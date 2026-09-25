@@ -228,7 +228,23 @@ export function nearestHospitalForCity(city: unknown, address?: unknown): Neares
 // HOSPITALS, PLURAL. The closest one may be the wrong one — a guest may already have a network, or
 // a taxi driver may know a better route — so the page lists three and lets the person choose,
 // rather than deciding for them and explaining the decision.
-export type EmergencyHospital = { name: string; address: string; phone: string }
+//
+// CUSTOMISABLE ON TOP (Jon, 2026-09-25: "need better customization features so I can build my own
+// page"). The computed part — three hospitals and the non-emergency line — is the floor. On top of
+// it the editor may add hospitals of its own (`custom: true`), any number of extra contacts (a
+// poison line, the building's front desk, a vet), and a free "good to know" note. Those additions
+// are the operator's, so `mergeEmergency` carries them across every recompute: the backfill route
+// and the read-time self-heal refresh the table-driven rows and leave the hand-written ones alone.
+export type EmergencyHospital = {
+  name: string; address: string; phone: string
+  /** Straight-line miles from the listing, one decimal; absent on hand-added rows. */
+  miles?: number
+  /** "24-hour ER", "Pediatric ER" — a short line under the name. */
+  note?: string
+  /** Added by hand in the editor; survives a recompute. */
+  custom?: boolean
+}
+export type EmergencyContact = { label: string; value: string; note?: string }
 
 export type EmergencySection = {
   heading: string
@@ -239,6 +255,31 @@ export type EmergencySection = {
   police: string | null
   /** Three nearby hospitals with 24-hour emergency rooms, closest first. */
   hospitals: EmergencyHospital[]
+  /** Extra numbers the operator added (poison control, front desk, …). */
+  contacts?: EmergencyContact[]
+  /** Free text under everything: "The AED is by the elevator on P1." */
+  notes?: string
+}
+
+/** Poison Control is the one national line worth suggesting on every book; the operator can delete it. */
+export const DEFAULT_EMERGENCY_CONTACTS: EmergencyContact[] = [
+  { label: 'Poison Control', value: '1-800-222-1222', note: 'Free, 24 hours, nationwide' },
+]
+
+/**
+ * A fresh table-driven section plus everything the operator added to the old one: hand-added
+ * hospitals, extra contacts, the note. Edits to the computed hospitals' text are NOT kept — those
+ * rows come from the verified table and a correction belongs in the table, not in one book.
+ */
+export function mergeEmergency(old: any, fresh: EmergencySection): EmergencySection {
+  if (!old || typeof old !== 'object') return { ...fresh, contacts: DEFAULT_EMERGENCY_CONTACTS.map(c => ({ ...c })) }
+  const customHosp = (Array.isArray(old.hospitals) ? old.hospitals : []).filter((h: any) => h && h.custom && (h.name || h.phone))
+  const out: EmergencySection = { ...fresh, hospitals: [...fresh.hospitals, ...customHosp] }
+  if (Array.isArray(old.contacts)) out.contacts = old.contacts.filter((c: any) => c && typeof c === 'object')
+  else out.contacts = DEFAULT_EMERGENCY_CONTACTS.map(c => ({ ...c }))
+  if (typeof old.notes === 'string' && old.notes.trim()) out.notes = old.notes
+  if (typeof old.heading === 'string' && old.heading.trim()) out.heading = old.heading
+  return out
 }
 
 /** The N closest hospitals to a point, closest first. */
@@ -265,6 +306,7 @@ export function buildEmergency(l: { lat?: unknown; lng?: unknown; city?: unknown
     emergency: '911',
     policeLabel: p ? p.agency : null,
     police: p ? p.phone : null,
-    hospitals: list.map(h => ({ name: h.name, address: h.address, phone: h.phone })),
+    hospitals: list.map(h => ({ name: h.name, address: h.address, phone: h.phone, miles: Math.round(h.miles * 10) / 10, note: '24-hour emergency room' })),
+    contacts: DEFAULT_EMERGENCY_CONTACTS.map(c => ({ ...c })),
   }
 }

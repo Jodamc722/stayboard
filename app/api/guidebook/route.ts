@@ -13,7 +13,7 @@ import { photoForPlace } from '@/lib/place-photo'
 import { requireLevel } from '@/lib/access'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
-import { buildEmergency } from '@/lib/emergency'
+import { buildEmergency, mergeEmergency } from '@/lib/emergency'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -70,7 +70,9 @@ export async function GET(req: NextRequest) {
     // Rebuilt when the section is MISSING or still the old single-hospital shape — a book healed
     // earlier today carries `hospital`, not `hospitals`, and would print no hospitals at all.
     const emOld = gb && gb.sections && gb.sections.emergency
-    const emNeedsBuild = !emOld || !Array.isArray(emOld.hospitals) || !emOld.hospitals.length
+    // Also rebuilt once when the section predates the 2026-09-25 page (no `contacts` array): the
+    // merge keeps anything the operator added and gains distances, ER notes and Poison Control.
+    const emNeedsBuild = !emOld || !Array.isArray(emOld.hospitals) || !emOld.hospitals.length || !Array.isArray(emOld.contacts)
     if (gb && gb.listing_id && emNeedsBuild) {
       try {
         const { data: lrows } = await db.from('guesty_listings')
@@ -81,7 +83,7 @@ export async function GET(req: NextRequest) {
           const em = buildEmergency({ lat: l.lat, lng: l.lng, city: l.address_city, address: l.address_full })
           if (em.hospitals.length) {
             const sections = (gb.sections && typeof gb.sections === 'object') ? { ...gb.sections } : {}
-            sections.emergency = em
+            sections.emergency = mergeEmergency(emOld, em)
             sections.omit = (Array.isArray(sections.omit) ? sections.omit : []).filter((k: string) => k !== 'emergency')
             gb.sections = sections
             await db.from('guidebooks').update({ sections }).eq('id', gb.id)

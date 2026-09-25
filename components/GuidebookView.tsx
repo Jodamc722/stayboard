@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Paperclip, Pencil, Printer, Save, Share2, Sparkles, Trash2, Loader2, X } from 'lucide-react'
+import { DEFAULT_EMERGENCY_CONTACTS } from '@/lib/emergency'
 
 const QR = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent('https://stay-hospitality.com')
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
@@ -923,72 +924,6 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
 
         </Page>
 
-        {/* ── IN AN EMERGENCY ─────────────────────────────────────────────────────────────────
-            Jon, 2026-09-24: "just have local hospitals in the area, the local non-emergency phone
-            number, and our phone number on a page somewhere … I hate the way that you formatted it
-            currently."
-
-            Two earlier versions of this page were more designed than the job needed — a bordered
-            panel, 911 at 44px, a note under every line explaining what the line was for. A guest
-            reaching for this page is not reading, they are looking for a number, and decoration is
-            in the way. So it is the same quiet label-and-value rows the house-rules page uses, in
-            the order someone actually needs them, and nothing else.
-
-            The values are computed in lib/emergency.ts from the listing's own coordinates against a
-            table checked against each hospital operator's own site. Nothing here is model-written. */}
-        {(() => {
-          const em = s.emergency || {}
-          const hosps: any[] = Array.isArray(em.hospitals) ? em.hospitals : []
-          const Row = ({ label, children }: { label: any; children: any }) => (
-            <div className="flex flex-col gap-1 border-b pb-3.5 sm:flex-row sm:gap-4" style={{ borderColor: accentColor + '22' }}>
-              <p className="w-full shrink-0 text-[10px] font-semibold tracking-[0.24em] uppercase pt-0.5 sm:w-44" style={{ color: accentColor }}>{label}</p>
-              <div className="text-[13px] font-light leading-[1.7]">{children}</div>
-            </div>
-          )
-          return (
-            <Page num={++pageNo} id="emergency">
-              <Kicker><L k="em.tag" def="Emergency" /></Kicker>
-              <H><L k="em.heading" def="If you need help" /></H>
-              <div className="mt-8 flex flex-col gap-4">
-                <Row label={<L k="em.usLabel" def="US, ANY TIME" />}>
-                  <Tel v={s.contact?.customerService}><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></Tel>
-                </Row>
-                <Row label={<L k="em.911Label" def="EMERGENCY" />}>
-                  <Tel v="911">911</Tel>
-                </Row>
-                {em.police ? (
-                  <Row label={<L k="em.policeLabel" def="POLICE, NON-EMERGENCY" />}>
-                    <Tel v={em.police}><T path={['emergency', 'police']} value={em.police} rows={1} /></Tel>
-                    {em.policeLabel ? <span className="opacity-60"> · {em.policeLabel}</span> : null}
-                  </Row>
-                ) : null}
-              </div>
-              {hosps.length ? (
-                <div className="mt-7">
-                  <p className="text-[10px] font-semibold tracking-[0.24em] uppercase" style={{ color: accentColor }}>
-                    <L k="em.hospitalLabel" def="HOSPITALS NEARBY" />
-                  </p>
-                  <div className="mt-3 flex flex-col gap-3.5">
-                    {hosps.map((h: any, i: number) => (
-                      <div key={i} className="border-b pb-3" style={{ borderColor: accentColor + '22' }}>
-                        <p className="text-[13.5px]" style={{ fontFamily: SERIF }}>
-                          <T path={['emergency', 'hospitals', String(i), 'name'] as any} value={h.name} rows={1} />
-                        </p>
-                        <p className="mt-0.5 text-[12px] font-light leading-snug">
-                          <MapLink v={h.address}><T path={['emergency', 'hospitals', String(i), 'address'] as any} value={h.address} rows={2} /></MapLink>
-                        </p>
-                        <p className="mt-0.5 text-[12px] font-light">
-                          <Tel v={h.phone}><T path={['emergency', 'hospitals', String(i), 'phone'] as any} value={h.phone} rows={1} /></Tel>
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </Page>
-          )
-        })()}
-
         {/* LOCAL — places / eats. Photo cards when imagery exists; big editorial cards when few items. */}
         {localSecs.map((sec: any) => {
           const items = (s[sec.key].items || []).slice(0, 6)
@@ -1119,6 +1054,137 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
             {edit && <input value={lbl('booknext.url', 'https://stay-hospitality.com')} onChange={e => set(['_labels', 'booknext.url'], e.target.value)} placeholder="Booking link the QR points to" className="mt-6 w-[60%] bg-white/70 text-neutral-900 border border-dashed border-neutral-400 rounded p-1.5 text-[12px]" />}
           </div>
         </Page>
+
+        {/* ── IN AN EMERGENCY — THE LAST PAGE ─────────────────────────────────────────────────
+            Jon, 2026-09-25: "We need a better section for local hospitals, address, emergency
+            contact info, non-emergency local contact, and make the page nicer. Need better
+            customization features so I can build my own page. Revamp and place as the last page."
+
+            Last, so it is the page a guest lands on when they flip to the back of the book, and
+            the one that prints on the back cover. Three cards a person can read at arm's length —
+            911, us, the local non-emergency line — then the hospitals with address and phone, then
+            whatever the operator wants to add: more numbers (Poison Control is suggested), and a
+            free note. Every card is editable; hospitals and numbers can be added and removed.
+
+            The hospitals and the police line are computed in lib/emergency.ts from the listing's
+            own coordinates. Rows the operator adds by hand are flagged `custom` and survive a
+            recompute (mergeEmergency); rows from the table are refreshed by it. */}
+        {(() => {
+          const em = s.emergency || {}
+          const hosps: any[] = Array.isArray(em.hospitals) ? em.hospitals : []
+          const contacts: any[] = Array.isArray(em.contacts) ? em.contacts : DEFAULT_EMERGENCY_CONTACTS
+          const line = accentColor + '33'
+          const card = { borderColor: line, background: accentColor + '0c' }
+          const setHosps = (next: any[]) => set(['emergency', 'hospitals'], next)
+          const setContacts = (next: any[]) => set(['emergency', 'contacts'], next)
+          const removeBtn = (onClick: () => void, title: string) => edit ? (
+            <button type="button" title={title} onClick={onClick} className="absolute right-2 top-2 z-10 rounded-full bg-white/95 px-2 py-0.5 text-[10px] font-bold text-red-700 shadow ring-1 ring-black/10 print:hidden">× remove</button>
+          ) : null
+          const addBtn = (label: string, onClick: () => void) => edit ? (
+            <button type="button" onClick={onClick} className="print:hidden rounded-full border border-dashed px-3 py-1.5 text-[10.5px] font-semibold tracking-[0.12em] uppercase" style={{ borderColor: accentColor, color: accentColor }}>+ {label}</button>
+          ) : null
+          const label = (children: any) => <p className="text-[9.5px] font-semibold tracking-[0.3em] uppercase" style={{ color: accentColor }}>{children}</p>
+          return (
+            <Page num={++pageNo} id="emergency" ghost="help">
+              <Kicker><L k="em.tag" def="Emergency" /></Kicker>
+              <H><L k="em.heading" def="if you need help" /></H>
+              <p className="mt-3 max-w-[58ch] text-[12px] font-light leading-[1.8] opacity-80" style={{ fontFamily: SERIF }}>
+                <L k="em.intro" def="Keep this page handy. In an emergency, dial 911 first — then call us. We are one call away, day or night." rows={2} />
+              </p>
+
+              {/* The three numbers, as cards. 911 is the biggest thing on the page on purpose. */}
+              <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border px-4 py-4" style={card}>
+                  {label(<L k="em.911Label" def="Emergency" />)}
+                  <p className="mt-2 text-[34px] leading-none tracking-tight" style={{ fontFamily: SERIF }}><Tel v="911">911</Tel></p>
+                  <p className="mt-2 text-[10.5px] font-light leading-snug opacity-70"><L k="em.911Note" def="Police · Fire · Ambulance" /></p>
+                </div>
+                <div className="rounded-xl border px-4 py-4" style={card}>
+                  {label(<L k="em.usLabel" def="Stay Hospitality · 24/7" />)}
+                  <p className="mt-2 text-[19px] leading-tight" style={{ fontFamily: SERIF }}><Tel v={s.contact?.customerService}><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></Tel></p>
+                  <p className="mt-2 text-[10.5px] font-light leading-snug opacity-70"><L k="em.usNote" def="Lockouts, leaks, power, anything in the home" rows={2} /></p>
+                </div>
+                <div className="rounded-xl border px-4 py-4" style={card}>
+                  {label(<L k="em.policeLabel" def="Police · non-emergency" />)}
+                  <p className="mt-2 text-[19px] leading-tight" style={{ fontFamily: SERIF }}>
+                    {em.police || edit ? <Tel v={em.police}><T path={['emergency', 'police']} value={em.police || ''} rows={1} /></Tel> : <span className="opacity-40">—</span>}
+                  </p>
+                  <p className="mt-2 text-[10.5px] font-light leading-snug opacity-70">
+                    {edit ? <T path={['emergency', 'policeLabel']} value={em.policeLabel || ''} rows={1} /> : (em.policeLabel || <L k="em.policeNote" def="Noise, parking, a report that can wait" />)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Hospitals: name, distance, address (opens Maps), phone (dials). */}
+              <div className="mt-7 flex items-baseline justify-between gap-3">
+                {label(<L k="em.hospitalLabel" def="Hospitals nearby" />)}
+                {addBtn('Add hospital', () => setHosps([...hosps, { name: '', address: '', phone: '', note: '', custom: true }]))}
+              </div>
+              {hosps.length ? (
+                <div className={'mt-3 grid grid-cols-1 gap-3 ' + (hosps.length >= 3 ? 'sm:grid-cols-3' : hosps.length === 2 ? 'sm:grid-cols-2' : '')}>
+                  {hosps.map((h: any, i: number) => (
+                    <div key={i} className="relative rounded-xl border px-4 py-3.5" style={{ borderColor: line }}>
+                      {removeBtn(() => setHosps(hosps.filter((_: any, j: number) => j !== i)), 'Remove this hospital from the page')}
+                      <p className="text-[14px] leading-snug pr-2" style={{ fontFamily: SERIF }}>
+                        <T path={['emergency', 'hospitals', String(i), 'name'] as any} value={h.name} rows={1} />
+                      </p>
+                      {(Number.isFinite(Number(h.miles)) && h.miles !== '' && h.miles != null) || h.note || edit ? (
+                        <p className="mt-1 text-[10px] font-medium tracking-[0.14em] uppercase" style={{ color: accentColor }}>
+                          {Number.isFinite(Number(h.miles)) && h.miles !== '' && h.miles != null ? <span>{Number(h.miles) < 1 ? 'under 1 mile' : 'about ' + Number(h.miles) + ' mi'}</span> : null}
+                          {Number.isFinite(Number(h.miles)) && h.miles !== '' && h.miles != null && (h.note || edit) ? <span className="opacity-50"> · </span> : null}
+                          {(h.note || edit) ? <T path={['emergency', 'hospitals', String(i), 'note'] as any} value={h.note || ''} rows={1} /> : null}
+                        </p>
+                      ) : null}
+                      <p className="mt-2 text-[11.5px] font-light leading-snug">
+                        <MapLink v={h.address}><T path={['emergency', 'hospitals', String(i), 'address'] as any} value={h.address} rows={2} /></MapLink>
+                      </p>
+                      <p className="mt-1.5 text-[12.5px]" style={{ fontFamily: SERIF }}>
+                        <Tel v={h.phone}><T path={['emergency', 'hospitals', String(i), 'phone'] as any} value={h.phone} rows={1} /></Tel>
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-3 text-[11.5px] font-light opacity-60">{edit ? 'No hospitals yet — add one above.' : ''}</p>
+              )}
+
+              {/* More numbers — the operator's own list. Poison Control is suggested by default. */}
+              {(contacts.length || edit) ? (
+                <div className="mt-7">
+                  <div className="flex items-baseline justify-between gap-3">
+                    {label(<L k="em.moreLabel" def="More numbers" />)}
+                    {addBtn('Add a number', () => setContacts([...contacts, { label: '', value: '', note: '' }]))}
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-x-8 gap-y-2.5 sm:grid-cols-2">
+                    {contacts.map((c: any, i: number) => (
+                      <div key={i} className="relative flex flex-col gap-0.5 border-b pb-2.5 sm:flex-row sm:items-baseline sm:gap-4" style={{ borderColor: accentColor + '22' }}>
+                        {edit ? <button type="button" title="Remove this number" onClick={() => setContacts(contacts.filter((_: any, j: number) => j !== i))} className="absolute -left-6 top-0 text-[12px] font-bold text-red-700 print:hidden">×</button> : null}
+                        <p className="min-w-0 text-[10px] font-semibold tracking-[0.2em] uppercase sm:w-36 sm:shrink-0" style={{ color: accentColor }}>
+                          <T path={['emergency', 'contacts', String(i), 'label'] as any} value={c.label} rows={1} />
+                        </p>
+                        <div className="min-w-0 text-[12.5px] leading-snug">
+                          <span style={{ fontFamily: SERIF }}><Tel v={c.value}><T path={['emergency', 'contacts', String(i), 'value'] as any} value={c.value} rows={1} /></Tel></span>
+                          {(c.note || edit) ? <span className="block text-[10.5px] font-light opacity-70 sm:inline sm:ml-2"><T path={['emergency', 'contacts', String(i), 'note'] as any} value={c.note || ''} rows={1} /></span> : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Good to know — free text: where the AED is, the building's after-hours desk, … */}
+              {(em.notes || edit) ? (
+                <div className="mt-7 rounded-xl border px-4 py-3.5" style={card}>
+                  {label(<L k="em.notesLabel" def="Good to know" />)}
+                  <div className="mt-2 text-[12px] font-light leading-[1.75] whitespace-pre-line">
+                    <T path={['emergency', 'notes']} value={em.notes || ''} rows={4} />
+                  </div>
+                  {edit && !em.notes ? <p className="mt-1 text-[10px] opacity-60 print:hidden">Optional. Where the fire extinguisher and AED are, the building's front desk hours, the nearest 24-hour pharmacy — anything a guest should know at 2am.</p> : null}
+                </div>
+              ) : null}
+            </Page>
+          )
+        })()}
       </div>
     </div>
   )

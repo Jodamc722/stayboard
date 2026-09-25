@@ -18,7 +18,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
-import { buildEmergency } from '@/lib/emergency'
+import { buildEmergency, mergeEmergency } from '@/lib/emergency'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -47,7 +47,7 @@ async function run(write: boolean) {
     }
     if (write) {
       const sections = (b.sections && typeof b.sections === 'object') ? { ...b.sections } : {}
-      sections.emergency = em
+      sections.emergency = mergeEmergency(b.sections && b.sections.emergency, em)
       sections.omit = (Array.isArray(sections.omit) ? sections.omit : []).filter((k: string) => k !== 'emergency')
       const { error: uErr } = await db.from('guidebooks').update({ sections, updated_at: new Date().toISOString() }).eq('id', b.id)
       if (uErr) { results.push({ id: String(b.id), book: String(b.listing_name || ''), hospital: em.hospitals[0].name, hospitals: em.hospitals.length, police: em.police, ok: false, note: uErr.message }); continue }
