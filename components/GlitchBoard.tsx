@@ -28,6 +28,7 @@ type Glitch = {
   reservation_notes: string | null; sentiment: { score?: number; band?: string; dissatisfied?: boolean; topIssue?: string | null; excerpt?: string | null } | null
   due_date?: string | null; assignee?: string | null; assignee_person_id?: number | null; details?: string | null; progress?: number | null
   vendor_key?: string | null; vendor_name?: string | null
+  vendor_visit_on?: string | null; vendor_visit_window?: string | null; vendor_team_told_at?: string | null; vendor_team_told_for?: string | null
   // How it reached us and how the guest sounded — both feed the refund model (migration 060).
   reported_via?: string | null; guest_tone?: string | null
   // Migration 086 — how this issue is treated, independent of any Breezeway task.
@@ -414,19 +415,44 @@ function AssignField({ g, people, onDone }: { g: Glitch; people: { id: number; n
 function VendorGlitchField({ g, onDone }: { g: Glitch; onDone: () => void }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  const pick = async (v: { key: string | null; name: string | null }) => {
-    setBusy(true); setErr('')
+  const [note, setNote] = useState('')
+  const call = async (body: Record<string, any>) => {
+    setBusy(true); setErr(''); setNote('')
     try {
-      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', id: g.id, vendorKey: v.key, vendorName: v.name }) })
+      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: g.id, ...body }) })
       const j = await r.json()
-      if (!r.ok || !j.ok) setErr(j.error || 'Could not save'); else onDone()
+      if (!r.ok || !j.ok) setErr(j.error || 'Could not save')
+      else { if (body.action === 'vendorTell') setNote(j.posted ? 'Posted in ' + j.channel : 'Marked as told' + (j.error ? ' — ' + j.error : '')); onDone() }
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
   }
+  const pick = (v: { key: string | null; name: string | null }) => call({ action: 'update', vendorKey: v.key, vendorName: v.name })
+  // Told for THIS date; a moved visit re-arms the button on its own.
+  const told = !!g.vendor_team_told_for && g.vendor_team_told_for === g.vendor_visit_on
   return (
-    <div className="max-w-[360px]">
+    <div className="max-w-[420px] space-y-1.5">
       <VendorField vendorKey={g.vendor_key ?? null} vendorName={g.vendor_name ?? null} canEdit busy={busy} onPick={pick} />
+      {/* WHEN THEY ARE COMING, AND HAS THE TEAM BEEN TOLD (2026-09-25) — the same three facts the
+          project board keeps on a vendor job, so a plumber booked from a glitch is not a surprise at
+          the door. */}
+      {g.vendor_name ? (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <input type="date" value={g.vendor_visit_on || ''} disabled={busy} onChange={e => call({ action: 'update', vendorVisitOn: e.target.value || null })}
+            className="text-[12.5px] border border-line rounded-lg px-2 h-8 bg-white" />
+          <input defaultValue={g.vendor_visit_window || ''} placeholder="9–11am" disabled={busy}
+            onBlur={e => { if ((e.target.value || null) !== (g.vendor_visit_window || null)) call({ action: 'update', vendorVisitWindow: e.target.value }) }}
+            className="text-[12.5px] border border-line rounded-lg px-2 h-8 bg-white w-[110px]" />
+          {g.vendor_visit_on ? (told ? (
+            <span className="text-[11.5px] font-semibold text-emerald-700 inline-flex items-center gap-1"><Check size={12} /> Team told</span>
+          ) : (
+            <button onClick={() => call({ action: 'vendorTell' })} disabled={busy}
+              className="rounded-lg bg-ink text-white px-2.5 h-8 text-[11.5px] font-bold hover:bg-ink/85 disabled:opacity-40">Tell the team</button>
+          )) : null}
+          {busy ? <Loader2 size={13} className="animate-spin text-muted" /> : null}
+        </div>
+      ) : null}
       {err ? <span className="text-[12px] text-rose-700">{err}</span> : null}
+      {note ? <span className="text-[12px] text-muted">{note}</span> : null}
     </div>
   )
 }

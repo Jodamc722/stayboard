@@ -164,6 +164,10 @@ export async function POST(req: NextRequest) {
       // The outside vendor on it (migration 109). Name kept as a snapshot next to the key.
       if (b.vendorKey !== undefined) patch.vendor_key = str(b.vendorKey) || null
       if (b.vendorName !== undefined) patch.vendor_name = str(b.vendorName).slice(0, 200) || null
+      // When they are coming (migration 110). A changed date re-arms "Tell the team" by itself,
+      // because vendor_team_told_for no longer matches.
+      if (b.vendorVisitOn !== undefined) patch.vendor_visit_on = /^\d{4}-\d{2}-\d{2}$/.test(str(b.vendorVisitOn)) ? str(b.vendorVisitOn) : null
+      if (b.vendorVisitWindow !== undefined) patch.vendor_visit_window = str(b.vendorVisitWindow).slice(0, 60) || null
       if (b.assigneePersonId !== undefined) { const pid = Number(b.assigneePersonId); patch.assignee_person_id = Number.isFinite(pid) && pid > 0 ? pid : null }
       // Assigned to an app user (2026-09-22): tell them. The card link opens the board.
       if (b.assigneeEmail && str(b.assignee) && str(b.assignee) !== str(g.assignee)) {
@@ -194,6 +198,31 @@ export async function POST(req: NextRequest) {
       const { error } = await db.from('glitches').update(patch).eq('id', id)
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
       return NextResponse.json({ ok: true })
+    }
+
+    // TELL THE TEAM A VENDOR IS COMING (2026-09-25). Posts one line to the building's maintenance
+    // room (lib/slack-rules routing, same as every other field alert) and stamps the glitch, so the
+    // board can show "Announced" and stop asking. Best-effort on Slack: if the room is not set the
+    // stamp is still written and the response says where it went.
+    if (action === 'vendorTell') {
+      if (!g.vendor_name) return NextResponse.json({ ok: false, error: 'Pick a vendor first.' }, { status: 400 })
+      const visit = str(g.vendor_visit_on).slice(0, 10)
+      if (!visit) return NextResponse.json({ ok: false, error: 'Set the day they are coming first.' }, { status: 400 })
+      const { getSlackRules, groupForBuilding, channelFor } = await import('@/lib/slack-rules')
+      const { buildingOf } = await import('@/lib/segments')
+      const { postToChannel } = await import('@/lib/slack')
+      const rules = await getSlackRules()
+      const building = buildingOf(null, str(g.unit)) || null
+      const channel = channelFor(rules, groupForBuilding(rules, building), 'maintenance')
+      const day = new Date(visit + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
+      const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
+      const text = `🚚 *${str(g.vendor_name)}* is coming to *${str(g.unit) || 'a unit'}* on ${day}${g.vendor_visit_window ? ', ' + str(g.vendor_visit_window) : ''} — ${str(g.category) || 'guest issue'}${g.overview ? ': ' + str(g.overview).replace(/\s+/g, ' ').slice(0, 120) : ''}${g.guest_name ? ` (guest ${str(g.guest_name).split(' ')[0]} in house)` : ''}\n<${base}/glitches?id=${g.id}|Open the glitch>`
+      let posted: { ok: boolean; error?: string } = { ok: false, error: 'no maintenance room for ' + (building || 'this unit') }
+      if (channel) posted = await postToChannel(channel, text)
+      const stamp2 = { vendor_team_told_at: new Date().toISOString(), vendor_team_told_for: visit, history: stamp('vendor announced' + (channel ? ' in ' + channel : '')), updated_at: new Date().toISOString() }
+      const { error } = await db.from('glitches').update(stamp2).eq('id', id)
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      return NextResponse.json({ ok: true, posted: posted.ok, channel, error: posted.ok ? undefined : posted.error })
     }
 
     if (action === 'push') {

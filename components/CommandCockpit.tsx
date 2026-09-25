@@ -389,7 +389,7 @@ export const MINE_CLS: Record<string, string> = { todo: 'text-muted border-line 
 export const niceDay = (ymd: string | null) => { if (!ymd) return ''; try { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(ymd + 'T12:00:00Z')) } catch { return ymd } }
 
 type VendorVisit = {
-  id: string; projectId: string; project: string; title: string; vendor: string | null; vendorKey?: string | null
+  id: string; projectId: string; project: string; title: string; vendor: string | null; vendorKey?: string | null; href?: string
   visit_on: string; window: string | null; est: string | null; where: string | null; owner: string | null
   when: string; tone: 'today' | 'soon' | 'later' | 'missed' | 'done'; announced: boolean
 }
@@ -432,7 +432,7 @@ function VendorVisitsCard() {
       {loading && !data && <div className="px-4 py-3 text-[12.5px] text-muted flex items-center gap-2"><Loader2 size={12} className="animate-spin" /> Checking the boards…</div>}
       <div className="divide-y divide-line">
         {visits.slice(0, 8).map(v => (
-          <Link key={v.id} href={`/projects/${v.projectId}?task=${v.id}`} className="block px-4 py-2 hover:bg-app/60">
+          <Link key={v.id} href={v.href || `/projects/${v.projectId}?task=${v.id}`} className="block px-4 py-2 hover:bg-app/60">
             <div className="flex items-baseline gap-2 min-w-0">
               {/* The name carries the vendor card (hover / tap) — phone, insurance, what else is open with them. */}
               <span className="text-[12.5px] font-semibold text-ink truncate flex-1 min-w-0">{v.vendor ? <VendorName vendorKey={v.vendorKey} name={v.vendor} icon={false} /> : 'A vendor'}</span>
