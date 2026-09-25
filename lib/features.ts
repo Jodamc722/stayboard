@@ -111,6 +111,10 @@ export const FEATURES: Feature[] = [
   { key: 'billing',       label: 'Billable Hours',    path: '/billing', group: 'Money' },
   // Owner projections (2026-08-21, Jon): next season's net owner revenue, editable per month.
   { key: 'projections',   label: 'Projections',       path: '/projections', group: 'Money' },
+  // The boss's Revenue App (stay-hospitalitydrr.netlify.app) inside Lighthouse (Jon, 2026-09-25:
+  // "embed this app into my Lighthouse so I can go from this back to my app"). One frame, our nav
+  // around it. Its numbers already flow in through lib/revenue-app.ts; this is the screen itself.
+  { key: 'revenue-app',   label: 'Revenue App',       path: '/revenue-app', group: 'Money' },
   { key: 'reports',       label: 'Owner Reports',     path: '/reports', group: 'Money' },
   // Owner-money page: owner/admin-only by Jon's rule (migration 025 sets manager to off, same as
   // Revenue). Reviewers without a login use /report/owner-audit instead.
@@ -349,7 +353,7 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
     pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims', 'guests', 'guest-orders'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
-    pages: ['home', 'revenue', 'marketing', 'reports', 'health', 'patterns', 'blocked', 'buildings', 'listings', 'claims', 'contacts', 'channels'] },
+    pages: ['home', 'revenue', 'revenue-app', 'marketing', 'reports', 'health', 'patterns', 'blocked', 'buildings', 'listings', 'claims', 'contacts', 'channels'] },
 ]
 
 export function normWorkspace(v: any): Workspace {
