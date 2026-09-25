@@ -854,27 +854,23 @@ export const STACK_NOTE =
 // Jon, 2026-09-24: "fix the Pacer slide and share what they do for us, also about them and why we
 // chose to work with them." Three groups, in that order, because that is the order an owner asks.
 export const REVENUE_PARTNER_HEAD = 'Our revenue partner: Pacer'
-export const REVENUE_PARTNER_INTRO = 'We do not leave pricing to software. Pacer, a firm that does nothing but revenue management for vacation rentals and boutique hotels, prices your property every day and works with our team on the rate, the minimum stay and the calendar.'
+export const REVENUE_PARTNER_INTRO = 'We do not leave pricing to software. Pacer, a firm that does nothing but revenue management, works your rate with our team every day.'
 
 export type PartnerGroup = { label: string; rows: { k: string; v: string }[] }
+// Jon, 2026-09-25: "the Pacer slide is so long, condense it. Also Kyle and Justin are our account
+// managers that work our pricing daily." Six rows in three groups, nothing over two lines.
 export const REVENUE_PARTNER_GROUPS: PartnerGroup[] = [
   { label: 'What they do for your property', rows: [
-    { k: 'A named revenue manager', v: 'One person owns your pricing, adjusts it daily and answers to our team, with director-level oversight behind them.' },
-    { k: 'Rate, minimum stay and gaps', v: 'Nightly rate moved against live demand and the comp set; minimum stays opened or closed by date; gap nights priced to fill.' },
-    { k: 'The season ahead', v: 'Events, holidays and pickup pace watched months out, so a soft month is found while there is still time to fix it.' },
-    { k: 'Reporting we can show you', v: 'Monthly performance against the market, and a reason behind any rate you ask about.' },
+    { k: 'Kyle and Justin, your account managers', v: 'Work your pricing every day: rate, minimum stay and gap nights, against live demand and the comp set.' },
+    { k: 'The season ahead', v: 'Events and pickup pace watched months out; a monthly report, and a reason behind any rate you ask about.' },
   ] },
-  // Jon, 2026-09-25: "About Pacer is too long, condense it."
   { label: 'About Pacer', rows: [
-    { k: 'Pricing only, 50+ markets', v: 'Revenue management is the whole business, across seven countries.' },
-    { k: 'Built at scale', v: 'Founded by a former Vacasa revenue lead who helped grow it from 600 to 44,000 properties.' },
-    { k: 'Their results', v: '95% client retention; +23% median RevPAR after a year, across their own portfolios.' },
-    { k: 'Industry standing', v: 'Key Data\u2019s exclusive revenue partner; Casago and iTrip preferred; VRMA member.' },
+    { k: 'Pricing only, 50+ markets', v: 'Built by a former Vacasa revenue lead who helped grow it from 600 to 44,000 properties.' },
+    { k: 'Their results', v: '95% client retention; +23% median RevPAR after a year, in their own portfolios.' },
   ] },
   { label: 'Why we chose them', rows: [
-    { k: 'They run the tool, they do not sell one', v: 'Pricing software sets a number. An operator sets a strategy. Pacer runs our pricing platform with hotel-grade discipline, which is what a building needs.' },
-    { k: 'They see the market before one operator can', v: 'Across 50+ markets they read demand shifts weeks before they show in a single calendar, and ours is priced accordingly.' },
-    { k: 'Accountable people, not a dashboard', v: 'Biweekly strategy calls, a named manager, a monthly report. When a rate decision needs explaining, there is a person to ask.' },
+    { k: 'They run the tool, they do not sell one', v: 'An operator\u2019s strategy on our pricing platform, with hotel-grade discipline.' },
+    { k: 'People, not a dashboard', v: 'Named managers, biweekly calls, a monthly report.' },
   ] },
 ]
 /** Kept for decks stored before the three groups existed; the slide renders the groups. */
@@ -914,8 +910,9 @@ export const PITCH_RETIRED_MARKS: Record<string, string[]> = {
     'How your rate gets set', 'Who Pacer are', 'your unit is assigned',
     // Jon, 2026-09-24: the Pacer slide became three groups (what they do / about / why)
     'Their track record, in their own numbers', 'leading a 55-person team of analysts and data scientists', 'It is the whole business, across 50+ markets',
-    // Jon, 2026-09-25: About Pacer condensed
+    // Jon, 2026-09-25: About Pacer condensed, then the whole slide condensed with Kyle and Justin named
     'Not a feature of a software product', 'leading a 55-person revenue team',
+    'One person owns your pricing', 'Revenue management is the whole business, across seven countries', 'Biweekly strategy calls, a named manager', 'works with our team on the rate, the minimum stay',
     // Jon, 2026-09-24: daily pricing, not weekly
     'reviewing your calendar every week', 'reviews the full picture every week', 'reviews the calendar every week', 'works with our team every week'],
   stack: ['four disconnected tools', 'somebody has to go and ask', 'Nobody else in this market has it',
