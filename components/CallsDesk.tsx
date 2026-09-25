@@ -608,7 +608,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
 
       {tab === 'post' && (
         <PostCheckoutList rows={shownOut} openId={openId} setOpenId={setOpenId} draft={draft} setDraft={setDraft}
-          busy={busy} onAct={post} copied={copied} copyPhone={copyPhone}
+          busy={busy} onAct={post} copied={copied} copyPhone={copyPhone} today={today}
           empty={mode === 'day' ? `No follow-up calls for ${dateLabel === 'Today' ? 'today' : dateLabel} — nobody checked out of a recovery unit that day.` : undefined} />
       )}
 
@@ -721,12 +721,19 @@ function CallBtn({ phone }: { phone: string }) {
     </a></Tip>
   )
 }
-function dayTag(d: string, today: string) {
-  if (d === today) return <Tag tone="roseSolid" title="Arrives today — the call closes tonight">Today</Tag>
-  if (d === nextDay(today)) return <Tag tone="amber">Tomorrow</Tag>
-  let wd = ''
-  try { wd = new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' }) } catch { /* ignore */ }
-  return <Tag>{wd} {String(Number(d.slice(8, 10)))}</Tag>
+/** The arrival date, big enough to read across the room (Jon, 2026-09-25: "see the arrival date
+ *  easily"). Month over day, weekday under, in one fixed-width block at the left of the row. */
+function DateBlock({ d, today, label }: { d: string; today: string; label: string }) {
+  let mon = '', day = '', wd = ''
+  try { const x = new Date(d + 'T12:00:00'); mon = x.toLocaleDateString('en-US', { month: 'short' }).toUpperCase(); day = String(x.getDate()); wd = x.toLocaleDateString('en-US', { weekday: 'short' }) } catch { day = d }
+  const isToday = d === today
+  return (
+    <div title={label + ' ' + d} className={`shrink-0 w-[46px] text-center rounded-lg px-1 py-0.5 leading-none ${isToday ? 'bg-rose-600 text-white' : 'bg-app text-ink border border-line'}`}>
+      <div className={`text-[9px] font-bold tracking-wider ${isToday ? 'text-white/85' : 'text-muted'}`}>{mon}</div>
+      <div className="text-[17px] font-bold tabular-nums">{day}</div>
+      <div className={`text-[9.5px] font-semibold ${isToday ? 'text-white/85' : 'text-muted'}`}>{isToday ? 'Today' : wd}</div>
+    </div>
+  )
 }
 /** The small utility strip at the top of an opened row: number + copy, Guesty, claim / undo. */
 function RowTools({ id, phone, copied, copyPhone, children }: { id: string; phone: string; copied: string | null; copyPhone: (id: string, p: string) => void; children?: ReactNode }) {
@@ -765,6 +772,7 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
         return (
           <li key={r.id} className={r.done ? 'bg-emerald-50/30' : ''}>
             <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
+              <DateBlock d={r.check_in} today={today} label="Arrives" />
               <CallBtn phone={r.phone} />
               <button onClick={() => setOpenId(open ? null : r.id)} className="flex-1 min-w-0 text-left">
                 <div className="flex items-center gap-1.5 flex-wrap">
@@ -776,7 +784,7 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
                   <span className="text-[12px] text-ink tabular-nums whitespace-nowrap" title="Check-in → check-out">
                     In <b>{shortDay(r.check_in)}</b>{r.status.checkOut ? <> → out <b>{shortDay(r.status.checkOut)}</b></> : null}{r.status.nights ? <span className="text-muted"> · {r.status.nights}n</span> : null}
                   </span>
-                  {dayTag(r.check_in, today)}
+                  {r.check_in === nextDay(today) && <Tag tone="amber">Tomorrow</Tag>}
                   {r.tier === 'lux' && <Tag tone="violet">Luxury</Tag>}
                   {r.tier === 'big' && <Tag tone="emerald">Big {money(r.value)}</Tag>}
                   {r.recovery && <Tag tone="rose" title={`Last review ${r.recovery.rating.toFixed(1)}★ — ${r.recovery.openDays}d without a good one`}>Recovery {r.recovery.rating.toFixed(1)}★</Tag>}
@@ -831,8 +839,8 @@ const REASON_TAG: Record<string, { label: string; tone: string }> = {
   direct: { label: 'Direct', tone: 'brand' },
   value: { label: 'High value', tone: 'emerald' },
 }
-function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAct, copied, copyPhone, empty }: {
-  empty?: string
+function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAct, copied, copyPhone, empty, today }: {
+  empty?: string; today: string
   rows: OutRow[]; openId: string | null; setOpenId: (v: string | null) => void
   draft: Record<string, string>; setDraft: (f: (d: Record<string, string>) => Record<string, string>) => void
   busy: string | null; onAct: (id: string, o: 'happy' | 'issue' | 'no_answer' | 'claim' | 'undo') => void
@@ -849,6 +857,7 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
         return (
           <li key={r.id} className={r.done ? 'bg-emerald-50/30' : ''}>
             <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
+              <DateBlock d={r.check_out} today={today} label="Checked out" />
               <CallBtn phone={r.phone} />
               <button onClick={() => setOpenId(open ? null : r.id)} className="flex-1 min-w-0 text-left">
                 <div className="flex items-center gap-1.5 flex-wrap">
