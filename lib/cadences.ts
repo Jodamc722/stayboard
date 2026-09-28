@@ -80,6 +80,16 @@ export type CadenceDef = {
    * a cadence that simply never comes due. Silence is the failure mode this flag exists to prevent.
    */
   needsScope?: boolean
+  /**
+   * THE SUCCESSOR RULE (Jon, 2026-09-28: "once a task is completed, it creates the next task and
+   * manages that for the next 6 months"). When a task matching this cadence is COMPLETED, the next
+   * one is put on the ledger for completed + everyDays, and created in Breezeway `leadDays` before
+   * it is due (on the unit's best workable day when it needs the unit empty). Missed = it rides
+   * forward. Off = the cadence only ever shows up as a daily suggestion, as before.
+   */
+  successor?: boolean
+  /** How many days ahead of next-due the successor task is created. */
+  leadDays?: number
 }
 
 export type CadenceCfg = {
@@ -253,6 +263,8 @@ export function resolveCadences(raw: any): CadenceCfg {
       scopeBuildings: strList(o?.scopeBuildings, base.scopeBuildings),
       scopeUnits: strList(o?.scopeUnits, base.scopeUnits),
       needsScope: o?.needsScope == null ? base.needsScope : o.needsScope === true,
+      successor: o?.successor == null ? (base.successor !== false) : o.successor === true,
+      leadDays: num(o?.leadDays, base.leadDays ?? 14, 0, 120),
     }
   }
 
@@ -261,7 +273,7 @@ export function resolveCadences(raw: any): CadenceCfg {
     const blank: CadenceDef = {
       key: inv.key, label: inv.key, everyDays: 180, dept: 'maintenance', match: inv.key,
       needsVacant: true, needsDays: 1, minutes: 60, mode: 'suggest', seedIfNever: false,
-      requiresAmenity: '', scopeBuildings: [], scopeUnits: [], needsScope: false,
+      requiresAmenity: '', scopeBuildings: [], scopeUnits: [], needsScope: false, successor: true, leadDays: 14,
     }
     // An invented cadence with an uncompilable pattern is dropped, not silently made to match all.
     const c = one(blank, inv)

@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { runAutoInspections, runLowReviewInspections, retireArrivalInspections } from '@/lib/auto-inspections'
+import { runPmRecurrence, pmRecurrenceRanWithin } from '@/lib/pm-recurrence'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -53,15 +54,23 @@ export async function GET(req: NextRequest) {
     // (Jon, 2026-09-28: time-sensitive — "if not completed, delete the task"). Own try, same reason.
     let retired: any = null
     try { retired = await retireArrivalInspections({ dryRun: preview }) } catch (e: any) { retired = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+    // PM RECURRENCE rides this line too (Jon, 2026-09-28: a completed cadence task books the next
+    // one). Heavier than the rest — it reads a year of task history — so at most every six hours,
+    // and never on a preview. Own try.
+    let pm: any = null
+    if (!preview) {
+      try { pm = (await pmRecurrenceRanWithin(6)) ? { skipped: 'ran within 6h' } : await runPmRecurrence() } catch (e: any) { pm = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+    }
     // The cron's own response carries counts only — no guest data on the unauthenticated path.
     if (!preview && isCron && !(await signedIn())) {
       return NextResponse.json({
         ok: out.ok, enabled: out.enabled !== false, scanned: out.scanned, created: out.created, failed: out.failed, skippedNoBreezeway: out.skippedNoBreezeway, candidates: out.candidates.length,
         lowReviews: lowReviews ? { ok: lowReviews.ok, created: lowReviews.created, movedForward: lowReviews.movedForward, alreadyCovered: lowReviews.alreadyCovered, waitingForCheckout: lowReviews.waitingForCheckout, failed: lowReviews.failed } : null,
         retiredArrivalInspections: retired ? { ok: retired.ok, found: retired.found, retired: (retired.retired || []).length, failed: (retired.failed || []).length } : null,
+        pmRecurrence: pm ? { ok: pm.ok, skipped: pm.skipped, created: pm.created, proposed: pm.proposed, moved: pm.moved, error: pm.error } : null,
       })
     }
-    return NextResponse.json({ ...out, lowReviews, retiredArrivalInspections: retired })
+    return NextResponse.json({ ...out, lowReviews, retiredArrivalInspections: retired, pmRecurrence: pm })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }

@@ -120,6 +120,10 @@ export const AUTOMATIONS: AutomationDef[] = [
     configKey: 'eve_on_watch', receipt: 'automation_runs',
     notes: 'Rides the slack-watch cron line (vercel.json is at its cron cap). Rooms, hours and on/off live in app_settings eve_on_watch; state in eve_on_watch_state. Posts go through the slack_post Agent mode rung. No model call.' },
 
+  { key: 'pm-recurrence', label: 'Preventative work books itself', area: 'ops', path: '/api/cron/auto-inspections',
+    what: 'A completed cadence task (A/C deep clean, filter change, batteries, deep clean, or any cadence you add) puts the next one on the PM ledger for done + interval, and 14 days before it is due the next task is created in Breezeway — on the unit\'s best empty day when it needs one. A cadence on "suggest" asks Eve for a ✅ (task_create rung); on "auto" it is created outright. A successor whose day passes unfinished is moved forward weekly and counted. Manage the jobs and see the ledger in Users & admin → Settings → Cadences.',
+    configKey: 'preventative_cadences', receipt: 'none', settingsPath: '/users → Settings → Cadences',
+    notes: 'lib/pm-recurrence.ts, riding the hourly auto-inspections cron at most every 6 hours. Needs migration 113 (pm_schedule) and the cadences master switch on. Manual: POST /api/pm/schedule {dryRun}.' },
   { key: 'salato-watch', label: 'Salato booking watch', area: 'guests', path: '/api/cron/reservations',
     what: 'After every booking sync (every 5 minutes): each new Salato booking goes to #ccs-and-jon with @channel (unit, dates, nights, guest, channel, code). A 1-night booking is flagged NOT PERMITTED (Salato has a 2-night minimum) and must be canceled or extended; it gets a reminder in its thread every 3 hours in the daytime until it is, and a ✅ when it is. The Salato front desk board shows 1-night stays in red with who to call.',
     receipt: 'none', notes: 'lib/salato-watch.ts. State in app_settings salato_watch_state; each message claimed once in telegram_updates. Manual check: GET /api/salato/watch (dry run). Front-desk contact line: app_settings salato_desk_contact.' },

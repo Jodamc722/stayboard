@@ -26,6 +26,7 @@ type Cad = {
   match: string; needsVacant: boolean; needsDays: number; minutes: number
   mode: 'off' | 'suggest' | 'auto'; seedIfNever: boolean; requiresAmenity?: string
   scopeBuildings?: string[]; scopeUnits?: string[]; needsScope?: boolean
+  successor?: boolean; leadDays?: number
 }
 type Cfg = {
   enabled: boolean; dailyCap: number; perUnitCap: number; perPersonMinutes: number
@@ -50,6 +51,13 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
   const [preview, setPreview] = useState<any | null>(null)
   const [open, setOpen] = useState<string | null>(null)
+  // NEW CADENCE (Jon, 2026-09-28: "a place to add or create new cadences that are managed and
+  // tasks created"). A small form; the key is derived from the label; it saves with everything else.
+  const [adding, setAdding] = useState(false)
+  const [draft, setDraft] = useState<{ label: string; everyDays: number; dept: Cad['dept']; match: string; needsVacant: boolean; minutes: number; mode: Cad['mode'] }>({ label: '', everyDays: 180, dept: 'maintenance', match: '', needsVacant: false, minutes: 30, mode: 'suggest' })
+  const [ledger, setLedger] = useState<any[] | null>(null)
+  const [ledgerBusy, setLedgerBusy] = useState(false)
+  const [pmRun, setPmRun] = useState<any | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -64,6 +72,31 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
   const setCad = (key: string, patch: Partial<Cad>) =>
     setCfg(c => (c ? { ...c, cadences: c.cadences.map(x => (x.key === key ? { ...x, ...patch } : x)) } : c))
   const dirty = cfg ? JSON.stringify(cfg) !== saved : false
+  const addCadence = () => {
+    if (!cfg) return
+    const label = draft.label.trim()
+    const key = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 32)
+    if (!label || !key) { setMsg({ tone: 'bad', text: 'Give the job a name.' }); return }
+    if (cfg.cadences.some(c => c.key === key)) { setMsg({ tone: 'bad', text: 'A cadence with that name already exists.' }); return }
+    const match = draft.match.trim() || label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    try { new RegExp(match, 'i') } catch { setMsg({ tone: 'bad', text: 'That "counts as done" pattern is not valid.' }); return }
+    const c: Cad = { key, label, everyDays: Math.max(1, Math.round(draft.everyDays || 180)), dept: draft.dept, match, needsVacant: draft.needsVacant, needsDays: draft.needsVacant ? 1 : 0, minutes: Math.max(5, Math.round(draft.minutes || 30)), mode: draft.mode, seedIfNever: false, requiresAmenity: '', scopeBuildings: [], scopeUnits: [], needsScope: false, successor: true, leadDays: 14 }
+    set({ cadences: [...cfg.cadences, c] })
+    setOpen(key); setAdding(false)
+    setDraft({ label: '', everyDays: 180, dept: 'maintenance', match: '', needsVacant: false, minutes: 30, mode: 'suggest' })
+    setMsg({ tone: 'ok', text: `Added "${label}" — press Save to keep it.` })
+  }
+  const removeCadence = (key: string) => { if (!cfg) return; set({ cadences: cfg.cadences.filter(c => c.key !== key) }); if (open === key) setOpen(null) }
+  const loadLedger = useCallback(async () => {
+    setLedgerBusy(true)
+    try { const r = await fetch('/api/pm/schedule', { cache: 'no-store' }); const j = await r.json(); setLedger(Array.isArray(j?.rows) ? j.rows : []) } catch { setLedger([]) }
+    setLedgerBusy(false)
+  }, [])
+  const runPm = async (dry: boolean) => {
+    setBusy('pm')
+    try { const r = await fetch('/api/pm/schedule', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dryRun: dry, force: true }) }); const j = await r.json(); setPmRun(j); if (!dry) loadLedger() } catch (e: any) { setPmRun({ ok: false, error: String(e?.message || e) }) }
+    setBusy(null)
+  }
 
   async function save() {
     if (!cfg) return
@@ -230,6 +263,16 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
                       <input type="checkbox" checked={c.seedIfNever} onChange={e => setCad(c.key, { seedIfNever: e.target.checked })} className="mt-0.5" disabled={!isOwner} />
                       <span className="text-[12px]"><span className="font-semibold text-ink">Treat &ldquo;never recorded&rdquo; as due</span> <span className="text-muted">— on for jobs every unit certainly needs; off for ones only some units have</span></span>
                     </label>
+                    {/* THE SUCCESSOR RULE (Jon, 2026-09-28): done → the next one is booked. */}
+                    <label className="flex items-start gap-2 cursor-pointer sm:col-span-2">
+                      <input type="checkbox" checked={c.successor !== false} onChange={e => setCad(c.key, { successor: e.target.checked })} className="mt-0.5" disabled={!isOwner} />
+                      <span className="text-[12px]"><span className="font-semibold text-ink">When one is completed, book the next</span> <span className="text-muted">— the next task is put on the ledger for done + {everyLabel(c.everyDays)} and created in Breezeway</span>
+                        {' '}<input type="number" min={0} max={120} value={c.leadDays ?? 14} onChange={e => setCad(c.key, { leadDays: Number(e.target.value) })} className={box + ' w-[64px] ml-1'} disabled={!isOwner || c.successor === false} /> <span className="text-muted">days before it is due{c.mode === 'auto' ? ' (created outright — this cadence is on auto)' : ' (as a proposal Eve asks a ✅ for)'}</span>
+                      </span>
+                    </label>
+                    {!['ac_deep', 'ac_filter', 'batteries', 'deep_clean', 'dryer_vent', 'water_heater'].includes(c.key) && isOwner && (
+                      <button type="button" onClick={() => removeCadence(c.key)} className="sm:col-span-2 justify-self-start text-[11.5px] text-rose-700 underline decoration-dotted">Remove this cadence</button>
+                    )}
                     {(c.needsScope || scopedCount(c) > 0) && (
                       <div className="sm:col-span-2">
                         <p className="text-[12px] text-muted mb-1">
@@ -342,6 +385,64 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
             </p>
           )}
         </div>
+      </div>
+
+      {/* ── NEW CADENCE ───────────────────────────────────────────────────────────────────── */}
+      <div className="border border-line rounded-xl px-3 py-2.5">
+        {!adding ? (
+          <button type="button" onClick={() => setAdding(true)} disabled={!isOwner} className="text-[12.5px] font-semibold text-ink disabled:opacity-40">+ New cadence</button>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[12px]">
+            <label className="sm:col-span-3"><span className="text-muted">Job</span><input value={draft.label} onChange={e => setDraft(d => ({ ...d, label: e.target.value }))} placeholder="e.g. Remote batteries, Door-lock batteries, Central A/C filter clean" className={box + ' w-full mt-0.5'} autoFocus /></label>
+            <label><span className="text-muted">Every (days)</span><input type="number" min={1} max={3650} value={draft.everyDays} onChange={e => setDraft(d => ({ ...d, everyDays: Number(e.target.value) }))} className={box + ' w-full mt-0.5'} /></label>
+            <label><span className="text-muted">Department</span><select value={draft.dept} onChange={e => setDraft(d => ({ ...d, dept: e.target.value as Cad['dept'] }))} className={box + ' w-full mt-0.5'}><option value="maintenance">Maintenance</option><option value="housekeeping">Housekeeping</option><option value="inspection">Inspection</option></select></label>
+            <label><span className="text-muted">Minutes</span><input type="number" min={5} max={600} value={draft.minutes} onChange={e => setDraft(d => ({ ...d, minutes: Number(e.target.value) }))} className={box + ' w-full mt-0.5'} /></label>
+            <label className="sm:col-span-2"><span className="text-muted">Counts as done when a finished task name matches</span><input value={draft.match} onChange={e => setDraft(d => ({ ...d, match: e.target.value }))} placeholder="leave blank to match the job name · e.g. remote.*batter" className={box + ' w-full mt-0.5 font-mono'} /></label>
+            <label><span className="text-muted">Mode</span><select value={draft.mode} onChange={e => setDraft(d => ({ ...d, mode: e.target.value as Cad['mode'] }))} className={box + ' w-full mt-0.5'}><option value="suggest">Propose (Eve asks)</option><option value="auto">Create without asking</option><option value="off">Off</option></select></label>
+            <label className="flex items-center gap-2 sm:col-span-2"><input type="checkbox" checked={draft.needsVacant} onChange={e => setDraft(d => ({ ...d, needsVacant: e.target.checked }))} /> Only when the unit is empty</label>
+            <div className="flex items-center gap-2 sm:col-span-3">
+              <button type="button" onClick={addCadence} className="rounded-lg bg-ink text-white px-3 py-1.5 text-[12.5px] font-semibold">Add</button>
+              <button type="button" onClick={() => setAdding(false)} className="text-[12px] text-muted">Cancel</button>
+              <span className="text-[11.5px] text-muted">The first completed task that matches starts its clock; from then on each completion books the next.</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── THE LEDGER ────────────────────────────────────────────────────────────────────── */}
+      <div className="border border-line rounded-xl overflow-hidden">
+        <div className="px-3 py-1.5 bg-neutral-50 border-b border-line flex items-center gap-2 flex-wrap">
+          <span className="text-[11px] uppercase tracking-wider font-bold text-muted">What is booked next</span>
+          <button type="button" onClick={loadLedger} disabled={ledgerBusy} className="text-[11.5px] underline decoration-dotted text-ink disabled:opacity-40">{ledgerBusy ? 'Loading…' : (ledger ? 'Refresh' : 'Show')}</button>
+          <button type="button" onClick={() => runPm(true)} disabled={busy === 'pm'} className="text-[11.5px] underline decoration-dotted text-ink disabled:opacity-40">Preview the next run</button>
+          {isOwner && <button type="button" onClick={() => runPm(false)} disabled={busy === 'pm'} className="text-[11.5px] underline decoration-dotted text-amber-800 disabled:opacity-40">Run now</button>}
+        </div>
+        {pmRun && (
+          <div className="px-3 py-2 text-[11.5px] border-b border-line bg-amber-50/40">
+            {pmRun.error ? <span className="text-rose-700">{pmRun.error}</span> : <span>{pmRun.enabled === false ? 'Cadences are off. ' : ''}ledger {pmRun.ledger} · created {pmRun.created} · proposed {pmRun.proposed} · moved {pmRun.moved} · waiting for an empty day {pmRun.waiting}</span>}
+            {Array.isArray(pmRun.lines) && pmRun.lines.length > 0 && <ul className="mt-1 space-y-0.5 text-muted">{pmRun.lines.slice(0, 12).map((l: string, i: number) => <li key={i}>• {l}</li>)}</ul>}
+          </div>
+        )}
+        {ledger && (
+          ledger.length === 0 ? <p className="px-3 py-2 text-[12px] text-muted">Nothing on the ledger yet — it fills from the first completed task that matches a cadence (the next run of the automation, or Run now).</p> : (
+            <div className="max-h-[360px] overflow-auto">
+              <table className="w-full text-[11.5px]">
+                <thead className="text-left text-muted sticky top-0 bg-white"><tr><th className="px-3 py-1 font-semibold">Unit</th><th className="px-2 py-1 font-semibold">Job</th><th className="px-2 py-1 font-semibold">Last done</th><th className="px-2 py-1 font-semibold">Next due</th><th className="px-2 py-1 font-semibold">Status</th></tr></thead>
+                <tbody>
+                  {ledger.slice(0, 400).map((r: any) => (
+                    <tr key={r.listing_id + r.cadence_key} className="border-t border-line/60">
+                      <td className="px-3 py-1 whitespace-nowrap">{r.unit_name || r.listing_id}{r.building ? <span className="text-muted"> · {r.building}</span> : null}</td>
+                      <td className="px-2 py-1">{r.label}</td>
+                      <td className="px-2 py-1 whitespace-nowrap text-muted">{r.last_done || '—'}</td>
+                      <td className={'px-2 py-1 whitespace-nowrap ' + (r.daysOver > 0 ? 'text-rose-700 font-semibold' : '')}>{r.next_due}{r.daysOver > 0 ? ` (${r.daysOver}d over)` : ''}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{r.status === 'created' ? <span>task #{r.task_id} · {r.task_date}{r.moved ? ` · moved ×${r.moved}` : ''}</span> : <span className="text-muted">{r.note || 'on the ledger'}</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
       </div>
 
       {/* ── ACTIONS ───────────────────────────────────────────────────────────────────────── */}
