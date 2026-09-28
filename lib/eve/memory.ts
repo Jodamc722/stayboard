@@ -157,27 +157,36 @@ export async function neverUsedMemories(limit = 10, minInjected = 5): Promise<Ar
 }
 
 /**
- * Load the memories that matter for THIS turn. Two-stage on purpose:
- *   1. SQL narrows to the relevant scopes (never the whole table) and returns a wide candidate set.
- *   2. In-process ranking orders candidates by weight, proven usefulness (use_count), recency, AND
- *      overlap with the actual question — so when Jon asks about refunds, the refund rules beat an
- *      equally-weighted note about parking, instead of losing on a tie-break of updated_at.
- * The question is optional; without it the ranking degrades exactly to the old weight/recency order.
+ * Load the memories that matter for THIS turn.
+ *
+ * RECALL, REBUILT (Jon, 2026-09-28: "learn faster … improve the learning model"). The weekly audit
+ * that morning: 3,540 memories loaded across 59 chats, 14 of them shaped an answer — 0.4%. The
+ * ranking was weight × 3 first and relevance a distant second, so every turn opened with the same
+ * sixty heaviest lines whatever was asked, and the line that would have answered the question sat
+ * below the cut. Loading a memory is not remembering it; a colleague who recited the same sixty
+ * facts before every answer would not be called well-informed.
+ *
+ * THREE LANES NOW, each with its own budget, so no lane can crowd out another:
+ *   STANDING  rules, corrections and preferences from a person (Jon, a document, a colleague), in
+ *             scope. Always in her head, because they are the constitution. (≤ 16)
+ *   RELEVANT  everything in scope, in the neighbourhood, or recalled by full text — ranked by how
+ *             much of the QUESTION each one covers, rarer words counting more (the rarity is
+ *             measured across the candidates themselves, so "clean" counts for little and "ozone"
+ *             for a lot), a unit or building named outright counting double. Then a cheap model
+ *             pass reads the question next to the top candidates and picks the ones a good
+ *             colleague would want in mind — the pass that word overlap cannot do. (≤ 18)
+ *   RECENT    what was learned in the last seven days in scope. New is news. (≤ 6)
+ * The rows come back tagged with their lane so the learning audit can see which lane the answers
+ * actually draw on. Without a question the lanes degrade to the old weight-and-recency order.
+ *
+ * SCOPE, unchanged: SQL narrows to the relevant scopes plus `nearScopes` (the units of a building
+ * in play) and a full-text recall across every live memory; expired rows, superseded rows and
+ * self-made beliefs faded below the floor (lib/eve/beliefs.ts) never load.
  */
-//
-// RECALL BY MEANING AND BY NEIGHBOURHOOD, NOT ONLY BY LABEL (Jon, 2026-09-23: "operate like a neural
-// network … not just a list of memories"). Scope matching alone meant a question had to NAME the
-// building for her to remember anything about it, and a unit-level lesson ("4506's AC ices up") never
-// surfaced in a question about the building it sits in. Two more ways in, both cheap:
-//   - nearScopes: the units of a building that is in play (run.ts passes them). They load, ranked a
-//     little below what was named directly, so the building's own rules still lead.
-//   - associative recall: the question's most distinctive words, searched across EVERY live memory in
-//     Postgres full-text (websearch syntax, OR'd). A memory about "linen par" is found by a question
-//     about linen at a building it never mentioned. Only kept when it shares at least two words with
-//     the question; the scope tag stays on it in the prompt so she knows where it came from.
-// Ranking now includes BELIEF STRENGTH (lib/eve/beliefs.ts): who said it × how sure she is today.
-// A self-made belief that has faded below the floor does not load at all.
-export async function loadMemories(scopes: string[], email: string, limit = 60, question = '', opts: { nearScopes?: string[] } = {}): Promise<EveMemory[]> {
+export type RecallLane = 'standing' | 'relevant' | 'recent'
+const LANE_BUDGET: Record<RecallLane, number> = { standing: 16, relevant: 18, recent: 6 }
+
+export async function loadMemories(scopes: string[], email: string, limit = 60, question = '', opts: { nearScopes?: string[] } = {}): Promise<(EveMemory & { lane?: RecallLane })[]> {
   const db = supabaseAdmin()
   const wanted = scopes.slice()
   if (email) wanted.push('person:' + lc(email))
@@ -195,17 +204,18 @@ export async function loadMemories(scopes: string[], email: string, limit = 60, 
       .in('scope', wanted.concat(Array.from(near)))
       .order('weight', { ascending: false })
       .order('updated_at', { ascending: false })
-      .limit(Math.max(limit * 2, 160)))
-    const qWords = new Set(words(question))
+      .limit(Math.max(limit * 3, 240)))
+    const qWords = words(question)
+    const qSet = new Set(qWords)
     // The words that carry the question, longest first: short common words recall everything.
-    const terms = Array.from(qWords).filter(w => w.length >= 4 && !/^\d+$/.test(w)).sort((a, b) => b.length - a.length).slice(0, 6)
+    const terms = Array.from(qSet).filter(w => w.length >= 4 && !/^\d+$/.test(w)).sort((a, b) => b.length - a.length).slice(0, 8)
     let recalled: any[] = []
     if (terms.length) {
       recalled = await read(cols => db.from('eve_memory').select(cols)
         .is('superseded_by', null)
         .textSearch('text', terms.join(' or '), { type: 'websearch', config: 'english' })
         .order('weight', { ascending: false })
-        .limit(40)).catch(() => [])
+        .limit(80)).catch(() => [])
     }
     const byId = new Map<string, any>()
     for (const r of direct) byId.set(String(r.id), r)
@@ -213,28 +223,128 @@ export async function loadMemories(scopes: string[], email: string, limit = 60, 
 
     const today = new Date().toISOString().slice(0, 10)
     const now = Date.now()
-    const scored: { r: any; score: number }[] = []
+    const live: any[] = []
     byId.forEach(r => {
       if (r.expires_on && String(r.expires_on) < today) return
       if (!isHuman(r.source) && currentConfidence(r, now) < RETIRE_BELOW) return
-      let rel = 0
-      if (qWords.size) {
-        for (const w of words(String(r.text || '') + ' ' + String(r.why || ''))) if (qWords.has(w)) rel++
-      }
-      if (r._recalled && rel < 2) return
-      const ageDays = Math.max(0, (now - new Date(r.updated_at || r.created_at).getTime()) / 864e5)
-      const recency = ageDays < 7 ? 3 : ageDays < 30 ? 2 : ageDays < 90 ? 1 : 0
-      // Rules and corrections must never be crowded out by chatty insights — they get a floor bump.
-      const kindBump = r.kind === 'rule' || r.kind === 'correction' ? 4 : r.kind === 'preference' ? 2 : 0
-      // Neighbourhood and recall rank below what the question named outright.
-      const reach = r._recalled ? -6 : near.has(String(r.scope)) ? -4 : 0
-      const score = Number(r.weight || 0) * 3 + Math.min(Number(r.use_count || 0), 12) + recency + Math.min(rel, 6) * 4 + kindBump
-        + beliefStrength(r, now) * 12 + reach
-      scored.push({ r, score })
+      r._words = Array.from(new Set(words(String(r.text || '') + ' ' + String(r.why || ''))))
+      live.push(r)
     })
-    scored.sort((a, b) => b.score - a.score)
-    return scored.slice(0, limit).map(x => { const { _recalled, ...rest } = x.r; return rest }) as EveMemory[]
+    if (!live.length) return []
+
+    // ── Rarity across the pool: a word half the candidates share says nothing about which one.
+    const df = new Map<string, number>()
+    for (const r of live) for (const w of r._words as string[]) df.set(w, (df.get(w) || 0) + 1)
+    const N = live.length
+    const idf = (w: string) => Math.log((N + 1) / ((df.get(w) || 0) + 1)) + 1
+    const avgLen = live.reduce((a, r) => a + (r._words as string[]).length, 0) / N || 1
+    const namedScopes = new Set(scopes.filter(s => s.startsWith('unit:') || s.startsWith('building:') || s.startsWith('channel:')))
+    // BM25-shaped overlap: how much of the question this memory covers, damped for long memories.
+    const relevance = (r: any): number => {
+      if (!qSet.size) return 0
+      const mw = r._words as string[]
+      let s = 0
+      for (const w of mw) if (qSet.has(w)) s += idf(w) * (2.2 / (1 + 1.2 * (0.25 + 0.75 * (mw.length / avgLen))))
+      if (namedScopes.has(String(r.scope))) s *= 2
+      if (r._recalled && s < 2) return 0
+      return s
+    }
+    const ageDays = (r: any) => Math.max(0, (now - new Date(r.updated_at || r.created_at).getTime()) / 864e5)
+    const standingKind = (r: any) => r.kind === 'rule' || r.kind === 'correction' || r.kind === 'preference'
+
+    // ── STANDING: a person's rules and preferences, in scope (not recalled — the recall lane can
+    // pull a rule from a building that is not in play, and that belongs in RELEVANT on its merits).
+    const standing = live
+      .filter(r => !r._recalled && standingKind(r) && (isHuman(r.source) || Number(r.weight || 0) >= 8))
+      .sort((a, b) => (Number(b.weight) - Number(a.weight)) || (beliefStrength(b, now) - beliefStrength(a, now)) || (Number(b.use_count || 0) - Number(a.use_count || 0)))
+      .slice(0, LANE_BUDGET.standing)
+    const taken = new Set(standing.map(r => String(r.id)))
+
+    // ── RELEVANT: ranked by coverage of the question, with a touch of weight and belief so a tie
+    // goes to the line she has more reason to trust.
+    let relevantPool = live
+      .filter(r => !taken.has(String(r.id)))
+      .map(r => ({ r, rel: relevance(r) }))
+      .filter(x => x.rel > 0)
+      .map(x => ({ r: x.r, score: x.rel * 4 + Number(x.r.weight || 0) * 0.6 + beliefStrength(x.r, now) * 3 + (near.has(String(x.r.scope)) ? -1 : 0) }))
+      .sort((a, b) => b.score - a.score)
+    let reranked = false
+    if (relevantPool.length > 6 && qWords.length >= 5) {
+      const picked = await rerankByQuestion(question, relevantPool.slice(0, 36).map(x => x.r), LANE_BUDGET.relevant)
+      if (picked) {
+        reranked = true
+        const order = new Map(picked.map((id, i) => [id, i]))
+        const chosen = relevantPool.filter(x => order.has(String(x.r.id))).sort((a, b) => (order.get(String(a.r.id)) || 0) - (order.get(String(b.r.id)) || 0))
+        const rest = relevantPool.filter(x => !order.has(String(x.r.id)))
+        relevantPool = chosen.concat(rest)
+      }
+    }
+    const relevant = relevantPool.slice(0, LANE_BUDGET.relevant).map(x => x.r)
+    for (const r of relevant) taken.add(String(r.id))
+
+    // ── RECENT: learned this week, in scope, not already carried.
+    const recent = live
+      .filter(r => !taken.has(String(r.id)) && !r._recalled && ageDays(r) < 7)
+      .sort((a, b) => ageDays(a) - ageDays(b))
+      .slice(0, LANE_BUDGET.recent)
+    for (const r of recent) taken.add(String(r.id))
+
+    // ── No question (a cron turn, a bare greeting): the lanes above are thin, so fall back to the
+    // old order — weight, then recency — up to the limit, so nothing regresses for those callers.
+    let fill: any[] = []
+    if (!qSet.size) {
+      fill = live.filter(r => !taken.has(String(r.id)) && !r._recalled)
+        .sort((a, b) => (Number(b.weight) - Number(a.weight)) || (ageDays(a) - ageDays(b)))
+        .slice(0, Math.max(0, Math.min(limit, 40) - standing.length - recent.length))
+    }
+
+    const strip = (r: any, lane: RecallLane) => { const { _recalled, _words, ...rest } = r; return { ...rest, lane } as EveMemory & { lane: RecallLane } }
+    const out = standing.map(r => strip(r, 'standing'))
+      .concat(relevant.map(r => strip(r, 'relevant')))
+      .concat(recent.map(r => strip(r, 'recent')))
+      .concat(fill.map(r => strip(r, 'relevant')))
+    ;(out as any).reranked = reranked
+    return out.slice(0, limit)
   } catch { return [] }
+}
+
+/**
+ * THE PASS WORD OVERLAP CANNOT DO. A cheap model reads the question next to the top candidates and
+ * says which ones a good colleague would want in mind before answering — "Capri is Opal's building"
+ * for a question about a Capri repair, whether or not the question used the word. One short call
+ * on Haiku, a few hundred tokens, capped at four seconds; on any failure the lexical order stands,
+ * so a slow or missing model costs nothing but this refinement. Returns ids in the model's order,
+ * or null when it did not run.
+ */
+async function rerankByQuestion(question: string, candidates: any[], max: number): Promise<string[] | null> {
+  const key = process.env.ANTHROPIC_API_KEY
+  if (!key || !candidates.length) return null
+  const lines = candidates.map((r, i) => `${i + 1}. [${r.kind}${r.scope === 'portfolio' ? '' : ' ' + r.scope}] ${String(r.text || '').replace(/\s+/g, ' ').slice(0, 170)}`)
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 4000)
+  try {
+    const { aiFetch } = await import('@/lib/ai-usage')
+    const { modelFor } = await import('@/lib/ai-models')
+    const r = await aiFetch('memory-recall', {
+      method: 'POST', signal: ctrl.signal,
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: await modelFor('memory-recall'),
+        max_tokens: 80,
+        system: 'You pick which of a colleague\'s notes matter for answering a question. Reply with ONLY a JSON array of note numbers, most useful first, at most ' + max + ' of them. Include a note only if knowing it would change or sharpen the answer: a rule that applies, a fact about the unit, building, guest, person or channel in question, a past mistake on this kind of question, a decision already made. Leave out notes that merely share words with the question. An empty array is a valid answer.',
+        messages: [{ role: 'user', content: 'QUESTION:\n' + question.slice(0, 700) + '\n\nNOTES:\n' + lines.join('\n') }],
+      }),
+    })
+    const d: any = await r.json().catch(() => ({}))
+    if (!r.ok) return null
+    const text = Array.isArray(d?.content) ? d.content.map((x: any) => x?.text || '').join('') : ''
+    const m = text.match(/\[[\s\d,]*\]/)
+    if (!m) return null
+    const nums: number[] = JSON.parse(m[0])
+    const ids: string[] = []
+    for (const n of nums) { const c = candidates[Number(n) - 1]; if (c && !ids.includes(String(c.id))) ids.push(String(c.id)) }
+    return ids.slice(0, max)
+  } catch { return null } finally { clearTimeout(timer) }
 }
 
 /** Render for the system prompt. Grouped by kind so rules read as rules, not as trivia. */
