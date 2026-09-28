@@ -13,7 +13,7 @@ import {
   CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Wrench, LogOut, RefreshCw, Gauge, Star, CalendarRange, AlertTriangle, Timer,
   Sparkles, TrendingUp, BarChart3, KeyRound, Radar, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Lock, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
-  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus, AtSign, Activity, Plug, Hotel } from 'lucide-react'
+  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus, AtSign, Activity, Plug, Hotel, Brain } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
 // NAV, 2026-08-19 (Jon): the sidebar had 33 tabs in 7 groups, every one of them expanded, every
@@ -46,10 +46,13 @@ export const SECTIONS: NavSection[] = [
     title: 'Overview',
     items: [
       { to: '/command', label: 'Command Center', Icon: Gauge },
+      // Eve is back on the sidebar (Jon, 2026-09-28: "we need to have an Eve tab where open loops
+      // are, training questions, Eve command center overview"). She left it on 2026-08-19 ("Eve
+      // does not need her own page — a floating icon") and the bubble stays for talking to her;
+      // /eve is where her work is read. Open loops keeps its own row too — it is a tab on /eve and
+      // a page people already bookmarked.
+      { to: '/eve', label: 'Eve', Icon: Brain },
       { to: '/loops', label: 'Open loops', Icon: Radar },
-      // Eve left the sidebar on 2026-08-19 (Jon: "Eve does not need her own page — a floating
-      // icon"). She is the bubble in the bottom-right corner of every page now; managing her
-      // memory/voice/direction lives in Users & admin → Settings → Eve.
       //
       // Home left it on 2026-08-24 (Jon: "home page is a bust"). '/' is now a redirect to Today in
       // Ops, and the KPI board it used to render moved to /kpi under Money, where a page about
