@@ -109,6 +109,13 @@ export const AI_TASKS: AiTask[] = [
   { key: 'memory-recall', title: 'Eve — choosing what to remember for a question', group: 'Background', def: 'haiku', background: true,
     what: 'Given the question and up to 36 candidate memories, returns the numbers of the ones that would change or sharpen the answer. Runs once per turn, capped at four seconds; if it fails the word-overlap order stands.',
     matters: 'A few hundred tokens per turn. This is what turns 300 stored memories into the three that matter right now; a weak model here makes her forgetful, not wrong.' },
+  // THE EXPECTATIONS DESK (2026-09-28, lib/eve/expectations.ts). Reads 45 days of reviews, guest
+  // messages and flagged threads per building and writes the notes for CS and admin: what guests
+  // keep being surprised by, and the sentence for the listing, rules or pre-arrival message that
+  // would have spared them.
+  { key: 'expectations', title: 'Eve — expectation notes for CS and admin', group: 'Eve', def: 'sonnet', background: true,
+    what: 'One call a week over the evidence pack (reviews of every rating, inbound guest messages that ask or complain about things upfront copy should cover, unhappy threads). Returns up to twelve notes: building, theme, what guests hit, their words, the gap, where the fix belongs and the proposed copy.',
+    matters: 'The copy it proposes is what a person pastes into the listing or the pre-arrival message. A weak model writes vague notes nobody acts on; nothing reaches a guest without a person.' },
   { key: 'eve-correction', title: 'Eve — catching corrections in chat', group: 'Background', def: 'haiku', background: true,
     what: 'When someone replies "no, that\'s wrong…" to one of her answers, works out what was wrong and what is right, so the right thing is kept and the beliefs behind the wrong answer are weakened.',
     matters: 'A few hundred tokens, only when a reply pushes back. A miss loses one lesson; nothing reaches anyone.' },
