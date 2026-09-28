@@ -45,19 +45,6 @@ export const TAB_SETS: TabSet[] = [
       { to: '/marketing', label: 'Direct bookings' },
     ],
   },
-  // THE GARDEN HOTEL (Jon, 2026-09-28): "a separate tab or business… mirroring what we built for
-  // the VR, but with Cloudbeds." One sidebar row, five tabs, one permission key ('garden').
-  {
-    key: 'garden', label: 'Garden Hotel',
-    blurb: 'The hotel on Cloudbeds — the day at the front desk, rooms and cleans, calls and verifications, and its own reports.',
-    tabs: [
-      { to: '/garden', label: 'Today' },
-      { to: '/garden/rooms', label: 'Rooms & cleans' },
-      { to: '/garden/calls', label: 'Calls & verifications' },
-      { to: '/garden/reports', label: 'Reports' },
-      { to: '/garden/setup', label: 'Setup' },
-    ],
-  },
 ]
 
 // QUALITY AND ORDERS RETIRED 2026-09-03 (the September audit). Quality was Audits + Inspections +

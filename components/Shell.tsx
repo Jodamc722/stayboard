@@ -9,11 +9,13 @@ import { TAB_SETS, tabSetForPath, type TabSet } from '@/lib/tabsets'
 import { applyNavLayout, type NavLayout } from '@/lib/nav-layout'
 import { EveFloat } from '@/components/EveFloat'
 import { AddTaskHost, openAddTask } from '@/components/AddTaskSheet'
+import { BUSINESSES, businessForPath, businessDef, GARDEN_NAV, GARDEN_SECTIONS, GARDEN_ICON, LAST_VR_PATH_KEY, type BusinessKey } from '@/lib/business'
+import { AdamFloat } from '@/components/AdamFloat'
 import {
   CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Wrench, LogOut, RefreshCw, Gauge, Star, CalendarRange, AlertTriangle, Timer,
   Sparkles, TrendingUp, BarChart3, KeyRound, Radar, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Lock, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
-  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus, AtSign, Activity, Plug, Hotel, Brain } from 'lucide-react'
+  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus, AtSign, Activity, Plug, Brain, ChevronDown, Check } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
 // NAV, 2026-08-19 (Jon): the sidebar had 33 tabs in 7 groups, every one of them expanded, every
@@ -164,15 +166,6 @@ export const SECTIONS: NavSection[] = [
     ],
   },
   {
-    // THE GARDEN HOTEL (Jon, 2026-09-28): the second business. One row, its own section so it never
-    // reads as a VR tab; the tab strip (lib/tabsets 'garden') carries Today / Rooms & cleans /
-    // Calls & verifications / Reports / Setup. `to` is the row's identity; the set resolves it.
-    title: 'Garden Hotel',
-    items: [
-      { to: '/garden', label: 'Garden Hotel', Icon: Hotel, set: 'garden' },
-    ],
-  },
-  {
     // Integrations and Custom Fields moved inside Users & admin → App settings (September audit,
     // pass 2). The section keeps its title because Shell appends the Users & admin row to it.
     title: 'Settings',
@@ -231,6 +224,7 @@ export const useShellMenu = () => useContext(ShellMenu)
 
 export function Shell({ children, full = false }: { children: React.ReactNode; full?: boolean }) {
   const path = usePathname()
+  const router = useRouter()
   // ACTIVITY BEACON (Jon, 2026-08-22: "record all activity in the app"): one metadata row per
   // screen opened, straight from the shell so every page is covered. keepalive survives quick
   // navigations; failures are ignored — the app never waits on its own log.
@@ -262,6 +256,20 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   const [openGroups, setOpenGroups] = useState<Record<string, boolean> | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  // WHICH BUSINESS (Jon, 2026-09-28: "a drop down… a completely different page"). Decided by the
+  // URL, never by a saved choice, so a link into /garden always shows the hotel. The VR side's last
+  // path is kept on the device so switching back lands where you were.
+  const business: BusinessKey = businessForPath(path)
+  const [bizOpen, setBizOpen] = useState(false)
+  useEffect(() => { if (business === 'vr' && path) { try { localStorage.setItem(LAST_VR_PATH_KEY, path) } catch {} } }, [business, path])
+  const switchBusiness = (key: BusinessKey) => {
+    setBizOpen(false); setDrawerOpen(false)
+    if (key === business) return
+    let to = businessDef(key).landing
+    if (key === 'vr') { try { const last = localStorage.getItem(LAST_VR_PATH_KEY); if (last && last.startsWith('/') && !last.startsWith('/garden')) to = last } catch {} }
+    router.push(to)
+  }
+  const canSeeGarden = () => isOwner || (levels ? levels.garden != null && levels.garden !== 'off' : true)
   const pinsLoaded = useRef(false)
   const dragFrom = useRef<number | null>(null)
 
@@ -456,7 +464,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     : (workspace ? workspaceDef(workspace).label : null)
 
   const here = byPath[path || '']
-  const currentLabel = here ? here.label : (activeGroup || 'Lighthouse')
+  const currentLabel = business === 'garden' ? ((GARDEN_NAV.find(g => path === g.to || (g.to !== '/garden' && !!path && path.startsWith(g.to + '/'))) || GARDEN_NAV[0]).label) : here ? here.label : (activeGroup || 'Lighthouse')
 
   // DUPLICATE PAGE TITLE (Jon, 2026-08-26: "how do we make it visible and concise"). On a phone the
   // app bar two inches above the content already says "Today in Ops", and then the page says it
@@ -492,7 +500,71 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     return () => { dead = true; clearTimeout(t1); clearTimeout(t2); clear() }
   }, [path, currentLabel])
 
-  const navBody = (onNavigate?: () => void) => (
+
+  // THE BUSINESS DROPDOWN — under the logo, in the sidebar and the phone drawer.
+  const bizSwitcher = (compact?: boolean) => {
+    const cur = businessDef(business)
+    const list = BUSINESSES.filter(b => b.key === 'vr' || (b.key === 'garden' && canSeeGarden()))
+    if (list.length < 2) return null
+    return (
+      <div className={compact ? 'px-3 pb-2' : 'px-3 pb-2'}>
+        <div className="relative">
+          <button type="button" onClick={() => setBizOpen(o => !o)} aria-haspopup="listbox" aria-expanded={bizOpen}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-line bg-app/60 hover:bg-white hover:border-brand-200 text-left">
+            {business === 'garden' ? <GARDEN_ICON size={14} className="text-brand-600" /> : <Building2 size={14} className="text-brand-600" />}
+            <span className="flex-1 min-w-0">
+              <span className="block text-[12.5px] font-semibold text-ink truncate">{cur.label}</span>
+              <span className="block text-[10px] text-muted truncate">{cur.short}</span>
+            </span>
+            <ChevronDown size={14} className={'text-muted transition ' + (bizOpen ? 'rotate-180' : '')} />
+          </button>
+          {bizOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setBizOpen(false)} />
+              <div role="listbox" className="absolute left-0 right-0 mt-1 z-50 rounded-xl border border-line bg-white shadow-lifted p-1">
+                {list.map(b => (
+                  <button key={b.key} type="button" role="option" aria-selected={b.key === business} onClick={() => switchBusiness(b.key)}
+                    className={'w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left ' + (b.key === business ? 'bg-brand-50' : 'hover:bg-app')}>
+                    {b.key === 'garden' ? <GARDEN_ICON size={14} className="text-brand-600" /> : <Building2 size={14} className="text-brand-600" />}
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-[12.5px] font-semibold text-ink">{b.label}</span>
+                      <span className="block text-[10px] text-muted">{b.short}</span>
+                    </span>
+                    {b.key === business ? <Check size={14} className="text-brand-600" /> : null}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  const navBody = (onNavigate?: () => void) => business === 'garden' ? (
+    // THE HOTEL'S OWN SIDEBAR. Nothing of the VR portfolio here — no pins, no groups — just the
+    // hotel's pages and, for admins, the door back to Users & admin.
+    <>
+      {GARDEN_SECTIONS.map(section => {
+        const items = section.title === 'Settings' && isAdmin ? section.items.concat([{ to: '/users', label: 'Users & admin', Icon: UserCog }]) : section.items
+        return (
+          <div key={section.title}>
+            <div className="mt-3.5 first:mt-1 px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] font-bold text-muted/60">{section.title}</div>
+            {items.map(({ to, label, Icon }) => {
+              const active = path === to || (to !== '/garden' && !!path && path.startsWith(to + '/'))
+              return (
+                <Link key={to} href={to} prefetch={false} onClick={onNavigate}
+                  className={`flex items-center gap-3 px-2.5 py-[7px] rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
+                  <Icon size={16} strokeWidth={active ? 2.25 : 2} className={active ? 'text-brand-600' : ''} />
+                  <span className="truncate">{label}</span>
+                </Link>
+              )
+            })}
+          </div>
+        )
+      })}
+    </>
+  ) : (
     <>
       <button type="button" onClick={() => { setPaletteOpen(true); if (onNavigate) onNavigate() }}
         className="w-full flex items-center gap-2.5 mb-2 px-3 py-2 rounded-xl border border-line bg-app/60 text-sm text-muted hover:bg-white hover:border-brand-200 transition-all">
@@ -595,6 +667,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
           <img src="/icon-192.png" alt="Lighthouse" className="w-8 h-8 rounded-lg shadow-sm" />
           <span className="font-bold text-[15px] tracking-tight text-ink">LIGHTHOUSE</span>
         </div>
+        {bizSwitcher()}
         <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
           {navBody()}
         </nav>
@@ -664,7 +737,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
 
         {/* Eve rides along on every page (Jon, 2026-08-19: floating icon, not a page). Same
             role gate the old sidebar entry used — a role with eve 'off' never sees the bubble. */}
-        {canSee('/eve') && <EveFloat />}
+        {business === 'garden' ? <AdamFloat /> : (canSee('/eve') && <EveFloat />)}
 
         {/* One mount for the whole app; openAddTask() from anywhere raises it. */}
         {canSee('/plan') && <AddTaskHost />}
@@ -676,8 +749,8 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
             navigation. pb-safe keeps the labels off the iPhone home indicator, which viewport-fit
             cover otherwise draws straight through. */}
         <nav className={(full ? 'hidden' : 'lg:hidden flex') + ' flex-shrink-0 border-t border-line bg-white items-stretch pb-safe px-safe'}>
-          {pinned.slice(0, 4).map(({ to, label, Icon }) => {
-            const active = isActive(to)
+          {(business === 'garden' ? GARDEN_NAV.slice(0, 4) : pinned.slice(0, 4)).map(({ to, label, Icon }) => {
+            const active = business === 'garden' ? (path === to || (to !== '/garden' && !!path && path.startsWith(to + '/'))) : isActive(to)
             return (
               <Link key={'bb-' + to} href={to} prefetch={false}
                 className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-semibold ${active ? 'text-brand-600' : 'text-muted'}`}>
@@ -707,6 +780,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
                 <X size={17} />
               </button>
             </div>
+            <div className="pt-2">{bizSwitcher(true)}</div>
             <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
               {navBody(() => setDrawerOpen(false))}
             </nav>

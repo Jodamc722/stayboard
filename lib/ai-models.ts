@@ -55,7 +55,7 @@ export type AiTask = {
   what: string          // what the model is asked to do
   matters: string       // who reads the output, and what a bad one costs
   def: ModelTier
-  group: 'Guests' | 'Eve' | 'Listings & reports' | 'Operations' | 'Background'
+  group: 'Guests' | 'Eve' | 'Listings & reports' | 'Operations' | 'Background' | 'Garden Hotel'
   /** true = the call runs on a schedule with nobody watching; cost per day, not per click */
   background?: boolean
 }
@@ -78,6 +78,11 @@ export const AI_TASKS: AiTask[] = [
   { key: 'eve', title: 'Eve — chat & Telegram', group: 'Eve', def: 'sonnet',
     what: 'Answers questions by reasoning across up to sixteen tool calls: reservations, tasks, money, Slack, the web.',
     matters: 'Jon and the managers act on what she says. Every call is large, so the tier is where the money is.' },
+  // ── The Garden Hotel ── (Jon, 2026-09-28: "new business, new model"). Adam is the hotel's own
+  // agent with his own memory and chat log; he starts on the newest Sonnet, changeable here.
+  { key: 'adam', title: 'Adam — the Garden Hotel\'s agent', group: 'Garden Hotel', def: 'sonnet',
+    what: 'Answers hotel questions from the garden_* tables (today, rooms, cleans, calls, verifications, reports) and remembers what he is taught about the hotel.',
+    matters: 'The hotel team acts on what he says. Separate brain from Eve by design.' },
   { key: 'eve-review', title: "Eve — the operator's review", group: 'Eve', def: 'fable',
     what: 'Once a week (and on demand from chat or the Review tab) reads one evidence pack — the week\'s KPI tiles vs last week, anomalies, sweep findings, open audits, Slack items, glitches, low reviews, checklist ticks, app usage, her own track record — and writes what moved and why, three to six ranked plans, critiques of checklists, pages and automations, and at most four questions the data cannot answer.',
     matters: 'This is the plan Jon reads on Monday morning and the plans he accepts get graded. One large call a week; the top tier is where the reasoning lives, and a weak review is a wasted week.' },

@@ -19,7 +19,7 @@ type UsageData = { ok: boolean; days: number; missing?: boolean; total: Agg; byT
 const usd = (n: number) => n >= 100 ? '$' + Math.round(n).toLocaleString() : n >= 1 ? '$' + n.toFixed(2) : n > 0 ? '$' + n.toFixed(3) : '$0'
 const tok = (n: number) => n >= 1_000_000 ? (n / 1_000_000).toFixed(1) + 'M' : n >= 1000 ? Math.round(n / 1000) + 'k' : String(n)
 
-const GROUPS = ['Eve', 'Guests', 'Listings & reports', 'Operations', 'Background']
+const GROUPS = ['Eve', 'Garden Hotel', 'Guests', 'Listings & reports', 'Operations', 'Background']
 
 export function AiModelsAdmin({ isOwner }: { isOwner: boolean }) {
   const [tasks, setTasks] = useState<Task[]>([])
