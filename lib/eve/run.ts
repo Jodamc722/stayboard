@@ -131,7 +131,7 @@ export type RunEveOk = {
     turns: number; ms: number; tools: string[]; domains: string[]; memories: number; moneyRedacted: boolean; webSearch: string
     usage: { input: number; output: number; cacheRead: number; cacheWrite: number }
     /** Which injected memories the answer actually drew on (lib/eve/memory.ts memoryHitsFor). */
-    memoryHits: { injected: number; used: string[] }
+    memoryHits: { injected: number; used: string[]; lanes?: Record<string, number>; used_by_lane?: Record<string, number>; reranked?: boolean }
   }
 }
 export type RunEveErr = { ok: false; status: number; error: string }
@@ -364,7 +364,13 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     // use? Deterministic word overlap, so it costs nothing and runs on every turn. This is the
     // number that separates "she has 300 memories" from "her memories change her answers".
     const usedIds = memoryHitsFor(memories, finalText)
-    const memoryHits = { injected: memories.length, used: usedIds }
+    // Which lane each loaded and each used memory came from (lib/eve/memory.ts, three-lane recall,
+    // 2026-09-28), so the learning audit can say whether the standing rules, the question-relevant
+    // picks or the week's news are the ones that shape answers — and whether the reranker earns
+    // its call.
+    const laneOf = new Map(memories.map(m => [m.id, String((m as any).lane || 'relevant')]))
+    const tally = (ids: string[]) => ids.reduce((acc: Record<string, number>, id) => { const l = laneOf.get(id) || 'relevant'; acc[l] = (acc[l] || 0) + 1; return acc }, {})
+    const memoryHits = { injected: memories.length, used: usedIds, lanes: tally(memories.map(m => m.id)), used_by_lane: tally(usedIds), reranked: !!(memories as any).reranked }
 
     // Log the exchange. This is the substrate the improvement loop runs on; without it a thumbs-down
     // is just a feeling. Never let a logging failure break the answer. A probe (the learning
