@@ -9,21 +9,26 @@
 //   Open loops the page behind "Keeping tabs" (components/OpenLoops), unchanged
 //   Questions  the things only a person can tell her — answer one and it becomes a memory with
 //              your name on it. "Training questions" in Jon's words.
+//   Expectations  the notes she prepares for CS and admin (Jon, 2026-09-28): what guests keep
+//              being surprised by — parking fees, check-in, what is in the unit — and the sentence
+//              for the listing, the rules or the pre-arrival message that would have spared them.
+//              lib/eve/expectations.ts. Nothing is published; a person marks a note updated.
 // Memory, voice, agent mode and the thinking feed stay in Settings → Eve; the overview links there.
 // Lean rules (components/lean.tsx): one-line header with pills, tabs with counts, rows, detail
 // behind a click.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Sparkles, Check, X, HelpCircle, RefreshCw, ExternalLink, Loader2, Radar, Brain, Sliders } from 'lucide-react'
+import { Sparkles, Check, X, HelpCircle, RefreshCw, ExternalLink, Loader2, Radar, Brain, Sliders, MessageSquareWarning, Copy, RotateCcw, Play } from 'lucide-react'
 import { LeanHead, LeanTabs, LeanList, LeanRow, LeanSection, LeanEmpty, Tag, Pill, IconBtn } from '@/components/lean'
 import { OpenLoops } from '@/components/OpenLoops'
 
-type TabKey = 'overview' | 'loops' | 'questions'
+type TabKey = 'overview' | 'loops' | 'questions' | 'expectations'
 
 type Overview = {
   ok: boolean; day: string
   today: { headline: string | null; counts: any; waiting: any[]; decisions: any[]; gaps: string[] | null; error: string | null }
   loops: { open: number; byKind: Record<string, number>; urgent: number; oldestHours: number | null }
   questions: number
+  expectations: number
   thoughts: { unseen: number; allObserving: boolean }
   agent: { enabled: boolean; rungs: Record<string, number> | null }
   desks: { key: string; label: string; what: string; runs: string; settings: string | null; on: boolean | null; last: { at: string; ok: boolean; did: number | null; error: string | null } | null }[]
@@ -47,12 +52,13 @@ export function EveHub({ canEdit, loopsLevel, initialTab }: { canEdit: boolean; 
   const [ov, setOv] = useState<Overview | null>(null)
   const [err, setErr] = useState('')
   const [qCount, setQCount] = useState<number | null>(null)
+  const [xCount, setXCount] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     try {
       const r = await fetch('/api/eve/overview', { cache: 'no-store' }).then(x => x.json())
       if (!r?.ok) { setErr(r?.message || r?.error || 'Could not load'); return }
-      setOv(r); setQCount(r.questions); setErr('')
+      setOv(r); setQCount(r.questions); setXCount(r.expectations || 0); setErr('')
     } catch (e: any) { setErr(String(e?.message || e)) }
   }, [])
   useEffect(() => { load() }, [load])
@@ -62,7 +68,7 @@ export function EveHub({ canEdit, loopsLevel, initialTab }: { canEdit: boolean; 
     try {
       const sp = new URLSearchParams(window.location.search)
       const t = sp.get('tab')
-      if (t === 'loops' || t === 'questions' || t === 'overview') setTab(t)
+      if (t === 'loops' || t === 'questions' || t === 'overview' || t === 'expectations') setTab(t)
     } catch { /* server */ }
   }, [])
   const pick = (t: TabKey) => {
@@ -75,7 +81,8 @@ export function EveHub({ canEdit, loopsLevel, initialTab }: { canEdit: boolean; 
     { key: 'overview' as TabKey, label: 'Overview', n: waiting || null },
     { key: 'loops' as TabKey, label: 'Open loops', n: ov?.loops.open || null },
     { key: 'questions' as TabKey, label: 'Questions', n: qCount || null },
-  ]), [waiting, ov, qCount])
+    { key: 'expectations' as TabKey, label: 'Expectations', n: xCount || null },
+  ]), [waiting, ov, qCount, xCount])
 
   return (
     <div>
@@ -85,6 +92,7 @@ export function EveHub({ canEdit, loopsLevel, initialTab }: { canEdit: boolean; 
             <Pill tone={waiting ? 'amber' : 'slate'} title="Proposals and drafts she filed that are still waiting on a person" onClick={() => pick('overview')}>{waiting} waiting on you</Pill>
             <Pill tone={ov.loops.urgent ? 'rose' : ov.loops.open ? 'amber' : 'slate'} title="Loops she is keeping tabs on across Slack" onClick={() => pick('loops')}>{ov.loops.open} open loops</Pill>
             <Pill tone={qCount ? 'violet' : 'slate'} title="Things only a person can tell her" onClick={() => pick('questions')}>{qCount || 0} questions</Pill>
+            <Pill tone={xCount ? 'amber' : 'slate'} title="Notes for CS and admin: what guests keep being surprised by, and the copy that would fix it" onClick={() => pick('expectations')}>{xCount || 0} expectation notes</Pill>
             <Pill tone={ov.thoughts.unseen ? 'sky' : 'slate'} title="Thinking you have not looked at yet — Settings → Eve → Thinking"
               onClick={() => { window.location.href = '/users?tab=settings&panel=eve' }}>{ov.thoughts.unseen} unseen thoughts</Pill>
             <Pill tone={ov.agent.enabled ? 'emerald' : 'slate'} title={ov.agent.enabled ? 'Agent mode is on' : 'Agent mode is off — she observes and answers only'}>{ov.agent.enabled ? 'Agent on' : 'Agent off'}</Pill>
@@ -101,6 +109,7 @@ export function EveHub({ canEdit, loopsLevel, initialTab }: { canEdit: boolean; 
         ? <LeanEmpty>Open loops are switched off for your role. Ask Jon to turn them on in Users → Roles.</LeanEmpty>
         : <OpenLoops canEdit={loopsLevel === 'edit' || loopsLevel === 'full'} />)}
       {tab === 'questions' && <QuestionsTab canEdit={canEdit} onCount={n => { setQCount(n) }} />}
+      {tab === 'expectations' && <ExpectationsTab canEdit={canEdit} onCount={n => { setXCount(n) }} />}
     </div>
   )
 }
@@ -117,7 +126,7 @@ function OverviewTab({ ov, err, pick }: { ov: Overview | null; err: string; pick
     <div>
       {/* WHAT NEEDS A PERSON. The one section that can cost something if it is ignored. */}
       <LeanSection title="Needs a person" n={ov.today.waiting.length + (ov.questions || 0)} tone={ov.today.waiting.length ? 'rose' : undefined}>
-        {ov.today.waiting.length || ov.questions || ov.loops.open ? (
+        {ov.today.waiting.length || ov.questions || ov.loops.open || ov.expectations ? (
           <LeanList>
             {ov.today.waiting.map((w: any) => (
               <LeanRow key={w.id} name={w.summary || w.action || w.kind}
@@ -132,6 +141,11 @@ function OverviewTab({ ov, err, pick }: { ov: Overview | null; err: string; pick
               <LeanRow name={`${ov.questions} question${ov.questions === 1 ? '' : 's'} only you can answer`} meta="each answer becomes a memory with your name on it"
                 tags={<Tag tone="violet">training</Tag>}
                 actions={<IconBtn title="Open Questions" onClick={() => pick('questions')}><HelpCircle size={14} /></IconBtn>} />
+            ) : null}
+            {ov.expectations ? (
+              <LeanRow name={`${ov.expectations} expectation note${ov.expectations === 1 ? '' : 's'} for CS and admin`} meta="what guests keep being surprised by, and the copy that would fix it"
+                tags={<Tag tone="amber">listing & comms</Tag>}
+                actions={<IconBtn title="Open Expectations" onClick={() => pick('expectations')}><MessageSquareWarning size={14} /></IconBtn>} />
             ) : null}
             {ov.loops.open ? (
               <LeanRow name={`${ov.loops.open} open loop${ov.loops.open === 1 ? '' : 's'} on Slack`} meta={loopsLine}
@@ -274,6 +288,115 @@ function QuestionsTab({ canEdit, onCount }: { canEdit: boolean; onCount: (n: num
                     <button onClick={() => act(q.id, 'dismiss')} disabled={busy === q.id} className="inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-ink px-2 py-2"><X size={13} /> Not worth answering</button>
                   </div>
                 ) : null}
+              </LeanRow>
+            ))}
+          </LeanList>
+        )}
+    </div>
+  )
+}
+
+// ── Expectations ──────────────────────────────────────────────────────────────────────────────
+type XNote = {
+  id: string; building: string; theme: string; title: string; what_guests_hit: string; gap: string
+  fix_where: string; proposed_copy: string; owner: 'cs' | 'admin'; priority: 1 | 2 | 3
+  evidence: { quote: string; unit: string; source: string; when: string; rating?: number | null }[]
+  guests: number; status: string; status_by?: string | null; status_at?: string | null; status_note?: string | null
+  first_seen: string; last_seen: string; runs: number; reopened?: string | null
+}
+const FIX_LABEL: Record<string, string> = { listing: 'Listing', house_rules: 'House rules', pre_arrival: 'Pre-arrival message', checkin_guide: 'Check-in guide', faq: 'FAQ', guidebook: 'Guidebook' }
+
+function ExpectationsTab({ canEdit, onCount }: { canEdit: boolean; onCount: (n: number) => void }) {
+  const [status, setStatus] = useState<'open' | 'done' | 'dismissed'>('open')
+  const [notes, setNotes] = useState<XNote[] | null>(null)
+  const [busy, setBusy] = useState('')
+  const [run, setRun] = useState('')
+  const [copied, setCopied] = useState('')
+
+  const load = useCallback(async (st: 'open' | 'done' | 'dismissed') => {
+    try {
+      const r = await fetch('/api/eve/expectations?status=' + st, { cache: 'no-store' }).then(x => x.json())
+      const list: XNote[] = r?.notes || []
+      setNotes(list)
+      if (st === 'open') onCount(list.length)
+    } catch { setNotes([]) }
+  }, [onCount])
+  useEffect(() => { setNotes(null); load(status) }, [status, load])
+
+  async function mark(id: string, st: 'open' | 'done' | 'dismissed') {
+    setBusy(id)
+    try {
+      const r = await fetch('/api/eve/expectations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'status', id, status: st }) }).then(x => x.json())
+      if (r?.ok) setNotes(x => { const next = (x || []).filter(n => n.id !== id); if (status === 'open') onCount(next.length); return next })
+    } finally { setBusy('') }
+  }
+  async function runNow() {
+    setRun('…')
+    try {
+      const r = await fetch('/api/eve/expectations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'run' }) }).then(x => x.json())
+      if (r?.ok) { setRun(`${r.written} note${r.written === 1 ? '' : 's'}${r.reopened ? `, ${r.reopened} reopened` : ''}`); setStatus('open'); setNotes(r.notes || []); onCount((r.notes || []).length) }
+      else setRun('failed: ' + (r?.error || 'unknown'))
+    } catch (e: any) { setRun('failed: ' + String(e?.message || e)) }
+  }
+  const copy = async (n: XNote) => { try { await navigator.clipboard.writeText(n.proposed_copy); setCopied(n.id); setTimeout(() => setCopied(''), 1500) } catch { /* no clipboard */ } }
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 flex-wrap mb-3">
+        <div className="inline-flex rounded-xl border border-line overflow-hidden text-[12.5px]">
+          {(['open', 'done', 'dismissed'] as const).map(s => (
+            <button key={s} onClick={() => setStatus(s)} className={`px-3 py-1.5 font-semibold border-l border-line first:border-l-0 ${status === s ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>
+              {s === 'open' ? 'To do' : s === 'done' ? 'Updated' : 'Not a gap'}
+            </button>
+          ))}
+        </div>
+        <p className="text-[12px] text-muted max-w-[60ch]">What guests keep being surprised by, from reviews and their messages, and the sentence for the listing, the rules or the pre-arrival message that would have spared them. She prepares; you paste and mark it updated.</p>
+        {canEdit ? (
+          <button onClick={runNow} disabled={run === '…'} className="ml-auto inline-flex items-center gap-1.5 text-[12px] font-semibold rounded-lg border border-line bg-white px-3 py-1.5 text-ink hover:bg-app disabled:opacity-50" title="Reads the last 45 days again. Runs on its own every Monday.">
+            {run === '…' ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />} Read the last 45 days now{run && run !== '…' ? ` · ${run}` : ''}
+          </button>
+        ) : null}
+      </div>
+      {notes == null ? <LeanEmpty><Loader2 size={14} className="animate-spin inline mr-1" /> Loading…</LeanEmpty>
+        : !notes.length ? <LeanEmpty>{status === 'open' ? 'Nothing waiting. Either guests are not being surprised, or the desk has not run yet — it runs every Monday, or now with the button above.' : status === 'done' ? 'Nothing marked updated yet.' : 'Nothing dismissed.'}</LeanEmpty>
+        : (
+          <LeanList>
+            {notes.map(n => (
+              <LeanRow key={n.id} name={n.title} meta={`${n.building} · ${n.theme} · ${n.guests} guest${n.guests === 1 ? '' : 's'} · last ${n.last_seen}`}
+                tint={n.priority === 1 && status === 'open' ? 'amber' : undefined}
+                tags={<>
+                  <Tag tone={n.priority === 1 ? 'rose' : n.priority === 2 ? 'amber' : 'slate'}>P{n.priority}</Tag>
+                  <Tag tone="sky">{FIX_LABEL[n.fix_where] || n.fix_where}</Tag>
+                  <Tag tone={n.owner === 'cs' ? 'violet' : 'brand'}>{n.owner === 'cs' ? 'CS' : 'Admin'}</Tag>
+                  {n.reopened ? <Tag tone="rose">reopened</Tag> : null}
+                </>}
+                actions={canEdit && status === 'open' ? (
+                  <>
+                    <IconBtn title="Updated — the copy is live" tone="ok" onClick={() => mark(n.id, 'done')} disabled={busy === n.id}><Check size={14} /></IconBtn>
+                    <IconBtn title="Not a gap — we already say this, or it is not ours to say" tone="bad" onClick={() => mark(n.id, 'dismissed')} disabled={busy === n.id}><X size={14} /></IconBtn>
+                  </>
+                ) : canEdit ? (
+                  <IconBtn title="Back to the to-do list" onClick={() => mark(n.id, 'open')} disabled={busy === n.id}><RotateCcw size={14} /></IconBtn>
+                ) : null}
+                defaultOpen={status === 'open' && n.priority === 1}>
+                <p className="text-[13px] text-ink">{n.what_guests_hit}</p>
+                {n.reopened ? <p className="text-[12px] text-rose-700">{n.reopened}</p> : null}
+                {n.evidence?.length ? (
+                  <ul className="space-y-1">
+                    {n.evidence.map((e, i) => (
+                      <li key={i} className="text-[12px] text-muted">“{e.quote}” <span className="text-ink/70">— {e.unit}{e.rating != null ? `, ${e.rating}★` : ''}, {e.source}, {e.when}</span></li>
+                    ))}
+                  </ul>
+                ) : null}
+                <p className="text-[12.5px] text-ink/85"><span className="font-semibold">The gap:</span> {n.gap}</p>
+                <div className="rounded-xl border border-line bg-app px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted">Proposed copy · {FIX_LABEL[n.fix_where] || n.fix_where} · {n.owner === 'cs' ? 'customer service' : 'admin'}</p>
+                    <button onClick={() => copy(n)} className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand-700 hover:underline"><Copy size={12} /> {copied === n.id ? 'Copied' : 'Copy'}</button>
+                  </div>
+                  <p className="text-[13px] text-ink whitespace-pre-wrap">{n.proposed_copy}</p>
+                </div>
+                {n.status !== 'open' && n.status_by ? <p className="text-[11.5px] text-muted">{n.status === 'done' ? 'Marked updated' : 'Dismissed'} by {n.status_by}{n.status_at ? ' · ' + String(n.status_at).slice(0, 10) : ''}{n.status_note ? ' · ' + n.status_note : ''}</p> : null}
               </LeanRow>
             ))}
           </LeanList>
