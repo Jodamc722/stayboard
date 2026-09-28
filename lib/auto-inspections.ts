@@ -21,7 +21,7 @@
 // lifetime, however often the cron runs. A row with no task_id is a failed creation and is retried.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
-import { createBreezewayTask, updateBreezewayTask, matchBreezewayPerson, breezewayConfigured } from './breezeway'
+import { createBreezewayTask, updateBreezewayTask, cancelBreezewayTask, matchBreezewayPerson, breezewayConfigured } from './breezeway'
 import { marketOf } from './segments'
 import { getSetting, setSetting } from './app-settings'
 
@@ -714,4 +714,66 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
     }
   }
   return { ok: true, scanned: (revRows || []).length, candidates, created, failed, movedForward, alreadyCovered, waitingForCheckout }
+}
+
+// ── ARRIVAL INSPECTIONS ARE TIME-SENSITIVE: MISSED = GONE ───────────────────────────────────────
+// Jon, 2026-09-28: "If the VIP or owner stay [inspection] is not completed, it should delete the
+// task. Because that is a time-sensitive inspection. A bad review inspection is not time-sensitive
+// — it can just move to the next checkout."
+//
+// A pre-arrival inspection exists to catch problems BEFORE a particular guest walks in. Once that
+// guest has walked in, the walk it asked for cannot happen any more; an open task for it is not
+// outstanding work, it is a stale record that inflates the late count and hides the inspections
+// that still matter. So the morning after the arrival, an unfinished one is CANCELLED in Breezeway
+// (cancelled, not completed — completing would write into the record that a walk happened, and it
+// did not). A finished one is left exactly as it is: the field team did it, and a finished
+// inspection is never re-created because auto_inspections keys on the reservation.
+//
+// The low-review inspection (REV_KEY rows) is the opposite case and is deliberately NOT here: it
+// rides forward to the next checkout until somebody walks the unit (runLowReviewInspections).
+// Runs whenever the automation master switch is on — no separate switch, because the task it
+// retires is one this same automation created.
+export async function retireArrivalInspections(opts: { dryRun?: boolean } = {}): Promise<{
+  ok: boolean; enabled?: boolean; found: number; retired: { taskId: string; unit: string; reason: string; checkIn: string }[]; failed: { taskId: string; error: string }[]
+}> {
+  const cfg = await getTaskAutomation()
+  if (!cfg.enabled && !opts.dryRun) return { ok: true, enabled: false, found: 0, retired: [], failed: [] }
+  const db = supabaseAdmin()
+  const today = ymdET(new Date())
+  const from = ymdET(new Date(Date.now() - 60 * 86400000))
+  const out = { ok: true, found: 0, retired: [] as { taskId: string; unit: string; reason: string; checkIn: string }[], failed: [] as { taskId: string; error: string }[] }
+  const { data: rows } = await db.from('auto_inspections')
+    .select('reservation_id, listing_id, unit_name, reason, check_in, task_id')
+    .not('task_id', 'is', null).gte('check_in', from).lt('check_in', today)
+    .not('reservation_id', 'like', 'rev:%')
+    .limit(500)
+  const cand = ((rows || []) as any[]).filter(r => r.task_id)
+  if (!cand.length) return out
+  const { data: ts } = await db.from('breezeway_tasks_sync').select('id, status, finished_at').in('id', cand.map(r => str(r.task_id)))
+  const tmap: Record<string, any> = {}
+  for (const t of ((ts || []) as any[])) tmap[str(t.id)] = t
+  const stale = cand.filter(r => {
+    const t = tmap[str(r.task_id)]
+    if (!t) return false                                    // not in the mirror: leave it, the sync will tell us
+    if (t.finished_at) return false                         // done — the team did it
+    return !/complet|finish|close|approv|cancel|delet|void/i.test(str(t.status))
+  })
+  out.found = stale.length
+  if (opts.dryRun || !breezewayConfigured()) {
+    return { ...out, retired: stale.map(r => ({ taskId: str(r.task_id), unit: str(r.unit_name), reason: str(r.reason), checkIn: str(r.check_in).slice(0, 10) })) }
+  }
+  for (const r of stale) {
+    const taskId = str(r.task_id)
+    try {
+      const res = await cancelBreezewayTask(taskId)
+      if (!res.ok) throw new Error('Breezeway would not cancel (' + res.status + ')')
+      try { await db.from('breezeway_tasks_sync').update({ status: 'cancelled', synced_at: new Date().toISOString() }).eq('id', taskId) } catch { /* next sync */ }
+      // The receipt keeps its task_id (exactly-once stays intact) and says why the task is gone.
+      try { await db.from('auto_inspections').update({ reason: str(r.reason).replace(/ — retired.*$/, '') + ' — retired, arrival passed unwalked' }).eq('reservation_id', str(r.reservation_id)) } catch { /* cosmetic */ }
+      out.retired.push({ taskId, unit: str(r.unit_name), reason: str(r.reason), checkIn: str(r.check_in).slice(0, 10) })
+    } catch (e: any) {
+      out.failed.push({ taskId, error: String(e?.message || e).slice(0, 140) })
+    }
+  }
+  return out
 }
