@@ -17,6 +17,8 @@ import { lc } from './ctx'
 import { otaChannelOf, channelsInText } from '@/lib/ota-playbook'
 import { isSuperadmin } from '@/lib/access'
 import { beliefStrength, beliefTag, currentConfidence, isHuman, RETIRE_BELOW, beliefOf, storedConfidence, withBelief } from './beliefs'
+import { aiFetch } from '@/lib/ai-usage'
+import { modelFor } from '@/lib/ai-models'
 
 export const MEMORY_KINDS = ['rule', 'preference', 'insight', 'decision', 'person', 'issue', 'correction'] as const
 export type MemoryKind = typeof MEMORY_KINDS[number]
@@ -269,8 +271,11 @@ export async function loadMemories(scopes: string[], email: string, limit = 60, 
       .map(x => ({ r: x.r, score: x.rel * 4 + Number(x.r.weight || 0) * 0.6 + beliefStrength(x.r, now) * 3 + (near.has(String(x.r.scope)) ? -1 : 0) }))
       .sort((a, b) => b.score - a.score)
     let reranked = false
+    let rerank = relevantPool.length > 6 ? (qWords.length >= 5 ? 'pending' : 'short question') : 'pool ' + relevantPool.length
     if (relevantPool.length > 6 && qWords.length >= 5) {
-      const picked = await rerankByQuestion(question, relevantPool.slice(0, 36).map(x => x.r), LANE_BUDGET.relevant)
+      const res = await rerankByQuestion(question, relevantPool.slice(0, 36).map(x => x.r), LANE_BUDGET.relevant)
+      rerank = res.why
+      const picked = res.ids
       if (picked) {
         reranked = true
         const order = new Map(picked.map((id, i) => [id, i]))
@@ -304,6 +309,7 @@ export async function loadMemories(scopes: string[], email: string, limit = 60, 
       .concat(recent.map(r => strip(r, 'recent')))
       .concat(fill.map(r => strip(r, 'relevant')))
     ;(out as any).reranked = reranked
+    ;(out as any).rerank = rerank
     return out.slice(0, limit)
   } catch { return [] }
 }
@@ -316,15 +322,13 @@ export async function loadMemories(scopes: string[], email: string, limit = 60, 
  * so a slow or missing model costs nothing but this refinement. Returns ids in the model's order,
  * or null when it did not run.
  */
-async function rerankByQuestion(question: string, candidates: any[], max: number): Promise<string[] | null> {
+async function rerankByQuestion(question: string, candidates: any[], max: number): Promise<{ ids: string[] | null; why: string }> {
   const key = process.env.ANTHROPIC_API_KEY
-  if (!key || !candidates.length) return null
+  if (!key || !candidates.length) return { ids: null, why: key ? 'no candidates' : 'no api key' }
   const lines = candidates.map((r, i) => `${i + 1}. [${r.kind}${r.scope === 'portfolio' ? '' : ' ' + r.scope}] ${String(r.text || '').replace(/\s+/g, ' ').slice(0, 170)}`)
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 4000)
+  const timer = setTimeout(() => ctrl.abort(), 6000)
   try {
-    const { aiFetch } = await import('@/lib/ai-usage')
-    const { modelFor } = await import('@/lib/ai-models')
     const r = await aiFetch('memory-recall', {
       method: 'POST', signal: ctrl.signal,
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
@@ -336,15 +340,15 @@ async function rerankByQuestion(question: string, candidates: any[], max: number
       }),
     })
     const d: any = await r.json().catch(() => ({}))
-    if (!r.ok) return null
+    if (!r.ok) return { ids: null, why: 'api ' + r.status + ' ' + String(d?.error?.message || '').slice(0, 80) }
     const text = Array.isArray(d?.content) ? d.content.map((x: any) => x?.text || '').join('') : ''
     const m = text.match(/\[[\s\d,]*\]/)
-    if (!m) return null
+    if (!m) return { ids: null, why: 'no array in: ' + text.slice(0, 80) }
     const nums: number[] = JSON.parse(m[0])
     const ids: string[] = []
     for (const n of nums) { const c = candidates[Number(n) - 1]; if (c && !ids.includes(String(c.id))) ids.push(String(c.id)) }
-    return ids.slice(0, max)
-  } catch { return null } finally { clearTimeout(timer) }
+    return { ids: ids.slice(0, max), why: 'ok ' + ids.length }
+  } catch (e: any) { return { ids: null, why: 'threw: ' + String(e?.name === 'AbortError' ? 'timeout' : e?.message || e).slice(0, 80) } } finally { clearTimeout(timer) }
 }
 
 /** Render for the system prompt. Grouped by kind so rules read as rules, not as trivia. */
