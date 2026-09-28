@@ -90,6 +90,12 @@ export type CadenceDef = {
   successor?: boolean
   /** How many days ahead of next-due the successor task is created. */
   leadDays?: number
+  /**
+   * ONE JOB PER BUILDING, not per unit (Jon, 2026-09-28: exterior pressure washing, vendor pest
+   * control). The ledger still tracks it per unit — the building's units share the completion —
+   * but the successor is created once per building, on its first unit, never twenty times.
+   */
+  perBuilding?: boolean
 }
 
 export type CadenceCfg = {
@@ -141,15 +147,17 @@ export const DEFAULT_CADENCES: CadenceDef[] = [
     //
     // Thirty days, not ninety, because a central return in a coastal rental that turns over every
     // few days is a dirty filter for two months out of three on a quarterly cycle.
-    key: 'ac_filter', label: 'A/C filter change', everyDays: 30, dept: 'maintenance',
-    match: 'filter',
+    key: 'ac_filter', label: 'A/C filter change / coil clean', everyDays: 30, dept: 'maintenance',
+    // Jon, 2026-09-28: "Filter changes / coil clean for AC units" — one cadence, either counts.
+    match: 'filter|coil clean',
     needsScope: true, scopeBuildings: [], scopeUnits: [],
     // A filter is fifteen minutes and a step stool. It does not need an empty unit, but it is far
     // less awkward in one, so it is ranked below the jobs that genuinely need the window.
     needsVacant: false, needsDays: 0, minutes: 15, mode: 'suggest', seedIfNever: true,
   },
   {
-    key: 'batteries', label: 'Lock & smoke batteries', everyDays: 365, dept: 'maintenance',
+    // Jon, 2026-09-28: "Door lock batteries" (and the smoke detectors while the ladder is out).
+    key: 'batteries', label: 'Door lock & smoke batteries', everyDays: 365, dept: 'maintenance',
     match: 'batter(y|ies)',
     // The one job whose failure locks a guest out at midnight. Doable around a guest at a pinch.
     needsVacant: false, needsDays: 0, minutes: 20, mode: 'suggest', seedIfNever: true,
@@ -159,6 +167,46 @@ export const DEFAULT_CADENCES: CadenceDef[] = [
     // Deliberately NOT matching 'departure clean' — the turnover is not a deep clean.
     match: '(deep|detail|spring) clean',
     needsVacant: true, needsDays: 2, minutes: 240, mode: 'suggest', seedIfNever: true,
+  },
+  // ── JON'S LIST, 2026-09-28 ──────────────────────────────────────────────────────────────────
+  // "Deep cleans, PM audits, deep clean of AC, filter changes / coil clean, door lock batteries,
+  // exterior pressure washing for some buildings, pest control (in house), pest control (vendor),
+  // every unit inspected every 45–60 days." Intervals he did not name are ordinary practice and are
+  // meant to be changed in Settings → Cadences.
+  {
+    // Every unit walked on a clock. Any completed inspection resets it — a quality inspection after
+    // a bad review, a pre-arrival walk, a plain unit check — so the clock measures "when did a
+    // supervisor last stand in this unit", which is the question. 50 sits inside "45–60".
+    key: 'unit_inspection', label: 'Unit inspection (every 45–60 days)', everyDays: 50, dept: 'inspection',
+    match: 'inspect|unit check|walk.?through|walkthrough',
+    needsVacant: false, needsDays: 0, minutes: 45, mode: 'suggest', seedIfNever: true,
+  },
+  {
+    // The maintenance walk: every system checked against a checklist, work orders raised from it.
+    key: 'pm_audit', label: 'PM audit', everyDays: 90, dept: 'maintenance',
+    match: 'pm audit|preventive|preventative|maintenance audit|maintenance check',
+    needsVacant: true, needsDays: 1, minutes: 90, mode: 'suggest', seedIfNever: true,
+  },
+  {
+    key: 'pest_inhouse', label: 'Pest control (in house)', everyDays: 90, dept: 'maintenance',
+    // Our own spray / bait pass. A vendor visit is its own cadence below and does not count here.
+    match: '^(?!.*(vendor|orkin|terminix|truly|exterminat)).*(pest|spray|bait|roach|bug treat)',
+    needsVacant: false, needsDays: 0, minutes: 25, mode: 'suggest', seedIfNever: true,
+  },
+  {
+    // The contract exterminator. Building-level, and only where there is a contract: pick the
+    // buildings in Settings; one task per building per visit.
+    key: 'pest_vendor', label: 'Pest control (vendor)', everyDays: 90, dept: 'maintenance',
+    match: 'pest control.*(vendor|visit)|exterminat|orkin|terminix|truly nolen',
+    needsScope: true, scopeBuildings: [], scopeUnits: [], perBuilding: true,
+    needsVacant: false, needsDays: 0, minutes: 30, mode: 'suggest', seedIfNever: false,
+  },
+  {
+    // Exterior only, some buildings only (Jon). Building-level; pick the buildings in Settings.
+    key: 'pressure_wash', label: 'Exterior pressure washing', everyDays: 180, dept: 'maintenance',
+    match: 'pressure wash|power wash',
+    needsScope: true, scopeBuildings: [], scopeUnits: [], perBuilding: true,
+    needsVacant: false, needsDays: 0, minutes: 180, mode: 'suggest', seedIfNever: false,
   },
   {
     key: 'dryer_vent', label: 'Dryer vent clean', everyDays: 365, dept: 'maintenance',
@@ -265,6 +313,7 @@ export function resolveCadences(raw: any): CadenceCfg {
       needsScope: o?.needsScope == null ? base.needsScope : o.needsScope === true,
       successor: o?.successor == null ? (base.successor !== false) : o.successor === true,
       leadDays: num(o?.leadDays, base.leadDays ?? 14, 0, 120),
+      perBuilding: o?.perBuilding == null ? !!base.perBuilding : o.perBuilding === true,
     }
   }
 
@@ -273,7 +322,7 @@ export function resolveCadences(raw: any): CadenceCfg {
     const blank: CadenceDef = {
       key: inv.key, label: inv.key, everyDays: 180, dept: 'maintenance', match: inv.key,
       needsVacant: true, needsDays: 1, minutes: 60, mode: 'suggest', seedIfNever: false,
-      requiresAmenity: '', scopeBuildings: [], scopeUnits: [], needsScope: false, successor: true, leadDays: 14,
+      requiresAmenity: '', scopeBuildings: [], scopeUnits: [], needsScope: false, successor: true, leadDays: 14, perBuilding: false,
     }
     // An invented cadence with an uncompilable pattern is dropped, not silently made to match all.
     const c = one(blank, inv)

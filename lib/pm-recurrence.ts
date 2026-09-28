@@ -104,7 +104,18 @@ export async function runPmRecurrence(opts: { dryRun?: boolean; force?: boolean 
   out.ledger = upserts.length
 
   // ── 2. the successor ───────────────────────────────────────────────────────────────────────────
+  // ONE PER BUILDING (perBuilding cadences): of a building's due units, only the first creates a
+  // task; the rest ride on it. An open task on any unit of the building counts as the building's.
+  const perBuildingSeen = new Set<string>()
+  const buildingHasTask = new Set<string>()
+  for (const it of items) if (byKey[it.cadenceKey]?.perBuilding && it.scheduled) buildingHasTask.add(`${it.cadenceKey}|${it.building || it.unit}`)
   const due = items.filter(it => {
+    const cb = byKey[it.cadenceKey]
+    if (cb?.perBuilding) {
+      const bk = `${it.cadenceKey}|${it.building || it.unit}`
+      if (buildingHasTask.has(bk) || perBuildingSeen.has(bk)) return false
+      perBuildingSeen.add(bk)
+    }
     const c = byKey[it.cadenceKey]
     const r = rows[`${it.listingId}|${it.cadenceKey}`]
     if (!r || r.status !== 'scheduled' || it.scheduled) return false
@@ -131,7 +142,7 @@ export async function runPmRecurrence(opts: { dryRun?: boolean; force?: boolean 
     }
     const sup = automation ? (automation.supervisors[it.market] || automation.supervisors.Miami) : ''
     const assignees = c.dept === 'housekeeping' ? [] : Array.from(new Set([automation?.assignAlways, sup].filter(Boolean))) as string[]
-    const title = `${c.label} — ${it.unit}`
+    const title = c.perBuilding ? `${c.label} — ${it.building || it.unit}` : `${c.label} — ${it.unit}`
     const description = `Preventative ${c.label.toLowerCase()} on ${it.unit}, every ${c.everyDays} days. Last done ${it.lastDone}; due ${it.dueOn}${it.daysOver > 0 ? ` (${it.daysOver} days over)` : ''}.` +
       (c.needsVacant ? ` Scheduled on an empty day; if it slips, Lighthouse moves it to the next one.` : '') +
       `\n\nWhen this is completed, the next one is booked automatically for ${shift(date, c.everyDays)}. (Cadence "${c.label}", Users & admin → Settings → Cadences.)`

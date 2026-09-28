@@ -26,7 +26,7 @@ type Cad = {
   match: string; needsVacant: boolean; needsDays: number; minutes: number
   mode: 'off' | 'suggest' | 'auto'; seedIfNever: boolean; requiresAmenity?: string
   scopeBuildings?: string[]; scopeUnits?: string[]; needsScope?: boolean
-  successor?: boolean; leadDays?: number
+  successor?: boolean; leadDays?: number; perBuilding?: boolean
 }
 type Cfg = {
   enabled: boolean; dailyCap: number; perUnitCap: number; perPersonMinutes: number
@@ -46,6 +46,7 @@ function everyLabel(d: number) {
 
 export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
   const [cfg, setCfg] = useState<Cfg | null>(null)
+  const [shippedKeys, setShippedKeys] = useState<string[]>([])
   const [saved, setSaved] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
@@ -63,7 +64,7 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
     try {
       const r = await fetch('/api/settings/cadences', { cache: 'no-store' })
       const j = await r.json()
-      if (r.ok && j.config) { setCfg(j.config); setSaved(JSON.stringify(j.config)) }
+      if (r.ok && j.config) { setCfg(j.config); setSaved(JSON.stringify(j.config)); if (Array.isArray(j.defaults?.cadences)) setShippedKeys(j.defaults.cadences.map((c: any) => String(c.key))) }
     } catch { /* stays empty; a reload retries */ }
   }, [])
   useEffect(() => { load() }, [load])
@@ -270,7 +271,11 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
                         {' '}<input type="number" min={0} max={120} value={c.leadDays ?? 14} onChange={e => setCad(c.key, { leadDays: Number(e.target.value) })} className={box + ' w-[64px] ml-1'} disabled={!isOwner || c.successor === false} /> <span className="text-muted">days before it is due{c.mode === 'auto' ? ' (created outright — this cadence is on auto)' : ' (as a proposal Eve asks a ✅ for)'}</span>
                       </span>
                     </label>
-                    {!['ac_deep', 'ac_filter', 'batteries', 'deep_clean', 'dryer_vent', 'water_heater'].includes(c.key) && isOwner && (
+                    <label className="flex items-start gap-2 cursor-pointer sm:col-span-2">
+                      <input type="checkbox" checked={!!c.perBuilding} onChange={e => setCad(c.key, { perBuilding: e.target.checked })} className="mt-0.5" disabled={!isOwner} />
+                      <span className="text-[12px]"><span className="font-semibold text-ink">One job per building</span> <span className="text-muted">— pressure washing, a vendor visit: one task on the building, not one per unit</span></span>
+                    </label>
+                    {!shippedKeys.includes(c.key) && isOwner && (
                       <button type="button" onClick={() => removeCadence(c.key)} className="sm:col-span-2 justify-self-start text-[11.5px] text-rose-700 underline decoration-dotted">Remove this cadence</button>
                     )}
                     {(c.needsScope || scopedCount(c) > 0) && (
