@@ -4,8 +4,10 @@ import { syncBreezewayComments } from '@/lib/breezeway-comment-sync'
 import { runBehindAlert } from '@/lib/ops-behind'
 import { revalidateTag } from 'next/cache'
 import { bustOpsDay } from '@/lib/ops-day'
-import { withRouteReceipt } from '@/lib/automation-runs'
+import { withRouteReceipt, withReceipt as receipted } from '@/lib/automation-runs'
 import { assignVendorTasks } from '@/lib/vendor-assign'
+import { syncGarden } from '@/lib/garden/sync'
+import { tooSoon } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -39,7 +41,11 @@ async function run(req: NextRequest) {
   // unassigned open task there is handed to the Opal Works account; see lib/vendor-assign.
   let vendors: any = null
   try { vendors = await assignVendorTasks() } catch (e) { vendors = { error: String((e as any)?.message || e).slice(0, 120) } }
-  return NextResponse.json({ ranAt: new Date().toISOString(), ...result, comments, alert, vendors })
+  // THE GARDEN HOTEL rides this line (Jon, 2026-09-28: a separate business on Cloudbeds; see
+  // lib/garden). Its own tables, its own ledger; not connected is a quiet no-op, never an error here.
+  let garden: any = null
+  try { if (!(await tooSoon('garden-sync', 20))) garden = await receipted('garden-sync', () => syncGarden(), r => ({ itemCount: r.reservations ?? 0, detail: { rooms: r.rooms, cleans: r.cleans, errors: r.errors } })) } catch (e) { garden = { error: String((e as any)?.message || e).slice(0, 120) } }
+  return NextResponse.json({ ranAt: new Date().toISOString(), ...result, comments, alert, vendors, garden })
 }
 
 const withReceipt = withRouteReceipt<NextRequest>('breezeway-tasks', run)

@@ -13,7 +13,7 @@ import {
   CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Wrench, LogOut, RefreshCw, Gauge, Star, CalendarRange, AlertTriangle, Timer,
   Sparkles, TrendingUp, BarChart3, KeyRound, Radar, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Lock, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
-  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus, AtSign, Activity, Plug } from 'lucide-react'
+  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus, AtSign, Activity, Plug, Hotel } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
 // NAV, 2026-08-19 (Jon): the sidebar had 33 tabs in 7 groups, every one of them expanded, every
@@ -158,6 +158,15 @@ export const SECTIONS: NavSection[] = [
       { to: '/team',     label: 'Weekly Planner', Icon: CalendarRange },
       { to: '/cleaners', label: 'Cleaners', Icon: Sparkles },
       { to: '/labor',    label: 'Labor',    Icon: Timer },
+    ],
+  },
+  {
+    // THE GARDEN HOTEL (Jon, 2026-09-28): the second business. One row, its own section so it never
+    // reads as a VR tab; the tab strip (lib/tabsets 'garden') carries Today / Rooms & cleans /
+    // Calls & verifications / Reports / Setup. `to` is the row's identity; the set resolves it.
+    title: 'Garden Hotel',
+    items: [
+      { to: '/garden', label: 'Garden Hotel', Icon: Hotel, set: 'garden' },
     ],
   },
   {

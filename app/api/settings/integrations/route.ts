@@ -10,6 +10,7 @@ import { getAccess, isSuperadmin } from '@/lib/access'
 import { pageAllowed } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getConnections, publicView, slackAppConfigured } from '@/lib/integrations'
+import { cloudbedsConfig } from '@/lib/garden/cloudbeds'
 
 export const dynamic = 'force-dynamic'
 
@@ -93,6 +94,27 @@ export async function GET() {
             'Basic Information → App Credentials → copy the Client ID and Client Secret',
             'Vercel → add SLACK_CLIENT_ID and SLACK_CLIENT_SECRET → Production → redeploy',
             'Then anyone with access clicks Connect Slack on the Command Center and picks a channel.',
+          ],
+        } : null,
+      },
+      {
+        key: 'cloudbeds',
+        label: 'Cloudbeds (Garden Hotel)',
+        connected: cloudbedsConfig().mode !== 'none',
+        summary: cloudbedsConfig().mode !== 'none'
+          ? `Connected by ${cloudbedsConfig().mode === 'api_key' ? 'property API key' : 'OAuth app'}${cloudbedsConfig().propertyId ? ` · property ${cloudbedsConfig().propertyId}` : ''}. Feeds and a test button are on Garden Hotel → Setup.`
+          : 'Not connected — the Garden Hotel tabs are empty until a Cloudbeds key is set.',
+        uses: [
+          'Garden Hotel → Today: arrivals, departures, in-house and room condition',
+          'Rooms & cleans: departure cleans and stayovers created from reservations; a finished clean marks the room clean in Cloudbeds',
+          'Calls & verifications and the hotel\'s own reports',
+        ],
+        setup: owner ? {
+          envVar: 'CLOUDBEDS_API_KEY + CLOUDBEDS_PROPERTY_ID',
+          steps: [
+            'Cloudbeds → Settings → API Credentials → create an API key (reservations, rooms, housekeeping read; housekeeping write)',
+            'Vercel → add CLOUDBEDS_API_KEY and CLOUDBEDS_PROPERTY_ID → Production → redeploy',
+            'Garden Hotel → Setup → Test the key → Full sync',
           ],
         } : null,
       },

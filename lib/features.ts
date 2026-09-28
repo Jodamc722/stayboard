@@ -141,6 +141,11 @@ export const FEATURES: Feature[] = [
   // out of the box only Admin and GM can reach it — "a few people for now". To give it to someone
   // else, switch them to GM or flip it on for them individually on /users → Edit access.
   { key: 'integrations', label: 'Integrations',       path: '/integrations', group: 'Admin' },
+  // THE GARDEN HOTEL (Jon, 2026-09-28): a second business inside Lighthouse — the hotel on
+  // Cloudbeds, not the VR portfolio on Guesty. ONE key gates every /garden tab (Today, Rooms &
+  // cleans, Calls & verifications, Reports, Setup) because it is one door: either you work the
+  // hotel or you do not. Deliberately in no ops/cs/data bundle — admin and GM only until Jon says.
+  { key: 'garden',        label: 'Garden Hotel',      path: '/garden', group: 'Garden Hotel' },
 ]
 
 // ---- Extra permissions: things that are NOT pages. -------------------------------------------
