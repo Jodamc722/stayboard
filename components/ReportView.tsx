@@ -2096,6 +2096,23 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   // many future months as we want." The rail shows every month loaded; this picks the one whose
   // lines are broken out beneath it.
   const [planIx, setPlanIx] = useState(0)
+  // THE SLIDE HELPERS (Frame, Title, Lbl …) ARE DEFINED INSIDE THIS RENDER, so on every render they
+  // would be brand-new component types and React would unmount and remount everything under them —
+  // including the textarea being typed into, which dropped focus after each keystroke (Jon,
+  // 2026-09-28: "every time I type something, it exits out of it… only allows one symbol at a
+  // time"). stable() hands JSX one long-lived component per name that always calls this render's
+  // latest closure, so the tree keeps its identity and the caret stays where it is.
+  const inlineRef = useRef<Record<string, (p: Any) => React.ReactNode>>({})
+  const stableRef = useRef<Record<string, (p: Any) => React.ReactNode>>({})
+  const stable = <F extends (p: Any) => React.ReactNode>(name: string, fn: F): F => {
+    inlineRef.current[name] = fn
+    if (!stableRef.current[name]) {
+      const f = (p: Any) => inlineRef.current[name](p)
+      ;(f as Any).displayName = name
+      stableRef.current[name] = f
+    }
+    return stableRef.current[name] as F
+  }
   // Which money the per-listing slide shows. Jon asked for gross AND net "but make it a selecter"
   // (2026-09-22) — both by default, because the two answer different questions: gross is what the
   // guest paid us, net is what the statement is built on, and an owner asking "what did 515 make?"
@@ -3245,7 +3262,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
 
           // ── slide furniture ────────────────────────────────────────────────
           let pageNo = 0
-          const Foot = ({ label, dark }: { label: string; dark?: boolean }) => {
+          const Foot = stable('Foot', ({ label, dark }: { label: string; dark?: boolean }) => {
             pageNo += 1
             const n = pageNo
             return (
@@ -3268,7 +3285,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 </span>
               </div>
             )
-          }
+          })
 
           // Title block. An accent hairline sits under the eyebrow — the one place the brand
           // colour appears on a light slide, which is what makes it read as a mark rather than
@@ -3280,7 +3297,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           const HOUSE_SUB = SECTION_SUB
           // The team line counts the cards rather than saying "four" — see lib/onboarding-copy.
           const teamCount = ((sec('team').people || []) as Any[]).length
-          const Title = ({ k, dark, sub, rule, narrow }: { k: string; dark?: boolean; sub?: boolean; rule?: string; narrow?: boolean }) => (
+          const Title = stable('Title', ({ k, dark, sub, rule, narrow }: { k: string; dark?: boolean; sub?: boolean; rule?: string; narrow?: boolean }) => (
             <div>
               <div style={{ width: 30, height: 2, background: rule || (dark ? D.ink : t.accent), marginBottom: 18 }} />
               <h2 style={{
@@ -3295,14 +3312,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 </p>
               ) : null}
             </div>
-          )
+          ))
 
           // TWO COLUMNS FOR THE WORDY SLIDES (Jon, 2026-09-24: "Some of the wording is not showing").
           // Headline, subtitle and the paragraph stacked on the left used most of the slide's height
           // before the list began, so every list ran off the bottom into a scroll area nobody saw.
           // The argument goes on the left, the list gets the full height on the right, the same
           // answer the How-we-run-it slide reached.
-          const Split = ({ k, left, right, leftW, dark }: { k: string; left?: React.ReactNode; right: React.ReactNode; leftW?: number; dark?: boolean }) => (
+          const Split = stable('Split', ({ k, left, right, leftW, dark }: { k: string; left?: React.ReactNode; right: React.ReactNode; leftW?: number; dark?: boolean }) => (
             <div className="flex-1 min-h-0 flex" style={{ gap: 44, paddingBottom: 18 }}>
               <div className="flex flex-col min-h-0 onb-scroll" style={{ width: leftW || 340, flexShrink: 0 }}>
                 <Title k={k} narrow dark={dark} />
@@ -3314,7 +3331,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 <div style={{ width: '100%', paddingTop: 2 }}>{right}</div>
               </div>
             </div>
-          )
+          ))
           const leftBody = (v: string, set: (v: string) => void, top?: number) => (
             <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: top == null ? 18 : top, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder, whiteSpace: 'pre-line' }}>
               <Ed v={v} set={set} edit={edit} multiline />
@@ -3322,7 +3339,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           )
 
           // A photograph that holds half the composition and bleeds off the slide edge.
-          const Half = ({ src, side, title, set }: {
+          const Half = stable('Half', ({ src, side, title, set }: {
             src: string; side: 'left' | 'right'; title?: string; set?: (u: string) => void
           }) => (
             <Pick
@@ -3331,14 +3348,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               set={set || (() => {})}
               style={{ position: 'absolute', top: 0, bottom: 0, width: 452, [side]: 0, background: t.chip } as Any}
             />
-          )
+          ))
 
           // Any image in the deck, with the picker hung off it in edit mode. `Edit photo` only
           // appears for the team; everywhere else the whole frame is the target, because on a
           // gallery slide a button per frame would be five buttons on five photographs.
           // `pos` is object-position. It matters most for faces: a cover crop defaults to the
           // middle of the source, and the middle of a portrait photograph is a torso.
-          const Pick = ({ title, cur, set, style, cover, pos, choices, choicesLabel, groups }: {
+          const Pick = stable('Pick', ({ title, cur, set, style, cover, pos, choices, choicesLabel, groups }: {
             title: string; cur: string; set: (u: string) => void; style?: Any; cover?: boolean; pos?: string; choices?: string[]; choicesLabel?: string; groups?: { id: string; name: string; pics: string[] }[]
           }) => (
             <div style={{ position: 'relative', overflow: 'hidden', ...(style || {}) }}>
@@ -3366,12 +3383,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 </button>
               )}
             </div>
-          )
+          ))
 
           // `dark`: on a dark-ground slide the question was drawn in the light theme's ink — navy on
           // navy, so the question itself vanished and only the hint showed (Jon, 2026-09-24, the
           // "How we run it" slide: "this looks terrible"). The dark palette goes to the block too.
-          const Asks = ({ k, dark, top }: { k: string; dark?: boolean; top?: number }) => {
+          const Asks = stable('Asks', ({ k, dark, top }: { k: string; dark?: boolean; top?: number }) => {
             const as: Any[] = Array.isArray(sec(k).asks) ? sec(k).asks : []
             if (!as.length && !edit) return null
             const tt = dark ? { ...t, ink: D.ink, body: D.body, muted: D.muted, rule: D.rule } : t
@@ -3395,7 +3412,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 ) : null}
               </div>
             )
-          }
+          })
 
           // EVERY WORD ON THIS DECK IS EDITABLE (Jon, 2026-09-22: "on owner onboarding we need to
           // be able to edit all texts"). The section copy always was; what was not, and what an
@@ -3403,14 +3420,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // "Worth adding". They are written once here and stored per report under
           // content.labels.<id>, so a label Jon retypes on one owner's deck stays retyped on that
           // deck and every other deck keeps the house wording.
-          const Lab = ({ id, d, style, className }: { id: string; d: string; style?: Any; className?: string }) => {
+          const Lab = stable('Lab', ({ id, d, style, className }: { id: string; d: string; style?: Any; className?: string }) => {
             const saved = String((c.labels || {})[id] || '').trim()
             return (
               <span className={className} style={style}>
                 <Ed v={saved || d} set={v => patch('labels.' + id, v)} edit={edit} />
               </span>
             )
-          }
+          })
 
           const slides: { key: string; node: React.ReactNode; ai?: boolean }[] = []
 
@@ -5136,7 +5153,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           }
 
           // ── the off-by-default sections, one slide each ────────────────────
-          const RowSlide = ({ k, label, rows, kw, tone, field, asks }: { k: string; label: string; rows: Any[]; kw?: number; tone?: SlideTone; field?: string; asks?: boolean }) => (
+          const RowSlide = stable('RowSlide', ({ k, label, rows, kw, tone, field, asks }: { k: string; label: string; rows: Any[]; kw?: number; tone?: SlideTone; field?: string; asks?: boolean }) => (
             <Slide nav={label} warn={edit} ground={GROUND[tone || 'light']}>
               <div className="flex flex-col h-full">
                 <Title k={k} />
@@ -5184,7 +5201,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 <Foot label={label} />
               </div>
             </Slide>
-          )
+          ))
           for (const x of EXTRA) {
             if (hid(x.k)) continue
             // 'ai' and 'checklist' have slides of their own above. Rendering them here as well put a
@@ -5420,9 +5437,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   d.custom = Array.isArray(d.custom) ? d.custom : []
                   d.custom.push({ id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), kind, eyebrow: '', title, body: '', ...extra })
                 })
-                const B = ({ on, children }: { on: () => void; children: React.ReactNode }) => (
+                const B = stable('B', ({ on, children }: { on: () => void; children: React.ReactNode }) => (
                   <button onClick={on} style={{ fontSize: 13, fontWeight: 600, borderRadius: 999, padding: '11px 20px', background: t.ink, color: t.bg }}>{children}</button>
-                )
+                ))
                 return (
                   <div className="sb-noprint" style={{ marginTop: 26 }}>
                     <div className="flex flex-wrap items-center" style={{ gap: 10 }}>
@@ -5567,7 +5584,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           const footLeft = [String(hero.title || ''), periodLabel].filter(Boolean).join(' · ')
 
           /** THE FRAME. Header, margins, footer — identical on every slide, set once. */
-          const Frame = ({ sec, subj, tone, n, children, nav, note }: { sec: string; subj?: string; tone: SlideTone; n: number; children: React.ReactNode; nav: string; note?: string }) => {
+          const Frame = stable('Frame', ({ sec, subj, tone, n, children, nav, note }: { sec: string; subj?: string; tone: SlideTone; n: number; children: React.ReactNode; nav: string; note?: string }) => {
             const dark = tone === 'dark'
             const meta1 = { fontSize: 9.5, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase' as const, color: dark ? D.muted : tint(0.45), margin: 0 }
             return (
@@ -5587,31 +5604,31 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 </div>
               </Slide>
             )
-          }
+          })
 
           /** The 26px accent rule that opens a reading slide. */
-          const Tick = ({ dark }: { dark?: boolean }) => (
+          const Tick = stable('Tick', ({ dark }: { dark?: boolean }) => (
             <span style={{ display: 'block', width: 26, height: 2, borderRadius: 2, background: dark ? D.ink : t.accent, marginBottom: 14 }} />
-          )
-          const H1 = ({ children, w }: { children: React.ReactNode; w?: string }) => (
+          ))
+          const H1 = stable('H1', ({ children, w }: { children: React.ReactNode; w?: string }) => (
             <h2 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 58, lineHeight: 1.03, letterSpacing: '-0.028em', color: t.ink, margin: 0, maxWidth: w || '16ch' }}>{children}</h2>
-          )
-          const H2 = ({ children, dark, w }: { children: React.ReactNode; dark?: boolean; w?: string }) => (
+          ))
+          const H2 = stable('H2', ({ children, dark, w }: { children: React.ReactNode; dark?: boolean; w?: string }) => (
             <h2 style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 37, lineHeight: 1.16, letterSpacing: '-0.02em', color: dark ? D.ink : t.ink, margin: 0, maxWidth: w || '24ch' }}>{children}</h2>
-          )
-          const Lead = ({ children, dark, w }: { children: React.ReactNode; dark?: boolean; w?: string }) => (
+          ))
+          const Lead = stable('Lead', ({ children, dark, w }: { children: React.ReactNode; dark?: boolean; w?: string }) => (
             <p style={{ fontSize: 18, lineHeight: 1.62, color: dark ? D.body : tint(0.62), margin: 0, maxWidth: w || '64ch' }}>{children}</p>
-          )
-          const Lbl = ({ children, dark }: { children: React.ReactNode; dark?: boolean }) => (
+          ))
+          const Lbl = stable('Lbl', ({ children, dark }: { children: React.ReactNode; dark?: boolean }) => (
             <p style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.17em', textTransform: 'uppercase', color: dark ? D.muted : tint(0.45), margin: 0, lineHeight: 1.3 }}>{children}</p>
-          )
+          ))
           /** A figure. Serif, tabular, and the only thing on a slide allowed to be this big. */
-          const Fig = ({ children, size, dark, color }: { children: React.ReactNode; size?: number; dark?: boolean; color?: string }) => (
+          const Fig = stable('Fig', ({ children, size, dark, color }: { children: React.ReactNode; size?: number; dark?: boolean; color?: string }) => (
             <span style={{ display: 'block', fontFamily: SERIF, fontWeight: 400, fontSize: size || 34, lineHeight: 0.94, letterSpacing: '-0.025em', fontVariantNumeric: 'tabular-nums', color: color || (dark ? D.ink : t.ink) }}>{children}</span>
-          )
+          ))
 
           // Kept from the first pass: a title block driven by the section's own editable copy.
-          const RTitle = ({ k, dark, narrow }: { k: string; dark?: boolean; narrow?: boolean }) => {
+          const RTitle = stable('RTitle', ({ k, dark, narrow }: { k: string; dark?: boolean; narrow?: boolean }) => {
             const sec = (c as Any)[k] || {}
             return (
               <div>
@@ -5626,15 +5643,15 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 ) : null}
               </div>
             )
-          }
+          })
 
-          const Stat = ({ label, value, sub, dark, big }: { label: string; value: string; sub?: string; dark?: boolean; big?: boolean }) => (
+          const Stat = stable('Stat', ({ label, value, sub, dark, big }: { label: string; value: string; sub?: string; dark?: boolean; big?: boolean }) => (
             <div>
               <Lbl dark={dark}>{label}</Lbl>
               <div style={{ marginTop: 9 }}><Fig size={big ? 56 : 34} dark={dark}>{value}</Fig></div>
               {sub ? <p style={{ fontSize: 12.5, color: dark ? D.muted : tint(0.45), margin: '9px 0 0', lineHeight: 1.45 }}>{sub}</p> : null}
             </div>
-          )
+          ))
 
           // EVERY PHOTO ON THIS DECK IS SELECTABLE (Jon, 2026-09-22: "we can use more photos, all
           // editiable and sletable"). Unset falls back to the gallery resolved from the report's
@@ -5646,7 +5663,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const pics = Array.isArray(gallery) ? gallery : []
             return pics.length ? pics[i % pics.length] : ''
           }
-          const RPick = ({ k, i, style, alt }: { k: string; i: number; style?: Any; alt?: string }) => {
+          const RPick = stable('RPick', ({ k, i, style, alt }: { k: string; i: number; style?: Any; alt?: string }) => {
             const cur = photoAt(k, i)
             if (!cur && !edit) return null
             return (
@@ -5667,11 +5684,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 )}
               </div>
             )
-          }
+          })
 
           // A NOTE ON ANY SLIDE (Jon, 2026-09-22: "be able to add notes"). Shown to the owner when
           // it has words in it, offered as an empty line only while editing.
-          const SlideNote = ({ k, dark }: { k: string; dark?: boolean }) => {
+          const SlideNote = stable('SlideNote', ({ k, dark }: { k: string; dark?: boolean }) => {
             const notes = (c.slideNotes || {}) as Any
             const v = String(notes[k] || '')
             if (!v && !edit) return null
@@ -5682,7 +5699,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 </p>
               </div>
             )
-          }
+          })
 
           const slides: { key: string; node: React.ReactNode; ai?: boolean }[] = []
           const next = () => slides.length + 1
@@ -6130,6 +6147,27 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 rows: ((src.rows || []) as Any[]).map((r: Any) => ({ metric: r.metric, actual: '', plan: '', delta: '', good: true })),
               })
             })
+            // TWO WAYS TO SHOW A MISS (Jon, 2026-09-28: "make this where it does not look so
+            // aggressive if we are off … a simple number like we had before, or redo this, ok to
+            // have both options"). The bars painted every shortfall terracotta — headline, bar and
+            // delta, four rows deep — so an ordinary soft month read like an alarm. 'simple' is the
+            // default: the actual, the budget beside it, and the gap as a plain figure with a
+            // percentage under it, in the body colour. Above budget still earns the green. 'bars'
+            // keeps the old layout for a month worth dramatising, with the shortfall toned down to
+            // the body colour. Switched per report in edit mode; stored on content.plan.view.
+            const planView: 'simple' | 'bars' = String((plan as Any).view || '') === 'bars' ? 'bars' : 'simple'
+            // "$$335" is sitting in stored rows on the Sept 28 report; print one sign whatever was stored.
+            const one$ = (v: string) => String(v || '').replace(/\${2,}/g, '$')
+            const softNeg = 'rgba(255,255,255,0.72)'
+            const deltaColor = (neg: boolean, has: boolean) => !has ? D.muted : neg ? (planView === 'simple' ? softNeg : D.ink) : t.good
+            const pctOf = (f: { plan: string; delta: string }, metric: string): string => {
+              const b = snum(f.plan); const d = snum(f.delta)
+              if (!f.plan || !f.delta) return ''
+              if (/occupancy|occ\b/i.test(metric)) return Math.abs(d).toFixed(0) + ' pts ' + (d < 0 ? 'under' : d > 0 ? 'over' : 'on budget')
+              if (!b) return ''
+              const pc = Math.abs(d / Math.abs(b)) * 100
+              return pc < 0.5 ? 'on budget' : pc.toFixed(0) + '% ' + (d < 0 ? 'under' : 'over')
+            }
             slides.push({ key: 'plan', ai: true, node: (
               <Frame note="plan" nav="Budget" sec="Performance" subj="Against budget" tone="dark" n={n}>
                 <RTitle k="plan" dark />
@@ -6152,8 +6190,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           {String(m.label || '').replace(/\s+\d{4}$/, '')}
                           <span style={{ opacity: 0.6, letterSpacing: '0.1em', marginLeft: 8 }}>{String(m.status || '')}</span>
                         </span>
-                        <span style={{ display: 'block', fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', marginTop: 8, fontVariantNumeric: 'tabular-nums', opacity: on ? 1 : 0.6, color: hd ? (neg ? t.accent : t.good) : D.muted }}>
-                          {hd || '—'}
+                        <span style={{ display: 'block', fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', marginTop: 8, fontVariantNumeric: 'tabular-nums', opacity: on ? 1 : 0.6, color: deltaColor(neg, !!hd) }}>
+                          {one$(hd) || '—'}
                         </span>
                       </button>
                     )
@@ -6167,12 +6205,23 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     const neg = isNeg(r)
                     const mag = Math.min(0.46, (share(r) / span) * 0.44)
                     const pl = f.plan
+                    if (planView === 'simple') return (
+                      <div key={j} style={{ display: 'grid', gridTemplateColumns: '120px minmax(0,1fr) minmax(0,1fr) 150px', gap: 24, alignItems: 'baseline', padding: '13px 0', borderTop: j ? '1px solid ' + D.rule : 'none' }}>
+                        <span style={{ fontSize: 13, color: D.muted }}>{String(r.metric || '')}</span>
+                        <span style={{ fontFamily: SERIF, fontSize: 24, letterSpacing: '-0.02em', color: D.ink, fontVariantNumeric: 'tabular-nums' }}>{one$(f.actual) || '—'}</span>
+                        <span style={{ fontSize: 13, color: D.muted, fontVariantNumeric: 'tabular-nums' }}>{pl ? 'Budget ' + one$(pl) : ''}</span>
+                        <span style={{ textAlign: 'right' }}>
+                          <span style={{ display: 'block', fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', color: deltaColor(neg, !!f.delta) }}>{one$(f.delta) || '—'}</span>
+                          <span style={{ display: 'block', fontSize: 11, color: D.muted, marginTop: 2 }}>{pctOf(f, String(r.metric || ''))}</span>
+                        </span>
+                      </div>
+                    )
                     return (
                       <div key={j} style={{ display: 'grid', gridTemplateColumns: '236px minmax(0,1fr) 112px', gap: 24, alignItems: 'center', padding: '12px 0', borderTop: j ? '1px solid ' + D.rule : 'none' }}>
                         <div className="flex items-baseline" style={{ gap: 10 }}>
                           <span style={{ fontSize: 13, color: D.muted, width: 84, flexShrink: 0 }}>{String(r.metric || '')}</span>
-                          <span style={{ fontFamily: SERIF, fontSize: 21, letterSpacing: '-0.02em', color: D.ink, fontVariantNumeric: 'tabular-nums' }}>{f.actual || '—'}</span>
-                          {pl ? <span style={{ fontSize: 11.5, color: D.muted, fontVariantNumeric: 'tabular-nums' }}>{'vs ' + pl}</span> : null}
+                          <span style={{ fontFamily: SERIF, fontSize: 21, letterSpacing: '-0.02em', color: D.ink, fontVariantNumeric: 'tabular-nums' }}>{one$(f.actual) || '—'}</span>
+                          {pl ? <span style={{ fontSize: 11.5, color: D.muted, fontVariantNumeric: 'tabular-nums' }}>{'vs ' + one$(pl)}</span> : null}
                         </div>
                         <ChartTip dark title={String(r.metric || '')} rows={[
                           [f.live ? 'Live now' : 'Actual', f.actual || '—'],
@@ -6183,7 +6232,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           <div style={{ position: 'relative', height: 24 }}>
                             <span style={{ position: 'absolute', left: '50%', top: -3, bottom: -3, width: 1, background: 'rgba(255,255,255,0.28)' }} />
                             <span style={{
-                              position: 'absolute', top: 5, height: 14, background: neg ? t.accent : t.good,
+                              position: 'absolute', top: 5, height: 14, background: neg ? 'rgba(255,255,255,0.55)' : t.good,
                               ...(neg
                                 ? { right: '50%', marginRight: 2, borderRadius: '4px 0 0 4px' }
                                 : { left: '50%', marginLeft: 2, borderRadius: '0 4px 4px 0' }),
@@ -6191,7 +6240,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             }} />
                           </div>
                         </ChartTip>
-                        <p style={{ fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', textAlign: 'right', margin: 0, fontVariantNumeric: 'tabular-nums', color: f.delta ? (neg ? t.accent : t.good) : D.muted }}>{f.delta || '—'}</p>
+                        <p style={{ fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', textAlign: 'right', margin: 0, fontVariantNumeric: 'tabular-nums', color: deltaColor(neg, !!f.delta) }}>{one$(f.delta) || '—'}</p>
                       </div>
                     )
                   })}
@@ -6205,6 +6254,13 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 {edit && (
                   <div className="sb-noprint flex items-center flex-wrap" style={{ gap: 9, marginTop: 14 }}>
                     <BasisPicker label="Budget basis" value={planBasis} onPick={(v: string) => setBasis('plan', v)} t={t} />
+                    <span style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: D.muted, marginLeft: 6 }}>Show as</span>
+                    {(['simple', 'bars'] as const).map(v => (
+                      <button key={v} onClick={() => patch('plan.view', v)}
+                        style={{ fontSize: 11.5, fontWeight: 600, padding: '6px 12px', borderRadius: 999, background: planView === v ? t.accent : 'rgba(255,255,255,0.12)', color: planView === v ? '#fff' : D.ink }}>
+                        {v === 'simple' ? 'Simple numbers' : 'Bars'}
+                      </button>
+                    ))}
                     <button onClick={() => addMonth('before')} style={{ fontSize: 11.5, fontWeight: 600, padding: '6px 12px', borderRadius: 999, background: 'rgba(255,255,255,0.12)', color: D.ink }}>+ Month before</button>
                     <button onClick={() => addMonth('after')} style={{ fontSize: 11.5, fontWeight: 600, padding: '6px 12px', borderRadius: 999, background: 'rgba(255,255,255,0.12)', color: D.ink }}>+ Month after</button>
                     {months.length > 1 ? (
@@ -6407,23 +6463,69 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // from BOTH the tray and the slide. An item Jon has explicitly approved is now sorted to
           // the front, so clicking Include always puts it on the slide; what falls off the end is
           // an automatic item, which he can see and reorder.
-          if (recs && (recs.items || []).length && !hid('recs')) {
+          // MORE EDITABLE, AND FRAMED IN OUR FAVOUR (Jon, 2026-09-28: "the review feedback tab, we
+          // need to make it more editable, also need to be making us look good, highlight things
+          // we cant control without owner approval"). Every line on a card is now typed in place
+          // — the name, the tag, what we are doing, the guest's sentence — any card can be taken
+          // off, and a card can be added from scratch. The tag says whose call it is, in the
+          // owner's language: BUILDING for what the building or street causes, NEEDS YOUR
+          // APPROVAL for anything that waits on the owner's spend or say-so, and HANDLED BY STAY
+          // for what is ours — that last one still prints only when Jon includes it. Above the
+          // cards, the count of reviews that raised nothing, because that is the number that
+          // frames the rest. Overrides live on content.recsEdit[key] and content.recsCustom.
+          if (recs && ((recs.items || []).length || edit) && !hid('recs')) {
             const approved: string[] = Array.isArray(c.recsApproved) ? c.recsApproved : []
-            const shows = (r: Any) => r.cause !== 'ours' || approved.indexOf(r.key) >= 0
-            const passing = (recs.items as Any[]).filter(shows)
+            const hidden: string[] = Array.isArray(c.recsHidden) ? c.recsHidden : []
+            const over: Record<string, Any> = (c.recsEdit && typeof c.recsEdit === 'object') ? c.recsEdit : {}
+            const custom: Any[] = Array.isArray(c.recsCustom) ? c.recsCustom : []
+            type Card = { key: string; label: string; cause: string; action: string; quote: string; auto: string; mentions: number; custom: boolean }
+            const fromItem = (r: Any): Card => {
+              const o = over[r.key] || {}
+              return {
+                key: String(r.key), custom: false, mentions: Number(r.mentions || 0),
+                label: String(o.label ?? r.label ?? ''),
+                cause: String(o.cause ?? r.cause ?? 'ours'),
+                action: String(o.action ?? ((c.recsText || {})[r.key] ?? r.action ?? '')),
+                quote: String(o.quote ?? ''),
+                auto: String(r.quote || ''),
+              }
+            }
+            const cards: Card[] = (recs.items as Any[]).map(fromItem)
+              .concat(custom.map((x: Any, i: number) => ({ key: 'custom:' + i, custom: true, mentions: 0, label: String(x.label || ''), cause: String(x.cause || 'asset'), action: String(x.action || ''), quote: String(x.quote || ''), auto: '' })))
+            const shows = (r: Card) => hidden.indexOf(r.key) < 0 && (r.cause !== 'ours' || approved.indexOf(r.key) >= 0 || r.custom)
+            const passing = cards.filter(shows)
             const shown = passing
               .slice()
-              .sort((a: Any, b: Any) => (approved.indexOf(b.key) >= 0 ? 1 : 0) - (approved.indexOf(a.key) >= 0 ? 1 : 0))
-              .slice(0, 3)
-            const spare = passing.filter((r: Any) => shown.indexOf(r) < 0)
-            const held = (recs.items as Any[]).filter((r: Any) => !shows(r))
+              .sort((a: Card, b: Card) => (approved.indexOf(b.key) >= 0 ? 1 : 0) - (approved.indexOf(a.key) >= 0 ? 1 : 0))
+              .slice(0, 4)
+            const spare = passing.filter((r: Card) => shown.indexOf(r) < 0)
+            const held = cards.filter((r: Card) => !shows(r))
             const toggle = (k: string) => mutate((d: Any) => {
               const list: string[] = Array.isArray(d.recsApproved) ? d.recsApproved.slice() : []
               const at = list.indexOf(k)
               if (at >= 0) list.splice(at, 1); else list.push(k)
               d.recsApproved = list
             })
-            const CAUSE_TAG: Record<string, string> = { building: 'Building', asset: 'Asset · your call', ours: 'Ours to own' }
+            const hide = (k: string, on: boolean) => mutate((d: Any) => {
+              const list: string[] = Array.isArray(d.recsHidden) ? d.recsHidden.slice() : []
+              const at = list.indexOf(k)
+              if (on && at < 0) list.push(k); if (!on && at >= 0) list.splice(at, 1)
+              d.recsHidden = list
+            })
+            const setCard = (r: Card, field: string, v: string) => {
+              if (r.custom) { patch('recsCustom.' + r.key.slice(7) + '.' + field, v); return }
+              patch('recsEdit.' + r.key + '.' + field, v)
+            }
+            const addCard = () => mutate((d: Any) => { d.recsCustom = Array.isArray(d.recsCustom) ? d.recsCustom : []; d.recsCustom.push({ label: 'New item', cause: 'asset', action: '', quote: '' }) })
+            const removeCustom = (r: Card) => mutate((d: Any) => { if (Array.isArray(d.recsCustom)) d.recsCustom.splice(Number(r.key.slice(7)), 1) })
+            const CAUSES = ['building', 'asset', 'ours'] as const
+            const CAUSE_TAG: Record<string, string> = { building: 'Building', asset: 'Needs your approval', ours: 'Handled by Stay' }
+            const CAUSE_HINT: Record<string, string> = { building: 'Caused by the building or the street. Outside what we control.', asset: 'Waits on your go-ahead or spend. We have the plan ready.', ours: 'Ours to fix, and we are fixing it.' }
+            const tagStyle = (cause: string): React.CSSProperties =>
+              cause === 'asset' ? { background: t.accent, color: '#fff' }
+              : cause === 'building' ? { background: tint(0.08), color: tint(0.55) }
+              : { background: hexA(t.good, 0.14), color: t.good }
+            const clean = Number(recs.clean || 0), total = Number(recs.reviews || 0)
             if (shown.length || edit) {
               const n = next()
               slides.push({ key: 'recs', node: (
@@ -6433,25 +6535,55 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   <H2 w="26ch">
                     <Ed v={String(c.recsTitle || 'What guests raised, and what we are doing')} set={v => patch('recsTitle', v)} edit={edit} multiline />
                   </H2>
+                  {total ? (
+                    <p style={{ marginTop: 13, fontSize: 15, lineHeight: 1.6, color: tint(0.5), maxWidth: '62ch' }}>
+                      <Ed v={String(c.recsSub ?? (clean + ' of ' + total + ' reviews raised nothing at all. Of what the rest raised, here is whose call each one is and where it stands.'))} set={v => patch('recsSub', v)} edit={edit} multiline />
+                    </p>
+                  ) : null}
                   {shown.length ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + shown.length + ', minmax(0,1fr))', gap: 38, marginTop: 30 }}>
-                      {shown.map((r: Any, i: number) => (
-                        <div key={r.key} style={{ paddingTop: 16, borderTop: '2px solid ' + t.ink }}>
-                          <div className="flex items-baseline justify-between" style={{ gap: 10 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + shown.length + ', minmax(0,1fr))', gap: shown.length > 3 ? 26 : 38, marginTop: 26 }}>
+                      {shown.map((r: Card, i: number) => (
+                        <div key={r.key} style={{ paddingTop: 16, borderTop: '2px solid ' + (r.cause === 'asset' ? t.accent : t.ink) }}>
+                          <div className="flex items-center justify-between" style={{ gap: 10 }}>
                             <span style={{ fontFamily: SERIF, fontSize: 15, color: t.accent }}>{pad2(i + 1)}</span>
-                            <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: tint(0.38) }}>
-                              {CAUSE_TAG[String(r.cause)] || 'Noted'}{r.mentions > 1 ? ' · ' + r.mentions : ''}
-                            </span>
+                            {edit ? (
+                              <button className="sb-noprint" title={'Click to change: ' + CAUSE_HINT[r.cause]}
+                                onClick={() => setCard(r, 'cause', CAUSES[(CAUSES.indexOf(r.cause as Any) + 1) % CAUSES.length])}
+                                style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', padding: '3px 9px', borderRadius: 999, cursor: 'pointer', ...tagStyle(r.cause) }}>
+                                {CAUSE_TAG[r.cause] || 'Noted'} ↻
+                              </button>
+                            ) : (
+                              <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', padding: '3px 9px', borderRadius: 999, ...tagStyle(r.cause) }}>
+                                {CAUSE_TAG[r.cause] || 'Noted'}
+                              </span>
+                            )}
                           </div>
-                          <p style={{ fontSize: 17, fontWeight: 500, color: t.ink, margin: '12px 0 0', textTransform: 'capitalize' }}>{String(r.label || '')}</p>
-                          <p style={{ fontSize: 14, lineHeight: 1.6, color: tint(0.62), margin: '9px 0 0' }}>
-                            <Ed v={String((c.recsText || {})[r.key] || r.action || '')} set={v => patch('recsText.' + r.key, v)} edit={edit} multiline />
+                          <p style={{ fontSize: 17, fontWeight: 500, color: t.ink, margin: '12px 0 0', textTransform: r.custom ? 'none' : 'capitalize' }}>
+                            <Ed v={r.label} set={v => setCard(r, 'label', v)} edit={edit} />
+                            {r.mentions > 1 ? <span style={{ fontSize: 11, fontWeight: 500, color: tint(0.38), marginLeft: 8, textTransform: 'none' }}>{r.mentions + ' guests'}</span> : null}
                           </p>
-                          {edit && r.cause === 'ours' ? (
-                            <button onClick={() => toggle(r.key)} className="sb-noprint"
-                              style={{ marginTop: 11, fontSize: 10, fontWeight: 600, padding: '4px 10px', borderRadius: 999, background: t.accent, color: '#fff' }}>
-                              Included — take it off
+                          {r.quote ? (
+                            <p style={{ fontSize: 12.5, lineHeight: 1.5, color: tint(0.45), fontStyle: 'italic', margin: '8px 0 0' }}>
+                              &ldquo;<Ed v={r.quote} set={v => setCard(r, 'quote', v)} edit={edit} multiline />&rdquo;
+                            </p>
+                          ) : (edit && r.auto ? (
+                            <button className="sb-noprint" onClick={() => setCard(r, 'quote', r.auto)} title={r.auto}
+                              style={{ display: 'block', margin: '8px 0 0', fontSize: 11, color: tint(0.45), background: 'transparent', border: 0, padding: 0, textDecoration: 'underline', cursor: 'pointer', textAlign: 'left' }}>
+                              + Add the guest&rsquo;s own words
                             </button>
+                          ) : null)}
+                          <p style={{ fontSize: 14, lineHeight: 1.6, color: tint(0.62), margin: '9px 0 0' }}>
+                            <Ed v={r.action} set={v => setCard(r, 'action', v)} edit={edit} multiline placeholder="What we are doing, or what we need from you" />
+                          </p>
+                          {edit ? (
+                            <div className="sb-noprint flex flex-wrap" style={{ gap: 6, marginTop: 11 }}>
+                              {r.cause === 'ours' && !r.custom ? (
+                                <button onClick={() => toggle(r.key)} style={{ fontSize: 10, fontWeight: 600, padding: '4px 10px', borderRadius: 999, background: t.accent, color: '#fff' }}>Included — take it off</button>
+                              ) : null}
+                              <button onClick={() => r.custom ? removeCustom(r) : hide(r.key, true)} style={{ fontSize: 10, fontWeight: 600, padding: '4px 10px', borderRadius: 999, border: '1px solid ' + tint(0.2), color: tint(0.55), background: 'transparent' }}>
+                                {r.custom ? 'Delete' : 'Take off this report'}
+                              </button>
+                            </div>
                           ) : null}
                         </div>
                       ))}
@@ -6463,24 +6595,26 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   )}
 
                   {/* TEAM ONLY — never rendered for an owner, at any width. */}
-                  {edit && (held.length || spare.length) ? (
+                  {edit ? (
                     <div className="sb-noprint" style={{ marginTop: 'auto', paddingTop: 16, borderTop: '1px dashed ' + tint(0.2) }}>
                       <div className="flex flex-wrap items-center" style={{ gap: 8 }}>
                         <span style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: tint(0.45), marginRight: 4 }}>
-                          {held.length ? 'Ours to own — off the owner\u2019s copy' : 'Not on this slide'}
+                          {held.length ? 'Off the owner\u2019s copy' : 'Not on this slide'}
                         </span>
-                        {held.map((r: Any) => (
-                          <button key={r.key} onClick={() => toggle(r.key)} title={String(r.quote || '')}
+                        {held.map((r: Card) => (
+                          <button key={r.key} onClick={() => hidden.indexOf(r.key) >= 0 ? hide(r.key, false) : toggle(r.key)} title={r.auto || ''}
                             style={{ fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 999, background: t.card, border: '1px solid ' + tint(0.15), color: tint(0.62), textTransform: 'capitalize' }}>
-                            + {String(r.label)} <span style={{ color: tint(0.35) }}>{r.mentions}</span>
+                            + {r.label} {r.mentions ? <span style={{ color: tint(0.35) }}>{r.mentions}</span> : null}
                           </button>
                         ))}
-                        {spare.map((r: Any) => (
-                          <span key={r.key} title="Passes the filter, but only three fit the slide"
+                        {spare.map((r: Card) => (
+                          <span key={r.key} title="Passes the filter, but only four fit the slide"
                             style={{ fontSize: 12, padding: '5px 11px', borderRadius: 999, background: 'transparent', border: '1px dashed ' + tint(0.15), color: tint(0.35), textTransform: 'capitalize' }}>
-                            {String(r.label)}
+                            {r.label}
                           </span>
                         ))}
+                        <button onClick={addCard} title="A card of your own. Click its tag to set whose call it is: Building (outside our control), Needs your approval (waits on the owner, highlighted), Handled by Stay (ours)."
+                          style={{ fontSize: 12, fontWeight: 600, padding: '5px 11px', borderRadius: 999, border: '1px dashed ' + t.accent, color: t.accent, background: 'transparent' }}>+ Add an item</button>
                       </div>
                     </div>
                   ) : null}
