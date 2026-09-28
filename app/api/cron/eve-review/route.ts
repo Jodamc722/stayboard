@@ -11,6 +11,7 @@ import { recordRun } from '@/lib/automation-runs'
 import { runReview } from '@/lib/eve/review'
 import { runLearningAudit } from '@/lib/eve/learning-audit'
 import { runQualityAudit } from '@/lib/eve/quality-audit'
+import { runExpectationsDesk } from '@/lib/eve/expectations'
 import { eveGate } from '../../agent/route'
 
 export const dynamic = 'force-dynamic'
@@ -53,10 +54,18 @@ async function run(req: NextRequest) {
     try { quality = await runQualityAudit({ by: human || 'cron:quality-audit' }) } catch (e: any) { quality = { ok: false, error: String(e?.message || e).slice(0, 160) } }
     await recordRun({ name: 'quality-audit', ok: !!quality?.ok, itemCount: quality?.ok ? quality.findings.length : 0, error: quality?.ok ? undefined : quality?.error, detail: quality?.ok ? { headline: quality.headline, filed: quality.filed, posted: quality.posted, noSignal: quality.noSignal, model: quality.model, pack: quality.pack } : { pack: quality?.pack }, ms: Date.now() - q0 })
   }
+  // THE EXPECTATIONS DESK (Jon, 2026-09-28) rides the same Monday: the notes for CS and admin on
+  // what guests keep being surprised by. ?expectations=0 skips it; own try, own receipt.
+  let expectations: any = null
+  if (!focus && new URL(req.url).searchParams.get('expectations') !== '0') {
+    const e0 = Date.now()
+    try { expectations = await runExpectationsDesk({ by: human || 'cron:expectations' }) } catch (e: any) { expectations = { ok: false, error: String(e?.message || e).slice(0, 160) } }
+    await recordRun({ name: 'expectations', ok: !!expectations?.ok, itemCount: expectations?.ok ? expectations.written : 0, error: expectations?.ok ? undefined : expectations?.error, detail: expectations?.ok ? { reopened: expectations.reopened, model: expectations.model, pack: expectations.pack, buildings: expectations.buildings } : { pack: expectations?.pack }, ms: Date.now() - e0 })
+  }
   await recordRun({
     name: 'eve-review', ok: res.ok, itemCount: res.ok ? res.review.plans.length : 0,
     error: res.ok ? undefined : res.error,
     detail: res.ok ? { id: res.id, headline: res.review.headline, plans: res.persisted.plans, questions: res.persisted.questions, retired: res.persisted.retired, packTokens: res.pack.tokens, learning } : { pack: res.pack, learning },
   })
-  return NextResponse.json({ ...res, learning, quality }, { status: res.ok ? 200 : 500 })
+  return NextResponse.json({ ...res, learning, quality, expectations }, { status: res.ok ? 200 : 500 })
 }
