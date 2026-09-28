@@ -6236,26 +6236,24 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               <Frame note="plan" nav="Budget" sec="Performance" subj="Against budget" tone="dark" n={n}>
                 <RTitle k="plan" dark />
 
-                {/* THE RAIL — every month on the report, the selected one lit and ruled. */}
+                {/* THE RAIL — every month on the report, the selected one lit and ruled. Months only
+                    (Jon, 2026-09-28: "remove the rev number, just have the month to click"): the
+                    rail used to print each month's revenue gap under its name, which put three
+                    shortfalls in a row above the detail — the loudest line on the slide. The gap
+                    is in the rows below for the month that is open; the rail is now a tab strip. */}
                 <div className="flex items-stretch" style={{ marginTop: 20, borderBottom: '1px solid ' + D.rule }}>
                   {months.map((m: Any, j: number) => {
-                    const h = headline(m)
-                    const hd = j === ix ? figures(h).delta : String(h.delta || '')
-                    const neg = /^[-−]/.test(String(hd || '')) || (h.good === false && j !== ix)
                     const on = j === ix
                     return (
                       <button key={j} onClick={() => setPlanIx(j)} title={String(m.label || '')}
                         style={{
-                          flex: 1, minWidth: 0, textAlign: 'left', padding: '0 18px 13px 0', background: 'transparent',
+                          flex: '0 1 auto', minWidth: 0, textAlign: 'left', padding: '4px 34px 13px 0', background: 'transparent',
                           cursor: months.length > 1 ? 'pointer' : 'default',
                           borderBottom: '2px solid ' + (on ? t.accent : 'transparent'), marginBottom: -1,
                         }}>
-                        <span style={{ display: 'block', fontSize: 9.5, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: on ? D.ink : D.muted }}>
+                        <span style={{ display: 'block', fontSize: 11, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: on ? D.ink : D.muted, whiteSpace: 'nowrap' }}>
                           {String(m.label || '').replace(/\s+\d{4}$/, '')}
-                          <span style={{ opacity: 0.6, letterSpacing: '0.1em', marginLeft: 8 }}>{String(m.status || '')}</span>
-                        </span>
-                        <span style={{ display: 'block', fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', marginTop: 8, fontVariantNumeric: 'tabular-nums', opacity: on ? 1 : 0.6, color: deltaColor(neg, !!hd) }}>
-                          {one$(hd) || '—'}
+                          <span style={{ opacity: 0.6, letterSpacing: '0.1em', marginLeft: 8, fontWeight: 500 }}>{String(m.status || '')}</span>
                         </span>
                       </button>
                     )
