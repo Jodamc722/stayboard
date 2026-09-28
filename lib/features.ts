@@ -318,12 +318,22 @@ export function overriddenKeys(features: Record<string, any> | null | undefined)
 
 // Resolve the full level map for a user: the role's level for each feature, overridden per-person
 // where one is set.
+// HAND-PICKED FEATURES (Jon, 2026-09-28: "only specific users will get access to the Garden
+// drop-down… a different business with different staff… they will be hand-selected. For now, it
+// should only be me"). No role, workspace bundle or admin flag grants these — only a per-person
+// setting on /users → Edit access (features.garden = view|edit|full), or the superadmin.
+export const HAND_PICKED: string[] = ['garden']
+export function applyHandPicked(levels: Record<string, Level>, features?: Record<string, any> | null): Record<string, Level> {
+  for (const k of HAND_PICKED) levels[k] = userOverride(features, k) ?? 'off'
+  return levels
+}
+
 export function levelsForRole(role: RoleDef | null | undefined, features?: Record<string, any> | null): Record<string, Level> {
   const out: Record<string, Level> = {}
   for (const f of FEATURES) {
     out[f.key] = userOverride(features, f.key) ?? roleLevel(role, f.key)
   }
-  return out
+  return applyHandPicked(out, features)
 }
 
 // Legacy fallback when app_roles is missing or the user has no access_role yet: the old
@@ -336,7 +346,7 @@ export function legacyLevels(ws: any, features?: Record<string, any> | null): Re
     // assigned a role — otherwise the override would silently do nothing for legacy users.
     out[f.key] = userOverride(features, f.key) ?? (workspaceAllows(ws, f.key) ? 'full' : 'off')
   }
-  return out
+  return applyHandPicked(out, features)
 }
 
 // Landing for a level map: preferred landing if visible, else first visible page, else /no-access.

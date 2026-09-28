@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { cloudbedsConfigured, setHousekeeping } from '@/lib/garden/cloudbeds'
+import { emitGardenEvent } from '@/lib/garden/triggers'
 
 export const dynamic = 'force-dynamic'
 const KINDS = ['clean', 'stayover', 'inspection', 'deep_clean', 'maintenance']
@@ -56,6 +57,7 @@ export async function PATCH(req: NextRequest) {
   if (b?.note !== undefined) patch.note = b.note ? String(b.note).slice(0, 500) : null
   const { error } = await db.from('garden_tasks').update(patch).eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (patch.status === 'done') await emitGardenEvent('task_done', id, { kind: t.kind, room_name: t.room_name, room_id: t.room_id, reservation_id: t.reservation_id })
   let warning: string | null = null
   const push = b?.pushCloudbeds !== false
   if (patch.status === 'done' && push && t.room_id && cloudbedsConfigured() && (t.kind === 'clean' || t.kind === 'stayover' || t.kind === 'inspection')) {

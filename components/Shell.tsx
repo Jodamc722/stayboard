@@ -270,7 +270,8 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     if (key === 'vr') { try { const last = localStorage.getItem(LAST_VR_PATH_KEY); if (last && last.startsWith('/') && !last.startsWith('/garden')) to = last } catch {} }
     router.push(to)
   }
-  const canSeeGarden = () => isOwner || (levels ? levels.garden != null && levels.garden !== 'off' : true)
+  // Hand-picked (lib/features HAND_PICKED): shown only once levels say so — never on a guess.
+  const canSeeGarden = () => isOwner || (!!levels && levels.garden != null && levels.garden !== 'off')
   const pinsLoaded = useRef(false)
   const dragFrom = useRef<number | null>(null)
 

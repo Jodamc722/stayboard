@@ -63,6 +63,9 @@ const TOOLS = [
   { name: 'calls', description: 'Arrivals in the next 7 days with whether they were reached by phone, ID and card verification status, and every call logged; plus the recent call log.', input_schema: { type: 'object', properties: {} } },
   { name: 'report', description: 'Occupancy, arrivals by source, booked revenue and ADR, cleans done by kind, calls reached rate and verifications for a date range.', input_schema: { type: 'object', properties: { from: { type: 'string', description: 'YYYY-MM-DD' }, to: { type: 'string', description: 'YYYY-MM-DD' } }, required: ['from', 'to'] } },
   { name: 'status', description: 'Whether Cloudbeds is connected and when each feed last synced.', input_schema: { type: 'object', properties: {} } },
+  { name: 'call_desk', description: 'What the front desk owes each guest right now: welcome calls due, verifications pending, post-stay calls — with attempts so far.', input_schema: { type: 'object', properties: {} } },
+  { name: 'reviews', description: 'Recent reviews (90 days) with the average, the negative ones, the themes, and which still have no reply.', input_schema: { type: 'object', properties: { only: { type: 'string', description: 'optional: negative | unanswered' } } } },
+  { name: 'schedule', description: 'This week: who is on shift each day and what the day holds (cleans, stayovers, arrivals), with where the roster is short.', input_schema: { type: 'object', properties: {} } },
   { name: 'remember', description: 'Save something you were told about the hotel so you know it next time (a rule, a fact about a room or a guest, a preference). Only for things a person told you, never your own guesses.', input_schema: { type: 'object', properties: { content: { type: 'string' }, kind: { type: 'string', description: 'fact | rule | preference | person' }, subject: { type: 'string', description: 'a room number, a guest name, a vendor, or "hotel"' } }, required: ['content'] } },
 ]
 
@@ -81,6 +84,9 @@ async function runTool(name: string, args: any, by: string | null): Promise<any>
       return await gardenReport(ok(args?.from) ? args.from : todayET(-29), ok(args?.to) ? args.to : todayET(0))
     }
     if (name === 'status') return await gardenStatus()
+    if (name === 'call_desk') { const { callQueue } = await import('./call-desk'); const q = await callQueue({ days: 3 }); return { count: q.length, calls: q.map((x: any) => ({ kind: x.kind, guest: x.reservation?.guest_name, room: (x.reservation?.room_names || []).join(', '), check_in: x.reservation?.check_in, due: x.due_at, dueNow: x.dueNow, attempts: x.attempts, lastOutcome: x.last_outcome })) } }
+    if (name === 'reviews') { const { reviewStats } = await import('./reviews'); const db = supabaseAdmin(); let q = db.from('garden_reviews').select('source,guest_name,rating,max_rating,title,body,received_at,sentiment,themes,reply_status').gte('received_at', new Date(Date.now() - 90 * 86400000).toISOString()).order('received_at', { ascending: false }).limit(40); if (args?.only === 'negative') q = q.eq('sentiment', 'negative'); if (args?.only === 'unanswered') q = q.in('reply_status', ['none', 'drafted']); const { data } = await q; return { stats: await reviewStats(90), reviews: data || [] } }
+    if (name === 'schedule') { const { weekSchedule, weekStart } = await import('./schedule'); const w = await weekSchedule(weekStart(), 7); return { from: w.from, days: w.days.map((d: any) => ({ date: d.date, load: d.load, on: d.shifts.map((s: any) => `${s.staff?.name} (${s.role} ${s.start_time}–${s.end_time})`), short: d.suggest.gaps.filter((g: any) => g.short).map((g: any) => `${g.role} short ${g.short}`) })) } }
     if (name === 'remember') { const id = await adamRemember({ content: args?.content, kind: args?.kind, subject: args?.subject, by, source: 'chat' }); return { ok: !!id, id } }
     return { error: 'unknown tool' }
   } catch (e: any) { return { error: String(e?.message || e).slice(0, 300) } }
@@ -107,7 +113,7 @@ export async function runAdam(input: { access: Access; messages: { role: 'user' 
     settings.direction,
     `Today is ${todayET(0)} (America/New_York). The person asking is ${email || 'a team member'}.`,
     status ? `Cloudbeds: ${status.mode === 'none' ? 'NOT CONNECTED yet — the hotel tables may be empty; say so plainly rather than inventing numbers' : `connected (${status.mode})`}. Rooms in mirror: ${status.rooms}. Reservations in mirror: ${status.reservations}.` : '',
-    `Use the tools for anything about today, rooms, cleans, calls, verifications or numbers — never guess a figure. When someone tells you a rule or a fact about the hotel, call remember. Answer in a few short lines; no headers.`,
+    `Use the tools for anything about today, rooms, cleans, the call desk, verifications, reviews, the schedule or numbers — never guess a figure. When someone tells you a rule or a fact about the hotel, call remember. Answer in a few short lines; no headers.`,
     `What you have been taught about the hotel:\n${memoryBlock}`,
   ].filter(Boolean).join('\n\n')
 

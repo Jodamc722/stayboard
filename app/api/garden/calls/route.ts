@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { noteAttempt } from '@/lib/garden/call-desk'
 
 export const dynamic = 'force-dynamic'
 const CALL_KINDS = ['pre_arrival', 'welcome', 'verification', 'post_stay', 'other']
@@ -40,5 +41,6 @@ export async function POST(req: NextRequest) {
     called_by: by, duration_min: b?.durationMin != null ? Math.max(0, Math.round(Number(b.durationMin) || 0)) : null,
     note: b?.note ? String(b.note).slice(0, 500) : null,
   }).select('*').single()
+  if (!error && resId) await noteAttempt(resId, kind, outcome, by).catch(() => {})
   return error ? NextResponse.json({ error: error.message }, { status: 500 }) : NextResponse.json({ ok: true, call: data })
 }

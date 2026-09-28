@@ -9,7 +9,7 @@ import 'server-only'
 import { NextResponse } from 'next/server'
 import { createClient } from './supabase-server'
 import { supabaseAdmin } from './supabase-admin'
-import { normWorkspace, type Workspace, type Level, type RoleDef, levelsForRole, legacyLevels, landingFor, atLeast, workspaceDef, FEATURES } from './features'
+import { normWorkspace, type Workspace, type Level, type RoleDef, levelsForRole, legacyLevels, landingFor, atLeast, workspaceDef, FEATURES, applyHandPicked } from './features'
 
 export type Role = 'admin' | 'member'
 export type Access = {
@@ -56,7 +56,8 @@ export function bustRolesCache() { _rolesAt = 0 }
 export function resolveLevels(row: { role?: string | null; access_role?: string | null; workspace?: string | null; features?: any },
   roles: RoleDef[] | null): { levels: Record<string, Level>; landing: string; accessRole: string | null } {
   const features = (row.features && typeof row.features === 'object') ? row.features : null
-  if (row.role === 'admin') return { levels: ALL_FULL(), landing: '/command', accessRole: 'admin' }
+  // An admin has everything — except the hand-picked features, which stay per person (lib/features).
+  if (row.role === 'admin') return { levels: applyHandPicked(ALL_FULL(), features), landing: '/command', accessRole: 'admin' }
   const roleDef = roles && row.access_role ? roles.find(r => r.key === row.access_role) || null : null
   if (roleDef) {
     const levels = levelsForRole(roleDef, features)

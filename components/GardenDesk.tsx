@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Hotel, RefreshCw, Loader2, Check, Play, Plus, Phone, ShieldCheck, Undo2, X, Plug, KeyRound } from 'lucide-react'
 import { LeanHead, LeanTabs, LeanList, LeanRow, LeanSection, LeanEmpty, Tag, Pill, IconBtn, type Tone } from '@/components/lean'
+import { GardenCallDesk } from '@/components/GardenOps'
 
 type View = 'today' | 'rooms' | 'calls' | 'reports' | 'setup'
 const j = async (url: string, init?: RequestInit) => { const r = await fetch(url, { cache: 'no-store', ...init }); return r.json() }
@@ -172,13 +173,14 @@ function Rooms({ d, canEdit, reload }: { d: any; canEdit: boolean; reload: () =>
 
 // ---- Calls & verifications ---------------------------------------------------------------------
 function Calls({ d, canEdit, reload }: { d: any; canEdit: boolean; reload: () => void }) {
-  const [tab, setTab] = useState<'due' | 'all' | 'log'>('due')
+  const [tab, setTab] = useState<'desk' | 'due' | 'all' | 'log'>('desk')
   const due = d.upcoming.filter((r: any) => !r.reached || r.idStatus === 'pending' || r.cardStatus === 'pending')
   const list = tab === 'due' ? due : d.upcoming
   return (
     <>
-      <LeanTabs value={tab} onChange={setTab} tabs={[{ key: 'due', label: 'Needs a call or a check', n: due.length }, { key: 'all', label: 'Arriving this week', n: d.upcoming.length }, { key: 'log', label: 'Call log', n: d.recent.length }]} />
-      {tab !== 'log' ? (list.length ? (
+      <LeanTabs value={tab} onChange={setTab} tabs={[{ key: 'desk', label: 'Welcome calls & the desk' }, { key: 'due', label: 'Needs a call or a check', n: due.length }, { key: 'all', label: 'Arriving this week', n: d.upcoming.length }, { key: 'log', label: 'Call log', n: d.recent.length }]} />
+      {tab === 'desk' ? <GardenCallDesk canEdit={canEdit} onLogged={reload} /> : null}
+      {tab !== 'log' && tab !== 'desk' ? (list.length ? (
         <LeanList>
           {list.map((r: any) => (
             <LeanRow key={r.id} name={r.guest_name || 'Guest'} meta={`${(r.room_names || []).join(', ') || 'no room'} · ${dayLabel(r.check_in)} · ${r.nights ?? '?'}n${r.guest_phone ? ` · ${r.guest_phone}` : ''}${r.source ? ` · ${r.source}` : ''}`}

@@ -7,7 +7,7 @@
 // so a link into the hotel lands in the hotel and the back button behaves.
 //
 // Shared by Shell (the dropdown + which nav to draw). Pure; safe on the client.
-import { Hotel, ListChecks, BedDouble, PhoneCall, BarChart3, Plug, Sparkles } from 'lucide-react'
+import { Hotel, ListChecks, BedDouble, PhoneCall, BarChart3, Plug, Sparkles, CalendarRange, Star, FileText, Settings } from 'lucide-react'
 
 export type BusinessKey = 'vr' | 'garden'
 export type Business = { key: BusinessKey; label: string; short: string; landing: string; prefix: string | null }
@@ -31,11 +31,11 @@ export const businessDef = (key: BusinessKey): Business => BUSINESSES.find(b => 
  * permission key ('garden') covers all of it; Users & admin is appended by Shell for admins.
  */
 export const GARDEN_SECTIONS: { title: string; items: { to: string; label: string; Icon: any }[] }[] = [
-  { title: 'Overview',   items: [{ to: '/garden',         label: 'Today',                 Icon: ListChecks }] },
-  { title: 'Operations', items: [{ to: '/garden/rooms',   label: 'Rooms & cleans',        Icon: BedDouble }] },
-  { title: 'Guests',     items: [{ to: '/garden/calls',   label: 'Calls & verifications', Icon: PhoneCall }] },
-  { title: 'Money',      items: [{ to: '/garden/reports', label: 'Reports',               Icon: BarChart3 }] },
-  { title: 'Settings',   items: [{ to: '/garden/adam',    label: 'Adam',                  Icon: Sparkles }, { to: '/garden/setup', label: 'Cloudbeds & feeds', Icon: Plug }] },
+  { title: 'Overview',   items: [{ to: '/garden',               label: 'Today',                 Icon: ListChecks }] },
+  { title: 'Operations', items: [{ to: '/garden/rooms',         label: 'Rooms & cleans',        Icon: BedDouble }, { to: '/garden/schedule', label: 'Scheduler', Icon: CalendarRange }] },
+  { title: 'Guests',     items: [{ to: '/garden/calls',         label: 'Calls & verifications', Icon: PhoneCall }, { to: '/garden/reviews', label: 'Reviews', Icon: Star }] },
+  { title: 'Money',      items: [{ to: '/garden/reports',       label: 'Reports',               Icon: BarChart3 }, { to: '/garden/owner-reports', label: 'Owner reports', Icon: FileText }] },
+  { title: 'Settings',   items: [{ to: '/garden/adam',          label: 'Adam',                  Icon: Sparkles }, { to: '/garden/settings', label: 'Settings', Icon: Settings }, { to: '/garden/setup', label: 'Cloudbeds & feeds', Icon: Plug }] },
 ]
 export const GARDEN_NAV = GARDEN_SECTIONS.flatMap(s => s.items)
 export const GARDEN_ICON = Hotel

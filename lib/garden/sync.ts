@@ -14,6 +14,7 @@
 import 'server-only'
 import { supabaseAdmin } from '../supabase-admin'
 import { cloudbedsConfigured, getRooms, getReservations, getHousekeeping } from './cloudbeds'
+import { emitGardenEvent } from './triggers'
 
 const ET = 'America/New_York'
 export const todayET = (offsetDays = 0): string => {
@@ -29,12 +30,13 @@ async function mark(entity: string, ok: { count?: number } | { error: string }) 
   await db.from('garden_sync_status').upsert(row, { onConflict: 'entity' })
 }
 
-export type GardenSyncResult = { ok: boolean; connected: boolean; rooms?: number; reservations?: number; housekeeping?: number; cleans?: number; errors: string[] }
+export type GardenSyncResult = { ok: boolean; connected: boolean; rooms?: number; reservations?: number; housekeeping?: number; cleans?: number; events?: number; queue?: any; triggers?: any; phone?: any; errors: string[] }
 
 export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenSyncResult> {
   const out: GardenSyncResult = { ok: true, connected: cloudbedsConfigured(), errors: [] }
   if (!out.connected) {
     await Promise.all(['rooms', 'reservations', 'housekeeping'].map(e => mark(e, { error: 'not connected — set CLOUDBEDS_API_KEY (or the OAuth trio) and CLOUDBEDS_PROPERTY_ID in Vercel' }).catch(() => {})))
+    await runGardenDesks(out)
     return out
   }
   const db = supabaseAdmin()
@@ -61,6 +63,24 @@ export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenS
     }
     const list = since ? [...await getReservations({ from, to, modifiedSince: since }), ...await getReservations({ from, to })] : await getReservations({ from, to })
     const byId = new Map(list.map(r => [r.id, r]))
+    // What changed, for the triggers (garden_events): new bookings, cancellations, check-in/out.
+    const ids = Array.from(byId.keys())
+    const before: Record<string, any> = {}
+    for (let i = 0; i < ids.length; i += 300) { const { data } = await db.from('garden_reservations').select('id,status,check_in,check_out,room_ids').in('id', ids.slice(i, i + 300)); for (const b of ((data || []) as any[])) before[b.id] = b }
+    let events = 0
+    for (const r of Array.from(byId.values())) {
+      const b = before[r.id]
+      const pl = { guest_name: r.guestName, check_in: r.checkIn, check_out: r.checkOut, source: r.source, status: r.status }
+      if (!b) { if (r.status !== 'canceled') { await emitGardenEvent('reservation_created', r.id, pl); events++ } continue }
+      if (b.status !== r.status) {
+        if (r.status === 'canceled' || r.status === 'no_show') await emitGardenEvent('reservation_cancelled', r.id, pl)
+        else if (r.status === 'checked_in') await emitGardenEvent('checked_in', r.id, pl)
+        else if (r.status === 'checked_out') await emitGardenEvent('checked_out', r.id, pl)
+        else await emitGardenEvent('reservation_changed', r.id, pl)
+        events++
+      } else if (b.check_in !== r.checkIn || b.check_out !== r.checkOut || JSON.stringify(b.room_ids || []) !== JSON.stringify(r.roomIds)) { await emitGardenEvent('reservation_changed', r.id, pl); events++ }
+    }
+    out.events = events
     const rows = Array.from(byId.values()).map(r => ({
       id: r.id, status: r.status, guest_name: r.guestName, guest_email: r.guestEmail, guest_phone: r.guestPhone,
       check_in: r.checkIn, check_out: r.checkOut,
@@ -79,8 +99,11 @@ export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenS
   // 3) Housekeeping status → garden_rooms
   try {
     const hk = await getHousekeeping()
+    const { data: cur } = await db.from('garden_rooms').select('id,hk_status,name')
+    const curBy: Record<string, any> = {}; for (const c of ((cur || []) as any[])) curBy[c.id] = c
     for (const h of hk) {
       await db.from('garden_rooms').update({ hk_status: h.condition, occupied: h.occupied, hk_updated_at: new Date().toISOString() }).eq('id', h.roomId)
+      if (h.condition === 'dirty' && curBy[h.roomId] && curBy[h.roomId].hk_status !== 'dirty') await emitGardenEvent('room_dirty', h.roomId, { room_name: curBy[h.roomId].name })
     }
     out.housekeeping = hk.length
     await mark('housekeeping', { count: hk.length })
@@ -88,7 +111,34 @@ export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenS
 
   // 4) Auto cleans from the mirror
   try { out.cleans = await ensureCleans() } catch (e: any) { out.errors.push(`cleans: ${e?.message || e}`) }
+  // 5) The desks that ride the sync: the day's events, the call queue, the triggers, the phone.
+  await runGardenDesks(out)
   return out
+}
+
+/**
+ * Everything that follows a fresh mirror — and runs even when Cloudbeds is not connected, so a
+ * manually entered reservation or an imported review still moves the desks.
+ */
+export async function runGardenDesks(out: GardenSyncResult): Promise<void> {
+  try { await emitDayEvents() } catch (e: any) { out.errors.push(`day events: ${e?.message || e}`) }
+  try { const { buildCallQueue } = await import('./call-desk'); out.queue = await buildCallQueue() } catch (e: any) { out.errors.push(`call queue: ${e?.message || e}`) }
+  try { const { runTriggers } = await import('./triggers'); out.triggers = await runTriggers({ by: 'sync' }) } catch (e: any) { out.errors.push(`triggers: ${e?.message || e}`) }
+  try { const { syncPhone } = await import('./phone'); out.phone = await syncPhone() } catch (e: any) { out.errors.push(`phone: ${e?.message || e}`) }
+}
+
+/** arrival_tomorrow / departure_today, once per reservation per day (stamped in evidence-free form on app_settings). */
+async function emitDayEvents(): Promise<void> {
+  const db = supabaseAdmin()
+  const { getSetting, setSetting } = await import('../app-settings')
+  const t0 = todayET(0), t1 = todayET(1)
+  const st = await getSetting<any>('garden_day_events', null).catch(() => null)
+  if (st?.day === t0) return
+  const { data: arr } = await db.from('garden_reservations').select('id,guest_name,room_names,check_in,check_out,source').eq('check_in', t1).in('status', ['confirmed', 'not_confirmed'])
+  const { data: dep } = await db.from('garden_reservations').select('id,guest_name,room_names,check_in,check_out,source').eq('check_out', t0).in('status', ['confirmed', 'checked_in'])
+  for (const r of ((arr || []) as any[])) await emitGardenEvent('arrival_tomorrow', r.id, r)
+  for (const r of ((dep || []) as any[])) await emitGardenEvent('departure_today', r.id, r)
+  await setSetting('garden_day_events', { day: t0, arrivals: (arr || []).length, departures: (dep || []).length }, 'garden-sync')
 }
 
 /**
