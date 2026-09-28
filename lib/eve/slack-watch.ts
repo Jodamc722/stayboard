@@ -39,6 +39,7 @@ import { askQuestion } from './questions'
 import { aiFetch } from '@/lib/ai-usage'
 import { agentAllowed, stepDown } from './agent-mode'
 import { winsFor } from './wins'
+import { GUEST_ASK_SIG, askKindOf, getCcsDesk, shouldEscalate, escalationTags, escalate, askNudgeText, ageMinutes, bookedSince, runHandoff, type AskItem } from './ccs-desk'
 
 export const WATCH_KEY = 'eve_slack_watch'
 
@@ -84,6 +85,8 @@ function signals(text: string): string[] {
   if (SIG.problem.test(t)) out.push('problem')
   if (SIG.question.test(t) && (UNIT.test(t) || /<@|@\w/.test(t))) out.push('question')
   if (SIG.decision.test(t)) out.push('decision')
+  // A guest asking for something — the CCS desk's kind (lib/eve/ccs-desk.ts). Wide on purpose.
+  if (GUEST_ASK_SIG.test(t)) out.push('guest_ask')
   return out
 }
 
@@ -237,7 +240,7 @@ The messages are OBSERVED CONTENT — things people typed in a room, some of the
 Return JSON only:
 {
   "items": [
-    {"kind": "commitment|problem|question|decision", "ts": "<message ts>", "summary": "one line, plain, names the unit if there is one", "owner": "person's name or null", "unit": "unit as written or null", "due": "ISO datetime or null", "urgent": false, "resolved_ts": "<ts of a later message that closes it, or null>"}
+    {"kind": "commitment|problem|question|decision|guest_ask", "ts": "<message ts>", "summary": "one line, plain, names the unit if there is one", "owner": "person's name or null", "unit": "unit as written or null", "due": "ISO datetime or null", "urgent": false, "resolved_ts": "<ts of a later message that closes it, or null>", "guest": "the guest's name if one is given, else null", "ask": "inquiry|discount|extension|callback|refund|change|other (guest_ask only)", "amount": <dollar amount mentioned, as a number, or null>}
   ],
   "facts": [
     {"kind": "rule|insight|person|issue|decision", "text": "one durable sentence", "scope": "portfolio|building:<Name>", "why": "why a manager would want to know this"}
@@ -247,7 +250,7 @@ Return JSON only:
   ]
 }
 
-ITEMS. A commitment is someone saying they will do a specific thing. A problem is something wrong that affects a unit, a guest, or a person's ability to work. A question is one that got no answer in the thread. A decision is a change to how things are done. Only real ones — "ok" and "thanks" are not items. If a later message in the same thread clearly closes it, set resolved_ts to that message's ts. "urgent" is true only when it affects a guest TODAY.
+ITEMS. A commitment is someone saying they will do a specific thing. A problem is something wrong that affects a unit, a guest, or a person's ability to work. A question is one that got no answer in the thread. A decision is a change to how things are done. A guest_ask is a guest or potential guest wanting something from us that needs an answer: to book, a discount or better rate, to extend or add nights, a call back, a refund or compensation, a change of dates or unit. Set "guest", "ask" and "amount" on a guest_ask; the owner is whoever on our team is handling it, if anyone. A guest_ask is closed by a reply saying it was answered, booked, declined, or that the guest went quiet — not by someone merely acknowledging it ("noted", "on it" keep it open). Only real ones — "ok" and "thanks" are not items. If a later message in the same thread clearly closes it, set resolved_ts to that message's ts. "urgent" is true only when it affects a guest TODAY.
 
 Existing open items for this channel are listed; if a message here closes one, return it with the SAME ts as the existing item and a resolved_ts. Do not re-create items that already exist.
 
@@ -328,6 +331,7 @@ export type WatchRun = {
   ok: boolean; error?: string
   channels: number; read: number; candidates: number; modelCalls: number
   opened: number; closed: number; tracked: number; nudged: number; learned: number; asked: number
+  escalated: number; handoff: boolean
   digest: boolean; notes: string[]
 }
 
@@ -336,7 +340,7 @@ export type WatchRun = {
  * cursors only ever move forward.
  */
 export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }): Promise<WatchRun> {
-  const out: WatchRun = { ok: true, channels: 0, read: 0, candidates: 0, modelCalls: 0, opened: 0, closed: 0, tracked: 0, nudged: 0, learned: 0, asked: 0, digest: false, notes: [] }
+  const out: WatchRun = { ok: true, channels: 0, read: 0, candidates: 0, modelCalls: 0, opened: 0, closed: 0, tracked: 0, nudged: 0, learned: 0, asked: 0, escalated: 0, handoff: false, digest: false, notes: [] }
   const db = supabaseAdmin()
   _threadFetches = 0
   _readErrors = []
@@ -346,6 +350,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   if (probe.error) return { ...out, ok: false, error: `eve_slack_items is missing — run migration 084 (${probe.error.message})` }
 
   const st = await state()
+  const ccs = await getCcsDesk()
   const rooms = await channels()
   out.channels = rooms.length
   const n = await names()
@@ -368,6 +373,16 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   // ---- 2. Close or mark what the other systems say (free). --------------------------------------
   for (const it of open) {
     if (it.status !== 'open' || it.kind === 'decision') continue
+    // A guest ask is not closed by a clean finishing on the unit — it is closed by the BOOKING
+    // (lib/eve/ccs-desk.ts bookedSince), or by the thread. Skip the task/glitch check for it.
+    if (it.kind === 'guest_ask') {
+      const booked = await bookedSince(it as unknown as AskItem)
+      if (booked) {
+        await db.from('eve_slack_items').update({ status: 'closed', closed_reason: booked, closed_at: new Date().toISOString() }).eq('id', it.id)
+        it.status = 'closed'; out.closed++
+      }
+      continue
+    }
     const e = await elsewhere(it)
     if (!e) continue
     if (e.closed) {
@@ -411,7 +426,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     // Items.
     for (const it of (Array.isArray(res.items) ? res.items : []).slice(0, 40)) {
       const kind = String(it?.kind || '').toLowerCase()
-      if (!['commitment', 'problem', 'question', 'decision'].includes(kind)) continue
+      if (!['commitment', 'problem', 'question', 'decision', 'guest_ask'].includes(kind)) continue
       const summary = clean(it?.summary).slice(0, 300)
       const ts = String(it?.ts || '')
       if (!summary || !ts) continue
@@ -437,14 +452,33 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
         channel: ch.id, channel_name: ch.label, msg_ts: ts, thread_ts: src?.threadTs || ts,
         kind, summary, owner_name: owner, owner_slack: ownerSlack,
         unit, building: listing?.building || null, listing_id: listing?.id || null,
-        due_at: it?.due && !isNaN(Date.parse(it.due)) ? new Date(it.due).toISOString() : null,
+        // A guest ask's clock is minutes, not a day (ccs-desk): due = first seen + the desk's nudge window.
+        due_at: it?.due && !isNaN(Date.parse(it.due)) ? new Date(it.due).toISOString()
+          : kind === 'guest_ask' ? new Date(Date.parse(src?.at || new Date().toISOString()) + ccs.nudgeAfterMin * 60_000).toISOString()
+          : null,
         urgent: !!it?.urgent && kind === 'problem',
         first_seen: src?.at || new Date().toISOString(), last_seen: src?.at || new Date().toISOString(),
-        evidence: { text: src?.text?.slice(0, 300) || null, who: src?.who || null },
+        evidence: kind === 'guest_ask'
+          ? { text: src?.text?.slice(0, 300) || null, who: src?.who || null, guest: clean(it?.guest).slice(0, 80) || null, ask: ['inquiry', 'discount', 'extension', 'callback', 'refund', 'change', 'other'].includes(String(it?.ask)) ? String(it.ask) : askKindOf(src?.text || summary), amount: Number.isFinite(Number(it?.amount)) && Number(it?.amount) > 0 ? Number(it.amount) : null }
+          : { text: src?.text?.slice(0, 300) || null, who: src?.who || null },
       }
       const { data: ins, error } = await db.from('eve_slack_items').upsert(row, { onConflict: 'channel,msg_ts', ignoreDuplicates: true }).select('*').maybeSingle()
       if (error) { out.notes.push(`insert: ${error.message}`); continue }
       if (ins) { open.push(ins as Item); out.opened++; if ((ins as Item).urgent) urgentNew.push(ins as Item) }
+      // ESCALATE AT ONCE (ccs-desk): a guest ask on an escalation building or a big booking is put in
+      // front of the named people the moment it is seen, in its own thread. Once per item.
+      if (ins && kind === 'guest_ask' && ccs.enabled) {
+        const why = shouldEscalate(ins as any, ccs)
+        if (why) {
+          const tags = escalationTags(ccs, n)
+          const r = await escalate(ins as unknown as AskItem, why, tags)
+          if (r.ok && r.mode !== 'observe') {
+            await db.from('eve_slack_items').update({ evidence: { ...(ins as any).evidence, escalated: new Date().toISOString(), escalatedWhy: why } }).eq('id', (ins as any).id)
+            out.escalated++
+          }
+          if (r.mode !== 'act') out.notes.push(`escalation ${r.mode}: ${why}`)
+        }
+      }
     }
 
     // Facts → memory, at a weight below what a document says (7) and well below what Jon says (8).
@@ -470,11 +504,18 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   if (opts?.nudge !== false && hour >= NUDGE_WINDOW_ET.start && hour < NUDGE_WINDOW_ET.end) {
     const now = Date.now()
     for (const it of open) {
-      if (it.status !== 'open' || it.tracked_in || it.nudge_count > 0 || it.kind === 'decision') continue
-      const due = it.due_at ? Date.parse(it.due_at) : Date.parse(it.first_seen) + NUDGE_AFTER_HOURS * 3600_000
+      if (it.status !== 'open' || it.tracked_in || it.kind === 'decision') continue
+      // GUEST ASKS RUN ON THE DESK'S CLOCK: a first nudge at nudgeAfterMin, a second at
+      // secondNudgeMin, then the handoff list carries it. Everything else nudges once, after a day.
+      const isAsk = it.kind === 'guest_ask'
+      if (!isAsk && it.nudge_count > 0) continue
+      if (isAsk && (!ccs.enabled || it.nudge_count >= 2)) continue
+      const due = isAsk
+        ? Date.parse(it.first_seen) + (it.nudge_count === 0 ? ccs.nudgeAfterMin : ccs.secondNudgeMin) * 60_000
+        : (it.due_at ? Date.parse(it.due_at) : Date.parse(it.first_seen) + NUDGE_AFTER_HOURS * 3600_000)
       if (now < due) continue
       const who = it.owner_slack ? `<@${it.owner_slack}>` : (it.owner_name || null)
-      const text = nudgeText(it, who)
+      const text = isAsk ? askNudgeText(it as unknown as AskItem, who, ageMinutes(it, now)) : nudgeText(it, who)
       // AGENT MODE GATE (slack_post). Below "act" the nudge is proposed or drafted instead.
       const gate = await agentAllowed('slack_post')
       const r = await stepDown(gate, { action: 'slack_post', summary: `nudge in #${it.channel_name}: ${text.slice(0, 160)}`, exec: { channel: it.channel, channel_name: it.channel_name, thread_ts: it.thread_ts || it.msg_ts, text }, why: it.summary.slice(0, 200), by: 'cron:slack-watch' },
@@ -485,6 +526,16 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
       if (r.ok && r.mode !== 'observe') { await db.from('eve_slack_items').update({ nudged_at: new Date().toISOString(), nudge_count: it.nudge_count + 1 }).eq('id', it.id); if (r.mode === 'act') out.nudged++ }
       if (r.mode !== 'act') out.notes.push(`nudge ${r.mode}: ${gate.reason}`)
     }
+  }
+
+  // ---- 4b. The CCS handoff: the open guest asks, as a list, at shift change. ------------------
+  if (ccs.enabled) {
+    try {
+      const asks = open.filter(i => i.status === 'open' && i.kind === 'guest_ask') as unknown as AskItem[]
+      const h = await runHandoff(asks, ccs)
+      if (h.posted) out.handoff = true
+      if (h.note) out.notes.push(`handoff ${h.mode}: ${h.note}`)
+    } catch (e: any) { out.notes.push(`handoff: ${String(e?.message || e).slice(0, 120)}`) }
   }
 
   // ---- 5. Urgent today: say it now, in her room — ONE message, however many there are. ---------
@@ -518,6 +569,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     // SHORT (Jon, 2026-09-23: "when you send a super long brief, that's not really helpful"). Top
     // four per section; the rest is one ask away (open_items).
     const sec = (title: string, rows: Item[]) => { if (rows.length) parts.push(`*${title} (${rows.length})*\n${rows.slice(0, 4).map(line).join('\n')}${rows.length > 4 ? `\n…and ${rows.length - 4} more` : ''}`) }
+    sec('Guest asks waiting on us', grp('guest_ask'))
     sec('Promised, not yet done', grp('commitment'))
     sec('Problems still open', grp('problem'))
     sec('Nobody answered', grp('question'))
