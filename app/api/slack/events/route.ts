@@ -44,7 +44,7 @@ import { accessForEmail } from '@/lib/access'
 import { runEve } from '@/lib/eve/run'
 import { tierFor, tierNote, isEveRoom } from '@/lib/eve/slack-tier'
 import { postProvenance } from '@/lib/eve/provenance'
-import { tagIsFront, detectLang, translate, worthTranslating } from '@/lib/eve/slack-triage'
+import { tagPosition, translateChecked } from '@/lib/eve/slack-triage'
 import { getEveAskers, canAskEve } from '@/lib/eve/slack-askers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
@@ -298,10 +298,15 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
   // tell that from Eve being broken. The heuristic is only a hint to the translator now; the model
   // decides the language. The one case still skipped is a message with nothing to translate — a
   // bare link, a unit number, an emoji — because there is no translation of "401".
-  if (!viaReply && !tagIsFront(String(ev.text || ''), me)) {
-    if (!worthTranslating(question)) return ok()
-    const out = await translate(question, detectLang(question))
-    if (out) await say(channel, threadTs, out)
+  //
+  // STRICT, BOTH WAYS (Jon, 2026-09-28: "make sure that rule always works"). The tag at the very
+  // END translates and never asks a question; the tag at the FRONT answers. A tag in the middle of
+  // a sentence is a sentence addressed to her and answers too (it used to translate). The
+  // translation is checked for direction and for stray questions, retried once, and a failure
+  // posts one plain line instead of nothing — see translateChecked.
+  if (!viaReply && tagPosition(String(ev.text || ''), me) === 'end') {
+    const out = await translateChecked(question)
+    if (out) await say(channel, threadTs, out.text)
     return ok()
   }
 

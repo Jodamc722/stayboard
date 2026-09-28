@@ -41,13 +41,45 @@ import { modelPairFor } from '@/lib/ai-models'
 
 export type Lang = 'es' | 'en'
 
-/** Is the @mention the FIRST thing in the message? */
+/**
+ * WHERE THE TAG SITS IS THE WHOLE INSTRUCTION (Jon, 2026-09-28: "in Slack if the tag is @Eve at
+ * the end, it translates to Spanish and never asks a question. If you have @Eve at the beginning,
+ * then it answers the question. Make sure that rule always works.")
+ *
+ *   front  — the tag is the first thing said (a greeting or a colleague's tag before it is fine:
+ *            "Hi @Eve …", "Hola @Eve …", "@Roberto @Eve …"). She answers.
+ *   end    — the tag is the LAST thing said (trailing punctuation, emoji or "gracias" after it do
+ *            not count). She translates, and says nothing else.
+ *   middle — anywhere else ("can @Eve check this?"). Treated as FRONT: a tag inside a sentence is a
+ *            sentence addressed to her, and answering is the safe reading. The earlier rule sent
+ *            every non-front tag to the translator, so "can @Eve check 401" came back as Spanish
+ *            instead of an answer — that is the bug this fixes.
+ *   none   — no tag for her (a reply in her own room). The caller decides.
+ */
+export type TagPosition = 'front' | 'end' | 'middle' | 'none'
+const GREETING = /^(?:(?:hi|hey|hello|hola|buenas|buenos\s+d[ií]as|buenas\s+tardes|buenas\s+noches|good\s+(?:morning|afternoon|evening)|team|equipo|por\s+favor|please|ok|okay)[\s,.!:;-]*)+/i
+export function tagPosition(rawText: string, botUserId: string): TagPosition {
+  if (!botUserId) return 'front'
+  const tag = `<@${botUserId}>`
+  const t = String(rawText || '').replace(/\s+/g, ' ').trim()
+  if (!t.includes(tag)) return 'none'
+  // Slack sometimes leads with a blockquote marker or stray punctuation; allow those through,
+  // then a greeting, then other people's tags.
+  const others = `<@(?!${botUserId}>)[A-Z0-9]+>`
+  const lead = t.replace(/^[>\s*_~`-]+/, '').replace(GREETING, '').replace(new RegExp(`^(?:${others}[\\s,]*)+`), '')
+  if (lead.startsWith(tag)) return 'front'
+  // Trailing punctuation, emoji, "gracias"/"thanks"/"please" and other people's tags after the
+  // tag still count as "at the end" — the tag is the last thing SAID.
+  const tail = t
+    .replace(new RegExp(`(?:[\\s,.!?:;)\\]"'*_~\`-]|:[a-z0-9_+-]+:|[\\uD800-\\uDFFF].|${others}|\\b(?:gracias|thanks|thank you|thx|please|por favor|pls|plz)\\b)+$`, 'i'), '')
+    .trim()
+  if (tail.endsWith(tag)) return 'end'
+  return 'middle'
+}
+
+/** Is the @mention the FIRST thing in the message? (front or middle — anything but the end.) */
 export function tagIsFront(rawText: string, botUserId: string): boolean {
-  if (!botUserId) return true
-  const t = String(rawText || '').trim()
-  // Slack sometimes leads with a blockquote marker or stray punctuation; allow those through.
-  const lead = t.replace(/^[>\s*_~`-]+/, '')
-  return new RegExp(`^<@${botUserId}>`).test(lead)
+  return tagPosition(rawText, botUserId) !== 'end'
 }
 
 // Function words common in Spanish and rare-to-absent in English operational chatter.
@@ -92,14 +124,16 @@ export function worthTranslating(text: string): boolean {
     .replace(/[\uD800-\uDFFF]./g, ' ')         // emoji and other surrogate pairs
     .trim()
   const letters = (t.match(new RegExp(LETTER.source, 'g')) || []).length
-  const words = t.split(/\s+/).filter(w => LETTER.test(w))
-  return letters >= 6 && words.length >= 2
+  const words = t.split(/\s+/).filter(w => (w.match(new RegExp(LETTER.source, 'g')) || []).length >= 3)
+  // "listo 401" is worth a "ready 401"; "ok", "401" and ":+1:" are not (Jon, 2026-09-28: the rule
+  // must always work — a short real word tagged at the end still gets its translation).
+  return letters >= 4 && words.length >= 1
 }
 
 const SYSTEM = [
   'You translate short workplace messages for a property-management team in Miami. The team writes in Spanish and in English and needs to read each other.',
   'THIS TEAM WRITES IN TWO LANGUAGES AND ONLY TWO: English and Spanish. Work out which of the two the message is in, then translate it the other way \u2014 Spanish becomes natural English, English becomes natural Latin-American Spanish. If the message is in neither of those two languages, return the single word SKIP rather than translating it.',
-  'Output ONLY the translation \u2014 no preamble, no quotes, no language label, no notes, no commentary, and never an answer to anything the message asks, even if it is clearly a question.',
+  'Output ONLY the translation \u2014 no preamble, no quotes, no language label, no notes, no commentary, and never an answer to anything the message asks, even if it is clearly a question. NEVER ask a question of your own and never add a follow-up, an offer to help, or a sign-off: you are a translator, not a participant.',
   'Keep unit numbers, building names, people\u2019s names, times and links exactly as written. Keep the line breaks. If a phrase is local slang, translate the meaning rather than the words.',
   'If the message is already in both languages, return just the half that is missing. If there is genuinely nothing to translate, return the single word SKIP.',
 ].join(' ')
@@ -110,7 +144,7 @@ const SYSTEM = [
  * NOT a summary, NOT an answer. Whatever the message asks, this returns the message in the other
  * language and nothing more.
  */
-export async function translate(text: string, hint: Lang | null): Promise<string | null> {
+export async function translate(text: string, hint: Lang | null, to?: Lang): Promise<string | null> {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return null
   try {
@@ -119,7 +153,9 @@ export async function translate(text: string, hint: Lang | null): Promise<string
     // NOTHING and looks broken, with no way to tell it apart from the rule not firing. The shared
     // helper retries once on the tier's fallback, which is exactly the failure this must survive.
     const { model, fallback } = await modelPairFor('translate')
-    const lead = hint === 'es' ? 'This looks like Spanish.\n\n'
+    const lead = to === 'es' ? 'Translate the following into Latin-American Spanish. Output only the Spanish.\n\n'
+      : to === 'en' ? 'Translate the following into English. Output only the English.\n\n'
+      : hint === 'es' ? 'This looks like Spanish.\n\n'
       : hint === 'en' ? 'This looks like English.\n\n'
       : ''
     const r = await anthropicMessages(key, {
@@ -132,4 +168,39 @@ export async function translate(text: string, hint: Lang | null): Promise<string
     if (!out || /^SKIP\.?$/i.test(out)) return null
     return out
   } catch { return null }
+}
+
+/**
+ * THE TRANSLATION, CHECKED — the version the Slack handler calls.
+ *
+ * Jon, 2026-09-28: a tag at the end "translates to Spanish and never asks a question. Make sure
+ * that rule always works." Three things used to let it silently not work: the model answering the
+ * message instead of translating it, the model handing back the same language it was given, and a
+ * transient API failure turning into no post at all. So:
+ *   1. the direction is enforced — English in means Spanish out, Spanish in means English out; if
+ *      the first pass comes back in the source language it is redone with an explicit direction;
+ *   2. an output that asks something the source did not ask is treated as an answer and redone;
+ *   3. a failed call is retried once, and if it still fails the caller gets a plain non-question
+ *      line to post so the room can see the tag was received.
+ * Returns { text, fallback }: `fallback` is true when the text is the apology, not a translation.
+ */
+export async function translateChecked(text: string): Promise<{ text: string; fallback: boolean } | null> {
+  if (!worthTranslating(text)) return null
+  const src = detectLang(text)
+  const want: Lang | undefined = src === 'en' ? 'es' : src === 'es' ? 'en' : undefined
+  const asksMore = (out: string) => (out.match(/[?¿]/g) || []).length > (String(text).match(/[?¿]/g) || []).length
+  const sameLang = (out: string) => !!src && detectLang(out) === src && (out.split(/\s+/).length >= 3)
+  let out = await translate(text, src)
+  if (out && (sameLang(out) || asksMore(out))) out = await translate(text, src, want || (detectLang(out) === 'es' ? 'en' : 'es'))
+  if (!out) out = await translate(text, src, want)
+  if (out && asksMore(out)) {
+    // Strip a trailing question the model bolted on, keeping everything up to the last line that
+    // is part of the translation. If that leaves nothing, drop it rather than post an answer.
+    const lines = out.split('\n').filter(l => l.trim())
+    while (lines.length > 1 && /[?¿]/.test(lines[lines.length - 1]) && !/[?¿]/.test(text)) lines.pop()
+    out = lines.join('\n')
+    if (asksMore(out)) out = null
+  }
+  if (out) return { text: out, fallback: false }
+  return { text: src === 'es' ? 'No pude traducir este mensaje ahora mismo. Etiquétame otra vez en un momento.' : 'I could not translate this one just now. Tag me again in a moment.', fallback: true }
 }
