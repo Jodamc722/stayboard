@@ -349,7 +349,12 @@ type XNote = {
   evidence: { quote: string; unit: string; source: string; when: string; rating?: number | null }[]
   guests: number; status: string; status_by?: string | null; status_at?: string | null; status_note?: string | null
   first_seen: string; last_seen: string; runs: number; reopened?: string | null
+  copy_history?: { at: string; by: string; instruction: string; before: string }[]
+  copy_edited_by?: string | null
+  check?: { at: string; by: string; summary: string; units: { unit: string; task: string | null; taskDate: string | null; taskPhotos: number; listingPhotos: number; verdict: string; differences: string[]; note: string }[] }
 }
+const PUBLISHABLE = new Set(['listing', 'house_rules', 'faq'])
+const CHECKABLE = /photo|picture|as described|advertis|match|not as|smaller|different from|misleading|what is in the unit/i
 const FIX_LABEL: Record<string, string> = { listing: 'Listing', house_rules: 'House rules', pre_arrival: 'Pre-arrival message', checkin_guide: 'Check-in guide', faq: 'FAQ', guidebook: 'Guidebook' }
 
 function ExpectationsTab({ canEdit, onCount }: { canEdit: boolean; onCount: (n: number) => void }) {
@@ -385,6 +390,7 @@ function ExpectationsTab({ canEdit, onCount }: { canEdit: boolean; onCount: (n: 
     } catch (e: any) { setRun('failed: ' + String(e?.message || e)) }
   }
   const copy = async (n: XNote) => { try { await navigator.clipboard.writeText(n.proposed_copy); setCopied(n.id); setTimeout(() => setCopied(''), 1500) } catch { /* no clipboard */ } }
+  const patchNote = (id: string, patch: Partial<XNote>) => setNotes(x => (x || []).map(n => n.id === id ? { ...n, ...patch } : n))
 
   return (
     <div>
@@ -435,18 +441,130 @@ function ExpectationsTab({ canEdit, onCount }: { canEdit: boolean; onCount: (n: 
                   </ul>
                 ) : null}
                 <p className="text-[12.5px] text-ink/85"><span className="font-semibold">The gap:</span> {n.gap}</p>
-                <div className="rounded-xl border border-line bg-app px-3 py-2.5">
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted">Proposed copy · {FIX_LABEL[n.fix_where] || n.fix_where} · {n.owner === 'cs' ? 'customer service' : 'admin'}</p>
-                    <button onClick={() => copy(n)} className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand-700 hover:underline"><Copy size={12} /> {copied === n.id ? 'Copied' : 'Copy'}</button>
-                  </div>
-                  <p className="text-[13px] text-ink whitespace-pre-wrap">{n.proposed_copy}</p>
-                </div>
+                <CopyPanel n={n} canEdit={canEdit && status === 'open'} copied={copied === n.id} onCopy={() => copy(n)} onPatch={patch => patchNote(n.id, patch)} onPublished={() => setNotes(x => { const next = (x || []).filter(q => q.id !== n.id); if (status === 'open') onCount(next.length); return next })} />
                 {n.status !== 'open' && n.status_by ? <p className="text-[11.5px] text-muted">{n.status === 'done' ? 'Marked updated' : 'Dismissed'} by {n.status_by}{n.status_at ? ' · ' + String(n.status_at).slice(0, 10) : ''}{n.status_note ? ' · ' + n.status_note : ''}</p> : null}
               </LeanRow>
             ))}
           </LeanList>
         )}
+    </div>
+  )
+}
+
+// The copy itself, and everything a person can do to it before it goes anywhere (Jon, 2026-09-28:
+// "I should be able to audit it, edit it, and prompt it differently"; "publish from the
+// recommendations to a designated area without having to copy"; "if listing photos don't match,
+// it'll say check"). Edit in place; rewrite to an instruction (the previous version stays on the
+// note); check the unit's crew photos against the listing photos; publish the Good-to-know block
+// to every unit's Other notes in Guesty — after a confirm that shows exactly what will be written.
+function CopyPanel({ n, canEdit, copied, onCopy, onPatch, onPublished }: { n: XNote; canEdit: boolean; copied: boolean; onCopy: () => void; onPatch: (p: Partial<XNote>) => void; onPublished: () => void }) {
+  const [mode, setMode] = useState<'view' | 'edit' | 'rewrite' | 'confirm'>('view')
+  const [draft, setDraft] = useState(n.proposed_copy)
+  const [ask, setAsk] = useState('')
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
+  const [preview, setPreview] = useState<{ units: number; block: string } | null>(null)
+  const post = (body: any) => fetch('/api/eve/expectations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: n.id, ...body }) }).then(x => x.json())
+
+  async function save() {
+    setBusy('edit')
+    try { const r = await post({ op: 'edit', proposed_copy: draft }); if (r?.ok) { onPatch({ proposed_copy: draft }); setMode('view'); setMsg('Saved.') } else setMsg(r?.error || 'Could not save') } finally { setBusy('') }
+  }
+  async function rewrite() {
+    setBusy('rewrite')
+    try { const r = await post({ op: 'rewrite', instruction: ask }); if (r?.ok) { onPatch({ proposed_copy: r.proposed_copy, copy_history: (n.copy_history || []).concat([{ at: new Date().toISOString(), by: 'you', instruction: ask, before: n.proposed_copy }]) }); setDraft(r.proposed_copy); setAsk(''); setMode('view'); setMsg('Rewritten.') } else setMsg(r?.error || 'Could not rewrite') } finally { setBusy('') }
+  }
+  async function check() {
+    setBusy('check'); setMsg('Looking at the crew photos next to the listing photos…')
+    try { const r = await post({ op: 'check' }); if (r?.ok) { onPatch({ check: r.check }); setMsg('') } else setMsg(r?.error || 'Could not check') } finally { setBusy('') }
+  }
+  async function askPreview() {
+    setBusy('preview'); setMsg('')
+    try { const r = await post({ op: 'preview' }); if (r?.ok) { setPreview({ units: r.units, block: r.block }); setMode('confirm') } else setMsg(r?.error || 'Cannot publish this one') } finally { setBusy('') }
+  }
+  async function publish() {
+    setBusy('publish'); setMsg('Writing to Guesty…')
+    try {
+      const r = await post({ op: 'publish' })
+      if (r?.ok) { setMsg(`Published to ${r.okCount} of ${r.listings} listing${r.listings === 1 ? '' : 's'}${r.failCount ? ` · ${r.failCount} failed` : ''}.`); setMode('view'); setTimeout(onPublished, 1200) }
+      else setMsg(r?.error || 'Publish failed')
+    } finally { setBusy('') }
+  }
+  const publishable = PUBLISHABLE.has(n.fix_where)
+  const checkable = CHECKABLE.test(n.title + ' ' + n.gap + ' ' + n.what_guests_hit + ' ' + n.theme)
+  const blank = /\[[^\]]*\]/.test(n.proposed_copy)
+
+  return (
+    <div className="rounded-xl border border-line bg-app px-3 py-2.5 space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-muted">Proposed copy · {FIX_LABEL[n.fix_where] || n.fix_where} · {n.owner === 'cs' ? 'customer service' : 'admin'}{n.copy_edited_by ? ' · edited' : ''}</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          {canEdit && mode === 'view' ? <button onClick={() => { setDraft(n.proposed_copy); setMode('edit') }} className="text-[11.5px] font-semibold text-brand-700 hover:underline">Edit</button> : null}
+          {canEdit && mode === 'view' ? <button onClick={() => setMode('rewrite')} className="text-[11.5px] font-semibold text-brand-700 hover:underline">Rewrite…</button> : null}
+          <button onClick={onCopy} className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand-700 hover:underline"><Copy size={12} /> {copied ? 'Copied' : 'Copy'}</button>
+        </div>
+      </div>
+      {mode === 'edit' ? (
+        <div className="space-y-2">
+          <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={4} className="w-full rounded-lg border border-line bg-white px-3 py-2 text-[13px] text-ink" />
+          <div className="flex items-center gap-2">
+            <button onClick={save} disabled={busy === 'edit' || !draft.trim()} className="inline-flex items-center gap-1.5 text-xs font-semibold bg-brand-600 text-white rounded-lg px-3 py-1.5 hover:bg-brand-700 disabled:opacity-50"><Check size={13} /> Save</button>
+            <button onClick={() => setMode('view')} className="text-xs font-semibold text-muted hover:text-ink px-2 py-1.5">Cancel</button>
+          </div>
+        </div>
+      ) : mode === 'rewrite' ? (
+        <div className="space-y-2">
+          <p className="text-[13px] text-ink whitespace-pre-wrap">{n.proposed_copy}</p>
+          <input value={ask} onChange={e => setAsk(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && ask.trim()) rewrite() }} placeholder="Tell her how to rewrite it — shorter, warmer, say the fee is $45, mention the gate code comes the day before…" className="w-full rounded-lg border border-line bg-white px-3 py-2 text-[13px] text-ink" />
+          <div className="flex items-center gap-2">
+            <button onClick={rewrite} disabled={busy === 'rewrite' || !ask.trim()} className="inline-flex items-center gap-1.5 text-xs font-semibold bg-brand-600 text-white rounded-lg px-3 py-1.5 hover:bg-brand-700 disabled:opacity-50">{busy === 'rewrite' ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Rewrite</button>
+            <button onClick={() => setMode('view')} className="text-xs font-semibold text-muted hover:text-ink px-2 py-1.5">Cancel</button>
+          </div>
+        </div>
+      ) : mode === 'confirm' && preview ? (
+        <div className="space-y-2">
+          <p className="text-[12.5px] text-ink">This writes a <span className="font-semibold">Good to know</span> block at the end of <span className="font-semibold">Other notes</span> on all <span className="font-semibold">{preview.units}</span> live listings at {n.building}, on every channel. Anything a person wrote in Other notes stays; only the block is replaced. It will read:</p>
+          <pre className="text-[12px] text-ink whitespace-pre-wrap rounded-lg border border-line bg-white px-3 py-2 font-sans">{preview.block}</pre>
+          <div className="flex items-center gap-2">
+            <button onClick={publish} disabled={busy === 'publish'} className="inline-flex items-center gap-1.5 text-xs font-semibold bg-brand-600 text-white rounded-lg px-3 py-1.5 hover:bg-brand-700 disabled:opacity-50">{busy === 'publish' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Publish to {preview.units} listing{preview.units === 1 ? '' : 's'}</button>
+            <button onClick={() => setMode('view')} className="text-xs font-semibold text-muted hover:text-ink px-2 py-1.5">Not now</button>
+          </div>
+        </div>
+      ) : (
+        <p className="text-[13px] text-ink whitespace-pre-wrap">{n.proposed_copy}</p>
+      )}
+      {n.copy_history?.length ? (
+        <details className="text-[11.5px] text-muted"><summary className="cursor-pointer">{n.copy_history.length} earlier version{n.copy_history.length === 1 ? '' : 's'}</summary>
+          <ul className="mt-1 space-y-1">{n.copy_history.slice().reverse().map((h, i) => <li key={i}>“{h.instruction}” · {String(h.at).slice(0, 10)} — <span className="text-ink/70">{h.before}</span></li>)}</ul>
+        </details>
+      ) : null}
+      {mode === 'view' && canEdit ? (
+        <div className="flex items-center gap-2 flex-wrap pt-1">
+          {publishable ? (
+            <button onClick={askPreview} disabled={busy === 'preview' || blank} title={blank ? 'Fill in the [bracketed] blank first — Edit or Rewrite' : 'Write it to the listings in Guesty (after a confirm)'}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold bg-brand-600 text-white rounded-lg px-3 py-1.5 hover:bg-brand-700 disabled:opacity-50">{busy === 'preview' ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />} Publish to listings</button>
+          ) : <span className="text-[11.5px] text-muted">Goes in the {(FIX_LABEL[n.fix_where] || n.fix_where).toLowerCase()} — copy it there.</span>}
+          {checkable ? (
+            <button onClick={check} disabled={busy === 'check'} title="Puts the crew's photos from the last completed clean or inspection next to the listing photos and asks whether they still match"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg border border-line bg-white px-3 py-1.5 text-ink hover:bg-app disabled:opacity-50">{busy === 'check' ? <Loader2 size={13} className="animate-spin" /> : <Radar size={13} />} Check against photos</button>
+          ) : null}
+          {blank && publishable ? <span className="text-[11.5px] text-amber-700">Has a blank to fill in.</span> : null}
+        </div>
+      ) : null}
+      {msg ? <p className="text-[12px] text-ink/80">{msg}</p> : null}
+      {n.check ? (
+        <div className="rounded-lg border border-line bg-white px-3 py-2">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-muted">Checked {String(n.check.at).slice(0, 10)} · crew photos vs listing photos</p>
+          <p className="text-[12.5px] text-ink mt-1">{n.check.summary}</p>
+          <ul className="mt-1 space-y-1">
+            {n.check.units.map((u, i) => (
+              <li key={i} className="text-[12px] text-muted">
+                <Tag tone={u.verdict === 'differs' ? 'rose' : u.verdict === 'matches' ? 'emerald' : 'slate'}>{u.verdict}</Tag> <span className="text-ink">{u.unit}</span>{u.task ? ` · ${u.task} ${u.taskDate}` : ''}{u.differences.length ? ' — ' + u.differences.join('; ') : u.note ? ' — ' + u.note : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   )
 }
