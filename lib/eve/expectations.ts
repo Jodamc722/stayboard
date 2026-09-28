@@ -195,11 +195,20 @@ export async function runExpectationsDesk(opts: { by?: string; days?: number } =
     const toolUse = (r.data?.content || []).find((c: any) => c.type === 'tool_use' && c.input && typeof c.input === 'object')
     parsed = toolUse ? toolUse.input : null
     void usageOf(r.data)
+    // The input can arrive as the array itself, or as a JSON string, or under another key —
+    // take the notes wherever they are before calling the answer unstructured.
+    if (typeof parsed === 'string') { try { parsed = JSON.parse(parsed) } catch { /* fall through */ } }
+    if (Array.isArray(parsed)) parsed = { notes: parsed }
+    if (parsed && !Array.isArray(parsed.notes)) {
+      if (typeof parsed.notes === 'string') { try { parsed.notes = JSON.parse(parsed.notes) } catch { /* fall through */ } }
+      if (!Array.isArray(parsed.notes)) { const arr = Object.values(parsed).find(v => Array.isArray(v)); if (arr) parsed.notes = arr }
+    }
     if (!parsed || !Array.isArray(parsed.notes)) {
       // Say what came back instead, so a cut-off answer (stop_reason max_tokens) or a refusal
       // reads as what it is rather than a shrug.
       const text = (r.data?.content || []).map((c: any) => c?.text || '').join(' ')
-      return { ok: false, error: `model answer was not structured (stop: ${str(r.data?.stop_reason) || '?'}; blocks: ${(r.data?.content || []).map((c: any) => c?.type).join(',') || 'none'}${text ? '; said: ' + clip(text, 140) : ''})`, pack: pack.stats }
+      const keys = parsed && typeof parsed === 'object' ? Object.keys(parsed).slice(0, 6).join(',') : typeof parsed
+      return { ok: false, error: `model answer was not structured (stop: ${str(r.data?.stop_reason) || '?'}; blocks: ${(r.data?.content || []).map((c: any) => c?.type).join(',') || 'none'}; input keys: ${keys || 'none'}${text ? '; said: ' + clip(text, 140) : ''})`, pack: pack.stats }
     }
   } catch (e: any) { return { ok: false, error: clip(e?.message || e, 200), pack: pack.stats } }
 
