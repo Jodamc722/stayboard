@@ -35,6 +35,8 @@ import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, season
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
 import { CHANNEL_MARKS, CHANNEL_BODY, CHANNEL_COUNT, CHANNEL_COUNT_RETIRED } from '@/lib/channel-marks'
 import OwnerPortalDemo from '@/components/OwnerPortalDemo'
+// The owner review DECK does not build a slide from the verdict (see the slide block for why).
+const VERDICT_ON_DECK = false
 
 type Any = any
 /** Drop a trailing "· live on N channels" / "· not yet live" from a stored listing sub-line. */
@@ -769,7 +771,10 @@ function Ed({ v, set, edit, className, multiline, placeholder, max }: {
   /** Cap the grown height, for a field in a box that cannot grow with it (a team card). */
   max?: number
 }) {
-  if (!edit) return <span className={className}>{v}</span>
+  // "$$147" is stored on the Sept 28 17WEST report (pacing rows, the on-the-books strip, budget
+  // rows) — a doubled sign that no formatter here writes, so it arrived with the data. No figure
+  // on any deck ever means two dollar signs; print one, and leave the stored text for the editor.
+  if (!edit) return <span className={className}>{String(v || '').replace(/\${2,}/g, '$')}</span>
   if (multiline) return <AutoArea v={v} set={set} className={className} placeholder={placeholder} max={max} />
   return <AutoInput v={v} set={set} className={className} placeholder={placeholder} />
 }
@@ -2181,7 +2186,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     // sections with no data build no slide at all. Present mode then ran out of numbers before it
     // ran out of deck.
     ? (1
-        + ((verdict && !isHidden('verdict')) ? 1 : 0)
+        + ((verdict && !isHidden('verdict') && VERDICT_ON_DECK) ? 1 : 0)
         + (!isHidden('snapshot') ? 1 : 0)
         + ((listingTable && listingTable.rows.length && !isHidden('listings')) ? 1 : 0)
         + ((c.pacing && (c.pacing.rows || []).length && !isHidden('pacing')) ? 1 : 0)
@@ -5531,6 +5536,28 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             return '$' + Math.round(v).toLocaleString()
           }
           const hid = (k: string) => isHidden(k)
+          // HOW A SLIDE SHOWS ITS NUMBERS IS A CHOICE, PER SLIDE, PER REPORT (Jon, 2026-09-28: "think
+          // like an owner… long charts make us look bad. Give me a couple different variations…
+          // maybe we'd use that format if we're crushing it. If we're not, strict numbers… options
+          // for each of the slides"). A bar chart flatters a lead and advertises a gap, so the
+          // chart is one option and plain figures are the other; the team picks on the slide in
+          // edit mode and the choice is stored on content.views[key]. The budget slide keeps its
+          // own switch (content.plan.view), which shipped first and works the same way.
+          const views: Record<string, string> = (c.views && typeof c.views === 'object') ? (c.views as Any) : {}
+          const viewOf = (k: string, choices: string[], dflt: string) => (choices.indexOf(String(views[k] || '')) >= 0 ? String(views[k]) : dflt)
+          const ViewPick = stable('ViewPick', ({ k, choices, cur, dark }: { k: string; choices: [string, string][]; cur: string; dark?: boolean }) => (
+            edit ? (
+              <div className="sb-noprint flex items-center" style={{ gap: 6, marginTop: 14 }}>
+                <span style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: dark ? D.muted : tint(0.45), marginRight: 4 }}>Show as</span>
+                {choices.map(([v, label]) => (
+                  <button key={v} onClick={() => patch('views.' + k, v)}
+                    style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 11px', borderRadius: 999, background: cur === v ? t.accent : (dark ? 'rgba(255,255,255,0.12)' : tint(0.07)), color: cur === v ? '#fff' : (dark ? D.ink : tint(0.62)) }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : null
+          ))
           const num = (v: Any) => { const n = Number(String(v == null ? '' : v).replace(/[^0-9.]/g, '')); return Number.isFinite(n) ? n : 0 }
           /** Same, but keeping the sign — a delta of "−$102" has to come back negative. */
           const snum = (v: Any) => { const raw = String(v == null ? '' : v).trim(); const n = num(raw); return /^[-−]/.test(raw) ? -n : n }
@@ -5780,7 +5807,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           }
 
           // ── 2 · THE MONTH — the verdict, at display size ───────────────────
-          if (verdict && !hid('verdict')) {
+          // OFF THE DECK (Jon, 2026-09-28, on the 17WEST review: "slide 2 is stupid. Get rid of
+          // it."). The cover already carries the month's sentence and the snapshot carries its
+          // numbers, so a third page saying "ahead of the market, behind our own budget" was a
+          // slide of hedging between them. The verdict still exists on the scroll view, where the
+          // team reads it; the owner's deck goes cover, then the numbers.
+          if (verdict && !hid('verdict') && VERDICT_ON_DECK) {
             const n = next()
             slides.push({ key: 'verdict', node: (
               <Frame note="verdict" nav="The Month" sec="Performance" subj="The month" tone="light" n={n}>
@@ -6008,9 +6040,37 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           if (c.pacing && (c.pacing.rows || []).length && !hid('pacing')) {
             const n = next()
             const rows = (c.pacing.rows as Any[])
+            // 'bars' is the chart above; 'numbers' is three figures side by side with the market's
+            // figure and the difference beneath each — no bar for an owner to measure a gap on.
+            const pacingView = viewOf('pacing', ['bars', 'numbers'], 'bars')
+            const legend = String(c.pacingLegend || 'Comp set')
             slides.push({ key: 'pacing', ai: true, node: (
               <Frame note="pacing" nav="Pacing" sec="Performance" subj="Against the market" tone="light" n={n}>
                 <RTitle k="pacing" />
+                {pacingView === 'numbers' ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, Math.min(4, rows.length)) + ', minmax(0,1fr))', gap: 34, marginTop: 34 }}>
+                    {rows.slice(0, 4).map((r: Any, i: number) => {
+                      const a = num(r.ours), b = num(r.comps)
+                      const gap = a - b
+                      const behind = gap < 0
+                      const pct = b ? (gap / Math.abs(b)) * 100 : null
+                      return (
+                        <div key={i} style={{ paddingTop: 18, borderTop: '2px solid ' + t.ink }}>
+                          <Lbl>{String(r.metric || '')}</Lbl>
+                          <div style={{ marginTop: 14 }}>
+                            <Fig size={46}><Ed v={String(r.ours || '')} set={v => patch('pacing.rows.' + i + '.ours', v)} edit={edit} /></Fig>
+                          </div>
+                          <p style={{ fontSize: 13, color: tint(0.45), margin: '14px 0 0', fontVariantNumeric: 'tabular-nums' }}>
+                            {legend + ' '}<Ed v={String(r.comps || '')} set={v => patch('pacing.rows.' + i + '.comps', v)} edit={edit} />
+                          </p>
+                          <p style={{ fontSize: 13, fontWeight: 600, color: behind ? tint(0.62) : t.good, margin: '6px 0 0', fontVariantNumeric: 'tabular-nums' }}>
+                            {String(r.delta || '')}{pct == null ? '' : ' · ' + (pct >= 0 ? '+' : '−') + Math.abs(pct).toFixed(0) + '% vs market'}
+                          </p>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
                 <div style={{ marginTop: 20 }}>
                   {rows.map((r: Any, i: number) => {
                     const a = num(r.ours), b = num(r.comps), top = Math.max(a, b, 1) * 1.15
@@ -6050,6 +6110,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     )
                   })}
                 </div>
+                )}
+                {pacingView === 'numbers' ? null : (
                 <div className="flex items-center justify-between" style={{ gap: 22, marginTop: 16 }}>
                   <div className="flex items-center" style={{ gap: 22 }}>
                     <span className="flex items-center" style={{ gap: 8, fontSize: 12, color: tint(0.62) }}>
@@ -6062,6 +6124,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </div>
                   {edit ? <span className="sb-noprint" style={{ fontSize: 11.5, color: tint(0.35) }}>Type over either figure — the bars follow.</span> : null}
                 </div>
+                )}
+                <ViewPick k="pacing" cur={pacingView} choices={[['bars', 'Bars'], ['numbers', 'Numbers only']]} />
                 <SlideNote k="pacing" />
               </Frame>
             ) })
@@ -6206,7 +6270,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     const mag = Math.min(0.46, (share(r) / span) * 0.44)
                     const pl = f.plan
                     if (planView === 'simple') return (
-                      <div key={j} style={{ display: 'grid', gridTemplateColumns: '120px minmax(0,1fr) minmax(0,1fr) 150px', gap: 24, alignItems: 'baseline', padding: '13px 0', borderTop: j ? '1px solid ' + D.rule : 'none' }}>
+                      <div key={j} style={{ display: 'grid', gridTemplateColumns: '120px 190px minmax(0,1fr) 150px', gap: 24, alignItems: 'baseline', padding: '13px 0', borderTop: j ? '1px solid ' + D.rule : 'none' }}>
                         <span style={{ fontSize: 13, color: D.muted }}>{String(r.metric || '')}</span>
                         <span style={{ fontFamily: SERIF, fontSize: 24, letterSpacing: '-0.02em', color: D.ink, fontVariantNumeric: 'tabular-nums' }}>{one$(f.actual) || '—'}</span>
                         <span style={{ fontSize: 13, color: D.muted, fontVariantNumeric: 'tabular-nums' }}>{pl ? 'Budget ' + one$(pl) : ''}</span>
@@ -6369,9 +6433,29 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               (x.iso && String(x.iso).slice(0, 7) === String(initial.period_start || '').slice(0, 7))
               || (thisMonth && norm(x.full) === norm(thisMonth))
             )))
+            // 'bars' is the staircase above — six months of on-the-books occupancy, which always
+            // slopes down because the far months have not sold yet, and reads as a decline to an
+            // owner who has not seen a booking curve. 'numbers' is one tile per month: what is
+            // booked, in nights and money, with nothing drawn to scale.
+            const aheadView = viewOf('ahead', ['bars', 'numbers'], 'bars')
             slides.push({ key: 'ahead', ai: true, node: (
               <Frame note="ahead" nav="Looking ahead" sec="Ahead" subj="On the books" tone="light" n={n}>
                 <RTitle k="ahead" />
+                {aheadView === 'numbers' ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, Math.min(3, strip.length)) + ', minmax(0,1fr))', gap: '26px 34px', marginTop: 30 }}>
+                    {strip.map((x: Any, i: number) => {
+                      const pct = Math.max(0, Math.min(100, Number(x.occPct) || 0))
+                      const bits = [x.nights ? x.nights + ' nights' : '', x.revenue ? x.revenue + ' gross' : '', x.res ? x.res + ' stays' : ''].filter(Boolean)
+                      return (
+                        <div key={i} style={{ paddingTop: 14, borderTop: '2px solid ' + (i === curIx ? t.accent : tint(0.14)) }}>
+                          <Lbl>{String(x.full || x.month || '')}</Lbl>
+                          <div style={{ marginTop: 10 }}><Fig size={36}>{Math.round(pct) + '%'}</Fig></div>
+                          <p style={{ fontSize: 12.5, color: tint(0.45), margin: '8px 0 0', fontVariantNumeric: 'tabular-nums' }}>{bits.length ? 'booked · ' + bits.join(' · ') : 'booked so far'}</p>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, strip.length) + ', minmax(0,1fr))', gap: 22, alignItems: 'end', height: 218, marginTop: 24 }}>
                   {strip.map((x: Any, i: number) => {
                     const pct = Math.max(0, Math.min(100, Number(x.occPct) || 0))
@@ -6395,6 +6479,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     )
                   })}
                 </div>
+                )}
+                <ViewPick k="ahead" cur={aheadView} choices={[['bars', 'Bars'], ['numbers', 'Numbers only']]} />
                 <SlideNote k="ahead" />
               </Frame>
             ) })
