@@ -1,7 +1,7 @@
 // The Garden Hotel — owner-reports. Gated by the hand-picked 'garden' key; see lib/garden.
 import { redirect } from 'next/navigation'
 import { Shell } from '@/components/Shell'
-import { GardenOwnerReports } from '@/components/GardenOps'
+import { GardenOwnerReports } from '@/components/GardenOwnerReports'
 import { getAccess, isSuperadmin } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
@@ -16,7 +16,7 @@ export default async function GardenOwnerReportsPage() {
   return (
     <Shell>
       <div className="max-w-[1100px] mx-auto">
-        <GardenOwnerReports canEdit={canEdit} />
+        <GardenOwnerReports canEdit={canEdit} owner={isSuperadmin(access.email)} />
       </div>
     </Shell>
   )

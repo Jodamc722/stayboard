@@ -125,49 +125,6 @@ export function GardenReviews({ canEdit }: { canEdit: boolean }) {
   )
 }
 
-// ── Owner reports ────────────────────────────────────────────────────────────────────────────────
-export function GardenOwnerReports({ canEdit }: { canEdit: boolean }) {
-  const [d, setD] = useState<any | null>(null)
-  const [open, setOpen] = useState<any | null>(null)
-  const [period, setPeriod] = useState(() => { const t = new Date(); t.setUTCDate(0); return t.toISOString().slice(0, 7) })
-  const [busy, setBusy] = useState(false)
-  const load = useCallback(async () => setD(await j('/api/garden/owner-reports')), [])
-  useEffect(() => { load() }, [load])
-  const build = async () => { setBusy(true); const r = await post('/api/garden/owner-reports', { op: 'build', period, narrate: true }); setBusy(false); if (r?.report) setOpen(r.report); load() }
-  const view = async (p: string) => { const r = await j(`/api/garden/owner-reports?period=${p}`); setOpen(r.report) }
-  const setStatus = async (p: string, status: string) => { await post('/api/garden/owner-reports', { op: 'status', period: p, status }); load(); if (open?.period === p) view(p) }
-  if (!d) return <p className="text-[13px] text-muted inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading…</p>
-  if (!d.ok) return <><LeanHead title="Owner reports" icon={<FileText size={20} className="text-brand-600" />} /><LeanEmpty>{/does not exist|schema cache/i.test(d.error || '') ? 'Run migration 117_garden_ops.sql, then reload.' : d.error}</LeanEmpty></>
-  const x = open?.data
-  const Stat = ({ label, value, sub }: { label: string; value: any; sub?: string }) => <div className="rounded-xl border border-line bg-white px-3 py-2"><div className="text-[10.5px] uppercase tracking-wider text-muted font-semibold">{label}</div><div className="text-xl font-bold text-ink tabular-nums">{value ?? '—'}</div>{sub ? <div className="text-[11.5px] text-muted">{sub}</div> : null}</div>
-  return (
-    <>
-      <LeanHead title="Owner reports" icon={<FileText size={20} className="text-brand-600" />}>
-        {canEdit ? <><input type="month" value={period} onChange={e => setPeriod(e.target.value)} className={input} /><button onClick={build} disabled={busy} className="rounded-lg bg-ink text-white px-2.5 h-8 text-[12px] font-semibold inline-flex items-center gap-1 disabled:opacity-50">{busy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Build {period}</button></> : null}
-      </LeanHead>
-      <p className="text-[12.5px] text-muted mb-3">Built from the hotel&apos;s own tables — occupancy, arrivals by source, booked revenue and ADR as Cloudbeds totals them, cleans, calls, verifications, reviews — with a short letter Adam writes in the hotel&apos;s voice. A draft until you finalise it.</p>
-      {open && x ? (
-        <div className="rounded-2xl border border-line bg-white p-4 mb-4 space-y-3">
-          <div className="flex items-center gap-2 flex-wrap"><span className="text-[15px] font-bold text-ink">{open.title}</span><Tag tone={open.status === 'sent' ? 'emerald' : open.status === 'final' ? 'brand' : 'amber'}>{open.status}</Tag><span className="flex-1" />{canEdit ? <>{open.status === 'draft' ? <button onClick={() => setStatus(open.period, 'final')} className="rounded-lg border border-line px-2.5 py-1 text-[12px] font-semibold">Finalise</button> : null}{open.status === 'final' ? <button onClick={() => setStatus(open.period, 'sent')} className="rounded-lg border border-line px-2.5 py-1 text-[12px] font-semibold">Mark sent</button> : null}</> : null}<button onClick={() => setOpen(null)} className="text-muted"><X size={14} /></button></div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <Stat label="Occupancy" value={x.occupancy.value != null ? `${x.occupancy.value}%` : null} sub={x.occupancy.delta != null ? `${x.occupancy.delta > 0 ? '+' : ''}${x.occupancy.delta} pts vs last month` : `${x.occupancy.roomNights} room-nights`} />
-            <Stat label="Arrivals" value={x.arrivals.value} sub={Object.entries(x.arrivals.bySource || {}).map(([k, v]) => `${k} ${v}`).join(' · ') || undefined} />
-            <Stat label="Booked revenue" value={x.revenue.booked ? `$${Number(x.revenue.booked).toLocaleString()}` : null} sub={x.revenue.adr ? `ADR $${x.revenue.adr}` : x.revenue.basis} />
-            <Stat label="Reviews" value={x.reviews.avg != null ? `${x.reviews.avg}★` : null} sub={`${x.reviews.count} reviews · ${x.reviews.negative} negative`} />
-            <Stat label="Welcome calls" value={x.operations.welcomeCalls.due ? `${x.operations.welcomeCalls.done}/${x.operations.welcomeCalls.due}` : null} sub={x.operations.welcomeCalls.expired ? `${x.operations.welcomeCalls.expired} missed the window` : 'completed of due'} />
-            <Stat label="Calls reached" value={x.operations.calls.total ? `${Math.round((x.operations.calls.reached / x.operations.calls.total) * 100)}%` : null} sub={`${x.operations.calls.total} logged · ${x.operations.missedCalls} missed inbound`} />
-            <Stat label="Cleans done" value={Object.values(x.operations.cleans || {}).reduce((a: number, c: any) => a + c.done, 0)} sub={`of ${Object.values(x.operations.cleans || {}).reduce((a: number, c: any) => a + c.total, 0)}`} />
-            <Stat label="Verifications" value={x.operations.verifications.total} sub={`${x.operations.verifications.passed} passed · ${x.operations.verifications.failed} failed`} />
-          </div>
-          {open.narrative ? <div className="text-[13px] text-ink/90 whitespace-pre-wrap border-t border-line pt-3">{open.narrative}</div> : <p className="text-[12px] text-muted">No letter yet — rebuild to have Adam write one.</p>}
-          {x.reviews.lowlights?.length ? <div className="border-t border-line pt-3"><div className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1">What went wrong</div>{x.reviews.lowlights.slice(0, 4).map((r: any, i: number) => <p key={i} className="text-[12px] text-ink/80">{r.rating}★ {r.guest_name || 'a guest'} ({r.source}): {r.body?.slice(0, 160)}</p>)}</div> : null}
-        </div>
-      ) : null}
-      {d.reports.length ? <LeanList>{d.reports.map((r: any) => <LeanRow key={r.id} name={r.title || r.period} meta={`updated ${when(r.updated_at)}${r.sent_at ? ` · sent ${when(r.sent_at)}` : ''}`} tags={<Tag tone={r.status === 'sent' ? 'emerald' : r.status === 'final' ? 'brand' : 'amber'}>{r.status}</Tag>} actions={<IconBtn title="Open" onClick={() => view(r.period)}><ExternalLink size={14} /></IconBtn>} />)}</LeanList> : <LeanEmpty>No reports yet — pick a month and build one.</LeanEmpty>}
-    </>
-  )
-}
-
 // ── Call desk (welcome calls) ────────────────────────────────────────────────────────────────────
 export function GardenCallDesk({ canEdit, onLogged }: { canEdit: boolean; onLogged?: () => void }) {
   const [d, setD] = useState<any | null>(null)

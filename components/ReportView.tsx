@@ -183,6 +183,18 @@ const THEMES: Record<string, Any> = {
     trackBg: '#FCFBF7', footA: '#9A9B8C', footB: '#C4C4B4', barA: '#24352A', barB: '#8A4F7D',
     edBg: 'rgba(255,255,255,0.7)', edBorder: '#A98E4A',
   },
+  // THE GARDEN (Jon, 2026-09-28: "copy this style" — thegardenhotelandresort.com). Read off the
+  // site itself: sand ground #E7D8C9, forest green #364936 on every button and band, near-black
+  // ink #141617, Playfair Display uppercase headings over Montserrat. The hotel's reports default
+  // to it; the pair is 'garden' below.
+  garden: {
+    label: 'Garden', bg: '#E7D8C9', ink: '#141617', body: '#2E332E', sub: '#4E5A4E', muted: '#6B746B',
+    card: '#F7F1EA', cardBorder: '#D8C7B4', chip: '#EFE4D8', accent: '#364936', gold: '#8C6E3E', band: '#364936',
+    statusHotBg: '#E1E8E1', statusHotInk: '#364936', statusColdBg: '#EFE4D8', statusColdInk: '#6B746B',
+    good: '#2F6B44', downGray: '#9A9188', rule: '#D8C7B4', toolbarBg: 'rgba(231,216,201,0.94)', toolbarBorder: '#C9B59F',
+    trackBg: '#F3EBE1', footA: '#6B746B', footB: '#9A9188', barA: '#222722', barB: '#364936',
+    edBg: 'rgba(255,255,255,0.45)', edBorder: '#364936',
+  },
   porcelain: {
     label: 'Porcelain', bg: '#F5F6F8', ink: '#1F2430', body: '#434B5C', sub: '#6A7385', muted: '#949CAC',
     card: '#ffffff', cardBorder: '#E5E8EE', chip: '#F1F3F6', accent: '#5B6CB2', gold: '#7B84A8', band: '#1F2430',
@@ -198,7 +210,7 @@ const THEMES: Record<string, Any> = {
 // every number stay in the system sans (numbers in a display serif drift out of column alignment).
 // Loaded from Google Fonts only when a non-default pairing is picked, so the default report ships
 // exactly the bytes it shipped yesterday.
-const FONT_PAIRS: Record<string, { label: string; display: string; href: string; body?: string }> = {
+const FONT_PAIRS: Record<string, { label: string; display: string; href: string; body?: string; caps?: boolean }> = {
   modern: { label: 'Modern', display: '', href: '' },
   stay: {
     label: 'Stay',
@@ -215,6 +227,14 @@ const FONT_PAIRS: Record<string, { label: string; display: string; href: string;
     label: 'Classic',
     display: "'Playfair Display', Georgia, 'Times New Roman', serif",
     href: 'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800;900&display=swap',
+  },
+  // The hotel's own pairing (see the 'garden' theme): Playfair at 500, uppercase, over Montserrat.
+  garden: {
+    label: 'Garden',
+    display: "'Playfair Display', Georgia, 'Times New Roman', serif",
+    body: "'Montserrat', ui-sans-serif, system-ui, -apple-system, sans-serif",
+    href: 'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Montserrat:wght@400;500;600;700&display=swap',
+    caps: true,
   },
 }
 
@@ -2573,6 +2593,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         /* A high-contrast serif carries its weight through shape, not stroke — asking for 700
            of a 400-weight face is what makes browsers synthesise a smeared fake bold. */
         .sb-report h1, .sb-report h2, .sb-present h1, .sb-present h2 { font-weight: 400 !important; letter-spacing: -0.015em; }` : ''}
+        ${(fontPair as Any).caps ? `
+        /* The hotel's headings: Playfair at 500, uppercase and letterspaced, as on its own site. */
+        .sb-report h1, .sb-report h2, .sb-present h1, .sb-present h2 { text-transform: uppercase; letter-spacing: 0.04em; font-weight: 500 !important; }
+        .sb-report, .sb-present { letter-spacing: 0.01em; }` : ''}
         /* Numbers align down a column everywhere — tables, stat rows, statements. */
         .sb-report, .sb-present { font-variant-numeric: tabular-nums; }
         /* A printed / PDF'd share page gets the report, not the chrome. */

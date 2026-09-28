@@ -34,9 +34,12 @@ export async function GET(req: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ ok: true, report: (data || [])[0] || null })
   }
+  // THE GARDEN HOTEL'S REPORTS LIVE IN THIS TABLE TOO (2026-09-28) — same page, same editor —
+  // marked listing_ids ['garden']. The VR desk lists the portfolio's; the hotel's page lists its own.
   const { data, error } = await db
     .from('owner_reports')
     .select('id, code, title, scope_label, period_start, period_end, as_of, theme, status, created_at, updated_at')
+    .not('listing_ids', 'cs', '["garden"]')
     .order('updated_at', { ascending: false })
     .limit(200)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
