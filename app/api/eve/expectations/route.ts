@@ -7,15 +7,17 @@
 //   POST { op: 'edit', id, proposed_copy }        → the copy, edited before it goes anywhere
 //   POST { op: 'rewrite', id, instruction }       → Eve rewrites the copy to the instruction; the old one is kept
 //   POST { op: 'check', id }                      → compares crew photos from the last completed task with the listing photos
-//   POST { op: 'coverage', id }                   → is it already said? every listing section, our sent messages, guidebooks, FAQ
-//   POST { op: 'preview', id, section? }          → what Publish would write: the section, full before/after on a representative unit, which units differ
-//   POST { op: 'publish', id, section? }          → appends the managed block to that section on every live unit in Guesty (optimize edit access)
+//   POST { op: 'coverage', id }                   → is it already said? every listing section, our sent messages, guidebooks, FAQ;
+//                                                   also files the questions it raises ([bracket] facts, contradictions)
+//   POST { op: 'fill', id, values }               → fills the [bracket] blanks in the copy and answers the questions that asked for them
+//   POST { op: 'preview', id, sections? }         → what Publish would write, per section: full before/after on a representative unit, which units differ
+//   POST { op: 'publish', id, sections? }         → appends the managed block to each chosen section on every live unit in Guesty (optimize edit access)
 import { NextRequest, NextResponse } from 'next/server'
 import { eveGate } from '../../agent/route'
 import { atLeast } from '@/lib/features'
 import { isSuperadmin } from '@/lib/access'
 import { recordRun } from '@/lib/automation-runs'
-import { listExpectations, countOpenExpectations, runExpectationsDesk, setExpectationStatus, editExpectationCopy, previewPublish, publishExpectation, rewriteExpectationCopy, checkExpectationPhotos, coverageForNote } from '@/lib/eve/expectations'
+import { listExpectations, countOpenExpectations, runExpectationsDesk, setExpectationStatus, editExpectationCopy, previewPublish, publishExpectation, rewriteExpectationCopy, checkExpectationPhotos, coverageForNote, fillBlanks } from '@/lib/eve/expectations'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 180
@@ -67,16 +69,20 @@ export async function POST(req: NextRequest) {
     const r = await coverageForNote(String(body?.id || ''), by)
     return NextResponse.json(r, { status: r.ok ? 200 : 400 })
   }
+  if (op === 'fill') {
+    const r = await fillBlanks(String(body?.id || ''), (body?.values && typeof body.values === 'object') ? body.values : {}, by)
+    return NextResponse.json(r, { status: r.ok ? 200 : 400 })
+  }
   if (op === 'preview') {
-    const r = await previewPublish(String(body?.id || ''), body?.section ? String(body.section) : undefined)
+    const r = await previewPublish(String(body?.id || ''), Array.isArray(body?.sections) ? body.sections.map(String) : undefined)
     return NextResponse.json(r, { status: r.ok ? 200 : 400 })
   }
   if (op === 'publish') {
     // LIVE OTA TEXT. The same gate as the bulk copy tool: edit on the optimizer, or admin.
     const canPublish = isSuperadmin(a.email) || a.role === 'admin' || atLeast(a.levels?.optimize, 'edit')
     if (!canPublish) return NextResponse.json({ ok: false, error: 'Publishing to listings needs edit access to the listing optimizer.' }, { status: 403 })
-    const r = await publishExpectation(String(body?.id || ''), by, body?.section ? String(body.section) : undefined)
+    const r = await publishExpectation(String(body?.id || ''), by, Array.isArray(body?.sections) ? body.sections.map(String) : undefined)
     return NextResponse.json(r, { status: r.ok ? 200 : 400 })
   }
-  return NextResponse.json({ ok: false, error: 'op must be run, status, edit, rewrite, check, coverage, preview or publish' }, { status: 400 })
+  return NextResponse.json({ ok: false, error: 'op must be run, status, edit, rewrite, check, coverage, fill, preview or publish' }, { status: 400 })
 }
