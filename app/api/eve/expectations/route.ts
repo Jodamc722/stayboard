@@ -4,12 +4,18 @@
 //   GET  ?count=1                          → { count }
 //   POST { op: 'run' }                     → runs the desk now (edit access)
 //   POST { op: 'status', id, status: 'open'|'done'|'dismissed', note? }
+//   POST { op: 'edit', id, proposed_copy }        → the copy, edited before it goes anywhere
+//   POST { op: 'rewrite', id, instruction }       → Eve rewrites the copy to the instruction; the old one is kept
+//   POST { op: 'check', id }                      → compares crew photos from the last completed task with the listing photos
+//   POST { op: 'preview', id }                    → what Publish would write: building, units, block
+//   POST { op: 'publish', id }                    → writes the Good-to-know block to every live unit's
+//                                                   Other notes in Guesty (optimize edit access)
 import { NextRequest, NextResponse } from 'next/server'
 import { eveGate } from '../../agent/route'
 import { atLeast } from '@/lib/features'
 import { isSuperadmin } from '@/lib/access'
 import { recordRun } from '@/lib/automation-runs'
-import { listExpectations, countOpenExpectations, runExpectationsDesk, setExpectationStatus } from '@/lib/eve/expectations'
+import { listExpectations, countOpenExpectations, runExpectationsDesk, setExpectationStatus, editExpectationCopy, previewPublish, publishExpectation, rewriteExpectationCopy, checkExpectationPhotos } from '@/lib/eve/expectations'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 180
@@ -45,5 +51,28 @@ export async function POST(req: NextRequest) {
     const r = await setExpectationStatus(String(body?.id || ''), status as any, by, body?.note)
     return NextResponse.json(r, { status: r.ok ? 200 : 400 })
   }
-  return NextResponse.json({ ok: false, error: 'op must be run or status' }, { status: 400 })
+  if (op === 'edit') {
+    const r = await editExpectationCopy(String(body?.id || ''), String(body?.proposed_copy || ''), by)
+    return NextResponse.json(r, { status: r.ok ? 200 : 400 })
+  }
+  if (op === 'rewrite') {
+    const r = await rewriteExpectationCopy(String(body?.id || ''), String(body?.instruction || ''), by)
+    return NextResponse.json(r, { status: r.ok ? 200 : 400 })
+  }
+  if (op === 'check') {
+    const r = await checkExpectationPhotos(String(body?.id || ''), by)
+    return NextResponse.json(r, { status: r.ok ? 200 : 400 })
+  }
+  if (op === 'preview') {
+    const r = await previewPublish(String(body?.id || ''))
+    return NextResponse.json(r, { status: r.ok ? 200 : 400 })
+  }
+  if (op === 'publish') {
+    // LIVE OTA TEXT. The same gate as the bulk copy tool: edit on the optimizer, or admin.
+    const canPublish = isSuperadmin(a.email) || a.role === 'admin' || atLeast(a.levels?.optimize, 'edit')
+    if (!canPublish) return NextResponse.json({ ok: false, error: 'Publishing to listings needs edit access to the listing optimizer.' }, { status: 403 })
+    const r = await publishExpectation(String(body?.id || ''), by)
+    return NextResponse.json(r, { status: r.ok ? 200 : 400 })
+  }
+  return NextResponse.json({ ok: false, error: 'op must be run, status, edit, rewrite, check, preview or publish' }, { status: 400 })
 }
