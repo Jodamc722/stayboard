@@ -163,7 +163,18 @@ export async function runOpsDesk(opts: { force?: 'plan' | 'recap' | 'chase'; pre
   }
 
   if (wantPlan) {
-    const text = planText(day)
+    let text = planText(day)
+    // THE SHADOW SCHEDULER'S SUGGESTION rides the plan once she has earned it (10 of 14 days).
+    try {
+      const { shadowReadiness } = await import('./scheduler-shadow')
+      const r = await shadowReadiness()
+      const plan = r.lastPlan
+      if (r.ready && plan && plan.date === today) {
+        const unowned = day.tasks.filter(t => t.clean && !t.done && !t.people.length)
+        const lines = unowned.map(t => { const who = plan.assign[`${t.listing}__${today}`]; return who ? `  – ${shortUnit(t.unit)} → ${who}` : null }).filter(Boolean) as string[]
+        if (lines.length) text += `\n*My suggested assignments for the unowned cleans* (shadow scorecard ${r.wins}/${r.scored} — nothing is assigned without a ✅)\n${lines.slice(0, 10).join('\n')}`
+      }
+    } catch { /* the plan stands on its own */ }
     out.plan = text
     if (!opts.preview && await post(text, `ops desk: today's plan by person (${day.tasks.length} tasks)`)) st.lastPlan = today
   }
