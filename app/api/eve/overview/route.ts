@@ -7,12 +7,13 @@
 // nightly jobs is switched on and actually ran (automations). This route reads them together so
 // the page can say, in one line each, what needs Jon and what is running.
 //
-//   GET → { today, loops, questions, thoughts, agent, desks }
+//   GET → { today, loops, questions, expectations, thoughts, agent, desks }
 import { NextResponse } from 'next/server'
 import { eveGate } from '../../agent/route'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { myActionsOn } from '@/lib/eve/system'
 import { countOpenQuestions } from '@/lib/eve/questions'
+import { countOpenExpectations } from '@/lib/eve/expectations'
 import { unseenCount, allObserving } from '@/lib/eve/thoughts'
 import { getAgentSettings } from '@/lib/eve/agent-mode'
 import { allAutomationStates } from '@/lib/eve/automations'
@@ -24,7 +25,7 @@ export const maxDuration = 60
 
 // The desks and nightly jobs that belong on the overview, in the order a person reads them: what
 // runs during the day first, the night shift after. Keys are lib/eve/automations.ts keys.
-const DESKS = ['slack-watch', 'on-watch', 'ops-desk', 'scheduler-shadow', 'eve-ask', 'eve-review', 'quality-audit', 'eve-brain', 'eve-dossiers', 'eve-learn', 'eve-audit', 'eve-metrics']
+const DESKS = ['slack-watch', 'on-watch', 'ops-desk', 'scheduler-shadow', 'eve-ask', 'eve-review', 'quality-audit', 'expectations', 'eve-brain', 'eve-dossiers', 'eve-learn', 'eve-audit', 'eve-metrics']
 
 export async function GET() {
   const gate = await eveGate()
@@ -32,7 +33,7 @@ export async function GET() {
   const email = String(gate.access.email || '').toLowerCase()
   const day = todayET()
 
-  const [today, loops, questions, unseen, settings, states, runs] = await Promise.all([
+  const [today, loops, questions, unseen, settings, states, runs, expectations] = await Promise.all([
     myActionsOn(day).catch((e: any) => ({ error: String(e?.message || e) })),
     loopCounts(),
     countOpenQuestions().catch(() => 0),
@@ -40,6 +41,7 @@ export async function GET() {
     getAgentSettings(),
     allAutomationStates('eve').catch(() => [] as any[]),
     lastRuns().catch(() => ({} as Record<string, any>)),
+    countOpenExpectations().catch(() => 0),
   ])
 
   const byKey: Record<string, any> = {}
@@ -65,7 +67,7 @@ export async function GET() {
       gaps: (today as any).gaps || null,
       error: (today as any).error || null,
     },
-    loops, questions,
+    loops, questions, expectations,
     thoughts: { unseen, allObserving: allObserving(settings) },
     agent: { enabled: !!settings.enabled, rungs: settings.rungs || null },
     desks,
