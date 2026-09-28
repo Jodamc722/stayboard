@@ -250,7 +250,7 @@ Return JSON only:
   ]
 }
 
-ITEMS. A commitment is someone saying they will do a specific thing. A problem is something wrong that affects a unit, a guest, or a person's ability to work. A question is one that got no answer in the thread. A decision is a change to how things are done. A guest_ask is a guest or potential guest wanting something from us that needs an answer: to book, a discount or better rate, to extend or add nights, a call back, a refund or compensation, a change of dates or unit. Set "guest", "ask" and "amount" on a guest_ask; the owner is whoever on our team is handling it, if anyone. A guest_ask is closed by a reply saying it was answered, booked, declined, or that the guest went quiet — not by someone merely acknowledging it ("noted", "on it" keep it open). Only real ones — "ok" and "thanks" are not items. If a later message in the same thread clearly closes it, set resolved_ts to that message's ts. "urgent" is true only when it affects a guest TODAY.
+ITEMS. Only loops somebody would be sorry to have dropped. A commitment is someone saying they will do a SPECIFIC thing for a unit, a guest, a person or stock, with a consequence if it does not happen ("I'll bring the towels to 401 tonight", "I'll call the owner back") — NOT running logistics or chit-chat ("pushing laundry tomorrow", "on my way", "will check", "will let you know"). A problem is something wrong that affects a unit, a guest, or a person's ability to work. A question counts only when it is addressed to a person about a unit, a guest or an order and got no answer; scheduling chatter ("can we meet at 6?") is not one. A decision is a change to how things are done from now on, not a one-day arrangement. When in doubt, leave it out — a short list people trust beats a long one they mute. A guest_ask is a guest or potential guest wanting something from us that needs an answer: to book, a discount or better rate, to extend or add nights, a call back, a refund or compensation, a change of dates or unit. Set "guest", "ask" and "amount" on a guest_ask; the owner is whoever on our team is handling it, if anyone. A guest_ask is closed by a reply saying it was answered, booked, declined, or that the guest went quiet — not by someone merely acknowledging it ("noted", "on it" keep it open). Only real ones — "ok" and "thanks" are not items. If a later message in the same thread clearly closes it, set resolved_ts to that message's ts. "urgent" is true only when it affects a guest TODAY.
 
 Existing open items for this channel are listed; if a message here closes one, return it with the SAME ts as the existing item and a resolved_ts. Do not re-create items that already exist.
 
@@ -355,6 +355,19 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   out.channels = rooms.length
   const n = await names()
 
+  // EXPIRE, DON'T HOARD (Jon, 2026-09-28: "the long Slack post is not super helpful"). A question
+  // nobody answered in 3 days is dead; a promise nobody closed in 7 days is either done and
+  // unrecorded or not happening; a guest ask after 3 days has been decided by the guest. They stop
+  // being "open", stop counting, and keep their history (status 'expired').
+  const EXPIRE_DAYS: Record<string, number> = { question: 3, commitment: 7, guest_ask: 3, problem: 14, decision: 2 }
+  {
+    const cutoff = (k: string) => new Date(Date.now() - (EXPIRE_DAYS[k] || 14) * 86400000).toISOString()
+    for (const k of Object.keys(EXPIRE_DAYS)) {
+      const { data: gone } = await db.from('eve_slack_items').update({ status: 'expired', closed_reason: `expired after ${EXPIRE_DAYS[k]} days with no close`, closed_at: new Date().toISOString() })
+        .eq('status', 'open').eq('kind', k).lt('first_seen', cutoff(k)).select('id')
+      if (gone && gone.length) out.notes.push(`expired ${gone.length} ${k}`)
+    }
+  }
   const { data: openRows } = await db.from('eve_slack_items').select('*').eq('status', 'open').limit(500)
   const open = (openRows || []) as Item[]
 
@@ -558,25 +571,25 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     const openNow = open.filter(i => i.status === 'open')
     const { data: closedRows } = await db.from('eve_slack_items').select('summary,closed_reason,unit').eq('status', 'closed').gte('closed_at', new Date(Date.now() - 26 * 3600_000).toISOString()).limit(30)
     const closed = (closedRows || []) as any[]
-    const grp = (k: string) => openNow.filter(i => i.kind === k)
-    const line = (i: Item) => `• ${i.summary.slice(0, 120)}${i.unit ? ` (${i.unit})` : ''}${i.owner_name ? ` — ${i.owner_name}` : ''}${i.tracked_in ? ' · tracked in ' + i.tracked_in.split(':')[0] : ''}`
-    const parts: string[] = [`*Keeping tabs — ${today}*`]
-    // Yesterday's wins go first (Jon, 2026-09-23). A roll-up that only ever lists what is open
-    // teaches the room that Eve only speaks when something is wrong. Specific or silent — an
-    // empty list adds nothing. See lib/eve/wins.
+    // SHORT, AND ONLY WHAT NEEDS A PERSON TODAY (Jon, 2026-09-28: "the long Slack post is not super
+    // helpful at all"). The full list lives on /loops. Here: guest asks waiting, problems that touch
+    // a guest today or have sat 24h with nobody on them, promises past 48h — six lines at most, then
+    // the counts and the link. Decisions, unanswered questions and "what I learned" are on the page.
+    const hours = (i: Item) => (Date.now() - Date.parse(i.first_seen)) / 3600_000
+    const line = (i: Item) => `• ${i.summary.slice(0, 90)}${i.unit ? ` (${i.unit})` : ''}${i.owner_name ? ` — ${i.owner_name}` : ' — *nobody*'} · ${Math.round(hours(i)) < 48 ? Math.round(hours(i)) + 'h' : Math.round(hours(i) / 24) + 'd'}`
+    const asks = openNow.filter(i => i.kind === 'guest_ask').sort((a, b) => Date.parse(a.first_seen) - Date.parse(b.first_seen))
+    const hot = openNow.filter(i => i.kind === 'problem' && (i.urgent || (hours(i) >= 24 && !i.owner_name))).sort((a, b) => Date.parse(a.first_seen) - Date.parse(b.first_seen))
+    const late = openNow.filter(i => i.kind === 'commitment' && hours(i) >= 48).sort((a, b) => Date.parse(a.first_seen) - Date.parse(b.first_seen))
+    const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
+    const parts: string[] = [`*Keeping tabs — ${today}* · ${openNow.length} open · ${closed.length} closed since yesterday · <${base}/loops|all of it on /loops>`]
     const wins = await winsFor().catch(() => null)
-    if (wins && wins.lines.length) parts.push(`*Yesterday went well*\n${wins.lines.slice(0, 3).map(l => `• ${l}`).join('\n')}`)
-    // SHORT (Jon, 2026-09-23: "when you send a super long brief, that's not really helpful"). Top
-    // four per section; the rest is one ask away (open_items).
-    const sec = (title: string, rows: Item[]) => { if (rows.length) parts.push(`*${title} (${rows.length})*\n${rows.slice(0, 4).map(line).join('\n')}${rows.length > 4 ? `\n…and ${rows.length - 4} more` : ''}`) }
-    sec('Guest asks waiting on us', grp('guest_ask'))
-    sec('Promised, not yet done', grp('commitment'))
-    sec('Problems still open', grp('problem'))
-    sec('Nobody answered', grp('question'))
-    sec('Decisions made in chat', grp('decision'))
-    if (closed.length) parts.push(`*Closed since yesterday:* ${closed.length}`)
-    if (learnedTexts.length) parts.push(`*What I learned yesterday* — tell me if any of this is wrong\n${learnedTexts.slice(0, 3).map(t => `• ${t.slice(0, 140)}`).join('\n')}`)
-    if (parts.length === 1) parts.push('Nothing open. Quiet day.')
+    if (wins && wins.lines.length) parts.push(`*Yesterday went well* — ${wins.lines.slice(0, 2).join(' · ')}`)
+    const needs: string[] = []
+    if (asks.length) needs.push(`*Guest asks waiting (${asks.length})*\n${asks.slice(0, 3).map(line).join('\n')}`)
+    if (hot.length) needs.push(`*Problems that need a name on them (${hot.length})*\n${hot.slice(0, 2).map(line).join('\n')}`)
+    if (late.length) needs.push(`*Promised 2+ days ago, still open (${late.length})*\n${late.slice(0, 2).map(line).join('\n')}`)
+    if (needs.length) parts.push(needs.join('\n')); else parts.push('Nothing needs a person right now.')
+    if (learnedTexts.length) parts.push(`_Learned ${learnedTexts.length} thing${learnedTexts.length === 1 ? '' : 's'} yesterday — on the Eve memory page._`)
     const gate = await agentAllowed('slack_post')
     const text = parts.join('\n\n')
     const stepped = await stepDown(gate, { action: 'slack_post', summary: `morning roll-up in #vr-eve (${openNow.length} open)`, exec: { channel: EVE_CHANNELS.approvals, channel_name: 'vr-eve', text }, by: 'cron:slack-watch' },

@@ -12,7 +12,7 @@ import { AddTaskHost, openAddTask } from '@/components/AddTaskSheet'
 import {
   CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
   ListChecks, Wrench, LogOut, RefreshCw, Gauge, Star, CalendarRange, AlertTriangle, Timer,
-  Sparkles, TrendingUp, BarChart3, KeyRound, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Lock, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
+  Sparkles, TrendingUp, BarChart3, KeyRound, Radar, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Lock, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
   ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus, AtSign, Activity, Plug } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
@@ -46,6 +46,7 @@ export const SECTIONS: NavSection[] = [
     title: 'Overview',
     items: [
       { to: '/command', label: 'Command Center', Icon: Gauge },
+      { to: '/loops', label: 'Open loops', Icon: Radar },
       // Eve left the sidebar on 2026-08-19 (Jon: "Eve does not need her own page — a floating
       // icon"). She is the bubble in the bottom-right corner of every page now; managing her
       // memory/voice/direction lives in Users & admin → Settings → Eve.

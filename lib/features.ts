@@ -17,6 +17,9 @@ export const GROUP_ORDER = ['Overview', 'Guests', 'Operations', 'Portfolio', 'Mo
 
 export const FEATURES: Feature[] = [
   { key: 'command',       label: 'Command Center',    path: '/command', group: 'Overview' },
+  // Open loops (Jon, 2026-09-28): the page behind Eve's 'Keeping tabs' — guest asks, problems,
+  // promises, unanswered questions, decisions — with Done / Not a loop. Replaces the long roll-up.
+  { key: 'loops',         label: 'Open loops',        path: '/loops', group: 'Overview' },
   // Moved off '/' 2026-08-24 (Jon: "home page is a bust"). The KEY stays `home` on purpose — it is
   // what per-role permissions are stored against, so renaming it would silently reset everyone's
   // access to this page. Only the path, label and group moved.
@@ -352,9 +355,9 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'admin', label: 'Admin',            landing: '/command', blurb: 'Everything + user management', pages: 'all' },
   { key: 'gm',    label: 'GM',               landing: '/command', blurb: 'Everything except admin tools', pages: 'all' },
   { key: 'ops',   label: 'Ops',              landing: '/plan',    blurb: 'Field operations: cleans, glitches, audits, orders',
-    pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'projects', 'ffe', 'onboarding', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'patterns', 'blocked', 'faq', 'guest-orders', 'api-keys'] },
+    pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'projects', 'ffe', 'onboarding', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'patterns', 'blocked', 'faq', 'guest-orders', 'api-keys', 'loops'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
-    pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims', 'guests', 'guest-orders', 'api-keys'] },
+    pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims', 'guests', 'guest-orders', 'api-keys', 'loops'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
     pages: ['home', 'revenue', 'revenue-app', 'marketing', 'reports', 'health', 'patterns', 'blocked', 'buildings', 'listings', 'claims', 'contacts', 'channels', 'api-keys'] },
 ]
