@@ -32,6 +32,11 @@ import { anthropicMessages } from '@/lib/anthropic-call'
 import { usageOf } from '@/lib/ai-usage'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { todayET, shiftDay, lc } from './ctx'
+import { rollupBuilding as rollupB } from '@/lib/optimize-score'
+import { getSetting, setSetting } from '@/lib/app-settings'
+import { pageRows } from '@/lib/db-page'
+import { retrieveBreezewayTask } from '@/lib/breezeway'
+import { aiFetch } from '@/lib/ai-usage'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const clip = (v: any, n: number) => str(v).replace(/\s+/g, ' ').trim().slice(0, n)
@@ -270,6 +275,22 @@ export async function countOpenExpectations(): Promise<number> {
   return (await listExpectations('open')).length
 }
 
+/** A person's edit of the copy before it goes anywhere — the [fee] blank filled in, a sentence softened. */
+export async function editExpectationCopy(id: string, proposed_copy: string, by: string): Promise<{ ok: boolean; error?: string }> {
+  const db = supabaseAdmin()
+  try {
+    const { data } = await db.from('eve_knowledge').select('id,content').eq('id', id).maybeSingle()
+    if (!data) return { ok: false, error: 'not found' }
+    const n: ExpectationNote = JSON.parse(str((data as any).content))
+    const next = clip(proposed_copy, 900)
+    if (!next) return { ok: false, error: 'the copy cannot be empty' }
+    n.proposed_copy = next
+    ;(n as any).copy_edited_by = by; (n as any).copy_edited_at = new Date().toISOString()
+    const { error } = await db.from('eve_knowledge').update({ content: JSON.stringify(n), updated_at: new Date().toISOString() }).eq('id', id)
+    return error ? { ok: false, error: error.message } : { ok: true }
+  } catch (e: any) { return { ok: false, error: clip(e?.message || e, 160) } }
+}
+
 /** A person's verdict: updated (done), not a gap (dismissed), or back to open. */
 export async function setExpectationStatus(id: string, status: 'open' | 'done' | 'dismissed', by: string, note?: string): Promise<{ ok: boolean; error?: string }> {
   const db = supabaseAdmin()
@@ -282,4 +303,236 @@ export async function setExpectationStatus(id: string, status: 'open' | 'done' |
     const { error } = await db.from('eve_knowledge').update({ content: JSON.stringify(n), updated_at: n.status_at }).eq('id', id)
     return error ? { ok: false, error: error.message } : { ok: true }
   } catch (e: any) { return { ok: false, error: clip(e?.message || e, 160) } }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// PUBLISH TO THE LISTINGS (Jon, 2026-09-28: "if it's a listing update, we should be able to
+// publish from the recommendations to a designated area without having to copy").
+//
+// THE DESIGNATED AREA is a "Good to know" block at the end of each unit's OTHER NOTES — the
+// publicDescription.notes section Guesty shows on every channel, the same field the bulk copy
+// tool already writes property-wide (app/api/listing-copy). One block per building, built from
+// every note published for that building, so publishing a second note rewrites the block rather
+// than stacking a second paragraph. The block's exact previous text is remembered per building
+// (app_settings expectations_block:<building>) and stripped before the new one is appended, so the
+// rest of Other notes — whatever a person wrote there — is never touched.
+//
+// A person presses Publish; nothing here runs on a schedule. The write goes to every live unit in
+// the building with a pause between calls, is recorded in listing_copy_pushes like any other copy
+// push, and the note is marked updated with "published to N listings". Pre-arrival messages and
+// the check-in guide are not listings, so those notes keep the Copy button.
+
+const GUESTY_BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
+const DEAD_STATUS = ['inactive', 'disabled', 'archived', 'deleted']
+const BLOCK_HEAD = 'GOOD TO KNOW BEFORE YOU BOOK'
+const NOTES_MAX = 2000
+
+export const PUBLISHABLE = new Set(['listing', 'house_rules', 'faq'])
+type BlockState = { lines: Record<string, string>; block: string; at: string; by: string }
+const blockKey = (b: string) => 'expectations_block:' + slug(b)
+
+function buildBlock(lines: Record<string, string>): string {
+  const items = Object.values(lines).map(t => clip(t, 600)).filter(Boolean)
+  return items.length ? BLOCK_HEAD + '\n' + items.map(t => '• ' + t).join('\n') : ''
+}
+/** Other notes without our block — the person's own text, whatever it was. */
+function stripBlock(notes: string, prevBlock: string): string {
+  let s = String(notes || '')
+  if (prevBlock && s.includes(prevBlock)) s = s.replace(prevBlock, '')
+  // A block written by hand under the same heading counts as ours too.
+  const at = s.indexOf(BLOCK_HEAD)
+  if (at >= 0) s = s.slice(0, at)
+  return s.replace(/\s+$/, '')
+}
+
+export type PublishResult = { ok: true; listings: number; okCount: number; failCount: number; block: string; results: { id: string; name: string; ok: boolean; error?: string }[] } | { ok: false; error: string }
+
+/** What Publish would do, for the confirm line: the building's live units and the block as it would read. */
+export async function previewPublish(id: string): Promise<{ ok: boolean; error?: string; building?: string; units?: number; block?: string; fix_where?: string }> {
+  const db = supabaseAdmin()
+  const { data } = await db.from('eve_knowledge').select('id,content').eq('id', id).maybeSingle()
+  if (!data) return { ok: false, error: 'not found' }
+  const n: ExpectationNote = JSON.parse(str((data as any).content))
+  if (!PUBLISHABLE.has(n.fix_where)) return { ok: false, error: 'This note is for ' + (FIX_LABEL[n.fix_where] || n.fix_where) + ', not the listing — copy it there.' }
+  const units = (await buildingListings(n.building)).length
+  const state = await getSetting<BlockState | null>(blockKey(n.building), null)
+  const lines = { ...(state?.lines || {}), [n.id]: n.proposed_copy }
+  return { ok: true, building: n.building, units, block: buildBlock(lines), fix_where: n.fix_where }
+}
+
+async function buildingListings(building: string): Promise<{ id: string; name: string; raw: any }[]> {
+  const db = supabaseAdmin()
+  const { rows } = await pageRows<any>((a, b) => db.from('guesty_listings').select('id,title,nickname,building,status,raw').order('id').range(a, b), 12)
+  return (rows || [])
+    .filter((r: any) => DEAD_STATUS.indexOf(lc(r.status)) < 0)
+    .filter((r: any) => rollupB(r.building, r.nickname || r.title) === building)
+    .map((r: any) => ({ id: str(r.id), name: str(r.nickname || r.title) || str(r.id), raw: r.raw }))
+}
+
+export async function publishExpectation(id: string, by: string): Promise<PublishResult> {
+  const db = supabaseAdmin()
+  const { data } = await db.from('eve_knowledge').select('id,content').eq('id', id).maybeSingle()
+  if (!data) return { ok: false, error: 'not found' }
+  const n: ExpectationNote = JSON.parse(str((data as any).content))
+  if (!PUBLISHABLE.has(n.fix_where)) return { ok: false, error: 'This note is for ' + (FIX_LABEL[n.fix_where] || n.fix_where) + ', not the listing.' }
+  if (/\[[^\]]*\]/.test(n.proposed_copy)) return { ok: false, error: 'The copy still has a blank to fill in (the part in [brackets]). Edit it first.' }
+  const listings = await buildingListings(n.building)
+  if (!listings.length) return { ok: false, error: 'No live listings found for ' + n.building + '.' }
+
+  const { data: tok } = await db.from('guesty_tokens').select('access_token, expires_at').eq('id', 'singleton').maybeSingle()
+  const token = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now() + 30_000) ? String(tok.access_token) : ''
+  if (!token) return { ok: false, error: 'Guesty token unavailable — run a sync, then retry in a moment.' }
+
+  const prev = await getSetting<BlockState | null>(blockKey(n.building), null)
+  const lines = { ...(prev?.lines || {}), [n.id]: n.proposed_copy }
+  const block = buildBlock(lines)
+  const results: { id: string; name: string; ok: boolean; error?: string }[] = []
+  let okCount = 0, failCount = 0, first = true
+  for (const l of listings) {
+    if (!first) await new Promise(res => setTimeout(res, 250))
+    first = false
+    const pub = l.raw?.publicDescription && typeof l.raw.publicDescription === 'object' ? l.raw.publicDescription : {}
+    const base = stripBlock(str(pub.notes), prev?.block || '')
+    let notes = (base ? base + '\n\n' : '') + block
+    if (notes.length > NOTES_MAX) notes = notes.slice(0, NOTES_MAX)
+    try {
+      const r = await fetch(`${GUESTY_BASE}/listings/${encodeURIComponent(l.id)}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ publicDescription: { notes } }),
+      })
+      const text = await r.text().catch(() => '')
+      if (!r.ok) { results.push({ id: l.id, name: l.name, ok: false, error: `Guesty ${r.status}: ${text.slice(0, 120)}` }); failCount++; continue }
+      try {
+        const raw: any = (l.raw && typeof l.raw === 'object') ? l.raw : {}
+        await db.from('guesty_listings').update({ raw: { ...raw, publicDescription: { ...pub, notes }, _lastBulkCopy: new Date().toISOString() } }).eq('id', l.id)
+      } catch { /* mirror is best-effort; Guesty is the record */ }
+      results.push({ id: l.id, name: l.name, ok: true }); okCount++
+    } catch (e: any) { results.push({ id: l.id, name: l.name, ok: false, error: str(e?.message || e) }); failCount++ }
+  }
+  if (okCount) {
+    await setSetting(blockKey(n.building), { lines, block, at: new Date().toISOString(), by } as BlockState, by).catch(() => {})
+    try { await db.from('listing_copy_pushes').insert({ by_email: by, scope: 'property', buildings: [n.building], sections: ['notes'], listing_count: listings.length, ok_count: okCount, fail_count: failCount }) } catch { /* audit row never blocks */ }
+    await setExpectationStatus(id, 'done', by, `published to ${okCount} of ${listings.length} listings at ${n.building} (Other notes)`)
+  }
+  return { ok: true, listings: listings.length, okCount, failCount, block, results }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// REWRITE IT DIFFERENTLY (Jon, 2026-09-28: "if it makes a listing description update, I should
+// be able to audit it, edit it, and prompt it differently"). The note keeps its evidence and its
+// gap; only the proposed copy is rewritten, to the person's instruction, and the previous version
+// is kept on the note so the change can be read back.
+export async function rewriteExpectationCopy(id: string, instruction: string, by: string): Promise<{ ok: boolean; proposed_copy?: string; error?: string }> {
+  const key = process.env.ANTHROPIC_API_KEY
+  if (!key) return { ok: false, error: 'ANTHROPIC_API_KEY is not set' }
+  const db = supabaseAdmin()
+  const { data } = await db.from('eve_knowledge').select('id,content').eq('id', id).maybeSingle()
+  if (!data) return { ok: false, error: 'not found' }
+  const n: ExpectationNote = JSON.parse(str((data as any).content))
+  const ask = clip(instruction, 500)
+  if (!ask) return { ok: false, error: 'say how you want it rewritten' }
+  const { model, fallback } = await modelPairFor('expectations')
+  const r = await anthropicMessages(key, {
+    model, max_tokens: 600,
+    system: 'You rewrite one short piece of guest-facing copy for a short-term rental listing, house rules, FAQ or pre-arrival message. Warm, direct host voice; factual; no marketing; never invent a number or a fact — keep a bracketed blank like [fee] where the fact is not given. Reply with the rewritten copy only, no preamble, no quotes.',
+    messages: [{ role: 'user', content: `WHAT GUESTS HIT: ${n.what_guests_hit}\nTHE GAP: ${n.gap}\nWHERE IT GOES: ${FIX_LABEL[n.fix_where] || n.fix_where}\n\nCURRENT COPY:\n${n.proposed_copy}\n\nINSTRUCTION FROM THE TEAM: ${ask}` }],
+  }, fallback, 'expectations')
+  if (!r.ok) return { ok: false, error: clip(r.data?.error?.message, 160) || `model call failed (${r.status})` }
+  const text = clip((r.data?.content || []).map((c: any) => c?.text || '').join(' '), 900)
+  if (!text) return { ok: false, error: 'the model returned nothing' }
+  const history = Array.isArray((n as any).copy_history) ? (n as any).copy_history : []
+  history.push({ at: new Date().toISOString(), by, instruction: ask, before: n.proposed_copy })
+  ;(n as any).copy_history = history.slice(-6)
+  n.proposed_copy = text
+  ;(n as any).copy_edited_by = by; (n as any).copy_edited_at = new Date().toISOString()
+  const { error } = await db.from('eve_knowledge').update({ content: JSON.stringify(n), updated_at: new Date().toISOString() }).eq('id', id)
+  return error ? { ok: false, error: error.message } : { ok: true, proposed_copy: text }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// CHECK IT AGAINST THE UNIT (Jon, 2026-09-28: "if listing photos don't match, it'll say 'check'.
+// You should then run an audit from a Breezeway task completion versus the actual photos and see
+// if it matches"). For each unit named in the note's evidence (else the building's units, up to
+// six), take the photos the crew attached to its most recent completed clean or inspection in
+// Breezeway and put them next to the listing's own photos, and ask the vision model one question:
+// is this the same room, furnished the same way, or has something changed? The answer is filed on
+// the note per unit — matches / differs, with what differs — so "photos don't match" becomes
+// either a listing that needs new photos or a guest who was wrong, with the evidence either way.
+
+type CheckUnit = { unit: string; listingId: string; task: string | null; taskDate: string | null; taskPhotos: number; listingPhotos: number; verdict: 'matches' | 'differs' | 'no photos' | 'error'; differences: string[]; note: string }
+export type PhotoCheck = { at: string; by: string; units: CheckUnit[]; summary: string }
+
+function urlsIn(v: any, out: string[] = [], depth = 0): string[] {
+  if (depth > 6 || out.length > 40) return out
+  if (typeof v === 'string') { if (/^https?:\/\/\S+\.(jpe?g|png|webp)(\?|$)/i.test(v) || /\/(photo|image|upload)s?\//i.test(v) && /^https?:\/\//.test(v)) out.push(v) }
+  else if (Array.isArray(v)) for (const x of v) urlsIn(x, out, depth + 1)
+  else if (v && typeof v === 'object') for (const k of Object.keys(v)) urlsIn(v[k], out, depth + 1)
+  return out
+}
+const picsOf = (raw: any): string[] => (Array.isArray(raw?.pictures) ? raw.pictures : []).map((p: any) => String(p?.original || p?.large || p?.url || p?.thumbnail || '')).filter((u: string) => /^https?:\/\//.test(u))
+const shrink = (u: string) => (u.includes('/image/upload/') && !/\/image\/upload\/[a-z]_/.test(u)) ? u.replace('/image/upload/', '/image/upload/w_1024,q_auto/') : u
+
+export async function checkExpectationPhotos(id: string, by: string): Promise<{ ok: boolean; check?: PhotoCheck; error?: string }> {
+  const key = process.env.ANTHROPIC_API_KEY
+  if (!key) return { ok: false, error: 'ANTHROPIC_API_KEY is not set' }
+  const db = supabaseAdmin()
+  const { data } = await db.from('eve_knowledge').select('id,content').eq('id', id).maybeSingle()
+  if (!data) return { ok: false, error: 'not found' }
+  const n: ExpectationNote = JSON.parse(str((data as any).content))
+  const listings = await buildingListings(n.building)
+  if (!listings.length) return { ok: false, error: 'No live listings found for ' + n.building + '.' }
+  // The units the guests named, else the building's first six.
+  const named = new Set((n.evidence || []).map(e => lc(e.unit)).filter(Boolean))
+  let pick = listings.filter(l => named.has(lc(l.name)) || Array.from(named).some(u => u && (lc(l.name).includes(u) || u.includes(lc(l.name)))))
+  if (!pick.length) pick = listings
+  pick = pick.slice(0, 6)
+
+  const { model } = await modelPairFor('eve-vision')
+  const units: CheckUnit[] = []
+  for (const l of pick) {
+    const row: CheckUnit = { unit: l.name, listingId: l.id, task: null, taskDate: null, taskPhotos: 0, listingPhotos: 0, verdict: 'no photos', differences: [], note: '' }
+    try {
+      const { data: tasks } = await db.from('breezeway_tasks_sync').select('id,name,scheduled_date,finished_at,status,type_department')
+        .eq('reference_property_id', l.id).not('finished_at', 'is', null).order('finished_at', { ascending: false }).limit(8)
+      let taskPhotos: string[] = []
+      for (const t of ((tasks || []) as any[])) {
+        const det = await retrieveBreezewayTask(t.id)
+        if (!det.ok) continue
+        const urls = Array.from(new Set(urlsIn(det.data))).slice(0, 5)
+        if (urls.length) { taskPhotos = urls; row.task = str(t.name); row.taskDate = str(t.finished_at).slice(0, 10); break }
+      }
+      const listingPhotos = picsOf(l.raw).slice(0, 5)
+      row.taskPhotos = taskPhotos.length; row.listingPhotos = listingPhotos.length
+      if (!taskPhotos.length || !listingPhotos.length) { row.note = !taskPhotos.length ? 'no photos on the last eight completed tasks' : 'the listing has no photos'; units.push(row); continue }
+      const content: any[] = [{ type: 'text', text: 'LISTING PHOTOS (what we advertise):' }]
+      for (const u of listingPhotos) content.push({ type: 'image', source: { type: 'url', url: shrink(u) } })
+      content.push({ type: 'text', text: `CREW PHOTOS from "${row.task}" completed ${row.taskDate} (what the unit looked like then):` })
+      for (const u of taskPhotos) content.push({ type: 'image', source: { type: 'url', url: u } })
+      content.push({ type: 'text', text: 'Return JSON only: {"verdict":"matches"|"differs","differences":[up to 5 short strings, each one concrete thing that is different, missing, worn or changed — furniture, decor, appliances, condition],"note":one sentence}. "matches" when the crew photos show the same rooms furnished the same way; "differs" when a guest who booked from the listing photos would notice the difference. If the crew photos do not show the same rooms as the listing photos, say so in note and use "matches" only if nothing visible contradicts the listing.' })
+      const r = await aiFetch('eve-vision', {
+        method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model, max_tokens: 500, messages: [{ role: 'user', content }] }),
+      })
+      const d: any = await r.json().catch(() => ({}))
+      if (!r.ok) { row.verdict = 'error'; row.note = clip(d?.error?.message, 120) || `vision ${r.status}`; units.push(row); continue }
+      const text = (d?.content || []).map((c: any) => c?.text || '').join('')
+      const m = text.match(/\{[\s\S]*\}/)
+      const j = m ? (() => { try { return JSON.parse(m[0]) } catch { return null } })() : null
+      row.verdict = j?.verdict === 'differs' ? 'differs' : j ? 'matches' : 'error'
+      row.differences = Array.isArray(j?.differences) ? j.differences.map((x: any) => clip(x, 120)).slice(0, 5) : []
+      row.note = clip(j?.note || text, 200)
+    } catch (e: any) { row.verdict = 'error'; row.note = clip(e?.message || e, 120) }
+    units.push(row)
+  }
+  const differs = units.filter(u => u.verdict === 'differs')
+  const seen = units.filter(u => u.verdict === 'matches' || u.verdict === 'differs')
+  const summary = !seen.length ? 'No unit could be compared — no crew photos on recent tasks.'
+    : differs.length ? `${differs.length} of ${seen.length} unit${seen.length === 1 ? '' : 's'} differ from the listing photos: ${differs.map(u => u.unit).join(', ')}.`
+    : `All ${seen.length} unit${seen.length === 1 ? '' : 's'} checked match the listing photos.`
+  const check: PhotoCheck = { at: new Date().toISOString(), by, units, summary }
+  ;(n as any).check = check
+  const { error } = await db.from('eve_knowledge').update({ content: JSON.stringify(n), updated_at: check.at }).eq('id', id)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true, check }
 }
