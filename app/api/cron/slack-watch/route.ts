@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runSlackWatch, openItems } from '@/lib/eve/slack-watch'
 import { runOnWatch } from '@/lib/eve/on-watch'
+import { runOpsDesk } from '@/lib/eve/ops-desk'
 import { checkOutcomes } from '@/lib/eve/outcomes'
 import { cronAllowed, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
@@ -35,6 +36,9 @@ export async function GET(req: NextRequest) {
   if (!gate.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   // ?watch=preview — what the next on-watch pass would say, posting nothing and saving nothing.
   if (new URL(req.url).searchParams.get('watch') === 'preview') return NextResponse.json(await runOnWatch({ preview: true }))
+  // ?desk=plan|recap — what the ops desk would post right now, posting nothing.
+  const deskPrev = new URL(req.url).searchParams.get('desk')
+  if (deskPrev === 'plan' || deskPrev === 'recap') return NextResponse.json(await runOpsDesk({ force: deskPrev, preview: true }))
   const items = await openItems(100).catch(() => [])
   return NextResponse.json({ ok: true, open: items.length, items })
 }
@@ -69,11 +73,15 @@ export async function POST(req: NextRequest) {
   const o0 = Date.now()
   const outcomes = await checkOutcomes().catch((e: any) => ({ checked: 0, updated: 0, byOutcome: {}, error: String(e?.message || e).slice(0, 160) }))
   if (outcomes.checked || outcomes.error) recordRun({ name: 'eve-outcomes', ok: !outcomes.error, itemCount: outcomes.updated, detail: outcomes, error: outcomes.error || null, ms: Date.now() - o0 })
-  let watch: any = null
+  let watch: any = null, opsDesk: any = null
   if (url.searchParams.get('watch') !== '0') {
     const w0 = Date.now()
     watch = await runOnWatch({ force: url.searchParams.get('watch') === 'force' }).catch((e: any) => ({ ok: false, error: String(e?.message || e).slice(0, 200) }))
+    // THE OPS DESK rides the same hourly line (Jon, 2026-09-28): 7am plan by person, hourly
+    // assignment proposals for unowned work, 6pm recap. Own try; its hours are its own setting.
+    opsDesk = await runOpsDesk().catch((e: any) => ({ ok: false, error: String(e?.message || e).slice(0, 200) }))
+    if (opsDesk && !opsDesk.skipped) recordRun({ name: 'ops-desk', ok: opsDesk.ok !== false, itemCount: (opsDesk.proposedAssign || 0) + (opsDesk.plan ? 1 : 0) + (opsDesk.recap ? 1 : 0), detail: opsDesk, error: opsDesk.error || null, ms: Date.now() - w0 })
     if (watch && !watch.skipped) recordRun({ name: 'on-watch', ok: watch.ok !== false, itemCount: Object.values(watch.posted || {}).reduce((a: number, b: any) => a + Number(b || 0), 0) + (watch.resolved || 0), detail: watch, error: watch.error || null, ms: Date.now() - w0 })
   }
-  return NextResponse.json({ ...res, outcomes, watch }, { status: res.ok ? 200 : 500 })
+  return NextResponse.json({ ...res, outcomes, watch, opsDesk }, { status: res.ok ? 200 : 500 })
 }
