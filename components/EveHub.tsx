@@ -17,7 +17,7 @@
 // Lean rules (components/lean.tsx): one-line header with pills, tabs with counts, rows, detail
 // behind a click.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Sparkles, Check, X, HelpCircle, RefreshCw, ExternalLink, Loader2, Radar, Brain, Sliders, MessageSquareWarning, Copy, RotateCcw, Play, MessageCircle } from 'lucide-react'
+import { Sparkles, Check, X, HelpCircle, RefreshCw, ExternalLink, Loader2, Radar, Brain, Sliders, MessageSquareWarning, Copy, RotateCcw, Play, MessageCircle, Search } from 'lucide-react'
 import { LeanHead, LeanTabs, LeanList, LeanRow, LeanSection, LeanEmpty, Tag, Pill, IconBtn } from '@/components/lean'
 import { OpenLoops } from '@/components/OpenLoops'
 import { openEve } from '@/components/EveFloat'
@@ -352,6 +352,30 @@ type XNote = {
   copy_history?: { at: string; by: string; instruction: string; before: string }[]
   copy_edited_by?: string | null
   check?: { at: string; by: string; summary: string; units: { unit: string; task: string | null; taskDate: string | null; taskPhotos: number; listingPhotos: number; verdict: string; differences: string[]; note: string }[] }
+  coverage?: Coverage
+  published?: { at: string; by: string; section: string; label: string; listings: number; okCount: number; failCount: number }
+}
+// Is it already said? — every listing section on every unit, the messages we sent guests of that
+// building, the guidebooks, the FAQ (lib/eve/expectations.ts coverageForNote).
+type Coverage = {
+  at: string; by: string; topic: string; building: string; units: number
+  listing: { section: string; label: string; mentioning: number; sample: { unit: string; sentence: string } | null; variants: number }[]
+  messages: { total: number; mentioning: number; conversations: number; samples: { unit: string; when: string; sentence: string }[] }
+  guidebook: { units_with_book: number; mentioning: number; sample: { unit: string; sentence: string } | null }
+  faq: { entries: number; mentioning: number; sample: { unit: string; sentence: string } | null }
+  verdict: 'not_covered' | 'partly' | 'covered'
+  why: string; best_section: string; placement_note: string; revised_copy: string | null
+}
+// What Publish would write: the section, the full text before and after on a representative unit.
+type Preview = {
+  section: string; label: string; units: number; block: string; representative: string
+  before: string; after: string; same: number; differ: { unit: string; length: number }[]
+  sections: { key: string; label: string; filled: number }[]
+}
+const VERDICT: Record<string, { tone: 'emerald' | 'amber' | 'rose'; label: string }> = {
+  not_covered: { tone: 'emerald', label: 'not said anywhere' },
+  partly: { tone: 'amber', label: 'partly said already' },
+  covered: { tone: 'rose', label: 'we already say this' },
 }
 const PUBLISHABLE = new Set(['listing', 'house_rules', 'faq'])
 const CHECKABLE = /photo|picture|as described|advertis|match|not as|smaller|different from|misleading|what is in the unit/i
@@ -402,7 +426,7 @@ function ExpectationsTab({ canEdit, onCount }: { canEdit: boolean; onCount: (n: 
             </button>
           ))}
         </div>
-        <p className="text-[12px] text-muted max-w-[60ch]">What guests keep being surprised by, from reviews and their messages, and the sentence for the listing, the rules or the pre-arrival message that would have spared them. She prepares; you paste and mark it updated.</p>
+        <p className="text-[12px] text-muted max-w-[60ch]">What guests keep being surprised by, from reviews and their messages, and the sentence for the listing, the rules or the pre-arrival message that would have spared them. Before anything is published she shows you what we already say, which section it lands in, and the text before and after.</p>
         {canEdit ? (
           <button onClick={runNow} disabled={run === '…'} className="ml-auto inline-flex items-center gap-1.5 text-[12px] font-semibold rounded-lg border border-line bg-white px-3 py-1.5 text-ink hover:bg-app disabled:opacity-50" title="Reads the last 45 days again. Runs on its own every Monday.">
             {run === '…' ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />} Read the last 45 days now{run && run !== '…' ? ` · ${run}` : ''}
@@ -451,48 +475,87 @@ function ExpectationsTab({ canEdit, onCount }: { canEdit: boolean; onCount: (n: 
   )
 }
 
-// The copy itself, and everything a person can do to it before it goes anywhere (Jon, 2026-09-28:
-// "I should be able to audit it, edit it, and prompt it differently"; "publish from the
-// recommendations to a designated area without having to copy"; "if listing photos don't match,
-// it'll say check"). Edit in place; rewrite to an instruction (the previous version stays on the
-// note); check the unit's crew photos against the listing photos; publish the Good-to-know block
-// to every unit's Other notes in Guesty — after a confirm that shows exactly what will be written.
+// THE COPY, AND EVERYTHING A PERSON DOES TO IT BEFORE IT GOES ANYWHERE.
+//
+// Jon, 2026-09-28: "I'm not sure if I like the new format… not sure where it's posting it. It
+// should show where it's going to add it into the description. Check the entire listing to make
+// sure that it's not in it. Also check all the messages that go out to a guest to confirm that
+// it's not clear in the message threads… I can't just rewrite it, not knowing how it adds it or
+// where it adds it."
+//
+// So Publish is three steps on one panel, in that order, and nothing is written until all three
+// have been seen:
+//   1. IS IT ALREADY SAID?  Every section of the listing on every unit of the building, every
+//      message we sent guests there in the last 60 days, the guidebooks and the FAQ — with the
+//      sentences found, not a verdict on its own. If she finds it is already covered she says so
+//      and can rewrite the copy to fit what is there.
+//   2. WHERE IT GOES.  One section of the Guesty description — Guest access, Neighborhood,
+//      Getting around, Other notes or House rules — chosen by her from the evidence, changeable
+//      by the person, with how many units already have text in each.
+//   3. WHAT CHANGES.  The full text of that section on a representative unit, before and after,
+//      with the added block marked, and how many units share that text and how many differ.
+// Edit and Rewrite… stay where they were; Check against photos is unchanged.
 function CopyPanel({ n, canEdit, copied, onCopy, onPatch, onPublished }: { n: XNote; canEdit: boolean; copied: boolean; onCopy: () => void; onPatch: (p: Partial<XNote>) => void; onPublished: () => void }) {
-  const [mode, setMode] = useState<'view' | 'edit' | 'rewrite' | 'confirm'>('view')
+  const [mode, setMode] = useState<'view' | 'edit' | 'rewrite' | 'publish'>('view')
   const [draft, setDraft] = useState(n.proposed_copy)
   const [ask, setAsk] = useState('')
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
-  const [preview, setPreview] = useState<{ units: number; block: string } | null>(null)
+  const [preview, setPreview] = useState<Preview | null>(null)
+  const [force, setForce] = useState(false)
   const post = (body: any) => fetch('/api/eve/expectations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: n.id, ...body }) }).then(x => x.json())
 
   async function save() {
     setBusy('edit')
-    try { const r = await post({ op: 'edit', proposed_copy: draft }); if (r?.ok) { onPatch({ proposed_copy: draft }); setMode('view'); setMsg('Saved.') } else setMsg(r?.error || 'Could not save') } finally { setBusy('') }
+    try { const r = await post({ op: 'edit', proposed_copy: draft }); if (r?.ok) { onPatch({ proposed_copy: draft }); setMode('view'); setMsg('Saved.'); setPreview(null) } else setMsg(r?.error || 'Could not save') } finally { setBusy('') }
   }
   async function rewrite() {
     setBusy('rewrite')
-    try { const r = await post({ op: 'rewrite', instruction: ask }); if (r?.ok) { onPatch({ proposed_copy: r.proposed_copy, copy_history: (n.copy_history || []).concat([{ at: new Date().toISOString(), by: 'you', instruction: ask, before: n.proposed_copy }]) }); setDraft(r.proposed_copy); setAsk(''); setMode('view'); setMsg('Rewritten.') } else setMsg(r?.error || 'Could not rewrite') } finally { setBusy('') }
+    try { const r = await post({ op: 'rewrite', instruction: ask }); if (r?.ok) { onPatch({ proposed_copy: r.proposed_copy, copy_history: (n.copy_history || []).concat([{ at: new Date().toISOString(), by: 'you', instruction: ask, before: n.proposed_copy }]) }); setDraft(r.proposed_copy); setAsk(''); setMode('view'); setMsg('Rewritten.'); setPreview(null) } else setMsg(r?.error || 'Could not rewrite') } finally { setBusy('') }
+  }
+  async function useRevised(text: string) {
+    setBusy('edit')
+    try { const r = await post({ op: 'edit', proposed_copy: text }); if (r?.ok) { onPatch({ proposed_copy: text }); setDraft(text); setMsg('Copy replaced with her version.'); await loadPreview(preview?.section) } else setMsg(r?.error || 'Could not save') } finally { setBusy('') }
   }
   async function check() {
     setBusy('check'); setMsg('Looking at the crew photos next to the listing photos…')
     try { const r = await post({ op: 'check' }); if (r?.ok) { onPatch({ check: r.check }); setMsg('') } else setMsg(r?.error || 'Could not check') } finally { setBusy('') }
   }
-  async function askPreview() {
-    setBusy('preview'); setMsg('')
-    try { const r = await post({ op: 'preview' }); if (r?.ok) { setPreview({ units: r.units, block: r.block }); setMode('confirm') } else setMsg(r?.error || 'Cannot publish this one') } finally { setBusy('') }
+  // STEP 1 — the whole listing, our sent messages, the guidebooks, the FAQ.
+  async function coverage() {
+    setBusy('coverage'); setMsg('Reading every section of the listing, the messages we sent guests here, the guidebooks and the FAQ…')
+    try {
+      const r = await post({ op: 'coverage' })
+      if (r?.ok) { onPatch({ coverage: r.coverage }); setMsg(''); await loadPreview(r.coverage?.best_section) }
+      else setMsg(r?.error || 'Could not check what we already say')
+    } finally { setBusy('') }
+  }
+  // STEPS 2 AND 3 — the section, and the before/after on a representative unit.
+  async function loadPreview(section?: string) {
+    setBusy('preview')
+    try { const r = await post({ op: 'preview', section }); if (r?.ok) setPreview(r as Preview); else setMsg(r?.error || 'Cannot publish this one') } finally { setBusy('') }
+  }
+  async function openPublish() {
+    setMode('publish'); setMsg('')
+    if (!preview) await loadPreview(n.coverage?.best_section)
   }
   async function publish() {
+    if (!preview) return
     setBusy('publish'); setMsg('Writing to Guesty…')
     try {
-      const r = await post({ op: 'publish' })
-      if (r?.ok) { setMsg(`Published to ${r.okCount} of ${r.listings} listing${r.listings === 1 ? '' : 's'}${r.failCount ? ` · ${r.failCount} failed` : ''}.`); setMode('view'); setTimeout(onPublished, 1200) }
+      const r = await post({ op: 'publish', section: preview.section })
+      if (r?.ok) { setMsg(`Published to ${r.okCount} of ${r.listings} listing${r.listings === 1 ? '' : 's'} — ${preview.label}${r.failCount ? ` · ${r.failCount} failed` : ''}.`); setMode('view'); setTimeout(onPublished, 1400) }
       else setMsg(r?.error || 'Publish failed')
     } finally { setBusy('') }
   }
   const publishable = PUBLISHABLE.has(n.fix_where)
   const checkable = CHECKABLE.test(n.title + ' ' + n.gap + ' ' + n.what_guests_hit + ' ' + n.theme)
   const blank = /\[[^\]]*\]/.test(n.proposed_copy)
+  const cov = n.coverage || null
+  // The added block, marked inside the "after" text, so the change is read rather than inferred.
+  const cut = preview ? preview.after.indexOf(preview.block) : -1
+  const keep = preview && cut >= 0 ? preview.after.slice(0, cut) : preview?.after || ''
+  const added = preview && cut >= 0 ? preview.after.slice(cut) : ''
 
   return (
     <div className="rounded-xl border border-line bg-app px-3 py-2.5 space-y-2">
@@ -504,6 +567,7 @@ function CopyPanel({ n, canEdit, copied, onCopy, onPatch, onPublished }: { n: XN
           <button onClick={onCopy} className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand-700 hover:underline"><Copy size={12} /> {copied ? 'Copied' : 'Copy'}</button>
         </div>
       </div>
+
       {mode === 'edit' ? (
         <div className="space-y-2">
           <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={4} className="w-full rounded-lg border border-line bg-white px-3 py-2 text-[13px] text-ink" />
@@ -521,37 +585,129 @@ function CopyPanel({ n, canEdit, copied, onCopy, onPatch, onPublished }: { n: XN
             <button onClick={() => setMode('view')} className="text-xs font-semibold text-muted hover:text-ink px-2 py-1.5">Cancel</button>
           </div>
         </div>
-      ) : mode === 'confirm' && preview ? (
-        <div className="space-y-2">
-          <p className="text-[12.5px] text-ink">This writes a <span className="font-semibold">Good to know</span> block at the end of <span className="font-semibold">Other notes</span> on all <span className="font-semibold">{preview.units}</span> live listings at {n.building}, on every channel. Anything a person wrote in Other notes stays; only the block is replaced. It will read:</p>
-          <pre className="text-[12px] text-ink whitespace-pre-wrap rounded-lg border border-line bg-white px-3 py-2 font-sans">{preview.block}</pre>
-          <div className="flex items-center gap-2">
-            <button onClick={publish} disabled={busy === 'publish'} className="inline-flex items-center gap-1.5 text-xs font-semibold bg-brand-600 text-white rounded-lg px-3 py-1.5 hover:bg-brand-700 disabled:opacity-50">{busy === 'publish' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Publish to {preview.units} listing{preview.units === 1 ? '' : 's'}</button>
-            <button onClick={() => setMode('view')} className="text-xs font-semibold text-muted hover:text-ink px-2 py-1.5">Not now</button>
-          </div>
-        </div>
       ) : (
         <p className="text-[13px] text-ink whitespace-pre-wrap">{n.proposed_copy}</p>
       )}
+
+      {/* ── PUBLISH: the three steps, on the panel, in order ─────────────────────────────────── */}
+      {mode === 'publish' ? (
+        <div className="rounded-lg border border-line bg-white px-3 py-2.5 space-y-3">
+          {/* 1 — is it already said? */}
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-muted">1 · Do we already say this?</p>
+            {!cov ? (
+              <div className="space-y-1.5">
+                <p className="text-[12.5px] text-muted">Nothing is written until this has run. She reads all seven sections of the listing on every unit at {n.building}, every message we sent guests there in the last 60 days, the guidebooks and the FAQ, and shows you the sentences she finds.</p>
+                <button onClick={coverage} disabled={busy === 'coverage'} className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg border border-line bg-white px-3 py-1.5 text-ink hover:bg-app disabled:opacity-50">
+                  {busy === 'coverage' ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />} Check the listing and the message threads
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <p className="flex items-center gap-2 flex-wrap text-[12.5px] text-ink">
+                  <Tag tone={VERDICT[cov.verdict]?.tone || 'slate'}>{VERDICT[cov.verdict]?.label || cov.verdict}</Tag>
+                  <span>{cov.why}</span>
+                </p>
+                <ul className="space-y-0.5">
+                  {cov.listing.map(l => (
+                    <li key={l.section} className="text-[12px] text-muted">
+                      <span className="text-ink/80 font-semibold">{l.label}</span> — {l.mentioning ? <>{l.mentioning} of {cov.units} units: “{l.sample?.sentence}” <span className="text-ink/60">({l.sample?.unit})</span></> : 'no mention on any unit'}{l.variants > 1 ? <span className="text-ink/50"> · {l.variants} different versions of this section</span> : null}
+                    </li>
+                  ))}
+                  <li className="text-[12px] text-muted">
+                    <span className="text-ink/80 font-semibold">Messages we sent guests</span> — {cov.messages.mentioning} of {cov.messages.total} in {cov.messages.conversations} threads, last 60 days{cov.messages.samples.length ? ':' : '.'}
+                    {cov.messages.samples.map((s, i) => <span key={i} className="block pl-3">“{s.sentence}” <span className="text-ink/60">({s.unit}, {s.when})</span></span>)}
+                  </li>
+                  <li className="text-[12px] text-muted"><span className="text-ink/80 font-semibold">Guidebooks</span> — {cov.guidebook.mentioning} of {cov.guidebook.units_with_book} mention it{cov.guidebook.sample ? `: “${cov.guidebook.sample.sentence}”` : '.'}</li>
+                  <li className="text-[12px] text-muted"><span className="text-ink/80 font-semibold">FAQ</span> — {cov.faq.mentioning} of {cov.faq.entries} entries mention it{cov.faq.sample ? `: “${cov.faq.sample.sentence}”` : '.'}</li>
+                </ul>
+                {cov.revised_copy ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 space-y-1">
+                    <p className="text-[12px] text-amber-900">Given what is already there, she would say it this way instead:</p>
+                    <p className="text-[12.5px] text-ink whitespace-pre-wrap">{cov.revised_copy}</p>
+                    <button onClick={() => useRevised(cov.revised_copy as string)} disabled={busy === 'edit'} className="text-[11.5px] font-semibold text-brand-700 hover:underline">Use this copy</button>
+                  </div>
+                ) : null}
+                <button onClick={coverage} disabled={busy === 'coverage'} className="text-[11.5px] font-semibold text-brand-700 hover:underline">{busy === 'coverage' ? 'Checking…' : 'Check again'} <span className="text-muted font-normal">· last checked {String(cov.at).slice(0, 10)}</span></button>
+              </div>
+            )}
+          </div>
+
+          {/* 2 — which section of the description */}
+          {preview ? (
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-muted">2 · Where it goes in the description</p>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {preview.sections.map(s => (
+                  <button key={s.key} onClick={() => loadPreview(s.key)} disabled={busy === 'preview'}
+                    title={`${s.filled} of ${preview.units} units have text in ${s.label} today`}
+                    className={`rounded-lg border px-2.5 py-1 text-[12px] font-semibold ${preview.section === s.key ? 'border-brand-600 bg-brand-600 text-white' : 'border-line bg-white text-muted hover:text-ink'}`}>
+                    {s.label} <span className={preview.section === s.key ? 'text-white/70' : 'text-ink/40'}>{s.filled}/{preview.units}</span>
+                  </button>
+                ))}
+              </div>
+              {cov && cov.best_section === preview.section && cov.placement_note ? <p className="text-[12px] text-muted">Her reason: {cov.placement_note}</p> : null}
+            </div>
+          ) : null}
+
+          {/* 3 — the section before and after, in full */}
+          {preview ? (
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-muted">3 · What changes on the listing</p>
+              <p className="text-[12.5px] text-ink">It appends a block under “{preview.section === 'notes' ? 'GOOD TO KNOW BEFORE YOU BOOK' : 'PLEASE NOTE'}” at the end of <span className="font-semibold">{preview.label}</span> on all {preview.units} live listings at {n.building}, on every channel. Whatever a person wrote in that section stays; only the block is rewritten next time.</p>
+              <div className="grid gap-2 md:grid-cols-2">
+                <div>
+                  <p className="text-[11px] font-semibold text-muted mb-1">{preview.label} today · {preview.representative}</p>
+                  <pre className="text-[12px] text-ink/70 whitespace-pre-wrap rounded-lg border border-line bg-app px-3 py-2 font-sans max-h-64 overflow-auto">{preview.before || '(empty)'}</pre>
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold text-muted mb-1">After publishing</p>
+                  <pre className="text-[12px] whitespace-pre-wrap rounded-lg border border-emerald-200 bg-white px-3 py-2 font-sans max-h-64 overflow-auto"><span className="text-ink/70">{keep}</span><span className="bg-emerald-50 text-emerald-900">{added}</span></pre>
+                </div>
+              </div>
+              <p className="text-[12px] text-muted">
+                {preview.same} of {preview.units} units have exactly this text in {preview.label} today and end up identical.
+                {preview.differ.length ? <> {preview.differ.length} differ and keep their own — {preview.differ.slice(0, 6).map(d => d.unit).join(', ')}{preview.differ.length > 6 ? `, +${preview.differ.length - 6} more` : ''}; the same block is appended to each.</> : null}
+              </p>
+            </div>
+          ) : busy === 'preview' ? <p className="text-[12px] text-muted"><Loader2 size={13} className="animate-spin inline mr-1" /> Reading the listings…</p> : null}
+
+          <div className="flex items-center gap-2 flex-wrap pt-0.5">
+            <button onClick={publish} disabled={busy === 'publish' || !preview || (!cov && !force)}
+              title={!cov && !force ? 'Run the check above first' : `Writes to ${preview?.label} on ${preview?.units} listings`}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold bg-brand-600 text-white rounded-lg px-3 py-1.5 hover:bg-brand-700 disabled:opacity-50">
+              {busy === 'publish' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Publish to {preview?.units || ''} listing{preview?.units === 1 ? '' : 's'}{preview ? ` · ${preview.label}` : ''}
+            </button>
+            <button onClick={() => setMode('view')} className="text-xs font-semibold text-muted hover:text-ink px-2 py-1.5">Not now</button>
+            {!cov && !force ? <button onClick={() => setForce(true)} className="text-[11.5px] text-muted hover:text-ink underline">publish without checking</button> : null}
+            {cov?.verdict === 'covered' ? <span className="text-[11.5px] text-rose-700">She thinks this is already covered — read her reason before publishing.</span> : null}
+          </div>
+        </div>
+      ) : null}
+
       {n.copy_history?.length ? (
         <details className="text-[11.5px] text-muted"><summary className="cursor-pointer">{n.copy_history.length} earlier version{n.copy_history.length === 1 ? '' : 's'}</summary>
           <ul className="mt-1 space-y-1">{n.copy_history.slice().reverse().map((h, i) => <li key={i}>“{h.instruction}” · {String(h.at).slice(0, 10)} — <span className="text-ink/70">{h.before}</span></li>)}</ul>
         </details>
       ) : null}
+
       {mode === 'view' && canEdit ? (
         <div className="flex items-center gap-2 flex-wrap pt-1">
           {publishable ? (
-            <button onClick={askPreview} disabled={busy === 'preview' || blank} title={blank ? 'Fill in the [bracketed] blank first — Edit or Rewrite' : 'Write it to the listings in Guesty (after a confirm)'}
-              className="inline-flex items-center gap-1.5 text-xs font-semibold bg-brand-600 text-white rounded-lg px-3 py-1.5 hover:bg-brand-700 disabled:opacity-50">{busy === 'preview' ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />} Publish to listings</button>
+            <button onClick={openPublish} disabled={busy === 'preview' || blank} title={blank ? 'Fill in the [bracketed] blank first — Edit or Rewrite' : 'Shows what we already say, which section it goes in, and the before and after — then publishes'}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold bg-brand-600 text-white rounded-lg px-3 py-1.5 hover:bg-brand-700 disabled:opacity-50">{busy === 'preview' ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />} Publish to listings…</button>
           ) : <span className="text-[11.5px] text-muted">Goes in the {(FIX_LABEL[n.fix_where] || n.fix_where).toLowerCase()} — copy it there.</span>}
           {checkable ? (
             <button onClick={check} disabled={busy === 'check'} title="Puts the crew's photos from the last completed clean or inspection next to the listing photos and asks whether they still match"
               className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg border border-line bg-white px-3 py-1.5 text-ink hover:bg-app disabled:opacity-50">{busy === 'check' ? <Loader2 size={13} className="animate-spin" /> : <Radar size={13} />} Check against photos</button>
           ) : null}
           {blank && publishable ? <span className="text-[11.5px] text-amber-700">Has a blank to fill in.</span> : null}
+          {cov && mode === 'view' ? <span className="text-[11.5px] text-muted">Checked {String(cov.at).slice(0, 10)}: {VERDICT[cov.verdict]?.label || cov.verdict}.</span> : null}
         </div>
       ) : null}
       {msg ? <p className="text-[12px] text-ink/80">{msg}</p> : null}
+      {n.published ? <p className="text-[11.5px] text-emerald-700">Published {String(n.published.at).slice(0, 10)} by {n.published.by} to {n.published.okCount} of {n.published.listings} listings · {n.published.label}.</p> : null}
+
       {n.check ? (
         <div className="rounded-lg border border-line bg-white px-3 py-2">
           <p className="text-[11px] font-bold uppercase tracking-wider text-muted">Checked {String(n.check.at).slice(0, 10)} · crew photos vs listing photos</p>
