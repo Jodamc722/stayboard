@@ -324,58 +324,249 @@ export async function setExpectationStatus(id: string, status: 'open' | 'done' |
 
 const GUESTY_BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 const DEAD_STATUS = ['inactive', 'disabled', 'archived', 'deleted']
-const BLOCK_HEAD = 'GOOD TO KNOW BEFORE YOU BOOK'
-const NOTES_MAX = 2000
+const SECTION_MAX = 2000
+
+// WHERE IT CAN GO (Jon, 2026-09-28: "it should show where it's going to add it into the
+// description"). Guesty's publicDescription sections a property-wide note may be appended to.
+// Summary and The space are per-unit marketing copy and stay out; the four the bulk tool already
+// writes property-wide, plus House rules, are the candidates. The note's coverage check names the
+// best one; the person can pick another.
+export const SECTIONS: { key: string; label: string }[] = [
+  { key: 'access', label: 'Guest access' },
+  { key: 'neighborhood', label: 'Neighborhood' },
+  { key: 'transit', label: 'Getting around' },
+  { key: 'notes', label: 'Other notes' },
+  { key: 'houseRules', label: 'House rules' },
+]
+const ALL_SECTIONS: { key: string; label: string }[] = [{ key: 'summary', label: 'Summary' }, { key: 'space', label: 'The space' }].concat(SECTIONS)
+const SECTION_LABEL: Record<string, string> = Object.fromEntries(ALL_SECTIONS.map(s => [s.key, s.label]))
+const isSection = (k: any) => SECTIONS.some(s => s.key === k)
 
 export const PUBLISHABLE = new Set(['listing', 'house_rules', 'faq'])
 type BlockState = { lines: Record<string, string>; block: string; at: string; by: string }
-const blockKey = (b: string) => 'expectations_block:' + slug(b)
+const blockKey = (b: string, section: string) => 'expectations_block:' + slug(b) + (section === 'notes' ? '' : ':' + section)
+const headFor = (section: string) => (section === 'notes' ? 'GOOD TO KNOW BEFORE YOU BOOK' : 'PLEASE NOTE')
 
-function buildBlock(lines: Record<string, string>): string {
+function buildBlock(lines: Record<string, string>, section: string): string {
   const items = Object.values(lines).map(t => clip(t, 600)).filter(Boolean)
-  return items.length ? BLOCK_HEAD + '\n' + items.map(t => '• ' + t).join('\n') : ''
+  return items.length ? headFor(section) + '\n' + items.map(t => '• ' + t).join('\n') : ''
 }
-/** Other notes without our block — the person's own text, whatever it was. */
-function stripBlock(notes: string, prevBlock: string): string {
-  let s = String(notes || '')
+/** The section without our block — the person's own text, whatever it was. */
+function stripBlock(text: string, prevBlock: string, section: string): string {
+  let s = String(text || '')
   if (prevBlock && s.includes(prevBlock)) s = s.replace(prevBlock, '')
   // A block written by hand under the same heading counts as ours too.
-  const at = s.indexOf(BLOCK_HEAD)
+  const at = s.indexOf(headFor(section))
   if (at >= 0) s = s.slice(0, at)
   return s.replace(/\s+$/, '')
 }
+const pubOf = (raw: any): Record<string, string> => (raw?.publicDescription && typeof raw.publicDescription === 'object') ? raw.publicDescription : {}
+const sectionText = (raw: any, key: string) => str(pubOf(raw)[key]).trim()
 
-export type PublishResult = { ok: true; listings: number; okCount: number; failCount: number; block: string; results: { id: string; name: string; ok: boolean; error?: string }[] } | { ok: false; error: string }
-
-/** What Publish would do, for the confirm line: the building's live units and the block as it would read. */
-export async function previewPublish(id: string): Promise<{ ok: boolean; error?: string; building?: string; units?: number; block?: string; fix_where?: string }> {
-  const db = supabaseAdmin()
-  const { data } = await db.from('eve_knowledge').select('id,content').eq('id', id).maybeSingle()
-  if (!data) return { ok: false, error: 'not found' }
-  const n: ExpectationNote = JSON.parse(str((data as any).content))
-  if (!PUBLISHABLE.has(n.fix_where)) return { ok: false, error: 'This note is for ' + (FIX_LABEL[n.fix_where] || n.fix_where) + ', not the listing — copy it there.' }
-  const units = (await buildingListings(n.building)).length
-  const state = await getSetting<BlockState | null>(blockKey(n.building), null)
-  const lines = { ...(state?.lines || {}), [n.id]: n.proposed_copy }
-  return { ok: true, building: n.building, units, block: buildBlock(lines), fix_where: n.fix_where }
-}
-
-async function buildingListings(building: string): Promise<{ id: string; name: string; raw: any }[]> {
+type Unit = { id: string; name: string; raw: any }
+async function buildingListings(building: string): Promise<Unit[]> {
   const db = supabaseAdmin()
   const { rows } = await pageRows<any>((a, b) => db.from('guesty_listings').select('id,title,nickname,building,status,raw').order('id').range(a, b), 12)
   return (rows || [])
     .filter((r: any) => DEAD_STATUS.indexOf(lc(r.status)) < 0)
     .filter((r: any) => rollupB(r.building, r.nickname || r.title) === building)
     .map((r: any) => ({ id: str(r.id), name: str(r.nickname || r.title) || str(r.id), raw: r.raw }))
+    .sort((a: Unit, b: Unit) => a.name.localeCompare(b.name))
 }
 
-export async function publishExpectation(id: string, by: string): Promise<PublishResult> {
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// IS IT ALREADY SAID SOMEWHERE? (Jon, 2026-09-28: "check the entire listing to make sure that
+// it's not in it. Also check all the messages that go out to a guest to confirm that it's not
+// clear in the message threads"). Before anything is written, every place a guest could have read
+// about the topic is searched: all seven listing sections on every unit of the building, every
+// message WE sent to a guest of that building in the last 60 days, the units' guidebooks and their
+// FAQ entries. What was found — with the sentences — goes to the model with the note, and it says
+// covered / partly / not, and which section the copy belongs in. The report is filed on the note
+// so the person reads the evidence, not a verdict.
+const TOPIC: Record<string, RegExp> = {
+  'parking': /\b(parking|valet|garage|park(ed|ing)?\b|car|vehicle)\b/i,
+  'fees & deposits': /\b(fee|fees|deposit|charge|charged|resort|cleaning fee|tax|extra cost|surcharge|hold)\b/i,
+  'check-in & access': /\b(check.?in|check.?out|arrival|arrive|code|lockbox|key|keys|front desk|concierge|lobby|elevator|access|register|registration|wristband|ID)\b/i,
+  'amenities & hours': /\b(pool|gym|spa|sauna|hours|amenit\w*|beach chairs?|towels?|bbq|grill|rooftop)\b/i,
+  'building rules': /\b(rules?|policy|policies|age|minimum age|visitors?|guests? allowed|quiet hours|smok\w*|pets?|party|parties|noise)\b/i,
+  'noise & location': /\b(noise|noisy|loud|construction|traffic|street|location|neighbou?rhood|walk)\b/i,
+  'wifi & tv': /\b(wi-?fi|internet|password|network|tv|television|netflix|streaming|remote)\b/i,
+  'what is in the unit': /\b(photos?|pictures?|furnish\w*|bed|beds|sofa|couch|balcony|view|kitchen|washer|dryer|coffee|dishwasher|as described|advertised)\b/i,
+  'cleaning & supplies': /\b(clean\w*|towels?|linen|sheets|toiletries|soap|shampoo|paper|supplies|trash|garbage)\b/i,
+  'communication': /\b(respond|response|reply|contact|reach|phone|text|message|whatsapp|support)\b/i,
+}
+function topicRegex(n: ExpectationNote): RegExp {
+  const base = TOPIC[n.theme]
+  const words = Array.from(new Set((n.title + ' ' + n.what_guests_hit).toLowerCase().match(/[a-z][a-z'-]{4,}/g) || [])).filter(w => !/^(guests?|listing|before|about|their|there|which|would|should|could|arriv\w*|nobody|didn't|wasn't)$/.test(w)).slice(0, 8)
+  if (base) return base
+  return new RegExp('\\b(' + (words.length ? words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') : 'zzzz') + ')\\b', 'i')
+}
+function sentencesAbout(text: string, re: RegExp, max = 2): string[] {
+  const out: string[] = []
+  for (const sen of String(text || '').replace(/\s+/g, ' ').split(/(?<=[.!?])\s+|\n+/)) { if (re.test(sen)) { out.push(clip(sen, 220)); if (out.length >= max) break } }
+  return out
+}
+
+export type Coverage = {
+  at: string; by: string; topic: string; building: string; units: number
+  listing: { section: string; label: string; mentioning: number; sample: { unit: string; sentence: string } | null; variants: number }[]
+  messages: { total: number; mentioning: number; conversations: number; samples: { unit: string; when: string; sentence: string }[] }
+  guidebook: { units_with_book: number; mentioning: number; sample: { unit: string; sentence: string } | null }
+  faq: { entries: number; mentioning: number; sample: { unit: string; sentence: string } | null }
+  verdict: 'not_covered' | 'partly' | 'covered'
+  why: string
+  best_section: string
+  placement_note: string
+  revised_copy: string | null
+}
+
+export async function coverageForNote(id: string, by: string): Promise<{ ok: boolean; coverage?: Coverage; error?: string }> {
+  const key = process.env.ANTHROPIC_API_KEY
+  if (!key) return { ok: false, error: 'ANTHROPIC_API_KEY is not set' }
+  const db = supabaseAdmin()
+  const { data } = await db.from('eve_knowledge').select('id,content').eq('id', id).maybeSingle()
+  if (!data) return { ok: false, error: 'not found' }
+  const n: ExpectationNote = JSON.parse(str((data as any).content))
+  const units = await buildingListings(n.building)
+  if (!units.length) return { ok: false, error: 'No live listings found for ' + n.building + '.' }
+  const re = topicRegex(n)
+
+  // 1. The listing, every section, every unit.
+  const listing: Coverage['listing'] = ALL_SECTIONS.map(sec => {
+    let mentioning = 0; let sample: Coverage['listing'][number]['sample'] = null
+    const variants = new Set<string>()
+    for (const u of units) {
+      const t = sectionText(u.raw, sec.key); variants.add(t)
+      const hit = sentencesAbout(t, re, 1)
+      if (hit.length) { mentioning++; if (!sample) sample = { unit: u.name, sentence: hit[0] } }
+    }
+    return { section: sec.key, label: sec.label, mentioning, sample, variants: variants.size }
+  })
+
+  // 2. What WE wrote to guests of this building in the last 60 days (host messages only).
+  const messages: Coverage['messages'] = { total: 0, mentioning: 0, conversations: 0, samples: [] }
+  try {
+    const ids = units.map(u => u.id)
+    const since = shiftDay(todayET(), -60) + 'T00:00:00Z'
+    const { data: convs } = await db.from('guesty_conversations').select('id,listing_id,guest_name').in('listing_id', ids).gte('last_message_at', since).limit(800)
+    const cmeta: Record<string, any> = {}; for (const c of ((convs || []) as any[])) cmeta[str(c.id)] = c
+    const cids = Object.keys(cmeta); messages.conversations = cids.length
+    const nameOf = (lid: any) => units.find(u => u.id === str(lid))?.name || ''
+    for (let i = 0; i < cids.length; i += 200) {
+      const { data: msgs } = await db.from('guesty_messages').select('conversation_id,sender,body,sent_at,module').in('conversation_id', cids.slice(i, i + 200)).gte('sent_at', since).limit(5000)
+      for (const m of ((msgs || []) as any[])) {
+        if (INTERNAL.has(lc(m.module)) || lc(m.sender) === 'system' || /guest|inbound/i.test(lc(m.sender))) continue
+        messages.total++
+        const hit = sentencesAbout(str(m.body), re, 1)
+        if (hit.length) { messages.mentioning++; if (messages.samples.length < 3) messages.samples.push({ unit: nameOf(cmeta[str(m.conversation_id)]?.listing_id), when: str(m.sent_at).slice(0, 10), sentence: hit[0] }) }
+      }
+    }
+  } catch { /* optional evidence */ }
+
+  // 3. Guidebooks and FAQ entries for the building's units.
+  const guidebook: Coverage['guidebook'] = { units_with_book: 0, mentioning: 0, sample: null }
+  const faq: Coverage['faq'] = { entries: 0, mentioning: 0, sample: null }
+  try {
+    const { data: books } = await db.from('guidebooks').select('listing_id,sections,status').in('listing_id', units.map(u => u.id)).limit(400)
+    const seen = new Set<string>()
+    for (const b of ((books || []) as any[])) {
+      if (seen.has(str(b.listing_id))) continue; seen.add(str(b.listing_id)); guidebook.units_with_book++
+      const flat = JSON.stringify(b.sections || {}).replace(/"[a-zA-Z_]+":/g, ' ').replace(/[{}\[\]"]/g, ' ')
+      const hit = sentencesAbout(flat, re, 1)
+      if (hit.length) { guidebook.mentioning++; if (!guidebook.sample) guidebook.sample = { unit: units.find(u => u.id === str(b.listing_id))?.name || '', sentence: hit[0] } }
+    }
+  } catch { /* optional */ }
+  try {
+    const { data: rows } = await db.from('listing_faq').select('listing_id,question,answer').in('listing_id', units.map(u => u.id)).limit(2000)
+    for (const f of ((rows || []) as any[])) {
+      faq.entries++
+      const hit = sentencesAbout(str(f.question) + '. ' + str(f.answer), re, 1)
+      if (hit.length) { faq.mentioning++; if (!faq.sample) faq.sample = { unit: units.find(u => u.id === str(f.listing_id))?.name || '', sentence: hit[0] } }
+    }
+  } catch { /* optional */ }
+
+  // 4. The judgement, from the evidence.
+  const evidence = [
+    `LISTING (${units.length} units):`,
+    ...listing.map(l => `- ${l.label}: ${l.mentioning ? `${l.mentioning}/${units.length} units mention it — "${l.sample?.sentence}" (${l.sample?.unit})` : 'no mention on any unit'}${l.variants > 1 ? ` [text differs across ${l.variants} versions]` : ''}`),
+    `MESSAGES WE SENT TO GUESTS OF THIS BUILDING, last 60 days: ${messages.total} messages in ${messages.conversations} threads; ${messages.mentioning} mention the topic.` + (messages.samples.length ? '\n' + messages.samples.map(s => `- "${s.sentence}" (${s.unit}, ${s.when})`).join('\n') : ''),
+    `GUIDEBOOKS: ${guidebook.units_with_book} units have one; ${guidebook.mentioning} mention the topic.` + (guidebook.sample ? ` "${guidebook.sample.sentence}"` : ''),
+    `FAQ ENTRIES: ${faq.entries}; ${faq.mentioning} mention the topic.` + (faq.sample ? ` "${faq.sample.sentence}"` : ''),
+  ].join('\n')
+  const { model, fallback } = await modelPairFor('expectations')
+  let verdict: Coverage['verdict'] = 'not_covered', why = '', best = 'notes', placement = '', revised: string | null = null
+  try {
+    const r = await anthropicMessages(key, {
+      model, max_tokens: 700,
+      system: 'You judge whether a short-term rental already tells guests something, from evidence a system gathered. A mention is not coverage: "parking available" does not cover a $30/day fee. Reply with JSON only: {"verdict":"not_covered"|"partly"|"covered","why":"one or two sentences quoting the evidence","best_section":"access"|"neighborhood"|"transit"|"notes"|"houseRules","placement_note":"one sentence on why that section, and what nearby text it should sit with","revised_copy":string or null}. best_section: parking, transport and arrival logistics belong in transit (Getting around); building entry, front desk, codes and elevators in access (Guest access); rules, ages, visitors, quiet hours in houseRules; anything else in notes (Other notes). revised_copy only when the evidence shows the proposed copy is wrong or redundant (it repeats a sentence already there, or contradicts a fact we already state); otherwise null.',
+      messages: [{ role: 'user', content: `NOTE — what guests hit: ${n.what_guests_hit}\nThe gap as written: ${n.gap}\nProposed copy: ${n.proposed_copy}\n\nEVIDENCE:\n${evidence}` }],
+    }, fallback, 'expectations')
+    const text = (r.data?.content || []).map((c: any) => c?.text || '').join('')
+    const m = text.match(/\{[\s\S]*\}/)
+    const j = m ? JSON.parse(m[0]) : null
+    if (j) {
+      verdict = (['not_covered', 'partly', 'covered'] as const).includes(j.verdict) ? j.verdict : 'not_covered'
+      why = clip(j.why, 400); best = isSection(j.best_section) ? j.best_section : 'notes'; placement = clip(j.placement_note, 240)
+      revised = j.revised_copy ? clip(j.revised_copy, 900) : null
+    }
+  } catch { /* the evidence stands without the verdict */ }
+
+  const coverage: Coverage = { at: new Date().toISOString(), by, topic: String(re).replace(/^\/\\b\(|\)\\b\/i$/g, '').replace(/\|/g, ', ').slice(0, 160), building: n.building, units: units.length, listing, messages, guidebook, faq, verdict, why, best_section: best, placement_note: placement, revised_copy: revised }
+  ;(n as any).coverage = coverage
+  const { error } = await db.from('eve_knowledge').update({ content: JSON.stringify(n), updated_at: coverage.at }).eq('id', id)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true, coverage }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// PUBLISH TO THE LISTINGS (Jon, 2026-09-28: "publish from the recommendations to a designated
+// area without having to copy" — then: "it should show where it's going to add it … I can't just
+// rewrite it, not knowing how it adds it or where it adds it").
+//
+// HOW IT ADDS IT. The copy is appended to ONE chosen section of publicDescription, on every live
+// unit of the building, as a managed block under a fixed heading ("GOOD TO KNOW BEFORE YOU BOOK"
+// in Other notes, "PLEASE NOTE" elsewhere). One block per building × section, rebuilt from every
+// note published there, so a second note joins the block rather than stacking a second paragraph.
+// The block's exact previous text is remembered per building × section (app_settings
+// expectations_block:…) and stripped before the new one is appended, so whatever a person wrote in
+// that section is never touched. The preview below shows the full before and after for a
+// representative unit and names the units whose text differs, so nothing is written unseen.
+export type PublishResult = { ok: true; section: string; listings: number; okCount: number; failCount: number; block: string; results: { id: string; name: string; ok: boolean; error?: string }[] } | { ok: false; error: string }
+
+/** Everything the person needs to see before saying yes: the section, the full text before and after on a representative unit, and which units differ. */
+export async function previewPublish(id: string, sectionIn?: string): Promise<{ ok: boolean; error?: string; building?: string; section?: string; label?: string; units?: number; block?: string; representative?: string; before?: string; after?: string; same?: number; differ?: { unit: string; length: number }[]; sections?: { key: string; label: string; filled: number }[] }> {
+  const db = supabaseAdmin()
+  const { data } = await db.from('eve_knowledge').select('id,content').eq('id', id).maybeSingle()
+  if (!data) return { ok: false, error: 'not found' }
+  const n: ExpectationNote = JSON.parse(str((data as any).content))
+  if (!PUBLISHABLE.has(n.fix_where)) return { ok: false, error: 'This note is for ' + (FIX_LABEL[n.fix_where] || n.fix_where) + ', not the listing — copy it there.' }
+  const units = await buildingListings(n.building)
+  if (!units.length) return { ok: false, error: 'No live listings found for ' + n.building + '.' }
+  const section = isSection(sectionIn) ? String(sectionIn) : (isSection((n as any).coverage?.best_section) ? (n as any).coverage.best_section : 'notes')
+  const state = await getSetting<BlockState | null>(blockKey(n.building, section), null)
+  const lines = { ...(state?.lines || {}), [n.id]: n.proposed_copy }
+  const block = buildBlock(lines, section)
+  // The representative unit: the most common current text for that section.
+  const counts = new Map<string, number>()
+  for (const u of units) { const t = stripBlock(sectionText(u.raw, section), state?.block || '', section); counts.set(t, (counts.get(t) || 0) + 1) }
+  const common = Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]
+  const rep = units.find(u => stripBlock(sectionText(u.raw, section), state?.block || '', section) === common[0]) || units[0]
+  const before = sectionText(rep.raw, section)
+  const base = stripBlock(before, state?.block || '', section)
+  const after = ((base ? base + '\n\n' : '') + block).slice(0, SECTION_MAX)
+  const differ = units.filter(u => stripBlock(sectionText(u.raw, section), state?.block || '', section) !== common[0]).map(u => ({ unit: u.name, length: sectionText(u.raw, section).length }))
+  const sections = SECTIONS.map(s => ({ key: s.key, label: s.label, filled: units.filter(u => sectionText(u.raw, s.key)).length }))
+  return { ok: true, building: n.building, section, label: SECTION_LABEL[section], units: units.length, block, representative: rep.name, before, after, same: units.length - differ.length, differ, sections }
+}
+
+export async function publishExpectation(id: string, by: string, sectionIn?: string): Promise<PublishResult> {
   const db = supabaseAdmin()
   const { data } = await db.from('eve_knowledge').select('id,content').eq('id', id).maybeSingle()
   if (!data) return { ok: false, error: 'not found' }
   const n: ExpectationNote = JSON.parse(str((data as any).content))
   if (!PUBLISHABLE.has(n.fix_where)) return { ok: false, error: 'This note is for ' + (FIX_LABEL[n.fix_where] || n.fix_where) + ', not the listing.' }
   if (/\[[^\]]*\]/.test(n.proposed_copy)) return { ok: false, error: 'The copy still has a blank to fill in (the part in [brackets]). Edit it first.' }
+  const section = isSection(sectionIn) ? String(sectionIn) : (isSection((n as any).coverage?.best_section) ? (n as any).coverage.best_section : 'notes')
   const listings = await buildingListings(n.building)
   if (!listings.length) return { ok: false, error: 'No live listings found for ' + n.building + '.' }
 
@@ -383,39 +574,41 @@ export async function publishExpectation(id: string, by: string): Promise<Publis
   const token = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now() + 30_000) ? String(tok.access_token) : ''
   if (!token) return { ok: false, error: 'Guesty token unavailable — run a sync, then retry in a moment.' }
 
-  const prev = await getSetting<BlockState | null>(blockKey(n.building), null)
+  const prev = await getSetting<BlockState | null>(blockKey(n.building, section), null)
   const lines = { ...(prev?.lines || {}), [n.id]: n.proposed_copy }
-  const block = buildBlock(lines)
+  const block = buildBlock(lines, section)
   const results: { id: string; name: string; ok: boolean; error?: string }[] = []
   let okCount = 0, failCount = 0, first = true
   for (const l of listings) {
     if (!first) await new Promise(res => setTimeout(res, 250))
     first = false
-    const pub = l.raw?.publicDescription && typeof l.raw.publicDescription === 'object' ? l.raw.publicDescription : {}
-    const base = stripBlock(str(pub.notes), prev?.block || '')
-    let notes = (base ? base + '\n\n' : '') + block
-    if (notes.length > NOTES_MAX) notes = notes.slice(0, NOTES_MAX)
+    const pub = pubOf(l.raw)
+    const base = stripBlock(str(pub[section]), prev?.block || '', section)
+    let text = (base ? base + '\n\n' : '') + block
+    if (text.length > SECTION_MAX) text = text.slice(0, SECTION_MAX)
     try {
       const r = await fetch(`${GUESTY_BASE}/listings/${encodeURIComponent(l.id)}`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ publicDescription: { notes } }),
+        body: JSON.stringify({ publicDescription: { [section]: text } }),
       })
-      const text = await r.text().catch(() => '')
-      if (!r.ok) { results.push({ id: l.id, name: l.name, ok: false, error: `Guesty ${r.status}: ${text.slice(0, 120)}` }); failCount++; continue }
+      const body = await r.text().catch(() => '')
+      if (!r.ok) { results.push({ id: l.id, name: l.name, ok: false, error: `Guesty ${r.status}: ${body.slice(0, 120)}` }); failCount++; continue }
       try {
         const raw: any = (l.raw && typeof l.raw === 'object') ? l.raw : {}
-        await db.from('guesty_listings').update({ raw: { ...raw, publicDescription: { ...pub, notes }, _lastBulkCopy: new Date().toISOString() } }).eq('id', l.id)
+        await db.from('guesty_listings').update({ raw: { ...raw, publicDescription: { ...pub, [section]: text }, _lastBulkCopy: new Date().toISOString() } }).eq('id', l.id)
       } catch { /* mirror is best-effort; Guesty is the record */ }
       results.push({ id: l.id, name: l.name, ok: true }); okCount++
     } catch (e: any) { results.push({ id: l.id, name: l.name, ok: false, error: str(e?.message || e) }); failCount++ }
   }
   if (okCount) {
-    await setSetting(blockKey(n.building), { lines, block, at: new Date().toISOString(), by } as BlockState, by).catch(() => {})
-    try { await db.from('listing_copy_pushes').insert({ by_email: by, scope: 'property', buildings: [n.building], sections: ['notes'], listing_count: listings.length, ok_count: okCount, fail_count: failCount }) } catch { /* audit row never blocks */ }
-    await setExpectationStatus(id, 'done', by, `published to ${okCount} of ${listings.length} listings at ${n.building} (Other notes)`)
+    await setSetting(blockKey(n.building, section), { lines, block, at: new Date().toISOString(), by } as BlockState, by).catch(() => {})
+    try { await db.from('listing_copy_pushes').insert({ by_email: by, scope: 'property', buildings: [n.building], sections: [section], listing_count: listings.length, ok_count: okCount, fail_count: failCount }) } catch { /* audit row never blocks */ }
+    ;(n as any).published = { at: new Date().toISOString(), by, section, label: SECTION_LABEL[section], listings: listings.length, okCount, failCount, block }
+    await db.from('eve_knowledge').update({ content: JSON.stringify(n), updated_at: new Date().toISOString() }).eq('id', id)
+    await setExpectationStatus(id, 'done', by, `published to ${okCount} of ${listings.length} listings at ${n.building} — ${SECTION_LABEL[section]}`)
   }
-  return { ok: true, listings: listings.length, okCount, failCount, block, results }
+  return { ok: true, section, listings: listings.length, okCount, failCount, block, results }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
