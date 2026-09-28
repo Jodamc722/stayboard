@@ -251,6 +251,13 @@ async function badReviewIn(env: WatchEnv): Promise<Prepared[]> {
     const has = new Set(((open as any[]) || []).map(t => str(t.reference_property_id)))
     low = low.map(r => (has.has(str(r.listing_id)) ? { ...r, _inspected: true } : r))
   } catch { /* fine */ }
+  // And a walk that already FINISHED on or after the review's day covers it (Jon, 2026-09-28: "the
+  // same bad review should not populate the same bad review inspection") — whoever raised it.
+  try {
+    const { coveredReviewIds } = await import('@/lib/review-inspections')
+    const covered = await coveredReviewIds(db, low)
+    if (covered.size) low = low.map(r => (covered.has(str(r.id)) ? { ...r, _inspected: true } : r))
+  } catch { /* fine */ }
   const { data: ls } = await db.from('guesty_listings').select('id,nickname,title,building,address_city').in('id', lids)
   const nameOf: Record<string, string> = {}
   // THE INSPECTION GOES TO THAT MARKET'S SUPERVISOR (Jon, 2026-09-23 review). This handed every

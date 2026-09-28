@@ -626,6 +626,21 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
       }
     })
     .sort((a, b) => (b.recoveryDays || 0) - (a.recoveryDays || 0))
+  // WALKED SINCE THE REVIEW (Jon, 2026-09-28: a bad review that has had its inspection done should
+  // not keep asking for one). For every unit carrying a "worst" review, the quality inspection that
+  // finished on or after that review's day, if any. The UI swaps the walk button for the receipt.
+  try {
+    const { finishedInspectionsSince, inspectionCovering } = await import('@/lib/review-inspections')
+    const all = (units as any[]).concat(recoveryOnly as any[]).filter(u => u.worst && u.worst.at)
+    if (all.length) {
+      const oldest = all.map(u => String(u.worst.at)).sort()[0]
+      const done = await finishedInspectionsSince(db, all.map(u => String(u.listingId)), oldest)
+      for (const u of all) {
+        const hit = inspectionCovering(done, u.listingId, u.worst.at)
+        if (hit) u.walked = { at: hit.finishedAt.slice(0, 10), taskId: hit.id, name: hit.name }
+      }
+    }
+  } catch { /* no mirror: every unit still offers the walk */ }
   // Units per building comes from the LISTING MAP, not the review set: a building with 25 units of
   // which 6 got reviewed should read "6 of 25 reviewed", not "6 units". Silence is data too.
   const unitsTotalByBuilding: Record<string, number> = {}

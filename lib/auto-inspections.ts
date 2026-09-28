@@ -513,11 +513,11 @@ async function nextCheckouts(db: any, listingIds: string[], today: string): Prom
 
 export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): Promise<{
   ok: boolean; enabled?: boolean; scanned: number; candidates: any[]
-  created: number; failed: number; movedForward: number; waitingForCheckout: number
+  created: number; failed: number; movedForward: number; alreadyCovered: number; waitingForCheckout: number
 }> {
   const cfg = await getTaskAutomation()
   if ((!cfg.enabled || !cfg.lowReviews) && !opts.dryRun) {
-    return { ok: true, enabled: false, scanned: 0, candidates: [], created: 0, failed: 0, movedForward: 0, waitingForCheckout: 0 }
+    return { ok: true, enabled: false, scanned: 0, candidates: [], created: 0, failed: 0, movedForward: 0, alreadyCovered: 0, waitingForCheckout: 0 }
   }
   const db = supabaseAdmin()
   const today = ymdET(new Date())
@@ -542,10 +542,38 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
   // Normalise 10-scale channels to 5 before the threshold test.
   const norm = (v: any) => { const n = Number(v); return Number.isFinite(n) ? (n > 5 ? n / 2 : n) : NaN }
 
-  const lowRows = ((revRows || []) as any[]).filter(r => {
+  let lowRows = ((revRows || []) as any[]).filter(r => {
     const n = norm(r.rating)
     return Number.isFinite(n) && n > 0 && n <= cfg.lowReviewMax && !done.has(REV_KEY(str(r.id)))
   })
+  // ALREADY WALKED = ALREADY DONE (Jon, 2026-09-28: "the same bad review should not populate the
+  // same bad review inspection"). A review whose unit had a quality inspection FINISH on or after
+  // the review's day is covered — by the automation, by Eve, by a person in Breezeway, it does not
+  // matter who. It gets a receipt pointing at that task so it is never re-checked, and no second
+  // inspection is created for it.
+  let alreadyCovered = 0
+  try {
+    const { coveredReviewIds } = await import('./review-inspections')
+    const covered = await coveredReviewIds(db, lowRows)
+    if (covered.size) {
+      const keep: any[] = []
+      for (const r of lowRows) {
+        const hit = covered.get(str(r.id))
+        if (!hit) { keep.push(r); continue }
+        alreadyCovered++
+        if (opts.dryRun) continue
+        const meta = lmeta[str(r.listing_id)] || {}
+        await db.from('auto_inspections').upsert({
+          reservation_id: REV_KEY(str(r.id)), listing_id: str(r.listing_id) || null,
+          unit_name: str(meta.nickname || meta.title || 'Unit'), guest_name: str(r.guest_name) || 'Guest',
+          check_in: hit.scheduledDate || hit.finishedAt.slice(0, 10),
+          reason: 'low review ' + (Math.round(norm(r.rating) * 10) / 10) + '\u2605 \u2014 covered by a finished walk',
+          market: marketOf(meta.building, meta.address_city, meta.nickname || meta.title), task_id: hit.id, assignees: [],
+        }, { onConflict: 'reservation_id' }).then(() => {}, () => {})
+      }
+      lowRows = keep
+    }
+  } catch { /* the mirror is unavailable: fall back to the receipts alone */ }
   const lids = Array.from(new Set(lowRows.map(r => str(r.listing_id)).filter(Boolean)))
   const nextOut = await nextCheckouts(db, lids, today)
 
@@ -600,7 +628,7 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
   }
 
   if (opts.dryRun || !breezewayConfigured()) {
-    return { ok: true, scanned: (revRows || []).length, candidates, created: 0, failed: 0, movedForward, waitingForCheckout: candidates.filter(c => !c.nextCheckout).length }
+    return { ok: true, scanned: (revRows || []).length, candidates, created: 0, failed: 0, movedForward, alreadyCovered, waitingForCheckout: candidates.filter(c => !c.nextCheckout).length }
   }
 
   const names = Array.from(new Set([cfg.assignAlways, ...Object.values(cfg.supervisors)].filter(Boolean)))
@@ -685,5 +713,5 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
       console.error('low-review inspections: create failed for review', c.reviewId, e)
     }
   }
-  return { ok: true, scanned: (revRows || []).length, candidates, created, failed, movedForward, waitingForCheckout }
+  return { ok: true, scanned: (revRows || []).length, candidates, created, failed, movedForward, alreadyCovered, waitingForCheckout }
 }

@@ -130,6 +130,9 @@ function WalkIt({ unit }: { unit: any }) {
   const [state, setState] = useState<'' | 'busy' | 'done' | 'err'>('')
   const [msg, setMsg] = useState('')
   const w = unit.worst
+  // Walked since the review = done (Jon, 2026-09-28). The receipt replaces the button so the same
+  // bad review does not raise the same inspection twice.
+  if (unit.walked && state !== 'done') return <span className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-emerald-700" title={String(unit.walked.name || 'Quality inspection')}><Check size={12} /> Walked {unit.walked.at}</span>
   const go = async () => {
     setState('busy'); setMsg('')
     try {

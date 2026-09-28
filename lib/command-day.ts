@@ -315,8 +315,8 @@ export async function buildCommandDay(): Promise<CommandDay> {
     // Finished inspections on the arriving units — the name filter is in SQL so the row cap can
     // never drop the one that mattered.
     arrivalIds.length
-      ? db.from('breezeway_tasks_sync').select('id,reference_property_id,name')
-          .in('reference_property_id', arrivalIds.slice(0, 300)).gte('scheduled_date', back45).lte('scheduled_date', in2)
+      ? db.from('breezeway_tasks_sync').select('id,reference_property_id,name,finished_at')
+          .in('reference_property_id', arrivalIds.slice(0, 300)).gte('scheduled_date', back180).lte('scheduled_date', in2)
           .not('finished_at', 'is', null)
           .or('name.ilike.%inspect%,name.ilike.%unit%check%,name.ilike.%quality%')
           .limit(2000).then(r => guard<any[]>('done inspections', r as any, []))
@@ -404,8 +404,16 @@ export async function buildCommandDay(): Promise<CommandDay> {
   // ── 2. ARRIVALS: big arrivals → inspection cover; feedback; backlog in the unit ──────────────
   const bigValue = automation.bigValue || 1000
   const inspByRes = new Set(autoInsp.filter((a: any) => a.task_id).map((a: any) => str(a.reservation_id)))
+  // Two reads of the same rows: the arrival's own "inspection done" (recent, 45 days) and, per
+  // listing, when the LAST inspection finished — so a feedback row can tell whether the walk came
+  // after the review it is about.
   const doneInsp: Record<string, string> = {}
-  for (const t of doneInspRows) doneInsp[str(t.reference_property_id)] = str(t.id)
+  const lastWalk: Record<string, string> = {}
+  for (const t of doneInspRows) {
+    const lid = str(t.reference_property_id), fin = str(t.finished_at).slice(0, 10)
+    if (fin >= back45) doneInsp[lid] = str(t.id)
+    if (!lastWalk[lid] || fin > lastWalk[lid]) lastWalk[lid] = fin
+  }
   const reviewsByListing: Record<string, any[]> = {}
   for (const r of arrivalReviews) (reviewsByListing[str(r.listing_id)] = reviewsByListing[str(r.listing_id)] || []).push(r)
 
@@ -453,17 +461,24 @@ export async function buildCommandDay(): Promise<CommandDay> {
         if (n > 2 && keywordsOf(str(rv.content)).length === 0) continue
         if (!worst || n < norm5(worst.rating)) worst = rv
       }
+      // WALKED SINCE = DONE (Jon, 2026-09-28: "if a bad review or quality inspection is done, it
+      // should not populate"). A quality inspection that finished on or after the review's day
+      // answers it; the row does not come back on every arrival after that. Only a review NEWER
+      // than the last walk still asks for one.
+      if (worst && lastWalk[lid] && lastWalk[lid] >= str(worst.created_at).slice(0, 10)) { seenFeedbackUnit.add(lid); worst = null }
       if (worst) {
         seenFeedbackUnit.add(lid)
         const quote = str(worst.content).replace(/\s+/g, ' ').slice(0, 220)
         const kw = keywordsOf(quote)
-        const covered = !!openInsp || !!doneInsp[lid]
+        // A finished walk from BEFORE the review is not cover (it did not see what the guest saw),
+        // so only an inspection still open counts here; finished-after was handled above.
+        const covered = !!openInsp
         push({
           key: 'fb:' + lid + ':' + str(worst.id), kind: 'feedback', severity: isToday ? 'today' : 'soon', rank: isToday ? 3 : 7, owner: 'maintenance',
           due: dueArrival(isToday),
           unit, listingId: lid, market: marketOfId(lid),
           title: 'Guest arrives ' + when + ' into a unit with a ' + starsText(worst.rating, worst.channel) + ' review' + (kw.length ? ' about ' + kw.join(', ') : ''),
-          why: covered ? 'An inspection is already ' + (openInsp ? 'open' : 'done') + ' on this unit — check it covered the complaint.' : canFile(lid) ? 'Nothing open on this unit addresses it. A targeted look before the guest lands is the cheapest fix.' : 'Vendor-run building — flag it to the vendor before the guest lands.',
+          why: covered ? 'An inspection is already open on this unit — make sure it covers the complaint.' : canFile(lid) ? 'Nothing open on this unit addresses it. A targeted look before the guest lands is the cheapest fix.' : 'Vendor-run building — flag it to the vendor before the guest lands.',
           evidence: { quote, stars: norm5(worst.rating), date: str(worst.created_at).slice(0, 10), channel: str(worst.channel) },
           action: covered && openInsp
             ? { type: 'open', href: bz(str(openInsp.id)), label: 'Open inspection', external: true }
