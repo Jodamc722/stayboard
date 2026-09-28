@@ -54,7 +54,8 @@ export const SECTIONS: NavSection[] = [
       // /eve is where her work is read. Open loops keeps its own row too — it is a tab on /eve and
       // a page people already bookmarked.
       { to: '/eve', label: 'Eve', Icon: Brain },
-      { to: '/loops', label: 'Open loops', Icon: Radar },
+      // Open loops left the sidebar on 2026-09-28 (Jon: "remove open loops and combine it with eve").
+      // It is a tab on /eve; /loops redirects there so old pins and Slack links still land.
       //
       // Home left it on 2026-08-24 (Jon: "home page is a bust"). '/' is now a redirect to Today in
       // Ops, and the KPI board it used to render moved to /kpi under Money, where a page about

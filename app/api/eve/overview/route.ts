@@ -12,7 +12,7 @@ import { NextResponse } from 'next/server'
 import { eveGate } from '../../agent/route'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { myActionsOn } from '@/lib/eve/system'
-import { countOpenQuestions } from '@/lib/eve/questions'
+import { countOpenQuestions, listQuestions } from '@/lib/eve/questions'
 import { countOpenExpectations } from '@/lib/eve/expectations'
 import { unseenCount, allObserving } from '@/lib/eve/thoughts'
 import { getAgentSettings } from '@/lib/eve/agent-mode'
@@ -33,7 +33,7 @@ export async function GET() {
   const email = String(gate.access.email || '').toLowerCase()
   const day = todayET()
 
-  const [today, loops, questions, unseen, settings, states, runs, expectations] = await Promise.all([
+  const [today, loops, questions, unseen, settings, states, runs, expectations, topLoops, topQuestions] = await Promise.all([
     myActionsOn(day).catch((e: any) => ({ error: String(e?.message || e) })),
     loopCounts(),
     countOpenQuestions().catch(() => 0),
@@ -42,6 +42,8 @@ export async function GET() {
     allAutomationStates('eve').catch(() => [] as any[]),
     lastRuns().catch(() => ({} as Record<string, any>)),
     countOpenExpectations().catch(() => 0),
+    hotLoops().catch(() => [] as any[]),
+    listQuestions('open', 3).catch(() => [] as any[]),
   ])
 
   const byKey: Record<string, any> = {}
@@ -67,11 +69,27 @@ export async function GET() {
       gaps: (today as any).gaps || null,
       error: (today as any).error || null,
     },
-    loops, questions, expectations,
+    loops: { ...loops, top: topLoops }, questions, questionsTop: topQuestions.map((q: any) => ({ id: q.id, question: q.question, why: q.why || null, scope: q.scope, kind: q.kind })), expectations,
     thoughts: { unseen, allObserving: allObserving(settings) },
     agent: { enabled: !!settings.enabled, rungs: settings.rungs || null },
     desks,
   })
+}
+
+// THE FEW LOOPS THAT NEED A PERSON NOW (the Eve overview, 2026-09-28): urgent first, then guest
+// asks, then anything past its limit (guest ask 4h, the rest 48h) — oldest first, big before small.
+async function hotLoops(): Promise<any[]> {
+  const { data } = await supabaseAdmin().from('eve_slack_items').select('id,kind,summary,unit,building,owner_name,urgent,first_seen,channel,channel_name,msg_ts,thread_ts,evidence').eq('status', 'open').limit(1000)
+  const now = Date.now()
+  const rows = ((data || []) as any[]).map(r => {
+    const hours = (now - Date.parse(r.first_seen)) / 3600000
+    const late = r.kind === 'guest_ask' ? hours >= 4 : hours >= 48
+    const small = r?.evidence?.weight === 'small'
+    const score = (r.urgent ? 1000 : 0) + (r.kind === 'guest_ask' ? 300 : 0) + (late ? 100 : 0) + (small ? -500 : 0) + Math.min(hours, 96)
+    return { id: r.id, kind: r.kind, summary: String(r.summary || '').slice(0, 160), unit: r.unit, building: r.building, owner: r.owner_name, urgent: !!r.urgent, late, hours: Math.round(hours), score,
+      link: `https://slack.com/archives/${r.channel}/p${String(r.msg_ts).replace('.', '')}${r.thread_ts && r.thread_ts !== r.msg_ts ? `?thread_ts=${r.thread_ts}&cid=${r.channel}` : ''}`, channel: r.channel_name }
+  }).filter(r => r.urgent || r.kind === 'guest_ask' || r.late)
+  return rows.sort((a, b) => b.score - a.score).slice(0, 6)
 }
 
 // Open loops by kind — the same table /loops reads, counted rather than listed.

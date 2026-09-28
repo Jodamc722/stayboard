@@ -19,7 +19,7 @@ export const FEATURES: Feature[] = [
   { key: 'command',       label: 'Command Center',    path: '/command', group: 'Overview' },
   // Open loops (Jon, 2026-09-28): the page behind Eve's 'Keeping tabs' — guest asks, problems,
   // promises, unanswered questions, decisions — with Done / Not a loop. Replaces the long roll-up.
-  { key: 'loops',         label: 'Open loops',        path: '/loops', group: 'Overview' },
+  { key: 'loops',         label: 'Open loops (Eve tab)', path: '/loops', group: 'Overview' },
   // Moved off '/' 2026-08-24 (Jon: "home page is a bust"). The KEY stays `home` on purpose — it is
   // what per-role permissions are stored against, so renaming it would silently reset everyone's
   // access to this page. Only the path, label and group moved.

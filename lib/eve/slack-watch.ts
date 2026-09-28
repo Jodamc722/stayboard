@@ -572,7 +572,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     const hot = openNow.filter(i => i.kind === 'problem' && big(i) && (i.urgent || (hours(i) >= 24 && !i.owner_name))).sort((a, b) => Date.parse(a.first_seen) - Date.parse(b.first_seen))
     const late = openNow.filter(i => i.kind === 'commitment' && big(i) && hours(i) >= 48).sort((a, b) => Date.parse(a.first_seen) - Date.parse(b.first_seen))
     const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
-    const parts: string[] = [`*Keeping tabs — ${today}* · ${openNow.length} open · ${closed.length} closed since yesterday · <${base}/loops|all of it on /loops>`]
+    const parts: string[] = [`*Keeping tabs — ${today}* · ${openNow.length} open · ${closed.length} closed since yesterday · <${base}/eve?tab=loops|all of it on the Eve tab>`]
     const wins = await winsFor().catch(() => null)
     if (wins && wins.lines.length) parts.push(`*Yesterday went well* — ${wins.lines.slice(0, 2).join(' · ')}`)
     const needs: string[] = []

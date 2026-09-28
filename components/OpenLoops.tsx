@@ -36,7 +36,7 @@ const ageTone = (it: Item): 'rose' | 'amber' | 'slate' => {
   return h >= 48 ? 'rose' : h >= 24 ? 'amber' : 'slate'
 }
 
-export function OpenLoops({ canEdit }: { canEdit: boolean }) {
+export function OpenLoops({ canEdit, embedded }: { canEdit: boolean; embedded?: boolean }) {
   const [open, setOpen] = useState<Item[] | null>(null)
   const [closed, setClosed] = useState<Item[] | null>(null)
   const [tab, setTab] = useState<TabKey>('guest_ask')
@@ -89,12 +89,21 @@ export function OpenLoops({ canEdit }: { canEdit: boolean }) {
 
   return (
     <div>
+      {embedded ? (
+        <div className="flex items-center gap-1.5 flex-wrap mb-2">
+          <Pill tone={stale ? 'rose' : 'slate'} title="Open longer than the limit (guest ask 4h, anything else 48h)">{stale} overdue</Pill>
+          <Pill tone={nobody ? 'amber' : 'slate'} title="Open with nobody's name on them">{nobody} unowned</Pill>
+          <Pill title="Open in total">{open.length} open</Pill>
+          <span className="text-[11.5px] text-muted">what Eve is keeping tabs on across Slack — closed when the thread, the task or the booking says so</span>
+        </div>
+      ) : (
       <LeanHead title="Open loops" icon={<Radar size={20} className="text-brand-600" />}>
         <Pill tone={n('guest_ask') ? 'rose' : 'slate'} title="Guest asks waiting on us">{n('guest_ask')} guest asks</Pill>
         <Pill tone={stale ? 'rose' : 'slate'} title="Open longer than the limit (guest ask 4h, anything else 48h)">{stale} overdue</Pill>
         <Pill tone={nobody ? 'amber' : 'slate'} title="Open with nobody's name on them">{nobody} unowned</Pill>
         <Pill title="Open in total">{open.length} open</Pill>
       </LeanHead>
+      )}
       <LeanTabs tabs={TABS.map(t => ({ ...t, n: n(t.key) }))} value={tab} onChange={setTab} right={
         <>
           <select value={building} onChange={e => setBuilding(e.target.value)} className="rounded-lg border border-line px-2 py-1 text-[12px] bg-white"><option value="">All buildings</option>{buildings.map(b => <option key={b} value={b}>{b}</option>)}</select>

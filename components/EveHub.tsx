@@ -17,17 +17,20 @@
 // Lean rules (components/lean.tsx): one-line header with pills, tabs with counts, rows, detail
 // behind a click.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Sparkles, Check, X, HelpCircle, RefreshCw, ExternalLink, Loader2, Radar, Brain, Sliders, MessageSquareWarning, Copy, RotateCcw, Play } from 'lucide-react'
+import { Sparkles, Check, X, HelpCircle, RefreshCw, ExternalLink, Loader2, Radar, Brain, Sliders, MessageSquareWarning, Copy, RotateCcw, Play, MessageCircle } from 'lucide-react'
 import { LeanHead, LeanTabs, LeanList, LeanRow, LeanSection, LeanEmpty, Tag, Pill, IconBtn } from '@/components/lean'
 import { OpenLoops } from '@/components/OpenLoops'
+import { openEve } from '@/components/EveFloat'
 
 type TabKey = 'overview' | 'loops' | 'questions' | 'expectations'
+type HotLoop = { id: string; kind: string; summary: string; unit: string | null; building: string | null; owner: string | null; urgent: boolean; late: boolean; hours: number; link: string; channel: string | null }
 
 type Overview = {
   ok: boolean; day: string
   today: { headline: string | null; counts: any; waiting: any[]; decisions: any[]; gaps: string[] | null; error: string | null }
-  loops: { open: number; byKind: Record<string, number>; urgent: number; oldestHours: number | null }
+  loops: { open: number; byKind: Record<string, number>; urgent: number; oldestHours: number | null; top?: HotLoop[] }
   questions: number
+  questionsTop?: { id: string; question: string; why: string | null; scope: string; kind: string }[]
   expectations: number
   thoughts: { unseen: number; allObserving: boolean }
   agent: { enabled: boolean; rungs: Record<string, number> | null }
@@ -47,7 +50,7 @@ const ago = (iso: string | null | undefined): string => {
   return `${Math.round(m / 1440)}d ago`
 }
 
-export function EveHub({ canEdit, loopsLevel, initialTab }: { canEdit: boolean; loopsLevel: string; initialTab?: TabKey }) {
+export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: boolean; loopsLevel: string; initialTab?: TabKey; isAdmin?: boolean }) {
   const [tab, setTab] = useState<TabKey>(initialTab || 'overview')
   const [ov, setOv] = useState<Overview | null>(null)
   const [err, setErr] = useState('')
@@ -77,8 +80,10 @@ export function EveHub({ canEdit, loopsLevel, initialTab }: { canEdit: boolean; 
   }
 
   const waiting = ov?.today.waiting.length || 0
+  const hot = ov?.loops.top?.length || 0
+  const needsYou = waiting + hot + (qCount || 0) + (xCount || 0)
   const tabs = useMemo(() => ([
-    { key: 'overview' as TabKey, label: 'Overview', n: waiting || null },
+    { key: 'overview' as TabKey, label: 'Needs you', n: needsYou || null },
     { key: 'loops' as TabKey, label: 'Open loops', n: ov?.loops.open || null },
     { key: 'questions' as TabKey, label: 'Questions', n: qCount || null },
     { key: 'expectations' as TabKey, label: 'Expectations', n: xCount || null },
@@ -89,25 +94,23 @@ export function EveHub({ canEdit, loopsLevel, initialTab }: { canEdit: boolean; 
       <LeanHead title="Eve" icon={<Sparkles size={20} className="text-brand-600" />}>
         {ov ? (
           <>
-            <Pill tone={waiting ? 'amber' : 'slate'} title="Proposals and drafts she filed that are still waiting on a person" onClick={() => pick('overview')}>{waiting} waiting on you</Pill>
-            <Pill tone={ov.loops.urgent ? 'rose' : ov.loops.open ? 'amber' : 'slate'} title="Loops she is keeping tabs on across Slack" onClick={() => pick('loops')}>{ov.loops.open} open loops</Pill>
-            <Pill tone={qCount ? 'violet' : 'slate'} title="Things only a person can tell her" onClick={() => pick('questions')}>{qCount || 0} questions</Pill>
-            <Pill tone={xCount ? 'amber' : 'slate'} title="Notes for CS and admin: what guests keep being surprised by, and the copy that would fix it" onClick={() => pick('expectations')}>{xCount || 0} expectation notes</Pill>
-            <Pill tone={ov.thoughts.unseen ? 'sky' : 'slate'} title="Thinking you have not looked at yet — Settings → Eve → Thinking"
+            <Pill tone={needsYou ? 'rose' : 'emerald'} title="Proposals waiting for a yes, loops that are urgent or late, questions and expectation notes — everything that needs a person" onClick={() => pick('overview')}>{needsYou ? `${needsYou} need you` : 'nothing needs you'}</Pill>
+            <Pill tone={ov.thoughts.unseen ? 'sky' : 'slate'} title="What she would have done, and did not — Settings → Eve → Thinking"
               onClick={() => { window.location.href = '/users?tab=settings&panel=eve' }}>{ov.thoughts.unseen} unseen thoughts</Pill>
-            <Pill tone={ov.agent.enabled ? 'emerald' : 'slate'} title={ov.agent.enabled ? 'Agent mode is on' : 'Agent mode is off — she observes and answers only'}>{ov.agent.enabled ? 'Agent on' : 'Agent off'}</Pill>
+            <Pill tone={ov.agent.enabled ? 'emerald' : 'slate'} title={ov.agent.enabled ? 'Agent mode is on — she acts inside the fence set in Settings → Eve' : 'Agent mode is off — she observes and answers only'}>{ov.agent.enabled ? 'Agent on' : 'Agent off'}</Pill>
           </>
         ) : err ? <Pill tone="rose">{err}</Pill> : <Pill><Loader2 size={12} className="animate-spin inline" /></Pill>}
+        <button onClick={() => openEve()} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 text-white px-2.5 h-7 text-[12px] font-semibold hover:bg-brand-700"><MessageCircle size={13} /> Ask Eve</button>
         <IconBtn title="Refresh" onClick={load}><RefreshCw size={14} /></IconBtn>
         <IconBtn title="Memory, voice, agent mode, thinking — Settings → Eve" href="/users?tab=settings&panel=eve"><Sliders size={14} /></IconBtn>
       </LeanHead>
 
       <LeanTabs tabs={tabs} value={tab} onChange={pick} />
 
-      {tab === 'overview' && <OverviewTab ov={ov} err={err} pick={pick} />}
+      {tab === 'overview' && <OverviewTab ov={ov} err={err} pick={pick} isAdmin={!!isAdmin} canEdit={canEdit} reload={load} />}
       {tab === 'loops' && (loopsLevel === 'off'
         ? <LeanEmpty>Open loops are switched off for your role. Ask Jon to turn them on in Users → Roles.</LeanEmpty>
-        : <OpenLoops canEdit={loopsLevel === 'edit' || loopsLevel === 'full'} />)}
+        : <OpenLoops canEdit={loopsLevel === 'edit' || loopsLevel === 'full'} embedded />)}
       {tab === 'questions' && <QuestionsTab canEdit={canEdit} onCount={n => { setQCount(n) }} />}
       {tab === 'expectations' && <ExpectationsTab canEdit={canEdit} onCount={n => { setXCount(n) }} />}
     </div>
@@ -115,31 +118,74 @@ export function EveHub({ canEdit, loopsLevel, initialTab }: { canEdit: boolean; 
 }
 
 // ── Overview ──────────────────────────────────────────────────────────────────────────────────
-function OverviewTab({ ov, err, pick }: { ov: Overview | null; err: string; pick: (t: TabKey) => void }) {
+function OverviewTab({ ov, err, pick, isAdmin, canEdit, reload }: { ov: Overview | null; err: string; pick: (t: TabKey) => void; isAdmin: boolean; canEdit: boolean; reload: () => void }) {
+  const [busy, setBusy] = useState('')
+  const [note, setNote] = useState('')
+  const [draft, setDraft] = useState<Record<string, string>>({})
   if (err && !ov) return <LeanEmpty>{err}</LeanEmpty>
   if (!ov) return <LeanEmpty><Loader2 size={14} className="animate-spin inline mr-1" /> Reading her receipts…</LeanEmpty>
   const c = ov.today.counts || {}
   const byMode: Record<string, number> = c.by_mode || {}
-  const loopsLine = Object.entries(ov.loops.byKind).map(([k, n]) => `${n} ${KIND_LABEL[k] || k}`).join(' · ')
+  const hot = ov.loops.top || []
+  const qs = ov.questionsTop || []
+  const total = ov.today.waiting.length + hot.length + (ov.questions || 0) + (ov.expectations || 0)
+
+  // Every action here is the same call the deeper tab makes — the inbox is a shortcut, not a fork.
+  const call = async (id: string, fn: () => Promise<Response>, okText: string) => {
+    setBusy(id); setNote('')
+    try { const r = await fn().then(x => x.json()); setNote(r?.ok ? okText : (r?.error || 'Could not do that.')) } catch (e: any) { setNote(String(e?.message || e)) }
+    setBusy(''); reload()
+  }
+  const decide = (id: string, op: 'approve' | 'reject') => call(id, () => fetch('/api/eve/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, id }) }), op === 'approve' ? 'Done.' : 'Declined.')
+  const closeLoop = (id: string, action: 'close' | 'dismiss') => call(id, () => fetch('/api/loops', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, action }) }), action === 'close' ? 'Closed.' : 'Dismissed.')
+  const answer = (id: string, op: 'answer' | 'dismiss') => call(id, () => fetch('/api/eve/questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, id, answer: draft[id] || '' }) }), op === 'answer' ? 'Remembered, with your name on it.' : 'Dismissed.')
+  const KIND: Record<string, string> = { guest_ask: 'guest ask', problem: 'problem', commitment: 'promised', question: 'unanswered', decision: 'decision' }
 
   return (
     <div>
-      {/* WHAT NEEDS A PERSON. The one section that can cost something if it is ignored. */}
-      <LeanSection title="Needs a person" n={ov.today.waiting.length + (ov.questions || 0)} tone={ov.today.waiting.length ? 'rose' : undefined}>
-        {ov.today.waiting.length || ov.questions || ov.loops.open || ov.expectations ? (
+      {note ? <p className="text-[12px] text-muted mb-2 px-1">{note}</p> : null}
+      {/* NEEDS YOU — one list, every kind of thing a person has to touch, with the action on the
+          row. Proposals: approve or decline here (admins). Loops: close or open the thread.
+          Questions: answer inline. Nothing here links away to be acted on somewhere else. */}
+      <LeanSection title="Needs you" n={total} tone={ov.today.waiting.length || hot.some(h => h.urgent) ? 'rose' : undefined}>
+        {total ? (
           <LeanList>
             {ov.today.waiting.map((w: any) => (
               <LeanRow key={w.id} name={w.summary || w.action || w.kind}
-                meta={`${w.kind}${w.action && w.action !== w.kind ? ' · ' + w.action : ''} · filed ${w.filed}`}
-                tags={<Tag tone={w.status === 'waiting' ? 'amber' : w.status === 'deferred' ? 'violet' : 'rose'}>{w.status}</Tag>}
-                actions={<IconBtn title="Approve or decline in Settings → Eve → Agent mode" href="/users?tab=settings&panel=eve"><ExternalLink size={14} /></IconBtn>}>
-                {/* The row clips a long summary; the proposal in full is one click away. */}
+                meta={`she wants to ${String(w.action || w.kind).replace(/_/g, ' ')} · filed ${w.filed}`}
+                tags={<><Tag tone="amber">wants a yes</Tag>{w.status !== 'waiting' ? <Tag tone={w.status === 'deferred' ? 'violet' : 'rose'}>{w.status}</Tag> : null}</>}
+                actions={isAdmin ? <>
+                  <IconBtn title="Approve — she does it now" tone="ok" onClick={() => decide(w.id, 'approve')} disabled={busy === w.id}><Check size={14} /></IconBtn>
+                  <IconBtn title="Decline" tone="bad" onClick={() => decide(w.id, 'reject')} disabled={busy === w.id}><X size={14} /></IconBtn>
+                </> : <IconBtn title="An admin approves this in Settings → Eve → Agent mode" href="/users?tab=settings&panel=eve"><ExternalLink size={14} /></IconBtn>}>
                 {w.summary && String(w.summary).length > 40 ? <p className="text-[12.5px] text-ink/85">{w.summary}</p> : null}
               </LeanRow>
             ))}
-            {ov.questions ? (
-              <LeanRow name={`${ov.questions} question${ov.questions === 1 ? '' : 's'} only you can answer`} meta="each answer becomes a memory with your name on it"
-                tags={<Tag tone="violet">training</Tag>}
+            {hot.map(h => (
+              <LeanRow key={h.id} name={h.summary}
+                meta={`${h.unit || h.building || ''}${h.owner ? ` · ${h.owner}` : ' · nobody on it'}${h.channel ? ` · #${h.channel}` : ''} · ${h.hours < 48 ? `${h.hours}h` : `${Math.round(h.hours / 24)}d`} open`}
+                tags={<><Tag tone={h.kind === 'guest_ask' ? 'rose' : 'slate'}>{KIND[h.kind] || h.kind}</Tag>{h.urgent ? <Tag tone="roseSolid">urgent</Tag> : null}{h.late ? <Tag tone="amber">late</Tag> : null}</>}
+                actions={<>
+                  <IconBtn title="Open the Slack thread" href={h.link}><ExternalLink size={14} /></IconBtn>
+                  {canEdit ? <IconBtn title="It got done — close it" tone="ok" onClick={() => closeLoop(h.id, 'close')} disabled={busy === h.id}><Check size={14} /></IconBtn> : null}
+                  {canEdit ? <IconBtn title="Not a real loop" tone="bad" onClick={() => closeLoop(h.id, 'dismiss')} disabled={busy === h.id}><X size={14} /></IconBtn> : null}
+                </>} />
+            ))}
+            {qs.map(q => (
+              <LeanRow key={q.id} name={q.question} meta={`${q.scope} · only you can answer this`} tags={<Tag tone="violet">question</Tag>} defaultOpen={false}>
+                {q.why ? <p className="text-[12.5px] text-muted">Why she is asking: {q.why}</p> : null}
+                {canEdit ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input className="flex-1 min-w-[220px] rounded-lg border border-line bg-white px-3 py-2 text-[13px] text-ink" placeholder="Tell her…" value={draft[q.id] || ''} onChange={e => setDraft({ ...draft, [q.id]: e.target.value })}
+                      onKeyDown={e => { if (e.key === 'Enter' && (draft[q.id] || '').trim()) answer(q.id, 'answer') }} />
+                    <button onClick={() => answer(q.id, 'answer')} disabled={busy === q.id || !(draft[q.id] || '').trim()} className="inline-flex items-center gap-1.5 text-xs font-semibold bg-brand-600 text-white rounded-lg px-3 py-2 hover:bg-brand-700 disabled:opacity-50"><Check size={13} /> Save</button>
+                    <button onClick={() => answer(q.id, 'dismiss')} disabled={busy === q.id} className="inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-ink px-2 py-2"><X size={13} /> Not worth answering</button>
+                  </div>
+                ) : null}
+              </LeanRow>
+            ))}
+            {(ov.questions || 0) > qs.length ? (
+              <LeanRow name={`${(ov.questions || 0) - qs.length} more question${(ov.questions || 0) - qs.length === 1 ? '' : 's'}`} meta="on the Questions tab" tags={<Tag tone="violet">question</Tag>}
                 actions={<IconBtn title="Open Questions" onClick={() => pick('questions')}><HelpCircle size={14} /></IconBtn>} />
             ) : null}
             {ov.expectations ? (
@@ -147,13 +193,13 @@ function OverviewTab({ ov, err, pick }: { ov: Overview | null; err: string; pick
                 tags={<Tag tone="amber">listing & comms</Tag>}
                 actions={<IconBtn title="Open Expectations" onClick={() => pick('expectations')}><MessageSquareWarning size={14} /></IconBtn>} />
             ) : null}
-            {ov.loops.open ? (
-              <LeanRow name={`${ov.loops.open} open loop${ov.loops.open === 1 ? '' : 's'} on Slack`} meta={loopsLine}
-                tags={<>{ov.loops.urgent ? <Tag tone="rose">{ov.loops.urgent} urgent</Tag> : null}{ov.loops.oldestHours != null && ov.loops.oldestHours >= 24 ? <Tag tone="amber">oldest {Math.round(ov.loops.oldestHours / 24)}d</Tag> : null}</>}
+            {ov.loops.open > hot.length ? (
+              <LeanRow name={`${ov.loops.open - hot.length} more loop${ov.loops.open - hot.length === 1 ? '' : 's'} she is keeping tabs on`} meta={Object.entries(ov.loops.byKind).map(([k, n]) => `${n} ${KIND_LABEL[k] || k}`).join(' · ') + ' · none of them urgent or late'}
+                tags={<Tag>watching</Tag>}
                 actions={<IconBtn title="Open loops" onClick={() => pick('loops')}><Radar size={14} /></IconBtn>} />
             ) : null}
           </LeanList>
-        ) : <LeanEmpty>Nothing is waiting on a person. She has no proposals out, no questions, and no open loops.</LeanEmpty>}
+        ) : <LeanEmpty>Nothing needs you. No proposals out, no loop urgent or late, no questions.</LeanEmpty>}
       </LeanSection>
 
       {/* WHAT SHE DID TODAY — her own receipts (my_actions_today), not a recollection. */}

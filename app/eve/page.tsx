@@ -24,7 +24,7 @@ export default async function EvePage() {
   return (
     <Shell>
       <div className="max-w-[1100px] mx-auto">
-        <EveHub canEdit={eveLevel === 'edit' || eveLevel === 'full'} loopsLevel={loopsLevel} />
+        <EveHub canEdit={eveLevel === 'edit' || eveLevel === 'full'} loopsLevel={loopsLevel} isAdmin={access.role === 'admin'} />
       </div>
     </Shell>
   )
