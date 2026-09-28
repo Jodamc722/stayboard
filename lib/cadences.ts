@@ -96,6 +96,13 @@ export type CadenceDef = {
    * but the successor is created once per building, on its first unit, never twenty times.
    */
   perBuilding?: boolean
+  /**
+   * EQUIPMENT RULE (Jon, 2026-09-28): 'central' = central A/C units only, 'mini-split' = mini-splits
+   * only, 'window' = window / PTAC only, 'any' = every unit. The type per unit is inferred and
+   * overridable in Settings → Cadences → Equipment (lib/unit-equipment). A unit still unknown is
+   * excluded from a specific rule and counted, never assumed.
+   */
+  equipment?: 'any' | 'central' | 'mini-split' | 'window'
 }
 
 export type CadenceCfg = {
@@ -125,7 +132,7 @@ export type CadenceCfg = {
 // meant to be argued with in settings, which is where they can now be changed.
 export const DEFAULT_CADENCES: CadenceDef[] = [
   {
-    key: 'ac_deep', label: 'A/C deep clean', everyDays: 182, dept: 'maintenance',
+    key: 'ac_deep', label: 'A/C deep clean (coils)', everyDays: 182, dept: 'maintenance', equipment: 'any',
     // Jon, 2026-08-26: "Ac deep cleans should be every 6 months."
     match: '(a\\/?c|air ?con|hvac|mini ?split).*(deep|coil|blower|sanit)|deep clean.*(a\\/?c|hvac|split)',
     needsVacant: true, needsDays: 1, minutes: 120, mode: 'suggest', seedIfNever: true,
@@ -147,10 +154,13 @@ export const DEFAULT_CADENCES: CadenceDef[] = [
     //
     // Thirty days, not ninety, because a central return in a coastal rental that turns over every
     // few days is a dirty filter for two months out of three on a quarterly cycle.
-    key: 'ac_filter', label: 'A/C filter change / coil clean', everyDays: 30, dept: 'maintenance',
-    // Jon, 2026-09-28: "Filter changes / coil clean for AC units" — one cadence, either counts.
-    match: 'filter|coil clean',
-    needsScope: true, scopeBuildings: [], scopeUnits: [],
+    key: 'ac_filter', label: 'A/C filter change (central A/C)', everyDays: 30, dept: 'maintenance',
+    // Jon, 2026-09-28: central units only — a mini-split's filter is rinsed at every departure
+    // clean; its coils are the 6-month job (A/C deep clean, below, every kind). The central list
+    // now comes from the equipment inference (lib/unit-equipment), so this is no longer inert;
+    // buildings or units can still be picked to narrow it.
+    match: 'filter',
+    equipment: 'central', scopeBuildings: [], scopeUnits: [],
     // A filter is fifteen minutes and a step stool. It does not need an empty unit, but it is far
     // less awkward in one, so it is ranked below the jobs that genuinely need the window.
     needsVacant: false, needsDays: 0, minutes: 15, mode: 'suggest', seedIfNever: true,
@@ -314,6 +324,7 @@ export function resolveCadences(raw: any): CadenceCfg {
       successor: o?.successor == null ? (base.successor !== false) : o.successor === true,
       leadDays: num(o?.leadDays, base.leadDays ?? 14, 0, 120),
       perBuilding: o?.perBuilding == null ? !!base.perBuilding : o.perBuilding === true,
+      equipment: ['any', 'central', 'mini-split', 'window'].includes(String(o?.equipment)) ? o.equipment : (base.equipment || 'any'),
     }
   }
 
@@ -322,7 +333,7 @@ export function resolveCadences(raw: any): CadenceCfg {
     const blank: CadenceDef = {
       key: inv.key, label: inv.key, everyDays: 180, dept: 'maintenance', match: inv.key,
       needsVacant: true, needsDays: 1, minutes: 60, mode: 'suggest', seedIfNever: false,
-      requiresAmenity: '', scopeBuildings: [], scopeUnits: [], needsScope: false, successor: true, leadDays: 14, perBuilding: false,
+      requiresAmenity: '', scopeBuildings: [], scopeUnits: [], needsScope: false, successor: true, leadDays: 14, perBuilding: false, equipment: 'any',
     }
     // An invented cadence with an uncompilable pattern is dropped, not silently made to match all.
     const c = one(blank, inv)

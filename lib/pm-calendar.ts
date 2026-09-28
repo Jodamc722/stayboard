@@ -28,6 +28,7 @@ import { CADENCE_KEY, resolveCadences, cadenceRe, daysBetween, type CadenceDef }
 import { getSetting } from './app-settings'
 import { isTaskDone, isTaskGone } from './task-categories'
 import { linkedSets } from './linked-units'
+import { acTypeMap, equipmentMatches } from './unit-equipment'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const dOf = (v: any) => str(v).slice(0, 10)
@@ -115,6 +116,8 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
 
   const presets = await getOpsPresets()
   const VENDOR_RE = vendorRegex(presets.vendorBuildings)
+  // Equipment per unit, for cadences with a rule (central A/C only, mini-splits only).
+  const acOf = usable.some(c => c.equipment && c.equipment !== 'any') ? await acTypeMap() : {}
 
   // ── the units ────────────────────────────────────────────────────────────────────────────────
   const { data: lRes, error: lErr } = await db.from('guesty_listings')
@@ -247,6 +250,8 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
       }
       // We do not staff vendor buildings, so their housekeeping cadences are not ours to plan.
       if (m.vendor && c.dept === 'housekeeping') continue
+      // The equipment rule: a unit whose A/C type is unknown is left out of a specific rule.
+      if (c.equipment && c.equipment !== 'any' && !equipmentMatches(c.equipment, acOf[lid])) continue
 
       let ld = lastDone[lid]?.[c.key] || null
       for (const pid of (parentsOf[lid] || [])) {

@@ -47,6 +47,7 @@ import {
   CADENCE_KEY, resolveCadences, cadenceRe, daysBetween,
   type CadenceCfg, type CadenceDef,
 } from './cadences'
+import { acTypeMap, equipmentMatches } from './unit-equipment'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const dOf = (v: any) => str(v).slice(0, 10)
@@ -601,6 +602,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
 
   // ── RANK ──────────────────────────────────────────────────────────────────────────────────────
   // Equipment gates compiled once, not per unit — this loop runs units × cadences.
+  const acOf = live.some(c => c.equipment && c.equipment !== 'any') ? await acTypeMap() : {}
   const amenRe: Record<string, RegExp | null> = {}
   const amenStats: Record<string, { has: number; hasNot: number; unknown: number }> = {}
   for (const c of live) amenRe[c.key] = c.requiresAmenity ? cadenceRe(c.requiresAmenity) : null
@@ -650,6 +652,9 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
           || scopeU.some(u => u === lid || norm(u) === norm(meta.name))
         if (!inScope) { drop(`outside the ${c.label.toLowerCase()} list`); continue }
       }
+
+      // ── EQUIPMENT RULE (Jon, 2026-09-28: central vs mini-split) ────────────────────────────
+      if (c.equipment && c.equipment !== 'any' && !equipmentMatches(c.equipment, acOf[lid])) { drop(`${acOf[lid] || 'unknown'} A/C — rule is ${c.equipment}`); continue }
 
       // ── EQUIPMENT GATE ────────────────────────────────────────────────────────────────────
       // Checked EARLY, before anything expensive, because a unit without the equipment is not a
