@@ -118,7 +118,10 @@ export function OpenLoops({ canEdit }: { canEdit: boolean }) {
                   {it.urgent && <Tag tone="amber">guest today</Tag>}
                   {it.status === 'open' && <Tag tone={ageTone(it)} title={'Since ' + new Date(it.first_seen).toLocaleString()}>{age(it.first_seen)}</Tag>}
                   {it.owner_name ? <Tag tone="sky">{it.owner_name}</Tag> : it.kind !== 'decision' && it.status === 'open' ? <Tag tone="amber">nobody</Tag> : null}
-                  {it.tracked_in && <Tag title={it.tracked_in}>{it.tracked_in.split(':')[0]}</Tag>}
+                  {ev.weight === 'small' && <Tag title="Routine coordination — kept for visibility, never chased">small</Tag>}
+                  {ev.expires && it.status === 'open' && <Tag title={'Moot after ' + new Date(ev.expires).toLocaleString()}>until {new Date(ev.expires).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</Tag>}
+                  {it.tracked_in && <Tag tone="sky" title={ev.taskName ? `Breezeway task #${ev.taskId} "${ev.taskName}" — ${ev.matchedBy}` : it.tracked_in}>{it.tracked_in.startsWith('breezeway') ? 'in Breezeway' : it.tracked_in.startsWith('glitch') ? 'on glitch board' : it.tracked_in.split(':')[0]}</Tag>}
+                  {ev.guestTold && <Tag tone="emerald" title={'We wrote to the guest ' + new Date(ev.guestTold).toLocaleString() + (ev.guestToldBy ? ' — ' + ev.guestToldBy : '')}>guest told</Tag>}
                   {it.nudge_count > 0 && <Tag title={'Last asked ' + (it.nudged_at ? new Date(it.nudged_at).toLocaleString() : '')}>asked ×{it.nudge_count}</Tag>}
                   {ev.escalated && <Tag tone="roseSolid" title={'Escalated: ' + ev.escalatedWhy}>escalated</Tag>}
                   {it.status === 'closed' && it.closed_reason && <Tag tone={/dismissed/.test(it.closed_reason) ? 'slate' : 'emerald'} title={it.closed_reason}>{/dismissed/.test(it.closed_reason) ? 'not a loop' : /booked/.test(it.closed_reason) ? 'booked' : 'done'}</Tag>}

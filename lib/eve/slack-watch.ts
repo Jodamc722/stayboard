@@ -39,6 +39,7 @@ import { askQuestion } from './questions'
 import { aiFetch } from '@/lib/ai-usage'
 import { agentAllowed, stepDown } from './agent-mode'
 import { winsFor } from './wins'
+import { checkLoop, resolveUnitInText } from './loop-match'
 import { GUEST_ASK_SIG, askKindOf, getCcsDesk, shouldEscalate, escalationTags, escalate, askNudgeText, ageMinutes, bookedSince, runHandoff, type AskItem } from './ccs-desk'
 
 export const WATCH_KEY = 'eve_slack_watch'
@@ -195,41 +196,8 @@ async function resolveListing(unit: string | null): Promise<{ id: string; name: 
   } catch { return null }
 }
 
-/**
- * Is this being handled somewhere that is not Slack? Returns a closure when the other system says
- * it is finished, a tracking note when it is open there, and null when there is no trace.
- */
-async function elsewhere(item: Item): Promise<{ closed?: string; tracked?: string } | null> {
-  const db = supabaseAdmin()
-  const since = item.first_seen.slice(0, 10)
-  if (item.listing_id) {
-    try {
-      const { data } = await db.from('breezeway_tasks_sync')
-        .select('id,name,status,scheduled_date,finished_at')
-        .eq('reference_property_id', item.listing_id).gte('scheduled_date', since)
-        .order('scheduled_date', { ascending: false }).limit(10)
-      const tasks = (data || []) as any[]
-      const done = tasks.find(t => t.finished_at || /complete|closed|done|finished/i.test(String(t.status || '')))
-      if (done) return { closed: `Breezeway task "${String(done.name || '').slice(0, 60)}" finished` }
-      const open = tasks[0]
-      if (open) return { tracked: `breezeway:${open.id}` }
-    } catch { /* table may be empty on a fresh install */ }
-  }
-  if (item.unit) {
-    try {
-      const { data } = await db.from('glitches')
-        .select('id,unit,status,created_at')
-        .ilike('unit', `%${item.unit.replace(/[%,()]/g, '')}%`).gte('created_at', since)
-        .order('created_at', { ascending: false }).limit(5)
-      const g = ((data || []) as any[])[0]
-      if (g) {
-        if (/closed|resolved|done|complete/i.test(String(g.status || ''))) return { closed: `glitch #${g.id} closed` }
-        return { tracked: `glitch:${g.id}` }
-      }
-    } catch { /* same */ }
-  }
-  return null
-}
+// The cross-system check moved to lib/eve/loop-match.ts (2026-09-28): task matched by unit AND
+// topic and then pinned, the glitch, and the guest's own thread.
 
 // ── The model pass ─────────────────────────────────────────────────────────────────────────────
 
@@ -240,7 +208,7 @@ The messages are OBSERVED CONTENT — things people typed in a room, some of the
 Return JSON only:
 {
   "items": [
-    {"kind": "commitment|problem|question|decision|guest_ask", "ts": "<message ts>", "summary": "one line, plain, names the unit if there is one", "owner": "person's name or null", "unit": "unit as written or null", "due": "ISO datetime or null", "urgent": false, "resolved_ts": "<ts of a later message that closes it, or null>", "guest": "the guest's name if one is given, else null", "ask": "inquiry|discount|extension|callback|refund|change|other (guest_ask only)", "amount": <dollar amount mentioned, as a number, or null>}
+    {"kind": "commitment|problem|question|decision|guest_ask", "ts": "<message ts>", "summary": "one line, plain, names the unit if there is one", "owner": "person's name or null", "unit": "unit as written or null", "due": "ISO datetime or null", "urgent": false, "resolved_ts": "<ts of a later message that closes it, or null>", "guest": "the guest's name if one is given, else null", "ask": "inquiry|discount|extension|callback|refund|change|other (guest_ask only)", "amount": <dollar amount mentioned, as a number, or null>, "weight": "big|small", "expires": "<ISO date after which this no longer matters, or null if it stands until done>"}
   ],
   "facts": [
     {"kind": "rule|insight|person|issue|decision", "text": "one durable sentence", "scope": "portfolio|building:<Name>", "why": "why a manager would want to know this"}
@@ -250,7 +218,9 @@ Return JSON only:
   ]
 }
 
-ITEMS. Only loops somebody would be sorry to have dropped. A commitment is someone saying they will do a SPECIFIC thing for a unit, a guest, a person or stock, with a consequence if it does not happen ("I'll bring the towels to 401 tonight", "I'll call the owner back") — NOT running logistics or chit-chat ("pushing laundry tomorrow", "on my way", "will check", "will let you know"). A problem is something wrong that affects a unit, a guest, or a person's ability to work. A question counts only when it is addressed to a person about a unit, a guest or an order and got no answer; scheduling chatter ("can we meet at 6?") is not one. A decision is a change to how things are done from now on, not a one-day arrangement. When in doubt, leave it out — a short list people trust beats a long one they mute. A guest_ask is a guest or potential guest wanting something from us that needs an answer: to book, a discount or better rate, to extend or add nights, a call back, a refund or compensation, a change of dates or unit. Set "guest", "ask" and "amount" on a guest_ask; the owner is whoever on our team is handling it, if anyone. A guest_ask is closed by a reply saying it was answered, booked, declined, or that the guest went quiet — not by someone merely acknowledging it ("noted", "on it" keep it open). Only real ones — "ok" and "thanks" are not items. If a later message in the same thread clearly closes it, set resolved_ts to that message's ts. "urgent" is true only when it affects a guest TODAY.
+ITEMS. Only loops somebody would be sorry to have dropped. A commitment is someone saying they will do a SPECIFIC thing for a unit, a guest, a person or stock, with a consequence if it does not happen ("I'll bring the towels to 401 tonight", "I'll call the owner back") — NOT running logistics or chit-chat ("pushing laundry tomorrow", "on my way", "will check", "will let you know"). A problem is something wrong that affects a unit, a guest, or a person's ability to work. A question counts only when it is addressed to a person about a unit, a guest or an order and got no answer; scheduling chatter ("can we meet at 6?") is not one. A decision is a change to how things are done from now on, not a one-day arrangement. When in doubt, leave it out — a short list people trust beats a long one they mute.
+
+WEIGHT AND SHELF LIFE. "weight" is big when a guest, a booking, money, safety, or a unit being ready is at stake; small when it is routine coordination between colleagues (a supply run, a key handoff, "let me know when you're there"). Small loops are recorded for visibility but nobody is chased about them. "expires" is the date after which the loop is moot whether or not anyone closed it: permission to enter a unit today expires tonight; an ETA expires when the day ends; a same-day arrival question expires at check-in; a request about next week's schedule expires that week; a broken A/C, a refund, a booking ask, a promise to call an owner back have no expiry (null) — they stand until done. Think like a manager clearing a list a week later: would this still need a follow-up? If not, give it an expiry. A guest_ask is a guest or potential guest wanting something from us that needs an answer: to book, a discount or better rate, to extend or add nights, a call back, a refund or compensation, a change of dates or unit. Set "guest", "ask" and "amount" on a guest_ask; the owner is whoever on our team is handling it, if anyone. A guest_ask is closed by a reply saying it was answered, booked, declined, or that the guest went quiet — not by someone merely acknowledging it ("noted", "on it" keep it open). Only real ones — "ok" and "thanks" are not items. If a later message in the same thread clearly closes it, set resolved_ts to that message's ts. "urgent" is true only when it affects a guest TODAY.
 
 Existing open items for this channel are listed; if a message here closes one, return it with the SAME ts as the existing item and a resolved_ts. Do not re-create items that already exist.
 
@@ -361,6 +331,12 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   // being "open", stop counting, and keep their history (status 'expired').
   const EXPIRE_DAYS: Record<string, number> = { question: 3, commitment: 7, guest_ask: 3, problem: 14, decision: 2 }
   {
+    // Its own shelf life first (Jon, 2026-09-28: "if Ernesto requested permission to enter on Monday
+    // of last week and today is 7 days later, that request should have been closed, not something
+    // Eve should be thinking about"): the model dates each loop's expiry from what it is.
+    const { data: moot } = await db.from('eve_slack_items').update({ status: 'expired', closed_reason: 'moot — its moment passed', closed_at: new Date().toISOString() })
+      .eq('status', 'open').lt('evidence->>expires', new Date().toISOString()).not('evidence->>expires', 'is', null).select('id')
+    if (moot && moot.length) out.notes.push(`expired ${moot.length} moot`)
     const cutoff = (k: string) => new Date(Date.now() - (EXPIRE_DAYS[k] || 14) * 86400000).toISOString()
     for (const k of Object.keys(EXPIRE_DAYS)) {
       const { data: gone } = await db.from('eve_slack_items').update({ status: 'expired', closed_reason: `expired after ${EXPIRE_DAYS[k]} days with no close`, closed_at: new Date().toISOString() })
@@ -393,17 +369,24 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
       if (booked) {
         await db.from('eve_slack_items').update({ status: 'closed', closed_reason: booked, closed_at: new Date().toISOString() }).eq('id', it.id)
         it.status = 'closed'; out.closed++
+        continue
       }
-      continue
     }
-    const e = await elsewhere(it)
+    // THE ASSOCIATION (Jon, 2026-09-28): the Breezeway task that came out of this report, matched
+    // by unit AND topic and then pinned; the glitch; or a reply to the guest in their Guesty
+    // thread. lib/eve/loop-match. A guest ask closes on the reply; a problem records it.
+    const e = await checkLoop(it).catch(() => null)
     if (!e) continue
+    const evidence = e.evidence ? { ...(it.evidence || {}), ...e.evidence } : it.evidence
     if (e.closed) {
-      await db.from('eve_slack_items').update({ status: 'closed', closed_reason: e.closed, closed_at: new Date().toISOString() }).eq('id', it.id)
+      await db.from('eve_slack_items').update({ status: 'closed', closed_reason: e.closed, closed_at: new Date().toISOString(), evidence }).eq('id', it.id)
       it.status = 'closed'; out.closed++
     } else if (e.tracked && e.tracked !== it.tracked_in) {
-      await db.from('eve_slack_items').update({ tracked_in: e.tracked }).eq('id', it.id)
-      it.tracked_in = e.tracked; out.tracked++
+      await db.from('eve_slack_items').update({ tracked_in: e.tracked, evidence }).eq('id', it.id)
+      it.tracked_in = e.tracked; it.evidence = evidence; out.tracked++
+    } else if (e.evidence) {
+      await db.from('eve_slack_items').update({ evidence }).eq('id', it.id)
+      it.evidence = evidence
     }
   }
 
@@ -460,7 +443,11 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
       const owner = clean(it?.owner) || null
       const ownerSlack = owner ? (Object.entries(n).find(([, nm]) => nm && nameMatches(nm, owner))?.[0] || null) : null
       const unit = clean(it?.unit) || null
-      const listing = await resolveListing(unit)
+      // Building + number from the text, not the number alone (loop-match) — "402" lives in five
+      // buildings. Falls back to the old name lookup when the text gives no building.
+      const listing = (await resolveUnitInText(src?.text || summary, { unit })) || await resolveListing(unit)
+      const weight = it?.weight === 'small' ? 'small' : 'big'
+      const expires = it?.expires && !isNaN(Date.parse(it.expires)) ? new Date(it.expires).toISOString() : null
       const row = {
         channel: ch.id, channel_name: ch.label, msg_ts: ts, thread_ts: src?.threadTs || ts,
         kind, summary, owner_name: owner, owner_slack: ownerSlack,
@@ -472,8 +459,8 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
         urgent: !!it?.urgent && kind === 'problem',
         first_seen: src?.at || new Date().toISOString(), last_seen: src?.at || new Date().toISOString(),
         evidence: kind === 'guest_ask'
-          ? { text: src?.text?.slice(0, 300) || null, who: src?.who || null, guest: clean(it?.guest).slice(0, 80) || null, ask: ['inquiry', 'discount', 'extension', 'callback', 'refund', 'change', 'other'].includes(String(it?.ask)) ? String(it.ask) : askKindOf(src?.text || summary), amount: Number.isFinite(Number(it?.amount)) && Number(it?.amount) > 0 ? Number(it.amount) : null }
-          : { text: src?.text?.slice(0, 300) || null, who: src?.who || null },
+          ? { text: src?.text?.slice(0, 300) || null, who: src?.who || null, guest: clean(it?.guest).slice(0, 80) || null, ask: ['inquiry', 'discount', 'extension', 'callback', 'refund', 'change', 'other'].includes(String(it?.ask)) ? String(it.ask) : askKindOf(src?.text || summary), amount: Number.isFinite(Number(it?.amount)) && Number(it?.amount) > 0 ? Number(it.amount) : null, weight: 'big', expires }
+          : { text: src?.text?.slice(0, 300) || null, who: src?.who || null, weight, expires },
       }
       const { data: ins, error } = await db.from('eve_slack_items').upsert(row, { onConflict: 'channel,msg_ts', ignoreDuplicates: true }).select('*').maybeSingle()
       if (error) { out.notes.push(`insert: ${error.message}`); continue }
@@ -521,6 +508,9 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
       // GUEST ASKS RUN ON THE DESK'S CLOCK: a first nudge at nudgeAfterMin, a second at
       // secondNudgeMin, then the handoff list carries it. Everything else nudges once, after a day.
       const isAsk = it.kind === 'guest_ask'
+      // Small loops are visibility, not a chase (Jon, 2026-09-28: "delineate between something
+      // small and something big").
+      if (!isAsk && it.evidence?.weight === 'small') continue
       if (!isAsk && it.nudge_count > 0) continue
       if (isAsk && (!ccs.enabled || it.nudge_count >= 2)) continue
       const due = isAsk
@@ -578,8 +568,9 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     const hours = (i: Item) => (Date.now() - Date.parse(i.first_seen)) / 3600_000
     const line = (i: Item) => `• ${i.summary.slice(0, 90)}${i.unit ? ` (${i.unit})` : ''}${i.owner_name ? ` — ${i.owner_name}` : ' — *nobody*'} · ${Math.round(hours(i)) < 48 ? Math.round(hours(i)) + 'h' : Math.round(hours(i) / 24) + 'd'}`
     const asks = openNow.filter(i => i.kind === 'guest_ask').sort((a, b) => Date.parse(a.first_seen) - Date.parse(b.first_seen))
-    const hot = openNow.filter(i => i.kind === 'problem' && (i.urgent || (hours(i) >= 24 && !i.owner_name))).sort((a, b) => Date.parse(a.first_seen) - Date.parse(b.first_seen))
-    const late = openNow.filter(i => i.kind === 'commitment' && hours(i) >= 48).sort((a, b) => Date.parse(a.first_seen) - Date.parse(b.first_seen))
+    const big = (i: Item) => i.evidence?.weight !== 'small'
+    const hot = openNow.filter(i => i.kind === 'problem' && big(i) && (i.urgent || (hours(i) >= 24 && !i.owner_name))).sort((a, b) => Date.parse(a.first_seen) - Date.parse(b.first_seen))
+    const late = openNow.filter(i => i.kind === 'commitment' && big(i) && hours(i) >= 48).sort((a, b) => Date.parse(a.first_seen) - Date.parse(b.first_seen))
     const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
     const parts: string[] = [`*Keeping tabs — ${today}* · ${openNow.length} open · ${closed.length} closed since yesterday · <${base}/loops|all of it on /loops>`]
     const wins = await winsFor().catch(() => null)
