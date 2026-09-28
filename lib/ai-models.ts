@@ -103,6 +103,12 @@ export const AI_TASKS: AiTask[] = [
   { key: 'eve-brain', title: 'Eve — nightly reflection & predictions', group: 'Background', def: 'sonnet', background: true,
     what: 'Each night reads a digest of yesterday next to the beliefs it touches and writes her journal, the patterns worth keeping, which beliefs the day bore out or contradicted; makes today\'s checkable calls (late cleans, guest issues) against the base rate; and writes a two-line read of each building for the dossiers.',
     matters: 'This is how her confidence in what she believes moves. Three calls a night; a weak model here learns the wrong lessons slowly.' },
+  // RECALL (2026-09-28, lib/eve/memory.ts rerankByQuestion). Before an answer, reads the question
+  // next to the thirty-odd memories that share words with it and picks the ones a colleague would
+  // want in mind. Word overlap alone loaded the same sixty heavy lines every turn; 0.4% were used.
+  { key: 'memory-recall', title: 'Eve — choosing what to remember for a question', group: 'Background', def: 'haiku', background: true,
+    what: 'Given the question and up to 36 candidate memories, returns the numbers of the ones that would change or sharpen the answer. Runs once per turn, capped at four seconds; if it fails the word-overlap order stands.',
+    matters: 'A few hundred tokens per turn. This is what turns 300 stored memories into the three that matter right now; a weak model here makes her forgetful, not wrong.' },
   { key: 'eve-correction', title: 'Eve — catching corrections in chat', group: 'Background', def: 'haiku', background: true,
     what: 'When someone replies "no, that\'s wrong…" to one of her answers, works out what was wrong and what is right, so the right thing is kept and the beliefs behind the wrong answer are weakened.',
     matters: 'A few hundred tokens, only when a reply pushes back. A miss loses one lesson; nothing reaches anyone.' },
