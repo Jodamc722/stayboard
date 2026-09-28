@@ -37,6 +37,7 @@ import { getSetting, setSetting } from '@/lib/app-settings'
 import { pageRows } from '@/lib/db-page'
 import { retrieveBreezewayTask } from '@/lib/breezeway'
 import { aiFetch } from '@/lib/ai-usage'
+import { askQuestion, answerQuestion } from './questions'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const clip = (v: any, n: number) => str(v).replace(/\s+/g, ' ').trim().slice(0, n)
@@ -68,6 +69,11 @@ export type ExpectationNote = {
   last_seen: string
   runs: number
   reopened?: string | null
+  // WHERE IT GOES, recommended when the note is written (Jon, 2026-09-28: "when it makes a
+  // recommendation, it should recommend where it goes") and revised by the coverage check.
+  where?: { sections: string[]; why: string; by: 'desk' | 'coverage'; at: string } | null
+  // The [bracket] facts she cannot invent, filed as questions so somebody fills them in.
+  gaps?: { token: string; question: string; qid: string | null }[]
 }
 
 // The words that mark "nobody told me" — used only to pick which messages are worth the model's
@@ -148,7 +154,7 @@ const SYSTEM = `You are Eve, preparing notes for the customer-service and admin 
 
 YOUR ONE QUESTION for every line of evidence: would a sentence in the listing, the house rules, the pre-arrival message, the check-in guide, the FAQ or the guidebook have prevented this? If the guest was surprised, confused, or had to ask, the answer is usually yes and that is a note. If the thing was simply broken, dirty or late, it is NOT a note — that is an operations problem someone else handles. A guest who complains about a parking fee is a note if the fee was not stated up front, and not a note if it was stated and they disliked it.
 
-RULES. One note per building × theme; merge guests who hit the same thing. Quote guests in their own words, short, with the unit. "what_guests_hit" is one plain sentence. "gap" says exactly what we did not say or said unclearly — never "improve communication". "proposed_copy" is the actual text to paste, in the voice of a warm, direct host, factual, no marketing; if the fact is unknown to you (the exact fee, the garage hours), write it with a bracket like [fee] so a person fills it in — never invent a number. "fix_where" is where that copy belongs. "owner" is cs when the fix is a guest-facing message or reply template, admin when it is the listing, rules, FAQ or guidebook. "priority" 1 when three or more guests or money is involved, 2 when two, 3 when one guest but the fix is obvious and cheap. At most 12 notes; fewer is fine; none is fine when the evidence is only breakages. Building-wide issues that are the building's to fix (a broken elevator) are still a note if guests should have been warned.`
+RULES. One note per building × theme; merge guests who hit the same thing. Quote guests in their own words, short, with the unit. "what_guests_hit" is one plain sentence. "gap" says exactly what we did not say or said unclearly — never "improve communication". "proposed_copy" is the actual text to paste, in the voice of a warm, direct host, factual, no marketing; if the fact is unknown to you (the exact fee, the garage hours), write it with a bracket like [fee] so a person fills it in — never invent a number. "fix_where" is where that copy belongs. When fix_where is the listing, also set "sections" — which part or parts of the Guesty description the copy goes in: access (Guest access: building entry, front desk, codes, elevators, on-site parking), transit (Getting around: driving, garages off site, transport, arrival logistics), neighborhood (Neighborhood), houseRules (House rules: rules, ages, visitors, quiet hours), notes (Other notes: anything else). Name two only when it genuinely belongs in both, and say why in "where_note" in one sentence. "owner" is cs when the fix is a guest-facing message or reply template, admin when it is the listing, rules, FAQ or guidebook. "priority" 1 when three or more guests or money is involved, 2 when two, 3 when one guest but the fix is obvious and cheap. At most 12 notes; fewer is fine; none is fine when the evidence is only breakages. Building-wide issues that are the building's to fix (a broken elevator) are still a note if guests should have been warned.`
 
 const SCHEMA = {
   type: 'object', required: ['notes'],
@@ -164,6 +170,8 @@ const SCHEMA = {
           what_guests_hit: { type: 'string' },
           gap: { type: 'string' },
           fix_where: { type: 'string', enum: FIX_WHERE as unknown as string[] },
+          sections: { type: 'array', maxItems: 2, items: { type: 'string', enum: ['access', 'neighborhood', 'transit', 'notes', 'houseRules'] }, description: 'Which part(s) of the listing description, when fix_where is listing.' },
+          where_note: { type: 'string', description: 'One sentence on why that part of the description.' },
           proposed_copy: { type: 'string' },
           owner: { type: 'string', enum: ['cs', 'admin'] },
           priority: { type: 'integer', minimum: 1, maximum: 3 },
@@ -250,6 +258,12 @@ export async function runExpectationsDesk(opts: { by?: string; days?: number } =
       evidence, guests: Math.max(guestsNow, prev?.guests || 0),
       status, status_by: prev?.status_by || null, status_at: prev?.status_at || null, status_note: prev?.status_note || null,
       first_seen: prev?.first_seen || pack.today, last_seen: pack.today, runs: (prev?.runs || 0) + 1, reopened: reopenedNote,
+      // Her own placement call, kept unless the coverage check has already made a better one.
+      where: (prev?.where && prev.where.by === 'coverage') ? prev.where
+        : (Array.isArray(n.sections) && n.sections.length
+          ? { sections: n.sections.map(String).filter((k: string) => ['access', 'neighborhood', 'transit', 'notes', 'houseRules'].includes(k)).slice(0, 2), why: clip(n.where_note, 240), by: 'desk' as const, at: now }
+          : prev?.where || null),
+      gaps: prev?.gaps || [],
     }
     out.push(note)
     payload.push({ id, type: 'expectation', scope: 'building:' + note.building, title: `${note.building}: ${note.title}`.slice(0, 200), content: JSON.stringify(note), evidence_count: note.guests, updated_at: now })
@@ -415,12 +429,14 @@ export type Coverage = {
   faq: { entries: number; mentioning: number; sample: { unit: string; sentence: string } | null }
   verdict: 'not_covered' | 'partly' | 'covered'
   why: string
+  best_sections: string[]
   best_section: string
   placement_note: string
   revised_copy: string | null
+  open_questions: { question: string; why: string }[]
 }
 
-export async function coverageForNote(id: string, by: string): Promise<{ ok: boolean; coverage?: Coverage; error?: string }> {
+export async function coverageForNote(id: string, by: string): Promise<{ ok: boolean; coverage?: Coverage; gaps?: { token: string; question: string; qid: string | null }[]; asked?: number; error?: string }> {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return { ok: false, error: 'ANTHROPIC_API_KEY is not set' }
   const db = supabaseAdmin()
@@ -494,11 +510,13 @@ export async function coverageForNote(id: string, by: string): Promise<{ ok: boo
     `FAQ ENTRIES: ${faq.entries}; ${faq.mentioning} mention the topic.` + (faq.sample ? ` "${faq.sample.sentence}"` : ''),
   ].join('\n')
   const { model, fallback } = await modelPairFor('expectations')
-  let verdict: Coverage['verdict'] = 'not_covered', why = '', best = 'notes', placement = '', revised: string | null = null
+  let verdict: Coverage['verdict'] = 'not_covered', why = '', placement = '', revised: string | null = null
+  let bests: string[] = []
+  let asks: { question: string; why: string }[] = []
   try {
     const r = await anthropicMessages(key, {
       model, max_tokens: 700,
-      system: 'You judge whether a short-term rental already tells guests something, from evidence a system gathered. A mention is not coverage: "parking available" does not cover a $30/day fee. Reply with JSON only: {"verdict":"not_covered"|"partly"|"covered","why":"one or two sentences quoting the evidence","best_section":"access"|"neighborhood"|"transit"|"notes"|"houseRules","placement_note":"one sentence on why that section, and what nearby text it should sit with","revised_copy":string or null}. best_section: parking, transport and arrival logistics belong in transit (Getting around); building entry, front desk, codes and elevators in access (Guest access); rules, ages, visitors, quiet hours in houseRules; anything else in notes (Other notes). revised_copy only when the evidence shows the proposed copy is wrong or redundant (it repeats a sentence already there, or contradicts a fact we already state); otherwise null.',
+      system: 'You judge whether a short-term rental already tells guests something, from evidence a system gathered, and you say where the missing sentence belongs. A mention is not coverage: "parking available" does not cover a $30/day fee. Reply with JSON only: {"verdict":"not_covered"|"partly"|"covered","why":"one or two sentences quoting the evidence","best_sections":[one or two of "access","neighborhood","transit","notes","houseRules"],"placement_note":"one sentence on why those sections, and what nearby text it should sit with","revised_copy":string or null,"open_questions":[{"question":"...","why":"..."}]}. best_sections: put the sentence where the reader already meets the subject — if a section already carries the topic, that is the section, even when another would also do. Building entry, the front desk, codes, elevators and on-site parking are access (Guest access); driving, off-site garages, transport and arrival logistics are transit (Getting around); rules, ages, visitors and quiet hours are houseRules; the area is neighborhood; anything else is notes (Other notes). Name two only when a guest would reasonably look in both and the sentence reads naturally in each — say so in placement_note. revised_copy only when the evidence shows the proposed copy is wrong or redundant (it repeats a sentence already there, or contradicts a fact we already state); otherwise null. open_questions: at most three things a person here must settle before this can be published — a fact nobody has written down, or a contradiction in the evidence (our messages say one price, the reviews another). Each needs a "why" saying what changes once it is answered. Empty when the evidence is consistent and complete.',
       messages: [{ role: 'user', content: `NOTE — what guests hit: ${n.what_guests_hit}\nThe gap as written: ${n.gap}\nProposed copy: ${n.proposed_copy}\n\nEVIDENCE:\n${evidence}` }],
     }, fallback, 'expectations')
     const text = (r.data?.content || []).map((c: any) => c?.text || '').join('')
@@ -506,35 +524,66 @@ export async function coverageForNote(id: string, by: string): Promise<{ ok: boo
     const j = m ? JSON.parse(m[0]) : null
     if (j) {
       verdict = (['not_covered', 'partly', 'covered'] as const).includes(j.verdict) ? j.verdict : 'not_covered'
-      why = clip(j.why, 400); best = isSection(j.best_section) ? j.best_section : 'notes'; placement = clip(j.placement_note, 240)
+      why = clip(j.why, 400); placement = clip(j.placement_note, 240)
+      bests = (Array.from(new Set((Array.isArray(j.best_sections) ? j.best_sections : [j.best_section]).map((x: any) => String(x)).filter(isSection))) as string[]).slice(0, 2)
       revised = j.revised_copy ? clip(j.revised_copy, 900) : null
+      asks = (Array.isArray(j.open_questions) ? j.open_questions : []).slice(0, 3).map((q: any) => ({ question: clip(q?.question, 300), why: clip(q?.why, 300) })).filter((q: any) => q.question && q.why)
     }
   } catch { /* the evidence stands without the verdict */ }
 
-  const coverage: Coverage = { at: new Date().toISOString(), by, topic: String(re).replace(/^\/\\b\(|\)\\b\/i$/g, '').replace(/\|/g, ', ').slice(0, 160), building: n.building, units: units.length, listing, messages, guidebook, faq, verdict, why, best_section: best, placement_note: placement, revised_copy: revised }
+  if (!bests.length) bests = ['notes']
+  const coverage: Coverage = { at: new Date().toISOString(), by, topic: String(re).replace(/^\/\\b\(|\)\\b\/i$/g, '').replace(/\|/g, ', ').slice(0, 160), building: n.building, units: units.length, listing, messages, guidebook, faq, verdict, why, best_sections: bests, best_section: bests[0], placement_note: placement, revised_copy: revised, open_questions: asks }
   ;(n as any).coverage = coverage
+  ;(n as any).where = { sections: bests, why: placement, by: 'coverage' as const, at: coverage.at }
   const { error } = await db.from('eve_knowledge').update({ content: JSON.stringify(n), updated_at: coverage.at }).eq('id', id)
   if (error) return { ok: false, error: error.message }
-  return { ok: true, coverage }
+  // AUTO-PROMPT (Jon, 2026-09-28): the [bracket] facts and anything the evidence contradicts become
+  // real questions, scoped to the building, so they are answered once and remembered.
+  const gaps = await askForBlanks(id, asks).catch(() => ({ ok: false, asked: 0, gaps: [] as any[] }))
+  return { ok: true, coverage, gaps: (gaps as any).gaps || [], asked: (gaps as any).asked || 0 }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // PUBLISH TO THE LISTINGS (Jon, 2026-09-28: "publish from the recommendations to a designated
 // area without having to copy" — then: "it should show where it's going to add it … I can't just
-// rewrite it, not knowing how it adds it or where it adds it").
+// rewrite it, not knowing how it adds it or where it adds it" — then: "is it going to be in other
+// notes? Is it going to be about the space? Is it going to be in multiple sections? When it makes
+// a recommendation, it should recommend where it goes").
 //
-// HOW IT ADDS IT. The copy is appended to ONE chosen section of publicDescription, on every live
+// WHERE IT GOES is part of the recommendation, not a question asked at the end. The desk names the
+// section (or sections) when it writes the note; the coverage check revises that from what the
+// listing already says; the person can change it. More than one section is allowed and normal —
+// the fee belongs next to the parking sentence in Guest access AND in House rules if the rule is
+// there.
+//
+// HOW IT ADDS IT. The copy is appended to each chosen section of publicDescription, on every live
 // unit of the building, as a managed block under a fixed heading ("GOOD TO KNOW BEFORE YOU BOOK"
 // in Other notes, "PLEASE NOTE" elsewhere). One block per building × section, rebuilt from every
 // note published there, so a second note joins the block rather than stacking a second paragraph.
 // The block's exact previous text is remembered per building × section (app_settings
 // expectations_block:…) and stripped before the new one is appended, so whatever a person wrote in
-// that section is never touched. The preview below shows the full before and after for a
-// representative unit and names the units whose text differs, so nothing is written unseen.
-export type PublishResult = { ok: true; section: string; listings: number; okCount: number; failCount: number; block: string; results: { id: string; name: string; ok: boolean; error?: string }[] } | { ok: false; error: string }
+// that section is never touched. One PUT per listing carries every chosen section at once. The
+// preview shows the full before and after for each section on a representative unit and names the
+// units whose text differs, so nothing is written unseen.
+export type SectionPlan = { section: string; label: string; head: string; block: string; representative: string; before: string; after: string; same: number; differ: { unit: string; length: number }[] }
+export type PublishResult = { ok: true; sections: string[]; labels: string[]; listings: number; okCount: number; failCount: number; results: { id: string; name: string; ok: boolean; error?: string }[] } | { ok: false; error: string }
 
-/** Everything the person needs to see before saying yes: the section, the full text before and after on a representative unit, and which units differ. */
-export async function previewPublish(id: string, sectionIn?: string): Promise<{ ok: boolean; error?: string; building?: string; section?: string; label?: string; units?: number; block?: string; representative?: string; before?: string; after?: string; same?: number; differ?: { unit: string; length: number }[]; sections?: { key: string; label: string; filled: number }[] }> {
+/** The sections a note is headed for: what the person picked, else the coverage check, else the desk, else Other notes. */
+function sectionsFor(n: ExpectationNote, picked?: string[]): string[] {
+  const clean = (a: any): string[] => Array.from(new Set((Array.isArray(a) ? a : []).map(String).filter(isSection))).slice(0, 3)
+  const fromPick = clean(picked)
+  if (fromPick.length) return fromPick
+  const fromCoverage = clean((n as any).coverage?.best_sections)
+  if (fromCoverage.length) return fromCoverage
+  const one = (n as any).coverage?.best_section
+  if (isSection(one)) return [String(one)]
+  const fromDesk = clean((n as any).where?.sections)
+  if (fromDesk.length) return fromDesk
+  return ['notes']
+}
+
+/** Everything the person needs to see before saying yes: every chosen section, the full text before and after on a representative unit, and which units differ. */
+export async function previewPublish(id: string, sectionsIn?: string[]): Promise<{ ok: boolean; error?: string; building?: string; chosen?: string[]; units?: number; plan?: SectionPlan[]; sections?: { key: string; label: string; filled: number }[]; why?: string }> {
   const db = supabaseAdmin()
   const { data } = await db.from('eve_knowledge').select('id,content').eq('id', id).maybeSingle()
   if (!data) return { ok: false, error: 'not found' }
@@ -542,31 +591,36 @@ export async function previewPublish(id: string, sectionIn?: string): Promise<{ 
   if (!PUBLISHABLE.has(n.fix_where)) return { ok: false, error: 'This note is for ' + (FIX_LABEL[n.fix_where] || n.fix_where) + ', not the listing — copy it there.' }
   const units = await buildingListings(n.building)
   if (!units.length) return { ok: false, error: 'No live listings found for ' + n.building + '.' }
-  const section = isSection(sectionIn) ? String(sectionIn) : (isSection((n as any).coverage?.best_section) ? (n as any).coverage.best_section : 'notes')
-  const state = await getSetting<BlockState | null>(blockKey(n.building, section), null)
-  const lines = { ...(state?.lines || {}), [n.id]: n.proposed_copy }
-  const block = buildBlock(lines, section)
-  // The representative unit: the most common current text for that section.
-  const counts = new Map<string, number>()
-  for (const u of units) { const t = stripBlock(sectionText(u.raw, section), state?.block || '', section); counts.set(t, (counts.get(t) || 0) + 1) }
-  const common = Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]
-  const rep = units.find(u => stripBlock(sectionText(u.raw, section), state?.block || '', section) === common[0]) || units[0]
-  const before = sectionText(rep.raw, section)
-  const base = stripBlock(before, state?.block || '', section)
-  const after = ((base ? base + '\n\n' : '') + block).slice(0, SECTION_MAX)
-  const differ = units.filter(u => stripBlock(sectionText(u.raw, section), state?.block || '', section) !== common[0]).map(u => ({ unit: u.name, length: sectionText(u.raw, section).length }))
+  const chosen = sectionsFor(n, sectionsIn)
+  const plan: SectionPlan[] = []
+  for (const section of chosen) {
+    const state = await getSetting<BlockState | null>(blockKey(n.building, section), null)
+    const lines = { ...(state?.lines || {}), [n.id]: n.proposed_copy }
+    const block = buildBlock(lines, section)
+    // The representative unit: the most common current text for that section.
+    const counts = new Map<string, number>()
+    for (const u of units) { const t = stripBlock(sectionText(u.raw, section), state?.block || '', section); counts.set(t, (counts.get(t) || 0) + 1) }
+    const common = Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]
+    const rep = units.find(u => stripBlock(sectionText(u.raw, section), state?.block || '', section) === common[0]) || units[0]
+    const before = sectionText(rep.raw, section)
+    const base = stripBlock(before, state?.block || '', section)
+    const after = ((base ? base + '\n\n' : '') + block).slice(0, SECTION_MAX)
+    const differ = units.filter(u => stripBlock(sectionText(u.raw, section), state?.block || '', section) !== common[0]).map(u => ({ unit: u.name, length: sectionText(u.raw, section).length }))
+    plan.push({ section, label: SECTION_LABEL[section], head: headFor(section), block, representative: rep.name, before, after, same: units.length - differ.length, differ })
+  }
   const sections = SECTIONS.map(s => ({ key: s.key, label: s.label, filled: units.filter(u => sectionText(u.raw, s.key)).length }))
-  return { ok: true, building: n.building, section, label: SECTION_LABEL[section], units: units.length, block, representative: rep.name, before, after, same: units.length - differ.length, differ, sections }
+  const why = str((n as any).coverage?.placement_note) || str((n as any).where?.why)
+  return { ok: true, building: n.building, chosen, units: units.length, plan, sections, why }
 }
 
-export async function publishExpectation(id: string, by: string, sectionIn?: string): Promise<PublishResult> {
+export async function publishExpectation(id: string, by: string, sectionsIn?: string[]): Promise<PublishResult> {
   const db = supabaseAdmin()
   const { data } = await db.from('eve_knowledge').select('id,content').eq('id', id).maybeSingle()
   if (!data) return { ok: false, error: 'not found' }
   const n: ExpectationNote = JSON.parse(str((data as any).content))
   if (!PUBLISHABLE.has(n.fix_where)) return { ok: false, error: 'This note is for ' + (FIX_LABEL[n.fix_where] || n.fix_where) + ', not the listing.' }
-  if (/\[[^\]]*\]/.test(n.proposed_copy)) return { ok: false, error: 'The copy still has a blank to fill in (the part in [brackets]). Edit it first.' }
-  const section = isSection(sectionIn) ? String(sectionIn) : (isSection((n as any).coverage?.best_section) ? (n as any).coverage.best_section : 'notes')
+  if (/\[[^\]]*\]/.test(n.proposed_copy)) return { ok: false, error: 'The copy still has a blank to fill in (the part in [brackets]). Fill it in or edit it first.' }
+  const chosen = sectionsFor(n, sectionsIn)
   const listings = await buildingListings(n.building)
   if (!listings.length) return { ok: false, error: 'No live listings found for ' + n.building + '.' }
 
@@ -574,41 +628,124 @@ export async function publishExpectation(id: string, by: string, sectionIn?: str
   const token = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now() + 30_000) ? String(tok.access_token) : ''
   if (!token) return { ok: false, error: 'Guesty token unavailable — run a sync, then retry in a moment.' }
 
-  const prev = await getSetting<BlockState | null>(blockKey(n.building, section), null)
-  const lines = { ...(prev?.lines || {}), [n.id]: n.proposed_copy }
-  const block = buildBlock(lines, section)
+  // One block per section, built once; then one PUT per listing carrying every section.
+  const prev: Record<string, BlockState | null> = {}
+  const blocks: Record<string, string> = {}
+  const lines: Record<string, Record<string, string>> = {}
+  for (const section of chosen) {
+    prev[section] = await getSetting<BlockState | null>(blockKey(n.building, section), null)
+    lines[section] = { ...(prev[section]?.lines || {}), [n.id]: n.proposed_copy }
+    blocks[section] = buildBlock(lines[section], section)
+  }
   const results: { id: string; name: string; ok: boolean; error?: string }[] = []
   let okCount = 0, failCount = 0, first = true
   for (const l of listings) {
     if (!first) await new Promise(res => setTimeout(res, 250))
     first = false
     const pub = pubOf(l.raw)
-    const base = stripBlock(str(pub[section]), prev?.block || '', section)
-    let text = (base ? base + '\n\n' : '') + block
-    if (text.length > SECTION_MAX) text = text.slice(0, SECTION_MAX)
+    const patch: Record<string, string> = {}
+    for (const section of chosen) {
+      const base = stripBlock(str(pub[section]), prev[section]?.block || '', section)
+      let text = (base ? base + '\n\n' : '') + blocks[section]
+      if (text.length > SECTION_MAX) text = text.slice(0, SECTION_MAX)
+      patch[section] = text
+    }
     try {
       const r = await fetch(`${GUESTY_BASE}/listings/${encodeURIComponent(l.id)}`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ publicDescription: { [section]: text } }),
+        body: JSON.stringify({ publicDescription: patch }),
       })
       const body = await r.text().catch(() => '')
       if (!r.ok) { results.push({ id: l.id, name: l.name, ok: false, error: `Guesty ${r.status}: ${body.slice(0, 120)}` }); failCount++; continue }
       try {
         const raw: any = (l.raw && typeof l.raw === 'object') ? l.raw : {}
-        await db.from('guesty_listings').update({ raw: { ...raw, publicDescription: { ...pub, [section]: text }, _lastBulkCopy: new Date().toISOString() } }).eq('id', l.id)
+        await db.from('guesty_listings').update({ raw: { ...raw, publicDescription: { ...pub, ...patch }, _lastBulkCopy: new Date().toISOString() } }).eq('id', l.id)
       } catch { /* mirror is best-effort; Guesty is the record */ }
       results.push({ id: l.id, name: l.name, ok: true }); okCount++
     } catch (e: any) { results.push({ id: l.id, name: l.name, ok: false, error: str(e?.message || e) }); failCount++ }
   }
+  const labels = chosen.map(s => SECTION_LABEL[s])
   if (okCount) {
-    await setSetting(blockKey(n.building, section), { lines, block, at: new Date().toISOString(), by } as BlockState, by).catch(() => {})
-    try { await db.from('listing_copy_pushes').insert({ by_email: by, scope: 'property', buildings: [n.building], sections: [section], listing_count: listings.length, ok_count: okCount, fail_count: failCount }) } catch { /* audit row never blocks */ }
-    ;(n as any).published = { at: new Date().toISOString(), by, section, label: SECTION_LABEL[section], listings: listings.length, okCount, failCount, block }
+    for (const section of chosen) await setSetting(blockKey(n.building, section), { lines: lines[section], block: blocks[section], at: new Date().toISOString(), by } as BlockState, by).catch(() => {})
+    try { await db.from('listing_copy_pushes').insert({ by_email: by, scope: 'property', buildings: [n.building], sections: chosen, listing_count: listings.length, ok_count: okCount, fail_count: failCount }) } catch { /* audit row never blocks */ }
+    ;(n as any).published = { at: new Date().toISOString(), by, sections: chosen, labels, listings: listings.length, okCount, failCount }
     await db.from('eve_knowledge').update({ content: JSON.stringify(n), updated_at: new Date().toISOString() }).eq('id', id)
-    await setExpectationStatus(id, 'done', by, `published to ${okCount} of ${listings.length} listings at ${n.building} — ${SECTION_LABEL[section]}`)
+    await setExpectationStatus(id, 'done', by, `published to ${okCount} of ${listings.length} listings at ${n.building} — ${labels.join(' + ')}`)
   }
-  return { ok: true, section, listings: listings.length, okCount, failCount, block, results }
+  return { ok: true, sections: chosen, labels, listings: listings.length, okCount, failCount, results }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// THE BLANKS SHE CANNOT FILL (Jon, 2026-09-28: "when we're optimizing listings, if there are
+// questions that these things prompt up, it should auto-prompt us to fill those sections").
+//
+// Her copy carries a [bracket] wherever the fact is not hers to invent — the exact fee, the garage
+// hours, the desk phone. Those brackets, and anything the coverage check found contradictory (our
+// messages say per night, the reviews say per day), become real questions in her question list,
+// scoped to the building, so they are answered once and remembered with the answerer's name. The
+// note shows them as fields: fill them in and the copy is completed in place.
+const BLANK = /\[([^\]\n]{1,60})\]/g
+export const blanksIn = (copy: string): string[] => Array.from(new Set(Array.from(str(copy).matchAll(BLANK)).map(m => m[1].trim()).filter(Boolean))).slice(0, 6)
+
+/** Files one question per blank (and any the coverage check raised) so they show up wherever questions do. */
+export async function askForBlanks(id: string, extra: { question: string; why: string }[] = []): Promise<{ ok: boolean; asked: number; gaps?: { token: string; question: string; qid: string | null }[]; error?: string }> {
+  const db = supabaseAdmin()
+  const { data } = await db.from('eve_knowledge').select('id,content').eq('id', id).maybeSingle()
+  if (!data) return { ok: false, asked: 0, error: 'not found' }
+  const n: ExpectationNote = JSON.parse(str((data as any).content))
+  const scope = 'building:' + n.building
+  const gaps: { token: string; question: string; qid: string | null }[] = []
+  let asked = 0
+  for (const token of blanksIn(n.proposed_copy)) {
+    const question = `${n.building}: what is the ${token}?`
+    const r = await askQuestion({
+      question, scope, kind: 'gap', source: 'eve',
+      why: `Her ${(FIX_LABEL[n.fix_where] || n.fix_where).toLowerCase()} copy for "${n.title}" cannot be published until this is filled in — ${n.guests} guest${n.guests === 1 ? '' : 's'} were surprised by it.`,
+      evidence: { expectation: n.id, token },
+    })
+    if (r.ok && !r.repeated) asked++
+    gaps.push({ token, question, qid: r.id || null })
+  }
+  for (const e of extra.slice(0, 3)) {
+    const q = clip(e.question, 300); const why = clip(e.why, 300)
+    if (!q || !why) continue
+    const r = await askQuestion({ question: `${n.building}: ${q}`, why, scope, kind: 'conflict', source: 'eve', evidence: { expectation: n.id } })
+    if (r.ok && !r.repeated) asked++
+    gaps.push({ token: '', question: q, qid: r.id || null })
+  }
+  ;(n as any).gaps = gaps
+  await db.from('eve_knowledge').update({ content: JSON.stringify(n), updated_at: new Date().toISOString() }).eq('id', id)
+  return { ok: true, asked, gaps }
+}
+
+/** Fill the blanks in place: [fee] → $30 a day, and the question that asked for it is answered in her memory too. */
+export async function fillBlanks(id: string, values: Record<string, string>, by: string): Promise<{ ok: boolean; proposed_copy?: string; answered?: number; error?: string }> {
+  const db = supabaseAdmin()
+  const { data } = await db.from('eve_knowledge').select('id,content').eq('id', id).maybeSingle()
+  if (!data) return { ok: false, error: 'not found' }
+  const n: ExpectationNote = JSON.parse(str((data as any).content))
+  let copy = n.proposed_copy
+  let filled = 0, answered = 0
+  const gaps: { token: string; question: string; qid: string | null }[] = Array.isArray((n as any).gaps) ? (n as any).gaps : []
+  for (const [token, raw] of Object.entries(values || {})) {
+    const value = clip(raw, 120)
+    if (!value) continue
+    const before = copy
+    copy = copy.split('[' + token + ']').join(value)
+    if (copy !== before) filled++
+    const g = gaps.find(x => x.token === token)
+    if (g?.qid) { const a = await answerQuestion(g.qid, `${token}: ${value}`, by); if (a.ok) answered++ }
+  }
+  if (!filled) return { ok: false, error: 'nothing to fill in' }
+  const history = Array.isArray((n as any).copy_history) ? (n as any).copy_history : []
+  history.push({ at: new Date().toISOString(), by, instruction: 'filled in ' + Object.keys(values).join(', '), before: n.proposed_copy })
+  ;(n as any).copy_history = history.slice(-6)
+  n.proposed_copy = clip(copy, 900)
+  ;(n as any).copy_edited_by = by; (n as any).copy_edited_at = new Date().toISOString()
+  ;(n as any).gaps = gaps.filter(g => !g.token || blanksIn(n.proposed_copy).includes(g.token))
+  const { error } = await db.from('eve_knowledge').update({ content: JSON.stringify(n), updated_at: new Date().toISOString() }).eq('id', id)
+  return error ? { ok: false, error: error.message } : { ok: true, proposed_copy: n.proposed_copy, answered }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
