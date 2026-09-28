@@ -2176,6 +2176,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     const lum = (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255
     return lum < 0.45
   })()
+  // THE HOTEL'S REPORTS (2026-09-28): the same page, the hotel's mark and its own words for the
+  // money — one booked figure from Cloudbeds, so the three-basis language of the VR review would
+  // only confuse an owner here.
+  const isGarden = String((c.meta || {}).business || '') === 'garden'
+  const bnote = (b: Basis): string => (isGarden ? 'Booked revenue, as Cloudbeds totals it' : BASIS_NOTE[b])
   const mark = {
     logo: String((c.meta || {}).logoUrl || '/stay-logo.png'),
     word: String((c.meta || {}).wordmark || 'STAY HOSPITALITY'),
@@ -5882,7 +5887,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const lead = cards.find((x: Any) => String(x.key).toLowerCase() === 'revenue') || cards[0]
             const rest = cards.filter((x: Any) => x !== lead).slice(0, 6)
             slides.push({ key: 'snapshot', ai: true, node: (
-              <Frame note="snapshot" nav="Snapshot" sec="Performance" subj={BASIS_NOTE[snapPrimary]} tone="tint" n={n}>
+              <Frame note="snapshot" nav="Snapshot" sec="Performance" subj={bnote(snapPrimary)} tone="tint" n={n}>
                 {edit && (
                   <div className="sb-noprint flex items-center flex-wrap" style={{ gap: 12, marginBottom: 18 }}>
                     <BasisPicker label="Big number" value={snapPrimary} onPick={(v: string) => setBasis('snapshotPrimary', v)} t={t} />
@@ -5988,7 +5993,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             }
             const best = listingTable.rows[0]
             slides.push({ key: 'listings', node: (
-              <Frame note="listings" nav="By listing" sec="Portfolio" subj={BASIS_NOTE[netBasis]} tone="tint" n={n}>
+              <Frame note="listings" nav={isGarden ? 'By room type' : 'By listing'} sec={isGarden ? 'Rooms' : 'Portfolio'} subj={bnote(netBasis)} tone="tint" n={n}>
                 <div className="flex items-end justify-between" style={{ gap: 24, flex: '0 0 auto' }}>
                   <div style={{ minWidth: 0 }}>
                     <Tick />

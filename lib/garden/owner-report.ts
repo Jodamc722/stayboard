@@ -78,7 +78,7 @@ export async function buildGardenContent(from: string, to: string, tpl: ReportTe
   const all = ['verdict', 'snapshot', 'listings', 'byMonth', 'ahead', 'voices', 'projects', 'pacing', 'plan', 'statement', 'recs']
   const omit = all.filter(k => k === 'pacing' || k === 'plan' || k === 'statement' || k === 'recs' || !has(k))
   const content: ReportContent & { custom?: any[] } = {
-    meta: { scopeLabel: hotel.name, periodStart: from, periodEnd: to, asOf, activeListings: P.rooms, daysRemaining: 0, generatedAt: new Date().toISOString(), kind: 'review', ...({ business: GARDEN_SENTINEL, template: tpl.key } as any) },
+    meta: { scopeLabel: hotel.name, periodStart: from, periodEnd: to, asOf, activeListings: P.rooms, daysRemaining: 0, generatedAt: new Date().toISOString(), kind: 'review', ...({ business: GARDEN_SENTINEL, template: tpl.key, wordmark: 'THE GARDEN HOTEL & RESORT', logoUrl: '/garden-logo.svg' } as any) },
     hero: { eyebrow: fill(tpl.copy.heroEyebrow, vars), title: hotel.name, headline: `${pct(P.occPct)} occupancy, ${money(P.adr)} ADR and ${money(P.revenue)} booked across ${periodLabel}.`, preparedFor: fill(tpl.copy.preparedFor, vars), dateLabel: fill(tpl.copy.heroDateLabel, vars), heroImage: null },
     snapshot: { headline: fill(tpl.copy.snapshotHeadline, vars), subtitle: fill(tpl.copy.snapshotSubtitle, vars), cards, ytd: null, metrics: { accomNum: P.revenue, accomGrossNum: P.revenue, cleaningNum: 0, feeNum: 0, occNights: P.roomNights, availNights: P.available, reservations: P.stays, units: P.rooms, occPct: Math.round(P.occPct) } },
     pacing: null, plan: null, statement: null,
