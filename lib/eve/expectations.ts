@@ -130,10 +130,11 @@ export async function buildExpectationsPack(days = 45): Promise<ExpectationsPack
 
   // Per building, most recent first, capped so one busy building cannot eat the context.
   const blocks: string[] = []
-  const names = Object.keys(perB).sort((a, b) => perB[b].length - perB[a].length)
+  // The twelve busiest buildings; a building with one line is not a pattern yet.
+  const names = Object.keys(perB).sort((a, b) => perB[b].length - perB[a].length).slice(0, 12)
   for (const b of names) {
-    const lines = perB[b].sort().reverse().slice(0, 45)
-    blocks.push(`## ${b} — ${perB[b].length} item(s)${perB[b].length > 45 ? ', 45 most recent shown' : ''}\n${lines.join('\n')}`)
+    const lines = perB[b].sort().reverse().slice(0, 30)
+    blocks.push(`## ${b} — ${perB[b].length} item(s)${perB[b].length > 30 ? ', 30 most recent shown' : ''}\n${lines.join('\n')}`)
   }
   return { text: blocks.join('\n\n'), stats, today, from, buildings: names.length }
 }
@@ -184,7 +185,7 @@ export async function runExpectationsDesk(opts: { by?: string; days?: number } =
   let parsed: any = null, answeredBy = model
   try {
     const r = await anthropicMessages(key, {
-      model, max_tokens: 4000, system: SYSTEM,
+      model, max_tokens: 8000, system: SYSTEM,
       tools: [{ name: 'expectation_notes', description: 'Deliver the notes as structured data.', input_schema: SCHEMA }],
       tool_choice: { type: 'tool', name: 'expectation_notes' },
       messages: [{ role: 'user', content: `DATE: ${pack.today}. WINDOW: ${pack.from} → ${pack.today}.\n\nEVIDENCE, BY BUILDING:\n\n${pack.text}` }],
@@ -194,8 +195,13 @@ export async function runExpectationsDesk(opts: { by?: string; days?: number } =
     const toolUse = (r.data?.content || []).find((c: any) => c.type === 'tool_use' && c.input && typeof c.input === 'object')
     parsed = toolUse ? toolUse.input : null
     void usageOf(r.data)
+    if (!parsed || !Array.isArray(parsed.notes)) {
+      // Say what came back instead, so a cut-off answer (stop_reason max_tokens) or a refusal
+      // reads as what it is rather than a shrug.
+      const text = (r.data?.content || []).map((c: any) => c?.text || '').join(' ')
+      return { ok: false, error: `model answer was not structured (stop: ${str(r.data?.stop_reason) || '?'}; blocks: ${(r.data?.content || []).map((c: any) => c?.type).join(',') || 'none'}${text ? '; said: ' + clip(text, 140) : ''})`, pack: pack.stats }
+    }
   } catch (e: any) { return { ok: false, error: clip(e?.message || e, 200), pack: pack.stats } }
-  if (!parsed || !Array.isArray(parsed.notes)) return { ok: false, error: 'model answer was not structured', pack: pack.stats }
 
   // Merge with what is already filed: same building × theme accumulates; a done note with new
   // evidence since it was marked done reopens and says so.
