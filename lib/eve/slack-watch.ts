@@ -305,6 +305,57 @@ export type WatchRun = {
   digest: boolean; notes: string[]
 }
 
+// EXPIRE, DON'T HOARD — and KEEP 'URGENT' HONEST (Jon, 2026-09-28: "the long Slack post is not
+// super helpful"; "if Ernesto requested permission to enter on Monday of last week and today is 7
+// days later, that request should have been closed"; "update the open loops, make sure it's
+// urgent"). Three rules, run before every pass and on demand (?sweep=1):
+//   1. Its own shelf life: the model dates each loop's expiry from what it is (evidence.expires).
+//   2. A kind's ceiling: a question nobody answered in 2 days is dead; a promise nobody closed in
+//      5 is done-and-unrecorded or not happening; a guest ask after 2 days was decided by the
+//      guest; a problem nobody touched in 7 is either fixed or lives in Breezeway now; a decision
+//      after 1 day was made. The list read 9-day-old "urgent" problems before this was tightened.
+//   3. Gone quiet: nothing said in its thread for 4 days = nobody is working it here; expire it.
+//   And 'urgent' means "affects a guest TODAY" — so it lasts a day, unless the unit still has a guest
+//   in house or arriving today, in which case it holds. Everything expired keeps its history.
+export const EXPIRE_DAYS: Record<string, number> = { question: 2, commitment: 5, guest_ask: 2, problem: 7, decision: 1 }
+export const QUIET_DAYS = 4
+export async function sweepLoops(): Promise<{ expired: Record<string, number>; calmed: number; open: number }> {
+  const db = supabaseAdmin()
+  const now = new Date().toISOString()
+  const expired: Record<string, number> = {}
+  const tally = (k: string, n: number) => { if (n) expired[k] = (expired[k] || 0) + n }
+  const { data: moot } = await db.from('eve_slack_items').update({ status: 'expired', closed_reason: 'moot — its moment passed', closed_at: now })
+    .eq('status', 'open').lt('evidence->>expires', now).not('evidence->>expires', 'is', null).select('id')
+  tally('moot', (moot || []).length)
+  const cutoff = (d: number) => new Date(Date.now() - d * 86400000).toISOString()
+  for (const k of Object.keys(EXPIRE_DAYS)) {
+    const { data: gone } = await db.from('eve_slack_items').update({ status: 'expired', closed_reason: `expired after ${EXPIRE_DAYS[k]} days with no close`, closed_at: now })
+      .eq('status', 'open').eq('kind', k).lt('first_seen', cutoff(EXPIRE_DAYS[k])).select('id')
+    tally(k, (gone || []).length)
+  }
+  const { data: quiet } = await db.from('eve_slack_items').update({ status: 'expired', closed_reason: `nothing said in its thread for ${QUIET_DAYS} days`, closed_at: now })
+    .eq('status', 'open').lt('last_seen', cutoff(QUIET_DAYS)).lt('first_seen', cutoff(QUIET_DAYS)).select('id')
+  tally('quiet', (quiet || []).length)
+
+  // Urgent decays after a day unless the unit still has a guest today.
+  let calmed = 0
+  const { data: urg } = await db.from('eve_slack_items').select('id,listing_id,first_seen').eq('status', 'open').eq('urgent', true).lt('first_seen', cutoff(1))
+  const rows = (urg || []) as any[]
+  if (rows.length) {
+    const lids = Array.from(new Set(rows.map(r => r.listing_id).filter(Boolean)))
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+    const hasGuest = new Set<string>()
+    if (lids.length) {
+      const { data: res } = await db.from('guesty_reservations').select('listing_id').in('listing_id', lids).in('status', ['confirmed', 'checked_in']).lte('check_in', today).gt('check_out', today)
+      for (const r of ((res || []) as any[])) hasGuest.add(String(r.listing_id))
+    }
+    const calm = rows.filter(r => !r.listing_id || !hasGuest.has(String(r.listing_id))).map(r => r.id)
+    if (calm.length) { await db.from('eve_slack_items').update({ urgent: false }).in('id', calm); calmed = calm.length }
+  }
+  const { count } = await db.from('eve_slack_items').select('id', { count: 'exact', head: true }).eq('status', 'open')
+  return { expired, calmed, open: count || 0 }
+}
+
 /**
  * The pass. Safe to run twice a day; everything it does is idempotent on (channel, msg_ts) and the
  * cursors only ever move forward.
@@ -325,25 +376,8 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   out.channels = rooms.length
   const n = await names()
 
-  // EXPIRE, DON'T HOARD (Jon, 2026-09-28: "the long Slack post is not super helpful"). A question
-  // nobody answered in 3 days is dead; a promise nobody closed in 7 days is either done and
-  // unrecorded or not happening; a guest ask after 3 days has been decided by the guest. They stop
-  // being "open", stop counting, and keep their history (status 'expired').
-  const EXPIRE_DAYS: Record<string, number> = { question: 3, commitment: 7, guest_ask: 3, problem: 14, decision: 2 }
-  {
-    // Its own shelf life first (Jon, 2026-09-28: "if Ernesto requested permission to enter on Monday
-    // of last week and today is 7 days later, that request should have been closed, not something
-    // Eve should be thinking about"): the model dates each loop's expiry from what it is.
-    const { data: moot } = await db.from('eve_slack_items').update({ status: 'expired', closed_reason: 'moot — its moment passed', closed_at: new Date().toISOString() })
-      .eq('status', 'open').lt('evidence->>expires', new Date().toISOString()).not('evidence->>expires', 'is', null).select('id')
-    if (moot && moot.length) out.notes.push(`expired ${moot.length} moot`)
-    const cutoff = (k: string) => new Date(Date.now() - (EXPIRE_DAYS[k] || 14) * 86400000).toISOString()
-    for (const k of Object.keys(EXPIRE_DAYS)) {
-      const { data: gone } = await db.from('eve_slack_items').update({ status: 'expired', closed_reason: `expired after ${EXPIRE_DAYS[k]} days with no close`, closed_at: new Date().toISOString() })
-        .eq('status', 'open').eq('kind', k).lt('first_seen', cutoff(k)).select('id')
-      if (gone && gone.length) out.notes.push(`expired ${gone.length} ${k}`)
-    }
-  }
+  // Expire what is moot, drop 'urgent' from what no longer affects a guest today (sweepLoops).
+  { const sw = await sweepLoops(); for (const k of Object.keys(sw.expired)) out.notes.push(`expired ${sw.expired[k]} ${k}`); if (sw.calmed) out.notes.push(`calmed ${sw.calmed} no longer urgent`) }
   const { data: openRows } = await db.from('eve_slack_items').select('*').eq('status', 'open').limit(500)
   const open = (openRows || []) as Item[]
 

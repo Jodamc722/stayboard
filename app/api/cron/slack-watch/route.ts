@@ -12,6 +12,7 @@ import { runSlackWatch, openItems } from '@/lib/eve/slack-watch'
 import { runOnWatch } from '@/lib/eve/on-watch'
 import { runOpsDesk } from '@/lib/eve/ops-desk'
 import { runSchedulerShadow } from '@/lib/eve/scheduler-shadow'
+import { sweepLoops } from '@/lib/eve/slack-watch'
 import { checkOutcomes } from '@/lib/eve/outcomes'
 import { cronAllowed, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
@@ -40,6 +41,8 @@ export async function GET(req: NextRequest) {
   // ?desk=plan|recap — what the ops desk would post right now, posting nothing.
   const deskPrev = new URL(req.url).searchParams.get('desk')
   if (deskPrev === 'plan' || deskPrev === 'recap') return NextResponse.json(await runOpsDesk({ force: deskPrev, preview: true }))
+  // ?sweep=1 — expire moot loops and calm stale 'urgent' flags now, reading no Slack.
+  if (new URL(req.url).searchParams.get('sweep') === '1') return NextResponse.json(await sweepLoops())
   // ?shadow=1 — run the shadow scheduler's evening pass now (score today, project tomorrow), saving.
   if (new URL(req.url).searchParams.get('shadow') === '1') return NextResponse.json(await runSchedulerShadow({ force: true }))
   const items = await openItems(100).catch(() => [])
