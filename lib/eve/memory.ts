@@ -308,9 +308,11 @@ export async function loadMemories(scopes: string[], email: string, limit = 60, 
       .concat(relevant.map(r => strip(r, 'relevant')))
       .concat(recent.map(r => strip(r, 'recent')))
       .concat(fill.map(r => strip(r, 'relevant')))
-    ;(out as any).reranked = reranked
-    ;(out as any).rerank = rerank
-    return out.slice(0, limit)
+    // Trim FIRST: slice() returns a new array, and a tag set on the old one would be lost.
+    const trimmed = out.slice(0, limit)
+    ;(trimmed as any).reranked = reranked
+    ;(trimmed as any).rerank = rerank
+    return trimmed
   } catch { return [] }
 }
 
