@@ -82,6 +82,22 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
   const [tab, setTab] = useState<MarketTab>('All')
   const presets = useOpsPresets()
   const [bzRoles, setBzRoles] = useState<Record<string, string>>({})
+  // EVE'S READ OF THE LAST 30 DAYS (Jon, 2026-09-28: "the schedule recommended should live in the
+  // scheduler tab in Suggest a schedule … go back 30 days to learn how we schedule"). Who usually
+  // works where, and how her shadow plans have scored. The habits feed the suggester as an affinity.
+  const [habits, setHabits] = useState<any | null>(null)
+  const [shadow, setShadow] = useState<any | null>(null)
+  const [showRead, setShowRead] = useState(false)
+  useEffect(() => {
+    fetch('/api/schedule/habits?days=30', { cache: 'no-store' }).then(r => r.json())
+      .then(j => { if (j?.ok) { setHabits(j.habits || null); setShadow(j.shadow || null) } }).catch(() => {})
+  }, [])
+  const affinity = useMemo(() => {
+    const out: Record<number, Record<string, number>> = {}
+    if (!habits?.people) return out
+    for (const r of roster) { const h = habits.people[personKey(r.name)]; if (h) out[r.id] = h.hubs || {} }
+    return out
+  }, [habits, roster])
   useEffect(() => {
     fetch('/api/breezeway/people?department=housekeeping', { cache: 'no-store' }).then(r => r.json())
       .then(j => { const m: Record<string, string> = {}; for (const p of (j?.people || [])) m[personKey(p.name)] = String(p.role || ''); setBzRoles(m) }).catch(() => {})
@@ -103,9 +119,9 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
   }), [working, roster, capBy, roleOf])
 
   const runSuggest = useCallback((rs: Row[], ps: SugPerson[], keep: boolean, t = target, ot = overtime) => {
-    const s = suggestSchedule(rs, ps, { keepCurrent: keep, targetCleans: t, overtimeMin: ot })
+    const s = suggestSchedule(rs, ps, { keepCurrent: keep, targetCleans: t, overtimeMin: ot, affinity })
     setAssign(s.assign); setWhy(s.why)
-  }, [target, overtime])
+  }, [target, overtime, affinity])
 
   // Load the day: cleans + roster from the schedule, who is on from capacity.
   useEffect(() => {
@@ -324,6 +340,25 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
               </label>
               <button onClick={() => resuggest()} disabled={busy} className="inline-flex items-center gap-1 px-2 h-7 rounded-lg border border-line bg-white font-semibold"><RotateCcw size={12} /> Re-suggest</button>
             </div>
+
+            {habits ? (
+              <div className="px-4 py-1.5 border-b border-line text-[12px] flex items-center gap-2 flex-wrap bg-violet-50/40">
+                <span className="font-semibold text-violet-900">Eve's read of the last {habits.days} days</span>
+                <span className="text-muted">{habits.totalCleans} cleans · {Object.keys(habits.people || {}).length} people{habits.perDay ? ' · ' + Object.entries(habits.perDay).map(([m, n]) => `${m} ${n}/person-day`).join(' · ') : ''}</span>
+                {shadow ? <span className="text-muted" title="Her nightly projection scored against what actually happened: fewer people, no more travel, nothing left unassigned">· shadow plans beat reality {shadow.wins} of {shadow.scored} days{shadow.ready ? ' — ready' : ` (needs ${shadow.needed} of ${shadow.window})`}</span> : null}
+                <button onClick={() => setShowRead(v => !v)} className="ml-auto underline decoration-dotted text-violet-900">{showRead ? 'Hide' : 'Who usually works where'}</button>
+                {showRead ? (
+                  <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-0.5 text-[11.5px] pt-1">
+                    {people.map(p => {
+                      const h = habits.people?.[personKey(p.name)]
+                      if (!h) return <div key={p.id} className="text-muted">{first(p.name)} — no cleans in the window</div>
+                      const hubs = Object.entries(h.hubs as Record<string, number>).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(', ')
+                      return <div key={p.id}><span className="font-semibold text-ink">{first(p.name)}</span> <span className="text-muted">— {hubs} · {h.avgCleansPerDay}/day over {h.daysWorked} days</span></div>
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             <div className="px-4 py-2 border-b border-line flex items-center gap-2 flex-wrap text-[12px]">
               <div className="inline-flex rounded-lg border border-line overflow-hidden">

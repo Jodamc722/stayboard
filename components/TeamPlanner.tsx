@@ -9,8 +9,9 @@
 // work — you saw "3" and had to switch views to learn what the 3 were. In the new view every day
 // opens in place, so there is nothing to switch to.
 import { useCallback, useEffect, useState } from 'react'
-import { Loader2, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
+import { Loader2, ChevronLeft, ChevronRight, RefreshCw, Wand2 } from 'lucide-react'
 import { LeanHead, Pill, IconBtn } from './lean'
+import { WeekSuggester } from '@/components/WeekSuggester'
 import { PlannerView, PlannerLegend, type PDay, type PBlock, type PGroup } from './PlannerView'
 import { ScheduleLaborStrip, type ScheduleLaborData } from './ScheduleLaborStrip'
 import { DayCleans } from './DayCleans'
@@ -46,6 +47,8 @@ export function TeamPlanner() {
   const [crew, setCrew] = useState<'inhouse' | 'vendor'>('inhouse')
   // The cleans are the page; the calendar is a second view of the same day, not a second half of it.
   const [view, setView] = useState<'cleans' | 'calendar'>('cleans')
+  // SUGGEST THE WEEK (Jon, 2026-09-28): Eve's plan per day for this range, approvable a day at a time.
+  const [suggest, setSuggest] = useState(false)
 
   const load = useCallback(async () => {
     setBusy(true); setErr('')
@@ -114,8 +117,12 @@ export function TeamPlanner() {
             : null}
           <IconBtn title="Forward a week" onClick={() => { setFrom(addDays(from, 7)); setTo(addDays(to, 7)) }}><ChevronRight size={15} /></IconBtn>
           <IconBtn title="Reload the planner" onClick={load} disabled={busy}><RefreshCw size={14} className={busy ? 'animate-spin' : ''} /></IconBtn>
+          {dept === 'cleaning' && crew === 'inhouse' ? (
+            <button onClick={() => setSuggest(true)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 h-8 rounded-lg bg-ink text-white"><Wand2 size={13} /> Suggest the week</button>
+          ) : null}
         </div>
       </div>
+      {suggest ? <WeekSuggester from={from} to={to} onClose={() => setSuggest(false)} onPushed={load} /> : null}
 
       {/* which view, then which market — and, on the calendar, how it is grouped */}
       <div className="flex items-center gap-1.5 flex-wrap">

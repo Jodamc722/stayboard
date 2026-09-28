@@ -47,7 +47,16 @@ export type SugClean = {
 }
 /** role: 'cleaner' (default), 'supervisor' (last resort), 'other' (ops, handyman: never auto-assigned). */
 export type SugPerson = { id: number; name: string; market: string | null; capacityMin: number; role?: 'cleaner' | 'supervisor' | 'other' }
-export type SuggestOptions = { keepCurrent?: boolean; targetCleans?: number; overtimeMin?: number }
+export type SuggestOptions = {
+  keepCurrent?: boolean; targetCleans?: number; overtimeMin?: number
+  /**
+   * HOW WE USUALLY SCHEDULE (Jon, 2026-09-28: "go back 30 days to learn how we schedule"). Person id
+   * → hub → share of that person's recent cleans there (0..1), from lib/schedule-habits. A person
+   * scores higher on a building they usually work; never lower on one they do not. A tie-breaker
+   * behind the day's own rules, not a wall.
+   */
+  affinity?: Record<number, Record<string, number>>
+}
 export type Suggestion = {
   /** clean key → person id, or null for unassigned */
   assign: Record<string, number | null>
@@ -180,10 +189,13 @@ export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: S
         // 3: same building dominates. 6: someone already out beats starting someone new.
         // 7: a supervisor only when nobody else can. Then the least extra driving, then room.
         const away = !!marketOf[p.id] && marketOf[p.id] !== c.market
-        const score = (inHub ? 1000 : 0) + (n > 0 ? 600 : 0) - (sup ? 3000 : 0) - (away ? 900 : 0) - add + Math.max(left, 0) / 10
+        // 8: the habit. Usually works this building (from the last 30 days) → up to +500, below
+        // "same building today" and "already out", above the driving and the room.
+        const habit = opts.affinity?.[p.id]?.[c.hub] || 0
+        const score = (inHub ? 1000 : 0) + (n > 0 ? 600 : 0) - (sup ? 3000 : 0) - (away ? 900 : 0) + habit * 500 - add + Math.max(left, 0) / 10
         if (score > bestScore) {
           best = p; bestScore = score
-          bestWhy = sup ? 'supervisor, nobody else had room' : inHub ? `already in ${c.hub}` : left < 0 ? `fills ${first(p.name)}'s day (+${-left}m over)` : n ? 'fills a day already started' : 'has the most room'
+          bestWhy = sup ? 'supervisor, nobody else had room' : inHub ? `already in ${c.hub}` : habit >= 0.3 ? `usually works ${c.hub} (${Math.round(habit * 100)}% of recent cleans)` : left < 0 ? `fills ${first(p.name)}'s day (+${-left}m over)` : n ? 'fills a day already started' : 'has the most room'
         }
       }
       if (best) { assign[c.key] = best.id; why[c.key] = bestWhy; mine[best.id].push(c); if (!marketOf[best.id]) marketOf[best.id] = c.market }

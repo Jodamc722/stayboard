@@ -29,6 +29,7 @@ import { buildSchedule } from '@/lib/schedule-build'
 import { buildDayPicture } from '@/lib/capacity-day'
 import { suggestSchedule, standardMinutes, loadFor, hubCentres, DEFAULT_CAPACITY_MIN, type SugClean, type SugPerson } from '@/lib/schedule-suggest'
 import { matchRoster, personKey } from '@/lib/roster-match'
+import { learnHabits, affinityFor } from '@/lib/schedule-habits'
 import { postToChannel } from '@/lib/slack'
 import { EVE_CHANNELS } from '@/lib/slack-rules'
 import { agentAllowed, stepDown } from './agent-mode'
@@ -59,6 +60,11 @@ export type ShadowPlan = {
   byPerson: Record<string, string[]>
   /** clean key → person name (the plan itself), for the ops desk to propose. */
   assign: Record<string, string | null>
+  /** clean key → Breezeway person id, for the weekly planner's Approve. */
+  assignIds?: Record<string, number | null>
+  /** clean key → unit / listing / current assignee ids, so a day can be pushed without re-reading. */
+  cleansById?: Record<string, { listingId: string; unit: string; currentIds: number[]; sameDayTurn: boolean }>
+  why?: Record<string, string>
 }
 export type ShadowScore = {
   scoredAt: string
@@ -111,15 +117,22 @@ export async function projectDay(date: string): Promise<ShadowPlan | null> {
   for (const c of cleans) for (const id of c.currentIds) if (hk.some(h => h.id === id)) on.add(id)
   const people: SugPerson[] = Array.from(on).map(id => { const p = hk.find(h => h.id === id); return { id, name: p?.name || String(id), market: marketFromRegion(p?.region || null), capacityMin: caps[id] || DEFAULT_CAPACITY_MIN, role: roleOf(p?.name || '') } })
   if (!people.length) return null
-  // From scratch, not "keep current": the point is what SHE would do with the same people.
-  const sug = suggestSchedule(cleans, people, { keepCurrent: false, targetCleans: 4, overtimeMin: 60 })
+  // From scratch, not "keep current": the point is what SHE would do with the same people — with the
+  // last 30 days of habits as a tie-breaker (Jon, 2026-09-28: "go back 30 days to learn how we schedule").
+  let affinity: Record<number, Record<string, number>> = {}
+  try { affinity = affinityFor(await learnHabits(30), hk) } catch { affinity = {} }
+  const sug = suggestSchedule(cleans, people, { keepCurrent: false, targetCleans: 4, overtimeMin: 60, affinity })
   const centres = hubCentres(cleans)
   const byPerson: Record<string, string[]> = {}
   const assign: Record<string, string | null> = {}
+  const assignIds: Record<string, number | null> = {}
+  const cleansById: NonNullable<ShadowPlan['cleansById']> = {}
   const mine: Record<number, SugClean[]> = {}
   let unassigned = 0
   for (const c of cleans) {
+    cleansById[c.key] = { listingId: c.listingId, unit: String(c.unit), currentIds: c.currentIds, sameDayTurn: c.sameDayTurn }
     const pid = sug.assign[c.key]
+    assignIds[c.key] = pid == null ? null : pid
     if (pid == null) { unassigned++; assign[c.key] = null; continue }
     const p = people.find(x => x.id === pid)
     assign[c.key] = p?.name || null
@@ -128,7 +141,7 @@ export async function projectDay(date: string): Promise<ShadowPlan | null> {
   }
   let work = 0, travel = 0, maxLoad = 0
   for (const pid of Object.keys(mine)) { const l = loadFor(mine[Number(pid)], centres); work += l.work; travel += l.travel; maxLoad = Math.max(maxLoad, l.minutes) }
-  return { date, builtAt: new Date().toISOString(), cleans: cleans.length, peopleOnShift: people.length, peopleUsed: Object.keys(mine).length, unassigned, workMinutes: Math.round(work), travelMinutes: Math.round(travel), maxLoadMinutes: Math.round(maxLoad), byPerson, assign }
+  return { date, builtAt: new Date().toISOString(), cleans: cleans.length, peopleOnShift: people.length, peopleUsed: Object.keys(mine).length, unassigned, workMinutes: Math.round(work), travelMinutes: Math.round(travel), maxLoadMinutes: Math.round(maxLoad), byPerson, assign, assignIds, cleansById, why: sug.why }
 }
 
 /** Score a plan against the day as it actually ran (from the capacity picture, after the day). */
@@ -180,7 +193,7 @@ export async function runSchedulerShadow(opts: { force?: boolean; preview?: bool
     }
     if (!st.days[tomorrow] || opts.force) {
       const plan = await projectDay(tomorrow)
-      if (plan) { st.days[tomorrow] = { plan }; out.projected = `${tomorrow}: ${plan.cleans} cleans → ${plan.peopleUsed} of ${plan.peopleOnShift} people, ${plan.unassigned} unassigned, travel ${plan.travelMinutes}m` }
+      if (plan) { const { cleansById: _c, why: _w, ...slim } = plan; st.days[tomorrow] = { plan: slim as ShadowPlan }; out.projected = `${tomorrow}: ${plan.cleans} cleans → ${plan.peopleUsed} of ${plan.peopleOnShift} people, ${plan.unassigned} unassigned, travel ${plan.travelMinutes}m` }
       else out.notes.push(`${tomorrow}: no cleans or nobody on shift — no plan`)
     }
     // Sunday readout in #vr-eve.
