@@ -25,6 +25,7 @@ import { canSeeMoney, type Access } from '@/lib/access'
 import { redactMoney } from '@/lib/money'
 import { pageRows } from '@/lib/db-page'
 import { isLowReview } from '@/lib/review-scale'
+import { welcomeRate, welcomeCallsDue } from '@/lib/call-desk'
 
 
 const DEAD_LISTING = ['inactive', 'disabled', 'archived', 'deleted']
@@ -135,9 +136,12 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     // ---------------------------------------------------------------- reads
     const resFrom = prevFrom
     const resTo = addDays(to, 14)          // far enough forward for arrivals-next-7 and welcome calls
-    const [reservations, tasks, sentiment, lowReviews, glitchRows, openWork, syncRows, openGlitchRes, openTaskRes] = await Promise.all([
+    const [reservations, tasks, sentiment, lowReviews, glitchRows, openWork, syncRows, openGlitchRes, openTaskRes, welcome, welcomePrev, welcomeDue] = await Promise.all([
+      // No custom_fields any more (2026-09-28): the welcome-call numbers come from the call log
+      // (lib/call-desk), and that jsonb column on two windows of reservations was the heaviest thing
+      // this read carried.
       pageAll((a, b) => db.from('guesty_reservations')
-        .select('id,listing_id,listing_name,guest_name,check_in,check_out,nights,status,source,money_total,custom_fields,cleaning:raw->money->>fareCleaning,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,channelFee:raw->money->>hostServiceFee')
+        .select('id,listing_id,listing_name,guest_name,check_in,check_out,nights,status,source,money_total,cleaning:raw->money->>fareCleaning,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,channelFee:raw->money->>hostServiceFee')
         .gte('check_out', resFrom).lte('check_in', resTo).order('check_out').range(a, b)),
       pageAll((a, b) => db.from('breezeway_tasks_sync')
         .select('id,reference_property_id,name,status,type_department,scheduled_date,started_at,finished_at,total_minutes,rate_paid,assignees')
@@ -170,6 +174,11 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         .not('status', 'ilike', '%close%').not('status', 'ilike', '%approv%')
         .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
         .order('id').range(a, b), 8),
+      // WELCOME CALLS — the call log's rate (lib/call-desk welcomeRate), the same number the Calls
+      // desk and the Command Center strip print, narrowed to this board's scope.
+      welcomeRate(db, from, to, inScope),
+      welcomeRate(db, prevFrom, prevTo, inScope),
+      welcomeCallsDue(db, today).catch(() => null),
     ])
 
     // ---------------------------------------------------------------- today
@@ -379,33 +388,11 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       }
     }
 
-    // ---- welcome calls. Any writing in the Welcome Call custom field counts as done (same rule
-    // the welcome-calls board uses), so the two screens can never disagree.
-    const WELCOME_FIELD_ID = '68d59ad7e34f25001311d85a'
-    const cfId = (c: any) => String((c && c.fieldId && c.fieldId._id) || (c && typeof c.fieldId === 'string' ? c.fieldId : '') || '')
-    const welcomeOf = (cf: any) => {
-      if (!Array.isArray(cf)) return undefined
-      return cf.find((c: any) => cfId(c) === WELCOME_FIELD_ID || /welcome/i.test(str(c && (c.fieldName || c.name || (c.fieldId && c.fieldId.name)))))
-    }
-    const welcomeBlock = (a: string, b: string) => {
-      const rows = live.filter(r => inWin(dOf(r.check_in), a, b) && str(r.status).toLowerCase() === 'confirmed')
-      let done = 0
-      for (const r of rows) {
-        const w: any = welcomeOf(r.custom_fields)
-        if (w && ((typeof w.value === 'string' && w.value.trim().length > 0) || w._by)) done += 1
-      }
-      return { arrivals: rows.length, done, pct: rows.length ? round((done / rows.length) * 100, 1) : null }
-    }
-    // Calls that are actually on the clock right now: arriving in the next 72 hours (Jon,
-    // 2026-09-09 — the same window as lib/call-desk WELCOME_AHEAD_DAYS), no note yet.
-    const dueWindow = addDays(today, 3)
-    const welcomeDueNow = live.filter(r => {
-      if (str(r.status).toLowerCase() !== 'confirmed') return false
-      const ci = dOf(r.check_in)
-      if (!(ci >= today && ci <= dueWindow)) return false
-      const w: any = welcomeOf(r.custom_fields)
-      return !(w && ((typeof w.value === 'string' && w.value.trim().length > 0) || w._by))
-    }).length
+    // ---- welcome calls. The rate is the call log's (read above, lib/call-desk welcomeRate). Calls on
+    // the clock right now are the desk's own `dueNow` — live arrivals from today through the 72-hour
+    // runway with no completed call, whether the tick is in Guesty or on the desk — in this scope.
+    // `null` = that read failed, which the board shows as a dash rather than a confident zero.
+    const welcomeDueNow: number | null = welcomeDue ? welcomeDue.filter(d => inScope(d.listingId)).length : null
 
     const sentimentBlock = (a: string, b: string) => {
       const rows = sentiment.filter(s => inWin(dOf(s.last_message_at), a, b) && (!s.listing_id || inScope(s.listing_id)))
@@ -468,8 +455,6 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     const staysPrev = stayBlock(prevFrom, prevTo)
     const work = workBlock(from, to)
     const workPrev = workBlock(prevFrom, prevTo)
-    const welcome = welcomeBlock(from, to)
-    const welcomePrev = welcomeBlock(prevFrom, prevTo)
     const senti = sentimentBlock(from, to)
     const sentiPrev = sentimentBlock(prevFrom, prevTo)
     const glitch = glitchBlock(from, to)
@@ -681,8 +666,12 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       },
 
       welcome: {
-        pct: welcome.pct, pctPrev: welcomePrev.pct,
-        done: welcome.done, arrivals: welcome.arrivals,
+        // completed ÷ (completed + incomplete) from the call log; null under 5 closed calls.
+        // `arrivals` keeps its name for the GM brief ("X of Y") — it is the calls with a verdict.
+        pct: welcome.rate, pctPrev: welcomePrev.rate,
+        done: welcome.completed, arrivals: welcome.completed + welcome.incomplete,
+        missed: welcome.incomplete, open: welcome.open, n: welcome.n, text: welcome.text,
+        since: welcome.since,
         dueNow: welcomeDueNow,
       },
 

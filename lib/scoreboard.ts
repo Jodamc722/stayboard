@@ -24,7 +24,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { getLaborSettings } from '@/lib/labor-settings'
 import { ymdET, addDays } from '@/lib/team-schedule'
-import { loadCallsDesk, isCompleted } from '@/lib/call-desk'
+import { loadCallsDesk, welcomeRate } from '@/lib/call-desk'
 import { laborEconomics } from '@/lib/labor-econ'
 import { billingRange, type BillingTask } from '@/lib/billing'
 import { todayList, progressOf } from '@/lib/daily-checklist'
@@ -95,14 +95,12 @@ export async function buildScoreboard(): Promise<Scoreboard> {
 
   const [calls, callsWeek, claims, glitches, econNow, econPrev, billing, checklist] = await Promise.all([
     safe(() => loadCallsDesk(sb, today)),
+    // THE welcome-call rate (lib/call-desk welcomeRate) — the one Home and the Calls desk print, from
+    // the paged call log. This was its own unpaged `.limit(1000)` read with a copy of the formula.
     safe(async () => {
-      const { data, error } = await sb.from('guest_calls')
-        .select('reservation_id,outcome,scheduled_for,called_at,guest_name,tier')
-        .eq('kind', 'welcome')
-        .or(`scheduled_for.gte.${lastStart},and(scheduled_for.is.null,called_at.gte.${lastStart}T00:00:00Z)`)
-        .order('reservation_id').limit(1000)
-      if (error) throw new Error(error.message)
-      return (data || []) as any[]
+      const [now, prev] = await Promise.all([welcomeRate(sb, weekStart, today), welcomeRate(sb, lastStart, lastSame)])
+      if (now.truncated || prev.truncated) throw new Error('the call log read came back short')
+      return { now, prev }
     }),
     safe(async () => {
       const { data, error } = await sb.from('claims')
@@ -142,32 +140,28 @@ export async function buildScoreboard(): Promise<Scoreboard> {
     else {
       const due = calls.v.rows.filter(r => r.dueToday)
       const done = due.filter(r => r.done)
-      // The week's completion rate — /api/calls/stats' own formula, on the day the call was DUE.
-      const rate = (rows: any[]) => {
-        let c = 0, i = 0
-        for (const r of rows) { if (isCompleted(r.outcome)) c++; else if (r.outcome === 'incomplete') i++ }
-        return c + i ? Math.round((c / (c + i)) * 100) : null
-      }
-      const weekRows = callsWeek.ok ? callsWeek.v : []
-      const dOf = (r: any) => dayOf(r.scheduled_for) || ymdET(new Date(r.called_at))
-      const thisWeek = weekRows.filter(r => inRange(dOf(r), weekStart, today))
-      const lastWeek = weekRows.filter(r => inRange(dOf(r), lastStart, lastSame))
-      const pctNow = rate(thisWeek), pctPrev = rate(lastWeek)
+      // The week's completion rate — lib/call-desk welcomeRate, on the day each call was DUE. Under
+      // five verdicts there is no rate (Monday's one call is not "100% this week"); the count is said.
+      const wNow = callsWeek.ok ? callsWeek.v.now : null
+      const wPrev = callsWeek.ok ? callsWeek.v.prev : null
+      const pctNow = wNow ? wNow.rate : null, pctPrev = wPrev ? wPrev.rate : null
+      const weekCalls = wNow ? wNow.completed + wNow.incomplete + wNow.open : 0
       const rows: ScoreRow[] = due
         .sort((a, b) => Number(a.done) - Number(b.done) || (a.prio - b.prio))
         .slice(0, 12)
         .map(r => ({ text: (r.done ? '✓ ' : '· ') + (r.guest || 'Guest') + ' — ' + r.listing + (r.mandatory ? ' · ' + r.tier : '') + (r.done && r.calledBy ? ' · ' + r.calledBy : ''), href: '/welcome-calls' }))
+      const weekTxt = pctNow != null ? pctNow + '% this week' : wNow && wNow.n ? wNow.text + ' this week' : 'due today'
       tiles.push({
         ...base,
         value: done.length + '/' + due.length,
-        sub: pctNow == null ? 'due today' : pctNow + '% this week',
+        sub: weekTxt,
         tone: due.length && done.length === due.length ? 'ok' : due.length - done.length >= 3 ? 'hot' : due.length > done.length ? 'warn' : 'quiet',
         delta: delta(pctNow, pctPrev, n => n + ' pts', 'up'),
         compare: { now: pctNow, prev: pctPrev, unit: '% completed' },
         detail: {
           rows,
-          note: 'Today: ' + done.length + ' of ' + due.length + ' arrivals called. This week ' + (pctNow == null ? 'has no closed calls yet' : pctNow + '% completed') +
-            ' (' + thisWeek.length + ' calls) vs ' + (pctPrev == null ? 'no rate' : pctPrev + '%') + ' last week to ' + lastSame.slice(5) + '. Rate = completed ÷ (completed + incomplete), the Calls desk formula; open calls do not count yet.' +
+          note: 'Today: ' + done.length + ' of ' + due.length + ' arrivals called. This week ' + (pctNow != null ? pctNow + '% completed' : wNow && wNow.n ? wNow.text + ' completed — too few for a rate' : 'has no closed calls yet') +
+            ' (' + weekCalls + ' calls) vs ' + (pctPrev != null ? pctPrev + '%' : wPrev && wPrev.n ? wPrev.text : 'no rate') + ' last week to ' + lastSame.slice(5) + '. Rate = completed ÷ (completed + incomplete), the Calls desk formula; open calls do not count yet, and under 5 closed calls there is no rate.' +
             (callsWeek.ok ? '' : ' Week rate unavailable: ' + callsWeek.err),
         },
       })

@@ -271,7 +271,8 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
           <Big label="In house" value={count(t.inHouse)} Icon={Users} href="/reservations" sub={t.occupancy != null ? pct(t.occupancy, 0) + ' of units' : undefined} />
           <Big label="Cleans today" value={t.cleansScheduled != null ? t.cleansDone + '/' + t.cleansScheduled : '—'} Icon={Brush} href="/schedule"
             sub={t.cleansScheduled ? Math.round((t.cleansDone / t.cleansScheduled) * 100) + '% done' : 'none scheduled'} />
-          <Big label="Welcome calls due" value={count(t.welcomeDueNow)} Icon={PhoneCall} href="/welcome-calls" sub="next 72 hours"
+          <Big label="Welcome calls due" value={t.welcomeDueNow == null ? '—' : count(t.welcomeDueNow)} Icon={PhoneCall} href="/welcome-calls"
+            sub={k && t.welcomeDueNow == null ? 'could not read' : 'next 72 hours'}
             tone={t.welcomeDueNow > 0 ? 'alert' : undefined} />
           <Big label="Open work" value={count(t.openWork)} Icon={AlertTriangle} href="/glitches"
             sub={t.openGlitches != null ? t.openGlitches + ' glitches · ' + count(t.openTasks) + ' unfinished tasks' : 'nothing open'}
@@ -370,8 +371,13 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
                 ? count(rh.awaitingReply) + ' still waiting' + (rh.medianReplyHours != null ? ' · ' + rh.medianReplyHours + 'h median' : '')
                 : 'reply coverage'}
               alert={rh.awaitingReply > 0} />
-            <Tile label="Welcome calls" value={wc.pct != null ? pct(wc.pct, 1) : '—'} Icon={PhoneCall} href="/welcome-calls"
-              sub={wc.arrivals != null ? count(wc.done) + ' of ' + count(wc.arrivals) + ' arrivals called' : undefined}
+            {/* The call log's rate — the Calls desk's and the Command Center's number. Under five
+                closed calls it shows the count, never a percentage off one or two calls. */}
+            <Tile label="Welcome calls" value={wc.pct != null ? pct(wc.pct, 0) : (wc.n ? String(wc.text) : '—')} Icon={PhoneCall} href="/welcome-calls"
+              sub={wc.arrivals != null
+                ? (wc.pct != null ? count(wc.done) + ' of ' + count(wc.arrivals) + ' calls completed' : wc.n ? 'too few closed calls for a rate' : 'no closed calls yet')
+                  + (wc.since ? ' · log starts ' + String(wc.since).slice(5) : '')
+                : undefined}
               delta={wc.pct != null && wc.pctPrev != null ? <Delta v={Math.round((wc.pct - wc.pctPrev) * 10) / 10} suffix=" pts" /> : undefined}
               alert={wc.pct != null && wc.pct < 80} />
             <Tile label="Guest sentiment" value={s.happyPct != null ? pct(s.happyPct, 1) : '—'} Icon={Sparkles} href="/messages"

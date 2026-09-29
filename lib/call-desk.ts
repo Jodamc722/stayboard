@@ -45,6 +45,7 @@ import { ratingToStars } from '@/lib/optimize-score'
 import { channelOf } from '@/lib/welcome-call-guide'
 import { parkingBooked } from '@/lib/parking'
 import { isLowReview, clearsRecovery } from '@/lib/review-scale'
+import { pctOrCount } from '@/lib/money'
 
 // The Airbnb/Vrbo-scale thresholds, for reference. The recovery rule itself is channel-aware and
 // lives in lib/review-scale (isLowReview / clearsRecovery) — Booking is judged on its own /10 scale.
@@ -351,6 +352,123 @@ export const WELCOME_FIELD_ID = '68d59ad7e34f25001311d85a'
 const cfId = (c: any) => String((c?.fieldId?._id) || (typeof c?.fieldId === 'string' ? c.fieldId : '') || '')
 export const welcomeOf = (cf: any) => Array.isArray(cf) ? cf.find((c: any) => cfId(c) === WELCOME_FIELD_ID || /welcome/i.test(String(c?.fieldName || c?.name || c?.fieldId?.name || ''))) : undefined
 export const guestyCalled = (cf: any) => { const w = welcomeOf(cf); return !!w && ((typeof w.value === 'string' && w.value.trim().length > 0) || !!w._by) }
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// THE WELCOME-CALL RATE — one formula for Home, the Command Center strip and the Calls desk
+// (2026-09-28 audit, P0-5). There were three. Home divided the Guesty field by status=`confirmed`
+// arrivals, so a guest Guesty had already moved to checked_in fell out and a call logged on the desk
+// never counted; the desk header divided field-or-log by live arrivals; the scoreboard and the calls
+// scoreboard used the call log. The LOG is the durable one — every call is a row and the nightly
+// close-out writes the miss — so it is the rate:
+//
+//   completed ÷ (completed + incomplete), welcome calls, by the day each call was DUE
+//   (scheduled_for; rows from before migration 074 fall back to called_at's Eastern date)
+//
+// Open rows (claimed, no answer yet, not due yet) are not a verdict and are reported apart. Under
+// five verdicts there is no rate — the count is said instead (lib/money pctOrCount). The log began
+// on 2026-09-08 (migrations 073/074): a window that starts earlier only covers the part after, and
+// says so (`since`).
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+export const CALL_LOG_SINCE = '2026-09-08'
+
+export type CallTally = { completed: number; late: number; incomplete: number; open: number; attempts: number; noAnswer: number }
+export const emptyTally = (): CallTally => ({ completed: 0, late: 0, incomplete: 0, open: 0, attempts: 0, noAnswer: 0 })
+
+/** The day a call belongs to: the day it was due, else (rows from before 074) the Eastern day it was made. */
+export const callDay = (r: any): string => String(r?.scheduled_for || '').slice(0, 10) || (r?.called_at ? ymdET(new Date(r.called_at)) : '')
+
+/** Count one guest_calls row into a tally — the one classification every call count uses. */
+export function tallyCall(a: CallTally, r: any): CallTally {
+  const o = String(r?.outcome || '')
+  if (isCompleted(o)) {
+    a.completed++
+    // `late` = a welcome call completed AFTER the day it was due. It counts as done, but it is
+    // reported: a desk that is always reaching guests already in the unit is not calling ahead.
+    if (r.kind === 'welcome' && r.scheduled_for && r.called_at && ymdET(new Date(r.called_at)) > String(r.scheduled_for).slice(0, 10)) a.late++
+  }
+  else if (o === 'incomplete') a.incomplete++
+  else a.open++
+  a.attempts += Number(r?.attempts) || 0
+  if (o === 'no_answer') a.noAnswer++
+  return a
+}
+
+/** Completion rate of a tally — completed ÷ (completed + incomplete), whole percent, null under five verdicts. */
+export function callRate(a: CallTally): number | null {
+  return pctOrCount(a.completed, a.completed + a.incomplete, 5, 0).pct
+}
+
+/**
+ * The call log for [from, to] (Eastern dates, inclusive, by callDay), paged and ordered. `truncated`
+ * means a page failed or the ceiling was hit — a rate from part of the log is not a rate.
+ */
+export async function callLogRows(sb: any, from: string, to: string, kind?: 'welcome' | 'post_checkout'): Promise<{ rows: any[]; truncated: boolean }> {
+  // guest_calls has a composite key and no `id`, so the stable order for paging is the key itself.
+  // The lower bound runs on UTC midnight for the called_at fallback — hours EARLY, never late — and
+  // the exact Eastern window is applied below.
+  const { rows, truncated } = await pageRows<any>((a, b) => {
+    let q = sb.from('guest_calls')
+      .select('reservation_id,kind,outcome,tier,attempts,called_by,caller_email,called_at,scheduled_for,guest_name,note,closed_at,listing_id')
+      .or(`scheduled_for.gte.${from},and(scheduled_for.is.null,called_at.gte.${from}T00:00:00Z)`)
+    if (kind) q = q.eq('kind', kind)
+    return q.order('reservation_id').order('kind').range(a, b)
+  }, 10)
+  return { rows: rows.filter((r: any) => { const d = callDay(r); return !!d && d >= from && d <= to }), truncated }
+}
+
+export type WelcomeRate = CallTally & {
+  /** completed ÷ (completed + incomplete), whole percent — null under five verdicts or on a short read */
+  rate: number | null
+  /** the verdicts behind the rate: completed + incomplete */
+  n: number
+  /** "83%", or "3 of 4" when there are too few verdicts for a rate */
+  text: string
+  /** set when the window starts before the call log does — the rate covers only this date onward */
+  since: string | null
+  truncated: boolean
+}
+
+/**
+ * THE welcome-call completion rate for [from, to]. `inScope` narrows it to the listings a filtered
+ * board is showing; a row with no listing passes only if `inScope('')` does (an unfiltered board).
+ */
+export async function welcomeRate(sb: any, from: string, to: string, inScope?: (listingId: string) => boolean): Promise<WelcomeRate> {
+  const { rows, truncated } = await callLogRows(sb, from, to, 'welcome')
+  const t = emptyTally()
+  for (const r of rows) {
+    if (inScope && !inScope(String(r.listing_id || ''))) continue
+    tallyCall(t, r)
+  }
+  const p = pctOrCount(t.completed, t.completed + t.incomplete, 5, 0)
+  return {
+    ...t, rate: truncated ? null : p.pct, n: p.n, text: truncated ? '—' : p.text,
+    since: from < CALL_LOG_SINCE ? CALL_LOG_SINCE : null, truncated,
+  }
+}
+
+/**
+ * The welcome calls on the clock right now — live arrivals from today through the 72-hour runway
+ * that nobody has completed (Guesty field ticked, or a completed row in the log). The desk's own
+ * `dueNow`, without building the whole desk. Throws on a failed read rather than reporting zero.
+ */
+export async function welcomeCallsDue(sb: any, today: string): Promise<{ id: string; listingId: string }[]> {
+  const dueDate = addDays(today, WELCOME_AHEAD_DAYS)
+  const { rows, truncated } = await pageRows<any>((a, b) => sb.from('guesty_reservations')
+    .select('id,listing_id,status,custom_fields')
+    .gte('check_in', today).lte('check_in', dueDate).order('id').range(a, b), 4)
+  if (truncated) throw new Error('welcome calls due: the arrivals read came back short')
+  const live = rows.filter((r: any) => isLiveStay(r.status))
+  const ids = live.map((r: any) => String(r.id))
+  const logged = new Set<string>()
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await sb.from('guest_calls').select('reservation_id,outcome').eq('kind', 'welcome').in('reservation_id', ids.slice(i, i + 200))
+    if (error) throw new Error('welcome calls due: ' + error.message)
+    for (const l of ((data || []) as any[])) if (isCompleted(l.outcome)) logged.add(String(l.reservation_id))
+  }
+  return live
+    .filter((r: any) => !(guestyCalled(r.custom_fields) || logged.has(String(r.id))))
+    .map((r: any) => ({ id: String(r.id), listingId: String(r.listing_id || '') }))
+}
 
 const fieldVal = (cf: any, kw: string) => {
   if (!Array.isArray(cf)) return undefined
@@ -666,18 +784,11 @@ export async function loadCallsDesk(sb: any, today: string, viewDate?: string): 
     .filter((r: PostRow) => !!r.recovery)
 
   // ── THE NUMBERS AT THE TOP ────────────────────────────────────────────────────────────────────
-  const weekAgo = addDays(today, -7)
-  const { rows: arrivedAll, truncated: coverageShort } = await pageRows<any>((a, b) => sb.from('guesty_reservations')
-    .select('id,status,custom_fields').gte('check_in', weekAgo).lt('check_in', today).order('id').range(a, b), 4)
-  const arrivedRows = arrivedAll.filter((r: any) => isLiveStay(r.status))
-  // A call logged locally counts even if the Guesty field write lagged.
-  const arrivedIds = arrivedRows.map((r: any) => String(r.id))
-  const arrivedLogs: any[] = arrivedIds.length ? (await Promise.all(
-    Array.from({ length: Math.ceil(arrivedIds.length / 200) }, (_, i) => arrivedIds.slice(i * 200, i * 200 + 200))
-      .map(chunk => sb.from('guest_calls').select('reservation_id,outcome').eq('kind', 'welcome').in('reservation_id', chunk).then((r: any) => r.data || []))
-  )).flat() : []
-  const localCalled = new Set(arrivedLogs.filter((l: any) => isCompleted(l.outcome)).map((l: any) => String(l.reservation_id)))
-  const arrivedCalled = arrivedRows.filter((r: any) => guestyCalled(r.custom_fields) || localCalled.has(String(r.id))).length
+  // Coverage is THE welcome-call rate (welcomeRate above — the one Home and the Command Center strip
+  // print) over the last seven settled days: arrivals up to yesterday, each already given a verdict
+  // by the close-out. It used to be its own formula over reservations, one of four in the app.
+  const cov = await welcomeRate(sb, addDays(today, -7), addDays(today, -1))
+  const coverageShort = cov.truncated
 
   const isToday = (iso: string) => !!iso && ymdET(new Date(iso)) === today
   const open = rows.filter(r => !r.done && !r.closed)
@@ -689,9 +800,9 @@ export async function loadCallsDesk(sb: any, today: string, viewDate?: string): 
     mandatoryDoneToday: rows.filter(r => r.mandatory && r.done && isToday(r.calledAt)).length,
     calledToday: rows.filter(r => r.done && isToday(r.calledAt)).length + outRows.filter(r => r.done && isToday(r.calledAt)).length,
     pending: open.length,
-    coverage: (coverageShort || !arrivedRows.length) ? null : Math.round((arrivedCalled / arrivedRows.length) * 100),
-    coverageOf: arrivedRows.length,
-    coverageMissed: arrivedRows.length - arrivedCalled,
+    coverage: cov.rate,
+    coverageOf: cov.n,
+    coverageMissed: cov.incomplete,
     coverageShort,
     recoveryUnits: recovery.size,
     recoveryCalls: open.filter(r => r.recovery).length,
