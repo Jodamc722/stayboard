@@ -4,7 +4,8 @@
 // re-runs at noon without anyone opening the page.
 import { NextRequest, NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
-import { createClient } from '@/lib/supabase-server'
+import { requireLevel } from '@/lib/access'
+import { requireCron } from '@/lib/cron-auth'
 import { syncReservations } from '@/lib/guesty'
 import { syncBreezewayTasks } from '@/lib/breezeway-sync'
 
@@ -22,20 +23,18 @@ revalidateTag('schedule')
   return NextResponse.json({ ok: true, syncedAt: new Date().toISOString() })
 }
 
-// Cron (GET). If CRON_SECRET is set, require it; otherwise allow (Vercel cron calls are internal).
+// GET: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron). Not on a schedule
+// today — the Sync buttons below are its only callers.
 export async function GET(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = req.headers.get('authorization') || ''
-    if (auth !== `Bearer ${secret}`) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
   return doSync()
 }
 
-// In-app Sync button (POST) — logged-in users only.
+// In-app Sync button (POST) on the Turnover Schedule and its Weekly tab — anyone who can see that
+// board (was: any Supabase session, a disabled employee's included).
 export async function POST() {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const g = await requireLevel('schedule', 'view')
+  if (!g.ok) return g.res
   return doSync()
 }

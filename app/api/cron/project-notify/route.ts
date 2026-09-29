@@ -6,30 +6,28 @@
 //                                             then the morning digest goes out
 //   GET ?dry=1                                signed-in only: counts, nothing sent or stamped
 //
-// Auth is the house pattern: CRON_SECRET bearer when set, else Vercel's x-vercel-cron header; a
-// signed-in person may also run it by hand. Anonymous gets nothing — this sends email.
+// Auth: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron); a dry run is
+// counts only and open to any active team member. Anonymous gets nothing — this sends email.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
-import { tooSoon } from '@/lib/cron-auth'
+import { requireUser } from '@/lib/access'
+import { requireCron, tooSoon } from '@/lib/cron-auth'
 import { withReceipt } from '@/lib/automation-runs'
 import { generateReminders, sendImmediate, sendDigest } from '@/lib/project-notify'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
-async function signedIn(): Promise<boolean> {
-  try { const { data: { user } } = await createClient().auth.getUser(); return !!user } catch { return false }
-}
-
 export async function GET(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  const auth = req.headers.get('authorization') || ''
-  const isCron = secret ? auth === 'Bearer ' + secret : !!req.headers.get('x-vercel-cron')
   const sp = new URL(req.url).searchParams
   const digest = sp.get('digest') === '1'
   const dry = sp.get('dry') === '1'
-  const me = await signedIn()
-  if (dry ? !me : (!isCron && !me)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (dry) {
+    const g = await requireUser()
+    if (!g.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  } else {
+    const gate = await requireCron(req)
+    if (!gate.ok) return gate.res
+  }
 
   try {
     if (digest) {

@@ -7,24 +7,18 @@ import { bustOpsDay } from '@/lib/ops-day'
 import { withRouteReceipt, withReceipt as receipted } from '@/lib/automation-runs'
 import { assignVendorTasks } from '@/lib/vendor-assign'
 import { syncGarden } from '@/lib/garden/sync'
-import { tooSoon } from '@/lib/cron-auth'
+import { requireCron, tooSoon } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 // Scheduled refresh of the Breezeway task mirror (assignees) so the scheduler
 // stays current without waiting on webhooks. Wired to a Vercel cron in
-// vercel.json (every 2 hours). If CRON_SECRET is set, requires the matching
-// bearer token (Vercel sends it automatically); otherwise runs open so the
-// cron works without extra configuration.
+// vercel.json (every 30 minutes). Auth: the scheduler's bearer, or a signed-in
+// admin (lib/cron-auth requireCron).
 async function run(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = req.headers.get('authorization') || ''
-    if (auth !== 'Bearer ' + secret) {
-      return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-    }
-  }
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
   const result = await syncBreezewayTasks(250000)
   // Field replies written inside Breezeway come back into the app threads and notify whoever
   // is following that task. Best effort - a comment failure must never fail the task mirror.

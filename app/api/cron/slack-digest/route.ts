@@ -12,15 +12,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { runDigest } from '@/lib/slack-alerts'
 import { dispatchApproved } from '@/lib/slack-queue'
 import { botConnected } from '@/lib/slack'
+import { requireCron } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 async function run(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  if (secret && req.headers.get('authorization') !== 'Bearer ' + secret) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
   if (!(await botConnected())) return NextResponse.json({ ok: true, skipped: 'Slack bot not connected' })
   const digest = await runDigest().catch((e: any) => ({ error: String(e && e.message) }))
   const dispatched = await dispatchApproved().catch(() => ({ sent: 0, failed: 0 }))

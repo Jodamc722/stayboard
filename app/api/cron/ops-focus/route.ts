@@ -22,7 +22,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { buildOpsFocus } from '@/lib/ops-focus'
 import { getSetting, setSetting } from '@/lib/app-settings'
-import { cronAllowed } from '@/lib/cron-auth'
+import { requireCron } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
@@ -44,8 +44,9 @@ export async function POST(req: NextRequest) { return run(req) }
 export async function GET(req: NextRequest) { return run(req) }
 
 async function run(req: NextRequest) {
-  const allowed = cronAllowed(req)
-  if (!allowed.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // The scheduler's bearer, or a signed-in admin (?force=1 to run outside a slot).
+  const allowed = await requireCron(req)
+  if (!allowed.ok) return allowed.res
 
   const { hour, date } = etParts()
   const force = req.nextUrl.searchParams.get('force') === '1'

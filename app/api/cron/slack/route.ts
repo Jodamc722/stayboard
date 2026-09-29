@@ -8,8 +8,7 @@
 // finds nothing worth saying, and returns a skip. A quiet day produces zero Slack messages.
 //
 // BARE PATH ON PURPOSE — a Vercel cron pointed at a path WITH A QUERY STRING never fires.
-// Auth matches the other crons: enforce the bearer token when CRON_SECRET is set, otherwise run
-// open so the schedule works without extra configuration.
+// Auth: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron).
 import { NextRequest, NextResponse } from 'next/server'
 import {
   runLateCleanAlert, runGlitchAlert, runOvertimeAlert,
@@ -19,15 +18,14 @@ import {
 } from '@/lib/slack-alerts'
 import { expireStale, dispatchApproved } from '@/lib/slack-queue'
 import { botConnected } from '@/lib/slack'
+import { requireCron } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 async function run(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  if (secret && req.headers.get('authorization') !== 'Bearer ' + secret) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
 
   const expired = await expireStale().catch(() => 0)
 

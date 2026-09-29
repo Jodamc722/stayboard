@@ -4,11 +4,12 @@
 //                                      already exists when its owner's morning email is built)
 //   GET ?dry=1                         signed-in only: which series are due, nothing created
 //
-// House auth: CRON_SECRET bearer when set, else Vercel's x-vercel-cron header; a signed-in person
-// may run it by hand. Idempotent — the schedule moves with the instance, so running twice in a
-// morning creates nothing the second time.
+// Auth: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron); a dry run is
+// open to any active team member. Idempotent — the schedule moves with the instance, so running
+// twice in a morning creates nothing the second time.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
+import { requireUser } from '@/lib/access'
+import { requireCron } from '@/lib/cron-auth'
 import { withReceipt } from '@/lib/automation-runs'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { runRecurrences } from '@/lib/project-templates'
@@ -17,17 +18,15 @@ import { todayISO } from '@/lib/projects-shared'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
-async function signedIn(): Promise<boolean> {
-  try { const { data: { user } } = await createClient().auth.getUser(); return !!user } catch { return false }
-}
-
 export async function GET(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  const auth = req.headers.get('authorization') || ''
-  const isCron = secret ? auth === 'Bearer ' + secret : !!req.headers.get('x-vercel-cron')
   const dry = new URL(req.url).searchParams.get('dry') === '1'
-  const me = await signedIn()
-  if (dry ? !me : (!isCron && !me)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (dry) {
+    const g = await requireUser()
+    if (!g.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  } else {
+    const gate = await requireCron(req)
+    if (!gate.ok) return gate.res
+  }
   const today = todayISO()
   try {
     if (dry) {

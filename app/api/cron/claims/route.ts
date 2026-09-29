@@ -10,10 +10,10 @@
 // not shout every single day.
 //
 // BARE PATH ON PURPOSE — a Vercel cron pointed at a path WITH A QUERY STRING never fires.
-// Auth matches the other crons: enforce the bearer token when CRON_SECRET is set, otherwise run
-// open so the schedule works without extra configuration.
+// Auth: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron).
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { requireCron } from '@/lib/cron-auth'
 import { notify } from '@/lib/notify'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { nextCheckInMap } from '@/lib/claim-turnover'
@@ -32,11 +32,8 @@ const OPEN_STAGES = ['draft', 'review', 'ready']
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
 async function run(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = req.headers.get('authorization') || ''
-    if (auth !== 'Bearer ' + secret) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
   const started = Date.now()
   const today = todayET()
   try {

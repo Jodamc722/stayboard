@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { syncReservations } from '@/lib/guesty'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { bustOpsDay } from '@/lib/ops-day'
+import { requireCron } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -14,14 +15,10 @@ export const maxDuration = 60
 // (a bare path, same schedule style) stayed at 5 minutes. A stale booking feed is how a walk-in
 // reaches the property before the sheet does, so this gets its own plain path.
 //
-// Auth matches the Breezeway cron exactly: enforce the bearer token when CRON_SECRET is set,
-// otherwise run open so the schedule works without extra configuration.
+// Auth: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron).
 async function run(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = req.headers.get('authorization') || ''
-    if (auth !== 'Bearer ' + secret) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
   const started = Date.now()
   const full = new URL(req.url).searchParams.get('full') === '1'
   let since: string | null = null

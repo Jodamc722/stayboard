@@ -13,9 +13,9 @@
 // picks up where it left off; the current and previous month are always re-swept because late
 // journal entries and re-recognitions land there.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { hasEditCookie } from '@/lib/edit-access'
+import { requireLevel } from '@/lib/access'
+import { requireCron } from '@/lib/cron-auth'
 import { syncOwners, syncOwnerStatements, syncLedgerMonth, ensureMonths, pendingMonths } from '@/lib/guesty-owner-sync'
 
 export const dynamic = 'force-dynamic'
@@ -25,33 +25,29 @@ const etMonth = () =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit' })
     .format(new Date()).slice(0, 7)
 
-// WHY THIS FAILS OPEN WHEN NO SECRET IS SET — the same law as /api/sync/guesty and the cron routes.
-// A Vercel cron sends no cookie, so falling through to the signed-in-user check rejected EVERY
-// scheduled run: the hourly sweep ('20 * * * *') had never once fired. The owner mirror only moved
-// when a human triggered it, and it aged silently — on 2026-08-05 the audit read "no July statements
-// generated" while 43 finished statements sat in Guesty, and on 2026-08-11 the board was six days
-// stale again. Nothing reports a cron that never ran.
-//
-// With CRON_SECRET set the bearer token is required (that is the right end state). Without it the
-// sync runs open so the schedule works — this route pulls our own accounting data from Guesty into
-// our own mirror: it returns no guest information and writes nothing outside the mirror tables.
-async function authorize(req: NextRequest): Promise<boolean> {
-  const auth = req.headers.get('authorization') || ''
-  if (process.env.CRON_SECRET && auth === 'Bearer ' + process.env.CRON_SECRET) return true
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (user || hasEditCookie()) return true
-  return !process.env.CRON_SECRET
-}
+// WHO MAY RUN IT.
+//   · The sweep (the default, ?only=owners, ?month=, ?months=) writes our mirror and spends the
+//     Guesty accounting budget: the scheduler's bearer, or a signed-in admin (lib/cron-auth).
+//   · The read-only diagnostics (?gap, ?peek, ?status) return owner money and guest names: anyone
+//     who holds Owner Audit — the same key the page, the sidebar and /api/owner-audit use. They
+//     used to accept ANY Supabase session.
+// No secret in a production build now denies instead of running open.
+const isReadOnly = (qs: URLSearchParams) => qs.get('gap') === '1' || !!qs.get('peek') || qs.get('status') === '1'
 
 export async function POST(req: NextRequest) {
-  if (!(await authorize(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const started = Date.now()
   const qs = new URL(req.url).searchParams
+  if (isReadOnly(qs)) {
+    const g = await requireLevel('owner-audit', 'view')
+    if (!g.ok) return g.res
+  } else {
+    const gate = await requireCron(req)
+    if (!gate.ok) return gate.res
+  }
+  const started = Date.now()
   const sb = supabaseAdmin()
 
   try {
-    // ── GAP: the month's RESERVATIONS against the month's STATEMENTS. Read-only, signed-in only.
+    // ── GAP: the month's RESERVATIONS against the month's STATEMENTS. Read-only (gated above).
     //    ?gap=1&month=YYYY-MM
     // The audit reads statements; this reads the other side and asks what does not line up:
     //   · a stay that earned money and never reached a statement (revenue nobody billed)
@@ -60,9 +56,6 @@ export async function POST(req: NextRequest) {
     //     describing a booking that no longer looks like that, which is the failure mode you only
     //     get once statements exist.
     if (qs.get('gap') === '1') {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return NextResponse.json({ error: 'sign in to use gap' }, { status: 403 })
       const month = String(qs.get('month') || etMonth()).slice(0, 7)
       const [y, m] = month.split('-').map(Number)
       const start = new Date(Date.UTC(y, m - 1, 1)).toISOString().slice(0, 10)
@@ -166,16 +159,13 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // ── PEEK: why doesn't this statement tie? Read-only, signed-in users only.
+    // ── PEEK: why doesn't this statement tie? Read-only (gated above).
     //    ?peek=<owner name fragment>&month=YYYY-MM
     // Returns Guesty's own statement object next to OUR ledger arithmetic, split by charge code
     // AND by the recognized flag — because the recognized slice is what the audit reads, so
     // anything sitting outside it is invisible money and the usual reason a statement is "off".
     const peek = qs.get('peek')
     if (peek) {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return NextResponse.json({ error: 'sign in to use peek' }, { status: 403 })
       const month = String(qs.get('month') || etMonth()).slice(0, 7)
       const { data: st } = await sb.from('guesty_owner_statements')
         .select('id, owner_id, owner_name, period_month, ending_balance, due_to_owner, raw')

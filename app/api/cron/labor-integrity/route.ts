@@ -11,10 +11,9 @@
 //   GET  (cron)         → run all checks over the last 30 days; email Jon only on failures
 //   GET ?preview=1      → signed-in: run the checks and return them as JSON, sending nothing
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { laborEconomics } from '@/lib/labor-econ'
 import { sendGmail } from '@/lib/gmail-send'
-import { cronAllowed } from '@/lib/cron-auth'
+import { requireCron } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -28,15 +27,10 @@ type Check = { key: string; ok: boolean; level: 'red' | 'amber'; what: string; f
 export async function GET(req: NextRequest) {
   const sp = new URL(req.url).searchParams
   const preview = sp.get('preview')
-  // Scheduler bearer, or a signed-in person. This route emails the owner and answered anonymous
-  // callers with the full payroll check until 2026-09-18.
-  if (!cronAllowed(req).viaSecret) {
-    try {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-    } catch { return NextResponse.json({ error: 'unauthorized' }, { status: 401 }) }
-  }
+  // Scheduler bearer, or a signed-in admin (lib/cron-auth requireCron). This route emails the
+  // owner and answered anonymous callers with the full payroll check until 2026-09-18.
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
 
   const yd = dISO(new Date(Date.now() - 864e5))
   const d30 = dISO(new Date(Date.now() - 30 * 864e5))

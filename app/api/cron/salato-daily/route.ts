@@ -14,13 +14,12 @@
 // GET ?preview=1     → the HTML, no send (signed in)
 // GET ?test=1        → send to YOU only
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { sendGmail } from '@/lib/gmail-send'
 import { isLiveStay } from '@/lib/stay-status'
 import { salatoListings } from '@/lib/salato-units'
-import { cronAllowed } from '@/lib/cron-auth'
+import { requireCron } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -51,18 +50,13 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams
   const preview = sp.get('preview') === '1'
   const test = sp.get('test') === '1'
-  // WHO IS ALLOWED TO SET THIS OFF. An unqualified GET here is the REAL SEND, not a preview, and
-  // until 2026-09-16 it had no auth of any kind: anyone who knew the URL could trigger the Salato
-  // daily email from a browser, as many times as they liked. preview/test already required a session; the send
-  // path required nothing. It now takes the cron bearer, which Vercel puts on every scheduled call
-  // (this job is in vercel.json), while preview and test keep their session check below.
-  {
-    const gate = cronAllowed(req)
-    if (!gate.ok && !(preview || test)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  // WHO IS ALLOWED TO SET THIS OFF. An unqualified GET here is the REAL SEND, not a preview. The
+  // scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron); preview and test are a
+  // person's actions, so the bearer alone does not open them.
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
+  const user = gate.access ? gate.access.user : null
   try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
     if ((preview || test) && !user) return NextResponse.json({ error: 'sign in' }, { status: 401 })
 
     const db = supabaseAdmin()

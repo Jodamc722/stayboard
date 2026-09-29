@@ -1,47 +1,70 @@
-// WHY FIVE SCHEDULED JOBS HAD NEVER RUN.
+// WHO MAY RUN A SCHEDULED JOB.
 //
-// This app grew two different ways of authorising a cron:
+// History, briefly: this app grew two ways of authorising a cron — an OPEN pattern ("require the
+// bearer when CRON_SECRET is set, otherwise run") and a GATED one ("bearer, or a signed-in
+// session") — at a time when CRON_SECRET was not set, so the gated five never ran on schedule and
+// the open twenty ran for anyone who knew the URL. CRON_SECRET IS SET now (Vercel sends it as a
+// bearer on every scheduled call), which makes both patterns the same thing in practice: the
+// bearer, or nothing.
 //
-//   THE OPEN PATTERN (reservations, breezeway-tasks, slack, watchdog, ~20 others):
-//     if (CRON_SECRET is set) require the bearer token — otherwise run.
-//     With no secret configured these run fine, which is why the booking feed is always current.
+// Two things were still wrong with that (2026-09-28 audit, 07 B-4/B-13, 03 #26):
+//   1. It failed OPEN. If the env var ever went missing — a new project, a copied deployment, a
+//      typo — every job that writes Guesty calendars, hammers Breezeway or spends model money
+//      would run for any anonymous caller. A missing secret in a production build now denies.
+//   2. The manual paths trusted too little or too much. Some accepted ANY signed-in session
+//      (a disabled employee's still-valid session included), some trusted a spoofable
+//      `x-vercel-cron` header, and the bearer-only ones left no way for an admin to press
+//      "Run now" at all.
 //
-//   THE GATED PATTERN (guest-comms, sentiment/scan, eve-audit, eve-metrics, eve/learn):
-//     viaCron = CRON_SECRET is set AND the bearer matches — otherwise require a logged-in session.
-//     With no secret configured, Vercel's scheduler sends no bearer, fails the session check, and
-//     gets a 401. Every time. Silently.
-//
-// CRON_SECRET has never been set on this project, so those five have never once run on schedule.
-// Nothing alerted, because a 401 is a perfectly healthy-looking response: the guest conversations
-// feed sat hours stale, sentiment went unscanned, and Eve's nightly learning, her daily baselines
-// and her own standing audit were simply dark — while every dashboard reported green.
-//
-// THE FIX, AND WHY IT IS NOT JUST "MAKE THEM OPEN".
-// Two of these five spend real money on every run (sentiment/scan and eve/learn both call
-// Anthropic). An open URL that costs money each time it is fetched is a bill waiting to happen —
-// so opening them the way the other twenty are opened would trade a silent outage for a silent
-// invoice.
-//
-// So: run when nobody can prove who they are, but never more often than the schedule intends.
-// `tooSoon()` reads the run ledger the automations work added today and refuses a repeat inside the
-// job's own interval. The worst an anonymous caller can do is trigger the run that was about to
-// happen anyway. Setting CRON_SECRET still tightens it back to a bearer check — this makes the
-// secret an improvement rather than a prerequisite, which is the property it should have had from
-// the start.
+// requireCron() is the one answer: the scheduler's bearer, or a signed-in admin (or a caller-given
+// stricter/looser gate for the few jobs a non-admin legitimately presses), or nothing.
 import 'server-only'
+import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { supabaseAdmin } from './supabase-admin'
+import { requireAdmin, type Access } from './access'
+
+/** A deployed build. Local `next dev` is the only place a missing secret may mean "open". */
+function isProductionBuild(): boolean {
+  return process.env.VERCEL_ENV === 'production' || process.env.NODE_ENV === 'production'
+}
 
 /**
- * Is this request allowed to run a scheduled job?
- * When CRON_SECRET is set, only the matching bearer passes (Vercel sends it on every cron call).
- * When it is not set, everything passes — and the caller must additionally respect tooSoon().
+ * Is this request the scheduler? With CRON_SECRET set, only the matching bearer passes (Vercel
+ * sends it on every cron call). Without it: denied in any deployed build, open only in local dev.
  */
-export function cronAllowed(req: NextRequest): { ok: boolean; viaSecret: boolean } {
+export function cronAllowed(req: NextRequest | Request): { ok: boolean; viaSecret: boolean } {
   const secret = process.env.CRON_SECRET
-  if (!secret) return { ok: true, viaSecret: false }
+  if (!secret) return { ok: !isProductionBuild(), viaSecret: false }
   const auth = req.headers.get('authorization') || ''
-  return { ok: auth === 'Bearer ' + secret, viaSecret: auth === 'Bearer ' + secret }
+  const ok = auth === 'Bearer ' + secret
+  return { ok, viaSecret: ok }
+}
+
+export type CronGate =
+  | { ok: true; viaSecret: boolean; access: Access | null; res?: undefined }
+  | { ok: false; viaSecret: false; access: null; res: NextResponse }
+
+type FallbackGate = () => Promise<{ ok: boolean; access?: Access | null }>
+
+/**
+ * The scheduler (bearer), or a person allowed to press "Run now" — a signed-in admin by default,
+ * or whatever `fallback` gate the route passes (e.g. requireUser for a Sync button the whole team
+ * uses). `access` is set when a person ran it, null when the scheduler did.
+ *
+ * A refusal is ALWAYS a 401 — never the fallback's 403 — so withRouteReceipt treats an
+ * unauthorised poke as "not a run" rather than as a failed run.
+ */
+export async function requireCron(req: NextRequest | Request, opts: { fallback?: FallbackGate } = {}): Promise<CronGate> {
+  const c = cronAllowed(req)
+  if (c.viaSecret) return { ok: true, viaSecret: true, access: null }
+  try {
+    const g = opts.fallback ? await opts.fallback() : await requireAdmin()
+    if (g.ok) return { ok: true, viaSecret: false, access: g.access || null }
+  } catch { /* no session to read (the scheduler, a script) — fall through */ }
+  // Local development without a secret: open, as it always was.
+  if (c.ok) return { ok: true, viaSecret: false, access: null }
+  return { ok: false, viaSecret: false, access: null, res: NextResponse.json({ error: 'unauthorized' }, { status: 401 }) }
 }
 
 /**
@@ -49,8 +72,7 @@ export function cronAllowed(req: NextRequest): { ok: boolean; viaSecret: boolean
  * Returns the skip payload to hand straight back, or null to proceed.
  *
  * Deliberately fails OPEN (returns null) if the ledger cannot be read: a throttle that cannot see
- * the history must not become the reason a job never runs — that is the exact failure this whole
- * file exists to undo.
+ * the history must not become the reason a job never runs.
  */
 export async function tooSoon(name: string, minMinutes: number): Promise<{ skipped: string; lastRunAt: string } | null> {
   try {

@@ -12,31 +12,18 @@
 // success response).
 import { NextRequest, NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
-import { createClient } from '@/lib/supabase-server'
 import { syncReviewsDetailed } from '@/lib/guesty'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { requireCron } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
-async function signedIn(): Promise<boolean> {
-  try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    return !!user
-  } catch { return false }
-}
-
 export async function GET(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  const auth = req.headers.get('authorization') || ''
-  // ANONYMOUS CALLERS ARE NOT CRON (2026-09-02). This read `|| auth === ''`, and an anonymous
-  // request sends no Authorization header — so `auth` IS '' and the clause was true for exactly the
-  // caller it was meant to exclude. CRON_SECRET has never been set on this project, so that branch
-  // was the live one. Vercel's scheduler stamps `x-vercel-cron` on every call; that header is the
-  // whole of the leniency it needs. Same shape as app/api/cron/suggestions.
-  const isCron = secret ? auth === 'Bearer ' + secret : !!req.headers.get('x-vercel-cron')
-  if (!isCron && !(await signedIn())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // The scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron). The old
+  // `x-vercel-cron` header leniency is gone — it was spoofable by anyone.
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
 
   const startedAt = Date.now()
   try {

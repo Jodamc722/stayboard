@@ -7,20 +7,18 @@
 // does nothing, same contract as auto-inspections.
 //
 // BARE PATH ON PURPOSE (a Vercel cron with a query string never fires — see reservation-notices).
-// Auth matches the other crons: enforce the bearer token when CRON_SECRET is set.
+// Auth: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron).
 import { NextRequest, NextResponse } from 'next/server'
 import { getGuestOrdersCfg, createDueLinks, pushDue } from '@/lib/guest-orders'
 import { recordRun } from '@/lib/automation-runs'
+import { requireCron } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 async function run(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = req.headers.get('authorization') || ''
-    if (auth !== 'Bearer ' + secret) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
   const started = Date.now()
   const cfg = await getGuestOrdersCfg()
   if (!cfg.enabled) return NextResponse.json({ ok: true, skipped: 'guest orders automation is off (App settings → Guest orders)' })

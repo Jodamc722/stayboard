@@ -14,7 +14,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { eveGate } from '../../agent/route'
 import { refreshResponseStats } from '@/lib/response-times'
 import { recordRun } from '@/lib/automation-runs'
-import { cronAllowed, tooSoon } from '@/lib/cron-auth'
+import { requireCron, tooSoon } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -23,24 +23,15 @@ export async function POST(req: NextRequest) { return run(req) }
 export async function GET(req: NextRequest) { return run(req) }
 
 async function run(req: NextRequest) {
-  // AUTH (fixed 2026-08-26). This used to be: bearer-or-a-logged-in-session. With CRON_SECRET
-  // unset — which it has always been — Vercel's scheduler had no bearer, failed the session check,
-  // and got a 401 on every single run. See lib/cron-auth.ts for the whole story.
-  const secret = process.env.CRON_SECRET
-  const auth = req.headers.get('authorization') || ''
-  const viaCron = !!secret && auth === `Bearer ${secret}`
-  const allowed = cronAllowed(req)
-  let human = false
-  if (!allowed.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  if (!allowed.viaSecret) {
-    // No secret configured: a signed-in admin runs it on demand, anyone else gets the scheduled
-    // cadence and no more.
-    const gate = await eveGate()
-    human = gate.ok
-    if (!human) {
-      const skip = await tooSoon('guest-comms', 10)
-      if (skip) return NextResponse.json({ ok: true, ...skip })
-    }
+  // AUTH: the scheduler's bearer, or an Eve admin running it on demand (lib/cron-auth requireCron).
+  const gate = await requireCron(req, { fallback: eveGate })
+  if (!gate.ok) return gate.res
+  const viaCron = gate.viaSecret
+  const human = !!gate.access
+  if (!viaCron && !human) {
+    // Local dev without a secret: the scheduled cadence and no more.
+    const skip = await tooSoon('guest-comms', 10)
+    if (skip) return NextResponse.json({ ok: true, ...skip })
   }
 
   const sp = new URL(req.url).searchParams

@@ -10,13 +10,12 @@
 //
 // So on a heavy turn day this route creates NOTHING and says so. That is the feature working.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { recordRun } from '@/lib/automation-runs'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sweepUnit, deptOf } from '@/lib/pending-work'
 import { closeStaleCleans } from '@/lib/stale-cleans'
 import { closeStrayInspections } from '@/lib/task-audit'
-import { tooSoon } from '@/lib/cron-auth'
+import { requireCron, tooSoon } from '@/lib/cron-auth'
 import { buildSuggestions, createFromSuggestion, logAccepted, getCadenceCfg } from '@/lib/suggestions'
 
 export const dynamic = 'force-dynamic'
@@ -24,37 +23,17 @@ export const maxDuration = 120
 
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 
-async function signedIn(): Promise<boolean> {
-  try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    return !!user
-  } catch { return false }
-}
-
 export async function GET(req: NextRequest) {
   // ── WHO MAY RUN THE CREATING PATH ─────────────────────────────────────────────────────────────
-  // Audit, 2026-08-27: this used to accept `auth === ''` when CRON_SECRET is unset — and
-  // lib/cron-auth's own header records that CRON_SECRET has never been set on this project. That
-  // made a plain anonymous GET from anywhere on the internet enough to run the path that CREATES
-  // work in Breezeway and assigns it to named staff.
-  //
-  // The lenient fallback exists so Vercel's scheduler can run jobs without a secret, and Vercel
-  // stamps `x-vercel-cron` on every one of its calls. That header is the whole of the leniency it
-  // needs; a bare unauthenticated request is not the scheduler and gets nothing.
-  const secret = process.env.CRON_SECRET
-  const auth = req.headers.get('authorization') || ''
-  const isCron = secret ? auth === 'Bearer ' + secret : !!req.headers.get('x-vercel-cron')
+  // This path CREATES work in Breezeway and assigns it to named staff. The scheduler's bearer, or
+  // a signed-in admin (lib/cron-auth requireCron) — nothing anonymous, no spoofable header.
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
   const preview = new URL(req.url).searchParams.get('preview') === '1'
-  const me = await signedIn()
+  const me = !!gate.access
 
-  // PREVIEW NAMES UNITS AND PEOPLE. The lenient no-CRON_SECRET cron heuristic exists so Vercel's
-  // scheduler can RUN the job, never so an anonymous caller can read who is working where today.
-  if (preview) {
-    if (!me) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  } else if (!isCron && !me) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  // PREVIEW NAMES UNITS AND PEOPLE — a person's view, never the scheduler's.
+  if (preview && !me) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   const date = ymd(new Date())
 

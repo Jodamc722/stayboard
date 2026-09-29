@@ -5,7 +5,7 @@
 // it is given. Time-boxed and resumable; a backlog drains over several passes, newest calls first.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { cronAllowed } from '@/lib/cron-auth'
+import { requireCron } from '@/lib/cron-auth'
 import { talkrouteConfigured } from '@/lib/talkroute'
 import { processCallIntel } from '@/lib/call-notes'
 
@@ -13,8 +13,8 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 export async function GET(req: NextRequest) {
-  const allowed = cronAllowed(req)
-  if (!allowed.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const allowed = await requireCron(req)
+  if (!allowed.ok) return allowed.res
   if (!(await talkrouteConfigured())) return NextResponse.json({ ok: true, skipped: 'talkroute not connected' })
   const t0 = Date.now()
   try {

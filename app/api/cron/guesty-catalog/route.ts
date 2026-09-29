@@ -7,24 +7,18 @@
 // button still runs the whole set through /api/sync/guesty.
 import { NextRequest, NextResponse } from 'next/server'
 import { runFullSync } from '@/lib/guesty'
-import { cronAllowed, tooSoon } from '@/lib/cron-auth'
+import { requireCron, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
-import { createClient } from '@/lib/supabase-server'
 import { runChannelCheck } from '@/lib/channel-check'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 export async function GET(req: NextRequest) {
-  // CRON_SECRET is set on this project, so the scheduler always carries the bearer; the
-  // x-vercel-cron header alone is spoofable and is not accepted (probed anonymously 2026-09-18).
-  const allowed = cronAllowed(req).viaSecret
-  if (!allowed) {
-    try {
-      const { data: { user } } = await createClient().auth.getUser()
-      if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-    } catch { return NextResponse.json({ error: 'unauthorized' }, { status: 401 }) }
-  }
+  // The scheduler's bearer, or a signed-in admin. The x-vercel-cron header alone is spoofable and
+  // is not accepted (probed anonymously 2026-09-18).
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
   // Whoever the caller is, the catalog does not change by the minute.
   const skip = await tooSoon('guesty-catalog', 20)
   if (skip) return NextResponse.json({ ok: true, ...skip })

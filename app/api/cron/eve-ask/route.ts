@@ -12,8 +12,7 @@
 // GET ?preview=1  → build the batch and send nothing. For checking what she WOULD ask.
 // GET ?force=1    → send one item now, ignoring the daily budget. Signed-in humans only.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
-import { cronAllowed, tooSoon } from '@/lib/cron-auth'
+import { requireCron, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
 import { runMorningAsk, buildBatch, expireStaleAsks, askSettings, recipients } from '@/lib/eve/ask'
 import { expireUnanswered } from '@/lib/eve/ralph'
@@ -22,22 +21,15 @@ import { flushDeferred } from '@/lib/eve/agent-mode'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
-async function signedIn(): Promise<boolean> {
-  try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    return !!user
-  } catch { return false }
-}
-
 export async function GET(req: NextRequest) {
-  const allowed = cronAllowed(req)
-  if (!allowed.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // The scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron).
+  const allowed = await requireCron(req)
+  if (!allowed.ok) return allowed.res
 
   const url = new URL(req.url)
   const preview = url.searchParams.get('preview') === '1'
   const force = url.searchParams.get('force') === '1'
-  const human = await signedIn()
+  const human = !!allowed.access
 
   // Costs nothing and sends nothing: anyone allowed this far may look.
   if (preview) {

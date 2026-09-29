@@ -11,10 +11,9 @@ import { studyPending } from '@/lib/eve/study'
 import { learnLingo } from '@/lib/eve/voice'
 import { askCalibrationQuestions } from '@/lib/eve/operating-model'
 import { runLearningAudit } from '@/lib/eve/learning-audit'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { recordRun } from '@/lib/automation-runs'
-import { cronAllowed, tooSoon } from '@/lib/cron-auth'
+import { requireCron, tooSoon } from '@/lib/cron-auth'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 
@@ -44,19 +43,14 @@ function parseJson(raw: string): any | null {
 // portfolio shape and Eve's own failures — see lib/eve/sweep.ts for why those count records rather
 // than asking a model what is true.
 export async function POST(req: NextRequest) {
-  // AUTH (fixed 2026-08-26). Was bearer-or-session; CRON_SECRET has never been set, so the
-  // scheduler got a 401 four times a day and this pass has never once run on its own. It spends
-  // real money (the FAQ/complaint phase calls Anthropic), so without a secret it runs for anyone —
-  // but never more than once every three hours. See lib/cron-auth.ts.
-  const allowed = cronAllowed(req)
-  if (!allowed.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  if (!allowed.viaSecret) {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      const skip = await tooSoon('eve-learn', 170)
-      if (skip) return NextResponse.json({ ok: true, ...skip })
-    }
+  // AUTH: the scheduler's bearer, or a signed-in admin pressing "Learn now" in Users & admin → Eve
+  // (lib/cron-auth requireCron). It spends real money (the FAQ/complaint phase calls Anthropic),
+  // so nothing anonymous — and local dev without a secret still gets the three-hour ceiling.
+  const allowed = await requireCron(req)
+  if (!allowed.ok) return allowed.res
+  if (!allowed.viaSecret && !allowed.access) {
+    const skip = await tooSoon('eve-learn', 170)
+    if (skip) return NextResponse.json({ ok: true, ...skip })
   }
   const days = Math.min(120, Math.max(7, Number(new URL(req.url).searchParams.get('days')) || 60))
 

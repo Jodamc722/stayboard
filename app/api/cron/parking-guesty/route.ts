@@ -13,7 +13,7 @@
 // the door codes and the guest-order links down with it, while re-PUTting the custom-field array
 // of live reservations on every pass.
 import { NextRequest, NextResponse } from 'next/server'
-import { cronAllowed, tooSoon } from '@/lib/cron-auth'
+import { requireCron, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
 import { retryPendingGuestyWrites } from '@/lib/parking'
 
@@ -21,10 +21,9 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 export async function GET(req: NextRequest) {
-  const allow = cronAllowed(req)
-  if (!allow.ok) return NextResponse.json({ ok: false, error: 'not authorised' }, { status: 401 })
-  // With no CRON_SECRET set, anyone can reach this URL — so the ledger is the ceiling. The worst an
-  // anonymous caller achieves is the run that was about to happen anyway.
+  const allow = await requireCron(req)
+  if (!allow.ok) return allow.res
+  // A person pressing it by hand still gets the job's own cadence as a ceiling.
   if (!allow.viaSecret) {
     const skip = await tooSoon('parking-guesty', 45)
     if (skip) return NextResponse.json({ ok: true, ...skip })

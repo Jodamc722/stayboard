@@ -14,7 +14,7 @@
 // history is not what the clock was ever about.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { cronAllowed, tooSoon } from '@/lib/cron-auth'
+import { requireCron, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
@@ -48,14 +48,10 @@ export async function GET(req: NextRequest) { return run(req) }
 export async function POST(req: NextRequest) { return run(req) }
 
 async function run(req: NextRequest) {
-  const allowed = cronAllowed(req)
-  if (!allowed.ok) {
-    // An Eve admin may run it by hand, the same as the other jobs — with CRON_SECRET set there is
-    // otherwise no way to check that the sweep works without waiting a day to find out.
-    const { eveGate } = await import('../../agent/route')
-    const gate = await eveGate()
-    if (!gate.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  // The scheduler's bearer, or an Eve admin by hand — with CRON_SECRET set there is otherwise no
+  // way to check that the sweep works without waiting a day to find out.
+  const allowed = await requireCron(req, { fallback: async () => (await import('../../agent/route')).eveGate() })
+  if (!allowed.ok) return allowed.res
   if (!allowed.viaSecret) {
     const skip = await tooSoon('trash-sweep', 60)
     if (skip) return NextResponse.json({ ok: true, ...skip })

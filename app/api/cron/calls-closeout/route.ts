@@ -15,7 +15,7 @@
 // rows already completed or already incomplete are never touched, so re-running is harmless.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { cronAllowed } from '@/lib/cron-auth'
+import { requireCron } from '@/lib/cron-auth'
 import { ymdET } from '@/lib/team-schedule'
 import { closeOutCalls } from '@/lib/call-desk'
 
@@ -23,8 +23,8 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
-  const allowed = cronAllowed(req)
-  if (!allowed.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const allowed = await requireCron(req)
+  if (!allowed.ok) return allowed.res
   const startedAt = Date.now()
   const today = ymdET(new Date())
   try {

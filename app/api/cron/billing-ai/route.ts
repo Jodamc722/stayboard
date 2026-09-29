@@ -3,6 +3,7 @@
 // verdict before the statement closes. Same bearer rule as every other cron here.
 import { NextRequest, NextResponse } from 'next/server'
 import { judgeRoutineTasks } from '@/lib/billing-ai'
+import { requireCron } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -13,11 +14,8 @@ function shiftMonth(ym: string, n: number): string {
 }
 
 export async function GET(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = req.headers.get('authorization') || ''
-    if (auth !== 'Bearer ' + secret) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
   const month = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()).slice(0, 7)
   const out: Record<string, any> = {}
   for (const m of [month, shiftMonth(month, -1)]) {

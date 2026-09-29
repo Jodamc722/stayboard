@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { runSyncAlert } from '@/lib/slack-alerts'
+import { requireCron } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 // 2026-08-20: this was 30 — the LOWEST maxDuration of any cron in the app, set back when the
@@ -117,11 +118,8 @@ function withBudget<T>(work: Promise<T>, ms: number, whenLate: T): Promise<T> {
 
 
 async function run(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = req.headers.get('authorization') || ''
-    if (auth !== 'Bearer ' + secret) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
   const db = supabaseAdmin()
   const [gs, bz] = await Promise.all([
     db.from('guesty_sync_status').select('entity,last_sync_at,last_error').limit(50),

@@ -4,15 +4,16 @@
 // reads that page every morning, turns it into our Activation shape and writes it into the guide
 // so /guide/<slug> is never showing last month's line-up.
 //
-// GET  - what the Vercel cron calls (auth: CRON_SECRET bearer when configured, else open).
-// POST - what the admin "Sync now" button calls (auth: session, guide cookie, or admin password).
+// GET  - what the Vercel cron calls (auth: the CRON_SECRET bearer, or a signed-in admin).
+// POST - what the "Sync now" button calls (auth: an active team member, guide cookie, or admin password).
 //
 // SAFE MERGE: only items this job created (src: 'web') are replaced. Anything typed by hand on
 // the page survives, so a manual one-off is never wiped by the scrape.
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { createClient } from '@/lib/supabase-server'
+import { requireUser } from '@/lib/access'
+import { requireCron } from '@/lib/cron-auth'
 import { adminPasswordOk } from '@/lib/shareAuth'
 import { verifyEditToken } from '@/lib/edit-access'
 import { guideKey, normSlug, seedFor, todayIso, DOW_NAMES, type Guide, type Activation } from '@/lib/guide'
@@ -177,27 +178,23 @@ function slugOf(req: NextRequest): string {
   return normSlug(new URL(req.url).searchParams.get('slug') || 'garden') || 'garden'
 }
 
-// Vercel cron. Open when CRON_SECRET is unset so the schedule works without extra configuration.
+// Vercel cron: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron).
 export async function GET(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = req.headers.get('authorization') || ''
-    if (auth !== 'Bearer ' + secret) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
   const slugs = str(new URL(req.url).searchParams.get('slugs') || slugOf(req)).split(',').map(normSlug).filter(Boolean)
   const results: any[] = []
   for (const s of slugs.slice(0, 10)) results.push({ slug: s, ...(await run(s)) })
   return NextResponse.json({ ok: results.some(r => r.ok), results })
 }
 
-// The "Sync now" button on the page.
+// The "Sync now" button on the page: an active team member (the allowlist, not merely any
+// Supabase session — a disabled employee's session no longer counts), the guide edit cookie, or
+// the admin password.
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   let allowed = false
-  try {
-    const { data } = await createClient().auth.getUser()
-    allowed = !!(data && data.user)
-  } catch { allowed = false }
+  try { allowed = (await requireUser()).ok } catch { allowed = false }
   if (!allowed) { try { allowed = verifyEditToken(cookies().get(GUIDE_COOKIE)?.value) } catch { allowed = false } }
   if (!allowed) {
     const gate = await adminPasswordOk(str(body?.adminPassword))

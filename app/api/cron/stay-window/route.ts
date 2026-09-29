@@ -6,20 +6,17 @@
 // is Eastern, so the hour is read in Eastern and the schedule stays where Jon put it all year.
 //
 // BARE PATH ON PURPOSE — a Vercel cron pointed at a path WITH A QUERY STRING never fires.
-// Auth matches the other crons: enforce the bearer token when CRON_SECRET is set, otherwise run
-// open so the schedule works without extra configuration.
+// Auth: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron).
 import { NextRequest, NextResponse } from 'next/server'
 import { readConfig, writeConfig, runDirection, hourET, todayET } from '@/lib/stay-window'
+import { requireCron } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 async function run(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = req.headers.get('authorization') || ''
-    if (auth !== 'Bearer ' + secret) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
 
   const cfg = await readConfig()
   const hour = hourET()

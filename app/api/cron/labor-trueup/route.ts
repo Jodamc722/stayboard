@@ -22,7 +22,6 @@
 // GET ?preview=1     → return the HTML without sending or storing (signed in)
 // GET ?test=1        → send to YOU only
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { getOpsPresets } from '@/lib/app-settings'
@@ -34,7 +33,7 @@ import { getShifts } from '@/lib/homebase'
 import { getTimecards } from '@/lib/homebase-labor'
 import { getLaborSettings } from '@/lib/labor-settings'
 import { computeYesterdayLabor } from '@/lib/labor-daily'
-import { cronAllowed } from '@/lib/cron-auth'
+import { requireCron } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
@@ -90,18 +89,13 @@ async function send(req: NextRequest) {
   const preview = sp.get('preview') === '1'
   const test = sp.get('test') === '1'
   const force = sp.get('force') === '1'
-  // WHO IS ALLOWED TO SET THIS OFF. An unqualified GET here is the REAL SEND, not a preview, and
-  // until 2026-09-16 it had no auth of any kind: anyone who knew the URL could trigger the daily
-  // labor email, payroll figures and all, from a browser, as many times as they liked. preview/test already required a session; the send
-  // path required nothing. It now takes the cron bearer, which Vercel puts on every scheduled call
-  // (this job is in vercel.json), while preview and test keep their session check below.
-  {
-    const gate = cronAllowed(req)
-    if (!gate.ok && !(preview || test)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  // WHO IS ALLOWED TO SET THIS OFF. An unqualified GET here is the REAL SEND — payroll figures and
+  // all. The scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron); preview and test
+  // are a person's actions, so the bearer alone does not open them.
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
+  const user = gate.access ? gate.access.user : null
   try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
     if ((preview || test) && !user) return NextResponse.json({ error: 'sign in' }, { status: 401 })
 
     const now = new Date()

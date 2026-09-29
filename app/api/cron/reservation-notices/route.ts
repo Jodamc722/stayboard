@@ -8,12 +8,12 @@
 // on the booking feed, which sat 65 minutes stale behind "?only=reservations&fast=1"). Anything
 // this route needs to vary must be a default here, not a parameter in vercel.json.
 //
-// Auth matches the other crons: enforce the bearer token when CRON_SECRET is set, otherwise run
-// open so the schedule works without extra configuration.
+// Auth: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron).
 import { NextRequest, NextResponse } from 'next/server'
 import { pullNotices } from '@/lib/reservation-pull'
 import { runNoticeDrafts } from '@/lib/notice-drafts'
 import { getTaskAutomation } from '@/lib/auto-inspections'
+import { requireCron } from '@/lib/cron-auth'
 
 // GMAIL DRAFTS RIDE THIS CRON (2026-09-18). vercel.json sits at the 40-cron Pro cap and Eve's
 // weekly review needed a line, so /api/cron/notice-drafts lost its own schedule. It used to fire at
@@ -27,13 +27,11 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 async function run(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  const auth = req.headers.get('authorization') || ''
-  if (secret && auth !== 'Bearer ' + secret) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  // The queue fill stays open (see above); the Gmail drafting it now carries keeps the gate the old
-  // /api/cron/notice-drafts had — the scheduler's own call (x-vercel-cron) or the bearer — so an
-  // anonymous fetch in a drafting hour refills the desk and nothing more.
-  const isCron = secret ? auth === 'Bearer ' + secret : !!req.headers.get('x-vercel-cron')
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
+  // The Gmail drafting this cron carries runs only on the scheduler's own call (the bearer), in its
+  // five drafting hours — an admin pressing "Run now" refills the desk and nothing more.
+  const isCron = gate.viaSecret
   const started = Date.now()
   try {
     // 30 days ahead: far enough that a long-lead booking is on the desk well before its lead-time

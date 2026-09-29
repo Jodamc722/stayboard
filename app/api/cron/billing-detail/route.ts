@@ -20,6 +20,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { retrieveBreezewayTask, mapBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
 import { monthTasks } from '@/lib/billing'
 import { getSetting, setSetting } from '@/lib/app-settings'
+import { requireCron } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -35,16 +36,12 @@ function shiftMonth(ym: string, n: number): string {
   return d.toISOString().slice(0, 7)
 }
 
-// Auth matches every other cron in this app: enforce the bearer token when CRON_SECRET is set.
-// Until 2026-08-20 this route had no check of any kind — no session, no secret — while running
-// for up to five minutes, hammering the Breezeway API and writing to two tables. Anyone who
-// knew the URL could run it on a loop.
+// Auth: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron). Until 2026-08-20
+// this route had no check of any kind while running for up to five minutes, hammering the
+// Breezeway API and writing to two tables.
 export async function GET(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = req.headers.get('authorization') || ''
-    if (auth !== 'Bearer ' + secret) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const gate = await requireCron(req)
+  if (!gate.ok) return gate.res
   if (!breezewayConfigured()) return NextResponse.json({ ok: false, error: 'Breezeway not configured' })
   const db = supabaseAdmin()
   const month = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()).slice(0, 7)

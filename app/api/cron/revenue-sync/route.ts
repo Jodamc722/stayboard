@@ -13,8 +13,9 @@
 // the Revenue tab may also trigger it (the Sync-now button).
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getAccess } from '@/lib/access'
+import { requireLevel } from '@/lib/access'
 import { recordRun } from '@/lib/automation-runs'
+import { requireCron } from '@/lib/cron-auth'
 import {
   fetchFeed, parseFeed, rowKey, pick, num, bool, ym, coverage, monthsBack,
   FEEDS_LIVE, FEEDS_REQUESTED, revenueAppConfig, type Feed, type Row,
@@ -221,17 +222,10 @@ async function writeStatus(reps: FeedReport[]) {
 }
 
 async function run(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  const auth = req.headers.get('authorization') || ''
-  const viaCron = !!secret && auth === 'Bearer ' + secret
-  if (!viaCron) {
-    if (secret) {
-      // Not the cron — allow a signed-in user with full access on Revenue (the Sync-now button).
-      const a = await getAccess()
-      const lvl = a.user && a.allowed ? a.levels['revenue'] : undefined
-      if (lvl !== 'full') return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-    }
-  }
+  // The scheduler's bearer, or a signed-in user with full access on Revenue (the Sync-now button).
+  // No secret in a production build now denies instead of running open (lib/cron-auth).
+  const gate = await requireCron(req, { fallback: () => requireLevel('revenue', 'full') })
+  if (!gate.ok) return gate.res
 
   const cfg = revenueAppConfig()
   if (!cfg.configured) {
