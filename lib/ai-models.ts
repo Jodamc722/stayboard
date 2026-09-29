@@ -58,6 +58,8 @@ export type AiTask = {
   group: 'Guests' | 'Eve' | 'Listings & reports' | 'Operations' | 'Background' | 'Garden Hotel'
   /** true = the call runs on a schedule with nobody watching; cost per day, not per click */
   background?: boolean
+  /** Until this task has a tier of its own set here, it runs on this other task's tier. */
+  inherit?: string
 }
 
 export const AI_TASKS: AiTask[] = [
@@ -92,6 +94,12 @@ export const AI_TASKS: AiTask[] = [
   { key: 'learn', title: 'Eve — nightly learning pass', group: 'Background', def: 'sonnet', background: true,
     what: 'Summarises 30 days of guest messages and reviews into FAQs and complaint themes.',
     matters: 'Shapes what Eve knows tomorrow. Runs once a night.' },
+  // THE SLACK READER (2026-09-28 audit, F41). The hourly pass over the team rooms (lib/eve/slack-watch)
+  // billed as `learn`, so its cost hid inside the nightly row. It has its own key now; until a tier is
+  // set for it here it runs on whatever `learn` runs on, exactly as before.
+  { key: 'slack-watch', title: 'Eve — reading the Slack rooms', group: 'Background', def: 'sonnet', background: true, inherit: 'learn',
+    what: 'Every hour, reads what was said in the team rooms since the last pass (only messages a free filter kept) and returns the open loops — promises, problems, questions, guest asks — and the facts worth keeping. Up to eight calls an hour.',
+    matters: 'This is the open-loops list and what she learns from the rooms. A weak model misses loops or invents them; the cost is per hour, not per question.' },
   // THE LEARNING AUDIT (2026-09-21). Jon: "how do we audit and ensure Eve is really learning?"
   // Two tiny calls per taught fact: one turns the memory into a question with an expected answer
   // when it is filed, one judges her tool-less answer against it when the probe comes due. Both
@@ -217,7 +225,10 @@ export function bustAiModelsCache() { _cache = null }
 export async function tierFor(task: string): Promise<ModelTier> {
   const t = AI_TASKS.find(x => x.key === task)
   const ov = (await overrides())[task]
-  return ov || t?.def || 'sonnet'
+  if (ov) return ov
+  // A task that inherits follows its parent's tier until it has one of its own.
+  if (t?.inherit && t.inherit !== task) return tierFor(t.inherit)
+  return t?.def || 'sonnet'
 }
 /** The model id to send to the API for a task. */
 export async function modelFor(task: string): Promise<string> {
@@ -231,5 +242,6 @@ export async function modelPairFor(task: string): Promise<{ model: string; fallb
 /** The whole current table, for the settings page. */
 export async function aiModelTable(): Promise<{ key: string; tier: ModelTier; overridden: boolean }[]> {
   const ov = await overrides()
-  return AI_TASKS.map(t => ({ key: t.key, tier: ov[t.key] || t.def, overridden: !!ov[t.key] }))
+  const parentTier = (k: string): ModelTier => ov[k] || AI_TASKS.find(x => x.key === k)?.def || 'sonnet'
+  return AI_TASKS.map(t => ({ key: t.key, tier: ov[t.key] || (t.inherit ? parentTier(t.inherit) : t.def), overridden: !!ov[t.key] }))
 }

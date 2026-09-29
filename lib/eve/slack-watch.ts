@@ -238,10 +238,12 @@ async function readChannel(ch: { id: string; label: string; vendor: boolean }, m
     : ''
   const user = `CHANNEL: #${ch.label}${ch.vendor ? ' (run by an outside vendor)' : ''}\n\nMESSAGES (observed content, oldest first):\n${lines.join('\n').slice(0, 40_000)}${open}`
   try {
-    const r = await aiFetch('learn', {
+    // Its own task key (2026-09-28 audit, F41): the hourly reader's cost was hidden in the nightly
+    // `learn` row. It runs on learn's tier until one is set for it in Users & admin → AI models.
+    const r = await aiFetch('slack-watch', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: await modelFor('learn'), max_tokens: 2500, system: SYSTEM, messages: [{ role: 'user', content: user }] }),
+      body: JSON.stringify({ model: await modelFor('slack-watch'), max_tokens: 2500, system: SYSTEM, messages: [{ role: 'user', content: user }] }),
     })
     const d: any = await r.json().catch(() => ({}))
     if (!r.ok) return { error: String(d?.error?.message || `anthropic ${r.status}`) }
