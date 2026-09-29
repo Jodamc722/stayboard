@@ -25,7 +25,7 @@ import { BulkListingCopy } from '@/components/BulkListingCopy'
 import { UnitTable, type UnitRow } from '@/components/UnitTable'
 import { FixNext, type FixItem } from '@/components/FixNext'
 import { HealthBoard } from '@/components/HealthBoard'
-import { unitRevenue, REV_WINDOWS, windowFor, windowRange } from '@/lib/unit-revenue'
+import { unitRevenue, REV_WINDOWS, windowFor, windowRange, DEFAULT_BASIS } from '@/lib/unit-revenue'
 import { BASES, BASIS_SHORT, BASIS_NOTE, type Basis } from '@/lib/basis'
 import { LeanHead, Pill, LeanEmpty } from '@/components/lean'
 import { AlertTriangle } from 'lucide-react'
@@ -198,7 +198,7 @@ const getPortfolioData = unstable_cache(async (periodDays: number | null) => {
 // longer cache and only runs for the views that show it.
 const getRevenue = unstable_cache(
   async (from: string, to: string, basis: Basis) => unitRevenue(from, to, basis),
-  ['portfolio-revenue-v1'], { revalidate: 300 },
+  ['portfolio-revenue-v2'], { revalidate: 300 },
 )
 
 export default async function PortfolioPage({ searchParams }: { searchParams?: { d?: string; v?: string; rev?: string; b?: string } }) {
@@ -209,7 +209,8 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
   const period = periodFor(searchParams?.d)
   let view = viewFor(searchParams?.v)
   const revWin = windowFor(searchParams?.rev)
-  const basis: Basis = (BASES as string[]).includes(String(searchParams?.b)) ? (searchParams!.b as Basis) : 'gross'
+  // Opens on Net + fees — the ADR Home and Revenue Center show (lib/unit-revenue DEFAULT_BASIS).
+  const basis: Basis = (BASES as string[]).includes(String(searchParams?.b)) ? (searchParams!.b as Basis) : DEFAULT_BASIS
 
   const [{
     buildings, workByBuilding, totalUnits, portfolioAvg, units, fixes,
@@ -227,7 +228,9 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
   let unitsWithMoney = units
   let revenueNote: string | null = null
   if (view === 'units') {
-    const { from, to } = windowRange(revWin.days, new Date().toISOString().slice(0, 10))
+    // TODAY IN EASTERN TIME (2026-09-28 audit, P1-4): the UTC date moved the window a day forward
+    // every evening after 8pm ET.
+    const { from, to } = windowRange(revWin.days, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()))
     try {
       const rev = await getRevenue(from, to, basis)
       // ADR / RevPAR are dollar amounts: canSeeMoney only (2026-09-18 audit). Occupancy is a
@@ -252,7 +255,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
     const qs = new URLSearchParams()
     if (v !== 'buildings') qs.set('v', v)
     if (period.key !== DEFAULT_PERIOD) qs.set('d', period.key)
-    if (v === 'units') { if (revWin.key !== '90') qs.set('rev', revWin.key); if (basis !== 'gross') qs.set('b', basis) }
+    if (v === 'units') { if (revWin.key !== '90') qs.set('rev', revWin.key); if (basis !== DEFAULT_BASIS) qs.set('b', basis) }
     return `/buildings${qs.toString() ? `?${qs}` : ''}`
   }
   const fixUnits = new Set(fixes.map(f => f.unitId)).size
@@ -284,7 +287,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
             if (p.key !== DEFAULT_PERIOD) qs.set('d', p.key)
             if (view !== 'buildings') qs.set('v', view)
             if (revWin.key !== '90') qs.set('rev', revWin.key)
-            if (basis !== 'gross') qs.set('b', basis)
+            if (basis !== DEFAULT_BASIS) qs.set('b', basis)
             return (
               <Link key={p.key} href={`/buildings${qs.toString() ? `?${qs}` : ''}`} prefetch={false}
                 aria-current={on ? 'page' : undefined} title={`Rating over ${p.label.toLowerCase()} (Optimize Score is always all-time)`} className={seg(on)}>
@@ -316,7 +319,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
                 const qs = new URLSearchParams({ v: 'units' })
                 if (period.key !== DEFAULT_PERIOD) qs.set('d', period.key)
                 if (w.key !== '90') qs.set('rev', w.key)
-                if (basis !== 'gross') qs.set('b', basis)
+                if (basis !== DEFAULT_BASIS) qs.set('b', basis)
                 return <Link key={w.key} href={`/buildings?${qs}`} prefetch={false} title="Window for occupancy, ADR and RevPAR" className={seg(w.key === revWin.key)}>{w.label}</Link>
               })}
             </nav>
@@ -325,7 +328,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
                 const qs = new URLSearchParams({ v: 'units' })
                 if (period.key !== DEFAULT_PERIOD) qs.set('d', period.key)
                 if (revWin.key !== '90') qs.set('rev', revWin.key)
-                if (bk !== 'gross') qs.set('b', bk)
+                if (bk !== DEFAULT_BASIS) qs.set('b', bk)
                 return <Link key={bk} href={`/buildings?${qs}`} prefetch={false} title={BASIS_NOTE[bk]} className={seg(bk === basis)}>{BASIS_SHORT[bk]}</Link>
               })}
             </nav>
