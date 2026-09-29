@@ -30,7 +30,7 @@ async function mark(entity: string, ok: { count?: number } | { error: string }) 
   await db.from('garden_sync_status').upsert(row, { onConflict: 'entity' })
 }
 
-export type GardenSyncResult = { ok: boolean; connected: boolean; rooms?: number; reservations?: number; housekeeping?: number; cleans?: number; events?: number; queue?: any; triggers?: any; phone?: any; hub?: any; errors: string[] }
+export type GardenSyncResult = { ok: boolean; connected: boolean; rooms?: number; reservations?: number; housekeeping?: number; cleans?: number; events?: number; queue?: any; triggers?: any; phone?: any; hub?: any; homebase?: any; errors: string[] }
 
 export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenSyncResult> {
   const out: GardenSyncResult = { ok: true, connected: cloudbedsConfigured(), errors: [] }
@@ -127,6 +127,8 @@ export async function runGardenDesks(out: GardenSyncResult): Promise<void> {
   try { const { buildCallQueue } = await import('./call-desk'); out.queue = await buildCallQueue() } catch (e: any) { out.errors.push(`call queue: ${e?.message || e}`) }
   try { const { runTriggers } = await import('./triggers'); out.triggers = await runTriggers({ by: 'sync' }) } catch (e: any) { out.errors.push(`triggers: ${e?.message || e}`) }
   try { const { syncPhone } = await import('./phone'); out.phone = await syncPhone() } catch (e: any) { out.errors.push(`phone: ${e?.message || e}`) }
+  // Homebase: the hotel's contract labor — people and punches (lib/garden/homebase). Quiet until set up.
+  try { const { syncGardenHomebase } = await import('./homebase'); out.homebase = await syncGardenHomebase() } catch (e: any) { out.errors.push(`homebase: ${e?.message || e}`) }
 }
 
 /** arrival_tomorrow / departure_today, once per reservation per day (stamped in evidence-free form on app_settings). */

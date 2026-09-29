@@ -261,6 +261,7 @@ function Reports({ d, range, setRange }: { d: any; range: { from: string; to: st
 }
 
 // ---- Setup -------------------------------------------------------------------------------------
+const FEED_LABEL: Record<string, string> = { rooms: 'Rooms', reservations: 'Reservations', housekeeping: 'Room status (housekeeping)', calendar: 'Multi-calendar (availability & rates)', channels: 'Channels (calendar sync)', payments: 'Payments', messages: 'Guest messaging', homebase_staff: 'Homebase — people', homebase_timecards: 'Homebase — timecards' }
 function Setup({ d, owner, canEdit, onSync, busy }: { d: any; owner: boolean; canEdit: boolean; onSync: (full: boolean) => void; busy: boolean }) {
   const [test, setTest] = useState<any | null>(null)
   const runTest = async () => { setTest({ busy: true }); setTest(await post('/api/garden', { action: 'test' })) }
@@ -278,9 +279,9 @@ function Setup({ d, owner, canEdit, onSync, busy }: { d: any; owner: boolean; ca
               <div className="text-[12.5px] text-ink/85 space-y-1">
                 <p className="font-semibold">To connect (owner):</p>
                 <ol className="list-decimal pl-5 space-y-0.5">
-                  <li>Cloudbeds → Settings (gear) → <b>API Credentials</b> (or Marketplace → Cloudbeds API) → create an <b>API key</b> with read access to reservations, rooms and housekeeping, plus housekeeping write.</li>
+                  <li>Cloudbeds → Settings (gear) → <b>API Credentials</b> (or Marketplace → Cloudbeds API) → create an <b>API key</b> with read access to reservations, rooms, housekeeping, rates/availability, payments and guests, plus housekeeping write.</li>
                   <li>Vercel → Environment Variables → add <code>CLOUDBEDS_API_KEY</code> and <code>CLOUDBEDS_PROPERTY_ID</code> (the hotel&apos;s property ID from the same screen) → Production → redeploy.</li>
-                  <li>Come back here → Test the key → Full sync. Rooms, the next 60 days of reservations and room statuses land in the Garden Hotel tables; cleans are created from departures.</li>
+                  <li>Come back here → Test the key → Full sync. Rooms, reservations, room statuses, the multi-calendar, channels and payments land in the Garden Hotel tables; cleans are created from departures.</li>
                 </ol>
                 <p className="text-muted">Partner-app (OAuth) route instead: <code>CLOUDBEDS_CLIENT_ID</code>, <code>CLOUDBEDS_CLIENT_SECRET</code>, <code>CLOUDBEDS_REFRESH_TOKEN</code>. Other systems (phones, payments, locks) plug in next to this one the same way — their own file under lib/garden, their own feed row below.</p>
               </div>
@@ -291,10 +292,10 @@ function Setup({ d, owner, canEdit, onSync, busy }: { d: any; owner: boolean; ca
       <LeanSection title="Feeds" right={<span className="text-muted">{d.rooms} rooms · {d.reservations} reservations in the mirror</span>}>
         <LeanList>
           {d.feeds.map((f: any) => (
-            <LeanRow key={f.entity} name={f.entity === 'rooms' ? 'Rooms' : f.entity === 'reservations' ? 'Reservations' : 'Room status (housekeeping)'}
+            <LeanRow key={f.entity} name={FEED_LABEL[f.entity] || f.entity}
               meta={f.lastSyncAt ? `last ${when(f.lastSyncAt)}${f.count != null ? ` · ${f.count} rows` : ''}` : 'never synced'}
               tags={<Tag tone={f.error ? 'rose' : f.ageMin != null && f.ageMin <= 60 ? 'emerald' : 'amber'}>{f.error ? 'error' : f.ageMin != null ? `${f.ageMin}m ago` : 'never'}</Tag>}>
-              {f.error ? <p className="text-[12px] text-rose-700">{f.error}</p> : <p className="text-[12px] text-muted">Every 30 minutes with the task mirror; Sync now on any tab pulls at once.</p>}
+              {f.error ? <p className="text-[12px] text-rose-700">{f.error}</p> : <p className="text-[12px] text-muted">{f.entity.startsWith('homebase') ? 'Homebase — set up in Users & admin → Settings → Homebase (labor). ' : 'Cloudbeds. '}Every 30 minutes with the task mirror; Sync now on any tab pulls at once.</p>}
             </LeanRow>
           ))}
         </LeanList>

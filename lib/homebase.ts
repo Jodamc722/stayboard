@@ -13,6 +13,21 @@
 // rather than throwing.
 
 import { fetchWithTimeout } from './fetch-timeout'
+import { getSetting } from './app-settings'
+
+// THE GARDEN HOTEL'S LOCATIONS ARE NOT STAY'S (2026-09-29). When the hotel is a location inside
+// Stay's Homebase account (no GARDEN_HOMEBASE_API_KEY), the locations picked for it in Garden →
+// Users & admin → Settings → Homebase are left out here, so hotel punches never reach VR labor,
+// cost per clean or the briefs. Nothing is excluded until someone picks them.
+let _gx: { at: number; ids: string[] } | null = null
+async function gardenExcluded(): Promise<string[]> {
+  if (process.env.GARDEN_HOMEBASE_API_KEY) return []
+  if (_gx && Date.now() - _gx.at < 5 * 60 * 1000) return _gx.ids
+  const s = await getSetting<any>('garden_homebase', null).catch(() => null)
+  const ids = Array.isArray(s?.locationUuids) ? s.locationUuids.map(String) : []
+  _gx = { at: Date.now(), ids }
+  return ids
+}
 
 const BASE = process.env.HOMEBASE_BASE_URL || 'https://app.joinhomebase.com/api/public'
 
@@ -51,7 +66,8 @@ const pick = (o: Json, ...keys: string[]) => {
 export async function getLocationUuid(): Promise<string> {
   const fixed = process.env.HOMEBASE_LOCATION_UUID
   if (fixed) return fixed
-  const locs = arr(await hb('/locations'))
+  const ex = await gardenExcluded()
+  const locs = arr(await hb('/locations')).filter((l: Json) => !ex.includes(String(pick(l, 'uuid', 'id', 'location_uuid'))))
   const uuid = pick(locs[0] || {}, 'uuid', 'id', 'location_uuid')
   if (!uuid) throw new Error('No Homebase locations visible to this API key')
   return String(uuid)
@@ -113,10 +129,11 @@ export async function getLocationUuids(): Promise<string[]> {
   if (fixed) return [fixed]
   if (_locs && Date.now() - _locs.at < 10 * 60 * 1000) return _locs.ids
   const locs = arr(await hb('/locations'))
+  const ex = await gardenExcluded()
   const out: string[] = []
   for (const l of locs) {
     const u = pick(l, 'uuid', 'id', 'location_uuid')
-    if (u) out.push(String(u))
+    if (u && !ex.includes(String(u))) out.push(String(u))
   }
   if (!out.length) throw new Error('No Homebase locations visible to this API key')
   _locs = { at: Date.now(), ids: out }

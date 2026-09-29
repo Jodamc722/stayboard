@@ -87,6 +87,7 @@ const L = {
   gDesk: dynamic(() => import('@/components/GardenDesk').then(m => m.GardenDesk), { loading: spin, ssr: false }),
   gTeam: dynamic(() => import('@/components/GardenTeam').then(m => m.GardenTeam), { loading: spin, ssr: false }),
   gAdam: dynamic(() => import('@/components/AdamAdmin').then(m => m.AdamAdmin), { loading: spin, ssr: false }),
+  gHomebase: dynamic(() => import('@/components/GardenHomebase').then(m => m.GardenHomebase), { loading: spin, ssr: false }),
 }
 
 // ── THE DIRECTORY ───────────────────────────────────────────────────────────────────────────────
@@ -276,6 +277,10 @@ const GARDEN_ENTRIES: Entry[] = [
     blurb: 'Whether Cloudbeds is connected, when each feed last synced — rooms, reservations, housekeeping, calendar, payments — and a sync now.',
     find: 'cloudbeds connect api key property sync status feeds integration health broken',
     render: p => <L.gDesk view="setup" canEdit={!!p.canEdit} owner={p.isOwner} /> },
+  { key: 'homebase', title: 'Homebase (labor)', group: 'Start here', Icon: Timer, need: 'staff',
+    blurb: 'The hotel\'s contract labor on Homebase — connect its account or its location in Stay\'s, match people to the roster, and see the week\'s hours and cost.',
+    find: 'homebase labor hours timecards punches clock in payroll contract 1099 wages cost staff connect location',
+    render: p => <L.gHomebase owner={p.isOwner} canEdit={!!p.canEdit} /> },
   { key: 'hotel', title: 'Hotel profile', group: 'Start here', Icon: Building2, need: 'settings',
     blurb: 'Name, desk phone, manager, check-in and check-out times, the Slack channel the hotel posts to.',
     find: 'hotel name phone manager check in check out time slack channel address profile',

@@ -19,7 +19,7 @@ export async function gardenStatus(): Promise<GardenStatus> {
   ])
   const byE: Record<string, any> = {}
   for (const r of ((st || []) as any[])) byE[r.entity] = r
-  const feeds = ['rooms', 'reservations', 'housekeeping'].map(entity => {
+  const feeds = ['rooms', 'reservations', 'housekeeping', 'calendar', 'channels', 'payments', 'messages', 'homebase_staff', 'homebase_timecards'].map(entity => {
     const r = byE[entity]
     return { entity, lastSyncAt: r?.last_sync_at || null, error: r?.last_error || null, count: r?.count ?? null, ageMin: r?.last_sync_at ? Math.round((Date.now() - Date.parse(r.last_sync_at)) / 60000) : null }
   })
