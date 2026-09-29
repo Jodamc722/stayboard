@@ -20,7 +20,7 @@ import { getAccess } from '@/lib/access'
 import { adminPasswordOk } from '@/lib/shareAuth'
 import { SALATO_RULES_INTRO, SALATO_RULES_IMPORTANT } from '@/lib/salato-rules'
 import { salatoVerifyRid } from '@/lib/salato-verify-token'
-import { logParking, tooManyWrong, LOCKOUT_MINUTES } from '@/lib/parking'
+import { logParking, lockoutReason, LOCKOUT_MINUTES } from '@/lib/parking'
 
 // Lockout counter — shares the parking_access_log ledger (code = this constant) so it survives a
 // redeploy, exactly like lib/parking-gate.ts.
@@ -33,7 +33,10 @@ function ipOf(req: NextRequest): string | null {
 /** Resolve the signed token to a reservation id, counting failures; null = refuse. */
 async function ridFromToken(req: NextRequest, token: string): Promise<{ rid: string | null; locked: boolean }> {
   const ip = ipOf(req)
-  if (await tooManyWrong(LOCK_CODE, ip)) return { rid: null, locked: true }
+  // PER ADDRESS ONLY (2026-09-29, with review N8). The token is a 128-bit signature, so there is
+  // nothing to guess across addresses; the ledger's all-addresses ceiling only ever let forty junk
+  // requests from anywhere lock every guest's check-in for fifteen minutes.
+  if ((await lockoutReason(LOCK_CODE, ip)) === 'ip') return { rid: null, locked: true }
   const rid = salatoVerifyRid(token)
   if (!rid) { if (token) await logParking({ code: LOCK_CODE, action: 'denied', detail: 'bad verify token', ip }); return { rid: null, locked: false } }
   return { rid, locked: false }
