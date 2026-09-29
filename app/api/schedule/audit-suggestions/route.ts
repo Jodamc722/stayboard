@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
     // Live stays only — the same /confirm|checked/i test LIVE applies below, done in the query so every
     // inquiry and cancellation overlapping the night no longer rides along (it could pass 1,000 rows).
     db.from('guesty_reservations').select('listing_id,status').lte('check_in', date).gt('check_out', date).or('status.ilike.%confirm%,status.ilike.%checked%').limit(1000), // deliberate cap: live stays in house on one night — at most one per listing, ~290
-    db.from('qc_tasks').select('listing_id,status,issue_type'),
+    db.from('qc_tasks').select('listing_id,status,issue_type').eq('status', 'open').eq('issue_type', 'review-audit').limit(1000), // deliberate cap: open review-audit QC tasks only (the filter below, done in the query) — a few dozen at most
     db.from('guesty_listings').select('id,nickname,title,status'),
   ])
   const nameOf: Record<string, string> = {}
