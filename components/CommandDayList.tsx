@@ -167,7 +167,11 @@ export function CommandDayList() {
   const dups = live.filter(i => i.kind === 'duplicate')
   const vendorNotes = live.filter(isVendorFeedback)
   const backlog = live.filter(i => i.kind === 'pending')
-  const approvals = data.tiles.guestDesk.rows.filter(r => r.kind === 'approval' && !gone[r.key])
+  // A spend decided here is recorded as handled (ApprovalRow), so it stays gone while the shared
+  // day core still lists it as pending.
+  const handledKeys: Record<string, true> = {}
+  for (const h of data.handled || []) handledKeys[h.key] = true
+  const approvals = data.tiles.guestDesk.rows.filter(r => r.kind === 'approval' && !gone[r.key] && !handledKeys[r.key])
 
   return (
     <div className="max-w-[760px] mx-auto space-y-5">
@@ -596,7 +600,12 @@ function ApprovalRow({ row, onCleared, onChanged }: { row: GuestDeskRow; onClear
   const [err, setErr] = useState('')
   const decide = async (approved: boolean) => {
     setBusy(true); setErr('')
-    try { await post('/api/requests/update', { action: 'decide', id, approved }); onCleared(row.key); onChanged() }
+    try {
+      await post('/api/requests/update', { action: 'decide', id, approved })
+      // Also recorded as handled, so it cannot flash back as pending before the shared day rebuilds.
+      await clearRow({ key: row.key, title: (approved ? 'Approved: ' : 'Rejected: ') + row.text, unit: row.unit }, 'done').catch(() => {})
+      onCleared(row.key); onChanged()
+    }
     catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
   }

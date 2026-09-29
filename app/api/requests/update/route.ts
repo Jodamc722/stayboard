@@ -9,9 +9,14 @@
 //   create / comment  -> view  (field staff file requests + talk; that is the point of the tab)
 //   patch / decide    -> edit  (decide = approve/reject money; approver stamped server-side)
 //   delete            -> full  (no snapshot/undo exists for requests — keep it to full access)
+//
+// The Command Center's day core (cached 30s under the 'day' tag) lists pending spend approvals and
+// overdue requests, so every write that changes either busts it (lib/bust) — an approved spend must
+// not read back as pending on the next load.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
+import { bustDay } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,6 +48,7 @@ export async function POST(req: NextRequest) {
         approval_required: !!d.approval_required, approval_status: d.approval_required ? 'pending' : null,
       }).select('id').single()
       if (error) throw error
+      bustDay()
       return NextResponse.json({ ok: true, id: data!.id })
     }
 
@@ -57,6 +63,7 @@ export async function POST(req: NextRequest) {
         updated_at: new Date().toISOString(),
       }).eq('id', id).select().single()
       if (error) throw error
+      bustDay()
       return NextResponse.json({ ok: true, request: data })
     }
 
@@ -67,6 +74,7 @@ export async function POST(req: NextRequest) {
       updates.updated_at = new Date().toISOString()
       const { data, error } = await db.from('field_requests').update(updates).eq('id', id).select().single()
       if (error) throw error
+      bustDay()
       return NextResponse.json({ ok: true, request: data })
     }
 
@@ -82,6 +90,7 @@ export async function POST(req: NextRequest) {
     if (action === 'delete') {
       const { error } = await db.from('field_requests').delete().eq('id', id)
       if (error) throw error
+      bustDay()
       return NextResponse.json({ ok: true })
     }
 
