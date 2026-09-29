@@ -163,7 +163,7 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
   const totalProblems = data.listings.filter(l => l.missingMajor.length > 0).length
   const selCell = sel ? sel.l.cells[sel.key] : null
   const selDef = sel ? CHANNELS.find(c => c.key === sel.key) : null
-  const unknownStatuses = CHANNELS.flatMap(c => Object.keys(data.statusesSeen?.[c.key] || {}).filter(s => !/^(COMPLETED|FAILED|DISCONNECTED|\(none\)|\(no status\))$/.test(s)).map(s => c.label + ': ' + s + ' ×' + data.statusesSeen[c.key][s]))
+  const unknownStatuses = CHANNELS.flatMap(c => Object.keys(data.statusesSeen?.[c.key] || {}).filter(s => !/^(COMPLETED|FAILED|DISCONNECTED|\(none\))$/.test(s) && !(c.key === 'expedia' && s === '(no status)')).map(s => c.label + ': ' + s + ' ×' + data.statusesSeen[c.key][s]))
 
   return (
     <div className="space-y-3">
