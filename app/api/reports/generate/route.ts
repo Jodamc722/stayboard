@@ -30,6 +30,7 @@ import { getStaff } from '@/lib/staffing'
 import { marketOf } from '@/lib/segments'
 import { requireLevel } from '@/lib/access'
 import { modelFor } from '@/lib/ai-models'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -307,10 +308,13 @@ export async function POST(req: NextRequest) {
       amenityCatalog.sort((x, y) => x.localeCompare(y))
     } catch { /* the recommended list still stands on its own */ }
 
-    const { data: revs } = await db0.from('guesty_reviews')
-      .select('listing_id, rating, excluded_from_score').in('listing_id', ids0).limit(2000)
+    // Every review of these units, paged (was one unordered read capped at 1,000 — a building scope
+    // averaged an arbitrary sample of its reviews).
+    const revs = await pageRows<any>((a, b) => db0.from('guesty_reviews')
+      .select('listing_id, rating, excluded_from_score').in('listing_id', ids0).order('id').range(a, b))
+    if (revs.truncated) console.error('reports/generate: review read stopped early — unit averages may be off')
     const ratingsBy: Record<string, number[]> = {}
-    for (const r of ((revs || []) as any[])) {
+    for (const r of revs.rows) {
       if (r.excluded_from_score) continue
       const n = Number(r.rating)
       if (Number.isFinite(n)) (ratingsBy[String(r.listing_id)] = ratingsBy[String(r.listing_id)] || []).push(n)
