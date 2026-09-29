@@ -88,6 +88,12 @@ export const AI_TASKS: AiTask[] = [
   { key: 'eve-review', title: "Eve — the operator's review", group: 'Eve', def: 'fable',
     what: 'Once a week (and on demand from chat or the Review tab) reads one evidence pack — the week\'s KPI tiles vs last week, anomalies, sweep findings, open audits, Slack items, glitches, low reviews, checklist ticks, app usage, her own track record — and writes what moved and why, three to six ranked plans, critiques of checklists, pages and automations, and at most four questions the data cannot answer.',
     matters: 'This is the plan Jon reads on Monday morning and the plans he accepts get graded. One large call a week; the top tier is where the reasoning lives, and a weak review is a wasted week.' },
+  // THE MONDAY QUALITY AUDIT (2026-09-29, 04 F42b). lib/eve/quality-audit billed as `eve-review`, so its
+  // cost hid inside the operator review's row. Its own key, same pattern as `slack-watch`: until a tier
+  // is set for it here it runs on whatever `eve-review` runs on, exactly as before.
+  { key: 'quality-audit', title: 'Eve — Monday quality audit', group: 'Eve', def: 'fable', inherit: 'eve-review',
+    what: 'Rides the Monday review: one call over a 90-day quality pack that names the three weaknesses costing reviews, each with evidence, a root cause, an action and a metric.',
+    matters: 'Its plans are graded in 21 days. Runs on the operator review\'s model until a tier is set here.' },
   { key: 'eve-vision', title: 'Eve — reading photos', group: 'Eve', def: 'sonnet',
     what: 'Looks at unit photos and describes condition, damage, staging.',
     matters: 'Feeds inspection notes; a wrong read sends a cleaner back for nothing.' },
