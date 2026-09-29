@@ -7,6 +7,7 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { pageRows } from './db-page'
+import { TASK_DONE_RE } from './task-categories'
 export * from './projects-shared'
 import {
   type Project, type ProjectFull, type Member, type Person, type Task, type Viewer, type EventType,
@@ -437,7 +438,7 @@ export async function taskProjects(taskId: string): Promise<{ id: string; title:
 // or sent Breezeway task its field status NOW — all read live at page load and stamped onto the
 // row as `state`, never stored. Every lookup is soft: a missing table blanks the state, not the page.
 const soft = async <T,>(pr: PromiseLike<{ data: T | null; error: any }>): Promise<T | null> => { try { const r = await pr; return r.error ? null : r.data } catch { return null } }
-const BZ_DONE = /finish|complet|closed|done/i
+const BZ_DONE = TASK_DONE_RE   // the shared done rule (lib/task-categories), status only: it drives the auto-done write
 const BZ_GONE = /cancel/i
 
 async function enrichLinks(L: any[]) {

@@ -23,6 +23,7 @@ import { pageRows } from '@/lib/db-page'
 import { getSetting } from '@/lib/app-settings'
 import { marketOf, buildingOf } from '@/lib/segments'
 import { isDepartureCleanName } from '@/lib/breezeway'
+import { isTaskDone } from '@/lib/task-categories'
 
 export const PARTNER_OUT_KEY = 'partner_out'
 export const PARTNER_FEEDS = ['units', 'cleans', 'labor', 'tasks', 'ops-daily', 'status'] as const
@@ -68,7 +69,7 @@ export function keyMatches(given: string, expected: string): boolean {
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const num = (v: any): number => { const x = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return Number.isFinite(x) ? x : 0 }
 const d10 = (v: any): string => str(v).slice(0, 10)
-const isDone = (t: any): boolean => /complete|finish|close|approv|done/i.test(str(t && t.status)) || !!(t && t.finished_at)
+const isDone = (t: any): boolean => isTaskDone(t && t.status, t && t.finished_at)   // the shared done rule (lib/task-categories)
 const isDead = (t: any): boolean => /delete|cancel/i.test(str(t && t.status))
 function deptOf(v: any): string {
   const s = str(v).toLowerCase()

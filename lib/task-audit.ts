@@ -25,10 +25,11 @@ import { supabaseAdmin } from './supabase-admin'
 import { pageRows } from './db-page'
 import { completeBreezewayTask, cancelBreezewayTask, breezewayConfigured } from './breezeway'
 import { deptOf } from './pending-work'
+import { TASK_DONE_RE } from './task-categories'
 
 const str = (v: any) => String(v ?? '').trim()
 const dOf = (v: any) => (v ? String(v).slice(0, 10) : '')
-const DONE = /\b(complete|finish|close|approv)/i
+const DONE = TASK_DONE_RE   // the shared done rule (lib/task-categories)
 const GONE = /\b(cancel|delet|void)/i
 
 /** Lighthouse says so on the task itself. Provenance lives in the description, not in a column. */

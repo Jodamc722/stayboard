@@ -32,10 +32,11 @@ import { getOpsPresets } from './app-settings'
 import { untrackedRegex } from './ops-presets'
 import { isLiveStay } from './stay-status'
 import { getTaskAutomation } from './auto-inspections'
+import { TASK_DONE_RE } from './task-categories'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const dOf = (v: any) => str(v).slice(0, 10)
-const DONE = /\b(complete|finish|close|approv)/i
+const DONE = TASK_DONE_RE   // the shared done rule (lib/task-categories)
 const GONE = /delete|cancel/i
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 

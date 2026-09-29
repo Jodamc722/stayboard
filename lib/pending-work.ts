@@ -34,10 +34,11 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { updateBreezewayTask, breezewayConfigured, matchBreezewayPerson } from './breezeway'
 import { pageRows } from './db-page'
+import { TASK_DONE_RE } from './task-categories'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const dOf = (v: any) => str(v).slice(0, 10)
-const DONE = /\b(complete|finish|close|approv)/i
+const DONE = TASK_DONE_RE   // the shared done rule (lib/task-categories)
 const GONE = /delete|cancel/i
 
 export function deptOf(v: any): 'maintenance' | 'housekeeping' | 'inspection' | 'other' {

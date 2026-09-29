@@ -60,6 +60,7 @@ import { getOpsPresets } from './app-settings'
 import { noBreezewayRegex } from './ops-presets'
 import { auditKey } from './task-audit'
 import { isLiveStay } from './stay-status'
+import { TASK_DONE_RE } from './task-categories'
 import { STAGE_LABEL as CLAIM_STAGE_LABEL } from './claims'
 import { ratingDisplay } from './review-scale'
 import { COMPLETED, guestyCalled } from './call-desk'
@@ -72,7 +73,7 @@ import type { StaffDay } from './forecast/staffing'
 const str = (v: any) => String(v ?? '').trim()
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 const shift = (d: string, n: number) => ymd(new Date(Date.parse(d + 'T12:00:00Z') + n * 86400000))
-const DONE = /\b(complete|finish|close|approv)/i
+const DONE = TASK_DONE_RE   // the shared done rule (lib/task-categories)
 const GONE = /\b(cancel|delet|void)/i
 const INSPECT = /inspect|unit check|quality/i
 const MOVED = /^\[moved to [^\]]+\]\s*/i
