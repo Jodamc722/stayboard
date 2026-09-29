@@ -20,19 +20,17 @@ const PAGE_NOTES: Record<string, string> = {
   reservations: 'every booking, searchable; the source of truth mirrored from Guesty',
   'reservation-emails': 'front-desk notices to buildings — auto-drafted daily into support@ Drafts with the registration form attached; config lives in Users & admin → Settings → Front-desk notices',
   messages: 'guest message threads from all channels',
-  reviews: 'every review with AI reply drafting; the reply voice is tuned in Settings',
+  reviews: 'every review with AI reply drafting; the reply voice is tuned in Settings; the jobs made from complaints are its Actions tab (/reviews?tab=actions)',
   'welcome-calls': 'VIP/new-arrival call list for the guest experience team',
   guidebooks: 'per-property guest guidebooks',
   claims: 'damage/incident claims tracking with daily sweep',
   faq: 'per-property answers the team gives guests',
   guests: 'the guest directory — profiles, history, VIP flags',
-  salato: 'Salato building front desk: its own share/verify flow for arrivals',
+  salato: 'not a page any more — which units the Salato board, verification and daily email cover is set in Users & admin → Settings → Salato front-desk units (/salato redirects there); the front desk itself works from the Salato share board (/salato/share: verify, arrivals, departure cleans, in-house)',
   plan: 'Today in Ops — the operational day: exceptions, pushes to Breezeway, acknowledgements',
   schedule: 'the turnover scheduler — cleans, assignments, same-day turns',
-  forecast: 'the weekly schedule ahead',
   glitches: 'things broken in units — tracked to resolution',
   audits: 'periodic property audit runs',
-  inspections: 'inspection checklists; auto-created for big/VIP/owner arrivals when Task automation is on',
   orders: 'purchasing pipeline with must/recommended/nice tiers and export',
   requests: 'internal work requests',
   blocked: 'units blocked out of service and why',
@@ -44,7 +42,6 @@ const PAGE_NOTES: Record<string, string> = {
   listings: 'every listing with channel config',
   optimize: 'ranked list of what to fix across the portfolio; the optimizer itself is on each listing page (/listings/<id>)',
   health: 'listing health & channel connection status',
-  patterns: 'building-level performance patterns',
   revenue: 'revenue center — pricing, pacing, pickup',
   marketing: 'marketing assets and campaigns',
   billing: 'billing, maintenance and payroll rollups',
@@ -53,10 +50,9 @@ const PAGE_NOTES: Record<string, string> = {
   cleaners: 'housekeeping roster and assignments',
   labor: 'labor hours and timecards from Homebase',
   'labor-dashboard': 'labor cost dashboards',
-  'custom-fields': 'Guesty custom-field mapping',
   'labor-settings': 'labor rules and pay settings',
   integrations: 'connected systems — Guesty, Breezeway, Slack, Google, Homebase',
-  eve: 'retired as a page — Eve is the floating bubble on every screen; her memory/voice/direction live in Users & admin → Settings → Eve',
+  eve: 'Eve\'s tab — what needs a person, what she did today, the open loops she is keeping tabs on, the questions only a person can answer, and her expectation notes for CS; people talk to her in the floating bubble on every page; her memory, voice and agent mode live in Users & admin → Settings → Eve',
 }
 
 let _cache: string | null = null
@@ -75,7 +71,8 @@ export function appAtlas(): string {
   _cache = 'THE APP (Lighthouse) — you know every page. When someone asks where to do something, '
     + 'point them at the page (and the Settings fold if it is a setting). Users & admin (/users) '
     + 'holds Settings: task automation, front-desk notices, Slack rules, approval limits, review '
-    + 'voice, share links, staffing, PAR levels — and your own memory/voice/direction under "Eve".\n'
+    + 'voice, share links, staffing, PAR levels, Guesty custom fields, Salato front-desk units — and '
+    + 'your own memory/voice/direction under "Eve".\n'
     + pages
     + '\n\nYOUR TOOL DOMAINS — open a domain to gain its tools for the rest of the conversation:\n'
     + tools

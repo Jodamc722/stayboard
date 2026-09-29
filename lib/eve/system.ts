@@ -297,7 +297,7 @@ export const SYSTEM_TOOLS: EveTool[] = [
 
   {
     name: 'emails_sent',
-    description: 'What outbound email this app actually sent, and to whom — every brief, notice and report goes through one sender, so this is the receipt. Filter by days, source (ops-brief, maint-brief, labor-trueup, salato-daily) or a recipient address. Use it to answer "did the brief go out this morning", "who is on the labor email", "has anything failed to send".',
+    description: 'What outbound email this app actually sent, and to whom — every brief, notice and report goes through one sender, so this is the receipt. Filter by days, source (ops-brief, labor-trueup, salato-daily, guest-orders, reservation-notices, owner) or a recipient address. Use it to answer "did the brief go out this morning", "who is on the labor email", "has anything failed to send".',
     input_schema: obj({ days: S.num, source: S.str, to: S.str, limit: S.num }),
     run: async (input, ctx) => {
       const days = clampDays(input?.days, 7, 120)
