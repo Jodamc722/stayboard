@@ -73,7 +73,7 @@ export async function nextCheckInMap(
       .in('listing_id', listingIds)
       .gte('check_in', earliest)
       .order('check_in', { ascending: true })
-      .limit(2000)
+      .limit(1000) // deliberate cap: Jon to decide — the claims cron's "next guest arrives, photograph it now" alert reads this (oldest first, so only the newest claims can lose their next arrival)
     rows = ((data || []) as any[]).filter(r => usable(r.status)) as Row[]
   } catch { return out }
 

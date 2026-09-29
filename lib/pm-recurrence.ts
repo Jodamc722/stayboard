@@ -95,7 +95,7 @@ export async function runPmRecurrence(opts: { dryRun?: boolean; force?: boolean 
   const items: DueItem[] = cal.buildings.flatMap(b => b.items).filter(i => byKey[i.cadenceKey] && byKey[i.cadenceKey].successor !== false && i.lastDone)
 
   // ── 1. the ledger ──────────────────────────────────────────────────────────────────────────────
-  const { data: rowsRes } = await db.from('pm_schedule').select('*').limit(5000)
+  const { data: rowsRes } = await db.from('pm_schedule').select('*').limit(1000) // deliberate cap: Jon to decide — PM recurrence creates, proposes and moves Breezeway tasks off this ledger (unordered)
   const rows: Record<string, any> = {}
   for (const r of ((rowsRes || []) as any[])) rows[`${r.listing_id}|${r.cadence_key}`] = r
   const upserts: any[] = []

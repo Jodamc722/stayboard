@@ -142,7 +142,7 @@ export async function pullNotices(days = 30): Promise<PullResult> {
     .in('listing_id', ids)
     .gte('check_in', from).lte('check_in', to)
     .order('check_in', { ascending: true })
-    .limit(2000)
+    .limit(1000) // deliberate cap: Jon to decide — the notice pull files building arrival notices off this (soonest first; the furthest-out arrivals wait for a later pull)
   if (rErr) return { ...empty, error: rErr.message }
 
   const candidates = ((resRows || []) as any[]).filter(r => {

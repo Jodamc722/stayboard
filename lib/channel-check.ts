@@ -76,7 +76,7 @@ async function writeAudits(next: ChannelSnapshot): Promise<{ opened: number; res
   let opened = 0, resolved = 0
   try {
     // What is already on the tab, so first_seen_at survives and a still-open row is not "new".
-    const prev: any = await db.from('eve_audits').select('id,status,first_seen_at').like('id', 'channel:%').limit(3000)
+    const prev: any = await db.from('eve_audits').select('id,status,first_seen_at').like('id', 'channel:%').limit(1000) // deliberate cap: Jon to decide — the channel check reopens and resolves findings off these rows (unordered)
     const prevRows: any[] = (prev && prev.data) || []
     const prevById: Record<string, any> = {}
     for (const r of prevRows) prevById[String(r.id)] = r

@@ -503,7 +503,7 @@ async function nextCheckouts(db: any, listingIds: string[], today: string): Prom
     .gte('check_out', today)
     .in('status', ['confirmed', 'checked_in'])
     .order('check_out', { ascending: true })
-    .limit(2000)
+    .limit(1000) // deliberate cap: Jon to decide — the low-review inspection automation creates and moves tasks off this (soonest first; a unit whose next checkout falls past the 1,000th row reads as "waiting")
   for (const r of (data || []) as any[]) {
     const lid = str(r.listing_id)
     if (lid && !out[lid]) out[lid] = str(r.check_out).slice(0, 10)

@@ -121,7 +121,7 @@ export async function generateReminders(today = todayISO()): Promise<{ dueSoon: 
   const tomorrow = new Date(today + 'T12:00:00Z'); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
   const tmr = tomorrow.toISOString().slice(0, 10)
   const { data: tasks, error } = await sb.from('project_steps')
-    .select('id,project_id,title,due_on,status').neq('status', 'done').not('due_on', 'is', null).lte('due_on', tmr).limit(2000)
+    .select('id,project_id,title,due_on,status').neq('status', 'done').not('due_on', 'is', null).lte('due_on', tmr).limit(1000) // deliberate cap: Jon to decide — the daily due/overdue reminders are written off this (unordered)
   if (error) throw new Error('reminders: ' + error.message)
   const T = (tasks || []) as any[]
   if (!T.length) return { dueSoon: 0, overdue: 0 }
@@ -260,7 +260,7 @@ export async function sendImmediate(opts: { dryRun?: boolean } = {}): Promise<{ 
 export async function sendDigest(opts: { dryRun?: boolean; only?: string } = {}): Promise<{ people: number; sent: number; errors: string[] }> {
   const sb = supabaseAdmin()
   const since = new Date(Date.now() - 36 * 3600000).toISOString()
-  let q = sb.from('project_notifications').select('*').is('digested_at', null).gte('created_at', since).order('created_at').limit(2000)
+  let q = sb.from('project_notifications').select('*').is('digested_at', null).gte('created_at', since).order('created_at').limit(1000) // deliberate cap: Jon to decide — the morning digest emails these and marks them digested (oldest first)
   if (opts.only) q = q.eq('email', lower(opts.only))
   const { data, error } = await q
   if (error) throw new Error('digest: ' + error.message)

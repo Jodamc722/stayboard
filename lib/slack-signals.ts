@@ -757,7 +757,7 @@ export async function findNotableArrivals(opts?: {
     db.from('guesty_reservations')
       .select('id,listing_id,guest_name,check_in,nights,status,source,money_total')
       .gte('check_in', today).lte('check_in', until)
-      .order('check_in', { ascending: true }).limit(1500),
+      .order('check_in', { ascending: true }).limit(1000), // deliberate cap: Jon to decide — the owner / big / long-stay Slack post reads this (soonest first; at the default 7-day lookahead it is ~500 rows, at the 30-day maximum the furthest-out wait)
     db.from('guesty_listings').select('id,nickname,title'),
   ])
 
