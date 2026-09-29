@@ -94,7 +94,9 @@ export type GData = {
   /** Cleans whose guest has genuinely left (checkout + grace) that nobody has started. */
   behind?: { notStarted: number; sameDay: number; earliestIn: string | null; unassigned: number; waiting: number; level: '' | 'warn' | 'urgent'; units: { taskId: string; unit: string; market?: string | null; checkOutTime: string | null; arrivingAt: string | null; assignee: string | null }[] }
   lastSync?: string | null
-  /** Reads that came back partial. Never silent — see the banner above the deadline strip. */
+  /** When today's Breezeway tasks were last refreshed in the mirror (the board IS the mirror). */
+  bzSync?: string | null
+  /** Reads that came back partial. Never silent — see the line above the deadline strip. */
   degraded?: string[]
 }
 export type GStaff = {
@@ -1253,6 +1255,17 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   const hh = dl ? Math.floor(Math.abs(dl.minsLeft) / 60) : 0
   const mm = dl ? Math.abs(dl.minsLeft) % 60 : 0
   const clock = dl ? (dl.passed ? `${hh}h ${mm}m past` : `${hh}h ${mm}m left`) : ''
+  // ONE LINE FOR "WHAT YOU SEE MAY BE WRONG" (2026-09-28 audit, 08 UX-11): a failed read and a
+  // partial read used to be two stacked cards. The failure leads; a partial read names what it missed.
+  const degradedList = Array.isArray(data?.degraded) ? data!.degraded! : []
+  const problem = error
+    ? 'Could not load the board — ' + error + ' · what you see may be old' + (degradedList.length ? ' · also incomplete: ' + degradedList.join(', ') : '')
+    : degradedList.length ? 'Incomplete — could not fully read: ' + degradedList.join(', ') + ' · refresh in a moment' : ''
+  const behindUnits = behindHere.slice(0, 8).map(u => u.unit + (u.arrivingAt ? ' (in ' + u.arrivingAt + ')' : '')).join(' · ') + (behindHere.length > 8 ? ' · +' + (behindHere.length - 8) + ' more' : '')
+  // HOW FRESH, BOTH HALVES (2026-09-28 audit, 06 F-21): the tasks are the Breezeway mirror and the
+  // stays are Guesty, and only Guesty's age used to show.
+  const fresh = [data?.bzSync ? 'BZ ' + fmtAgo(data.bzSync) : '', data?.lastSync ? 'res ' + fmtAgo(data.lastSync) : ''].filter(Boolean).join(' · ')
+  const freshTitle = [data?.bzSync ? 'Breezeway tasks last refreshed ' + fmtAgo(data.bzSync) : '', data?.lastSync ? 'Guesty reservations last synced ' + fmtAgo(data.lastSync) : ''].filter(Boolean).join(' · ')
 
   return (
     <CatsCtx.Provider value={cats}>
@@ -1265,44 +1278,30 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           500, a timeout and a genuinely clear day all rendered the same sentence: "Nothing on the
           board for today yet." That is the failure mode that quietly destroys trust in a board —
           it says all clear at the exact moment it knows least. */}
-      {error && (
-        <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 flex items-start gap-2">
-          <AlertTriangle size={14} className="text-rose-600 mt-0.5 shrink-0" />
-          <div className="min-w-0 flex-1">
-            <p className="text-[12.5px] font-bold text-rose-900">Could not load the board</p>
-            <p className="text-[11.5px] text-rose-900/80 mt-0.5">{error} — what you see below may be old, or nothing at all.</p>
-          </div>
-          <button onClick={onRefresh} className="text-[11.5px] font-bold text-rose-700 hover:text-rose-900 shrink-0">Retry</button>
-        </div>
-      )}
-
-      {/* A PARTIAL READ IS NOT A COMPLETE ONE. buildOpsDay throws when a read fails outright; this
-          is the softer case — a scan that stopped early, so some numbers are lower than the truth. */}
-      {Array.isArray(data?.degraded) && data!.degraded!.length > 0 && (
-        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 flex items-start gap-2">
-          <AlertTriangle size={13} className="text-amber-600 mt-0.5 shrink-0" />
-          <p className="text-[12px] text-amber-900">Some of today&rsquo;s numbers are incomplete — could not fully read: {data!.degraded!.join(', ')}. Refresh in a moment.</p>
+      {/* A PARTIAL READ IS NOT A COMPLETE ONE, AND A FAILED ONE IS NOT A CLEAR DAY. buildOpsDay
+          throws when a read fails outright (the fetch error); a scan that stopped early comes back
+          as `degraded`. One line either way, the failure first (see `problem` above). */}
+      {problem && (
+        <div className={'mb-3 rounded-xl border px-3 py-1.5 flex items-center gap-2 ' + (error ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50')}>
+          <AlertTriangle size={13} className={'shrink-0 ' + (error ? 'text-rose-600' : 'text-amber-600')} />
+          <span className={'min-w-0 flex-1 text-[12px] leading-snug ' + (error ? 'text-rose-900' : 'text-amber-900')}>{problem}</span>
+          <button onClick={onRefresh} className={'text-[11.5px] font-bold shrink-0 ' + (error ? 'text-rose-700 hover:text-rose-900' : 'text-amber-800 hover:text-amber-950')}>{error ? 'Retry' : 'Refresh'}</button>
         </div>
       )}
 
       {/* ── NOT STARTED, AND THE GUEST HAS ALREADY GONE ──────────────────────────────────────
           Computed on every request since the board was written (lib/ops-behind, clock-aware so a
-          9am look at an 11am checkout stays quiet) and rendered nowhere. It is the one band that
-          says where a walk-in comes from. Past the deadline it gives way to the close-out below. */}
+          9am look at an 11am checkout stays quiet). It is the one band that says where a walk-in
+          comes from. ONE LINE OF TAGS (2026-09-28 audit, 08 UX-11) — the counts, then the units,
+          which truncate on a phone and read in full on hover. Past the deadline it gives way to
+          the close-out below. */}
       {!dl?.passed && behindHere.length > 0 && (
-        <div className={'mb-3 rounded-xl border px-3 py-2 ' + (behindSameDay > 0 ? 'border-rose-300 bg-rose-50' : 'border-amber-300 bg-amber-50')}>
-          <div className="flex items-start gap-2 flex-wrap">
-            <AlertTriangle size={14} className={'mt-0.5 shrink-0 ' + (behindSameDay > 0 ? 'text-rose-600' : 'text-amber-600')} />
-            <p className={'text-[12.5px] font-bold ' + (behindSameDay > 0 ? 'text-rose-900' : 'text-amber-900')}>
-              {behindHere.length} clean{behindHere.length === 1 ? '' : 's'} not started and the guest has already gone
-              {behindSameDay > 0 && <span className="font-semibold"> · {behindSameDay} with a check-in today{behindEarliest ? ', earliest ' + behindEarliest : ''}</span>}
-              {behindUnowned > 0 && <span className="font-semibold"> · {behindUnowned} with nobody on {behindUnowned === 1 ? 'it' : 'them'}</span>}
-            </p>
-          </div>
-          <p className="mt-1 text-[11.5px] text-ink/70 pl-6">
-            {behindHere.slice(0, 8).map(u => u.unit + (u.arrivingAt ? ' (in ' + u.arrivingAt + ')' : '')).join(' · ')}
-            {behindHere.length > 8 ? ' · +' + (behindHere.length - 8) + ' more' : ''}
-          </p>
+        <div className={'mb-3 rounded-xl border px-3 py-1.5 flex items-center gap-1.5 ' + (behindSameDay > 0 ? 'border-rose-300 bg-rose-50' : 'border-amber-300 bg-amber-50')}>
+          <AlertTriangle size={13} className={'shrink-0 ' + (behindSameDay > 0 ? 'text-rose-600' : 'text-amber-600')} />
+          <LTag tone={behindSameDay > 0 ? 'roseSolid' : 'amber'} title="Departure cleans whose guest has left (checkout + 30 min) that nobody has started">{behindHere.length} not started</LTag>
+          {behindSameDay > 0 && <LTag tone="rose" title={'Of those, ' + behindSameDay + ' with a guest checking in today' + (behindEarliest ? ' — the earliest at ' + behindEarliest : '')}>{behindSameDay} check-in today{behindEarliest ? ' · ' + behindEarliest : ''}</LTag>}
+          {behindUnowned > 0 && <LTag tone="amber" title={'Of those, ' + behindUnowned + ' with nobody assigned'}>{behindUnowned} unowned</LTag>}
+          <span className="min-w-0 flex-1 truncate text-[11.5px] text-ink/70" title={behindUnits}>{behindUnits}</span>
         </div>
       )}
 
@@ -1350,8 +1349,8 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           {aside}
           <span className="text-[11.5px] text-muted shrink-0 inline-flex items-center gap-1.5">
             {loading && <Loader2 size={11} className="animate-spin" />}
-            {data?.lastSync ? `synced ${fmtAgo(data.lastSync)}` : today}
-            <LTip label="Refresh now"><button onClick={onRefresh} className="hover:text-ink p-0.5"><RefreshCw size={12} /></button></LTip>
+            <span title={freshTitle || undefined}>{fresh || today}</span>
+            <LTip label="Refresh now"><button onClick={onRefresh} aria-label="Refresh the board" className="hover:text-ink p-0.5"><RefreshCw size={12} /></button></LTip>
           </span>
         </div>
       )}
@@ -1397,7 +1396,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           </select>
         )}
         {(mode === 'units' || mode === 'people') && !(searchOpen || q) && (
-          <button onClick={() => setSearchOpen(true)} aria-label="Search" className="sm:hidden px-2.5 py-1.5 rounded-xl border border-line bg-white text-muted hover:text-ink min-h-[36px]"><Search size={14} /></button>
+          <button onClick={() => setSearchOpen(true)} aria-label="Search" title="Search units, tasks and people" className="sm:hidden px-2.5 py-1.5 rounded-xl border border-line bg-white text-muted hover:text-ink min-h-[36px]"><Search size={14} /></button>
         )}
         {(mode === 'units' || mode === 'people') && (
           <div className={'relative order-last w-full basis-full sm:order-none sm:w-auto sm:basis-auto sm:flex-1 sm:min-w-[140px] sm:max-w-[240px] ' + ((searchOpen || q) ? '' : 'hidden sm:block')}>
@@ -1405,7 +1404,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
             <input ref={searchRef} value={q} onChange={e => setQ(e.target.value)} onBlur={() => { if (!q) setSearchOpen(false) }}
               placeholder={mode === 'units' ? 'Unit, task, name…' : 'Person…'}
               className="w-full rounded-xl border border-line bg-white pl-7 pr-7 py-1.5 text-[13px] min-h-[36px] focus:outline-none focus:border-ink" />
-            {q && <button onClick={() => { setQ(''); setSearchOpen(false) }} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>}
+            {q && <button onClick={() => { setQ(''); setSearchOpen(false) }} title="Clear the search" aria-label="Clear the search" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>}
           </div>
         )}
         <span className="ml-auto inline-flex items-center gap-1.5">
