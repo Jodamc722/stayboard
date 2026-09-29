@@ -48,6 +48,7 @@
 import { unstable_cache } from 'next/cache'
 import { supabaseAdmin } from './supabase-admin'
 import { DAY_TAG, tooOld } from './bust'
+import { pageRows } from './db-page'
 import { buildOpsDay } from './ops-day'
 import { buildDayPicture, type DayPicture } from './capacity-day'
 import { getTaskAutomation } from './auto-inspections'
@@ -372,14 +373,16 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
       ? db.from('auto_inspections').select('reservation_id,listing_id,task_id,check_in')
           .in('listing_id', arrivalIds.slice(0, 300)).gte('check_in', back45).lte('check_in', in2).then(r => guard<any[]>('auto inspections', r as any, []))
       : Promise.resolve([] as any[]),
-    // Finished inspections on the arriving units — the name filter is in SQL so the row cap can
-    // never drop the one that mattered.
+    // Finished inspections on the arriving units — the name filter is in SQL, and the read is PAGED
+    // NEWEST FIRST (2026-09-28 audit): an unordered .limit(2000) is 1,000 arbitrary rows, so the
+    // newest walk could be the one left out — and a "walked since = done" feedback row came back.
     arrivalIds.length
-      ? db.from('breezeway_tasks_sync').select('id,reference_property_id,name,finished_at')
+      ? pageRows<any>((a, b) => db.from('breezeway_tasks_sync').select('id,reference_property_id,name,finished_at')
           .in('reference_property_id', arrivalIds.slice(0, 300)).gte('scheduled_date', back180).lte('scheduled_date', in2)
           .not('finished_at', 'is', null)
           .or('name.ilike.%inspect%,name.ilike.%unit%check%,name.ilike.%quality%')
-          .limit(2000).then(r => guard<any[]>('done inspections', r as any, []))
+          .order('finished_at', { ascending: false }).order('id').range(a, b), 4)
+          .then(r => { if (r.truncated) degraded.push('done inspections'); return r.rows })
       : Promise.resolve([] as any[]),
     glitchTaskIds.length
       ? db.from('breezeway_tasks_sync').select('id,status,finished_at').in('id', glitchTaskIds.slice(0, 200)).then(r => guard<any[]>('glitch tasks', r as any, []))
@@ -472,7 +475,8 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   const lastWalk: Record<string, string> = {}
   for (const t of doneInspRows) {
     const lid = str(t.reference_property_id), fin = str(t.finished_at).slice(0, 10)
-    if (fin >= back45) doneInsp[lid] = str(t.id)
+    // Rows arrive newest first: the first one per unit is the walk to link.
+    if (fin >= back45 && !doneInsp[lid]) doneInsp[lid] = str(t.id)
     if (!lastWalk[lid] || fin > lastWalk[lid]) lastWalk[lid] = fin
   }
   const reviewsByListing: Record<string, any[]> = {}
