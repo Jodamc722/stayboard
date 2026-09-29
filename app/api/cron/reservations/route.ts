@@ -60,6 +60,16 @@ async function run(req: NextRequest) {
 // RECEIPT (2026-09-28): every run, so "did the booking feed run" has an answer that is not an
 // inference from guesty_sync_status.
 const receipted = withRouteReceipt<NextRequest>('reservations', run, { count: (b) => (typeof b.reservations === 'number' ? b.reservations : undefined) })
-async function runAndBust(req: NextRequest) { const res = await receipted(req); bustOpsDay(); return res }
+// Bust the day only when a run actually brought bookings in (2026-09-29): this used to purge it on
+// every call — an anonymous 401 and a quiet 0-booking run included — and each purge is a full
+// Command Center / Today in Ops rebuild for the next viewer.
+async function runAndBust(req: NextRequest) {
+  const res = await receipted(req)
+  if (res.ok) {
+    const b = await res.clone().json().catch(() => null)
+    if (!b || b.reservations !== 0) bustOpsDay()
+  }
+  return res
+}
 export async function GET(req: NextRequest) { return runAndBust(req) }
 export async function POST(req: NextRequest) { return runAndBust(req) }
