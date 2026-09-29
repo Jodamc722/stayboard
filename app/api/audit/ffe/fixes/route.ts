@@ -18,6 +18,7 @@ import { ffePortfolio } from '@/lib/ffe-portfolio'
 import { unitCode, resolveCode, orderCode } from '@/lib/ffe-links'
 import { needsOwner, FIX_OWNER_THRESHOLD } from '@/lib/ffe-catalog'
 import { notify } from '@/lib/notify'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
@@ -83,7 +84,9 @@ export async function GET(req: NextRequest) {
 
     // ---- THE BOARD ----
     const [{ data, error }, units] = await Promise.all([
-      db.from('ffe_fixes').select('*').order('created_at', { ascending: false }).limit(3000),
+      // Every fix, newest first, paged — the totals below count all of them, not the first 1,000.
+      pageRows((a, b) => db.from('ffe_fixes').select('*').order('created_at', { ascending: false }).order('id').range(a, b), 3)
+        .then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'could not read every fix — try again' } : null })),
       ffePortfolio(db),
     ])
     if (error) return fail(error.message)
