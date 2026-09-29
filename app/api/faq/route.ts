@@ -33,8 +33,14 @@ type CfDef = { label: string; slug: string }
 /** The unmasked how-to behind one the desk showed masked: same unit, same title, masks to what was sent. */
 async function rawHowto(db: ReturnType<typeof supabaseAdmin>, listingId: string, title: string, masked: string): Promise<string | null> {
   if (!listingId || !title) return null
-  const { data } = await db.from('audit_items').select('title,item_type,details,kind,note').eq('listing_id', listingId).order('created_at').limit(500)
-  for (const it of ((data as any[]) || [])) {
+  // By title (or the item type a title-less item is shown under), newest first — not the oldest few
+  // hundred items on a unit that has been walked many times.
+  const cols = 'title,item_type,details,kind,note,created_at'
+  const [byTitle, byType] = await Promise.all([
+    db.from('audit_items').select(cols).eq('listing_id', listingId).eq('title', title).order('created_at', { ascending: false }).limit(50),
+    db.from('audit_items').select(cols).eq('listing_id', listingId).eq('item_type', title).order('created_at', { ascending: false }).limit(50),
+  ])
+  for (const it of [...(((byTitle.data as any[]) || [])), ...(((byType.data as any[]) || []))]) {
     if (String(it.title || it.item_type || 'How-to') !== title) continue
     for (const cand of [it?.details?.howTo, it?.note]) {
       if (typeof cand === 'string' && cand && scrubStoredText(cand) === masked) return cand
@@ -180,7 +186,11 @@ export async function POST(req: NextRequest) {
     }
     const ins = await db.from('listing_faq').insert(row).select('*').limit(1)
     if (ins.error) return NextResponse.json({ error: ins.error.message }, { status: 500 })
-    return NextResponse.json({ ok: true, entry: ins.data && ins.data[0] })
+    // What comes back is masked like the GET for anyone not set to Direct — an approved how-to is saved
+    // with its real text (rawHowto), and the response must not be the way to read it.
+    const saved: any = ins.data && ins.data[0]
+    const direct = doorCodePolicy(__gate.access) === 'direct'
+    return NextResponse.json({ ok: true, entry: saved && !direct ? { ...saved, question: saved.question == null ? saved.question : scrubStoredText(saved.question), answer: saved.answer == null ? saved.answer : scrubStoredText(saved.answer) } : saved })
   }
   if (action === 'approveDraft' || action === 'dismissDraft') {
     const id = String(body.id || '')

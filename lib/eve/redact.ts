@@ -243,22 +243,38 @@ export function looksLikeDoorCode(text: any): boolean {
 // in / since ("since 2024"), a date, a phone number, money, a decimal, a percentage, or a run glued
 // to letters (a confirmation code). A zip / area / confirmation "code" is not a lock word.
 const MEM_CODE_WORD_RE = /\b(?:doors?|gates?|locks?|lockbox(?:es)?|keypads?|codes?|pins?|entry|entries|combos?|salto|access|passcodes?|keycodes?|c[oó]digos?)\b/gi
+// In a ROOM (scrubStoredStrings) the other ways into a building count too — a memory is not refused
+// for mentioning a garage, but a room is not read a garage or mailbox code.
+const ROOM_CODE_WORD_RE = /\b(?:doors?|gates?|locks?|lockbox(?:es)?|keypads?|codes?|pins?|entry|entries|combos?|salto|access|passcodes?|keycodes?|c[oó]digos?|garages?|mailbox(?:es)?|buzzers?|intercoms?|call\s?box(?:es)?|fobs?)\b/gi
 const MEM_RUN_RE = /(?<![A-Za-z\u00C0-\u024F0-9$.,\/-])\d{4,8}(?![0-9%]|[.,\/-]\d)[#*]?/g
 const MEM_PHONE_RE = /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g
+// A street address is not a code: "access via 1600 Collins Ave", "the gate at 7300 Biscayne Blvd".
+const MEM_STREET_RE = /\b\d{1,6}\s+(?:[NSEW]\.?\s+)?(?:[A-Z][A-Za-z]+\s+){1,3}(?:Ave|Avenue|St|Street|Blvd|Boulevard|Rd|Road|Dr|Drive|Way|Ln|Lane|Ct|Court|Pl|Place|Ter|Terrace|Hwy|Highway|Pkwy|Parkway|Cir|Circle|Causeway)\b/g
 const MEM_UNIT_BEFORE_RE = /\b(?:unit|units|apt|apartment|suite|ste|room|rm|floor|level)\.?\s*#?\s*$/i
 const MEM_YEAR_BEFORE_RE = /\b(?:in|since|during|until|till|before|after)\s+$/i
 const MEM_NEAR = 24
 
+/**
+ * How codeRuns reads a text. `room`: the wider list of ways in (ROOM_CODE_WORD_RE). `keep`: names that
+ * are never a code — the portfolio's own unit names ("Arya 1705", "17 West 1704"), so "Arya 1705 keypad
+ * offline" keeps its unit in a maintenance room.
+ */
+export type CodeRunOpts = { room?: boolean; keep?: RegExp | null }
+
 /** The [start, end) of every 4-8 digit run that sits within ~24 characters of a lock word. */
-function codeRuns(raw: string): Array<[number, number]> {
+function codeRuns(raw: string, opts: CodeRunOpts = {}): Array<[number, number]> {
   const out: Array<[number, number]> = []
   if (!/\d{4}/.test(raw)) return out
-  // Phone numbers out first, same length, so every position below still lines up.
-  const s = raw.replace(MEM_PHONE_RE, (m: string) => ' '.repeat(m.length))
+  // Phone numbers, street addresses and known unit names out first, same length, so every position
+  // below still lines up.
+  const blank = (m: string) => ' '.repeat(m.length)
+  let s = raw.replace(MEM_PHONE_RE, blank).replace(MEM_STREET_RE, blank)
+  if (opts.keep) s = s.replace(opts.keep, blank)
   const words: Array<[number, number]> = []
-  MEM_CODE_WORD_RE.lastIndex = 0
+  const WORDS = opts.room ? ROOM_CODE_WORD_RE : MEM_CODE_WORD_RE
+  WORDS.lastIndex = 0
   let w: RegExpExecArray | null
-  while ((w = MEM_CODE_WORD_RE.exec(s))) {
+  while ((w = WORDS.exec(s))) {
     if (/^(?:codes?|c[oó]digos?)$/i.test(w[0])) {
       const prev = /([a-z]+)\s*$/i.exec(s.slice(Math.max(0, w.index - 20), w.index))
       if (prev && NOT_A_DOOR.test(prev[1])) continue
@@ -287,9 +303,9 @@ export function codeNearDigits(text: any): boolean {
 }
 
 /** The same runs, masked — for text that is kept or replayed rather than refused (scrubStoredText). */
-export function maskCodeNearDigits(text: any): string {
+export function maskCodeNearDigits(text: any, opts: CodeRunOpts = {}): string {
   const s = String(text == null ? '' : text)
-  const runs = codeRuns(s)
+  const runs = codeRuns(s, opts)
   if (!runs.length) return s
   let out = ''
   let last = 0
@@ -346,7 +362,8 @@ export function isCodeFact(names: any[], value: any): boolean {
 }
 
 function walk(v: any, keyHint: string, ids: FieldIds): any {
-  if (typeof v === 'string') return v && hides(keyKind(keyHint), v) ? REDACTED : scrubText(v)
+  // (namedCodeString here too: a string inside an ARRAY under a code-named key — { building_codes: ['1234'] }.)
+  if (typeof v === 'string') return v && (hides(keyKind(keyHint), v) || namedCodeString(keyHint, v)) ? REDACTED : scrubText(v)
   if (typeof v === 'number') return hides(keyKind(keyHint), v) ? REDACTED : v
   if (Array.isArray(v)) return v.map(x => walk(x, keyHint, ids))
   if (v && typeof v === 'object') {
@@ -429,9 +446,9 @@ export function redactCodeText(s: any): string {
  * text redactor, then any lock word next to a 4-8 digit number. Stricter than a tool result on
  * purpose; a unit number in a sentence about a door is a fair price in a log. Never throws.
  */
-export function scrubStoredText(text: any, released: string[] = [], mark?: string): string {
+export function scrubStoredText(text: any, released: string[] = [], mark?: string, opts: CodeRunOpts = {}): string {
   const t = String(text == null ? '' : text)
-  try { return maskCodeNearDigits(redactCodeText(released.length ? scrubReleasedCodes(t, released, mark) : t)) } catch { return t }
+  try { return maskCodeNearDigits(redactCodeText(released.length ? scrubReleasedCodes(t, released, mark) : t), opts) } catch { return t }
 }
 
 /**
@@ -442,9 +459,9 @@ export function scrubStoredText(text: any, released: string[] = [], mark?: strin
  * thread or a line read from #ccs-and-jon would carry one. Stricter than a private answer on purpose; a
  * unit number in a sentence about a door is a fair price in a shared room. Never throws.
  */
-export function scrubStoredStrings<T>(value: T): T {
+export function scrubStoredStrings<T>(value: T, opts: CodeRunOpts = { room: true }): T {
   const go = (v: any): any => {
-    if (typeof v === 'string') return scrubStoredText(v)
+    if (typeof v === 'string') return scrubStoredText(v, [], undefined, opts)
     if (Array.isArray(v)) return v.map(go)
     if (v && typeof v === 'object' && !(v instanceof Date)) {
       const out: Record<string, any> = {}

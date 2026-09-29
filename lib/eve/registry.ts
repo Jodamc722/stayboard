@@ -119,6 +119,23 @@ async function codeFieldIds(ctx: EveCtx): Promise<CodeIds> {
   } catch { return _codeIds ? _codeIds.ids : { codeFieldIds: [], deviceFieldIds: [] } }
 }
 
+// The portfolio's own unit names with a number in them ("Arya 1705", "17 West 1704"), as one pattern,
+// built once per request: a room scrub never takes a unit's number out of its name.
+const _unitNames = new WeakMap<object, RegExp | null>()
+function unitNamesRe(ctx: EveCtx): RegExp | null {
+  if (_unitNames.has(ctx)) return _unitNames.get(ctx) || null
+  let re: RegExp | null = null
+  try {
+    const names = Array.from(new Set(Object.values(ctx.listingMeta || {}).map(m => String(m?.name || '').trim())))
+      .filter(n => /\d{4}/.test(n) && /[A-Za-z]{2}/.test(n) && n.length <= 60)   // a bare number is not a name
+      .sort((a, b) => b.length - a.length)
+      .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'))
+    if (names.length) re = new RegExp('(?<![A-Za-z0-9])(?:' + names.join('|') + ')(?![A-Za-z0-9])', 'gi')
+  } catch { re = null }
+  _unitNames.set(ctx, re)
+  return re
+}
+
 /**
  * Run a tool with the money gate applied. Rule 4: redaction happens HERE, before the output is
  * serialized into the conversation — not in the UI, where the model has already seen the number.
@@ -156,7 +173,7 @@ export async function runTool(name: string, input: any, ctx: EveCtx, open: strin
     // next to a 4-8 digit number is masked — because a guest thread's check-in message or a line read
     // from #ccs-and-jon can carry a code the patterns above miss. Not the door-code tool: its quoted
     // lines are scrubbed at the source, and in an admin's own DM its `code` is the answer.
-    const coded = ctx.sharedRoom && tool.name !== 'door_code_check' ? scrubStoredStrings(coded0) : coded0
+    const coded = ctx.sharedRoom && tool.name !== 'door_code_check' ? scrubStoredStrings(coded0, { room: true, keep: unitNamesRe(ctx) }) : coded0
     // A VENDOR ROOM GETS THE JOB, NOT THE GUEST (2026-09-28 audit, F2 / B-10). ops_today, unit_status,
     // the sentiment and glitch boards all carry guest names or a guest's own words; in a room with an
     // outside company in it every result loses them here, whatever tool produced it — and since the
