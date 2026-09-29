@@ -14,9 +14,9 @@ import {
   runLateCleanAlert, runGlitchAlert, runOvertimeAlert,
   runRepeatOffenderAlert, runDoorCodeAlert, runBlockedArrivalAlert,
   runMarketBrief, runHandover, runWalkInRiskAlert,
-  runReadinessCheck, runLaborReport, runNotableArrivals,
+  runReadinessCheck, runLaborReport, runNotableArrivals, runDigest,
 } from '@/lib/slack-alerts'
-import { expireStale, dispatchApproved } from '@/lib/slack-queue'
+import { expireStale, dispatchApproved, nowMinutesET } from '@/lib/slack-queue'
 import { botConnected } from '@/lib/slack'
 import { requireCron } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
@@ -55,12 +55,21 @@ async function run(req: NextRequest) {
   const blockedArrivals = await safe(runBlockedArrivalAlert())
   const marketBrief = await safe(runMarketBrief())
   const handover = await safe(runHandover())
+  // THE MORNING DIGEST rides this cron (2026-09-28; it had its own line, /api/cron/slack-digest at
+  // 11:31 UTC, which drifted to 6:31am in winter). Only on the pass inside 07:15–07:45 Eastern —
+  // this cron fires at :19 and :49, so that is the 07:19 pass, all year. Its own rule (the same
+  // settings key, slack_rules → events.digest, shipped off) still decides whether it may speak, and
+  // its 20-hour cooldown means a second pass could never post it twice.
+  const etMin = nowMinutesET()
+  const digest = etMin >= 7 * 60 + 15 && etMin <= 7 * 60 + 45
+    ? await safe(runDigest())
+    : { skipped: 'outside its 07:15-07:45 ET slot' }
   // An outbox crash is NOT "nothing to send" (2026-09-28 audit #23) — it is reported as such.
   const dispatched: { sent: number; failed: number; error?: string } =
     await dispatchApproved().catch((e: any) => ({ sent: 0, failed: 0, error: String((e && e.message) || e).slice(0, 200) }))
 
   // HONEST OK: false when the outbox crashed or any engine errored, naming which.
-  const engines: Record<string, any> = { readiness, labor, notable, walkIn, lateCleans, glitches, overtime, repeats, doorCodes, blockedArrivals, marketBrief, handover }
+  const engines: Record<string, any> = { readiness, labor, notable, walkIn, lateCleans, glitches, overtime, repeats, doorCodes, blockedArrivals, marketBrief, handover, digest }
   const errors = Object.keys(engines)
     .filter(k => engines[k] && typeof engines[k] === 'object' && engines[k].error)
     .map(k => k + ': ' + String(engines[k].error).slice(0, 120))
@@ -69,7 +78,7 @@ async function run(req: NextRequest) {
   return NextResponse.json({
     ok: errors.length === 0, ranAt: new Date().toISOString(), expired,
     readiness, labor, notable, walkIn, lateCleans, glitches, overtime, repeats, doorCodes, blockedArrivals,
-    marketBrief, handover, dispatched,
+    marketBrief, handover, digest, dispatched,
     ...(errors.length ? { error: errors.join('; ').slice(0, 480) } : {}),
   })
 }

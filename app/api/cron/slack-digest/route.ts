@@ -1,30 +1,7 @@
-// THE MORNING DIGEST — one message that says what today looks like.
-//
-// Jon, 2026-08-19: "in the future should give them a slack message about there day, what to
-// expect, what to know ect. This can be useful for them to get a little brief."
-//
-// This is the team-wide half of that. It auto-sends (no approval) because it is a summary of
-// facts, not a nudge aimed at a person, and because a brief that arrives at lunchtime because
-// nobody approved it at 7am is worthless.
-//
-// BARE PATH ON PURPOSE — a Vercel cron pointed at a path WITH A QUERY STRING never fires.
-import { NextRequest, NextResponse } from 'next/server'
-import { runDigest } from '@/lib/slack-alerts'
-import { dispatchApproved } from '@/lib/slack-queue'
-import { botConnected } from '@/lib/slack'
-import { requireCron } from '@/lib/cron-auth'
+// MERGED (2026-09-28) into /api/cron/slack, which runs the morning digest engine on its 07:19 ET
+// pass. This path has no cron line any more; it stays as a re-export of the Slack cron only because
+// lib/eve/automations.ts still names it.
+export { GET, POST } from '../slack/route'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
-
-async function run(req: NextRequest) {
-  const gate = await requireCron(req)
-  if (!gate.ok) return gate.res
-  if (!(await botConnected())) return NextResponse.json({ ok: true, skipped: 'Slack bot not connected' })
-  const digest = await runDigest().catch((e: any) => ({ error: String(e && e.message) }))
-  const dispatched = await dispatchApproved().catch(() => ({ sent: 0, failed: 0 }))
-  return NextResponse.json({ ok: true, ranAt: new Date().toISOString(), digest, dispatched })
-}
-
-export async function GET(req: NextRequest) { return run(req) }
-export async function POST(req: NextRequest) { return run(req) }
