@@ -16,6 +16,7 @@ import { syncReviewsDetailed } from '@/lib/guesty'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireCron } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -45,8 +46,10 @@ async function run(req: NextRequest) {
     try {
       const db = supabaseAdmin()
       const since = new Date(Date.now() - 90 * 86400000).toISOString()
-      const { data } = await db.from('guesty_reviews').select('channel,created_at').gte('created_at', since).limit(5000)
-      for (const r of ((data || []) as any[])) {
+      // Paged in id order: 90 days of reviews passes 1,000, and these are counts.
+      const got = await pageRows((a, b) => db.from('guesty_reviews').select('channel,created_at').gte('created_at', since).order('id').range(a, b), 5)
+      if (got.truncated) console.error('[sync-reviews] 90-day review read incomplete — byChannel counts are short')
+      for (const r of got.rows) {
         const ch = String(r.channel || 'Other')
         const at = String(r.created_at || '')
         if (!byChannel[ch]) byChannel[ch] = { n: 0, newest: null }
