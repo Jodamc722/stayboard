@@ -12,7 +12,6 @@ let cache: { at: number; props: { id: number; name: string }[] } | null = null
 export async function GET() {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   if (!breezewayConfigured()) return NextResponse.json({ ok: false, error: 'Breezeway not configured.' }, { status: 503 })
   if (cache && Date.now() - cache.at < 10 * 60 * 1000) return NextResponse.json({ ok: true, properties: cache.props, count: cache.props.length, cached: true })
   try {

@@ -21,7 +21,6 @@ const cachedPeople = unstable_cache(async () => {
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
   const dept = String(new URL(req.url).searchParams.get('department') || '').toLowerCase().trim()
   let people: Awaited<ReturnType<typeof listBreezewayPeople>> = []

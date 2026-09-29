@@ -26,7 +26,6 @@ async function token(sb: any): Promise<string | null> {
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   const id = new URL(req.url).searchParams.get('listingId') || ''
   if (!id) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
   const probe = new URL(req.url).searchParams.get('probe') || ''
@@ -96,7 +95,6 @@ export async function POST(req: NextRequest) {
   // The bulk panels sit on the Property page (/buildings/[slug]); edit there or on the Optimizer.
   const gate = await requireAnyLevel(['optimize', 'buildings'], 'edit')
   if (!gate.ok) return gate.res
-  const user = gate.access.user
 
   const body = await req.json().catch(() => ({} as any))
   const listingIds: string[] = Array.isArray(body?.listingIds) ? body.listingIds.filter((x: any) => typeof x === 'string') : []

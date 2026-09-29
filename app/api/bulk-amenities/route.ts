@@ -16,7 +16,6 @@ export async function POST(req: NextRequest) {
   // The bulk panels sit on the Property page (/buildings/[slug]); edit there or on the Optimizer.
   const gate = await requireAnyLevel(['optimize', 'buildings'], 'edit')
   if (!gate.ok) return gate.res
-  const user = gate.access.user
 
   const body = await req.json().catch(() => ({} as any))
   const listingIds: string[] = Array.isArray(body?.listingIds) ? body.listingIds.filter((x: any) => typeof x === 'string') : []

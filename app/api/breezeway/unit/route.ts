@@ -23,7 +23,6 @@ function isDone(t: any) { const st = stage(t); return !!t?.finished_at || st ===
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
 
   const listingId = String(new URL(req.url).searchParams.get('listingId') || '').trim()

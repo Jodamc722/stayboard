@@ -16,7 +16,6 @@ export async function POST(req: NextRequest) {
   // HeroCollage lives on the Listing page; edit on Listings or the Optimizer is the bar.
   const gate = await requireAnyLevel(['optimize', 'listings'], 'edit')
   if (!gate.ok) return gate.res
-  const user = gate.access.user
 
   const body = await req.json().catch(() => ({} as any))
   const listingId = body?.listingId

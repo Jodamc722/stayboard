@@ -18,7 +18,6 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   const gate = await requireAdmin('admin')
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   const clientId = process.env.GOOGLE_CLIENT_ID
   if (!clientId) return NextResponse.json({ error: 'GOOGLE_CLIENT_ID not set in env' }, { status: 500 })
   const sp = new URL(req.url).searchParams

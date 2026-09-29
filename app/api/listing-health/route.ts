@@ -284,7 +284,6 @@ const computeHealth = unstable_cache(async () => {
 export async function GET(req: Request) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   try {
     const full: any = await computeHealth()
     // OPS — what Today in Ops needs: one small score per listing, keyed by id, so the board can

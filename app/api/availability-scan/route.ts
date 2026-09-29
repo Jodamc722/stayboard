@@ -117,7 +117,6 @@ const cachedScan = unstable_cache(
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
 
   const refresh = new URL(req.url).searchParams.get('refresh') === '1'
   try {

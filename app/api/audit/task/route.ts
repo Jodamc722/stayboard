@@ -49,7 +49,6 @@ function buildBrief(item: any, unit: string): string {
 export async function GET() {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   if (!breezewayConfigured()) return NextResponse.json({ ok: true, people: [] })
   try { const people = await listBreezewayPeople(); return NextResponse.json({ ok: true, people: people || [] }) } catch { return NextResponse.json({ ok: true, people: [] }) }
 }

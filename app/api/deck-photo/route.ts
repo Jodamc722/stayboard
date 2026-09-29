@@ -41,7 +41,6 @@ export async function POST(req: NextRequest) {
   // Signed in is the gate. This writes to our own storage and touches nothing live.
   const gate = await requireLevel('reports', 'edit')
   if (!gate.ok) return gate.res
-  const user = gate.access.user
 
   let form: FormData
   try { form = await req.formData() } catch { return NextResponse.json({ error: 'multipart form-data required' }, { status: 400 }) }

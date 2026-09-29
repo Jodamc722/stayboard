@@ -24,7 +24,6 @@ function parseJson(raw: string): any | null {
 export async function POST(req: NextRequest) {
   const gate = await requireLevel('guidebooks', 'edit')
   if (!gate.ok) return gate.res
-  const user = gate.access.user
 
   const body = await req.json().catch(() => ({} as any))
   const id = String(body?.id || '')

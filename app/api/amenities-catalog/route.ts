@@ -24,7 +24,6 @@ function pickGroup(x: any): string {
 export async function GET() {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
 
   if (CACHE && Date.now() - CACHE.at < TTL) return NextResponse.json({ names: CACHE.names, groups: CACHE.groups, cached: true })
 

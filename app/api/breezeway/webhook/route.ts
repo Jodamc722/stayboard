@@ -31,7 +31,6 @@ export async function GET(req: NextRequest) {
   if (!p.get('subscribe') && !p.get('list')) return NextResponse.json({ ok: true }) // validation ping
   const gate = await requireAdmin('admin')
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
   const token = await getBreezewayToken()
   if (p.get('list')) {

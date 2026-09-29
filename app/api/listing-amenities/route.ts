@@ -14,7 +14,6 @@ export async function POST(req: NextRequest) {
   // Called from the Listing page (AmenityEditor) and from Owner Reports as well as the Optimizer.
   const gate = await requireAnyLevel(['optimize', 'listings', 'reports'], 'edit')
   if (!gate.ok) return gate.res
-  const user = gate.access.user
 
   const body = await req.json().catch(() => ({} as any))
   const listingId = body?.listingId

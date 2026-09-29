@@ -18,7 +18,6 @@ export async function POST(req: NextRequest) {
   // report attachments) use it too. Edit on either tab is the bar.
   const gate = await requireAnyLevel(['guidebooks', 'reports'], 'edit')
   if (!gate.ok) return gate.res
-  const user = gate.access.user
 
   const form = await req.formData().catch(() => null)
   const file = form?.get('file') as File | null

@@ -14,7 +14,6 @@ export const maxDuration = 30
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   if (!breezewayConfigured()) return NextResponse.json({ ok: true, comments: [] })
   const ids = String(new URL(req.url).searchParams.get('taskIds') || '')
     .split(',').map(s => s.trim()).filter(s => /^\d+$/.test(s)).slice(0, 8)

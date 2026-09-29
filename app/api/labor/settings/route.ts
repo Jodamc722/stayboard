@@ -13,7 +13,6 @@ const NUM_FIELDS = ['pct_good', 'pct_bad', 'grace_min', 'over_sched_min', 'ot_we
 export async function GET() {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   return NextResponse.json({ ok: true, settings: await getAllLaborSettings() })
 }
 

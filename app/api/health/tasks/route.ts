@@ -13,7 +13,6 @@ export const maxDuration = 45
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
 
   const db = supabaseAdmin()
   // Every pushed task, newest first, paged: the map below answers "is this issue already pushed?" and
