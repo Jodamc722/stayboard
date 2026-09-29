@@ -12,8 +12,10 @@
 // the recurring-projects pass (/api/cron/project-recur, 10:35 UTC) had cron lines of their own, both
 // pinned to UTC — so both drifted an hour earlier every winter. They now ride this line and key on
 // the EASTERN hour: recurrences at 6am (before the reminders, so a new 1:1 already exists when its
-// owner's digest is built), the digest at 7am. The recur pass is idempotent (its 6:13 and 6:43 runs
-// create nothing the second time); the digest keeps its 20-hour guard, so it goes once.
+// owner's digest is built), the digest at 7am. Both keep a 20-hour guard, so each goes once a morning:
+// the recur pass was meant to be idempotent, but a series behind by more than one period is caught up
+// one instance per run, so the 6:13 and 6:43 runs could each create one (2026-09-29 review, R1-12).
+// A by-hand ?recur=1 is not guarded — a person asked for it.
 //
 // Auth: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron); a dry run is
 // counts only and open to any active team member. Anonymous gets nothing — this sends email.
@@ -84,7 +86,10 @@ export async function GET(req: NextRequest) {
     if (!dry) {
       const h = hourET()
       if (h === RECUR_HOUR_ET) {
-        try { out.recur = await recurPass(false) } catch (e: any) { out.recur = { ok: false, error: String(e?.message || e).slice(0, 300) } }
+        try {
+          const skip = await tooSoon('project-recur', 1200)
+          out.recur = skip ? { ok: true, recur: true, ...skip } : await recurPass(false)
+        } catch (e: any) { out.recur = { ok: false, error: String(e?.message || e).slice(0, 300) } }
       }
       if (h === DIGEST_HOUR_ET) {
         try { out.digest = await digestPass(false) } catch (e: any) { out.digest = { ok: false, error: String(e?.message || e).slice(0, 300) } }
