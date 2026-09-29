@@ -10,7 +10,6 @@ export const maxDuration = 60
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   const sp = new URL(req.url).searchParams
   // A throw here used to escape as a bare 500 with no body, so the board could only say "Could not
   // load the schedule." The reason now comes back as the JSON error the board already displays.

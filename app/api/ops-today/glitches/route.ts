@@ -42,7 +42,6 @@ const cachedGlitches = unstable_cache(
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   try {
     const today = ymd(new Date())
     // ?history=1 → the FULL record including resolved glitches (for the /glitches page);

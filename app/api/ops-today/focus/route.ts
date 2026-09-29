@@ -15,7 +15,6 @@ export const maxDuration = 60
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   const market = String(req.nextUrl.searchParams.get('market') || 'all')
   const refresh = req.nextUrl.searchParams.get('refresh') === '1'
   const cachedOnly = req.nextUrl.searchParams.get('cached') === '1'

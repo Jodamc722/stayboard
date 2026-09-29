@@ -10,7 +10,6 @@ export const maxDuration = 30
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   try {
     const day = await buildOpsDay(req.nextUrl.searchParams.get('date'), { fresh: req.nextUrl.searchParams.get('refresh') === '1' })
     // The cached day carries the listing directory and the capacity picture for the Command Center,

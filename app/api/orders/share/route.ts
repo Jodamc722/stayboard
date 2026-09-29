@@ -9,7 +9,6 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   const scope = String(req.nextUrl.searchParams.get('scope') || '')
   if (!/^(b|u|m):.+/.test(scope)) return NextResponse.json({ error: 'scope must be b:building, u:listingId, or m:id,id (multi)' }, { status: 400 })
   const url = req.nextUrl.origin + '/owner-orders?s=' + encodeURIComponent(scope) + '&k=' + ownerOrderSig(scope)

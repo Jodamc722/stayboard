@@ -15,7 +15,6 @@ function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok && !hasEditCookie()) return gate.res
-  const user = gate.access.user
   const sp = new URL(req.url).searchParams
   const id = str(sp.get('id'))
   const from = str(sp.get('from'))

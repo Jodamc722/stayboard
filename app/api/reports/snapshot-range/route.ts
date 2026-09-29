@@ -28,7 +28,6 @@ function prettyDate(iso: string): string {
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok && !hasEditCookie()) return gate.res
-  const user = gate.access.user
 
   const sp = new URL(req.url).searchParams
   const id = str(sp.get('id'))

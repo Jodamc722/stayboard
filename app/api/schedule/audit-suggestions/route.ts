@@ -15,7 +15,6 @@ const DEAD_LISTING = /inactive|disabled|archived|deleted/i
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   const date = String(new URL(req.url).searchParams.get('date') || '').slice(0, 10)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return NextResponse.json({ error: 'Pass ?date=YYYY-MM-DD' }, { status: 400 })
   const db = supabaseAdmin()

@@ -47,7 +47,6 @@ export async function GET(req: Request) {
   const sinceIso = new Date(Date.now() - days * 86400000).toISOString()
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
 
   const sb = supabaseAdmin()
 

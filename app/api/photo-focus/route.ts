@@ -21,7 +21,6 @@ export async function POST(req: NextRequest) {
   // HeroCollage lives on the Listing page; edit on Listings or the Optimizer is the bar.
   const gate = await requireAnyLevel(['optimize', 'listings'], 'edit')
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ error: 'AI is not configured on this deployment.' }, { status: 503 })
 

@@ -43,7 +43,6 @@ async function fetchCheckouts(db: any, from: string, to: string) {
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   const VENDOR = vendorRegex((await getOpsPresets()).vendorBuildings)
   const HIST = 60
   const today = ymd(new Date())

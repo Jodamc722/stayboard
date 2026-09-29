@@ -35,7 +35,6 @@ async function readStored(db: any): Promise<{ owners: Owner[]; syncedAt: string 
 export async function GET() {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   const stored = await readStored(supabaseAdmin())
   return NextResponse.json({ ok: true, ...stored })
 }

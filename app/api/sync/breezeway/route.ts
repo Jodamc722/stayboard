@@ -22,7 +22,6 @@ function asArray(d: any): any[] {
 export async function POST(req: NextRequest) {
   const gate = await requireAdmin('admin')
   if (!gate.ok) return gate.res
-  const user = gate.access.user
 
   if (!breezewayConfigured()) {
     return NextResponse.json({ error: 'Breezeway not configured — add BREEZEWAY_CLIENT_ID and BREEZEWAY_CLIENT_SECRET in Vercel env, then retry.' }, { status: 503 })

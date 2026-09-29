@@ -36,7 +36,6 @@ function addDays(s: string, n: number): string { const d = new Date(s + 'T12:00:
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   try {
     const sp = req.nextUrl.searchParams
     const days = Math.min(180, Math.max(14, Number(sp.get('days')) || 90))

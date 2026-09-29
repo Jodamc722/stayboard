@@ -10,7 +10,6 @@ export const maxDuration = 60
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   try {
     const sp = req.nextUrl.searchParams
     return NextResponse.json(await buildDaySheet(sp.get('date') || '', sp.get('market') || ''))

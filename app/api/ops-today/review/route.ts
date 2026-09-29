@@ -22,7 +22,6 @@ export const maxDuration = 60
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
 
   const market = String(req.nextUrl.searchParams.get('market') || 'all')
   // The board's date, when the pager has moved off today — the backlog's "next workable day" is

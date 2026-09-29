@@ -55,7 +55,6 @@ async function fetchDocBlock(url: string): Promise<any | null> {
 export async function POST(req: NextRequest) {
   const gate = await requireLevel('reports', 'edit')
   if (!gate.ok && !hasEditCookie()) return gate.res
-  const user = gate.access.user
   const body = await req.json().catch(() => ({} as any))
   const sectionKey = str(body?.sectionKey).slice(0, 30)
   const prompt = str(body?.prompt).slice(0, 2000)

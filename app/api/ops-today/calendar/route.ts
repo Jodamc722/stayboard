@@ -15,7 +15,6 @@ const isLive = (s: string) => /confirm|check/i.test(str(s))
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   try {
     const sp = req.nextUrl.searchParams
     const listingId = str(sp.get('listingId'))

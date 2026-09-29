@@ -20,7 +20,6 @@ const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).form
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   try {
     const qd = String(req.nextUrl.searchParams.get('date') || '')
     const today = /^\d{4}-\d{2}-\d{2}$/.test(qd) ? qd : ymd(new Date())

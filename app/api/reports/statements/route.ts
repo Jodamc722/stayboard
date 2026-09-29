@@ -20,7 +20,6 @@ const csv = (v: string | null) => (v || '').split(',').map(s => s.trim()).filter
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
   if (!gate.ok && !hasEditCookie()) return gate.res
-  const user = gate.access.user
 
   const qs = new URL(req.url).searchParams
   const buildings = csv(qs.get('buildings'))

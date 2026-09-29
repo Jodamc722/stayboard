@@ -34,7 +34,6 @@ const SYS = [
 export async function POST(req: NextRequest) {
   const gate = await requireLevel('orders', 'edit')
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   const body = await req.json().catch(() => ({} as any))
   const scope = String(body.scope || 'all')
   const force = !!body.force

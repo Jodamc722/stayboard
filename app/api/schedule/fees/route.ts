@@ -23,7 +23,6 @@ export async function GET(req: NextRequest) {
   try {
     const gate = await requireUser()
     if (!gate.ok) return gate.res
-    const user = gate.access.user
     const VENDOR = vendorRegex((await getOpsPresets()).vendorBuildings)
     const { searchParams } = new URL(req.url)
     const db = supabaseAdmin()
