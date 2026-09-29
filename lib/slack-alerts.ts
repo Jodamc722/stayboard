@@ -19,11 +19,12 @@ import { buildingOf } from './segments'
 import { getDirectory } from './slack'
 import { getTimecards } from './homebase-labor'
 import { loadBehind } from './ops-behind'
-import { draft } from './slack-queue'
+import { draft, nowMinutesET } from './slack-queue'
 import { getSetting, setSetting } from './app-settings'
 import {
   getSlackRules, groupForBuilding, channelFor, audienceFor, resolveSlackId, deptForCategory,
-  type SlackRules, type RoutingGroup, type Dept,
+  withinWindow, broadcastAllowed,
+  type SlackRules, type RoutingGroup, type Dept, type EventKey,
 } from './slack-rules'
 import {
   lateCleansMessage, glitchesMessage, overtimeMessage, digestMessage,
@@ -46,12 +47,24 @@ export function etDate(d?: Date): string {
   return String(s).slice(0, 10)
 }
 
-type Ctx = { rules: SlackRules; users: Awaited<ReturnType<typeof getDirectory>>['users'] }
+/**
+ * ASK FIRST, LOAD SECOND (2026-09-28, 09 D15/D31). The Slack cron runs every engine 48 times a
+ * day, and each one used to load its whole situation — the day sheet, Homebase shifts, a 7-day
+ * arrivals scan, the Slack directory — before draft() finally checked the master mute and the
+ * sending window and threw the work away. This is the same gate draft() applies (enabled, master
+ * mute, window), asked before anything is read. Returns the skip reason, or null to go ahead.
+ */
+function gateFor(rules: SlackRules, key: EventKey): string | null {
+  const rule = rules.events[key]
+  if (!rule || !rule.enabled) return 'disabled'
+  if (!broadcastAllowed(rules, key)) return 'muted (master mute in Slack rules)'
+  if (!withinWindow(rule, nowMinutesET())) return 'outside the sending window'
+  return null
+}
 
-async function ctx(): Promise<Ctx> {
-  const rules = await getSlackRules()
-  const dir = await getDirectory()
-  return { rules, users: dir.users }
+/** The Slack directory, loaded only once an engine has been cleared to speak. */
+async function slackUsers(): Promise<Awaited<ReturnType<typeof getDirectory>>['users']> {
+  return (await getDirectory()).users
 }
 
 /** A bucket of work that shares one message: one area, one department. */
@@ -89,9 +102,10 @@ function bucketBy<T>(
  * problem, and the maintenance channel should never see it.
  */
 export async function runLateCleanAlert(): Promise<any> {
-  const { rules, users } = await ctx()
-  const rule = rules.events.late_cleans
-  if (!rule.enabled) return { skipped: 'disabled' }
+  const rules = await getSlackRules()
+  const skip = gateFor(rules, 'late_cleans')
+  if (skip) return { skipped: skip }
+  const users = await slackUsers()
 
   const b = await loadBehind()
   if (!b.units.length) return { skipped: 'nothing behind', waiting: b.waiting }
@@ -141,9 +155,10 @@ const CLOSED_STATUSES = ['closed', 'done', 'resolved']
  * is the opposite of spam.
  */
 export async function runGlitchAlert(): Promise<any> {
-  const { rules, users } = await ctx()
-  const rule = rules.events.glitches
-  if (!rule.enabled) return { skipped: 'disabled' }
+  const rules = await getSlackRules()
+  const skip = gateFor(rules, 'glitches')
+  if (skip) return { skipped: skip }
+  const users = await slackUsers()
 
   const today = etDate()
   const db = supabaseAdmin()
@@ -204,9 +219,10 @@ export async function runGlitchAlert(): Promise<any> {
  * today's date is what makes this "still on the clock right now".
  */
 export async function runOvertimeAlert(): Promise<any> {
-  const { rules, users } = await ctx()
-  const rule = rules.events.overtime
-  if (!rule.enabled) return { skipped: 'disabled' }
+  const rules = await getSlackRules()
+  const skip = gateFor(rules, 'overtime')
+  if (skip) return { skipped: skip }
+  const users = await slackUsers()
 
   const today = etDate()
   let cards: Awaited<ReturnType<typeof getTimecards>> = []
@@ -271,7 +287,8 @@ export async function runSyncAlert(alerts: string[], recovered: string[]): Promi
 
 export async function runDigest(): Promise<any> {
   const rules = await getSlackRules()
-  if (!rules.events.digest.enabled) return { skipped: 'disabled' }
+  const skip = gateFor(rules, 'digest')
+  if (skip) return { skipped: skip }
   const today = etDate()
   const db = supabaseAdmin()
 
@@ -325,7 +342,8 @@ export async function runDigest(): Promise<any> {
  */
 export async function runRepeatOffenderAlert(windowDays = 14): Promise<any> {
   const rules = await getSlackRules()
-  if (!rules.events.repeat_offenders.enabled) return { skipped: 'disabled' }
+  const skip = gateFor(rules, 'repeat_offenders')
+  if (skip) return { skipped: skip }
   const items = await findRepeatOffenders(windowDays)
   if (!items.length) return { skipped: 'nothing repeating' }
 
@@ -358,7 +376,8 @@ export async function runRepeatOffenderAlert(windowDays = 14): Promise<any> {
 
 export async function runDoorCodeAlert(): Promise<any> {
   const rules = await getSlackRules()
-  if (!rules.events.door_codes.enabled) return { skipped: 'disabled' }
+  const skip = gateFor(rules, 'door_codes')
+  if (skip) return { skipped: skip }
   const problems = await findCodeProblems(2)
   if (!problems.length) return { skipped: 'codes look fine' }
 
@@ -382,7 +401,8 @@ export async function runDoorCodeAlert(): Promise<any> {
 
 export async function runBlockedArrivalAlert(lookaheadDays = 5): Promise<any> {
   const rules = await getSlackRules()
-  if (!rules.events.blocked_arrival.enabled) return { skipped: 'disabled' }
+  const skip = gateFor(rules, 'blocked_arrival')
+  if (skip) return { skipped: skip }
   const items = await findBlockedArrivals(lookaheadDays)
   if (!items.length) return { skipped: 'no arrivals into blocked units' }
 
@@ -415,7 +435,8 @@ export async function runBlockedArrivalAlert(lookaheadDays = 5): Promise<any> {
 /** Jon: "a general brief in the VR ops channel, short and to the point, top priorities per market." */
 export async function runMarketBrief(): Promise<any> {
   const rules = await getSlackRules()
-  if (!rules.events.market_brief.enabled) return { skipped: 'disabled' }
+  const skip = gateFor(rules, 'market_brief')
+  if (skip) return { skipped: skip }
   const markets = await marketPriorities()
   if (!markets.length) return { skipped: 'no markets with work' }
 
@@ -447,7 +468,8 @@ export async function runMarketBrief(): Promise<any> {
  */
 export async function runHandover(): Promise<any> {
   const rules = await getSlackRules()
-  if (!rules.events.handover.enabled) return { skipped: 'disabled' }
+  const skip = gateFor(rules, 'handover')
+  if (skip) return { skipped: skip }
   if (!rules.leadershipChannel) {
     return { skipped: 'no leadership channel set — pick one in /users then invite the bot' }
   }
@@ -479,9 +501,10 @@ export async function runHandover(): Promise<any> {
  * pass: a guest arriving tonight into a unit that is blocked, uncleaned, or has no working code.
  */
 export async function runWalkInRiskAlert(): Promise<any> {
-  const { rules, users } = await ctx()
-  const rule = rules.events.walk_in_risk
-  if (!rule.enabled) return { skipped: 'disabled' }
+  const rules = await getSlackRules()
+  const skip = gateFor(rules, 'walk_in_risk')
+  if (skip) return { skipped: skip }
+  const users = await slackUsers()
 
   const risks = await findWalkInRisks()
   if (!risks.length) return { skipped: 'no arrivals at risk' }
@@ -522,9 +545,10 @@ export async function runWalkInRiskAlert(): Promise<any> {
  * everything is ready, because "all ready" at 3pm is genuinely the news.
  */
 export async function runReadinessCheck(): Promise<any> {
-  const { rules, users } = await ctx()
-  const rule = rules.events.readiness_3pm
-  if (!rule.enabled) return { skipped: 'disabled' }
+  const rules = await getSlackRules()
+  const skip = gateFor(rules, 'readiness_3pm')
+  if (skip) return { skipped: skip }
+  const users = await slackUsers()
 
   const { date, units } = await checkReadiness()
   if (!units.length) return { skipped: 'no arrivals today' }
@@ -608,8 +632,8 @@ export async function runReadinessCheck(): Promise<any> {
  */
 export async function runLaborReport(): Promise<any> {
   const rules = await getSlackRules()
-  const rule = rules.events.labor_report
-  if (!rule.enabled) return { skipped: 'disabled' }
+  const skip = gateFor(rules, 'labor_report')
+  if (skip) return { skipped: skip }
   const channelId = rules.leadershipChannel || rules.defaultChannel || rules.firehose
   if (!channelId) return { skipped: 'no leadership channel set — pick one in /users' }
 
@@ -640,8 +664,8 @@ export async function runLaborReport(): Promise<any> {
 /** Jon, 2026-08-19: "It should also send updates for owner stays, big bookings, etc." */
 export async function runNotableArrivals(): Promise<any> {
   const rules = await getSlackRules()
-  const rule = rules.events.notable_arrivals
-  if (!rule.enabled) return { skipped: 'disabled' }
+  const skip = gateFor(rules, 'notable_arrivals')
+  if (skip) return { skipped: skip }
   const channelId = rules.leadershipChannel || rules.opsChannel || rules.defaultChannel || rules.firehose
   if (!channelId) return { skipped: 'no channel set' }
 
