@@ -75,8 +75,12 @@ const GUEST_TOOLS = ['guest_profile', 'guest_thread', 'guest_history',
 // channel the bot is in (#ccs-and-jon included); the dossiers and her mind quote the latest low
 // review; review search is the guest's own words; the custom-field tools are the building's setup
 // (and were a door-code side door, F1). Every other result loses guest names in runTool.
+// 2026-09-29 review (N2): the other two Slack readers (one channel's history; which channels she can
+// read) and the internal comment threads were still open; the written playbooks name owners, staff
+// and money (lib/eve/docs.ts), and the email receipts list guest and owner addresses with subjects.
 const VENDOR_ALSO = ['slack_search', 'slack_thread', 'open_items', 'dossier', 'my_mind', 'search_reviews',
-  'guesty_fields', 'custom_fields', 'guesty_config']
+  'guesty_fields', 'custom_fields', 'guesty_config',
+  'slack_channel', 'slack_reach', 'comments', 'doc_search', 'doc_read', 'emails_sent']
 // Every share link's page IS the access for an open link (2026-09-28 audit, F10): listing them in a
 // shared room hands one vendor the others' boards. An admin asks for them; nobody else in Slack.
 const LINK_TOOLS = ['share_links']
