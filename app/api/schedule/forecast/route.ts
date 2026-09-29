@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { marketOf } from '@/lib/segments'
+import { marketOf, MARKETS } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
 import { requireUser } from '@/lib/access'
@@ -12,7 +12,6 @@ export const maxDuration = 60
 // A clean = a confirmed/checked Guesty checkout, deduped per unit/day (same rule as /api/schedule).
 // Botanica is vendor-cleaned (hotel staff) - tracked separately, not counted in OUR needs. ET dates.
 const LIVE = /confirm|checked/i
-const MARKETS = ['Miami', 'Broward', 'North']
 const DAYLABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
@@ -69,7 +68,7 @@ export async function GET(req: NextRequest) {
     const building = str(l.building)
     const name = l.nickname || l.title || 'Unit'
     let market = String(marketOf(building, l.address_city, name) || 'Miami')
-    if (!MARKETS.includes(market)) market = 'Miami'
+    if (!(MARKETS as string[]).includes(market)) market = 'Miami'
     meta[id] = { market, vendor: VENDOR.test(building) || VENDOR.test(name) }
   }
 
