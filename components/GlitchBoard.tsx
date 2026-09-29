@@ -15,6 +15,7 @@ import { Sheet } from './Sheet'
 import { StepDots, StepBar, Field, Chips, type Step } from './Steps'
 import { ImageDrop } from './ImageDrop'
 import { RefundTraining, TeachFromGlitch } from './RefundTraining'
+import { useAccess } from '@/lib/useAccess'
 
 type Glitch = {
   id: string; status: string; glitch_type: string | null; category: string | null
@@ -178,6 +179,10 @@ export function GlitchBoard() {
   const [canTrain, setCanTrain] = useState(false)
   const [showTrain, setShowTrain] = useState(false)
   useEffect(() => { fetch('/api/glitches/training', { cache: 'no-store' }).then(r => r.json()).then(j => setCanTrain(!!j?.canTrain)).catch(() => {}) }, [])
+  // WHO SIGNS OFF A REFUND OVER THE CAP: full access on Glitches (the server checks the same).
+  // Not shown while access is still loading — the hook reports full until it knows.
+  const acc = useAccess()
+  const canApprove = !acc.loading && acc.atLeast('glitches', 'full')
 
   // DEEP LINKS (2026-09-28 audit, D11). /glitches?id=<glitch> — the Slack vendor post, vendor jobs,
   // vendor visits and the Command Center — opens that card; ?q=<unit or words> narrows the board to
@@ -315,6 +320,7 @@ export function GlitchBoard() {
           onChanged={load}
           act={act}
           canTrain={canTrain}
+          canApprove={canApprove}
           openRefund={refundFor === openGlitch.id}
           onDeleted={(trashId, label) => { setUndo({ trashId, label }); setOpen(''); load() }}
         />
@@ -545,13 +551,14 @@ function OpenClock({ g }: { g: Glitch }) {
   )
 }
 
-function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, openRefund, onDeleted }: {
+function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, canApprove, openRefund, onDeleted }: {
   g: Glitch
   people: { id: number; name: string; departments: string[] }[]
   onClose: () => void
   onChanged: () => void
   act: (id: string, body: Record<string, any>, c?: string) => Promise<void>
   canTrain: boolean
+  canApprove: boolean
   openRefund: boolean
   onDeleted: (trashId: string, label: string) => void
 }) {
@@ -586,6 +593,9 @@ function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, openRefund
   const hist: any[] = Array.isArray((g as any).history) ? (g as any).history : []
   // refund_approved defaults to 0, so "$0" is only a real decision when one was logged.
   const refundLogged = refund > 0 || hist.some((h: any) => h && h.action === 'refund_logged')
+  // A refund over the cap that a manager turned down is back at $0 and waiting for a new amount —
+  // not "declined", which is a decision somebody made about the guest.
+  const refundRejected = refund === 0 && lastRefundEvent(g)?.action === 'refund_rejected'
   const [showActivity, setShowActivity] = useState(false)
   const taskLabel = g.task_status === 'completed' ? 'Completed' : g.task_status === 'in_progress' ? 'In progress' : g.task_status ? 'Not started' : ''
   const taskTone = g.task_status === 'completed' ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' : g.task_status === 'in_progress' ? 'bg-sky-50 text-sky-800 ring-sky-200' : 'bg-amber-50 text-amber-800 ring-amber-200'
@@ -620,7 +630,13 @@ function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, openRefund
         </button>
         <OpenClock g={g} />
         {dueOver ? <span className={chip + ' bg-rose-50 text-rose-800 ring-rose-200'}>Overdue</span> : null}
-        {g.refund_needs_approval ? <span className={chip + ' bg-violet-50 text-violet-800 ring-violet-200'}>Refund awaiting approval</span> : null}
+        {g.refund_needs_approval ? (
+          <span className={chip + ' bg-violet-50 text-violet-800 ring-violet-200'}
+            title={canApprove ? 'Over the approval cap — approve or reject it here' : 'Over the approval cap — waiting on someone with full access on Glitches to sign it off'}>
+            Refund awaiting approval
+          </span>
+        ) : null}
+        {g.refund_needs_approval && canApprove ? <RefundSignOff g={g} onDone={onChanged} /> : null}
       </div>
 
       <h2 className="text-[20px] sm:text-[22px] font-bold text-ink leading-snug mt-3">{headline}</h2>
@@ -695,8 +711,10 @@ function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, openRefund
         </FieldRow>
         <FieldRow label="Refund">
           <button onClick={() => refundRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="text-left">
-            {refundLogged
-              ? <span className="font-semibold text-emerald-700">{refund > 0 ? money(refund) + ' given' : 'Declined ($0)'}</span>
+            {refundRejected
+              ? <span className="font-semibold text-rose-700">Not approved — log a new amount</span>
+              : refundLogged
+              ? <span className={'font-semibold ' + (g.refund_needs_approval ? 'text-violet-700' : 'text-emerald-700')}>{refund > 0 ? money(refund) + (g.refund_needs_approval ? ' — awaiting sign-off' : ' given') : 'Declined ($0)'}</span>
               : <span className="text-muted">None logged</span>}
             {rec != null && !refundLogged ? <span className="text-muted"> · suggested {money(rec)}</span> : null}
           </button>
@@ -734,8 +752,8 @@ function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, openRefund
 
       <div className="space-y-3 mt-3">
         <div ref={refundRef}>
-          <Fold title="Refund" open={openRefund} hint={refundLogged ? (refund > 0 ? money(refund) + ' given' : 'declined') : rec != null ? 'suggested ' + money(rec) : 'work out a recommendation'}>
-            <MoneyTab g={g} openRefund={openRefund} onChanged={onChanged} canTrain={canTrain} />
+          <Fold title="Refund" open={openRefund} hint={refundRejected ? 'not approved' : refundLogged ? (refund > 0 ? money(refund) + (g.refund_needs_approval ? ' awaiting sign-off' : ' given') : 'declined') : rec != null ? 'suggested ' + money(rec) : 'work out a recommendation'}>
+            <MoneyTab g={g} openRefund={openRefund} onChanged={onChanged} canTrain={canTrain} canApprove={canApprove} />
           </Fold>
         </div>
 
@@ -902,7 +920,7 @@ function UnitSignals({ g }: { g: Glitch }) {
 // Two numbers that must never be confused: what the model RECOMMENDS and what a person DECIDED.
 // They sit side by side on purpose — the gap between them, across many cards, is the only way to
 // find out whether the policy matches what the team actually does.
-function MoneyTab({ g, openRefund, onChanged, canTrain }: { g: Glitch; openRefund: boolean; onChanged: () => void; canTrain: boolean }) {
+function MoneyTab({ g, openRefund, onChanged, canTrain, canApprove }: { g: Glitch; openRefund: boolean; onChanged: () => void; canTrain: boolean; canApprove: boolean }) {
   const [rec, setRec] = useState<any>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -970,9 +988,17 @@ function MoneyTab({ g, openRefund, onChanged, canTrain }: { g: Glitch; openRefun
             ) : null}
             {g.refund_note ? <p className="text-[12px] text-muted mt-1">{g.refund_note}</p> : null}
             {g.refund_needs_approval ? (
-              <p className="text-[12px] font-bold text-violet-700 mt-1.5">Waiting on a manager to sign this off.</p>
+              canApprove
+                ? <div className="mt-2"><RefundSignOff g={g} onDone={onChanged} /></div>
+                : <p className="text-[12px] font-bold text-violet-700 mt-1.5">Waiting on a manager to sign this off.</p>
+            ) : g.refund_approved_by ? (
+              <p className="text-[12px] text-muted mt-1">Signed off by {String(g.refund_approved_by).split('@')[0]}{g.refund_approved_at ? ' · ' + fmtStamp(g.refund_approved_at) : ''}</p>
             ) : null}
           </>
+        ) : lastRefundEvent(g)?.action === 'refund_rejected' ? (
+          <p className="text-[13px] font-semibold text-rose-700 mt-0.5">
+            {money(Number(lastRefundEvent(g)?.amount) || 0)} was not approved{g.refund_approved_by ? ' by ' + String(g.refund_approved_by).split('@')[0] : ''}{lastRefundEvent(g)?.note ? ': ' + String(lastRefundEvent(g)?.note) : ''}. Log a new amount — 0 if the guest gets nothing.
+          </p>
         ) : (
           <p className="text-[13px] text-muted mt-0.5">Nothing logged yet. Zero is a real answer — log it as declined so the question stops coming back.</p>
         )}
@@ -1767,6 +1793,58 @@ function EditGlitch({ g, onDone }: { g: Glitch; onDone: () => void }) {
         {err && <span className="text-[10px] text-rose-700">{err}</span>}
       </div>
     </div>
+  )
+}
+
+/** The latest refund decision in the card's history — logged, approved or rejected — or null. */
+function lastRefundEvent(g: Glitch): any | null {
+  const h: any[] = Array.isArray(g.history) ? g.history : []
+  for (let i = h.length - 1; i >= 0; i--) {
+    const a = String((h[i] && h[i].action) || '')
+    if (a === 'refund_logged' || a === 'refund_approved' || a === 'refund_rejected') return h[i]
+  }
+  return null
+}
+
+/**
+ * SIGN OFF A REFUND OVER THE CAP (2026-09-28 audit, D12). Shown only to approvers — full access on
+ * Glitches — and the server checks the same thing. Approve keeps the amount and puts the approver
+ * on the card; Reject sends it back to $0 with a reason, until someone logs a new amount.
+ */
+function RefundSignOff({ g, onDone }: { g: Glitch; onDone: () => void }) {
+  const [busy, setBusy] = useState<'' | 'approve' | 'reject'>('')
+  const [err, setErr] = useState('')
+  const amt = money(Number(g.refund_approved) || 0) || '$0'
+  const decide = async (approve: boolean) => {
+    let note = ''
+    if (approve) {
+      if (!window.confirm('Approve the ' + amt + ' refund' + (g.guest_name ? ' for ' + g.guest_name : '') + '?')) return
+    } else {
+      const why = window.prompt('Reject the ' + amt + ' refund? Say why — whoever logged it will see this. It goes back to $0 until a new amount is logged.', '')
+      if (why === null) return
+      note = why
+    }
+    setBusy(approve ? 'approve' : 'reject'); setErr('')
+    try {
+      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: g.id, action: 'approveRefund', approve, note }) })
+      const j = await r.json().catch(() => ({} as any))
+      if (!r.ok || !j.ok) setErr(j.error || 'Could not save the decision.')
+      else onDone()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy('')
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 flex-wrap">
+      <button onClick={() => decide(true)} disabled={!!busy} title={'Sign off the ' + amt + ' refund — the amount stands and your name goes on the card'}
+        className="inline-flex items-center gap-1 text-[12px] font-bold px-2.5 h-8 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
+        {busy === 'approve' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Approve {amt}
+      </button>
+      <button onClick={() => decide(false)} disabled={!!busy} title="Reject it — the refund goes back to $0 until someone logs a new amount"
+        className="inline-flex items-center gap-1 text-[12px] font-bold px-2.5 h-8 rounded-xl border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 disabled:opacity-50">
+        {busy === 'reject' ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />} Reject
+      </button>
+      {err ? <span className="text-[12px] text-rose-700">{err}</span> : null}
+    </span>
   )
 }
 

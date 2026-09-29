@@ -1,5 +1,6 @@
-// Glitch actions: move along the escalation path, update fields, push a Breezeway task
-// for operations (explicit click only), check the pushed task's status, delete.
+// Glitch actions: move along the escalation path, update fields, log a refund and sign off one
+// over the cap, push a Breezeway task for operations (explicit click only), check the pushed
+// task's status, delete.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -143,13 +144,62 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, amount, needsApproval, cap })
     }
 
+    // SIGN-OFF FOR A REFUND OVER THE CAP (2026-09-28 audit, D12). Logging an amount above the
+    // approval line set refund_needs_approval, and nothing anywhere could clear it — the card said
+    // "Waiting on a manager to sign this off" forever. Whoever holds FULL access on Glitches (the
+    // board leads; admins and the owner always do) now answers it:
+    //   approve → the amount stands, and who signed it and when is stamped on the card;
+    //   reject  → the refund goes back to $0 — nothing is given until someone logs a new amount,
+    //             which is judged against the cap again — and the rejected figure stays in history.
+    if (action === 'approveRefund') {
+      const approver = await requireLevel('glitches', 'full')
+      if (!approver.ok) return NextResponse.json({ ok: false, error: 'Only someone with full access on Glitches can sign off a refund.' }, { status: 403 })
+      if (!g.refund_needs_approval) return NextResponse.json({ ok: false, error: 'This refund is not waiting on a sign-off.' }, { status: 409 })
+      // An explicit answer either way — a malformed request must never zero someone's refund.
+      const decision = b.approve === true || str(b.decision) === 'approve' ? 'approve'
+        : b.approve === false || str(b.decision) === 'reject' ? 'reject' : ''
+      if (!decision) return NextResponse.json({ ok: false, error: 'Say approve or reject.' }, { status: 400 })
+      const approve = decision === 'approve'
+      const note = str(b.note).slice(0, 300)
+      const amount = Number(g.refund_approved) || 0
+      const nowIso = new Date().toISOString()
+      const patch: Record<string, any> = {
+        refund_needs_approval: false,
+        refund_approved_by: user.email || 'team',
+        refund_approved_at: nowIso,
+        history: stamp(approve ? 'refund_approved' : 'refund_rejected', { amount, note: note || undefined }),
+        updated_at: nowIso,
+      }
+      if (!approve) {
+        patch.refund_approved = 0
+        patch.refund_note = ('Not approved' + (note ? ': ' + note : '')).slice(0, 300)
+      }
+      const { error } = await db.from('glitches').update(patch).eq('id', id)
+      if (error) {
+        const hint = /column|schema/i.test(error.message) ? ' — run migration 085 in Supabase first.' : ''
+        return NextResponse.json({ ok: false, error: error.message.slice(0, 200) + hint }, { status: 500 })
+      }
+      return NextResponse.json({ ok: true, approved: approve, amount })
+    }
+
     if (action === 'update') {
       const patch: Record<string, any> = {}
       if (b.overview !== undefined) patch.overview = str(b.overview)
       if (b.category !== undefined) patch.category = str(b.category) || null
       if (b.glitchType !== undefined) patch.glitch_type = str(b.glitchType) || null
       if (b.incidentDate !== undefined) patch.incident_date = str(b.incidentDate) || null
-      if (b.refundApproved !== undefined) patch.refund_approved = num(b.refundApproved) || 0
+      if (b.refundApproved !== undefined) {
+        patch.refund_approved = num(b.refundApproved) || 0
+        // THE CAP APPLIES HERE TOO (2026-09-28). The Edit form carries the refund amount, so an
+        // amount over the approval line — or one a manager had just rejected — could be typed in
+        // and stand with nobody's sign-off. A changed amount is judged against the cap again.
+        if (patch.refund_approved !== (Number(g.refund_approved) || 0)) {
+          const cap = await refundApprovalCap()
+          patch.refund_needs_approval = patch.refund_approved > cap
+          patch.refund_approved_by = null
+          patch.refund_approved_at = null
+        }
+      }
       if (b.reportedBy !== undefined) patch.reported_by = str(b.reportedBy) || null
       if (b.guestEmail !== undefined) patch.guest_email = str(b.guestEmail) || null
       if (b.unit !== undefined) patch.unit = str(b.unit) || null
@@ -193,9 +243,14 @@ export async function POST(req: NextRequest) {
   if (b.reportedVia !== undefined) patch.reported_via = ['message','call','in_person','at_checkout','review','other'].includes(String(b.reportedVia).toLowerCase()) ? String(b.reportedVia).toLowerCase() : null
   if (b.details !== undefined) patch.details = str(b.details).slice(0, 4000) || null
       if (b.progress !== undefined) { const pr = Number(b.progress); patch.progress = (Number.isFinite(pr) && pr >= 0 && pr <= 100) ? Math.round(pr) : null }
-      patch.history = stamp('updated')
+      patch.history = stamp('updated', patch.refund_needs_approval !== undefined ? { refund: patch.refund_approved, needsApproval: patch.refund_needs_approval } : undefined)
       patch.updated_at = new Date().toISOString()
-      const { error } = await db.from('glitches').update(patch).eq('id', id)
+      let { error } = await db.from('glitches').update(patch).eq('id', id)
+      // The approval columns arrive with migration 085; an edit must still save without them.
+      if (error && /column|schema/i.test(error.message) && patch.refund_needs_approval !== undefined) {
+        delete patch.refund_needs_approval; delete patch.refund_approved_by; delete patch.refund_approved_at
+        ;({ error } = await db.from('glitches').update(patch).eq('id', id))
+      }
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
       return NextResponse.json({ ok: true })
     }
