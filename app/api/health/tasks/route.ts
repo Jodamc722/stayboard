@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, retrieveBreezewayTask, normalizeTaskStatus } from '@/lib/breezeway'
 import { requireUser } from '@/lib/access'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
@@ -15,12 +16,18 @@ export async function GET(req: NextRequest) {
   const user = gate.access.user
 
   const db = supabaseAdmin()
-  const { data: rows, error } = await db.from('breezeway_tasks')
+  // Every pushed task, newest first, paged: the map below answers "is this issue already pushed?" and
+  // the summary counts them all — the first 1,000 of a .limit(2000) left older pushes out of both.
+  // Bounded at 5 pages (a page load); the query's own error keeps its old answer.
+  let error: any = null
+  const read = await pageRows<any>((a, b) => db.from('breezeway_tasks')
     .select('id, listing_id, issue_title, department, priority, breezeway_task_id, scheduled_date, status, report_url, action_taken_at, created_at')
-    .order('created_at', { ascending: false }).limit(2000)
+    .order('created_at', { ascending: false }).order('id').range(a, b)
+    .then((r: any) => { if (r.error) error = r.error; return r }), 5)
   if (error) return NextResponse.json({ error: `breezeway_tasks read: ${error.message}. Run migration 009.`, tasks: {} }, { status: 200 })
+  if (read.truncated) console.error('[health/tasks] pushed-task read stopped at 5,000 — the oldest pushes are not shown')
 
-  let list = rows || []
+  let list = read.rows
 
   if (new URL(req.url).searchParams.get('refresh') === '1' && breezewayConfigured()) {
     const open = list.filter((r: any) => r.breezeway_task_id && (r.status === 'created' || r.status === 'in_progress')).slice(0, 40)
