@@ -497,11 +497,15 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
         const only = (prefix: string) => { const l = named.filter(x => x.startsWith(prefix)); return l.length === 1 ? l[0] : null }
         const capScope = only('unit:') || only('building:') || only('channel:') || 'portfolio'
         saveMemory({
-          text: said, kind, scope: capScope, weight: 5, maxWeight: cap,
+          // FILED AS AN INSIGHT, NOT A RULE (2026-09-28 audit, F15). "The AC in 402 always breaks" is
+          // a description, not an instruction, and filed as kind 'rule' from Jon it went straight
+          // into her STANDING RULES before he had confirmed anything. It is an insight until he says
+          // yes (his answer is a new rule that supersedes this row); the standing lane skips it.
+          text: said, kind: 'insight', scope: capScope, weight: 5, maxWeight: cap,
           // Only Jon's own words are filed as Jon's; a colleague's directive is Eve's inference.
           source: isSuperadmin(ctx.email) ? 'jon' : source === 'telegram' ? 'telegram' : 'eve',
           why: source === 'telegram' ? 'said on Telegram — auto-captured, awaiting confirmation' : `said in chat by ${ctx.email || 'someone'} — auto-captured, awaiting confirmation`,
-          evidence: chatId ? { chatId, autoCaptured: true } : { autoCaptured: true }, created_by: ctx.email || null,
+          evidence: chatId ? { chatId, autoCaptured: true, proposedKind: kind } : { autoCaptured: true, proposedKind: kind }, created_by: ctx.email || null,
         }).then(async saved => {
           if (!saved.ok || !saved.id || saved.deduped) return
           const { askQuestion } = await import('./questions')

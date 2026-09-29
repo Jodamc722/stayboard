@@ -257,8 +257,10 @@ export async function loadMemories(scopes: string[], email: string, limit = 60, 
 
     // ── STANDING: a person's rules and preferences, in scope (not recalled — the recall lane can
     // pull a rule from a building that is not in play, and that belongs in RELEVANT on its merits).
+    // An auto-captured "always / never" sentence is not a rule until Jon confirms it (F15): it can be
+    // picked as RELEVANT on its merits, never read out as a standing rule.
     const standing = live
-      .filter(r => !r._recalled && standingKind(r) && (isHuman(r.source) || Number(r.weight || 0) >= 8))
+      .filter(r => !r._recalled && standingKind(r) && (isHuman(r.source) || Number(r.weight || 0) >= 8) && !(r.evidence && r.evidence.autoCaptured))
       .sort((a, b) => (Number(b.weight) - Number(a.weight)) || (beliefStrength(b, now) - beliefStrength(a, now)) || (Number(b.use_count || 0) - Number(a.use_count || 0)))
       .slice(0, LANE_BUDGET.standing)
     const taken = new Set(standing.map(r => String(r.id)))
