@@ -35,9 +35,10 @@ import { getShifts } from '@/lib/homebase'
 import { getTimecards } from '@/lib/homebase-labor'
 import { getLaborSettings } from '@/lib/labor-settings'
 import { computeYesterdayLabor } from '@/lib/labor-daily'
-import { requireCron } from '@/lib/cron-auth'
+import { requireCron, cronAllowed } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
 import { integrityChecks, engineFailedCheck, emailIntegrityFailures } from '@/lib/labor-integrity'
+import { atEasternHour } from '@/lib/et-clock'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -85,7 +86,16 @@ const secTitle = (t: string, sub: string) =>
 
 // RECEIPT (2026-09-21): the Learning tab's Homebase row read "missing" because this job never
 // wrote one. The wrapper reads ok/sent/to off the response; preview, test and ?checks write nothing.
-export const GET = withRouteReceipt<NextRequest>('labor-trueup', send, { skipWhen: (req) => { const sp = new URL(req.url).searchParams; return sp.get('preview') === '1' || sp.get('test') === '1' || sp.get('checks') === '1' } })
+const receipted = withRouteReceipt<NextRequest>('labor-trueup', send, { skipWhen: (req) => { const sp = new URL(req.url).searchParams; return sp.get('preview') === '1' || sp.get('test') === '1' || sp.get('checks') === '1' } })
+
+// 7:58AM EASTERN ALL YEAR (2026-09-29). vercel.json fires this at 11:58 AND 12:58 UTC; on the
+// scheduler's own call, the one that is not 7am in New York stops here — before the receipt, the
+// Homebase reads, the snapshot or any send (lib/et-clock). A person's run — ?force, preview, test,
+// checks — carries no bearer and is never skipped.
+export async function GET(req: NextRequest) {
+  if (cronAllowed(req).viaSecret && !atEasternHour(7)) return NextResponse.json({ ok: true, skipped: 'daylight-saving twin — this job runs at 7am Eastern' })
+  return receipted(req)
+}
 
 // The three windows, SEQUENTIAL on purpose — parallel runs double up on Homebase and trip its
 // rate limiting; the engine caches its weeks so runs 2 and 3 ride run 1.
