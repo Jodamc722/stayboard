@@ -292,8 +292,8 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
       {/* ---------------------------------------------------------------- window label */}
       {windowLabel && (
         <p className="text-[12px] text-muted mb-2.5">
-          Everything below covers <span className="font-semibold text-ink">{windowLabel}</span>, compared with the {win.days} days before it
-          ({win.prevFrom} → {win.prevTo}).
+          Everything below covers <span className="font-semibold text-ink">{windowLabel}</span>, compared with {win.prior === 'month' ? 'the month before' : 'the ' + win.days + ' days before it'}
+          {' '}({win.prevFrom} → {win.prevTo}).
           {market !== 'all' ? ' ' + market + ' only.' : ''}{building !== 'all' ? ' ' + building + ' only.' : ''}
         </p>
       )}

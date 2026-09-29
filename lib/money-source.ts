@@ -392,9 +392,12 @@ export async function applyMoneyOverride(
     }
   }
 
-  // Prior window, so the deltas stay honest.
+  // Prior window, so the deltas stay honest — in the SAME scope as the current one (2026-09-28 audit,
+  // P1-7: this call dropped `scopeIds`, so a Miami board compared Miami now against the whole
+  // portfolio before). lib/kpi now hands a whole-month window the previous calendar month as its
+  // prior, so his prior resolves every month instead of only after a 31-day month.
   if (prevFrom && prevTo) {
-    const prev = await resolveRevenue(prevFrom, prevTo)
+    const prev = await resolveRevenue(prevFrom, prevTo, scopeIds)
     if (prev.money) {
       const p = prev.money
       const pc = (now: any, was: any) => (typeof now === 'number' && typeof was === 'number' && was) ? Math.round(((now - was) / Math.abs(was)) * 1000) / 10 : null

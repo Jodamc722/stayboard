@@ -1,7 +1,8 @@
 // BUSINESS KPIs — the numbers the home page runs on.
 //
 // One endpoint, one window, everything compared against the SAME LENGTH period immediately before
-// it, so "vs prior" always means something. Sources:
+// it — or, for a whole calendar month, the calendar month before — so "vs prior" always means
+// something. Sources:
 //   • guesty_reservations  → occupancy, ADR, RevPAR, cleaning revenue, arrivals/departures, welcome calls
 //   • breezeway_tasks_sync → work completed (cleans / maintenance / inspections), minutes, rate_paid
 //   • guesty_conversation_sentiment → guest sentiment
@@ -26,6 +27,7 @@ import { redactMoney } from '@/lib/money'
 import { pageRows } from '@/lib/db-page'
 import { isLowReview } from '@/lib/review-scale'
 import { welcomeRate, welcomeCallsDue } from '@/lib/call-desk'
+import { wholeMonth } from '@/lib/money-source'
 
 
 const DEAD_LISTING = ['inactive', 'disabled', 'archived', 'deleted']
@@ -113,8 +115,14 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     }
     if (from > to) { const t = from; from = to; to = t }
     const span = daysBetween(from, to)
+    // "VS PRIOR" (2026-09-28 audit, P1-7). A whole calendar month compares with the calendar month
+    // before it — September against August, not against Aug 2–31 — which is also the only prior the
+    // Revenue App (month-grained) can answer. Any other window compares with the same number of days
+    // immediately before it. Occupancy, ADR and RevPAR are per-night rates, so a 30- vs 31-day pair
+    // compares like with like.
     const prevTo = addDays(from, -1)
-    const prevFrom = addDays(prevTo, -(span - 1))
+    const monthly = !!wholeMonth(from, to)
+    const prevFrom = monthly ? prevTo.slice(0, 8) + '01' : addDays(prevTo, -(span - 1))
     const marketFilter = str(sp.get('market') || 'all')
     const buildingFilter = str(sp.get('building') || 'all')
 
@@ -650,7 +658,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
 
     const payload = {
       ok: true,
-      window: { from, to, days: span, prevFrom, prevTo, today },
+      window: { from, to, days: span, prevFrom, prevTo, prevDays: daysBetween(prevFrom, prevTo), prior: monthly ? 'month' : 'days', today },
       filters: {
         market: marketFilter, building: buildingFilter,
         markets: ['Miami', 'Broward', 'North'],
