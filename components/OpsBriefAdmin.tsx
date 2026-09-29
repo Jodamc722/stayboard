@@ -7,8 +7,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { Sunrise, Loader2, Check, AlertTriangle, Save, Eye, Send, Mail } from 'lucide-react'
 
 type Digest = { enabled?: boolean; to?: string[]; fromEmail?: string }
-type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; trueup?: Digest; salato?: Digest; laborPlan?: { targetMarginPct?: number | null }; maint?: { enabled?: boolean; miamiTo?: string[]; browardTo?: string[]; miamiLang?: string; browardLang?: string }
-  // THE CREW'S LANGUAGE (Jon, 2026-08-25). Field day sheets and maintenance briefs only —
+// The retired maintenance briefs' `maint` block (2026-09-09) is no longer edited on this card.
+// Whatever is stored rides back through `...cfg` unchanged on save, so nothing is lost.
+type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; trueup?: Digest; salato?: Digest; laborPlan?: { targetMarginPct?: number | null }
+  // THE CREW'S LANGUAGE (Jon, 2026-08-25). Field day sheets only —
   // Ops Command and the GM brief are management documents and stay English.
   lang?: { miami?: string; broward?: string } }
 
@@ -53,7 +55,6 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
     v_botanica: (c.vendors?.botanica || []).join(', '), v_pt: (c.vendors?.pt || []).join(', '), v_north: (c.vendors?.north || []).join(', '),
     d_trueup: (c.trueup?.to || []).join(', '), d_salato: (c.salato?.to || []).join(', '),
     lp_target: c.laborPlan?.targetMarginPct != null ? String(c.laborPlan.targetMarginPct) : '',
-    m_miami: (c.maint?.miamiTo || []).join(', '), m_broward: (c.maint?.browardTo || []).join(', '),
   })
   const load = useCallback(async () => {
     try {
@@ -61,15 +62,15 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
       const j = await r.json()
       if (r.ok) {
         const c = j.config || {}
-        setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, dm: c.maint?.enabled !== false, lg: JSON.stringify([c.lang?.miami, c.lang?.broward, c.maint?.miamiLang, c.maint?.browardLang]) }))
+        setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, lg: JSON.stringify([c.lang?.miami, c.lang?.broward]) }))
       }
     } catch { /* card stays editable with defaults */ }
   }, [])
   useEffect(() => { load(); loadMailboxes() }, [load, loadMailboxes])
 
-  const langSig = JSON.stringify([cfg.lang?.miami, cfg.lang?.broward, cfg.maint?.miamiLang, cfg.maint?.browardLang])
-  // One control, two places: the field day sheets and the maintenance briefs. English stays the
-  // default everywhere, so nothing changes for anyone until somebody chooses.
+  const langSig = JSON.stringify([cfg.lang?.miami, cfg.lang?.broward])
+  // One control per market day sheet. English stays the default everywhere, so nothing changes for
+  // anyone until somebody chooses.
   const langPick = (value: string | undefined, onPick: (v: string) => void) => (
     <select value={value || 'en'} onChange={e => onPick(e.target.value)} disabled={!isOwner}
       className="text-[11.5px] bg-app border border-line rounded-lg px-1.5 py-1 disabled:opacity-60">
@@ -78,7 +79,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
     </select>
   )
 
-  const dirty = JSON.stringify({ rw: raw, enabled: cfg.enabled === true, dt: cfg.trueup?.enabled === true, ds: cfg.salato?.enabled === true, dm: cfg.maint?.enabled !== false, lg: langSig }) !== saved
+  const dirty = JSON.stringify({ rw: raw, enabled: cfg.enabled === true, dt: cfg.trueup?.enabled === true, ds: cfg.salato?.enabled === true, lg: langSig }) !== saved
   const parse = (v: string) => v.split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x))
 
   async function save() {
@@ -95,14 +96,12 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
           const n = Number(t)
           return { targetMarginPct: t && Number.isFinite(n) ? n : null }
         })(),
-        maint: { enabled: cfg.maint?.enabled !== false, miamiTo: parse(raw.m_miami || ''), browardTo: parse(raw.m_broward || ''),
-          miamiLang: cfg.maint?.miamiLang || 'en', browardLang: cfg.maint?.browardLang || 'en' },
         lang: { miami: cfg.lang?.miami || 'en', broward: cfg.lang?.broward || 'en' },
       }
       const r = await fetch('/api/settings/ops-brief', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Could not save.')
       const c = j.config || config
-      setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, dm: c.maint?.enabled !== false, lg: JSON.stringify([c.lang?.miami, c.lang?.broward, c.maint?.miamiLang, c.maint?.browardLang]) }))
+      setCfg(c); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, lg: JSON.stringify([c.lang?.miami, c.lang?.broward]) }))
       const total = (c.miami || []).length + (c.broward || []).length + (c.full || []).length + (c.gm || []).length
         + (c.vendors?.botanica || []).length + (c.vendors?.pt || []).length + (c.vendors?.north || []).length
       setMsg({ tone: 'ok', text: `Saved — ${total} recipient${total === 1 ? '' : 's'} across all lists. Anything that didn't look like an email was dropped.` })
@@ -183,25 +182,6 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
                 className="w-full text-[12px] bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
             </div>
           ))}
-        </div>
-
-        {/* RETIRED 2026-09-09. The two maintenance emails were folded into the market day sheets
-            (Jon: fold maintenance in). The card stays as a note rather than vanishing, because
-            somebody saved a recipient list here and deserves to know what happened to it — and
-            what happened is that it never worked: it was written to one settings key and read from
-            another, so both emails went to the owner alone the whole time. */}
-        <div className="rounded-xl border border-line bg-app/40 p-3 space-y-1">
-          <span className="text-[12px] font-bold text-ink">Maintenance briefs · retired</span>
-          <div className="text-[11px] text-muted">
-            The two 7:46am emails no longer send. Everything they carried is inside the Miami and
-            Broward day sheets now: the maintenance table for that market, and the carryover
-            worklist in the Review card, which also says the next day each unit is empty.
-          </div>
-          <div className="text-[11px] text-muted">
-            The recipient list saved here never reached the send — it was stored under one key and
-            read from another, so both emails went to the owner alone, CC Roberto. Anyone who was
-            supposed to be on it should be added to the Miami or Broward day sheet above.
-          </div>
         </div>
 
         {/* STAFFING PLANNER TARGET (Jon, 2026-08-18): the margin the Weekly planner's hours

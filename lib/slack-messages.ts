@@ -300,60 +300,9 @@ export function digestMessage(s: DigestStats, audience: string[]): { body: strin
   return { body, summary: 'Morning digest — ' + s.turnovers + ' turnovers, ' + s.arrivals + ' arrivals' }
 }
 
-// ── Personal brief (per person DM) ─────────────────────────────────────────────────────────────
-
-export type PersonalBrief = {
-  name: string
-  date: string
-  cleans: { unit: string; arrivingAt: string | null }[]
-  otherTasks: { unit: string; title: string }[]
-  note: string | null
-}
-
-/**
- * Jon asked for this on 2026-08-19: "should give them a slack message about there day, what to
- * expect, what to know... useful for them to get a little brief." One DM, their work only.
- */
-export function personalBriefMessage(b: PersonalBrief): { body: string; summary: string } {
-  const first = (b.name || '').split(/\s+/)[0] || 'there'
-  const head = opener(b.date + b.name, [
-    '☀️ Morning ' + first + '!',
-    '👋 Hey ' + first + ' — here is your day',
-    '☀️ Good morning ' + first + ' — quick look at today',
-  ])
-
-  const tight = b.cleans.filter(c => c.arrivingAt)
-  const cleanLines = b.cleans.map(c =>
-    '• *' + c.unit + '*' + (c.arrivingAt ? ' — guest arrives ' + c.arrivingAt : ''))
-  const taskLines = b.otherTasks.slice(0, 6).map(t => '• ' + t.unit + ' — ' + t.title.slice(0, 70))
-
-  const total = b.cleans.length + b.otherTasks.length
-  const shape = total === 0
-    ? 'Nothing assigned to you yet today — check with your supervisor before you head out.'
-    : total <= 2
-      ? 'A light one today.'
-      : total >= 6
-        ? 'A full day — pace yourself, and shout if it is too much.'
-        : 'A steady day.'
-
-  const body = nl([
-    head,
-    shape,
-    b.cleans.length ? '' : null,
-    b.cleans.length ? '*Your cleans (' + b.cleans.length + ')*' : null,
-    b.cleans.length ? cleanLines.join('\n') : null,
-    b.otherTasks.length ? '' : null,
-    b.otherTasks.length ? '*Also on you*' : null,
-    b.otherTasks.length ? taskLines.join('\n') : null,
-    tight.length ? '' : null,
-    tight.length ? '⏰ ' + plural(tight.length, 'One unit has', tight.length + ' units have') + ' a guest arriving today, so those are the ones to hit first.' : null,
-    b.note ? '\n📌 ' + b.note : null,
-    '',
-    'Anything in your way, just reply here — someone will pick it up. Have a great day 🙌',
-  ])
-
-  return { body, summary: b.name + ' — ' + b.cleans.length + ' cleans, ' + b.otherTasks.length + ' other tasks' }
-}
+// The per-person DM brief (personalBriefMessage, Jon's 2026-08-19 ask) was removed 2026-09-28: it
+// had no caller and no engine, only a settings switch that promised it. It is in git history if
+// the engine is ever built.
 
 // ── Bilingual support (field channels) ─────────────────────────────────────────────────────────
 //

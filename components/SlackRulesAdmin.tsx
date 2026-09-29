@@ -60,7 +60,6 @@ type Building = { label: string; market: string; vendor?: boolean }
 type Dest =
   | { kind: 'area'; note: string }
   | { kind: 'channel'; field: 'opsChannel' | 'leadershipChannel' | 'defaultChannel' | 'firehose' }
-  | { kind: 'dm'; note: string }
 
 /**
  * Plain-English descriptions. Written for the person configuring this, not for a developer — every
@@ -101,8 +100,8 @@ const ALERTS: { key: string; title: string; blurb: string; dest: Dest }[] = [
     blurb: 'Bookings or tasks stopped syncing. Sends immediately — never waits for approval.' },
   { key: 'digest', title: 'Morning summary', dest: { kind: 'channel', field: 'defaultChannel' },
     blurb: 'One message with the shape of the day: turnovers, arrivals, open issues.' },
-  { key: 'personal_brief', title: 'Personal brief (direct message)', dest: { kind: 'dm', note: 'sent to each person privately' },
-    blurb: 'Each person gets their own day: their cleans, their arrivals, anything to know.' },
+  // No "Personal brief (direct message)" row: it was a switch with no engine behind it — nothing
+  // ever built or sent one (2026-09-28 audit). If it is built, it comes back here with its engine.
 ]
 
 const hhmm = (min: number): string => {
@@ -424,7 +423,7 @@ export function SlackRulesAdmin({ isOwner }: { isOwner: boolean }) {
                           />
                         ) : (
                           <span className="text-[12px] font-medium text-ink bg-app rounded-lg px-2 py-1">
-                            {a.dest.kind === 'area' ? 'the area’s ' + a.dest.note : a.dest.note}
+                            {'the area’s ' + a.dest.note}
                           </span>
                         )}
                       </div>

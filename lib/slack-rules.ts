@@ -24,7 +24,7 @@ export const RULES_KEY = 'slack_rules'
 
 /** The alerts this system can send. Adding one here + a default rule is all it takes. */
 export type EventKey =
-  | 'late_cleans' | 'glitches' | 'overtime' | 'sync' | 'digest' | 'personal_brief'
+  | 'late_cleans' | 'glitches' | 'overtime' | 'sync' | 'digest'
   // added 2026-08-19 after reading 30 days of every ops channel — see [[reference-slack-channels]]
   | 'repeat_offenders' | 'door_codes' | 'blocked_arrival' | 'market_brief' | 'handover'
   | 'walk_in_risk'
@@ -44,7 +44,6 @@ export const EVENT_LABELS: Record<EventKey, string> = {
   overtime: 'Someone running over hours',
   sync: 'Sync failures (system)',
   digest: 'Morning ops digest',
-  personal_brief: 'Personal morning brief (DM)',
   repeat_offenders: 'Same problem coming back',
   door_codes: 'Door code duplicates & gaps',
   blocked_arrival: 'Guest booked into a blocked unit',
@@ -270,7 +269,8 @@ export const DEFAULT_RULES: SlackRules = {
     // A dead feed is not a judgement call and waiting on a human defeats the point.
     sync: { enabled: true, approval: false, quietStart: 0, quietEnd: 24 * 60, cooldownMin: 360 },
     digest: { enabled: false, approval: false, quietStart: 6 * 60, quietEnd: 12 * 60, cooldownMin: 20 * 60 },
-    personal_brief: { enabled: false, approval: false, quietStart: 6 * 60, quietEnd: 12 * 60, cooldownMin: 20 * 60 },
+    // No personal_brief: the per-person DM brief never had an engine (2026-09-28 audit). A stored
+    // rule for it is dropped by mergeRules, which only keeps keys defined here.
     // Once a day is plenty — a repeat is a week-old pattern, not breaking news.
     repeat_offenders: { enabled: false, approval: true, quietStart: 8 * 60, quietEnd: 18 * 60, cooldownMin: 20 * 60 },
     // Codes matter before check-in, so this one is allowed to speak early.

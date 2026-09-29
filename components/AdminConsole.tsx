@@ -157,7 +157,7 @@ const ENTRIES: Entry[] = [
 
   {
     key: 'brief', title: 'Morning brief & daily emails', group: 'Communications', Icon: Mail, ownerOnly: true,
-    blurb: 'Who receives the ops brief, the day sheets and the maintenance briefs — and which language each crew gets them in.',
+    blurb: 'Who receives the ops brief and the day sheets — and which language each crew gets them in.',
     find: 'morning brief email recipients day sheet spanish english language maintenance brief labor true-up salato digest sender mailbox staffing margin',
     render: p => <L.brief isOwner={p.isOwner} />,
   },
