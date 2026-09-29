@@ -87,7 +87,7 @@ export async function closeStaleCleans(opts: { dryRun?: boolean } = {}): Promise
       .gte('scheduled_date', from).lt('scheduled_date', cutoff)
       .ilike('name', '%clean%')
       .order('scheduled_date', { ascending: false })
-      .limit(1000) // deliberate cap: the newest 1,000 before the cutoff (~2 weeks) — bounds what this closer can touch; reaching older ones is Jon's call
+      .limit(1000) // deliberate cap: the newest 1,000 cleans before the cutoff — bounds what this closer can touch; reaching older ones is Jon's call
     if (error) return { ...base, ok: false, error: error.message }
 
     const open = ((data || []) as any[]).filter(t => {
