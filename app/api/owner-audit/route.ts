@@ -51,7 +51,10 @@ async function whoAmI(): Promise<{ ok: boolean; internal: boolean; email: string
     // valid share cookie and a login that does not carry the feature.
   }
   // share_links row 'owner-audit' (2026-09-18): the reviewer's own passcode, revocable on its own.
-  const gate = await linkGate('owner-audit', { kinds: ['owner-audit'] })
+  // cookieOnly: the login was judged above and found short. linkGate's signed-in shortcut opens
+  // any link for any allowlisted login, so without it the cleaner or CS agent this check just
+  // refused walked straight back in here. Only this link's own passcode cookie opens it now.
+  const gate = await linkGate('owner-audit', { kinds: ['owner-audit'], cookieOnly: true })
   return { ok: gate.ok, internal: false, email: '' }
 }
 
