@@ -193,7 +193,8 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
 
   // --- Light headline snapshot: cheap counts, for instant situational awareness only. ---
   const cutoff60 = daysAgoISO(60)
-  const [unansweredRows, unreadCount, checkinCount, checkoutCount, inhouseCount, openFW, apprFW] = await Promise.all([
+  // Started now, awaited below with the memory and prompt reads — one wait, not two (F7).
+  const headlineP = Promise.all([
     safe(db.from('guesty_reviews').select('listing_id').eq('has_reply', false).eq('excluded_from_score', false).gte('created_at', cutoff60).order('id').limit(500), { data: [] } as any),
     cnt(db.from('guesty_conversations').select('*', { count: 'exact', head: true }).gt('unread_count', 0)),
     cnt(db.from('guesty_reservations').select('*', { count: 'exact', head: true }).eq('check_in', today)),
@@ -202,13 +203,6 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     cnt(db.from('field_requests').select('*', { count: 'exact', head: true }).in('status', ['open', 'in_progress'])),
     cnt(db.from('field_requests').select('*', { count: 'exact', head: true }).eq('approval_required', true).neq('approval_status', 'approved')),
   ])
-  const headline = {
-    today,
-    unanswered_reviews_60d: ((unansweredRows as any).data || []).filter((r: any) => ctx.reviewable(r.listing_id)).length,
-    unread_guest_threads: unreadCount, checkins_today: checkinCount, checkouts_today: checkoutCount,
-    in_house_now: inhouseCount, open_field_work: openFW, approvals_waiting: apprFW,
-    listings_total: Object.keys(ctx.listingMeta).length,
-  }
 
   // --- Memory, scoped to what this question is actually about. ---
   const lastUser = String([...messages].reverse().find(m => m.role === 'user')?.content || '')
@@ -224,28 +218,43 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     const b = sc.slice(9)
     for (const id of Object.keys(ctx.listingMeta)) if (ctx.listingMeta[id].rollup === b) nearScopes.push('unit:' + id)
   }
-  // The question rides along so retrieval can rank by RELEVANCE, not just weight — the memories
-  // about the thing being asked beat equally-weighted trivia about everything else.
-  const memories = await loadMemories(scopes, ctx.email, 60, lastUser || wholeThread, { nearScopes })
-  // THE LIVING MIND (lib/eve/brain.ts): the dossiers of whatever is in play, last night's reflection
-  // and her track record, in her head before she reaches for a tool. Not for a probe: the learning
-  // audit tests what she REMEMBERS, and handing her the file would pass it for her.
-  const mind = isProbe ? '' : await safe(import('./brain').then(m => m.mindForPrompt({ text: wholeThread.slice(-4000), scopes, sharedRoom: ctx.sharedRoom })), '')
-  const voice = await safe(getVoiceProfile(), '')
+  // ONE WAIT, NOT SIX (2026-09-28 audit, F7). None of these reads depends on another; awaited one
+  // after the other they added up — the memory rerank alone may take its full cap — before the
+  // first token of every answer. They run together now; each keeps its own fallback and the
+  // rerank keeps its own timeout.
+  const [headRows, memories, mind, voice, lingo, operatingModel, agent] = await Promise.all([
+    headlineP,
+    // The question rides along so retrieval can rank by RELEVANCE, not just weight — the memories
+    // about the thing being asked beat equally-weighted trivia about everything else.
+    loadMemories(scopes, ctx.email, 60, lastUser || wholeThread, { nearScopes }),
+    // THE LIVING MIND (lib/eve/brain.ts): the dossiers of whatever is in play, last night's reflection
+    // and her track record, in her head before she reaches for a tool. Not for a probe: the learning
+    // audit tests what she REMEMBERS, and handing her the file would pass it for her.
+    isProbe ? Promise.resolve('') : safe(import('./brain').then(m => m.mindForPrompt({ text: wholeThread.slice(-4000), scopes, sharedRoom: ctx.sharedRoom })), ''),
+    safe(getVoiceProfile(), ''),
+    // How this team writes. Absent until the nightly pass has read enough real messages to have an
+    // opinion, and absent is correct — an invented house style is worse than a neutral one.
+    safe(getLingo(), null as any),
+    // Who does what, per building. Goes in the STABLE block: it only changes when Jon answers a
+    // calibration question, and a wrong answer here is the most expensive kind she can give.
+    safe(getOperatingModel().then(renderOperatingModel), ''),
+    // AGENT MODE, stated to her in one paragraph so she never claims she can or cannot act wrongly.
+    // Read fresh (no cache): the switch must be true in the very next answer after Jon flips it.
+    safe(getAgentSettings(), normalizeAgentSettings(null)),
+  ])
+  const [unansweredRows, unreadCount, checkinCount, checkoutCount, inhouseCount, openFW, apprFW] = headRows
+  const headline = {
+    today,
+    unanswered_reviews_60d: ((unansweredRows as any).data || []).filter((r: any) => ctx.reviewable(r.listing_id)).length,
+    unread_guest_threads: unreadCount, checkins_today: checkinCount, checkouts_today: checkoutCount,
+    in_house_now: inhouseCount, open_field_work: openFW, approvals_waiting: apprFW,
+    listings_total: Object.keys(ctx.listingMeta).length,
+  }
 
   // WHAT LANGUAGE TO ANSWER IN, decided here rather than left to the model. Read off the LAST user
   // message, not the whole thread: a supervisor who opens in English and switches to Spanish has
   // switched, and Eve should switch with them mid-conversation rather than at the next question.
   const lang = detectLanguage(lastUser)
-  // How this team writes. Absent until the nightly pass has read enough real messages to have an
-  // opinion, and absent is correct — an invented house style is worse than a neutral one.
-  const lingo = await safe(getLingo(), null as any)
-  // Who does what, per building. Goes in the STABLE block: it only changes when Jon answers a
-  // calibration question, and a wrong answer here is the most expensive kind she can give.
-  const operatingModel = await safe(getOperatingModel().then(renderOperatingModel), '')
-  // AGENT MODE, stated to her in one paragraph so she never claims she can or cannot act wrongly.
-  // Read fresh (no cache): the switch must be true in the very next answer after Jon flips it.
-  const agent = await safe(getAgentSettings(), normalizeAgentSettings(null))
   const agentMode = renderAgentModeForPrompt(agent)
 
   const userName = String((access.profile as any)?.name || '') || (access.email ? access.email.split('@')[0] : '')
