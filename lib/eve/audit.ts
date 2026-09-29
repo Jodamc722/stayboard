@@ -326,8 +326,9 @@ async function auditArrivalsWithoutCleans(c: Row): Promise<AuditFinding[]> {
 const DOOR_CODE_FIELD = '695af1454ebbdc00137c3f41'
 
 async function auditListingGaps(c: Row): Promise<AuditFinding[]> {
-  const l: any = await safe(c.db.from('guesty_listings').select('id,nickname,title,status,pictures,raw').order('id').limit(500), { data: [] })
-  const live = (l?.data || []).filter((x: any) => !DEAD_LISTING.test(lc(x.status)))
+  // Only the raw fields read below (custom fields, the photo fallback), not the whole record (2026-09-29, 02-F15).
+  const l: any = await safe(c.db.from('guesty_listings').select('id,nickname,title,status,pictures,cf:raw->customFields,rp:raw->pictures').order('id').limit(500), { data: [] })
+  const live = (l?.data || []).map((x: any) => ({ ...x, raw: { customFields: x.cf, pictures: x.rp } })).filter((x: any) => !DEAD_LISTING.test(lc(x.status)))
   if (live.length < 5) return []
   const out: AuditFinding[] = []
 
@@ -373,8 +374,9 @@ async function auditListingGaps(c: Row): Promise<AuditFinding[]> {
  */
 async function auditGuestContent(c: Row): Promise<AuditFinding[]> {
   const out: AuditFinding[] = []
-  const l: any = await safe(c.db.from('guesty_listings').select('id,nickname,title,status,raw').order('id').limit(500), { data: [] })
-  const live = (l?.data || []).filter((x: any) => !DEAD_LISTING.test(lc(x.status)))
+  // Only the three raw fields read below, not the whole record (2026-09-29, 02-F15).
+  const l: any = await safe(c.db.from('guesty_listings').select('id,nickname,title,status,hr:raw->publicDescription->houseRules,acc:raw->publicDescription->access,cii:raw->checkInInstructions').order('id').limit(500), { data: [] })
+  const live = (l?.data || []).map((x: any) => ({ ...x, raw: { publicDescription: { houseRules: x.hr, access: x.acc }, checkInInstructions: x.cii } })).filter((x: any) => !DEAD_LISTING.test(lc(x.status)))
   if (live.length < 5) return out
 
   const noRules = live.filter((x: any) => !String(x.raw?.publicDescription?.houseRules || '').trim())

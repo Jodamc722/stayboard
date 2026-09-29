@@ -359,8 +359,10 @@ export type CodeAudit = {
 export async function auditCodes(): Promise<CodeAudit[]> {
   const db = supabaseAdmin()
   const out: CodeAudit[] = []
-  const { data } = await db.from('guesty_listings').select('id,nickname,title,status,raw').order('id').limit(500)
-  const live = (data || []).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
+  // Only the raw fields codeOf() and crossCheck() read — the custom fields, the check-in text and three
+  // publicDescription texts — not every listing's whole Guesty record (2026-09-29, 02-F15).
+  const { data } = await db.from('guesty_listings').select('id,nickname,title,status,cf:raw->customFields,cii:raw->checkInInstructions,acc:raw->publicDescription->access,hr:raw->publicDescription->houseRules,pdn:raw->publicDescription->notes').order('id').limit(500)
+  const live = (data || []).map((l: any) => ({ ...l, raw: { customFields: l.cf, checkInInstructions: l.cii, publicDescription: { access: l.acc, houseRules: l.hr, notes: l.pdn } } })).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
   if (live.length < 5) return out
   const now = new Date().toISOString()
 

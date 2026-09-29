@@ -202,8 +202,9 @@ export async function nightlyVision(quotaOverride?: number): Promise<{
   const db = supabaseAdmin()
   const model = await getSetting<string>(VISION_MODEL_KEY, await modelFor('eve-vision'))
 
-  const { data: ls } = await db.from('guesty_listings').select('id,nickname,title,status,pictures,raw').order('id').limit(400)
-  const live = (ls || []).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
+  // raw is only the photo fallback in picturesOf(), so only raw->pictures is read (2026-09-29, 02-F15).
+  const { data: ls } = await db.from('guesty_listings').select('id,nickname,title,status,pictures,rp:raw->pictures').order('id').limit(400)
+  const live = (ls || []).map((l: any) => ({ ...l, raw: { pictures: l.rp } })).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
   // PAGED, NOT .limit(20000) (Jon, 2026-09-23 review). PostgREST hands back 1,000 rows whatever
   // .limit() says, so once more than 1,000 photos had been seen every unit past the first page
   // looked NEVER seen — and the nightly pass would re-buy vision calls on photos it already had.
@@ -246,8 +247,9 @@ export async function nightlyVision(quotaOverride?: number): Promise<{
 /** Portfolio coverage — how much of the estate Eve has actually laid eyes on. */
 export async function visionCoverage(): Promise<{ units: number; photos: number; seen: number; unitsFullySeen: number; unitsNeverSeen: number; truncated?: boolean }> {
   const db = supabaseAdmin()
-  const { data: ls } = await db.from('guesty_listings').select('id,status,pictures,raw').order('id').limit(400)
-  const live = (ls || []).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
+  // Only raw->pictures, the picturesOf() fallback (02-F15).
+  const { data: ls } = await db.from('guesty_listings').select('id,status,pictures,rp:raw->pictures').order('id').limit(400)
+  const live = (ls || []).map((l: any) => ({ ...l, raw: { pictures: l.rp } })).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
   // Paged for the same reason as nightlyVision above (Jon, 2026-09-23 review): an unpaged read
   // capped coverage at 1,000 seen photos and under-reported it silently. `truncated` is set only
   // when the 20-page ceiling is really hit (or a page failed), so a coverage figure can say so.

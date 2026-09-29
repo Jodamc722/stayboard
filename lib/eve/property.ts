@@ -79,8 +79,9 @@ export const PROPERTY_TOOLS: EveTool[] = [
     input_schema: obj({ name: S.str, id: S.str }),
     run: async (input: any, ctx: any) => {
       if (!input?.name && !input?.id) {
-        const { data } = await ctx.db.from('guesty_listings').select('id,nickname,title,status,building,raw').order('id').limit(400)
-        const live = (data || []).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
+        // Only the three raw fields read below, not every listing's whole Guesty record (2026-09-29, 02-F15).
+        const { data } = await ctx.db.from('guesty_listings').select('id,nickname,title,status,building,hr:raw->publicDescription->houseRules,acc:raw->publicDescription->access,cii:raw->checkInInstructions').order('id').limit(400)
+        const live = (data || []).map((l: any) => ({ ...l, raw: { publicDescription: { houseRules: l.hr, access: l.acc }, checkInInstructions: l.cii } })).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
         const missing = live.filter((l: any) => !String(l.raw?.publicDescription?.houseRules || '').trim())
         const noArrival = live.filter((l: any) => !String(l.raw?.checkInInstructions || l.raw?.publicDescription?.access || '').trim())
         return {

@@ -515,8 +515,9 @@ async function mineReviewResponses(c: Ctx): Promise<Finding[]> {
 // ---------------------------------------------------------------------------------------------
 async function mineGuestyFields(c: Ctx): Promise<Finding[]> {
   const out: Finding[] = []
-  const { data: ls } = await c.db.from('guesty_listings').select('id,status,raw').order('id').limit(400)
-  const live = (ls || []).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
+  // Only the custom fields, not every listing's whole Guesty record (2026-09-29, 02-F15).
+  const { data: ls } = await c.db.from('guesty_listings').select('id,status,cf:raw->customFields').order('id').limit(400)
+  const live = (ls || []).map((l: any) => ({ ...l, raw: { customFields: l.cf } })).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
   if (!live.length) return out
   // Resolve ids to human names. The mirror stores fieldId as a BARE STRING on most listings, so
   // without this map every field reads as a hex id and the finding is useless to a person.
@@ -570,13 +571,14 @@ async function mineGuestKnowledge(c: Ctx): Promise<Finding[]> {
   const [faqRes, bookRes, listRes, sentRes] = await Promise.all([
     safe(c.db.from('listing_faq').select('listing_id,category,question,answer,status').order('created_at', { ascending: false }).limit(3000), { data: [] } as any),
     safe(c.db.from('guidebooks').select('listing_id,status,sections').order('updated_at', { ascending: false }).limit(600), { data: [] } as any),
-    safe(c.db.from('guesty_listings').select('id,nickname,title,status,pictures,raw').order('id').limit(400), { data: [] } as any),
+    // Only the raw fields read below (rules, arrival text, the photo fallback), not the whole record (02-F15).
+    safe(c.db.from('guesty_listings').select('id,nickname,title,status,pictures,hr:raw->publicDescription->houseRules,acc:raw->publicDescription->access,cii:raw->checkInInstructions,rp:raw->pictures').order('id').limit(400), { data: [] } as any),
     safe(c.db.from('guesty_conversation_sentiment').select('top_issue,listing_id,last_message_at')
       .gte('last_message_at', c.from).order('conversation_id').limit(3000), { data: [] } as any),
   ])
   const faqs: any[] = faqRes.data || []
   const books: any[] = bookRes.data || []
-  const live: any[] = (listRes.data || []).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
+  const live: any[] = (listRes.data || []).map((l: any) => ({ ...l, raw: { publicDescription: { houseRules: l.hr, access: l.acc }, checkInInstructions: l.cii, pictures: l.rp } })).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
   if (!live.length) return out
 
   // ---- coverage ----
