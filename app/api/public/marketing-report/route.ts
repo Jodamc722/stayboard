@@ -8,6 +8,7 @@
 // MADE), never on the stay date. Bucketed in Eastern time.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, canSeeMoney } from '@/lib/access'
+import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { linkGate } from '@/lib/passcode-gate'
 import { stripMoney, type LinkScope } from '@/lib/share-links'
@@ -114,20 +115,26 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url)
 
   // ── who is asking ────────────────────────────────────────────────────────
-  // Internal = a TEAM MEMBER (allowlisted, active), not merely a Supabase session (2026-09-28, B-5).
-  // Dollars then follow that person's own permission; a link holder gets what the link's scope says.
+  // Internal = a TEAM MEMBER (allowlisted, active), not merely a Supabase session (2026-09-28, B-5),
+  // who holds the Direct bookings tab (2026-09-29 review, N13 — any login used to read full guest
+  // names here). Dollars then follow that person's own permission; a link holder gets what the
+  // link's scope says.
   let internal = false
   let canMoney = false
+  let signedIn = false
   try {
     const a = await getAccess()
-    internal = !!a.user && !!a.allowed
+    signedIn = !!a.user && !!a.allowed
+    internal = signedIn && atLeast(a.levels.marketing, 'view')
     canMoney = internal && canSeeMoney(a)
   } catch { internal = false; canMoney = false }
   // share_links row 'marketing' (2026-09-18): its own passcode, and a scope that can pin the date
-  // range and switch dollars off for this link alone.
+  // range and switch dollars off for this link alone. A login already judged short of the tab does
+  // not pass on linkGate's signed-in shortcut (that would hand it the link's dollars): only this
+  // link's own cookie opens it, as for any partner.
   let linkScope: LinkScope = {}
   if (!internal) {
-    const gate = await linkGate('marketing', { kinds: ['marketing'] })
+    const gate = await linkGate('marketing', { kinds: ['marketing'], cookieOnly: signedIn })
     if (!gate.ok) return gate.res
     linkScope = gate.link.scope || {}
   }

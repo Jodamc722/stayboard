@@ -11,6 +11,7 @@
 // or a phone number can come out of here — the contacts themselves never leave the server.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { linkGate } from '@/lib/passcode-gate'
 import type { LinkScope } from '@/lib/share-links'
@@ -25,17 +26,20 @@ const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America
 
 export async function GET(_req: NextRequest) {
   // Same door as the report itself: a logged-in TEAM MEMBER (allowlisted, active — not merely a
-  // Supabase session, 2026-09-28 B-5), or the marketing link's cookie.
+  // Supabase session, 2026-09-28 B-5) who holds the Direct bookings tab (2026-09-29 review, N13),
+  // or the marketing link's cookie — which is also what a login short of the tab needs.
   let internal = false
+  let signedIn = false
   try {
     const a = await getAccess()
-    internal = !!a.user && !!a.allowed
+    signedIn = !!a.user && !!a.allowed
+    internal = signedIn && atLeast(a.levels.marketing, 'view')
   } catch { internal = false }
   // share_links row 'marketing' (2026-09-18): its own passcode, and a scope that can pin the date
   // range and switch dollars off for this link alone.
   let linkScope: LinkScope = {}
   if (!internal) {
-    const gate = await linkGate('marketing', { kinds: ['marketing'] })
+    const gate = await linkGate('marketing', { kinds: ['marketing'], cookieOnly: signedIn })
     if (!gate.ok) return gate.res
     linkScope = gate.link.scope || {}
   }

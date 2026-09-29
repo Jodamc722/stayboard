@@ -15,6 +15,7 @@
 // than the mirror's own floor is returned with partial:true and the UI greys it out.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, canSeeMoney } from '@/lib/access'
+import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { linkGate } from '@/lib/passcode-gate'
 import { stripMoney, type LinkScope } from '@/lib/share-links'
@@ -53,20 +54,24 @@ function addMonths(ym: string, n: number): string {
 }
 
 export async function GET(req: NextRequest) {
-  // Internal = a TEAM MEMBER (allowlisted, active), not merely a Supabase session (2026-09-28, B-5);
-  // dollars follow that person's own permission, a link holder's follow the link's scope.
+  // Internal = a TEAM MEMBER (allowlisted, active), not merely a Supabase session (2026-09-28, B-5),
+  // who holds the Direct bookings tab (2026-09-29 review, N13); dollars follow that person's own
+  // permission, a link holder's follow the link's scope.
   let internal = false
   let canMoney = false
+  let signedIn = false
   try {
     const a = await getAccess()
-    internal = !!a.user && !!a.allowed
+    signedIn = !!a.user && !!a.allowed
+    internal = signedIn && atLeast(a.levels.marketing, 'view')
     canMoney = internal && canSeeMoney(a)
   } catch { internal = false; canMoney = false }
   // share_links row 'marketing' (2026-09-18): its own passcode, and a scope that can pin the date
-  // range and switch dollars off for this link alone.
+  // range and switch dollars off for this link alone. A login already judged short of the tab needs
+  // this link's own cookie, like any partner (see marketing-report).
   let linkScope: LinkScope = {}
   if (!internal) {
-    const gate = await linkGate('marketing', { kinds: ['marketing'] })
+    const gate = await linkGate('marketing', { kinds: ['marketing'], cookieOnly: signedIn })
     if (!gate.ok) return gate.res
     linkScope = gate.link.scope || {}
   }
