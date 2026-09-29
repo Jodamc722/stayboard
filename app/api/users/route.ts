@@ -40,9 +40,9 @@ async function isPrivilegedTarget(email: string): Promise<boolean> {
 // Supabase issuing them new tokens (the access token they hold lapses within the hour); re-enabling
 // lifts it. Best-effort: the allowlist row is the source of truth, so a failure is reported, never
 // fatal. Returns a warning sentence when it did not take.
-async function setBan(sb: any, email: string, banned: boolean): Promise<{ done: boolean; warning?: string }> {
+async function setBan(sb: any, email: string, banned: boolean, knownId?: string | null): Promise<{ done: boolean; warning?: string }> {
   try {
-    const id = await findUserId(sb, email)
+    const id = knownId || await findUserId(sb, email)
     if (!id) return banned ? { done: false, warning: 'Disabled in Lighthouse, but no login account was found to sign out.' } : { done: false }
     const { error } = await sb.auth.admin.updateUserById(id, { ban_duration: banned ? '876000h' : 'none' })
     if (!error) return { done: true }
@@ -105,8 +105,9 @@ export async function POST(req: NextRequest) {
   }
 
   const sb = supabaseAdmin()
-  // Re-inviting someone who was disabled re-enables them (status: 'active' below), so the ban on
-  // their login has to lift too — otherwise they are "active" and still cannot sign in.
+  // Re-inviting someone makes them active (status: 'active' below), so any ban on their login has
+  // to lift too — otherwise they are "active" and still cannot sign in. The prior row is read only
+  // for the audit line; the ban itself is lifted below whenever a login exists.
   const { data: priorRow } = await sb.from('app_users').select('status').eq('email', email).maybeSingle()
   // Upsert the allowlist row first so access is granted even if the email can't be delivered.
   const row: any = { email, role, status: 'active', invited_by: access.email, last_invited_at: new Date().toISOString() }
@@ -124,7 +125,12 @@ export async function POST(req: NextRequest) {
     upErr = retry.error
   }
   if (upErr) return NextResponse.json({ error: `Could not save user: ${upErr.message}` }, { status: 500 })
-  const unban = (priorRow as any)?.status === 'disabled' ? await setBan(sb, email, false) : null
+  // WHENEVER THE LOGIN EXISTS (2026-09-29 review, N9), not only when the old row said 'disabled':
+  // someone disabled and then removed (the delete could not take their login with it), or whose
+  // re-enable could not reach Supabase, came back "active" and still banned. Lifting a ban that is
+  // not there changes nothing; no login yet (a first invite) is skipped.
+  const authId = await findUserId(sb, email)
+  const unban = authId ? await setBan(sb, email, false, authId) : null
   const unbanNote = unban?.warning ? { warning: unban.warning } : {}
   // AUDIT (B-11): who added or re-invited whom, as what. Never the password — only whether one was set.
   await logAdmin({ email: access.email, area: 'users', action: 'invite', target: email, req,
@@ -138,7 +144,7 @@ export async function POST(req: NextRequest) {
       const { error: cErr } = await (sb as any).auth.admin.createUser({ email, password, email_confirm: true })
       if (!cErr) pw = { passwordSet: true }
       else if (/already.*registered|exists|been registered/i.test(cErr.message || '')) {
-        const id = await findUserId(sb, email)
+        const id = authId || await findUserId(sb, email)
         if (id) {
           const { error: uErr } = await (sb as any).auth.admin.updateUserById(id, { password })
           pw = uErr ? { passwordSet: false, note: `Access granted, but could not set the password (${uErr.message}).` } : { passwordSet: true, note: 'This person already had an account — its password was reset to the one you set.' }
