@@ -58,7 +58,7 @@ import { auditKey } from './task-audit'
 import { isLiveStay } from './stay-status'
 import { STAGE_LABEL as CLAIM_STAGE_LABEL } from './claims'
 import { ratingDisplay } from './review-scale'
-import { COMPLETED } from './call-desk'
+import { COMPLETED, guestyCalled } from './call-desk'
 import { readSnapshot, problemsFromSnapshot } from './channel-health'
 import { CHANNEL_LABEL, VERDICT_LABEL } from './channel-types'
 
@@ -296,7 +296,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
       .select('id,stage,waiting_on,property,unit_no,guest_name,deadline_on,amount_sought,listing_id,deleted_at')
       .neq('stage', 'closed').is('deleted_at', null).limit(200),
     db.from('guesty_conversation_sentiment')
-      .select('conversation_id,guest_name,listing_id,channel,band,dissatisfied,awaiting_reply,top_issue,guest_excerpt,last_message_at,status')
+      .select('conversation_id,guest_name,listing_id,reservation_id,channel,band,dissatisfied,awaiting_reply,top_issue,guest_excerpt,last_message_at,last_guest_at,status')
       .eq('status', 'open').order('last_message_at', { ascending: false }).limit(60),
     db.from('guesty_reviews').select('id,listing_id,rating,channel,guest_name,created_at,content', { count: 'exact' })
       .eq('has_reply', false).eq('excluded_from_score', false).gte('created_at', back60 + 'T00:00:00Z')
@@ -357,12 +357,14 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   // ── arrivals (today → +2), live stays only ───────────────────────────────────────────────────
   const arrivalsAll = guard<any[]>('arrivals', arrivalsRes as any, []).filter(r => isLiveStay(r.status))
   const arrivalIds = Array.from(new Set(arrivalsAll.map(r => str(r.listing_id)).filter(Boolean)))
-  const truthy = (v: any) => v === true || v === 1 || (typeof v === 'string' && /^(y|yes|true|done|complete|1|x)/i.test(v.trim()))
-  const fieldVal = (cf: any, kw: string) => Array.isArray(cf) ? (cf.find((c: any) => str(c?.fieldName || c?.name).toLowerCase().includes(kw)) || {}).value : undefined
+  const arrivalResIds = arrivalsAll.map(r => str(r.id)).filter(Boolean)
   const glitchTaskIds = guard<any[]>('glitches', glitchesRes as any, []).map(g => str(g.breezeway_task_id)).filter(Boolean)
+  // The stays behind the guest rows that could make the list (section 6). Read raw here — the
+  // sentiment read's own guard stays where it was, so a failure is named in the same place.
+  const sentResIds = Array.from(new Set((((sentimentRes as any)?.data || []) as any[]).filter(s => s && (s.dissatisfied || s.awaiting_reply)).map(s => str(s.reservation_id)).filter(Boolean)))
 
   // ── WAVE 2: keyed on the arriving units, all in parallel ─────────────────────────────────────
-  const [arrivalReviews, autoInsp, doneInspRows, glitchTaskRows] = await Promise.all([
+  const [arrivalReviews, autoInsp, doneInspRows, glitchTaskRows, guestStayRows, welcomeCallRows] = await Promise.all([
     // Recent reviews only (180d) — bounded by date, not by an arbitrary row cap that starves quiet units.
     arrivalIds.length
       ? db.from('guesty_reviews').select('id,listing_id,rating,content,guest_name,channel,created_at')
@@ -387,7 +389,20 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     glitchTaskIds.length
       ? db.from('breezeway_tasks_sync').select('id,status,finished_at').in('id', glitchTaskIds.slice(0, 200)).then(r => guard<any[]>('glitch tasks', r as any, []))
       : Promise.resolve([] as any[]),
+    sentResIds.length
+      ? db.from('guesty_reservations').select('id,check_in,check_out,status').in('id', sentResIds.slice(0, 100)).then(r => guard<any[]>('guest stays', r as any, []))
+      : Promise.resolve([] as any[]),
+    // ONE DEFINITION OF "WELCOME CALL DONE" (2026-09-28 audit, D21) — the Calls desk's: the Guesty
+    // field (matched by its id) or a completed welcome call logged here. This read the field by a
+    // NAME Guesty never sends, so every arrival counted as "welcome call due".
+    arrivalResIds.length
+      ? db.from('guest_calls').select('reservation_id').eq('kind', 'welcome').in('outcome', COMPLETED as any)
+          .in('reservation_id', arrivalResIds.slice(0, 300)).then(r => guard<any[]>('welcome calls', r as any, []))
+      : Promise.resolve([] as any[]),
   ])
+  const welcomeCalled = new Set<string>(welcomeCallRows.map((c: any) => str(c.reservation_id)))
+  const stayById: Record<string, any> = {}
+  for (const s of guestStayRows) stayById[str(s.id)] = s
 
   // The rows as the engine generates them — whether anybody cleared one today is withDismissals' job.
   const next: Omit<NextItem, 'dismissed'>[] = []
@@ -496,7 +511,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     const isToday = checkIn === today, isTomorrow = checkIn === tomorrow
     const openInsp = (openByListing[lid] || []).find((t: any) => INSPECT.test(str(t.name)))
     const inspection: ArrivalRow['inspection'] = !canFile(lid) && !openInsp && !doneInsp[lid] ? 'n/a' : openInsp ? 'open' : (doneInsp[lid] || inspByRes.has(str(r.id))) ? 'done' : 'none'
-    const welcomeDone = truthy(fieldVal(r.custom_fields, 'welcome'))
+    const welcomeDone = guestyCalled(r.custom_fields) || welcomeCalled.has(str(r.id))
     arrivalRows.push({ reservationId: str(r.id), guest: str(r.guest_name) || 'Guest', unit, listingId: lid || null, checkIn, nights, value, big, today: isToday, inspection, inspectionTaskId: openInsp ? str(openInsp.id) : (doneInsp[lid] || null), welcomeDone })
 
     if (!isToday && !isTomorrow) continue
@@ -618,7 +633,8 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     if (overdue) glOverdue++
     if (!hasTask && (lane === 'ops' || lane === 'pool')) glNoTask++
     const issue = str(g.overview || g.glitch_type || g.category) || 'Guest issue'
-    const href = '/glitches?q=' + encodeURIComponent(unit)
+    // The card itself, not the unit's search (2026-09-28 audit, D11): ?q= only filtered History.
+    const href = '/glitches?id=' + encodeURIComponent(str(g.id))
     glitchRows.push({ id: str(g.id), unit, issue: issue.slice(0, 160), status: lane, due, overdue, ageDays, assignee: str(g.assignee), hasTask, taskStatus: hasTask ? (taskStatus[str(g.breezeway_task_id)] || null) : null, href })
     if (overdue || (!hasTask && lane === 'ops') || lane === 'incident') {
       push({
@@ -647,6 +663,8 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     if (dueSoon) clDueSoon++
     claimRows.push({ id: str(c.id), unit, property: str(c.property), guest: str(c.guest_name), stage, stageLabel: CLAIM_STAGE_LABEL[stage] || stage, deadline, daysLeft, amount: c.amount_sought != null ? Number(c.amount_sought) : null, waitingOn: c.waiting_on ? str(c.waiting_on) : null })
     if (stage === 'review' || dueSoon) {
+      // Opens THIS claim (ClaimsBoard reads ?claim=), not the whole desk (2026-09-28 audit, D20).
+      const href = '/claims?claim=' + encodeURIComponent(str(c.id))
       push({
         key: 'claim:' + str(c.id), kind: 'claim', severity: dueSoon && daysLeft != null && daysLeft <= 1 ? 'now' : 'today', rank: dueSoon ? 2 : 4, owner: 'gm',
         due: deadline ? (daysLeft != null && daysLeft < 0 ? 'deadline passed ' + deadline.slice(5) : 'file by ' + deadline.slice(5)) : 'today',
@@ -654,7 +672,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
         title: stage === 'review' ? 'Claim waiting on your review' + (c.amount_sought ? ' — ' + money(Number(c.amount_sought)) : '')
           : daysLeft != null && daysLeft < 0 ? 'Claim filing deadline PASSED ' + Math.abs(daysLeft) + 'd ago' : 'Claim must be filed in ' + daysLeft + ' day' + (daysLeft === 1 ? '' : 's'),
         why: str(c.guest_name || 'Guest') + ' · ' + (CLAIM_STAGE_LABEL[stage] || stage) + (c.waiting_on ? ' · waiting on ' + str(c.waiting_on) : ''),
-        action: { type: 'open', href: '/claims', label: 'Open claims' }, href: '/claims',
+        action: { type: 'open', href, label: 'Open claim' }, href,
       })
     }
   }
@@ -685,16 +703,27 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   } catch (e: any) { degraded.push('channel connections — ' + String(e?.message || e).slice(0, 80)) }
 
   // ── 6. GUESTS: sentiment scan ───────────────────────────────────────────────────────────────
+  // A CURRENT GUEST ONLY (2026-09-28 audit, D8): the guest wrote in the last 72 hours, or the stay
+  // is in house or lands inside 48 hours. The sentiment rows never age out, so a complaint from a
+  // stay that ended weeks ago read "Unhappy guest … within the hour" every morning. And the row
+  // opens THAT thread — "Reply" used to land on the inbox list, to hunt for it.
+  const in48 = ymd(new Date(now.getTime() + 48 * 3600000))
   for (const s of guard<any[]>('sentiment', sentimentRes as any, [])) {
     if (!s.dissatisfied && !s.awaiting_reply) continue
+    const lastAt = Date.parse(str(s.last_guest_at || s.last_message_at))
+    const wroteLately = Number.isFinite(lastAt) && now.getTime() - lastAt <= 72 * 3600000
+    const stay = stayById[str(s.reservation_id)]
+    const stayCurrent = !!stay && isLiveStay(stay.status) && str(stay.check_in).slice(0, 10) <= in48 && str(stay.check_out).slice(0, 10) >= today
+    if (!wroteLately && !stayCurrent) continue
     const unit = nameOf(s.listing_id) || 'Unit'
+    const href = s.conversation_id ? '/messages/' + encodeURIComponent(str(s.conversation_id)) : '/messages'
     push({
       key: 'guest:' + str(s.conversation_id), kind: 'guest', severity: s.dissatisfied ? 'now' : 'today', rank: s.dissatisfied ? 2 : 5, owner: 'desk',
       due: s.dissatisfied ? 'within the hour' : 'today',
       unit, listingId: str(s.listing_id) || null, market: marketOfId(s.listing_id),
       title: (s.dissatisfied ? 'Unhappy guest' : 'Guest waiting on a reply') + (s.top_issue ? ': ' + str(s.top_issue).slice(0, 80) : ''),
       why: str(s.guest_name || 'Guest') + ' · ' + str(s.channel).toUpperCase() + (s.guest_excerpt ? ' · “' + str(s.guest_excerpt).replace(/\s+/g, ' ').slice(0, 140) + '”' : ''),
-      action: { type: 'open', href: '/messages', label: 'Open thread' }, href: '/messages',
+      action: { type: 'open', href, label: 'Open thread' }, href,
     })
   }
 
@@ -708,7 +737,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   const approvals = guard<any[]>('approvals', approvalsRes as any, []).filter(r => !/^(approved|rejected)$/i.test(str(r.approval_status)))
   const deskRows: GuestDeskRow[] = []
   for (const r of reviews.slice(0, 8)) deskRows.push({ key: 'rv:' + str(r.id), kind: 'review', who: str(r.guest_name) || 'Guest', unit: nameOf(r.listing_id), text: str(r.content).replace(/\s+/g, ' ').slice(0, 140), meta: (Number.isFinite(norm5(r.rating)) ? starsText(r.rating, r.channel) + ' · ' : '') + str(r.channel), href: '/reviews' })
-  for (const c of convos.slice(0, 8)) deskRows.push({ key: 'msg:' + str(c.id), kind: 'message', who: str(c.guest_name) || 'Guest', unit: nameOf(c.listing_id), text: str(c.last_message_preview).slice(0, 140), meta: (Number(c.unread_count) || 0) + ' unread · ' + str(c.channel), href: '/messages' })
+  for (const c of convos.slice(0, 8)) deskRows.push({ key: 'msg:' + str(c.id), kind: 'message', who: str(c.guest_name) || 'Guest', unit: nameOf(c.listing_id), text: str(c.last_message_preview).slice(0, 140), meta: (Number(c.unread_count) || 0) + ' unread · ' + str(c.channel), href: '/messages/' + encodeURIComponent(str(c.id)) })
   for (const a of welcomeDue.slice(0, 8)) deskRows.push({ key: 'wc:' + a.reservationId, kind: 'welcome', who: a.guest, unit: a.unit, text: 'Welcome call due today', meta: a.nights + ' nt · ' + money(a.value), href: '/welcome-calls' })
   for (const a of approvals.slice(0, 6)) deskRows.push({ key: 'ap:' + str(a.id), kind: 'approval', who: str(a.vendor) || str(a.type), unit: [str(a.building), str(a.unit)].filter(Boolean).join(' '), text: str(a.title), meta: a.amount_usd != null ? money(Number(a.amount_usd)) : str(a.priority), href: '/requests' })
   const deskTotal = reviewsTotal + convosTotal + welcomeDue.length + approvals.length

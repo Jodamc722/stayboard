@@ -829,7 +829,7 @@ export function TilePanel({ k, d, roster, onChanged }: { k: TileKey; d: CommandD
     <div className={scroll}>
       {t.claims.rows.length === 0 && <Empty text="No open claims." />}
       {t.claims.rows.map(c => (
-        <Link key={c.id} href="/claims" className={ROW + ' hover:bg-app/40'}>
+        <Link key={c.id} href={'/claims?claim=' + encodeURIComponent(c.id)} className={ROW + ' hover:bg-app/40'}>
           <Pill cls={c.stage === 'review' ? 'bg-amber-100 text-amber-800' : c.stage === 'ready' ? 'bg-rose-100 text-rose-700' : 'bg-app text-muted'}>{c.stageLabel}</Pill>
           <span className="font-bold text-ink">{c.unit}</span>
           <span className="text-ink/75 truncate flex-1 min-w-[120px]">{c.guest}</span>

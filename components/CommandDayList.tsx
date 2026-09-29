@@ -547,7 +547,7 @@ function ClaimRow({ item: i, onCleared }: { item: NextItem; onCleared: (k: strin
   const done = async () => { setBusy(true); try { await clearRow(i, 'done'); onCleared(i.key) } catch { /* shown on reload */ } setBusy(false) }
   return (
     <Row sev={i.severity} title={i.unit + ' — ' + i.title} meta={i.why + ' · ' + i.due}
-      primary={<Link href="/claims" className={PRIMARY}>Review</Link>}
+      primary={<Link href={i.href || '/claims'} className={PRIMARY}>Review</Link>}
       secondary={<IconBtn title="Mark done — it happened" tone="ok" onClick={done} disabled={busy}><Check size={15} /></IconBtn>} />
   )
 }
