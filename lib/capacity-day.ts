@@ -13,7 +13,9 @@
 // disagree. A unit's price, a person's day, and the moves worth making are one computation seen
 // from three angles.
 import 'server-only'
+import { unstable_cache } from 'next/cache'
 import { supabaseAdmin } from './supabase-admin'
+import { DAY_TAG, freshEnough } from './bust'
 import { getShifts } from './homebase'
 import { getCrew } from './crew'
 import { marketOf } from './segments'
@@ -28,6 +30,8 @@ const personName = (v: any) => String(v ?? '').replace(/\s+/g, ' ').trim()
 
 export type DayPicture = {
   date: string
+  /** When this picture was priced — a cached copy is never served as if it were now (lib/bust). */
+  builtAt?: string
   /** Every person on shift, whether or not they have work. `shiftStartMin` is ET minutes past midnight. */
   people: (DayLoad & { shiftStartMin?: number | null })[]
   /** Work with nobody on it — the pool a supervisor is choosing from. */
@@ -80,7 +84,24 @@ function etMinutesOf(d: Date): number {
   return (Number(p.find(x => x.type === 'hour')?.value || 0) % 24) * 60 + Number(p.find(x => x.type === 'minute')?.value || 0)
 }
 
+/**
+ * The picture for a date, SHARED FOR 45 SECONDS (2026-09-28 audit). Today in Ops' landings, the
+ * Command Center's team tile, /api/capacity, the Focus cron, Eve's watches and the shadow scheduler
+ * each priced the same day on their own — a listings read, the day's tasks and a Homebase read
+ * apiece, twice per Command Center build. One computation now serves them until the day tag is
+ * bumped (lib/bust: an assign, a staged pick, a Breezeway change), and a cached copy older than two
+ * minutes is rebuilt in place rather than served as now.
+ */
 export async function buildDayPicture(date: string, market?: string): Promise<DayPicture> {
+  return freshEnough(() => cachedPicture(date, market || ''), () => buildDayPictureFresh(date, market), p => p.builtAt, PICTURE_MAX_AGE_MS)
+}
+const PICTURE_MAX_AGE_MS = 120_000
+const cachedPicture = unstable_cache(
+  async (date: string, market: string) => buildDayPictureFresh(date, market || undefined),
+  ['day-picture-v1'], { tags: [DAY_TAG], revalidate: 45 },
+)
+
+async function buildDayPictureFresh(date: string, market?: string): Promise<DayPicture> {
   const db = supabaseAdmin()
   const notes: string[] = []
 
@@ -91,29 +112,32 @@ export async function buildDayPicture(date: string, market?: string): Promise<Da
   ])
   const VENDOR_RE = vendorRegex((presets as any)?.vendorBuildings)
 
-  // Listings: name, size, position, market. Small table, one read.
-  const { data: lRows } = await db.from('guesty_listings')
-    .select('id,nickname,title,building,unit,bedrooms,address_city,status,raw')
+  // Listings: name, size, position, market. Small table, one read — and ONLY the two raw fields this
+  // uses (2026-09-28 audit): selecting `raw` pulled every listing's multi-MB blob to read lat/lng.
+  // A failed read throws rather than pricing an empty day (supabase-js does not throw on its own).
+  const { data: lRows, error: lErr } = await db.from('guesty_listings')
+    .select('id,nickname,title,building,unit,bedrooms,address_city,status,lat:raw->address->>lat,lng:raw->address->>lng')
     .order('id')
+  if (lErr) throw new Error('could not read listings — ' + String(lErr.message || lErr).slice(0, 120))
   const lmap: Record<string, any> = {}
   for (const l of ((lRows as any[]) || [])) {
     const name = str(l.nickname) || str(l.title) || str(l.unit) || str(l.id)
-    const addr = (l.raw && l.raw.address) || {}
     lmap[String(l.id)] = {
       name,
       building: str(l.building) || null,
       bedrooms: l.bedrooms == null ? null : Number(l.bedrooms),
       market: marketOf(l.building, l.address_city, name),
-      lat: addr.lat == null ? null : Number(addr.lat),
-      lng: addr.lng == null ? null : Number(addr.lng),
+      lat: l.lat == null ? null : Number(l.lat),
+      lng: l.lng == null ? null : Number(l.lng),
       vendor: VENDOR_RE ? VENDOR_RE.test(name) : false,
     }
   }
 
   // The day's board. One date, so this is small and needs no paging.
-  const { data: tRows } = await db.from('breezeway_tasks_sync')
+  const { data: tRows, error: tErr } = await db.from('breezeway_tasks_sync')
     .select('id,reference_property_id,name,status,scheduled_date,assignees,assignee_name,started_at,finished_at,total_minutes,type_department')
     .eq('scheduled_date', date).order('id').limit(1000)
+  if (tErr) throw new Error('could not read the day\'s tasks — ' + String(tErr.message || tErr).slice(0, 120))
 
   const stopsByPerson: Record<string, Stop[]> = {}
   const unassignedStops: Stop[] = []
@@ -238,7 +262,7 @@ export async function buildDayPicture(date: string, market?: string): Promise<Da
     }
   }).sort((a, b) => b.minutes - a.minutes)
 
-  return { date, people, unassigned, suggestions, kpi, notes }
+  return { date, builtAt: new Date().toISOString(), people, unassigned, suggestions, kpi, notes }
 }
 
 /**
