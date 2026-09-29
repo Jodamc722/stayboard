@@ -251,7 +251,7 @@ export async function makePredictions(today = todayET(), idx?: ListingIdx): Prom
   const model = await getOperatingModel()
   const hist0 = shiftDay(today, -60)
   const [taskRead, histRead, arrRead, gRead, stayRead] = await Promise.all([
-    db().from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,assignee_name').eq('scheduled_date', today).limit(1000),
+    db().from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,assignee_name').eq('scheduled_date', today).limit(1000), // deliberate cap: one day's Breezeway tasks (~90 a day portfolio-wide)
     pageRows<any>((a, b) => db().from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,finished_at,assignees,assignee_name')
       .gte('scheduled_date', hist0).lt('scheduled_date', today).order('scheduled_date').order('id').range(a, b), 10),
     db().from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_name').eq('check_in', today).in('status', ['confirmed', 'checked_in']).limit(500),
@@ -394,7 +394,7 @@ async function dayDigest(day: string, idx: ListingIdx): Promise<{ text: string; 
   const scopes = new Set<string>()
   const lines: string[] = []
   const [tasks, glitches, reviews, items, closed, corrections, downs, acted] = await Promise.all([
-    db().from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,finished_at,assignees,assignee_name').eq('scheduled_date', day).limit(1000),
+    db().from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,finished_at,assignees,assignee_name').eq('scheduled_date', day).limit(1000), // deliberate cap: one day's Breezeway tasks (~90 a day portfolio-wide)
     db().from('glitches').select('listing_id,unit,category,overview,created_at').gte('created_at', lo).lt('created_at', hi).limit(200),
     db().from('guesty_reviews').select('listing_id,rating,content,created_at').gte('created_at', lo).lt('created_at', hi).eq('excluded_from_score', false).limit(200),
     db().from('eve_slack_items').select('kind,unit,building,summary,first_seen,channel_name').gte('first_seen', lo).lt('first_seen', hi).limit(60),

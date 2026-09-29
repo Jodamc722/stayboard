@@ -359,9 +359,7 @@ export type CodeAudit = {
 export async function auditCodes(): Promise<CodeAudit[]> {
   const db = supabaseAdmin()
   const out: CodeAudit[] = []
-  // Only the raw fields codeOf() and crossCheck() read — the custom fields, the check-in text and three
-  // publicDescription texts — not every listing's whole Guesty record (2026-09-29, 02-F15).
-  const { data } = await db.from('guesty_listings').select('id,nickname,title,status,cf:raw->customFields,cii:raw->checkInInstructions,acc:raw->publicDescription->access,hr:raw->publicDescription->houseRules,pdn:raw->publicDescription->notes').order('id').limit(500)
+  const { data } = await db.from('guesty_listings').select('id,nickname,title,status,cf:raw->customFields,cii:raw->checkInInstructions,acc:raw->publicDescription->access,hr:raw->publicDescription->houseRules,pdn:raw->publicDescription->notes').order('id').limit(500) // only the raw fields codeOf() and crossCheck() read, not the whole record (2026-09-29, 02-F15)
   const live = (data || []).map((l: any) => ({ ...l, raw: { customFields: l.cf, checkInInstructions: l.cii, publicDescription: { access: l.acc, houseRules: l.hr, notes: l.pdn } } })).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
   if (live.length < 5) return out
   const now = new Date().toISOString()
@@ -387,7 +385,7 @@ export async function auditCodes(): Promise<CodeAudit[]> {
 
   // Drift: a changed code is an UNVERIFIED code again. Whatever we knew about the old one tells us
   // nothing about the new one, and quietly carrying the old confirmation forward would be a lie.
-  const { data: prior } = await db.from('door_code_state').select('listing_id,code_fp,current_code').limit(1000)
+  const { data: prior } = await db.from('door_code_state').select('listing_id,code_fp,current_code').limit(1000) // deliberate cap: one row per listing (keyed on listing_id), ~290
   const priorById: Record<string, any> = {}
   for (const r of (prior || [])) priorById[String((r as any).listing_id)] = r
 
@@ -444,7 +442,7 @@ export async function auditCodes(): Promise<CodeAudit[]> {
 
   // Never confirmed by a human. This is the honest headline number for "are our codes accurate":
   // not how many look right, but how many anybody has actually opened a door with.
-  const { data: st } = await db.from('door_code_state').select('listing_id,last_verified_at,changed_at,last_failed_at').limit(1000)
+  const { data: st } = await db.from('door_code_state').select('listing_id,last_verified_at,changed_at,last_failed_at').limit(1000) // deliberate cap: one row per listing (keyed on listing_id), ~290
   const rows = st || []
   const neverOk = rows.filter((r: any) => !r.last_verified_at || Date.parse(r.last_verified_at) < Date.parse(r.changed_at || ''))
   if (neverOk.length) {

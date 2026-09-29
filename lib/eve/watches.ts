@@ -289,7 +289,7 @@ async function badReviewIn(env: WatchEnv): Promise<Prepared[]> {
     nameOf[str(l.id)] = str(l.nickname || l.title)
     marketOfLid[str(l.id)] = str(marketOf(l.building, l.address_city, l.nickname || l.title))
   }
-  const { data: nx } = await db.from('guesty_reservations').select('listing_id,check_out,status').in('listing_id', lids).gte('check_out', env.today).in('status', ['confirmed', 'checked_in']).order('check_out').limit(1000)
+  const { data: nx } = await db.from('guesty_reservations').select('listing_id,check_out,status').in('listing_id', lids).gte('check_out', env.today).in('status', ['confirmed', 'checked_in']).order('check_out').limit(1000) // deliberate cap: upcoming stays of the few units with a low review in the last 48h (at most 60 reviews read), soonest first, so each unit's next check-out is on this page
   const nextOut: Record<string, string> = {}
   for (const r of ((nx as any[]) || [])) { const lid = str(r.listing_id); if (!nextOut[lid]) nextOut[lid] = str(r.check_out).slice(0, 10) }
   const cfg = await env.automation()

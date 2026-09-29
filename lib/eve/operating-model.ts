@@ -245,7 +245,7 @@ export async function deriveOperatingPicture(days = 90): Promise<BuildingPicture
   const [roster, presets, listings, tasks] = await Promise.all([
     rosterNames(),
     getOpsPresets().catch(() => null),
-    db.from('guesty_listings').select('id,building,nickname,title').limit(1000).then(r => (r.data || []) as any[]),
+    db.from('guesty_listings').select('id,building,nickname,title').limit(1000).then(r => (r.data || []) as any[]), // deliberate cap: one row per listing, ~290
     pageRows((a, b) => db.from('breezeway_tasks_sync')
       .select('id,reference_property_id,type_department,assignees,assignee_name,finished_by_name,status,scheduled_date')
       .gte('scheduled_date', from).order('id').range(a, b), 15),

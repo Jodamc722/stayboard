@@ -96,7 +96,7 @@ async function safe<T>(fn: () => Promise<T>, fb: T): Promise<T> { try { return a
 
 async function listingRollups(db: ReturnType<typeof supabaseAdmin>): Promise<Record<string, { name: string; building: string }>> {
   const out: Record<string, { name: string; building: string }> = {}
-  const { data } = await db.from('guesty_listings').select('id,building,nickname,title').limit(1000)
+  const { data } = await db.from('guesty_listings').select('id,building,nickname,title').limit(1000) // deliberate cap: one row per listing, ~290
   for (const l of ((data || []) as any[])) out[String(l.id)] = { name: String(l.nickname || l.title || l.id), building: rollupBuilding(l.building, l.nickname || l.title) }
   return out
 }

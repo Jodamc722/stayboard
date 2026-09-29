@@ -314,7 +314,7 @@ export async function scoreDay(plan: ShadowPlan): Promise<ShadowScore | null> {
   const planKeys = Object.keys(plan.assign || {}).filter(k => detail[k] && detail[k].minutes != null)
   if (!planKeys.length) return null
   const { data, error } = await supabaseAdmin().from('breezeway_tasks_sync')
-    .select('id,reference_property_id,name,status,assignees').eq('scheduled_date', plan.date).order('id').limit(1000)
+    .select('id,reference_property_id,name,status,assignees').eq('scheduled_date', plan.date).order('id').limit(1000) // deliberate cap: one day's Breezeway tasks (~90 a day portfolio-wide)
   if (error) return null
   // WHAT RAN: every departure clean on the day (not cancelled) and the names on it.
   const ran: Record<string, string[]> = {}
