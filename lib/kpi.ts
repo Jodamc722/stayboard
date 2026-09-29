@@ -859,7 +859,7 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
         minutesPerTurn: work.minutesPerTurn,
         costNote: cleaningCostKnown
           ? 'cost = what Breezeway records as paid on completed housekeeping tasks'
-          : 'Breezeway records no pay on these tasks, so the margin cannot be worked out yet — upload a Homebase timesheet on the Labor page',
+          : 'Breezeway records no pay on these tasks, so margin is not worked out here — cost per clean from Homebase punches is on the Labor board',
       },
 
       labor: {
