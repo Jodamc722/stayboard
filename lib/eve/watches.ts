@@ -92,7 +92,8 @@ function makeEnv(settings: AgentSettings, declined: Record<string, { reasons: st
   return {
     today: ymdET(), now: new Date(), settings, db: supabaseAdmin(),
     declinedReasons: (shape: string) => (declined[shape]?.reasons || []).slice(0, 5),
-    commandDay: () => cd || (cd = import('@/lib/command-day').then(m => m.buildCommandDay()).catch(() => null)),
+    // money: true — a cron has no viewer to look up, and no watch reads the refund rows it would hide.
+    commandDay: () => cd || (cd = import('@/lib/command-day').then(m => m.buildCommandDay({ money: true })).catch(() => null)),
     dayPicture: () => dp || (dp = import('@/lib/capacity-day').then(m => m.buildDayPicture(ymdET())).catch(() => null)),
     automation: () => au || (au = import('@/lib/auto-inspections').then(m => m.getTaskAutomation()).catch(() => null)),
   }

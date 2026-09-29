@@ -34,6 +34,8 @@
 //               cancel stays behind the admin password (Jon: close/delete pw-gated)
 //   glitch      an open guest issue that is overdue, an incident, or in the ops lane with no task
 //   claim       a claim in Jon's review, or with its filing deadline inside 5 days / passed
+//   refund      a glitch refund over the cap waiting on a sign-off (Decide; the amount only for
+//               viewers who may see money)
 //   guest       a guest waiting on a reply (the one rule, lib/response-times) or one the sentiment
 //               scan marked unhappy — one row per thread, both tags when it is both
 //   unassigned  open non-clean work on today's board with nobody attached (cleans are covered by
@@ -63,6 +65,7 @@ import { COMPLETED, guestyCalled } from './call-desk'
 import { readSnapshot, problemsFromSnapshot } from './channel-health'
 import { CHANNEL_LABEL, VERDICT_LABEL } from './channel-types'
 import { awaitingSet, slaDueAt, SLA_RULE_TEXT, type AwaitingRow, type AwaitingSet } from './response-times'
+import { getAccess, canSeeMoney } from './access'
 
 const str = (v: any) => String(v ?? '').trim()
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
@@ -90,8 +93,10 @@ const etMidnightIso = (d: string) => {
 const daysBetween = (fromIso: string, toYmd: string) => Math.round((Date.parse(toYmd + 'T12:00:00Z') - Date.parse(ymd(new Date(fromIso)) + 'T12:00:00Z')) / 86400000)
 
 export const DISMISS_KEY = 'command_dismissed'
+/** The key prefix of a refund sign-off row — how its cleared entries are recognised too. */
+const REFUND_KEY = 'refund:'
 
-export type NextKind = 'turn' | 'late' | 'inspection' | 'feedback' | 'pending' | 'duplicate' | 'glitch' | 'claim' | 'guest' | 'unassigned' | 'channel'
+export type NextKind = 'turn' | 'late' | 'inspection' | 'feedback' | 'pending' | 'duplicate' | 'glitch' | 'claim' | 'refund' | 'guest' | 'unassigned' | 'channel'
 /** A short label on a row ("Unhappy", "Late 25m"), with the hover that explains it. */
 export type RowTag = { label: string; tone: 'rose' | 'amber' | 'violet' | 'sky' | 'slate'; title?: string }
 /** Who owns clearing it. The lane a supervisor filters to. Lives in lib/command-types (client-safe). */
@@ -221,8 +226,11 @@ type CommandCore = {
  * PostgREST reads per build, ~40 with a cold board. The core is now built at most every 30 seconds
  * and shared (tag 'day': an assign, a staged pick or a Breezeway change still shows on the next
  * read), and the rows cleared today are applied after it, read straight from the table as before.
+ *
+ * `money`: may the caller see dollar amounts (lib/access canSeeMoney)? Left out, it is the signed-in
+ * viewer's own switch — looked up only on a day that has an amount to hold back.
  */
-export async function buildCommandDay(): Promise<CommandDay> {
+export async function buildCommandDay(opts: { money?: boolean } = {}): Promise<CommandDay> {
   const today = ymd(new Date())
   const [core, dismissRow] = await Promise.all([
     commandCore(today),
@@ -231,7 +239,12 @@ export async function buildCommandDay(): Promise<CommandDay> {
     // request landed on another instance.
     supabaseAdmin().from('app_settings').select('value').eq('key', DISMISS_KEY).maybeSingle(),
   ])
-  return withDismissals(core, dismissRow)
+  const day = withDismissals(core, dismissRow)
+  // A REFUND'S AMOUNT IS FOR PEOPLE WHO MAY SEE MONEY (the owner, and whoever he switched on). The
+  // core is shared, so it is taken out here, per request, after the cache.
+  if (!day.next.some(n => n.kind === 'refund') && !day.handled.some(h => h.key.startsWith(REFUND_KEY))) return day
+  const seesMoney = opts.money != null ? opts.money : await getAccess().then(a => canSeeMoney(a)).catch(() => false)
+  return seesMoney ? day : withoutRefundAmounts(day)
 }
 
 /** A cached core older than this is rebuilt in place rather than served as now (lib/bust). */
@@ -285,7 +298,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
 
   // ── WAVE 1: everything that does not depend on anything else ──────────────────────────────────
-  const [day, automation, presets, arrivalsRes, glitchesRes, claimsRes, sentimentRes, reviewsToReplyRes, waiting, approvalsRes, fieldOverdueRes, openTasksP, bzOverdueCountRes, callsDoneRes] = await Promise.all([
+  const [day, automation, presets, arrivalsRes, glitchesRes, claimsRes, sentimentRes, reviewsToReplyRes, waiting, approvalsRes, fieldOverdueRes, openTasksP, bzOverdueCountRes, callsDoneRes, refundsRes] = await Promise.all([
     // .catch, because buildOpsDay now THROWS on a failed read (2026-09-09) — right for the board's
     // own route, wrong here: a listings blip must not take claims, reviews, messages and the calls
     // desk down with it. A null day degrades; every `day.*` read below is guarded.
@@ -330,6 +343,9 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     // COMPLETED), counted on the ET day the call was logged. A count, not rows.
     db.from('guest_calls').select('reservation_id', { count: 'exact', head: true })
       .in('outcome', COMPLETED as any).gte('called_at', etMidnightIso(today)).lt('called_at', etMidnightIso(shift(today, 1))),
+    // Refunds logged over the cap and not yet signed off — whatever lane the glitch is in.
+    db.from('glitches').select('id,listing_id,unit,guest_name,overview,glitch_type,category,refund_approved')
+      .eq('refund_needs_approval', true).order('created_at', { ascending: false }).limit(50),
   ])
   // THE CAPACITY MODEL rides in with the day: lib/ops-day prices it for its landings, and this used
   // to price the same day a second time in the same second. Read on its own only when the board read
@@ -666,6 +682,29 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     }
   }
 
+  // ── 4b. REFUNDS WAITING ON A SIGN-OFF (2026-09-28 audit, D12) ───────────────────────────────
+  // A refund logged over the cap sets refund_needs_approval, and Approve / Reject on the glitch card
+  // clears it. Until someone does, it is a decision on the GM's desk, open glitch or not. The amount
+  // rides in the title; buildCommandDay takes it out for viewers who may not see money. Before
+  // migration 085 the column is not there: no rows, and nothing to report.
+  const refundErr = (refundsRes as any)?.error
+  const refunds = refundErr && /refund_needs_approval|42703|PGRST204/i.test(String(refundErr.code || '') + ' ' + String(refundErr.message || ''))
+    ? [] : guard<any[]>('refund sign-offs', refundsRes as any, [])
+  for (const g of refunds) {
+    const unit = str(g.unit) || nameOf(g.listing_id) || 'Unit'
+    const amount = Number(g.refund_approved) || 0
+    const issue = str(g.overview || g.glitch_type || g.category) || 'Guest issue'
+    const href = '/glitches?id=' + encodeURIComponent(str(g.id))
+    push({
+      key: REFUND_KEY + str(g.id), kind: 'refund', severity: 'today', rank: 3, owner: 'gm',
+      due: 'today',
+      unit, listingId: str(g.listing_id) || null, market: marketOfId(g.listing_id),
+      title: 'Refund ' + (amount > 0 ? money(amount) + ' ' : '') + 'on ' + unit + ' awaiting sign-off',
+      why: (g.guest_name ? str(g.guest_name) + ' · ' : '') + issue.slice(0, 100),
+      action: { type: 'open', href, label: 'Review' }, href,
+    })
+  }
+
   // ── 5. CLAIMS ────────────────────────────────────────────────────────────────────────────────
   const claimRows: ClaimRow[] = []
   let clReview = 0, clDueSoon = 0
@@ -938,6 +977,21 @@ function withDismissals(core: CommandCore, dismissRow: any): CommandDay {
       ...core.completed,
       handledDone: handled.filter(h => h.outcome === 'done').length,
     },
+  }
+}
+
+/** A dollar amount in running text: "Refund $350 on 17W-1204" → "Refund on 17W-1204". */
+const AMOUNT_RE = /\s*\$\d[\d,]*(?:\.\d+)?/g
+/** The day as a viewer without the money switch gets it: no amount on a refund row, live or cleared. */
+function withoutRefundAmounts(day: CommandDay): CommandDay {
+  const scrub = (s: string) => s.replace(AMOUNT_RE, '')
+  return {
+    ...day,
+    next: day.next.map(n => n.kind !== 'refund' ? n : {
+      ...n, title: scrub(n.title), why: scrub(n.why),
+      dismissed: n.dismissed && n.dismissed.title ? { ...n.dismissed, title: scrub(n.dismissed.title) } : n.dismissed,
+    }),
+    handled: day.handled.map(h => h.key.startsWith(REFUND_KEY) && h.title ? { ...h, title: scrub(h.title) } : h),
   }
 }
 

@@ -9,8 +9,8 @@
 // verdict line (components/command/Scoreboard, /api/command/scoreboard) — Jon, 2026-09-18.
 //
 //   DECIDE  things only Jon can do: Eve's questions (answer in place), spend approvals (approve /
-//           reject), claims in his review or near a filing deadline (review), Slack messages waiting
-//           to send (send / skip).
+//           reject), claims in his review or near a filing deadline (review), refunds over the cap
+//           waiting on a sign-off (open the card), Slack messages waiting to send (send / skip).
 //   FIX     exceptions only, from the engine's `next` list: a late clean, a turn nobody is on, a
 //           guest waiting on a reply, a big arrival with no inspection, an overdue guest issue.
 //   CLEAR   batches, one row per batch: cancel every duplicate (admin password once), copy one vendor
@@ -85,6 +85,11 @@ const isVendorFeedback = (i: NextItem) => i.kind === 'feedback' && !i.action && 
 const isOnTrackTurn = (i: NextItem) => i.kind === 'turn' && i.action?.type !== 'assign'
 /** Glitch rows: only overdue ones and incidents are exceptions; "no task yet" is the desk's routine. */
 const isGlitchException = (i: NextItem) => i.kind === 'glitch' && (i.severity === 'now' || /past its due date|incident/i.test(i.title))
+/** Decide rows whose decision is made on another page, one tap away — the tag, and what the clear button means there. */
+const DECIDE_LINK: Partial<Record<NextItem['kind'], { tag: string; tone: LeanTone; hover: string; clear: 'done' | 'skipped'; clearTitle: string }>> = {
+  refund: { tag: 'Refund', tone: 'violet', hover: 'A refund over the cap — Approve or Reject it on the glitch card', clear: 'skipped', clearTitle: 'Not today — hide it until tomorrow' },
+}
+const isDecideLink = (i: NextItem) => !!DECIDE_LINK[i.kind]
 
 /** Task ids of cleans the engine already calls late or at risk — a same-day turn with a name on it
  *  still belongs in Fix when the clock says it will not land (review found it hidden otherwise). */
@@ -156,6 +161,7 @@ export function CommandDayList() {
   const troubled = troubledCleanIds(data)
   const fixRows = live.filter(i => isFixRow(i, troubled)).sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || a.rank - b.rank)
   const claims = live.filter(i => i.kind === 'claim')
+  const links = live.filter(isDecideLink)
   const dups = live.filter(i => i.kind === 'duplicate')
   const vendorNotes = live.filter(isVendorFeedback)
   const backlog = live.filter(i => i.kind === 'pending')
@@ -166,7 +172,7 @@ export function CommandDayList() {
       <DayLine d={data} loading={loading} tick={tick} reload={reload} roster={roster} vendorsOnSite={vendorsOnSite} />
       {/* THE WEEK — the KPI strip (Jon, 2026-09-18). The day's numbers stay behind "How's the day". */}
       <Scoreboard />
-      <DecideBand d={data} claims={claims} approvals={approvals} onCleared={hide} onChanged={reload} />
+      <DecideBand d={data} claims={claims} links={links} approvals={approvals} onCleared={hide} onChanged={reload} />
       {/* WHAT EVE IS THINKING (2026-09-21): a collapsed line, the same cards as Settings → Eve → Thinking. Admins only; hidden otherwise. */}
       <EveThinking />
       <FixBand rows={fixRows} roster={roster} onCleared={hide} onChanged={reload} />
@@ -300,7 +306,7 @@ function Row({ sev, title, meta, tags, primary, secondary, onTap, expanded, chil
 }
 
 // ── 1. DECIDE ───────────────────────────────────────────────────────────────────────────────────
-function DecideBand({ d, claims, approvals, onCleared, onChanged }: { d: CommandDay; claims: NextItem[]; approvals: GuestDeskRow[]; onCleared: (key: string) => void; onChanged: () => void }) {
+function DecideBand({ d, claims, links, approvals, onCleared, onChanged }: { d: CommandDay; claims: NextItem[]; links: NextItem[]; approvals: GuestDeskRow[]; onCleared: (key: string) => void; onChanged: () => void }) {
   const eve = useEveQuestions()
   const plans = useEvePlans()
   const drafts = useEveDrafts()
@@ -314,11 +320,12 @@ function DecideBand({ d, claims, approvals, onCleared, onChanged }: { d: Command
   const eveMore = eveGroups.slice(eveShown.length).reduce((a, g) => a + g.qs.length, 0)
   const eveCount = eve.rows.length || (eve.loaded ? 0 : eve.count)
   const approvalsHidden = Math.max(0, d.tiles.guestDesk.approvals - d.tiles.guestDesk.rows.filter(r => r.kind === 'approval').length)
-  const count = slackLive.length + approvals.length + claims.length + eveCount + plans.rows.length + drafts.rows.length
+  const count = slackLive.length + approvals.length + claims.length + links.length + eveCount + plans.rows.length + drafts.rows.length
 
   const rows: Ranked[] = []
   for (const it of slackLive) rows.push({ key: 'slack:' + it.id, sev: 'now', rank: 0, node: <SlackRow item={it} q={slack} /> })
   for (const c of claims) rows.push({ key: c.key, sev: c.severity, rank: c.rank, node: <ClaimRow item={c} onCleared={onCleared} /> })
+  for (const l of links) rows.push({ key: l.key, sev: l.severity, rank: l.rank, node: <DecideLinkRow item={l} onCleared={onCleared} /> })
   for (const a of approvals) rows.push({ key: a.key, sev: 'today', rank: 3, node: <ApprovalRow row={a} onCleared={onCleared} onChanged={onChanged} /> })
   if (approvalsHidden > 0) rows.push({ key: 'ap:more', sev: 'today', rank: 3.5, node: <Row sev={null} title={plural(approvalsHidden, 'more approval') + ' waiting'} primary={<Link href="/requests" className={PRIMARY}>Approvals</Link>} /> })
   for (const dr of drafts.rows) rows.push({ key: 'draft:' + dr.id, sev: 'today', rank: 2.5, node: <EveDraftRow d={dr} act={drafts.act} busy={drafts.busy === dr.id} /> })
@@ -549,6 +556,19 @@ function ClaimRow({ item: i, onCleared }: { item: NextItem; onCleared: (k: strin
     <Row sev={i.severity} title={i.unit + ' — ' + i.title} meta={i.why + ' · ' + i.due}
       primary={<Link href={i.href || '/claims'} className={PRIMARY}>Review</Link>}
       secondary={<IconBtn title="Mark done — it happened" tone="ok" onClick={done} disabled={busy}><Check size={15} /></IconBtn>} />
+  )
+}
+
+/** A decision made one tap away (DECIDE_LINK): the row opens the page it is made on. */
+function DecideLinkRow({ item: i, onCleared }: { item: NextItem; onCleared: (k: string) => void }) {
+  const [busy, setBusy] = useState(false)
+  const m = DECIDE_LINK[i.kind]
+  if (!m) return null
+  const clear = async () => { setBusy(true); try { await clearRow(i, m.clear); onCleared(i.key) } catch { /* shown on reload */ } setBusy(false) }
+  return (
+    <Row sev={i.severity} title={i.title} tags={<Tag tone={m.tone} title={m.hover}>{m.tag}</Tag>} meta={i.why}
+      primary={<Link href={i.href || '/'} className={PRIMARY}>{i.action && i.action.type === 'open' ? i.action.label : 'Open'}</Link>}
+      secondary={<IconBtn title={m.clearTitle} tone={m.clear === 'done' ? 'ok' : undefined} onClick={clear} disabled={busy}>{m.clear === 'done' ? <Check size={15} /> : <X size={14} />}</IconBtn>} />
   )
 }
 
