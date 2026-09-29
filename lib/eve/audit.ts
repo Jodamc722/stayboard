@@ -649,11 +649,20 @@ export async function runAudit(): Promise<AuditRun> {
   // a genuine alert vanish within a day of appearing, which is a worse failure than a stale row:
   // the whole point of the tab is that a quiet feed stays visible until somebody deals with it.
   // Anything prefixed `ext:` closes itself.
+  //
+  // AND NOT ON A RUN WHERE A CHECK FAILED (2026-09-29). A check that threw found nothing — it did not
+  // find "fixed". Its findings are missing from this run because it could not look, so closing them
+  // would reset their age ("new" again tomorrow) and drop their snooze. Checks now fail out loud on
+  // a short read instead of returning a wrong count, so this is the day that matters: skip the
+  // auto-close for the whole run (the same rule the nightly sweep uses for memory expiry); the next
+  // clean run closes what is really fixed.
+  const failedChecks = Object.keys(checks).filter(k => checks[k] === -1)
   const stillIds = new Set(rows.map(r => r.id))
-  const toResolve = prevRows
+  const toResolve = failedChecks.length ? [] as string[] : prevRows
     .filter(r => (r.status === 'open' || r.status === 'snoozed') && !stillIds.has(String(r.id)))
     .filter(r => !String(r.id).startsWith('ext:'))
     .map(r => String(r.id))
+  if (failedChecks.length) errors.push('auto-close skipped this run: ' + failedChecks.join(', ') + ' failed')
   if (toResolve.length) {
     for (let i = 0; i < toResolve.length; i += 100) {
       await safe(db.from('eve_audits').update({ status: 'resolved', resolved_at: now }).in('id', toResolve.slice(i, i + 100)), null)
