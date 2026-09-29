@@ -63,7 +63,7 @@ export async function buildGardenContent(from: string, to: string, tpl: ReportTe
   const weeks = weekBuckets(from, to).map(b => {
     const rows = (D.work.rows as any[]).filter(t => t.date >= b.start && t.date <= b.endIncl)
     const group = (label: string, kinds: string[]) => { const items = rows.filter(t => kinds.includes(t.kind)).map(t => `${t.room_name || 'Room'} — ${t.kind === 'clean' ? 'departure clean' : t.kind.replace('_', ' ')}${t.status === 'done' ? '' : ' (open)'}`); return items.length ? { category: label, items: items.slice(0, 12) } : null }
-    return { label: b.label, groups: [group('Housekeeping', ['clean', 'stayover', 'deep_clean']), group('Inspections', ['inspection']), group('Maintenance', ['maintenance'])].filter(Boolean) as { category: string; items: string[] }[] }
+    return { label: b.label, groups: [group('DEEP CLEANS', ['deep_clean']), group('INSPECTIONS', ['inspection']), group('MAINTENANCE', ['maintenance'])].filter(Boolean) as { category: string; items: string[] }[] }
   }).filter(w => w.groups.length)
 
   const custom: any[] = []

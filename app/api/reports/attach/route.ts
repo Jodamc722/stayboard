@@ -159,6 +159,8 @@ async function parseCompletedText(notes: string, scopeLabel: string): Promise<{ 
 // no AI): grouped by department, routine departure/turnover cleans excluded, maintenance always surfaced.
 async function refreshWork(rep: any): Promise<{ label: string; groups: { category: string; items: string[] }[] }[]> {
   const ids: string[] = (Array.isArray(rep.listing_ids) ? rep.listing_ids : []).map((x: any) => String(x)).filter(Boolean).slice(0, 40)
+  // THE GARDEN HOTEL's reports carry listing_ids ['garden'] — its work is garden_tasks, not Breezeway.
+  if (ids.length === 1 && ids[0] === 'garden') return refreshGardenWork(rep)
   const scope = await resolveScope(ids, [])
   const byId: Record<string, ReportListing> = {}
   for (const l of scope.listings) byId[l.id] = l
@@ -264,4 +266,23 @@ export async function POST(req: NextRequest) {
   const section = await parseStatements(urls, scopeLabel)
   if (!section) return NextResponse.json({ error: 'Could not summarize those statement PDFs.' }, { status: 422 })
   return NextResponse.json({ ok: true, section })
+}
+
+// The hotel's finished tasks for the period, grouped the same way (routine departure cleans and
+// stayovers left out — an owner reads the work that changed something, not the daily turn).
+async function refreshGardenWork(rep: any): Promise<{ label: string; groups: { category: string; items: string[] }[] }[]> {
+  const from = str(rep.period_start).slice(0, 10), to = str(rep.period_end).slice(0, 10)
+  const { data } = await supabaseAdmin().from('garden_tasks').select('date,kind,room_name,note,status').gte('date', from).lte('date', to).eq('status', 'done').not('kind', 'in', '(clean,stayover)').order('date')
+  const LABEL: Record<string, string> = { inspection: 'INSPECTIONS', deep_clean: 'DEEP CLEANS', maintenance: 'MAINTENANCE' }
+  const weeks: { label: string; groups: { category: string; items: string[] }[] }[] = []
+  for (const b of weekBuckets(from, to)) {
+    const byKind: Record<string, string[]> = {}
+    for (const t of ((data || []) as any[]).filter(t => t.date >= b.start && t.date <= b.endIncl)) {
+      const k = LABEL[t.kind] || 'WORK COMPLETED'
+      ;(byKind[k] = byKind[k] || []).push(((t.room_name ? 'Room ' + t.room_name + ' — ' : '') + (t.note || t.kind.replace('_', ' '))).slice(0, 140))
+    }
+    const groups = Object.keys(byKind).map(k => ({ category: k, items: byKind[k].slice(0, 8) }))
+    if (groups.length) weeks.push({ label: b.label, groups })
+  }
+  return weeks
 }

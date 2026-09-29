@@ -6737,32 +6737,87 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             }
           }
 
-          // ── 10 · THE WORK ─────────────────────────────────────────────────
-          if ((projects.weeks || []).length && !hid('projects')) {
-            const groups: Any[] = []
-            for (const w of (projects.weeks as Any[])) for (const g of (w.groups || [])) {
-              const found = groups.find((x: Any) => x.category === g.category)
-              if (found) found.items = found.items.concat(g.items || [])
-              else groups.push({ category: g.category, items: (g.items || []).slice() })
+          // ── 10 · THE WORK — WHAT WE ACCOMPLISHED ──────────────────────────
+          // Jon, 2026-09-29: "we need a slide where we can just fill it with accomplished
+          // activities, and it auto-generates like we used to on the old report." The old scrolling
+          // report had the COMPLETED WORK box (typed lines, an uploaded work order, rough notes the
+          // AI sorts into type groups, and a Breezeway pull) — the deck only drew the Breezeway
+          // weeks, so the manual work never reached a slide and there was nowhere on the deck to add
+          // it. Now: one slide, the typed/auto-filled groups first, the pulled work merged in, and
+          // in Edit the same auto-fill tools sit on the slide itself. It shows in Edit even when
+          // empty, so there is always a page to fill.
+          if (!hid('projects')) {
+            const manual = manualGroups()
+            const groups: Any[] = manual.map((g: Any, mi: number) => ({ category: g.category, items: g.items.slice(), manualIdx: mi }))
+            for (const w of ((projects.weeks || []) as Any[])) for (const g of (w.groups || [])) {
+              const found = groups.find((x: Any) => String(x.category).toUpperCase() === String(g.category).toUpperCase())
+              const items = (g.items || []).filter((it: string) => !(found && found.items.indexOf(it) >= 0))
+              if (found) found.items = found.items.concat(items)
+              else groups.push({ category: g.category, items: items.slice() })
             }
-            if (groups.length) {
+            const total = groups.reduce((a: number, g: Any) => a + (g.items || []).length, 0)
+            if (total || edit) {
               const n = next()
+              const perGroup = edit ? 3 : (groups.length <= 3 ? 7 : 4)
               slides.push({ key: 'projects', ai: true, node: (
-                <Frame note="projects" nav="The work" sec="Ahead" subj="What we did" tone="light" n={n}>
-                  <RTitle k="projects" />
-                  <div style={{ marginTop: 26, display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: '26px 34px' }}>
-                    {groups.slice(0, 6).map((g: Any, i: number) => (
-                      <div key={i} style={{ paddingTop: 14, borderTop: '1px solid ' + tint(0.22) }}>
-                        <Lbl>{String(g.category || '')}</Lbl>
-                        <div style={{ marginTop: 10 }}>
-                          {(g.items || []).slice(0, 4).map((it: string, j: number) => (
-                            <p key={j} style={{ fontSize: 13, lineHeight: 1.55, color: tint(0.62), margin: '0 0 6px' }}>{String(it)}</p>
-                          ))}
-                          {(g.items || []).length > 4 ? <p style={{ fontSize: 12, color: tint(0.35), margin: 0 }}>+{(g.items || []).length - 4} more</p> : null}
+                <Frame note="projects" nav="The work" sec="Ahead" subj="What we accomplished" tone="light" n={n}>
+                  <div>
+                    <Tick />
+                    <H2 w="26ch"><Ed v={projects.headline || 'What we accomplished.'} set={v => patch('projects.headline', v)} edit={edit} multiline /></H2>
+                    {(projects.subtitle || edit) ? (
+                      <p style={{ marginTop: 13, fontSize: 15, lineHeight: 1.6, color: tint(0.5), maxWidth: '62ch' }}>
+                        <Ed v={projects.subtitle || ''} set={v => patch('projects.subtitle', v)} edit={edit} multiline placeholder="One line on the period's work (optional)" />
+                      </p>
+                    ) : null}
+                  </div>
+                  {total ? (
+                    <div style={{ marginTop: 22, display: 'grid', gridTemplateColumns: 'repeat(' + Math.min(3, Math.max(1, groups.length)) + ', minmax(0,1fr))', gap: '22px 34px', flex: '0 1 auto', minHeight: 0 }}>
+                      {groups.slice(0, 6).map((g: Any, i: number) => (
+                        <div key={i} style={{ paddingTop: 14, borderTop: '1px solid ' + tint(0.22) }}>
+                          <Lbl>{String(g.category || '')}</Lbl>
+                          <div style={{ marginTop: 10 }}>
+                            {(g.items || []).slice(0, perGroup).map((it: string, j: number) => (
+                              <p key={j} style={{ fontSize: 13, lineHeight: 1.55, color: tint(0.62), margin: '0 0 6px', position: 'relative' }}>
+                                {edit && g.manualIdx != null && j < (manual[g.manualIdx]?.items || []).length ? (
+                                  <button className="sb-noprint" title="Remove" onClick={() => mutate((d: Any) => { const m = d.projects.manual; if (m && m[g.manualIdx] && Array.isArray(m[g.manualIdx].items)) m[g.manualIdx].items.splice(j, 1) })}
+                                    style={{ position: 'absolute', left: -16, top: 1, color: t.accent, background: 'transparent', border: 0, cursor: 'pointer', fontSize: 12 }}>×</button>
+                                ) : null}
+                                {String(it)}
+                              </p>
+                            ))}
+                            {(g.items || []).length > perGroup ? <p style={{ fontSize: 12, color: tint(0.35), margin: 0 }}>+{(g.items || []).length - perGroup} more</p> : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: 15, color: tint(0.45), marginTop: 22 }}>Nothing yet — paste what got done below and it sorts itself into the slide.</p>
+                  )}
+                  {edit ? (
+                    <div className="sb-noprint" style={{ marginTop: 'auto', paddingTop: 14, borderTop: '1px dashed ' + tint(0.2) }}>
+                      <div style={{ display: 'flex', gap: 10, alignItems: 'stretch' }}>
+                        <textarea value={manualAiNotes} onChange={e => setManualAiNotes(e.target.value)} rows={2}
+                          placeholder="Paste or type what got done — 'Fixed A/C in 409, replaced lock 404, deep cleaned the pool deck' — and it sorts into the slide."
+                          style={{ flex: 1, fontSize: 12.5, lineHeight: 1.45, padding: '8px 10px', borderRadius: 8, border: '1px solid ' + tint(0.22), background: t.card, color: t.ink, resize: 'vertical', outline: 'none' }} />
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <button onClick={autofillFromNotes} disabled={!!busy || !manualAiNotes.trim()}
+                            style={{ fontSize: 12, fontWeight: 600, borderRadius: 999, padding: '7px 14px', background: t.accent, color: t.card, opacity: (!!busy || !manualAiNotes.trim()) ? 0.5 : 1, whiteSpace: 'nowrap' }}>
+                            {busy === 'completed-ai' ? 'Sorting…' : 'Auto-fill'}
+                          </button>
+                          <button onClick={refreshBreezeway} disabled={!!busy} title={isGarden ? 'Pull the finished hotel tasks for the period' : 'Pull the finished Breezeway work for the period'}
+                            style={{ fontSize: 12, fontWeight: 600, borderRadius: 999, padding: '7px 14px', background: t.card, border: '1px solid ' + tint(0.25), color: t.ink, whiteSpace: 'nowrap' }}>
+                            {busy === 'refresh-work' ? 'Pulling…' : (isGarden ? 'Pull hotel tasks' : 'Pull from Breezeway')}
+                          </button>
+                          <button onClick={() => manualFileRef.current && manualFileRef.current.click()} disabled={!!busy}
+                            style={{ fontSize: 12, fontWeight: 600, borderRadius: 999, padding: '7px 14px', background: t.card, border: '1px solid ' + tint(0.25), color: t.ink, whiteSpace: 'nowrap' }}>
+                            {busy === 'completed' ? 'Reading…' : 'Upload a file'}
+                          </button>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                      <input ref={manualFileRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" className="hidden" onChange={onManualFilePick} />
+                      {attachMsg ? <p style={{ fontSize: 11.5, color: tint(0.5), margin: '6px 0 0' }}>{attachMsg}</p> : null}
+                    </div>
+                  ) : null}
                   <SlideNote k="projects" />
                 </Frame>
               ) })
