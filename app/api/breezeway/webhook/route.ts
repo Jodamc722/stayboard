@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
     const { error } = await supabaseAdmin().from('breezeway_tasks_sync').upsert(row, { onConflict: 'id' })
     // A field change in Breezeway (started, finished, reassigned) reaches the boards on the next
     // read, not when their cache happens to expire — throttled per instance (BUST_EVERY_MS).
-    if (!error && Date.now() - lastBustAt >= BUST_EVERY_MS) { lastBustAt = Date.now(); bustBoards() }
+    if (!error && Date.now() - lastBustAt >= BUST_EVERY_MS) { lastBustAt = Date.now(); bustBoards({ daysheet: false }) }
   } catch { /* never fail the webhook delivery */ }
   return NextResponse.json({ ok: true })
 }

@@ -21,12 +21,14 @@ export function bustDay(): void {
 }
 
 /** Every board that reads the Breezeway mirror: the day, the Scheduler, and the field boards' day sheet (lib/daysheet, 90 s). */
-export function bustBoards(): void {
+export function bustBoards(opts?: { daysheet?: boolean }): void {
   bustDay()
   try { revalidateTag(SCHEDULE_TAG) } catch { /* best-effort */ }
   // The day sheet was never busted, so a job added from a field board was missing from the list
-  // the board reloads right after "Add" for up to 90 seconds.
-  try { revalidateTag('daysheet') } catch { /* best-effort */ }
+  // the board reloads right after "Add" for up to 90 seconds. The Breezeway webhook passes
+  // { daysheet: false }: in a morning burst it would rebuild the ~9-query sheet on almost every
+  // poll, and its own 90 s cache already bounds how stale a webhook-driven change can be.
+  if (opts?.daysheet !== false) { try { revalidateTag('daysheet') } catch { /* best-effort */ } }
 }
 
 // ── NEVER SERVE AN OLD DAY ─────────────────────────────────────────────────────────────────────
