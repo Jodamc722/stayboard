@@ -50,10 +50,11 @@ export const FEATURES: Feature[] = [
   // thousand email addresses are not the same privilege, and should not be granted by one switch.
   { key: 'contacts',      label: 'Contacts',          path: '/contacts', group: 'Guests' },
   // Gated 2026-08-06 (Jon, second pass): guest PII on an auth-only page deserves a role setting.
-  // Re-applied after the Patterns upload (73bd724) landed from a pre-salato copy of this file.
-  // The public share/verify links (/salato/share, /salato/verify) stay open — OPEN_PREFIXES wins
-  // before the role gate in middleware.
-  { key: 'salato',        label: 'Salato Front Desk', path: '/salato', group: 'Guests' },
+  // Since 2026-09-28 the bare /salato page is a redirect and this key gates what outlived it: the
+  // Salato unit list (/api/salato/units, edited in Users & admin → Settings) and the booking-watch
+  // door (/api/salato/watch). The public share/verify links (/salato/share, /salato/verify) stay
+  // open — OPEN_PREFIXES wins before the role gate in middleware.
+  { key: 'salato',        label: 'Salato settings',   path: '/salato', group: 'Guests' },
   { key: 'plan',          label: 'Today in Ops',      path: '/plan', group: 'Operations' },
   { key: 'maintenance',   label: 'Maintenance',       path: '/maintenance', group: 'Operations' },
   { key: 'schedule',      label: 'Turnover Schedule', path: '/schedule', group: 'Operations' },

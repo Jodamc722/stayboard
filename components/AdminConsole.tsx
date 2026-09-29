@@ -59,6 +59,8 @@ const L = {
   reviewVoice: dynamic(() => import('@/components/ReviewVoiceAdmin').then(m => m.ReviewVoiceAdmin), { loading: spin, ssr: false }),
   notices: dynamic(() => import('@/components/ReservationEmailsAdmin').then(m => m.ReservationEmailsAdmin), { loading: spin, ssr: false }),
   salato: dynamic(() => import('@/components/SalatoVerifyEmailAdmin').then(m => m.SalatoVerifyEmailAdmin), { loading: spin, ssr: false }),
+  // Moved here from the retired bare /salato page (2026-09-28 audit) — its only editor.
+  salatoUnits: dynamic(() => import('@/components/SalatoUnitsPicker').then(m => m.SalatoUnitsPicker), { loading: spin, ssr: false }),
   share: dynamic(() => import('@/components/ShareLinksCard').then(m => m.ShareLinksCard), { loading: spin, ssr: false }),
   nav: dynamic(() => import('@/components/NavLayoutAdmin').then(m => m.NavLayoutAdmin), { loading: spin, ssr: false }),
   taskCats: dynamic(() => import('@/components/TaskCategoriesAdmin').then(m => m.TaskCategoriesAdmin), { loading: spin, ssr: false }),
@@ -176,6 +178,12 @@ const ENTRIES: Entry[] = [
     blurb: 'Who is told when a Salato guest finishes ID verification.',
     find: 'salato verification id selfie email recipients cc notify',
     render: () => <L.salato />,
+  },
+  {
+    key: 'salato-units', title: 'Salato front-desk units', group: 'Communications', Icon: Building2,
+    blurb: 'Which units the Salato board, its share link, ID verification and the daily email cover.',
+    find: 'salato units unit list front desk board share link listing add building verification daily email',
+    render: () => <L.salatoUnits />,
   },
 
   {
