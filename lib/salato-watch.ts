@@ -28,6 +28,7 @@
 // post came from if anyone asks in the thread (lib/eve/provenance.ts).
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 import { salatoListings } from '@/lib/salato-units'
 import { slackApi } from '@/lib/slack'
 import { getSetting } from '@/lib/app-settings'
@@ -143,10 +144,13 @@ export async function runSalatoWatch(opts: { dryRun?: boolean; fromCron?: boolea
   const today = ymdET()
   const { match, ids } = await salatoListings(db)
   if (!ids.length) return { ...out, error: 'no Salato listings found' }
-  const { data, error } = await db.from('guesty_reservations')
+  // Paged: every booking still ahead, never the first 1,000 by date — a booking the first run did
+  // not see would be announced later as "new" when it was already on the books. A short read stops
+  // the run, as a failed one did.
+  const { rows: data, truncated } = await pageRows<any>((a, b) => db.from('guesty_reservations')
     .select('id,listing_id,check_in,check_out,nights,status,source,guest_name,confirmation_code')
-    .in('listing_id', ids).gte('check_out', today).order('check_in').order('id').limit(1000)
-  if (error) return { ...out, ok: false, error: error.message.slice(0, 200) }
+    .in('listing_id', ids).gte('check_out', today).order('check_in').order('id').range(a, b), 5)
+  if (truncated) return { ...out, ok: false, error: 'the reservation read stopped early — nothing was posted' }
   const state = await readState()
   if (opts.fromCron && !state.seeded) return { ...out, error: 'not started yet: POST /api/salato/watch once to start it' }
   const firstRun = !state.seeded
