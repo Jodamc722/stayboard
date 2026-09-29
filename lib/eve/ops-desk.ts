@@ -91,7 +91,7 @@ async function readDay(today: string): Promise<Day> {
   return { today, tasks, arrivals, arrivalsTomorrow }
 }
 
-// ── 7am: the plan ──────────── ────────────────────────────────────────────────────────────────────
+// ── 7am: the plan ────────────────────────────────────────────────────────────────────────────────
 // ONE LINE, THEN WHAT NEEDS A NAME (2026-09-28 audits: 06 F-28, 04 F31). The plan used to be a roll
 // call — up to fourteen person lines repeating the day sheets in Slack, against Jon's "Slack short;
 // lists live in the app". It is now one summary line with the link to /plan, then the work nobody
