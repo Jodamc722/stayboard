@@ -19,14 +19,20 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
 import { buildEmergency, mergeEmergency } from '@/lib/emergency'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 async function run(write: boolean) {
   const db = supabaseAdmin()
-  const { data: books, error } = await db.from('guidebooks').select('id, listing_id, listing_name, sections').limit(1000)
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+  // EVERY book, paged in id order — "every single guidebook" cannot be the first 1,000 returned. A
+  // read that fails or runs out of pages stops the run before anything is written, as an error did.
+  const { rows: books, truncated } = await pageRows((a, b) => db.from('guidebooks').select('id, listing_id, listing_name, sections').order('id').range(a, b))
+  if (truncated) {
+    console.error('[guidebook/emergency] guidebook read incomplete — run stopped before any write')
+    return NextResponse.json({ ok: false, error: 'Could not read every guidebook — nothing was changed. Try again.' }, { status: 500 })
+  }
 
   const ids = Array.from(new Set((books || []).map((b: any) => String(b.listing_id || '')).filter(Boolean)))
   const { data: listings } = await db.from('guesty_listings')
