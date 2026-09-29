@@ -93,11 +93,6 @@ export async function adminPasswordOk(pw: string | undefined | null, opts: { sur
 // front-desk share link by people who are NOT signed into the app. Signed-in app users never need
 // it. Stored as share_settings row id=5. FAIL CLOSED: while unset, only signed-in app users can
 // edit the rules (a share-only viewer cannot).
-/** The STORED value — see currentAdminPassword. */
-export async function currentRulesPassword(): Promise<string> {
-  return readStored(RULES_ID, 'rules_settings')
-}
-
 export async function rulesPasswordOk(pw: string | undefined | null): Promise<{ ok: boolean; reason: string; locked?: boolean }> {
   return checkCredential(RULES_ID, 'pw:rules', pw, {
     unset: 'Editing rules from the share link is locked. Set a rules password in Users → Share links & security first, or sign in.',

@@ -117,8 +117,6 @@ export type Claim = {
 //
 // Dates are plain YYYY-MM-DD strings throughout — no Date parsing of a bare date string, which
 // silently shifts a day in a UTC-behind timezone.
-export const FILING_WINDOW_DAYS = 13
-
 export type ChannelPolicy = {
   /** Hard cutoff in days after checkout. null = the channel imposes none (direct bookings). */
   windowDays: number | null
@@ -241,12 +239,6 @@ export function dueWithTurnover(
   const beforeArrival = addDays(arrival, -1)
   if (beforeArrival && beforeArrival < policyDue) return { due: beforeArrival, reason: 'turnover' }
   return { due: policyDue, reason: 'policy' }
-}
-
-/** True while the next guest has not yet arrived — i.e. the evidence is still there to photograph. */
-export function evidenceStillThere(claim: { next_check_in?: string | null }): boolean | null {
-  const d = daysUntil(claim.next_check_in)
-  return d === null ? null : d > 0
 }
 
 /**
@@ -379,10 +371,6 @@ export function gatesFor(claim: Claim, items: ClaimItem[]): Gate[] {
         ? (claim.check_out ? 'This channel sets no filing window — the only clock is how fresh the charge looks.' : 'No checkout date on the booking.')
         : (d < 0 ? 'The window closed ' + Math.abs(d) + ' day(s) ago.' : d + ' day(s) left.') },
   ]
-}
-
-export function readyToFile(claim: Claim, items: ClaimItem[]): boolean {
-  return gatesFor(claim, items).every(g => g.ok)
 }
 
 // ── the note that lands on the reservation ─────────────────────────────────

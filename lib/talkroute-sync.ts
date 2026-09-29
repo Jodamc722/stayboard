@@ -40,7 +40,7 @@ import { fetchWithTimeout } from './fetch-timeout'
 import { getSetting, setSetting } from './app-settings'
 import { writeCustomFields } from './guesty-custom-fields'
 import { appendReservationNote } from './guesty-res-notes'
-import { WELCOME_AHEAD_DAYS, WELCOME_GRACE_DAYS, POST_GRACE_DAYS, addDays, isCompleted } from './call-desk'
+import { WELCOME_GRACE_DAYS, POST_GRACE_DAYS, addDays, isCompleted } from './call-desk'
 import { isLiveStay } from './stay-status'
 import { callerDeviceOf, callerNameOf, talkroutePeople, getPeopleMap, backfillCallers, type TrPerson, type PeopleMap } from './talkroute-people'
 

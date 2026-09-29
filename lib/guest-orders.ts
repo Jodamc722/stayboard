@@ -401,10 +401,6 @@ export function soldInOf(v: any): number | null {
 /** How many pieces one item holds — 1..9999, else "not said". */
 export function piecesOf(v: any): number | null { const n = Math.floor(Number(v) || 0); return n >= 1 && n <= 9999 ? n : null }
 export function pieceNameOf(v: any): string | null { const t = String(v || '').trim().replace(/\s+/g, ' ').slice(0, 24); return t || null }
-/** "1 = 5 pods" — what the guest reads under the name. Null when either half is missing. */
-export function pieceLabel(item: Pick<CatalogItem, 'pieces' | 'piece_name'>): string | null {
-  return item.pieces && item.piece_name ? '1 = ' + item.pieces + ' ' + item.piece_name : null
-}
 /** The quantity the guest actually gets: rounded UP to the item's multiple (7 pods → 10 in 5s). */
 export function snapToSoldIn(qty: number, soldIn: number | null | undefined): number {
   const n = Math.floor(Number(qty) || 0)
@@ -475,12 +471,6 @@ export async function listCoupons(): Promise<Coupon[]> {
   const { data } = await supabaseAdmin().from('guest_order_coupons').select('*').order('created_at', { ascending: false }).limit(200)
   return (data || []).map(normCoupon)
 }
-/** "15% off" / "$10 off" — what a coupon is worth, in words. */
-export function couponWorth(c: Pick<Coupon, 'percent_off' | 'amount_off_usd'>): string {
-  if (c.percent_off && c.percent_off > 0) return Math.round(c.percent_off * 100) / 100 + '% off'
-  if (c.amount_off_usd && c.amount_off_usd > 0) return money(c.amount_off_usd) + ' off'
-  return 'no discount'
-}
 /** Why a code cannot be used right now — null means it can. Written for the guest to read. */
 export function couponProblem(c: Coupon | null, subtotal: number, building: string | null | undefined, now = new Date()): string | null {
   if (!c) return 'We don\u2019t recognise that code.'
@@ -547,26 +537,6 @@ export function priceForQty(item: Pick<CatalogItem, 'price_usd' | 'tiers' | 'sal
   if (sale !== null && sale >= 0) candidates.push(sale)
   const unit = Math.min(...candidates)
   return { unit, tier: hit && hit.unit_price_usd <= unit ? hit : null }
-}
-
-/**
- * Sanity checks on a price ladder, written for the person editing it rather than for a log.
- * The one that actually bites: a break above "max per order" can never be reached, so it reads as
- * a promise on the card and then never applies.
- */
-export function tierProblems(item: Pick<CatalogItem, 'price_usd' | 'tiers' | 'max_qty'>): string[] {
-  const out: string[] = []
-  const list = Number(item.price_usd) || 0
-  const tiers = sanitizeTiers(item.tiers)
-  const max = Math.max(1, Math.floor(Number(item.max_qty) || 10))
-  let prev = list
-  for (const t of tiers) {
-    if (t.min_qty > max) out.push(t.min_qty + '+ can never be reached — max per order is ' + max)
-    if (list > 0 && t.unit_price_usd >= list) out.push(t.min_qty + '+ is not a discount at ' + t.unit_price_usd.toFixed(2) + ' each')
-    else if (t.unit_price_usd > prev) out.push(t.min_qty + '+ costs more each than the break below it')
-    prev = t.unit_price_usd
-  }
-  return out
 }
 
 export type StockRow = { item_id: string; scope: string; on_hand: number; reserved: number; low_at: number; updated_at: string; updated_by: string | null }

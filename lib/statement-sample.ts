@@ -170,19 +170,3 @@ export const STATEMENT_ALSO: KV[] = [
     { k: 'Revenue management', v: 'Only if you are on a revenue-management plan.' },
     { k: 'Adjustments', v: 'Cancellations, refunds or late charges from a prior month, labeled by month.' },
 ]
-
-/**
- * The day the reading-guide slide shipped. Every deck generated before it froze one of the older
- * versions of these rows into its content JSON -- including the two Jon corrected: a "Cleaning
- * fee" row describing a fee owners never see, and a reimbursement row describing the OTA
- * commission, which is already out of the rental line. Those rows were never rendered, so no one
- * can have edited them on purpose, which is why an old deck is safe to overwrite wholesale.
- * A deck generated from today forward keeps whatever is stored, edits included.
- */
-export const STATEMENT_ALSO_SINCE = '2026-09-18'
-
-/** True when a deck predates the slide and its stored rows should be replaced by the house set. */
-export function statementAlsoStale(generatedAt: unknown): boolean {
-  const g = String(generatedAt || '').slice(0, 10)
-  return !g || g < STATEMENT_ALSO_SINCE
-}

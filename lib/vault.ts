@@ -87,12 +87,6 @@ export function maskHint(plain: string): string {
 
 const lower = (s: any) => String(s || '').trim().toLowerCase()
 
-/** One collection, as the access check needs it. */
-export type CollectionRef = {
-  id: string; name: string; slug: string; color?: string | null
-  roles: string[]; level: VaultLevel
-}
-
 /**
  * Every collection this person can open, and at what level.
  *

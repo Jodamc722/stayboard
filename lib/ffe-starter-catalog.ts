@@ -30,7 +30,6 @@
 // a week of re-quoting. Not everything is tiered: nobody needs three grades of trash bag, and
 // pretending otherwise triples the list for no decision. Where one tier is listed, that item is a
 // commodity and the tier is Standard.
-import { FfeTier } from './ffe-catalog'
 
 export type StarterProduct = {
   role: string          // the thing it IS, shared across its tiers — "Nightstand"
@@ -390,16 +389,3 @@ const SUPPLIES: StarterProduct[] = [
 ]
 
 export const STARTER_CATALOG: StarterProduct[] = [...FURNITURE, ...AMENITIES, ...LINEN, ...SUPPLIES]
-
-/** How many the starter list would add for a given choice of kinds and tiers. */
-export function starterCount(kinds: string[], tiers: string[]): number {
-  return STARTER_CATALOG.filter(p =>
-    (!kinds.length || kinds.indexOf(p.kind) >= 0) && (!tiers.length || tiers.indexOf(p.tier) >= 0)).length
-}
-
-/** A one-line summary for the confirm step, e.g. "62 products · Furniture, Amenities · Standard". */
-export function starterSummary(kinds: string[], tiers: string[], tierList: FfeTier[]): string {
-  const n = starterCount(kinds, tiers)
-  const t = tiers.map(k => (tierList.find(x => x.key === k)?.short || k)).join(', ')
-  return `${n} product${n === 1 ? '' : 's'}${t ? ' · ' + t : ''}`
-}

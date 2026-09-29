@@ -1099,7 +1099,6 @@ export async function buildAudit(month: string): Promise<AuditData> {
       // posted and reversed to the cent) — was flagged for $5.00 that does not exist. The
       // bookkeeper checked the first two Botanica flags and called both false; they were ($0.00
       // and $0.14 net). A fully reversed posting is nothing; money that actually nets is the flag.
-      const miscNet = money(g.other)
       // Only the reimbursement and cleaning lines, netted. A bare "Owner charge" on an owner stay
       // is NOT one of these — it is the turnover, and it belongs to owner_stay_cleaning below.
       const reimbLines = g.lines.filter(l => l.code !== 'AF' && l.code !== 'CMS'

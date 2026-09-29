@@ -144,14 +144,6 @@ export function aggregateUnitRows(
   }
 }
 
-/** His numbers for one month, whole portfolio. Null when the mirror has nothing usable. */
-export async function monthMoney(month: string): Promise<MonthMoney | null> {
-  const his = await revenueAppUnitMonth(month)
-  const rows: RevUnitMonthRow[] = []
-  for (const k of Object.keys(his.rows)) rows.push(his.rows[k])
-  return aggregateUnitRows(rows, month, his.kind, his.syncedAt)
-}
-
 function staleness(syncedAt: string | null, maxStaleHours: number): { ageH: number; stale: boolean } {
   const ageH = syncedAt ? (Date.now() - new Date(syncedAt).getTime()) / 3_600_000 : Infinity
   return { ageH, stale: ageH > maxStaleHours }

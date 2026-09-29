@@ -8,7 +8,7 @@
 // what it does with the clock.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
-import { BANDS, type Band, minutesOf, opsNow, isLate, progressOf, OPS_TZ } from './checklist-shared'
+import { BANDS, type Band, minutesOf, opsNow, isLate, OPS_TZ } from './checklist-shared'
 // Re-exported so callers import one module, while the pure time logic stays testable and shared
 // with the browser (lib/checklist-shared).
 export { BANDS, BAND_LABEL, minutesOf, clockLabel, opsNow, isLate, progressOf, type Band } from './checklist-shared'

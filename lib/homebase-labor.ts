@@ -6,7 +6,7 @@
 // /api/homebase/probe route once and we tighten the pickers to your account's
 // actual schema.
 
-import { getLocationUuids, getShifts, nameMatches, type Shift } from '@/lib/homebase'
+import { getLocationUuids, nameMatches, type Shift } from '@/lib/homebase'
 import { fetchWithTimeout } from '@/lib/fetch-timeout'
 
 const BASE = process.env.HOMEBASE_BASE_URL || 'https://app.joinhomebase.com/api/public'
@@ -16,11 +16,6 @@ type Json = any
 const pick = (o: Json, ...ks: string[]) => {
   for (const k of ks) if (o?.[k] != null && o[k] !== '') return o[k]
   return null
-}
-const arr = (d: Json): Json[] => {
-  if (Array.isArray(d)) return d
-  for (const k of ['data', 'timecards', 'results']) if (Array.isArray(d?.[k])) return d[k]
-  return []
 }
 
 async function hb(path: string): Promise<Json> {

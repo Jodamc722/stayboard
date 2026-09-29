@@ -57,16 +57,6 @@ export function healthBand(score: number, unrated = false): HealthBand {
   if (score >= 60) return 'risk'
   return 'critical'
 }
-export function healthBandUi(b: HealthBand): { ring: string; text: string; bg: string; dot: string; label: string } {
-  switch (b) {
-    case 'elite': return { ring: 'ring-emerald-300', text: 'text-emerald-700', bg: 'bg-emerald-50', dot: 'bg-emerald-500', label: 'Elite' }
-    case 'healthy': return { ring: 'ring-emerald-200', text: 'text-emerald-700', bg: 'bg-emerald-50', dot: 'bg-emerald-500', label: 'Healthy' }
-    case 'watch': return { ring: 'ring-amber-200', text: 'text-amber-700', bg: 'bg-amber-50', dot: 'bg-amber-500', label: 'Watch' }
-    case 'risk': return { ring: 'ring-orange-200', text: 'text-orange-700', bg: 'bg-orange-50', dot: 'bg-orange-500', label: 'At risk' }
-    case 'critical': return { ring: 'ring-rose-200', text: 'text-rose-700', bg: 'bg-rose-50', dot: 'bg-rose-500', label: 'Critical' }
-    default: return { ring: 'ring-slate-200', text: 'text-muted', bg: 'bg-app', dot: 'bg-slate-300', label: 'No reviews yet' }
-  }
-}
 
 /* ------------------------------- normalize -------------------------------- */
 // Stored ratings come in mixed scales across channels; reduce everything to 0-5 stars.

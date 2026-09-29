@@ -17,7 +17,7 @@
 // are mostly not in this Slack, and an @-mention that resolves to nobody is worse than useless.
 import 'server-only'
 import { getSetting, setSetting } from './app-settings'
-import { getDirectory, type SlackUser } from './slack'
+import { type SlackUser } from './slack'
 import { nameMatches, nameMatchesRoster } from './homebase'
 
 export const RULES_KEY = 'slack_rules'
@@ -543,20 +543,6 @@ export function resolveSlackId(
     if (u) return u.id
   }
   return null
-}
-
-/** Convenience: resolve a batch of names in one directory read. */
-export async function resolveMany(names: (string | null | undefined)[]): Promise<Record<string, string>> {
-  const rules = await getSlackRules()
-  const dir = await getDirectory()
-  const out: Record<string, string> = {}
-  for (const n of names) {
-    const raw = String(n || '').trim()
-    if (!raw || out[raw]) continue
-    const id = resolveSlackId(raw, dir.users, rules)
-    if (id) out[raw] = id
-  }
-  return out
 }
 
 /** Is `event` allowed to send right now, given its quiet hours? `nowMin` is minutes-of-day ET. */

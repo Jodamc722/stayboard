@@ -31,7 +31,7 @@
 // below) rather than typed out beside it. A printed matrix that drifts from the live recommendation
 // is worse than no matrix, because the team trusts the paper and the tool quietly disagrees.
 import type { Severity, ResolutionSpeed, Mitigation } from './refund-policy'
-import { computeRefund, BASE, SPEED, MITIGATION } from './refund-policy'
+import { computeRefund } from './refund-policy'
 
 // ── WHO SIGNS ───────────────────────────────────────────────────────────────────────────────────
 // Jon, 2026-09-22, chose dollar tiers over percentage tiers: a number you can hold in your head at

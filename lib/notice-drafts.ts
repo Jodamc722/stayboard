@@ -509,8 +509,3 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
   }
   return base
 }
-
-/** Debug hook: what Guesty returns for the fields the Elser form needs. Used by ?probe= only. */
-export async function probeLiveReservation(resId: string): Promise<LiveRes | null> {
-  return fetchLiveReservation(resId)
-}

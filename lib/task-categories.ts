@@ -166,7 +166,6 @@ export function catOfTask(t: { name?: string | null; dept?: string | null; type?
 }
 
 export const CAT_ORDER: string[] = DEFAULT_CATS.map(c => c.key)
-export const CAT_LABEL: Record<string, string> = DEFAULT_CATS.reduce((m, c) => { m[c.key] = c.label; return m }, {} as Record<string, string>)
 
 // ── ONE ANSWER TO "WHAT STATE IS THIS TASK IN" (2026-09-09 audit) ──────────────────────────────
 // Seven copies of these regexes had grown across the app, in two different dialects:

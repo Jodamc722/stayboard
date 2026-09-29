@@ -17,7 +17,7 @@ import { supabaseAdmin } from './supabase-admin'
 import { addNote } from './projects'
 import {
   type Template, type TemplateSection, type Recurrence, type ProjectKind, type Member,
-  nextOccurrence, todayISO, toPerson, PROJECT_KINDS,
+  nextOccurrence, todayISO, PROJECT_KINDS,
 } from './projects-shared'
 
 // ---------------------------------------------------------------- built-ins

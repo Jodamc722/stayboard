@@ -188,11 +188,6 @@ export type StayWindowConfig = {
   log: RunLogEntry[]
 }
 
-export const DEFAULT_CONFIG: StayWindowConfig = {
-  enabled: false, days: 60, openHour: 18, closeHour: 7, shortMin: 3, longMin: 30,
-  listings: [], ranOn: {}, log: [],
-}
-
 function clampInt(v: any, lo: number, hi: number, dflt: number): number {
   const n = Math.round(Number(v))
   if (!Number.isFinite(n)) return dflt

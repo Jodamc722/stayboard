@@ -170,10 +170,4 @@ export async function runChannelCheck(opts?: { health?: ChannelHealth }): Promis
   return { ok: errors.length === 0, at: next.at, firstRun: !prev, listings: health.listings.length, problems, transitions: transitions.length, alerts, audits: { opened: audits.opened, resolved: audits.resolved }, slack, errors, ms }
 }
 
-/** The current problem rows without a recompute — what the Command Center and Eve read. */
-export async function channelProblemsNow() {
-  const s = await readSnapshot()
-  return { at: s ? s.at : null, problems: problemsFromSnapshot(s) }
-}
-
 export type { CellVerdict }

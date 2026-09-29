@@ -47,10 +47,6 @@ import { parkingBooked } from '@/lib/parking'
 import { isLowReview, clearsRecovery } from '@/lib/review-scale'
 import { pctOrCount } from '@/lib/money'
 
-// The Airbnb/Vrbo-scale thresholds, for reference. The recovery rule itself is channel-aware and
-// lives in lib/review-scale (isLowReview / clearsRecovery) — Booking is judged on its own /10 scale.
-export const LOW_STARS = 3        // <= this is a bad review on the 5-star channels
-export const CLEAR_STARS = 4.5    // a review this good, AFTER the low one, clears the unit (5-star channels)
 export const HIGH_VALUE = 2500    // a stay worth calling about on money alone
 
 // ── THE WELCOME-CALL WINDOW (Jon, 2026-09-09) ───────────────────────────────────────────────────
@@ -265,12 +261,6 @@ export function glitchesFor(all: any[], listingId: string, listingName: string, 
 }
 
 export type CallReason = 'glitch' | 'recovery' | 'direct' | 'value'
-export const REASON_LABEL: Record<CallReason, string> = {
-  glitch: 'Issue during stay',
-  recovery: 'Unit in recovery',
-  direct: 'Direct booking',
-  value: 'High-value stay',
-}
 
 /** Context for the post-checkout card. Only `recovery` puts the guest on the list (see above). */
 export function postCheckoutReasons(opts: { glitches: StayGlitch[]; inRecovery: boolean; source: string; value: number }): CallReason[] {
@@ -817,91 +807,6 @@ export async function loadCallsDesk(sb: any, today: string, viewDate?: string): 
   let talkroute = !!String(process.env.TALKROUTE_API_KEY || '').trim()
   if (!talkroute) { try { const { talkrouteConfigured } = await import('./talkroute'); talkroute = await talkrouteConfigured() } catch { talkroute = false } }
   return { today, talkroute, callers, rows, outRows, recoveryFailed: rec.failed, kpis }
-}
-
-// ── THE RECOVERY BOARD (Reviews page) ───────────────────────────────────────────────────────────
-// Jon, 2026-09-09: "move review recovery to review section unless it falls into actual welcome
-// call". A unit waiting for a good review is a REPUTATION fact, so the list of them — and who is
-// booked there next — lives with the reviews. The Calls desk keeps only the recovery arrivals that
-// are inside the welcome-call window (today..72h), where they are just mandatory calls like any
-// other; this board shows the rest, so the next arrival at a burned unit is visible weeks out
-// without cluttering today's call sheet.
-export type RecoveryArrival = {
-  id: string; guest: string; check_in: string; nights: number; value: number; source: string
-  called: boolean            // welcome call already made (Guesty field or local log)
-  onDesk: boolean            // inside the welcome-call window → it is on the Calls desk right now
-}
-export type RecoveryBoardUnit = RecoveryUnit & {
-  listing: string; building: string
-  arrivals: RecoveryArrival[]   // next arrivals at this unit, soonest first
-}
-export type RecoveryBoard = { today: string; units: RecoveryBoardUnit[]; failed: boolean; horizonDays: number }
-
-export const RECOVERY_HORIZON_DAYS = 45
-
-export async function loadRecoveryBoard(sb: any, today: string): Promise<RecoveryBoard> {
-  const rec = await cachedRecovery().then(e => ({ map: new Map<string, RecoveryUnit>(e), failed: false }))
-    .catch(() => ({ map: new Map<string, RecoveryUnit>(), failed: true }))
-  const ids = Array.from(rec.map.keys())
-  if (!ids.length) return { today, units: [], failed: rec.failed, horizonDays: RECOVERY_HORIZON_DAYS }
-
-  const toDate = addDays(today, RECOVERY_HORIZON_DAYS)
-  const dueDate = addDays(today, WELCOME_AHEAD_DAYS)
-  const [listings, arrivals] = await Promise.all([
-    (async () => {
-      const out: any[] = []
-      for (let i = 0; i < ids.length; i += 200) {
-        const { data } = await sb.from('guesty_listings').select('id,nickname,title,building').in('id', ids.slice(i, i + 200))
-        out.push(...(data || []))
-      }
-      return out
-    })(),
-    (async () => {
-      const out: any[] = []
-      for (let i = 0; i < ids.length; i += 100) {
-        const { data } = await sb.from('guesty_reservations')
-          .select('id,listing_id,listing_name,guest_name,check_in,nights,status,money_total,source,custom_fields,nightsCount:raw->>nightsCount')
-          .in('listing_id', ids.slice(i, i + 100)).gte('check_in', today).lte('check_in', toDate).order('check_in').limit(400)
-        out.push(...(data || []))
-      }
-      return out.filter((r: any) => isLiveStay(r.status))
-    })(),
-  ])
-  const resIds = arrivals.map((r: any) => String(r.id))
-  const logs: any[] = resIds.length ? (await Promise.all(
-    Array.from({ length: Math.ceil(resIds.length / 200) }, (_, i) => resIds.slice(i * 200, i * 200 + 200))
-      .map(chunk => sb.from('guest_calls').select('reservation_id,outcome').eq('kind', 'welcome').in('reservation_id', chunk).then((r: any) => r.data || []))
-  )).flat() : []
-  const localCalled = new Set(logs.filter((l: any) => isCompleted(l.outcome)).map((l: any) => String(l.reservation_id)))
-
-  const nameOf = new Map<string, { listing: string; building: string }>()
-  for (const l of listings) nameOf.set(String(l.id), { listing: String(l.nickname || l.title || ''), building: String(l.building || '') })
-  const byListing = new Map<string, RecoveryArrival[]>()
-  for (const r of arrivals) {
-    const lid = String(r.listing_id || '')
-    if (!nameOf.get(lid)?.listing && r.listing_name) nameOf.set(lid, { listing: String(r.listing_name), building: nameOf.get(lid)?.building || '' })
-    const check_in = String(r.check_in).slice(0, 10)
-    if (!byListing.has(lid)) byListing.set(lid, [])
-    byListing.get(lid)!.push({
-      id: String(r.id), guest: String(r.guest_name || ''), check_in,
-      nights: Number(r.nights) || Number(r.nightsCount) || 0, value: Number(r.money_total) || 0, source: String(r.source || ''),
-      called: guestyCalled(r.custom_fields) || localCalled.has(String(r.id)),
-      onDesk: check_in <= dueDate,
-    })
-  }
-  const units: RecoveryBoardUnit[] = ids.map(id => {
-    const u = rec.map.get(id)!
-    const n = nameOf.get(id)
-    const building = rollupBuilding(n?.building || n?.listing || '')
-    return { ...u, listing: n?.listing || id, building: building === 'Unknown' ? '' : building, arrivals: byListing.get(id) || [] }
-  })
-  // Soonest next arrival first — that is the unit whose next review is being decided next — then
-  // the units nobody is booked into, longest-waiting first.
-  units.sort((a, b) => {
-    const an = a.arrivals[0]?.check_in || '9999', bn = b.arrivals[0]?.check_in || '9999'
-    return an.localeCompare(bn) || (b.openDays - a.openDays)
-  })
-  return { today, units, failed: rec.failed, horizonDays: RECOVERY_HORIZON_DAYS }
 }
 
 /**

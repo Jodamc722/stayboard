@@ -68,8 +68,6 @@ const isDone = (s: string) => isTaskDone(s)
 const isRunning = (s: string) => isTaskRunning(s)
 const isGone = (s: string) => isTaskGone(s)
 
-export type OpsDay = Awaited<ReturnType<typeof buildOpsDay>>
-
 /** Breezeway files building and common-area work against no listing at all; this is its home. */
 export const NO_UNIT = '__no_unit__'
 export const NO_UNIT_LABEL = 'Building & common areas'

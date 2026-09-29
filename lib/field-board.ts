@@ -24,7 +24,6 @@ const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).fo
 
 /** The five things a field board can carry. A board shows exactly what it was ticked for. */
 export const BOARD_SECTIONS = ['today', 'units', 'crew', 'cleans', 'verify', 'vacant', 'work', 'issues', 'requests', 'add'] as const
-export type BoardSection = typeof BOARD_SECTIONS[number]
 export const isBoardLink = (sections: any): boolean =>
   !!sections && BOARD_SECTIONS.some(k => sections[k] === true)
 

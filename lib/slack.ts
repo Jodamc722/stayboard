@@ -207,19 +207,6 @@ export function mention(userId: string | null | undefined): string {
   return id ? '<@' + id + '>' : ''
 }
 
-/** Mention a list of people, skipping blanks and duplicates, in the order given. */
-export function mentionAll(ids: (string | null | undefined)[]): string {
-  const seen: Record<string, boolean> = {}
-  const out: string[] = []
-  for (const raw of ids) {
-    const id = String(raw || '').trim()
-    if (!id || seen[id]) continue
-    seen[id] = true
-    out.push(mention(id))
-  }
-  return out.join(' ')
-}
-
 // ── Directory (people + channels), cached ──────────────────────────────────────────────────────
 
 export type Directory = { users: SlackUser[]; channels: SlackChannel[]; fetchedAt: string }

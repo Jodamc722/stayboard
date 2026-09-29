@@ -23,7 +23,7 @@
 // reasonable acts. Nobody is at fault, which is exactly why nobody catches it.
 import { supabaseAdmin } from './supabase-admin'
 import { pageRows } from './db-page'
-import { completeBreezewayTask, cancelBreezewayTask, breezewayConfigured } from './breezeway'
+import { cancelBreezewayTask, breezewayConfigured } from './breezeway'
 import { deptOf } from './pending-work'
 import { TASK_DONE_RE } from './task-categories'
 

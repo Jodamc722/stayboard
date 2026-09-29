@@ -20,7 +20,6 @@ import { breezewayConfigured, listBreezewayPeople, listPropertyHousekeeping, pic
 const DOOR_CODE_FIELD = '695af1454ebbdc00137c3f41'
 const CLEANING_TIME_FIELD = '69977f98e346440013af2462'
 
-const DEAD = /cancel|declin|inquir|expire|denied/i
 const LIVE = /confirm|checked/i // ONLY confirmed/checked stays make cleans. NOT inquiry/reserved (holds) and NOT 'closed' (Guesty closed = released/replaced - verified with the Cindy/Rustic-18 phantom)
 const IS_17WEST = (s: string) => /17\s*west/i.test(s)
 // Vendor-cleaned buildings (hotel/vendor staff, not our team) now come from ops presets
@@ -38,7 +37,6 @@ return null
 function hubOf(building: string): string {
 const s = String(building || '').trim()
 if (!s) return 'Other'
-const m = s.match(/^([A-Za-z0-9''.-]+(?:\s+[A-Za-z''.-]+)?)/)
 const first = s.split(/\s+/)[0]
 if (/^\d/.test(first)) return s
 return first

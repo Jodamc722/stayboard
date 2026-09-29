@@ -47,8 +47,6 @@ export type Guide = {
   updatedBy?: string
 }
 
-export const GUIDE_SECTIONS = ['quick', 'activations', 'venues', 'menu', 'quotes', 'todo', 'gallery', 'place', 'contact'] as const
-
 export function guideKey(slug: string): string { return 'guide:' + normSlug(slug) }
 export function normSlug(slug: string): string { return String(slug || '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40) }
 

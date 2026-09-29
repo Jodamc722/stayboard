@@ -64,7 +64,3 @@ export function tabSetForPath(path: string | null | undefined): { set: TabSet; t
   }
   return best
 }
-
-export function tabSetByKey(key: string): TabSet | null {
-  return TAB_SETS.find(s => s.key === key) || null
-}

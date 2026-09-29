@@ -60,7 +60,6 @@ export const FFE_KINDS: FfeKind[] = [
 ]
 
 export const KIND_BY_KEY: Record<string, FfeKind> = Object.fromEntries(FFE_KINDS.map(k => [k.key, k]))
-export const KIND_KEYS: string[] = FFE_KINDS.map(k => k.key)
 export const normalizeKind = (v: any): string => {
   const s = String(v || '').trim().toLowerCase()
   if (KIND_BY_KEY[s]) return s
@@ -94,7 +93,6 @@ export const FFE_TIERS: FfeTier[] = [
 ]
 
 export const TIER_BY_KEY: Record<string, FfeTier> = Object.fromEntries(FFE_TIERS.map(t => [t.key, t]))
-export const TIER_KEYS: string[] = FFE_TIERS.map(t => t.key)
 export const normalizeTier = (v: any): string => {
   const s = String(v || '').trim().toLowerCase().replace(/\s+/g, '')
   if (TIER_BY_KEY[s]) return s
@@ -246,16 +244,10 @@ function splitCsv(line: string): string[] {
 // ── LINE STAGES ─────────────────────────────────────────────────────────────────────────────────
 // Per LINE, not per order, because "the order is placed" is never true of all forty items at once.
 export const LINE_STAGES = ['draft', 'sent', 'approved', 'declined', 'ordered', 'delivered', 'installed'] as const
-export type LineStage = typeof LINE_STAGES[number]
 
 export const STAGE_LABEL: Record<string, string> = {
   draft: 'Draft', sent: 'With owner', approved: 'Approved', declined: 'Owner said no',
   ordered: 'Ordered', delivered: 'Delivered', installed: 'Installed',
-}
-// The forward path. Declined is a dead end on purpose — un-declining is an owner decision, not ours.
-export const NEXT_STAGE: Record<string, LineStage | null> = {
-  draft: 'sent', sent: 'approved', approved: 'ordered', ordered: 'delivered',
-  delivered: 'installed', installed: null, declined: null,
 }
 export const ORDER_STATUS_LABEL: Record<string, string> = {
   draft: 'Draft', sent: 'With owner', approved: 'Approved', changes: 'Changes requested', closed: 'Closed',

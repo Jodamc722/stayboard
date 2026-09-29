@@ -27,7 +27,6 @@ import { parseMentions, prefsOf, todayISO, type Person, type Member, type Notify
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
 const DEFAULT_FROM = 'jon@stay-hospitality.com'
 const lower = (s: any) => String(s || '').trim().toLowerCase()
-const first = (s: string | null | undefined) => String(s || '').split(/[\s@]/)[0]
 export const taskUrl = (projectId: string, taskId?: string | null) => `/projects/${projectId}${taskId ? `?task=${taskId}` : ''}`
 
 type Row = {

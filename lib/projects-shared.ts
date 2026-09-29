@@ -15,15 +15,10 @@ export const STAGE_LABEL: Record<Stage, string> = {
   idea: 'Idea', planned: 'Planned', in_progress: 'In progress',
   blocked: 'Blocked', review: 'Review', done: 'Done', cancelled: 'Cancelled',
 }
-/** Columns shown on the board. Done and cancelled are reachable but not a standing column. */
-export const BOARD_STAGES: Stage[] = ['idea', 'planned', 'in_progress', 'blocked', 'review', 'done']
 export const PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const
 export const APPROVALS = ['not_needed', 'needed', 'requested', 'approved', 'declined'] as const
 export const LINK_KINDS = ['listing', 'reservation', 'task', 'owner', 'building', 'claim', 'glitch'] as const
 export const PHOTO_PHASES = ['before', 'during', 'after'] as const
-
-const OPEN_STAGES: Stage[] = ['idea', 'planned', 'in_progress', 'blocked', 'review']
-export const isOpenStage = (s: any) => OPEN_STAGES.includes(String(s) as Stage)
 
 export type Project = {
   id: string; ref: string | null; title: string; summary: string | null
@@ -38,7 +33,6 @@ export type Project = {
   created_by: string | null; created_at: string; updated_at: string
 }
 
-const num = (v: any): number | null => { const n = Number(v); return Number.isFinite(n) ? n : null }
 export const money = (cents: number | null | undefined) =>
   cents == null ? null : Math.round(Number(cents)) / 100
 export const toCents = (dollars: any): number | null => {
@@ -117,8 +111,6 @@ export type Task = {
   breezeway_task_id?: string | null
   breezeway?: { status: string; tone: 'open' | 'done' | 'bad'; assignee?: string | null; date?: string | null; reportUrl?: string | null } | null
 }
-/** A linked thing's live state, stamped on at read time. */
-export type LinkState = { label: string; tone: 'open' | 'done' | 'bad' | 'wait'; detail: string | null; href: string | null; bz?: string | null }
 
 // ── COMMENTS, EVENTS AND FILES (Wave 2) ──────────────────────────────────────────────────────────
 // One stream holds both what people SAID (kind=comment) and what people DID (kind=event). An event
@@ -415,7 +407,6 @@ export type BoardSettings = {
   /** What that section is called. Ignored when the board already has one of DONE_NAMES. */
   doneSection: string
 }
-export const DEFAULT_SETTINGS: BoardSettings = { view: 'board', accent: 'indigo', icon: '📋', hideDone: false, sectionOrder: [], moveDone: true, doneSection: 'Completed' }
 
 // ── MY VIEW OF THIS BOARD ───────────────────────────────────────────────────────────────────────
 //
@@ -600,7 +591,6 @@ export type Notification = {
 }
 /** What a member gets EMAILED about. The bell in the app shows everything regardless. */
 export type NotifyPrefs = { assigned: boolean; mentions: boolean; comments: boolean; digest: boolean }
-export const DEFAULT_PREFS: NotifyPrefs = { assigned: true, mentions: true, comments: true, digest: true }
 export const prefsOf = (raw: any): NotifyPrefs => ({
   assigned: raw?.assigned !== false, mentions: raw?.mentions !== false, comments: raw?.comments !== false, digest: raw?.digest !== false,
 })

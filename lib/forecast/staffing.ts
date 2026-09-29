@@ -316,11 +316,6 @@ export async function buildStaffingForecast(opts: { from?: string; days?: number
   return opts.fresh ? compute(from, days) : cached(from, days)
 }
 
-/** The forecast for one date, one line per market — "tomorrow" in the EOD recap. */
-export function linesFor(fc: StaffingForecast, date: string): string[] {
-  return fc.days.filter(d => d.date === date).map(d => d.line)
-}
-
 // ── the ledger ────────────────────────────────────────────────────────────────────────────────────
 
 /**

@@ -3,7 +3,7 @@
 // These are the cases the weights exist FOR. If someone retunes them, this file is the argument
 // they have to answer: a duplicate outranks everything, a paid-for trip outranks a cold one, and a
 // crew with no room does not get handed more work.
-import { rankFocus, dupId, MAX_FOCUS } from '../ops-focus-rank'
+import { rankFocus, MAX_FOCUS } from '../ops-focus-rank'
 
 let fail = 0
 const eq = (label: string, got: any, want: any) => {

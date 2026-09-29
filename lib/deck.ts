@@ -34,8 +34,6 @@ export const TYPE = {
 /** 8pt rhythm. Slides use these and nothing between them. */
 export const SPACE = { xs: 6, sm: 10, md: 16, lg: 24, xl: 34, xxl: 48 } as const
 
-export const RADIUS = { slide: 16, card: 14, image: 10, pill: 999 } as const
-
 /**
  * Colour ROLES, not colours — the concrete hex comes from the report's chosen theme, so a deck
  * can be run in Capri (the house default: bone, navy, clay) or any of the others without a
@@ -53,25 +51,6 @@ export const ROLE = {
   /** the dark slides that stop a deck reading as one long beige afternoon */
   ground: 'band',
 } as const
-
-/** Ink for the dark slides. Fixed, because they sit on the brand ground in every theme. */
-export const ON_DARK = {
-  ink: '#ffffff',
-  body: 'rgba(255,255,255,0.86)',
-  quiet: 'rgba(255,255,255,0.56)',
-  rule: 'rgba(255,255,255,0.22)',
-} as const
-
-/**
- * How many dark slides a deck should carry. Two is punctuation; five is a different document.
- * The onboarding spends its two on "About Stay Hospitality" and "What we charge".
- */
-export const DARK_BUDGET = 2
-
-/** The one line of furniture every slide below the cover carries. */
-export function footerRight(wordmark: string, n: number): string {
-  return wordmark + ' · ' + String(n).padStart(2, '0')
-}
 
 /**
  * SLIDE TONES — what stops a deck reading as one long beige afternoon.

@@ -159,11 +159,3 @@ export function buildingGuideFor(listingName?: string): BuildingGuide | null {
   if (/mango|jasmine|sapodilla|bamboo|bougainvillea|mahogany|royal\s*palm/.test(s)) return BUILDINGS.find(b => b.key === 'oasis') || null
   return null
 }
-
-export const QUESTIONS_UNIVERSAL = [
-  'What time do you expect to arrive? (so we have access ready)',
-  'How many guests will be staying? (confirm it matches the booking)',
-  'First time in the area / any special occasion?',
-  'Do you have a rental car, or will you need parking?',
-  'Any questions about check-in or the building?',
-]

@@ -281,12 +281,6 @@ export function matchesProperty(p: PropertyEmail, listing: { building?: any; nic
   return p.match.some(k => k && hay.includes(k))
 }
 
-/** The property a listing belongs to, or null. First match wins, so keep keywords distinct. */
-export function propertyForListing(props: PropertyEmail[], listing: { building?: any; nickname?: any; title?: any }): PropertyEmail | null {
-  for (const p of props) if (matchesProperty(p, listing)) return p
-  return null
-}
-
 /**
  * Is a property ready to send? A building with no recipients is the one failure mode that looks
  * fine on screen and silently does nothing, so it is called out rather than left to be discovered.

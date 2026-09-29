@@ -740,17 +740,6 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
     .replace(moneyRe(DEFAULT_TEMPLATE.laborRate), money0(rate))
   const rules = t.moneyRules.map(r => ({ k: subMoney(r.k), v: subMoney(r.v) }))
 
-  // A worked month, so the statement is not the first one they have ever seen. Numbers tie.
-  const nights = 19, adr = 286
-  const rental = nights * adr
-  const commission = Math.round(rental * (t.mgmtPct / 100) * 100) / 100
-  const charges = [
-    { date: 'Oct 6', work: 'Kitchen faucet dripping — replaced cartridge', who: 'Guest reported, fixed same day', labor: `0.7h · ${money2(0.7 * rate)}`, materials: money2(19), total: money2(0.7 * rate + 19) },
-    { date: 'Oct 19', work: 'A/C service and filter change', who: 'Scheduled preventative', labor: `1.5h · ${money2(1.5 * rate)}`, materials: money2(18), total: money2(1.5 * rate + 18) },
-  ]
-  const chargeTotal = 0.7 * rate + 19 + 1.5 * rate + 18
-  const net = Math.round((rental - commission - chargeTotal) * 100) / 100
-
   return {
     meta: {
       kind: 'onboarding',
@@ -1025,38 +1014,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
   }
 }
 
-/** The eight sections a generated onboarding shows, in render order. */
-export const ONBOARDING_CORE = [
-  // THE ROADMAP (Jon, 2026-09-23: "a full-fledged roadmap from who we are, what we do, the guest
-  // experience, the listing, seasonality, ramp, etc."). The order is the argument: establish who
-  // we are and what we have already run, show the work we do to the product, show how a stay is
-  // actually run, then rate, then their unit, then the calendar year and the ramp, and only then
-  // the admin. A deck that opens on statements is a deck about paperwork.
-  'welcome', 'agenda', 'team', 'overview', 'experience',
-  'craft', 'channels', 'guestcare', 'revenue', 'stack', 'listings',
-  // THE REVENUE STORY IS NOT OPTIONAL (Jon, 2026-09-16: "we should also have a revenue slide,
-  // not actual numbers but show season pickup… ramp takes time for listing to move up on
-  // algorithms, new listing promotion, push for good reviews"). These two carry the only
-  // expectation-setting in the deck that stops month one reading as a failure in February.
-  'season', 'ramp', 'rampsteps',
-  'guesty', 'statement',
-  // CHECKLIST MOVED OUT OF THE HIDDEN SET (Jon, 2026-09-18: "mention ACH and W9 needs to be
-  // filled out, log in to Guesty owner portal"). Those three were added to the checklist and the
-  // checklist was hidden by default, so the deck answered his request by printing them nowhere.
-  // It also earns its place on its own terms: the meeting has to end on what each side still
-  // owes, and the owner's half -- W-9, ACH, insurance rider, HOA -- is the half that holds up a
-  // first payout.
-  'checklist', 'notes',
-] as const
-
 /** Built, kept, and hidden by default. Switched on per owner from the editing toolbar. */
 export const ONBOARDING_EXTRA = [
   'unit', 'strategy', 'tech', 'money', 'comms', 'nextup',
-] as const
-
-/** Every section key an onboarding report can hide, in render order. */
-export const ONBOARDING_SECTIONS = [
-  'welcome', 'agenda', 'team', 'overview', 'experience', 'craft', 'channels', 'guestcare',
-  'revenue', 'stack', 'listings', 'unit', 'strategy', 'ramp', 'rampsteps',
-  'season', 'guesty', 'tech', 'money', 'statement', 'comms', 'checklist', 'nextup', 'notes',
 ] as const

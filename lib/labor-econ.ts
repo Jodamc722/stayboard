@@ -1518,8 +1518,6 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     hkCleansByPerson[rec.who] = hkCleansByPerson[rec.who] || {}
     hkCleansByPerson[rec.who][rec.market] = (hkCleansByPerson[rec.who][rec.market] || 0) + 1
   }
-  const depCleansAll = Object.keys(depCleansByMk).reduce((a, k) => a + depCleansByMk[k], 0)
-  const depCleansByOthers = Object.keys(depCleansByOthersMk).reduce((a, k) => a + depCleansByOthersMk[k], 0)
   // payroll + hours, split by each housekeeper's share of cleans per market
   const bucketNames: Record<string, Record<string, boolean>> = {}
   for (const p of peopleAll) {

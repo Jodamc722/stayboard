@@ -46,15 +46,3 @@ export function parseListing(nick?: string | null, title?: string | null): Parse
 export function normalizeBuilding(b: string): string {
   return b.trim().replace(/\s+/g, ' ')
 }
-
-// Bedroom bucket from room_type or bedroom count
-export function bedroomBucket(roomType: string | null | undefined, bedrooms: number | null | undefined): string {
-  const rt = (roomType || '').toUpperCase()
-  if (/STUDIO|^STU$/.test(rt) || bedrooms === 0) return 'Studio'
-  if (/1\s?BR|1\s?BD/.test(rt) || bedrooms === 1) return '1BR'
-  if (/2\s?BR|2\s?BD/.test(rt) || bedrooms === 2) return '2BR'
-  if (/3\s?BR|3\s?BD/.test(rt) || bedrooms === 3) return '3BR'
-  if (bedrooms && bedrooms >= 4) return `${bedrooms}BR+`
-  if (/4\s?BR|4\s?BD/.test(rt)) return '4BR+'
-  return 'Other'
-}

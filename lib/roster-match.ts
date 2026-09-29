@@ -22,12 +22,3 @@ export function matchRoster(roster: RosterPerson[], name: string): { ok: true; i
   if (byFirst.length === 1) return { ok: true, id: byFirst[0].id, person: byFirst[0] }
   return { ok: false, reason: byFirst.length > 1 ? 'More than one "' + name.split(' ')[0] + '" on the Breezeway roster — assign from the board.' : 'Could not find "' + name + '" on the Breezeway roster — assign from the board.' }
 }
-
-/** Does a task assignee string name this person? Exact key, or a unique-enough first name. */
-export function samePerson(a: any, b: any): boolean {
-  const ka = personKey(a), kb = personKey(b)
-  if (!ka || !kb) return false
-  if (ka === kb) return true
-  const fa = ka.split(' ')[0], fb = kb.split(' ')[0]
-  return fa.length > 3 && fa === fb && (ka.split(' ').length === 1 || kb.split(' ').length === 1)
-}

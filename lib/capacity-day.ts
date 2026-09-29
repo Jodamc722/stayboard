@@ -22,7 +22,7 @@ import { marketOf } from './segments'
 import { getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { isDepartureCleanName } from './breezeway'
-import { assessDay, spread, unitCost, cleanTableFor, PERFORMED_FLOOR_MIN, type Stop, type DayLoad, type Person } from './capacity'
+import { assessDay, spread, unitCost, PERFORMED_FLOOR_MIN, type Stop, type DayLoad, type Person } from './capacity'
 
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 /** Collapse whitespace so the two systems' spellings of one person land in one lane. */

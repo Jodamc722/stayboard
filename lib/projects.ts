@@ -10,8 +10,8 @@ import { pageRows } from './db-page'
 import { TASK_DONE_RE } from './task-categories'
 export * from './projects-shared'
 import {
-  type Project, type ProjectFull, type Member, type Person, type Task, type Viewer, type EventType,
-  progressOf, healthOf, nestTasks, TASK_STATUSES, money, todayISO, canSee, canEdit, toPerson,
+  type Project, type ProjectFull, type Member, type Person, type Viewer, type EventType,
+  progressOf, healthOf, nestTasks, money, todayISO, canSee, canEdit, toPerson,
   type Invoice, INVOICE_STATUSES, INVOICE_COUNTS, nextOccurrence, doneSectionName, isDoneSection, settingsOf, viewPrefsOf,
 } from './projects-shared'
 

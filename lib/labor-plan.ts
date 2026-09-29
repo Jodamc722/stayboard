@@ -36,7 +36,7 @@ import { supabaseAdmin } from './supabase-admin'
 import { getSetting, setSetting, getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { marketOf } from './segments'
-import { getShifts, nameMatchesRoster } from './homebase'
+import { getShifts } from './homebase'
 import { getCrew } from './crew'
 
 const TZ = 'America/New_York'
@@ -236,140 +236,6 @@ export async function pickupFactors(): Promise<{ factors: number[]; samples: num
     samples[lead] = ratios.length
   }
   return { factors, samples }
-}
-
-// ---------------------------------------------------------------------------
-// Per-cleaner, day-of (Jon, 2026-08-19: "it should base hours on work and rev to make sure
-// profitable"). For each cleaner: the NET revenue their assigned departure cleans earn, and the
-// MOST hours that revenue supports at the target margin — revenue x (1 - target) / wage, per
-// market. A shift inside that budget is a profitable day at target; over it, the day pays less
-// than the target no matter how well it goes. Assigned cleans come from Breezeway; a clean with
-// two names on it counts half to each. Typical-pace hours (settled hours-per-clean) are carried
-// as a reference floor but the judgment is revenue-based, not pace-based.
-// ---------------------------------------------------------------------------
-export type CleanerToday = {
-  name: string
-  byMarket: { market: string; cleans: number; hours: number; revenue: number; budgetHours: number }[]
-  cleans: number
-  revenue: number                  // net fees the assigned cleans earn
-  projectedHours: number           // typical pace at settled hours/clean — reference only
-  budgetHours: number              // most hours the day's revenue supports at the target margin
-  scheduledHours: number | null    // today's Homebase shift
-  marginAtScheduledPct: number | null
-}
-export async function projectCleaners(date: string): Promise<{ people: CleanerToday[]; overheadShare: number; targetMarginPct: number }> {
-  const db = supabaseAdmin()
-  const cal = await getCalibration()
-  const cfg = await getSetting<{ targetMarginPct?: number }>('labor_plan', {}).catch(() => ({} as any))
-  const setT = Number(cfg?.targetMarginPct)
-  const targetPct = Number.isFinite(setT) && setT > 0 && setT < 90 ? Math.round(setT)
-    : Math.min(60, Math.max(30, (cal.settledMarginPct != null ? cal.settledMarginPct + 3 : 45)))
-  const VENDOR = vendorRegex((await getOpsPresets()).vendorBuildings)
-  const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(5000)
-  // LOCK-OFF LISTINGS (Jon, 2026-08-21): "Arya 2004 FULL" IS "Arya 2004/1" plus "Arya 2004/2" —
-  // three listings, two physical studios, listed separately only so guests can book either shape.
-  // baseOfFull/baseOfPart tie the three names to one base so the counting below can be smart
-  // about it instead of crediting the same walls twice.
-  const baseOfFull = (n: string): string | null => {
-    const m = /^(.*?)[\s-]+full\b/i.exec(String(n || ''))
-    return m && m[1].trim() ? m[1].trim().toLowerCase() : null
-  }
-  const baseOfPart = (n: string): string | null => {
-    const m = /^(.*?)\/\s*\d+\b/.exec(String(n || ''))
-    return m && m[1].trim() ? m[1].trim().toLowerCase() : null
-  }
-  const meta: Record<string, { market: string; vendor: boolean; name: string }> = {}
-  const partsOfBase: Record<string, number> = {}
-  for (const l of (listings || []) as any[]) {
-    const name = l.nickname || l.title || 'Unit'
-    const building = String(l.building || '')
-    meta[String(l.id)] = {
-      market: String(marketOf(building, l.address_city, name) || 'Miami').toLowerCase(),
-      vendor: VENDOR.test(building) || VENDOR.test(String(name)),
-      name: String(name),
-    }
-    const pb = baseOfPart(String(name))
-    if (pb) partsOfBase[pb] = (partsOfBase[pb] || 0) + 1
-  }
-  const { data: tasks } = await db.from('breezeway_tasks_sync')
-    .select('id,name,status,assignees,reference_property_id')
-    .eq('scheduled_date', date).limit(2000)
-  // A SUPERVISOR IS NOT A CLEANER (Jon, 2026-08-21: "Yoslenis is a Supervisor"). Her name lands
-  // on cleans because she helps or signs off, but her wages are supervision overhead (lib/crew),
-  // so she never belongs in the per-cleaner profit table — and she is dropped BEFORE shares are
-  // split, so the cleaner who actually turned the unit keeps full credit.
-  const crewMap = await getCrew().catch(() => null)
-  const cleanerCache: Record<string, boolean> = {}
-  const isCleaner = (n: string): boolean => {
-    if (!(n in cleanerCache)) cleanerCache[n] = !crewMap || crewMap.deptOf(n, null, 'housekeeping') === 'housekeeping'
-    return cleanerCache[n]
-  }
-  const rows: { m: { market: string; vendor: boolean; name: string }; ppl: string[]; weight: number }[] = []
-  const componentBasesToday: Record<string, true> = {}
-  for (const t of (tasks || []) as any[]) {
-    const status = String(t.status || '').toLowerCase()
-    if (/delete|cancel/.test(status)) continue
-    if (!/departure clean|turnover clean|check-?out clean/i.test(String(t.name || ''))) continue
-    const m = meta[String(t.reference_property_id)]
-    if (!m || m.vendor) continue
-    const ppl = (Array.isArray(t.assignees) ? t.assignees : [])
-      .map((a: any) => String(a?.name || a || '').trim()).filter(Boolean)
-      .filter(isCleaner)
-    if (!ppl.length) continue
-    const pb = baseOfPart(m.name)
-    if (pb) componentBasesToday[pb] = true
-    rows.push({ m, ppl, weight: 1 })
-  }
-  const per: Record<string, Record<string, number>> = {}
-  for (const r of rows) {
-    const fb = baseOfFull(r.m.name)
-    if (fb) {
-      // The desk schedules the FULL clean AND the component cleans to be safe. When the
-      // components share the day, they are the physical truth — skip the FULL duplicate.
-      if (componentBasesToday[fb]) continue
-      // A FULL clean alone is still every unit it contains: two studios' worth of work and fees.
-      r.weight = Math.max(2, partsOfBase[fb] || 0)
-    }
-    const share = r.weight / r.ppl.length
-    for (const pn of r.ppl) { per[pn] = per[pn] || {}; per[pn][r.m.market] = (per[pn][r.m.market] || 0) + share }
-  }
-  const sched: Record<string, number> = {}
-  try {
-    const shifts = await getShifts(date, TZ)
-    for (const sft of shifts) {
-      if (sft.open || !sft.name) continue
-      const a = sft.startAt ? new Date(sft.startAt).getTime() : NaN
-      const b = sft.endAt ? new Date(sft.endAt).getTime() : NaN
-      if (Number.isFinite(a) && Number.isFinite(b) && b > a) sched[sft.name] = (sched[sft.name] || 0) + Math.min(12, (b - a) / 3600000)
-    }
-  } catch { /* shifts unavailable → column shows a dash */ }
-  const schedNames = Object.keys(sched)
-  const people: CleanerToday[] = Object.keys(per).map(name => {
-    const byMarket = Object.keys(per[name]).sort().map(mk => {
-      const c = calFor(cal, mk)
-      const cleans = round1(per[name][mk])
-      const revenue = round2(cleans * c.feePerClean)
-      return {
-        market: mk, cleans, revenue,
-        hours: round1(cleans * c.hoursPerClean * (1 + cal.overheadShare)),
-        budgetHours: c.wage > 0 ? round1((revenue * (1 - targetPct / 100)) / c.wage) : 0,
-      }
-    })
-    const cleans = round1(byMarket.reduce((a, b) => a + b.cleans, 0))
-    const revenue = round2(byMarket.reduce((a, b) => a + b.revenue, 0))
-    const projectedHours = round1(byMarket.reduce((a, b) => a + b.hours, 0))
-    const budgetHours = round1(byMarket.reduce((a, b) => a + b.budgetHours, 0))
-    const hit = nameMatchesRoster(name, schedNames)
-    const scheduledHours = hit ? round1(sched[hit]) : null
-    // Margin the scheduled shift leaves on this cleaner's revenue, at her market-mix wage.
-    const wageMix = projectedHours > 0
-      ? byMarket.reduce((a, b) => a + b.hours * calFor(cal, b.market).wage, 0) / projectedHours
-      : FALLBACK.wage
-    const marginAtScheduledPct = scheduledHours != null && revenue > 0
-      ? Math.round((1 - (scheduledHours * wageMix) / revenue) * 100) : null
-    return { name, byMarket, cleans, revenue, projectedHours, budgetHours, scheduledHours, marginAtScheduledPct }
-  }).sort((a, b) => b.revenue - a.revenue)
-  return { people, overheadShare: cal.overheadShare, targetMarginPct: targetPct }
 }
 
 // ---------------------------------------------------------------------------

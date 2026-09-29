@@ -36,10 +36,6 @@ async function accessTokenFor(email: string): Promise<{ token?: string; error?: 
   } catch (e: any) { return { error: String(e?.message || e) } }
 }
 
-function b64url(s: string): string {
-  return Buffer.from(s).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
 // A raw-message payload can contain non-ASCII bytes (an accented guest name in the HTML). We keep
 // the raw string as latin1 so every byte survives the final base64url pass unchanged.
 function rawToB64url(raw: string): string {
@@ -335,23 +331,6 @@ export async function listGmailDrafts(fromEmail: string, max = 25): Promise<{ id
       out.push({ id, subject, hasPdf })
     }
     return out
-  } catch { return null }
-}
-
-// Which Google account does this token actually open? The connect flow used to key tokens by the
-// APP login, so a row labeled support@ can hold a personal account's grant — and every draft the
-// engine files lands in that account's Drafts while the desk stares at an empty support@ folder.
-// users/me/profile answers with the real mailbox; profile scope rides along with any Gmail scope.
-export async function gmailProfileEmail(fromEmail: string): Promise<string | null> {
-  const { token } = await accessTokenFor(fromEmail)
-  if (!token) return null
-  try {
-    const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile', {
-      headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
-    })
-    if (!r.ok) return null
-    const j: any = await r.json().catch(() => null)
-    return typeof j?.emailAddress === 'string' ? j.emailAddress.toLowerCase() : null
   } catch { return null }
 }
 

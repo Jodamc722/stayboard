@@ -439,7 +439,6 @@ export function housePortalUrl(stored: unknown): string {
 // "The four people who run your unit" was typed as a constant the day the team was four. The
 // editor has had "Add someone" since 2026-09-17, so a fifth card made the line wrong on the
 // slide it sits above. The number is now read from the cards at render time.
-const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight']
 export const TEAM_SUBTITLE_RETIRED = 'The four people who run your unit, and the inbox behind them.'
 export const TEAM_SUBTITLE = 'Your points of contact, and the support inbox.'
 export function teamSubtitle(_count: number): string { return TEAM_SUBTITLE }
@@ -609,14 +608,6 @@ export const EXPERIENCE_ITEMS: PropertyItem[] = [
   { k: 'Capri Apartments', v: 'Palm Beach County · apartments', b: 'Capri' },
   { k: 'Amrit Luxury Condo Rentals', v: 'Palm Beach · luxury', b: 'Amrit' },
   { k: 'Eden Escapes', v: 'Broward · homes & villas', b: 'Eden' },
-]
-
-// Retired with the slide (boss, 2026-09-24): the slide is the properties, nothing to prove under them.
-export const EXPERIENCE_PROOF_RETIRED: { k: string; v: string }[] = [
-
-  { k: 'One operator, end to end', v: 'Listing, pricing, guest communication, turnovers and maintenance run as one team on one system.' },
-  { k: 'Hotel standards on a single unit', v: 'The checklist that cleans a hotel floor cleans your property: same standard, same inspection, same photographic record.' },
-  { k: 'Coverage around the clock', v: 'A guest locked out at 2am reaches a person. That call is answered in minutes, and it decides the review.' },
 ]
 
 export const EXPERIENCE_PROOF: { k: string; v: string }[] = []

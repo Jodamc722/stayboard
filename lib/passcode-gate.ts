@@ -219,9 +219,6 @@ export async function anyLinkGate(kinds: string[]): Promise<LinkGate> {
   return { ok: false, link: null, reason: 'locked', res: NextResponse.json({ ok: false, needsPassword: true, error: 'Password required' }, { status: 401 }) }
 }
 
-/** True when the request may act as a holder of one of these link kinds (cookie) or is signed in. */
-export async function anyLinkAuthed(kinds: string[]): Promise<boolean> { return (await anyLinkGate(kinds)).ok }
-
 /**
  * POST handler body for a per-link login: resolve → lockout → compare → set this link's cookie.
  * The gate key is 'link:<code>' so five wrong guesses on one link do not lock the others.

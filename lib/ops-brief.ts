@@ -17,11 +17,11 @@ import { THEMES, looksNegative, sentenceAbout } from './review-themes'
 import { getOpsPresets, getSetting } from './app-settings'
 import { vendorRegex } from './ops-presets'
 import { buildDaySheet } from './daysheet'
-import { getShifts, nameMatches, nameMatchesRoster } from './homebase'
+import { getShifts, nameMatches } from './homebase'
 import { getStaff } from './staffing'
 import { getSalaried } from './salary'
 import { getTimecardsAudited } from './homebase-labor'
-import { kindOfTask, isDepartureCleanTask } from './labor-econ'
+import { kindOfTask } from './labor-econ'
 import { isLiveStay } from './stay-status'
 import { billingMonth } from './billing'
 import { getLaborSettings } from './labor-settings'
@@ -33,7 +33,6 @@ import { upcomingAutoInspections } from './auto-inspections'
 import { vacantWork, vacantWorkSummary, type VacantWork } from './vacant-work'
 import { maintData } from './maint-brief'
 import { translator, type BriefLang } from './brief-lang'
-import { stateOfTask } from './task-categories'
 import { buildReviewQueue, dayWord, niceDate } from './review-queue'
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
@@ -784,7 +783,6 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     try { maintBr = await maintData('Broward') } catch { maintBr = null }
   }
   const sheet: any = d.sheet || {}
-  const label = variant === 'full' ? 'Full Portfolio' : variant
   const dateNice = new Intl.DateTimeFormat(locale, { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date())
 
   const arrivals: any[] = sheet.arrivals || []
@@ -804,7 +802,6 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   const glitches: any[] = (sheet.glitches || []).filter((g: any) => !/done|resolved|closed/i.test(str(g.status)))
   const highExceptions: any[] = (sheet.exceptions || []).filter((e: any) => e.severity === 'high').slice(0, 6)
   const walkIns = arrivals.filter(a => a.bookedToday || a.bookedAfterSync)
-  const notStarted = d.cleans.filter(c => c.state === 'not_started')
   const unassigned = d.cleans.filter(c => /UNASSIGNED/.test(c.assignee))
   const sameDay = d.cleans.filter(c => c.sameDayArrival && c.state !== 'done')
   const occupiedTonight = Math.max(0, d.activeCount - vacants.length)

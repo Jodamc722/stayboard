@@ -123,8 +123,6 @@ function daysBetween(from: string, to: string): number {
 // inspection is NOT the departure clean. The day sheet used to count them as one, which produced
 // two harms at once — a unit with only a strip booked looked covered, and a unit with a real clean
 // PLUS a strip raised a bogus "two cleans, one is probably a duplicate" alarm.
-const NOT_THE_CLEAN = /strip|walk-?through|inspect|unit check/i
-const IS_THE_CLEAN = /departure clean|turnover clean|check-?out clean|move-?out clean|deep clean|limpieza/i
 function isDepartureClean(name: string, dept: string): boolean {
   // Same shared rule as the scheduler. The old version matched "deep clean" and fell back to any
   // housekeeping task containing the word clean, which pulled oven cleans and refresh cleans onto
@@ -518,8 +516,6 @@ async function _buildDaySheet(dateIn?: string, marketIn?: string): Promise<any> 
     const exceptions: Exc[] = []
     const add = (severity: 'high' | 'med', kind: string, unit: string, detail: string, action: string) =>
       exceptions.push({ kind, unit, detail, action, severity })
-
-    const extensionListings = new Set(departures.filter(d => d.extension).map(d => d.listingId))
 
     for (const d of departures) {
       // The extension warning sits ABOVE the vendor skip on purpose: a vendor crew stripping a unit

@@ -87,8 +87,6 @@ const X = (key: string, en: string, es: string, ask?: FfeAsk, hint?: { en: strin
 // FIX is the one that used to fall on the floor: it is not a purchase, so it had no home on a
 // purchasing form, and it either got lost or got raised as a maintenance ticket. Now it is a first
 // class answer that routes itself.
-export const FFE_OUTCOMES = ['add', 'replace', 'fix', 'keep'] as const
-export type FfeOutcome = typeof FFE_OUTCOMES[number]
 /** Which answers become something to buy. FIX is deliberately not one of them. */
 export const BUYS: string[] = ['add', 'replace']
 
@@ -312,11 +310,6 @@ export const FFE_ANSWERS = {
   fix: { en: 'Fix', es: 'Reparar' },
   keep: { en: 'Nothing needed', es: 'Nada hace falta' },
   na: { en: 'Not here', es: 'No hay' },
-}
-export const FFE_ANSWER_HELP = {
-  add: { en: 'The unit does not have one', es: 'La unidad no tiene' },
-  replace: { en: 'It is here but has to be swapped', es: 'Está pero hay que cambiarlo' },
-  fix: { en: 'It can be repaired — goes to the team, not the owner', es: 'Se puede reparar — va al equipo, no al dueño' },
 }
 
 export const FFE_UI = {
