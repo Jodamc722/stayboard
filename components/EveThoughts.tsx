@@ -7,8 +7,9 @@
 // twice with the guest-facing text in view), Not this (a short reason becomes a memory from Jon),
 // Ask me next time (that one watch proposes from now on).
 //
-// Used twice: the full feed on Settings → Eve → Thinking (EveThinkingFeed) and the compact line
-// under the Command Center's Decide band (EveThinkingLine). Same cards, same buttons.
+// Used twice: the full feed on Settings → Eve → Thinking (EveThinkingFeed), and the Command Center,
+// which renders ThoughtCard + useThoughts inside its own list (components/CommandDayList). Same
+// cards, same buttons.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Loader2, Check, X, BellRing, ChevronDown, ChevronRight, Eye, RefreshCw, Sparkles, Lock } from 'lucide-react'
 
@@ -305,32 +306,5 @@ export function EveThinkingFeed() {
         </div>
       ))}
     </div>
-  )
-}
-
-// ── THE LINE: under the Command Center's Decide band ────────────────────────────────────────────
-export function EveThinkingLine() {
-  const [open, setOpen] = useState(false)
-  const th = useThoughts({ limit: 40 })
-  const [note, setNote] = useState('')
-  if (th.forbidden || (!th.loading && !th.rows.length && !th.err)) return null
-  const n = th.rows.length
-  const onDone = (id: string, msg: string, ok: boolean) => { if (ok) th.remove(id); setNote(msg) }
-  return (
-    <section>
-      <button onClick={() => setOpen(o => !o)} aria-expanded={open} className="px-1 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-ink/70 hover:text-ink min-h-[28px]">
-        <Sparkles size={12} className="text-brand-600" /> Eve is thinking about {n} thing{n === 1 ? '' : 's'}{th.unseen > 0 ? ` (${th.unseen} new)` : ''} {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-      </button>
-      {open && (
-        <div className="mt-1 rounded-2xl border border-line bg-white shadow-soft divide-y divide-line">
-          {note && <div className="px-3 py-2 text-[12px] text-ink bg-app/60">{note}</div>}
-          {th.rows.map(t => <ThoughtCard key={t.id} t={t} compact onDone={onDone} />)}
-          <div className="px-3 py-2 flex items-center justify-between">
-            <a href="/users?tab=settings&panel=eve" className="text-[11.5px] font-semibold text-brand-700 hover:underline">All of it, in Settings → Eve → Thinking</a>
-            {th.unseen > 0 && <button onClick={th.markAllSeen} className="text-[11.5px] text-muted hover:text-ink">Mark all seen</button>}
-          </div>
-        </div>
-      )}
-    </section>
   )
 }
