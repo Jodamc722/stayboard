@@ -30,6 +30,7 @@ import 'server-only'
 // expected to show the warning instead of the figure — the daily true-up email already refuses to
 // send on a partial read, and a shared board must not quietly understate what the crew cost.
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 import { getTimecardsAudited } from '@/lib/homebase-labor'
 import { getShifts, type Shift } from '@/lib/homebase'
 import { isDepartureCleanName } from '@/lib/breezeway'
@@ -134,14 +135,23 @@ export async function scheduleLabor(plan: TeamSchedule, today: string): Promise<
   if (listingIds.length) {
     const back = new Date(plan.from + 'T12:00:00Z'); back.setUTCDate(back.getUTCDate() - 9)
     const rows: any[] = []
+    let feesShort = false
     for (let i = 0; i < listingIds.length; i += 100) {
-      const { data } = await db.from('guesty_reservations')
-        .select('listing_id,check_out,status,source,cleaning:raw->money->>fareCleaning,grossFare:raw->money->>fareAccommodationAdjusted')
-        .in('listing_id', listingIds.slice(i, i + 100))
+      // Paged in id order: a hundred units over a planner window plus nine days can pass 1,000
+      // checkouts, and a fee that was never read prices that clean at $0.
+      const chunk = listingIds.slice(i, i + 100)
+      const read = await pageRows<any>((a, b) => db.from('guesty_reservations')
+        .select('id,listing_id,check_out,status,source,cleaning:raw->money->>fareCleaning,grossFare:raw->money->>fareAccommodationAdjusted')
+        .in('listing_id', chunk)
         .gte('check_out', back.toISOString().slice(0, 10)).lte('check_out', plan.to)
         .not('status', 'in', '("canceled","cancelled","declined")')
-        .limit(1000)
-      rows.push(...(data || []))
+        .order('id').range(a, b), 6)
+      if (read.truncated) feesShort = true
+      rows.push(...read.rows)
+    }
+    if (feesShort) {
+      console.error('schedule-labor: the checkout read stopped early — cleaning revenue is understated')
+      notes.push('Some checkouts could not be read — cleaning revenue on this board is understated.')
     }
     // Expedia bundles the cleaning fee into the fare, so those checkouts arrive at zero. Rebuild
     // from the unit's own non-Expedia bookings — modal, capped at the fare, skipped where the unit
