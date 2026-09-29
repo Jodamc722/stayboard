@@ -75,7 +75,7 @@ export function TalkrouteAdmin() {
       if (op === 'unsubscribe') setFlash(`Removed ${j.removed || 0} webhook${j.removed === 1 ? '' : 's'}.`)
       if (op === 'sync') {
         const s = j.sync || {}
-        setFlash(`${s.partial ? 'Partly synced (ran out of time — press Sync now again, or the 15-minute backfill finishes it)' : 'Synced'} — ${s.calls?.fetched ?? 0} calls (${s.calls?.matched ?? 0} matched to bookings, ${s.calls?.welcomeCompleted ?? 0} welcome calls completed), ${s.texts?.messages ?? 0} texts in ${s.texts?.conversations ?? 0} threads, ${s.voicemails?.fetched ?? 0} voicemails.${s.errors?.length ? ' First error: ' + s.errors[0] : ''}`)
+        setFlash(`${s.partial ? 'Partly synced (ran out of time — press Sync now again, or the 30-minute backfill finishes it)' : 'Synced'} — ${s.calls?.fetched ?? 0} calls (${s.calls?.matched ?? 0} matched to bookings, ${s.calls?.welcomeCompleted ?? 0} welcome calls completed), ${s.texts?.messages ?? 0} texts in ${s.texts?.conversations ?? 0} threads, ${s.voicemails?.fetched ?? 0} voicemails.${s.errors?.length ? ' First error: ' + s.errors[0] : ''}`)
       }
       if (op === 'settings' || op === 'transcribe_settings') setFlash('Saved.')
       if (op === 'recheck_calls') {
@@ -90,7 +90,7 @@ export function TalkrouteAdmin() {
       if (op === 'save_transcribe_key') { setDgKey(''); setFlash('Transcription is on. Recorded calls will start turning into notes within a few minutes.') }
       if (op === 'run_notes') {
         const n = j.notes || {}
-        setFlash(`${n.transcribed || 0} calls transcribed, ${n.summarised || 0} notes written, ${n.notesPushed || 0} pushed to Guesty${n.usd ? ` · $${n.usd.toFixed(3)}` : ''}${n.partial ? ' — more to go, press again or let the 15-minute job finish it' : ''}.${n.errors?.length ? ' First error: ' + n.errors[0] : ''}`)
+        setFlash(`${n.transcribed || 0} calls transcribed, ${n.summarised || 0} notes written, ${n.notesPushed || 0} pushed to Guesty${n.usd ? ` · $${n.usd.toFixed(3)}` : ''}${n.partial ? ' — more to go, press again or let the 30-minute job finish it' : ''}.${n.errors?.length ? ' First error: ' + n.errors[0] : ''}`)
       }
     } catch (e: any) { setErr(e.message || String(e)) } finally { setBusy(null) }
   }
@@ -167,7 +167,7 @@ export function TalkrouteAdmin() {
                 : <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full"><AlertTriangle size={11} /> Webhooks not registered</span>}
             </div>
             <div className="p-4 space-y-3 text-[13px]">
-              <p className="text-muted">With webhooks on, a finished call reaches the Calls desk within seconds. The 15-minute backfill runs either way, so nothing is lost if Talkroute misses one.</p>
+              <p className="text-muted">With webhooks on, a finished call reaches the Calls desk within seconds. The 30-minute backfill runs either way, so nothing is lost if Talkroute misses one.</p>
               <div className="flex gap-2 flex-wrap">
                 <button onClick={() => post('subscribe')} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3.5 py-2 font-semibold hover:bg-brand-700 disabled:opacity-50">{busy === 'subscribe' ? <Loader2 size={13} className="animate-spin" /> : <Webhook size={13} />} {d.webhookRegistered ? 'Re-register webhooks' : 'Register webhooks'}</button>
                 <button onClick={() => post('sync')} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-3.5 py-2 font-semibold text-ink hover:bg-app disabled:opacity-50">{busy === 'sync' ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Sync now</button>

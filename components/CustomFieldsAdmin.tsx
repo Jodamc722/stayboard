@@ -195,7 +195,7 @@ export function CustomFieldsAdmin() {
         <div className="mt-8 rounded-2xl border border-line bg-white p-10 text-center shadow-soft">
           <div className="text-ink font-semibold">No custom fields synced yet</div>
           <p className="text-sm text-muted mt-1 max-w-md mx-auto">
-            Hit “Sync from Guesty” above. If Guesty is in 429 cooldown the next cron tick (every 15 min) will populate this list automatically.
+            Hit “Sync from Guesty” above. If Guesty is in 429 cooldown the next scheduled sync (twice a day) will populate this list automatically.
           </p>
         </div>
       ) : grouped.length === 0 ? (
