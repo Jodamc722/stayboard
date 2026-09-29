@@ -2364,6 +2364,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               {stdArm === 'armed' ? 'Click again to make this the standard' : stdArm === 'busy' ? 'Locking in…' : stdArm === 'done' ? 'This is the standard ✓' : stdArm === 'fail' ? 'Could not lock in' : 'Make this the standard'}
             </button>
           )}
+          {edit && c.ov && Object.keys(c.ov).length ? (
+            <button onClick={() => mutate((d: Any) => { delete d.ov })} title="Every number and label you typed over goes back to the figure the report computed"
+              className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+              Reset {Object.keys(c.ov).length} typed-over figure{Object.keys(c.ov).length === 1 ? '' : 's'}
+            </button>
+          ) : null}
           {edit && (
             <button onClick={save} disabled={saving} className="inline-flex items-center justify-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold text-white disabled:opacity-60" style={{ background: t.accent, color: t.card, minWidth: 132 }}>
               {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save changes'}
@@ -5640,6 +5646,26 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           const footLeft = [String(hero.title || ''), periodLabel].filter(Boolean).join(' · ')
 
           /** THE FRAME. Header, margins, footer — identical on every slide, set once. */
+          // EVERYTHING ON THE DECK IS EDITABLE (Jon, 2026-09-29: "make it all editable for the owner
+          // reports for 17west"). Section copy was already editable; the numbers, labels, table
+          // cells, month names, quotes' attributions and the slide furniture were computed and could
+          // not be touched. O(key, computed) puts an override in front of any of them: in Edit it is
+          // a field holding the override or the computed text; out of Edit it prints the override if
+          // one was typed, else the computed value. Overrides live flat on content.ov, keyed by
+          // slide + element, so they save and share with the report and never disturb the data the
+          // figure came from. Clearing a field back to empty and saving keeps an empty override —
+          // "Reset figures" in the toolbar drops them all.
+          const OV: Record<string, string> = (c.ov && typeof c.ov === 'object') ? (c.ov as Any) : {}
+          const ovKey = (k: string) => String(k).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 90)
+          const O = (k: string, def: Any, ml?: boolean): Any => {
+            const key = ovKey(k)
+            const has = Object.prototype.hasOwnProperty.call(OV, key)
+            const shown = has ? OV[key] : (def == null ? '' : (typeof def === 'string' || typeof def === 'number') ? String(def) : null)
+            if (edit && shown != null) return <Ed v={String(shown)} set={v => patch('ov.' + key, v)} edit multiline={ml} />
+            if (has) return String(OV[key]).replace(/\${2,}/g, '$')
+            return def
+          }
+
           const Frame = stable('Frame', ({ sec, subj, tone, n, children, nav, note }: { sec: string; subj?: string; tone: SlideTone; n: number; children: React.ReactNode; nav: string; note?: string }) => {
             const dark = tone === 'dark'
             const meta1 = { fontSize: 9.5, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase' as const, color: dark ? D.muted : tint(0.45), margin: 0 }
@@ -5647,14 +5673,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               <Slide nav={nav} noteKey={note} warn={edit} pad={0} ground={GROUND[tone]}>
                 <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '40px 72px 38px' }}>
                   <div className="flex items-baseline justify-between" style={{ flex: '0 0 auto' }}>
-                    <p style={meta1}>{sec}</p>
-                    <p style={meta1}>{subj || ''}</p>
+                    <p style={meta1}>{O((note || nav) + '_sec', sec)}</p>
+                    <p style={meta1}>{O((note || nav) + '_subj', subj || '')}</p>
                   </div>
                   <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', paddingTop: 22, paddingBottom: 18 }}>
                     {children}
                   </div>
                   <div className="flex items-baseline justify-between" style={{ flex: '0 0 auto' }}>
-                    <p style={meta1}>{footLeft}</p>
+                    <p style={meta1}>{O('footLeft', footLeft)}</p>
                     <p style={{ fontFamily: SERIF, fontSize: 13, color: dark ? D.muted : tint(0.45), margin: 0 }}>{pad2(n)}</p>
                   </div>
                 </div>
@@ -5675,12 +5701,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           const Lead = stable('Lead', ({ children, dark, w }: { children: React.ReactNode; dark?: boolean; w?: string }) => (
             <p style={{ fontSize: 18, lineHeight: 1.62, color: dark ? D.body : tint(0.62), margin: 0, maxWidth: w || '64ch' }}>{children}</p>
           ))
-          const Lbl = stable('Lbl', ({ children, dark }: { children: React.ReactNode; dark?: boolean }) => (
-            <p style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.17em', textTransform: 'uppercase', color: dark ? D.muted : tint(0.45), margin: 0, lineHeight: 1.3 }}>{children}</p>
+          const Lbl = stable('Lbl', ({ children, dark, ok }: { children: React.ReactNode; dark?: boolean; ok?: string }) => (
+            <p style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.17em', textTransform: 'uppercase', color: dark ? D.muted : tint(0.45), margin: 0, lineHeight: 1.3 }}>{ok ? O(ok, children) : children}</p>
           ))
           /** A figure. Serif, tabular, and the only thing on a slide allowed to be this big. */
-          const Fig = stable('Fig', ({ children, size, dark, color }: { children: React.ReactNode; size?: number; dark?: boolean; color?: string }) => (
-            <span style={{ display: 'block', fontFamily: SERIF, fontWeight: 400, fontSize: size || 34, lineHeight: 0.94, letterSpacing: '-0.025em', fontVariantNumeric: 'tabular-nums', color: color || (dark ? D.ink : t.ink) }}>{children}</span>
+          const Fig = stable('Fig', ({ children, size, dark, color, ok }: { children: React.ReactNode; size?: number; dark?: boolean; color?: string; ok?: string }) => (
+            <span style={{ display: 'block', fontFamily: SERIF, fontWeight: 400, fontSize: size || 34, lineHeight: 0.94, letterSpacing: '-0.025em', fontVariantNumeric: 'tabular-nums', color: color || (dark ? D.ink : t.ink) }}>{ok ? O(ok, children) : children}</span>
           ))
 
           // Kept from the first pass: a title block driven by the section's own editable copy.
@@ -5701,11 +5727,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             )
           })
 
-          const Stat = stable('Stat', ({ label, value, sub, dark, big }: { label: string; value: string; sub?: string; dark?: boolean; big?: boolean }) => (
+          const Stat = stable('Stat', ({ label, value, sub, dark, big, ok }: { label: string; value: string; sub?: string; dark?: boolean; big?: boolean; ok?: string }) => (
             <div>
-              <Lbl dark={dark}>{label}</Lbl>
-              <div style={{ marginTop: 9 }}><Fig size={big ? 56 : 34} dark={dark}>{value}</Fig></div>
-              {sub ? <p style={{ fontSize: 12.5, color: dark ? D.muted : tint(0.45), margin: '9px 0 0', lineHeight: 1.45 }}>{sub}</p> : null}
+              <Lbl dark={dark} ok={ok ? ok + '_l' : undefined}>{label}</Lbl>
+              <div style={{ marginTop: 9 }}><Fig size={big ? 56 : 34} dark={dark} ok={ok ? ok + '_v' : undefined}>{value}</Fig></div>
+              {(sub || (edit && ok)) ? <p style={{ fontSize: 12.5, color: dark ? D.muted : tint(0.45), margin: '9px 0 0', lineHeight: 1.45 }}>{ok ? O(ok + '_s', sub || '') : sub}</p> : null}
             </div>
           ))
 
@@ -5792,7 +5818,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       ) : (
                         <p style={{ fontFamily: SERIF, fontSize: 15, letterSpacing: '0.3em', textTransform: 'uppercase', color: '#fff', opacity: 0.92, margin: 0 }}>{mark.word}</p>
                       )}
-                      <p style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.55)', margin: 0 }}>Owner review</p>
+                      <p style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.55)', margin: 0, pointerEvents: 'auto' }}>{O('cover_kicker', 'Owner review')}</p>
                     </div>
                     <div style={{ pointerEvents: 'auto' }}>
                       <p style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)', margin: '0 0 18px' }}>
@@ -5812,8 +5838,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         <div className="flex" style={{ marginTop: 32, borderTop: '1px solid rgba(255,255,255,0.20)', paddingTop: 20 }}>
                           {cards.slice(0, 4).map((x: Any, i: number, arr: Any[]) => (
                             <div key={x.key || i} style={{ paddingRight: i === arr.length - 1 ? 0 : 44, marginRight: i === arr.length - 1 ? 0 : 44, borderRight: i === arr.length - 1 ? 'none' : '1px solid rgba(255,255,255,0.14)' }}>
-                              <span style={{ display: 'block', fontFamily: SERIF, fontWeight: 400, fontSize: 33, lineHeight: 1, letterSpacing: '-0.025em', fontVariantNumeric: 'tabular-nums', color: '#fff' }}>{cardValue(x, snapPrimary)}</span>
-                              <span style={{ display: 'block', fontSize: 9.5, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)', marginTop: 9 }}>{String(x.label || '')}</span>
+                              <span style={{ display: 'block', fontFamily: SERIF, fontWeight: 400, fontSize: 33, lineHeight: 1, letterSpacing: '-0.025em', fontVariantNumeric: 'tabular-nums', color: '#fff' }}>{O('cover_c' + i + '_v', cardValue(x, snapPrimary))}</span>
+                              <span style={{ display: 'block', fontSize: 9.5, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)', marginTop: 9 }}>{O('cover_c' + i + '_l', String(x.label || ''))}</span>
                             </div>
                           ))}
                         </div>
@@ -5898,10 +5924,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 {lead ? (
                   <div className="flex items-center" style={{ gap: 56 }}>
                     <div style={{ width: 352, flexShrink: 0 }}>
-                      <Lbl>{String(lead.label || 'Revenue')}</Lbl>
-                      <div style={{ marginTop: 16 }}><Fig size={88}>{cardValue(lead, snapPrimary)}</Fig></div>
-                      {cardSecond(lead) ? (
-                        <p style={{ fontSize: 15, fontWeight: 600, color: t.accent, margin: '12px 0 0', fontVariantNumeric: 'tabular-nums' }}>{cardSecond(lead)}</p>
+                      <Lbl ok="snap_lead_l">{String(lead.label || 'Revenue')}</Lbl>
+                      <div style={{ marginTop: 16 }}><Fig size={88} ok="snap_lead_v">{cardValue(lead, snapPrimary)}</Fig></div>
+                      {(cardSecond(lead) || edit) ? (
+                        <p style={{ fontSize: 15, fontWeight: 600, color: t.accent, margin: '12px 0 0', fontVariantNumeric: 'tabular-nums' }}>{O('snap_lead_s', cardSecond(lead) || '')}</p>
                       ) : null}
                       {(snap.subtitle || edit) ? (
                         <p style={{ fontSize: 14.5, lineHeight: 1.6, color: tint(0.62), margin: '16px 0 0', maxWidth: '32ch' }}>
@@ -5942,10 +5968,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             borderRight: (i % 3) === 2 ? 'none' : '1px solid ' + tint(0.12),
                             borderBottom: topRow && rest.length > 3 ? '1px solid ' + tint(0.12) : 'none',
                           }}>
-                            <Lbl>{String(card.label || '')}</Lbl>
-                            <div style={{ marginTop: 8 }}><Fig size={33}>{cardValue(card, snapPrimary)}</Fig></div>
-                            {cardSecond(card) ? (
-                              <p style={{ fontSize: 11.5, fontWeight: 600, color: t.accent, margin: '7px 0 0', fontVariantNumeric: 'tabular-nums' }}>{cardSecond(card)}</p>
+                            <Lbl ok={'snap_' + (card.key || i) + '_l'}>{String(card.label || '')}</Lbl>
+                            <div style={{ marginTop: 8 }}><Fig size={33} ok={'snap_' + (card.key || i) + '_v'}>{cardValue(card, snapPrimary)}</Fig></div>
+                            {(cardSecond(card) || edit) ? (
+                              <p style={{ fontSize: 11.5, fontWeight: 600, color: t.accent, margin: '7px 0 0', fontVariantNumeric: 'tabular-nums' }}>{O('snap_' + (card.key || i) + '_s', cardSecond(card) || '')}</p>
                             ) : null}
                           </div>
                         )
@@ -6017,7 +6043,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   <div className="sb-scrollpane" style={{ height: '100%', overflowY: 'auto', overscrollBehavior: 'contain', paddingRight: 8 }}>
                     <div style={{ position: 'sticky', top: 0, zIndex: 1, background: GROUND.tint, display: 'grid', gridTemplateColumns: grid, gap: 10, paddingBottom: 9, borderBottom: '1px solid ' + t.ink }}>
                       {cols.map(x => (
-                        <p key={x.key} style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.15em', textTransform: 'uppercase', color: tint(0.45), margin: 0, textAlign: x.key === 'unit' || x.key === 'share' ? 'left' : 'right' }}>{x.label}</p>
+                        <p key={x.key} style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.15em', textTransform: 'uppercase', color: tint(0.45), margin: 0, textAlign: x.key === 'unit' || x.key === 'share' ? 'left' : 'right' }}>{O('lt_h_' + x.key, x.label)}</p>
                       ))}
                     </div>
                     {listingTable.rows.map((r: Any) => {
@@ -6025,18 +6051,18 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       return (
                         <div key={r.id} style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, padding: '9px 0', borderBottom: '1px solid ' + tint(0.07), alignItems: 'center' }}>
                           <div style={{ minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 9 }}>
-                            <span style={{ fontSize: 14, color: t.ink, fontWeight: 500, whiteSpace: 'nowrap' }}>{String(r.unit || r.name || '')}</span>
-                            {size(r) ? <span style={{ fontSize: 11, color: tint(0.45) }}>{size(r)}</span> : null}
-                            {r.name && r.name !== r.unit ? <span style={{ fontSize: 11, color: tint(0.35), whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(r.name)}</span> : null}
+                            <span style={{ fontSize: 14, color: t.ink, fontWeight: 500, whiteSpace: 'nowrap' }}>{O('lt_' + r.id + '_unit', String(r.unit || r.name || ''))}</span>
+                            {(size(r) || edit) ? <span style={{ fontSize: 11, color: tint(0.45) }}>{O('lt_' + r.id + '_size', size(r))}</span> : null}
+                            {r.name && r.name !== r.unit ? <span style={{ fontSize: 11, color: tint(0.35), whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{O('lt_' + r.id + '_name', String(r.name))}</span> : null}
                           </div>
                           <div className="flex items-center" style={{ gap: 9 }}>
                             <span style={{ position: 'relative', width: 94, height: 7, borderRadius: 9, background: tint(0.07), flexShrink: 0 }}>
                               <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 9, width: Math.max(2, (rev / top) * 100) + '%', background: r.id === best.id ? t.accent : tint(0.22) }} />
                             </span>
-                            <span style={{ fontSize: 11, color: tint(0.45), fontVariantNumeric: 'tabular-nums' }}>{((rev / all) * 100).toFixed(1)}%</span>
+                            <span style={{ fontSize: 11, color: tint(0.45), fontVariantNumeric: 'tabular-nums' }}>{O('lt_' + r.id + '_share', ((rev / all) * 100).toFixed(1) + '%')}</span>
                           </div>
                           {cols.slice(2).map(x => (
-                            <p key={x.key} style={{ fontSize: 13.5, color: x.key === 'rev' ? t.ink : tint(0.62), fontWeight: x.key === 'rev' ? 500 : 400, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{cell(r, x.key)}</p>
+                            <p key={x.key} style={{ fontSize: 13.5, color: x.key === 'rev' ? t.ink : tint(0.62), fontWeight: x.key === 'rev' ? 500 : 400, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{O('lt_' + r.id + '_' + x.key, cell(r, x.key))}</p>
                           ))}
                         </div>
                       )
@@ -6046,10 +6072,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, padding: '11px 8px 0 0', borderTop: '1px solid ' + t.ink, flex: '0 0 auto' }}>
-                  <p style={{ fontSize: 14, fontWeight: 500, color: t.ink, margin: 0 }}>{'All ' + listingTable.totals.units + ' units'}</p>
-                  <p style={{ fontSize: 12.5, color: tint(0.45), margin: 0 }}>100%</p>
+                  <p style={{ fontSize: 14, fontWeight: 500, color: t.ink, margin: 0 }}>{O('lt_tot_unit', 'All ' + listingTable.totals.units + ' units')}</p>
+                  <p style={{ fontSize: 12.5, color: tint(0.45), margin: 0 }}>{O('lt_tot_share', '100%')}</p>
                   {cols.slice(2).map(x => (
-                    <p key={x.key} style={{ fontSize: 14, fontWeight: 500, color: t.ink, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{cell(listingTable.totals, x.key)}</p>
+                    <p key={x.key} style={{ fontSize: 14, fontWeight: 500, color: t.ink, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{O('lt_tot_' + x.key, cell(listingTable.totals, x.key))}</p>
                   ))}
                 </div>
               </Frame>
@@ -6085,7 +6111,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       const pct = b ? (gap / Math.abs(b)) * 100 : null
                       return (
                         <div key={i} style={{ paddingTop: 18, borderTop: '2px solid ' + t.ink }}>
-                          <Lbl>{String(r.metric || '')}</Lbl>
+                          <Lbl><Ed v={String(r.metric || '')} set={v => patch('pacing.rows.' + i + '.metric', v)} edit={edit} /></Lbl>
                           <div style={{ marginTop: 14 }}>
                             <Fig size={46}><Ed v={String(r.ours || '')} set={v => patch('pacing.rows.' + i + '.ours', v)} edit={edit} /></Fig>
                           </div>
@@ -6093,7 +6119,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             {legend + ' '}<Ed v={String(r.comps || '')} set={v => patch('pacing.rows.' + i + '.comps', v)} edit={edit} />
                           </p>
                           <p style={{ fontSize: 13, fontWeight: 600, color: behind ? tint(0.62) : t.good, margin: '6px 0 0', fontVariantNumeric: 'tabular-nums' }}>
-                            {String(r.delta || '')}{pct == null ? '' : ' · ' + (pct >= 0 ? '+' : '−') + Math.abs(pct).toFixed(0) + '% vs market'}
+                            <Ed v={String(r.delta || '')} set={v => patch('pacing.rows.' + i + '.delta', v)} edit={edit} />{pct == null ? '' : ' · ' + (pct >= 0 ? '+' : '−') + Math.abs(pct).toFixed(0) + '% vs market'}
                           </p>
                         </div>
                       )
@@ -6109,13 +6135,13 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     return (
                       <div key={i} style={{ display: 'grid', gridTemplateColumns: '128px minmax(0,1fr)', gap: 20, alignItems: 'center', padding: '13px 0', borderTop: i ? '1px solid ' + tint(0.12) : 'none' }}>
                         <div>
-                          <p style={{ fontSize: 13, fontWeight: 500, color: t.ink, margin: 0 }}>{String(r.metric || '')}</p>
+                          <p style={{ fontSize: 13, fontWeight: 500, color: t.ink, margin: 0 }}><Ed v={String(r.metric || '')} set={v => patch('pacing.rows.' + i + '.metric', v)} edit={edit} /></p>
                           <p style={{ fontSize: 11.5, fontWeight: 600, color: behind ? t.accent : t.good, margin: '4px 0 0', fontVariantNumeric: 'tabular-nums' }}>
-                            {String(r.delta || '')}
+                            <Ed v={String(r.delta || '')} set={v => patch('pacing.rows.' + i + '.delta', v)} edit={edit} />
                           </p>
                         </div>
                         <ChartTip title={String(r.metric || '')} rows={[
-                          ['17 West', String(r.ours || '—')],
+                          [String(OV.pacing_us || meta.scopeLabel || '17 West'), String(r.ours || '—')],
                           [String(c.pacingLegend || 'Comp set'), String(r.comps || '—')],
                           ['Difference', String(r.delta || '—')],
                           ['vs. market', pct == null ? '—' : (pct >= 0 ? '+' : '−') + Math.abs(pct).toFixed(1) + '%'],
@@ -6144,7 +6170,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 <div className="flex items-center justify-between" style={{ gap: 22, marginTop: 16 }}>
                   <div className="flex items-center" style={{ gap: 22 }}>
                     <span className="flex items-center" style={{ gap: 8, fontSize: 12, color: tint(0.62) }}>
-                      <i style={{ width: 16, height: 8, borderRadius: '0 2px 2px 0', background: t.accent, display: 'inline-block' }} />17 West
+                      <i style={{ width: 16, height: 8, borderRadius: '0 2px 2px 0', background: t.accent, display: 'inline-block' }} />{O('pacing_us', String(meta.scopeLabel || '17 West'))}
                     </span>
                     <span className="flex items-center" style={{ gap: 8, fontSize: 12, color: tint(0.62) }}>
                       <i style={{ width: 16, height: 8, borderRadius: '0 2px 2px 0', background: tint(0.22), display: 'inline-block' }} />
@@ -6274,17 +6300,17 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   {months.map((m: Any, j: number) => {
                     const on = j === ix
                     return (
-                      <button key={j} onClick={() => setPlanIx(j)} title={String(m.label || '')}
+                      <div role="button" tabIndex={0} key={j} onClick={() => setPlanIx(j)} title={String(m.label || '')}
                         style={{
                           flex: '0 1 auto', minWidth: 0, textAlign: 'left', padding: '4px 34px 13px 0', background: 'transparent',
                           cursor: months.length > 1 ? 'pointer' : 'default',
                           borderBottom: '2px solid ' + (on ? t.accent : 'transparent'), marginBottom: -1,
                         }}>
                         <span style={{ display: 'block', fontSize: 11, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: on ? D.ink : D.muted, whiteSpace: 'nowrap' }}>
-                          {String(m.label || '').replace(/\s+\d{4}$/, '')}
-                          <span style={{ opacity: 0.6, letterSpacing: '0.1em', marginLeft: 8, fontWeight: 500 }}>{String(m.status || '')}</span>
+                          {edit && on ? <Ed v={String(m.label || '')} set={v => patch('plan.months.' + j + '.label', v)} edit /> : String(m.label || '').replace(/\s+\d{4}$/, '')}
+                          <span style={{ opacity: 0.6, letterSpacing: '0.1em', marginLeft: 8, fontWeight: 500 }}>{edit && on ? <Ed v={String(m.status || '')} set={v => patch('plan.months.' + j + '.status', v)} edit /> : String(m.status || '')}</span>
                         </span>
-                      </button>
+                      </div>
                     )
                   })}
                 </div>
@@ -6298,21 +6324,21 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     const pl = f.plan
                     if (planView === 'simple') return (
                       <div key={j} style={{ display: 'grid', gridTemplateColumns: '120px 190px minmax(0,1fr) 150px', gap: 24, alignItems: 'baseline', padding: '13px 0', borderTop: j ? '1px solid ' + D.rule : 'none' }}>
-                        <span style={{ fontSize: 13, color: D.muted }}>{String(r.metric || '')}</span>
-                        <span style={{ fontFamily: SERIF, fontSize: 24, letterSpacing: '-0.02em', color: D.ink, fontVariantNumeric: 'tabular-nums' }}>{one$(f.actual) || '—'}</span>
-                        <span style={{ fontSize: 13, color: D.muted, fontVariantNumeric: 'tabular-nums' }}>{pl ? 'Budget ' + one$(pl) : ''}</span>
+                        <span style={{ fontSize: 13, color: D.muted }}><Ed v={String(r.metric || '')} set={v => patch('plan.months.' + ix + '.rows.' + j + '.metric', v)} edit={edit} /></span>
+                        <span style={{ fontFamily: SERIF, fontSize: 24, letterSpacing: '-0.02em', color: D.ink, fontVariantNumeric: 'tabular-nums' }}>{O('plan_' + ix + '_' + j + '_actual', one$(f.actual) || '—')}</span>
+                        <span style={{ fontSize: 13, color: D.muted, fontVariantNumeric: 'tabular-nums' }}>{edit ? <>Budget <Ed v={String(r.plan || pl || '')} set={v => patch('plan.months.' + ix + '.rows.' + j + '.plan', v)} edit /></> : (pl ? 'Budget ' + one$(pl) : '')}</span>
                         <span style={{ textAlign: 'right' }}>
-                          <span style={{ display: 'block', fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', color: deltaColor(neg, !!f.delta) }}>{one$(f.delta) || '—'}</span>
-                          <span style={{ display: 'block', fontSize: 11, color: D.muted, marginTop: 2 }}>{pctOf(f, String(r.metric || ''))}</span>
+                          <span style={{ display: 'block', fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', color: deltaColor(neg, !!f.delta) }}>{O('plan_' + ix + '_' + j + '_delta', one$(f.delta) || '—')}</span>
+                          <span style={{ display: 'block', fontSize: 11, color: D.muted, marginTop: 2 }}>{O('plan_' + ix + '_' + j + '_pct', pctOf(f, String(r.metric || '')))}</span>
                         </span>
                       </div>
                     )
                     return (
                       <div key={j} style={{ display: 'grid', gridTemplateColumns: '236px minmax(0,1fr) 112px', gap: 24, alignItems: 'center', padding: '12px 0', borderTop: j ? '1px solid ' + D.rule : 'none' }}>
                         <div className="flex items-baseline" style={{ gap: 10 }}>
-                          <span style={{ fontSize: 13, color: D.muted, width: 84, flexShrink: 0 }}>{String(r.metric || '')}</span>
-                          <span style={{ fontFamily: SERIF, fontSize: 21, letterSpacing: '-0.02em', color: D.ink, fontVariantNumeric: 'tabular-nums' }}>{one$(f.actual) || '—'}</span>
-                          {pl ? <span style={{ fontSize: 11.5, color: D.muted, fontVariantNumeric: 'tabular-nums' }}>{'vs ' + one$(pl)}</span> : null}
+                          <span style={{ fontSize: 13, color: D.muted, width: 84, flexShrink: 0 }}><Ed v={String(r.metric || '')} set={v => patch('plan.months.' + ix + '.rows.' + j + '.metric', v)} edit={edit} /></span>
+                          <span style={{ fontFamily: SERIF, fontSize: 21, letterSpacing: '-0.02em', color: D.ink, fontVariantNumeric: 'tabular-nums' }}>{O('plan_' + ix + '_' + j + '_actual', one$(f.actual) || '—')}</span>
+                          {(pl || edit) ? <span style={{ fontSize: 11.5, color: D.muted, fontVariantNumeric: 'tabular-nums' }}>{edit ? <>vs <Ed v={String(r.plan || pl || '')} set={v => patch('plan.months.' + ix + '.rows.' + j + '.plan', v)} edit /></> : 'vs ' + one$(pl)}</span> : null}
                         </div>
                         <ChartTip dark title={String(r.metric || '')} rows={[
                           [f.live ? 'Live now' : 'Actual', f.actual || '—'],
@@ -6331,15 +6357,15 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             }} />
                           </div>
                         </ChartTip>
-                        <p style={{ fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', textAlign: 'right', margin: 0, fontVariantNumeric: 'tabular-nums', color: deltaColor(neg, !!f.delta) }}>{one$(f.delta) || '—'}</p>
+                        <p style={{ fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', textAlign: 'right', margin: 0, fontVariantNumeric: 'tabular-nums', color: deltaColor(neg, !!f.delta) }}>{O('plan_' + ix + '_' + j + '_delta', one$(f.delta) || '—')}</p>
                       </div>
                     )
                   })}
                 </div>
-                {m0.note ? <p style={{ fontSize: 13.5, lineHeight: 1.6, color: D.body, margin: '16px 0 0', maxWidth: '80ch' }}>{String(m0.note)}</p> : null}
+                {(m0.note || edit) ? <p style={{ fontSize: 13.5, lineHeight: 1.6, color: D.body, margin: '16px 0 0', maxWidth: '80ch' }}><Ed v={String(m0.note || '')} set={v => patch('plan.months.' + ix + '.note', v)} edit={edit} multiline placeholder="A line about this month (optional)" /></p> : null}
                 {isLiveMonth && hasBasisRaw(SM) ? (
                   <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: D.muted, margin: '14px 0 0' }}>
-                    {String(m0.label || '').replace(/\s+\d{4}$/, '') + ' is live — ' + BASIS_NOTE[planBasis].toLowerCase() + ', against the budget'}
+                    {O('plan_live_' + ix, String(m0.label || '').replace(/\s+\d{4}$/, '') + ' is live — ' + BASIS_NOTE[planBasis].toLowerCase() + ', against the budget')}
                   </p>
                 ) : null}
                 {edit && (
@@ -6375,7 +6401,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   <div className="flex" style={{ gap: 44, marginTop: 26, flexWrap: 'wrap' }}>
                     {(c.statement.kpis as Any[]).slice(0, 4).map((k: Any, i: number) => (
                       <div key={i} style={{ minWidth: 160 }}>
-                        <Stat label={String(k.label || '')} value={String(k.value || '')} sub={String(k.sub || '')} />
+                        <Stat ok={'stmt_k' + i} label={String(k.label || '')} value={String(k.value || '')} sub={String(k.sub || '')} />
                       </div>
                     ))}
                   </div>
@@ -6389,14 +6415,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     <div style={{ marginTop: 24 }}>
                       <div style={{ display: 'grid', gridTemplateColumns: g, gap: 10, paddingBottom: 8, borderBottom: '1px solid ' + t.ink }}>
                         {cols2.map((h, i) => (
-                          <p key={h} style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.15em', textTransform: 'uppercase', color: tint(0.45), margin: 0, textAlign: i === 0 ? 'left' : 'right' }}>{h}</p>
+                          <p key={h} style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.15em', textTransform: 'uppercase', color: tint(0.45), margin: 0, textAlign: i === 0 ? 'left' : 'right' }}>{O('stmt_h' + i, h)}</p>
                         ))}
                       </div>
                       {rows.map((m: Any, i: number) => (
                         <div key={i} style={{ display: 'grid', gridTemplateColumns: g, gap: 10, padding: '9px 0', borderBottom: '1px solid ' + tint(0.07) }}>
-                          <p style={{ fontSize: 13.5, color: t.ink, margin: 0, fontWeight: 500 }}>{String(m.label || m.month || '')}</p>
+                          <p style={{ fontSize: 13.5, color: t.ink, margin: 0, fontWeight: 500 }}>{O('stmt_' + i + '_m', String(m.label || m.month || ''))}</p>
                           {['rental', 'commission', 'other', 'net', 'paid'].map(k => (
-                            <p key={k} style={{ fontSize: 13.5, color: k === 'net' ? t.ink : tint(0.62), fontWeight: k === 'net' ? 500 : 400, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{money0(m[k])}</p>
+                            <p key={k} style={{ fontSize: 13.5, color: k === 'net' ? t.ink : tint(0.62), fontWeight: k === 'net' ? 500 : 400, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{O('stmt_' + i + '_' + k, money0(m[k]))}</p>
                           ))}
                         </div>
                       ))}
@@ -6475,9 +6501,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       const bits = [x.nights ? x.nights + ' nights' : '', x.revenue ? x.revenue + ' gross' : '', x.res ? x.res + ' stays' : ''].filter(Boolean)
                       return (
                         <div key={i} style={{ paddingTop: 14, borderTop: '2px solid ' + (i === curIx ? t.accent : tint(0.14)) }}>
-                          <Lbl>{String(x.full || x.month || '')}</Lbl>
-                          <div style={{ marginTop: 10 }}><Fig size={36}>{Math.round(pct) + '%'}</Fig></div>
-                          <p style={{ fontSize: 12.5, color: tint(0.45), margin: '8px 0 0', fontVariantNumeric: 'tabular-nums' }}>{bits.length ? 'booked · ' + bits.join(' · ') : 'booked so far'}</p>
+                          <Lbl ok={'ahead_' + i + '_l'}>{String(x.full || x.month || '')}</Lbl>
+                          <div style={{ marginTop: 10 }}><Fig size={36} ok={'ahead_' + i + '_v'}>{Math.round(pct) + '%'}</Fig></div>
+                          <p style={{ fontSize: 12.5, color: tint(0.45), margin: '8px 0 0', fontVariantNumeric: 'tabular-nums' }}>{O('ahead_' + i + '_s', bits.length ? 'booked · ' + bits.join(' · ') : 'booked so far')}</p>
                         </div>
                       )
                     })}
@@ -6497,9 +6523,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         ['Nights on the books', String(x.nights || '')],
                         ['Reservations', String(x.res || '')],
                       ]} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
-                        <Fig size={26}>{Math.round(pct) + '%'}</Fig>
-                        <span style={{ marginTop: 9, borderRadius: '4px 4px 0 0', background: i === curIx ? t.accent : tint(0.22), height: Math.max(4, (pct / 100) * 142) }} />
-                        <span style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: tint(0.45), marginTop: 12 }}>{String(x.month || '')}</span>
+                        <Fig size={26} ok={'ahead_' + i + '_v'}>{Math.round(pct) + '%'}</Fig>
+                        <span style={{ marginTop: 9, borderRadius: '4px 4px 0 0', background: i === curIx ? t.accent : tint(0.22), height: Math.max(4, ((OV[ovKey('ahead_' + i + '_v')] != null ? (parseFloat(String(OV[ovKey('ahead_' + i + '_v')])) || 0) : pct) / 100) * 142) }} />
+                        <span style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: tint(0.45), marginTop: 12 }}>{O('ahead_' + i + '_m', String(x.month || ''))}</span>
                         {/* The rate used to print here AND in the hover card. One of them had to go,
                             and the hover is the one that can hold the whole row. */}
                       </ChartTip>
@@ -6534,24 +6560,24 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             strokeDasharray={String(CIRC)} strokeDashoffset={String(CIRC * (1 - Math.max(0, Math.min(1, avg / 5))))}
                             transform="rotate(-90 60 60)" />
                         </svg>
-                        <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: SERIF, fontSize: 44, letterSpacing: '-0.03em', color: t.ink, fontVariantNumeric: 'tabular-nums' }}>{avg.toFixed(1)}</span>
+                        <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: SERIF, fontSize: 44, letterSpacing: '-0.03em', color: t.ink, fontVariantNumeric: 'tabular-nums' }}>{O('voices_avg', avg.toFixed(1))}</span>
                       </div>
-                      <div style={{ marginTop: 16 }}><Lbl>{'Average of ' + count + ' review' + (count === 1 ? '' : 's')}</Lbl></div>
+                      <div style={{ marginTop: 16 }}><Lbl ok="voices_avg_l">{'Average of ' + count + ' review' + (count === 1 ? '' : 's')}</Lbl></div>
                     </div>
                   ) : null}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {hero1 ? (
                       <>
-                        <p style={{ fontFamily: SERIF, fontSize: 25, lineHeight: 1.42, letterSpacing: '-0.013em', color: t.ink, margin: 0 }}>&ldquo;{String(hero1.text || '')}&rdquo;</p>
-                        <div style={{ marginTop: 14 }}><Lbl>{[hero1.guest, hero1.unit].filter(Boolean).join(' · ')}</Lbl></div>
+                        <p style={{ fontFamily: SERIF, fontSize: 25, lineHeight: 1.42, letterSpacing: '-0.013em', color: t.ink, margin: 0 }}>&ldquo;<Ed v={String(hero1.text || '')} set={v => patch('voices.quotes.0.text', v)} edit={edit} multiline />&rdquo;</p>
+                        <div style={{ marginTop: 14 }}><Lbl>{edit ? <><Ed v={String(hero1.guest || '')} set={v => patch('voices.quotes.0.guest', v)} edit placeholder="Guest" /> · <Ed v={String(hero1.unit || '')} set={v => patch('voices.quotes.0.unit', v)} edit placeholder="Unit" /></> : [hero1.guest, hero1.unit].filter(Boolean).join(' · ')}</Lbl></div>
                       </>
                     ) : null}
                     {rest.length ? (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 28, borderTop: '1px solid ' + tint(0.12), marginTop: 24, paddingTop: 20 }}>
                         {rest.map((q: Any, i: number) => (
                           <div key={i}>
-                            <p style={{ fontSize: 14, lineHeight: 1.55, color: t.ink, margin: 0 }}>&ldquo;{String(q.text || '')}&rdquo;</p>
-                            <div style={{ marginTop: 9 }}><Lbl>{[q.guest, q.unit].filter(Boolean).join(' · ')}</Lbl></div>
+                            <p style={{ fontSize: 14, lineHeight: 1.55, color: t.ink, margin: 0 }}>&ldquo;<Ed v={String(q.text || '')} set={v => patch('voices.quotes.' + (i + 1) + '.text', v)} edit={edit} multiline />&rdquo;</p>
+                            <div style={{ marginTop: 9 }}><Lbl>{edit ? <><Ed v={String(q.guest || '')} set={v => patch('voices.quotes.' + (i + 1) + '.guest', v)} edit placeholder="Guest" /> · <Ed v={String(q.unit || '')} set={v => patch('voices.quotes.' + (i + 1) + '.unit', v)} edit placeholder="Unit" /></> : [q.guest, q.unit].filter(Boolean).join(' · ')}</Lbl></div>
                           </div>
                         ))}
                       </div>
@@ -6673,7 +6699,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           </div>
                           <p style={{ fontSize: 17, fontWeight: 500, color: t.ink, margin: '12px 0 0', textTransform: r.custom ? 'none' : 'capitalize' }}>
                             <Ed v={r.label} set={v => setCard(r, 'label', v)} edit={edit} />
-                            {r.mentions > 1 ? <span style={{ fontSize: 11, fontWeight: 500, color: tint(0.38), marginLeft: 8, textTransform: 'none' }}>{r.mentions + ' guests'}</span> : null}
+                            {r.mentions > 1 ? <span style={{ fontSize: 11, fontWeight: 500, color: tint(0.38), marginLeft: 8, textTransform: 'none' }}>{O('recs_' + r.key + '_n', r.mentions + ' guests')}</span> : null}
                           </p>
                           {r.quote ? (
                             <p style={{ fontSize: 12.5, lineHeight: 1.5, color: tint(0.45), fontStyle: 'italic', margin: '8px 0 0' }}>
@@ -6748,7 +6774,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // empty, so there is always a page to fill.
           if (!hid('projects')) {
             const manual = manualGroups()
-            const groups: Any[] = manual.map((g: Any, mi: number) => ({ category: g.category, items: g.items.slice(), manualIdx: mi }))
+            // A legacy report stored projects.manual as a flat string[]; its lines are shown through
+            // the override layer until a first write migrates it to groups.
+            const legacyManual = Array.isArray(projects.manual) && typeof projects.manual[0] === 'string'
+            const groups: Any[] = manual.map((g: Any, mi: number) => ({ category: g.category, items: g.items.slice(), manualIdx: legacyManual ? null : mi }))
             for (const w of ((projects.weeks || []) as Any[])) for (const g of (w.groups || [])) {
               const found = groups.find((x: Any) => String(x.category).toUpperCase() === String(g.category).toUpperCase())
               const items = (g.items || []).filter((it: string) => !(found && found.items.indexOf(it) >= 0))
@@ -6774,7 +6803,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     <div style={{ marginTop: 22, display: 'grid', gridTemplateColumns: 'repeat(' + Math.min(3, Math.max(1, groups.length)) + ', minmax(0,1fr))', gap: '22px 34px', flex: '0 1 auto', minHeight: 0 }}>
                       {groups.slice(0, 6).map((g: Any, i: number) => (
                         <div key={i} style={{ paddingTop: 14, borderTop: '1px solid ' + tint(0.22) }}>
-                          <Lbl>{String(g.category || '')}</Lbl>
+                          <Lbl>{g.manualIdx != null ? <Ed v={String(g.category || '')} set={v => patch('projects.manual.' + g.manualIdx + '.category', v)} edit={edit} /> : O('work_' + i + '_cat', String(g.category || ''))}</Lbl>
                           <div style={{ marginTop: 10 }}>
                             {(g.items || []).slice(0, perGroup).map((it: string, j: number) => (
                               <p key={j} style={{ fontSize: 13, lineHeight: 1.55, color: tint(0.62), margin: '0 0 6px', position: 'relative' }}>
@@ -6782,7 +6811,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                                   <button className="sb-noprint" title="Remove" onClick={() => mutate((d: Any) => { const m = d.projects.manual; if (m && m[g.manualIdx] && Array.isArray(m[g.manualIdx].items)) m[g.manualIdx].items.splice(j, 1) })}
                                     style={{ position: 'absolute', left: -16, top: 1, color: t.accent, background: 'transparent', border: 0, cursor: 'pointer', fontSize: 12 }}>×</button>
                                 ) : null}
-                                {String(it)}
+                                {g.manualIdx != null && j < (manual[g.manualIdx]?.items || []).length
+                                  ? <Ed v={String(it)} set={v => patch('projects.manual.' + g.manualIdx + '.items.' + j, v)} edit={edit} multiline />
+                                  : O('work_' + i + '_' + j, String(it), true)}
                               </p>
                             ))}
                             {(g.items || []).length > perGroup ? <p style={{ fontSize: 12, color: tint(0.35), margin: 0 }}>+{(g.items || []).length - perGroup} more</p> : null}
