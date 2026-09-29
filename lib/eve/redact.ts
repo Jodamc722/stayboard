@@ -178,6 +178,31 @@ export function redactSensitive<T>(value: T, opts: { codeFieldIds?: string[] } =
   try { return walk(value, '', ids) as T } catch { return value }
 }
 
+// ── Money in free text (2026-09-28, F9) ─────────────────────────────────────────────────────────
+
+const MONEY_TEXT_RE = /(?:US)?\$\s?\d[\d,]*(?:\.\d+)?(?:\s?[kKmM]\b)?|\b\d[\d,]*(?:\.\d+)?\s?(?:dollars|usd|bucks)\b|\bUSD\s?\d[\d,]*(?:\.\d+)?/gi
+export const MONEY_MASK = '$[hidden]'
+
+/** "$1,200", "1200 dollars", "USD 950" → "$[hidden]". For people not cleared for dollar figures. */
+export function maskMoneyText(s: string): string {
+  return String(s == null ? '' : s).replace(MONEY_TEXT_RE, () => MONEY_MASK)
+}
+
+/** maskMoneyText over every string in a tool result. Never throws. */
+export function maskMoneyStrings<T>(value: T): T {
+  const go = (v: any): any => {
+    if (typeof v === 'string') return maskMoneyText(v)
+    if (Array.isArray(v)) return v.map(go)
+    if (v && typeof v === 'object' && !(v instanceof Date)) {
+      const out: Record<string, any> = {}
+      for (const k of Object.keys(v)) out[k] = go(v[k])
+      return out
+    }
+    return v
+  }
+  try { return go(value) as T } catch { return value }
+}
+
 // ── Guest details in a vendor room (2026-09-28, F2 / B-10) ──────────────────────────────────────
 
 export const GUEST_HIDDEN = '(hidden in this room)'

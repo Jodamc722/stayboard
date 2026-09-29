@@ -292,6 +292,9 @@ export const CORE_TOOLS: EveTool[] = [
     name: 'memory_search',
     description: 'YOUR OWN NOTEBOOK — the standing rules, preferences, decisions, known issues, people mappings and past corrections you have accumulated. The highest-weight ones are already in your prompt; use this to dig for something older or scoped to a specific building or unit. Filter by kind (rule|preference|insight|decision|person|issue|correction), scope, or a free-text query.',
     input_schema: obj({ kind: S.str, scope: S.str, query: S.str, limit: S.num }),
+    // A memory can carry a dollar figure ("refunds over $300 need Jon"); for someone not cleared for
+    // money it is masked like any other money tool's output (2026-09-28 audit, F9).
+    money: true,
     run: async (input, ctx) => {
       const lim = clampLimit(input?.limit, 30, 80)
       let q = ctx.db.from('eve_memory').select('id,kind,text,why,scope,weight,source,use_count,created_at').is('superseded_by', null).order('weight', { ascending: false }).order('updated_at', { ascending: false }).limit(lim)
@@ -647,6 +650,8 @@ export const CORE_TOOLS: EveTool[] = [
     name: 'knowledge_search',
     description: 'Eve LEARNED-KNOWLEDGE base, auto-mined nightly from guest messages, reviews and complaints: top FAQs guests ask (with the fix to pre-empt them) and recurring complaint categories (portfolio + per building). Filter by type ("faq"|"complaint"|"insight"|"fact"), query, building. Use it for "what do guests ask most", "biggest complaint drivers", or to ground any recommendation in real patterns.',
     input_schema: obj({ type: S.str, query: S.str, building: S.str, limit: S.num }),
+    // Mined from guest messages and complaints, which quote amounts; masked for non-money viewers (F9).
+    money: true,
     run: async (input, ctx) => {
       const lim = clampLimit(input?.limit, 40, 80)
       // Dossiers, journals and predictions live in this table too (lib/eve/brain.ts); they have their own tools.

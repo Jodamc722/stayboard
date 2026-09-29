@@ -28,6 +28,7 @@ import { getOperatingModel, renderOperatingModel } from './operating-model'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 import { getAgentSettings, normalizeAgentSettings, renderAgentModeForPrompt, agentAllowed } from './agent-mode'
+import { maskMoneyText } from './redact'
 
 // MODEL is resolved per request via modelFor('eve') — see lib/ai-models (editable on Users & admin).
 
@@ -286,7 +287,11 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       // derived from the feature and tool registries — byte-identical for the life of the process —
       // and it was being glued onto `memories`, which lands in the UNCACHED block. Every turn paid
       // list price to re-send a string that had not changed since the deploy.
-      const blocks = buildSystemBlocks({ headline, atlas: appAtlas(), memories: renderMemories(memories), mind, openDomains: open, voice: voicePlus, userName, canMoney, operatingModel, agentMode })
+      // MONEY IN MEMORY FOLLOWS THE MONEY GATE (2026-09-28 audit, F9). Only tool outputs were
+      // redacted; the memories and the mind block went into the prompt whole, so a staff member in
+      // Slack could be read a dollar figure Jon once taught her. Masked here for anyone not cleared.
+      const memText = renderMemories(memories)
+      const blocks = buildSystemBlocks({ headline, atlas: appAtlas(), memories: canMoney ? memText : maskMoneyText(memText), mind: canMoney ? mind : maskMoneyText(mind), openDomains: open, voice: voicePlus, userName, canMoney, operatingModel, agentMode })
       // TWO BREAKPOINTS, NOT ONE. `stable` survives between conversations while the five-minute
       // window holds; `dynamic` (memories, headline, who is asking) is constant within ONE
       // conversation and different in the next, so it earns its own entry rather than riding free

@@ -10,7 +10,7 @@
 // extra turn on the first deep question of a thread; benefit is she picks from twelve, then six.
 import 'server-only'
 import { redactMoney } from '@/lib/money'
-import { redactSensitive, isCodeFieldName, redactGuestPII } from './redact'
+import { redactSensitive, isCodeFieldName, redactGuestPII, maskMoneyStrings } from './redact'
 import type { EveTool, EveDomain } from './types'
 import { wireShape, obj, S } from './types'
 import type { EveCtx } from './ctx'
@@ -147,7 +147,10 @@ export async function runTool(name: string, input: any, ctx: EveCtx, open: strin
     // outside company in it every result loses them here, whatever tool produced it.
     const out = ctx.tier === 'vendor' ? redactGuestPII(coded) : coded
     if (tool.money && !ctx.canMoney) {
-      return { output: { ...redactMoney(out), _money_redacted: 'Dollar amounts are hidden for this user. Occupancy, counts, minutes and percentages are still accurate; ADR and RevPAR are dollar figures and are hidden too. Do not guess at the hidden numbers.' } }
+      // redactMoney nulls amounts under money KEYS; a dollar figure written into a sentence ("refund
+      // $300", a memory, a knowledge row) sits under `text` and passed. maskMoneyStrings takes those
+      // out too (2026-09-28 audit, F9).
+      return { output: { ...maskMoneyStrings(redactMoney(out)), _money_redacted: 'Dollar amounts are hidden for this user. Occupancy, counts, minutes and percentages are still accurate; ADR and RevPAR are dollar figures and are hidden too. Do not guess at the hidden numbers.' } }
     }
     return { output: out }
   } catch (e: any) {
