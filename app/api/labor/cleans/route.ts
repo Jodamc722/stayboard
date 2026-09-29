@@ -27,15 +27,25 @@ const dOf = (v: any) => str(v).slice(0, 10)
 const round2 = (n: number) => Math.round(n * 100) / 100
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 
-async function pageAll(q: (a: number, b: number) => any, pages = 6): Promise<any[]> {
-  const out: any[] = []
+// PAGED, ORDERED, AND LOUD (2026-09-29 fix pass). Every caller orders on a key that ends in id, so
+// the page boundaries are stable (scheduled_date / check_out alone are not unique, and unordered
+// paging repeats and skips rows). A query ERROR throws and the log says so instead of showing a
+// short week as a complete one; running out of pages is flagged as partial:true.
+async function pageAll(q: (a: number, b: number) => any, pages = 6): Promise<{ rows: any[]; truncated: boolean }> {
+  const rows: any[] = []
+  const seen: Record<string, boolean> = {}
   for (let p = 0; p < pages; p++) {
-    const { data } = await q(p * 1000, p * 1000 + 999)
-    if (!data?.length) break
-    out.push(...data)
-    if (data.length < 1000) break
+    const { data, error } = await q(p * 1000, p * 1000 + 999)
+    if (error) throw new Error('clean log read failed — ' + String(error.message || error))
+    if (!data?.length) return { rows, truncated: false }
+    for (const r of data) {
+      const k = r && r.id != null ? String(r.id) : null
+      if (k) { if (seen[k]) continue; seen[k] = true }
+      rows.push(r)
+    }
+    if (data.length < 1000) return { rows, truncated: false }
   }
-  return out
+  return { rows, truncated: true }
 }
 
 export async function GET(req: NextRequest) {
@@ -57,18 +67,27 @@ export async function GET(req: NextRequest) {
   const longNights = Math.max(2, Number(timing.longStayNights) || 10)
   const VENDOR_RE = vendorRegex((presets as any).vendorBuildings)
 
-  const [listings, tasks, reservations] = await Promise.all([
-    pageAll((a, b) => sb.from('guesty_listings')
-      .select('id, title, nickname, building, unit, bedrooms, address_city, status').order('id').range(a, b), 3),
-    pageAll((a, b) => sb.from('breezeway_tasks_sync')
-      .select('id, reference_property_id, name, status, scheduled_date, assignees, started_at, finished_at, total_minutes, linked_reservation_id, rate_paid')
-      .gte('scheduled_date', from).lte('scheduled_date', to).order('scheduled_date').range(a, b)),
-    // A stay that ENDED in the window is the one a departure clean follows. Cleaning fee comes from
-    // the same `->>` scalars the rest of the app uses (never select raw->money in bulk).
-    pageAll((a, b) => sb.from('guesty_reservations')
-      .select('id, listing_id, guest_name, check_in, check_out, nights, status, source, cleaning:raw->money->>fareCleaning')
-      .gte('check_out', from).lte('check_out', to).order('check_out').range(a, b)),
-  ])
+  let listings: any[], tasks: any[], reservations: any[], partial = false
+  try {
+    const [lp, tp, rp] = await Promise.all([
+      pageAll((a, b) => sb.from('guesty_listings')
+        .select('id, title, nickname, building, unit, bedrooms, address_city, status').order('id').range(a, b), 3),
+      pageAll((a, b) => sb.from('breezeway_tasks_sync')
+        .select('id, reference_property_id, name, status, scheduled_date, assignees, started_at, finished_at, total_minutes, linked_reservation_id, rate_paid')
+        .gte('scheduled_date', from).lte('scheduled_date', to).order('scheduled_date').order('id').range(a, b)),
+      // A stay that ENDED in the window is the one a departure clean follows. Cleaning fee comes from
+      // the same `->>` scalars the rest of the app uses (never select raw->money in bulk).
+      pageAll((a, b) => sb.from('guesty_reservations')
+        .select('id, listing_id, guest_name, check_in, check_out, nights, status, source, cleaning:raw->money->>fareCleaning')
+        .gte('check_out', from).lte('check_out', to).order('check_out').order('id').range(a, b)),
+    ])
+    listings = lp.rows; tasks = tp.rows; reservations = rp.rows
+    partial = lp.truncated || tp.truncated || rp.truncated
+    if (partial) console.error('[labor/cleans] paged read hit its page limit', from, to)
+  } catch (e: any) {
+    console.error('[labor/cleans] read failed', e)
+    return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
+  }
 
   const lmap: Record<string, any> = {}
   for (const l of listings) {
@@ -186,6 +205,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
+    ...(partial ? { partial: true } : {}),
     from, to, market, longStayNights: longNights,
     rows,
     byUnit,

@@ -63,15 +63,27 @@ function currentWorkweek(now: Date, weekStart: 'sunday' | 'monday') {
   return { start: dISO(addDays(now, -offset)), end: dISO(addDays(now, 6 - offset)) }
 }
 
-async function pageAll(q: (a: number, b: number) => any, pages = 5): Promise<any[]> {
-  const out: any[] = []
+// PAGED, ORDERED, AND LOUD (2026-09-29 fix pass). Every caller orders by id: unordered paging on
+// PostgREST repeats and skips rows, so a month-wide read (the Billing board asks for ~2,000 finished
+// tasks) could count some tasks twice and miss others. A query ERROR throws — the route answers
+// { ok:false, error }, exactly as it already does when the engine's own reads fail — instead of
+// reading as "that was all the data". Running out of pages is not an error: `truncated` says so and
+// the response carries partial:true. 12 pages covers the route's own 90-day cap.
+async function pageAll(q: (a: number, b: number) => any, pages = 12): Promise<{ rows: any[]; truncated: boolean }> {
+  const rows: any[] = []
+  const seen: Record<string, boolean> = {}
   for (let p = 0; p < pages; p++) {
-    const { data } = await q(p * 1000, p * 1000 + 999)
-    if (!data?.length) break
-    out.push(...data)
-    if (data.length < 1000) break
+    const { data, error } = await q(p * 1000, p * 1000 + 999)
+    if (error) throw new Error('labor read failed — ' + String(error.message || error))
+    if (!data?.length) return { rows, truncated: false }
+    for (const r of data) {
+      const k = r && r.id != null ? String(r.id) : null
+      if (k) { if (seen[k]) continue; seen[k] = true }
+      rows.push(r)
+    }
+    if (data.length < 1000) return { rows, truncated: false }
   }
-  return out
+  return { rows, truncated: true }
 }
 
 async function shiftsForRange(start: string, end: string): Promise<(Shift & { date: string })[]> {
@@ -170,13 +182,14 @@ export async function GET(req: Request) {
     // inside the engine — and the two could disagree: a Homebase week failing for one call and
     // not the other put a green "payroll is complete" banner over short numbers. The audit now
     // rides with the cards and is surfaced at the top level of the response.
-    const [dayShiftsAll, tcAudit, weekShiftsAll, listingRows] = await Promise.all([
+    const [dayShiftsAll, tcAudit, weekShiftsAll, listingPage] = await Promise.all([
       shiftsForRange(start, end),
       getTimecardsAudited(start, end),
       shiftsForRange(week.start, week.end),
       pageAll((a, b) => sb.from('guesty_listings')
-        .select('id,nickname,title,building,address_city').range(a, b)),
+        .select('id,nickname,title,building,address_city').order('id').range(a, b)),
     ])
+    const listingRows = listingPage.rows
     const timecardsAll = tcAudit.cards
 
     const lmap: Record<string, { market: string; name: string; vendor: boolean }> = {}
@@ -194,10 +207,11 @@ export async function GET(req: Request) {
     // and the previous evening's work rode in. Same fix the engine had since 2026-09-01.
     const qStart = dISO(new Date(new Date(start + 'T12:00:00Z').getTime() - 864e5))
     const qEnd = dISO(new Date(new Date(end + 'T12:00:00Z').getTime() + 864e5))
-    const taskRowsAll = (await pageAll((a, b) => sb.from('breezeway_tasks_sync')
+    const taskPage = await pageAll((a, b) => sb.from('breezeway_tasks_sync')
       .select('id,name,type_department,assignee_name,finished_by_name,reference_property_id,finished_at,rate_paid,total_minutes')
       .gte('finished_at', qStart).lte('finished_at', qEnd + 'T23:59:59')
-      .range(a, b)))
+      .order('id').range(a, b))
+    const taskRowsAll = taskPage.rows
       .filter(t => { const d = etDay(t.finished_at); return !!d && d >= start && d <= end })
     const taskRows = taskRowsAll.filter(t => marketFilter(t.reference_property_id))
 
@@ -283,12 +297,16 @@ export async function GET(req: Request) {
     const cleaningTaskPay = round2(cleanTasks.reduce((a, t) => a + (num(t.rate_paid) ?? 0), 0))
 
     // ---- Checkouts + cleaning fees ----------------------------------------
-    const resRows = (await pageAll((a, b) => sb.from('guesty_reservations')
+    const resPage = await pageAll((a, b) => sb.from('guesty_reservations')
       .select('id,listing_id,check_out,status,cleaning:raw->money->>fareCleaning,grossFare:raw->money->>fareAccommodationAdjusted,channelFee:raw->money->>hostServiceFee')
       .gte('check_out', start).lte('check_out', end)
       .not('status', 'in', '("canceled","cancelled","declined")')
-      .range(a, b)))
+      .order('id').range(a, b))
+    const resRows = resPage.rows
       .filter(r => marketFilter(r.listing_id))
+    // A read that ran out of pages is reported, never passed off as the whole window.
+    const shortReads = [listingPage.truncated && 'listings', taskPage.truncated && 'tasks', resPage.truncated && 'reservations'].filter(Boolean) as string[]
+    if (shortReads.length) console.error('[labor/kpi] paged read hit its page limit:', shortReads.join(', '), start, end)
 
     // NET of the channel's cut — the exact formula lib/labor-econ.ts uses, so every fee this
     // route reports (today strip, per-person revenue, attribution) sits on the same base as the
@@ -524,6 +542,7 @@ export async function GET(req: Request) {
 
     const body = {
       ok: true, market: marketParam, week: { ...week, weekStart }, departments, weekSchedule,
+      ...(shortReads.length ? { partial: true } : {}),
       // PAYROLL COMPLETENESS, from the same pull the numbers came from. When any Homebase week
       // failed, every dollar on the page is a floor, not a total — the UI must say so.
       payrollComplete: tcAudit.complete && (econ as any)?.payrollAudit?.complete !== false,
