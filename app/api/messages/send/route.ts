@@ -50,7 +50,7 @@ const etTime = (ms: number) => new Date(ms).toLocaleTimeString('en-US', { timeZo
 function certainlyNotSent(err: string): boolean {
   const m = err.match(/Guesty send-message (\d{3})\b/)
   if (m) return Number(m[1]) < 500
-  return /Guesty is not configured|no conversation id|empty message|conversationId and body required|only runs after a person says yes/i.test(err)
+  return /Guesty is not configured|no conversation id|empty message|conversationId and body required|only runs after a person says yes|welded to propose/i.test(err)
 }
 
 type Dup = { at: number; unconfirmed: boolean }
