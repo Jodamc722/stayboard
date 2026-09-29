@@ -208,7 +208,7 @@ export async function POST(req: NextRequest) {
   try { allowed = (await requireUser()).ok } catch { allowed = false }
   if (!allowed) { try { allowed = verifyEditToken(cookies().get(GUIDE_COOKIE)?.value) } catch { allowed = false } }
   if (!allowed) {
-    const gate = await adminPasswordOk(str(body?.adminPassword))
+    const gate = await adminPasswordOk(str(body?.adminPassword), { surface: 'public' })
     if (!gate.ok) return NextResponse.json({ ok: false, error: gate.reason || 'Locked' }, { status: 401 })
   }
   const slug = normSlug(str(body?.slug)) || slugOf(req)

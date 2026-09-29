@@ -36,7 +36,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from './supabase-admin'
 import { hashPassword, verifyPassword } from './edit-access'
 import { hmacHex, safeEqual, sha256Hex } from './signing'
-import { logParking, tooManyWrong, LOCKOUT_MINUTES } from './parking'
+import { logParking, lockoutReason, LOCKOUT_MINUTES } from './parking'
 import { cookies } from 'next/headers'
 import { getAccess, canSeeMoney } from './access'
 import { linkUsable, hintOf, type ShareLinkRow } from './share-links'
@@ -67,10 +67,20 @@ export function storablePasscode(pw: string): string { return hashPassword(pw) }
 export function isStoredHash(stored: string): boolean { return isHash(stored) }
 
 // ── Lockout ───────────────────────────────────────────────────────────────────────────────────
-// `gate` is the ledger key: 'pw:share', 'pw:marketing', 'link:<code>' …
+// `gate` is the ledger key: 'pw:admin', 'pw:admin:public', 'pw:vault', 'link:<code>' …
 const WRONG_PER_IP = 5
+/**
+ * THE CEILING NEVER LOCKS THE TEAM OUT (2026-09-29 review, N8). The per-address limit binds
+ * everyone. The per-gate ceiling (every address together) exists to notice someone rotating
+ * addresses — and on its own it let that same someone lock a signed-in, active team member out of
+ * a destructive action or the vault by guessing wrong from forty places. So the ceiling does not
+ * bind a member (getAccess().allowed). The login is read only when the ceiling has actually
+ * tripped, so the everyday path costs no extra auth lookup.
+ */
 export async function isLockedOut(gate: string, ip: string | null): Promise<boolean> {
-  return tooManyWrong(gate, ip, WRONG_PER_IP)
+  const why = await lockoutReason(gate, ip, WRONG_PER_IP)
+  if (why !== 'gate') return why === 'ip'
+  return !(await signedInUser()).signedIn
 }
 export async function noteWrong(gate: string, ip: string | null, detail = 'wrong passcode'): Promise<void> {
   await logParking({ code: gate, action: 'denied', detail, ip })

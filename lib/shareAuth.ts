@@ -11,8 +11,10 @@
 //   - COMPARED in constant time (passcodeMatches), hash or legacy plaintext.
 //   - LOCKED OUT after 5 wrong per address in 15 minutes, per credential (gates pw:admin, pw:rules,
 //     pw:vault on the parking_access_log ledger every share-link passcode already uses — so it
-//     survives a redeploy — plus that ledger's per-gate ceiling across all addresses). An EMPTY
-//     attempt is refused without being counted: that is a form asking, not a guess.
+//     survives a redeploy — plus that ledger's per-gate ceiling across all addresses, which never
+//     binds a signed-in team member). An EMPTY attempt is refused without being counted: that is a
+//     form asking, not a guess. The public pages that take the admin password count on their own
+//     gate, pw:admin:public, so a stranger's guesses there cannot lock the team's own gate.
 //   - READ BACK as "set, and when it last changed" only (credentialStates). The stored value — a
 //     hash once used — never leaves the server.
 import { headers } from 'next/headers'
@@ -76,8 +78,11 @@ export async function currentAdminPassword(): Promise<string> {
   return readStored(ADMIN_ID, 'admin_settings')
 }
 
-export async function adminPasswordOk(pw: string | undefined | null): Promise<{ ok: boolean; reason: string; locked?: boolean }> {
-  return checkCredential(ADMIN_ID, 'pw:admin', pw, {
+// `surface: 'public'` — the pages anyone with the URL can reach (the guest guide editor and its
+// "Sync now", the Salato verification reopen). Same password, its own ledger key (2026-09-29
+// review, N8): forty wrong guesses at a public page used to lock the in-app destructive actions too.
+export async function adminPasswordOk(pw: string | undefined | null, opts: { surface?: 'app' | 'public' } = {}): Promise<{ ok: boolean; reason: string; locked?: boolean }> {
+  return checkCredential(ADMIN_ID, opts.surface === 'public' ? 'pw:admin:public' : 'pw:admin', pw, {
     unset: 'Delete is locked. Set the admin password in Users → Share links & security first.',
     wrong: 'Wrong admin password.',
     noun: 'admin password',

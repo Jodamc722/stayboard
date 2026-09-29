@@ -599,6 +599,15 @@ const WRONG_WINDOW_MIN = 15
  * does not do; see the note in the route.
  */
 export async function tooManyWrong(code: string, ip: string | null, perIp = WRONG_LIMIT): Promise<boolean> {
+  return (await lockoutReason(code, ip, perIp)) !== null
+}
+
+/**
+ * The same count as tooManyWrong, saying WHICH limit tripped: 'ip' (this address's own misses) or
+ * 'gate' (every address together). A caller that must not let strangers lock its own people out
+ * can honour 'ip' and judge 'gate' for itself (lib/passcode-gate isLockedOut, 2026-09-29 review N8).
+ */
+export async function lockoutReason(code: string, ip: string | null, perIp = WRONG_LIMIT): Promise<'ip' | 'gate' | null> {
   try {
     const since = new Date(Date.now() - WRONG_WINDOW_MIN * 60000).toISOString()
     const db = supabaseAdmin()
@@ -611,8 +620,10 @@ export async function tooManyWrong(code: string, ip: string | null, perIp = WRON
       ip ? base().eq('ip', ip) : Promise.resolve({ count: 0 } as any),
       base(),
     ])
-    return (mine || 0) >= perIp || (all || 0) >= WRONG_LIMIT_CODE
-  } catch { return false }  // counting failures never block a correct passcode
+    if ((mine || 0) >= perIp) return 'ip'
+    if ((all || 0) >= WRONG_LIMIT_CODE) return 'gate'
+    return null
+  } catch { return null }  // counting failures never block a correct passcode
 }
 
 export const LOCKOUT_MINUTES = WRONG_WINDOW_MIN

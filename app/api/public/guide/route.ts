@@ -146,7 +146,7 @@ export async function POST(req: NextRequest) {
     return res
   }
   if (action === 'unlock') {
-    const gate = await adminPasswordOk(str(body?.password))
+    const gate = await adminPasswordOk(str(body?.password), { surface: 'public' })
     if (!gate.ok) return NextResponse.json({ ok: false, error: gate.reason || 'Wrong password' }, { status: 401 })
     const res = NextResponse.json({ ok: true, canEdit: true })
     res.cookies.set(GUIDE_COOKIE, signEditToken(Date.now() + EDIT_TTL_MS), {
@@ -167,7 +167,7 @@ export async function PUT(req: NextRequest) {
   const email = await sessionEmail()
   let who = email
   if (!email && !hasGuideCookie()) {
-    const gate = await adminPasswordOk(str(body?.adminPassword))
+    const gate = await adminPasswordOk(str(body?.adminPassword), { surface: 'public' })
     if (!gate.ok) return NextResponse.json({ ok: false, error: gate.reason || 'Locked' }, { status: 401 })
     who = 'admin-link'
   } else if (!email) who = 'admin-link'

@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
       const access = await getAccess()
       const member = !!access.user && !!access.allowed
       if (!member) {
-        const gate = await adminPasswordOk(body?.password)
+        const gate = await adminPasswordOk(body?.password, { surface: 'public' })
         if (!gate.ok) return NextResponse.json({ ok: false, needsAdminPassword: true, error: gate.reason }, { status: gate.locked ? 429 : 403 })
       }
       const rec = await readRecord(db, rid)

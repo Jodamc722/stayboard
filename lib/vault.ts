@@ -248,6 +248,7 @@ export function isMissingTable(msg: any): boolean {
 // audit row for a WRONG code (so "who is guessing" is answerable); the caller writes the row for
 // the successful action, which is the record of who entered it and what they opened.
 const WRONG = 'wrong vault code'
+const LOCKED = WRONG + ' · locked out'   // a refusal made while already locked out — logged, never counted
 const WRONG_LIMIT = 8          // wrong codes per person per window before we stop answering
 const WRONG_WINDOW_MIN = 15
 
@@ -270,12 +271,16 @@ export async function checkVaultCode(opts: {
   const me = lower(opts.email)
   // Too many wrong codes → stop answering for a while. Counted from the audit log itself, so the
   // limit survives a redeploy and is visible in the same place as everything else.
+  // ONLY REAL GUESSES COUNT (2026-09-29 review, N8). A refusal made while already locked out is
+  // still written (the trail shows who kept trying) but no longer counted: it used to extend the
+  // person's own lockout on every retry, and an address lockout someone else caused — a colleague
+  // on the office network — became this person's per-person lockout too.
   try {
     const since = new Date(Date.now() - WRONG_WINDOW_MIN * 60000).toISOString()
     const { count } = await supabaseAdmin().from(LOG).select('id', { count: 'exact', head: true })
-      .eq('email', me).eq('action', 'denied').like('detail', WRONG + '%').gte('created_at', since)
+      .eq('email', me).eq('action', 'denied').like('detail', WRONG + '%').not('detail', 'like', LOCKED + '%').gte('created_at', since)
     if ((count || 0) >= WRONG_LIMIT) {
-      await logAccess({ itemId: opts.itemId, email: me, action: 'denied', detail: WRONG + ' · locked out (' + opts.purpose + ')', ip: opts.ip })
+      await logAccess({ itemId: opts.itemId, email: me, action: 'denied', detail: LOCKED + ' (' + opts.purpose + ')', ip: opts.ip })
       return { ok: false, status: 429, wrongCode: true, error: 'Too many wrong codes. Try again in ' + WRONG_WINDOW_MIN + ' minutes.' }
     }
   } catch { /* counting failures never block a correct code */ }
@@ -283,7 +288,7 @@ export async function checkVaultCode(opts: {
   // plaintext on its first correct entry, and add the per-address lockout on top of the per-person one.
   const verdict = await vaultCodeVerdict(opts.code, cur, opts.ip || null)
   if (verdict === 'locked') {
-    await logAccess({ itemId: opts.itemId, email: me, action: 'denied', detail: WRONG + ' · locked out (' + opts.purpose + ')', ip: opts.ip })
+    await logAccess({ itemId: opts.itemId, email: me, action: 'denied', detail: LOCKED + ' (' + opts.purpose + ')', ip: opts.ip })
     return { ok: false, status: 429, wrongCode: true, error: 'Too many wrong codes. Try again in ' + WRONG_WINDOW_MIN + ' minutes.' }
   }
   if (verdict !== 'ok') {
