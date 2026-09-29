@@ -120,8 +120,21 @@ export const CORE_TOOLS: EveTool[] = [
       const qId = String(input?.id || '').trim()
       const qName = lc(input?.name).trim()
       if (!qId && !qName) return { error: 'Provide the unit name or id.' }
-      const { data: ls } = await db.from('guesty_listings').select('id,nickname,title,status,building,raw').order('id')
-      const matches = (ls || []).filter((l: any) => qId ? String(l.id) === qId : (lc(l.nickname).includes(qName) || lc(l.title).includes(qName)))
+      // FROM THE REGISTRY, NOT FROM RAW (2026-09-28 audit, F4). This read EVERY listing with its raw
+      // JSONB (descriptions, pictures — megabytes) on every call and matched in JS, on a database that
+      // has saturated twice. The unit is resolved from ctx.listingMeta, already loaded; only a name
+      // that is not in any nickname looks at titles, and then without raw. The cleaning status is one
+      // JSON path on one row, below.
+      let ls: any[] = Object.keys(ctx.listingMeta)
+        .filter(id => qId ? id === qId : lc(ctx.listingMeta[id].name).includes(qName))
+        .map(id => ({ id, nickname: ctx.listingMeta[id].name, title: '', status: ctx.listingMeta[id].status, building: ctx.listingMeta[id].building }))
+      if (!ls.length && !ctx.scopedBuildings) {
+        const safeQ = qName.replace(/[%,()]/g, '')
+        const q0 = db.from('guesty_listings').select('id,nickname,title,status,building')
+        const { data } = await (qId ? q0.eq('id', qId) : q0.or(`nickname.ilike.%${safeQ}%,title.ilike.%${safeQ}%`)).order('id').limit(20)
+        ls = (data as any[]) || []
+      }
+      const matches = ls
       if (!matches.length) return { resolved: false, note: `No listing matches "${input?.id || input?.name}". This is INCONCLUSIVE - ask for the exact unit name, a guest name, or a confirmation code.` }
       const isActive = (l: any) => !/inactive|disabled|archived|deleted|pending/i.test(lc(l.status))
       const primary: any = matches.filter(isActive)[0] || matches[0]
@@ -132,7 +145,11 @@ export const CORE_TOOLS: EveTool[] = [
       const inHouse = live.find((r: any) => String(r.check_in).slice(0, 10) <= today && today < String(r.check_out).slice(0, 10)) || null
       const upcoming = live.filter((r: any) => String(r.check_in).slice(0, 10) > today).sort((a: any, b: any) => String(a.check_in).localeCompare(String(b.check_in)))[0] || null
       const lastOut = live.filter((r: any) => String(r.check_out).slice(0, 10) <= today).sort((a: any, b: any) => String(b.check_out).localeCompare(String(a.check_out)))[0] || null
-      let cleaningStatus: string | null = (primary.raw && (primary.raw.cleaningStatus || primary.raw?.pms?.cleaningStatus)) || null
+      let cleaningStatus: string | null = null
+      try {
+        const { data: cs } = await db.from('guesty_listings').select('cs:raw->>cleaningStatus,pcs:raw->pms->>cleaningStatus').eq('id', String(primary.id)).maybeSingle()
+        cleaningStatus = (cs as any)?.cs || (cs as any)?.pcs || null
+      } catch { /* the live read below may still have it */ }
       try {
         const token = await getToken()
         if (token) {
@@ -617,12 +634,14 @@ export const CORE_TOOLS: EveTool[] = [
       // How often is each field actually filled in? A defined-but-empty field is the usual reason
       // somebody says "we don't track that" when in fact we do, badly.
       const fill: Record<string, { name: string; filled: number; sample: string | null }> = {}
-      const { data: ls } = await ctx.db.from('guesty_listings').select('id,nickname,title,raw').order('id').limit(400)
+      // One JSON path, not the whole raw row (2026-09-28 audit, F4): 400 listings' descriptions and
+      // pictures were read to count custom fields.
+      const { data: ls } = await ctx.db.from('guesty_listings').select('id,nickname,title,cf:raw->customFields').order('id').limit(400)
       let scanned = 0
       let oneUnit: any = null
       for (const l of (ls || [])) {
         const row: any = l
-        const cf = Array.isArray(row.raw?.customFields) ? row.raw.customFields : []
+        const cf = Array.isArray(row.cf) ? row.cf : []
         scanned++
         const isTarget = input?.listingId && String(row.id) === String(input.listingId)
         if (isTarget) oneUnit = { unit: row.nickname || row.title, fields: [] as any[] }
