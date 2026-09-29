@@ -89,7 +89,7 @@ export function WeekSuggester({ from, to, onClose, onPushed }: { from: string; t
                   {Object.entries(p.byPerson).sort((a, b) => b[1].length - a[1].length).map(([who, units]) => (
                     <div key={who}><span className="font-semibold text-ink">{first(who)}</span> <span className="text-muted">— {units.join(', ')}</span></div>
                   ))}
-                  {p.unassigned ? <div className="text-amber-700 inline-flex items-center gap-1"><AlertTriangle size={12} /> {p.unassigned} with nobody — add a person on the Turnover Schedule</div> : null}
+                  {p.unassigned ? <div className="text-amber-700 inline-flex items-center gap-1"><AlertTriangle size={12} /> {p.unassigned} with nobody — add a person on the Scheduler</div> : null}
                 </div>
               ) : null}
             </div>

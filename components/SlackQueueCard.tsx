@@ -33,7 +33,6 @@ const EVENT_TONE: Record<string, string> = {
   overtime: 'bg-sky-100 text-sky-800',
   digest: 'bg-slate-100 text-slate-700',
   sync: 'bg-rose-100 text-rose-700',
-  personal_brief: 'bg-emerald-100 text-emerald-800',
 }
 export const EVENT_LABEL: Record<string, string> = {
   late_cleans: 'Cleans behind',
@@ -41,7 +40,6 @@ export const EVENT_LABEL: Record<string, string> = {
   overtime: 'Over hours',
   digest: 'Digest',
   sync: 'Sync',
-  personal_brief: 'Brief',
 }
 
 /** '<@U123>' is unreadable in a review UI. Swap in the name we already know. */

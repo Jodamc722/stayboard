@@ -296,7 +296,7 @@ export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, 
           rather than letting a short list read as a light day. */}
       {labor && !clocked.length && day.date > (days.find(d => d.today)?.date || '') ? (
         <p className="rounded-xl bg-app px-4 py-2 text-[11.5px] text-muted ring-1 ring-line">
-          No Homebase shifts set this far ahead — the crew below is who has work assigned or is marked on the Turnover Schedule.
+          No Homebase shifts set this far ahead — the crew below is who has work assigned or is marked on the Scheduler.
         </p>
       ) : null}
 
@@ -304,7 +304,7 @@ export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, 
       {!c.markets.length ? (
         <div className="rounded-2xl bg-white ring-1 ring-line px-4 py-10 text-center">
           <p className="text-[13px] text-muted">Nobody on the housekeeping schedule for this day.</p>
-          <p className="text-[11.5px] text-muted/80 mt-1">Set who is working on the Turnover Schedule, and unassigned work never reaches this board.</p>
+          <p className="text-[11.5px] text-muted/80 mt-1">Set who is working on the Scheduler, and unassigned work never reaches this board.</p>
         </div>
       ) : c.markets.map(mk => (
         <section key={mk.market} className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
@@ -403,7 +403,7 @@ export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, 
 
       {canManage ? (
         <a href="/schedule" className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-brand-700 hover:text-brand-800">
-          <CalendarRange size={13} /> Open the Turnover Schedule to assign or move cleans
+          <CalendarRange size={13} /> Open the Scheduler to assign or move cleans
         </a>
       ) : null}
     </div>

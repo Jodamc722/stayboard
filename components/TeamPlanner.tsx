@@ -67,10 +67,10 @@ export function TeamPlanner() {
   // used to be an amber banner and a footer paragraph.
   const head = (
     <LeanHead title="Weekly Planner">
-      {data && !data.counts.rosterWeeks ? <Pill tone="rose" title="No roster saved for these weeks — set who is on and off on the Turnover Schedule">No roster</Pill> : null}
+      {data && !data.counts.rosterWeeks ? <Pill tone="rose" title="No roster saved for these weeks — set who is on and off on the Scheduler">No roster</Pill> : null}
       {data && data.counts.rosterWeeks && data.counts.clashes ? <Pill tone="amber" title="Days where the roster and the work disagree — ringed in amber below">{data.counts.clashes} clash{data.counts.clashes === 1 ? '' : 'es'}</Pill> : null}
       {data && data.counts.unassignedDropped ? <Pill tone="amber" title="Jobs with nobody assigned in Breezeway yet">{data.counts.unassignedDropped} unassigned</Pill> : null}
-      {data ? <Pill title={'Long stay = ' + data.rules.longStayNights + '+ nights, big arrival = $' + data.rules.bigBookingUsd.toLocaleString() + '+ (Users → Task automation). On/off comes from the Turnover Schedule roster; the work is what is assigned in Breezeway.'}>{data.rules.longStayNights}+n · ${data.rules.bigBookingUsd.toLocaleString()}+</Pill> : null}
+      {data ? <Pill title={'Long stay = ' + data.rules.longStayNights + '+ nights, big arrival = $' + data.rules.bigBookingUsd.toLocaleString() + '+ (Users → Task automation). On/off comes from the Scheduler roster; the work is what is assigned in Breezeway.'}>{data.rules.longStayNights}+n · ${data.rules.bigBookingUsd.toLocaleString()}+</Pill> : null}
     </LeanHead>
   )
 

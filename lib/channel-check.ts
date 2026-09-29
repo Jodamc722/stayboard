@@ -118,7 +118,7 @@ function slackBody(alerts: Transition[]): { body: string; summary: string } {
   const body = ':electric_plug: *' + n + ' listing' + (n === 1 ? '' : 's') + ' dropped off a channel since the last check*\n' +
     lines.join('\n') +
     '\nGuests cannot book these there until they are reconnected. ' + CHANNEL_FIX + '.\n' +
-    '<' + APP_URL + '/channels?problems=1|Open Channel connections>'
+    '<' + APP_URL + '/channels?problems=1|Open Channels>'
   return { body, summary: n + ' listing' + (n === 1 ? '' : 's') + ' lost a channel connection' }
 }
 
