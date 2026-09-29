@@ -35,7 +35,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { EVE_CHANNELS } from '@/lib/slack-rules'
 import { postToChannel, postThreadReply } from '@/lib/slack'
-import { nameMatches } from '@/lib/person-name'
+import { nameMatches, nameTokens } from '@/lib/person-name'
 import { agentAllowed, stepDown } from './agent-mode'
 
 export const CCS_DESK_KEY = 'eve_ccs_desk'
@@ -171,17 +171,23 @@ export async function bookedSince(it: AskItem): Promise<string | null> {
   const db = supabaseAdmin()
   const since = new Date(Date.parse(it.first_seen) - 10 * 60_000).toISOString()
   const guest = String(it.evidence?.guest || '').trim()
+  // THE RIGHT BOOKING (2026-09-28 audit, F28). With no unit, a first name alone matched any new
+  // reservation in the portfolio ("Maria" booked somewhere → "booked"). Now: on the loop's own unit,
+  // the guest's name (a first name will do there) or, with no name, the unit's booking; with no unit,
+  // only the guest's FULL name closes it.
+  const fullName = nameTokens(guest).length >= 2
+  const fullMatch = (n: string) => fullName && nameTokens(n).length >= 2 && nameMatches(n, guest)
   try {
     let q = db.from('guesty_reservations').select('id,confirmation_code,guest_name,listing_name,check_in,check_out,status,created_at')
       .gte('created_at', since).in('status', ['confirmed', 'checked_in', 'reserved']).order('created_at', { ascending: false }).limit(20)
     if (it.listing_id) q = q.eq('listing_id', it.listing_id)
-    else if (guest) q = q.ilike('guest_name', `%${guest.split(/\s+/)[0].replace(/[%,()]/g, '')}%`)
+    else if (fullName) q = q.ilike('guest_name', `%${guest.split(/\s+/)[0].replace(/[%,()]/g, '')}%`)
     else return null
     const { data } = await q
     const rows = (data || []) as any[]
-    const hit = guest
-      ? rows.find(r => nameMatches(String(r.guest_name || ''), guest) || String(r.guest_name || '').toLowerCase().includes(guest.split(/\s+/)[0].toLowerCase()))
-      : rows[0]
+    const hit = !guest ? rows[0]
+      : it.listing_id ? rows.find(r => fullMatch(String(r.guest_name || '')) || nameMatches(String(r.guest_name || ''), guest))
+      : rows.find(r => fullMatch(String(r.guest_name || '')))
     if (!hit) return null
     return `booked — ${String(hit.guest_name || 'guest')} ${String(hit.check_in).slice(0, 10)}→${String(hit.check_out).slice(0, 10)}${hit.confirmation_code ? ' (' + hit.confirmation_code + ')' : ''}`
   } catch { return null }

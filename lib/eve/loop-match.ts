@@ -29,6 +29,8 @@ import { isDepartureCleanName } from '@/lib/breezeway'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const lc = (v: any) => str(v).toLowerCase()
+/** Guesty activity logs and internal notes — never a message to the guest (same set as lib/eve/watches). */
+const INTERNAL_MODULES = new Set(['log', 'note', 'notes', 'internal', 'internal_note', 'activity', 'system'])
 
 // Topic vocabulary: the words a report and its task share. Each group is one topic.
 const TOPICS: [string, RegExp][] = [
@@ -157,9 +159,14 @@ export async function guestAnswered(item: { listing_id?: string | null; first_se
   const sinceIso = new Date(Date.parse(item.first_seen) - 5 * 60_000).toISOString()
   try {
     const ids: string[] = []
-    if (guest) {
-      const { data: byName } = await db.from('guesty_conversations').select('id,guest_name,last_message_at').ilike('guest_name', `%${guest.split(/\s+/)[0].replace(/[%,()]/g, '')}%`).gte('last_message_at', sinceIso).order('last_message_at', { ascending: false }).limit(5)
-      for (const c of ((byName || []) as any[])) if (!guest.includes(' ') || lc(c.guest_name).includes(lc(guest.split(/\s+/).pop()))) ids.push(str(c.id))
+    // THE RIGHT GUEST (2026-09-28 audit, F28). A first name alone matched threads across the whole
+    // portfolio — "Maria" is a dozen guests — and closed the ask on somebody else's reply. A name now
+    // counts only as a FULL name (every part of it in the thread's guest name); otherwise the thread
+    // must be the one on the loop's own unit (below).
+    const parts = guest.split(/\s+/).filter(p => p.replace(/[^a-z]/gi, '').length >= 2)
+    if (parts.length >= 2) {
+      const { data: byName } = await db.from('guesty_conversations').select('id,guest_name,last_message_at').ilike('guest_name', `%${parts[0].replace(/[%,()]/g, '')}%`).gte('last_message_at', sinceIso).order('last_message_at', { ascending: false }).limit(10)
+      for (const c of ((byName || []) as any[])) { const n = lc(c.guest_name); if (parts.every(p => n.includes(lc(p)))) ids.push(str(c.id)) }
     }
     if (!ids.length && item.listing_id) {
       const day = str(item.first_seen).slice(0, 10)
@@ -168,8 +175,14 @@ export async function guestAnswered(item: { listing_id?: string | null; first_se
       if (r) { const { data: convs } = await db.from('guesty_conversations').select('id').eq('reservation_id', str(r.id)).limit(5); for (const c of ((convs || []) as any[])) ids.push(str(c.id)) }
     }
     if (!ids.length) return null
-    const { data: msgs } = await db.from('guesty_messages').select('conversation_id,sent_at,sender_name').in('conversation_id', ids).eq('sender', 'host').gt('sent_at', sinceIso).order('sent_at', { ascending: true }).limit(1)
-    const m = ((msgs || []) as any[])[0]
+    // A GUESTY TEMPLATE IS NOT A REPLY (2026-09-28 audit, F28 / 09 D13). Scheduled templates (check-in
+    // instructions, review requests) are host messages with is_automated=true and closed the ask as
+    // "we replied". They are skipped — `.or(...)` keeps the NULL rows, which are most of them — and so
+    // are internal notes and logs; a message with a person's name on it is preferred.
+    const { data: msgs } = await db.from('guesty_messages').select('conversation_id,sent_at,sender_name,module').in('conversation_id', ids).eq('sender', 'host').gt('sent_at', sinceIso)
+      .or('is_automated.is.null,is_automated.eq.false').order('sent_at', { ascending: true }).limit(10)
+    const real = ((msgs || []) as any[]).filter(x => !INTERNAL_MODULES.has(lc(x.module)))
+    const m = real.find(x => str(x.sender_name).trim()) || real[0]
     return m ? { at: str(m.sent_at), by: str(m.sender_name), conversationId: str(m.conversation_id) } : null
   } catch { return null }
 }
@@ -186,7 +199,9 @@ export async function checkLoop(item: { kind: string; listing_id?: string | null
     const g = await guestAnswered(item)
     if (g && !item.evidence?.guestTold) {
       ev.guestTold = g.at; ev.guestToldBy = g.by; ev.conversationId = g.conversationId
-      if (item.kind === 'guest_ask' && ['callback', 'change', 'other', 'inquiry', 'discount', 'extension'].includes(str(item.evidence?.ask))) {
+      // A REFUND IS NEVER CLOSED BY A REPLY (F28): telling the guest is not deciding the money.
+      const ask = str(item.evidence?.ask)
+      if (item.kind === 'guest_ask' && ask !== 'refund' && ['callback', 'change', 'other', 'inquiry', 'discount', 'extension'].includes(ask)) {
         return { closed: `we replied to the guest ${clock(g.at)}${g.by ? ' by ' + g.by : ''}`, evidence: ev }
       }
     }
