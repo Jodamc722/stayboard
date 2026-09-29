@@ -285,11 +285,11 @@ export function nudgeText(it: Pick<Item, 'kind' | 'summary' | 'unit' | 'evidence
 
 // ── The run ──────────────────────────────────────────────────────────────────────────────────
 
-type State = { cursors: Record<string, string>; lastRun: string | null; lastDigest: string | null }
+type State = { cursors: Record<string, string>; lastRun: string | null; lastDigest: string | null; lastDigestAt?: string | null }
 
 async function state(): Promise<State> {
   const v = await getSetting<any>(WATCH_KEY, null)
-  return { cursors: (v && v.cursors) || {}, lastRun: v?.lastRun || null, lastDigest: v?.lastDigest || null }
+  return { cursors: (v && v.cursors) || {}, lastRun: v?.lastRun || null, lastDigest: v?.lastDigest || null, lastDigestAt: v?.lastDigestAt || null }
 }
 
 function etHour(): number {
@@ -335,9 +335,22 @@ export async function sweepLoops(): Promise<{ expired: Record<string, number>; c
       .eq('status', 'open').eq('kind', k).lt('first_seen', cutoff(EXPIRE_DAYS[k])).select('id')
     tally(k, (gone || []).length)
   }
-  const { data: quiet } = await db.from('eve_slack_items').update({ status: 'expired', closed_reason: `nothing said in its thread for ${QUIET_DAYS} days`, closed_at: now })
-    .eq('status', 'open').lt('last_seen', cutoff(QUIET_DAYS)).lt('first_seen', cutoff(QUIET_DAYS)).select('id')
-  tally('quiet', (quiet || []).length)
+  // SILENCE IS NOT A FIX (2026-09-28 audit, F29 — narrow). A problem, a refund or a callback whose
+  // matched Breezeway task or glitch is still open (tracked_in) is being worked somewhere else, which
+  // is exactly why its thread went quiet; the quiet rule leaves it alone. The shelf lives above are
+  // unchanged, and everything else still expires for quiet as before.
+  const { data: quietRows } = await db.from('eve_slack_items').select('id,kind,tracked_in,evidence')
+    .eq('status', 'open').lt('last_seen', cutoff(QUIET_DAYS)).lt('first_seen', cutoff(QUIET_DAYS)).order('first_seen').limit(500)
+  const quietIds = ((quietRows || []) as any[])
+    .filter(r => !(r.tracked_in && (r.kind === 'problem' || ['refund', 'callback'].indexOf(String(r.evidence?.ask || '')) >= 0)))
+    .map(r => r.id)
+  let quietN = 0
+  for (let i = 0; i < quietIds.length; i += 100) {
+    const { data: quiet } = await db.from('eve_slack_items').update({ status: 'expired', closed_reason: `nothing said in its thread for ${QUIET_DAYS} days`, closed_at: now })
+      .in('id', quietIds.slice(i, i + 100)).eq('status', 'open').select('id')
+    quietN += (quiet || []).length
+  }
+  tally('quiet', quietN)
 
   // Urgent decays after a day unless the unit still has a guest today.
   let calmed = 0
@@ -619,6 +632,16 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     if (hot.length) needs.push(`*Problems that need a name on them (${hot.length})*\n${hot.slice(0, 2).map(line).join('\n')}`)
     if (late.length) needs.push(`*Promised 2+ days ago, still open (${late.length})*\n${late.slice(0, 2).map(line).join('\n')}`)
     if (needs.length) parts.push(needs.join('\n')); else parts.push('Nothing needs a person right now.')
+    // EXPIRIES ARE SAID ONCE (2026-09-28 audit, F29). Loops that timed out since the last roll-up
+    // without anybody closing them used to vanish from the list in silence. One line, counted from
+    // the last roll-up so each is announced exactly once; "moot" ones (their moment passed) are not.
+    let unanswered = 0
+    try {
+      const { data: expRows } = await db.from('eve_slack_items').select('id,closed_reason').eq('status', 'expired')
+        .gte('closed_at', st.lastDigestAt || new Date(Date.now() - 24 * 3600_000).toISOString()).order('closed_at').limit(500)
+      unanswered = ((expRows || []) as any[]).filter(r => !/^moot/i.test(String(r.closed_reason || ''))).length
+    } catch { /* the roll-up goes out without the line */ }
+    if (unanswered) parts.push(`_${unanswered} expired unanswered since the last roll-up — on the Eve tab._`)
     if (learnedTexts.length) parts.push(`_Learned ${learnedTexts.length} thing${learnedTexts.length === 1 ? '' : 's'} yesterday — on the Eve memory page._`)
     const gate = await agentAllowed('slack_post', { ask: true })
     const text = parts.join('\n\n')
@@ -630,7 +653,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     // A roll-up with nothing in it does not claim the day. The first live run was preceded by two
     // empty ones (the reads were failing) and each said "quiet day" and took today's slot — so the
     // real roll-up, with 30 open items, never went out. Only a digest with content counts.
-    if (r.ok) { out.digest = true; if (openNow.length || closed.length) st.lastDigest = today; if (stepped.mode === 'deferred') out.notes.push(`digest held for quiet hours: ${gate.reason}`) }
+    if (r.ok) { out.digest = true; if (openNow.length || closed.length || unanswered) { st.lastDigest = today; st.lastDigestAt = new Date().toISOString() } if (stepped.mode === 'deferred') out.notes.push(`digest held for quiet hours: ${gate.reason}`) }
     else out.notes.push(`digest: ${r.error}`)
   }
 
@@ -638,7 +661,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   // means invite the bot; "missing_scope" means reinstall; both are somebody's ten-minute fix.
   for (const e of _readErrors.slice(0, 12)) out.notes.push(`could not read ${e}`)
 
-  await setSetting(WATCH_KEY, { cursors, lastRun: new Date().toISOString(), lastDigest: st.lastDigest }, 'slack-watch')
+  await setSetting(WATCH_KEY, { cursors, lastRun: new Date().toISOString(), lastDigest: st.lastDigest, lastDigestAt: st.lastDigestAt || null }, 'slack-watch')
   return out
 }
 
