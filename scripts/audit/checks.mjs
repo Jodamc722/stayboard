@@ -218,6 +218,28 @@ function rowCap() {
   return out
 }
 
+// 4b. A LIMIT ABOVE THE CAP IS NOT A LIMIT (2026-09-29). `.limit(5000)` reads as "up to 5,000" and
+// returns at most 1,000 — the same silent cut as 4, harder to see because the number looks generous.
+// 266 of these were in the code when this check was added. Same marker, same rule: page it, or say on
+// the line why the set can never pass 1,000 (or why the first 1,000 of this order is enough).
+function overCap() {
+  const out = []
+  for (const f of SRC()) {
+    const src = rd(f)
+    for (const m of src.matchAll(/\.limit\(\s*([0-9][0-9_]*)\s*\)/g)) {
+      const n = Number(m[1].replace(/_/g, ''))
+      if (!(n > 1000)) continue
+      if (inComment(src, m.index)) continue
+      if (DELIBERATE_CAP.test(lineText(src, m.index))) continue
+      out.push({ id: `over-cap:${f}:${lineOf(src, m.index)}`, sev: 'amber', area: 'Data',
+        title: `Query asks for more than 1,000 rows and silently gets 1,000`,
+        detail: `.limit(${n}) — PostgREST returns at most 1,000 rows whatever the limit says, with no error. Page it (lib/db-page.ts pageRows, ordered), or mark the line \`// deliberate cap: <why 1,000 is enough>\`.`,
+        where: [`${f}:${lineOf(src, m.index)}`] })
+    }
+  }
+  return out
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 5. SWALLOWED WRITE FAILURES
 // An empty catch around a mirror write means the UI reports success while the board silently
@@ -422,6 +444,7 @@ export const STATIC_CHECKS = [
   ['Cron auth', cronAuth],
   ['Shell compliance', shellCompliance],
   ['Row cap', rowCap],
+  ['Over cap', overCap],
   ['Swallowed writes', swallowedWrites],
   ['Hooks after return', hooksAfterReturn],
   ['Duplicate helpers', duplicateHelpers],
