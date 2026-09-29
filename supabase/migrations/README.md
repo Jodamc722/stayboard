@@ -11,7 +11,8 @@ to be safe to run twice.
 - **Never renumber an applied file.** Cite a migration by its full file name
   (`073_guest_calls.sql`, not "073").
 - **Never used:** 089 and 119–129.
-- **Highest in use:** 135. Check this folder before picking the next number.
+- **Highest in use:** 136 (`136_agent_files.sql`). Check this folder before picking the next number —
+  two sessions pick numbers in parallel.
 - **`000_baseline_legacy_tables.sql` is not a migration to run.** It is the DDL of three tables
   that were created by hand before they had a file here (`schedule_blocks`,
   `schedule_manual_cleans`, `labor_settings`), kept so every table has its DDL in the repo.
