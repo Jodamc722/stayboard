@@ -683,13 +683,33 @@ export async function syncMessages(conversationId: string): Promise<number> {
 // { module: { type }, body }. The module type is the channel the thread lives on — Guesty's docs list
 // 'email', 'sms', 'whatsapp' and the OTA modules (airbnb2, bookingCom, homeaway2…); the exact
 // enum for OTA threads is NOT verified against a live call, so this is defensive on purpose:
-//   • the caller may pass a module; otherwise it is derived from the conversation's channel;
-//   • a 4xx that mentions the module is retried once with the thread's last inbound module, then
-//     with 'email' — never a third time;
+//   • the caller may pass a module; otherwise the module that last WORKED for this channel goes
+//     first (app_settings guesty_send_modules, written on every success), then the one derived
+//     from the conversation's channel;
+//   • a 4xx that mentions the module is retried with the thread's last inbound module — never a
+//     third time;
+//   • 'email' is a last resort ONLY for a thread that is not on an OTA (2026-09-28, 09 D2): on an
+//     Airbnb / Booking.com / Vrbo / Expedia thread an email fallback delivers the message
+//     off-platform, which the channel treats as moving the guest off it;
 //   • the FULL error text is logged and returned; nothing here ever throws past the caller.
 // This is welded to rung 2 in agent mode: it only ever runs after a person said yes.
 // ------------------------------------------------------------
-export type SendGuestResult = { ok: boolean; id?: string | null; module?: string; error?: string; status?: number; attempts?: string[] }
+export type SendGuestResult = { ok: boolean; id?: string | null; module?: string; channel?: string; error?: string; status?: number; attempts?: string[] }
+
+const OTA_RE = /airbnb|booking|vrbo|homeaway|expedia/i
+const SEND_MODULES_KEY = 'guesty_send_modules'
+
+/** One stable key per channel for the remembered-module map. */
+function sendChannelKey(channel: string): string {
+  const c = String(channel || '').toLowerCase()
+  if (/airbnb/.test(c)) return 'airbnb'
+  if (/booking/.test(c)) return 'bookingcom'
+  if (/vrbo|homeaway/.test(c)) return 'vrbo'
+  if (/expedia/.test(c)) return 'expedia'
+  if (/whatsapp/.test(c)) return 'whatsapp'
+  if (/sms/.test(c)) return 'sms'
+  return c.replace(/[^a-z0-9]+/g, '').slice(0, 30)
+}
 
 function moduleForChannel(channel: string): string {
   const c = String(channel || '').toLowerCase()
@@ -709,22 +729,35 @@ export async function sendGuestMessage(conversationId: string, body: string, opt
   if (!text) return { ok: false, error: 'empty message' }
   if (!CID || !CSEC) return { ok: false, error: 'Guesty is not configured' }
 
-  // Which module? Caller's choice first; else the thread's channel from the mirror; else the
-  // module of the guest's own last message (the surest sign of where they are reading).
+  // Which module? Caller's choice first; else the module that last worked on this channel; else
+  // the thread's channel from the mirror; else the module of the guest's own last message (the
+  // surest sign of where they are reading).
   const candidates: string[] = []
   if (opts.module) candidates.push(String(opts.module))
+  let chan = ''
+  let remembered = ''
   try {
     const sb = supabaseAdmin()
     const { data: conv } = await sb.from('guesty_conversations').select('channel,raw').eq('id', id).maybeSingle()
     const rawMod = String((conv as any)?.raw?.lastMessage?.module || '')
-    const chan = String((conv as any)?.channel || '')
-    if (chan) candidates.push(moduleForChannel(chan))
+    chan = String((conv as any)?.channel || '')
+    if (chan) {
+      try {
+        const { getSetting } = await import('./app-settings')
+        const map = await getSetting<Record<string, string>>(SEND_MODULES_KEY, {})
+        remembered = String((map && map[sendChannelKey(chan)]) || '')
+      } catch { /* a hint, not a requirement */ }
+      if (remembered) candidates.push(remembered)
+      candidates.push(moduleForChannel(chan))
+    }
     if (rawMod) candidates.push(rawMod)
     const { data: last } = await sb.from('guesty_messages').select('raw').eq('conversation_id', id).eq('sender', 'guest').order('sent_at', { ascending: false }).limit(1)
     const lm = String(((last as any[]) || [])[0]?.raw?.module || '')
     if (lm) candidates.push(lm)
   } catch { /* the mirror is a hint, not a requirement */ }
-  candidates.push('email')
+  // An OTA thread — by its channel or by any module it has used — never falls back to email.
+  const ota = OTA_RE.test(chan) || candidates.some(c => OTA_RE.test(c))
+  if (!ota) candidates.push('email')
   const tried: string[] = []
   const order: string[] = []
   for (const c of candidates) if (c && order.indexOf(c) < 0) order.push(c)
@@ -748,7 +781,16 @@ export async function sendGuestMessage(conversationId: string, body: string, opt
         try { j = JSON.parse(txt) } catch { j = null }
         const mid = j?._id || j?.id || j?.data?._id || null
         try { await recordSync('guest_message_sent', 1) } catch { /* cosmetic */ }
-        return { ok: true, id: mid ? String(mid) : null, module: mod, attempts: tried }
+        // Remember what worked for this channel, so the next send goes straight to it.
+        const ck = chan ? sendChannelKey(chan) : ''
+        if (ck && mod !== remembered) {
+          try {
+            const { getSetting, setSetting } = await import('./app-settings')
+            const map = await getSetting<Record<string, string>>(SEND_MODULES_KEY, {})
+            await setSetting(SEND_MODULES_KEY, { ...(map || {}), [ck]: mod }, 'guesty-send')
+          } catch { /* the send happened; remembering it is a nicety */ }
+        }
+        return { ok: true, id: mid ? String(mid) : null, module: mod, channel: chan || undefined, attempts: tried }
       }
       lastStatus = r.status
       lastErr = `Guesty send-message ${r.status} (module ${mod}): ${txt.slice(0, 400)}`
@@ -763,7 +805,11 @@ export async function sendGuestMessage(conversationId: string, body: string, opt
       break
     }
   }
-  return { ok: false, error: lastErr || 'Guesty refused the message', status: lastStatus || undefined, attempts: tried }
+  return {
+    ok: false,
+    error: (lastErr || 'Guesty refused the message') + (ota ? ' — not retried by email: this is a ' + (chan || 'channel') + ' thread, and email would take the guest off-platform.' : ''),
+    status: lastStatus || undefined, channel: chan || undefined, attempts: tried,
+  }
 }
 
 // Clean a raw Guesty channel id/name into a human-friendly label.
