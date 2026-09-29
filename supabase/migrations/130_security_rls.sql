@@ -6,7 +6,7 @@
 --   B-1  Nineteen tables were created with RLS off: the eight Garden Hotel tables from 115/116 (guest
 --        name, email, phone, totals, ID/card verification status), the nine from 117 (staff, shifts,
 --        the call queue, reviews, owner reports, phone calls), pm_schedule (113 turned it OFF
---        explicitly) and labor_settings (sql/labor_settings_schema.sql, pay thresholds). Every read
+--        explicitly) and labor_settings (000_baseline_legacy_tables.sql, pay thresholds). Every read
 --        and write of these goes through the service-role client, which bypasses RLS, so turning it
 --        on with NO policy shuts the anon/authenticated door and changes nothing for the app.
 --
@@ -44,7 +44,7 @@ begin
     'garden_reviews', 'garden_owner_reports', 'garden_phone_calls',
     -- 113_pm_schedule.sql (which disabled it on purpose; the PM ledger is read by the service role only)
     'pm_schedule',
-    -- sql/labor_settings_schema.sql
+    -- 000_baseline_legacy_tables.sql (was sql/labor_settings_schema.sql)
     'labor_settings',
     -- Created in the dashboard, no migration on record, read and written only by the service role:
     -- the admin password / rules password / vault code live in share_settings, the role templates in
