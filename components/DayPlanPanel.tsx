@@ -182,7 +182,7 @@ export function DayPlanPanel({ units, roster, staff, today, cap, onClose, onAppl
                   </>}
             </p>
           </div>
-          <button onClick={onClose} disabled={busy} className="text-muted hover:text-ink disabled:opacity-40 shrink-0 mt-0.5"><X size={16} /></button>
+          <button onClick={onClose} disabled={busy} title="Close" className="text-muted hover:text-ink disabled:opacity-40 shrink-0 mt-0.5"><X size={16} /></button>
         </div>
 
         {/* ── THE TWO KNOBS THAT CHANGE THE ANSWER ── */}

@@ -309,7 +309,7 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
             <p className="text-[12px] text-muted mt-0.5">A sandbox. Move cleans, change who is working, re-suggest. Nothing reaches Breezeway until you approve.</p>
           </div>
           <input type="date" value={date} disabled={busy} onChange={e => e.target.value && setDate(e.target.value)} className="text-[12.5px] border border-line rounded-lg px-2 h-8" />
-          <button onClick={onClose} disabled={busy} className="text-muted hover:text-ink disabled:opacity-40 mt-1"><X size={16} /></button>
+          <button onClick={onClose} disabled={busy} title="Close" className="text-muted hover:text-ink disabled:opacity-40 mt-1"><X size={16} /></button>
         </div>
 
         {loading ? (

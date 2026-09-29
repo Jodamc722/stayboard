@@ -139,7 +139,7 @@ export function RequestDetail({
               placeholder="Add a comment…"
               className="flex-1 px-3 py-2 rounded-lg border border-line bg-white text-sm focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none"
             />
-            <button onClick={addComment} disabled={!newComment.trim()}
+            <button onClick={addComment} disabled={!newComment.trim()} title="Send comment"
               className="px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-50 hover:bg-ink/90 inline-flex items-center gap-1 text-xs font-medium"><Send size={13}/></button>
           </div>
         </div>

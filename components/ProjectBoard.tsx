@@ -123,7 +123,7 @@ export function ProjectBoard({ canEdit, canFull, me, autoNew }: { canEdit: boole
             <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search projects, buildings, leads…"
               className="text-[13px] pl-7 pr-7 py-1.5 rounded-lg border border-line bg-white w-full sm:w-72 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-            {q && <button onClick={() => setQ('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>}
+            {q && <button onClick={() => setQ('')} title="Clear search" className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>}
           </span>
           <select value={cat} onChange={e => setCat(e.target.value)}
             className="text-[13px] bg-white border border-line rounded-lg px-2 py-1.5">
@@ -604,7 +604,7 @@ function Drawer({ id, canEdit, canFull, listings, people, cats, onClose, onChang
                   <input type="checkbox" checked={s.done} disabled={!canEdit} onChange={e => act({ action: 'stepSet', stepId: s.id, done: e.target.checked }, 'step' + s.id)} />
                   <span className={s.done ? 'line-through text-muted' : 'text-ink'}>{s.title}</span>
                   {s.due_on && <span className="ml-auto text-[11px] text-muted">{dayLabel(s.due_on)}</span>}
-                  {canFull && <button onClick={e => { e.preventDefault(); act({ action: 'stepDelete', stepId: s.id }) }} className="text-muted hover:text-rose-600"><Trash2 size={11} /></button>}
+                  {canFull && <button onClick={e => { e.preventDefault(); act({ action: 'stepDelete', stepId: s.id }) }} title="Delete step" className="text-muted hover:text-rose-600"><Trash2 size={11} /></button>}
                 </label>
               ))}
               {!p.steps.length && <p className="text-[12px] text-muted px-2.5 py-3">No steps yet.</p>}
@@ -627,7 +627,7 @@ function Drawer({ id, canEdit, canFull, listings, people, cats, onClose, onChang
                 <label key={l.ref_id} className="flex items-center gap-2 px-2.5 py-1.5 text-[13px] cursor-pointer hover:bg-app">
                   <input type="checkbox" checked={l.done} disabled={!canEdit} onChange={e => act({ action: 'linkDone', kind: 'listing', refId: l.ref_id, done: e.target.checked })} />
                   <span className={l.done ? 'line-through text-muted' : 'text-ink'}>{l.label || listings.find((x: any) => x.id === l.ref_id)?.label || l.ref_id}</span>
-                  {canEdit && <button onClick={e => { e.preventDefault(); act({ action: 'unlink', kind: 'listing', refId: l.ref_id }) }} className="ml-auto text-muted hover:text-rose-600"><X size={11} /></button>}
+                  {canEdit && <button onClick={e => { e.preventDefault(); act({ action: 'unlink', kind: 'listing', refId: l.ref_id }) }} title="Remove this unit from the project" className="ml-auto text-muted hover:text-rose-600"><X size={11} /></button>}
                 </label>
               ))}
               {!units.length && <p className="text-[12px] text-muted px-2.5 py-3">Not linked to any unit.</p>}
@@ -830,7 +830,7 @@ function Modal({ title, sub, children, onClose, wide }: { title: string; sub?: s
             <h3 className="text-[15px] font-bold text-ink truncate">{title}</h3>
             {sub && <p className="text-[11px] text-muted truncate">{sub}</p>}
           </div>
-          <button onClick={onClose} className="text-muted hover:text-ink p-1"><X size={16} /></button>
+          <button onClick={onClose} title="Close" className="text-muted hover:text-ink p-1"><X size={16} /></button>
         </div>
         <div className="px-4 py-3 overflow-y-auto pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:pb-3">{children}</div>
       </div>

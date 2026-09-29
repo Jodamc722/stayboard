@@ -146,7 +146,7 @@ export function GuidebookLauncher({ listingId, name, compact }: {
                 <h3 className="font-bold text-ink">Guidebook builder — {name}</h3>
                 <p className="text-xs text-muted mt-0.5">Description, photos, Wi-Fi, reviews and local recs come in automatically. Your notes below are raw material — the AI rewrites everything into polished copy.</p>
               </div>
-              <button onClick={() => setOpen(false)} className="text-muted hover:text-ink"><X size={18} /></button>
+              <button onClick={() => setOpen(false)} title="Close" className="text-muted hover:text-ink"><X size={18} /></button>
             </div>
 
             <div className="px-5 py-4 space-y-5 overflow-y-auto sm:max-h-[62vh]">
@@ -170,7 +170,7 @@ export function GuidebookLauncher({ listingId, name, compact }: {
                         {u.kind === 'photo'
                           ? <img src={u.url} alt="" className="h-16 w-16 rounded-lg object-cover ring-1 ring-line" />
                           : <div className="flex h-16 w-24 items-center justify-center rounded-lg bg-white ring-1 ring-line px-1 text-center text-[9px] font-semibold text-muted">{u.name.slice(0, 24)}</div>}
-                        <button onClick={() => setUps(x => x.filter((_, j) => j !== i))}
+                        <button onClick={() => setUps(x => x.filter((_, j) => j !== i))} title="Remove this upload"
                           className="absolute -right-1.5 -top-1.5 hidden rounded-full bg-red-600 p-0.5 text-white group-hover:block"><Trash2 size={10} /></button>
                       </div>
                     ))}

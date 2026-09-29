@@ -140,8 +140,8 @@ export function TaskCategoriesAdmin({ isAdmin }: { isAdmin: boolean }) {
                 title="Anything no other category claims lands here">catch-all</span>
             )}
             <span className="ml-auto flex items-center gap-1">
-              <button disabled={!isAdmin || i === 0} onClick={() => up(i)} className="p-1 rounded hover:bg-app disabled:opacity-25"><ChevronUp size={13} /></button>
-              <button disabled={!isAdmin || i === cats.length - 1} onClick={() => down(i)} className="p-1 rounded hover:bg-app disabled:opacity-25"><ChevronDown size={13} /></button>
+              <button disabled={!isAdmin || i === 0} onClick={() => up(i)} title="Move up" className="p-1 rounded hover:bg-app disabled:opacity-25"><ChevronUp size={13} /></button>
+              <button disabled={!isAdmin || i === cats.length - 1} onClick={() => down(i)} title="Move down" className="p-1 rounded hover:bg-app disabled:opacity-25"><ChevronDown size={13} /></button>
               {!c.fallback && (
                 <button disabled={!isAdmin} onClick={() => delCat(i)} className="p-1 rounded hover:bg-rose-50 text-rose-500 disabled:opacity-25" title="Remove this category"><Trash2 size={13} /></button>
               )}
@@ -161,7 +161,7 @@ export function TaskCategoriesAdmin({ isAdmin }: { isAdmin: boolean }) {
                   <input value={r.dept || ''} disabled={!isAdmin} placeholder="dept"
                     onChange={e => patch(i, { rules: c.rules.map((x, n) => n === ri ? { ...x, dept: e.target.value } : x) })}
                     className="w-28 rounded-lg border border-line px-2 py-1 text-[12px] font-mono" />
-                  <button disabled={!isAdmin} onClick={() => patch(i, { rules: c.rules.filter((_, n) => n !== ri) })}
+                  <button disabled={!isAdmin} onClick={() => patch(i, { rules: c.rules.filter((_, n) => n !== ri) })} title="Remove this rule"
                     className="p-1 rounded hover:bg-app text-muted disabled:opacity-25"><Trash2 size={12} /></button>
                 </div>
               ))}

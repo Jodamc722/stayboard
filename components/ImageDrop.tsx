@@ -125,7 +125,7 @@ export function ImageDrop({ items, onChange, endpoint, extra, srcFor, enabled, l
           {items.map((u, i) => (
             <span key={u + i} className="relative inline-block">
               <img src={src(u)} alt="" className="w-14 h-14 object-cover rounded-lg border border-line" />
-              <button type="button" onClick={e => { e.stopPropagation(); remove(i) }} aria-label="Remove"
+              <button type="button" onClick={e => { e.stopPropagation(); remove(i) }} aria-label="Remove" title="Remove"
                 className="absolute -top-1.5 -right-1.5 bg-rose-600 text-white rounded-full p-0.5 shadow">
                 <X size={10} />
               </button>

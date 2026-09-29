@@ -109,7 +109,7 @@ export function UnitTasks({ listingId }: { listingId: string; name?: string }) {
                     <span className="inline-flex items-center gap-1.5 min-w-0"><CheckCircle2 size={12} className="text-emerald-600 shrink-0" /><span className="truncate text-ink">{t.name}</span>
                       <span className={`text-[10px] px-1 rounded ${teamOf(t.department).c}`}>{teamOf(t.department).label}</span>
                     </span>
-                    <span className="text-[11px] text-muted shrink-0 inline-flex items-center gap-1.5">{t.finished_at?.slice(0, 10)}{t.finished_by ? ` · ${t.finished_by}` : ''}{t.report_url && <a href={t.report_url} target="_blank" rel="noreferrer" className="text-brand-700 hover:underline inline-flex items-center"><FileText size={10} /></a>}</span>
+                    <span className="text-[11px] text-muted shrink-0 inline-flex items-center gap-1.5">{t.finished_at?.slice(0, 10)}{t.finished_by ? ` · ${t.finished_by}` : ''}{t.report_url && <a href={t.report_url} target="_blank" rel="noreferrer" title="Open the Breezeway report" className="text-brand-700 hover:underline inline-flex items-center"><FileText size={10} /></a>}</span>
                   </div>
                 ))}
               </div>

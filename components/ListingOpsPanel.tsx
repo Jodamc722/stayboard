@@ -95,7 +95,7 @@ export default function ListingOpsPanel({
       <div className="relative w-full max-w-md h-dvh bg-white shadow-xl flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="font-semibold text-neutral-900 truncate">{ops?.unit || unitName || 'Listing'}</div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-neutral-100" aria-label="Close">
+          <button onClick={onClose} className="p-1 rounded hover:bg-neutral-100" aria-label="Close" title="Close">
             <X className="w-4 h-4" />
           </button>
         </div>

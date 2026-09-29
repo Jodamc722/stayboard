@@ -616,7 +616,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
           {!guest && <button onClick={() => { const next = JSON.parse(JSON.stringify(gb)); next.sections._showTags = showTags ? false : true; setGb(next); fetch('/api/guidebook', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: next.id, sections: next.sections }) }) }} className={'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ' + (showTags ? 'border-neutral-300' : 'border-neutral-800 bg-neutral-800 text-white')} title="Show/hide the // labels and accent lines on photos">Photo tags {showTags ? 'on' : 'off'}</button>}
           {!guest && <button onClick={() => { navigator.clipboard.writeText(window.location.origin + '/g/' + gb.id).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) }).catch(() => {}) }} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold" title="Copy the public guest link — no login needed to view">{copied ? <Save size={13} /> : <Share2 size={13} />} {copied ? 'Copied!' : 'Share'}</button>}
           <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold"><Printer size={13} /> Print / PDF</button>
-          {!guest && <button onClick={del} className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600"><Trash2 size={13} /></button>}
+          {!guest && <button onClick={del} title="Delete this guidebook" className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600"><Trash2 size={13} /></button>}
         </div>
       </div>
       )}
@@ -633,7 +633,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
               className="inline-flex items-center gap-1.5 rounded-lg bg-black px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
               {askBusy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} {askBusy ? 'Revising…' : 'Apply'}
             </button>
-            <button onClick={() => { setAskOpen(false); setAskErr('') }} className="rounded-lg border border-neutral-300 p-2 text-neutral-500"><X size={14} /></button>
+            <button onClick={() => { setAskOpen(false); setAskErr('') }} title="Close" className="rounded-lg border border-neutral-300 p-2 text-neutral-500"><X size={14} /></button>
           </div>
           {askErr && <p className="mx-auto mt-1.5 max-w-[760px] text-xs text-red-600">{askErr}</p>}
         </div>

@@ -97,7 +97,7 @@ export function UndoBar({ item, onUndone, onDismiss }: { item: { trashId: string
         {busy ? <Loader2 size={12} className="animate-spin" /> : <Undo2 size={12} />} Undo
       </button>
       {err && <span className="text-[11px] text-rose-200">{err}</span>}
-      <button onClick={onDismiss} className="text-white/60 hover:text-white"><X size={14} /></button>
+      <button onClick={onDismiss} title="Dismiss" className="text-white/60 hover:text-white"><X size={14} /></button>
     </div>
   )
 }
@@ -141,7 +141,7 @@ export function TrashDrawer({ kind, onRestored, onClose }: { kind: 'glitch' | 'c
       <div className="flex items-center gap-2 mb-2">
         <Trash2 size={14} className="text-muted" />
         <span className="text-sm font-semibold text-ink">Recently deleted</span>
-        <button onClick={onClose} className="ml-auto text-muted hover:text-ink"><X size={15} /></button>
+        <button onClick={onClose} title="Close" className="ml-auto text-muted hover:text-ink"><X size={15} /></button>
       </div>
       {err && <div className="text-[12px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5 mb-2">{err}</div>}
       {!items && <div className="text-[12px] text-muted py-3 text-center">Loading…</div>}

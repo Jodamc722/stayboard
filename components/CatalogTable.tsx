@@ -437,7 +437,7 @@ function BulkEditor({ item, price, cost, tiers, setItem, canEdit, maxQty, soldIn
                   : keep !== null ? <span className={'text-[11px] ' + (keep < 0 ? 'text-rose-700 font-semibold' : 'text-muted')}>{keep < 0 ? 'below cost' : 'keep ' + money(keep)}</span> : null}
                 {t.min_qty > maxQty ? <span className="text-[11px] font-semibold text-amber-800 inline-flex items-center gap-1"><AlertTriangle size={11} /> max per order is {maxQty}</span> : null}
                 {offStep ? <span className="text-[11px] font-semibold text-amber-800">not a multiple of {step} — rounds up on the form</span> : null}
-                {canEdit ? <button type="button" onClick={() => put(tiers.filter((_, k) => k !== idx))} className="text-muted hover:text-rose-600 ml-auto"><X size={12} /></button> : null}
+                {canEdit ? <button type="button" onClick={() => put(tiers.filter((_, k) => k !== idx))} title="Remove this tier" className="text-muted hover:text-rose-600 ml-auto"><X size={12} /></button> : null}
               </div>
             )
           })}

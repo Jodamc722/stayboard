@@ -154,10 +154,10 @@ export function LaborDashboard() {
           ))}
         </div>
         <div className="flex items-center rounded-xl border border-line bg-white shadow-soft overflow-hidden">
-          <button onClick={() => step(-1)} className="px-2 py-1.5 text-muted hover:text-ink" aria-label="Previous"><ChevronLeft className="w-4 h-4" /></button>
+          <button onClick={() => step(-1)} className="px-2 py-1.5 text-muted hover:text-ink" aria-label="Previous" title="Previous"><ChevronLeft className="w-4 h-4" /></button>
           <span className="px-2 text-[12.5px] font-semibold text-ink whitespace-nowrap">{data?.label || '…'}</span>
           <button onClick={() => step(1)} disabled={data ? data.to >= today : false}
-            className="px-2 py-1.5 text-muted hover:text-ink disabled:opacity-30" aria-label="Next"><ChevronRight className="w-4 h-4" /></button>
+            className="px-2 py-1.5 text-muted hover:text-ink disabled:opacity-30" aria-label="Next" title="Next"><ChevronRight className="w-4 h-4" /></button>
         </div>
         <button onClick={() => { setPeriod('day'); setAnchor(shift(today, -1)) }}
           className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft">Yesterday</button>

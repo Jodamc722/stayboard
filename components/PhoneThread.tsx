@@ -121,7 +121,7 @@ export function PhoneThread({ number, display, guest, unit, events: initial, res
       {showRes && reservation && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30 p-3" onClick={() => setShowRes(false)}>
           <div className="w-full max-w-md rounded-2xl bg-white border border-line shadow-soft p-4" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-3"><span className="font-semibold text-ink">Reservation</span><button onClick={() => setShowRes(false)} className="text-muted hover:text-ink"><X size={16} /></button></div>
+            <div className="flex items-center justify-between mb-3"><span className="font-semibold text-ink">Reservation</span><button onClick={() => setShowRes(false)} title="Close" className="text-muted hover:text-ink"><X size={16} /></button></div>
             <dl className="text-[13px] space-y-1.5">
               <Row Icon={User} k="Guest" v={reservation.guest_name || '—'} />
               <Row Icon={Phone} k="Phone" v={reservation.guest_phone || display} />

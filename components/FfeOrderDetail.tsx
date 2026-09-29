@@ -753,7 +753,7 @@ export function FfeOrderDetail({ id }: { id: string }) {
                         className={'text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border ' + (l.priority ? TIER_CLS[l.priority] : 'bg-white text-neutral-400 border-dashed border-neutral-300')}>
                         {l.priority ? TIER_LABEL[l.priority] : '+ tier'}
                       </button>
-                      {l.url ? <a href={l.url} target="_blank" rel="noreferrer" className="text-muted hover:text-ink"><ExternalLink className="w-3 h-3" /></a> : null}
+                      {l.url ? <a href={l.url} target="_blank" rel="noreferrer" title="Open product page" className="text-muted hover:text-ink"><ExternalLink className="w-3 h-3" /></a> : null}
                       {!l.url && l.walkUrl ? <a href={l.walkUrl} target="_blank" rel="noreferrer" title="Link the walker suggested" className="text-amber-600 hover:text-amber-700"><ExternalLink className="w-3 h-3" /></a> : null}
                     </div>
                     <div className="text-[11px] text-muted truncate">

@@ -984,7 +984,7 @@ function quickTags(r: string): string[] {
                         <div className="space-y-1">
                           {sl.map((lbl, i) => (
                             <div key={i} className="flex items-center gap-2">
-                              {orgRoom === room && shotMap[i] ? <img src={shotMap[i]} alt="" className="w-7 h-7 rounded object-cover shrink-0" /> : <button onClick={() => { stageCamera(room); setShotIdx(i) }} disabled={orgBusy && orgRoom === room} className="w-7 h-7 rounded border border-indigo-300 text-indigo-600 text-sm leading-none shrink-0">📷</button>}
+                              {orgRoom === room && shotMap[i] ? <img src={shotMap[i]} alt="" className="w-7 h-7 rounded object-cover shrink-0" /> : <button onClick={() => { stageCamera(room); setShotIdx(i) }} disabled={orgBusy && orgRoom === room} title="Take this shot" className="w-7 h-7 rounded border border-indigo-300 text-indigo-600 text-sm leading-none shrink-0">📷</button>}
                               <span className={'text-[12px] ' + (orgRoom === room && shotMap[i] ? 'text-indigo-400 line-through' : 'text-indigo-900')}>{lbl}</span>
                             </div>
                           ))}

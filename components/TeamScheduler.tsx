@@ -131,12 +131,12 @@ export function TeamScheduler({ code }: { code: string }) {
       )}
       {/* week nav */}
       <div className="flex items-center gap-2 mb-3">
-        <button onClick={() => load(data.prev)} className="w-11 h-11 rounded-xl border border-line bg-white grid place-items-center" aria-label="Previous week"><ChevronLeft size={18} /></button>
+        <button onClick={() => load(data.prev)} className="w-11 h-11 rounded-xl border border-line bg-white grid place-items-center" aria-label="Previous week" title="Previous week"><ChevronLeft size={18} /></button>
         <div className="flex-1 text-center">
           <div className="text-[15px] font-bold text-ink">{fmtDay(data.weekStart)} → {fmtDay(data.weekEnd)}</div>
           <div className="text-[12px] text-muted">{all.length} cleans · <span className={unassigned ? 'text-amber-700 font-semibold' : 'text-emerald-700 font-semibold'}>{unassigned ? unassigned + ' unassigned' : 'all assigned'}</span>{loading ? ' · refreshing…' : ''}</div>
         </div>
-        <button onClick={() => load(data.next)} className="w-11 h-11 rounded-xl border border-line bg-white grid place-items-center" aria-label="Next week"><ChevronRight size={18} /></button>
+        <button onClick={() => load(data.next)} className="w-11 h-11 rounded-xl border border-line bg-white grid place-items-center" aria-label="Next week" title="Next week"><ChevronRight size={18} /></button>
       </div>
 
       {feedback && (
@@ -284,7 +284,7 @@ function CleanerSheet({ clean, hks, teamIds, onPick, onClose }: { clean: Clean; 
     <div className="fixed inset-0 z-50 bg-black/40 flex items-end justify-center" onClick={onClose}>
       <div className="bg-white w-full max-w-xl rounded-t-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="px-4 pt-3 pb-2 border-b border-line">
-          <div className="flex items-center gap-2"><div className="flex-1 min-w-0"><div className="text-[15px] font-bold text-ink truncate">{clean.unit}</div><div className="text-[12px] text-muted">{fmtDay(clean.date)}{clean.checkOutTime ? ' · out ' + fmtTime(clean.checkOutTime) : ''}{clean.sameDayTurn ? ' · same-day turn' : ''}</div></div><button onClick={onClose} className="w-9 h-9 rounded-lg border border-line grid place-items-center" aria-label="Close"><X size={15} /></button></div>
+          <div className="flex items-center gap-2"><div className="flex-1 min-w-0"><div className="text-[15px] font-bold text-ink truncate">{clean.unit}</div><div className="text-[12px] text-muted">{fmtDay(clean.date)}{clean.checkOutTime ? ' · out ' + fmtTime(clean.checkOutTime) : ''}{clean.sameDayTurn ? ' · same-day turn' : ''}</div></div><button onClick={onClose} className="w-9 h-9 rounded-lg border border-line grid place-items-center" aria-label="Close" title="Close"><X size={15} /></button></div>
           <div className="relative mt-2"><Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" /><input ref={ref} value={q} onChange={e => setQ(e.target.value)} className={INPUT + ' pl-9'} placeholder="Find a cleaner" /></div>
         </div>
         <div className="overflow-y-auto px-2 py-2">

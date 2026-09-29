@@ -124,7 +124,7 @@ export function ReservationEmailsAdmin({ isOwner }: { isOwner: boolean }) {
                 {/* Name + PDF badge + unit count + a warning + the On switch was more than one
                     phone line, and the On switch was the piece that fell off the right. */}
                 <div className="flex items-center gap-2 gap-y-1.5 flex-wrap px-3 py-2.5 bg-app">
-                  <button onClick={() => setOpen(isOpen ? null : p.id)} className="text-muted hover:text-ink" aria-label="Toggle">
+                  <button onClick={() => setOpen(isOpen ? null : p.id)} className="text-muted hover:text-ink" aria-label="Toggle" title={isOpen ? 'Hide settings' : 'Show settings'}>
                     {isOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                   </button>
                   <span className="text-[13px] font-semibold text-ink">{p.name}</span>

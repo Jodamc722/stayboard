@@ -237,7 +237,7 @@ export function FfeCatalog() {
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-[12.5px] text-emerald-800 flex items-start gap-2">
           <Check className="w-3.5 h-3.5 mt-0.5 shrink-0" />
           <span className="flex-1">{flash}</span>
-          <button onClick={() => setFlash('')} className="text-emerald-700"><X className="w-3.5 h-3.5" /></button>
+          <button onClick={() => setFlash('')} title="Dismiss" className="text-emerald-700"><X className="w-3.5 h-3.5" /></button>
         </div>
       ) : null}
       {!tiersReady ? (
@@ -410,7 +410,7 @@ export function FfeCatalog() {
               className="rounded-lg border border-line px-2 py-1.5 text-[12px]">
               {FFE_TIERS.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
             </select>
-            <button onClick={() => setImp(null)} className="text-muted hover:text-ink p-1"><X className="w-4 h-4" /></button>
+            <button onClick={() => setImp(null)} title="Discard this import" className="text-muted hover:text-ink p-1"><X className="w-4 h-4" /></button>
           </div>
 
           <div className="max-h-[22rem] overflow-auto">
@@ -450,7 +450,7 @@ export function FfeCatalog() {
                     <td className="px-3 py-1.5 text-muted">{r.vendor || '—'}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums font-semibold text-ink">{r.price == null ? '—' : money(r.price)}</td>
                     <td className="px-3 py-1.5">
-                      {r.url ? <a href={r.url} target="_blank" rel="noreferrer" className="text-muted hover:text-ink"><ExternalLink className="w-3.5 h-3.5" /></a> : null}
+                      {r.url ? <a href={r.url} target="_blank" rel="noreferrer" title="Open product page" className="text-muted hover:text-ink"><ExternalLink className="w-3.5 h-3.5" /></a> : null}
                     </td>
                   </tr>
                 ))}
@@ -672,7 +672,7 @@ export function FfeCatalog() {
                             <div className="text-[12.5px] font-semibold text-ink flex items-center gap-1.5 flex-wrap">
                               {sc.vendor}
                               {sc.member_price ? <span className="text-[9px] font-bold uppercase px-1 py-0.5 rounded bg-emerald-100 text-emerald-700">member rate</span> : null}
-                              {sc.url ? <a href={sc.url} target="_blank" rel="noreferrer" className="text-muted hover:text-ink"><ExternalLink className="w-3 h-3" /></a> : null}
+                              {sc.url ? <a href={sc.url} target="_blank" rel="noreferrer" title="Open product page" className="text-muted hover:text-ink"><ExternalLink className="w-3 h-3" /></a> : null}
                             </div>
                             <div className="text-[11px] text-muted">
                               {[sc.vendor_sku, sc.lead_time_days ? sc.lead_time_days + ' day lead' : '', sc.note].filter(Boolean).join(' · ') || '—'}

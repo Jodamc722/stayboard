@@ -422,7 +422,7 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, building, code…"
               className="rounded-lg border border-line pl-7 pr-6 py-1 text-[12px] w-full" />
             {q.trim() && (
-              <button onClick={() => setQ('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>
+              <button onClick={() => setQ('')} aria-label="Clear search" title="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>
             )}
           </div>
           <button onClick={() => { setEditing(null); setForm({ ...EMPTY, property_id: (props.find(p => p.enabled) || props[0] || { id: '' }).id }) }}

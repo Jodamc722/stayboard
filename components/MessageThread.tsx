@@ -94,7 +94,7 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
           <div className="bg-white rounded-2xl border border-line shadow-xl w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-3 border-b border-line flex items-center justify-between">
               <h3 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><CalendarDays size={15} className="text-brand-600" /> Reservation</h3>
-              <button onClick={() => setShowRes(false)} className="text-muted hover:text-ink"><X size={16} /></button>
+              <button onClick={() => setShowRes(false)} title="Close" className="text-muted hover:text-ink"><X size={16} /></button>
             </div>
             {/* Ten rows of detail plus a header and a footer is taller than a phone in landscape,
                 and the card is centred in the overlay — without an inner scroller the top and

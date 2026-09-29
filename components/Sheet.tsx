@@ -65,7 +65,7 @@ export function Sheet({ open, onClose, title, subtitle, children, footer, wide }
             <p className="text-[15px] font-bold text-ink leading-tight">{title}</p>
             {subtitle ? <div className="text-[12px] text-muted mt-0.5">{subtitle}</div> : null}
           </div>
-          <button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink p-1 -m-1 rounded-lg hover:bg-app shrink-0">
+          <button onClick={onClose} aria-label="Close" title="Close" className="text-muted hover:text-ink p-1 -m-1 rounded-lg hover:bg-app shrink-0">
             <X size={17} />
           </button>
         </div>

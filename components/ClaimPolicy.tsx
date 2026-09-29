@@ -71,7 +71,7 @@ export function ClaimPolicyPanel({ onClose, onSaved }: { onClose: () => void; on
       <div className="flex items-center gap-2 mb-1">
         <CalendarClock size={14} className="text-muted" />
         <span className="text-sm font-semibold text-ink">Filing policy by channel</span>
-        <button onClick={onClose} className="ml-auto text-muted hover:text-ink"><X size={15} /></button>
+        <button onClick={onClose} title="Close" className="ml-auto text-muted hover:text-ink"><X size={15} /></button>
       </div>
       <p className="text-[12px] text-muted mb-3">
         <span className="font-medium text-ink">Window</span> is the channel&rsquo;s hard cutoff, in days after checkout &mdash; miss it and the claim is worth nothing.{' '}

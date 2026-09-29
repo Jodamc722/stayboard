@@ -274,7 +274,7 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
           onDragOver={e => { e.preventDefault(); setDragOver(true) }} onDragLeave={e => { e.preventDefault(); setDragOver(false) }}
           onDrop={e => { if (e.dataTransfer?.files?.length) { e.preventDefault(); setDragOver(false); onFiles(e.dataTransfer.files) } }}>
           {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700">{error}</div>}
-          {pushMsg && <div className="rounded-xl border border-brand-200 bg-brand-50 px-3.5 py-2.5 text-[13px] text-brand-700 flex items-center justify-between gap-2"><span>{pushMsg}</span><button onClick={() => setPushMsg(null)} className="text-muted hover:text-ink"><X size={13} /></button></div>}
+          {pushMsg && <div className="rounded-xl border border-brand-200 bg-brand-50 px-3.5 py-2.5 text-[13px] text-brand-700 flex items-center justify-between gap-2"><span>{pushMsg}</span><button onClick={() => setPushMsg(null)} title="Dismiss" className="text-muted hover:text-ink"><X size={13} /></button></div>}
 
           {/* Layout picker */}
           <div className="flex items-center gap-1.5 flex-wrap">

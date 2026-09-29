@@ -271,7 +271,7 @@ export function GuestOrderStudio({ canEdit, isOwner }: { canEdit: boolean; isOwn
           <div className="fixed inset-y-0 right-0 z-40 w-[380px] max-w-full overflow-y-auto bg-white border-l border-line shadow-lifted p-4 space-y-3 xl:static xl:inset-auto xl:w-auto xl:max-w-none xl:overflow-visible xl:rounded-2xl xl:border xl:shadow-none xl:sticky xl:top-4">
             <div className="flex items-center justify-between">
               <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">{cur._new ? 'New item' : 'Edit item'}</div>
-              <button onClick={() => setSel(null)} className="text-muted hover:text-ink"><X size={16} /></button>
+              <button onClick={() => setSel(null)} title="Close" className="text-muted hover:text-ink"><X size={16} /></button>
             </div>
             <div className="flex gap-3">
               <label className={'relative block w-24 h-24 rounded-2xl overflow-hidden border border-line bg-app flex-shrink-0 ' + (ro ? '' : 'cursor-pointer hover:border-brand-300')} title="Photo">

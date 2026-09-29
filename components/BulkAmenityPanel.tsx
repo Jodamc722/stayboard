@@ -62,7 +62,7 @@ export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: s
     <section className="rounded-2xl border border-brand-200 bg-white p-4 mb-5">
       <div className="flex items-center justify-between gap-2 mb-3">
         <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><Sparkles size={14} className="text-brand-600" /> Bulk amenities</h2>
-        <button onClick={() => setOpenPanel(false)} className="text-muted hover:text-ink"><X size={16} /></button>
+        <button onClick={() => setOpenPanel(false)} title="Close" className="text-muted hover:text-ink"><X size={16} /></button>
       </div>
 
       {!results && (

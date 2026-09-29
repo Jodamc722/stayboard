@@ -116,7 +116,7 @@ function VendorPop({ vendorKey, name, anchor, onClose, pinned }: { vendorKey: st
           </p>
         </div>
         {v?.regular && <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 ring-1 ring-amber-200"><Star size={9} /> Regular</span>}
-        {pinned && <button onClick={onClose} className="shrink-0 text-muted hover:text-ink"><X size={13} /></button>}
+        {pinned && <button onClick={onClose} title="Close" className="shrink-0 text-muted hover:text-ink"><X size={13} /></button>}
       </div>
       {s === undefined && <div className="px-3 py-4 text-muted inline-flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Looking them up…</div>}
       {s === null && <div className="px-3 py-3 text-muted">Nothing saved for this vendor yet. Pick them from the directory to keep their details.</div>}
@@ -251,7 +251,7 @@ export function VendorPicker({ value, onChange, vendors, disabled, placeholder, 
             )}
           </div>
           {!disabled && (
-            <button type="button" onClick={() => onChange({ ...blankVendorDraft(), save: value.save })} className="text-muted hover:text-rose-600 shrink-0"><X size={12} /></button>
+            <button type="button" onClick={() => onChange({ ...blankVendorDraft(), save: value.save })} title="Clear vendor" className="text-muted hover:text-rose-600 shrink-0"><X size={12} /></button>
           )}
         </div>
       </div>
@@ -350,7 +350,7 @@ export function VendorField({ vendorKey, vendorName, canEdit, busy, onPick }: {
           {chosen?.coi && chosen.coi.tone !== 'ok' && <p className={'text-[11px] font-bold ' + (chosen.coi.tone === 'bad' ? 'text-rose-700' : 'text-amber-700')}>{chosen.coi.label}</p>}
           {!chosen && vendorKey === null && canEdit && <button type="button" onClick={() => setEditing(true)} className="text-[11px] text-muted hover:text-ink">Not in the directory · pick or add</button>}
         </div>
-        {canEdit && <button type="button" onClick={() => onPick({ key: null, name: null })} disabled={busy} className="text-muted hover:text-rose-600 shrink-0"><X size={12} /></button>}
+        {canEdit && <button type="button" onClick={() => onPick({ key: null, name: null })} disabled={busy} title="Remove vendor" className="text-muted hover:text-rose-600 shrink-0"><X size={12} /></button>}
       </div>
     )
   }

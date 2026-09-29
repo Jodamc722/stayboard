@@ -316,9 +316,9 @@ function Stepper({ label, value, min, max, step = 1, onChange, render }: { label
   return (
     <div className="flex items-center gap-3">
       <span className="text-[14px] font-semibold text-ink flex-1">{label}</span>
-      <button type="button" onClick={() => onChange(Math.max(min, snap(value - step)))} className="w-11 h-11 rounded-xl border border-line bg-white grid place-items-center active:bg-app" aria-label={'Fewer ' + label}><Minus size={16} /></button>
+      <button type="button" onClick={() => onChange(Math.max(min, snap(value - step)))} className="w-11 h-11 rounded-xl border border-line bg-white grid place-items-center active:bg-app" aria-label={'Fewer ' + label} title={'Fewer ' + label}><Minus size={16} /></button>
       <span className="w-16 text-center text-[16px] font-bold tabular-nums">{render ? render(value) : value}</span>
-      <button type="button" onClick={() => onChange(Math.min(max, snap(value + step)))} className="w-11 h-11 rounded-xl border border-line bg-white grid place-items-center active:bg-app" aria-label={'More ' + label}><Plus size={16} /></button>
+      <button type="button" onClick={() => onChange(Math.min(max, snap(value + step)))} className="w-11 h-11 rounded-xl border border-line bg-white grid place-items-center active:bg-app" aria-label={'More ' + label} title={'More ' + label}><Plus size={16} /></button>
     </div>
   )
 }
@@ -408,12 +408,12 @@ function RoomView({ code, unit, room, items, allItems, onBack, act, reload, inde
   return (
     <div>
       <div className="flex items-center gap-2 mb-3">
-        <button onClick={onBack} className="w-11 h-11 rounded-xl border border-line bg-white grid place-items-center" aria-label="Back to rooms"><ChevronLeft size={18} /></button>
+        <button onClick={onBack} className="w-11 h-11 rounded-xl border border-line bg-white grid place-items-center" aria-label="Back to rooms" title="Back to rooms"><ChevronLeft size={18} /></button>
         <div className="flex-1 min-w-0">
           {renaming ? (
             <div className="flex gap-2">
               <input value={name} onChange={e => setName(e.target.value)} className={INPUT} autoFocus />
-              <button onClick={() => wrap(async () => { await act({ action: 'renameRoom', roomId: room.id, name }); setRenaming(false) })} className={BTN + ' bg-ink text-white'}><Check size={16} /></button>
+              <button onClick={() => wrap(async () => { await act({ action: 'renameRoom', roomId: room.id, name }); setRenaming(false) })} title="Save name" className={BTN + ' bg-ink text-white'}><Check size={16} /></button>
             </div>
           ) : (
             <button onClick={() => setRenaming(true)} className="text-left flex items-center gap-2 min-h-[44px]">
@@ -438,7 +438,7 @@ function RoomView({ code, unit, room, items, allItems, onBack, act, reload, inde
             {photos.map((p, i) => (
               <div key={p.url + i} className="relative aspect-square rounded-xl overflow-hidden bg-app">
                 <a href={p.url} target="_blank" rel="noreferrer"><img src={p.url} alt={p.caption || room.name} className="w-full h-full object-cover" /></a>
-                <button onClick={() => wrap(() => act({ action: 'removePhoto', roomId: room.id, url: p.url }))} className="absolute top-1 right-1 w-8 h-8 rounded-full bg-black/60 text-white grid place-items-center" aria-label="Remove photo"><X size={14} /></button>
+                <button onClick={() => wrap(() => act({ action: 'removePhoto', roomId: room.id, url: p.url }))} className="absolute top-1 right-1 w-8 h-8 rounded-full bg-black/60 text-white grid place-items-center" aria-label="Remove photo" title="Remove photo"><X size={14} /></button>
               </div>
             ))}
           </div>
@@ -515,9 +515,9 @@ function RoomView({ code, unit, room, items, allItems, onBack, act, reload, inde
 
       {err && <p className="text-[13px] text-rose-600 font-semibold mb-2">{err}</p>}
       <div className="sticky bottom-0 -mx-4 px-4 pt-2 pb-[calc(env(safe-area-inset-bottom)+8px)] bg-app/95 backdrop-blur border-t border-line flex gap-2 mb-2">
-        <button onClick={onPrev || onBack} className={BTN + ' border border-line bg-white text-ink px-3'} aria-label={onPrev ? 'Previous room' : 'All rooms'}><ChevronLeft size={16} /></button>
+        <button onClick={onPrev || onBack} className={BTN + ' border border-line bg-white text-ink px-3'} aria-label={onPrev ? 'Previous room' : 'All rooms'} title={onPrev ? 'Previous room' : 'All rooms'}><ChevronLeft size={16} /></button>
         <button onClick={() => wrap(async () => { await act({ action: 'checkRoom', roomId: room.id, checked: !room.checked_at }); if (!room.checked_at) onNext() })} className={BTN + ' flex-1 ' + (room.checked_at ? 'border border-emerald-300 bg-emerald-50 text-emerald-800' : 'bg-ink text-white')}>{room.checked_at ? <><CheckCircle2 size={16} /> Room done — tap to reopen</> : <><Check size={16} /> Room done{index < total - 1 ? ' → next room' : ' → finish'}</>}</button>
-        <button onClick={() => { if (confirm('Remove "' + room.name + '" and its ' + items.length + ' items?')) wrap(async () => { await act({ action: 'removeRoom', roomId: room.id }); onBack() }) }} className={BTN + ' border border-line bg-white text-muted'} aria-label="Remove room"><Trash2 size={16} /></button>
+        <button onClick={() => { if (confirm('Remove "' + room.name + '" and its ' + items.length + ' items?')) wrap(async () => { await act({ action: 'removeRoom', roomId: room.id }); onBack() }) }} className={BTN + ' border border-line bg-white text-muted'} aria-label="Remove room" title="Remove room"><Trash2 size={16} /></button>
       </div>
       <div className="flex justify-center gap-4 mb-4 text-[12.5px] font-semibold text-muted">
         <button onClick={onBack} className="min-h-[36px]">All rooms</button>
@@ -541,7 +541,7 @@ function ItemPicker({ room, items, onAdd }: { room: Room; items: Item[]; onAdd: 
       <div className="relative">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
         <input value={q} onChange={e => setQ(e.target.value)} className={INPUT + ' pl-9'} placeholder={'Add what\'s in the ' + room.name.toLowerCase() + '… (sofa, plates, hangers)'} inputMode="search" autoComplete="off" />
-        {q && <button onClick={() => setQ('')} className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center text-muted" aria-label="Clear"><X size={14} /></button>}
+        {q && <button onClick={() => setQ('')} className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center text-muted" aria-label="Clear" title="Clear"><X size={14} /></button>}
       </div>
       <div className="mt-2 flex gap-1.5 flex-wrap">
         {results.map(c => {
@@ -608,11 +608,11 @@ function ItemRow({ item: i, code, act, reload, onPhoto }: { item: Item; code: st
           <span className="block text-[11.5px] text-muted">{i.brand === 'size' || i.brand === 'model' ? 'add the ' + i.brand : CATEGORIES.find(c => c.key === i.category)?.label || i.category}{flagged ? <span className={'font-bold ' + (i.condition === 'fair' ? 'text-amber-700' : 'text-rose-700')}> · {i.condition}</span> : null}{i.photo_url ? ' · 📷' : ''}{i.notes ? ' · note' : ''}</span>
         </button>
         <div className="flex items-center gap-1 shrink-0">
-          <button onClick={() => bump(-1)} className="w-9 h-9 rounded-lg border border-line bg-white grid place-items-center" aria-label="One fewer"><Minus size={14} /></button>
+          <button onClick={() => bump(-1)} className="w-9 h-9 rounded-lg border border-line bg-white grid place-items-center" aria-label="One fewer" title="One fewer"><Minus size={14} /></button>
           <span className={'w-7 text-center text-[15px] font-bold tabular-nums ' + (short ? 'text-amber-700' : '')}>{qty}</span>
-          <button onClick={() => bump(1)} className="w-9 h-9 rounded-lg border border-line bg-white grid place-items-center" aria-label="One more"><Plus size={14} /></button>
-          <button onClick={() => setCondition(good ? null : 'good')} className={'ml-1 w-10 h-10 rounded-xl grid place-items-center border ' + (good ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-line text-emerald-700')} aria-label={good ? 'Confirmed good — tap to undo' : 'Here and good'}><Check size={18} strokeWidth={3} /></button>
-          <button onClick={() => setMore(m => !m)} className={'w-10 h-10 rounded-xl grid place-items-center border ' + (flagged ? (i.condition === 'fair' ? 'bg-amber-500 border-amber-500 text-white' : 'bg-rose-600 border-rose-600 text-white') : more ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted')} aria-label="Problem, photo or details"><AlertTriangle size={16} /></button>
+          <button onClick={() => bump(1)} className="w-9 h-9 rounded-lg border border-line bg-white grid place-items-center" aria-label="One more" title="One more"><Plus size={14} /></button>
+          <button onClick={() => setCondition(good ? null : 'good')} className={'ml-1 w-10 h-10 rounded-xl grid place-items-center border ' + (good ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-line text-emerald-700')} aria-label={good ? 'Confirmed good — tap to undo' : 'Here and good'} title={good ? 'Confirmed good — tap to undo' : 'Here and good'}><Check size={18} strokeWidth={3} /></button>
+          <button onClick={() => setMore(m => !m)} className={'w-10 h-10 rounded-xl grid place-items-center border ' + (flagged ? (i.condition === 'fair' ? 'bg-amber-500 border-amber-500 text-white' : 'bg-rose-600 border-rose-600 text-white') : more ? 'bg-ink border-ink text-white' : 'bg-white border-line text-muted')} aria-label="Problem, photo or details" title="Problem, photo or details"><AlertTriangle size={16} /></button>
         </div>
       </div>
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { onPhoto(e.target.files); e.target.value = '' }} />

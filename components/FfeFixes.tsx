@@ -91,7 +91,7 @@ export function FfeFixes() {
       {err ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-700">{err}</div> : null}
       {msg ? (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-[12.5px] text-emerald-800 flex items-center gap-2">
-          {msg}<button onClick={() => setMsg('')} className="ml-auto"><X className="w-3.5 h-3.5" /></button>
+          {msg}<button onClick={() => setMsg('')} title="Dismiss" className="ml-auto"><X className="w-3.5 h-3.5" /></button>
         </div>
       ) : null}
 

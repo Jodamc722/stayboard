@@ -68,7 +68,7 @@ export function PhotoEditor({ itemId, name, url, onDone, onClose }: {
       <div onClick={e => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-3 border-b border-line">
           <div className="text-[14px] font-semibold text-ink">{name} · photo</div>
-          <button onClick={onClose} className="text-muted hover:text-ink"><X size={16} /></button>
+          <button onClick={onClose} title="Close" className="text-muted hover:text-ink"><X size={16} /></button>
         </div>
 
         <div className="p-5 grid md:grid-cols-[1fr_240px] gap-5">

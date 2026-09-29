@@ -429,7 +429,7 @@ function RowLine({ row, today, busy, roster, selected, onToggle, onSchedule, onA
                 {row.group.tasks.map(t => (
                   <p key={t.id} className={t.id === row.group.keepId ? 'text-muted' : 'text-rose-700'}>
                     {t.id === row.group.keepId ? 'kept' : 'extra'} &middot; {t.name}{t.assignees?.length ? ` · ${t.assignees.join(', ')}` : ' · nobody named'}
-                    <a href={bzTask(t.id)} target="_blank" rel="noreferrer" className="ml-1.5 text-muted hover:text-ink"><ExternalLink size={10} className="inline" /></a>
+                    <a href={bzTask(t.id)} target="_blank" rel="noreferrer" title="Open in Breezeway" className="ml-1.5 text-muted hover:text-ink"><ExternalLink size={10} className="inline" /></a>
                   </p>
                 ))}
               </div>

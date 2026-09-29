@@ -67,7 +67,7 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
     <section className="rounded-2xl border border-brand-200 bg-white p-4 mb-5">
       <div className="flex items-center justify-between gap-2 mb-3">
         <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><SlidersHorizontal size={14} className="text-brand-600" /> Bulk set policies</h2>
-        <button onClick={() => setOpen(false)} className="text-muted hover:text-ink"><X size={16} /></button>
+        <button onClick={() => setOpen(false)} title="Close" className="text-muted hover:text-ink"><X size={16} /></button>
       </div>
 
       {results ? (

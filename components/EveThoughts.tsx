@@ -152,7 +152,7 @@ export function ThoughtCard({ t, compact, onDone }: { t: Thought; compact?: bool
   return (
     <div className={`py-2.5 ${compact ? 'px-3' : ''} ${t.unseen ? 'bg-brand-50/30' : ''}`}>
       <div className="flex items-start gap-2">
-        {compact && <button onClick={() => setOpen(o => !o)} aria-expanded={open} className="mt-0.5 text-muted hover:text-ink">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button>}
+        {compact && <button onClick={() => setOpen(o => !o)} aria-expanded={open} title={open ? 'Hide details' : 'Show details'} className="mt-0.5 text-muted hover:text-ink">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button>}
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
             <span>{when(t.createdAt)}</span>

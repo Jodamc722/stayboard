@@ -59,9 +59,9 @@ export default function UnitCalendar({ listingId, value, onChange, compact }: { 
   return (
     <div className={'rounded-xl border border-line bg-white ' + (compact ? 'p-2' : 'p-3')}>
       <div className="flex items-center gap-2 mb-2">
-        <button type="button" onClick={() => setCursor(addMonths(cursor, -1))} className="p-1 rounded-md border border-line text-muted hover:text-ink hover:bg-app"><ChevronLeft size={14} /></button>
+        <button type="button" onClick={() => setCursor(addMonths(cursor, -1))} title="Previous month" className="p-1 rounded-md border border-line text-muted hover:text-ink hover:bg-app"><ChevronLeft size={14} /></button>
         <div className="text-[13px] font-bold text-ink">{label}</div>
-        <button type="button" onClick={() => setCursor(addMonths(cursor, 1))} className="p-1 rounded-md border border-line text-muted hover:text-ink hover:bg-app"><ChevronRight size={14} /></button>
+        <button type="button" onClick={() => setCursor(addMonths(cursor, 1))} title="Next month" className="p-1 rounded-md border border-line text-muted hover:text-ink hover:bg-app"><ChevronRight size={14} /></button>
         <button type="button" onClick={() => { setCursor(monthStart(today)); onChange(today) }} className="ml-auto text-[11px] font-semibold px-2 py-1 rounded-md border border-line text-muted hover:text-ink hover:bg-app">Today</button>
         {loading && <span className="text-[10px] text-muted">loading…</span>}
       </div>

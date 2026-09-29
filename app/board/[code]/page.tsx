@@ -593,7 +593,7 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
           return (
             <div className="fb-sheet" onClick={e => { if (e.target === e.currentTarget) setUnitOpen('') }}>
               <div className="fb-sheetbox">
-                <div className="fb-sheettop"><b>{u.name}</b><button className="fb-x" onClick={() => setUnitOpen('')}>✕</button></div>
+                <div className="fb-sheettop"><b>{u.name}</b><button className="fb-x" title="Close" onClick={() => setUnitOpen('')}>✕</button></div>
 
                 <div className="fb-chips">
                   {u.clean ? <span className={'fb-pill ' + (/done/i.test(String(st)) ? 'ok' : /progress/i.test(String(st)) ? 'warn' : 'off')}>clean {st || 'not scheduled'}</span> : null}
@@ -623,7 +623,7 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
             {addOpen ? (
               <div className="fb-sheet" onClick={e => { if (e.target === e.currentTarget) setAddOpen(false) }}>
                 <div className="fb-sheetbox">
-                  <div className="fb-sheettop"><b>Add a job</b><button className="fb-x" onClick={() => setAddOpen(false)}>✕</button></div>
+                  <div className="fb-sheettop"><b>Add a job</b><button className="fb-x" title="Close" onClick={() => setAddOpen(false)}>✕</button></div>
                   <label className="fb-lab">Unit</label>
                   {addUnit && unitIndex[addUnit] ? (
                     <div className="fb-fixed">

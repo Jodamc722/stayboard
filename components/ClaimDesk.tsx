@@ -413,7 +413,7 @@ function ItemCard({ claimId, item, index, onItems, setErr }: { claimId: string; 
         <span className={'text-[11px] font-bold px-1.5 py-0.5 rounded ' + (ok ? 'bg-emerald-600 text-white' : 'bg-ink text-white')}>Item {index + 1}</span>
         {ok ? <span className="text-[11px] text-emerald-700 font-medium inline-flex items-center gap-1"><Check size={11} /> Complete</span>
           : <span className="text-[11px] text-muted">Needs description, condition, age, cost, replacement link and a photo</span>}
-        <button onClick={remove} disabled={busy} className="ml-auto text-muted hover:text-rose-700"><Trash2 size={14} /></button>
+        <button onClick={remove} disabled={busy} title="Remove this item" className="ml-auto text-muted hover:text-rose-700"><Trash2 size={14} /></button>
       </div>
 
       <textarea value={v.description || ''} onChange={e => setV({ ...v, description: e.target.value })} onBlur={() => save()}
@@ -469,7 +469,7 @@ function ItemCard({ claimId, item, index, onItems, setErr }: { claimId: string; 
             <FileText size={11} /> Receipt attached
           </a>
         )}
-        {v.receipt_url && <button onClick={() => save({ receipt_url: null })} className="text-muted hover:text-rose-700"><X size={12} /></button>}
+        {v.receipt_url && <button onClick={() => save({ receipt_url: null })} title="Remove receipt" className="text-muted hover:text-rose-700"><X size={12} /></button>}
       </div>
 
       {photos.length > 0 && (
@@ -481,7 +481,7 @@ function ItemCard({ claimId, item, index, onItems, setErr }: { claimId: string; 
                   ? <img src={fileHref(p)} alt="" className="w-16 h-16 object-cover rounded-lg border border-line" />
                   : <span className="w-16 h-16 rounded-lg border border-line bg-white flex items-center justify-center"><FileText size={16} className="text-muted" /></span>}
               </a>
-              <button onClick={() => save({ photo_urls: photos.filter((_, j) => j !== i) })}
+              <button onClick={() => save({ photo_urls: photos.filter((_, j) => j !== i) })} title="Remove this photo"
                 className="absolute -top-1 -right-1 bg-white border border-line rounded-full p-0.5 text-muted hover:text-rose-700 opacity-0 group-hover:opacity-100">
                 <X size={10} />
               </button>

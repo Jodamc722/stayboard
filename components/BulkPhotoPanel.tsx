@@ -122,7 +122,7 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
     <section className="rounded-2xl border border-brand-200 bg-white p-4 mb-5 w-full">
       <div className="flex items-center justify-between gap-2 mb-1">
         <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><Images size={14} className="text-brand-600" /> Organize photos by room</h2>
-        <button onClick={() => setOpen(false)} className="text-muted hover:text-ink"><X size={16} /></button>
+        <button onClick={() => setOpen(false)} title="Close" className="text-muted hover:text-ink"><X size={16} /></button>
       </div>
       <p className="text-[12px] text-muted mb-3">Groups each unit's photos by room type and adds a short room description (caption) to each. The first 5 photos always keep their current order. Nothing changes on Guesty until you push.</p>
 

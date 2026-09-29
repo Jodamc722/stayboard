@@ -98,7 +98,7 @@ export function Scoreboard() {
             <span className="text-[12.5px] font-bold text-ink">{tile.label}</span>
             <span className="text-[11.5px] text-muted truncate">{tile.value}{tile.sub ? ' · ' + tile.sub : ''}</span>
             {tile.delta && <DeltaTag d={tile.delta} vs={tile.vs} />}
-            <button onClick={() => setOpen(null)} className={ICON_BTN + ' ml-auto text-muted hover:text-ink'} aria-label="Close"><X size={15} /></button>
+            <button onClick={() => setOpen(null)} className={ICON_BTN + ' ml-auto text-muted hover:text-ink'} aria-label="Close" title="Close"><X size={15} /></button>
           </div>
           {tile.degraded && (
             <p className="px-4 py-2 text-[12px] text-amber-800 flex items-center gap-1.5 border-b border-line"><AlertTriangle size={12} /> Could not read this one: {tile.degraded}</p>

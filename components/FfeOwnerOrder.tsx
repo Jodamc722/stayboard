@@ -303,7 +303,7 @@ export function FfeOwnerOrder({ code }: { code: string }) {
                               {l.product || (lang === 'en' ? l.itemEn : l.itemEs)}
                             </span>
                             {l.code ? <span className="text-[10px] font-mono text-neutral-400">{l.code}</span> : null}
-                            {l.url ? <a href={l.url} target="_blank" rel="noreferrer" className="text-neutral-400"><ExternalLink className="w-3 h-3" /></a> : null}
+                            {l.url ? <a href={l.url} target="_blank" rel="noreferrer" title={lang === 'en' ? 'See the product' : 'Ver el producto'} className="text-neutral-400"><ExternalLink className="w-3 h-3" /></a> : null}
                             {l.priority && TIER_T[l.priority] ? (
                               <span className={'text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' + TIER_T[l.priority].cls}>
                                 {TIER_T[l.priority][lang]}
@@ -331,11 +331,11 @@ export function FfeOwnerOrder({ code }: { code: string }) {
                           <div className="text-[13px] font-bold text-neutral-900 tabular-nums">{usd(l.lineTotal)}</div>
                           {!l.locked ? (
                             <div className="mt-1 inline-flex items-center rounded-lg overflow-hidden border border-neutral-200">
-                              <button onClick={() => choose(l.id, 'yes')}
+                              <button onClick={() => choose(l.id, 'yes')} title={lang === 'en' ? 'Yes, order this' : 'Sí, pedirlo'}
                                 className={'px-2 py-1 text-[11px] font-bold ' + (!off ? 'bg-emerald-600 text-white' : 'text-neutral-400')}>
                                 <Check className="w-3 h-3" />
                               </button>
-                              <button onClick={() => choose(l.id, 'no')}
+                              <button onClick={() => choose(l.id, 'no')} title={lang === 'en' ? 'No, skip this' : 'No, omitirlo'}
                                 className={'px-2 py-1 text-[11px] font-bold ' + (off ? 'bg-neutral-800 text-white' : 'text-neutral-400')}>
                                 <X className="w-3 h-3" />
                               </button>

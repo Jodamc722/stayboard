@@ -160,7 +160,7 @@ export function ProjectsRail() {
       {/* Phone: a bar that names where you are and opens the same list. */}
       <div className="lg:hidden shrink-0 border-b border-line bg-white px-3 py-2 pt-safe-keep">
         <div className="flex items-center gap-2">
-          <button onClick={menu.open} aria-label="Open the Lighthouse menu" className="w-10 h-10 rounded-lg border border-line grid place-items-center text-muted hover:text-ink shrink-0"><Menu size={18} /></button>
+          <button onClick={menu.open} aria-label="Open the Lighthouse menu" title="Open the Lighthouse menu" className="w-10 h-10 rounded-lg border border-line grid place-items-center text-muted hover:text-ink shrink-0"><Menu size={18} /></button>
           <button onClick={() => setMobileOpen(o => !o)}
             className="flex-1 min-w-0 flex items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink text-left">
             <KanbanSquare size={14} className="text-muted" />

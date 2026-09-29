@@ -2397,7 +2397,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 <X size={11} /> Remove current
               </button>
             )}
-            <button onClick={() => setPicker(false)} className="ml-auto" style={{ color: t.muted }}><X size={14} /></button>
+            <button onClick={() => setPicker(false)} title="Close" className="ml-auto" style={{ color: t.muted }}><X size={14} /></button>
           </div>
           {pool === null ? (
             <p className="mt-2 text-[12px] italic" style={{ color: t.muted }}>Loading listing photos&hellip;</p>
@@ -2421,7 +2421,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 w-[min(680px,92vw)] rounded-2xl shadow-xl border p-4" style={{ background: t.card, borderColor: t.toolbarBorder }}>
           <div className="flex items-center gap-2">
             <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: t.gold }}>AI EDIT &middot; {aiKey}</p>
-            <button onClick={() => setAiKey(null)} className="ml-auto" style={{ color: t.muted }}><X size={14} /></button>
+            <button onClick={() => setAiKey(null)} title="Close" className="ml-auto" style={{ color: t.muted }}><X size={14} /></button>
           </div>
           <textarea
             value={aiPrompt}
@@ -2439,7 +2439,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             {aiFiles.map((u, i) => (
               <span key={i} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px]" style={{ background: t.chip, color: t.sub }}>
                 file {i + 1}
-                <button onClick={() => setAiFiles(aiFiles.filter((_x, xi) => xi !== i))} style={{ color: t.accent }}><X size={11} /></button>
+                <button onClick={() => setAiFiles(aiFiles.filter((_x, xi) => xi !== i))} title="Remove this file" style={{ color: t.accent }}><X size={11} /></button>
               </span>
             ))}
             <button onClick={runAi} disabled={aiBusy || !aiPrompt.trim()} className="ml-auto inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.accent, color: t.card }}>
@@ -2759,7 +2759,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             <div className="rounded-2xl shadow-2xl" style={{ width: 340, maxHeight: '62vh', display: 'flex', flexDirection: 'column', background: t.card, border: '1px solid ' + t.toolbarBorder }}>
               <div className="flex items-center justify-between" style={{ padding: '10px 14px', borderBottom: '1px solid ' + t.rule }}>
                 <span style={{ fontSize: 12.5, fontWeight: 700, color: t.ink }}>Presenter notes</span>
-                <button onClick={() => setNotesOpen(false)} style={{ color: t.muted }} aria-label="Close notes"><X size={14} /></button>
+                <button onClick={() => setNotesOpen(false)} style={{ color: t.muted }} aria-label="Close notes" title="Close notes"><X size={14} /></button>
               </div>
               <div style={{ padding: '10px 14px', borderBottom: '1px solid ' + t.rule }}>
                 <textarea
@@ -2853,7 +2853,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             <div className="flex items-center gap-2">
               <Lock size={14} style={{ color: t.accent }} />
               <p className="text-[13px] font-bold" style={{ color: t.ink }}>{pwMode === 'set' ? 'Set the team edit password' : 'Unlock editing'}</p>
-              <button onClick={() => setPwMode(null)} className="ml-auto" style={{ color: t.muted }}><X size={15} /></button>
+              <button onClick={() => setPwMode(null)} title="Close" className="ml-auto" style={{ color: t.muted }}><X size={15} /></button>
             </div>
             <p className="mt-1.5 text-[12px]" style={{ color: t.sub }}>
               {pwMode === 'set' ? 'Teammates can edit any report by opening its link and entering this password.' : 'Enter the team password to edit this report on this device.'}
@@ -2880,10 +2880,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           <button onClick={exitPresent} className="fixed top-4 right-4 z-[60] inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[12px] font-semibold shadow-lg" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
             <X size={13} /> Exit
           </button>
-          <button onClick={() => goTo(slide - 1)} disabled={slide <= 0} className="fixed left-3 top-1/2 -translate-y-1/2 z-[60] rounded-full p-2.5 shadow-lg disabled:opacity-25" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
+          <button onClick={() => goTo(slide - 1)} disabled={slide <= 0} title="Previous slide" className="fixed left-3 top-1/2 -translate-y-1/2 z-[60] rounded-full p-2.5 shadow-lg disabled:opacity-25" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
             <ChevronLeft size={22} />
           </button>
-          <button onClick={() => goTo(slide + 1)} disabled={slide >= presentCount - 1} className="fixed right-3 top-1/2 -translate-y-1/2 z-[60] rounded-full p-2.5 shadow-lg disabled:opacity-25" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
+          <button onClick={() => goTo(slide + 1)} disabled={slide >= presentCount - 1} title="Next slide" className="fixed right-3 top-1/2 -translate-y-1/2 z-[60] rounded-full p-2.5 shadow-lg disabled:opacity-25" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
             <ChevronRight size={22} />
           </button>
           {isOnboarding && navNames.length ? (
@@ -2982,7 +2982,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             <div onClick={e => e.stopPropagation()} className="rounded-2xl w-full max-w-3xl max-h-[86vh] overflow-auto p-5" style={{ background: t.card, border: '1px solid ' + t.cardBorder }}>
               <div className="flex items-center justify-between gap-4 mb-1">
                 <p className="text-[15px] font-semibold" style={{ color: t.ink }}>{propPick.name}</p>
-                <button onClick={() => setPropPick(null)} className="rounded-full p-1.5" style={{ color: t.sub }}><X size={16} /></button>
+                <button onClick={() => setPropPick(null)} title="Close" className="rounded-full p-1.5" style={{ color: t.sub }}><X size={16} /></button>
               </div>
               <p className="text-[12.5px] mb-4" style={{ color: propMsg ? t.gold : t.muted }}>{propMsg || 'Pick a photo. It is saved for every onboarding deck, not just this one.'}</p>
               {groups.length > 1 && (
@@ -3035,7 +3035,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             style={{ background: t.card, border: '1px solid ' + t.cardBorder }}>
             <div className="flex items-center justify-between gap-4 mb-4">
               <p className="text-[15px] font-semibold" style={{ color: t.ink }}>{photoPick.title}</p>
-              <button onClick={() => { setPhotoPick(null); setPhotoUrl('') }} className="rounded-full p-1.5" style={{ color: t.sub }}><X size={16} /></button>
+              <button onClick={() => { setPhotoPick(null); setPhotoUrl('') }} title="Close" className="rounded-full p-1.5" style={{ color: t.sub }}><X size={16} /></button>
             </div>
             {/* UPLOAD FIRST, because it is the answer for every photo that is not already on
                 the listing — headshots above all (Jon, 2026-09-17: "have upload path for all
@@ -7026,7 +7026,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 return (
                 <div key={card.key || i} className="relative rounded-2xl p-5 shadow-sm border flex flex-col" style={{ background: t.card, borderColor: t.cardBorder }}>
                   {edit && (
-                    <button onClick={() => mutate(d => d.snapshot.cards.splice(i, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
+                    <button onClick={() => mutate(d => d.snapshot.cards.splice(i, 1))} title="Remove this card" className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
                   )}
                   <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: t.accent }}>
                     <Ed v={card.label || ''} set={v => patch('snapshot.cards.' + i + '.label', v)} edit={edit} />
@@ -7159,7 +7159,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   return (
                   <div key={s.key || i} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
                     {edit && (
-                      <button onClick={() => mutate(d => d.snaps.splice(i, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
+                      <button onClick={() => mutate(d => d.snaps.splice(i, 1))} title="Remove this card" className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
                     )}
                     <p className="text-sm font-black tracking-[0.14em] pr-5" style={{ color: t.accent }}>
                       <Ed v={s.label || ''} set={v => patch('snaps.' + i + '.label', v)} edit={edit} />
@@ -7318,7 +7318,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 {(c.pacing.rows || []).map((r: Any, i: number) => (
                   <div key={i} className="sb-pacerow relative rounded-2xl p-5 shadow-sm border grid items-center gap-3" style={{ background: t.card, borderColor: t.cardBorder, gridTemplateColumns: 'minmax(6rem,1.15fr) 1fr 1fr minmax(5rem,1fr)' }}>
                     {edit && (
-                      <button onClick={() => mutate(d => d.pacing.rows.splice(i, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
+                      <button onClick={() => mutate(d => d.pacing.rows.splice(i, 1))} title="Remove this row" className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
                     )}
                     <div className="sb-pace-span text-sm font-bold" style={{ color: t.ink }}>{r.metric}</div>
                     <div className="text-center">
@@ -7353,7 +7353,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 {(plan.months || []).map((m: Any, mi: number) => (
                   <div key={mi} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
                     {edit && (
-                      <button onClick={() => mutate(d => d.plan.months.splice(mi, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
+                      <button onClick={() => mutate(d => d.plan.months.splice(mi, 1))} title="Remove this month" className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
                     )}
                     <div className="flex items-center gap-2.5">
                       <span className="text-sm font-black tracking-[0.14em]">{m.label}</span>
@@ -7703,7 +7703,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   {(c.statement.items || []).map((it: Any, i: number) => (
                     <div key={i} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
                       {edit && (
-                        <button onClick={() => mutate(d => d.statement.items.splice(i, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
+                        <button onClick={() => mutate(d => d.statement.items.splice(i, 1))} title="Remove this line" className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
                       )}
                       <p className="text-sm font-bold"><Ed v={it.title || ''} set={v => patch('statement.items.' + i + '.title', v)} edit={edit} /></p>
                       <p className="text-[13px] mt-1" style={{ color: t.body }}><Ed v={it.summary || ''} set={v => patch('statement.items.' + i + '.summary', v)} edit={edit} multiline /></p>
@@ -7748,7 +7748,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 return (
                 <div key={i} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
                   {edit && (
-                    <button onClick={() => mutate(d => d.ahead.months.splice(i, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
+                    <button onClick={() => mutate(d => d.ahead.months.splice(i, 1))} title="Remove this month" className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
                   )}
                   <div className="flex items-center gap-2.5">
                     <span className="text-sm font-black tracking-[0.14em]"><Ed v={m.label || ''} set={v => patch('ahead.months.' + i + '.label', v)} edit={edit} /></span>
@@ -7888,7 +7888,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     {projection.upsides.map((r: Any, i: number) => (
                       <div key={i} className="flex items-start gap-2.5 text-[13px]" style={{ color: t.body }}>
                         {edit && (
-                          <button onClick={() => mutate(d => d.projection.upsides.splice(i, 1))} style={{ color: t.accent }} className="mt-0.5"><X size={12} /></button>
+                          <button onClick={() => mutate(d => d.projection.upsides.splice(i, 1))} title="Remove this line" style={{ color: t.accent }} className="mt-0.5"><X size={12} /></button>
                         )}
                         <span className="shrink-0 text-[11px] font-black px-1.5 py-0.5 rounded-md tabular-nums" style={{ background: t.accentSoft || '#ecfdf5', color: t.accent }}>+{r.adrPct}% ADR</span>
                         <span><b>{r.unit}:</b> <Ed v={r.text || ''} set={v => patch('projection.upsides.' + i + '.text', v)} edit={edit} multiline /></span>
@@ -7954,7 +7954,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               {(voices.quotes || []).map((q: Any, i: number) => (
                 <div key={i} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>
                   {edit && (
-                    <button onClick={() => mutate(d => d.voices.quotes.splice(i, 1))} className="absolute top-2 right-2 rounded-full p-1 hover:bg-red-50" style={{ color: t.accent }}><X size={13} /></button>
+                    <button onClick={() => mutate(d => d.voices.quotes.splice(i, 1))} title="Remove this quote" className="absolute top-2 right-2 rounded-full p-1 hover:bg-red-50" style={{ color: t.accent }}><X size={13} /></button>
                   )}
                   <span className="text-4xl leading-none font-serif" style={{ color: t.gold }}>“</span>
                   <p className="mt-1 text-[14px] leading-relaxed" style={{ color: t.body }}>
@@ -7998,7 +7998,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 {(voices.themes || []).map((t: Any, i: number) => (
                   <div key={i} className="relative border-l-2 pl-4" style={{ borderColor: t.accent }}>
                     {edit && (
-                      <button onClick={() => mutate(d => d.voices.themes.splice(i, 1))} className="absolute top-0 right-0 rounded-full p-1 text-white/50 hover:text-white"><X size={13} /></button>
+                      <button onClick={() => mutate(d => d.voices.themes.splice(i, 1))} title="Remove this theme" className="absolute top-0 right-0 rounded-full p-1 text-white/50 hover:text-white"><X size={13} /></button>
                     )}
                     <p className="text-sm font-bold"><Ed v={t.title || ''} set={v => patch('voices.themes.' + i + '.title', v)} edit={edit} /></p>
                     <p className="text-[13px] text-white/75 mt-0.5"><Ed v={t.body || ''} set={v => patch('voices.themes.' + i + '.body', v)} edit={edit} multiline /></p>
@@ -8033,7 +8033,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               {(projects.weeks || []).map((w: Any, wi: number) => (
                 <div key={wi} className="relative rounded-2xl p-5 shadow-sm border h-full flex flex-col" style={{ background: t.card, borderColor: t.cardBorder }}>
                   {edit && (
-                    <button onClick={() => mutate(d => d.projects.weeks.splice(wi, 1))} className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
+                    <button onClick={() => mutate(d => d.projects.weeks.splice(wi, 1))} title="Remove this week" className="absolute top-2 right-2" style={{ color: t.accent }}><X size={13} /></button>
                   )}
                   <p className="text-[11px] font-black tracking-[0.16em] pb-2 border-b" style={{ color: t.accent, borderColor: t.rule }}>
                     <Ed v={w.label || ''} set={v => patch('projects.weeks.' + wi + '.label', v)} edit={edit} />
@@ -8049,7 +8049,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             <span className="absolute left-0 top-[7px] w-1 h-1 rounded-full" style={{ background: t.gold }} />
                             <Ed v={it} set={v => patch('projects.weeks.' + wi + '.groups.' + gi + '.items.' + ii, v)} edit={edit} multiline />
                             {edit && (
-                              <button onClick={() => mutate(d => d.projects.weeks[wi].groups[gi].items.splice(ii, 1))} className="absolute -left-4 top-0.5" style={{ color: t.accent }}><X size={11} /></button>
+                              <button onClick={() => mutate(d => d.projects.weeks[wi].groups[gi].items.splice(ii, 1))} title="Remove this item" className="absolute -left-4 top-0.5" style={{ color: t.accent }}><X size={11} /></button>
                             )}
                           </li>
                         ))}
@@ -8078,7 +8078,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         <li key={i} className="relative text-[12.5px] leading-snug pl-3" style={{ color: t.body }}>
                           <span className="absolute left-0 top-[7px] w-1 h-1 rounded-full" style={{ background: t.gold }} />
                           <Ed v={String(it)} set={v => patch('projects.manual.' + i, v)} edit={edit} multiline />
-                          {edit && (<button onClick={() => mutate(d => d.projects.manual.splice(i, 1))} className="absolute -left-4 top-0.5" style={{ color: t.accent }}><X size={11} /></button>)}
+                          {edit && (<button onClick={() => mutate(d => d.projects.manual.splice(i, 1))} title="Remove this item" className="absolute -left-4 top-0.5" style={{ color: t.accent }}><X size={11} /></button>)}
                         </li>
                       ))}
                     </ul>
@@ -8091,14 +8091,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             <span className="text-[10px] font-black tracking-[0.14em] uppercase" style={{ color: t.muted }}>
                               <Ed v={String(g.category || 'COMPLETED WORK')} set={v => patch('projects.manual.' + gi + '.category', v)} edit={edit} />
                             </span>
-                            {edit && (<button onClick={() => mutate(d => d.projects.manual.splice(gi, 1))} style={{ color: t.accent }}><X size={12} /></button>)}
+                            {edit && (<button onClick={() => mutate(d => d.projects.manual.splice(gi, 1))} title="Remove this group" style={{ color: t.accent }}><X size={12} /></button>)}
                           </div>
                           <ul className="mt-1.5 space-y-1.5">
                             {(Array.isArray(g.items) ? g.items : []).map((it: Any, ii: number) => (
                               <li key={ii} className="relative text-[12.5px] leading-snug pl-3" style={{ color: t.body }}>
                                 <span className="absolute left-0 top-[7px] w-1 h-1 rounded-full" style={{ background: t.gold }} />
                                 <Ed v={String(it)} set={v => patch('projects.manual.' + gi + '.items.' + ii, v)} edit={edit} multiline />
-                                {edit && (<button onClick={() => mutate(d => d.projects.manual[gi].items.splice(ii, 1))} className="absolute -left-4 top-0.5" style={{ color: t.accent }}><X size={11} /></button>)}
+                                {edit && (<button onClick={() => mutate(d => d.projects.manual[gi].items.splice(ii, 1))} title="Remove this item" className="absolute -left-4 top-0.5" style={{ color: t.accent }}><X size={11} /></button>)}
                               </li>
                             ))}
                           </ul>
@@ -8137,7 +8137,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   {(projects.tracking || []).map((t: Any, i: number) => (
                     <div key={i} className="relative">
                       {edit && (
-                        <button onClick={() => mutate(d => d.projects.tracking.splice(i, 1))} className="absolute top-0 right-0" style={{ color: t.accent }}><X size={13} /></button>
+                        <button onClick={() => mutate(d => d.projects.tracking.splice(i, 1))} title="Remove this item" className="absolute top-0 right-0" style={{ color: t.accent }}><X size={13} /></button>
                       )}
                       <p className="text-sm font-bold"><Ed v={t.title || ''} set={v => patch('projects.tracking.' + i + '.title', v)} edit={edit} /></p>
                       <p className="text-[12.5px] mt-0.5" style={{ color: t.body }}><Ed v={t.body || ''} set={v => patch('projects.tracking.' + i + '.body', v)} edit={edit} multiline /></p>

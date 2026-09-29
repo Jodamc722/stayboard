@@ -935,7 +935,7 @@ function FiveSheet({ initial, all, photos, heroCands, onApply, onClose }: { init
         <div className="px-4 py-3 border-b border-line flex items-center gap-2">
           <Crown size={16} className="text-amber-600" />
           <div className="flex-1 min-w-0"><div className="text-[15px] font-bold text-ink">Cover photos — the first five</div><div className="text-[12px] text-muted">What a guest sees in the search card and swipes before opening. Aim for five different spaces: what&apos;s special · where I sleep · where I sit · where I cook · where I bathe. Pick a slot, then tap a photo below.</div></div>
-          <button onClick={onClose} className="w-9 h-9 rounded-lg border border-line grid place-items-center" aria-label="Close"><RotateCcw size={14} className="hidden" /><span className="text-lg leading-none">×</span></button>
+          <button onClick={onClose} className="w-9 h-9 rounded-lg border border-line grid place-items-center" aria-label="Close" title="Close"><RotateCcw size={14} className="hidden" /><span className="text-lg leading-none">×</span></button>
         </div>
         <div className="overflow-y-auto p-4 space-y-4">
           {/* Laid out like Airbnb's header grid: one big cover, four beside it. */}
@@ -949,8 +949,8 @@ function FiveSheet({ initial, all, photos, heroCands, onApply, onClose }: { init
                   <div className="flex items-center gap-1"><span className="font-bold text-ink">{i + 1}</span><span className="text-muted truncate">{i === 0 ? 'cover — earns the click' : p ? (p.room || p.category || '').replace(/-/g, ' ') : 'empty'}</span></div>
                   {p && <div className="flex items-center gap-1 mt-0.5"><span className={`font-bold px-1 rounded ${(p.quality || 0) >= 75 ? 'bg-emerald-100 text-emerald-700' : (p.quality || 0) >= 60 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>{p.quality ?? '–'}</span><span className="text-ink truncate">{p.subject || p.category}</span>{rankOf(p._id) && <span className="ml-auto text-amber-700 font-semibold whitespace-nowrap">pick #{rankOf(p._id)}</span>}</div>}
                   <div className="flex items-center gap-1 mt-1">
-                    <button onClick={() => move(i, -1)} disabled={i === 0} className="p-0.5 rounded border border-line text-muted disabled:opacity-30"><ArrowUp size={11} className="-rotate-90" /></button>
-                    <button onClick={() => move(i, 1)} disabled={i === 4} className="p-0.5 rounded border border-line text-muted disabled:opacity-30"><ArrowDown size={11} className="-rotate-90" /></button>
+                    <button onClick={() => move(i, -1)} disabled={i === 0} title="Move left" className="p-0.5 rounded border border-line text-muted disabled:opacity-30"><ArrowUp size={11} className="-rotate-90" /></button>
+                    <button onClick={() => move(i, 1)} disabled={i === 4} title="Move right" className="p-0.5 rounded border border-line text-muted disabled:opacity-30"><ArrowDown size={11} className="-rotate-90" /></button>
                     {p && <button onClick={() => clear(i)} className="ml-auto p-0.5 rounded border border-line text-muted hover:text-rose-600" title="Empty this slot"><Trash2 size={11} /></button>}
                   </div>
                 </div>

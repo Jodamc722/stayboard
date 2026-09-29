@@ -387,7 +387,7 @@ export function AddTaskSheet({
           <h2 className="text-[16px] font-bold text-ink flex-1">
             Add a task{seededPerson ? <span className="font-semibold text-muted text-[13.5px]"> · for {seededPerson}</span> : null}
           </h2>
-          <button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink p-1"><X size={16} /></button>
+          <button onClick={onClose} aria-label="Close" title="Close" className="text-muted hover:text-ink p-1"><X size={16} /></button>
         </div>
 
         {/* ── UNIT ──────────────────────────────────────────────────────────────────────────── */}
@@ -420,7 +420,7 @@ export function AddTaskSheet({
             <span className="text-[14px] font-bold text-ink">{uname(unit)}</span>
             {unit.building && <span className="text-[11.5px] text-muted">{unit.building}</span>}
             {intelBusy && <Loader2 size={12} className="animate-spin text-muted" />}
-            <button onClick={() => { setUnit(null); setUq('') }} aria-label="Change unit" className="ml-auto text-muted hover:text-ink"><X size={14} /></button>
+            <button onClick={() => { setUnit(null); setUq('') }} aria-label="Change unit" title="Change unit" className="ml-auto text-muted hover:text-ink"><X size={14} /></button>
           </div>
         )}
 
@@ -535,7 +535,7 @@ export function AddTaskSheet({
             {pickedPeople.map(p => (
               <span key={p.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-brand-600 text-white text-[12.5px] font-semibold">
                 {p.name}
-                <button type="button" aria-label={'Take ' + p.name + ' off this task'}
+                <button type="button" aria-label={'Take ' + p.name + ' off this task'} title={'Take ' + p.name + ' off this task'}
                   onClick={() => setPicked(s => s.filter(x => x !== p.id))} className="opacity-80 hover:opacity-100">
                   <X size={12} />
                 </button>
