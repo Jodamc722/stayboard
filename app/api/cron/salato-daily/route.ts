@@ -10,16 +10,19 @@
 // note or custom field mentioning the hotel, a same-day turn, or a stay with no name attached yet.
 // Those rows are marked so the desk reads them first instead of scanning every line.
 //
-// GET                → send to the configured list (silent until configured)
-// GET ?preview=1     → the HTML, no send (signed in)
-// GET ?test=1        → send to YOU only
+// GET                → send to the configured list (switched on with nobody on it = a failed run
+//                      and one owner bell a day)
+// GET ?preview=1     → the HTML, no send (signed-in admin)
+// GET ?test=1        → send to YOU only (signed-in admin)
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getSetting } from '@/lib/app-settings'
+import { getSetting, setSetting } from '@/lib/app-settings'
 import { sendGmail } from '@/lib/gmail-send'
 import { isLiveStay } from '@/lib/stay-status'
 import { salatoListings } from '@/lib/salato-units'
 import { requireCron } from '@/lib/cron-auth'
+import { withRouteReceipt } from '@/lib/automation-runs'
+import { notify } from '@/lib/notify'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -46,7 +49,7 @@ const card = (title: string, count: number | null, when: string, inner: string, 
   '<p style="margin:2px 0 0;font-size:11px;color:#9ca3af">' + when + '</p></div>' +
   '<div style="padding:10px 14px">' + inner + '</div></div>'
 
-export async function GET(req: NextRequest) {
+async function run(req: NextRequest): Promise<Response> {
   const sp = req.nextUrl.searchParams
   const preview = sp.get('preview') === '1'
   const test = sp.get('test') === '1'
@@ -174,12 +177,43 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: r.ok, sentTo: me, subject, error: r.error })
     }
     const to = (cfg?.to || []).filter(Boolean)
-    if (!cfg?.enabled || !fromEmail || !to.length) {
-      return NextResponse.json({ ok: true, sent: false, reason: 'not configured', subject })
+    if (!cfg?.enabled) return NextResponse.json({ ok: true, sent: false, reason: 'switched off', subject })
+    // ON BUT ADDRESSED TO NOBODY IS NOT A SKIP (2026-09-28, 06 F-13). This used to answer
+    // ok:true "not configured" and say nothing, so a list somebody emptied looked exactly like a
+    // quiet morning. Now the run is a failure and the owner gets one bell a day saying so — the
+    // same rule the ops brief follows for an empty list.
+    if (!fromEmail || !to.length) {
+      const why = !to.length ? 'has nobody to send to' : 'has no sending mailbox (fromEmail)'
+      const alerted = await alertOwnerOnce(why).catch(() => false)
+      return NextResponse.json({ ok: false, sent: false, reason: 'switched on but ' + why, alerted, subject })
     }
     const r = await sendGmail({ fromEmail, to, subject, html })
     return NextResponse.json({ ok: r.ok, sent: r.ok, to: to.length, subject, error: r.error })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })
   }
+}
+
+// RECEIPT (2026-09-28): every real send attempt (a preview or a test writes none).
+const receipted = withRouteReceipt<NextRequest>('salato-daily', run, {
+  skipWhen: (req) => { const sp = new URL(req.url).searchParams; return sp.get('preview') === '1' || sp.get('test') === '1' },
+})
+export async function GET(req: NextRequest) { return receipted(req) }
+
+const OWNER = 'jon@stay-hospitality.com'
+const ALERT_KEY = 'salato_daily_alert'
+
+/** One in-app bell to the owner per Eastern day, however many times the send is tried. */
+async function alertOwnerOnce(why: string): Promise<boolean> {
+  const today = ymd(new Date())
+  const last = await getSetting<{ on?: string }>(ALERT_KEY, {})
+  if (last && last.on === today) return false
+  await notify([OWNER], {
+    kind: 'system',
+    title: 'The Salato daily email is on but ' + why,
+    body: 'It did not go out this morning. Fill it in under Users & admin → Settings → Morning brief (Salato daily), or switch it off.',
+    link: '/users',
+  })
+  await setSetting(ALERT_KEY, { on: today }, 'salato-daily')
+  return true
 }
