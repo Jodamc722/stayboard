@@ -950,6 +950,18 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
       const { applyMoneyOverride } = await import('./money-source')
       out = await applyMoneyOverride(payload, from, to, prevFrom, prevTo, scopeIds)
     } catch { /* the mirror is never allowed to take the KPI board down — ours stands */ }
-    return showMoney ? { ...out, moneyHidden: false } : { ...redactMoney(out), moneyHidden: true }
+    if (showMoney) return { ...out, moneyHidden: false }
+    const hidden: any = redactMoney(out)
+    // OCCUPANCY IS NOT MONEY. `revenue` reads as a money word, so the redactor nulls that whole block
+    // — and occupancy, nights and available went with it, leaving the Occupancy tile blank for anyone
+    // without dollars (and Eve unable to quote it to them). Those are exactly the ratios and counts
+    // the money rule keeps (lib/money: "a percentage is exactly what Jon asked to keep"), so they are
+    // put back here BY NAME; every amount in the block stays gone.
+    const rv: any = (out && out.revenue) || {}
+    hidden.revenue = {
+      occupancy: rv.occupancy ?? null, occupancyPrev: rv.occupancyPrev ?? null, occupancyChange: rv.occupancyChange ?? null,
+      nights: rv.nights ?? null, available: rv.available ?? null,
+    }
+    return { ...hidden, moneyHidden: true }
   }
 }
