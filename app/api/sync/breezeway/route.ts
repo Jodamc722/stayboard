@@ -7,6 +7,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, getBreezewayToken, bzApi, mapBreezewayTask } from '@/lib/breezeway'
 import { requireAdmin } from '@/lib/access'
 import { bustBoards } from '@/lib/bust'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -150,8 +151,14 @@ return NextResponse.json({ ok: true, processed: i - offset, totalProperties: act
         const st = String((l as any).status || '').toLowerCase()
         gMap.set(String((l as any).id), { name: (l as any).nickname || (l as any).title || '', status: st, active: !DEAD.includes(st) })
       }
-      const { data: rs } = await db.from('guesty_reservations').select('listing_id').gte('check_out', today).in('status', ['confirmed', 'checked_in', 'checked_out']).limit(8000)
-      const resSet = new Set<string>((rs || []).map((r: any) => String(r.listing_id)))
+      // Every upcoming stay, paged (was one unordered read capped at 1,000). A booked unit missing from
+      // this read would be listed as safe to remove, so a short read stops here instead of answering.
+      const rs = await pageRows<any>((a, b) => db.from('guesty_reservations').select('listing_id').gte('check_out', today).in('status', ['confirmed', 'checked_in', 'checked_out']).order('id').range(a, b))
+      if (rs.truncated) {
+        console.error('sync/breezeway reconcile: upcoming-reservation read stopped early')
+        return NextResponse.json({ error: 'Could not read every upcoming reservation, so the removal list cannot be trusted — try again.' }, { status: 502 })
+      }
+      const resSet = new Set<string>(rs.rows.map((r: any) => String(r.listing_id)))
 
       const flagged: any[] = []
       let matchedActive = 0
