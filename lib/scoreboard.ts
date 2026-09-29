@@ -131,7 +131,7 @@ export async function buildScoreboard(): Promise<Scoreboard> {
     ? 'last week (' + cmpFrom.slice(5) + ' to ' + cmpTo.slice(5) + ') vs the week before'
     : 'this week through yesterday (' + cmpFrom.slice(5) + ' to ' + cmpTo.slice(5) + ') vs the same days last week'
 
-  const [calls, callsWeek, claims, glitches, econNow, econPrev, econToday, billing, checklist] = await Promise.all([
+  const [calls, callsWeek, claims, glitches, econ, billing, checklist] = await Promise.all([
     safe(() => loadCallsDesk(sb, today)),
     // THE welcome-call rate (lib/call-desk welcomeRate) — the one Home and the Calls desk print, from
     // the paged call log. This was its own unpaged `.limit(1000)` read with a copy of the formula.
@@ -164,13 +164,19 @@ export async function buildScoreboard(): Promise<Scoreboard> {
       ])
       return { open: (open.data || []) as any[], closed: (closed.data || []) as any[], newNow: cntNow.count || 0, newPrev: cntPrev.count || 0 }
     }),
-    safe(() => laborEconomics({ from: cmpFrom, to: cmpTo, market: 'all' })),
-    safe(() => laborEconomics({ from: cmpPrevFrom, to: cmpPrevTo, market: 'all' })),
-    // Today on its own line — cleans so far and the wages of whoever has already clocked out.
-    safe(() => laborEconomics({ from: today, to: today, market: 'all' })),
+    // THE LABOR WINDOWS ONE AFTER ANOTHER (2026-09-29 review, R1-9): each laborEconomics already fans
+    // out ~18 reads, so three at once put ~54 queries in flight beside everything else on this strip.
+    (async () => {
+      const econNow = await safe(() => laborEconomics({ from: cmpFrom, to: cmpTo, market: 'all' }))
+      const econPrev = await safe(() => laborEconomics({ from: cmpPrevFrom, to: cmpPrevTo, market: 'all' }))
+      // Today on its own line — cleans so far and the wages of whoever has already clocked out.
+      const econToday = await safe(() => laborEconomics({ from: today, to: today, market: 'all' }))
+      return { econNow, econPrev, econToday }
+    })(),
     safe(() => billingRange(cmpPrevFrom, today)),
     safe(() => todayList(now)),
   ])
+  const { econNow, econPrev, econToday } = econ
 
   const tiles: ScoreTile[] = []
 
