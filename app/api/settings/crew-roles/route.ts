@@ -19,6 +19,7 @@ import { getCrew, DEPTS, DEPT_LABEL, SOURCE_LABEL, type Dept } from '@/lib/crew'
 import { getTimecardsAudited } from '@/lib/homebase-labor'
 import { nameMatchesRoster } from '@/lib/homebase'
 import { isDepartureCleanName } from '@/lib/breezeway'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -74,9 +75,10 @@ export async function GET(req: NextRequest) {
     getCrew(),
     getAgencies(true).catch(() => [] as Agency[]),
     getTimecardsAudited(from, to).catch(() => ({ cards: [] as any[], complete: false, failedWeeks: [] as string[], weeks: 0 })),
-    sb.from('breezeway_tasks_sync')
+    // Every task in the window, paged (was one unordered read capped at 1,000; 30 days is ~3,000).
+    pageRows<any>((a, b) => sb.from('breezeway_tasks_sync')
       .select('name, type_department, assignees, scheduled_date, status')
-      .gte('scheduled_date', from).lte('scheduled_date', to).limit(5000),
+      .gte('scheduled_date', from).lte('scheduled_date', to).order('scheduled_date').order('id').range(a, b)),
     staffSingleSourceReady().catch(() => false),
     getStaff(true).catch(() => [] as any[]),
   ])
@@ -100,7 +102,8 @@ export async function GET(req: NextRequest) {
 
   // ── Breezeway: colour. Folded onto the Homebase spelling so one person is one row. ────────────
   const knownNames = Object.keys(byName)
-  for (const t of (tasksRes.data || [])) {
+  if (tasksRes.truncated) console.error('settings/crew-roles: task read stopped early — Breezeway counts may be low')
+  for (const t of tasksRes.rows) {
     const raw = Array.isArray((t as any).assignees) ? (t as any).assignees : []
     const dept = str((t as any).type_department).toLowerCase()
     const isClean = isDepartureCleanName((t as any).name)
