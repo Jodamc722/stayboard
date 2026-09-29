@@ -34,6 +34,23 @@ async function isPrivilegedTarget(email: string): Promise<boolean> {
   } catch { return true }   // cannot tell → treat as protected
 }
 
+// SESSIONS FOLLOW STATUS (2026-09-28 audit, B-8). Disabling used to be a row update only: the
+// person's refresh token kept working, so their Supabase session outlived their job. A ban stops
+// Supabase issuing them new tokens (the access token they hold lapses within the hour); re-enabling
+// lifts it. Best-effort: the allowlist row is the source of truth, so a failure is reported, never
+// fatal. Returns a warning sentence when it did not take.
+async function setBan(sb: any, email: string, banned: boolean): Promise<{ done: boolean; warning?: string }> {
+  try {
+    const id = await findUserId(sb, email)
+    if (!id) return banned ? { done: false, warning: 'Disabled in Lighthouse, but no login account was found to sign out.' } : { done: false }
+    const { error } = await sb.auth.admin.updateUserById(id, { ban_duration: banned ? '876000h' : 'none' })
+    if (!error) return { done: true }
+    return { done: false, warning: (banned ? 'Disabled in Lighthouse, but their login could not be signed out: ' : 'Re-enabled in Lighthouse, but their login is still blocked: ') + String(error.message || error).slice(0, 160) }
+  } catch (e: any) {
+    return { done: false, warning: (banned ? 'Disabled in Lighthouse, but their login could not be signed out: ' : 'Re-enabled in Lighthouse, but their login is still blocked: ') + String(e?.message || e).slice(0, 160) }
+  }
+}
+
 // Find an existing auth user's id by email (paged; the team is small so a few pages is plenty).
 async function findUserId(sb: any, email: string): Promise<string | null> {
   try {
@@ -87,6 +104,9 @@ export async function POST(req: NextRequest) {
   }
 
   const sb = supabaseAdmin()
+  // Re-inviting someone who was disabled re-enables them (status: 'active' below), so the ban on
+  // their login has to lift too — otherwise they are "active" and still cannot sign in.
+  const { data: priorRow } = await sb.from('app_users').select('status').eq('email', email).maybeSingle()
   // Upsert the allowlist row first so access is granted even if the email can't be delivered.
   const row: any = { email, role, status: 'active', invited_by: access.email, last_invited_at: new Date().toISOString() }
   if (typeof body?.workspace === 'string' && body.workspace) row.workspace = normWorkspace(body.workspace)
@@ -103,6 +123,8 @@ export async function POST(req: NextRequest) {
     upErr = retry.error
   }
   if (upErr) return NextResponse.json({ error: `Could not save user: ${upErr.message}` }, { status: 500 })
+  const unban = (priorRow as any)?.status === 'disabled' ? await setBan(sb, email, false) : null
+  const unbanNote = unban?.warning ? { warning: unban.warning } : {}
 
   // If an admin supplied a password, create (or update) the auth account directly with it - no email
   // round-trip needed. The admin shares the password with the teammate securely.
@@ -119,7 +141,7 @@ export async function POST(req: NextRequest) {
         } else pw = { passwordSet: false, note: 'Access granted, but the existing account could not be found to set its password.' }
       } else pw = { passwordSet: false, note: `Access granted, but the password could not be set (${cErr.message}).` }
     } catch (e: any) { pw = { passwordSet: false, note: `Access granted, but the password could not be set (${String(e?.message || e)}).` } }
-    return NextResponse.json({ ok: true, email, role, password: pw })
+    return NextResponse.json({ ok: true, email, role, password: pw, ...unbanNote })
   }
 
   // Send a Supabase invite email (recipient sets their own password). Best-effort: if SMTP isn't
@@ -133,7 +155,7 @@ export async function POST(req: NextRequest) {
   } catch (e: any) {
     invite = { sent: false, note: `Access granted, but invite email could not be sent (${String(e?.message || e)}).` }
   }
-  return NextResponse.json({ ok: true, email, role, invite })
+  return NextResponse.json({ ok: true, email, role, invite, ...unbanNote })
 }
 
 export async function PATCH(req: NextRequest) {
@@ -246,7 +268,13 @@ export async function PATCH(req: NextRequest) {
     if (uErr) return NextResponse.json({ error: `Could not set password: ${uErr.message}` }, { status: 500 })
     passwordSet = true
   }
-  return NextResponse.json({ ok: true, passwordSet })
+  // Disable → ban the login; re-enable → lift it (see setBan).
+  let session: { banned: boolean; done: boolean; warning?: string } | undefined
+  if (patch.status === 'disabled' || patch.status === 'active') {
+    const r = await setBan(sb, email, patch.status === 'disabled')
+    session = { banned: patch.status === 'disabled', ...r }
+  }
+  return NextResponse.json({ ok: true, passwordSet, ...(session ? { session } : {}), ...(session?.warning ? { warning: session.warning } : {}) })
 }
 
 // DELETE — remove a teammate entirely: drop the allowlist row AND delete their login account.
