@@ -24,6 +24,8 @@ import { agentAllowed, stepDown, getAgentSettings, logAgent, OWNER, type ActionT
 import type { CommandDay } from '@/lib/command-day'
 import type { DayPicture } from '@/lib/capacity-day'
 import { shapeOf, recordThought } from './thoughts'
+import { awaitingSet, slaDueAt } from '@/lib/response-times'
+import { GUEST_REPLY_SYSTEM } from '@/lib/guest-reply-draft'
 
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const ymdET = (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
@@ -114,41 +116,50 @@ async function askModel(task: string, system: string, user: string, maxTokens = 
   } catch (e: any) { console.error('[watches] model call threw', task, String(e?.message || e)); return '' }
 }
 
-const GUEST_REPLY_SYSTEM = `You write short replies to guests of "Stay Hospitality", a short-term-rental manager in South Florida. You are the team ("we"), never "the host". Always English. Two to four sentences, warm and plain, no filler ("we value your feedback", "rest assured"), no emojis. Answer what the guest actually asked from the facts given; if a fact is missing, say a teammate will confirm shortly rather than inventing it. Never promise refunds or discounts. Never include door codes, phone numbers or addresses. Output only the reply text.`
+// GUEST_REPLY_SYSTEM is lib/guest-reply-draft's — the one voice, whether this watch or a person's
+// "Draft with Eve" on the thread asked for the draft.
 
 const REVIEW_REPLY_SYSTEM = `You write short PUBLIC replies to guest reviews for "Stay Hospitality". We are the team ("we", "our team"), never "the host". Always English. 2-3 sentences, 45 words or fewer, warm and plain. Respond to the feeling, not the specific defect: do not admit fault, restate or concede the problem, and do not promise refunds. No filler phrases, no idioms, no emojis, no unit or building names. Output only the reply.`
 
 // ---- The eight ------------------------------------------------------------------------------------
 
+// THE ONE "WAITING ON US" RULE (lib/response-times, 2026-09-28 audit D3–D5). This watch kept its own
+// window — the guest's last message over an hour old, 8am–10pm ET, any hour for today's arrivals —
+// so Eve, the inbox and the Command Center could disagree about the same guest. It now takes the
+// inbox's own waiting set and raises a thread once it is past its reply-by time: 60 minutes for a
+// message sent 8am–10pm ET or on the guest's arrival day, 8am for one sent overnight.
 async function guestUnanswered(env: WatchEnv): Promise<Prepared[]> {
   const db = env.db
-  const cutoff = new Date(env.now.getTime() - 60 * 60_000).toISOString()
-  const { data } = await db.from('conversation_response').select('conversation_id,reservation_id,listing_id,channel,last_guest_at,guest_msgs,replies')
-    .eq('awaiting', true).lt('last_guest_at', cutoff).gte('last_guest_at', new Date(env.now.getTime() - 72 * 3600_000).toISOString())
-    .order('last_guest_at', { ascending: false }).limit(30)
-  const rows = ((data as any[]) || [])
-  if (!rows.length) return []
-  const inHours = hourET(env.now) >= 8 && hourET(env.now) < 22
-  const resIds = rows.map(r => str(r.reservation_id)).filter(Boolean)
+  const nowMs = env.now.getTime()
+  const set = await awaitingSet({ db, now: nowMs })
+  if (set.error) throw new Error('could not read who is waiting: ' + set.error)
+  // Past its stored reply-by time — or with none stored yet (a row computed before migration 134, or
+  // before its thread moved again), decided below by the same rule once its check-in is known.
+  const cands = set.rows.filter(r => r.overdue || !r.sla_due_at)
+  if (!cands.length) return []
+  const resIds = cands.map(r => str(r.reservation_id)).filter(Boolean)
   const resById: Record<string, any> = {}
   if (resIds.length) {
-    const { data: rs } = await db.from('guesty_reservations').select('id,guest_name,listing_name,check_in,check_out,nights,status').in('id', resIds.slice(0, 60))
+    const { data: rs } = await db.from('guesty_reservations').select('id,guest_name,listing_name,check_in,check_out,nights,status').in('id', resIds.slice(0, 200))
     for (const r of ((rs as any[]) || [])) resById[str(r.id)] = r
   }
   const out: Prepared[] = []
-  for (const r of rows) {
+  for (const r of cands) {
     const res = resById[str(r.reservation_id)]
-    const arrivesToday = !!res && str(res.check_in).slice(0, 10) === env.today
-    if (!inHours && !arrivesToday) continue
+    const due = r.sla_due_at || slaDueAt(r.awaiting_since || r.last_guest_at, res ? str(res.check_in).slice(0, 10) : null)
+    if (!due || Date.parse(due) > nowMs) continue
     if (res && /cancel|declin|inquir/i.test(str(res.status))) continue
+    if (out.length >= 30) break
+    const arrivesToday = !!res && str(res.check_in).slice(0, 10) === env.today
     const convId = str(r.conversation_id)
-    const waitedH = Math.round((env.now.getTime() - Date.parse(str(r.last_guest_at))) / 3600_000)
+    const waitedMs = nowMs - Date.parse(str(r.awaiting_since || r.last_guest_at))
+    const waited = !Number.isFinite(waitedMs) ? 'a while' : waitedMs < 3600_000 ? `${Math.max(1, Math.round(waitedMs / 60_000))}m` : `${Math.round(waitedMs / 3600_000)}h`
     const guest = str(res?.guest_name) || 'the guest'
     const unit = str(res?.listing_name) || ''
     out.push({
       subject: `thread:${convId}`, action: 'guest_reply_draft', metric: 'sentiment_negative',
-      ask: `draft a reply to ${guest}${unit ? ` (${unit})` : ''} — waiting ${waitedH}h on ${str(r.channel) || 'their thread'}${arrivesToday ? ', arriving TODAY' : ''}? (it waits on the thread for Send; nothing reaches the guest yet)`,
-      why: `The guest spoke last ${waitedH}h ago and nobody has answered.`,
+      ask: `draft a reply to ${guest}${unit ? ` (${unit})` : ''} — waiting ${waited} on ${str(r.channel) || 'their thread'}${arrivesToday ? ', arriving TODAY' : ''}? (it waits on the thread for Send; nothing reaches the guest yet)`,
+      why: `The guest has waited ${waited} with no answer — past the reply-by time.`,
       exec: async () => {
         // INTERNAL ENTRIES ARE NOT THE CONVERSATION (Jon, 2026-09-23 review). Guesty files activity
         // logs and internal team notes into the same thread. They were fed to the model as "US:"
@@ -170,7 +181,7 @@ async function guestUnanswered(env: WatchEnv): Promise<Prepared[]> {
         const facts = res ? `Guest: ${guest}. Unit: ${unit}. Stay: ${str(res.check_in).slice(0, 10)} to ${str(res.check_out).slice(0, 10)} (${res.nights || '?'} nights). Channel: ${str(r.channel)}.` : `Channel: ${str(r.channel)}.`
         const draft = await askModel('guest-reply', GUEST_REPLY_SYSTEM, `${facts}\n\nTHREAD (oldest first):\n${thread}\n\nWrite our reply to the guest's last message.`)
         if (!draft) return null
-        return { conversationId: convId, draft, guest, unit, channel: str(r.channel), why: `Guest waited ${waitedH}h with no answer.` }
+        return { conversationId: convId, draft, guest, unit, channel: str(r.channel), why: `Guest waited ${waited} with no answer.` }
       },
     })
   }
@@ -478,7 +489,7 @@ async function noShowRisk(env: WatchEnv): Promise<Prepared[]> {
 }
 
 export const WATCHES: WatchDef[] = [
-  { key: 'guest_unanswered_1h', title: 'Guest waiting over an hour', what: 'A guest spoke last more than an hour ago (8am–10pm ET; any hour for today\'s arrivals). She drafts the reply and asks "send this?".', action: 'guest_reply_draft', cooldownHours: 24, trigger: guestUnanswered },
+  { key: 'guest_unanswered_1h', title: 'Guest past the reply-by time', what: 'A guest waiting on a reply past the inbox\'s reply-by time: an hour for a message sent 8am–10pm ET or on their arrival day, 8am for one sent overnight. She drafts the reply and asks "send this?".', action: 'guest_reply_draft', cooldownHours: 24, trigger: guestUnanswered },
   { key: 'clean_late', title: 'Late clean with nobody on it', what: 'A late or at-risk clean on Today in Ops with no assignee. She picks the on-shift housekeeper in that market with headroom and asks to assign.', action: 'task_assign', cooldownHours: 24, trigger: cleanLate },
   { key: 'big_arrival_uninspected', title: 'Big arrival with no inspection', what: 'A big-value arrival within 48h with no inspection task. She prepares the pre-arrival inspection (same payload as the automation) and asks.', action: 'task_create', cooldownHours: 48, trigger: bigArrivalUninspected },
   { key: 'bad_review_in', title: 'Bad review just landed', what: 'A review at 3★ or below in the last 48h. She prepares a quality inspection on the next checkout and a public reply draft, and asks about each.', action: 'task_create', cooldownHours: 168, trigger: badReviewIn },
