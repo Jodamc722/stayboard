@@ -1,10 +1,11 @@
 'use client'
-// Read-only AUDIT view of a guest conversation: full transcript (who sent each message),
-// a reservation-details pop-up, and a button to open + reply in Guesty's inbox.
-// (In-app replying is intentionally off for now — this is a quality/audit surface.)
+// A guest conversation: full transcript (who sent each message), a reservation-details pop-up,
+// Eve's draft when a watch wrote one, and — for people with edit on Messages — a reply box
+// (2026-09-28 audit, D1). The reply goes out through Guesty on the thread's own channel; "Draft with
+// Eve" fills the box, and nothing reaches the guest until a person presses Send.
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { CalendarDays, X, ExternalLink, User, Phone, DollarSign, Home, BedDouble, MessageSquare, Sparkles, Send, Loader2 } from 'lucide-react'
+import { CalendarDays, X, ExternalLink, User, Phone, DollarSign, Home, BedDouble, Sparkles, Send, Loader2 } from 'lucide-react'
 
 type Msg = { id: string; sender: string; sender_name?: string | null; body: string | null; sent_at: string | null }
 type Reservation = {
@@ -16,8 +17,8 @@ type Reservation = {
 const fmt = (s?: string | null) => { if (!s) return ''; const d = new Date(s); return isNaN(d.getTime()) ? '' : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) }
 const fmtDay = (s?: string | null) => { if (!s) return '—'; const d = new Date(s); return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) }
 
-export function MessageThread({ conversationId, channel, guest, unit, initialMessages, reservation, guestyUrl }: {
-  conversationId: string; channel: string; guest: string; unit: string; initialMessages: Msg[]; reservation: Reservation; guestyUrl: string
+export function MessageThread({ conversationId, channel, guest, unit, initialMessages, reservation, guestyUrl, canReply }: {
+  conversationId: string; channel: string; guest: string; unit: string; initialMessages: Msg[]; reservation: Reservation; guestyUrl: string; canReply: boolean
 }) {
   const [showRes, setShowRes] = useState(false)
   const [sent, setSent] = useState<Msg[]>([])
@@ -78,13 +79,14 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
           the guest, and the person who presses it is on the receipt. */}
       <EveDraftCard conversationId={conversationId} guest={guest} onSent={(body) => setSent(prev => prev.concat([{ id: 'eve-' + Date.now(), sender: 'host', sender_name: 'Eve (sent by you)', body, sent_at: new Date().toISOString() }]))} />
 
-      {/* Audit footer — reply happens in Guesty */}
-      <div className="border-t border-line px-3 sm:px-5 py-3 flex items-center justify-between gap-3 flex-wrap bg-app/30">
-        <span className="text-[12px] text-muted inline-flex items-center gap-1.5"><MessageSquare size={13} /> Audit view — reply to the guest in Guesty.</span>
-        <a href={guestyUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-700 hover:underline">
-          Reply in Guesty <ExternalLink size={12} />
-        </a>
-      </div>
+      {/* THE REPLY BOX (D1). The footer "Reply in Guesty" link it replaces pointed at the same place
+          as the header's "Open in Guesty", which stays for anything the box cannot do. */}
+      {canReply ? (
+        <ReplyBox conversationId={conversationId} guest={guest} channel={channel}
+          onSent={(body, by) => setSent(prev => prev.concat([{ id: 'sent-' + Date.now(), sender: 'host', sender_name: by, body, sent_at: new Date().toISOString() }]))} />
+      ) : (
+        <div className="border-t border-line px-3 sm:px-5 py-2.5 bg-app/30 text-[12px] text-muted">View only — replying needs edit access on Messages.</div>
+      )}
 
       {/* Reservation modal */}
       {showRes && reservation && (
@@ -127,6 +129,84 @@ function Row({ Icon, label, value, link }: { Icon: any; label: string; value: st
     <div className="flex items-center justify-between gap-3">
       <span className="text-muted inline-flex items-center gap-1.5"><Icon size={13} /> {label}</span>
       {link ? <a href={link} className="font-medium text-brand-700 hover:underline text-right">{value}</a> : <span className="font-medium text-ink text-right">{value}</span>}
+    </div>
+  )
+}
+
+/** Guesty's module names, as a person says them. */
+function moduleLabel(m: string): string {
+  const s = String(m || '').toLowerCase()
+  if (/airbnb/.test(s)) return 'Airbnb'
+  if (/booking/.test(s)) return 'Booking.com'
+  if (/homeaway|vrbo/.test(s)) return 'Vrbo'
+  if (/expedia/.test(s)) return 'Expedia'
+  if (s === 'sms') return 'SMS'
+  if (s === 'whatsapp') return 'WhatsApp'
+  return s || 'Guesty'
+}
+
+/**
+ * THE REPLY BOX (2026-09-28 audit, D1). Type — or press Draft with Eve — then Send. It goes out
+ * through Guesty on the thread's own channel (POST /api/messages/send → guest_reply_send), and the
+ * receipt says which channel carried it; a message that went out by email instead of inside the
+ * OTA thread is called out, not buried. Nothing is sent without a press of Send.
+ */
+function ReplyBox({ conversationId, guest, channel, onSent }: { conversationId: string; guest: string; channel: string; onSent: (body: string, by: string) => void }) {
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState<'' | 'send' | 'draft'>('')
+  const [err, setErr] = useState('')
+  const [receipt, setReceipt] = useState<{ label: string; warn: boolean; title: string } | null>(null)
+  const who = guest || 'the guest'
+
+  const draft = async () => {
+    if (busy) return
+    if (text.trim() && !confirm('Replace what you have typed with Eve’s draft?')) return
+    setBusy('draft'); setErr(''); setReceipt(null)
+    try {
+      const r = await fetch('/api/messages/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }) }).then(x => x.json())
+      if (!r?.ok) setErr(r?.error || r?.message || 'Eve could not draft this.')
+      else setText(String(r.draft || ''))
+    } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy('') }
+  }
+
+  const send = async () => {
+    const body = text.trim()
+    if (busy || !body) return
+    if (!confirm('Send this to ' + who + (channel ? ' on ' + channel : '') + ' now?')) return
+    setBusy('send'); setErr(''); setReceipt(null)
+    try {
+      const res = await fetch('/api/messages/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId, body }) })
+      const r = await res.json().catch(() => ({} as any))
+      if (!res.ok || !r?.ok) { setErr(r?.error || r?.message || 'Guesty did not send it — nothing reached the guest.'); return }
+      onSent(body, String(r.by || 'You'))
+      setText('')
+      const mod = String(r.module || '')
+      const offThread = mod === 'email' && /airbnb|booking|vrbo|expedia/i.test(channel)
+      const time = new Date(r.at || Date.now()).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+      setReceipt({
+        label: offThread ? `Sent by email, not inside the ${channel} thread · ${time} — check Guesty` : `Sent via ${moduleLabel(mod)} · ${time}`,
+        warn: offThread,
+        title: `Guesty module: ${mod || 'not reported'}${r.id ? ' · message ' + r.id : ''}`,
+      })
+    } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy('') }
+  }
+
+  return (
+    <div className="border-t border-line px-3 sm:px-5 py-3 bg-app/30">
+      <textarea value={text} onChange={e => setText(e.target.value)} rows={3} placeholder={'Reply to ' + who + '…'} aria-label="Reply to the guest"
+        className="w-full text-sm text-ink bg-white border border-line rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+      <div className="mt-2 flex items-center gap-2 flex-wrap">
+        <button onClick={send} disabled={!!busy || !text.trim()} title={'Send this to ' + who + ' now, on the thread’s own channel'}
+          className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-white bg-brand-600 hover:bg-brand-700 px-2.5 py-1.5 rounded-lg disabled:opacity-50">
+          {busy === 'send' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Send
+        </button>
+        <button onClick={draft} disabled={!!busy} title="Eve reads the thread and writes a reply into the box — nothing is sent"
+          className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-700 bg-white border border-brand-200 hover:bg-brand-50 px-2.5 py-1.5 rounded-lg disabled:opacity-50">
+          {busy === 'draft' ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Draft with Eve
+        </button>
+        {receipt ? <span className={'text-[11.5px] ' + (receipt.warn ? 'font-semibold text-amber-700' : 'text-emerald-700')} title={receipt.title}>{receipt.label}</span> : null}
+      </div>
+      {err ? <div className="mt-1.5 text-[12px] text-rose-700">{err}</div> : null}
     </div>
   )
 }

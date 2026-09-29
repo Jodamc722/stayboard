@@ -93,6 +93,7 @@ export default async function MessageThreadPage({ params }: { params: { id: stri
         initialMessages={(msgs ?? []) as any}
         reservation={reservation && reservation.id ? reservation : null}
         guestyUrl={guestyUrl}
+        canReply={atLeast(access.levels['messages'], 'edit')}
       />
     </Shell>
   )
