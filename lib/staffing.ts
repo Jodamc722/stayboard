@@ -295,17 +295,32 @@ export function mergeSuggestion(existing: StaffRow | null, s: StaffSuggestion, n
 
 
 // ── VENDORS (Jon, 2026-09-01: "an option to add different vendors") ───────────────────────────
+// SIXTY SECONDS IN MEMORY (2026-09-28 audit, 02 F16). getOpsPresets() reads the registry on every
+// call — about four times per Command Center build and twice in the middle of the KPI build — and it
+// changes a few times a month. A failed read is never remembered, upsertVendor clears it, and every
+// caller gets its own copies, so nobody can edit the cache by editing a row.
+const VENDORS_TTL_MS = 60_000
+let vendorsCache: { at: number; rows: Vendor[] } | null = null
+/** Forget the cached registry. upsertVendor does this; anything else that writes `vendors` should too. */
+export function clearVendorsCache(): void { vendorsCache = null }
+
 export async function getVendors(includeInactive = false): Promise<Vendor[]> {
   try {
-    const sb = supabaseAdmin()
-    const { data } = await sb.from('vendors').select('*').order('sort').order('label')
-    const rows = ((data || []) as any[]).map(r => ({
-      key: String(r.key), label: String(r.label || r.key),
-      buildings: Array.isArray(r.buildings) ? r.buildings.map(String) : [],
-      billing: r.billing ?? null, contact: r.contact ?? null, notes: r.notes ?? null,
-      active: r.active !== false, sort: num(r.sort, 100),
-    }))
-    return includeInactive ? rows : rows.filter(v => v.active)
+    let rows: Vendor[]
+    if (vendorsCache && Date.now() - vendorsCache.at < VENDORS_TTL_MS) rows = vendorsCache.rows
+    else {
+      const sb = supabaseAdmin()
+      const { data, error } = await sb.from('vendors').select('*').order('sort').order('label')
+      rows = ((data || []) as any[]).map(r => ({
+        key: String(r.key), label: String(r.label || r.key),
+        buildings: Array.isArray(r.buildings) ? r.buildings.map(String) : [],
+        billing: r.billing ?? null, contact: r.contact ?? null, notes: r.notes ?? null,
+        active: r.active !== false, sort: num(r.sort, 100),
+      }))
+      if (!error) vendorsCache = { at: Date.now(), rows }
+    }
+    const out = rows.map(v => ({ ...v, buildings: v.buildings.slice() }))
+    return includeInactive ? out : out.filter(v => v.active)
   } catch { return [] }   // table may predate migration 062 — everything falls back to presets
 }
 
@@ -323,6 +338,7 @@ export async function upsertVendor(v: Partial<Vendor> & { key: string }): Promis
     if (v.active != null) row.active = !!v.active
     if (v.sort !== undefined) row.sort = num(v.sort, 100)
     const { error } = await sb.from('vendors').upsert(row, { onConflict: 'key' })
+    if (!error) clearVendorsCache()
     return error ? { ok: false, error: error.message } : { ok: true }
   } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
 }
