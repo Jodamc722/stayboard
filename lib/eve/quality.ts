@@ -10,7 +10,7 @@ import { THEMES } from '@/lib/review-themes'
 import { listProjects } from '@/lib/projects'
 import type { EveTool, EveDomain } from './types'
 import { obj, S } from './types'
-import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveListing, normStar, DEAD_LISTING, scopeIds, pageRows } from './ctx'
+import { clampLimit, clampDays, lc, has, safe, cap, chunk, resolveListing, normStar, DEAD_LISTING, scopeIds, pageRows } from './ctx'
 
 export const QUALITY_TOOLS: EveTool[] = [
   {

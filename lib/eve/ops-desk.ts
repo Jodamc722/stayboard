@@ -46,7 +46,6 @@ const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : St
 const etHour = (now = new Date()) => Number(new Intl.DateTimeFormat('en-US', { timeZone: ET, hour: 'numeric', hour12: false }).format(now)) % 24
 const etDate = (now = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: ET }).format(now)
 const shift = (ymd: string, d: number) => new Intl.DateTimeFormat('en-CA', { timeZone: ET }).format(new Date(Date.parse(ymd + 'T12:00:00Z') + d * 86400000))
-const clock = (ts: any) => { const d = new Date(String(ts)); return isNaN(d.getTime()) ? '' : new Intl.DateTimeFormat('en-US', { timeZone: ET, hour: 'numeric', minute: '2-digit' }).format(d).replace(' ', '').toLowerCase() }
 const shortUnit = (u: any) => str(u).split(' - ')[0].trim() || 'a unit'
 const isDone = (t: any) => isTaskDone(t.status, t.finished_at)
 const isGone = (t: any) => /cancel|delet|void/i.test(str(t.status))

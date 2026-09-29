@@ -16,7 +16,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { METRIC_BY_KEY } from './metrics'
 import { computeTrend, loadSeries, MIN_BASELINE } from './trends'
 import { saveMemory } from './memory'
-import { todayET, shiftDay, round2, lc, num } from './ctx'
+import { todayET, shiftDay, round2, lc } from './ctx'
 
 export type RecStatus = 'open' | 'accepted' | 'rejected' | 'superseded' | 'expired'
 export type Outcome = 'worked' | 'didnt' | 'inconclusive'

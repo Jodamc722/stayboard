@@ -5,7 +5,7 @@
 import 'server-only'
 import type { EveTool, EveDomain } from './types'
 import { obj, S } from './types'
-import { clampLimit, clampDays, lc, has, safe, chunk, normStar } from './ctx'
+import { clampLimit, lc, safe, normStar } from './ctx'
 import { RELOCATED } from './core'
 
 const ENTITY_TYPES = ['task', 'glitch', 'claim', 'unit']
@@ -103,7 +103,6 @@ export const GUEST_TOOLS: EveTool[] = [
       const { data: resv } = await q.order('check_in', { ascending: false }).limit(clampLimit(input?.limit, 40, 80))
       const stays = (resv || [])
       if (!stays.length) return { found: false, note: `No reservations match "${name || email}".` }
-      const resIds = stays.map((r: any) => String(r.id))
       const listingIds: string[] = []
       const seenL: Record<string, true> = {}
       for (const r of stays) { const k = String((r as any).listing_id); if (k && !seenL[k]) { seenL[k] = true; listingIds.push(k) } }

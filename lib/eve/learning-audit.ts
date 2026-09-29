@@ -37,7 +37,7 @@ import { costUsd } from '@/lib/ai-usage'
 import { runEve } from './run'
 import { saveMemory, neverUsedMemories } from './memory'
 import { scorecard } from './recommendations'
-import { listThoughts, shapeOf } from './thoughts'
+import { listThoughts } from './thoughts'
 import { pageRows } from './ctx'
 
 export type ProbeKind = 'taught' | 'declined' | 'answered' | 'rule'

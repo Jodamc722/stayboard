@@ -11,10 +11,10 @@ import { rollupBuilding } from '@/lib/optimize-score'
 import type { EveTool } from './types'
 import { obj, S } from './types'
 import {
-  clampLimit, daysAgoISO, normStar, lc, has, DEAD_LISTING, safe, cap, pageRows,
+  clampLimit, daysAgoISO, normStar, lc, has, safe, cap, pageRows,
 } from './ctx'
 import { loadMemories, saveMemory, normKind, MEMORY_KINDS } from './memory'
-import { METRICS, METRIC_BY_KEY } from './metrics'
+import { METRICS } from './metrics'
 import { computeTrend, anomalyScan } from './trends'
 import { createRecommendation, scorecard } from './recommendations'
 import { runReview } from './review'
