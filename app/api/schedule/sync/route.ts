@@ -1,7 +1,7 @@
 // Force-refresh the Turnover Schedule. Revalidates the 'schedule' cache tag so the next load recomputes
-// from current Guesty reservations + Breezeway tasks. POST = the in-app Sync button (logged-in users).
-// GET = Vercel cron (fires at 6am + noon ET, see vercel.json) so the schedule locks in the morning and
-// re-runs at noon without anyone opening the page.
+// from current Guesty reservations + Breezeway tasks. POST = the in-app Sync button (anyone who can see
+// the Scheduler). GET = a manual "Run now" (the scheduler's bearer or a signed-in admin); it is not on
+// a schedule — vercel.json has no line for it.
 import { NextRequest, NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
 import { requireLevel } from '@/lib/access'
@@ -14,7 +14,7 @@ export const maxDuration = 60
 
 async function doSync() {
   // Pull the Guesty reservations DELTA first so altered/canceled stays don't linger as phantom
-// cleans (a reservation changed in Guesty otherwise sat stale until the 2h Guesty cron).
+// cleans (a reservation changed in Guesty otherwise sat stale until the next 5-minute reservations pass).
 try { await syncReservations() } catch { /* Guesty hiccup - still refresh from cached data */ }
 // Re-pull the Breezeway task mirror (soonest checkouts first) so assignments made in Breezeway
 // moments ago show immediately on Refresh — the board was otherwise stale until the 30-min cron.

@@ -1,6 +1,6 @@
 'use client'
 // Public (per-link passcode) STAY REPORT — the Botanica performance report for Margaux / hotel
-// ownership. Canonical path /report/stay; /report/botanica keeps working. Row 'botanica-report'.
+// ownership, at /report/botanica (the old /report/stay alias was removed). Row 'botanica-report'.
 // High-level tiles for the selected date range + per-night detail, always live from the mirror.
 import { Fragment, useEffect, useMemo, useState, useCallback } from 'react'
 

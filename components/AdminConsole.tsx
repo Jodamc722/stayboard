@@ -66,8 +66,8 @@ const L = {
   taskCats: dynamic(() => import('@/components/TaskCategoriesAdmin').then(m => m.TaskCategoriesAdmin), { loading: spin, ssr: false }),
   revAudit: dynamic(() => import('@/components/ReviewAuditPanel').then(m => m.ReviewAuditPanel), { loading: spin, ssr: false }),
   cadences: dynamic(() => import('@/components/CadencesAdmin').then(m => m.CadencesAdmin), { loading: spin, ssr: false }),
-  // Three former pages, folded in by the September audit (pass 2): /integrations, /settings/labor
-  // and /settings/custom-fields all redirect to their panel here.
+  // Three former pages, folded in by the September audit (pass 2): /integrations and
+  // /settings/labor redirect to their panel here; /settings/custom-fields was removed.
   integrations: dynamic(() => import('@/components/IntegrationsAdmin').then(m => m.IntegrationsAdmin), { loading: spin, ssr: false }),
   laborSettings: dynamic(() => import('@/components/LaborSettings').then(m => m.LaborSettings), { loading: spin, ssr: false }),
   customFields: dynamic(() => import('@/components/CustomFieldsAdmin').then(m => m.CustomFieldsAdmin), { loading: spin, ssr: false }),

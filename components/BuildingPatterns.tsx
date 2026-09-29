@@ -129,7 +129,7 @@ export function BuildingPatterns() {
                 <div className="flex items-center gap-3 flex-wrap text-[11.5px]">
                   <Link href="/reviews" className="font-semibold text-brand-700 hover:underline inline-flex items-center gap-1">Reviews <ArrowRight size={11} /></Link>
                   <Link href="/glitches" className="font-semibold text-brand-700 hover:underline inline-flex items-center gap-1">Guest issues <ArrowRight size={11} /></Link>
-                  <Link href="/reviews/actions" className="font-semibold text-brand-700 hover:underline inline-flex items-center gap-1">Fix jobs <ArrowRight size={11} /></Link>
+                  <Link href="/reviews?tab=actions" className="font-semibold text-brand-700 hover:underline inline-flex items-center gap-1">Fix jobs <ArrowRight size={11} /></Link>
                   <span className="ml-auto text-muted">{b.reviews.recent} reviews in window</span>
                 </div>
               </LeanRow>

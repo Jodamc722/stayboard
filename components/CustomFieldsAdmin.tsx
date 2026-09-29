@@ -2,9 +2,11 @@
 // Guesty custom fields — which ones Lighthouse tracks and which are KPIs.
 //
 // A panel on Users & admin since the September audit (pass 2); it was its own page at
-// /settings/custom-fields, which still redirects here. It used to be handed its rows by a server
-// page and reload them with router.refresh(); now it reads them itself through the same browser
-// client it always wrote with, so it can live inside the settings directory like everything else.
+// /settings/custom-fields, since removed. It used to be handed its rows by a server page and reload
+// them with router.refresh(); now it reads them itself through the same browser client it always
+// wrote with, so it can live inside the settings directory like everything else. That client reads
+// as the signed-in person: since migration 130 the read policy admits only an active Lighthouse
+// member (lh_is_member), so a disabled login sees an empty list.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
 import { Sparkles, Eye, EyeOff, Search, AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react'
