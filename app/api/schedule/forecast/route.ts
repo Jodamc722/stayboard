@@ -27,11 +27,14 @@ function sunOf(s: string) { return addDays(s, -dow(s)) }
 async function fetchCheckouts(db: any, from: string, to: string) {
   const rows: any[] = []
   for (let off = 0; ; off += 1000) {
-    const { data } = await db.from('guesty_reservations')
+    // id breaks date ties: 60+ days of check-outs is several pages, and ordered by date alone a stay
+    // on a page boundary could be read twice or skipped.
+    const { data, error } = await db.from('guesty_reservations')
       .select('listing_id,check_out,status')
       .gte('check_out', from).lte('check_out', to)
-      .order('check_out', { ascending: true })
+      .order('check_out', { ascending: true }).order('id')
       .range(off, off + 999)
+    if (error) console.error('schedule/forecast: check-out page failed — counts may read low', error.message)
     if (!data || !data.length) break
     rows.push(...data)
     if (data.length < 1000) break

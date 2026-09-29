@@ -42,11 +42,13 @@ export async function GET(req: NextRequest) {
 
     const rows: any[] = []
     for (let off = 0; ; off += 1000) {
-      const { data } = await db.from('guesty_reservations')
+      // id breaks date ties, so a stay on a page boundary is never read twice or skipped.
+      const { data, error } = await db.from('guesty_reservations')
         .select('listing_id,check_out,status,fee:raw->money->>fareCleaning')
         .gte('check_out', ws).lte('check_out', we)
-        .order('check_out', { ascending: true })
+        .order('check_out', { ascending: true }).order('id')
         .range(off, off + 999)
+      if (error) console.error('schedule/fees: check-out page failed — fees may read low', error.message)
       if (!data || !data.length) break
       rows.push(...data)
       if (data.length < 1000) break
