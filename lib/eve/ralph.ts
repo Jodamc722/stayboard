@@ -270,7 +270,10 @@ export async function sendApproved(id: string, by: string): Promise<{ ok: boolea
   const res = await sendMessage(settings.chatId, addressed, { preview: false })
   await recordAgentAction('telegram_ask', { rung: gate.rung, allowed: res.ok, mode: 'act', reason: res.ok ? `approved by ${by}` : `Telegram refused: ${res.error}`, summary: `ask Ralphbot: ${question.slice(0, 120)}`, ref: id, by: 'chat', actor: by, countAs: res.ok ? 'ask' : 'none' })
   if (!res.ok) {
-    try { await db().from('eve_actions').update({ status: 'failed', result: { error: res.error } }).eq('id', id) } catch {}
+    try {
+      const { error: upErr } = await db().from('eve_actions').update({ status: 'failed', result: { error: res.error } }).eq('id', id)
+      if (upErr) console.error('ralph.sendApproved: marking the question failed did not save', upErr.message)
+    } catch (e) { console.error('ralph.sendApproved: marking the question failed did not save', e) }
     return { ok: false, error: String(res.error || 'Telegram refused the message') }
   }
 
