@@ -15,6 +15,15 @@ export const maxDuration = 30
 const WEBHOOK_BASE = process.env.BREEZEWAY_WEBHOOK_URL || 'https://api.breezeway.io/public/webhook/v1'
 const RECEIVER_URL = 'https://stayboard-three.vercel.app/api/breezeway/webhook'
 
+// AT MOST ONE BUST EVERY 15 SECONDS PER INSTANCE (2026-09-29 review, R1-8). Events come in bursts —
+// a cleaner closing a unit fires started / checklist / finished within seconds, a morning's
+// assignments arrive by the dozen — and every delivery busted the day and the Scheduler, so each
+// board rebuilt its whole picture again and again. Both tags ('day' and 'schedule') are busted, as
+// before. The trade: an event that lands inside a window shows with the next bust, or when the
+// board's own cache runs out (the day in under a minute, the Scheduler's snapshot in five).
+const BUST_EVERY_MS = 15_000
+let lastBustAt = 0
+
 export async function GET(req: NextRequest) {
   const p = new URL(req.url).searchParams
   if (!p.get('subscribe') && !p.get('list')) return NextResponse.json({ ok: true }) // validation ping
@@ -43,8 +52,8 @@ export async function POST(req: NextRequest) {
     const row: any = { ...mapBreezewayTask(task), synced_at: new Date().toISOString() }
     const { error } = await supabaseAdmin().from('breezeway_tasks_sync').upsert(row, { onConflict: 'id' })
     // A field change in Breezeway (started, finished, reassigned) reaches the boards on the next
-    // read, not when their cache happens to expire.
-    if (!error) bustBoards()
+    // read, not when their cache happens to expire — throttled per instance (BUST_EVERY_MS).
+    if (!error && Date.now() - lastBustAt >= BUST_EVERY_MS) { lastBustAt = Date.now(); bustBoards() }
   } catch { /* never fail the webhook delivery */ }
   return NextResponse.json({ ok: true })
 }
