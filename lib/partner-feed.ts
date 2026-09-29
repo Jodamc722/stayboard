@@ -19,6 +19,7 @@
 //   • Every call is logged to `partner_access_log` (metadata only, never the payload).
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 import { getSetting } from '@/lib/app-settings'
 import { marketOf, buildingOf } from '@/lib/segments'
 import { isDepartureCleanName } from '@/lib/breezeway'
@@ -83,16 +84,14 @@ export function monthRange(month: string): { from: string; to: string } {
   return { from: month + '-01', to: new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10) }
 }
 
+// A PAGE THAT FAILS IS NOT THE END OF THE MONTH (2026-09-29). This used to stop at the first failed
+// page and hand back what it had, so a timeout on page two went to the Revenue App as a whole month
+// of volumes. Now the feed fails instead — the route answers its existing 500 "feed failed" — and
+// the partner keeps its last good pull rather than a short one it cannot tell apart.
 async function pageAll(build: (from: number, to: number) => any, maxPages = 14): Promise<any[]> {
-  const out: any[] = []
-  for (let i = 0; i < maxPages; i++) {
-    const { data, error } = await build(i * 1000, i * 1000 + 999)
-    if (error) break
-    const rows = (data || []) as any[]
-    out.push.apply(out, rows)
-    if (rows.length < 1000) break
-  }
-  return out
+  const { rows, truncated } = await pageRows<any>(build, maxPages)
+  if (truncated) throw new Error('a paged read stopped early — the feed would be incomplete')
+  return rows
 }
 
 type Unit = { id: string; name: string; building: string; market: string; city: string; bedrooms: number | null; active: boolean }
