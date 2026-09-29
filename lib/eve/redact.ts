@@ -43,16 +43,24 @@ const KEY_RE = /(door|entry|access|gate|lock|garage)[\W_]{0,3}(code|pin|combo)|k
 // offline: 3", "Smart lock battery: 20%" and "Lockbox location: left rail" keep their values while
 // "Keypad: 5512" and "Lockbox: 2468" still lose theirs.
 const SAYS_CODE_RE = /(?:^|[^a-z0-9])(?:codes?|pins?|pass[\s_-]*codes?|combinations?|combos?|key[\s_-]*codes?|c[oó]digos?|secrets?)(?![a-z0-9])/i
-// A 4-8 digit run (or 3 digits closed by # or *) that is not a count, a percentage, money, a date, a
-// phone number, part of a model number, or a unit number ("unit 1102").
-// (tsconfig targets ES5: no /u flag and no \p{…} in a regex literal — Latin plus the accented set.)
-const DEVICE_CODE_RE = /(?<![A-Za-z\u00C0-\u024F0-9.$\/-])(?<!\b(?:unit|apt|apartment|suite|ste|room|rm)\.?\s*#?\s*)(?:\d{4,8}(?![0-9%]|[.\/-]\d)|\d{3}[#*])/i
-// …and a value that is nothing BUT digits is a code whatever its length ("246", "246#").
-const WHOLE_CODE_RE = /^\s*[#*]?\d{3,8}[#*]?\s*$/
+// FAIL-SAFE: a value in a device field is a code unless, once the numbers that are plainly something
+// else are taken out — a percentage, a date, a time, a phone number, money, a unit number — fewer
+// than three digits are left. So "20%", 3, "installed 2025-03-01" and "by unit 1102" keep their
+// values, while "5512", "2468 on the left rail", "551#", "12-34-56", "4 8 2 1" and "L-2468" do not.
+const HARMLESS_NUMBERS: RegExp[] = [
+  /\d+(?:\.\d+)?\s?%/g,                                              // 20%, 100 %
+  /\b\d{4}-\d{1,2}-\d{1,2}\b/g,                                      // 2025-03-01
+  /\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g,                             // 9/28, 09/28/2026
+  /\b\d{1,2}:\d{2}\b/g,                                              // 10:30
+  /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g,           // 305-555-1234
+  /\$\s?\d[\d,]*(?:\.\d+)?/g,                                        // $120
+  /\b(?:unit|apt|apartment|suite|ste|room|rm|floor|level)\.?\s*#?\s*\d+/gi, // unit 1102
+]
 function holdsCodeDigits(v: any): boolean {
   if (typeof v !== 'string' && typeof v !== 'number') return false
-  const s = String(v)
-  return WHOLE_CODE_RE.test(s) || DEVICE_CODE_RE.test(s)
+  let s = String(v)
+  for (const re of HARMLESS_NUMBERS) s = s.replace(re, ' ')
+  return (s.match(/\d/g) || []).length >= 3
 }
 type CodeKind = 'code' | 'device' | null
 /** 'code' — a name that says it holds a code; 'device' — a lock or keypad named alone; null — neither. */
