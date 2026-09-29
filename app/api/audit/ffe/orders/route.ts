@@ -56,11 +56,15 @@ const clean = (v: any, max: number) => { const s = str(v).trim(); return s ? s.s
  */
 async function productsWithSource(db: any, ids: string[]): Promise<Record<string, any>> {
   if (!ids.length) return {}
-  const { data: prods } = await db.from('ffe_catalog').select('*').in('id', ids).limit(2000)
+  // Both paged in id order: the picker passes every active product, and each has a few sources.
+  const prodRead = await pageRows((a, b) => db.from('ffe_catalog').select('*').in('id', ids).order('id').range(a, b), 5)
+  if (prodRead.truncated) console.error('[ffe/orders] product read incomplete — some products are missing from the picker')
+  const prods = prodRead.rows
   let srcs: any[] = []
   try {
-    const { data } = await db.from('ffe_catalog_sources').select('*').in('catalog_id', ids).limit(5000)
-    srcs = (data || []) as any[]
+    const src = await pageRows((a, b) => db.from('ffe_catalog_sources').select('*').in('catalog_id', ids).order('id').range(a, b), 5)
+    if (src.truncated) console.error('[ffe/orders] sources read incomplete — some products are priced from the product row, not their chosen source')
+    srcs = src.rows
   } catch { /* migration 038 not run — fall back to whatever is on the product itself */ }
   const byProduct: Record<string, any[]> = {}
   for (const x of srcs) (byProduct[str(x.catalog_id)] = byProduct[str(x.catalog_id)] || []).push(x)
@@ -149,10 +153,12 @@ export async function GET(req: NextRequest) {
       try {
         const lids = Array.from(new Set(lineRows.map(l => str(l.listing_id)))).filter(Boolean)
         if (lids.length) {
-          const { data: wa } = await db.from('ffe_answers')
+          // Paged in id order — one answer per item on every unit of the order passes 1,000 quickly.
+          const wa = await pageRows((a, b) => db.from('ffe_answers')
             .select('listing_id,room,item_key,photo_url,replacement_photo,replacement_url,note,spec')
-            .in('listing_id', lids).limit(20000)
-          for (const a of ((wa || []) as any[])) {
+            .in('listing_id', lids).order('id').range(a, b), 5)
+          if (wa.truncated) console.error('[ffe/orders] walk-answer read incomplete — some lines show without the walk photo/note')
+          for (const a of wa.rows) {
             walkBy[str(a.listing_id) + '|' + str(a.room) + '|' + str(a.item_key)] = a
           }
         }
@@ -186,7 +192,10 @@ export async function GET(req: NextRequest) {
     if (sp.get('list')) {
       const [{ data: ords, error: oErr }, { data: lines, error: lErr }] = await Promise.all([
         db.from('ffe_orders').select('*').order('created_at', { ascending: false }).limit(500),
-        db.from('ffe_order_lines').select('order_id,qty,unit_cost,stage').limit(20000),
+        // Every line on every order, paged — the rollups below add them all up. Bounded at 5 pages
+        // (a page load); past that the board says so rather than show short totals.
+        pageRows((a, b) => db.from('ffe_order_lines').select('order_id,qty,unit_cost,stage').order('id').range(a, b), 5)
+          .then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'could not read every order line — the totals would be short' } : null })),
       ])
       if (oErr) return fail(oErr.message)
       if (lErr) return fail(lErr.message)
@@ -216,8 +225,10 @@ export async function GET(req: NextRequest) {
     if (!ownerId) {
       // Owners with something to BUY. A Fix answer is deliberately not counted here — it belongs
       // on the Fixes board, not in an owner's order.
-      const { data: ans, error } = await db.from('ffe_answers')
-        .select('listing_id,answer').in('answer', BUYS).limit(20000)
+      // Every flagged item in the portfolio, paged (counted per owner below), bounded at 5 pages.
+      const { data: ans, error } = await pageRows((a, b) => db.from('ffe_answers')
+        .select('listing_id,answer').in('answer', BUYS).order('id').range(a, b), 5)
+        .then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'could not read every flagged item — the counts would be short' } : null }))
       if (error) return fail(error.message)
       const byListing: Record<string, number> = {}
       for (const a of ((ans || []) as any[])) byListing[str(a.listing_id)] = (byListing[str(a.listing_id)] || 0) + 1
@@ -238,15 +249,23 @@ export async function GET(req: NextRequest) {
     const ids = mine.map(x => x.id)
     if (!ids.length) return NextResponse.json({ ok: true, owner: null, groups: [], products: [] })
 
-    const [{ data: ans, error: aErr }, { data: onOrder }, { data: prods }, ov] = await Promise.all([
-      db.from('ffe_answers').select('listing_id,room,item_key,title,answer,qty,note,spec,photo_url,replacement_url,replacement_photo,est_cost')
-        .in('listing_id', ids).in('answer', BUYS).limit(20000),
-      db.from('ffe_order_lines').select('listing_id,room,item_key,order_id').in('listing_id', ids).limit(20000),
-      db.from('ffe_catalog').select('id,code,name_en,category,item_keys,vendor,vendor_sku,unit_cost,url,image_url,room_hint')
-        .eq('active', true).limit(2000),
+    // All paged, bounded at 5 pages. The flagged items keep the order they were answered in. What is
+    // already on an order is read in full or not at all: a short read would show an item that is
+    // already being bought as still waiting to be ordered.
+    const [{ data: ans, error: aErr }, { data: onOrder, error: onErr }, prodRead, ov] = await Promise.all([
+      pageRows((a, b) => db.from('ffe_answers').select('listing_id,room,item_key,title,answer,qty,note,spec,photo_url,replacement_url,replacement_photo,est_cost')
+        .in('listing_id', ids).in('answer', BUYS).order('updated_at').order('id').range(a, b), 5)
+        .then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'could not read every flagged item for this owner — try again' } : null })),
+      pageRows((a, b) => db.from('ffe_order_lines').select('listing_id,room,item_key,order_id').in('listing_id', ids).order('id').range(a, b), 5)
+        .then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'could not read what is already on an order — try again' } : null })),
+      pageRows((a, b) => db.from('ffe_catalog').select('id,code,name_en,category,item_keys,vendor,vendor_sku,unit_cost,url,image_url,room_hint')
+        .eq('active', true).order('code').order('id').range(a, b), 5),
       overrides(db),
     ])
     if (aErr) return fail(aErr.message)
+    if (onErr) return fail(onErr.message)
+    if (prodRead.truncated) console.error('[ffe/orders] active-catalog read incomplete — the picker is missing products')
+    const prods = prodRead.rows
 
     const already = new Set(((onOrder || []) as any[]).map(l => str(l.listing_id) + '|' + str(l.room) + '|' + str(l.item_key)))
     const labelsFor = labelIndex(ov)

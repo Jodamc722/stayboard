@@ -92,9 +92,11 @@ export async function POST(req: NextRequest) {
     try {
       const lids = Array.from(new Set(rows.map(l => str(l.listing_id))))
       if (lids.length) {
-        const { data: wa } = await db.from('ffe_answers')
-          .select('listing_id,room,item_key,note,answer,photo_url').in('listing_id', lids).limit(20000)
-        for (const a of ((wa || []) as any[])) walkBy[str(a.listing_id) + '|' + str(a.room) + '|' + str(a.item_key)] = a
+        // Paged in id order — one answer per item on every unit of the order passes 1,000 quickly.
+        const wa = await pageRows((a, b) => db.from('ffe_answers')
+          .select('listing_id,room,item_key,note,answer,photo_url').in('listing_id', lids).order('id').range(a, b), 5)
+        if (wa.truncated) console.error('[ffe/orders/ai] walk-answer read incomplete — some lines are tiered without their walk note')
+        for (const a of wa.rows) walkBy[str(a.listing_id) + '|' + str(a.room) + '|' + str(a.item_key)] = a
       }
     } catch { /* fine */ }
     const withWalk = rows.map(l => {
