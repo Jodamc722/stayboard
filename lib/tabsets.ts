@@ -47,52 +47,9 @@ export const TAB_SETS: TabSet[] = [
   },
 ]
 
-// QUALITY AND ORDERS RETIRED 2026-09-03 (the September audit). Quality was Audits + Inspections +
-// FF&E and Orders was Purchasing + Work Orders + Projects; the four extra tabs had no data and no
-// visitors, so each set was one page wearing a costume. Audits and Purchasing are plain rows again.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const RETIRED_TAB_SETS: TabSet[] = [
-  {
-    key: 'quality', label: 'Quality',
-    blurb: 'Every walk of a unit in one place — annual/spot audits, pre-arrival inspections, and the FF&E furniture audit.',
-    tabs: [
-      { to: '/audits', label: 'Audits' },
-      { to: '/inspections', label: 'Inspections' },
-      { to: '/ffe', label: 'FF&E' },
-    ],
-  },
-  {
-    key: 'orders', label: 'Orders',
-    // Guest Orders left on 2026-08-25 (Jon: "Guest orders stand alone"). Everything else here is
-    // US spending money on a unit; a guest order is a GUEST spending money on their own stay. It
-    // reads as the same word and is a different business, so it sits with Guests now.
-    // Jon, same day: "orders can be one but can filter" — Purchasing already filters by stage,
-    // owner and building on the page itself, so these three stay behind one sidebar row.
-    blurb: 'What needs buying, fixing or building — purchasing from audits, field work orders, and building projects.',
-    tabs: [
-      { to: '/orders', label: 'Purchasing' },
-      { to: '/requests', label: 'Work Orders' },
-      { to: '/projects', label: 'Projects' },
-    ],
-  },
-  // GUEST COMMS IS GONE (Jon, 2026-08-25: "just make it easier, if it does not make sense then
-  // move"). Guidebooks left it first, and what remained was a row called something you could not
-  // click, standing in front of two pages that are not the same job: Front-Desk Notices is a daily
-  // send, Property FAQ is reference material Eve reads. A label that names none of its contents is
-  // the thing that makes a sidebar hard to learn. Both are their own rows now.
-  // THE OWNERS SET IS RETIRED (Jon, 2026-08-25: "remove the projections tab, in the owner reports
-  // it should have a projection builder"). Projections stopped being somewhere you GO: the numbers
-  // belong to the report you are building, so the builder lives inside Owner Reports and the model
-  // editor is reached from there. Owner Statement Audit had already left on the same grounds, and
-  // a set of one is just a row wearing a costume — so /reports is a plain row again.
-  //
-  // /projections keeps its route, its API and its role gate. It is the model editor behind the
-  // builder, not dead code, and it is where the deeper work lands when Eric's app connects.
-  // THE TEAM SET IS RETIRED (Jon, 2026-08-25: "just make it easier"). A section titled Team,
-  // holding one row titled Team, holding three pages, was three levels of chrome for three pages —
-  // and the row's label taught you nothing the section had not already said. Weekly Planner,
-  // Cleaners and Labor are their own rows now. Nothing else about them moved.
-]
+// RETIRED SETS — Quality and Orders (2026-09-03), Guest Comms, Owners and Team (2026-08-25) — each
+// stopped earning its row (rule above). Their definitions and the reasons are in git history.
+// /projections keeps its route, API and role gate: it is the model editor behind the report builder.
 
 function covers(path: string, to: string): boolean {
   return path === to || path.startsWith(to + '/')

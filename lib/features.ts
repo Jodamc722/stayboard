@@ -57,15 +57,12 @@ export const FEATURES: Feature[] = [
   { key: 'plan',          label: 'Today in Ops',      path: '/plan', group: 'Operations' },
   { key: 'maintenance',   label: 'Maintenance',       path: '/maintenance', group: 'Operations' },
   { key: 'schedule',      label: 'Turnover Schedule', path: '/schedule', group: 'Operations' },
-  { key: 'forecast',      label: 'Weekly Schedule',   path: '/schedule/forecast', group: 'Operations' },
   { key: 'glitches',      label: 'Glitches',          path: '/glitches', group: 'Operations' },
   // The refund playbook (2026-09-22, Jon): the ladder, the matrix, the clocks and the training
   // scenarios. Read-only for anyone who handles a guest issue; the money columns still obey the
   // money permission inside the page, so a role without it sees the doctrine and not the dollars.
   { key: 'refunds',       label: 'Making it right',   path: '/refunds', group: 'Operations' },
   { key: 'audits',        label: 'Audits',            path: '/audits', group: 'Operations' },
-  // Gated 2026-08-06 (Jon): was reachable by any logged-in member with no permission setting.
-  { key: 'inspections',   label: 'Inspections',       path: '/inspections', group: 'Operations' },
   { key: 'orders',        label: 'Orders',            path: '/orders', group: 'Operations' },
   { key: 'requests',      label: 'Requests',          path: '/requests', group: 'Operations' },
   // Blocked Units (2026-08-10, Jon): every unit off the calendar, read live from Guesty's
@@ -108,8 +105,6 @@ export const FEATURES: Feature[] = [
   // Personal read-only API keys (Jon, 2026-09-25). Every role can make their own; a key reads
   // exactly what its owner can see, through /api/v1 only.
   { key: 'api-keys',      label: 'API keys',           path: '/api-keys', group: 'Settings' },
-  // Building Patterns (2026-08-06, Jon): recurring complaint themes per building — prevention layer.
-  { key: 'patterns',      label: 'Building Patterns', path: '/patterns', group: 'Portfolio' },
   { key: 'revenue',       label: 'Revenue',           path: '/revenue', group: 'Money' },
   { key: 'marketing',     label: 'Direct Bookings',   path: '/marketing', group: 'Money' },
   // Billable hours (2026-08-06, Jon): Breezeway task billing by owner + labor vs actual.
@@ -131,11 +126,10 @@ export const FEATURES: Feature[] = [
   // Labor Dashboard (2026-08-10, Jon): the live click-into view behind the daily labor email —
   // day / week / month, per person, with the exceptions leading.
   { key: 'labor-dashboard', label: 'Labor Dashboard',  path: '/labor/dashboard', group: 'Team' },
-  { key: 'custom-fields', label: 'Custom Fields',     path: '/settings/custom-fields', group: 'Admin' },
   // Labor settings (2026-08-07): per-market labor% bands, clock-in grace, OT week, attribution
   // gate. Registered here because the build gate caught it unregistered — these thresholds drive
-  // the Labor board, the Schedule strip AND the briefs, so it sits in Admin next to Custom Fields
-  // rather than being reachable by anyone who can see /labor.
+  // the Labor board, the Schedule strip AND the briefs, so it sits in Admin rather than being
+  // reachable by anyone who can see /labor.
   { key: 'labor-settings', label: 'Labor Settings',   path: '/settings/labor', group: 'Admin' },
   // Connected apps (Slack, email). Deliberately LEFT OUT of the ops / cs / data bundles below, so
   // out of the box only Admin and GM can reach it — "a few people for now". To give it to someone
@@ -370,11 +364,11 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'admin', label: 'Admin',            landing: '/command', blurb: 'Everything + user management', pages: 'all' },
   { key: 'gm',    label: 'GM',               landing: '/command', blurb: 'Everything except admin tools', pages: 'all' },
   { key: 'ops',   label: 'Ops',              landing: '/plan',    blurb: 'Field operations: cleans, glitches, audits, orders',
-    pages: ['home', 'plan', 'schedule', 'forecast', 'glitches', 'audits', 'orders', 'requests', 'projects', 'ffe', 'onboarding', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'patterns', 'blocked', 'faq', 'guest-orders', 'api-keys', 'loops'] },
+    pages: ['home', 'plan', 'schedule', 'glitches', 'audits', 'orders', 'requests', 'projects', 'ffe', 'onboarding', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'blocked', 'faq', 'guest-orders', 'api-keys', 'loops'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
     pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims', 'guests', 'guest-orders', 'api-keys', 'loops'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
-    pages: ['home', 'revenue', 'revenue-app', 'marketing', 'reports', 'health', 'patterns', 'blocked', 'buildings', 'listings', 'claims', 'contacts', 'channels', 'api-keys'] },
+    pages: ['home', 'revenue', 'revenue-app', 'marketing', 'reports', 'health', 'blocked', 'buildings', 'listings', 'claims', 'contacts', 'channels', 'api-keys'] },
 ]
 
 export function normWorkspace(v: any): Workspace {
