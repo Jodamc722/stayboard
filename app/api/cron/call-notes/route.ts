@@ -1,8 +1,9 @@
 // CALL NOTES — the transcription + note worker (2026-09-21).
 //
 // Its own cron rather than a slice of the Talkroute sync, because the two have different shapes:
-// the sync is a quick mirror every 15 minutes, this walks a queue of audio and can take as long as
-// it is given. Time-boxed and resumable; a backlog drains over several passes, newest calls first.
+// the sync is a quick mirror, this walks a queue of audio and can take as long as it is given.
+// Every 30 minutes (9 and 39 past; was every 15 until 2026-09-28). Time-boxed and resumable; a
+// backlog drains over several passes, newest calls first.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireCron } from '@/lib/cron-auth'

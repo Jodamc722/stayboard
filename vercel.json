@@ -10,11 +10,11 @@
     },
     {
       "path": "/api/cron/guest-comms",
-      "schedule": "9,39 * * * *"
+      "schedule": "10,40 * * * *"
     },
     {
       "path": "/api/cron/reservation-notices",
-      "schedule": "13 * * * *"
+      "schedule": "28 * * * *"
     },
     {
       "path": "/api/cron/breezeway-tasks",
@@ -26,11 +26,11 @@
     },
     {
       "path": "/api/cron/watchdog",
-      "schedule": "26 * * * *"
+      "schedule": "24 * * * *"
     },
     {
       "path": "/api/sentiment/scan",
-      "schedule": "19,49 * * * *"
+      "schedule": "21,51 * * * *"
     },
     {
       "path": "/api/sync/owner-statements",
@@ -42,27 +42,27 @@
     },
     {
       "path": "/api/cron/guesty-catalog",
-      "schedule": "21 4,16 * * *"
+      "schedule": "3 4,16 * * *"
     },
     {
       "path": "/api/cron/sync-reviews",
-      "schedule": "37 */6 * * *"
+      "schedule": "26 3,9,15,21 * * *"
     },
     {
       "path": "/api/cron/auto-inspections",
-      "schedule": "28 10,14,18,22 * * *"
+      "schedule": "33 10,14,18,22 * * *"
     },
     {
       "path": "/api/cron/suggestions",
-      "schedule": "48 11 * * *"
+      "schedule": "36 11 * * *"
     },
     {
       "path": "/api/eve/learn",
-      "schedule": "47 5 * * *"
+      "schedule": "20 5 * * *"
     },
     {
       "path": "/api/cron/eve-ask",
-      "schedule": "0 13 * * *"
+      "schedule": "3 13 * * *"
     },
     {
       "path": "/api/cron/ops-brief",
@@ -70,7 +70,7 @@
     },
     {
       "path": "/api/cron/salato-daily",
-      "schedule": "16 11 * * *"
+      "schedule": "14 11 * * *"
     },
     {
       "path": "/api/cron/labor-trueup",
@@ -94,7 +94,7 @@
     },
     {
       "path": "/api/cron/eve-metrics",
-      "schedule": "43 7,8,9 * * *"
+      "schedule": "50 7,8,9 * * *"
     },
     {
       "path": "/api/cron/claims",
@@ -110,7 +110,7 @@
     },
     {
       "path": "/api/cron/guest-orders",
-      "schedule": "8 */2 * * *"
+      "schedule": "18 */2 * * *"
     },
     {
       "path": "/api/cron/eve-audit",
@@ -126,19 +126,19 @@
     },
     {
       "path": "/api/cron/project-notify",
-      "schedule": "7,37 * * * *"
+      "schedule": "13,43 * * * *"
     },
     {
       "path": "/api/cron/calls-closeout",
-      "schedule": "30 5 * * *"
+      "schedule": "31 5 * * *"
     },
     {
       "path": "/api/cron/slack-watch",
-      "schedule": "20 * * * *"
+      "schedule": "48 0-4,11-23 * * *"
     },
     {
       "path": "/api/cron/trash-sweep",
-      "schedule": "40 8 * * *"
+      "schedule": "20 8 * * *"
     },
     {
       "path": "/api/cron/eve-review",
@@ -146,11 +146,11 @@
     },
     {
       "path": "/api/cron/talkroute",
-      "schedule": "11,26,41,56 * * * *"
+      "schedule": "16,46 * * * *"
     },
     {
       "path": "/api/cron/call-notes",
-      "schedule": "6,21,36,51 * * * *"
+      "schedule": "9,39 * * * *"
     }
   ]
 }

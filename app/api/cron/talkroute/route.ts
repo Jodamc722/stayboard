@@ -1,5 +1,6 @@
-// TALKROUTE BACKFILL — every 15 minutes. The webhook is the fast path; this is the one that never
-// misses: calls (last sync − 1h), changed text threads, voicemails, and the matcher over all of it.
+// TALKROUTE BACKFILL — every 30 minutes (16 and 46 past; was every 15 until 2026-09-28). The
+// webhook is the fast path; this is the one that never misses: calls (last sync − 1h), changed text
+// threads, voicemails, and the matcher over all of it.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireCron } from '@/lib/cron-auth'
