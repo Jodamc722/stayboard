@@ -106,7 +106,8 @@ function kpiBlock(tiles: ScoreTile[], weekStart: string, today: string): Block {
   for (const t of tiles) {
     if (t.degraded) { lines.push(`- ${t.label}: could not read (${t.degraded})`); continue }
     const c = t.compare
-    const cmp = c ? ` | this week ${fmt(c.now, c.unit)} vs same weekdays last week ${fmt(c.prev, c.unit)} (${c.unit})` : ''
+    // The tile's own `vs` names the two windows it compared (settled days, or last week on day one).
+    const cmp = c ? ` | ${t.vs || 'this week vs same weekdays last week'}: ${fmt(c.now, c.unit)} vs ${fmt(c.prev, c.unit)} (${c.unit})` : ''
     const d = t.delta ? ` | delta ${t.delta.value} (${t.delta.dir}; good when ${t.delta.goodWhen})` : ''
     lines.push(`- ${t.label}: ${t.value} · ${t.sub}${cmp}${d}`)
     if (t.detail?.note) lines.push(`    how it is computed: ${clip(t.detail.note, 260)}`)
