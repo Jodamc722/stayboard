@@ -15,6 +15,7 @@ import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { blockedUnits } from '@/lib/blocked-units'
+import { pageRows } from '@/lib/db-page'
 import { MaintenanceView, type TriageRow } from './MaintenanceView'
 
 export const dynamic = 'force-dynamic'
@@ -42,6 +43,15 @@ function ageDays(iso?: string | null): number {
   return Math.max(0, Math.floor(ms / 86400000))
 }
 
+// EVERY ROW, IN ORDER (2026-09-29). Each read below was an unordered first 1,000 rows (the finished-
+// work read asked for 2,000 — PostgREST still stops at 1,000), so the queue and the heat grid could
+// quietly drop open work once a table outgrew one page. Paged by id now; a short read is logged.
+async function whole(label: string, q: (from: number, to: number) => PromiseLike<any>) {
+  const r = await pageRows<any>(q)
+  if (r.truncated) console.error('[maintenance] ' + label + ' read stopped early — the page may be missing rows')
+  return { data: r.rows }
+}
+
 const GLITCH_OPEN = ['pool', 'ops', 'guest_followup', 'refund', 'manager_review', 'incident']
 const WO_CLOSED = ['done', 'cancelled']
 // ── A DELETED TASK IS NOT OPEN WORK (2026-09-14, the tab-by-tab walk) ──────────────────────────
@@ -66,19 +76,21 @@ export default async function MaintenancePage() {
   const d30 = shift(today, -30)
 
   const [woRes, taskRes, doneRes, glitchRes, blocked] = await Promise.all([
-    db.from('field_requests').select('*').limit(1000),
+    whole('work orders', (a, b) => db.from('field_requests').select('*').order('id').range(a, b)),
     // Open maintenance execution: unfinished Breezeway maintenance tasks scheduled in the last
     // 60 days or undated. Older than that is archaeology, not operations.
-    db.from('breezeway_tasks_sync')
+    whole('open tasks', (a, b) => db.from('breezeway_tasks_sync')
       .select('id, reference_property_id, type_department, name, status, assignee_name, finished_at, scheduled_date, report_url, created:raw->>created_at')
       .eq('type_department', 'maintenance').is('finished_at', null)
-      .gte('scheduled_date', shift(today, -60)).limit(1000),
+      .gte('scheduled_date', shift(today, -60)).order('id').range(a, b)),
     // Closed maintenance work in the last 30 days, to find what never got billed.
-    db.from('breezeway_tasks_sync')
+    whole('finished tasks', (a, b) => db.from('breezeway_tasks_sync')
       .select('id, reference_property_id, name, status, assignee_name, finished_at, total_minutes')
       .eq('type_department', 'maintenance')
-      .gte('finished_at', d30 + 'T00:00:00').limit(2000),
-    db.from('glitches').select('id,status,unit,market,glitch_type,category,overview,assignee,due_date,created_at,breezeway_task_id').limit(1000),
+      .gte('finished_at', d30 + 'T00:00:00').order('id').range(a, b)),
+    // Only the statuses the queue counts as open (the same GLITCH_OPEN filter below), so this read
+    // does not page through every closed glitch ever logged.
+    whole('glitches', (a, b) => db.from('glitches').select('id,status,unit,market,glitch_type,category,overview,assignee,due_date,created_at,breezeway_task_id').in('status', GLITCH_OPEN).order('id').range(a, b)),
     blockedUnits(30).catch(() => null),
   ])
 
