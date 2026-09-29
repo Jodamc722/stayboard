@@ -682,7 +682,9 @@ export const CORE_TOOLS: EveTool[] = [
         await attachSlackPost(parked.requestId, posted.channelId, posted.ts)
       }
       out.sent_for_approval = true
-      const toThem = sl ? ' When it is released the code goes to them by direct message — never into a channel.' : ''
+      const toThem = !sl ? ''
+        : out.dm_note ? ' A direct message to them could not be opened, so whoever releases it passes it on privately — never into a channel.'
+        : ' When it is released the code goes to them by direct message — never into a channel.'
       out.release = posted.ok
         ? 'Parked for approval and posted in ' + posted.channel + ' with a Release button. It expires in 4 hours. Tell the person it is now waiting on an approver, and name the channel.' + toThem + ' Do not offer any other route to the code.'
         : 'Parked for approval, but it did NOT post to Slack (' + posted.error + '). Say so plainly: an admin has to open Settings -> Eve -> Approvals to release it.'

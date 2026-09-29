@@ -10,7 +10,7 @@
 // Cost is one extra turn on the first deep question of a thread.
 import 'server-only'
 import { redactMoney } from '@/lib/money'
-import { redactSensitive, codeFieldNameKind, redactGuestPII, maskMoneyStrings } from './redact'
+import { redactSensitive, codeFieldNameKind, redactGuestPII, maskMoneyStrings, scrubStoredStrings } from './redact'
 import { fitResult } from './fit'
 import type { EveTool, EveDomain } from './types'
 import { wireShape, obj, S } from './types'
@@ -150,7 +150,13 @@ export async function runTool(name: string, input: any, ctx: EveCtx, open: strin
     // of door / access codes except the door-code tool's own, which returns a code only when the
     // per-person policy in lib/eve/door-code.ts says it may.
     const raw = await tool.run(input || {}, ctx)
-    const coded = tool.name === 'door_code_check' ? raw : redactSensitive(raw, await codeFieldIds(ctx))
+    const coded0 = tool.name === 'door_code_check' ? raw : redactSensitive(raw, await codeFieldIds(ctx))
+    // IN A ROOM, NO CODE IN ANY FORM (Jon, 2026-09-29: door codes are "never in team channels with field
+    // team"). In Slack or a Telegram group every string also gets the stored-text treatment — a lock word
+    // next to a 4-8 digit number is masked — because a guest thread's check-in message or a line read
+    // from #ccs-and-jon can carry a code the patterns above miss. Not the door-code tool: its quoted
+    // lines are scrubbed at the source, and in an admin's own DM its `code` is the answer.
+    const coded = ctx.sharedRoom && tool.name !== 'door_code_check' ? scrubStoredStrings(coded0) : coded0
     // A VENDOR ROOM GETS THE JOB, NOT THE GUEST (2026-09-28 audit, F2 / B-10). ops_today, unit_status,
     // the sentiment and glitch boards all carry guest names or a guest's own words; in a room with an
     // outside company in it every result loses them here, whatever tool produced it — and since the

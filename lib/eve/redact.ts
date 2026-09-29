@@ -92,11 +92,15 @@ export function codeFieldNameKind(name: any): CodeKind {
 const BARE_KEY_RE = /(door|keypad|lock|entry|access|gate|garage)[\s_-]?(code|pin)|^door$|^res(ervation)?[\s_-]?code$|access[\s_-]?secret|^pin([\s_-]?code)?$|pass[\s_-]?code|^lock[\s_-]?box([\s_-]?(code|pin|combo))?$|^salto([\s_-]?(code|pin|key))?$|smart[\s_-]?lock[\s_-]?(code|pin)|^combination$|^c[oó]digo$/i
 /** The same split for a KEY: `door_code` holds a code; `lockbox`, `salto` and `door` name a device. */
 function keyKind(k: string): CodeKind {
-  if (!k) return null
-  if (BARE_KEY_RE.test(k)) return SAYS_CODE_RE.test(k) ? 'code' : 'device'
-  // A key named for some other code — "building_code", "Old code", "guestCode" (2026-09-29): hidden
-  // when its value is code-shaped, so a key like `code_fp` or a currency code costs nothing.
-  return namesACode(k) ? 'device' : null
+  if (!k || !BARE_KEY_RE.test(k)) return null
+  return SAYS_CODE_RE.test(k) ? 'code' : 'device'
+}
+// A key NAMED for some other code — "building_code", "Old code", "guestCode" (2026-09-29): its STRING
+// value is hidden when code-shaped. Only a key that ends with the word (so `code_fp` is not one), never
+// a number (so a count like `units_with_code: 212` stays), and never a harmless kind (confirmation, zip…).
+const ENDS_WITH_CODE_RE = /(?:^|[\s_\-.]|[a-z])(?:codes?|C(?:ode|ODE)S?|c[oó]digos?)\s*:?\s*$/
+function namedCodeString(k: string, v: any): boolean {
+  return typeof v === 'string' && !!k && ENDS_WITH_CODE_RE.test(k) && namesACode(k) && holdsCodeDigits(v)
 }
 // Inside a code field, these keys say WHICH field it is and how often it is filled — never what it
 // holds. Every other scalar in a code field is redacted, whatever it is called ("example", "value",
@@ -114,13 +118,26 @@ const CODE_FIELD_KEEP = /^(?:_?id|field_?id|fieldid|field|field_?name|fieldname|
 //            code it is not — a confirmation, reservation, booking, promo, zip, area, error or status
 //            code. A confirmation code like HMABC123 never matches: the digits must come first.
 //   BEFORE — "4821 is the door code".
-//   AFTER  — "use 4821# on the keypad", "4821 at the front door" (2026-09-29): the digits, then where
-//            they go. A unit number ("unit 1102 at the door") keeps its digits.
+// And since 2026-09-29, the ways a check-in message actually writes one:
+//   HASH   — a run of 3-8 digits closed with # is a keypad entry, whatever is around it: "Door: 4821#",
+//            "Building 1234# / Unit 4821#". No unit exemption: nobody writes a unit number that way.
+//   ENTER  — a verb that only ever means keying digits in ("punch in", "key in", "dial", "type in",
+//            "input", "marca", "teclea"), then 4-8 digits (or 3 with a #): "punch in 4821, then the
+//            button". A phone number after "dial" is not one (its digits go on).
+//   USE    — "use" / "enter" / "press" and the digits, ONLY when where they go follows: "use 4821# on
+//            the keypad", "enter 5566 at the front door", "use 4821 to get in", "usa 7788 para entrar".
+//            Without that tail it is not a code — "guest in 402 at the door", "arrives 1030 at the
+//            gate" and "pay $150 to enter" keep their numbers.
+//   DASH   — "your code — 5566": code / pin / passcode only, never a device word ("Keypad — 1102"
+//            and "Lockbox – 402 needs a battery" are unit numbers).
 // TIGHT takes digits written with single spaces or dashes too ("code is 4 8 2 1", "pin 12-34-56").
 const WINDOW_RE = /\b(?:(?:door|entry|access|lock|gate|garage|keypad)\s*(?:code|pin|combo)|c[oó]digo\s+de\s+(?:la\s+)?(?:puerta|entrada|acceso|cerradura|port[oó]n))/gi
-const TIGHT_RE = /(\b[a-z]+\s+)?\b(lock\s*box|salto|pass\s*code|combination|keypad|pin|c[oó]digo|code)(?:\s+(?:code|pin|number|num|no\.?|#))?\s*(?:is|es|was|:|#|-|=|—|–)?\s*(\d(?:[ -]?[\d#*]){2,})/gi
+const TIGHT_RE = /(\b[a-z]+\s+)?\b(lock\s*box|salto|pass\s*code|combination|combo|keypad|pin|c[oó]digo|code)(?:\s+(?:code|pin|number|num|no\.?|#))?\s*(?:is|es|was|:|#|-|=)?\s*(\d(?:[ -]?[\d#*]){2,})/gi
+const DASH_RE = /(\b[a-z]+\s+)?\b(pass\s*code|pin|c[oó]digo|code)\s*[—–]\s*(\d(?:[ -]?[\d#*]){2,})/gi
 const BEFORE_RE = /(\d[\d#*]{2,})(\s+(?:is|es|=)\s+(?:the\s+|el\s+|la\s+)?(?:(?:door|entry|access|lock|gate|garage)\s*(?:code|pin|combo)|keypad|c[oó]digo|lock\s*box|passcode))/gi
-const AFTER_RE = /(?<![\d.\/-])\b(\d[\d#*]{2,7})(?![\d#*])(\s+(?:(?:on|at|into|in)\s+(?:the\s+|el\s+|la\s+)?(?:front\s+|main\s+|building\s+|lobby\s+|garage\s+|gate\s+)?(?:keypad|key\s*pad|lock\s*box|lock|door|gate|garage|entrance|entry|salto|smart\s*lock|teclado|puerta|cerradura)|to\s+(?:enter|open|unlock|get\s+in)|para\s+(?:entrar|abrir))\b)/gi
+const HASH_RE = /(?<![\dA-Za-z#\/=?&.-])(\d{3,8})#+/g
+const ENTER_RE = /\b(punch(?:\s+in)?|key\s+in|type\s+in|dial|input|teclea|digita|marca|marque)(\s+(?:the\s+|el\s+|la\s+)?(?:code\s+|c[oó]digo\s+)?)(\d{4,8}#*|\d{3}#+)(?![\d#*]|[-.\s]\d)/gi
+const USE_RE = /\b(use|enter|press|usa|introduce|ingresa)(\s+(?:the\s+|el\s+|la\s+)?(?:code\s+|c[oó]digo\s+)?)(\d[\d#*]{2,7})(?![\d#*])(?=\s+(?:(?:on|at|into|in)\s+(?:the\s+|el\s+|la\s+)?(?:front\s+|main\s+|building\s+|lobby\s+|garage\s+|gate\s+)?(?:keypad|key\s*pad|lock\s*box|lock|door|gate|garage|entrance|entry|salto|smart\s*lock|teclado|puerta|cerradura)|to\s+(?:enter|open|unlock|get\s+in)|para\s+(?:entrar|abrir))\b)/gi
 // ("reservation" is not on this list: the Salto / Botanica per-stay DOOR code is a reservation field.)
 const NOT_A_DOOR = /^(?:confirmation|confirm|conf|booking|promo|promotional|discount|coupon|voucher|zip|postal|post|area|country|dial|error|status|response|http|verification|verify|tracking|reference|ref|order|invoice|tax|flight|qr|bar|source)$/i
 const DIGITS = /[0-9#*]{3,}/g
@@ -180,6 +197,8 @@ function scrubWindow(s: string): string {
     let end = Math.min(s.length, start + 40)
     const stop = s.slice(start, end).search(/[.!?;](?:\s|$)|\n/)
     if (stop >= 0) end = start + stop
+    // Never cut a number in half: "…use 48213#" at the 40th character lost "4821" and kept "3#".
+    while (end < s.length && end > start && /[\d#*]/.test(s[end]) && /[\d#*]/.test(s[end - 1])) end++
     const seg = s.slice(start, end)
     out += s.slice(last, start) + seg.replace(DIGITS, (d: string, at: number) => (UNIT_BEFORE_RE.test(seg.slice(Math.max(0, at - 14), at)) ? d : redactDigits(d)))
     last = end
@@ -198,9 +217,15 @@ function scrubText(s: string): string {
     if (digits.replace(/[^0-9]/g, '').length >= 9) return m
     return m.slice(0, m.length - digits.length) + '[redacted]'
   })
+  out = out.replace(DASH_RE, (m: string, pre: string | undefined, kw: string, digits: string) => {
+    if (pre && /^(?:code|c[oó]digo)$/i.test(kw) && NOT_A_DOOR.test(pre.trim())) return m
+    if (digits.replace(/[^0-9]/g, '').length >= 9) return m
+    return m.slice(0, m.length - digits.length) + '[redacted]'
+  })
   out = out.replace(BEFORE_RE, (_m: string, digits: string, rest: string) => redactDigits(digits) + rest)
-  out = out.replace(AFTER_RE, (m: string, digits: string, rest: string, at: number, whole: string) =>
-    (UNIT_BEFORE_RE.test(whole.slice(Math.max(0, at - 14), at)) ? m : redactDigits(digits) + rest))
+  out = out.replace(HASH_RE, '[redacted]')
+  out = out.replace(ENTER_RE, (_m: string, verb: string, mid: string) => verb + mid + '[redacted]')
+  out = out.replace(USE_RE, (_m: string, verb: string, mid: string) => verb + mid + '[redacted]')
   return out
 }
 
@@ -217,8 +242,7 @@ export function looksLikeDoorCode(text: any): boolean {
 // optional # or * after it). What is NOT a code run: a unit number ("unit 1102"), a year after
 // in / since ("since 2024"), a date, a phone number, money, a decimal, a percentage, or a run glued
 // to letters (a confirmation code). A zip / area / confirmation "code" is not a lock word.
-// (Lock brands too, 2026-09-29: "punch in 4821, then the Schlage button".)
-const MEM_CODE_WORD_RE = /\b(?:doors?|gates?|locks?|lockbox(?:es)?|keypads?|codes?|pins?|entry|entries|combos?|salto|access|passcodes?|keycodes?|c[oó]digos?|schlage|kwikset|igloohome|lockly)\b/gi
+const MEM_CODE_WORD_RE = /\b(?:doors?|gates?|locks?|lockbox(?:es)?|keypads?|codes?|pins?|entry|entries|combos?|salto|access|passcodes?|keycodes?|c[oó]digos?)\b/gi
 const MEM_RUN_RE = /(?<![A-Za-z\u00C0-\u024F0-9$.,\/-])\d{4,8}(?![0-9%]|[.,\/-]\d)[#*]?/g
 const MEM_PHONE_RE = /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g
 const MEM_UNIT_BEFORE_RE = /\b(?:unit|units|apt|apartment|suite|ste|room|rm|floor|level)\.?\s*#?\s*$/i
@@ -287,19 +311,36 @@ export function isCodeValue(fieldName: any, value: any): boolean {
 }
 
 // A name that is about a way in — used only for a whole-value decision on a screen, never for text.
-const WAY_IN_NAME_RE = /door|entry|entrance|access|gate|garage|lock|keypad|salto|alarm|mail\s*box|\bpin\b|combo|\bkey|c[oó]digo|puerta|port[oó]n/i
+const WAY_IN_NAME_RE = /door|entry|entrance|access|gate|garage|lock|keypad|salto|alarm|mail\s*box|\bpin\b|combo|\bkey|c[oó]digo|puerta|port[oó]n|check.?in|arrival|instruction|parking|building/i
+// On a unit's facts, these numbers are plainly something else too: opening hours ("7am-10pm"), a
+// parking spot or space ("Spot 214"), a street address ("1600 Collins Ave").
+const FACT_HARMLESS: RegExp[] = [
+  /\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)/gi,
+  /\b(?:spot|space|stall|bay|lot|piso|nivel)\s*#?\s*\d+/gi,
+  /\b\d{1,6}\s+(?:[NSEW]\.?\s+)?(?:[A-Z][A-Za-z]+\s+){1,3}(?:Ave|Avenue|St|Street|Blvd|Boulevard|Rd|Road|Dr|Drive|Way|Ln|Lane|Ct|Court|Pl|Place|Ter|Terrace|Hwy|Highway|Pkwy|Parkway|Cir|Circle|Causeway)\b\.?/g,
+]
+function factCodeShaped(v: any): boolean {
+  if (typeof v !== 'string' && typeof v !== 'number') return false
+  let s = String(v)
+  if (/(?<![\dA-Za-z#\/=?&.-])\d{3,8}#/.test(s)) return true   // "1234#" is a keypad entry, always
+  for (const re of FACT_HARMLESS) s = s.replace(re, ' ')
+  return holdsCodeDigits(s)
+}
 
 /**
  * A unit FACT (a custom field) on a screen for people who may not see codes — the FAQ desk. Hidden
  * whole when any of its names (name, slug) is a code field, a lock or keypad field with a code-shaped
- * value, or any other way in ("Gate", "Garage", "Alarm", "Mailbox", "Entry Instructions") whose value
- * carries a code-shaped number. What is left is still run through the text redactor by the caller.
+ * value, or any other way in ("Gate", "Garage", "Alarm", "Mailbox", "Entry Instructions", "Check-in
+ * instructions", "Parking") whose value still carries a code-shaped number once the plainly harmless
+ * ones are out (a phone, a date, a time or opening hours, money, a unit, floor or parking spot, a street
+ * address). Failing closed is the point: a sentence with "Building 1234" in it is hidden whole, because
+ * the text redactor cannot tell that from a street number. What is left still goes through it.
  */
 export function isCodeFact(names: any[], value: any): boolean {
   for (const n of names || []) {
     if (!n) continue
     if (isCodeValue(n, value)) return true
-    if (WAY_IN_NAME_RE.test(String(n)) && holdsCodeDigits(value)) return true
+    if (WAY_IN_NAME_RE.test(String(n)) && factCodeShaped(value)) return true
   }
   return false
 }
@@ -327,7 +368,7 @@ function walk(v: any, keyHint: string, ids: FieldIds): any {
     const out: Record<string, any> = {}
     for (const k of Object.keys(v)) {
       const val = v[k]
-      if ((typeof val === 'string' || typeof val === 'number') && val !== '' && val != null && hides(keyKind(k), val)) { out[k] = REDACTED; continue }
+      if ((typeof val === 'string' || typeof val === 'number') && val !== '' && val != null && (hides(keyKind(k), val) || namedCodeString(k, val))) { out[k] = REDACTED; continue }
       out[k] = walk(val, k, ids)
     }
     return out
@@ -359,7 +400,7 @@ export const RELEASED_CODE_MARK = '[door code released — see Eve actions]'
  * log (eve_chats.answer) and not in the Telegram transcript that is replayed into later prompts.
  * Every occurrence of each released code is replaced with a pointer to the audit trail.
  */
-export function scrubReleasedCodes(text: string, codes: string[]): string {
+export function scrubReleasedCodes(text: string, codes: string[], mark: string = RELEASED_CODE_MARK): string {
   let out = String(text || '')
   const list = codes.map(c => String(c || '').trim()).filter(c => c.length >= 3).sort((a, b) => b.length - a.length)
   for (const c of list) {
@@ -368,10 +409,10 @@ export function scrubReleasedCodes(text: string, codes: string[]): string {
     const digits = c.replace(/[^0-9]/g, '')
     if (digits.length >= 3) {
       const re = new RegExp('(?<![0-9])[#*]*' + digits.split('').join('[\\s#*.-]*') + '[#*]*(?![0-9])', 'g')
-      out = out.replace(re, RELEASED_CODE_MARK)
+      out = out.replace(re, mark)
     }
     // A code with letters in it (or too few digits to match on) is also replaced exactly as written.
-    if (digits.length < 3 || /[^0-9#*\s]/.test(c)) out = out.split(c).join(RELEASED_CODE_MARK)
+    if (digits.length < 3 || /[^0-9#*\s]/.test(c)) out = out.split(c).join(mark)
   }
   return out
 }
@@ -388,9 +429,31 @@ export function redactCodeText(s: any): string {
  * text redactor, then any lock word next to a 4-8 digit number. Stricter than a tool result on
  * purpose; a unit number in a sentence about a door is a fair price in a log. Never throws.
  */
-export function scrubStoredText(text: any, released: string[] = []): string {
+export function scrubStoredText(text: any, released: string[] = [], mark?: string): string {
   const t = String(text == null ? '' : text)
-  try { return maskCodeNearDigits(redactCodeText(released.length ? scrubReleasedCodes(t, released) : t)) } catch { return t }
+  try { return maskCodeNearDigits(redactCodeText(released.length ? scrubReleasedCodes(t, released, mark) : t)) } catch { return t }
+}
+
+/**
+ * EVERY STRING IN A TOOL RESULT, FOR A ROOM (2026-09-29 review). In Slack (and a Telegram group) an
+ * answer is read by a room — a field-team room included — so tool results there get the stored-text
+ * treatment on top of redactSensitive: a lock word next to a 4-8 digit number is masked too ("Front door
+ * 4821", "Gate 9911, then door 4821", "combo 2468"), the way a check-in message quoted from a guest
+ * thread or a line read from #ccs-and-jon would carry one. Stricter than a private answer on purpose; a
+ * unit number in a sentence about a door is a fair price in a shared room. Never throws.
+ */
+export function scrubStoredStrings<T>(value: T): T {
+  const go = (v: any): any => {
+    if (typeof v === 'string') return scrubStoredText(v)
+    if (Array.isArray(v)) return v.map(go)
+    if (v && typeof v === 'object' && !(v instanceof Date)) {
+      const out: Record<string, any> = {}
+      for (const k of Object.keys(v)) out[k] = go(v[k])
+      return out
+    }
+    return v
+  }
+  try { return go(value) as T } catch { return value }
 }
 
 /** Every string inside a tool's arguments with the released codes taken out. Never throws. */

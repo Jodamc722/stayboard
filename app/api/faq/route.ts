@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireLevel, doorCodePolicy } from '@/lib/access'
-import { requireVrUser } from '@/lib/vr-gate'
+import { requireLevel, requireAnyLevel, doorCodePolicy } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { otaLinksFrom } from '@/lib/ota-links'
 import { pageRows } from '@/lib/db-page'
 import { DOOR_CODE_FIELD_ID, RES_CODE_FIELD, isCodeFact, scrubStoredText } from '@/lib/eve/redact'
@@ -29,6 +29,19 @@ const CODE_HIDDEN = `Hidden — Customer Service requests door codes in ${DOOR_C
 const MASKED = /\[redacted/i
 
 type CfDef = { label: string; slug: string }
+
+/** The unmasked how-to behind one the desk showed masked: same unit, same title, masks to what was sent. */
+async function rawHowto(db: ReturnType<typeof supabaseAdmin>, listingId: string, title: string, masked: string): Promise<string | null> {
+  if (!listingId || !title) return null
+  const { data } = await db.from('audit_items').select('title,item_type,details,kind,note').eq('listing_id', listingId).order('created_at').limit(500)
+  for (const it of ((data as any[]) || [])) {
+    if (String(it.title || it.item_type || 'How-to') !== title) continue
+    for (const cand of [it?.details?.howTo, it?.note]) {
+      if (typeof cand === 'string' && cand && scrubStoredText(cand) === masked) return cand
+    }
+  }
+  return null
+}
 
 function facts(raw: any, cfMap?: Record<string, CfDef>, codes: 'direct' | 'ask' | 'off' = 'off') {
   const hide = codes !== 'direct'
@@ -73,9 +86,11 @@ function facts(raw: any, cfMap?: Record<string, CfDef>, codes: 'direct' | 'ask' 
 export async function GET(req: NextRequest) {
   // NOT PUBLIC (2026-09-29). This answered with no check at all — the whole listing list, and per
   // listing the Wi-Fi password, the access notes and every Guesty custom field. Its only callers
-  // are the FAQ desk on /faq and the listing page, both behind a login.
-  const gate = await requireVrUser()
+  // are the FAQ desk on /faq and on the listing page, so it takes the same level those pages do:
+  // view on the FAQ or on listings — and a vacation-rental login.
+  const gate = await requireAnyLevel(['faq', 'listings'], 'view')
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const db = supabaseAdmin()
   const listingId = req.nextUrl.searchParams.get('listingId') || ''
   if (!listingId) {
@@ -137,6 +152,13 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({} as any))
   const action = String(body.action || '')
+  // Approving a how-to that was shown masked: the desk sends back what it was shown, so the real text
+  // is taken from the audit item itself (the same unit, the same title, the text that masks to what was
+  // sent) — approving never needs anyone to retype a code, and never saves the mask.
+  if (action === 'approveHowto' && typeof body.answer === 'string' && MASKED.test(body.answer)) {
+    const raw = await rawHowto(db, String(body.listingId || ''), String(body.question || ''), body.answer)
+    if (raw) body.answer = raw
+  }
   // A MASKED ANSWER IS NEVER SAVED BACK (2026-09-29). Anyone not set to Direct sees codes in entries,
   // drafts and how-tos as "[redacted]" (GET); saving that text would overwrite the real answer with the
   // mask. So it is refused, and the fix is the right one anyway: a door code does not belong in an FAQ.

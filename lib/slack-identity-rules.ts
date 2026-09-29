@@ -114,7 +114,7 @@ export function decideIdentity(input: {
     }
     const byName = active.filter(u => u.name && input.nameMatches(u.name, slackName))
     if (byName.some(u => u.privileged)) {
-      return { ...out, problem: `"${slackName}" is named like an admin account, and admin accounts are only ever matched by email` }
+      return { ...out, problem: `"${slackName}" is named like an admin account (or one that gets or approves door codes), and those are only ever matched by email` }
     }
     if (byName.length === 1) return { ...out, email: byName[0].email, how: 'name' }
     if (byName.length > 1) return { ...out, problem: `${byName.length} Lighthouse accounts are named like "${slackName}"` }

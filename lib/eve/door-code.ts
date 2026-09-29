@@ -26,8 +26,9 @@ import { getListingCalendar } from '@/lib/guesty'
 import { todayET, lc, shiftDay, DEAD_LISTING } from './ctx'
 import { codeConfidence, fingerprint, recordVerification, refreshOne, transitionFor, bothCodes, inspectCode, type Confidence } from './code-integrity'
 import { DOOR_CODE_ROOM_NAMES, isSlackUserId } from './door-code-rooms'
-import { scrubStoredText } from './redact'
+import { scrubStoredText, scrubReleasedCodes, codeFieldNameKind } from './redact'
 import { resolveLighthouseEmail } from '@/lib/slack-identity'
+import { nameMatches, nameTokens } from '@/lib/person-name'
 
 /** The Guesty custom field that holds the door code (same id daysheet + listingIntel use). */
 const DOOR_CODE_FIELD = '695af1454ebbdc00137c3f41'
@@ -143,6 +144,8 @@ export type ResolvedCode = {
   stay?: { id: string; guest: string | null; checkIn: string; checkOut: string } | null
   /** Set when a reservation-system unit has no code — the reason matters more than the absence. */
   missingReason?: string
+  /** Reservation-system units: the per-stay codes of the recent stays read, for scrubbing quotes only. */
+  stayCodes?: string[]
 }
 
 /**
@@ -187,9 +190,13 @@ async function resolveCode(db: ReturnType<typeof supabaseAdmin>, l: any, today: 
   }
 
   const who = stay.guest_name ? ` (${stay.guest_name})` : ''
+  // Every recent stay's own code, for scrubbing quoted thread lines (runCheck): the last guest's thread
+  // carries the last guest's code. Never used to decide what to send.
+  const stayCodes = ((rv as any[]) || []).map(r => cfById({ customFields: r.custom_fields }, RES_CODE_FIELD)).filter(Boolean) as string[]
   return {
     code: code || null,
     source: 'reservation',
+    stayCodes,
     stay: { id: String(stay.id), guest: stay.guest_name || null, checkIn: String(stay.check_in).slice(0, 10), checkOut: String(stay.check_out).slice(0, 10) },
     missingReason: code ? undefined
       : `${unit} takes its code from the reservation and this stay${who} has none on it. On Botanica an empty field means the codes have been WIPED — nothing will work at that door until a new one is set. Do not send anyone with the building's standing code; it is not what the keypad holds.`,
@@ -269,12 +276,48 @@ const EXTEND = /\b(extra night|another night|one more night|extend(?:ing|ed)? (?
 const EARLY = /\b(early check.?in|check.?in early|checking in early|arriv(?:e|ing) early|here early|already here|we'?re outside|i'?m outside|outside the (?:building|door|unit)|can we (?:come|get) in (?:early|now)|in the lobby)\b/i
 
 // NO CODE RIDES OUT IN A QUOTE (2026-09-29 review). A guest thread holds OUR check-in messages too —
-// "your door code is 4821#" — and the guest's own "the code 4821 isn't working". Whatever this check
-// quotes (the recent thread, a permission quote, a vacancy finding, a note built from one) goes to Eve,
-// into the approval card in Slack and onto the /doorcode reply, so every quoted line loses the codes
-// this unit is known to hold, in any spelling, and anything else that reads as a code. The patterns
-// below still read the ORIGINAL words; only what is quoted is scrubbed.
-const quoteText = (text: string, secrets: string[]) => scrubStoredText(text.slice(0, 500), secrets)
+// "your door code is 4821#, building 1234#" — and the guest's own "the code 4821 isn't working".
+// Whatever this check quotes (a permission quote, a vacancy finding, the note built from one, the
+// guest's recent lines) goes to Eve, into the approval card in Slack and onto the /doorcode reply. So
+// OUR messages are not quoted at all (recentThread is the guest's side only), and every guest line
+// loses every code this unit is known to hold — the door code and the one before it, each code field
+// on the listing (building, back-up, old, program…), the recent stays' own codes — in any spelling,
+// plus anything else that reads as a code. Scrubbed whole, then cut. The patterns below still read
+// the ORIGINAL words; only what is quoted is scrubbed.
+const QUOTE_MARK = '[code]'
+const quoteText = (text: string, secrets: string[]) => scrubStoredText(text, secrets, QUOTE_MARK).slice(0, 500)
+
+let _codeKinds: { at: number; kinds: Record<string, 'code' | 'device'> } | null = null
+/** Which Guesty custom fields hold a code, by id — from their names and slugs (lib/eve/redact.ts). */
+async function codeFieldKinds(db: ReturnType<typeof supabaseAdmin>): Promise<Record<string, 'code' | 'device'>> {
+  if (_codeKinds && Date.now() - _codeKinds.at < 10 * 60_000) return _codeKinds.kinds
+  const kinds: Record<string, 'code' | 'device'> = { [DOOR_CODE_FIELD]: 'code', [RES_CODE_FIELD]: 'code' }
+  try {
+    const { data } = await db.from('guesty_custom_fields').select('id,name,slug').order('id').limit(500)
+    for (const d of ((data as any[]) || [])) {
+      const k = [codeFieldNameKind(d?.name), codeFieldNameKind(d?.slug)]
+      if (k.indexOf('code') >= 0) kinds[String(d.id)] = 'code'
+      else if (k.indexOf('device') >= 0) kinds[String(d.id)] = 'device'
+    }
+    _codeKinds = { at: Date.now(), kinds }
+  } catch { /* the door code and the patterns still apply */ }
+  return kinds
+}
+
+/** Every code written on the listing's own code fields — each number in them, and the value itself. */
+function listingCodeValues(raw: any, kinds: Record<string, 'code' | 'device'>): string[] {
+  const out: string[] = []
+  for (const c of (Array.isArray(raw?.customFields) ? raw.customFields : [])) {
+    const id = String(c?.fieldId?._id || c?.fieldId?.id || c?.fieldId || '')
+    const v = c?.value == null ? '' : String(c.value).trim()
+    if (!v || !kinds[id]) continue
+    const runs = v.match(/\d{3,}/g) || []
+    if (runs.length) { out.push(...runs); continue }
+    // A short code with letters or short digit groups in it ("AB12", "12-34") is scrubbed as written.
+    if (kinds[id] === 'code' && /\d/.test(v) && v.length <= 16) out.push(v)
+  }
+  return out
+}
 
 /** Guest-side messages on one reservation's thread, newest first. `raw` is for matching only. */
 async function guestThread(db: any, reservationId: string, secrets: string[], limit = 40): Promise<{ from: string; at: string; text: string; raw: string; isGuest: boolean }[]> {
@@ -398,12 +441,14 @@ export async function runCheck(input: { unit?: string; listingId?: string; reque
     }
   }
 
-  // The codes this door is known to take — the one on file and, for a standing code, the one the
-  // keypad may still hold — scrubbed out of every line this check quotes (quoteText, above).
-  const secrets: string[] = [code]
+  // Every code this unit is known to hold — the one on file, the one the keypad may still hold, each
+  // code field on the listing, the recent stays' own codes — scrubbed out of every line this check
+  // quotes (quoteText, above).
+  const secrets: string[] = [code, ...(resolved.stayCodes || [])]
   if (tracked) {
     try { const pair = await bothCodes(String(l.id), code); if (pair.previous) secrets.push(pair.previous) } catch { /* the patterns still apply */ }
   }
+  try { secrets.push(...listingCodeValues(l.raw, await codeFieldKinds(db))) } catch { /* the patterns still apply */ }
 
   // ---- Gate 2: is anyone in it? ----
   const { data: rv } = await db.from('guesty_reservations')
@@ -443,7 +488,9 @@ export async function runCheck(input: { unit?: string; listingId?: string; reque
       .select('name,assignees,type_department,status')
       .eq('reference_property_id', l.id).eq('scheduled_date', today).order('id').limit(10)
     const t: any = (tk || [])[0]
-    if (t) taskToday = { name: t.name, assignees: Array.isArray(t.assignees) ? t.assignees.map((a: any) => String(a?.name || '')).filter(Boolean) : [], dept: t.type_department }
+    // The task's name goes onto the approval card and to Eve: without this unit's own codes in it (only
+    // the known codes — a pattern would take the unit number out of "Keypad battery — 1102").
+    if (t) taskToday = { name: scrubReleasedCodes(String(t.name || ''), secrets, QUOTE_MARK), assignees: Array.isArray(t.assignees) ? t.assignees.map((a: any) => String(a?.name || '')).filter(Boolean) : [], dept: t.type_department }
   } catch { /* not a gate */ }
 
   const common = { ...base, calendar, arrivalWarning, inHouse: inHouse ? { guest: inHouse.guest_name, check_in: String(inHouse.check_in).slice(0, 10), check_out: String(inHouse.check_out).slice(0, 10) } : null, nextArrival: upcoming ? { guest: upcoming.guest_name, check_in: String(upcoming.check_in).slice(0, 10) } : null, cleaningStatus, taskToday }
@@ -481,10 +528,12 @@ export async function runCheck(input: { unit?: string; listingId?: string; reque
           const isGuest = /guest|inbound/i.test(lc((m as any).sender))
           const text = String((m as any).body || '').trim()
           if (!text) continue
-          // Matched on the guest's own words; quoted without any code in them (quoteText).
-          const row = { from: isGuest ? 'GUEST' : ((m as any).sender_name || 'us'), at: String((m as any).sent_at), text: quoteText(text, secrets) }
+          // The guest's side only: OUR messages are the check-in templates that carry the codes, and
+          // nothing here needs them. Matched on the guest's own words; quoted without any code in them.
+          if (!isGuest) continue
+          const row = { from: 'GUEST', at: String((m as any).sent_at), text: quoteText(text, secrets) }
           thread.push(row)
-          if (isGuest && AFFIRM.test(text) && ENTRY.test(text)) quotes.push(row)
+          if (AFFIRM.test(text) && ENTRY.test(text)) quotes.push(row)
         }
         thread.reverse()
       }
@@ -707,6 +756,18 @@ export async function releaseByToken(token: string, approvedBy: string, opts?: {
     const who = await resolveLighthouseEmail(requesterSlack).catch(() => null)
     const same = [who?.email, who?.profileEmail].some(e => String(e || '').trim().toLowerCase() === approver)
     if (same) return { ok: false, error: SELF }
+    // ...or by NAME, for an approver whose Slack account is on an address nothing links to: refusing is
+    // the safe way round. Both full names, or the very same name — a shared first name alone is not it.
+    if (who?.slackName) {
+      try {
+        const { data: me } = await db.from('app_users').select('profile').eq('email', approver).maybeSingle()
+        const mine = String((me as any)?.profile?.name || '').trim()
+        const A = nameTokens(mine), B = nameTokens(who.slackName)
+        if (A.length && B.length && (A.join(' ') === B.join(' ') || (A.length > 1 && B.length > 1 && nameMatches(mine, who.slackName)))) {
+          return { ok: false, error: SELF }
+        }
+      } catch { /* the address checks above still stand */ }
+    }
   }
   if (row.status === 'executed') return { ok: false, error: 'That code was already sent.' }
   if (row.status === 'rejected' || row.status === 'expired') return { ok: false, error: `This request was ${row.status}.` }
