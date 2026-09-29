@@ -35,6 +35,7 @@ import { crewScorecard } from './accountability'
 import { expectedCronPaths } from './automations'
 import { readSnapshot } from '@/lib/channel-health'
 import { channelFindings } from '@/lib/channel-check'
+import { awaitingSet, slaDueAt, SLA_RULE_TEXT } from '@/lib/response-times'
 
 export type Severity = 'critical' | 'warn' | 'info'
 export type Area = 'pipeline' | 'guests' | 'reviews' | 'ops' | 'listings' | 'money' | 'eve'
@@ -226,25 +227,34 @@ async function auditMetricGaps(c: Row): Promise<AuditFinding[]> {
 // GUESTS, REVIEWS, OPS — is anybody being left waiting?
 // =================================================================================================
 
+// THE ONE "WAITING ON US" RULE (lib/response-times, 2026-09-28 audit D3–D5). This read the sentiment
+// scan's awaiting flag — frozen at scan time — and called anything over six hours "waiting". It now
+// takes the inbox's own waiting set and keeps the guests past their reply-by time; which of them are
+// unhappy still comes from the scan.
 async function auditAwaitingReply(c: Row): Promise<AuditFinding[]> {
-  const s: any = await safe(c.db.from('guesty_conversation_sentiment')
-    .select('conversation_id,listing_id,awaiting_reply,dissatisfied,last_guest_at,top_issue')
-    .eq('awaiting_reply', true).order('last_guest_at', { ascending: true }).limit(500), { data: [] })
-  const rows: any[] = s?.data || []
-  if (!rows.length) return []
-  const aged = rows.map(r => ({ ...r, mins: minsSince(r.last_guest_at) })).filter(r => r.mins != null && r.mins > 60 * 6)
-  if (!aged.length) return []
-  const unhappy = aged.filter(r => r.dissatisfied)
-  const worst = aged[0]
-  const out: AuditFinding[] = [{
-    id: 'guests_awaiting_reply', area: 'guests', severity: aged.length > 15 || unhappy.length > 0 ? 'critical' : 'warn', count: aged.length,
-    title: `${aged.length} guest${aged.length === 1 ? ' is' : 's are'} waiting on a reply`,
-    detail: `All have been waiting over six hours; the oldest is ${worst.mins != null ? hrs(worst.mins) : 'unknown'}.`
-      + (unhappy.length ? ` ${unhappy.length} of them are already flagged unhappy — those are the ones that turn into reviews.` : ''),
-    fix: 'Answer the unhappy ones first, then oldest first. A holding reply beats silence.',
-    evidence: { waiting: aged.length, unhappy: unhappy.length, oldestMinutes: worst.mins },
+  const set = await awaitingSet({ db: c.db })
+  if (set.error) throw new Error('could not read who is waiting: ' + set.error)
+  const now = Date.now()
+  // Past the stored reply-by time — or, for a row with none stored yet (computed before migration
+  // 134, or before its thread moved again), the same rule on the guest's last message.
+  const late = set.rows.filter(r => { const due = r.sla_due_at || slaDueAt(r.awaiting_since || r.last_guest_at); return !!due && Date.parse(due) <= now })
+  if (!late.length) return []
+  const ids = late.map(r => r.conversation_id)
+  const unhappy = new Set<string>()
+  for (let i = 0; i < ids.length; i += 200) {
+    const s: any = await safe(c.db.from('guesty_conversation_sentiment').select('conversation_id').in('conversation_id', ids.slice(i, i + 200)).eq('dissatisfied', true), { data: [] })
+    for (const x of ((s?.data || []) as any[])) unhappy.add(String(x.conversation_id))
+  }
+  const n = late.length
+  const oldest = late.reduce((m, r) => Math.max(m, minsSince(r.awaiting_since || r.last_guest_at) || 0), 0)
+  return [{
+    id: 'guests_awaiting_reply', area: 'guests', severity: n > 15 || unhappy.size > 0 ? 'critical' : 'warn', count: n,
+    title: `${n} guest${n === 1 ? ' is' : 's are'} waiting past the reply-by time`,
+    detail: `Past the reply-by time: ${SLA_RULE_TEXT}. The longest wait is ${hrs(oldest)}.`
+      + (unhappy.size ? ` ${unhappy.size} of them ${unhappy.size === 1 ? 'is' : 'are'} already flagged unhappy — those are the ones that turn into reviews.` : ''),
+    fix: 'Answer the unhappy ones first, then the longest wait. A holding reply beats silence.',
+    evidence: { waiting: n, unhappy: unhappy.size, oldestMinutes: oldest, conversations: ids.slice(0, 20) },
   }]
-  return out
 }
 
 async function auditUnansweredReviews(c: Row): Promise<AuditFinding[]> {
