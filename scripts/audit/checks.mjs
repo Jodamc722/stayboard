@@ -185,6 +185,10 @@ function shellCompliance() {
 // 4. POSTGREST 1000-ROW CAP
 // .limit(1000) is exactly the PostgREST default cap, so a truncated result is indistinguishable
 // from a complete one. Every number computed off one of these is quietly capped.
+// Not a finding: a .limit(1000) whose own line ends in `// deliberate cap: <reason>` — a bounded,
+// ordered "latest N" list, or a table that can never reach 1,000 rows, said so where it is written.
+// A stated, deliberate cap is not a silent truncation. The reason is required (the marker alone is
+// not enough), and the marker must sit on the same line as the .limit(1000) it excuses.
 // ─────────────────────────────────────────────────────────────────────────────
 // Is this offset inside a comment? ("Paged, not .limit(1000)" in a history note is not a query.)
 function inComment(src, idx) {
@@ -192,12 +196,19 @@ function inComment(src, idx) {
   if (/(^|[^:'"`\\])\/\//.test(pre)) return true
   return src.lastIndexOf('/*', idx) > src.lastIndexOf('*/', idx)
 }
+const DELIBERATE_CAP = /\/\/\s*deliberate cap:\s*\S/i
+// The whole source line the offset sits on.
+function lineText(src, idx) {
+  const end = src.indexOf('\n', idx)
+  return src.slice(src.lastIndexOf('\n', idx - 1) + 1, end < 0 ? src.length : end)
+}
 function rowCap() {
   const out = []
   for (const f of SRC()) {
     const src = rd(f)
     for (const m of src.matchAll(/\.limit\(1000\)/g)) {
       if (inComment(src, m.index)) continue
+      if (DELIBERATE_CAP.test(lineText(src, m.index))) continue
       out.push({ id: `row-cap:${f}:${lineOf(src, m.index)}`, sev: 'amber', area: 'Data',
         title: `Query capped at exactly 1000 rows`,
         detail: 'PostgREST returns at most 1000 rows by default, so this cannot tell "there were 1000" from "there were more and you got 1000". Page it, or raise the cap and assert you did not hit it.',
