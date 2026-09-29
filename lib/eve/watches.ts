@@ -152,11 +152,13 @@ async function guestUnanswered(env: WatchEnv): Promise<Prepared[]> {
         // altogether. Rows whose module is a log / note / internal entry are dropped before either
         // test (older rows can carry a log module under 'host' or 'guest', so the module decides,
         // not the sender). Read deeper than we show so a run of notes cannot empty the window.
-        const { data: msgs } = await db.from('guesty_messages').select('sender,sender_name,body,sent_at,module').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(40)
+        const { data: msgs } = await db.from('guesty_messages').select('sender,sender_name,body,sent_at,module,is_automated').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(40)
         const all = ((msgs as any[]) || []).filter(m => !INTERNAL_MODULES.has(str(m.module).toLowerCase())).slice(0, 12)
         // conversation_response is refreshed by the guest-comms cron; the mirror is fresher. If we
-        // (or Eve, via Send) have answered since, there is nothing to draft.
-        const lastReal = all.find(m => m.sender === 'guest' || m.sender === 'host')
+        // (or Eve, via Send) have answered since, there is nothing to draft. A GUESTY TEMPLATE IS NOT
+        // AN ANSWER (2026-09-28 audit, F18): Guesty sends its automations as the host, so a check-in
+        // template after the guest's question used to read as "we replied" and suppress the draft.
+        const lastReal = all.find(m => m.sender === 'guest' || (m.sender === 'host' && m.is_automated !== true))
         if (!lastReal || lastReal.sender !== 'guest') return null
         const thread = all.filter(m => m.sender === 'guest' || m.sender === 'host').slice().reverse().map(m => `${m.sender === 'guest' ? 'GUEST' : 'US'}: ${str(m.body).replace(/\s+/g, ' ').slice(0, 500)}`).join('\n')
         if (!thread) return null
