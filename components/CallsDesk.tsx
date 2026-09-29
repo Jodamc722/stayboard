@@ -591,7 +591,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   return (
     <div className="space-y-3">
       <header className="flex items-end justify-between gap-3 flex-wrap">
-        <h1 className="text-2xl font-bold text-ink tracking-tight inline-flex items-center gap-2"><PhoneCall size={20} className="text-brand-600" /> Calls</h1>
+        <h1 className="text-2xl font-bold text-ink tracking-tight inline-flex items-center gap-2"><PhoneCall size={20} className="text-brand-600" /> Calls desk</h1>
         <div className="flex items-center gap-1.5 flex-wrap text-[12px]">
           <span className={`rounded-lg px-2 py-1 font-semibold tabular-nums ${!mTot ? 'bg-slate-100 text-muted' : kpis.mandatoryOpen ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>Must call {kpis.mandatoryDoneToday}/{mTot}</span>
           <span className="rounded-lg px-2 py-1 font-semibold tabular-nums bg-slate-100 text-ink">Other {oDone}/{oTot}</span>

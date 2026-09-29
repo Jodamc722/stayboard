@@ -151,7 +151,7 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
   }
 
   const head = (extra?: React.ReactNode) => (
-    <LeanHead title="Channel connections">{extra}</LeanHead>
+    <LeanHead title="Channels">{extra}</LeanHead>
   )
   if (loading && !data) return <div>{head()}<LeanEmpty><Loader2 size={16} className="animate-spin inline mr-2" /> Reading every listing&apos;s channels…</LeanEmpty></div>
   if (err && !data) return <div>{head()}<div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 flex items-center gap-2"><AlertTriangle size={14} /> {err}</div></div>

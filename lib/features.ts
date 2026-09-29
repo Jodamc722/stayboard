@@ -57,13 +57,13 @@ export const FEATURES: Feature[] = [
   { key: 'salato',        label: 'Salato settings',   path: '/salato', group: 'Guests' },
   { key: 'plan',          label: 'Today in Ops',      path: '/plan', group: 'Operations' },
   { key: 'maintenance',   label: 'Maintenance',       path: '/maintenance', group: 'Operations' },
-  { key: 'schedule',      label: 'Turnover Schedule', path: '/schedule', group: 'Operations' },
+  { key: 'schedule',      label: 'Scheduler',         path: '/schedule', group: 'Operations' },
   { key: 'glitches',      label: 'Glitches',          path: '/glitches', group: 'Operations' },
   // The refund playbook (2026-09-22, Jon): the ladder, the matrix, the clocks and the training
   // scenarios. Read-only for anyone who handles a guest issue; the money columns still obey the
   // money permission inside the page, so a role without it sees the doctrine and not the dollars.
   { key: 'refunds',       label: 'Making it right',   path: '/refunds', group: 'Operations' },
-  { key: 'audits',        label: 'Audits',            path: '/audits', group: 'Operations' },
+  { key: 'audits',        label: 'Quality',           path: '/audits', group: 'Operations' },
   { key: 'orders',        label: 'Orders',            path: '/orders', group: 'Operations' },
   { key: 'requests',      label: 'Requests',          path: '/requests', group: 'Operations' },
   // Blocked Units (2026-08-10, Jon): every unit off the calendar, read live from Guesty's
@@ -98,7 +98,7 @@ export const FEATURES: Feature[] = [
   // Channel connections (Jon, 2026-09-18): every listing × every channel — live, failed,
   // disconnected, suspended or simply not connected — and the daily trigger behind it. View reads
   // the matrix; full runs the check by hand (Refresh). Admin/manager inherit full through '*'.
-  { key: 'channels',      label: 'Channel connections', path: '/channels', group: 'Portfolio' },
+  { key: 'channels',      label: 'Channels',          path: '/channels', group: 'Portfolio' },
   // Lighthouse checking itself. Under Settings rather than Portfolio: it is about the app, not the
   // buildings, and the whole point of moving it off Slack and out of email was to stop app-health
   // noise landing where operational information lives.
@@ -107,7 +107,7 @@ export const FEATURES: Feature[] = [
   // exactly what its owner can see, through /api/v1 only.
   { key: 'api-keys',      label: 'API keys',           path: '/api-keys', group: 'Settings' },
   { key: 'revenue',       label: 'Revenue',           path: '/revenue', group: 'Money' },
-  { key: 'marketing',     label: 'Direct Bookings',   path: '/marketing', group: 'Money' },
+  { key: 'marketing',     label: 'Direct bookings',   path: '/marketing', group: 'Money' },
   // Billable hours (2026-08-06, Jon): Breezeway task billing by owner + labor vs actual.
   // Money page -> owner/admin-only by default (migration 027 records manager off, like Owner Audit).
   { key: 'billing',       label: 'Billable Hours',    path: '/billing', group: 'Money' },

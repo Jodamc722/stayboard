@@ -304,7 +304,7 @@ export function AuditDesk() {
 
   return (
     <div>
-      <LeanHead title="Property Audits" icon={<ClipboardList size={20} className="text-muted" />}>
+      <LeanHead title="Quality" icon={<ClipboardList size={20} className="text-muted" />}>
         <Pill title="Audits not yet marked complete">{openAudits.length} open</Pill>
         {nDue > 0 ? <Pill tone="rose" title="Completed audits 6+ months old (due) or a year+ (overdue) — time to re-audit">{nDue} due</Pill> : null}
         <Pill tone="amber" title="Captured items still open across open audits">{nOpenItems} items open</Pill>
