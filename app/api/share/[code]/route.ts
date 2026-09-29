@@ -311,7 +311,11 @@ async function handle(req: NextRequest, code: string, pw: string, body?: any) {
     })
   }
 
-  if (sections.team || sections.team_maint) {
+  // A FAILED PLANNER READ LEAVES THE PLANNER OUT (2026-09-29, 02-F6) instead of failing every other
+  // section on the link: SharedView draws the planner only when it is there. Logged, and the payload
+  // is not memoised, so the next load tries again.
+  let plannerFailed = false
+  if (sections.team || sections.team_maint) try {
     // The weekly planner, scoped to whatever this link covers. Same builder the in-app tab uses —
     // one set of numbers, two doors — and the same tag vocabulary as Slack and the ops brief.
     // Names are the point here: this is a rota, not guest data, so `guest_names` does not apply.
@@ -358,6 +362,9 @@ async function handle(req: NextRequest, code: string, pw: string, body?: any) {
         })),
       })),
     }
+  } catch (e) {
+    plannerFailed = true
+    console.error('share/[code]: planner read failed', e)
   }
 
   if (sections.notes) {
@@ -370,7 +377,7 @@ async function handle(req: NextRequest, code: string, pw: string, body?: any) {
       }))
   }
 
-  payloadMemo.set(memoKey, { at: Date.now(), out })
+  if (!plannerFailed) payloadMemo.set(memoKey, { at: Date.now(), out })
   if (payloadMemo.size > 200) { const first = payloadMemo.keys().next().value; if (first) payloadMemo.delete(first) }
   return NextResponse.json(out)
 }
