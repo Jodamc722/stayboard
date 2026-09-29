@@ -124,21 +124,22 @@ export async function buildCtx(access: Access, canMoney: boolean, opts: { onlyBu
   // A VENDOR ROOM SEES ITS OWN BUILDINGS (2026-09-28 audit, F2). "Their own buildings" was a line in
   // the prompt; now the registry itself is narrowed, so unit lookups, portfolio counts and review
   // scoping only know the routing group's buildings (canonical labels from lib/segments, the same
-  // ones the group lists). If nothing matches — a group whose labels drifted — nothing is narrowed
-  // rather than every answer coming back empty.
-  const only = (opts.onlyBuildings || []).map(b => lc(b).trim()).filter(Boolean)
+  // ones the group lists).
+  //
+  // FAIL CLOSED (2026-09-29 review, N14). A scope that matches nothing — a group whose labels drifted,
+  // or a vendor room with no buildings set — used to narrow nothing, which handed that room the whole
+  // portfolio. Asking for a scope (onlyBuildings given, even empty) now always narrows: no match, no
+  // units. run.ts tells her so, and the room is told an admin must fix the group's buildings.
   let scopedBuildings: string[] | undefined
-  if (only.length) {
-    const keep = Object.keys(listingMeta).filter(id => {
+  if (opts.onlyBuildings) {
+    const only = opts.onlyBuildings.map(b => lc(b).trim()).filter(Boolean)
+    const kept: Record<string, true> = {}
+    for (const id of Object.keys(listingMeta)) {
       const m = listingMeta[id]
-      return only.indexOf(lc(canonicalBuilding(m.building, m.name) || '')) >= 0 || only.indexOf(lc(m.rollup)) >= 0
-    })
-    if (keep.length) {
-      const kept: Record<string, true> = {}
-      for (const id of keep) kept[id] = true
-      for (const id of Object.keys(listingMeta)) if (!kept[id]) delete listingMeta[id]
-      scopedBuildings = (opts.onlyBuildings || []).slice()
+      if (only.indexOf(lc(canonicalBuilding(m.building, m.name) || '')) >= 0 || only.indexOf(lc(m.rollup)) >= 0) kept[id] = true
     }
+    for (const id of Object.keys(listingMeta)) if (!kept[id]) delete listingMeta[id]
+    scopedBuildings = opts.onlyBuildings.slice()
   }
 
   const nameOf = (lid: any) => listingMeta[String(lid)]?.name || 'Unknown'
@@ -163,6 +164,14 @@ export async function buildCtx(access: Access, canMoney: boolean, opts: { onlyBu
     today: todayET(), listingMeta, nameOf, buildingOf, reviewable, idsForBuilding, idsForName,
     scopedBuildings,
   }
+}
+
+/**
+ * The listing ids a scoped room may see (buildCtx onlyBuildings — a vendor room), or null when the
+ * registry was not narrowed. An EMPTY list means the scope matched nothing: show nothing (N14).
+ */
+export function scopeIds(ctx: EveCtx): string[] | null {
+  return ctx.scopedBuildings ? Object.keys(ctx.listingMeta) : null
 }
 
 /** Resolve a unit from a name or id to exactly one listing, the way unit_status does. */

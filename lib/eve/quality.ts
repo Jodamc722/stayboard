@@ -10,7 +10,7 @@ import { THEMES } from '@/lib/review-themes'
 import { listProjects } from '@/lib/projects'
 import type { EveTool, EveDomain } from './types'
 import { obj, S } from './types'
-import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveListing, normStar, DEAD_LISTING } from './ctx'
+import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveListing, normStar, DEAD_LISTING, scopeIds } from './ctx'
 
 export const QUALITY_TOOLS: EveTool[] = [
   {
@@ -127,9 +127,12 @@ export const QUALITY_TOOLS: EveTool[] = [
     run: async (input, ctx) => {
       const days = clampDays(input?.days, 30, 120)
       const lim = clampLimit(input?.limit, 40, 100)
+      const scope = scopeIds(ctx)   // a vendor room: its own units' threads only (2026-09-29 review, N14)
+      if (scope && !scope.length) return { window_days: days, count: 0, truncated: false, dissatisfied: 0, awaiting_reply: 0, top_issues: {}, threads: [], note: 'This room is scoped to buildings that match no units, so there is nothing to show from here.' }
       let q = ctx.db.from('guesty_conversation_sentiment')
         .select('conversation_id,guest_name,channel,reservation_id,listing_id,score,band,dissatisfied,triggers,top_issue,reason,guest_excerpt,last_message_at,last_guest_at,awaiting_reply,status,marked_sensitive_at')
         .gte('last_message_at', new Date(Date.now() - days * 86400000).toISOString())
+      if (scope) q = q.in('listing_id', scope)
       if (input?.band) q = q.eq('band', lc(input.band))
       if (input?.dissatisfied_only) q = q.eq('dissatisfied', true)
       if (input?.awaiting_reply_only) q = q.eq('awaiting_reply', true)

@@ -289,7 +289,12 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   const preOpen = Array.isArray(input.domains) ? input.domains : []
   for (const d of preOpen) { const k = lc(d); if (DOMAIN_KEYS.indexOf(k) >= 0 && open.indexOf(k) < 0) open.push(k) }
 
-  const surface = [source === 'telegram' ? TELEGRAM_NOTE : source === 'slack' ? SLACK_NOTE : '', input.surfaceNote || ''].filter(Boolean).join('\n')
+  // A SCOPE THAT MATCHED NOTHING (2026-09-29 review, N14): the room sees no units at all (buildCtx
+  // fails closed), and she says why instead of reporting a quiet day.
+  const emptyScope = ctx.scopedBuildings && !Object.keys(ctx.listingMeta).length
+    ? `This room's buildings (${ctx.scopedBuildings.join(', ') || 'none set'}) match no units in the portfolio, so from here you can see no units, tasks, issues or claims. Say that plainly — never that nothing is going on — and that a Stay Hospitality admin has to set this room's buildings at /users → Settings → Slack alerts & rules → Areas.`
+    : ''
+  const surface = [source === 'telegram' ? TELEGRAM_NOTE : source === 'slack' ? SLACK_NOTE : '', input.surfaceNote || '', emptyScope].filter(Boolean).join('\n')
   // ORDER IS PRECEDENCE. The prompt tells the model these notes override what came before, so the
   // last word belongs to the narrowest instruction: house vocabulary first, then where she is
   // standing, then Jon's own hand-written voice notes, and the language rule last of all, because

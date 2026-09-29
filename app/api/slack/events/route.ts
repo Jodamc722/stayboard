@@ -402,7 +402,10 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
       tier: grant.tier,
       // A vendor ROOM restricts the answer whoever asks — an admin included (2026-09-29 review, N3/N4).
       vendorRoom: !!grant.vendorRoom,
-      onlyBuildings: grant.tier === 'vendor' ? grant.buildings : undefined,
+      // The vendor tier's scope, FAIL CLOSED (N14): a vendor room is always scoped, even with no
+      // buildings set (then it sees no units); an unmapped asker in one of our group rooms is scoped to
+      // that group. Only an unmapped asker in a room with no routing group stays unscoped, as before.
+      onlyBuildings: grant.tier === 'vendor' && (grant.vendorRoom || grant.buildings.length) ? grant.buildings : undefined,
       surfaceNote: [
         `This is ${where}. Whatever that channel is for is the likely subject — if it is a building's channel, assume the question is about that building unless told otherwise.`,
         history,

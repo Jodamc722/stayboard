@@ -13,7 +13,7 @@ import { nextCheckInMap } from '@/lib/claim-turnover'
 import type { EveTool, EveDomain } from './types'
 import { winsFor } from './wins'
 import { obj, S } from './types'
-import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveListing, pageRows } from './ctx'
+import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveListing, pageRows, scopeIds } from './ctx'
 import { nameMatches, personKey, bestSpelling } from '@/lib/person-name'
 import { assigneeNames as assigneeNamesOf } from './dossiers'
 
@@ -47,11 +47,15 @@ export const OPS_TOOLS: EveTool[] = [
       const lim = clampLimit(input?.limit, 40, 150)
       const from = String(input?.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.from) : shiftDay(ctx.today, -7)
       const to = String(input?.to || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.to) : ctx.today
+      // A VENDOR ROOM SEES ITS OWN UNITS' WORK (2026-09-29 review, N14); an empty scope sees none.
+      const scope = scopeIds(ctx)
+      if (scope && !scope.length) return { window: { from, to }, count: 0, truncated: false, tasks: [], note: 'This room is scoped to buildings that match no units, so there is no work to show from here.' }
       let q = ctx.db.from('breezeway_tasks_sync').select(TASK_COLS)
         .gte('scheduled_date', from).lte('scheduled_date', to)
       if (input?.dept) q = q.eq('type_department', lc(input.dept))
       const unit = resolveListing(ctx, input)
       if (unit) q = q.eq('reference_property_id', unit.id)
+      else if (scope) q = q.in('reference_property_id', scope)
       // Rule 2: order before limit, always.
       const { data } = await q.order('scheduled_date', { ascending: false }).order('id').limit(lim)
       let rows = (data || []).map((t: any) => ({
@@ -230,9 +234,12 @@ export const OPS_TOOLS: EveTool[] = [
     run: async (input, ctx) => {
       const lim = clampLimit(input?.limit, 40, 100)
       const days = clampDays(input?.days, 60, 400)
+      const scope = scopeIds(ctx)   // a vendor room: its own units' issues only (N14)
+      if (scope && !scope.length) return { count: 0, truncated: false, by_lane: {}, overdue: 0, glitches: [], note: 'This room is scoped to buildings that match no units, so there are no issues to show from here.' }
       // Slim select — the full row carries photos[], history jsonb and AI text (multi-MB over a board).
       let q = ctx.db.from('glitches').select('id,status,glitch_type,category,listing_id,unit,market,guest_name,channel,incident_date,overview,due_date,assignee,progress,refund_approved,created_at')
         .gte('created_at', new Date(Date.now() - days * 86400000).toISOString())
+      if (scope) q = q.in('listing_id', scope)
       if (input?.status) q = q.eq('status', lc(input.status))
       else if (input?.open_only !== false) q = q.not('status', 'in', '("done","resolved","closed")')
       const { data, error } = await q.order('created_at', { ascending: false }).limit(lim)
@@ -269,7 +276,11 @@ export const OPS_TOOLS: EveTool[] = [
     money: true,
     run: async (input, ctx) => {
       const lim = clampLimit(input?.limit, 50, 100)
-      const { data, error } = await ctx.db.from('claims').select('*').is('deleted_at', null).order('created_at', { ascending: false }).limit(lim)
+      const scope = scopeIds(ctx)   // a vendor room: its own units' claims only (N14)
+      if (scope && !scope.length) return { count: 0, by_stage: {}, claims: [], note: 'This room is scoped to buildings that match no units, so there are no claims to show from here.' }
+      let cq = ctx.db.from('claims').select('*').is('deleted_at', null)
+      if (scope) cq = cq.in('listing_id', scope)
+      const { data, error } = await cq.order('created_at', { ascending: false }).limit(lim)
       if (error) return { error: 'Claims unavailable: ' + error.message.slice(0, 120) }
       const claims: any[] = data || []
       const ids = claims.map(c => c.id)
