@@ -12,7 +12,7 @@ const STATUS_CLS: Record<string, string> = { approved: 'bg-emerald-100 text-emer
 export default function DeliveryPage() {
   const [items, setItems] = useState<Item[]>([])
   const [loading, setLoading] = useState(true)
-  const [err, setErr] = useState('')
+  const [, setErr] = useState('')
   const [needsPw, setNeedsPw] = useState(false)
   const [pw, setPw] = useState('')
   const [pwErr, setPwErr] = useState('')

@@ -22,7 +22,7 @@
 // deeper: the engine's pick is a default, never a decision.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import {
-  Lightbulb, Loader2, Plus, X, ChevronDown, ChevronRight, Wrench, Sparkles, ClipboardList,
+  Lightbulb, Loader2, X, ChevronDown, ChevronRight, Wrench, Sparkles, ClipboardList,
   CalendarClock, Check, AlertTriangle, RefreshCw, Info,
 } from 'lucide-react'
 

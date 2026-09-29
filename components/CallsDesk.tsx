@@ -19,7 +19,7 @@
 // six steps, the building guide behind a toggle, notes last.
 import { useEffect, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
-import { RefreshCw, PhoneCall, Check, AlertTriangle, Loader2, ShieldAlert, Clock, Copy, StickyNote, ScrollText, ShieldCheck, MapPin, KeyRound, ChevronDown, CreditCard, CalendarDays, Globe, Car, Star, Wrench, HeartHandshake, PhoneOff, MessageSquareWarning, Crown, Gem, Hand, Voicemail, BarChart3, UserCheck, FileText, X } from 'lucide-react'
+import { RefreshCw, PhoneCall, Check, AlertTriangle, Loader2, Copy, StickyNote, MapPin, KeyRound, ChevronDown, CreditCard, CalendarDays, Globe, Car, Star, Wrench, HeartHandshake, PhoneOff, MessageSquareWarning, Crown, Gem, Hand, Voicemail, UserCheck, FileText, X } from 'lucide-react'
 import { channelOf, channelPolicy, buildingGuideFor } from '@/lib/welcome-call-guide'
 import { IconBtn, Tip } from '@/components/lean'
 import { StayPanel } from '@/components/StayPanel'
@@ -559,8 +559,6 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
     { key: 'welcome', title: 'Everyone else', why: 'complete what you can', must: false,
       rows: due.filter(r => laneOf(r) === 'welcome') },
   ].filter(l => l.rows.length)
-  // Recovery units being handled in the Must-call lane, so that lane's header can own up to them.
-  const recoveryInMust = due.filter(r => laneOf(r) === 'must' && r.recovery).length
 
   // DONE CALLS (2026-09-21, Jon: "have a completed call section"). Both kinds, newest first —
   // proof of work for the day, and where a note gets re-read after the card has left the board.

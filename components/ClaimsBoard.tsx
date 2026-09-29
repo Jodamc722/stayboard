@@ -15,8 +15,8 @@ import {
 import { DeleteButton, UndoBar, TrashDrawer } from '@/components/DeleteControl'
 import { Tag, Pill, LeanHead, LeanTabs, IconBtn, Tip, LeanList, LeanEmpty, type Tone } from '@/components/lean'
 import {
-  STAGES, STAGE_LABEL, OUTCOMES, money, itemsTotal, num, daysUntil, urgencyOf, hardDeadlineBiting, gatesFor, claimTitle,
-  type Claim, type Stage,
+  STAGE_LABEL, OUTCOMES, money, itemsTotal, num, daysUntil, urgencyOf, hardDeadlineBiting, gatesFor, claimTitle,
+  type Claim,
 } from '@/lib/claims'
 import { ClaimPolicyPanel } from '@/components/ClaimPolicy'
 

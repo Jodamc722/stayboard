@@ -9,7 +9,7 @@
 //
 // The long-stay threshold is the operator's own (/users → Ops presets), not a number invented here.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, AlertTriangle, X, CalendarClock, Clock } from 'lucide-react'
+import { AlertTriangle, X, CalendarClock, Clock } from 'lucide-react'
 
 type Row = {
   id: string; unitId: string; unit: string; building: string; bedrooms: number | null

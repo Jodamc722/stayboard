@@ -31,12 +31,12 @@ import { ListingWorkspace, type WorkTab } from '@/components/ListingWorkspace'
 import { ContentTable } from '@/components/ContentTable'
 import {
   computeScore, rollupBuilding, buildingSlug, band, bandUi, ratingToStars,
-  lastOptimizedOf, contentLooksComplete, scoreGaps, type Factor, type Gap,
+  lastOptimizedOf, scoreGaps, type Factor, type Gap,
 } from '@/lib/optimize-score'
 import {
-  Building2, MapPin, BedDouble, Bath, Users, Star, ArrowLeft, Check, X, Sparkles,
-  AlertTriangle, Image as ImageIcon, CalendarClock, Ban, Zap, FileText, Tag, MessageSquare,
-  PlusCircle, ShieldAlert, ExternalLink, Wrench, ArrowRight, ChevronRight, ClipboardList,
+  Building2, ArrowLeft, Check, X,
+  AlertTriangle, Image as ImageIcon, CalendarClock, Ban, Zap, FileText, Tag,
+  PlusCircle, ShieldAlert, ExternalLink, ArrowRight, ChevronRight,
 } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -148,8 +148,6 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   const optimizeScore = res.overall
   const opt = bandUi(res.band)
   const gaps = scoreGaps(res)
-  // Separate, honestly-worded claim: the copy is filled in. It does NOT mean anyone ran the optimizer.
-  const contentComplete = contentLooksComplete(res, name)
 
   // Recommended-to-add = optimizer high-value picks this unit is missing (canonical labels, incl. Self check-in).
   const recommendedAdds: string[] = Array.from(new Set([
@@ -158,13 +156,6 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   ])).filter(a => !curLower.has(String(a).toLowerCase()))
 
   const pictures = Array.isArray(listing.pictures) ? listing.pictures : (Array.isArray(raw.pictures) ? raw.pictures : [])
-
-  // Closed-header headlines. A fold is only safe if you can tell from the outside whether it needs you.
-  const photoSub = [
-    `${photoCount} photos`,
-    res.photos.aiQuality != null ? `AI quality ${res.photos.aiQuality}/100` : 'photo AI never run',
-    res.photos.coverageNote || null,
-  ].filter(Boolean).join(' · ')
 
   // THE CONTENT TABLE'S ROWS. Built from the raw publicDescription rather than
   // res.description.sections, because that list filters empties out — and an empty section is the
@@ -421,18 +412,6 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
 }
 
 /* ---------------- UI bits ---------------- */
-function Panel({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-2xl border border-line bg-white p-4">
-      <div className="mb-2.5">
-        <h2 className="text-sm font-bold text-ink">{title}</h2>
-        {sub && <div className="text-[11px] text-muted mt-0.5">{sub}</div>}
-      </div>
-      {children}
-    </section>
-  )
-}
-
 function ScoreCard({ title, score, factors, Icon, weight }: { title: string; score: number; factors: Factor[]; Icon: any; weight?: string }) {
   const ui = bandUi(band(score))
   return (

@@ -36,21 +36,11 @@ export type Item = {
   sizeValue: number | null; sizeUnit: string | null
 }
 export type Tier = { min_qty: number; unit_price_usd: number }
-const SIZE_UNITS = ['mL', 'L', 'fl oz', 'oz', 'g', 'kg', 'ct']
-/** Per 100 for the small measures, per 1 for the rest — nobody quotes a price per millilitre. */
-function perMeasure(price: number, size: number, unit: string): string | null {
-  if (!(price > 0) || !(size > 0) || !unit) return null
-  const per100 = unit === 'mL' || unit === 'g'
-  const amount = per100 ? 100 : 1
-  const v = price / size * amount
-  return '$' + (v < 0.1 ? v.toFixed(3) : v.toFixed(2)) + ' per ' + (per100 ? '100 ' : '') + unit
-}
 type Scope = { id: string; label: string; buildings: string[]; listings: string[] }
 type Listing = { id: string; name: string; building: string }
 type Data = { scopes: Scope[]; items: Item[]; untracked: number; listings: Listing[]; buildings: string[]; markets?: string[] }
 type NewItem = { key: string; name: string; description: string; category: string; unit: string; price: string; cost: string; onHand: string; reorderUrl: string }
 
-const money = (n: number | null | undefined) => n === null || n === undefined ? '—' : '$' + (Math.round(n * 100) / 100).toFixed(2)
 const box = 'text-[12.5px] px-2 py-1.5 rounded-lg border border-line bg-white text-ink focus:outline-none focus:border-brand-300'
 
 /**
@@ -69,10 +59,10 @@ export function InventoryBoard({ canEdit, view: fixedView, onSwitchView }: { can
   const [stockEdits, setStockEdits] = useState<Record<string, { onHand?: number; lowAt?: number }>>({})
   const [itemEdits, setItemEdits] = useState<Record<string, Partial<Item>>>({})
   const [adds, setAdds] = useState<NewItem[]>([])
-  const [removing, setRemoving] = useState<string | null>(null)   // two-step delete
+  const [, setRemoving] = useState<string | null>(null)   // two-step delete
   const [coverOpen, setCoverOpen] = useState(false)
   const [unitQ, setUnitQ] = useState('')
-  const [hubMenu, setHubMenu] = useState(false)
+  const [, setHubMenu] = useState(false)
   const [addOpen, setAddOpen] = useState(false)     // "Add from catalog" picker
   const [addQ, setAddQ] = useState('')
   const [offShelf, setOffShelf] = useState<string[]>([])   // scope|itemId queued for removal

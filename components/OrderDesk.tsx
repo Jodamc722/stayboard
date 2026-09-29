@@ -18,7 +18,6 @@ type Row = { id: string; audit_id: string; listing_id: string; room: string; kin
 type Stage = 'blocked' | 'owner' | 'supply' | 'later' | 'ready' | 'ordered' | 'arriving' | 'received' | 'installed'
 
 const STAGE_LABEL: Record<Stage, string> = { blocked: 'Needs approval', owner: 'Awaiting owner', supply: 'Owner supplying', later: 'Owner deferred', ready: 'Ready to buy', ordered: 'Ordered', arriving: 'Arriving', received: 'Received', installed: 'Installed' }
-const STAGE_CLS: Record<Stage, string> = { blocked: 'bg-amber-100 text-amber-800', owner: 'bg-violet-100 text-violet-700', supply: 'bg-sky-100 text-sky-800', later: 'bg-neutral-100 text-neutral-500', ready: 'bg-emerald-100 text-emerald-800', ordered: 'bg-sky-100 text-sky-800', arriving: 'bg-indigo-100 text-indigo-800', received: 'bg-teal-100 text-teal-800', installed: 'bg-neutral-200 text-neutral-600' }
 // The filter strip, left to right, and which stages roll into each bucket.
 const FILTERS: { key: string; label: string; stages: Stage[] }[] = [
   { key: 'all', label: 'All open', stages: ['blocked', 'owner', 'supply', 'later', 'ready', 'ordered', 'arriving', 'received'] },

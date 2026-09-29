@@ -13,7 +13,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { formatPhone } from '@/lib/talkroute'
-import { ArrowLeft, PhoneOutgoing, PhoneIncoming, PhoneMissed, Play, User, Home, CalendarDays, HandHeart, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, PhoneOutgoing, PhoneIncoming, PhoneMissed, User, Home, CalendarDays, HandHeart, AlertTriangle } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 

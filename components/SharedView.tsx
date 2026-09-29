@@ -5,7 +5,7 @@
 // component cannot leak what it was never sent.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, Lock, CalendarDays, TrendingUp, Megaphone, Sparkles, ShieldCheck, StickyNote, Users, RefreshCw, AtSign,
-  Mail, MailX, Ban, Star, Repeat, AlertTriangle, Search, Download } from 'lucide-react'
+  Mail, MailX, Ban, Star, AlertTriangle, Search, Download } from 'lucide-react'
 import { PlannerView, PlannerLegend, type PGroup } from './PlannerView'
 import { ScheduleLaborStrip } from './ScheduleLaborStrip'
 import { DayCleans } from './DayCleans'

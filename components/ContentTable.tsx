@@ -12,7 +12,6 @@
 // AN EMPTY SECTION IS THE MOST USEFUL ROW ON THE PAGE, so it is the loudest — and it carries what
 // it costs, because "Transit is empty" and "Transit is empty and that is 1.8 points" are different
 // sentences to somebody deciding what to do this afternoon.
-import { type SectionKey } from '@/lib/listing-ai'
 
 export type ContentRow = {
   key: string

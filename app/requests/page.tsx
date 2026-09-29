@@ -38,7 +38,6 @@ function rollupBuilding(raw?: string | null): string {
 }
 
 // --- status helpers -------------------------------------------------------
-const OPEN_STATUSES = ['open']
 const PROGRESS_STATUSES = ['in_progress', 'in progress', 'progress']
 const CLOSED_STATUSES = ['done', 'closed', 'complete', 'completed', 'resolved', 'cancelled', 'canceled']
 

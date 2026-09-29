@@ -26,7 +26,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
   const [data, setData] = useState<Data | null>(null)
   const [tab, setTab] = useState<TabKey>('departures')
   const [err, setErr] = useState('')
-  const [loading, setLoading] = useState(true)
+  const [, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [syncMsg, setSyncMsg] = useState('')
   const [refreshing, setRefreshing] = useState(false)

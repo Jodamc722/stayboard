@@ -10,7 +10,7 @@ type Cfg = { mode: 'auto' | 'auto-plus' | 'list'; ids: string[]; exclude: string
 
 export function SalatoUnitsPicker({ onSaved }: { onSaved?: () => void }) {
   const [listings, setListings] = useState<L[]>([])
-  const [cfg, setCfg] = useState<Cfg>({ mode: 'auto', ids: [], exclude: [] })
+  const [, setCfg] = useState<Cfg>({ mode: 'auto', ids: [], exclude: [] })
   const [q, setQ] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)

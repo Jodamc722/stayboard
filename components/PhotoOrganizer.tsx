@@ -58,7 +58,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [heroId, setHeroId] = useState<string | null>(null)
   const [order, setOrder] = useState<string[]>([])           // working order incl. hero at index 0
   const [proposed, setProposed] = useState<string[]>([])      // AI's proposed order (for reset)
-  const [heroSug, setHeroSug] = useState<Result['heroSuggestion']>(null)
+  const [, setHeroSug] = useState<Result['heroSuggestion']>(null)
   const [overflow, setOverflow] = useState(0)
   const [assessment, setAssessment] = useState<Result['assessment']>(null)
   const [removeList, setRemoveList] = useState<{ _id: string; reason: string }[]>([])
@@ -87,7 +87,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [presets, setPresets] = useState<Preset[]>([])
   const [presetPick, setPresetPick] = useState<Record<string, string>>({})
   const [orderRule, setOrderRule] = useState<string>('')
-  const [sections, setSections] = useState<Section[]>([])
+  const [, setSections] = useState<Section[]>([])
   const [heroCands, setHeroCands] = useState<HeroCandidate[]>([])
   const [titleIdeas, setTitleIdeas] = useState<string[]>([])
   const [titleHooks, setTitleHooks] = useState<{ hook: string; strength: number }[]>([])

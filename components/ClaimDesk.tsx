@@ -12,13 +12,13 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   ArrowLeft, Loader2, Plus, Trash2, Upload, X, ExternalLink, Check, AlertTriangle,
-  CalendarClock, ShieldAlert, FileText, Camera, DollarSign, CheckCircle2, Circle, RotateCcw,
+  CalendarClock, ShieldAlert, FileText, Camera, CheckCircle2, Circle, RotateCcw,
 } from 'lucide-react'
 import CommentThread from '@/components/CommentThread'
 import { DeleteButton } from '@/components/DeleteControl'
 import {
   STAGES, OUTCOMES, WAITING, CHANNELS, CONDITIONS, money, num, itemsTotal, daysUntil, gatesFor,
-  claimTitle, urgencyOf, hardUrgencyOf, type Claim, type ClaimItem, type ChannelPolicy, type Stage,
+  claimTitle, urgencyOf, type Claim, type ClaimItem, type ChannelPolicy,
 } from '@/lib/claims'
 
 /**
@@ -125,7 +125,6 @@ export function ClaimDesk({ id, embedded, onClose, onChanged }: Props) {
   const d = daysUntil(dueTarget)
   const hardD = daysUntil(claim.deadline_on)
   const u = urgencyOf(claim)
-  const hardU = hardUrgencyOf(claim)
   const stageIndex = STAGES.findIndex(s => s.key === claim.stage)
 
   return (

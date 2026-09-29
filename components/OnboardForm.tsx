@@ -13,7 +13,7 @@
 // Agnostic on purpose: nothing here knows or needs a Guesty listing. The code in the URL is the key.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Camera, Check, ChevronDown, ChevronLeft, Loader2, Minus, Plus, Pencil, Trash2, X, Image as ImageIcon, CheckCircle2, AlertTriangle, ClipboardCopy, RotateCcw, ShoppingCart } from 'lucide-react'
-import { CONDITIONS, CATEGORIES, ROOM_KIND_LABEL, ROOM_TYPES, ROOM_GROUP_LABEL, BED_SIZES, TIERS, TIER_LABEL, bedroomKeys, bedroomLabel, bedsFor, roomsChosen, describeUnit, type UnitDetails, type Condition, type Category, type RoomKind, type BedSize, type Tier } from '@/lib/onboarding'
+import { CONDITIONS, CATEGORIES, ROOM_KIND_LABEL, ROOM_TYPES, ROOM_GROUP_LABEL, BED_SIZES, bedroomKeys, bedroomLabel, bedsFor, roomsChosen, describeUnit, type UnitDetails, type Condition, type Category, type RoomKind, type BedSize, type Tier } from '@/lib/onboarding'
 import { Sparkles, ChevronRight, Play } from 'lucide-react'
 import { searchCatalog, typicalFor, type CatalogItem } from '@/lib/onboarding-catalog'
 import { Search } from 'lucide-react'
@@ -356,7 +356,6 @@ function AddRoom({ act, reload }: { act: (b: any) => Promise<any>; reload: () =>
 function RoomView({ code, unit, room, items, allItems, onBack, act, reload, index, total, onPrev, onNext }: { code: string; unit: Unit; room: Room; items: Item[]; allItems: Item[]; onBack: () => void; act: (b: any) => Promise<any>; reload: () => Promise<void>; index: number; total: number; onPrev?: () => void; onNext: () => void }) {
   const [renaming, setRenaming] = useState(false)
   const [ai, setAi] = useState<any | null>(null)      // the read-back proposal, awaiting approval
-  const details = unit.details || {}
   const have = (nm: string) => items.find(i => i.name.toLowerCase() === nm.toLowerCase())
   const [aiBusy, setAiBusy] = useState(false)
   const readPhotos = async () => {
@@ -652,30 +651,6 @@ function ItemRow({ item: i, code, act, reload, onPhoto }: { item: Item; code: st
           <button onClick={() => { if (confirm('Remove "' + i.name + '"?')) act({ action: 'removeItem', itemId: i.id }).then(reload).catch((e: any) => alert(String(e?.message || e))) }} className="col-span-2 text-[13px] font-semibold text-rose-700 inline-flex items-center gap-1 min-h-[36px]"><Trash2 size={14} /> Remove item</button>
         </div>
       )}
-    </div>
-  )
-}
-
-function AddItem({ roomId, act, onDone, onCancel }: { roomId: string; act: (b: any) => Promise<any>; onDone: () => Promise<void>; onCancel: () => void }) {
-  const [name, setName] = useState('')
-  const [category, setCategory] = useState<Category>('furniture')
-  const [qty, setQty] = useState(1)
-  const [need, setNeed] = useState('')
-  const [condition, setCondition] = useState<Condition>('good')
-  const [busy, setBusy] = useState(false)
-  return (
-    <div className="px-3 py-3 border-t border-line space-y-2">
-      <input value={name} onChange={e => setName(e.target.value)} className={INPUT} placeholder="What is it? (Big spoons, Bar cart, Extra lamp…)" autoFocus />
-      <div className="flex gap-1.5 flex-wrap">{CATEGORIES.map(c => <button key={c.key} type="button" onClick={() => setCategory(c.key)} className={CHIP + ' min-h-[34px] text-[12px] ' + (category === c.key ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line')}>{c.label}</button>)}</div>
-      <div className="flex items-center gap-2 flex-wrap">
-        <Stepper label="Counted" value={qty} min={0} max={99} onChange={setQty} />
-      </div>
-      <div className="flex items-center gap-2"><input inputMode="numeric" value={need} onChange={e => setNeed(e.target.value.replace(/[^0-9]/g, ''))} className={INPUT} placeholder="Should have (optional)" /><span className="text-[11px] text-muted whitespace-nowrap">the gap goes on the buy list</span></div>
-      <div className="flex gap-1.5 flex-wrap">{CONDITIONS.map(c => <button key={c.key} type="button" onClick={() => setCondition(c.key)} className={'rounded-full border text-[12px] font-semibold min-h-[34px] px-3 ' + (condition === c.key ? c.cls : 'bg-white text-ink/70 border-line')}>{c.label}</button>)}</div>
-      <div className="flex gap-2">
-        <button onClick={async () => { setBusy(true); try { await act({ action: 'addItem', roomId, name, category, qty, condition, expected: need === '' ? null : Number(need) }); await onDone() } catch (e: any) { alert(String(e?.message || e)) } setBusy(false) }} disabled={busy || !name.trim()} className={BTN + ' bg-ink text-white flex-1'}>{busy ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />} Add</button>
-        <button onClick={onCancel} className={BTN + ' border border-line bg-white text-ink'}>Cancel</button>
-      </div>
     </div>
   )
 }

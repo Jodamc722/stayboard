@@ -18,7 +18,7 @@ import {
   CHECKLIST_HEADLINE, CHECKLIST_SUBTITLE, RAMP_HEADLINE, RAMP_SUBTITLE,
   WELCOME_BODY, SUPPORT_NOTE, RAMP_BANDS, RAMP_BANDS_RETIRED_MARKS, RAMP_NOTE,
   SECTION_HEAD, SECTION_SUB, SEASON_LABEL, houseAsk,
-  MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS, CLEANS_HIGHLIGHT,
+  MONEY_RULES, PORTAL_ITEMS, CHECKLIST_ROWS,
   MONEY_RULES_RETIRED_MARK, PORTAL_ITEMS_RETIRED_MARK, CHECKLIST_RETIRED_MARK,
   houseBody, OVERVIEW_BODY_RETIRED_MARK, COMPANY_STATS_RETIRED_MARK, pitchSectionStale,
   OVERVIEW_BODY_2, COMPANY_STATS_2,
@@ -4942,14 +4942,6 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               }
               return out
             }
-            const catTotal = (cat: string) => {
-              let n = 0
-              for (const l of catLines(cat)) {
-                const v = Number(String(l.amt || '').replace(/[^0-9.]/g, '')) * (l.neg ? -1 : 1)
-                if (Number.isFinite(v)) n += v
-              }
-              return n
-            }
             const hasDetail = (cat: string) => catLines(cat).length > 0
 
             slides.push({ key: 'statement', node: (
@@ -6260,14 +6252,6 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const isNeg = (r: Any) => /^[-−]/.test(String(figures(r).delta || '')) || (r.good === false && !figures(r).live)
             const share = (r: Any) => { const f = figures(r); return num(f.actual) > 0 ? Math.abs(snum(f.delta)) / num(f.actual) : 0 }
             const span = rows.reduce((m: number, r: Any) => Math.max(m, share(r)), 0) || 1
-            // A month's headline is its revenue line — never RevPAR, which reads as a tiny number
-            // beside a five-figure miss and tells an owner nothing about the month.
-            const headline = (m: Any) => {
-              const rs = (m.rows || []) as Any[]
-              return rs.find((r: Any) => /revenue|gross/i.test(String(r.metric || '')))
-                || rs.find((r: Any) => /revpar/i.test(String(r.metric || '')))
-                || rs[0] || {}
-            }
             const addMonth = (where: 'before' | 'after') => mutate((d: Any) => {
               const list: Any[] = d.plan.months
               const src = list[Math.max(0, Math.min(list.length - 1, ix))] || {}

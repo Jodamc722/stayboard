@@ -17,7 +17,7 @@ export function RequestDetail({
   const [r, setR] = useState(r0)
   const [comments, setComments] = useState(c0)
   const [newComment, setNewComment] = useState('')
-  const [pending, startTransition] = useTransition()
+  const [, startTransition] = useTransition()
 
   // All writes go through /api/requests/update (requireLevel-gated, service role) — this page
   // used to write field_requests from the browser client, which bypassed role levels (and RLS

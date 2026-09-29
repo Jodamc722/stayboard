@@ -8,8 +8,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Plus, Loader2, X, Link2, Camera, Mail, Check, AlertTriangle, Clock, DollarSign,
-  Trash2, Copy, ExternalLink, ChevronRight, Search, Archive, RefreshCw,
-  MoreHorizontal, Lock, Repeat, LayoutTemplate,
+  Trash2, Copy, ExternalLink, Search, Archive, RefreshCw,
+  MoreHorizontal, Lock, Repeat,
 } from 'lucide-react'
 import { ACCENT_CLS } from '@/lib/projects-shared'
 

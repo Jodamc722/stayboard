@@ -5,7 +5,7 @@
 // uses Claude vision to pick the framing (it guides the crop — it does not repaint pixels). Everything
 // renders on one canvas so the download/push is exactly what you see.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { LayoutGrid, Download, Sparkles, X, Upload, UploadCloud, Wand2, ZoomIn, RotateCcw, Image as ImageIcon, Check } from 'lucide-react'
+import { LayoutGrid, Download, Sparkles, X, Upload, UploadCloud, Wand2, ZoomIn, RotateCcw, Check } from 'lucide-react'
 
 type Pic = { _id?: string; original?: string; thumbnail?: string }
 type XF = { scale: number; fx: number; fy: number }               // zoom + focal point (0..1)

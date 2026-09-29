@@ -3,7 +3,7 @@
 // replace; AI only assists (photo tagging + per-room suggestions). Breezeway tasks are created
 // in the desktop app, never here.
 import { useEffect, useRef, useState } from 'react'
-import { DEFAULT_PAR, parForRoom, parKey, unitShape, type ParTable, type UnitShape } from '@/lib/par-levels'
+import { DEFAULT_PAR, parForRoom, parKey, type ParTable, type UnitShape } from '@/lib/par-levels'
 
 type Item = { id: string; room: string; kind: string; item_type?: string | null; title?: string | null; note?: string | null; photo_url?: string | null; severity?: string | null; status: string; qty?: number; details?: any }
 type Listing = { id: string; name: string; building: string; bedrooms: number | null; bathrooms: number | null }
@@ -214,7 +214,6 @@ export default function AuditCapture({ code }: { code: string }) {
   function roomCover(r: string) { const c = cfgByKey[roomKey(r)]; return c ? c.cover_photo_url : null }
 
   const isOnboarding = !!(data && data.audit && data.audit.auditType === 'onboarding')
-  const fSize = (() => { const f = items.find((x: any) => /filter/i.test(String(x.title || '')) && x.details && x.details.size); return f ? String(f.details.size) : '' })()
   const basicsDone = BASICS.every(b => items.some((it: any) => it.room === 'Unit basics' && it.kind === 'tag' && b.opts.indexOf(String(it.title || '')) >= 0))
   function startDraft(room: string, seed?: Partial<Draft>) {
     setDraft({ room, kind: (seed && seed.kind) || (isOnboarding ? 'inventory' : 'replace'), title: (seed && seed.title) || '', itemType: '', note: (seed && seed.note) || '', severity: '', photoUrl: '', photos: [], ai: null })
@@ -233,20 +232,6 @@ export default function AuditCapture({ code }: { code: string }) {
     if (r.indexOf('living') >= 0) { out.push('Sofa condition'); out.push('TV + remote'); out.push('Balcony door + lock') }
     if (r.indexOf('laundry') >= 0 || r.indexOf('hall') >= 0 || r.indexOf('utility') >= 0) { out.push('AC filter replace'); out.push('Water heater check'); out.push('Washer hoses + lint') }
     return out
-  }
-  async function addMissing(room: string, label: string) {
-    if (essBusy) return
-    setEssBusy(true)
-    try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: 'add', title: label, note: 'Missing essential' }) }) } catch {}
-    setEssBusy(false)
-    await load()
-  }
-  async function pmOk(room: string, label: string) {
-    if (essBusy) return
-    setEssBusy(true)
-    try { await fetch('/api/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'addItem', code, room, kind: 'inventory', itemType: 'pm-ok', title: label + ' — OK' }) }) } catch {}
-    setEssBusy(false)
-    await load()
   }
   async function bumpEss(room: string, label: string) {
     if (essBusy) return
@@ -535,7 +520,6 @@ export default function AuditCapture({ code }: { code: string }) {
   }
   // The essentials for a room now come from the PAR table, so the label list and the required
   // count can never drift apart. parRows adds what the walker has actually counted.
-  function essFor(room: string): string[] { return parForRoom(room, parShape, parTable).map(x => x.item) }
   function parRows(room: string): { item: string; par: number; have: number; short: number }[] {
     return parForRoom(room, parShape, parTable).map(p => {
       let have = 0

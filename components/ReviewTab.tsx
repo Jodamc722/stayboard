@@ -17,7 +17,7 @@
 // /api/ops-today/review), so Add / Move / Delete go through the exact routes they always did. The
 // model only ORDERS and EXPLAINS; it never touches a task.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, RefreshCw, CalendarClock, X, Wrench, Sparkles, ClipboardList, Trash2, CheckSquare, Square, ChevronRight, ChevronDown, ExternalLink, FileText, Cpu, ListOrdered } from 'lucide-react'
+import { Loader2, CalendarClock, X, Wrench, Sparkles, ClipboardList, Trash2, CheckSquare, Square, ChevronRight, ChevronDown, ExternalLink, FileText, Cpu, ListOrdered } from 'lucide-react'
 import CommentThread from '@/components/CommentThread'
 import { useSuggestions, type Sug } from '@/components/SuggestionsBand'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'

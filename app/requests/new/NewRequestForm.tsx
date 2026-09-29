@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 import { VendorPicker, useVendorDirectory, saveVendorInline, vendorDraftBody, blankVendorDraft, type VendorDraft } from '@/components/VendorCard'
 

@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, Download,
-  ExternalLink, FileText, LayoutList, Lock, MessageSquare, RefreshCw, Scissors, Search,
+  ExternalLink, FileText, Lock, MessageSquare, RefreshCw, Scissors, Search,
   Send, Settings2, ShieldAlert, ShieldCheck, StickyNote, X, HelpCircle,
 } from 'lucide-react'
 import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanEmpty, IconBtn, Tip } from '@/components/lean'
@@ -1839,7 +1839,6 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 const items = byOwner[o.ownerId]
                 const filterActive = !!(q.trim() || fStatus || fFlag || fOwner || fSource || fTag || fFresh)
                 const isOpen = expandedOwners[o.ownerId] !== undefined ? expandedOwners[o.ownerId] : filterActive
-                const off = o.dueToOwner == null ? null : Math.round((o.net - o.dueToOwner) * 100) / 100
                 const s = stats[o.ownerId] || { notes: 0, comments: 0 }
                 const attention = items.filter(it => it.status !== 'done' || it.flags.some(f => f.severity !== 'info') || it.note || it.comments.length > 0)
                 const showAll = !!showAllRows[o.ownerId] || filterActive

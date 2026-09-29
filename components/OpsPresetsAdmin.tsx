@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Building2, Users, Timer, Loader2, Check, AlertTriangle, Save, Plus, Trash2, RotateCcw, Info,
 } from 'lucide-react'
-import { DEFAULT_PRESETS, mergePresets, type OpsPresets, type VendorBuilding } from '@/lib/ops-presets'
+import { DEFAULT_PRESETS, mergePresets, type OpsPresets } from '@/lib/ops-presets'
 import { clearOpsPresetsCache } from '@/lib/useOpsPresets'
 
 const MARKETS = ['Miami', 'Broward', 'North']

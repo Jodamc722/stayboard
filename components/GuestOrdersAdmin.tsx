@@ -536,7 +536,6 @@ function unitCostOf(it: { cost_usd?: number | null; pack_size?: number | null; p
   if (size > 0 && cost > 0) return Math.round((cost / size) * 10000) / 10000
   return it.cost_usd === null || it.cost_usd === undefined ? null : Number(it.cost_usd)
 }
-const usd = (n: number) => (n < 1 ? (Math.round(n * 100) / 100).toFixed(2).replace(/^0/, '') + '¢'.replace('¢', '') : '$' + (Math.round(n * 100) / 100).toFixed(2))
 const money2 = (n: number) => '$' + (Math.round(n * 100) / 100).toFixed(2)
 function costLabel(it: { price_usd: number; pack_size?: number | null; pack_cost_usd?: number | null; cost_usd?: number | null; tiers?: PriceTier[] | null }): string {
   const c = unitCostOf(it)

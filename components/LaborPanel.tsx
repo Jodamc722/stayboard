@@ -99,7 +99,6 @@ export function LaborPanel() {
   // anyone else — `moneyHidden` only tells this component which layout to draw. Every dollar tile
   // below has a percentage counterpart, so the board answers the same questions either way.
   const hideMoney = d?.moneyHidden === true
-  const peopleCols = hideMoney ? 7 : 11
 
   // THE PERSON'S DAYS, NOT JUST THEIR TASKS (Jon, 2026-08-23: "the labor KPI dashboard needs
   // to show all the color"). Each day is a ledger line — cleans and the net fees they earned,

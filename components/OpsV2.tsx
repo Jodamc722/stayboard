@@ -24,13 +24,12 @@
 //
 // Assignment uses /api/breezeway/assign, creation /api/ops-today/add-task (which already takes
 // assigneeIds). This file is a front door on machinery that already works.
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   Plus, ChevronDown, Users, Send, Loader2, Check, FileText, ChevronLeft, ChevronRight, CalendarDays, ClipboardList,
 } from 'lucide-react'
 import { Pill, Tag, IconBtn, Tip } from '@/components/lean'
 import { OpsGrid } from '@/components/OpsGrid'
-import { useModal } from '@/components/Modal'
 import { useCachedFetch } from '@/lib/swr'
 import { matchRoster } from '@/lib/roster-match'
 import { AddTaskSheet, type AddTaskSeed } from '@/components/AddTaskSheet'
@@ -47,7 +46,6 @@ type Glitch = { id: string; unit: string; issue: string; ageDays?: number; runni
 type StaffPerson = { name: string; role: string | null; clockedIn: boolean; shift: string | null; bzAlias: string | null; tasks: number; cleans: number }
 type Staffing = { ok: boolean; people: StaffPerson[]; summary: { clockedIn: number; nothingAssigned: number; idleNames: string[] } }
 type Roster = { id: number; name: string; departments: string[] }
-type Listing = { id: string; nickname?: string | null; title?: string | null; building?: string | null; status?: string | null }
 
 // ── The efficiency model (/api/capacity — lib/capacity-day). Built 2026-08-27, measured from
 // 1,372 timed cleans; this page is its first surface. Shapes mirror DayLoad / Suggestion / DayKpi.

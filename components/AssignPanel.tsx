@@ -19,7 +19,7 @@
 //      this is the moment to ask what else is owed there — not after they have left. lib/pending-work
 //      has said so since it was written; the board never asked at the moment it mattered.
 import { useMemo, useState } from 'react'
-import { Loader2, Search, Check, MapPin, Clock, AlertTriangle } from 'lucide-react'
+import { Loader2, Search, MapPin, AlertTriangle } from 'lucide-react'
 import { rankAssignees, buildAssignContext, type RankPerson } from '@/lib/assign-rank'
 import { useSuggestions } from '@/components/SuggestionsBand'
 

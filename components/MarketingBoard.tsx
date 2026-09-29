@@ -6,7 +6,7 @@
 // The whole board is keyed on when a booking was MADE, not when the stay happens. That is the
 // only honest way to answer "did marketing work in July?".
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Search, RefreshCw, Download, TrendingUp, TrendingDown, Minus, Lock, AlertTriangle, Loader2 } from 'lucide-react'
+import { Search, RefreshCw, Download, Lock, AlertTriangle, Loader2 } from 'lucide-react'
 
 type Bucket = 'be' | 'website' | 'direct' | 'manual' | 'owner' | 'ota'
 type Family = 'direct' | 'manual' | 'owner' | 'ota'
@@ -44,10 +44,6 @@ type Data = {
   current?: Roll; previous?: Roll; trend?: Trend[]; rows?: Row[]; rowsTotal?: number; error?: string
 }
 
-const BUCKET_LABEL: Record<Bucket, string> = {
-  be: 'Booking engine (BE API)', website: 'Website', direct: 'Direct',
-  manual: 'Manual', owner: 'Owner', ota: 'OTA',
-}
 const STATE_LABEL: Record<State, string> = {
   booked: 'Booked', inhouse: 'In house', stayed: 'Stayed', pending: 'Inquiry', canceled: 'Canceled',
 }
@@ -132,21 +128,6 @@ function Delta({ now, before, invert, compact }: { now: number; before: number; 
       <span className="text-[9px] leading-none">{flat ? '\u00B7' : change > 0 ? '\u25B2' : '\u25BC'}</span>
       {flat ? 'flat' : (change > 0 ? '+' : '') + pct1(change)}
     </span>
-  )
-}
-
-// THE one hero figure on this view. Proportional figures, not tabular — tabular-nums gives every
-// digit the width of a zero, which reads loose at display sizes.
-function HeroFigure({ label, value, sub, now, before, invert }: { label: string; value: string; sub?: string; now?: number; before?: number; invert?: boolean }) {
-  return (
-    <div>
-      <div className="text-[11px] uppercase tracking-widest text-brand-600 font-semibold">{label}</div>
-      <div className="text-[52px] sm:text-6xl font-bold text-ink leading-[1.05] mt-1">{value}</div>
-      <div className="mt-2 flex items-center gap-2 flex-wrap">
-        {now !== undefined && before !== undefined ? <Delta now={now} before={before} invert={invert} /> : null}
-      </div>
-      {sub ? <p className="text-xs text-muted mt-2 max-w-[34ch] leading-relaxed">{sub}</p> : null}
-    </div>
   )
 }
 
@@ -436,7 +417,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   const [q, setQ] = useState('')
   const [stateFilter, setStateFilter] = useState<'all' | State>('all')
   // This is the marketing tab — the list opens on direct and the picker widens it.
-  const [familyFilter, setFamilyFilter] = useState<'all' | Family>('direct')
+  const [familyFilter] = useState<'all' | Family>('direct')
   const [payFilter, setPayFilter] = useState<'all' | Pay>('all')
   const [sortKey, setSortKey] = useState<'created' | 'accom' | 'checkIn' | 'nights'>('created')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')

@@ -9,7 +9,7 @@
 //   Labor     — billable labor vs ACTUAL hours worked per person (Breezeway Start/Complete time),
 //               against an editable per-person hourly cost, for the maintenance margin story.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { RefreshCw, Download, ChevronDown, ChevronRight, Search, ExternalLink, AlertTriangle, Check, X, Pencil } from 'lucide-react'
+import { RefreshCw, Download, ChevronDown, ChevronRight, Search, ExternalLink, AlertTriangle, Check, X } from 'lucide-react'
 import { useAccess } from '@/lib/useAccess'
 import { LeanHead, Pill, Tag, IconBtn, Tip } from '@/components/lean'
 
@@ -61,7 +61,6 @@ function monthLabel(m: string): string {
   const d = new Date(m + '-15T12:00:00Z')
   return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
 }
-const initials = (s: string) => s.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w.charAt(0)).join('').toUpperCase() || '?'
 
 // ── Add a billable task (created in Breezeway, billed immediately when an amount is set) ────
 function AddTask({ units, month, onDone }: { units: { id: string; name: string }[]; month: string; onDone: () => void }) {
@@ -112,19 +111,6 @@ function AddTask({ units, month, onDone }: { units: { id: string; name: string }
           {busy ? 'Creating…' : 'Create & bill'}
         </button>
       </div>
-    </div>
-  )
-}
-
-function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'good' | 'bad' }) {
-  const v = tone === 'bad' ? 'text-rose-600' : tone === 'good' ? 'text-emerald-700' : 'text-ink'
-  // Tighter padding + tracking on a phone only, so a two-word label ("BILLED TO OWNERS") stays on
-  // one line instead of pushing the figure down a row. Desktop is unchanged.
-  return (
-    <div className="rounded-2xl border border-line bg-white p-3 sm:p-4 shadow-soft">
-      <div className="text-[10.5px] uppercase tracking-[0.08em] sm:tracking-[0.14em] text-brand-600 font-bold">{label}</div>
-      <div className={'text-2xl font-bold tabular-nums mt-1 tracking-tight ' + v}>{value}</div>
-      {sub ? <div className="text-[11px] text-muted mt-0.5">{sub}</div> : null}
     </div>
   )
 }

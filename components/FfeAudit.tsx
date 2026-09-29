@@ -27,7 +27,7 @@
 // Everything else is unchanged and deliberate: every tap saves on its own with no Submit to forget,
 // a failed save says so on that row and keeps the tap, and EN/ES flips the whole page at once.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { FFE_ANSWERS, FFE_UI, roomsFor, type FfeItem, type FfeRoom } from '@/lib/ffe-checklist'
+import { FFE_ANSWERS, FFE_UI, roomsFor, type FfeRoom } from '@/lib/ffe-checklist'
 
 const STATUS: Record<string, { en: string; es: string; cls: string }> = {
   vacant:   { en: 'Vacant',          es: 'Vacía',                cls: 'bg-emerald-500' },
@@ -365,7 +365,6 @@ export function FfeAudit({ code }: { code: string }) {
           const isOpen = !!open[room.key]
           const isChecked = checked.has(room.key)
           const logged = room.items.filter(i => data.answers[room.key + '::' + i.key])
-          const suggestions = room.items.filter(i => !data.answers[room.key + '::' + i.key])
           return (
             <div key={room.key} className="rounded-2xl border border-neutral-200 bg-white overflow-hidden">
               <button onClick={() => setOpen(o => ({ ...o, [room.key]: !o[room.key] }))}

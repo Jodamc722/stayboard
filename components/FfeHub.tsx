@@ -13,7 +13,7 @@
 // at all: occupied means do not knock, checkout means now is the moment, check-in means finish
 // before the guest lands.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Sofa, Copy, Check, RefreshCw, Loader2, ChevronRight } from 'lucide-react'
+import { Sofa, Copy, Check, RefreshCw, ChevronRight } from 'lucide-react'
 
 type Unit = {
   id: string; name: string; bedrooms: number | null; building: string

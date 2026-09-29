@@ -22,12 +22,12 @@ import {
   Home, CalendarDays, UserRound, Loader2, Lock, Unlock, Search, Trash2, CornerDownRight,
   MessageSquare, Paperclip, FileText, Send, Pencil, Download, Activity, Repeat, SlidersHorizontal, LayoutTemplate, LayoutList, Columns3, ArrowUp, ArrowDown, MoreHorizontal, Save,
   CalendarRange, ChevronLeft, GripVertical, ShieldAlert, Bug, Wrench, ExternalLink, ArrowRightCircle,
-  Truck, Megaphone, Clock, BadgeCheck, Copy, EyeOff, PanelRightClose, PanelRightOpen, Flag, FolderInput,
+  Truck, Megaphone, Clock, BadgeCheck, Copy, EyeOff, PanelRightClose, PanelRightOpen, FolderInput,
 } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 import type { ProjectFull, Task, Member, Person, Note, ProjectFile } from '@/lib/projects-shared'
 import { VendorName, VendorField, VendorPicker, useVendorDirectory, blankVendorDraft, type VendorHit } from '@/components/VendorCard'
-import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, ACCENT_CLS, ACCENTS, ICONS, iconOf, INVOICE_STATUSES, INVOICE_STATUS_LABEL, invoiceTotals, VENDOR_TRADES, estLabel, visitState, needsTelling, upcomingVisits, shortDate, RECUR_LABEL, doneSectionName, isDoneSection, viewPrefsFor, RAIL_PANELS, RAIL_LABEL, LIST_COLUMNS, COLUMN_LABEL, columnTemplate, type ViewPrefs, type RailPanel, type ListColumn, type BoardSettings, type Recurrence, type Accent, type Invoice, type VendorRecord, type TaskFilters, type SavedView, EMPTY_FILTERS, BUILTIN_VIEWS, filtersActive } from '@/lib/projects-shared'
+import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, ACCENT_CLS, ACCENTS, ICONS, iconOf, INVOICE_STATUSES, INVOICE_STATUS_LABEL, invoiceTotals, estLabel, visitState, needsTelling, upcomingVisits, shortDate, RECUR_LABEL, doneSectionName, viewPrefsFor, RAIL_PANELS, RAIL_LABEL, LIST_COLUMNS, COLUMN_LABEL, columnTemplate, type ViewPrefs, type RailPanel, type ListColumn, type BoardSettings, type Recurrence, type Accent, type Invoice, type TaskFilters, type SavedView, EMPTY_FILTERS, BUILTIN_VIEWS, filtersActive } from '@/lib/projects-shared'
 import { taskTag, taskInView } from '@/lib/task-view'
 
 type Roster = { display: string; email: string | null; notifiable: boolean }[]
@@ -94,13 +94,6 @@ function dueTone(due: string | null, status: string): 'late' | 'today' | 'soon' 
   if (due === t) return 'today'
   const soon = new Date(t + 'T12:00:00Z'); soon.setUTCDate(soon.getUTCDate() + 2)
   return due <= soon.toISOString().slice(0, 10) ? 'soon' : 'later'
-}
-const DUE_CLS: Record<string, string> = {
-  late: 'bg-rose-100 text-rose-700 border-rose-200 font-bold',
-  today: 'bg-amber-100 text-amber-800 border-amber-200 font-bold',
-  soon: 'bg-white text-ink border-line font-semibold',
-  later: 'bg-white text-muted border-line',
-  none: 'bg-transparent text-muted/50 border-transparent hover:border-line',
 }
 const dueText = (due: string | null) => { const tone = dueTone(due, 'todo'); if (!due) return 'Date'; if (tone === 'today') return 'Today'; return nice(due) }
 
@@ -845,7 +838,6 @@ function BoardCard({ t, name, canEdit, busy, openId, onOpen, act, counts, dragId
   const done = t.status === 'done'
   const c = counts[t.id]
   const dragging = !!dragId && canEdit
-  const set = (patch: any) => act({ action: 'taskSet', taskId: t.id, ...patch })
   const subDone = t.subtasks.filter(s => s.status === 'done').length
   // THE CARD IS THE ROW, STACKED (Jon, 2026-09-24). Line one: circle, title, the one tag. Line
   // two, quiet: owner, due, subtasks, Breezeway — and only when there is something to show.
@@ -1168,7 +1160,6 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, cols, dra
   // Which inline editor is open on this row: the ⋯ menu, the owner picker, or a title rename.
   const [menu, setMenu] = useState<null | 'more' | 'owner'>(null)
   const [rename, setRename] = useState<string | null>(null)
-  const tone = dueTone(t.due_on, t.status)
 
   const ownerNames = t.assignees.map(a => a.email || a.display)
   return (
@@ -2433,7 +2424,6 @@ function ArrivalsStrip({ p, tasks, busy, act, onOpen, canEdit }: {
       </div>
       <div className="divide-y divide-line">
         {soon.slice(0, 8).map(t => {
-          const v = visitState(t.visit_on, t.status, today())!
           return (
             <div key={t.id} className="px-3 py-2 flex items-center gap-2 min-w-0">
               <button onClick={() => onOpen(t.id)} className="min-w-0 flex-1 text-left">
@@ -2465,7 +2455,6 @@ function VendorBox({ task, canEdit, busy, act, vendors }: {
 }) {
   const set = (patch: any) => act({ action: 'taskSet', taskId: task.id, ...patch })
   const [open, setOpen] = useState(false)
-  const chosen = task.vendor_key ? vendors.find(v => v.key === task.vendor_key) : null
   const v = visitState(task.visit_on, task.status, today())
   const r = task.recurs
 
@@ -2593,7 +2582,7 @@ function AddInvoice({ taskId, act, busy, vendors, onSaved, onClose, files }: {
   const [amount, setAmount] = useState('')
   const [number, setNumber] = useState('')
   const [status, setStatus] = useState('received')
-  const [issued, setIssued] = useState('')
+  const [issued] = useState('')
   const [dueOn, setDueOn] = useState('')
   const [photoId, setPhotoId] = useState('')
   const [note, setNote] = useState('')

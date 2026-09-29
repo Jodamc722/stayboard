@@ -12,8 +12,8 @@ import { useMemo, useState } from 'react'
 import { RangeFilter } from '@/components/RangeFilter'
 import type { RevenueData, UnitRow, Rec } from '@/app/revenue/page'
 import {
-  DollarSign, TrendingUp, TrendingDown, BedDouble, Percent, Sparkles, Building2, Wallet,
-  Search, AlertTriangle, CarFront, Layers, ArrowUpDown, ChevronUp, ChevronDown, CalendarClock,
+  DollarSign, TrendingUp, TrendingDown, BedDouble, Percent, Building2, Wallet,
+  Search, AlertTriangle, Layers, ArrowUpDown, ChevronUp, ChevronDown, CalendarClock,
   Minus, Users, ClipboardCheck, X, Filter, Gauge
 } from 'lucide-react'
 import { Tag } from '@/components/lean'

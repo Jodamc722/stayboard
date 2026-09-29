@@ -12,7 +12,7 @@
 // Nothing is written until Create. Until then this is a plan on your screen.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Loader2, Plus, ArrowLeft, Package, Copy, Check, ExternalLink, ShoppingCart, Building2, ChevronRight,
+  Loader2, ArrowLeft, Copy, Check, ShoppingCart, Building2, ChevronRight,
 } from 'lucide-react'
 import { money, ORDER_STATUS_LABEL, STAGE_LABEL } from '@/lib/ffe-catalog'
 
@@ -392,7 +392,6 @@ function Builder({ ownerId, onBack }: { ownerId: string; onBack: () => void }) {
           {itemGroups.map(g => {
             const allSkipped = g.lines.every(l => skip[l.k])
             const val = assign[g.lines[0].k] && g.lines.every(l => assign[l.k] === assign[g.lines[0].k]) ? assign[g.lines[0].k] : ''
-            const p = prodById[val]
             return (
               <div key={g.itemKey + g.label} className={'px-4 py-3 flex items-center gap-3 flex-wrap ' + (allSkipped ? 'opacity-45' : '')}>
                 <input type="checkbox" checked={!allSkipped} onChange={e => skipGroup(g.lines, !e.target.checked)} />
