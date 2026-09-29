@@ -234,6 +234,16 @@ async function readCounters(): Promise<AgentCounters> {
 
 export async function getCounters(): Promise<AgentCounters> { return readCounters() }
 
+/**
+ * Every AI task Eve's own loop, watches and desks run — what the daily AI budget meters (2026-09-28
+ * audit, F21). The old test was a prefix regex (eve…, learn, ops-focus) that missed the watch drafts
+ * (guest-reply on Sonnet, review-reply on Opus), memory recall, translation, the learning probes, the
+ * expectations desk and the Slack reader, so "over today's AI budget → no draft" never tripped on the
+ * watches' own spend. The sentiment scan is its own job, Jon's call, and is not metered here.
+ */
+export const EVE_AI_TASKS = ['eve', 'eve-review', 'eve-vision', 'eve-brain', 'eve-correction', 'learn', 'slack-watch',
+  'memory-recall', 'probe-writer', 'probe-judge', 'guest-reply', 'review-reply', 'translate', 'expectations', 'ops-focus']
+
 /** Dollars Eve's own tasks have spent today (ET), from the ai_usage ledger. */
 export async function aiSpendToday(): Promise<number> {
   try {
@@ -242,12 +252,12 @@ export async function aiSpendToday(): Promise<number> {
     const sinceLocal = new Date(day + 'T00:00:00')
     const offsetMin = etOffsetMinutes(sinceLocal)
     const since = new Date(sinceLocal.getTime() - offsetMin * 60_000).toISOString()
-    const { data } = await supabaseAdmin().from('ai_usage').select('task,cost_usd').gte('at', since).limit(5000)
+    // ORDERED AND PAGED (F21): an unordered .limit(5000) is 1,000 arbitrary rows on PostgREST.
+    const { pageRows } = await import('@/lib/db-page')
+    const { rows } = await pageRows((a, b) => supabaseAdmin().from('ai_usage').select('cost_usd')
+      .in('task', EVE_AI_TASKS).gte('at', since).order('at', { ascending: true }).order('id', { ascending: true }).range(a, b), 20)
     let usd = 0
-    for (const r of ((data as any[]) || [])) {
-      const t = String(r.task || '')
-      if (/^(eve|learn|ops-focus|eve-review)/.test(t)) usd += Number(r.cost_usd) || 0
-    }
+    for (const r of (rows as any[])) usd += Number(r.cost_usd) || 0
     return Math.round(usd * 100) / 100
   } catch { return 0 }
 }
