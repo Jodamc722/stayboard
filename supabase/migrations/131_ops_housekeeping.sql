@@ -50,7 +50,8 @@ end $$;
 -- one table (the nightly trash sweep calls it table by table, so no single statement runs long).
 --
 -- Retention: automation_runs 60 days (the newest row per job is always kept, so a weekly job never
--- vanishes); app_notifications read and over 30 days, or any over 90; user_activity 180 days;
+-- vanishes); app_notifications read and over 30 days, or any over 90; user_activity 180 days
+-- (never the admin audit trail — rows with meta.admin = true — which is kept for good);
 -- email_log 180; eve_watch_fires 45 (cooldowns are clamped to 30); eve_audits resolved over 90;
 -- guesty_conversation_sentiment whose last message is over 180 days old (the scan looks back 60);
 -- telegram_messages 90; rev_feed_row month-scoped rows for months over 13 months back and any row
@@ -83,7 +84,10 @@ begin
       ('app_notifications',
        '(x.read is true and x.created_at < now() - interval ''30 days'') or x.created_at < now() - interval ''90 days''',
        array['read', 'created_at']),
-      ('user_activity', 'x.at < now() - interval ''180 days''', array['at']),
+      -- The admin audit trail (lib/activity.ts logAdmin, meta.admin = true) is never pruned.
+      ('user_activity',
+       'x.at < now() - interval ''180 days'' and (x.meta ->> ''admin'') is distinct from ''true''',
+       array['at', 'meta']),
       ('email_log', 'x.sent_at < now() - interval ''180 days''', array['sent_at']),
       ('eve_watch_fires', 'x.fired_at < now() - interval ''45 days''', array['fired_at']),
       ('eve_audits',
