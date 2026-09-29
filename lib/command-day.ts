@@ -389,6 +389,9 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   // ── arrivals (today → +2), live stays only ───────────────────────────────────────────────────
   const arrivalsAll = guard<any[]>('arrivals', arrivalsRes as any, []).filter(r => isLiveStay(r.status))
   const arrivalIds = Array.from(new Set(arrivalsAll.map(r => str(r.listing_id)).filter(Boolean)))
+  // Reviews are only read for the units a guest lands in TODAY or TOMORROW — the only arrivals the
+  // feedback rows below look at — so the paged read carries no day-after-tomorrow units.
+  const feedbackIds = Array.from(new Set(arrivalsAll.filter(r => { const d = str(r.check_in).slice(0, 10); return d === today || d === tomorrow }).map(r => str(r.listing_id)).filter(Boolean)))
   const arrivalResIds = arrivalsAll.map(r => str(r.id)).filter(Boolean)
   const glitchTaskIds = guard<any[]>('glitches', glitchesRes as any, []).map(g => str(g.breezeway_task_id)).filter(Boolean)
   // The stays behind the unhappy-guest rows that could make the list (section 6). Read raw here —
@@ -400,10 +403,13 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   // ── WAVE 2: keyed on the arriving units, all in parallel ─────────────────────────────────────
   const [arrivalReviews, autoInsp, doneInspRows, glitchTaskRows, guestStayRows, welcomeCallRows, waitThreads] = await Promise.all([
     // Recent reviews only (180d) — bounded by date, not by an arbitrary row cap that starves quiet units.
-    arrivalIds.length
-      ? db.from('guesty_reviews').select('id,listing_id,rating,content,guest_name,channel,created_at')
-          .in('listing_id', arrivalIds.slice(0, 300)).eq('excluded_from_score', false).gte('created_at', back180 + 'T00:00:00Z')
-          .order('created_at', { ascending: false }).limit(3000).then(r => guard<any[]>('arrival reviews', r as any, []))
+    // PAGED NEWEST FIRST (2026-09-29): the old .limit(3000) returned 1,000 — the newest 1,000 across
+    // every arriving unit — so a quieter unit's last five reviews could be cut off the end of it.
+    feedbackIds.length
+      ? pageRows<any>((a, b) => db.from('guesty_reviews').select('id,listing_id,rating,content,guest_name,channel,created_at')
+          .in('listing_id', feedbackIds.slice(0, 300)).eq('excluded_from_score', false).gte('created_at', back180 + 'T00:00:00Z')
+          .order('created_at', { ascending: false }).order('id').range(a, b), 4)
+          .then(r => { if (r.truncated) degraded.push('arrival reviews'); return r.rows })
       : Promise.resolve([] as any[]),
     arrivalIds.length
       ? db.from('auto_inspections').select('reservation_id,listing_id,task_id,check_in')
