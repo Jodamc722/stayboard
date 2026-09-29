@@ -23,6 +23,7 @@ import {
 import { STARTER_CATALOG } from '@/lib/ffe-starter-catalog'
 import { FFE_ROOMS } from '@/lib/ffe-checklist'
 import { detectHeader, readSheet, SheetColumnMap } from '@/lib/sheet-read'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 
@@ -83,15 +84,19 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams
   try {
     const ready = await tierKindReady(db)
-    let q = db.from('ffe_catalog')
-      .select(ready ? BASE_COLS + ',tier,kind' : BASE_COLS)
-      .order('code', { ascending: true })
-      .limit(4000)
-    if (!sp.get('all')) q = q.eq('active', true)
-    if (sp.get('category')) q = q.eq('category', str(sp.get('category')))
-    if (ready && sp.get('kind')) q = q.eq('kind', normalizeKind(sp.get('kind')))
-    if (ready && sp.get('tier')) q = q.eq('tier', normalizeTier(sp.get('tier')))
-    const { data, error } = await q
+    // Every product, paged in code order (codes are unique) — `.limit(4000)` returned the first 1,000.
+    const page = (a: number, b: number) => {
+      let q = db.from('ffe_catalog')
+        .select(ready ? BASE_COLS + ',tier,kind' : BASE_COLS)
+        .order('code', { ascending: true }).order('id')
+      if (!sp.get('all')) q = q.eq('active', true)
+      if (sp.get('category')) q = q.eq('category', str(sp.get('category')))
+      if (ready && sp.get('kind')) q = q.eq('kind', normalizeKind(sp.get('kind')))
+      if (ready && sp.get('tier')) q = q.eq('tier', normalizeTier(sp.get('tier')))
+      return q.range(a, b)
+    }
+    const { data, error } = await pageRows(page, 5)
+      .then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'could not read the whole catalog — try again' } : null }))
     if (error) return fail(error.message)
 
     const term = str(sp.get('q')).trim().toLowerCase()
@@ -102,9 +107,12 @@ export async function GET(req: NextRequest) {
     // the catalog still works before migration 038 has been run.
     let sources: any[] = []
     try {
-      const { data: src } = await db.from('ffe_catalog_sources')
-        .select('*').in('catalog_id', rows.map(r => r.id)).limit(8000)
-      sources = (src || []) as any[]
+      // Paged in id order: a few sources per product passes 1,000 long before the catalog does.
+      const ids = rows.map(r => r.id)
+      const src = await pageRows((a, b) => db.from('ffe_catalog_sources')
+        .select('*').in('catalog_id', ids).order('id').range(a, b), 5)
+      if (src.truncated) console.error('[ffe/catalog] sources read incomplete — some products show without every place to buy them')
+      sources = src.rows
     } catch { /* not migrated yet */ }
     const byProduct: Record<string, any[]> = {}
     for (const x of sources) (byProduct[str(x.catalog_id)] = byProduct[str(x.catalog_id)] || []).push(x)
@@ -264,7 +272,9 @@ export async function POST(req: NextRequest) {
       })
 
       // Which of these we already have, so the preview can say "12 new, 3 already here".
-      const { data: ex } = await db.from('ffe_catalog').select('code,name_en').limit(5000)
+      const exRead = await pageRows((a, b) => db.from('ffe_catalog').select('code,name_en').order('id').range(a, b), 5)
+      if (exRead.truncated) console.error('[ffe/catalog] preview: existing-product read incomplete — duplicates may be under-counted')
+      const ex = exRead.rows
       const haveCode = new Set(((ex || []) as any[]).map(r => str(r.code).toUpperCase()))
       const haveName = new Set(((ex || []) as any[]).map(r => str(r.name_en).trim().toLowerCase()))
 
@@ -283,7 +293,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Every existing code, once — both the uniqueness check and the next-number are derived from it.
-    const { data: existing, error: exErr } = await db.from('ffe_catalog').select('id,code,name_en').limit(5000)
+    // Paged: a code minted from the first 1,000 alone can collide with one past it.
+    const { data: existing, error: exErr } = await pageRows((a, b) => db.from('ffe_catalog').select('id,code,name_en').order('id').range(a, b), 5)
+      .then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'could not read every existing product code — nothing was saved, try again' } : null }))
     if (exErr) return fail(exErr.message)
     const taken = ((existing || []) as any[]).map(r => str(r.code))
     const byCode: Record<string, string> = {}
