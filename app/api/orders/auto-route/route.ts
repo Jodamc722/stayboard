@@ -22,7 +22,7 @@ async function candidates(db: any) {
   const { data } = await db.from('audit_items')
     .select('id,listing_id,kind,title,qty,status,details')
     .in('kind', ORDER_KINDS).in('status', OPEN_STATUS)
-    .order('created_at', { ascending: false }).limit(2000)
+    .order('created_at', { ascending: false }).limit(1000) // deliberate cap: Jon to decide — Auto-route writes an approval decision on each priced line read here; newest 1,000 open order lines only
   return (data || []).filter((x: any) => {
     const d = x.details && typeof x.details === 'object' ? x.details : {}
     const est = Number(d.est)

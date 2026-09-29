@@ -179,7 +179,7 @@ export async function POST(req: NextRequest) {
       sb.from('guesty_listings').select('id,nickname,title,building,address_city').limit(1000), // deliberate cap: one row per listing, ~290
       sb.from('breezeway_tasks_sync')
         .select('assignee_name,finished_by_name,reference_property_id,type_department,name,finished_at')
-        .gte('finished_at', start).lte('finished_at', end + 'T23:59:59').limit(5000),
+        .gte('finished_at', start).lte('finished_at', end + 'T23:59:59').limit(1000), // deliberate cap: Jon to decide — Auto-fill writes role and area onto staff rows from these tasks; 60 days is ~5,000 finished tasks, read unordered
       roster(agencyList),
       getStaff(true),
     ])

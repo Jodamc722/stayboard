@@ -315,7 +315,7 @@ export async function POST(req: NextRequest) {
     getStaff(true).catch(() => [] as any[]),
     getTimecardsAudited(from, to).catch(() => ({ cards: [] as any[] })),
     sb.from('breezeway_tasks_sync').select('assignees, scheduled_date')
-      .gte('scheduled_date', from).lte('scheduled_date', to).limit(5000),
+      .gte('scheduled_date', from).lte('scheduled_date', to).limit(1000), // deliberate cap: Jon to decide — Consolidate writes a crew onto each name found here; 30 days is ~3,000 tasks, read unordered
   ])
 
   // Everyone the app knows about: on payroll, seen in Breezeway, or already on the roster.
