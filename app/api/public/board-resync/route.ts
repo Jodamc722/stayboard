@@ -12,8 +12,10 @@ export const maxDuration = 60
 const WINDOW_MS = 30 * 60 * 1000
 
 export async function POST() {
-  // Any unlocked board link in this browser (or a signed-in user) may call this helper.
-  const gate = await anyLinkGate(['vendor-board', 'salato-desk'])
+  // Any unlocked board link in this browser (or a signed-in user) may call this helper — the vendor
+  // boards, the Salato desk, and the Botanica owner report (its Resync 401'd for link holders until
+  // 2026-09-29). Same 30-minute throttle for all of them.
+  const gate = await anyLinkGate(['vendor-board', 'salato-desk', 'botanica'])
   if (!gate.ok) return gate.res
   try {
     const db = supabaseAdmin()
