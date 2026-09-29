@@ -1108,10 +1108,13 @@ function Slide({ nav, children, pad, bleed, warn, ground, h, noteKey }: {
           invisible for that one frame instead. */}
       <div
         ref={canvas}
-        className="sb-slide-canvas"
+        className="sb-slide-canvas onb-scroll"
         style={{
           width: LW, height: LH, transform: 'scale(' + (scale || 1) + ')',
           opacity: scale ? 1 : 0, padding: bleed ? 0 : (pad == null ? 64 : pad),
+          // Every slide scrolls inside its own page once its content is taller than the page —
+          // never before (no scrollbar on a slide that fits).
+          overflowY: bleed ? 'hidden' : 'auto',
         }}
       >
         {children}
@@ -1121,7 +1124,7 @@ function Slide({ nav, children, pad, bleed, warn, ground, h, noteKey }: {
           position: 'absolute', left: 12, bottom: 12, zIndex: 5, borderRadius: 999,
           padding: '5px 11px', fontSize: 11, fontWeight: 600, background: '#C9A227', color: '#fff',
         }}>
-          {spill}px past the edge &mdash; trim this slide
+          {spill}px more than fits &mdash; this slide scrolls
         </div>
       ) : null}
     </div>
@@ -2656,6 +2659,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             aspect-ratio: auto !important; border-radius: 0 !important; border: 0 !important;
             box-shadow: none !important; overflow: hidden !important; }
           .sb-slide-canvas { transform: none !important; width: 1120px !important; height: 630px !important; }
+          .sb-slide-canvas, .sb-slide .onb-scroll { overflow: hidden !important; }
           /* The spill badge and the edit affordances are working tools, never artefacts on a
              page an owner is holding. */
           .sb-pick, textarea, input { border-color: transparent !important; background: transparent !important; }
@@ -5676,7 +5680,13 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     <p style={meta1}>{O((note || nav) + '_sec', sec)}</p>
                     <p style={meta1}>{O((note || nav) + '_subj', subj || '')}</p>
                   </div>
-                  <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', paddingTop: 22, paddingBottom: 18 }}>
+                  {/* SCROLLS ONLY WHEN IT HAS TO (Jon, 2026-09-29: "any slide that has additional
+                      information is all scrollable… only if the text goes beyond the page"). The
+                      body is a scroll area with no scrollbar until the content outgrows the page;
+                      'safe center' keeps a short slide centred and starts a long one at the top
+                      instead of clipping its head. The 'Scroll for more ↓' tag (.onb-scroll) shows
+                      only while there is more below. */}
+                  <div className="onb-scroll" style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'safe center', overflowY: 'auto', paddingTop: 22, paddingBottom: 18, paddingRight: 6 }}>
                     {children}
                   </div>
                   <div className="flex items-baseline justify-between" style={{ flex: '0 0 auto' }}>
@@ -6408,7 +6418,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 ) : null}
                 {(c.statement.months || []).length ? (() => {
                   const money0 = (x: Any) => { const v = Number(x); return Number.isFinite(v) ? usd(v) : '—' }
-                  const rows = (c.statement.months as Any[]).slice(0, 6)
+                  const rows = (c.statement.months as Any[])
                   const cols2 = ['Month', 'Rental', 'Commission', 'Other', 'Net', 'Paid']
                   const g = 'minmax(0,1fr) 104px 114px 88px 104px 104px'
                   return (
@@ -6787,7 +6797,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const total = groups.reduce((a: number, g: Any) => a + (g.items || []).length, 0)
             if (total || edit) {
               const n = next()
-              const perGroup = edit ? 3 : (groups.length <= 3 ? 7 : 4)
+              // Every item shows; a long month scrolls inside the slide instead of hiding behind "+N more".
+              const perGroup = 999
               slides.push({ key: 'projects', ai: true, node: (
                 <Frame note="projects" nav="The work" sec="Ahead" subj="What we accomplished" tone="light" n={n}>
                   <div>
