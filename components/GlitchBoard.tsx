@@ -5,12 +5,11 @@ import PolishButton from './PolishButton'
 // Create a glitch by searching the guest name (reservation details auto-attach), push a
 // Breezeway task for the field, and move the card along the escalation path.
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Plus, RefreshCw, Search, X, Camera, CalendarDays, User2, Sliders, Trash2, Loader2, Pencil, GraduationCap, Check } from 'lucide-react'
+import { Plus, RefreshCw, Search, X, User2, Trash2, Loader2, Pencil, GraduationCap, Check } from 'lucide-react'
 import { Pill, Tag, IconBtn } from './lean'
 import { StayPanel } from './StayPanel'
 import { VendorField, VendorName } from './VendorCard'
 import CommentThread from './CommentThread'
-import UnitCalendar from './UnitCalendar'
 import { DeleteButton, UndoBar, TrashDrawer } from './DeleteControl'
 import { Sheet } from './Sheet'
 import { StepDots, StepBar, Field, Chips, type Step } from './Steps'
@@ -42,14 +41,6 @@ type Glitch = {
 }
 type ResMatch = { reservationId: string; listingId: string; unit: string; market: string; guestName: string; guestPhone: string | null; guestEmail: string | null; checkIn: string; checkOut: string; channel: string | null; total: number | null; notes: string | null; sentiment: { score?: number; band?: string; dissatisfied?: boolean; topIssue?: string | null; excerpt?: string | null } | null; guestyUrl: string }
 
-// Progress is derived from where the card sits on the board, so the bar moves as work moves.
-// A manual `progress` on the row overrides it when someone wants to be explicit.
-const STAGE_PROGRESS: Record<string, number> = { pool: 5, ops: 30, guest_followup: 50, refund: 65, manager_review: 80, incident: 90, closed: 100 }
-function progressOf(g: Glitch): number {
-  const manual = Number(g.progress)
-  if (Number.isFinite(manual) && manual >= 0 && manual <= 100) return Math.round(manual)
-  return STAGE_PROGRESS[String(g.status)] ?? 0
-}
 function dueState(due: string | null | undefined, closed: boolean): { label: string; cls: string } | null {
   if (!due) return null
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
@@ -84,16 +75,6 @@ export function laneOf(status: string | null | undefined): Lane {
   const s = String(status || '')
   return LANES.find(l => l.statuses.indexOf(s) >= 0) || LANES[0]
 }
-/** Kept for the legacy stage arrows and the progress fallback. */
-const COLS: { key: string; label: string }[] = [
-  { key: 'pool', label: 'Glitch pool' },
-  { key: 'ops', label: 'VR Ops' },
-  { key: 'guest_followup', label: 'Guest followup' },
-  { key: 'refund', label: 'Refund request' },
-  { key: 'manager_review', label: 'Manager review' },
-  { key: 'incident', label: 'Incident report' },
-  { key: 'closed', label: 'Closed' },
-]
 const TYPES = ['Glitch (Quality Issue)', 'Security Incident', 'Injury']
 const CATS = [
   'Maintenance - HVAC/Temperature', 'Maintenance - Water Heater', 'Maintenance - Plumbing',
@@ -183,19 +164,43 @@ function SentimentChip({ s }: { s: { band?: string; dissatisfied?: boolean; topI
 export function GlitchBoard() {
   const [glitches, setGlitches] = useState<Glitch[]>([])
   const [loading, setLoading] = useState(true)
+  const [loaded, setLoaded] = useState(false)   // at least one successful read of the board
   const [err, setErr] = useState('')
   const [market, setMarket] = useState('all')
   const [showNew, setShowNew] = useState(false)
   const [open, setOpen] = useState<string>('')
   const [people, setPeople] = useState<{ id: number; name: string; departments: string[] }[]>([])
   const [refundFor, setRefundFor] = useState('')  // glitch id whose refund logger is open
-  const [panel, setPanel] = useState<string>('')  // '<id>:edit' | '<id>:push'
   const [showTrash, setShowTrash] = useState(false)
   const [undo, setUndo] = useState<{ trashId: string; label: string } | null>(null)
-  // TRAIN THE ADVISOR (Jon, 2026-09-22) — admins and glitch-board leads only.
+  // TRAIN THE ADVISOR (Jon, 2026-09-22) — admins and glitch-board leads only. Read once here and
+  // handed to each card's refund section, which used to fetch it again on every open.
   const [canTrain, setCanTrain] = useState(false)
   const [showTrain, setShowTrain] = useState(false)
   useEffect(() => { fetch('/api/glitches/training', { cache: 'no-store' }).then(r => r.json()).then(j => setCanTrain(!!j?.canTrain)).catch(() => {}) }, [])
+
+  // DEEP LINKS (2026-09-28 audit, D11). /glitches?id=<glitch> — the Slack vendor post, vendor jobs,
+  // vendor visits and the Command Center — opens that card; ?q=<unit or words> narrows the board to
+  // it. Both used to land on the whole unfiltered board (q only ever reached the History tab).
+  const [q, setQ] = useState('')
+  const linked = useRef('')
+  useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search)
+      const id = (sp.get('id') || '').trim()
+      if (id) { linked.current = id; setOpen(id) }
+      const qq = (sp.get('q') || '').trim()
+      if (qq) setQ(qq)
+    } catch { /* no URL, no deep link */ }
+  }, [])
+  // Closing a linked card drops ?id= from the address, so a reload does not reopen it.
+  const closeCard = () => {
+    setOpen(''); setRefundFor('')
+    try {
+      const u = new URL(window.location.href)
+      if (u.searchParams.has('id')) { u.searchParams.delete('id'); window.history.replaceState(null, '', u.pathname + u.search) }
+    } catch { /* cosmetic */ }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -204,6 +209,7 @@ export function GlitchBoard() {
       const j = await r.json()
       if (!r.ok || !j.ok) { setErr(j.error || 'Failed to load'); setLoading(false); return }
       setGlitches(j.glitches || [])
+      setLoaded(true)
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
@@ -224,11 +230,19 @@ export function GlitchBoard() {
     } catch (e: any) { setErr(String(e?.message || e)) }
   }
 
-  const rows = market === 'all' ? glitches : glitches.filter(g => g.market === market)
+  const needle = q.trim().toLowerCase()
+  const rows = (market === 'all' ? glitches : glitches.filter(g => g.market === market))
+    .filter(g => !needle || [g.unit, g.overview, g.guest_name].some(v => String(v || '').toLowerCase().indexOf(needle) >= 0))
   const markets = ['all', 'Miami', 'Broward', 'North', 'Vendor']
   // The open card is looked up from the live list, not copied into state, so an edit or a refund
   // refreshes what the sheet is showing without anyone having to close and reopen it.
   const openGlitch = open ? glitches.find(g => g.id === open) || null : null
+  // A link to a card that is no longer on the board says so, instead of opening nothing.
+  useEffect(() => {
+    if (!loaded || !linked.current || open !== linked.current) return
+    if (!glitches.some(g => g.id === linked.current)) { setErr('That glitch is not on the board any more — it may have been deleted (see Recently deleted).'); setOpen('') }
+    linked.current = ''
+  }, [loaded, glitches, open])
 
   if (loading && !glitches.length) return <div className="text-sm text-muted py-10 text-center">Loading glitch board…</div>
 
@@ -240,6 +254,12 @@ export function GlitchBoard() {
         <select value={market} onChange={e => setMarket(e.target.value)} title="Market" className="text-[12px] py-1 pl-2 pr-6 rounded-lg border border-line bg-white">
           {markets.map(m => <option key={m} value={m}>{m === 'all' ? 'All markets' : m}</option>)}
         </select>
+        {q ? (
+          <button onClick={() => setQ('')} title={'Showing only cards that mention “' + q + '” — click to show the whole board'}
+            className="inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1 rounded-lg bg-brand-50 text-brand-700 hover:bg-brand-100">
+            <Search size={11} /> {q} <X size={11} />
+          </button>
+        ) : null}
         <GlitchKpis rows={rows} />
         <span className="ml-auto flex items-center gap-1">
           {canTrain ? <IconBtn title="Train the refund advisor" tone="brand" onClick={() => setShowTrain(true)}><GraduationCap size={14} /></IconBtn> : null}
@@ -291,9 +311,10 @@ export function GlitchBoard() {
         <GlitchDetail
           g={openGlitch}
           people={people}
-          onClose={() => { setOpen(''); setRefundFor('') }}
+          onClose={closeCard}
           onChanged={load}
           act={act}
+          canTrain={canTrain}
           openRefund={refundFor === openGlitch.id}
           onDeleted={(trashId, label) => { setUndo({ trashId, label }); setOpen(''); load() }}
         />
@@ -524,12 +545,13 @@ function OpenClock({ g }: { g: Glitch }) {
   )
 }
 
-function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDeleted }: {
+function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, openRefund, onDeleted }: {
   g: Glitch
   people: { id: number; name: string; departments: string[] }[]
   onClose: () => void
   onChanged: () => void
   act: (id: string, body: Record<string, any>, c?: string) => Promise<void>
+  canTrain: boolean
   openRefund: boolean
   onDeleted: (trashId: string, label: string) => void
 }) {
@@ -713,7 +735,7 @@ function GlitchDetail({ g, people, onClose, onChanged, act, openRefund, onDelete
       <div className="space-y-3 mt-3">
         <div ref={refundRef}>
           <Fold title="Refund" open={openRefund} hint={refundLogged ? (refund > 0 ? money(refund) + ' given' : 'declined') : rec != null ? 'suggested ' + money(rec) : 'work out a recommendation'}>
-            <MoneyTab g={g} openRefund={openRefund} onChanged={onChanged} />
+            <MoneyTab g={g} openRefund={openRefund} onChanged={onChanged} canTrain={canTrain} />
           </Fold>
         </div>
 
@@ -880,7 +902,7 @@ function UnitSignals({ g }: { g: Glitch }) {
 // Two numbers that must never be confused: what the model RECOMMENDS and what a person DECIDED.
 // They sit side by side on purpose — the gap between them, across many cards, is the only way to
 // find out whether the policy matches what the team actually does.
-function MoneyTab({ g, openRefund, onChanged }: { g: Glitch; openRefund: boolean; onChanged: () => void }) {
+function MoneyTab({ g, openRefund, onChanged, canTrain }: { g: Glitch; openRefund: boolean; onChanged: () => void; canTrain: boolean }) {
   const [rec, setRec] = useState<any>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -889,8 +911,6 @@ function MoneyTab({ g, openRefund, onChanged }: { g: Glitch; openRefund: boolean
   // Answers to its questions and the tone, sent back with the next ask.
   const [answers, setAnswers] = useState('')
   const [tone, setTone] = useState('')
-  const [canTrain, setCanTrain] = useState(false)
-  useEffect(() => { fetch('/api/glitches/training', { cache: 'no-store' }).then(r => r.json()).then(j => setCanTrain(!!j?.canTrain)).catch(() => {}) }, [])
 
   const ask = async () => {
     setBusy(true); setErr('')
@@ -1745,131 +1765,6 @@ function EditGlitch({ g, onDone }: { g: Glitch; onDone: () => void }) {
       <div className="flex items-center gap-1.5">
         <button onClick={save} disabled={busy} className="text-[11px] font-medium px-2.5 py-1.5 rounded-md bg-ink text-white disabled:opacity-40">{busy ? 'Saving…' : 'Save'}</button>
         {err && <span className="text-[10px] text-rose-700">{err}</span>}
-      </div>
-    </div>
-  )
-}
-
-
-// Comments + @tags on a glitch — uses the SYSTEM-WIDE /api/comments (mentions notify via the
-// Shell bell). Tag with the picker or type @name in the text; the glitch creator is notified too.
-// OWNERSHIP + SCHEDULE for a glitch: who owns it, when it is due (on a calendar that shows the
-// unit's reservations so work is not booked into a guest's stay), how far along, and the running
-// detail notes. Everything writes straight to the glitch record the board reads.
-function GlitchManage({ g, people, onDone }: { g: Glitch; people: { id: number; name: string }[]; onDone: () => void }) {
-  const [open, setOpen] = useState(false)
-  const [cal, setCal] = useState(false)
-  const [due, setDue] = useState(g.due_date || '')
-  const [who, setWho] = useState(g.assignee || '')
-  const [prog, setProg] = useState<string>(g.progress == null ? '' : String(g.progress))
-  const [details, setDetails] = useState(g.details || '')
-  const [busy, setBusy] = useState(false)
-  const [msg, setMsg] = useState('')
-  const [err, setErr] = useState('')
-  useEffect(() => { setDue(g.due_date || ''); setWho(g.assignee || ''); setProg(g.progress == null ? '' : String(g.progress)); setDetails(g.details || '') }, [g.id, g.due_date, g.assignee, g.progress, g.details])
-
-  const save = async (patch: Record<string, any>, note: string) => {
-    setBusy(true); setErr(''); setMsg('')
-    try {
-      const person = people.filter(p => p.name === who)[0]
-      const body = Object.assign({ action: 'update', id: g.id, assigneePersonId: person ? person.id : null }, patch)
-      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      const j = await r.json()
-      if (!r.ok || !j.ok) { setErr(j.error || 'Could not save'); setBusy(false); return }
-      setMsg(note); onDone()
-    } catch (e: any) { setErr(String(e?.message || e)) }
-    setBusy(false)
-  }
-  const pct = progressOf(g)
-  return (
-    <div className="rounded-lg border border-line bg-app/40 p-2">
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Owner &amp; schedule</div>
-        <span className="text-[10px] text-muted">{pct}% {'\u00b7'} {(COLS.filter(x => x.key === g.status)[0] || { label: g.status }).label}</span>
-        <button onClick={() => setOpen(!open)} className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-md border border-line bg-white text-muted hover:text-ink hover:bg-app inline-flex items-center gap-1"><Sliders size={10} />{open ? 'Hide' : 'Edit'}</button>
-      </div>
-      {open && (
-        <div className="mt-2 space-y-2">
-          <div className="flex gap-2 flex-wrap items-center">
-            <button onClick={() => setCal(!cal)} className="text-[11px] font-medium px-2 py-1.5 rounded-md border border-line bg-white hover:bg-app inline-flex items-center gap-1"><CalendarDays size={12} />{due ? 'Due ' + due : 'Set due date'}</button>
-            {due && <button onClick={() => { setDue(''); save({ dueDate: '' }, 'Due date cleared') }} className="text-[11px] text-muted hover:text-rose-700">clear</button>}
-            <input list="glitch-people" value={who} onChange={e => setWho(e.target.value)} placeholder="Assign to&hellip;" className="text-[11px] border border-line rounded-md px-2 py-1.5 bg-white w-40" />
-            <datalist id="glitch-people">{people.map(p => <option key={p.id} value={p.name} />)}</datalist>
-            <select value={prog} onChange={e => setProg(e.target.value)} className="text-[11px] border border-line rounded-md px-2 py-1.5 bg-white" title="Leave on Auto to follow the board stage">
-              <option value="">Auto ({STAGE_PROGRESS[g.status] ?? 0}%)</option>
-              {[0, 10, 25, 50, 75, 90, 100].map(v => <option key={v} value={v}>{v}%</option>)}
-            </select>
-            <button onClick={() => save({ dueDate: due, assignee: who, progress: prog === '' ? null : Number(prog) }, 'Saved')} disabled={busy} className="text-[11px] font-medium px-2.5 py-1.5 rounded-md bg-ink text-white disabled:opacity-40">{busy ? 'Saving…' : 'Save'}</button>
-          </div>
-          {cal && (
-            <UnitCalendar listingId={g.listing_id} value={due || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())} onChange={d => { setDue(d); setCal(false) }} compact />
-          )}
-          <textarea value={details} onChange={e => setDetails(e.target.value)} onBlur={() => { if ((g.details || '') !== details) save({ details }, 'Details saved') }} rows={3} placeholder="Add details — what has been tried, parts ordered, what the guest was told…" className="w-full text-xs border border-line rounded-md px-2 py-1.5 bg-white" />
-          {msg && <div className="text-[11px] text-emerald-700">{msg}</div>}
-          {err && <div className="text-[11px] text-rose-700">{err}</div>}
-        </div>
-      )}
-      {!open && (g.details || g.due_date || g.assignee) && (
-        <div className="mt-1 text-[11px] text-muted">
-          {g.assignee ? <span className="text-ink font-medium">{g.assignee}</span> : 'Unassigned'}
-          {g.due_date ? ' · due ' + g.due_date : ''}
-          {g.details ? ' · ' + String(g.details).slice(0, 90) + (String(g.details).length > 90 ? '…' : '') : ''}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function GlitchComments({ g }: { g: Glitch }) {
-  const [items, setItems] = useState<any[]>([])
-  const [team, setTeam] = useState<string[]>([])
-  const [body, setBody] = useState('')
-  const [tags, setTags] = useState<string[]>([])
-  const [tagQ, setTagQ] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-  const [loaded, setLoaded] = useState(false)
-  const [tick, setTick] = useState(0)
-  useEffect(() => {
-    fetch('/api/comments?type=glitch&id=' + g.id, { cache: 'no-store' }).then(r => r.json()).then(j => {
-      if (j && j.ok) { setItems(Array.isArray(j.comments) ? j.comments : []); setTeam(Array.isArray(j.team) ? j.team : []); setLoaded(true) }
-    }).catch(() => {})
-  }, [g.id, tick])
-  const post = async () => {
-    if (!body.trim()) return
-    setBusy(true); setErr('')
-    try {
-      const label = (g.unit ? g.unit + ' — ' : '') + ((g.overview || '').split('\n')[0].slice(0, 60) || 'glitch')
-      const r = await fetch('/api/comments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'glitch', id: g.id, body: body.trim(), mentions: tags, label }) })
-      const j = await r.json()
-      if (!r.ok || !j.ok) { setErr(j.error || 'Could not post') } else { setBody(''); setTags([]); setTick(t => t + 1) }
-    } catch (e: any) { setErr(String(e?.message || e)) }
-    setBusy(false)
-  }
-  const addTag = (v: string) => { const e2 = v.trim().toLowerCase(); if (e2 && team.indexOf(e2) >= 0 && tags.indexOf(e2) < 0) setTags(prev => prev.concat([e2])); setTagQ('') }
-  const who = (e2: string) => String(e2 || '').split('@')[0]
-  const when = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) }
-  return (
-    <div className="mt-2 rounded-lg border border-line bg-app/40 p-2">
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">Comments{loaded ? ' (' + items.length + ')' : ''}</div>
-      <div className="space-y-1 max-h-44 overflow-y-auto">
-        {items.map(cm => (
-          <div key={cm.id} className="bg-white border border-line rounded-md px-2 py-1.5">
-            <div className="text-[10px] text-muted"><span className="font-semibold text-ink">{who(cm.author_email)}</span> · {when(cm.created_at)}{(cm.mentions || []).length > 0 && <span> · tagged {(cm.mentions || []).map(who).join(', ')}</span>}</div>
-            <div className="text-[12px] text-ink whitespace-pre-wrap">{cm.body}</div>
-          </div>
-        ))}
-        {loaded && items.length === 0 && <div className="text-[11px] text-muted">No comments yet.</div>}
-      </div>
-      <div className="mt-1.5 space-y-1">
-        <textarea value={body} onChange={e => setBody(e.target.value)} placeholder="Add a comment… (@name in the text also tags)" rows={2} className="w-full text-xs border border-line rounded-md px-2 py-1.5 bg-white" />
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <input list={'cmt-team-' + g.id} value={tagQ} onChange={e => { setTagQ(e.target.value); if (team.indexOf(e.target.value.trim().toLowerCase()) >= 0) addTag(e.target.value) }} placeholder="Tag teammate…" className="text-[11px] border border-line rounded-md px-2 py-1 bg-white w-44" />
-          <datalist id={'cmt-team-' + g.id}>{team.map(t => <option key={t} value={t} />)}</datalist>
-          {tags.map(t2 => <span key={t2} className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200 inline-flex items-center gap-1">@{who(t2)}<button onClick={() => setTags(prev => prev.filter(x => x !== t2))} className="hover:text-rose-600">{'\u00d7'}</button></span>)}
-          <button onClick={post} disabled={busy || !body.trim()} className="ml-auto text-[11px] font-medium px-2.5 py-1.5 rounded-md bg-ink text-white disabled:opacity-40">{busy ? 'Posting…' : 'Comment'}</button>
-        </div>
-        {err && <div className="text-[11px] text-rose-700">{err}</div>}
       </div>
     </div>
   )

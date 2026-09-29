@@ -25,7 +25,8 @@ export default function GlitchesPage() {
   const [market, setMarket] = useState('all')
   const [q, setQ] = useState('')
   // DEEP LINK (2026-09-02): the Command Center sends /glitches?q=<unit> so a tapped row lands on
-  // that unit's issues rather than on a 200-card board you then have to search again.
+  // that unit's issues rather than on a 200-card board you then have to search again. The Board
+  // tab reads ?q= (and ?id=) itself (GlitchBoard); this carries the same filter into History.
   useEffect(() => { try { const v = new URLSearchParams(window.location.search).get('q'); if (v) setQ(v) } catch {} }, [])
 
   const load = useCallback(async () => {
@@ -80,8 +81,9 @@ export default function GlitchesPage() {
 
   return (
     <Shell>
-      {/* The Today-in-Ops tab shows what needs eyes now; this page manages the pattern. */}
-      <LeanHead title="Guest Issues">
+      {/* The Today-in-Ops tab shows what needs eyes now; this page manages the pattern.
+          The title is the sidebar's word (2026-09-28 audit, 08 UX): one name per page. */}
+      <LeanHead title="Glitches">
         {bg.length > 0 && <Pill tone={inPlay ? 'rose' : 'emerald'} title="Cards on the escalation board that are not closed">{inPlay} in play</Pill>}
         {data && <Pill title={all.length + ' Breezeway guest-reported tasks on record'}>{openCount} open in Breezeway</Pill>}
         {boardRefunds > 0 && <Pill tone="emerald" title="Refunds approved across board cards">${Math.round(boardRefunds).toLocaleString()} refunded</Pill>}
