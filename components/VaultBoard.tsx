@@ -179,6 +179,8 @@ function RecordsView({ askCode }: { askCode: AskCode }) {
 function ActivityView() {
   const [rows, setRows] = useState<any[]>([])
   const [users, setUsers] = useState<string[]>([])
+  const [totals, setTotals] = useState<{ pages: number; apis: number; refused: number } | null>(null)
+  const [capped, setCapped] = useState(false)
   const [who, setWho] = useState('')
   const [days, setDays] = useState(7)
   const [state, setState] = useState<'loading' | 'ok' | 'migration' | 'forbidden' | 'error'>('loading')
@@ -190,7 +192,7 @@ function ActivityView() {
       const j = await r.json()
       if (r.status === 403 || r.status === 401) { setState('forbidden'); setErr(j.message || 'Reading activity needs full access on Users & admin.'); return }
       if (!j.ok) { setState(j.needsMigration ? 'migration' : 'error'); setErr(j.error || ''); return }
-      setRows(j.rows || []); setUsers(j.users || []); setState('ok')
+      setRows(j.rows || []); setUsers(j.users || []); setTotals(j.totals || null); setCapped(!!j.capped); setState('ok')
     } catch (e: any) { setState('error'); setErr(String(e?.message || e)) }
   }, [])
   useEffect(() => { load(who, days) }, [who, days, load])
@@ -200,9 +202,10 @@ function ActivityView() {
       <b>One migration to run:</b> <code>supabase/migrations/047_user_activity.sql</code> in the Supabase SQL editor — activity starts recording the moment the table exists.
     </div>
   )
-  const pages = rows.filter(r => r.kind === 'page').length
-  const apis = rows.filter(r => r.kind === 'api').length
-  const refused = rows.filter(r => r.allowed === false).length
+  // The feed holds the newest 1,000 rows; the API counts the whole window when it was cut off.
+  const pages = totals ? totals.pages : rows.filter(r => r.kind === 'page').length
+  const apis = totals ? totals.apis : rows.filter(r => r.kind === 'api').length
+  const refused = totals ? totals.refused : rows.filter(r => r.allowed === false).length
   const fmtAt = (s: string) => new Date(s).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })
   return (
     <div className="space-y-3">
@@ -214,7 +217,7 @@ function ActivityView() {
         <select value={days} onChange={e => setDays(Number(e.target.value))} className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12.5px] shadow-soft">
           <option value={1}>Today-ish (24h)</option><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option>
         </select>
-        <span className="text-[12px] text-muted">{pages} screens · {apis} actions{refused ? <span className="text-rose-700 font-semibold"> · {refused} refused</span> : ''}</span>
+        <span className="text-[12px] text-muted" title={capped ? 'Counts cover the whole window; the list below shows the newest 1,000 entries.' : undefined}>{pages} screens · {apis} actions{refused ? <span className="text-rose-700 font-semibold"> · {refused} refused</span> : ''}</span>
         <span className="grow" />
         <button onClick={() => load(who, days)} className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold shadow-soft inline-flex items-center gap-1.5"><RefreshCw size={12} /> Refresh</button>
       </div>
