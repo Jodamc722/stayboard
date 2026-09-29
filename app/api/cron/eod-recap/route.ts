@@ -37,7 +37,7 @@
 // staffing forecast is recorded and every forecast day that has passed is graded (lib/forecast).
 // Each step is wrapped — a ledger failure never touches the email, and the email never blocks it.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
+import { requireUser } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { laborEconomics, kindOfTask } from '@/lib/labor-econ'
@@ -75,8 +75,11 @@ const secTitle = (t: string, sub?: string) =>
   `<p style="margin:0 0 8px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#4338ca;font-weight:700">${t}${sub ? ` <span style="font-weight:500;letter-spacing:0;text-transform:none;color:#9ca3af">&middot; ${sub}</span>` : ''}</p>`
 const card = (inner: string) => `<div style="${cardStyle}">${inner}</div>`
 
+// An ACTIVE Lighthouse member, not merely a Supabase login (2026-09-29): other apps' accounts share
+// this Supabase project, and a bare session let them preview, test-send or re-send the recap.
 async function signedIn(): Promise<string | null> {
-  try { const sb = createClient(); const { data: { user } } = await sb.auth.getUser(); return user?.email ? String(user.email).toLowerCase() : null } catch { return null }
+  const g = await requireUser().catch(() => null)
+  return g && g.ok && g.access.email ? String(g.access.email).toLowerCase() : null
 }
 
 export const GET = withRouteReceipt<NextRequest>('eod-recap', send, { skipWhen: (req) => { const sp = new URL(req.url).searchParams; return !!sp.get('preview') || !!sp.get('test') } })

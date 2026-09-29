@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cronAllowed } from '@/lib/cron-auth'
 import { setSetting } from '@/lib/app-settings'
-import { createClient } from '@/lib/supabase-server'
+import { requireUser } from '@/lib/access'
 import { getSetting } from '@/lib/app-settings'
 import { buildOpsBrief, buildGmBrief, buildVendorBrief, VENDOR_GROUPS, type BriefVariant, type VendorGroup } from '@/lib/ops-brief'
 import { asLang, type BriefLang } from '@/lib/brief-lang'
@@ -48,12 +48,12 @@ const ccFor = (to: string[]): string[] => {
   return STANDING_CC.filter(c => !already.has(c.toLowerCase()))
 }
 
+// An ACTIVE Lighthouse member, not merely a Supabase login (2026-09-29): other apps' accounts share
+// this Supabase project, and a bare session let them preview the GM brief, test-send, or re-send
+// the whole team's brief.
 async function currentUser(): Promise<string | null> {
-  try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    return user?.email ? String(user.email).toLowerCase() : null
-  } catch { return null }
+  const g = await requireUser().catch(() => null)
+  return g && g.ok && g.access.email ? String(g.access.email).toLowerCase() : null
 }
 
 export const GET = withRouteReceipt<NextRequest>('ops-brief', send, {
