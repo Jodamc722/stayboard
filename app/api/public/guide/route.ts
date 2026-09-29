@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { createClient } from '@/lib/supabase-server'
+import { getAccess } from '@/lib/access'
 import { adminPasswordOk } from '@/lib/shareAuth'
 import { signEditToken, verifyEditToken, EDIT_TTL_MS } from '@/lib/edit-access'
 import { guideKey, normSlug, seedFor, type Guide } from '@/lib/guide'
@@ -47,10 +47,12 @@ async function writeGuide(slug: string, content: Guide, by: string): Promise<{ o
   } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
 }
 
+// A LIGHTHOUSE login, not merely a Supabase session: a signed-in account that is off the allowlist
+// or disabled used to get the editor (and a save) on the strength of being signed in at all.
 async function sessionEmail(): Promise<string> {
   try {
-    const { data } = await createClient().auth.getUser()
-    return str(data?.user?.email)
+    const a = await getAccess()
+    return a.allowed ? str(a.user?.email || a.email) : ''
   } catch { return '' }
 }
 
