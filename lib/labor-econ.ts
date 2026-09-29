@@ -353,6 +353,43 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const market = String(opts.market || 'all').toLowerCase()
   const sb = supabaseAdmin()
 
+  // EVERY READ STARTS AT ONCE (2026-09-28 audit, 02 F9). The window's tasks, both halves of the
+  // clean pool, the checkouts, the stays, the agencies and the salaried roster depend on nothing but
+  // the window, and were read one after another — five paged chains and two more reads in series,
+  // twice per Command Center scoreboard build. They now run alongside the listings / presets /
+  // Homebase wave, and each is still AWAITED WHERE IT WAS USED, so no line of the arithmetic below
+  // moved and the numbers are the same. `early` marks a promise handled, so one that fails before
+  // its await is not an unhandled rejection; the await still throws it, exactly as before.
+  const early = <T,>(p: Promise<T>): Promise<T> => { p.catch(() => { /* surfaced at its await */ }); return p }
+  // Widened a day each side then filtered by ET day: the raw timestamptz bounds are UTC, so the
+  // old query dropped everything finished after 8pm on `to` and picked up the previous window's
+  // late evening instead.
+  const qFrom = dISO(addDays(new Date(from + 'T12:00:00Z'), -1))
+  const qTo = dISO(addDays(new Date(to + 'T12:00:00Z'), 1))
+  const taskRowsAllP = early(pageAll((a, b) => sb.from('breezeway_tasks_sync')
+    .select('id,name,type_department,assignee_name,finished_by_name,assignees,reference_property_id,finished_at,status,total_minutes,rate_paid')
+    .gte('finished_at', qFrom).lte('finished_at', qTo + 'T23:59:59').order('id', { ascending: true }).range(a, b)))
+  // The padded clean pool (why, below where it is used).
+  const padFrom = dISO(addDays(new Date(from + 'T12:00:00Z'), -2))
+  const padTo = dISO(addDays(new Date(to + 'T12:00:00Z'), 9))
+  const poolCols = 'id,name,type_department,assignee_name,finished_by_name,assignees,reference_property_id,finished_at,scheduled_date,status,total_minutes'
+  const poolByFinishP = early(pageAll((a, b) => sb.from('breezeway_tasks_sync')
+    .select(poolCols).gte('finished_at', padFrom).lte('finished_at', padTo + 'T23:59:59').order('id', { ascending: true }).range(a, b)))
+  const poolBySchedP = early(pageAll((a, b) => sb.from('breezeway_tasks_sync')
+    .select(poolCols).gte('scheduled_date', padFrom).lte('scheduled_date', padTo).order('id', { ascending: true }).range(a, b)))
+  // The checkouts (padded back, why below) and the live stays overlapping the window.
+  const resFrom = dISO(addDays(new Date(from + 'T12:00:00Z'), -9))
+  const resRowsRawP = early(pageAll((a, b) => sb.from('guesty_reservations')
+    .select('listing_id,check_out,status,source,confirmation_code,guest_name,tags:raw->tags,cleaning:raw->money->>fareCleaning,commission:raw->money->>commission,grossFare:raw->money->>fareAccommodationAdjusted,channelFee:raw->money->>hostServiceFee')
+    .gte('check_out', resFrom).lte('check_out', to)
+    .not('status', 'in', '("canceled","cancelled","declined")').order('id', { ascending: true }).range(a, b)))
+  const staysRawP = early(pageAll((a, b) => sb.from('guesty_reservations')
+    .select('id,listing_id,check_in,check_out,status')
+    .lte('check_in', to).gte('check_out', from)
+    .in('status', LIVE_RES_STATUS).order('id', { ascending: true }).range(a, b)))
+  const agenciesListP = getAgencies().catch(() => [] as Awaited<ReturnType<typeof getAgencies>>)
+  const salariedRosterP = getSalaried().catch(() => [] as SalaryRow[])
+
   const [presets, crew, listingRows, tcAudit] = await Promise.all([
     getOpsPresets(),
     getCrew(),
@@ -392,14 +429,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const inMarketListing = (id: any) => market === 'all' || lmap[String(id)]?.market === market
 
   // ── the window's work + the money entered on it ───────────────────────────
-  // Widened a day each side then filtered by ET day: the raw timestamptz bounds are UTC, so the
-  // old query dropped everything finished after 8pm on `to` and picked up the previous window's
-  // late evening instead.
-  const qFrom = dISO(addDays(new Date(from + 'T12:00:00Z'), -1))
-  const qTo = dISO(addDays(new Date(to + 'T12:00:00Z'), 1))
-  const taskRowsAll = (await pageAll((a, b) => sb.from('breezeway_tasks_sync')
-    .select('id,name,type_department,assignee_name,finished_by_name,assignees,reference_property_id,finished_at,status,total_minutes,rate_paid')
-    .gte('finished_at', qFrom).lte('finished_at', qTo + 'T23:59:59').order('id', { ascending: true }).range(a, b)))
+  // (Read at the top, qFrom..qTo widened a day each side; filtered by ET day here.)
+  const taskRowsAll = (await taskRowsAllP)
     .filter(t => { const d = etDay(t.finished_at); return d >= from && d <= to })
   const taskRows = taskRowsAll.filter(t => inMarketListing(t.reference_property_id))
 
@@ -416,13 +447,9 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // days before the window to a week after. The cost-per-clean denominator is drawn from the same
   // pool but strictly inside the window (see cleansDone below), which is what lets a clean the
   // crew did but nobody closed still count on the day it was scheduled.
-  const padFrom = dISO(addDays(new Date(from + 'T12:00:00Z'), -2))
-  const padTo = dISO(addDays(new Date(to + 'T12:00:00Z'), 9))
-  const poolCols = 'id,name,type_department,assignee_name,finished_by_name,assignees,reference_property_id,finished_at,scheduled_date,status,total_minutes'
-  const poolByFinish = await pageAll((a, b) => sb.from('breezeway_tasks_sync')
-    .select(poolCols).gte('finished_at', padFrom).lte('finished_at', padTo + 'T23:59:59').order('id', { ascending: true }).range(a, b))
-  const poolBySched = await pageAll((a, b) => sb.from('breezeway_tasks_sync')
-    .select(poolCols).gte('scheduled_date', padFrom).lte('scheduled_date', padTo).order('id', { ascending: true }).range(a, b))
+  // (Both halves read at the top: padFrom = window − 2 days, padTo = window + 9.)
+  const poolByFinish = await poolByFinishP
+  const poolBySched = await poolBySchedP
   const poolSeen: Record<string, boolean> = {}
   const cleanPool: any[] = []
   for (const t of poolByFinish.concat(poolBySched)) {
@@ -449,17 +476,20 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const ids = taskRows.map(t => String(t.id))
   const details: Record<string, any> = {}
   const adjs: Record<string, any> = {}
-  for (let i = 0; i < ids.length; i += 400) {
-    const chunk = ids.slice(i, i + 400)
-    if (!chunk.length) break
-    try {
-      const { data } = await sb.from('breezeway_billing_details').select('task_id,costs,supplies,rate_type').in('task_id', chunk)
-      for (const d of (data || []) as any[]) details[String(d.task_id)] = d
-    } catch { /* a task with no detail simply carries no charge */ }
-    try {
-      const { data } = await sb.from('billing_adjustments').select('task_id,excluded,override_amount,billed_hours').in('task_id', chunk)
-      for (const a of (data || []) as any[]) adjs[String(a.task_id)] = a
-    } catch { /* overlay optional */ }
+  // Chunks run four at a time, each chunk's two reads together (2026-09-28 audit). Every task id sits
+  // in exactly one chunk, so the order the chunks land in cannot change a number.
+  const chunks: string[][] = []
+  for (let i = 0; i < ids.length; i += 400) chunks.push(ids.slice(i, i + 400))
+  for (let c = 0; c < chunks.length; c += 4) {
+    await Promise.all(chunks.slice(c, c + 4).map(async chunk => {
+      const [dRes, aRes] = await Promise.all([
+        // A task with no detail simply carries no charge; the adjustments overlay is optional.
+        Promise.resolve(sb.from('breezeway_billing_details').select('task_id,costs,supplies,rate_type').in('task_id', chunk)).catch(() => null),
+        Promise.resolve(sb.from('billing_adjustments').select('task_id,excluded,override_amount,billed_hours').in('task_id', chunk)).catch(() => null),
+      ])
+      for (const d of (((dRes as any)?.data) || []) as any[]) details[String(d.task_id)] = d
+      for (const a of (((aRes as any)?.data) || []) as any[]) adjs[String(a.task_id)] = a
+    }))
   }
 
   // WHAT WE CHARGED FOR THIS TASK — as entered on the task. Never derived from wages or hours.
@@ -550,7 +580,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // checkout was two days earlier, had no fee to find and counted at $0. Padded checkouts join
   // the MATCHING only: their fees ride on the clean they claim, and every window-scoped total and
   // audit bucket still counts checkouts strictly inside [from, to].
-  const resFrom = dISO(addDays(new Date(from + 'T12:00:00Z'), -9))
+  // (resFrom = window − 9 days, read at the top.)
   // ONLY A BOOKING THAT ACTUALLY HAPPENED PAYS A CLEANING FEE (labor audit, 2026-09-21). This
   // query used to exclude canceled/declined and keep everything else — so VRBO inquiries, expired
   // requests and pending bookings all counted as cleaning revenue. The audit found "Rustic 16 ·
@@ -560,10 +590,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // lib/kpi.ts uses (LIVE_RES); owner + friends-&-family stays are inventory decisions, not
   // guests (lib/owner-audit.ts isOwnerOrFriendsFamily), so they earn no cleaning revenue here
   // either — their clean still counts as a clean, it just carries $0.
-  const resRowsRaw = await pageAll((a, b) => sb.from('guesty_reservations')
-    .select('listing_id,check_out,status,source,confirmation_code,guest_name,tags:raw->tags,cleaning:raw->money->>fareCleaning,commission:raw->money->>commission,grossFare:raw->money->>fareAccommodationAdjusted,channelFee:raw->money->>hostServiceFee')
-    .gte('check_out', resFrom).lte('check_out', to)
-    .not('status', 'in', '("canceled","cancelled","declined")').order('id', { ascending: true }).range(a, b))
+  const resRowsRaw = await resRowsRawP
   let resNonLive = 0, resNonLiveFees = 0, resOwnerFF = 0, resOwnerFFFees = 0
   const resNonLiveByStatus: Record<string, number> = {}
   const resRowsAll = resRowsRaw.filter(r => {
@@ -579,10 +606,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // WHO WAS IN THE UNIT ON A GIVEN DAY. A departure clean finished while a live guest is still in
   // house is a MID-STAY clean (Jon, 2026-09-21: "mid stay cleans are revenue generated"), not a
   // turn and not a refresh. Live stays overlapping the window, by listing.
-  const staysRaw = await pageAll((a, b) => sb.from('guesty_reservations')
-    .select('id,listing_id,check_in,check_out,status')
-    .lte('check_in', to).gte('check_out', from)
-    .in('status', LIVE_RES_STATUS).order('id', { ascending: true }).range(a, b))
+  const staysRaw = await staysRawP
   const staysByListing: Record<string, { ci: string; co: string }[]> = {}
   for (const r of staysRaw) {
     const ci = String(r.check_in || '').slice(0, 10), co = String(r.check_out || '').slice(0, 10)
@@ -1113,10 +1137,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   // (wagesHomebase) and kpi.agencyLoad is the receipt. Agencies whose fees are still 0 load
   // nothing, so this is inert until the contracts are typed into the People & agencies card.
   const winDays = Math.max(1, Math.round((new Date(to + 'T12:00:00').getTime() - new Date(from + 'T12:00:00').getTime()) / 864e5) + 1)
-  const agenciesList = await getAgencies().catch(() => [] as Awaited<ReturnType<typeof getAgencies>>)
+  const agenciesList = await agenciesListP
   // Salaried people are on our books, so no agency ever marks them up. Resolved BEFORE the
   // grouping below so the agency receipt never totals a load that is later zeroed out.
-  const salariedRoster = await getSalaried().catch(() => [] as SalaryRow[])
+  const salariedRoster = await salariedRosterP
   const salActive = salariedRoster.filter(r => r.active !== false && weeklyCost(r) > 0)
   const isSalariedName = (n: string) => salActive.some(r => nameMatches(n, r.name))
   const agencyIdx: Record<string, { label: string; pct: number; perHour: number; flat: number }> = {}
