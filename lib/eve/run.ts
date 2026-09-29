@@ -120,6 +120,14 @@ export type RunEveInput = {
   memoryWeightCap?: number
   /** Force money redaction regardless of the person's own permission — a shared room, not a private one. */
   forceNoMoney?: boolean
+  /**
+   * The Slack tier asking (lib/eve/slack-tier.ts). 'vendor' — an outside company's room, or an
+   * asker nobody could identify — strips guest names, contact details, guests' own words and review
+   * text from every tool result (registry.runTool redactGuestPII).
+   */
+  tier?: 'admin' | 'staff' | 'vendor'
+  /** A vendor grant's buildings: the listing registry is narrowed to them (lib/eve/ctx.ts buildCtx). */
+  onlyBuildings?: string[]
   maxTurns?: number
 }
 
@@ -170,7 +178,8 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   const canMoney = input.forceNoMoney ? false : canSeeMoney(access)
   const deny = (input.denyTools || []).map(t => String(t).trim()).filter(Boolean)
   const allowed = (list: any[]) => (deny.length ? list.filter((t: any) => deny.indexOf(String(t?.name)) < 0) : list)
-  const ctx = await buildCtx(access, canMoney)
+  const ctx = await buildCtx(access, canMoney, { onlyBuildings: input.tier === 'vendor' ? input.onlyBuildings : undefined })
+  if (input.tier) ctx.tier = input.tier
   const db = supabaseAdmin()
   const today = todayET()
 

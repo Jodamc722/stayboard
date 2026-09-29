@@ -10,7 +10,7 @@
 // extra turn on the first deep question of a thread; benefit is she picks from twelve, then six.
 import 'server-only'
 import { redactMoney } from '@/lib/money'
-import { redactSensitive, isCodeFieldName } from './redact'
+import { redactSensitive, isCodeFieldName, redactGuestPII } from './redact'
 import type { EveTool, EveDomain } from './types'
 import { wireShape, obj, S } from './types'
 import type { EveCtx } from './ctx'
@@ -141,7 +141,11 @@ export async function runTool(name: string, input: any, ctx: EveCtx, open: strin
     // of door / access codes except the door-code tool's own, which returns a code only when the
     // per-person policy in lib/eve/door-code.ts says it may.
     const raw = await tool.run(input || {}, ctx)
-    const out = tool.name === 'door_code_check' ? raw : redactSensitive(raw, { codeFieldIds: await codeFieldIds(ctx) })
+    const coded = tool.name === 'door_code_check' ? raw : redactSensitive(raw, { codeFieldIds: await codeFieldIds(ctx) })
+    // A VENDOR ROOM GETS THE JOB, NOT THE GUEST (2026-09-28 audit, F2 / B-10). ops_today, unit_status,
+    // the sentiment and glitch boards all carry guest names or a guest's own words; in a room with an
+    // outside company in it every result loses them here, whatever tool produced it.
+    const out = ctx.tier === 'vendor' ? redactGuestPII(coded) : coded
     if (tool.money && !ctx.canMoney) {
       return { output: { ...redactMoney(out), _money_redacted: 'Dollar amounts are hidden for this user. Occupancy, counts, minutes and percentages are still accurate; ADR and RevPAR are dollar figures and are hidden too. Do not guess at the hidden numbers.' } }
     }

@@ -15,6 +15,7 @@
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rollupBuilding } from '@/lib/optimize-score'
+import { buildingOf as canonicalBuilding } from '@/lib/segments'
 import type { Access } from '@/lib/access'
 
 export type EveCtx = {
@@ -35,6 +36,10 @@ export type EveCtx = {
   question?: string
   /** A room other people read (Slack, a Telegram group): people's files stay out (lib/eve/brain.ts). */
   sharedRoom?: boolean
+  /** The Slack tier asking (lib/eve/slack-tier.ts). 'vendor' strips guest details from every tool result. */
+  tier?: 'admin' | 'staff' | 'vendor'
+  /** Set when listingMeta was narrowed to a vendor's own buildings (buildCtx onlyBuildings). */
+  scopedBuildings?: string[]
 }
 
 export type ListingMeta = { name: string; status: string; building: string; rollup: string }
@@ -96,7 +101,7 @@ export function cap<T>(rows: T[], limit: number): { rows: T[]; truncated: boolea
 // One definition of paging for the whole app — see lib/db-page.ts for what it is undoing.
 export { pageRows } from '@/lib/db-page'
 
-export async function buildCtx(access: Access, canMoney: boolean): Promise<EveCtx> {
+export async function buildCtx(access: Access, canMoney: boolean, opts: { onlyBuildings?: string[] } = {}): Promise<EveCtx> {
   const db = supabaseAdmin()
   const listingMeta: Record<string, ListingMeta> = {}
   try {
@@ -113,6 +118,25 @@ export async function buildCtx(access: Access, canMoney: boolean): Promise<EveCt
       }
     }
   } catch { /* empty portfolio is survivable */ }
+  // A VENDOR ROOM SEES ITS OWN BUILDINGS (2026-09-28 audit, F2). "Their own buildings" was a line in
+  // the prompt; now the registry itself is narrowed, so unit lookups, portfolio counts and review
+  // scoping only know the routing group's buildings (canonical labels from lib/segments, the same
+  // ones the group lists). If nothing matches — a group whose labels drifted — nothing is narrowed
+  // rather than every answer coming back empty.
+  const only = (opts.onlyBuildings || []).map(b => lc(b).trim()).filter(Boolean)
+  let scopedBuildings: string[] | undefined
+  if (only.length) {
+    const keep = Object.keys(listingMeta).filter(id => {
+      const m = listingMeta[id]
+      return only.indexOf(lc(canonicalBuilding(m.building, m.name) || '')) >= 0 || only.indexOf(lc(m.rollup)) >= 0
+    })
+    if (keep.length) {
+      const kept: Record<string, true> = {}
+      for (const id of keep) kept[id] = true
+      for (const id of Object.keys(listingMeta)) if (!kept[id]) delete listingMeta[id]
+      scopedBuildings = (opts.onlyBuildings || []).slice()
+    }
+  }
 
   const nameOf = (lid: any) => listingMeta[String(lid)]?.name || 'Unknown'
   const buildingOf = (lid: any) => listingMeta[String(lid)]?.rollup || 'Unassigned'
@@ -134,6 +158,7 @@ export async function buildCtx(access: Access, canMoney: boolean): Promise<EveCt
   return {
     db, access, email: lc(access.email), canMoney,
     today: todayET(), listingMeta, nameOf, buildingOf, reviewable, idsForBuilding, idsForName,
+    scopedBuildings,
   }
 }
 

@@ -262,10 +262,19 @@ export const CORE_TOOLS: EveTool[] = [
       const d = String(input?.date || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.date) : ctx.today
       const sheet: any = await safe(buildDaySheet(d, input?.market ? String(input.market) : undefined), null as any)
       if (!sheet) return { error: 'Day sheet could not be built right now.' }
+      // A VENDOR ROOM SEES ITS OWN UNITS (2026-09-28 audit, F2). Its listing registry was narrowed to
+      // its buildings in buildCtx; the sheet is built for a whole market, so its rows are narrowed to
+      // the same units here, and the portfolio counts give way to counts of what is shown.
+      const own: Record<string, true> | null = ctx.scopedBuildings ? {} : null
+      if (own) for (const id of Object.keys(ctx.listingMeta)) own[lc(ctx.listingMeta[id].name)] = true
+      const scoped = (rows: any[]) => (own ? (rows || []).filter((r: any) => !!own[lc(r?.unit)]) : (rows || []))
       // Trim to what a language model can actually reason over — the raw sheet is very large.
-      const slim = (rows: any[], n: number, pick: (r: any) => any) => (rows || []).slice(0, n).map(pick)
+      const slim = (rows: any[], n: number, pick: (r: any) => any) => scoped(rows).slice(0, n).map(pick)
+      const counts = own
+        ? { departures: scoped(sheet.departures).length, arrivals: scoped(sheet.arrivals).length, vacants: scoped(sheet.vacants).length, exceptions: scoped(sheet.exceptions).length, glitches: scoped(sheet.glitches).length, scope: 'this room\'s buildings only' }
+        : sheet.counts
       return {
-        date: sheet.date, market: sheet.market, markets: sheet.markets, counts: sheet.counts,
+        date: sheet.date, market: sheet.market, markets: own ? undefined : sheet.markets, counts,
         sync: sheet.sync, lastSync: sheet.lastSync,
         exceptions: slim(sheet.exceptions, 40, (e: any) => ({ kind: e.kind, unit: e.unit, detail: e.detail, action: e.action, severity: e.severity })),
         departures: slim(sheet.departures, 60, (r: any) => ({ unit: r.unit, building: r.building, guest: r.guest, checkOutTime: r.checkOutTime, status: r.status, sameDayTurn: r.sameDayTurn, nextGuest: r.nextGuest, clean: r.clean ? { status: r.clean.status, assignees: r.clean.assignees, label: r.clean.label } : null })),

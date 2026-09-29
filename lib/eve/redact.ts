@@ -177,3 +177,65 @@ export function redactSensitive<T>(value: T, opts: { codeFieldIds?: string[] } =
   const ids = opts.codeFieldIds && opts.codeFieldIds.length ? opts.codeFieldIds.reduce((m, id) => { m[String(id)] = true; return m }, {} as Record<string, true>) : null
   try { return walk(value, '', ids) as T } catch { return value }
 }
+
+// ── Guest details in a vendor room (2026-09-28, F2 / B-10) ──────────────────────────────────────
+
+export const GUEST_HIDDEN = '(hidden in this room)'
+// Keys that carry a guest's name, contact details or own words.
+const GUEST_KEY_RE = /^(?:guest|guest_?name|guestname|guests_?name|guest_?names|same_?day_?guest|arriving_?guest|guest_?excerpt|guest_?words|guest_?email|guest_?phone|email|e_?mail|phone|phone_?number|mobile|quote|quotes|excerpt|permission_?quotes)$/i
+// Keys that are the guest's NAME — collected so the same name can be taken out of free text too.
+const GUEST_NAME_KEY_RE = /^(?:guest|guest_?name|guestname|guests_?name|same_?day_?guest|arriving_?guest)$/i
+// nextGuest on the day sheet is a time or a date ("4:00 PM today", "Oct 2"), not a name. It is
+// hidden only when it does not look like one.
+const NEXT_GUEST_KEY_RE = /^next_?guest$/i
+const REVIEW_TEXT_KEY_RE = /^(?:content|text|comment|review|body|public_?review|publicreview)$/i
+const RATING_KEY_RE = /^(?:rating|stars|score|overall_?rating)$/i
+
+/**
+ * A room with an outside company in it gets the operational answer without the guest: names,
+ * emails, phones, the guest's own words and review text are replaced, and any guest name found in
+ * the result is taken out of the free text around it (a unit_status note, an exception's detail).
+ * Never throws.
+ */
+export function redactGuestPII<T>(value: T): T {
+  try {
+    const names: Record<string, true> = {}
+    let hidden = 0
+    const collect = (v: any, depth: number) => {
+      if (!v || typeof v !== 'object' || depth > 8) return
+      if (Array.isArray(v)) { for (const x of v) collect(x, depth + 1); return }
+      for (const k of Object.keys(v)) {
+        const x = v[k]
+        if (GUEST_NAME_KEY_RE.test(k) && typeof x === 'string') { const n = x.trim(); if (n.length >= 3 && !/^guest$/i.test(n)) names[n] = true }
+        else if (x && typeof x === 'object') collect(x, depth + 1)
+      }
+    }
+    collect(value, 0)
+    const nameList = Object.keys(names).sort((a, b) => b.length - a.length)
+    const nameRes = nameList.map(n => new RegExp(n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'))
+    const scrubNames = (s: string) => {
+      let out = s
+      for (const re of nameRes) out = out.replace(re, () => { hidden++; return 'the guest' })
+      return out
+    }
+    const go = (v: any): any => {
+      if (typeof v === 'string') return nameRes.length ? scrubNames(v) : v
+      if (Array.isArray(v)) return v.map(go)
+      if (v && typeof v === 'object' && !(v instanceof Date)) {
+        const isReview = Object.keys(v).some(k => RATING_KEY_RE.test(k))
+        const out: Record<string, any> = {}
+        for (const k of Object.keys(v)) {
+          const x = v[k]
+          if (x != null && x !== '' && (GUEST_KEY_RE.test(k) || (isReview && REVIEW_TEXT_KEY_RE.test(k) && typeof x === 'string'))) { out[k] = GUEST_HIDDEN; hidden++; continue }
+          if (NEXT_GUEST_KEY_RE.test(k) && typeof x === 'string' && x && !/\d/.test(x)) { out[k] = GUEST_HIDDEN; hidden++; continue }
+          out[k] = go(x)
+        }
+        return out
+      }
+      return v
+    }
+    const out = go(value)
+    if (hidden && out && typeof out === 'object' && !Array.isArray(out)) out._guest_redacted = 'Guest names, contact details and guests\' own words are hidden in this room. Answer the operational question without them.'
+    return out as T
+  } catch { return value }
+}

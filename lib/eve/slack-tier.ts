@@ -71,6 +71,15 @@ const ADMIN_ONLY = ['ask_ralph', 'slack_queue']
 // is the raw record. None of it belongs in a room with an outside company in it.
 const GUEST_TOOLS = ['guest_profile', 'guest_thread', 'guest_history',
   'reservation_detail', 'awaiting_reply', 'unread_conversations', 'welcome_calls', 'search_reservations', 'guesty_live']
+// 2026-09-28 audit (F2): what else a vendor room could still read. The Slack readers reach every
+// channel the bot is in (#ccs-and-jon included); the dossiers and her mind quote the latest low
+// review; review search is the guest's own words; the custom-field tools are the building's setup
+// (and were a door-code side door, F1). Every other result loses guest names in runTool.
+const VENDOR_ALSO = ['slack_search', 'slack_thread', 'open_items', 'dossier', 'my_mind', 'search_reviews',
+  'guesty_fields', 'custom_fields', 'guesty_config']
+// Every share link's page IS the access for an open link (2026-09-28 audit, F10): listing them in a
+// shared room hands one vendor the others' boards. An admin asks for them; nobody else in Slack.
+const LINK_TOOLS = ['share_links']
 
 // DIRECTING HER IS A TOOL, SO IT IS TAKEN AWAY AS A TOOL (Jon, 2026-09-23 review). `canDirect` was
 // declared on every grant and read by nothing, and propose_action — her hands: tasks, Slack posts,
@@ -138,7 +147,7 @@ async function baseTierFor(access: Access | null, channelId: string): Promise<Ti
     tier: 'vendor',
     buildings: group ? (group.buildings || []).slice() : [],
     canMoney: false, canDirect: false,
-    denyTools: ENTRY_TOOLS.concat(ADMIN_ONLY, GUEST_TOOLS, ['remember', 'recommend', 'ask_jon', 'close_item']),
+    denyTools: ENTRY_TOOLS.concat(ADMIN_ONLY, GUEST_TOOLS, VENDOR_ALSO, LINK_TOOLS, ['remember', 'recommend', 'ask_jon', 'close_item']),
     memoryWeightCap: 0,
     group,
   }
