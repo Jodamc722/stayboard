@@ -11,6 +11,7 @@
 import { NextResponse } from 'next/server'
 import { eveGate } from '../../agent/route'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 import { myActionsOn } from '@/lib/eve/system'
 import { countOpenQuestions, listQuestions } from '@/lib/eve/questions'
 import { countOpenExpectations } from '@/lib/eve/expectations'
@@ -79,7 +80,10 @@ export async function GET() {
 // THE FEW LOOPS THAT NEED A PERSON NOW (the Eve overview, 2026-09-28): urgent first, then guest
 // asks, then anything past its limit (guest ask 4h, the rest 48h) — oldest first, big before small.
 async function hotLoops(): Promise<any[]> {
-  const { data } = await supabaseAdmin().from('eve_slack_items').select('id,kind,summary,unit,building,owner_name,urgent,first_seen,channel,channel_name,msg_ts,thread_ts,evidence').eq('status', 'open').limit(1000)
+  // Every open loop, paged in id order: the top six are picked from ALL of them, not from whichever
+  // first 1,000 PostgREST handed back.
+  const { rows: data, truncated } = await pageRows((a, b) => supabaseAdmin().from('eve_slack_items').select('id,kind,summary,unit,building,owner_name,urgent,first_seen,channel,channel_name,msg_ts,thread_ts,evidence').eq('status', 'open').order('id').range(a, b))
+  if (truncated) console.error('[eve/overview] hot loops: open-loop read incomplete')
   const now = Date.now()
   const rows = ((data || []) as any[]).map(r => {
     const hours = (now - Date.parse(r.first_seen)) / 3600000
@@ -93,9 +97,12 @@ async function hotLoops(): Promise<any[]> {
 }
 
 // Open loops by kind — the same table /loops reads, counted rather than listed.
-async function loopCounts(): Promise<{ open: number; byKind: Record<string, number>; urgent: number; oldestHours: number | null }> {
+async function loopCounts(): Promise<{ open: number; byKind: Record<string, number>; urgent: number; oldestHours: number | null; partial?: boolean }> {
   try {
-    const { data } = await supabaseAdmin().from('eve_slack_items').select('kind,urgent,first_seen').eq('status', 'open').limit(1000)
+    // Counted over EVERY open loop (paged, id order). A failed or cut-short read is logged and
+    // flagged `partial` rather than shown as the true count.
+    const { rows: data, truncated } = await pageRows((a, b) => supabaseAdmin().from('eve_slack_items').select('id,kind,urgent,first_seen').eq('status', 'open').order('id').range(a, b))
+    if (truncated) console.error('[eve/overview] loop counts: open-loop read incomplete')
     const rows = (data || []) as any[]
     const byKind: Record<string, number> = {}
     let urgent = 0; let oldest: number | null = null
@@ -105,6 +112,6 @@ async function loopCounts(): Promise<{ open: number; byKind: Record<string, numb
       const h = (Date.now() - Date.parse(r.first_seen)) / 3600000
       if (Number.isFinite(h) && (oldest == null || h > oldest)) oldest = h
     }
-    return { open: rows.length, byKind, urgent, oldestHours: oldest == null ? null : Math.round(oldest) }
+    return { open: rows.length, byKind, urgent, oldestHours: oldest == null ? null : Math.round(oldest), ...(truncated ? { partial: true } : {}) }
   } catch { return { open: 0, byKind: {}, urgent: 0, oldestHours: null } }
 }
