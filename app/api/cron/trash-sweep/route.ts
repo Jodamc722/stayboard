@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireCron, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
+import { getSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -44,6 +45,46 @@ async function sweep() {
   }
 }
 
+// ── THE LOG PRUNE (2026-09-28, migration 131) — SHIPPED OFF ─────────────────────────────────────
+// The app's log tables (run receipts, notifications, activity, the email log, Eve's watch fires and
+// resolved audits, old sentiment rows, Telegram transcripts, raw Revenue App rows, AI usage) had no
+// retention at all. prune_logs() in migration 131 holds the retention rules; this calls it table by
+// table, so no single statement runs long. It ONLY runs when app_settings `housekeeping` has
+// "prune": true — "prune": "dry" records what it would delete and deletes nothing. Off by default.
+// Before migration 131 runs, it reports "not installed" and does nothing.
+const PRUNE_TABLES = [
+  'automation_runs', 'app_notifications', 'user_activity', 'email_log', 'eve_watch_fires',
+  'eve_audits', 'guesty_conversation_sentiment', 'telegram_messages', 'rev_feed_row', 'ai_usage',
+]
+const PRUNE_BUDGET_MS = 40_000
+
+async function prune(): Promise<{ mode?: string; skipped?: string; deleted?: number; errors?: number; counts?: Record<string, any> }> {
+  const cfg = await getSetting<{ prune?: boolean | string }>('housekeeping', {})
+  const mode = cfg && cfg.prune === true ? 'delete' : cfg && cfg.prune === 'dry' ? 'dry' : null
+  if (!mode) return { skipped: 'off — app_settings housekeeping.prune is not set' }
+  const db = supabaseAdmin()
+  const t0 = Date.now()
+  const counts: Record<string, any> = {}
+  let errors = 0
+  for (const table of PRUNE_TABLES) {
+    if (Date.now() - t0 > PRUNE_BUDGET_MS) { counts[table] = 'deferred to tomorrow (out of time)'; continue }
+    const { data, error } = await db.rpc('prune_logs', { dry_run: mode === 'dry', only_table: table })
+    if (error) {
+      // The function is not there yet: migration 131 has not been run. Nothing to do.
+      if (/PGRST202|42883/.test(String(error.code || '')) || /prune_logs/i.test(String(error.message || ''))) {
+        return { mode, skipped: 'not installed — run supabase/migrations/131_ops_housekeeping.sql' }
+      }
+      counts[table] = 'error: ' + String(error.message || error).slice(0, 120)
+      errors++
+      continue
+    }
+    if (data && typeof data === 'object') Object.assign(counts, data)
+  }
+  let deleted = 0
+  for (const k of Object.keys(counts)) if (typeof counts[k] === 'number') deleted += counts[k]
+  return { mode, deleted, errors, counts }
+}
+
 export async function GET(req: NextRequest) { return run(req) }
 export async function POST(req: NextRequest) { return run(req) }
 
@@ -56,9 +97,16 @@ async function run(req: NextRequest) {
     const skip = await tooSoon('trash-sweep', 60)
     if (skip) return NextResponse.json({ ok: true, ...skip })
   }
-  const out = await sweep()
+  const swept: any = await sweep()
+  // The prune never blocks or fails the trash sweep it rides on; a prune error is reported on the
+  // same receipt, which is where its counts live.
+  let pruned: any
+  try { pruned = await prune() } catch (e: any) { pruned = { errors: 1, error: String(e?.message || e).slice(0, 200) } }
+  const ok = !!swept.ok && !(pruned && pruned.errors)
+  const out = { ...swept, ok, prune: pruned }
   try {
-    await recordRun({ name: 'trash-sweep', ok: !!out.ok, itemCount: Number((out as any).purged || 0), detail: out, error: (out as any).error || null })
+    const err = swept.error || (pruned && pruned.errors ? 'log prune: ' + (pruned.error || pruned.errors + ' table(s) failed') : null)
+    await recordRun({ name: 'trash-sweep', ok, itemCount: Number(swept.purged || 0), detail: out, error: err })
   } catch { /* the sweep is what matters; the receipt is bookkeeping */ }
-  return NextResponse.json(out, { status: out.ok ? 200 : 500 })
+  return NextResponse.json(out, { status: swept.ok ? 200 : 500 })
 }
