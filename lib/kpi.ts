@@ -421,8 +421,9 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
     // The count above is operational (every guest in house); the occupancy % is over the stock.
     const inHouseStock = inHouseNow.filter(r => inStock(r.listing_id)).length
     const sameDayTurns = departuresToday.filter(d => arrivalsToday.some(a => String(a.listing_id) === String(d.listing_id))).length
+    // "Next 7 days" is today and the six after it: `<= in7` counted an eighth day.
     const in7 = addDays(today, 7)
-    const arrivals7 = live.filter(r => dOf(r.check_in) >= today && dOf(r.check_in) <= in7)
+    const arrivals7 = live.filter(r => dOf(r.check_in) >= today && dOf(r.check_in) < in7)
     const booked7 = arrivals7.reduce((s, r) => s + num(r.money_total), 0)
 
     const scopedTasks = tasks.filter(t => !isDead(t) && inScope(t.reference_property_id))
