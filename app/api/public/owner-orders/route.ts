@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ownerOrderSigValid } from '@/lib/ownerShare'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -107,8 +108,9 @@ export async function GET(req: NextRequest) {
     db.from('audit_items').select('id,listing_id,room,kind,title,qty,note,photo_url,severity,status,details,created_at').in('kind', ['replace', 'add']).in('status', LIVE_STATUS).in('listing_id', scope.ids).order('created_at', { ascending: false }).limit(1000), // deliberate cap: the scope's newest 1,000 order lines — a review sheet an owner reads line by line
     db.from('guesty_listings').select('id,nickname,title,building').in('id', scope.ids).limit(300),
     // Everything ever flagged for these units - this is what turns "buy a new one" into
-    // "we have already repaired this three times".
-    db.from('audit_items').select('listing_id,kind,title,status,created_at').in('listing_id', scope.ids).in('kind', ['replace', 'add', 'maintenance']).order('created_at', { ascending: true }).limit(4000),
+    // "we have already repaired this three times". Paged up to the 4,000 it always asked for (one
+    // read stopped at 1,000, so a busy building's repair counts and "flagged since" dates read short).
+    pageRows((a, b) => db.from('audit_items').select('listing_id,kind,title,status,created_at').in('listing_id', scope.ids).in('kind', ['replace', 'add', 'maintenance']).order('created_at', { ascending: true }).order('id').range(a, b), 4),
     // 18 months: old enough to catch a recurring complaint, recent enough that the owner cannot
     // fairly say "that was fixed years ago".
     db.from('guesty_reviews').select('listing_id,rating,content,created_at').in('listing_id', scope.ids).lte('rating', 4).gte('created_at', new Date(Date.now() - 550 * 86400000).toISOString()).order('created_at', { ascending: false }).limit(400),
@@ -122,8 +124,9 @@ export async function GET(req: NextRequest) {
   for (const l of ol.data || []) lm[String(l.id)] = { name: l.nickname || l.title || 'Unit', building: l.building || '' }
 
   // history keyed by listing + normalised title
+  if (hist.truncated) console.error('public/owner-orders: flag history read stopped early — repair counts may be low')
   const hmap: Record<string, { first: string; repairs: number }> = {}
-  for (const h of hist.data || []) {
+  for (const h of hist.rows as any[]) {
     const t = nrm(h.title)
     if (!t) continue
     const key = String(h.listing_id) + '|' + t
