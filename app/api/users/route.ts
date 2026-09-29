@@ -28,7 +28,8 @@ async function requireAdmin() {
 async function isPrivilegedTarget(email: string): Promise<boolean> {
   if (email === OWNER) return true
   try {
-    const { data } = await supabaseAdmin().from('app_users').select('role').eq('email', email).maybeSingle()
+    const { data, error } = await supabaseAdmin().from('app_users').select('role').eq('email', email).maybeSingle()
+    if (error) return true   // supabase-js reports a failed read here, it does not throw
     return (data as any)?.role === 'admin'
   } catch { return true }   // cannot tell → treat as protected
 }
@@ -154,6 +155,12 @@ export async function PATCH(req: NextRequest) {
     const touchesPower = (!!password && !self) || body?.status !== undefined || body?.role !== undefined || body?.access_role !== undefined
     if (privileged && touchesPower) return NextResponse.json({ error: 'Only the owner can change an admin account\u2019s password, status or role.' }, { status: 403 })
     if (body?.role === 'admin' || body?.access_role === 'admin') return NextResponse.json({ error: 'Only the owner can make someone an admin.' }, { status: 403 })
+    // PROFILE AND PREFS ON THE OWNER'S OR ANOTHER ADMIN'S ROW are the owner's too (2026-09-28 audit,
+    // B-19): profile.name is what Slack identity matching reads, so editing it re-points who a
+    // Slack message is taken to be from. An admin still edits their OWN profile and prefs.
+    if (privileged && !self && (body?.profile !== undefined || body?.prefs !== undefined)) {
+      return NextResponse.json({ error: 'Only the owner can edit an admin account’s profile or preferences.' }, { status: 403 })
+    }
   }
   const patch: any = {}
   if (body?.role === 'admin' || body?.role === 'member') patch.role = body.role
@@ -212,7 +219,8 @@ export async function PATCH(req: NextRequest) {
       else if (patch.role == null) patch.role = 'member'
     }
   }
-  // Profile details + notification preferences: any admin can edit.
+  // Profile details + notification preferences: any admin on member rows (and their own); the owner
+  // on admin rows (checked above).
   if (body?.profile && typeof body.profile === 'object' && !Array.isArray(body.profile)) patch.profile = body.profile
   if (body?.prefs && typeof body.prefs === 'object' && !Array.isArray(body.prefs)) patch.prefs = body.prefs
   if (Object.keys(patch).length === 0 && !password) return NextResponse.json({ error: 'Nothing to update.' }, { status: 400 })
