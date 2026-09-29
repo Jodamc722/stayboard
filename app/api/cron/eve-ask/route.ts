@@ -17,6 +17,7 @@ import { recordRun } from '@/lib/automation-runs'
 import { runMorningAsk, buildBatch, expireStaleAsks, askSettings, recipients } from '@/lib/eve/ask'
 import { expireUnanswered } from '@/lib/eve/ralph'
 import { flushDeferred } from '@/lib/eve/agent-mode'
+import { atEasternHour } from '@/lib/et-clock'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -25,6 +26,10 @@ export async function GET(req: NextRequest) {
   // The scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron).
   const allowed = await requireCron(req)
   if (!allowed.ok) return allowed.res
+  // 9:03AM EASTERN ALL YEAR (2026-09-29). vercel.json fires this at 13:03 AND 14:03 UTC; on the
+  // scheduler's own call, the one that is not 9am in New York stops here — before the flush, the
+  // watches, the receipt or a single ask (lib/et-clock). A person's preview or force is never skipped.
+  if (allowed.viaSecret && !atEasternHour(9)) return NextResponse.json({ ok: true, skipped: 'daylight-saving twin — this job runs at 9am Eastern' })
 
   const url = new URL(req.url)
   const preview = url.searchParams.get('preview') === '1'

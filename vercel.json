@@ -62,7 +62,7 @@
     },
     {
       "path": "/api/cron/eve-ask",
-      "schedule": "3 13 * * *"
+      "schedule": "3 13,14 * * *"
     },
     {
       "path": "/api/cron/ops-brief",
