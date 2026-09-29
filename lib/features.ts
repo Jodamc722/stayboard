@@ -30,7 +30,7 @@ export const FEATURES: Feature[] = [
   // without a deploy. Migration 045 seeds admin=full and every other role=off.
   { key: 'eve',           label: 'Eve',               path: '/eve', group: 'Overview' },
   { key: 'reservations',  label: 'Reservations',      path: '/reservations', group: 'Guests' },
-  { key: 'reservation-emails', label: 'Reservation Emails', path: '/reservation-emails', group: 'Guests' },
+  { key: 'reservation-emails', label: 'Front-Desk Notices', path: '/reservation-emails', group: 'Guests' },
   { key: 'messages',      label: 'Messages',          path: '/messages', group: 'Guests' },
   { key: 'reviews',       label: 'Reviews',           path: '/reviews', group: 'Guests' },
   // The Calls desk since 2026-09-08 — pre-arrival, bad-review recovery and post-checkout calls on
@@ -64,8 +64,8 @@ export const FEATURES: Feature[] = [
   // money permission inside the page, so a role without it sees the doctrine and not the dollars.
   { key: 'refunds',       label: 'Making it right',   path: '/refunds', group: 'Operations' },
   { key: 'audits',        label: 'Quality',           path: '/audits', group: 'Operations' },
-  { key: 'orders',        label: 'Orders',            path: '/orders', group: 'Operations' },
-  { key: 'requests',      label: 'Requests',          path: '/requests', group: 'Operations' },
+  { key: 'orders',        label: 'Purchasing',        path: '/orders', group: 'Operations' },
+  { key: 'requests',      label: 'Work Orders',       path: '/requests', group: 'Operations' },
   // Blocked Units (2026-08-10, Jon): every unit off the calendar, read live from Guesty's
   // multi-calendar, with the note whoever created the block typed in. An operations page, not a
   // money one — the point is to chase the work behind the block before the nights are gone.
@@ -106,7 +106,7 @@ export const FEATURES: Feature[] = [
   // Personal read-only API keys (Jon, 2026-09-25). Every role can make their own; a key reads
   // exactly what its owner can see, through /api/v1 only.
   { key: 'api-keys',      label: 'API keys',           path: '/api-keys', group: 'Settings' },
-  { key: 'revenue',       label: 'Revenue',           path: '/revenue', group: 'Money' },
+  { key: 'revenue',       label: 'Revenue Center',    path: '/revenue', group: 'Money' },
   { key: 'marketing',     label: 'Direct bookings',   path: '/marketing', group: 'Money' },
   // Billable hours (2026-08-06, Jon): Breezeway task billing by owner + labor vs actual.
   // Money page -> owner/admin-only by default (migration 027 records manager off, like Owner Audit).
@@ -120,7 +120,7 @@ export const FEATURES: Feature[] = [
   { key: 'reports',       label: 'Owner Reports',     path: '/reports', group: 'Money' },
   // Owner-money page: owner/admin-only by Jon's rule (migration 025 sets manager to off, same as
   // Revenue). Reviewers without a login use /report/owner-audit instead.
-  { key: 'owner-audit',   label: 'Owner Audit',       path: '/owner-audit', group: 'Money' },
+  { key: 'owner-audit',   label: 'Owner Statement Audit', path: '/owner-audit', group: 'Money' },
   { key: 'team-schedule', label: 'Weekly Planner',    path: '/team', group: 'Team' },
   { key: 'cleaners',      label: 'Cleaners',          path: '/cleaners', group: 'Team' },
   { key: 'labor',         label: 'Labor',             path: '/labor', group: 'Team' },
