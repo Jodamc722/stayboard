@@ -35,3 +35,11 @@ export const isFiveStarReview = (rating: any, channel?: any) =>
 
 export const isLowReview = (rating: any, channel?: any) =>
   Number(rating) <= (isBookingChannel(channel) ? 3.5 : 3)
+
+// ── WHAT CLEARS A UNIT OUT OF RECOVERY ──────────────────────────────────────────────────────────
+// A unit opens recovery on a low review (isLowReview) and leaves it on the next clearly good one:
+// Airbnb/Vrbo 4.5+, Booking 8.6/10+ (stored 4.3). The reviews dashboard and the Calls desk both
+// decide recovery with this, so a Booking 7/10 can no longer open recovery on /reviews and not on
+// the desk (2026-09-28 audit, P1-9).
+export const clearsRecovery = (rating: any, channel?: any) =>
+  Number(rating) >= (isBookingChannel(channel) ? 4.3 : 4.5)

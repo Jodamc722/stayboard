@@ -12,11 +12,13 @@
 // the fixed 30/60/90-day window I proposed: a calendar has no idea whether the problem was fixed,
 // while the next guest's review does. So:
 //
-//   IN RECOVERY   = the unit's most recent LOW review (<= 3 stars, the same definition the briefs,
-//                   the review KPIs and lib/review-themes already use) has NO review of 4.5 stars
-//                   or better after it.
-//   RECOVERED     = a 4.5+ review landed after that low one. The flag clears itself, silently, the
-//                   moment a guest says the place is good again.
+//   IN RECOVERY   = the unit's most recent LOW review (lib/review-scale isLowReview: 3 stars or
+//                   under, Booking 7/10 or under — the review KPIs' own rule) has NO clearly good
+//                   review after it.
+//   RECOVERED     = a review that clearsRecovery (4.5+, Booking 8.6/10+) landed after that low one.
+//                   The flag clears itself, silently, the moment a guest says the place is good again.
+//   Each channel is judged on its OWN scale (2026-09-28 audit): with a flat 3 / 4.5, a Booking 7/10
+//   opened recovery on /reviews but not here, and a Booking 8.8/10 never cleared a unit.
 //
 // There is deliberately NO time limit and no "mark recovered" button. A unit that has been flagged
 // for two months is not a stale row to dismiss — it is a unit that has not earned a good review in
@@ -42,9 +44,12 @@ import { pageRows } from '@/lib/db-page'
 import { ratingToStars } from '@/lib/optimize-score'
 import { channelOf } from '@/lib/welcome-call-guide'
 import { parkingBooked } from '@/lib/parking'
+import { isLowReview, clearsRecovery } from '@/lib/review-scale'
 
-export const LOW_STARS = 3        // <= this is a bad review (matches ops-brief, review KPIs, review-themes)
-export const CLEAR_STARS = 4.5    // a review this good, AFTER the low one, clears the unit
+// The Airbnb/Vrbo-scale thresholds, for reference. The recovery rule itself is channel-aware and
+// lives in lib/review-scale (isLowReview / clearsRecovery) — Booking is judged on its own /10 scale.
+export const LOW_STARS = 3        // <= this is a bad review on the 5-star channels
+export const CLEAR_STARS = 4.5    // a review this good, AFTER the low one, clears the unit (5-star channels)
 export const HIGH_VALUE = 2500    // a stay worth calling about on money alone
 
 // ── THE WELCOME-CALL WINDOW (Jon, 2026-09-09) ───────────────────────────────────────────────────
@@ -140,11 +145,11 @@ export async function recoveryUnits(db: any): Promise<Map<string, RecoveryUnit>>
     // still not clear one either, which is the same rule applied on both sides.
     const idx = revs.findIndex((r: any) => {
       const s = ratingToStars(r.rating)
-      return s != null && s <= LOW_STARS && RECOVERY_CHANNELS.indexOf(channelOf(r.channel)) >= 0
+      return s != null && isLowReview(s, r.channel) && RECOVERY_CHANNELS.indexOf(channelOf(r.channel)) >= 0
     })
     if (idx < 0) continue                       // no low review at all
     const since = revs.slice(0, idx)            // everything newer than the low one
-    if (since.some((r: any) => { const s = ratingToStars(r.rating); return s != null && s >= CLEAR_STARS })) continue // cleared
+    if (since.some((r: any) => { const s = ratingToStars(r.rating); return s != null && clearsRecovery(s, r.channel) })) continue // cleared
     const low = revs[idx]
     out.set(listingId, {
       listingId,

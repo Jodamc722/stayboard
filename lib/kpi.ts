@@ -24,6 +24,7 @@ import { rollupBuilding } from '@/lib/optimize-score'
 import { canSeeMoney, type Access } from '@/lib/access'
 import { redactMoney } from '@/lib/money'
 import { pageRows } from '@/lib/db-page'
+import { isLowReview } from '@/lib/review-scale'
 
 
 const DEAD_LISTING = ['inactive', 'disabled', 'archived', 'deleted']
@@ -144,9 +145,12 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       pageAll((a, b) => db.from('guesty_conversation_sentiment')
         .select('conversation_id,listing_id,band,dissatisfied,awaiting_reply,status,top_issue,last_message_at')
         .gte('last_message_at', prevFrom + 'T00:00:00Z').order('last_message_at').range(a, b), 4),
+      // LOW ON ITS OWN SCALE (2026-09-28): ≤3 stars, or ≤7/10 on Booking (stored 3.5) — the review
+      // KPIs' isLowReview, applied below. Reviews excluded from the score stay off the list, as they
+      // do everywhere else a review is judged.
       db.from('guesty_reviews')
         .select('id,listing_id,rating,content,guest_name,channel,created_at,has_reply')
-        .gte('created_at', from + 'T00:00:00Z').lte('rating', 3).is('removed_at', null)
+        .gte('created_at', from + 'T00:00:00Z').lte('rating', 3.5).is('removed_at', null).eq('excluded_from_score', false)
         .order('created_at', { ascending: false }).limit(60),
       // PAGED (2026-09-03): both were .limit(1000) — the cap itself. Glitches over two windows
       // and open requests can exceed it; the counts under-reported exactly when they mattered.
@@ -553,7 +557,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     for (let d = from; d <= to; d = addDays(d, 1)) dayRows.push({ date: d, done: work.byDay[d] || 0 })
 
     const negatives = ((lowReviews.data || []) as any[])
-      .filter(r => inScope(r.listing_id))
+      .filter(r => isLowReview(r.rating, r.channel) && inScope(r.listing_id))
       .slice(0, 12)
       .map(r => {
         const li = lmap[String(r.listing_id)]

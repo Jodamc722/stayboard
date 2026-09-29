@@ -33,7 +33,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, buildingOf } from '@/lib/segments'
 import { setSetting } from '@/lib/app-settings'
 import { ratingToStars } from '@/lib/optimize-score'
-import { isBookingChannel, isFiveStarReview, isLowReview } from '@/lib/review-scale'
+import { isBookingChannel, isFiveStarReview, isLowReview, clearsRecovery } from '@/lib/review-scale'
 import { isDepartureCleanName } from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
@@ -462,7 +462,7 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
     for (const r of rows) {
       // A clearly good review clears the unit; a low one opens recovery. Anything in between is
       // neither, so keep walking back.
-      if (!isLowReview(r.rating, r.channel) && r.rating >= (isBookingChannel(r.channel) ? 4.3 : 4.5)) return null
+      if (clearsRecovery(r.rating, r.channel)) return null
       if (isLowReview(r.rating, r.channel)) {
         return { days: Math.max(0, daysBetween(r.at, today)), since: r.at, rating: r.rating, channel: r.channel }
       }

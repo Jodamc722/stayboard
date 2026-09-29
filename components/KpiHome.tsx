@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { SyncNowButton } from '@/components/SyncNowButton'
 import { LaborEconStrip } from '@/components/LaborEconStrip'
+import { isBookingChannel, ratingDisplay } from '@/lib/review-scale'
 import {
   LogIn, LogOut, Users, Sparkles, TrendingUp, TrendingDown, Minus, ArrowUpRight,
   Star, PhoneCall, AlertTriangle, Wrench, ClipboardCheck, Brush, Timer, DollarSign,
@@ -540,13 +541,14 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
 
       {/* ---------------------------------------------------------------- guest experience */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-        <Panel title="Recent low reviews" note="3 stars or under in this window — click through to reply or raise a task">
+        <Panel title="Recent low reviews" note="3★ or under (Booking 7/10 or under) in this window — click through to reply or raise a task">
           <ul className="divide-y divide-line/70 max-h-[420px] overflow-auto">
             {((k && k.negatives) || []).map((n: any) => (
               <li key={n.id}>
                 <Link href="/reviews" className="group flex gap-3 px-4 py-2.5 hover:bg-app transition-colors">
-                  <span className={'shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-[12px] font-bold ' +
-                    (n.rating <= 2 ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700')}>{n.rating}★</span>
+                  <span title={isBookingChannel(n.channel) ? 'Booking rating, on its own /10 scale' : 'Star rating'}
+                    className={'shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-[11px] font-bold ' +
+                    (n.rating <= 2 ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700')}>{isBookingChannel(n.channel) ? ratingDisplay(n.rating, n.channel) : n.rating + '★'}</span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       <span className="text-[12.5px] font-semibold text-ink truncate">{n.unit}</span>
@@ -559,7 +561,7 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
                 </Link>
               </li>
             ))}
-            {k && (!k.negatives || !k.negatives.length) && <li className="px-4 py-8 text-center text-muted text-sm">No reviews at 3 stars or under. Rare — enjoy it.</li>}
+            {k && (!k.negatives || !k.negatives.length) && <li className="px-4 py-8 text-center text-muted text-sm">No low reviews. Rare — enjoy it.</li>}
             {!k && <li className="px-4 py-8 text-center text-muted text-sm">Loading…</li>}
           </ul>
         </Panel>
