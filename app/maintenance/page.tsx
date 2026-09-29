@@ -76,7 +76,7 @@ export default async function MaintenancePage() {
   const d30 = shift(today, -30)
 
   const [woRes, taskRes, doneRes, glitchRes, blocked] = await Promise.all([
-    whole('work orders', (a, b) => db.from('field_requests').select('*').order('id').range(a, b)),
+    whole('work orders', (a, b) => db.from('field_requests').select('*').not('status', 'in', '(' + WO_CLOSED.join(',') + ')').order('id').range(a, b)),
     // Open maintenance execution: unfinished Breezeway maintenance tasks scheduled in the last
     // 60 days or undated. Older than that is archaeology, not operations.
     whole('open tasks', (a, b) => db.from('breezeway_tasks_sync')
