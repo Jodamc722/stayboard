@@ -45,9 +45,13 @@ export async function GET(req: NextRequest) {
     const board = await ensureMyBoard(email, myName).catch(() => null)
     // select('*') so this keeps working before migration 087 adds `role`; a row without one is
     // an assignee, which is what every row meant until collaborators existed.
-    const { data: asg, error: aErr } = await sb.from('project_task_assignees')
-      .select('*').or(`email.eq.${email},person_key.in.(${keys.map(k => JSON.stringify(k)).join(',')})`).limit(2000)
-    if (aErr) throw new Error(aErr.message)
+    // PAGED (2026-09-29): this is every assignment the person has ever had, done tasks included, and
+    // each recurring cycle carries open tasks forward with fresh rows — past 1,000 an unordered read
+    // dropped some.
+    const asgRead = await pageRows<any>((a, b) => sb.from('project_task_assignees')
+      .select('*').or(`email.eq.${email},person_key.in.(${keys.map(k => JSON.stringify(k)).join(',')})`).order('id').range(a, b))
+    if (asgRead.truncated) throw new Error('could not read every task assigned to you')
+    const asg = asgRead.rows
     // A COLLABORATOR'S TASK IS STILL ON MY LIST (Jon, 2026-09-15: "if collaborated it's assigned
     // to my tasks"). It is not hidden and it is not a separate tab — it is labelled, so the list
     // can still tell me what I owe from what I am only party to.
@@ -57,19 +61,30 @@ export async function GET(req: NextRequest) {
       // Assignee wins: being on the hook outranks being copied in, if somehow both are recorded.
       if (roleByTask[k] !== 'assignee') roleByTask[k] = String(a.role || 'assignee')
     }
-    const own = board ? await sb.from('project_steps').select('id').eq('project_id', board.id).neq('status', 'done').limit(1000) : { data: [] as any[] } // deliberate cap: one person's own board, open tasks only — nowhere near 1,000, and the task read below takes at most 1,000 ids anyway
+    const own = board ? await sb.from('project_steps').select('id').eq('project_id', board.id).neq('status', 'done').limit(1000) : { data: [] as any[] } // deliberate cap: one person's own board, open tasks only — nowhere near 1,000
     let taskIds = Array.from(new Set([
       ...((asg || []) as any[]).filter(a => !visible || visible.has(String(a.project_id))).map(a => String(a.task_id)),
       ...((own.data || []) as any[]).map(t => String(t.id)),
     ]))
     if (!taskIds.length) return NextResponse.json({ ok: true, today, groups: empty(), total: 0, board })
 
-    const { data: tasks, error: tErr } = await sb.from('project_steps')
-      .select('id,project_id,title,status,due_on,priority,section,parent_id,updated_at')
-      .in('id', taskIds.slice(0, 1000)).neq('status', 'done')
-      .order('due_on', { ascending: true, nullsFirst: false }).order('id')
-    if (tErr) throw new Error(tErr.message)
-    const rows = (tasks || []) as any[]
+    // 200 ids a read (an .in() list rides in the URL) instead of the first 1,000 ids only. More than
+    // one read is merged back into the order a single read gives: due date, undated last, then id.
+    const rows: any[] = []
+    for (let i = 0; i < taskIds.length; i += 200) {
+      const { data: tasks, error: tErr } = await sb.from('project_steps')
+        .select('id,project_id,title,status,due_on,priority,section,parent_id,updated_at')
+        .in('id', taskIds.slice(i, i + 200)).neq('status', 'done')
+        .order('due_on', { ascending: true, nullsFirst: false }).order('id')
+      if (tErr) throw new Error(tErr.message)
+      rows.push(...((tasks || []) as any[]))
+    }
+    if (taskIds.length > 200) rows.sort((x, y) => {
+      const dx = x.due_on ? String(x.due_on) : null, dy = y.due_on ? String(y.due_on) : null
+      if (dx !== dy) return dx === null ? 1 : dy === null ? -1 : dx < dy ? -1 : 1
+      const ix = String(x.id), iy = String(y.id)
+      return ix < iy ? -1 : ix > iy ? 1 : 0
+    })
     if (!rows.length) return NextResponse.json({ ok: true, today, groups: empty(), total: 0, board })
 
     // A SUBTASK NEEDS ITS PARENT'S NAME. "Which unit" is a perfectly good subtask under "Vendor
