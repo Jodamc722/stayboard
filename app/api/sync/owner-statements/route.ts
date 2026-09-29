@@ -19,6 +19,7 @@ import { requireLevel } from '@/lib/access'
 import { requireCron } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
 import { syncOwners, syncOwnerStatements, syncLedgerMonth, ensureMonths, pendingMonths } from '@/lib/guesty-owner-sync'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -83,20 +84,19 @@ async function handle(req: NextRequest): Promise<Response> {
       // which is exactly the thing to catch during the month instead of on statement day.
       const onStatement = new Set<string>()
       const ledgerOwnerOfListing: Record<string, string> = {}
-      for (let off = 0; off < 100_000; off += 1000) {
-        // Same selector the audit uses — the code lives in the row's JSON, not in a column.
-        const { data, error } = await sb.from('guesty_owner_ledger')
-          .select('owner_id, listing_id, res:raw->reservationConfirmationCode->>title')
-          .eq('recognized', true).eq('entry_month', month)
-          .range(off, off + 999)
-        if (error) break
-        const batch = (data || []) as any[]
-        for (const r of batch) {
-          const c = String((r as any).res || '').trim(); if (c) onStatement.add(c)
-          const lid = String((r as any).listing_id || '')
-          if (lid && (r as any).owner_id) ledgerOwnerOfListing[lid] = String((r as any).owner_id)
-        }
-        if (batch.length < 1000) break
+      // PAGED IN ID ORDER, AND A FAILED PAGE IS NOT THE END (2026-09-29). The pages had no order, so
+      // lines could repeat or be skipped, and an error broke the loop as if the ledger stopped there —
+      // every booking past it then read as "earned but not on any statement". Now a short read says so.
+      // Same selector the audit uses — the code lives in the row's JSON, not in a column.
+      const ledger = await pageRows<any>((a, b) => sb.from('guesty_owner_ledger')
+        .select('owner_id, listing_id, res:raw->reservationConfirmationCode->>title')
+        .eq('recognized', true).eq('entry_month', month)
+        .order('id').range(a, b), 100)
+      if (ledger.truncated) return NextResponse.json({ ok: false, error: `Could not read all of ${month}'s ledger lines — try again in a minute.` }, { status: 503 })
+      for (const r of ledger.rows) {
+        const c = String(r.res || '').trim(); if (c) onStatement.add(c)
+        const lid = String(r.listing_id || '')
+        if (lid && r.owner_id) ledgerOwnerOfListing[lid] = String(r.owner_id)
       }
       // Names for the fallback mapping and for units, so the answer reads like the portfolio.
       const { data: ownRows } = await sb.from('guesty_owners').select('id, full_name')
@@ -112,13 +112,14 @@ async function handle(req: NextRequest): Promise<Response> {
       // "Finished" is judged against the EASTERN date (2026-09-29): the UTC date is already tomorrow
       // from 8pm ET, when it counted tomorrow's checkouts as owing the ledger money.
       const todayEt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
-      for (let off = 0; off < 20_000; off += 1000) {
-        const { data, error } = await sb.from('guesty_reservations')
-          .select('id, confirmation_code, guest_name, check_in, check_out, status, source, listing_id, money_total, upd:raw->>lastUpdatedAt')
-          .gt('check_out', start).lt('check_in', endExcl)
-          .range(off, off + 999)
-        if (error) break
-        const batch = (data || []) as any[]
+      // Same rule for the month's stays: paged in id order, and a short read is an error, not a smaller month.
+      const resRead = await pageRows<any>((a, b) => sb.from('guesty_reservations')
+        .select('id, confirmation_code, guest_name, check_in, check_out, status, source, listing_id, money_total, upd:raw->>lastUpdatedAt')
+        .gt('check_out', start).lt('check_in', endExcl)
+        .order('id').range(a, b), 20)
+      if (resRead.truncated) return NextResponse.json({ ok: false, error: `Could not read all of ${month}'s reservations — try again in a minute.` }, { status: 503 })
+      {
+        const batch = resRead.rows
         scanned += batch.length
         for (const r of batch) {
           const code = String(r.confirmation_code || '').trim()
@@ -148,7 +149,6 @@ async function handle(req: NextRequest): Promise<Response> {
             else if (onStatement.has(code)) changed.push({ ...row, changedAt: upd, statementBuilt: st.gen })
           }
         }
-        if (batch.length < 1000) break
       }
       const byOwner = (arr: any[]) => arr.reduce((a: any, r: any) => { a[r.owner] = (a[r.owner] || 0) + 1; return a }, {})
       return NextResponse.json({
