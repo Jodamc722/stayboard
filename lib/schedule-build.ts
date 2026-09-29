@@ -6,8 +6,9 @@
 // market (Miami / Broward / North). Adds per clean: hub/building, bedrooms, check-in/out times,
 // nights, same-day-turn, current DOOR CODE, and cleaning time. Read-only; assignment via /api/schedule/assign.
 import { getListingCalendar } from '@/lib/guesty'
-import { unstable_cache, revalidateTag } from 'next/cache'
+import { unstable_cache } from 'next/cache'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 import { marketOf, type Market } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorNameOf, noBreezewayRegex } from '@/lib/ops-presets'
@@ -63,11 +64,17 @@ const anchor = /^\d{4}-\d{2}-\d{2}$/.test(dateParam || '') ? dateParam! : today
 const start = anchor // week = rolling next-7-days from the anchor (today on load)
 const end = view === 'day' ? anchor : addDays(start, 6)
 
-const compute = unstable_cache(async (view: string, start: string, end: string, today: string, _vendorKey: string) => {
+// The long-stay threshold is in the snapshot too (longStayNights), so it is part of the key — an
+// edit to it used to reach the board only when the five minutes ran out.
+const compute = unstable_cache(async (view: string, start: string, end: string, today: string, _vendorKey: string, _longStay: number) => {
 const db = supabaseAdmin()
-const [{ data: outs }, { data: ins }, { data: listings }] = await Promise.all([
-db.from('guesty_reservations').select('id,listing_id,listing_name,guest_name,guest_id,guest_phone,check_out,check_in,status,nights,source,fee:raw->money->>fareCleaning').gte('check_out', start).lte('check_out', end).limit(4000),
-db.from('guesty_reservations').select('listing_id,check_in,status,nights,guest_name,guest_id,guest_phone').gte('check_in', start).lte('check_in', addDays(end, 30)).limit(8000),
+// PAGED AND ORDERED (2026-09-28 audit). `.limit(4000)` and `.limit(8000)` are 1,000 rows in practice
+// and neither read had an order, so in season the arrivals behind every same-day turn were an
+// arbitrary, truncated set — cached for five minutes for every viewer. A read that stops early now
+// throws, exactly like the listings guard below: an error beats a schedule that quietly misses a turn.
+const [outsRes, insRes, { data: listings }] = await Promise.all([
+pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,listing_name,guest_name,guest_id,guest_phone,check_out,check_in,status,nights,source,fee:raw->money->>fareCleaning').gte('check_out', start).lte('check_out', end).order('check_out').order('id').range(a, b), 8),
+pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,status,nights,guest_name,guest_id,guest_phone').gte('check_in', start).lte('check_in', addDays(end, 30)).order('check_in').order('id').range(a, b), 12),
 // PERF: pull ONLY the raw sub-fields this route uses (customFields for door/cleaning codes +
 // check-in/out times) instead of the full multi-MB raw blob for every listing.
 db.from('guesty_listings').select('id,nickname,title,building,address_city,status,bedrooms,cfRaw:raw->customFields,ciRaw:raw->>defaultCheckInTime,coRaw:raw->>defaultCheckOutTime,lat:raw->address->>lat,lng:raw->address->>lng'),
@@ -76,6 +83,11 @@ db.from('guesty_listings').select('id,nickname,title,building,address_city,statu
 // HARD GUARD: if the listings query hiccups, ABORT instead of caching a garbage snapshot
 // (rows would render with hub 'Other', no bedrooms/door codes - worse than an error).
 if (!listings || !listings.length) throw new Error('Listing data unavailable - hit Sync to retry.')
+if (outsRes.truncated || insRes.truncated) throw new Error('Could not read every reservation - hit Sync to retry.')
+const outs = outsRes.rows
+const ins = insRes.rows
+// A snapshot that must not be shared: shown to this viewer, never cached (see the end of compute).
+let partial = false
 
 type Meta = { name: string; market: Market; hub: string; bedrooms: number | null; doorCode: string | null; cleaningTime: string | null; checkIn: string | null; checkOut: string | null; is17: boolean; vendor: string | null; guestyOnly: boolean; city: string | null; lat: number | null; lng: number | null }
 const meta: Record<string, Meta> = {}
@@ -169,11 +181,16 @@ assignedNames: [],
 // with zero live API calls; the live API is only consulted for day-view rows the mirror misses.
 let mirror: any[] = []
 try {
-const { data: bzTasks } = await db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,total_minutes,report_url,linked_reservation_id').eq('type_department', 'housekeeping').gte('scheduled_date', addDays(start, -14)).lte('scheduled_date', addDays(end, 3)).limit(3000)
+// PAGED AND ORDERED like the reservations (2026-09-28 audit): `.limit(3000)` was 1,000 arbitrary rows,
+// so assignees and sync badges went missing and day view paid a live Breezeway lookup for each gap.
+// A mirror that stopped early still renders (day view falls back to live lookups, as it always did
+// on a failed pull) but the snapshot is not cached.
+const { rows: bzTasks, truncated: mirrorShort } = await pageRows<any>((a, b) => db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,total_minutes,report_url,linked_reservation_id').eq('type_department', 'housekeeping').gte('scheduled_date', addDays(start, -14)).lte('scheduled_date', addDays(end, 3)).order('scheduled_date').order('id').range(a, b), 8)
+if (mirrorShort) { partial = true; console.error('schedule: mirror read stopped early') }
 // The board is departure cleans ONLY. isDepartureCleanName is the single shared rule — see
 // lib/breezeway.ts for why the old /depart|clean|turn/ let an oven clean onto the scheduler.
 mirror = (bzTasks || []).filter((t: any) => isDepartureCleanName(t.name) && !/cancel|delet/i.test(String(t.status || '')))
-} catch (e) { console.error('schedule: mirror pull failed', e) }
+} catch (e) { partial = true; console.error('schedule: mirror pull failed', e) }
 
 let enrichedOk = 0
 // MIRROR-FIRST (both views): same-day task match from breezeway_tasks_sync — instant, no API.
@@ -219,8 +236,9 @@ c.assignedNames = ppl.map(p => String(p.name || '')).filter(Boolean)
 }
 
 // If EVERY Breezeway lookup failed (token rate-limited on a cold lambda), this snapshot has no
-// assignees/sync badges - self-bust the cache tag so the very next load recomputes enriched.
-if (view === 'day' && breezewayConfigured() && cleans.length && enrichedOk === 0) { try { revalidateTag('schedule') } catch {} }
+// assignees/sync badges - so it is not cached, and the very next load recomputes enriched. (This
+// used to call revalidateTag here, which Next refuses inside a cached function — it never ran.)
+if (view === 'day' && breezewayConfigured() && cleans.length && enrichedOk === 0) partial = true
 
 // Block-aware: reflect cleans a user moved to the next day (schedule_blocks: listing_id, orig_date, blocked_until).
     try {
@@ -439,7 +457,7 @@ housekeepers = people.filter(p => p.departments.length === 0 || p.departments.in
 } catch (e) { console.error('schedule: people list failed', e) }
 }
 
-return {
+const snapshot = {
 ok: true, view, today, weekStart: start, weekEnd: end, longStayNights: LONG_STAY,
 prev: view === 'day' ? addDays(start, -1) : addDays(start, -7),
 next: view === 'day' ? addDays(start, 1) : addDays(start, 7),
@@ -447,9 +465,15 @@ totals: { cleans: cleans.filter((c) => !c.movedTo).length, feeTotal: cleans.filt
 days, housekeepers, units, breezeway: breezewayConfigured(),
 syncedAt: new Date().toISOString(),
 }
+// A PARTIAL SNAPSHOT IS SHOWN, NEVER SHARED. Throwing is how a value is kept out of unstable_cache;
+// the caller below catches it and serves this one viewer the snapshot all the same.
+if (partial) { const e: any = new Error('schedule snapshot not cached: partial read'); e.uncachedSchedule = snapshot; throw e }
+return snapshot
 }, ['schedule-v2'], { tags: ['schedule'], revalidate: 300 })
 
-const payload = await compute(view, start, end, today, vendorKey)
+let payload: any
+try { payload = await compute(view, start, end, today, vendorKey, LONG_STAY) }
+catch (e: any) { if (e && e.uncachedSchedule) payload = e.uncachedSchedule; else throw e }
 // LIVE staged-assignment overlay (uncached): server-saved cleaner picks survive refresh/tab-switch
   try {
     const sdb = supabaseAdmin()
