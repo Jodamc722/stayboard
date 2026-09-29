@@ -33,7 +33,7 @@ import 'server-only'
 import { rollupBuilding } from '@/lib/optimize-score'
 import type { EveTool, EveDomain } from './types'
 import { obj, S } from './types'
-import { clampLimit, lc, DEAD_LISTING } from './ctx'
+import { clampLimit, lc, DEAD_LISTING, pageRows } from './ctx'
 import { lookAtUnit, visionCoverage } from './vision'
 
 const cap = (rows: any[], lim: number) => ({ rows: rows.slice(0, lim), truncated: rows.length > lim })
@@ -155,8 +155,10 @@ export const PROPERTY_TOOLS: EveTool[] = [
     input_schema: obj({ name: S.str, id: S.str }),
     run: async (input: any, ctx: any) => {
       if (!input?.name && !input?.id) {
-        const [{ data: books }, { data: ls }] = await Promise.all([
-          ctx.db.from('guidebooks').select('listing_id,status,updated_at').order('updated_at', { ascending: false }).limit(1000),
+        // Paged (2026-09-29): every regeneration adds a guidebook row, so past 1,000 rows a unit whose
+        // only book was older read as having none.
+        const [{ rows: books, truncated }, { data: ls }] = await Promise.all([
+          pageRows<any>((a, b) => ctx.db.from('guidebooks').select('id,listing_id,status,updated_at').order('updated_at', { ascending: false }).order('id').range(a, b)),
           ctx.db.from('guesty_listings').select('id,nickname,title,status').order('id').limit(400),
         ])
         const live = (ls || []).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
@@ -164,7 +166,7 @@ export const PROPERTY_TOOLS: EveTool[] = [
         const published = new Set((books || []).filter((b: any) => /publish|live|active/i.test(String(b.status))).map((b: any) => String(b.listing_id)))
         const none = live.filter((l: any) => !withBook.has(String(l.id)))
         return {
-          live_units: live.length, with_any_book: withBook.size, published: published.size,
+          live_units: live.length, with_any_book: withBook.size, published: published.size, truncated: truncated || undefined,
           units_with_no_book: none.slice(0, 40).map((l: any) => l.nickname || l.title),
           note: 'A unit with no guidebook means every question that book would have answered arrives as a message instead.',
         }

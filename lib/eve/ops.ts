@@ -118,10 +118,15 @@ export const OPS_TOOLS: EveTool[] = [
       const from = String(input?.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.from) : shiftDay(ctx.today, -days)
       const to = String(input?.to || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.to) : shiftDay(ctx.today, days)
 
-      let q = ctx.db.from('breezeway_tasks_sync').select(TASK_COLS).gte('scheduled_date', from).lte('scheduled_date', to)
       const unit = resolveListing(ctx, input)
-      if (unit) q = q.eq('reference_property_id', unit.id)
-      const { data } = await q.order('scheduled_date', { ascending: true }).order('id').limit(1000)
+      // PAGED (2026-09-29). The default four-week window holds ~2,500 tasks, and one capped read
+      // stopped at the first 1,000 in date order — everything after roughly the first eleven days
+      // was missing from her list and her counts. Past 12 pages she is told the list is partial.
+      const { rows: data, truncated } = await pageRows<any>((a, b) => {
+        let q = ctx.db.from('breezeway_tasks_sync').select(TASK_COLS).gte('scheduled_date', from).lte('scheduled_date', to)
+        if (unit) q = q.eq('reference_property_id', unit.id)
+        return q.order('scheduled_date', { ascending: true }).order('id').range(a, b)
+      })
 
       const all = (data || []).map((t: any) => ({
         id: t.id, unit: ctx.nameOf(t.reference_property_id), building: ctx.buildingOf(t.reference_property_id),
@@ -142,7 +147,7 @@ export const OPS_TOOLS: EveTool[] = [
       const matched = Object.values(spellings)
       if (!matched.length) {
         const everyone = Array.from(new Set(all.flatMap((t: any) => t.assignees))).sort()
-        return { person: who, found: false, window: { from, to },
+        return { person: who, found: false, window: { from, to }, truncated: truncated || undefined,
           note: `Nobody matching "${who}" has work assigned in that window` + (unit ? ` at ${unit.meta.name}` : '') + '.',
           assignees_in_window: everyone.slice(0, 60) }
       }
@@ -166,7 +171,7 @@ export const OPS_TOOLS: EveTool[] = [
       return {
         person: matched[0], window: { from, to }, today: ctx.today,
         scopedTo: unit ? unit.meta.name : (bld || null),
-        count: rows.length, shown: shown.length,
+        count: rows.length, shown: shown.length, truncated: truncated || undefined,
         by_state: byState, by_building: byBuilding,
         departure_cleans: rows.filter((t: any) => t.is_departure_clean).length,
         upcoming: rows.filter((t: any) => t.date >= ctx.today && t.state !== 'done').length,
@@ -492,7 +497,8 @@ export const OPS_TOOLS: EveTool[] = [
       const [tasksPage, stagedRes, resvRes] = await Promise.all([
         pageRows((a, b) => ctx.db.from('breezeway_tasks_sync').select(TASK_COLS).eq('type_department', 'housekeeping').gte('scheduled_date', shiftDay(from, -pad)).lte('scheduled_date', shiftDay(to, pad)).order('scheduled_date').order('id').range(a, b)),
         safe(ctx.db.from('schedule_staged').select('listing_id,date,cleaner_name').gte('date', from).lte('date', to).order('date'), { data: [] } as any),
-        safe(ctx.db.from('guesty_reservations').select('listing_id,check_out,status').gte('check_out', from).lte('check_out', to).order('check_out').limit(1000), { data: [] } as any),
+        // Paged (2026-09-29): a month-long range passes 1,000 check-outs, and the day counts stopped there.
+        pageRows((a, b) => ctx.db.from('guesty_reservations').select('id,listing_id,check_out,status').gte('check_out', from).lte('check_out', to).order('check_out').order('id').range(a, b)),
       ])
       let allHk = tasksPage.rows.filter((t: any) => isDepartureCleanName(t.name))
       // SCOPE BEFORE COUNTING. The market filter used to be applied to the unit list only, after
@@ -510,7 +516,7 @@ export const OPS_TOOLS: EveTool[] = [
       const byDay: Record<string, any> = {}
       const ensure = (d: string) => (byDay[d] = byDay[d] || { date: d, checkouts: 0, cleans: 0, assigned: 0, done: 0, staged: 0, units: [] })
       for (let d = from; dayDiff(d, to) >= 0; d = shiftDay(d, 1)) ensure(d)
-      for (const r of (resvRes.data || [])) {
+      for (const r of resvRes.rows) {
         if (/cancel|declin|inquir|expire/i.test(lc((r as any).status))) continue
         const d = String((r as any).check_out).slice(0, 10)
         if (inRange(d)) ensure(d).checkouts++
@@ -552,7 +558,7 @@ export const OPS_TOOLS: EveTool[] = [
         const d = byDay[k]
         return { ...d, units: d.units.slice(0, 40), unassigned: d.cleans - d.assigned }
       })
-      return { from, to, scope: input?.market || 'whole portfolio', truncated: tasksPage.truncated || undefined, days, note: 'A departure clean is only counted when the task NAME says departure/turnover — a deep clean or oven clean is not a turnover. A clean counts on the day the work LANDED, and a move shows on both days: the old one says it left, the new one says where it came from.' }
+      return { from, to, scope: input?.market || 'whole portfolio', truncated: (tasksPage.truncated || resvRes.truncated) || undefined, days, note: 'A departure clean is only counted when the task NAME says departure/turnover — a deep clean or oven clean is not a turnover. A clean counts on the day the work LANDED, and a move shows on both days: the old one says it left, the new one says where it came from.' }
     },
   },
 ]
