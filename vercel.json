@@ -38,7 +38,7 @@
     },
     {
       "path": "/api/cron/stay-window",
-      "schedule": "3 11,12,22,23 * * *"
+      "schedule": "6 * * * *"
     },
     {
       "path": "/api/cron/guesty-catalog",

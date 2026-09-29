@@ -1,14 +1,12 @@
 // THROW THE MINIMUM-STAY SWITCH AT THE HOUR JON SET.
 //
 // Decides for itself whether this is the hour, in EASTERN time: Vercel crons run on UTC and do not
-// shift with daylight saving, so a schedule pinned to one UTC offset silently stops matching every
-// November and March. vercel.json fires at 03 past 11, 12, 22 and 23 UTC — BOTH UTC candidates for
-// 7am and for 6pm Eastern — and only the fire that lands on the configured Eastern hour acts:
-//   EDT (UTC−4): 11:03Z = 07:03 ET (close) · 22:03Z = 18:03 ET (open) · the other two are no-ops
-//   EST (UTC−5): 12:03Z = 07:03 ET (close) · 23:03Z = 18:03 ET (open) · the other two are no-ops
-// Until 2026-09-28 the schedule was `36 21,22,10,11`, which only reached 7am/6pm while New York was
-// on EDT — from 2026-11-01 neither switch would ever have run and the calendar would have frozen on
-// whichever minimum was written last. Same pattern as app/api/cron/ops-focus.
+// shift with daylight saving. vercel.json fires HOURLY at :06 (2026-09-29), so every Eastern hour is
+// reached all year under both offsets, and only the fire that lands on the configured open or close
+// hour acts; every other fire answers "not a switch hour". The hours are whatever the panel set
+// (cfg.openHour / cfg.closeHour) — the old schedule fired only at 7am and 6pm ET, so any other pair
+// (today's is 7pm / 5am) could never run. runDirection is idempotent per Eastern day, so the
+// repeated 1am hour of the November fall-back cannot write twice.
 //
 // BARE PATH ON PURPOSE — a Vercel cron pointed at a path WITH A QUERY STRING never fires.
 // Auth: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron).
@@ -19,10 +17,6 @@ import { withRouteReceipt } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
-
-/** The only Eastern hours the vercel.json schedule reaches all year (see the header). */
-const CRON_HOURS_ET = [7, 18]
-const hourLabel = (h: number) => (h === 0 ? '12am' : h < 12 ? h + 'am' : h === 12 ? '12pm' : (h - 12) + 'pm')
 
 async function run(req: NextRequest) {
   const gate = await requireCron(req)
@@ -35,19 +29,12 @@ async function run(req: NextRequest) {
   if (!cfg.enabled) return NextResponse.json({ ok: true, skipped: 'schedule is off', hour, today })
   if (!cfg.listings.length) return NextResponse.json({ ok: true, skipped: 'no listings on the schedule', hour, today })
 
-  // An hour the schedule never reaches is a switch that never fires. Say so on every run rather
-  // than skip quietly: the panel lets any hour be picked, the cron does not.
-  const unreachable = [cfg.openHour, cfg.closeHour].filter(h => CRON_HOURS_ET.indexOf(h) < 0)
-  const reason = unreachable.length
-    ? 'The switch only runs at 7am and 6pm Eastern, so ' + unreachable.map(hourLabel).join(' and ') +
-      ' will never fire — set the hours back to 6pm / 7am (or add those hours to vercel.json).'
-    : undefined
-
+  // The configured Eastern hours decide; the hourly schedule reaches every one of them.
   const direction: 'open' | 'close' | null =
     hour === cfg.openHour ? 'open' : hour === cfg.closeHour ? 'close' : null
 
   if (!direction) {
-    return NextResponse.json({ ok: !reason, skipped: 'not a switch hour', reason, hour, openHour: cfg.openHour, closeHour: cfg.closeHour, today })
+    return NextResponse.json({ ok: true, skipped: 'not a switch hour', hour, openHour: cfg.openHour, closeHour: cfg.closeHour, today })
   }
 
   // runDirection is idempotent per Eastern day per direction, so a retry after a timeout or a double
