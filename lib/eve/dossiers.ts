@@ -62,7 +62,7 @@ export type ListingIdx = Record<string, { name: string; rollup: string; dead: bo
 export async function listingIndex(): Promise<ListingIdx> {
   const out: ListingIdx = {}
   try {
-    const { data } = await supabaseAdmin().from('guesty_listings').select('id,nickname,title,status,building,address_city').order('id').limit(2000)
+    const { data } = await supabaseAdmin().from('guesty_listings').select('id,nickname,title,status,building,address_city').order('id').limit(1000) // deliberate cap: one row per listing, ~290
     for (const l of (data as any[]) || []) {
       const name = String(l.nickname || l.title || '')
       const rollup = rollupBuilding(l.building, name)

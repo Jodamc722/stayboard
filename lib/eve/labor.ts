@@ -109,7 +109,7 @@ export const LABOR_TOOLS: EveTool[] = [
       const [shifts, audit, taskRes, roster] = await Promise.all([
         safe(getShifts(date) as any, [] as any),
         safe(getTimecardsAudited(date, date) as any, { cards: [], complete: false, failedWeeks: [] } as any),
-        safe(ctx.db.from('breezeway_tasks_sync').select('id,name,status,assignees,type_department,reference_property_id').eq('scheduled_date', date).order('id').limit(2000), { data: [] } as any),
+        safe(ctx.db.from('breezeway_tasks_sync').select('id,name,status,assignees,type_department,reference_property_id').eq('scheduled_date', date).order('id').limit(1000), { data: [] } as any), // deliberate cap: one day's Breezeway tasks (~90 a day portfolio-wide)
         safe(getEmployees() as any, [] as any),
       ])
       const rosterNames = (roster as any[]).map((e: any) => e.name).filter(Boolean)

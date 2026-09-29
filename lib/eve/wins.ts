@@ -89,7 +89,7 @@ export async function winsFor(day?: string): Promise<Wins> {
   // ── Cleans: the day the work landed, and whether it was ready for check-in. ─────────────────
   try {
     const { data } = await db.from('breezeway_tasks_sync').select('id,name,status,finished_at')
-      .gte('finished_at', lo).lt('finished_at', hi).limit(3000)
+      .gte('finished_at', lo).lt('finished_at', hi).limit(1000) // deliberate cap: tasks finished in one 48-hour window (~90 a day portfolio-wide)
     const done = ((data as any[]) || []).filter(t =>
       isDepartureCleanName(t.name) && !/delete|cancel/i.test(String(t.status || '')) && etDay(t.finished_at) === d)
     const before = done.filter(t => etHour(t.finished_at) < CHECKIN_HOUR_ET).length

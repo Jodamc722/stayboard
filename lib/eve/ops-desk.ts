@@ -74,9 +74,9 @@ async function readDay(today: string): Promise<Day> {
   // skip rows. The listing read also brings each unit's check-in time (one JSON path, not raw), so
   // the plan can say when a guest lands (F31).
   const [{ data: ts }, { data: ls }, { data: arr }] = await Promise.all([
-    db.from('breezeway_tasks_sync').select('id,name,status,scheduled_date,finished_at,started_at,type_department,assignees,reference_property_id').eq('scheduled_date', today).order('id').limit(2000),
-    db.from('guesty_listings').select('id,nickname,title,building,checkIn:raw->>defaultCheckInTime').order('id').limit(3000),
-    db.from('guesty_reservations').select('listing_id,guest_name,check_in,status').in('check_in', [today, shift(today, 1)]).in('status', ['confirmed', 'reserved', 'checked_in']).order('check_in').order('listing_id').limit(2000),
+    db.from('breezeway_tasks_sync').select('id,name,status,scheduled_date,finished_at,started_at,type_department,assignees,reference_property_id').eq('scheduled_date', today).order('id').limit(1000), // deliberate cap: one day's Breezeway tasks (~90 a day portfolio-wide)
+    db.from('guesty_listings').select('id,nickname,title,building,checkIn:raw->>defaultCheckInTime').order('id').limit(1000), // deliberate cap: one row per listing, ~290
+    db.from('guesty_reservations').select('listing_id,guest_name,check_in,status').in('check_in', [today, shift(today, 1)]).in('status', ['confirmed', 'reserved', 'checked_in']).order('check_in').order('listing_id').limit(1000), // deliberate cap: live arrivals today and tomorrow, at most one per unit a day (~290 units)
   ])
   const meta: Record<string, { unit: string; building: string; checkIn: string | null }> = {}
   for (const l of ((ls || []) as any[])) { const nm = str(l.nickname || l.title) || 'Unit'; meta[str(l.id)] = { unit: nm, building: str(l.building) || buildingOf(nm) || nm, checkIn: hm12(l.checkIn) } }

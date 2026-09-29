@@ -138,7 +138,7 @@ export async function buildReviewPack(focus?: string): Promise<Pack> {
     safe(async () => {
       const [items, ticks] = await Promise.all([
         db.from('daily_checklist_items').select('id,title,by_time,band,owner_role,active').limit(200),
-        db.from('daily_checklist_ticks').select('item_id,day,done_at').gte('day', d7).lte('day', today).limit(2000),
+        db.from('daily_checklist_ticks').select('item_id,day,done_at').gte('day', d7).lte('day', today).limit(1000), // deliberate cap: one tick per checklist item per day (unique item_id + day) — 8 days of a list of about a dozen items
       ])
       return { items: (items.data || []) as any[], ticks: (ticks.data || []) as any[] }
     }, { items: [] as any[], ticks: [] as any[] }),

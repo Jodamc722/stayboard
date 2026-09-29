@@ -49,7 +49,7 @@ export async function buildQualityPack(days = 90): Promise<QualityPack> {
   const blocks: string[] = []
   const meta: Record<string, { unit: string; building: string }> = {}
   {
-    const { data } = await db.from('guesty_listings').select('id,nickname,title,building').limit(3000)
+    const { data } = await db.from('guesty_listings').select('id,nickname,title,building').limit(1000) // deliberate cap: one row per listing, ~290
     for (const l of ((data || []) as any[])) { const unit = str(l.nickname || l.title) || str(l.id); meta[str(l.id)] = { unit, building: rollupBuilding(l.building, unit) } }
   }
   const nameOf = (lid: any) => meta[str(lid)]?.unit || str(lid)

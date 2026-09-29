@@ -797,7 +797,7 @@ export const RELOCATED = {
       const l: any = (data || [])[0]
       if (!l) return { error: 'listing not found' }
       const raw = l.raw || {}; const pub = raw.publicDescription || {}
-      const { data: revs } = await ctx.db.from('guesty_reviews').select('rating').eq('listing_id', l.id).eq('excluded_from_score', false).order('id').limit(2000)
+      const { data: revs } = await ctx.db.from('guesty_reviews').select('rating').eq('listing_id', l.id).eq('excluded_from_score', false).order('id').limit(1000) // deliberate cap: one unit's reviews (the whole table is ~4,000 across ~290 units)
       const rr = (revs || []).map((x: any) => normStar(x.rating)).filter((v: any): v is number => v != null)
       return {
         name: l.nickname || l.title, building: rollupBuilding(l.building, l.nickname || l.title), status: l.status,
