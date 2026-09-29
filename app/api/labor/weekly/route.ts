@@ -10,7 +10,7 @@
 // a trend that disagrees with the board it sits under is worse than no trend. Homebase caches its
 // weeks internally, which is what keeps six calls affordable.
 import { NextRequest, NextResponse } from 'next/server'
-import { getAccess, canSeeMoney } from '@/lib/access'
+import { requireUser, canSeeMoney } from '@/lib/access'
 import { laborEconomics } from '@/lib/labor-econ'
 
 export const dynamic = 'force-dynamic'
@@ -30,8 +30,10 @@ function mondayOf(d: Date): Date {
 }
 
 export async function GET(req: NextRequest) {
-  const access = await getAccess()
-  if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const access = gate.access
   const money = canSeeMoney(access)
 
   const sp = new URL(req.url).searchParams

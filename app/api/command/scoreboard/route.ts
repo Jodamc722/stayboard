@@ -7,7 +7,7 @@
 // AFTER the cache so the cached copy is the same for everyone.
 import { NextResponse } from 'next/server'
 import { unstable_cache } from 'next/cache'
-import { getAccess, canSeeMoney } from '@/lib/access'
+import { requireUser, canSeeMoney } from '@/lib/access'
 import { buildScoreboard, type ScoreTile } from '@/lib/scoreboard'
 
 export type { ScoreDelta, ScoreRow, ScoreTile, Scoreboard } from '@/lib/scoreboard'
@@ -26,8 +26,10 @@ function redact(t: ScoreTile): ScoreTile {
 }
 
 export async function GET() {
-  const access = await getAccess()
-  if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const access = gate.access
   try {
     const board = await cachedScoreboard()
     const showMoney = canSeeMoney(access)

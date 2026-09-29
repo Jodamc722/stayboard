@@ -15,7 +15,7 @@
 //     dept, date, minutes, pay) for the drill-down
 
 import { NextResponse } from 'next/server'
-import { getAccess, canSeeMoney } from '@/lib/access'
+import { requireUser, canSeeMoney } from '@/lib/access'
 import { redactMoney, pctOf } from '@/lib/money'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getShifts, nameMatches, nameMatchesRoster, type Shift } from '@/lib/homebase'
@@ -98,8 +98,10 @@ async function shiftsForRange(start: string, end: string): Promise<(Shift & { da
 }
 
 export async function GET(req: Request) {
-  const access = await getAccess()
-  if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const access = gate.access
   // Amounts are the owner's, plus anyone he has switched on at /users → Dollar amounts; everyone
   // else gets the same board in percentages. Decided here, on the server, so the dollars are never
   // in the payload at all (see lib/money.ts).

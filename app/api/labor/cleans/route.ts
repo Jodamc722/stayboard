@@ -11,7 +11,7 @@
 // /users → Ops presets (default 10), the same one the schedule and the Slack alerts use. Likewise
 // the per-clean minute benchmark comes from `benchmarkMinutes()` by bedroom count.
 import { NextRequest, NextResponse } from 'next/server'
-import { getAccess, canSeeMoney } from '@/lib/access'
+import { requireUser, canSeeMoney } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex, benchmarkMinutes } from '@/lib/ops-presets'
@@ -50,8 +50,10 @@ async function pageAll(q: (a: number, b: number) => any, pages = 6): Promise<{ r
 }
 
 export async function GET(req: NextRequest) {
-  const access = await getAccess()
-  if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const access = gate.access
   const money = canSeeMoney(access)
 
   const sp = new URL(req.url).searchParams

@@ -1,7 +1,7 @@
 // LABOR BY DAY, BY CREW — the one KPI table (Jon, 2026-09-21). See lib/labor-day.ts.
 // GET ?from=YYYY-MM-DD&to=YYYY-MM-DD&market=all|miami|broward|north   (default: last 14 days ending yesterday)
 import { NextRequest, NextResponse } from 'next/server'
-import { getAccess, canSeeMoney } from '@/lib/access'
+import { requireUser, canSeeMoney } from '@/lib/access'
 import { laborDays, CREW_KEYS } from '@/lib/labor-day'
 
 export const dynamic = 'force-dynamic'
@@ -13,8 +13,10 @@ const addDays = (d: Date, n: number) => new Date(d.getTime() + n * 864e5)
 const isDay = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s)
 
 export async function GET(req: NextRequest) {
-  const access = await getAccess()
-  if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const access = gate.access
   const money = canSeeMoney(access)
   const sp = new URL(req.url).searchParams
   const today = dISO(new Date())

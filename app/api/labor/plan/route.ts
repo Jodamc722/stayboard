@@ -8,15 +8,17 @@
 // margin percentages — enough to build the schedule, nothing priced. Redaction happens here on
 // the server so the dollars never reach the client at all.
 import { NextRequest, NextResponse } from 'next/server'
-import { getAccess, canSeeMoney } from '@/lib/access'
+import { requireUser, canSeeMoney } from '@/lib/access'
 import { buildWeekPlan } from '@/lib/labor-plan'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
-  const access = await getAccess()
-  if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
+  const access = gate.access
   const showMoney = canSeeMoney(access)
   try {
     const ws = req.nextUrl.searchParams.get('weekStart') || undefined
