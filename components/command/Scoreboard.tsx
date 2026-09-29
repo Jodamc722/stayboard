@@ -18,16 +18,19 @@ export const SCOREBOARD_URL = '/api/command/scoreboard'
 type Tone = 'ok' | 'warn' | 'hot' | 'quiet'
 type Delta = { value: string; dir: 'up' | 'down' | 'flat'; goodWhen: 'up' | 'down' }
 type Row = { text: string; href?: string }
-type Tile = { key: string; label: string; value: string; sub: string; tone: Tone; delta?: Delta; detail: { rows: Row[]; note?: string }; degraded?: string }
+type Tile = { key: string; label: string; value: string; sub: string; tone: Tone; delta?: Delta; vs?: string; detail: { rows: Row[]; note?: string }; degraded?: string }
 type Board = { ok: boolean; error?: string; weekStart: string; weekStartDay: string; today: string; generatedAt: string; tiles: Tile[] }
 
 const niceDay = (ymd: string) => { try { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(ymd + 'T12:00:00Z')) } catch { return ymd } }
 
-function DeltaTag({ d }: { d: Delta }) {
-  if (d.dir === 'flat') return <span className="text-[10.5px] text-muted leading-none whitespace-nowrap">= last wk</span>
+// `vs` says which days the delta compares — the rate and money tiles use settled days (through
+// yesterday; last week in full on the week's first day), the counts use the same days last week.
+function DeltaTag({ d, vs }: { d: Delta; vs?: string }) {
+  const title = vs || 'vs the same days last week'
+  if (d.dir === 'flat') return <span className="text-[10.5px] text-muted leading-none whitespace-nowrap" title={title}>= last wk</span>
   const good = d.dir === d.goodWhen
   return (
-    <span className={'text-[10.5px] font-semibold leading-none whitespace-nowrap ' + (good ? 'text-emerald-700' : 'text-rose-700')} title="vs the same days last week">
+    <span className={'text-[10.5px] font-semibold leading-none whitespace-nowrap ' + (good ? 'text-emerald-700' : 'text-rose-700')} title={title}>
       {d.dir === 'up' ? '▲' : '▼'} {d.value}
     </span>
   )
@@ -50,7 +53,7 @@ function ScoreTile({ t, active, onClick }: { t: Tile; active: boolean; onClick: 
         {t.sub && <span className="text-[10.5px] text-muted leading-none whitespace-nowrap">{t.sub}</span>}
       </div>
       <div className="mt-1 min-h-[11px] flex items-center gap-1">
-        {t.degraded ? <span className="text-[10.5px] text-amber-800 leading-none inline-flex items-center gap-0.5"><AlertTriangle size={9} /> not read</span> : t.delta ? <DeltaTag d={t.delta} /> : <span className="text-[10.5px] text-muted/70 leading-none">week to date</span>}
+        {t.degraded ? <span className="text-[10.5px] text-amber-800 leading-none inline-flex items-center gap-0.5"><AlertTriangle size={9} /> not read</span> : t.delta ? <DeltaTag d={t.delta} vs={t.vs} /> : <span className="text-[10.5px] text-muted/70 leading-none">week to date</span>}
       </div>
     </button>
   )
@@ -94,7 +97,7 @@ export function Scoreboard() {
           <div className="px-4 py-2 border-b border-line bg-app/60 flex items-center gap-2">
             <span className="text-[12.5px] font-bold text-ink">{tile.label}</span>
             <span className="text-[11.5px] text-muted truncate">{tile.value}{tile.sub ? ' · ' + tile.sub : ''}</span>
-            {tile.delta && <DeltaTag d={tile.delta} />}
+            {tile.delta && <DeltaTag d={tile.delta} vs={tile.vs} />}
             <button onClick={() => setOpen(null)} className={ICON_BTN + ' ml-auto text-muted hover:text-ink'} aria-label="Close"><X size={15} /></button>
           </div>
           {tile.degraded && (
