@@ -12,6 +12,8 @@
 // below is tolerant — it probes multiple key spellings and degrades to null
 // rather than throwing.
 
+import { fetchWithTimeout } from './fetch-timeout'
+
 const BASE = process.env.HOMEBASE_BASE_URL || 'https://app.joinhomebase.com/api/public'
 
 type Json = any
@@ -19,13 +21,14 @@ type Json = any
 async function hb(path: string): Promise<Json> {
   const key = process.env.HOMEBASE_API_KEY || process.env['Homebase_Secret_id']
   if (!key) throw new Error('HOMEBASE_API_KEY is not set')
-  const r = await fetch(`${BASE}${path}`, {
+  // 20s; a timed-out read is retried once, then thrown (lib/fetch-timeout).
+  const r = await fetchWithTimeout(`${BASE}${path}`, {
     headers: {
       Authorization: `Bearer ${key}`,
       Accept: 'application/vnd.homebase-v1+json',
     },
     cache: 'no-store',
-  })
+  }, { label: `Homebase ${path.split('?')[0]}` })
   if (!r.ok) {
     const body = await r.text().catch(() => '')
     throw new Error(`Homebase ${r.status} on ${path}: ${body.slice(0, 200)}`)

@@ -12,6 +12,7 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { getToken } from './guesty'
+import { fetchWithTimeout, ACCOUNTING_TIMEOUT_MS } from './fetch-timeout'
 
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
@@ -19,12 +20,14 @@ type Res = { status: number; ok: boolean; json: any; error?: string }
 
 // Authed GET with the same 429 backoff lib/guesty's api() uses. Kept local rather than
 // importing so the accounting sweep can never be starved by an unrelated change there.
+// 30s per call (the accounting API is slow by nature); a timed-out page is retried once, then
+// thrown — which the month sweep records as its error and resumes from next run.
 async function gget(path: string, attempt = 1): Promise<Res> {
   const token = await getToken()
-  const r = await fetch(BASE + path, {
+  const r = await fetchWithTimeout(BASE + path, {
     headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' },
     cache: 'no-store',
-  })
+  }, { ms: ACCOUNTING_TIMEOUT_MS, label: `Guesty accounting ${path.split('?')[0]}` })
   if (r.status === 429 && attempt < 6) {
     await new Promise(res => setTimeout(res, Math.min(1000 * attempt, 8000)))
     return gget(path, attempt + 1)

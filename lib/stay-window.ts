@@ -15,6 +15,7 @@
 // edit lib/guesty.ts regularly and a new feature is not worth a merge conflict in the API client.
 import 'server-only'
 import { getToken } from './guesty'
+import { fetchWithTimeout } from './fetch-timeout'
 
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
@@ -46,11 +47,12 @@ async function authed(path: string, init?: RequestInit): Promise<{ status: numbe
     attempt++
     const token = await getToken(force)
     force = false
-    const r = await fetch(`${BASE}${path}`, {
+    // 20s per call; the calendar reads and its PUT are safe to repeat once (lib/fetch-timeout).
+    const r = await fetchWithTimeout(`${BASE}${path}`, {
       ...init,
       headers: { ...(init?.headers || {}), Authorization: `Bearer ${token}`, Accept: 'application/json' },
       cache: 'no-store',
-    })
+    }, { label: `Guesty ${path.split('?')[0]}` })
     if (r.status === 401 && attempt === 1) { force = true; continue }
     if (r.status === 429 && attempt < 5) {
       await new Promise(res => setTimeout(res, Math.min(1000 * attempt, 8000)))

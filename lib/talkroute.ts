@@ -15,6 +15,7 @@
 import 'server-only'
 import { getSetting, setSetting } from './app-settings'
 import { encryptSecret, decryptSecret, vaultKeyReady } from './vault'
+import { fetchWithTimeout } from './fetch-timeout'
 
 export const TR_BASE = 'https://api.talkroute.com/api/v2'
 export const TR_SETTINGS_KEY = 'talkroute'
@@ -102,11 +103,12 @@ export async function trFetch<T = any>(path: string, init: RequestInit & { query
   if (!key) throw new TalkrouteError(0, 'Talkroute is not connected — paste the API key on Users & admin → Talkroute.')
   const url = new URL(TR_BASE + path)
   for (const [k, v] of Object.entries(init.query || {})) if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v))
-  const r = await fetch(url.toString(), {
+  // 20s; a timed-out read is retried once, a timed-out send never is (lib/fetch-timeout).
+  const r = await fetchWithTimeout(url.toString(), {
     method: init.method || 'GET',
     headers: { Authorization: 'Bearer ' + key, Accept: 'application/json', ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...(init.headers as any || {}) },
     body: init.body, cache: 'no-store',
-  })
+  }, { label: `Talkroute ${path.split('?')[0]}` })
   const text = await r.text()
   let j: any = null
   try { j = text ? JSON.parse(text) : null } catch { j = null }

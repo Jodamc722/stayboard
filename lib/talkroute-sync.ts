@@ -36,6 +36,7 @@ import {
   type TrCallRecord, type TrTextConversation, type TrVoiceMessage,
 } from './talkroute'
 import { getToken as guestyToken } from './guesty'
+import { fetchWithTimeout } from './fetch-timeout'
 import { writeCustomFields } from './guesty-custom-fields'
 import { appendReservationNote } from './guesty-res-notes'
 import { WELCOME_AHEAD_DAYS, WELCOME_GRACE_DAYS, POST_GRACE_DAYS, addDays, isCompleted } from './call-desk'
@@ -157,7 +158,7 @@ async function backfillPhones(sb: any, today: string, errors: string[]): Promise
   let n = 0
   for (const r of rows.slice(0, 25)) {
     try {
-      const g: any = await fetch(`${BASE}/guests/${r.guestId}`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' }, cache: 'no-store' }).then(x => x.ok ? x.json() : null)
+      const g: any = await fetchWithTimeout(`${BASE}/guests/${r.guestId}`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' }, cache: 'no-store' }, { label: 'Guesty /guests' }).then(x => x.ok ? x.json() : null)
       const ph = g?.phone || (Array.isArray(g?.phones) && g.phones.length ? (typeof g.phones[0] === 'string' ? g.phones[0] : (g.phones[0]?.number || g.phones[0]?.phone)) : '')
       if (ph) { await sb.from('guesty_reservations').update({ guest_phone: String(ph) }).eq('id', r.id); n++ }
       await new Promise(res => setTimeout(res, 120))

@@ -7,6 +7,7 @@
 // actual schema.
 
 import { getLocationUuids, getShifts, nameMatches, type Shift } from '@/lib/homebase'
+import { fetchWithTimeout } from '@/lib/fetch-timeout'
 
 const BASE = process.env.HOMEBASE_BASE_URL || 'https://app.joinhomebase.com/api/public'
 const OT_WEEKLY_HOURS = 40 // FL: overtime is federal FLSA — over 40h/workweek
@@ -25,13 +26,14 @@ const arr = (d: Json): Json[] => {
 async function hb(path: string): Promise<Json> {
   const key = process.env.HOMEBASE_API_KEY || process.env['Homebase_Secret_id']
   if (!key) throw new Error('Homebase API key not configured (HOMEBASE_API_KEY)')
-  const r = await fetch(`${BASE}${path}`, {
+  // 20s; a timed-out read is retried once, then thrown — a failed week, never a hang.
+  const r = await fetchWithTimeout(`${BASE}${path}`, {
     headers: {
       Authorization: `Bearer ${key}`,
       Accept: 'application/vnd.homebase-v1+json',
     },
     cache: 'no-store',
-  })
+  }, { label: `Homebase ${path.split('?')[0]}` })
   if (!r.ok) throw new Error(`Homebase ${r.status} on ${path}`)
   return r.json()
 }

@@ -8,6 +8,7 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { parseListing } from './parse-listing'
+import { fetchWithTimeout } from './fetch-timeout'
 
 const BASE      = process.env.GUESTY_BASE_URL  || 'https://open-api.guesty.com/v1'
 const TOKEN_URL = process.env.GUESTY_TOKEN_URL || 'https://open-api.guesty.com/oauth2/token'
@@ -53,7 +54,8 @@ export async function getToken(force = false): Promise<string> {
       if (expiresAt > Date.now() + 5 * 60_000) return cached.access_token
     }
   }
-  const r = await fetch(TOKEN_URL, {
+  // 20s, never retried on a timeout: Guesty rations new tokens, so a second mint is not free.
+  const r = await fetchWithTimeout(TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     body: new URLSearchParams({
@@ -62,7 +64,7 @@ export async function getToken(force = false): Promise<string> {
       client_id: CID,
       client_secret: CSEC
     })
-  })
+  }, { label: 'Guesty auth' })
   if (!r.ok) {
     const body = await r.text().catch(() => '')
     throw new Error(`Guesty auth ${r.status}: ${body.slice(0, 300)}`)
@@ -82,7 +84,8 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     attempt++
     const token = await getToken(forceRefresh)
     forceRefresh = false
-    const r = await fetch(`${BASE}${path}`, {
+    // 20s per call; a timed-out read is retried once, then thrown (lib/fetch-timeout).
+    const r = await fetchWithTimeout(`${BASE}${path}`, {
       ...init,
       headers: {
         ...(init?.headers || {}),
@@ -90,7 +93,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
         Accept: 'application/json'
       },
       cache: 'no-store'
-    })
+    }, { label: `Guesty ${path.split('?')[0]}` })
     if (r.status === 401 && attempt === 1) { forceRefresh = true; continue } // refresh token once on real auth failure
     if (r.status === 429 && attempt < 6) {                            // back off + retry, REUSING the same token (don't hammer the token endpoint)
       const wait = Math.min(1000 * attempt, 8000)
@@ -717,12 +720,13 @@ export async function sendGuestMessage(conversationId: string, body: string, opt
     tried.push(mod)
     try {
       const token = await getToken()
-      const r = await fetch(`${BASE}/communication/conversations/${encodeURIComponent(id)}/send-message`, {
+      // A POST is never retried on a timeout — it may have been delivered (lib/fetch-timeout).
+      const r = await fetchWithTimeout(`${BASE}/communication/conversations/${encodeURIComponent(id)}/send-message`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify({ module: { type: mod }, body: text }),
         cache: 'no-store',
-      })
+      }, { label: 'Guesty send-message (it may still have been delivered — check the thread before sending again)' })
       const txt = await r.text().catch(() => '')
       if (r.ok) {
         let j: any = null

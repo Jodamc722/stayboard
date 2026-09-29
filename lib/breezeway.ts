@@ -5,6 +5,7 @@
 // endpoint is rate-limited to ~1 request/min, so the access token is cached in the
 // warm lambda. Docs: https://developer.breezeway.io/
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { fetchWithTimeout, retryAfterMs } from '@/lib/fetch-timeout'
 
 const AUTH = process.env.BREEZEWAY_AUTH_URL || 'https://api.breezeway.io/public/auth/v1'
 const BASE = process.env.BREEZEWAY_BASE_URL || 'https://api.breezeway.io/public/inventory/v1'
@@ -29,12 +30,12 @@ if (v && v.token && Number(v.exp) > Date.now() + 60_000) { cached = { token: Str
   const id = process.env.BREEZEWAY_CLIENT_ID
   const secret = process.env.BREEZEWAY_CLIENT_SECRET
   if (!id || !secret) throw new Error('Breezeway not configured — add BREEZEWAY_CLIENT_ID and BREEZEWAY_CLIENT_SECRET in Vercel env.')
-  const r = await fetch(`${AUTH}/`, {
+  const r = await fetchWithTimeout(`${AUTH}/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ client_id: id, client_secret: secret }),
     cache: 'no-store',
-  })
+  }, { label: 'Breezeway auth' })
   const text = await r.text().catch(() => '')
   if (!r.ok) throw new Error(`Breezeway auth ${r.status}: ${text.slice(0, 200)}`)
   let j: any = {}
@@ -46,13 +47,26 @@ try { await supabaseAdmin().from('breezeway_token_cache').upsert({ id: 1, token,
   return token
 }
 
+// RATE LIMITS AND HUNG CALLS (2026-09-28 cron audit, #4/#5). Every call gives up after 20s (a
+// read is retried once first — lib/fetch-timeout), and a 429 is retried up to three times, waiting
+// what Breezeway's Retry-After asks (capped at 10s) or 1s/2s/4s when it does not say. A 429 means
+// the request was refused, not performed, so retrying it is safe for any method.
+const BZ_429_RETRIES = 3
 export async function bzApi(path: string, init?: RequestInit): Promise<{ ok: boolean; status: number; data: any; text: string }> {
   const token = await getBreezewayToken()
-  const r = await fetch(`${BASE}${path}`, {
+  const label = `Breezeway ${String(init?.method || 'GET').toUpperCase()} ${path.split('?')[0]}`
+  const send = () => fetchWithTimeout(`${BASE}${path}`, {
     ...init,
     headers: { ...(init?.headers || {}), Authorization: `JWT ${token}`, Accept: 'application/json' },
     cache: 'no-store',
-  })
+  }, { label })
+  let r = await send()
+  for (let attempt = 0; r.status === 429 && attempt < BZ_429_RETRIES; attempt++) {
+    const wait = Math.min(retryAfterMs(r.headers.get('retry-after')) ?? 1000 * Math.pow(2, attempt), 10_000)
+    await r.text().catch(() => '')   // release the connection before waiting
+    await new Promise(res => setTimeout(res, wait))
+    r = await send()
+  }
   const text = await r.text().catch(() => '')
   let data: any = null
   try { data = JSON.parse(text) } catch { /* leave null */ }
