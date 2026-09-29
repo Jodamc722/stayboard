@@ -12,7 +12,7 @@
 //                      still need the bot /invite'd — no scope gets around that
 //   users:read         build the people directory, so a cleaner can actually be @-mentioned
 //   users:read.email   match a Slack account to a Lighthouse/Homebase person by email
-//   im:write           open a DM (supervisor alerts, the approval DM, the personal brief)
+//   im:write           open a DM (supervisor alerts, the approval DM)
 //   channels:read      list public channels for the admin picker
 //   groups:read        ...and the private ones the bot has been invited to
 //

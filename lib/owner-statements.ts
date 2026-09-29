@@ -1,10 +1,10 @@
 // Read layer over the owner-statement mirror. Everything an owner report says about money
 // actually collected comes through here.
 //
-// The accounting rules are the ones the account-wide audit proved (see
-// /api/guesty/statement-audit-all). Owner-ledger amounts are signed from the PM's side, so a
-// credit to the owner is negative; they are flipped on the way in so every figure below reads
-// as owner revenue:
+// The accounting rules are the ones the account-wide audit proved (the one-off
+// /api/guesty/statement-audit-all run, deleted 2026-09-28). Owner-ledger amounts are signed from
+// the PM's side, so a credit to the owner is negative; they are flipped on the way in so every
+// figure below reads as owner revenue:
 //
 //   AF  -> rental      net rental nightly income, i.e. owner earnings BEFORE expenses
 //   CMS -> commission  Stay's PM commission

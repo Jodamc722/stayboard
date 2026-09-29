@@ -6,7 +6,8 @@
 // Command Center's Do-next list now. The heavy lifting lives in OpsV2.
 //
 // What left this page and where it went:
-//   • The 3-day improvement plan → the Push tab → RETIRED 2026-09-02 (/api/ops-plan/daily is a 410).
+//   • The 3-day improvement plan → the Push tab → RETIRED 2026-09-02 (its route, /api/ops-plan/daily,
+//     was deleted 2026-09-28).
 //   • LaborStrip — cost numbers are a report, not a landing-page instrument; it sits at the bottom.
 //   • AuditFollowUps renders nothing when nothing is outstanding; when it renders it IS an exception.
 //

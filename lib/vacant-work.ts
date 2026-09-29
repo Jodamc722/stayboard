@@ -7,8 +7,8 @@
 // put in them, so the window closed unused and the same work stayed overdue.
 //
 // The cadence rules are NOT invented here. The audit interval is the operator's `auditDueDays`
-// (/users → Ops presets), the same one /api/ops-today/audits-due counts against, and "an audit is
-// a Breezeway task with 'audit' in its name" is that route's rule too. One definition, two callers.
+// (/users → Ops presets), and "an audit is a Breezeway task with 'audit' in its name" is the rule
+// the old audits-due count used (that route was retired 2026-09-28; this is its one caller now).
 //
 // Nothing here creates a task. It ranks what is worth doing and says why, and a human decides.
 import 'server-only'
@@ -71,7 +71,7 @@ export async function vacantWork(vacants: VacantUnit[], today: string): Promise<
   const auditDueDays = Math.max(30, Number((presets as any)?.timing?.auditDueDays) || 365)
 
   const [tasksRes, auditRes, reqRes, glitchRes, listRes] = await Promise.all([
-    // Audit / inspection / deep-clean history, by the same name rule the audits-due route uses.
+    // Audit / inspection / deep-clean history, by task name (the rule above).
     // NEWEST FIRST (super audit, 2026-08-22): with no ORDER BY, PostgREST's 5000-row cap dropped
     // ARBITRARY rows once the vacant list carried enough history — a unit's real audit could be
     // the row that fell off, and the brief printed "never done" about work on record. Ordered

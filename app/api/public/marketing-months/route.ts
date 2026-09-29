@@ -86,9 +86,10 @@ export async function GET(req: NextRequest) {
     // Default: when the mirror started writing, min(synced_at). NOT the earliest stay it holds —
     // one long stay still running at sync time would otherwise vouch for months it never saw.
     //
-    // But a backfill (/api/sync/reservations-backfill) imports real history by creation date, and
-    // those rows carry TODAY's synced_at. So a recorded backfill date wins: it says "everything
-    // from here forward was pulled straight from Guesty and is complete."
+    // But a backfill (the one-off /api/sync/reservations-backfill, deleted 2026-09-28) imported
+    // real history by creation date, and those rows carry TODAY's synced_at. So a recorded
+    // backfill date wins: it says "everything from here forward was pulled straight from Guesty
+    // and is complete."
     let floorMonth = ''
     try {
       const { data: fl } = await db

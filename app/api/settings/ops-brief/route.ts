@@ -27,13 +27,16 @@ const digestGet = async (key: string) => {
 
 // LANGUAGE IS A SAVED SETTING, NOT DECORATION (Jon, 2026-08-26 audit).
 //
-// The admin screen has shipped language pickers for the Miami/Broward day sheets and for each
-// maintenance brief since the Spanish work landed, and the UI sends them on every save. Neither
-// this route's GET nor its PUT ever mentioned `lang` — so the picker showed English on load,
-// accepted a change, reported "Saved", and dropped it on the floor. The crons read exactly these
-// fields (app/api/cron/ops-brief/route.ts:34, app/api/cron/maint-brief/route.ts:61), so setting a
-// crew's language was a Supabase row edit. A control that lies about having saved is worse than no
-// control: nobody goes looking for a bug in a screen that said yes.
+// The admin screen has shipped language pickers for the Miami/Broward day sheets since the Spanish
+// work landed, and the UI sends them on every save. Neither this route's GET nor its PUT ever
+// mentioned `lang` — so the picker showed English on load, accepted a change, reported "Saved",
+// and dropped it on the floor. The morning brief cron (app/api/cron/ops-brief) reads exactly these
+// fields, so setting a crew's language was a Supabase row edit. A control that lies about having
+// saved is worse than no control: nobody goes looking for a bug in a screen that said yes.
+//
+// The maintenance briefs' own lists and languages (app_settings 'maint_brief') are gone from this
+// route: those briefs were retired on 2026-09-09 and their cron deleted on 2026-09-28, so nothing
+// reads the key any more. A stored row is left as it is.
 const asLang = (v: any): 'en' | 'es' => String(v || '').toLowerCase() === 'es' ? 'es' : 'en'
 
 export async function GET() {
@@ -47,9 +50,6 @@ export async function GET() {
   // can set, or blank for automatic (settled 30-day HK margin + 3, computed by the planner).
   const lp = await getSetting<any>('labor_plan', null).catch(() => null)
   const lpTarget = Number(lp?.targetMarginPct)
-  // Maintenance briefs (Jon, 2026-08-20): one Miami, one Broward, each with its own list.
-  const mb = await getSetting<any>('maint_brief', null).catch(() => null)
-  const mbo = mb && typeof mb === 'object' ? mb : {}
   return NextResponse.json({
     ok: true,
     config: {
@@ -60,10 +60,6 @@ export async function GET() {
       trueup, salato,
       lang: { miami: asLang(s.lang?.miami), broward: asLang(s.lang?.broward) },
       laborPlan: { targetMarginPct: Number.isFinite(lpTarget) && lpTarget > 0 ? Math.round(lpTarget) : null },
-      maint: {
-        enabled: mbo.enabled !== false, miamiTo: cleanEmails(mbo.miamiTo), browardTo: cleanEmails(mbo.browardTo),
-        miamiLang: asLang(mbo.miamiLang), browardLang: asLang(mbo.browardLang),
-      },
     },
   })
 }
@@ -84,7 +80,7 @@ export async function PUT(req: NextRequest) {
   const res = await setSetting(KEY, config, access.email)
   if (!res.ok) return NextResponse.json({ error: res.error || 'Could not save.' }, { status: 500 })
   // The two ride-along digests write back to their own keys, preserving whatever else lives there
-  // (the true-up shares 'labor_weekly' with the Monday email, so a blind overwrite would eat it).
+  // (a blind overwrite would eat any other field stored on the key).
   const saveDigest = async (key: string, incoming: any) => {
     if (!incoming || typeof incoming !== 'object') return null
     const cur = await getSetting<any>(key, null).catch(() => null)
@@ -113,16 +109,5 @@ export async function PUT(req: NextRequest) {
     await setSetting('labor_plan', { ...base, targetMarginPct: target }, access.email).catch(() => null)
     laborPlan = { targetMarginPct: target }
   }
-  // Maintenance briefs: merge-save to their own key so the cron keeps reading what it reads.
-  let maint: { enabled: boolean; miamiTo: string[]; browardTo: string[]; miamiLang: 'en' | 'es'; browardLang: 'en' | 'es' } | null = null
-  if (c.maint && typeof c.maint === 'object') {
-    const cur = await getSetting<any>('maint_brief', null).catch(() => null)
-    const base = cur && typeof cur === 'object' ? cur : {}
-    maint = {
-      enabled: c.maint.enabled !== false, miamiTo: cleanEmails(c.maint.miamiTo), browardTo: cleanEmails(c.maint.browardTo),
-      miamiLang: asLang(c.maint.miamiLang), browardLang: asLang(c.maint.browardLang),
-    }
-    await setSetting('maint_brief', { ...base, ...maint }, access.email).catch(() => null)
-  }
-  return NextResponse.json({ ok: true, config: { ...config, trueup, salato, laborPlan, maint } })
+  return NextResponse.json({ ok: true, config: { ...config, trueup, salato, laborPlan } })
 }
