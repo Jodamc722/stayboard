@@ -7,7 +7,11 @@
 //
 // HOW THE NUMBER IS BUILT, in reading order:
 //   1. HISTORY — the same month LAST YEAR, from guesty_reservations: nights sold, net ADR
-//      (fareAccommodationAdjusted — already net of the channel's cut), average LOS, occupancy.
+//      (fareAccommodationAdjusted − hostServiceFee: the fare AFTER the channel's host fee, the owner
+//      statement's Net — lib/basis `net`, lib/owner-report), average LOS, occupancy. Until
+//      2026-09-28 this said the adjusted fare was "already net of the channel's cut"; it is not —
+//      it is the fare BEFORE the OTA fee (Revenue Center, owner reports and the Revenue App all
+//      treat it that way), so every projection sat above the owner's real net by that fee.
 //   2. MARKET — an uplift per market, seeded from researched market data (2026-08-21):
 //        · Miami STR: ADR ~$319, occ ~44-53%, revenue +4.7% YoY, supply +30% YoY (AirROI/Rabbu)
 //        · Fort Lauderdale: ADR ~$391, occ ~44%, revenue +2.0% YoY, supply +21.5% YoY (AirROI)
@@ -17,7 +21,8 @@
 //      Defaults: Miami ADR +3% / occ −1pt, Broward ADR +2% / occ −2pts — editable on the page.
 //   3. OVERRIDES — whatever the team types per unit per month (occ %, ADR, LOS) wins. Stored in
 //      app_settings 'owner_projections_v1', so no migration is needed and every edit is shared.
-//   4. NET OWNER — projected accommodation revenue × (1 − management fee %). The fee defaults
+//   4. NET OWNER — projected accommodation revenue (net of the channel fee, via the history ADR)
+//      × (1 − management fee %). The fee defaults
 //      to the setting below (20% until changed) with per-building overrides. Cleaning fees are
 //      a guest pass-through and stay out of owner revenue on purpose.
 //
@@ -126,16 +131,12 @@ export type ProjSettings = {
   updatedAt?: string; updatedBy?: string
 }
 
-async function pageAll(build: (from: number, to: number) => any, maxPages = 14): Promise<any[]> {
-  const out: any[] = []
-  for (let i = 0; i < maxPages; i++) {
-    const { data, error } = await build(i * 1000, i * 1000 + 999)
-    if (error) break
-    const rows = (data || []) as any[]
-    out.push.apply(out, rows)
-    if (rows.length < 1000) break
-  }
-  return out
+/** Every row of a paged read — or an error. A short history read would project owners LOW, and a
+ *  projection printed from part of last season is worse than no projection (2026-09-28 audit). */
+async function pageAll(what: string, build: (from: number, to: number) => any, maxPages = 14): Promise<any[]> {
+  const { rows, truncated } = await pageRows<any>(build, maxPages)
+  if (truncated) throw new Error('Projections: the ' + what + ' read came back short — not projecting from part of it. Try again.')
+  return rows
 }
 
 export async function buildProjections(): Promise<ProjectionsPayload> {
@@ -161,7 +162,7 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
   const unitAdj: Record<string, { qualityPct?: number }> = (cfg?.unitAdj && typeof cfg.unitAdj === 'object') ? cfg.unitAdj : {}
 
   // ---- listings (amenities ride along for the health model) ----
-  const listingRows = await pageAll((a, b) =>
+  const listingRows = await pageAll('listings', (a, b) =>
     db.from('guesty_listings').select('id,nickname,title,building,address_city,status,bedrooms,amenities').order('id').range(a, b), 3)
   type Li = { id: string; name: string; building: string; market: string; bedrooms: number | null; amenities: string[] }
   const lmap: Record<string, Li> = {}
@@ -180,8 +181,8 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
   // ---- health inputs: reviews (12 months), open glitches, open maintenance ----
   const yearAgo = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10)
   const [reviewRows, glitchRes, maintRes] = await Promise.all([
-    pageAll((a, b) => db.from('guesty_reviews').select('listing_id,rating')
-      .gte('created_at', yearAgo + 'T00:00:00Z').is('removed_at', null).eq('excluded_from_score', false).order('created_at').range(a, b), 5),
+    pageAll('reviews', (a, b) => db.from('guesty_reviews').select('id,listing_id,rating')
+      .gte('created_at', yearAgo + 'T00:00:00Z').is('removed_at', null).eq('excluded_from_score', false).order('created_at').order('id').range(a, b), 10),
     // PAGED (2026-09-03): both reads were capped at 1,000 by PostgREST whatever the limit said.
     pageRows<any>((a, b) => db.from('glitches').select('id,listing_id,unit,status').not('status', 'in', '("done","resolved","closed")').order('id').range(a, b), 4),
     pageRows<any>((a, b) => db.from('breezeway_tasks_sync').select('id,reference_property_id')
@@ -219,9 +220,10 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
   // ---- last season's reservations (whole hist window, one paged read) ----
   const histFrom = histSeason[0] + '-01'
   const histTo = histSeason[histSeason.length - 1] + '-' + daysInMonth(histSeason[histSeason.length - 1])
-  const reservations = await pageAll((a, b) => db.from('guesty_reservations')
-    .select('listing_id,check_in,check_out,nights,status,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,money_total')
-    .gte('check_out', histFrom).lte('check_in', histTo).order('check_out').range(a, b))
+  const reservations = await pageAll('reservations', (a, b) => db.from('guesty_reservations')
+    .select('id,listing_id,check_in,check_out,nights,status,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,channelFee:raw->money->>hostServiceFee,money_total')
+    .in('status', LIVE_RES)
+    .gte('check_out', histFrom).lte('check_in', histTo).order('check_out').order('id').range(a, b))
 
   // nights + fare share per unit per month; LOS from stays STARTING in the month
   type H = { nights: number; fare: number; losN: number; losSum: number }
@@ -237,7 +239,11 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
     const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
     if (!ci || !co || co <= ci) continue
     const totalNights = Math.max(1, Number(r.nights) || Math.round((Date.parse(co) - Date.parse(ci)) / 86400000) || 1)
-    const fare = num(r.fare) || num(r.fareBase) || num(r.money_total)
+    // NET OF THE CHANNEL'S HOST FEE — the owner statement's Net (lib/basis `net`: fare − hostServiceFee).
+    // `money_total` is only the last resort for a stay with no fare fields; it is a payout figure,
+    // already past the channel, so nothing more comes off it.
+    const gross = num(r.fare) || num(r.fareBase)
+    const fare = gross > 0 ? Math.max(0, gross - Math.max(0, num(r.channelFee))) : num(r.money_total)
     // walk the stay night by night into its months (stays are short; this is cheap)
     let d = ci
     while (d < co) {
@@ -438,6 +444,6 @@ export async function projectionSectionFor(listingIds: string[]): Promise<Projec
       .flatMap(u => (u.health?.recs || []).slice(0, 2).map(r0 => ({ unit: u.name, text: r0.text, adrPct: r0.adrPct })))
       .sort((a, b) => b.adrPct - a.adrPct)
       .slice(0, 10),
-    note: 'Projection basis: last season’s measured occupancy, net ADR and length of stay per unit, adjusted for the researched market outlook (Miami revenue +4.7% YoY with ~30% more supply; Fort Lauderdale +2.0% with budget-airlift headwinds; international and group demand carrying 2027 spend). Cleaning fees are a guest pass-through and are not owner revenue. These figures are a planning estimate, not a guarantee.',
+    note: 'Projection basis: last season’s measured occupancy, net ADR (after channel fees) and length of stay per unit, adjusted for the researched market outlook (Miami revenue +4.7% YoY with ~30% more supply; Fort Lauderdale +2.0% with budget-airlift headwinds; international and group demand carrying 2027 spend). Cleaning fees are a guest pass-through and are not owner revenue. These figures are a planning estimate, not a guarantee.',
   }
 }
