@@ -4,18 +4,20 @@
 //
 //   POST/GET /api/sync/owner-statements
 //     ?from=2025-12&to=2026-07   register the month range as work (defaults: Dec 2025 → now)
-//     ?months=1                  how many pending months to sweep this invocation (default 1)
+//     ?months=1                  how many pending months to sweep this invocation (default 1; 2 when
+//                                the previous month is due — see "THE MONTH THAT JUST CLOSED")
 //     ?month=2026-06             sweep exactly this month, ignoring the queue
 //     ?only=owners               owners + statement headers only, no ledger (fast)
 //     ?status=1                  read-only: what the mirror currently holds
 //
-// The ledger sweep is deliberately ONE MONTH AT A TIME. Cron calls this repeatedly and it
-// picks up where it left off; the current and previous month are always re-swept because late
-// journal entries and re-recognitions land there.
+// The ledger sweep is resumable month by month. Cron calls this twice a day and it picks up where
+// it left off; the current and previous month are re-swept because late journal entries and
+// re-recognitions land there.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
 import { requireCron } from '@/lib/cron-auth'
+import { withRouteReceipt } from '@/lib/automation-runs'
 import { syncOwners, syncOwnerStatements, syncLedgerMonth, ensureMonths, pendingMonths } from '@/lib/guesty-owner-sync'
 
 export const dynamic = 'force-dynamic'
@@ -34,7 +36,7 @@ const etMonth = () =>
 // No secret in a production build now denies instead of running open.
 const isReadOnly = (qs: URLSearchParams) => qs.get('gap') === '1' || !!qs.get('peek') || qs.get('status') === '1'
 
-export async function POST(req: NextRequest) {
+async function handle(req: NextRequest): Promise<Response> {
   const qs = new URL(req.url).searchParams
   if (isReadOnly(qs)) {
     const g = await requireLevel('owner-audit', 'view')
@@ -234,27 +236,60 @@ export async function POST(req: NextRequest) {
     await ensureMonths(from, to)
 
     const explicit = qs.get('month')
-    const queue = explicit ? [explicit] : await pendingMonths(now)
-    const budget = Math.max(1, Math.min(4, Number(qs.get('months') || 1)))
+    let queue = explicit ? [explicit] : await pendingMonths(now)
+    // THE MONTH THAT JUST CLOSED (2026-09-28 audit #2). pendingMonths puts the current month first
+    // and a Vercel cron cannot pass ?months=, so the scheduled budget was always 1: from the 1st,
+    // every run swept only the new month, and the month whose statements are being built and
+    // audited stopped receiving the late journal entries and re-recognitions that land in it.
+    // Now the previous month is swept too — on the 17:44 UTC pass always (first, so it gets the
+    // fresh budget), and on both passes during ET days 1–10 (statement week) — two months a run,
+    // under the same hard stop.
+    const prev = (() => {
+      const [y, mo] = now.split('-').map(Number)
+      return new Date(Date.UTC(y, mo - 2, 1)).toISOString().slice(0, 7)
+    })()
+    const etDay = Number(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()).slice(8, 10))
+    const eveningPass = new Date().getUTCHours() === 17
+    const sweepPrev = !explicit && (eveningPass || etDay <= 10)
+    if (sweepPrev) {
+      const first = eveningPass ? [prev, now] : [now, prev]
+      queue = first.concat(queue.filter(m => first.indexOf(m) < 0))
+    }
+    const asked = Number(qs.get('months') || 0)
+    const budget = Math.max(1, Math.min(4, asked || (sweepPrev ? 2 : 1)))
     // Leave headroom under maxDuration so a month that runs long still returns a real answer.
     const hardStop = started + 270_000
 
+    // A 'deadline reached at skip=N' is a paused sweep that resumes next run, not a failure.
+    const paused = (err: any) => /deadline reached/i.test(String(err || ''))
     const swept: any[] = []
     for (const m of queue.slice(0, budget)) {
       if (Date.now() > hardStop - 30_000) break
       try {
         swept.push(await syncLedgerMonth(m, hardStop))
       } catch (e: any) {
-        swept.push({ month: m, error: String(e?.message || e).slice(0, 300) })
-        break
+        const error = String(e?.message || e).slice(0, 300)
+        swept.push({ month: m, error })
+        if (paused(error)) break      // out of time — the next run resumes where this stopped
       }
     }
     out.swept = swept
+    out.sweptPrevious = sweepPrev
     out.remaining = (await pendingMonths(now)).filter(m => !swept.some(s => s.month === m && !s.error))
+    // HONEST OK: a month that failed (other than pausing on the deadline) fails the run.
+    const failedMonth = swept.find(s => s.error && !paused(s.error))
+    if (failedMonth) { out.ok = false; out.error = failedMonth.month + ': ' + failedMonth.error }
     return NextResponse.json({ ...out, elapsed_ms: Date.now() - started })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e), elapsed_ms: Date.now() - started }, { status: 500 })
   }
 }
 
+// RECEIPT (2026-09-28): the Learning tab already listed 'owner-statements' as a source, and nothing
+// ever wrote it. Sweeps only — the read-only diagnostics are not runs.
+const receipted = withRouteReceipt<NextRequest>('owner-statements', handle, {
+  skipWhen: (req) => isReadOnly(new URL(req.url).searchParams),
+  count: (b) => (Array.isArray(b.swept) ? b.swept.reduce((a: number, s: any) => a + (Number(s && s.rows) || 0), 0) : undefined),
+})
+export async function POST(req: NextRequest) { return receipted(req) }
 export const GET = POST
