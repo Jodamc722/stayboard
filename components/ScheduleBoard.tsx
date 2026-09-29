@@ -9,6 +9,7 @@ import { HomebaseWeek } from '@/components/HomebaseWeek'
 import { createPortal } from 'react-dom'
 import { useOpsPresets } from '@/lib/useOpsPresets'
 import { benchmarkMinutes, DEFAULT_TIMING, type Timing } from '@/lib/ops-presets'
+import { MARKETS } from '@/lib/segments'
 import { CalendarRange, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, UploadCloud, Check, Search, User, Repeat, ArrowDownUp, Users, Download, MessageSquare } from 'lucide-react'
 import { Tip } from '@/components/lean'
 import CommentThread from './CommentThread'
@@ -42,7 +43,6 @@ type Day = { date: string; dow: string; count: number; markets: Record<string, C
 type Person = { id: number; name: string; region: string | null }
 type Data = { longStayNights?: number; ok: boolean; view: string; today: string; weekStart: string; weekEnd: string; prev: string; next: string; totals: { cleans: number; feeTotal?: number; byMarket: { market: string; count: number; fee?: number }[] }; days: Day[]; housekeepers: Person[]; units?: { id: string; name: string }[]; breezeway: boolean; syncedAt?: string; error?: string }
 
-const MARKETS = ['Miami', 'Broward', 'North'] as const
 // ---- One-pager helpers: weekly roster + forecast strip (mirrors ForecastBoard) ----
 type TeamDoc = { members: string[]; cells: Record<string, string>; rate?: number; locked?: boolean }
 /** The week as Homebase has it, with the doc's overrides applied — see lib/team-roster. */

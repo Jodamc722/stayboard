@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, Plus, X, Check, Loader2, AlertTriangle, Uplo
 import ListingOpsPanel from './ListingOpsPanel'
 import { useOpsPresets } from '@/lib/useOpsPresets'
 import { vendorRegex, DEFAULT_ROSTER, DEFAULT_PRESETS } from '@/lib/ops-presets'
+import { MARKETS } from '@/lib/segments'
 
 type Day = { date: string; dow: number; day: string; actual: Record<string, number>; vendor: Record<string, number>; isToday?: boolean; isPast?: boolean }
 type FC = { ok: boolean; today: string; weekStart: string; weekEnd: string; prevWeekStart: string; nextWeekStart: string; isCurrentWeek: boolean; dayLabels?: string[]; week: Day[]; avgByMarketDow?: Record<string, number[]>; vendorAvgByMarketDow?: Record<string, number[]> }
@@ -11,7 +12,6 @@ type Unit = { unit: string; movedTo?: string | null; movedFrom?: string | null; 
 type HK = { id: string; name: string }
 type Pending = { listingId: string; date: string; id: string; name: string }
 
-const MARKETS = ['Miami', 'Broward', 'North']
 const STATUSES = ['Working', 'On Call', 'OFF', 'REQ OFF']
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -245,7 +245,7 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
             ? mk.map((x: any) => [x.market || x.name, x.cleans || x.items || x])
             : Object.entries(mk).map(([k, v]: any) => [k, (v && (v.cleans || v.items)) || v])
           for (const [mkt, raw] of entries) {
-            if (!MARKETS.includes(mkt)) continue
+            if (!(MARKETS as string[]).includes(mkt)) continue
             const arr: any[] = Array.isArray(raw) ? raw : []
             const key = `${dt}__${mkt}`
             for (const c of arr) {

@@ -11,8 +11,7 @@ import {
 } from 'lucide-react'
 import { DEFAULT_PRESETS, mergePresets, type OpsPresets } from '@/lib/ops-presets'
 import { clearOpsPresetsCache } from '@/lib/useOpsPresets'
-
-const MARKETS = ['Miami', 'Broward', 'North']
+import { MARKETS } from '@/lib/segments'
 
 const minToHHMM = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 const hhmmToMin = (s: string) => { const [h, m] = String(s || '').split(':').map(Number); return (isFinite(h) ? h : 16) * 60 + (isFinite(m) ? m : 0) }
