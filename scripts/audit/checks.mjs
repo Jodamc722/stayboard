@@ -27,6 +27,13 @@ function walk(dir, out = []) {
 }
 const SRC = () => walk('app').concat(walk('lib'), walk('components')).filter(f => /\.(ts|tsx|mjs)$/.test(f))
 const lineOf = (text, idx) => text.slice(0, idx).split('\n').length
+// Source with comments removed, so a gate or a <Shell> that is only MENTIONED in a comment never
+// counts as the real thing, and a long header comment never makes a redirect stub look like a page.
+// No parser (zero dependencies), so a line comment is cut only where `//` is not part of a URL or
+// a string opener — good enough for "is this call really here".
+const code = (src) => src
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .split('\n').map(l => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n')
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. CRON WIRING
@@ -71,17 +78,34 @@ function cronWiring() {
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. CRON AUTH
 // The house pattern is `if (secret) { ...check... }` — safe when CRON_SECRET is set, wide open
-// when it isn't. A cron route with no CRON_SECRET reference at all is open no matter what.
+// when it isn't. A cron route with no gate at all is open no matter what. The sanctioned gates are
+// the bearer check itself, lib/cron-auth's cronAllowed() / requireCron(), and requireAdmin() (a
+// signed-in admin pressing "Run now"). Two shapes are not open either: a 410 tombstone that touches
+// nothing, and a thin wrapper that hands the request to another route's handler (it inherits that
+// route's gate, so the check follows the import).
 // ─────────────────────────────────────────────────────────────────────────────
+const CRON_GATE = /CRON_SECRET|\bcronAllowed\s*\(|\brequireCron\s*\(|\brequireAdmin\s*\(/
+function cronGated(file, depth = 0) {
+  const src = code(rd(file))
+  if (CRON_GATE.test(src)) return true
+  if (/status:\s*410\b/.test(src) && !/\.from\(|\.rpc\(|fetch\(|supabase/i.test(src)) return true
+  if (depth < 2) {
+    for (const m of src.matchAll(/from\s+['"]((?:\.{1,2}|@)\/[^'"]+\/route)['"]/g)) {
+      const target = (m[1].startsWith('@/') ? m[1].slice(2) : path.join(path.dirname(file), m[1])) + '.ts'
+      if (has(target) && cronGated(target, depth + 1)) return true
+    }
+  }
+  return false
+}
 function cronAuth() {
   const out = []
   for (const f of walk('app/api/cron')) {
     if (path.basename(f) !== 'route.ts') continue
     const src = rd(f)
-    if (!/CRON_SECRET/.test(src)) {
+    if (!cronGated(f)) {
       const writes = /\.(upsert|insert|update|delete)\(/.test(src)
       out.push({ id: `cron-unauthed:${f}`, sev: writes ? 'red' : 'amber', area: 'Security',
-        title: `Cron route has no CRON_SECRET check: ${'/' + f.replace(/^app\//, '').replace(/\/route\.ts$/, '')}`,
+        title: `Cron route has no cron gate: ${'/' + f.replace(/^app\//, '').replace(/\/route\.ts$/, '')}`,
         detail: writes
           ? 'Anyone on the internet can trigger this and it writes to the database.'
           : 'Anyone on the internet can trigger this. Read-only, but it burns function time and leaks internals.',
@@ -93,9 +117,11 @@ function cronAuth() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. <Shell> COMPLIANCE
-// app/layout.tsx renders only {children}; there is no nested layout. A gated page that forgets
-// <Shell> ships with zero navigation and is effectively invisible — that is how /links and
-// /guests shipped unnoticed. Ground truth for "should have Shell" is lib/features.ts.
+// app/layout.tsx renders only {children}. A gated page that forgets <Shell> ships with zero
+// navigation and is effectively invisible — that is how /links and /guests shipped unnoticed.
+// Ground truth for "should have Shell" is lib/features.ts. Not a finding: a page under a NESTED
+// layout that renders <Shell> (app/projects/layout.tsx wraps the whole Projects app in
+// <Shell full>), and a redirect-only stub (it calls redirect() and draws nothing).
 // ─────────────────────────────────────────────────────────────────────────────
 // Pages that are correctly navigation-free. Each one needs a reason, because the cost of a
 // wrong entry here is a real bug going unreported forever — and the cost of leaving one out is
@@ -103,12 +129,24 @@ function cronAuth() {
 const SHELL_EXEMPT = [
   'app/guidebooks/[id]/page.tsx',      // documented in-file: outside Shell so print/PDF is clean
   'app/plan/print/page.tsx',           // print view
-  'app/reports/complaints/page.tsx',   // print-oriented owner report
-  'app/salato/page.tsx',               // Salato front-desk board, reached by its own link
   'app/audits/review/[code]/page.tsx', // share-code review page — the link IS the key
   'app/welcome/password/page.tsx',     // where a magic link lands someone with no password yet;
                                        // mid-auth there is nothing to navigate to
+  'app/doorcode/[token]/page.tsx',     // one-time door-code release reached from a Slack DM or Eve:
+                                       // a no-JS server page with POST forms, by design
 ]
+// Does a layout between this page and app/ render <Shell>?
+function layoutShell(pageFile) {
+  let dir = path.dirname(pageFile)
+  for (;;) {
+    const lay = path.join(dir, 'layout.tsx')
+    if (has(lay) && /<Shell\b/.test(code(rd(lay)))) return true
+    if (dir === 'app' || dir === '.' || !dir) return false
+    dir = path.dirname(dir)
+  }
+}
+// Calls redirect() and renders no JSX at all once comments are gone.
+const redirectOnly = (src) => { const c = code(src); return /\bredirect\(/.test(c) && !/<\/|\/>/.test(c) }
 function shellCompliance() {
   const out = []
   if (!has('lib/features.ts')) return out
@@ -131,7 +169,8 @@ function shellCompliance() {
     if (openExact.includes(routeN)) continue
     if (openPrefix.some(p => routeN.startsWith(p) || (routeN + '/').startsWith(p))) continue
     const src = rd(f)
-    if (/redirect\(/.test(src) && src.length < 900) continue // redirect-only stub
+    if (redirectOnly(src)) continue
+    if (layoutShell(f)) continue
     if (!/\bShell\b/.test(src)) {
       out.push({ id: `no-shell:${f}`, sev: 'red', area: 'Nav',
         title: `Page ships with no navigation: ${routeN}`,
@@ -147,11 +186,18 @@ function shellCompliance() {
 // .limit(1000) is exactly the PostgREST default cap, so a truncated result is indistinguishable
 // from a complete one. Every number computed off one of these is quietly capped.
 // ─────────────────────────────────────────────────────────────────────────────
+// Is this offset inside a comment? ("Paged, not .limit(1000)" in a history note is not a query.)
+function inComment(src, idx) {
+  const pre = src.slice(src.lastIndexOf('\n', idx - 1) + 1, idx)
+  if (/(^|[^:'"`\\])\/\//.test(pre)) return true
+  return src.lastIndexOf('/*', idx) > src.lastIndexOf('*/', idx)
+}
 function rowCap() {
   const out = []
   for (const f of SRC()) {
     const src = rd(f)
     for (const m of src.matchAll(/\.limit\(1000\)/g)) {
+      if (inComment(src, m.index)) continue
       out.push({ id: `row-cap:${f}:${lineOf(src, m.index)}`, sev: 'amber', area: 'Data',
         title: `Query capped at exactly 1000 rows`,
         detail: 'PostgREST returns at most 1000 rows by default, so this cannot tell "there were 1000" from "there were more and you got 1000". Page it, or raise the cap and assert you did not hit it.',
@@ -164,16 +210,29 @@ function rowCap() {
 // ─────────────────────────────────────────────────────────────────────────────
 // 5. SWALLOWED WRITE FAILURES
 // An empty catch around a mirror write means the UI reports success while the board silently
-// diverges from Breezeway. Comment-only catches are deliberate and are not flagged.
+// diverges from Breezeway. Comment-only catches are deliberate and are not flagged. Only the try
+// block THIS catch closes is inspected (matched brace by brace), so a `try { revalidateTag() }
+// catch {}` sitting under an honest, checked write is not blamed for it.
 // ─────────────────────────────────────────────────────────────────────────────
+function tryBlockBefore(src, catchIdx) {
+  let i = catchIdx - 1
+  while (i >= 0 && /\s/.test(src[i])) i--
+  if (src[i] !== '}') return null
+  let depth = 0
+  for (let j = i; j >= 0; j--) {
+    if (src[j] === '}') depth++
+    else if (src[j] === '{' && --depth === 0) return src.slice(j, i + 1)
+  }
+  return null
+}
 function swallowedWrites() {
   const out = []
   for (const f of SRC()) {
     const src = rd(f)
     for (const m of src.matchAll(/catch\s*(?:\([^)]*\))?\s*\{\s*\}/g)) {
       const ln = lineOf(src, m.index)
-      const before = src.slice(Math.max(0, m.index - 600), m.index)
-      if (!/\.(upsert|insert|update|delete)\(/.test(before)) continue
+      const block = tryBlockBefore(src, m.index)
+      if (!block || !/\.(upsert|insert|update|delete)\(/.test(block)) continue
       out.push({ id: `swallowed-write:${f}:${ln}`, sev: 'amber', area: 'Data',
         title: `Database write failure is swallowed silently`,
         detail: 'An empty catch sits directly after a write. If the write fails the caller still reports success and the mirror drifts out of sync with no trace.',
@@ -276,7 +335,12 @@ function buckets() {
 // 9. RLS REGISTER
 // A migration that creates a table without enabling row level security leaves it readable by
 // the anon key. Reported once per table; the runner's baseline keeps the standing backlog quiet.
+// RLS switched on in ANY migration counts, in any of the forms the repo uses — including
+// `alter table if exists public.x enable row level security` (061_rls_lockdown) and the same
+// statement inside a guarded do-block's execute string. SQL line comments are ignored, so a
+// commented-out statement neither creates a table nor secures one.
 // ─────────────────────────────────────────────────────────────────────────────
+const RLS_ON = /alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?(?:"?public"?\.)?"?([a-z0-9_]+)"?\s+enable\s+row\s+level\s+security/gi
 function rlsRegister() {
   const out = []
   const dir = 'supabase/migrations'
@@ -285,9 +349,12 @@ function rlsRegister() {
   const created = new Map()
   for (const f of fs.readdirSync(path.join(ROOT, dir)).sort()) {
     if (!f.endsWith('.sql')) continue
-    const src = rd(path.join(dir, f))
-    for (const m of src.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z0-9_]+)/gi)) created.set(m[1], f)
-    for (const m of src.matchAll(/alter\s+table\s+(?:public\.)?([a-z0-9_]+)\s+enable\s+row\s+level\s+security/gi)) enabled.add(m[1])
+    const src = rd(path.join(dir, f)).replace(/--[^\n]*/g, '')
+    for (const m of src.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z0-9_]+)/gi)) {
+      const t = m[1].toLowerCase()
+      if (!created.has(t)) created.set(t, f)   // report the migration that FIRST created it
+    }
+    for (const m of src.matchAll(RLS_ON)) enabled.add(m[1].toLowerCase())
   }
   for (const [t, f] of created) {
     if (!enabled.has(t)) {

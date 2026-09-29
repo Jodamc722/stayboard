@@ -19,11 +19,15 @@ node scripts/audit/run.mjs --write-baseline   # accept the current amber backlog
 
 **Static** (`checks.mjs`) — cron paths that Vercel will never fire because they carry a query
 string; cron routes scheduled but missing, or present but never scheduled; cron routes with no
-`CRON_SECRET` check; pages that forget `<Shell>` and therefore ship with no navigation; queries
-capped at exactly 1000 rows where PostgREST cannot tell you it truncated; empty `catch` blocks
-sitting directly after a database write; React hooks declared below an early return; duplicate
-exported helpers in `lib/` with incompatible signatures; tables created without RLS; tables the
-code reads that no migration creates; storage buckets served publicly that should be signed.
+gate (the `CRON_SECRET` bearer check, `cronAllowed()`, `requireCron()` or `requireAdmin()` — a 410
+tombstone, or a wrapper that hands off to another route's gated handler, is not open); pages that
+forget `<Shell>` and therefore ship with no navigation (a nested layout that renders `<Shell>`
+counts, and redirect-only stubs are skipped); queries capped at exactly 1000 rows where PostgREST
+cannot tell you it truncated (comments that merely mention it are ignored); empty `catch` blocks
+whose own `try` wraps a database write; React hooks declared below an early return; duplicate
+exported helpers in `lib/` with incompatible signatures; tables created without RLS (switched on
+in any migration, `alter table if exists …` included); tables the code reads that no migration
+creates; storage buckets served publicly that should be signed.
 
 **Live** (`live.mjs`) — every gated page must answer `307 → /login`. A `5xx` is red because a
 signed-in user would see an error screen. A `200` is *also* red, because middleware fails open
