@@ -31,7 +31,7 @@
 // person types — nothing about this particular unit. What the unit has on it is SHOWN beside the
 // box instead, so you can see it while you decide, and attached once by the server on create.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, X, Loader2, Users, CalendarDays, Search } from 'lucide-react'
+import { X, Loader2, Users, CalendarDays, Search } from 'lucide-react'
 import { useModal } from '@/components/Modal'
 import { previewRows, type BriefIntel } from '@/lib/task-brief'
 import { matchRoster } from '@/lib/roster-match'
@@ -561,15 +561,5 @@ export function AddTaskSheet({
         </button>
       </div>
     </div>
-  )
-}
-
-/** The ＋ Task button. Same affordance wherever it appears. */
-export function AddTaskButton({ className, label = 'Task' }: { className?: string; label?: string }) {
-  return (
-    <button type="button" onClick={() => openAddTask()} title="Add a task"
-      className={className || 'inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-bold hover:opacity-90'}>
-      <Plus size={14} /> {label}
-    </button>
   )
 }
