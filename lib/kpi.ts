@@ -87,6 +87,19 @@ function pagesFor(days: number, perDay: number, min = 2): number {
 const SLICE_DAYS = 31
 type Sliced = { rows: any[]; short: { from: string; to: string }[] }
 /**
+ * One page, asked for again once when it fails (2026-09-29 review, nb-3): a statement timeout or a
+ * 5xx under load is usually a blip, and one lost page blanks a whole block of the board. The query is
+ * rebuilt for the second try. A page that fails twice is reported short, as before.
+ */
+async function pageWithRetry(build: () => PromiseLike<any>): Promise<any> {
+  for (let attempt = 0; ; attempt++) {
+    let res: any
+    try { res = await build() } catch (e) { if (attempt) throw e; await new Promise(r => setTimeout(r, 300)); continue }
+    if (res && res.error && !attempt) { await new Promise(r => setTimeout(r, 300)); continue }
+    return res
+  }
+}
+/**
  * [from, to] (Eastern dates, inclusive) as SLICE_DAYS-day slices, newest first, `conc` at a time.
  * `q(a, b, newest)` builds one slice's already-ORDERED query; `newest` is the slice ending at `to`,
  * which a caller may leave open-ended above. Every slice is paged to completion or reported short.
@@ -102,7 +115,7 @@ async function readSlices(from: string, to: string, perDay: number, q: (a: strin
   const out: Sliced = { rows: [], short: [] }
   for (let i = 0; i < slices.length; i += conc) {
     const batch = slices.slice(i, i + conc)
-    const got = await Promise.all(batch.map(s => pageRows<any>((lo, hi) => q(s.a, s.b, s.b === to).range(lo, hi), pagesFor(SLICE_DAYS, perDay, 3))))
+    const got = await Promise.all(batch.map(s => pageRows<any>((lo, hi) => pageWithRetry(() => q(s.a, s.b, s.b === to).range(lo, hi)), pagesFor(SLICE_DAYS, perDay, 3))))
     got.forEach((r, j) => {
       for (const row of r.rows) out.rows.push(row)
       if (r.truncated) out.short.push({ from: batch[j].a, to: batch[j].b })
@@ -134,14 +147,18 @@ function etDayOf(ts: any): string {
 
 type Li = { id: string; name: string; building: string; market: string; active: boolean; full: boolean; listingFee: number }
 
+/** A custom window's dates before this year are a typo (a date picker's "0002-09-29"), not a question. */
+const MIN_YEAR = 2020
+/** The longest window the board reads — a leap year. The prior window doubles every read. */
+const MAX_WINDOW_DAYS = 366
 /**
- * The query a board is ASKING for, resolved — window, scope and today's Eastern date — as one
- * canonical string. /api/kpi caches on it, so "30 days" asked at 23:59 and at 00:01 are two different
- * boards, and `?days=30` and the same explicit from/to are one.
+ * THE WINDOW, ONE PARSER (2026-09-29 review, nb-2). The cache key (kpiQuery) and the board
+ * (buildKpiFor) each parsed from/to on their own and neither bounded a custom range, so a typed year
+ * of 0002 asked for two thousand years of month-long slices. Dates before MIN_YEAR are ignored and a
+ * custom range is cut to its newest MAX_WINDOW_DAYS.
  */
-export function kpiQuery(sp: URLSearchParams): string {
-  const today = todayET()
-  const isDate = (v: any) => /^\d{4}-\d{2}-\d{2}$/.test(str(v))
+function kpiWindow(sp: URLSearchParams, today: string): { from: string; to: string } {
+  const isDate = (v: any) => /^\d{4}-\d{2}-\d{2}$/.test(str(v)) && Number(str(v).slice(0, 4)) >= MIN_YEAR && Number.isFinite(Date.parse(str(v) + 'T12:00:00Z'))
   let to = isDate(sp.get('to')) ? str(sp.get('to')) : today
   let from = isDate(sp.get('from')) ? str(sp.get('from')) : ''
   if (!from) {
@@ -149,6 +166,18 @@ export function kpiQuery(sp: URLSearchParams): string {
     from = addDays(to, -(d - 1))
   }
   if (from > to) { const t = from; from = to; to = t }
+  if (daysBetween(from, to) > MAX_WINDOW_DAYS) from = addDays(to, -(MAX_WINDOW_DAYS - 1))
+  return { from, to }
+}
+
+/**
+ * The query a board is ASKING for, resolved — window, scope and today's Eastern date — as one
+ * canonical string. /api/kpi caches on it, so "30 days" asked at 23:59 and at 00:01 are two different
+ * boards, and `?days=30` and the same explicit from/to are one.
+ */
+export function kpiQuery(sp: URLSearchParams): string {
+  const today = todayET()
+  const { from, to } = kpiWindow(sp, today)
   return new URLSearchParams({
     from, to, market: str(sp.get('market') || 'all'), building: str(sp.get('building') || 'all'), today,
   }).toString()
@@ -174,15 +203,7 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
   {
     const db = supabaseAdmin()
     const today = todayET()
-    const isDate = (v: any) => /^\d{4}-\d{2}-\d{2}$/.test(str(v))
-
-    let to = isDate(sp.get('to')) ? str(sp.get('to')) : today
-    let from = isDate(sp.get('from')) ? str(sp.get('from')) : ''
-    if (!from) {
-      const d = Math.max(1, Math.min(365, parseInt(str(sp.get('days')) || '30', 10) || 30))
-      from = addDays(to, -(d - 1))
-    }
-    if (from > to) { const t = from; from = to; to = t }
+    const { from, to } = kpiWindow(sp, today)
     const span = daysBetween(from, to)
     // "VS PRIOR" (2026-09-28 audit, P1-7). A whole calendar month compares with the calendar month
     // before it — September against August, not against Aug 2–31 — which is also the only prior the
@@ -244,6 +265,8 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
     // ---------------------------------------------------------------- reads
     const resFrom = prevFrom
     const resTo = addDays(to, 14)          // far enough forward for arrivals-next-7
+    const yesterday = addDays(today, -1)
+    const minYmd = (a: string, b: string) => (a < b ? a : b)
     const readDays = daysBetween(prevFrom, to)
     const [resRead, taskRead, sentRead, lowReviews, glitchRows, openWork, syncRows, openGlitchRes, openTaskRes, welcome, welcomePrev, welcomeDue] = await Promise.all([
       // Live statuses only, filtered in the database (status is lowercased at sync): cancellations
@@ -267,12 +290,14 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
         .gte('scheduled_date', a).lte('scheduled_date', b)
         .order('scheduled_date', { ascending: false }).order('id', { ascending: false })),
       // Sliced on UTC day edges (an exact partition of time; the Eastern bucketing happens below).
-      // The newest slice stays open above so "open unhappy right now" sees today's threads.
+      // The newest slice stays open above so "open unhappy right now" sees today's threads — but only
+      // when the window reaches today: a window that ended last month has no "right now" to see, and
+      // left open it read every thread since (2026-09-29 review, nb-5).
       readSlices(prevFrom, to, 50, (a, b, newest) => {
         let x = db.from('guesty_conversation_sentiment')
           .select('conversation_id,listing_id,band,dissatisfied,awaiting_reply,status,top_issue,last_message_at')
           .gte('last_message_at', a + 'T00:00:00Z')
-        if (!newest) x = x.lt('last_message_at', addDays(b, 1) + 'T00:00:00Z')
+        if (!newest || to < today) x = x.lt('last_message_at', addDays(b, 1) + 'T00:00:00Z')
         return x.order('last_message_at', { ascending: false }).order('conversation_id')
       }),
       // LOW ON ITS OWN SCALE (2026-09-28): ≤3 stars, or ≤7/10 on Booking (stored 3.5) — the review
@@ -302,9 +327,11 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
         .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
         .order('id').range(a, b), 8),
       // WELCOME CALLS — the call log's rate (lib/call-desk welcomeRate), the same number the Calls
-      // desk and the Command Center strip print, narrowed to this board's scope.
-      welcomeRate(db, from, to, inScope),
-      welcomeRate(db, prevFrom, prevTo, inScope),
+      // desk and the Command Center strip print, narrowed to this board's scope. Closed days only: the
+      // window ends yesterday (ET) at the latest (2026-09-29 review, nb-4) — today's arrivals are
+      // still being called, and a day that has not happened has no verdict.
+      welcomeRate(db, from, minYmd(to, yesterday), inScope),
+      welcomeRate(db, prevFrom, minYmd(prevTo, yesterday), inScope),
       welcomeCallsDue(db, today).catch(() => null),
     ])
     const reservations = resRead.rows
@@ -871,6 +898,8 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
         done: welcome.completed, arrivals: welcome.completed + welcome.incomplete,
         missed: welcome.incomplete, open: welcome.open, n: welcome.n, text: welcome.text,
         since: welcome.since,
+        /** The last day the rate covers: yesterday at the latest (closed days only). */
+        through: minYmd(to, yesterday),
         dueNow: welcomeDueNow,
       },
 
@@ -923,6 +952,11 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
     } else if (!sentPrevOk) {
       // The open-thread counts run over every loaded thread, so a lost prior slice makes them a floor.
       blank(payload.sentiment, ['happyPctPrev', 'openUnhappy', 'awaitingReply'])
+      blank(payload.today, ['openUnhappy', 'awaitingReply'])
+    } else if (to < today) {
+      // A window that ended before today reads no threads after it (the newest slice is closed), so
+      // "open right now" would be a floor — a dash, not a low number.
+      blank(payload.sentiment, ['openUnhappy', 'awaitingReply'])
       blank(payload.today, ['openUnhappy', 'awaitingReply'])
     }
     if (!glCurOk) {
