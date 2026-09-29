@@ -43,13 +43,14 @@ import { rollupBuilding } from '@/lib/optimize-score'
 import { billingRange, type BillingTask } from '@/lib/billing'
 import { todayET, shiftDay, lc, num, round2, normStar, DEAD_LISTING, pageRows } from './ctx'
 import { personKey, nameMatches } from '@/lib/person-name'
+import { isTaskDone } from '@/lib/task-categories'
 
 export type Role = 'clean' | 'inspect'
 
 const INSPECT_RE = /inspect|walk\s?through|walkthrough|qc\b|quality check/i
 const MAINT_RE = /maintenance|repair|handyman|technician|fix/i
 
-const isDone = (t: any) => !!t.finished_at || /complete|finish|close|approv/.test(lc(t.status))
+const isDone = (t: any) => isTaskDone(t.status, t.finished_at)
 const dayOf = (v: any) => String(v || '').slice(0, 10)
 
 // A CLEAN IS A DEPARTURE CLEAN, AND NOTHING ELSE (Jon, 2026-09-23 review). This used to add
@@ -544,7 +545,7 @@ export async function maintenanceScorecard(input: {
   const people: MaintScore[] = Object.keys(byPerson).map(person => {
     const rs = byPerson[person]
     const ts = rs.map(r => r.t)
-    const done = ts.filter(t => !!t.finishedAt || /complete|finish|close|approv/.test(lc(t.status)))
+    const done = ts.filter(t => isTaskDone(t.status, t.finishedAt))
     const open = ts.filter(t => !done.includes(t))
     const timed = ts.filter(t => Number.isFinite(Number(t.actualMinutes)) && Number(t.actualMinutes) > 0)
     const mins = timed.reduce((a, t) => a + num(t.actualMinutes), 0)
@@ -604,7 +605,7 @@ export async function maintenanceScorecard(input: {
   // two-person job used to put its billed and labour amounts into the portfolio totals twice —
   // the caveat below already promised per-person counts would not sum to the total.
   const allTs = Array.from(new Set(rows.map(r => r.t)))
-  const allDone = allTs.filter(t => !!t.finishedAt || /complete|finish|close|approv/.test(lc(t.status)))
+  const allDone = allTs.filter(t => isTaskDone(t.status, t.finishedAt))
   const allTimed = allTs.filter(t => Number(t.actualMinutes) > 0)
   const bt = round2(allTs.reduce((a, t) => a + num(t.billedAmount), 0))
   const ctot = round2(allTs.reduce((a, t) => a + num(t.laborAmount), 0))

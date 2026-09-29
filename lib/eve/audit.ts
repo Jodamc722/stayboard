@@ -36,6 +36,7 @@ import { expectedCronPaths } from './automations'
 import { readSnapshot } from '@/lib/channel-health'
 import { channelFindings } from '@/lib/channel-check'
 import { awaitingSet, slaDueAt, SLA_RULE_TEXT } from '@/lib/response-times'
+import { isTaskDone } from '@/lib/task-categories'
 
 export type Severity = 'critical' | 'warn' | 'info'
 export type Area = 'pipeline' | 'guests' | 'reviews' | 'ops' | 'listings' | 'money' | 'eve'
@@ -281,7 +282,7 @@ async function auditOverdueTasks(c: Row): Promise<AuditFinding[]> {
     .select('id,name,status,scheduled_date,finished_at,started_at,type_department,reference_property_id')
     .gte('scheduled_date', from).lt('scheduled_date', c.today).order('scheduled_date').limit(4000), { data: [] })
   const rows: any[] = (t?.data || []).filter((x: any) => !/delete|cancel/.test(lc(x.status)))
-  const done = (x: any) => !!x.finished_at || /complete|finish|close|approv/.test(lc(x.status))
+  const done = (x: any) => isTaskDone(x.status, x.finished_at)
   const open = rows.filter(x => !done(x))
   if (open.length < 5) return []
   const neverStarted = open.filter(x => !x.started_at)

@@ -16,10 +16,12 @@ import { obj, S } from './types'
 import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveListing, pageRows, scopeIds } from './ctx'
 import { nameMatches, personKey, bestSpelling } from '@/lib/person-name'
 import { assigneeNames as assigneeNamesOf } from './dossiers'
+import { TASK_DONE_RE } from '@/lib/task-categories'
 
 // Status predicates. There is no enum on the mirror — every board in the app regex-matches, and
 // finished_at OVERRIDES the status label because the field app sets it even when the string is odd.
-const IS_DONE = /complete|finish|close|approv/
+// Done is the app's one rule (lib/task-categories), not a private copy of it.
+const IS_DONE = TASK_DONE_RE
 const IS_RUNNING = /progress|started/
 const IS_GONE = /delete|cancel/
 

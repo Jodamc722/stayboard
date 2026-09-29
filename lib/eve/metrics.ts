@@ -20,6 +20,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { isDepartureCleanName } from '@/lib/breezeway'
+import { isTaskDone } from '@/lib/task-categories'
 import { bucketFor, familyFor } from '@/lib/marketing'
 import { todayET, shiftDay, lc, num, round2, normStar, safe, DEAD_LISTING } from './ctx'
 
@@ -184,7 +185,7 @@ export async function computeRange(from: string, to: string): Promise<MetricRow[
     if (!dayIndex[d]) continue
     const s2 = lc(t.status)
     if (/delete|cancel/.test(s2)) continue
-    const done = !!t.finished_at || /complete|finish|close|approv/.test(s2)
+    const done = isTaskDone(s2, t.finished_at)
     const scopes = scopesOf(t.reference_property_id)
     for (const s of scopes) {
       if (done) bump(byDay[d], s, 'tasks_completed', 1)

@@ -31,6 +31,7 @@ import { crewScorecard } from './accountability'
 import { createRecommendation } from './recommendations'
 import { agentAllowed, stepDown } from './agent-mode'
 import { todayET, shiftDay, lc } from './ctx'
+import { isTaskDone } from '@/lib/task-categories'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const clip = (v: any, n: number) => str(v).replace(/\s+/g, ' ').trim().slice(0, n)
@@ -108,8 +109,8 @@ export async function buildQualityPack(days = 90): Promise<QualityPack> {
     const ids = rows.map(r => str(r.task_id)).filter(Boolean)
     const tmap: Record<string, any> = {}
     if (ids.length) { const { data: ts } = await db.from('breezeway_tasks_sync').select('id,status,finished_at,scheduled_date').in('id', ids); for (const t of ((ts || []) as any[])) tmap[str(t.id)] = t }
-    const walked = rows.filter(r => { const t = tmap[str(r.task_id)]; return t && (t.finished_at || /complet|finish|close|approv/i.test(str(t.status))) })
-    const open = rows.filter(r => { const t = tmap[str(r.task_id)]; return t && !t.finished_at && !/complet|finish|close|approv|cancel/i.test(str(t.status)) })
+    const walked = rows.filter(r => { const t = tmap[str(r.task_id)]; return t && isTaskDone(t.status, t.finished_at) })
+    const open = rows.filter(r => { const t = tmap[str(r.task_id)]; return t && !isTaskDone(t.status, t.finished_at) && !/cancel/i.test(str(t.status)) })
     stats.walks = { total: rows.length, shown: open.length }
     blocks.push(`## BAD-REVIEW INSPECTIONS, 60 days — ${rows.length} raised, ${walked.length} walked, ${open.length} still open\nStill open (unit · reason · sits on):\n${open.slice(0, 8).map(r => `- ${r.unit_name} · ${r.reason} · ${str(tmap[str(r.task_id)]?.scheduled_date).slice(0, 10)}`).join('\n') || '- none'}`)
   } catch (e: any) { blocks.push(`## BAD-REVIEW INSPECTIONS — unavailable (${clip(e?.message, 80)})`) }

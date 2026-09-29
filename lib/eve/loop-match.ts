@@ -26,6 +26,7 @@
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isDepartureCleanName } from '@/lib/breezeway'
+import { isTaskDone } from '@/lib/task-categories'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const lc = (v: any) => str(v).toLowerCase()
@@ -85,7 +86,7 @@ export async function resolveUnitInText(text: string, hint?: { unit?: string | n
 
 export type Match = { closed?: string; tracked?: string; evidence?: Record<string, any> }
 
-const done = (t: any) => !!t.finished_at || /complet|finish|close|approv/i.test(str(t.status))
+const done = (t: any) => isTaskDone(t.status, t.finished_at)
 const gone = (t: any) => /cancel|delet|void/i.test(str(t.status))
 const who = (t: any) => str(t.finished_by_name || (Array.isArray(t.assignees) && t.assignees[0] && (t.assignees[0].name || t.assignees[0])) || '')
 const clock = (iso: any) => { const d = new Date(str(iso)); return isNaN(d.getTime()) ? '' : new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }).format(d).replace(' ', '').toLowerCase() }

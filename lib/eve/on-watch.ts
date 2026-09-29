@@ -46,6 +46,7 @@ import { EVE_CHANNELS } from '@/lib/slack-rules'
 import { agentAllowed, stepDown } from './agent-mode'
 import { getOperatingModel, weDo } from './operating-model'
 import { buildingOf } from '@/lib/segments'
+import { isTaskDone } from '@/lib/task-categories'
 
 export const ON_WATCH_KEY = 'eve_on_watch'
 const STATE_KEY = 'eve_on_watch_state'
@@ -192,7 +193,7 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     const { data } = await db.from('breezeway_tasks_sync').select('id,status,started_at,finished_at,finished_by_name,assignees').in('id', taskIds.slice(i, i + 200))
     for (const t of (data as any[]) || []) tasks[String(t.id)] = t
   }
-  const taskDone = (t: any) => !!t && (!!t.finished_at || /complete|finish|close|approv/i.test(String(t.status || '')))
+  const taskDone = (t: any) => !!t && isTaskDone(t.status, t.finished_at)
   const who = (t: any) => first(t?.finished_by_name) || first(Array.isArray(t?.assignees) ? t.assignees[0]?.name : '')
   const unitOf = (g: any) => shortUnit(g.unit)
   // Field work only where the field work is ours. Botanica's hotel fixes its own rooms; a Botanica

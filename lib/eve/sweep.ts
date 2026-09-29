@@ -20,6 +20,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { isDepartureCleanName } from '@/lib/breezeway'
+import { isTaskDone } from '@/lib/task-categories'
 import { todayET, shiftDay, lc, num, round2, normStar, safe, DEAD_LISTING } from './ctx'
 import { saveMemory, revalidateSweptMemories } from './memory'
 
@@ -398,7 +399,7 @@ async function mineCompletion(c: Ctx): Promise<Finding[]> {
   const tasks = (res.data || []).filter((t: any) => !/delete|cancel/.test(lc(t.status)))
   if (tasks.length < 20) return out
 
-  const done = (t: any) => !!t.finished_at || /complete|finish|close|approv/.test(lc(t.status))
+  const done = (t: any) => isTaskDone(t.status, t.finished_at)
   const byDept: Record<string, { n: number; done: number; late: number }> = {}
   const byPerson: Record<string, { n: number; done: number }> = {}
   let neverStarted = 0

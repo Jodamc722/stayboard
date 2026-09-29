@@ -26,6 +26,7 @@ import { agentAllowed, stepDown } from './agent-mode'
 import { deptOf } from '@/lib/pending-work'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { buildingOf } from '@/lib/segments'
+import { isTaskDone } from '@/lib/task-categories'
 
 export const OPS_DESK_KEY = 'eve_ops_desk'
 const STATE_KEY = 'eve_ops_desk_state'
@@ -47,7 +48,7 @@ const etDate = (now = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone
 const shift = (ymd: string, d: number) => new Intl.DateTimeFormat('en-CA', { timeZone: ET }).format(new Date(Date.parse(ymd + 'T12:00:00Z') + d * 86400000))
 const clock = (ts: any) => { const d = new Date(String(ts)); return isNaN(d.getTime()) ? '' : new Intl.DateTimeFormat('en-US', { timeZone: ET, hour: 'numeric', minute: '2-digit' }).format(d).replace(' ', '').toLowerCase() }
 const shortUnit = (u: any) => str(u).split(' - ')[0].trim() || 'a unit'
-const isDone = (t: any) => !!t.finished_at || /complet|finish|close|approv/i.test(str(t.status))
+const isDone = (t: any) => isTaskDone(t.status, t.finished_at)
 const isGone = (t: any) => /cancel|delet|void/i.test(str(t.status))
 const isRunning = (t: any) => !!t.started_at || /progress|started|running/i.test(str(t.status))
 const names = (t: any): string[] => (Array.isArray(t.assignees) ? t.assignees : []).map((a: any) => str(a && typeof a === 'object' ? a.name : a).trim()).filter(Boolean)
