@@ -20,10 +20,13 @@ export function bustDay(): void {
   try { revalidateTag(DAY_TAG) } catch { /* best-effort */ }
 }
 
-/** Every board that reads the Breezeway mirror: the day and the Scheduler. */
+/** Every board that reads the Breezeway mirror: the day, the Scheduler, and the field boards' day sheet (lib/daysheet, 90 s). */
 export function bustBoards(): void {
   bustDay()
   try { revalidateTag(SCHEDULE_TAG) } catch { /* best-effort */ }
+  // The day sheet was never busted, so a job added from a field board was missing from the list
+  // the board reloads right after "Add" for up to 90 seconds.
+  try { revalidateTag('daysheet') } catch { /* best-effort */ }
 }
 
 // ── NEVER SERVE AN OLD DAY ─────────────────────────────────────────────────────────────────────
