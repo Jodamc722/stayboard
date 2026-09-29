@@ -77,7 +77,7 @@ async function release(formData: FormData) {
 /** What the approver is told about delivery, from the release's `dm` (sent / failed / none). */
 function deliveryLine(dm: string | undefined): { text: string; warn: boolean } {
   if (dm === 'failed') return { text: 'The DM to the person who asked did not go through. Give it to them yourself, privately — never in a channel.', warn: true }
-  if (dm === 'none') return { text: 'This one was asked for in the app, so there was nobody to DM. Pass it on privately — never in a channel.', warn: true }
+  if (dm === 'none') return { text: 'There was no Slack account to DM on this one (it was asked for in the app or on Telegram). Pass it on privately — never in a channel.', warn: true }
   return { text: 'Sent privately to whoever asked.', warn: false }
 }
 

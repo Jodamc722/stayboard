@@ -38,12 +38,16 @@ async function appUsers(): Promise<IdentityUser[]> {
     if (error) return []
     return ((data || []) as any[]).map(r => {
       const email = String(r?.email || '').toLowerCase().trim()
+      const f = r?.features && typeof r.features === 'object' ? r.features : {}
       return {
         email,
         status: String(r?.status || ''),
         name: String((r?.profile && typeof r.profile === 'object' ? r.profile.name : '') || '').trim(),
-        // The owner, or anyone who gets the admin tier in Slack — never reachable by a name alone.
-        privileged: isSuperadmin(email) || r?.role === 'admin' || r?.access_role === 'admin',
+        // The owner, anyone who gets the admin tier in Slack, and — since anyone in a Customer Service
+        // room may ask for a door code (2026-09-29) — anyone who gets a code without an approver or who
+        // approves them. Never reachable by a name alone: a Slack name is whatever someone typed.
+        privileged: isSuperadmin(email) || r?.role === 'admin' || r?.access_role === 'admin'
+          || String(f.door_codes || '').toLowerCase() === 'direct' || f.door_code_approver === true,
       }
     }).filter(u => u.email)
   } catch { return [] }

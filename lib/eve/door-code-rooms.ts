@@ -66,5 +66,27 @@ export function slackDoorCodeSetting(personal: DoorCodeSetting, surface: DoorCod
   return personal === 'direct' || personal === 'ask' ? personal : 'off'
 }
 
+/**
+ * ONE Slack person, and nothing else (2026-09-29 review). A code is only ever sent to the Slack id of
+ * whoever asked; `conversations.open` given "U1,U2" opens a GROUP DM, so anything that is not exactly
+ * one user id (U… or W…) is refused rather than sent.
+ */
+export function isSlackUserId(id: unknown): boolean {
+  return /^[UW][A-Z0-9]{2,}$/.test(String(id == null ? '' : id).trim())
+}
+
+/**
+ * Who in Slack may be handed the door-code tool (lib/eve/slack-tier.ts enforceDoorCodes): anyone in
+ * one of the two Customer Service rooms, an admin in a one-to-one DM, nobody anywhere else — and never
+ * in a vendor-run room, whatever it is configured as.
+ */
+export function doorCodeAccessFor(input: { channelId: unknown; tier: 'admin' | 'staff' | 'vendor'; vendorRoom?: boolean }): 'room' | 'dm' | 'never' {
+  if (input.vendorRoom) return 'never'
+  const surface = doorCodeSurface(input.channelId)
+  if (surface === 'room') return 'room'
+  if (surface === 'dm' && input.tier === 'admin') return 'dm'
+  return 'never'
+}
+
 /** The one line said wherever a code cannot be asked for. */
 export const NOT_HERE_LINE = `Door codes are never asked for in this channel — Customer Service requests them in ${DOOR_CODE_ROOM_NAMES}, and the code goes to whoever asked, privately.`

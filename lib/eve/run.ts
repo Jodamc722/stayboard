@@ -136,8 +136,9 @@ export type RunEveInput = {
   vendorRoom?: boolean
   /** A vendor grant's buildings: the listing registry is narrowed to them (lib/eve/ctx.ts buildCtx). */
   onlyBuildings?: string[]
-  /** The Slack conversation and asker, when source is 'slack' (lib/eve/ctx.ts EveCtx.slack). */
-  slack?: { channel: string; user: string; name?: string | null }
+  /** The Slack conversation and asker, when source is 'slack' (lib/eve/ctx.ts EveCtx.slack). `how` is
+   *  how the asker was matched to a Lighthouse account (lib/slack-identity-rules.ts), null if not at all. */
+  slack?: { channel: string; user: string; name?: string | null; how?: string | null }
   maxTurns?: number
 }
 
@@ -202,7 +203,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   const allowed = (list: any[]) => (deny.length ? list.filter((t: any) => deny.indexOf(String(t?.name)) < 0) : list)
   const ctx = await buildCtx(access, canMoney, { onlyBuildings: input.tier === 'vendor' ? input.onlyBuildings : undefined })
   if (input.tier) ctx.tier = input.tier
-  if (input.slack && input.slack.channel && input.slack.user) ctx.slack = { channel: String(input.slack.channel), user: String(input.slack.user), name: input.slack.name || null }
+  if (input.slack && input.slack.channel && input.slack.user) ctx.slack = { channel: String(input.slack.channel), user: String(input.slack.user), name: input.slack.name || null, how: input.slack.how || null }
   // An outside company can read this room: the vendor tier anywhere, or anyone in a vendor room.
   const guestSafe = input.tier === 'vendor' || !!input.vendorRoom
   if (guestSafe) ctx.guestSafe = true

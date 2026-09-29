@@ -7,10 +7,31 @@
 // the clean, so until then the old code is the one that opens the door), the arrival warning, and the
 // "which one opened it?" buttons — the only real evidence we ever get that a code is right.
 import 'server-only'
-import { dmUser } from '@/lib/slack'
+import { slackApi, postToChannel } from '@/lib/slack'
+import { isSlackUserId } from './door-code-rooms'
+
+/**
+ * Open the one-to-one DM with ONE Slack person. Anything that is not exactly one user id is refused —
+ * `conversations.open` given "U1,U2" opens a group DM, and a code must never land in one. Called
+ * BEFORE a Direct release in a Customer Service room, so a DM that cannot open parks the request
+ * instead of burning a release nobody receives.
+ */
+export async function openDm(slackUserId: string): Promise<{ ok: boolean; channel?: string; error?: string }> {
+  const id = String(slackUserId || '').trim()
+  if (!isSlackUserId(id)) return { ok: false, error: 'not a single Slack user' }
+  try {
+    const open = await slackApi('conversations.open', { users: id })
+    const ch = open && open.channel && open.channel.id ? String(open.channel.id) : ''
+    // A one-to-one DM's id starts with D; anything else is not the private place a code goes.
+    if (!/^D[A-Z0-9]+$/.test(ch)) return { ok: false, error: String((open && open.error) || 'cannot_open_dm') }
+    return { ok: true, channel: ch }
+  } catch (e: any) { return { ok: false, error: String(e?.message || e).slice(0, 120) } }
+}
 
 export type ReleasedCodeDm = {
   slackUserId: string
+  /** The DM already opened with openDm, if the caller opened it first. */
+  channel?: string
   unit: string
   code: string
   previousCode?: string | null
@@ -25,7 +46,9 @@ export type ReleasedCodeDm = {
 }
 
 export async function dmReleasedCode(p: ReleasedCodeDm): Promise<{ ok: boolean; error?: string }> {
-  if (!p.slackUserId) return { ok: false, error: 'no Slack user to send it to' }
+  if (!isSlackUserId(p.slackUserId)) return { ok: false, error: 'no single Slack user to send it to' }
+  const dm = p.channel && /^D[A-Z0-9]+$/.test(p.channel) ? { ok: true, channel: p.channel } : await openDm(p.slackUserId)
+  if (!dm.ok || !dm.channel) return { ok: false, error: dm.error || 'the direct message could not be opened' }
   const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
   const confirmUrl = p.confirmToken ? `${base}/doorcode/worked/${p.confirmToken}` : null
   const tryFirst = p.expect === 'old' && p.previousCode ? p.previousCode : p.code
@@ -46,6 +69,6 @@ export async function dmReleasedCode(p: ReleasedCodeDm): Promise<{ ok: boolean; 
       { type: 'button', text: { type: 'plain_text', text: 'Neither' }, url: `${confirmUrl}?ok=neither` },
     ] })
   }
-  const r = await dmUser(p.slackUserId, `Door code for ${p.unit} released by ${p.releasedBy}.`, blocks)
+  const r = await postToChannel(dm.channel, `Door code for ${p.unit} released by ${p.releasedBy}.`, blocks)
   return r.ok ? { ok: true } : { ok: false, error: r.error || 'the direct message did not go through' }
 }

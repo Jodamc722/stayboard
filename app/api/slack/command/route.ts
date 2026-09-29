@@ -22,10 +22,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { runCheck, requestDoorCode, attachSlackPost } from '@/lib/eve/door-code'
-import { emailForSlackUser } from '@/lib/slack'
+import { resolveLighthouseEmail, identityHint } from '@/lib/slack-identity'
 import { accessForEmail, doorCodePolicy } from '@/lib/access'
 import { postDoorCodeApproval } from '@/lib/eve/approvals'
-import { doorCodeSurface, doorCodeRoomName, slackDoorCodeSetting, NOT_HERE_LINE } from '@/lib/eve/door-code-rooms'
+import { doorCodeSurface, doorCodeRoomName, slackDoorCodeSetting, NOT_HERE_LINE, DOOR_CODE_ROOM_NAMES } from '@/lib/eve/door-code-rooms'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -61,6 +61,27 @@ export async function POST(req: NextRequest) {
   if (!unit) return say('Which unit? Try `/doorcode 3707` or `/doorcode Rustic 12`.')
   if (!userId) return say('Slack did not say who is asking, so I cannot send anything anywhere.')
 
+  // WHO IS ASKING — decided BEFORE any check runs, so someone who may not ask learns nothing about the
+  // unit (who is in it, when they leave). Slack hands us a user id and a display NAME; the name is a
+  // nickname anyone can change, so it never decides anything. The id is resolved the same hardened way
+  // the @Eve webhook resolves it (lib/slack-identity.ts: profile email, our other domain — so Jon's
+  // jon@staysoflo.com is Jon — the admin map, and a fenced name match). Outside the two Customer
+  // Service rooms, nobody we cannot place resolves to 'off' — which also closes the old hole where any
+  // member of the workspace could run this command. Inside them, the room is the team: anyone there is
+  // at least Ask (an approver releases, and the code goes to their Slack id by DM), and Direct stays
+  // Direct — unless the match was by name alone, which never skips an approver.
+  const who = await resolveLighthouseEmail(userId)
+  const requesterAccess = who.email ? await accessForEmail(who.email) : null
+  const personal = requesterAccess ? doorCodePolicy(requesterAccess) : 'off'
+  const setting = slackDoorCodeSetting(personal, surface)
+  let policy: 'off' | 'ask' | 'direct' = setting === 'refused' ? 'off' : setting
+  if (policy === 'direct' && who.how === 'name') policy = 'ask'
+  if (policy === 'off') {
+    return say(requesterAccess
+      ? `🔒 You are not set up to receive door codes. Customer Service requests them in ${DOOR_CODE_ROOM_NAMES}.`
+      : `🔒 I could not match your Slack account to a Lighthouse user (${identityHint(who, userId)}), so I cannot give you a code here. Customer Service can request one in ${DOOR_CODE_ROOM_NAMES}.`)
+  }
+
   const check = await runCheck({ unit, requestedBy: userName, requesterSlackId: userId })
 
   if (!check.canRelease) {
@@ -70,32 +91,20 @@ export async function POST(req: NextRequest) {
     return say(`🚫 *${check.headline}*${extra}`)
   }
 
-  // WHO IS ASKING. Slack hands us a user id and a display NAME; the name is a nickname anyone can
-  // change, so it is never used to decide anything. The id is resolved to the email on their Slack
-  // profile and then to their app user. Outside the two Customer Service rooms, nobody we cannot
-  // place resolves to 'off' — which also closes the old hole where any member of the workspace could
-  // run this command. Inside them, the room is the team: anyone there is at least Ask (an approver
-  // releases, and the code goes to their Slack id by DM), and Direct stays Direct.
-  const requesterEmail = await emailForSlackUser(userId)
-  const requesterAccess = requesterEmail ? await accessForEmail(requesterEmail) : null
-  const personal = requesterAccess ? doorCodePolicy(requesterAccess) : 'off'
-  const setting = slackDoorCodeSetting(personal, surface)
-  const policy = setting === 'refused' ? 'off' : setting
-
   const outcome = await requestDoorCode(check, {
-    email: requesterEmail || undefined, slackUserId: userId, name: userName ? `@${userName}` : undefined,
+    // The Lighthouse account when there is one; otherwise what Slack's profile says, for the approver.
+    email: who.email || who.profileEmail || undefined, slackUserId: userId, name: userName ? `@${userName}` : undefined,
     reason: `slash command by @${userName}${room ? ` in ${room}` : ''}`, policy,
   })
-  if (outcome.kind === 'denied') {
-    return say(requesterEmail
-      ? `🔒 ${outcome.message}`
-      : `🔒 I could not match your Slack account to a Lighthouse user, so I cannot give you a code here. Customer Service can request one in #ccs-and-jon or #vr-customercareteam.`)
-  }
+  if (outcome.kind === 'denied') return say(`🔒 ${outcome.message}`)
   if (outcome.kind === 'error') return say(`Checks passed for *${check.unit}*, but I could not park the request: ${outcome.message}`)
   if (outcome.kind === 'released') {
-    const both = outcome.previousCode ? `\n*If that fails:* \`${outcome.previousCode}\`` : ''
+    // Only they see this reply (ephemeral). Which code first follows the keypad, as on the DM.
+    const first = outcome.expect === 'old' && outcome.previousCode ? outcome.previousCode : outcome.code
+    const then = outcome.expect === 'old' && outcome.previousCode ? outcome.code : outcome.previousCode
+    const both = then ? `\n*If that fails:* \`${then}\`` : ''
     const tn = outcome.transitionNote ? `\n_${outcome.transitionNote}_` : ''
-    return say(`✅ *${check.unit}*\n*Try this first:* \`${outcome.code}\`${both}${tn}\n\n_Sent straight to you because your access is set to Direct. It is on the audit trail._`)
+    return say(`✅ *${check.unit}*\n*Try this first:* \`${first}\`${both}${tn}\n\n_Sent straight to you because your access is set to Direct. Only you can see this. It is on the audit trail._`)
   }
   const parked = outcome
 
@@ -112,7 +121,8 @@ export async function POST(req: NextRequest) {
     unit: check.unit || unit, building: check.building, address: check.address,
     verdict: check.verdict, headline: check.headline, occupancy: check.occupancy, note: check.note,
     quote: check.permissionQuotes?.[0] || null, taskToday: check.taskToday, vacancyScan: check.vacancyScan, calendar: check.calendar, confidence: check.confidence, arrivalWarning: check.arrivalWarning,
-    requestedBy: `@${userName}`, reason: room ? `asked in ${room}` : null, link,
+    // The Slack mention (drawn from the id, not a name they typed), marked when there is no Lighthouse login.
+    requestedBy: requesterAccess ? `<@${userId}>` : `<@${userId}> — no Lighthouse login`, reason: room ? `asked in ${room}` : null, link,
   })
   if (posted.ok && posted.channelId && posted.ts && parked.requestId) {
     await attachSlackPost(parked.requestId, posted.channelId, posted.ts)

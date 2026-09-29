@@ -9,6 +9,7 @@ import { dmUser } from '@/lib/slack'
 import { eveGate } from '../../agent/route'
 import { doorCodePolicy } from '@/lib/access'
 import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
+import { isSlackUserId } from '@/lib/eve/door-code-rooms'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -45,7 +46,10 @@ export async function POST(req: NextRequest) {
   // The person's own setting decides what happens next — No access, Ask, or Direct. One function
   // owns that for every entry point so none of them can drift into being more generous.
   const policy = doorCodePolicy(gate.access)
-  const outcome = await requestDoorCode(check, { email, slackUserId: body?.slackUserId, reason: body?.reason, policy })
+  // No Slack id from the request body (2026-09-29): a released code goes to whoever ASKED, and here that
+  // is this login — naming some other Slack user would send the code to them. The approver passes a web
+  // request on privately (the release page says so).
+  const outcome = await requestDoorCode(check, { email, reason: body?.reason, policy })
 
   if (outcome.kind === 'denied') return NextResponse.json({ ok: false, check, error: outcome.message }, { status: 403 })
   if (outcome.kind === 'error') return NextResponse.json({ ok: true, check, parkError: outcome.message })
@@ -74,7 +78,8 @@ export async function POST(req: NextRequest) {
 
   // Optional belt-and-braces DM, for when a specific person is the one waiting on it.
   let notified = 'skipped'
-  if (body?.notifySlackUserId) {
+  // One Slack person or nobody: "U1,U2" would open a group DM (lib/eve/door-code-rooms.ts isSlackUserId).
+  if (body?.notifySlackUserId && isSlackUserId(body.notifySlackUserId)) {
     const r = await dmUser(String(body.notifySlackUserId),
       `Door code requested for *${check.unit}* by ${email}.\n${check.headline}\nRelease it (one tap, link works once): ${link}`)
     notified = r.ok ? 'sent' : `failed: ${r.error}`

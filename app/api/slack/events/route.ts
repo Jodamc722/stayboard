@@ -417,7 +417,7 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
       onlyBuildings: grant.tier === 'vendor' && (grant.vendorRoom || grant.buildings.length) ? grant.buildings : undefined,
       // The room and the asker, for the door-code tool: in the two Customer Service rooms anyone may ask,
       // and whatever is released goes to THIS Slack user by DM, never into the room (lib/eve/door-code-rooms.ts).
-      slack: { channel, user, name: await personName(user) },
+      slack: { channel, user, name: await personName(user), how: access ? who.how : null },
       surfaceNote: [
         `This is ${where}. Whatever that channel is for is the likely subject — if it is a building's channel, assume the question is about that building unless told otherwise.`,
         history,

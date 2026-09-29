@@ -25,7 +25,9 @@ import { rollupBuilding } from '@/lib/optimize-score'
 import { getListingCalendar } from '@/lib/guesty'
 import { todayET, lc, shiftDay, DEAD_LISTING } from './ctx'
 import { codeConfidence, fingerprint, recordVerification, refreshOne, transitionFor, bothCodes, inspectCode, type Confidence } from './code-integrity'
-import { DOOR_CODE_ROOM_NAMES } from './door-code-rooms'
+import { DOOR_CODE_ROOM_NAMES, isSlackUserId } from './door-code-rooms'
+import { scrubStoredText } from './redact'
+import { resolveLighthouseEmail } from '@/lib/slack-identity'
 
 /** The Guesty custom field that holds the door code (same id daysheet + listingIntel use). */
 const DOOR_CODE_FIELD = '695af1454ebbdc00137c3f41'
@@ -266,9 +268,17 @@ const STILL_HERE = /\b(still (?:here|in|at|inside)|haven'?t left|have not left|n
 const EXTEND = /\b(extra night|another night|one more night|extend(?:ing|ed)? (?:my|our|the)? ?stay|stay(?:ing)? (?:an? )?(?:extra|longer|one more)|late check.?out|later check.?out|check.?out later)\b/i
 const EARLY = /\b(early check.?in|check.?in early|checking in early|arriv(?:e|ing) early|here early|already here|we'?re outside|i'?m outside|outside the (?:building|door|unit)|can we (?:come|get) in (?:early|now)|in the lobby)\b/i
 
-/** Guest-side messages on one reservation's thread, newest first. */
-async function guestThread(db: any, reservationId: string, limit = 40): Promise<{ from: string; at: string; text: string; isGuest: boolean }[]> {
-  const out: { from: string; at: string; text: string; isGuest: boolean }[] = []
+// NO CODE RIDES OUT IN A QUOTE (2026-09-29 review). A guest thread holds OUR check-in messages too —
+// "your door code is 4821#" — and the guest's own "the code 4821 isn't working". Whatever this check
+// quotes (the recent thread, a permission quote, a vacancy finding, a note built from one) goes to Eve,
+// into the approval card in Slack and onto the /doorcode reply, so every quoted line loses the codes
+// this unit is known to hold, in any spelling, and anything else that reads as a code. The patterns
+// below still read the ORIGINAL words; only what is quoted is scrubbed.
+const quoteText = (text: string, secrets: string[]) => scrubStoredText(text.slice(0, 500), secrets)
+
+/** Guest-side messages on one reservation's thread, newest first. `raw` is for matching only. */
+async function guestThread(db: any, reservationId: string, secrets: string[], limit = 40): Promise<{ from: string; at: string; text: string; raw: string; isGuest: boolean }[]> {
+  const out: { from: string; at: string; text: string; raw: string; isGuest: boolean }[] = []
   try {
     const { data: conv } = await db.from('guesty_conversations').select('id,guest_name')
       .eq('reservation_id', reservationId).order('last_message_at', { ascending: false }).limit(1)
@@ -281,20 +291,20 @@ async function guestThread(db: any, reservationId: string, limit = 40): Promise<
       const text = String((m as any).body || '').trim()
       if (!text) continue
       const isGuest = /guest|inbound/i.test(lc((m as any).sender))
-      out.push({ from: isGuest ? 'GUEST' : ((m as any).sender_name || 'us'), at: String((m as any).sent_at), text: text.slice(0, 500), isGuest })
+      out.push({ from: isGuest ? 'GUEST' : ((m as any).sender_name || 'us'), at: String((m as any).sent_at), text: quoteText(text, secrets), raw: text, isGuest })
     }
   } catch { /* a thread we cannot read is reported as unread, never as clean */ }
   return out
 }
 
-async function scanVacancy(db: any, threads: { id: string; who: string; role: 'departed' | 'arriving' }[], windowDays = 3): Promise<VacancyScan> {
+async function scanVacancy(db: any, threads: { id: string; who: string; role: 'departed' | 'arriving' }[], secrets: string[], windowDays = 3): Promise<VacancyScan> {
   const cutoff = Date.now() - windowDays * 86400000
   const findings: VacancyScan['findings'] = []
   let threadsRead = 0
   let messagesRead = 0
 
   for (const t of threads) {
-    const msgs = await guestThread(db, t.id)
+    const msgs = await guestThread(db, t.id, secrets)
     if (!msgs.length) continue
     threadsRead++
     for (const m of msgs) {
@@ -303,9 +313,9 @@ async function scanVacancy(db: any, threads: { id: string; who: string; role: 'd
       if (!Number.isFinite(at) || at < cutoff) continue
       messagesRead++
       const who = `${t.who} (${t.role === 'departed' ? 'checked out' : 'arriving'})`
-      if (t.role === 'departed' && STILL_HERE.test(m.text)) findings.push({ kind: 'still_here', from: who, at: m.at, text: m.text })
-      else if (t.role === 'departed' && EXTEND.test(m.text)) findings.push({ kind: 'extending', from: who, at: m.at, text: m.text })
-      else if (t.role === 'arriving' && EARLY.test(m.text)) findings.push({ kind: 'arriving_early', from: who, at: m.at, text: m.text })
+      if (t.role === 'departed' && STILL_HERE.test(m.raw)) findings.push({ kind: 'still_here', from: who, at: m.at, text: m.text })
+      else if (t.role === 'departed' && EXTEND.test(m.raw)) findings.push({ kind: 'extending', from: who, at: m.at, text: m.text })
+      else if (t.role === 'arriving' && EARLY.test(m.raw)) findings.push({ kind: 'arriving_early', from: who, at: m.at, text: m.text })
     }
   }
 
@@ -388,6 +398,13 @@ export async function runCheck(input: { unit?: string; listingId?: string; reque
     }
   }
 
+  // The codes this door is known to take — the one on file and, for a standing code, the one the
+  // keypad may still hold — scrubbed out of every line this check quotes (quoteText, above).
+  const secrets: string[] = [code]
+  if (tracked) {
+    try { const pair = await bothCodes(String(l.id), code); if (pair.previous) secrets.push(pair.previous) } catch { /* the patterns still apply */ }
+  }
+
   // ---- Gate 2: is anyone in it? ----
   const { data: rv } = await db.from('guesty_reservations')
     .select('id,guest_name,listing_id,check_in,check_out,status,confirmation_code')
@@ -464,7 +481,8 @@ export async function runCheck(input: { unit?: string; listingId?: string; reque
           const isGuest = /guest|inbound/i.test(lc((m as any).sender))
           const text = String((m as any).body || '').trim()
           if (!text) continue
-          const row = { from: isGuest ? 'GUEST' : ((m as any).sender_name || 'us'), at: String((m as any).sent_at), text: text.slice(0, 500) }
+          // Matched on the guest's own words; quoted without any code in them (quoteText).
+          const row = { from: isGuest ? 'GUEST' : ((m as any).sender_name || 'us'), at: String((m as any).sent_at), text: quoteText(text, secrets) }
           thread.push(row)
           if (isGuest && AFFIRM.test(text) && ENTRY.test(text)) quotes.push(row)
         }
@@ -507,7 +525,7 @@ export async function runCheck(input: { unit?: string; listingId?: string; reque
   const toScan: { id: string; who: string; role: 'departed' | 'arriving' }[] = []
   if (lastOut) toScan.push({ id: lastOut.id, who: lastOut.guest_name || 'last guest', role: 'departed' })
   if (upcoming) toScan.push({ id: upcoming.id, who: upcoming.guest_name || 'next guest', role: 'arriving' })
-  const vacancyScan = await scanVacancy(db, toScan)
+  const vacancyScan = await scanVacancy(db, toScan, secrets)
 
   if (vacancyScan.result === 'contradicted') {
     const f = vacancyScan.findings[0]
@@ -548,6 +566,9 @@ export async function runCheck(input: { unit?: string; listingId?: string; reque
  */
 export async function createRequest(check: DoorCheck, who: { email?: string; slackUserId?: string; name?: string; reason?: string }): Promise<{ ok: boolean; requestId?: string; token?: string; confirmToken?: string; error?: string }> {
   if (!check.canRelease || !check.listingId) return { ok: false, error: 'This check did not clear — nothing to park.' }
+  // Exactly one Slack person or none: the release is DM'd to this id, and "U1,U2" would open a group DM.
+  const slackUserId = isSlackUserId(who.slackUserId) ? String(who.slackUserId).trim() : undefined
+  who = { ...who, slackUserId }
   const db = supabaseAdmin()
   const token = randomBytes(24).toString('hex')
   // A SECOND token that survives the release. The first is burned the moment the code is revealed;
@@ -672,8 +693,20 @@ export async function releaseByToken(token: string, approvedBy: string, opts?: {
   // the person is entitled to the code outright and this call is just how it gets read and audited.
   const requester = String(row?.payload?.requesterEmail || '').trim().toLowerCase()
   const approver = String(approvedBy || '').trim().toLowerCase()
+  const SELF = 'You asked for this one, so somebody else has to release it. That is the whole point of the approval.'
   if (!opts?.selfReleaseOk && requester && approver && requester === approver) {
-    return { ok: false, error: 'You asked for this one, so somebody else has to release it. That is the whole point of the approval.' }
+    return { ok: false, error: SELF }
+  }
+  // ...AND NOT BY WAY OF A SECOND ADDRESS (2026-09-29 review). A request from Slack carries the Slack id
+  // Slack signed; since the Customer Service rooms let anyone there ask, a Slack profile on another
+  // address (jon@staysoflo.com, a personal mailbox) could park a request its owner then approves from
+  // their Lighthouse login. The Slack id is resolved the same way the room resolved it, and if it is the
+  // approver, it is theirs.
+  const requesterSlack = String(row?.payload?.requesterSlackId || '').trim()
+  if (!opts?.selfReleaseOk && requesterSlack && approver) {
+    const who = await resolveLighthouseEmail(requesterSlack).catch(() => null)
+    const same = [who?.email, who?.profileEmail].some(e => String(e || '').trim().toLowerCase() === approver)
+    if (same) return { ok: false, error: SELF }
   }
   if (row.status === 'executed') return { ok: false, error: 'That code was already sent.' }
   if (row.status === 'rejected' || row.status === 'expired') return { ok: false, error: `This request was ${row.status}.` }
@@ -691,7 +724,9 @@ export async function releaseByToken(token: string, approvedBy: string, opts?: {
     return { ok: false, error: resolved.missingReason || 'The door code has disappeared from Guesty since this was checked.' }
   }
 
-  await db.from('eve_actions').update({
+  // ONE RELEASE PER REQUEST, EVEN AT THE SAME SECOND (2026-09-29): the update only lands on a row that
+  // is still proposed, so two approvers tapping together cannot both release it.
+  const { data: won, error: upErr } = await db.from('eve_actions').update({
     status: 'executed', decided_by: approvedBy, decided_at: new Date().toISOString(),
     executed_at: new Date().toISOString(),
     // Blank the token so the link is single-use, and record WHO got it without recording WHAT.
@@ -699,7 +734,9 @@ export async function releaseByToken(token: string, approvedBy: string, opts?: {
     // answerable after this point, and it is the whole reason we will ever know a code is right.
     payload: { ...row.payload, token: null },
     result: { codeFp: fingerprint(code), sentTo: row.payload.requesterSlackId || row.payload.requesterEmail || 'unknown', at: new Date().toISOString() },
-  }).eq('id', row.id)
+  }).eq('id', row.id).eq('status', 'proposed').select('id')
+  if (upErr) return { ok: false, error: 'Could not record the release, so nothing was released. Try again.' }
+  if (!((won as any[]) || []).length) return { ok: false, error: 'That code was already sent.' }
 
   // BOTH CODES GO OUT. The keypad holds the old one until housekeeping changes it at the end of the
   // clean, so handing over only the newest value is handing over the one that does not open the
@@ -717,6 +754,8 @@ export async function releaseByToken(token: string, approvedBy: string, opts?: {
   }
 }
 
+const CONFIRM_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
+
 /**
  * "Did it actually open the door?" — answered from a link in the release DM, by whoever was
  * standing there. Deliberately needs no login: the token is the credential, it is single-purpose,
@@ -730,6 +769,10 @@ export async function confirmByToken(confirmToken: string, which: 'new' | 'old' 
   const { row } = await rowByToken(db, 'confirmToken', t)
   if (!row) return { ok: false, error: 'That link is not one of ours, or it is too old to match.' }
   if (row.status !== 'executed') return { ok: false, error: 'That code was never released, so there is nothing to confirm.' }
+  // This link needs no login, so it does not live forever: "which one opened it" is a question for the
+  // days after a release (it used to match only the latest 400 requests; now by token, with an age cap).
+  const releasedAt = row.executed_at ? Date.parse(row.executed_at) : 0
+  if (!releasedAt || Date.now() - releasedAt > CONFIRM_WINDOW_MS) return { ok: false, error: 'That link is not one of ours, or it is too old to match.' }
   const fp = row?.result?.codeFp
   if (!fp) return { ok: false, error: 'This release predates outcome tracking.' }
 
@@ -890,10 +933,13 @@ export async function rejectByToken(token: string, by: string): Promise<{ ok: bo
   const { row } = await rowByToken(db, 'token', t)
   if (!row) return { ok: false, error: 'This link is no longer valid.' }
   if (row.status !== 'proposed') return { ok: false, error: `This request was already ${row.status}.` }
-  await db.from('eve_actions').update({
+  // Only a request still waiting can be turned down — never one released a second ago (the same race
+  // as releaseByToken's).
+  const { data: won } = await db.from('eve_actions').update({
     status: 'rejected', decided_by: by, decided_at: new Date().toISOString(),
     payload: { ...row.payload, token: null },
-  }).eq('id', row.id)
+  }).eq('id', row.id).eq('status', 'proposed').select('id')
+  if (!((won as any[]) || []).length) return { ok: false, error: 'This request was already decided.' }
   return {
     ok: true, unit: row.payload.unit, slackUserId: row.payload.requesterSlackId || null,
     slackChannel: row.payload.slackChannel || null, slackTs: row.payload.slackTs || null,

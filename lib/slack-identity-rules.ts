@@ -29,7 +29,8 @@ export type Resolved = {
   problem?: string
 }
 
-/** One app_users row, reduced to what the decision needs. `privileged` = the owner or an admin. */
+/** One app_users row, reduced to what the decision needs. `privileged` = the owner, an admin, or anyone
+ *  set to Direct for door codes or allowed to approve them (lib/slack-identity.ts appUsers). */
 export type IdentityUser = { email: string; status: string; name: string; privileged: boolean }
 
 /** The Slack side. `guest` is null when unknown (a cached directory from before it was recorded). */
