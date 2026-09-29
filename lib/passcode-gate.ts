@@ -63,6 +63,9 @@ export function passcodeMatches(pw: string, stored: string): boolean {
 /** What to write for a NEW passcode: always the hash. */
 export function storablePasscode(pw: string): string { return hashPassword(pw) }
 
+/** Is this stored value already a hash (vs a legacy plaintext waiting for its upgrade)? */
+export function isStoredHash(stored: string): boolean { return isHash(stored) }
+
 // ── Lockout ───────────────────────────────────────────────────────────────────────────────────
 // `gate` is the ledger key: 'pw:share', 'pw:marketing', 'link:<code>' …
 const WRONG_PER_IP = 5

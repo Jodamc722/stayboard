@@ -3,27 +3,29 @@
 //
 // 2026-09-18: the vendor / marketing / audit / Botanica share passwords are gone from here. Every
 // shared page is a share_links row with its own passcode — set, rotated and revoked on /links.
+//
+// 2026-09-28 (audit B-9): all three are stored hashed (lib/shareAuth saveCredential) and this route
+// never returns a value again — not even to the owner. It answers "set, and when it last changed";
+// to change one, type a new one.
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase-admin'
-import { currentAdminPassword, currentRulesPassword, currentVaultCode } from '@/lib/shareAuth'
+import { credentialStates, saveCredential } from '@/lib/shareAuth'
 import { isSuperadmin, requireAdmin } from '@/lib/access'
 import { logAccess } from '@/lib/vault'
 
 export const dynamic = 'force-dynamic'
 
-// ADMINS ONLY, AND THE CLEARTEXT IS ADMINS ONLY TOO (2026-09-02). Same bar as the rest of Settings.
+// ADMINS ONLY (2026-09-02). Same bar as the rest of Settings.
 export async function GET() {
   const gate = await requireAdmin('admin')
   if (!gate.ok) return gate.res
-  const user = gate.access.user
-  const adminCur = await currentAdminPassword()
-  const adminSet = !!adminCur
-  // The admin password itself is visible ONLY to the Super Admin account (Jon).
-  const rules = await currentRulesPassword()
-  const vault = await currentVaultCode()
-  const payload: Record<string, any> = { vaultSet: !!vault, ok: true, adminSet, rulesSet: !!rules, rulesPassword: rules }
-  if (isSuperadmin(user.email)) { payload.adminPassword = adminCur; payload.vaultCode = vault }
-  return NextResponse.json(payload)
+  const s = await credentialStates()
+  return NextResponse.json({
+    ok: true,
+    admin: s.admin, rules: s.rules, vault: s.vault,
+    adminSet: s.admin.set, rulesSet: s.rules.set, vaultSet: s.vault.set,
+    // Only the owner may change the admin password (POST below) — the screen disables the field for everyone else.
+    canSetAdmin: isSuperadmin(gate.access.email),
+  })
 }
 
 export async function POST(req: NextRequest) {
@@ -32,16 +34,15 @@ export async function POST(req: NextRequest) {
   const user = gate.access.user
   try {
     const body = await req.json().catch(() => ({}))
-    const db = supabaseAdmin()
     // VAULT code (row id=6) — asked on every reveal in the vault. Admins only may set it, and the
     // change itself is written to the vault log: everyone's next reveal will need the new code.
     if (body.vaultCode !== undefined) {
       const vc = String(body.vaultCode || '').trim()
       if (vc.length < 4) return NextResponse.json({ ok: false, error: 'Vault code must be at least 4 characters.' }, { status: 400 })
-      const { error } = await db.from('share_settings').upsert({ id: 6, password: vc, updated_at: new Date().toISOString() })
-      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      const r = await saveCredential('vault', vc)
+      if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: 500 })
       await logAccess({ itemId: null, email: user.email, action: 'code-set', detail: 'vault code changed', ip: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null })
-      return NextResponse.json({ ok: true, vaultSet: true, vaultCode: isSuperadmin(user.email) ? vc : undefined })
+      return NextResponse.json({ ok: true, vaultSet: true, vault: r.state })
     }
     // ADMIN password (row id=2) — gates destructive actions like Delete
     if (body.adminPassword !== undefined) {
@@ -53,17 +54,17 @@ export async function POST(req: NextRequest) {
       }
       const ap = String(body.adminPassword || '').trim()
       if (ap.length < 4) return NextResponse.json({ ok: false, error: 'Admin password must be at least 4 characters.' }, { status: 400 })
-      const { error } = await db.from('share_settings').upsert({ id: 2, password: ap, updated_at: new Date().toISOString() })
-      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-      return NextResponse.json({ ok: true, adminSet: true })
+      const r = await saveCredential('admin', ap)
+      if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: 500 })
+      return NextResponse.json({ ok: true, adminSet: true, admin: r.state })
     }
     // RULES password (row id=5) — lets share-link (non-signed-in) users edit the Salato rules
     if (body.rulesPassword !== undefined) {
       const rp = String(body.rulesPassword || '').trim()
       if (rp.length < 4) return NextResponse.json({ ok: false, error: 'Rules password must be at least 4 characters.' }, { status: 400 })
-      const { error } = await db.from('share_settings').upsert({ id: 5, password: rp, updated_at: new Date().toISOString() })
-      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-      return NextResponse.json({ ok: true, rulesSet: true, rulesPassword: rp })
+      const r = await saveCredential('rules', rp)
+      if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: 500 })
+      return NextResponse.json({ ok: true, rulesSet: true, rules: r.state })
     }
     if (body.password !== undefined || body.marketingPassword !== undefined || body.auditPassword !== undefined || body.botanicaPassword !== undefined) {
       return NextResponse.json({ ok: false, error: 'Share-link passcodes are set per link on the Share Links page (/links) now.' }, { status: 410 })

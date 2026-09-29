@@ -8,7 +8,7 @@
 // allowed to. It is never in the list response, never in a log line, never in an error message.
 import crypto from 'crypto'
 import { supabaseAdmin } from './supabase-admin'
-import { currentVaultCode } from './shareAuth'
+import { currentVaultCode, vaultCodeVerdict } from './shareAuth'
 
 export const VAULT_BUCKET = 'vault'
 export const ITEMS = 'vault_items'
@@ -279,7 +279,14 @@ export async function checkVaultCode(opts: {
       return { ok: false, status: 429, wrongCode: true, error: 'Too many wrong codes. Try again in ' + WRONG_WINDOW_MIN + ' minutes.' }
     }
   } catch { /* counting failures never block a correct code */ }
-  if (!opts.code || opts.code !== cur) {
+  // The stored code is a hash now (2026-09-28 audit, B-9): compare in constant time, upgrade a legacy
+  // plaintext on its first correct entry, and add the per-address lockout on top of the per-person one.
+  const verdict = await vaultCodeVerdict(opts.code, cur, opts.ip || null)
+  if (verdict === 'locked') {
+    await logAccess({ itemId: opts.itemId, email: me, action: 'denied', detail: WRONG + ' · locked out (' + opts.purpose + ')', ip: opts.ip })
+    return { ok: false, status: 429, wrongCode: true, error: 'Too many wrong codes. Try again in ' + WRONG_WINDOW_MIN + ' minutes.' }
+  }
+  if (verdict !== 'ok') {
     await logAccess({ itemId: opts.itemId, email: me, action: 'denied', detail: WRONG + ' (' + opts.purpose + ')', ip: opts.ip })
     return { ok: false, status: 403, wrongCode: true, error: opts.code ? 'Wrong vault code.' : 'Enter the vault code.' }
   }
