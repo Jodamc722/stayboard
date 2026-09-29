@@ -194,7 +194,7 @@ export async function GET(req: NextRequest) {
         db.from('ffe_orders').select('*').order('created_at', { ascending: false }).limit(500),
         // Every line on every order, paged — the rollups below add them all up. Bounded at 5 pages
         // (a page load); past that the board says so rather than show short totals.
-        pageRows((a, b) => db.from('ffe_order_lines').select('order_id,qty,unit_cost,stage').order('id').range(a, b), 5)
+        pageRows((a, b) => db.from('ffe_order_lines').select('order_id,qty,unit_cost,stage').order('id').range(a, b), 20)
           .then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'could not read every order line — the totals would be short' } : null })),
       ])
       if (oErr) return fail(oErr.message)
@@ -225,9 +225,10 @@ export async function GET(req: NextRequest) {
     if (!ownerId) {
       // Owners with something to BUY. A Fix answer is deliberately not counted here — it belongs
       // on the Fixes board, not in an owner's order.
-      // Every flagged item in the portfolio, paged (counted per owner below), bounded at 5 pages.
+      // Every flagged item in the portfolio, paged (counted per owner below), bounded at 20 pages —
+      // two narrow columns, and add/replace answers never shrink as items get ordered.
       const { data: ans, error } = await pageRows((a, b) => db.from('ffe_answers')
-        .select('listing_id,answer').in('answer', BUYS).order('id').range(a, b), 5)
+        .select('listing_id,answer').in('answer', BUYS).order('id').range(a, b), 20)
         .then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'could not read every flagged item — the counts would be short' } : null }))
       if (error) return fail(error.message)
       const byListing: Record<string, number> = {}

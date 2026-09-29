@@ -73,6 +73,8 @@ export function FfeOrders() {
       if (!a?.ok) throw new Error(a?.error || 'Could not load orders.')
       setOrders(a.orders || [])
       setOwners(b?.owners || [])
+      // The owners list failing is not "nobody has anything to buy" — say so.
+      if (b && b.ok === false) setErr(b.error || 'Could not load the owners with something to buy.')
     } catch (e: any) { setErr(String(e?.message || e)) }
   }, [])
   useEffect(() => { load() }, [load])
