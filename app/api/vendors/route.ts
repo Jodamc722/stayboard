@@ -1,6 +1,6 @@
 // THE VENDOR DIRECTORY, for every board (Jon, 2026-09-24: one vendor list across projects,
-// glitches and requests). /api/projects/vendors stays for the project board; this one answers
-// anyone signed in, because a glitch or a request is raised by people who never open Projects.
+// glitches and requests). It answers anyone signed in, because a glitch or a request is raised by
+// people who never open Projects.
 //
 //   GET  /api/vendors[?all=1]   → active vendors (all: inactive too), regulars first
 //   POST /api/vendors { … }     → save one (create or update) and hand it back — the inline add
