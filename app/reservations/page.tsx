@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-server'
+import { pageRows } from '@/lib/db-page'
 import { Shell } from '@/components/Shell'
 import { DateFilter } from '@/components/DateFilter'
 import { customFieldNameMap, filledCustomFields } from '@/lib/custom-fields'
@@ -103,14 +104,37 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
   const dl = viewingToday ? 'today' : new Date(todayStr + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 
   // Upcoming first (>= today, ascending), then past (descending). Pull two sets to support tabbed UI.
-  const [{ data: upcoming }, { data: past }, { count: pastCount }, { data: sync }] = await Promise.all([
+  // UPCOMING, READ WHOLE WHERE IT IS COUNTED (2026-09-29). This was one `.limit(3000)` read of every
+  // stay not yet checked out; PostgREST stops at 1,000, so past 1,000 stays on the books the "active"
+  // count stuck at 1,000 and a heavy week could drop arrivals off the 7-day pills. Now: every stay
+  // arriving before date+7 (all the pills and today's tabs count), paged in check-in order; the next
+  // 60 arrivals after that (the Upcoming tab shows 60); and an exact count of the whole set.
+  const in7d = new Date(todayStr + 'T12:00:00Z'); in7d.setUTCDate(in7d.getUTCDate() + 7)
+  const in7Str = in7d.toISOString().slice(0, 10)
+  const [near, { data: later }, { count: upCount }, { data: past }, { count: pastCount }, { data: sync }] = await Promise.all([
+    pageRows<any>((a, b) => supabase
+      .from('guesty_reservations')
+      .select('id, listing_name, guest_name, guest_email, check_in, check_out, nights, status, source, money_total, money_paid, money_currency, custom_fields')
+      .in('status', ['confirmed', 'checked_in', 'checked_out'])
+      .gte('check_out', todayStr)
+      .lt('check_in', in7Str)
+      .order('check_in', { ascending: true })
+      .order('id', { ascending: true })
+      .range(a, b), 5),
     supabase
       .from('guesty_reservations')
       .select('id, listing_name, guest_name, guest_email, check_in, check_out, nights, status, source, money_total, money_paid, money_currency, custom_fields')
       .in('status', ['confirmed', 'checked_in', 'checked_out'])
       .gte('check_out', todayStr)
+      .gte('check_in', in7Str)
       .order('check_in', { ascending: true })
-      .limit(3000),
+      .order('id', { ascending: true })
+      .limit(60),
+    supabase
+      .from('guesty_reservations')
+      .select('id', { count: 'exact', head: true })
+      .in('status', ['confirmed', 'checked_in', 'checked_out'])
+      .gte('check_out', todayStr),
     supabase
       .from('guesty_reservations')
       .select('id, listing_name, guest_name, guest_email, check_in, check_out, nights, status, source, money_total, money_paid, money_currency, custom_fields')
@@ -126,14 +150,14 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
     supabase.from('guesty_sync_status').select('last_sync_at, last_error, items_synced').eq('entity', 'reservations').maybeSingle()
   ])
 
+  if (near.truncated) console.error('[reservations] read of stays arriving before ' + in7Str + ' stopped early — the pills and tabs may be short')
   const cfMap = await customFieldNameMap()
-  const up = upcoming ?? []
+  const up = near.rows.concat(later ?? [])
   const pastRows = past ?? []
   const pastTotal = pastCount ?? pastRows.length
+  const upTotal = upCount ?? up.length
 
   // ── KPIs derived only from queried columns ────────────────────────────────
-  const in7d = new Date(todayStr + 'T12:00:00Z'); in7d.setUTCDate(in7d.getUTCDate() + 7)
-  const in7Str = in7d.toISOString().slice(0, 10)
   const isCanceled = (s?: string | null) => /cancel|declin/i.test(s || '')
 
   const checkInsToday = up.filter(r => r.check_in === todayStr && !isCanceled(r.status)).length
@@ -197,7 +221,7 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
             </div>
             <div className="ml-auto flex items-center gap-2 flex-wrap">
               <DateFilter selected={todayStr} isToday={viewingToday} />
-              <span className="text-[11px] text-muted" title={`${up.length} active · ${pastTotal} past${totalSynced ? ` · ${totalSynced.toLocaleString()} synced in total` : ''}`}>Synced {fmtSync(lastSync)}</span>
+              <span className="text-[11px] text-muted" title={`${upTotal} active · ${pastTotal} past${totalSynced ? ` · ${totalSynced.toLocaleString()} synced in total` : ''}`}>Synced {fmtSync(lastSync)}</span>
             </div>
           </div>
 
