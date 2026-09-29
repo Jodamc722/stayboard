@@ -1,8 +1,8 @@
 -- 137 — the two client read/write policies nothing uses (2026-09-29).
 --
--- NOT APPLIED YET — waiting on Jon's go-ahead, because both policies belong to the Stay Onboarding
--- app's side of this shared Supabase project. Safe to run more than once, in one go, in the Supabase
--- SQL editor.
+-- Applied in production on 2026-09-29 on Jon's go-ahead (both policies sit on the Stay Onboarding
+-- app's side of this shared Supabase project). Verified after: guesty_tokens has no client policy;
+-- guesty_reviews_read is members-only. Safe to run more than once, in one go, in the SQL editor.
 --
 -- Evidence it breaks nothing: pg_stat_statements since 2026-08-08 (no entries evicted — dealloc 0,
 -- 3,496 of 5,000 tracked). No statement run as `authenticated` or `anon` ever touched guesty_tokens or
