@@ -253,7 +253,9 @@ export function redactGuestPII<T>(value: T): T {
     }
     collect(value, 0)
     const nameList = Object.keys(names).sort((a, b) => b.length - a.length)
-    const nameRes = nameList.map(n => new RegExp(n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'))
+    // WHOLE WORDS ONLY (2026-09-29 review, N10): a guest called "Ana" turned "Management" into
+    // "Mthe guestgement". A word boundary that knows accented letters, so "José" still matches.
+    const nameRes = nameList.map(n => new RegExp('(?<![\\p{L}\\p{N}_])' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\p{L}\\p{N}_])', 'giu'))
     const scrubNames = (s: string) => {
       let out = s
       for (const re of nameRes) out = out.replace(re, () => { hidden++; return 'the guest' })
