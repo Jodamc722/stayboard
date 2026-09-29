@@ -236,12 +236,13 @@ export async function POST(req: NextRequest) {
             try {
               const { data: rrow } = await db.from('guesty_reservations').select('raw').eq('id', rid).maybeSingle()
               const rraw: any = (rrow && rrow.raw && typeof rrow.raw === 'object') ? rrow.raw : {}
-              await db.from('guesty_reservations').update({ custom_fields: w.fields, raw: Object.assign({}, rraw, { customFields: w.fields }) }).eq('id', rid)
-            } catch {}
+              const { error: mErr } = await db.from('guesty_reservations').update({ custom_fields: w.fields, raw: Object.assign({}, rraw, { customFields: w.fields }) }).eq('id', rid)
+              if (mErr) console.error('salato-verify: reservation mirror update failed', mErr.message)
+            } catch (e) { console.error('salato-verify: reservation mirror update failed', e) }
           }
         }
       }
-    } catch {}
+    } catch (e) { console.error('salato-verify: Guesty note push failed', e) }
 
     // Team notification: details + ID/selfie/signature images + a PDF record of the initialed rules.
     // Recipients are editable in App settings (app_settings 'salato_verify_notify'). Best-effort.
@@ -299,7 +300,7 @@ export async function POST(req: NextRequest) {
     } catch (e: any) { record.emailError = String(e?.message || e) }
 
     // Second write only adds what happened to the note and the email; the stay is already verified.
-    try { await db.from('app_settings').upsert({ key: keyFor(rid), value: JSON.stringify(record), updated_at: new Date().toISOString() }) } catch {}
+    try { const { error: e2 } = await db.from('app_settings').upsert({ key: keyFor(rid), value: JSON.stringify(record), updated_at: new Date().toISOString() }); if (e2) console.error('salato-verify: record update failed', e2.message) } catch (e) { console.error('salato-verify: record update failed', e) }
 
     return NextResponse.json({ ok: true, pushedToGuesty: record.pushedToGuesty, emailedTo: record.emailedTo || [] })
   } catch (e: any) {

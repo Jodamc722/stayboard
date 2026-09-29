@@ -55,7 +55,7 @@ async function handlePost(req: NextRequest) {
       if (CLEAN.test(name)) return NextResponse.json({ ok: false, error: 'Departure cleans can only be deleted from the scheduler (admin password required).' }, { status: 403 })
       const r = await bzApi('/task/' + encodeURIComponent(taskId), { method: 'DELETE' })
       if (!r.ok) return NextResponse.json({ ok: false, error: 'Breezeway: ' + r.text.slice(0, 140) }, { status: 502 })
-      try { await db.from('breezeway_tasks_sync').delete().eq('id', taskId) } catch {}
+      try { const { error } = await db.from('breezeway_tasks_sync').delete().eq('id', taskId); if (error) console.error('ops-today/task-action: mirror delete failed', error.message) } catch (e) { console.error('ops-today/task-action: mirror delete failed', e) }
       return NextResponse.json({ ok: true, deleted: true })
     }
 
@@ -127,7 +127,7 @@ async function handlePost(req: NextRequest) {
       const r = await updateBreezewayTask(taskId, { name: newName })
       if (!r.ok) return NextResponse.json({ ok: false, error: 'Breezeway: ' + r.text.slice(0, 140) }, { status: 502 })
       // mirror immediately so the board shows the flag without waiting for the next sync
-      try { await db.from('breezeway_tasks_sync').update({ name: newName }).eq('id', taskId) } catch {}
+      try { const { error } = await db.from('breezeway_tasks_sync').update({ name: newName }).eq('id', taskId); if (error) console.error('ops-today/task-action: mirror rename failed', error.message) } catch (e) { console.error('ops-today/task-action: mirror rename failed', e) }
       return NextResponse.json({ ok: true, name: newName, vendor: on })
     }
 
@@ -152,7 +152,7 @@ async function handlePost(req: NextRequest) {
         liveStatus = str(typeof st === 'object' ? (st.code || st.name) : st).toLowerCase()
       } catch { /* verified below as best effort */ }
       const done = isTaskDone(liveStatus)   // the shared rule (lib/task-categories)
-      if (done) { try { await db.from('breezeway_tasks_sync').update({ status: liveStatus || 'completed', finished_at: new Date().toISOString() }).eq('id', taskId) } catch {} }
+      if (done) { try { const { error } = await db.from('breezeway_tasks_sync').update({ status: liveStatus || 'completed', finished_at: new Date().toISOString() }).eq('id', taskId); if (error) console.error('ops-today/task-action: mirror complete failed', error.message) } catch (e) { console.error('ops-today/task-action: mirror complete failed', e) } }
       return NextResponse.json({ ok: done, status: liveStatus || null, error: done ? undefined : 'Breezeway accepted the call but the task still reads "' + (liveStatus || 'unknown') + '" — close it in Breezeway.' }, { status: done ? 200 : 502 })
     }
 
