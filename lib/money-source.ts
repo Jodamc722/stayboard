@@ -25,6 +25,7 @@
 // fall back to our own math AND SAY SO on screen (feedback-alerts-must-name-things).
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 import { getSetting } from '@/lib/app-settings'
 import { revenueAppUnitMonth, type RevUnitMonthRow } from '@/lib/revenue-source'
 
@@ -223,8 +224,14 @@ export async function monthExpenses(month: string): Promise<MonthExpenses | null
   const d = await getMoneyDomains()
   if (!d.expenses) return null
   const db = supabaseAdmin()
-  const { data, error } = await db.from('rev_pnl_line').select('*').eq('month', month).limit(2000)
-  if (error || !data || !data.length) return null
+  // Paged on the table's own key (month, account, kind): a month past 1,000 lines used to total
+  // the first 1,000 as if they were all of them. A read that stops early is "not available", as an
+  // error always was — never a smaller expense figure.
+  const read = await pageRows<any>((a, b) => db.from('rev_pnl_line').select('*').eq('month', month)
+    .order('account').order('kind').range(a, b))
+  if (read.truncated) console.error('[money-source] monthExpenses: the P&L read for ' + month + ' stopped early — expenses shown as not available')
+  const data = read.rows
+  if (read.truncated || !data.length) return null
 
   // Prefer closed actuals; fall back to his live estimate for an open month.
   const actual = data.filter((r: any) => r.kind === 'actual')
