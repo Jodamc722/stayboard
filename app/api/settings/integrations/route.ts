@@ -89,7 +89,7 @@ export async function GET() {
           envVar: 'SLACK_CLIENT_ID + SLACK_CLIENT_SECRET',
           steps: [
             'api.slack.com/apps → Create New App → From scratch → pick your workspace',
-            'OAuth & Permissions → Redirect URLs → add https://stayboard-three.vercel.app/api/integrations/slack/callback',
+            'OAuth & Permissions → Redirect URLs → add ' + (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '') + '/api/integrations/slack/callback',
             'OAuth & Permissions → Bot Token Scopes → add incoming-webhook',
             'Basic Information → App Credentials → copy the Client ID and Client Secret',
             'Vercel → add SLACK_CLIENT_ID and SLACK_CLIENT_SECRET → Production → redeploy',

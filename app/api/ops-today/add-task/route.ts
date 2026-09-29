@@ -117,7 +117,7 @@ async function handlePost(req: NextRequest) {
       } catch { assigned = false }
     }
     // WRITE THROUGH to the mirror: the board reads breezeway_tasks_sync, which refreshes every
-    // 15 minutes — without this a task you just created was invisible until the next sync.
+    // 30 minutes — without this a task you just created was invisible until the next sync.
     try {
       await db.from('breezeway_tasks_sync').upsert({
         id: String(r.data.id), reference_property_id: listingId, name: title,

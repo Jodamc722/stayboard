@@ -1,7 +1,7 @@
 // Reviews feed — reads the persisted guesty_reviews table FIRST (fast, no Guesty call).
-// The 15-min sync (lib/guesty.ts → syncReviews) keeps that table fresh. If the table is
-// empty or errors (e.g. before the SQL migration has been run), we FALL BACK to the live
-// Guesty pull so nothing breaks. Response shape is preserved exactly for ReviewsPanel.
+// The 6-hourly review sync (cron/sync-reviews → lib/guesty.ts syncReviewsDetailed) keeps that table
+// fresh. If the table is empty or errors (e.g. before the SQL migration has been run), we FALL
+// BACK to the live Guesty pull so nothing breaks. Response shape is preserved exactly for ReviewsPanel.
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pageRows } from '@/lib/db-page'

@@ -12,7 +12,7 @@
 //   • Signed-in users skip the passcode, same as reading.
 //
 // Everything else matches /api/ops-today/add-task: create in Breezeway, then write through to
-// breezeway_tasks_sync so the board shows it before the 15-minute sync catches up.
+// breezeway_tasks_sync so the board shows it before the 30-minute sync catches up.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { checkRowPasscode, lockedResponse } from '@/lib/passcode-gate'

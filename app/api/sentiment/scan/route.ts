@@ -39,9 +39,9 @@ export async function POST(req: NextRequest) {
   // and finding out from the review.
   // AUTH (fixed 2026-08-26). The 2026-08-19 note above says this route "had NO cron and required a
   // session". It got its cron — and then answered it 401 every half hour, because the bearer check
-  // needs a CRON_SECRET that was never set. So the 392 unscanned conversations that prompted that
-  // note were joined by every conversation since. This scan calls Anthropic per thread, so with no
-  // secret it runs for anyone but no more often than its own schedule. See lib/cron-auth.ts.
+  // needs a CRON_SECRET that was not set then (it is now). So the 392 unscanned conversations that
+  // prompted that note were joined by every conversation since. This scan calls Anthropic per thread,
+  // so with no secret it runs for anyone but no more often than its own schedule. See lib/cron-auth.ts.
   //
   // A PERSON PRESSING SCAN (2026-09-28 audit, D16). The scheduler carries the bearer. The Scan
   // button on the Sentiment tab carries a session — and with CRON_SECRET set (it is, in prod) the
@@ -67,8 +67,8 @@ export async function POST(req: NextRequest) {
   let flushed: any = null
   try { flushed = await flushDeferred('cron:sentiment-scan'); if (flushed.ran || flushed.failed) await recordRun({ name: 'eve-deferred', ok: !flushed.failed, itemCount: flushed.ran, detail: flushed }) } catch { flushed = null }
   // EVE'S EYES (2026-09-21). The eight watches (lib/eve/watches.ts) ride the same 30-minute beat,
-  // for the cron only — an interactive scan should not wait on the day picture. vercel.json is at
-  // its 40-entry cap, so this is a chain, not a cron. Best effort; a watch failure never stops the scan.
+  // for the cron only — an interactive scan should not wait on the day picture. A chain, not a cron
+  // of its own. Best effort; a watch failure never stops the scan.
   let watched: any = null
   if (viaCron) {
     try {

@@ -4,7 +4,8 @@
 // strings end up in logs and forwarded screenshots).
 //
 // PRIVACY RULES, hard-coded, not configurable:
-//   • Never guest emails or phone numbers.
+//   • Never guest emails or phone numbers — except the `contacts` section, which will not render
+//     without the link's passcode (Jon, 2026-09-17).
 //   • Guest names come as "Maria G." unless the link explicitly enables full names.
 //   • Dollar figures only when show_money is on — one switch for the whole link.
 import { NextRequest, NextResponse } from 'next/server'
