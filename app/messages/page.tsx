@@ -94,7 +94,19 @@ export default async function MessagesPage() {
   const humans = speed.rows.map(r => num(r.human_first_ms)).filter(n => Number.isFinite(n) && n >= 0)
   const enough = humans.length >= MIN_SAMPLE
   const humanMed = enough ? median(humans) : null
-  const within1h = enough ? Math.round((humans.filter(n => n <= HOUR_MS).length / humans.length) * 100) : null
+  // A GUEST STILL WAITING IS A MISS (2026-09-29 review, nb-9). The share counted only threads a
+  // person had already answered, so the longer a guest went unanswered the less they counted
+  // against it. Every thread in the waiting set with no reply from a person yet, waiting over an
+  // hour, now joins the denominator as a miss.
+  const humanByConv: Record<string, number> = {}
+  for (const r of speed.rows) { const h = num(r.human_first_ms); if (Number.isFinite(h) && h >= 0) humanByConv[String(r.conversation_id)] = h }
+  const waitingPastHour = waiting.rows.filter(r => {
+    if (humanByConv[r.conversation_id] != null) return false   // a person answered its first question: counted above
+    const t = Date.parse(String(r.awaiting_since || r.last_guest_at || ''))
+    return Number.isFinite(t) && now - t > HOUR_MS
+  }).length
+  const in1hBase = humans.length + waitingPastHour
+  const within1h = in1hBase >= MIN_SAMPLE ? Math.round((humans.filter(n => n <= HOUR_MS).length / in1hBase) * 100) : null
   const anyMed = firsts.length >= MIN_SAMPLE ? median(firsts) : null
   const n = humans.length
   const sample = `${n} thread${n === 1 ? '' : 's'} the guest wrote in during the last 30 days`
@@ -103,9 +115,10 @@ export default async function MessagesPage() {
     + (enough ? '' : ' · too few to call')
     + (speed.truncated ? ' · partial sample' : '')
     + (speed.rows.length > n ? ` · ${speed.rows.length - n} more had no reply yet, or none we could attribute to a person` : '')
-  const within1hTitle = enough
+  const within1hTitle = within1h != null
     ? `Share of ${sample} whose first reply from a person came within an hour — the benchmark the OTAs reward`
-    : `Too few threads to call (${n}) — needs ${MIN_SAMPLE}`
+      + (waitingPastHour ? ` · ${waitingPastHour} guest${waitingPastHour === 1 ? '' : 's'} still waiting over an hour with no reply from a person count${waitingPastHour === 1 ? 's' : ''} as ${waitingPastHour === 1 ? 'a miss' : 'misses'}` : '')
+    : `Too few threads to call (${in1hBase}) — needs ${MIN_SAMPLE}`
   const waitingTitle = waiting.error ? `Could not read the waiting list: ${waiting.error}`
     : `Guests who wrote in the last ${AWAITING_HORIZON_H}h with no reply from a person since (Guesty templates don't count)`
       + (waiting.slaKnown ? ` · ${late} past their reply-by time — ${SLA_RULE_TEXT}` : ' · reply-by times appear once migration 134 has run')
