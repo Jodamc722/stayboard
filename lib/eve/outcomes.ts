@@ -6,7 +6,7 @@
 // result is whether somebody did it. Until now she could not tell the difference, so she could not
 // learn from it, and neither could Jon.
 //
-// HOW IT WORKS. Every hour (piggybacking the on-watch pass, since vercel.json is at its cron cap),
+// HOW IT WORKS. Every hour (riding the slack-watch cron with the on-watch pass: :48, 00–04 and 11–23 UTC),
 // walk the last 14 days of executed actions and ask the system each one touched what is true now:
 //   task_create / task_assign / task_note   → Breezeway: open · running · done · overdue · gone
 //   task_cancel                              → Breezeway: gone (stayed cancelled) · reopened

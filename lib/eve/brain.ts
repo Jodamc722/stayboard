@@ -28,9 +28,9 @@
 // chat that she got something wrong, the correction is captured as a belief and the beliefs that led
 // her astray are weakened.
 //
-// RUNS on the eve-metrics cron line (vercel.json is at its cron cap): 3:43am ET metrics, 4:43am ET
-// this, 5:43am ET the dossiers. Storage is eve_knowledge (journal:<day>, predictions:<day>) and
-// eve_memory, so there is no migration to wait for.
+// RUNS on the eve-metrics cron line (app/api/cron/eve-metrics picks the phase by the UTC hour):
+// 07:50 UTC metrics, 08:50 UTC this, 09:50 UTC the dossiers. Storage is eve_knowledge
+// (journal:<day>, predictions:<day>) and eve_memory, so there is no migration to wait for.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelFor } from '@/lib/ai-models'

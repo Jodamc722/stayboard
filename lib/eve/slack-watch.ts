@@ -372,8 +372,8 @@ export async function sweepLoops(): Promise<{ expired: Record<string, number>; c
 }
 
 /**
- * The pass. Safe to run twice a day; everything it does is idempotent on (channel, msg_ts) and the
- * cursors only ever move forward.
+ * The pass. Runs hourly at :48, 00–04 and 11–23 UTC (vercel.json); everything it does is idempotent
+ * on (channel, msg_ts) and the cursors only ever move forward.
  */
 export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }): Promise<WatchRun> {
   const out: WatchRun = { ok: true, channels: 0, read: 0, candidates: 0, modelCalls: 0, opened: 0, closed: 0, tracked: 0, nudged: 0, learned: 0, asked: 0, escalated: 0, handoff: false, digest: false, notes: [] }

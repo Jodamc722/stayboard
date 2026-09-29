@@ -323,7 +323,7 @@ export async function loadMemories(scopes: string[], email: string, limit = 60, 
  * THE PASS WORD OVERLAP CANNOT DO. A cheap model reads the question next to the top candidates and
  * says which ones a good colleague would want in mind before answering — "Capri is Opal's building"
  * for a question about a Capri repair, whether or not the question used the word. One short call
- * on Haiku, a few hundred tokens, capped at four seconds; on any failure the lexical order stands,
+ * on Haiku, a few hundred tokens, capped at six seconds; on any failure the lexical order stands,
  * so a slow or missing model costs nothing but this refinement. Returns ids in the model's order,
  * or null when it did not run.
  */

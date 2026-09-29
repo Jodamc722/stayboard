@@ -1,13 +1,13 @@
-// The tool registry and the progressive-disclosure mechanism that makes 48 tools workable.
+// The tool registry and the progressive-disclosure mechanism that makes all of Eve's tools workable.
 //
-// WHY NOT JUST HAND HER ALL 48. Two reasons, both measured rather than theoretical: the schemas
+// WHY NOT JUST HAND HER ALL OF THEM. Two reasons, both measured rather than theoretical: the schemas
 // alone would add ~12k tokens to EVERY request in the loop, and tool-selection accuracy falls off
 // once a model is choosing from more than about twenty options — it starts reaching for the
 // plausible-sounding tool instead of the right one.
 //
-// SO: twelve core tools are always present, plus open_domain(). When Eve opens a domain the server
-// appends that domain's schemas to the tools array for the REST OF THE CONVERSATION. Cost is one
-// extra turn on the first deep question of a thread; benefit is she picks from twelve, then six.
+// SO: a core set (CORE_TOOLS, the doc tools, my_actions_today, BRAIN_TOOLS, open_domain) is always
+// present; everything else is appended per domain by open_domain() for the REST OF THE CONVERSATION.
+// Cost is one extra turn on the first deep question of a thread.
 import 'server-only'
 import { redactMoney } from '@/lib/money'
 import { redactSensitive, codeFieldNameKind, redactGuestPII, maskMoneyStrings } from './redact'
