@@ -231,7 +231,7 @@ export const CORE_TOOLS: EveTool[] = [
 
   {
     name: 'review_summary',
-    description: 'Aggregate review score for a BUILDING, a unit (name/id), or the whole portfolio (no args = portfolio). Returns avg_rating on a 5-STAR scale (Airbnb /5; Booking & Vrbo normalized from /10), review_count, star distribution, unanswered count, and the lowest-rated units. ALWAYS use this for any "average review score/rating" question — never average raw ratings yourself.',
+    description: 'Aggregate review score for a BUILDING, a unit (name/id), or the whole portfolio (no args = portfolio). Returns avg_rating on a 5-STAR scale (Airbnb and Vrbo /5; Booking normalized from /10), review_count, star distribution, unanswered count, and the lowest-rated units. ALWAYS use this for any "average review score/rating" question — never average raw ratings yourself.',
     input_schema: obj({ building: S.str, name: S.str, id: S.str }),
     run: async (input, ctx) => {
       // PAGED. This is the tool whose own description says "ALWAYS use this for any average review
@@ -260,7 +260,7 @@ export const CORE_TOOLS: EveTool[] = [
         .sort((a, b) => (a.avg ?? 9) - (b.avg ?? 9))
       return {
         scope: input?.building ? `building: ${input.building}` : (input?.name ? `unit: ${input.name}` : (input?.id ? `unit id: ${input.id}` : 'whole portfolio')),
-        rating_scale: '/5 (Airbnb /5; Booking & Vrbo normalized from /10)',
+        rating_scale: '/5 (Airbnb and Vrbo /5; Booking normalized from /10)',
         truncated: revTruncated || undefined,
         review_count: rows.length, rated_count: vals.length,
         avg_rating: vals.length ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100 : null,

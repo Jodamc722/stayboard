@@ -68,7 +68,7 @@ export function clampDays(n: any, def = 30, max = 400): number {
   const x = Number(n)
   return Math.min(Math.max(Number.isFinite(x) ? x : def, 1), max)
 }
-/** Ratings arrive on MIXED scales (Airbnb /5, Booking & Vrbo /10). Everything normalizes to /5. */
+/** Ratings arrive on MIXED scales (Airbnb and Vrbo /5, Booking /10). Everything normalizes to /5. */
 export function normStar(n: any): number | null {
   const v = Number(n)
   if (!Number.isFinite(v) || v <= 0) return null
