@@ -13,6 +13,7 @@
 // Nothing here creates a task. It ranks what is worth doing and says why, and a human decides.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 import { getOpsPresets } from '@/lib/app-settings'
 
 const DONE = /complete|finish|close|approv/i
@@ -70,36 +71,45 @@ export async function vacantWork(vacants: VacantUnit[], today: string): Promise<
   const presets = await getOpsPresets()
   const auditDueDays = Math.max(30, Number((presets as any)?.timing?.auditDueDays) || 365)
 
-  const [tasksRes, auditRes, reqRes, glitchRes, listRes] = await Promise.all([
+  const [tasksRead, auditRead, reqRead, glitchRead, listRes] = await Promise.all([
     // Audit / inspection / deep-clean history, by task name (the rule above).
     // NEWEST FIRST (super audit, 2026-08-22): with no ORDER BY, PostgREST's 5000-row cap dropped
     // ARBITRARY rows once the vacant list carried enough history — a unit's real audit could be
     // the row that fell off, and the brief printed "never done" about work on record. Ordered
     // newest-first, the rows that decide recency always survive the cap.
-    db.from('breezeway_tasks_sync')
-      .select('reference_property_id,name,status,finished_at,scheduled_date')
+    // PAGED, AND ONLY THE NAMES THE LOOP BELOW READS (2026-09-29): that cap was never 5,000 —
+    // PostgREST returns 1,000 — so every vacant unit's whole history shared ONE newest-first page,
+    // and a yearly audit fell off the end of it and printed "Property audit — never done". The name
+    // filter is the loop's own (audit | inspect | walk-through | unit check | deep clean), in SQL.
+    pageRows<any>((a, b) => db.from('breezeway_tasks_sync')
+      .select('id,reference_property_id,name,status,finished_at,scheduled_date')
       .in('reference_property_id', ids)
-      .order('scheduled_date', { ascending: false }).limit(5000),
+      .or('name.ilike.%audit%,name.ilike.%inspect%,name.ilike.%walk-through%,name.ilike.%walk through%,name.ilike.%walkthrough%,name.ilike.%unit check%,name.ilike.%deep clean%,name.ilike.%deep-clean%,name.ilike.%detail clean%')
+      .order('scheduled_date', { ascending: false }).order('id').range(a, b), 5),
     // AND the app's OWN audit records. An audit done through the walk engine never creates a
     // Breezeway task called "audit", so counting only those said "never audited" for units that
     // were audited last month. Both sources, newest wins.
-    db.from('property_audits').select('listing_id,status,created_at,updated_at')
-      .in('listing_id', ids).limit(3000),
-    db.from('field_requests').select('id,listing_id,status,priority,title')
-      .in('status', ['open', 'in_progress']).limit(2000),
-    db.from('glitches').select('id,listing_id,status,overview')
-      .not('status', 'in', '("done","resolved","closed")').limit(2000),
+    pageRows<any>((a, b) => db.from('property_audits').select('id,listing_id,status,created_at,updated_at')
+      .in('listing_id', ids).order('id').range(a, b)),
+    // Open work orders and guest issues, oldest first (the first one per unit is the line quoted).
+    pageRows<any>((a, b) => db.from('field_requests').select('id,listing_id,status,priority,title')
+      .in('status', ['open', 'in_progress']).order('created_at').order('id').range(a, b)),
+    pageRows<any>((a, b) => db.from('glitches').select('id,listing_id,status,overview')
+      .not('status', 'in', '("done","resolved","closed")').order('created_at').order('id').range(a, b)),
     // Photo strength — a wide-open window is the moment to reshoot a thin set. photo_score is what
     // the listing photo AI wrote; a null means it has never even been looked at.
     db.from('guesty_listings').select('id,pictures,photo_score').in('id', ids).limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
   ])
+  if (tasksRead.truncated || auditRead.truncated || reqRead.truncated || glitchRead.truncated) {
+    console.error('[vacant-work] a paged read stopped early — some vacant-unit suggestions may be missing or wrong')
+  }
 
   const lastAudit: Record<string, string> = {}
   const openAudit = new Set<string>()
   const lastInspection: Record<string, string> = {}
   const openInspection = new Set<string>()
   const lastDeep: Record<string, string> = {}
-  for (const t of (tasksRes.data || []) as any[]) {
+  for (const t of tasksRead.rows) {
     const id = String(t.reference_property_id); if (!idSet.has(id)) continue
     const st = str(t.status); if (GONE.test(st)) continue
     const nm = str(t.name).toLowerCase()
@@ -111,7 +121,7 @@ export async function vacantWork(vacants: VacantUnit[], today: string): Promise<
     else if (/deep clean|deep-clean|detail clean/.test(nm)) { if (finished) put(lastDeep) }
   }
 
-  for (const a of (auditRes.data || []) as any[]) {
+  for (const a of auditRead.rows) {
     const id = String(a.listing_id); if (!idSet.has(id)) continue
     const st = str(a.status).toLowerCase()
     if (st === 'open') { openAudit.add(id); continue }
@@ -121,7 +131,7 @@ export async function vacantWork(vacants: VacantUnit[], today: string): Promise<
   }
 
   const openReq: Record<string, { n: number; urgent: number; first: string }> = {}
-  for (const r of (reqRes.data || []) as any[]) {
+  for (const r of reqRead.rows) {
     const id = String(r.listing_id); if (!idSet.has(id)) continue
     const e = openReq[id] || (openReq[id] = { n: 0, urgent: 0, first: str(r.title) })
     e.n++
@@ -129,7 +139,7 @@ export async function vacantWork(vacants: VacantUnit[], today: string): Promise<
     if (!e.first) e.first = str(r.title)
   }
   const openGlitch: Record<string, { n: number; first: string }> = {}
-  for (const g of (glitchRes.data || []) as any[]) {
+  for (const g of glitchRead.rows) {
     const id = String(g.listing_id); if (!idSet.has(id)) continue
     const e = openGlitch[id] || (openGlitch[id] = { n: 0, first: str(g.overview) })
     e.n++
