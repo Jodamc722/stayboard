@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
   const id = String(created?.id || '')
   if (!id) return NextResponse.json({ ok: false, error: 'Breezeway returned no task id.' }, { status: 502 })
 
-  // Mirror it now (the 15-min cron would pick it up eventually; billing wants it immediately).
+  // Mirror it now (the 30-minute sync would pick it up eventually; billing wants it immediately).
   try {
     const m: any = mapBreezewayTask(created)
     if (m?.id) {

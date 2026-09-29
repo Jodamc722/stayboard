@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
   recordRun({ name: 'guesty-catalog', ok: result.errors.length === 0, itemCount: result.listings + result.custom_fields, detail: result, error: result.errors.join('; ') || null, ms: Date.now() - started })
   // THE CHANNEL TRIGGER RIDES ON THIS SYNC (Jon, 2026-09-18). raw.integrations only changes when
   // the listings were just re-pulled, so this is the one moment a comparison with the last snapshot
-  // can find anything — and vercel.json is at its cron cap. Never allowed to fail the sync.
+  // can find anything. Never allowed to fail the sync.
   let channels: any = 'skipped — the listings did not sync, so there is nothing new to compare'
   if (result.listings > 0 || result.errors.length === 0) {
     channels = await runChannelCheck().catch((e: any) => ({ ok: false, error: String(e?.message || e).slice(0, 200) }))

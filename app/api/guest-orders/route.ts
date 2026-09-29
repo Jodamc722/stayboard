@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
     listOrders({ days }),
     listLinks({ from: addDays(today, -2), to: addDays(today, cfg.createDaysBefore + 14) }),
   ])
-  // What Breezeway did with each order's task, read off the mirror the 15-minute cron keeps.
+  // What Breezeway did with each order's task, read off the mirror the 30-minute sync keeps.
   const tasks = await orderTasks(orders)
   const ordersByLink: Record<string, number> = {}
   for (const o of orders) ordersByLink[o.link_code] = (ordersByLink[o.link_code] || 0) + 1

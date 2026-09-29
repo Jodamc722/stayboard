@@ -1,9 +1,9 @@
-// Eve keeps tabs on Slack — twice a day.
+// Eve keeps tabs on Slack — hourly at :48, 00–04 and 11–23 UTC (vercel.json).
 //
-// The MORNING run (before the team starts) reads everything since yesterday, posts the roll-up in
-// #vr-eve and sends the day's gentle nudges. The MIDDAY run reads what came in since, so a problem
-// raised at 10am that affects a 4pm check-in gets said at lunchtime, not tomorrow. Both use the
-// same cursors; nothing is read twice.
+// Every run reads what came in since the last one (the same cursors; nothing is read twice) and
+// sends the day's gentle nudges. The morning roll-up in #vr-eve goes once a day, on a morning run
+// (before 14:00 UTC, see GET, and inside lib/eve/slack-watch.ts's 7–10am ET window); on-watch
+// gates itself to 11am–7pm ET.
 //
 // Costs are capped inside runSlackWatch (channels, candidates, model calls per run), so a busy day
 // costs a fixed amount and a quiet day costs a Slack read and nothing else.
@@ -22,9 +22,9 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 // VERCEL CRON SENDS GET (2026-09-18). This handler only listed open items, so the scheduled watch
-// had never actually run — both entries in vercel.json were no-ops. A scheduler call (x-vercel-cron
-// or the bearer) now runs the watch; a person's GET still gets the list. The afternoon run skips
-// the digest: before 14:00 UTC (10am ET) it is the morning pass, after that the midday one.
+// had never actually run — both entries in vercel.json were no-ops. A scheduler call (the bearer;
+// x-vercel-cron is not trusted) now runs the watch; a person's GET still gets the list. Only a run
+// before 14:00 UTC (10am EDT) may send the morning digest; later runs pass digest=0.
 export async function GET(req: NextRequest) {
   const scheduled = cronAllowed(req).viaSecret
   if (scheduled) {
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
   const started = Date.now()
   const res = await runSlackWatch({ digest, nudge })
   recordRun({ name: 'slack-watch', ok: res.ok, itemCount: res.opened + res.closed + res.nudged, detail: res, error: res.error || null, ms: Date.now() - started })
-  // ON WATCH (Jon, 2026-09-23). The same cron now fires hourly 15–23 UTC as well as the 5am pass;
+  // ON WATCH (Jon, 2026-09-23). The same cron fires hourly at :48, 00–04 and 11–23 UTC;
   // once the rooms are read, Eve checks what is slipping between Slack, the glitch board and
   // Breezeway and says it in the command rooms. It gates itself to 11am–7pm ET. ?watch=0 skips it.
   // OUTCOMES (2026-09-24). Before she looks at the rooms, she looks at what became of her own

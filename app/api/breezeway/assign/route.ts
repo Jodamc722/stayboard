@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
   }
   const r = await updateBreezewayTask(taskId, { assignments: assigneeIds })
   if (!r.ok) return NextResponse.json({ error: `Breezeway ${r.status}: ${r.text.slice(0, 200)}` }, { status: 502 })
-  // VERIFY + WRITE THROUGH. The board reads our mirror, which refreshes every 15 minutes — without
+  // VERIFY + WRITE THROUGH. The board reads our mirror, which refreshes every 30 minutes — without
   // this the row still said "Unassigned" after a successful assign, which looks identical to a
   // failure. Read the task back from Breezeway (the truth), then stamp the mirror with what it says.
   let verified: string[] = []
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
     const people = asg.map((a: any) => ({ id: a?.assignee_id ?? a?.id ?? null, name: a?.name ?? null })).filter((a: any) => a.id || a.name)
     verified = people.map((p: any) => String(p.name || '')).filter(Boolean)
     await supabaseAdmin().from('breezeway_tasks_sync').update({ assignees: people }).eq('id', taskId)
-  } catch { /* the 15-min sync still catches up; the write itself succeeded */ }
+  } catch { /* the 30-minute sync still catches up; the write itself succeeded */ }
   // …and the boards read that mirror through a 45-second cache (Today in Ops, the Command Center)
   // and a 5-minute one (the Scheduler). Without the bust the reload each caller does right after an
   // assign read the cached pre-assign day — "Unassigned" again, the exact symptom above.

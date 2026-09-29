@@ -115,7 +115,7 @@ export async function GET(req: NextRequest) {
           const bc = await listBreezewayComments(id)
           if (breezeway && bc.ok) breezeway.comments = bc.comments
           // INSTANT INBOUND: store anything new as an app comment and notify the thread right now,
-          // instead of leaving it to the 15-minute cron.
+          // instead of leaving it to the 30-minute sync.
           if (bc.ok) { try { await importTaskComments(id, bc.comments) } catch { /* best effort */ } }
         } catch { /* best effort */ }
         // The full Breezeway roster, so a comment can tag anyone who works there — not just the

@@ -1,15 +1,15 @@
 // REVENUE APP SYNC — pulls the boss's revenue app into Lighthouse's rev_* mirror (migration 051).
 //
-// Runs hourly (vercel.json, minute 38 — his own Guesty sync is hourly, so anything faster would
-// only re-read the same numbers). Also callable by a signed-in owner/admin for "Sync now".
+// Runs every 4 hours at :38 UTC (vercel.json; his own Guesty sync is hourly, so anything faster
+// would only re-read the same numbers). Also callable by a signed-in owner/admin for "Sync now".
 //
 // It never fails the whole run because one feed is missing: each feed gets its own status row
 // (ok | missing | error) so the status card can say exactly which of the eleven feeds he has
 // wired and which are still on the request list. A feed he has not built yet is `missing`; a
 // wrong key is `error` — those are different problems and are shown differently.
 //
-// Auth matches the other crons: enforce the bearer token when CRON_SECRET is set, otherwise run
-// open so the schedule works without extra configuration. A signed-in user with full access on
+// Auth matches the other crons: the scheduler's bearer (lib/cron-auth requireCron — a missing
+// CRON_SECRET in production denies, it no longer runs open). A signed-in user with full access on
 // the Revenue tab may also trigger it (the Sync-now button).
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'

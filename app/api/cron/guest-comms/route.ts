@@ -7,7 +7,8 @@
 // feed had been 2.5 days stale before anyone looked, while Eve was answering guest questions off it.
 //
 // A customer-service brain is worth exactly as much as the freshness of the messages under it, so
-// this gets a 300s budget and a 15-minute cadence of its own, and it reports partial runs honestly.
+// this gets a 300s budget and a 30-minute cadence of its own (:10 and :40), and it reports partial
+// runs honestly.
 import { NextRequest, NextResponse } from 'next/server'
 import { syncConversations, syncRecentMessages } from '@/lib/guesty'
 import { supabaseAdmin } from '@/lib/supabase-admin'
