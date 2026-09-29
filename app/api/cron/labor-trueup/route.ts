@@ -17,10 +17,12 @@
 // NEVER ON PARTIAL PAYROLL. Any engine window with missing Homebase weeks skips the snapshot and
 // the send — better a quiet morning than a wrong number remembered as truth.
 //
-// GET                → run, store the snapshot, send
+// GET                → run, store the snapshot, send; run the integrity checks and email the owner
+//                      only if one fails (these were /api/cron/labor-integrity until 2026-09-28)
 // GET ?force=1       → run and always email
-// GET ?preview=1     → return the HTML without sending or storing (signed in)
-// GET ?test=1        → send to YOU only
+// GET ?preview=1     → return the HTML without sending or storing (signed-in admin)
+// GET ?test=1        → send to YOU only (signed-in admin)
+// GET ?checks=1      → the integrity checks as JSON, nothing sent (signed-in admin)
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
@@ -35,6 +37,7 @@ import { getLaborSettings } from '@/lib/labor-settings'
 import { computeYesterdayLabor } from '@/lib/labor-daily'
 import { requireCron } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
+import { integrityChecks, engineFailedCheck, emailIntegrityFailures } from '@/lib/labor-integrity'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -81,22 +84,33 @@ const secTitle = (t: string, sub: string) =>
   (sub ? ' <span style="color:#c4c9d0;font-weight:400;text-transform:none;letter-spacing:0">&middot; ' + sub + '</span>' : '') + '</p>'
 
 // RECEIPT (2026-09-21): the Learning tab's Homebase row read "missing" because this job never
-// wrote one. The wrapper reads ok/sent/to off the response; preview and test write nothing.
-export const GET = withRouteReceipt<NextRequest>('labor-trueup', send, { skipWhen: (req) => { const sp = new URL(req.url).searchParams; return sp.get('preview') === '1' || sp.get('test') === '1' } })
+// wrote one. The wrapper reads ok/sent/to off the response; preview, test and ?checks write nothing.
+export const GET = withRouteReceipt<NextRequest>('labor-trueup', send, { skipWhen: (req) => { const sp = new URL(req.url).searchParams; return sp.get('preview') === '1' || sp.get('test') === '1' || sp.get('checks') === '1' } })
+
+// The three windows, SEQUENTIAL on purpose — parallel runs double up on Homebase and trip its
+// rate limiting; the engine caches its weeks so runs 2 and 3 ride run 1.
+async function threeWindows(yd: string, d7: string, d30: string) {
+  const ecY = await laborEconomics({ from: yd, to: yd, market: 'all' })
+  const ec7 = await laborEconomics({ from: d7, to: yd, market: 'all' })
+  const ec30 = await laborEconomics({ from: d30, to: yd, market: 'all' })
+  return { ecY, ec7, ec30 }
+}
 
 async function send(req: NextRequest) {
   const sp = req.nextUrl.searchParams
   const preview = sp.get('preview') === '1'
   const test = sp.get('test') === '1'
   const force = sp.get('force') === '1'
+  // ?checks=1 — the integrity checks as JSON, nothing sent (what /api/cron/labor-integrity?preview=1 was).
+  const checksOnly = sp.get('checks') === '1'
   // WHO IS ALLOWED TO SET THIS OFF. An unqualified GET here is the REAL SEND — payroll figures and
-  // all. The scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron); preview and test
-  // are a person's actions, so the bearer alone does not open them.
+  // all. The scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron); preview, test and
+  // checks are a person's actions, so the bearer alone does not open them.
   const gate = await requireCron(req)
   if (!gate.ok) return gate.res
   const user = gate.access ? gate.access.user : null
   try {
-    if ((preview || test) && !user) return NextResponse.json({ error: 'sign in' }, { status: 401 })
+    if ((preview || test || checksOnly) && !user) return NextResponse.json({ error: 'sign in' }, { status: 401 })
 
     const now = new Date()
     const today = dISO(now)
@@ -104,14 +118,28 @@ async function send(req: NextRequest) {
     const d7 = dISO(addDays(now, -7))     // yd back 6 more days
     const d30 = dISO(addDays(now, -30))
 
-    // The three windows, SEQUENTIAL on purpose — parallel runs double up on Homebase and trip its
-    // rate limiting; the engine caches its weeks so runs 2 and 3 ride run 1.
-    const ecY = await laborEconomics({ from: yd, to: yd, market: 'all' })
-    const ec7 = await laborEconomics({ from: d7, to: yd, market: 'all' })
-    const ec30 = await laborEconomics({ from: d30, to: yd, market: 'all' })
+    // The engine not running at all is itself an integrity failure: the owner hears about it,
+    // then it fails the run exactly as before.
+    const { ecY, ec7, ec30 } = await threeWindows(yd, d7, d30).catch(async (e: any) => {
+      if (!preview && !test && !checksOnly) await emailIntegrityFailures([engineFailedCheck(e)], 1, d30, yd)
+      throw e
+    })
+
+    // THE INTEGRITY CHECKS (2026-09-28). These were /api/cron/labor-integrity, which re-ran this
+    // exact 30-day window five hours earlier, cold, in another function. Now they run on this
+    // job's own 30-day result, and the owner is emailed ONLY when one fails (lib/labor-integrity).
+    const checks = integrityChecks(ec30)
+    if (checksOnly) return NextResponse.json({ ok: checks.every(c => c.ok), window: `${d30}..${yd}`, checks })
+
     // NEVER SEND ON PARTIAL PAYROLL — a snapshot taken while Homebase was rate-limiting would
     // store understated payroll as settled truth and poison every comparison until the next run.
     const badAudit = [ecY.payrollAudit, ec7.payrollAudit, ec30.payrollAudit].find(a => a && !a.complete)
+    const integrity = { checks: checks.length, failed: checks.filter(c => !c.ok).length, emailed: false }
+    if (!preview && !test) {
+      // On a partial-payroll morning the "did not send" note below already names the missing weeks.
+      const failing = checks.filter(c => !c.ok && !(badAudit && c.key === 'punches-complete'))
+      if (failing.length) integrity.emailed = await emailIntegrityFailures(failing, checks.length, d30, yd)
+    }
     if (badAudit) {
       const why = 'Homebase did not return timecards for: ' + badAudit.failedWeeks.join(', ')
       // NEVER QUIET-SKIP (Jon doctrine): the numbers are withheld, but the silence is not.
@@ -130,7 +158,7 @@ async function send(req: NextRequest) {
       }
       return NextResponse.json({
         ok: false, sent: false, snapshotStored: false,
-        reason: 'payroll incomplete — ' + why,
+        reason: 'payroll incomplete — ' + why, integrity,
       }, { status: 503 })
     }
     const K30: any = ec30.kpi
@@ -601,11 +629,11 @@ async function send(req: NextRequest) {
     // labor_weekly) appeared to do nothing while labor_daily sat unset.
     const enabled = cfgW?.enabled !== false && cfgD?.enabled !== false
     if (!enabled && !force) {
-      return NextResponse.json({ ok: true, sent: false, reason: 'switched off in settings', snapshotStored: true, forward, subject })
+      return NextResponse.json({ ok: true, sent: false, reason: 'switched off in settings', snapshotStored: true, forward, subject, integrity })
     }
     const cc = STANDING_CC.filter(c => !seen.has(c))
     const r = await sendGmail({ fromEmail, to: to2, cc, subject, html })
-    return NextResponse.json({ ok: r.ok, sent: r.ok, to: to2.length, subject, forward, error: r.error })
+    return NextResponse.json({ ok: r.ok, sent: r.ok, to: to2.length, subject, forward, integrity, error: r.error })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })
   }
