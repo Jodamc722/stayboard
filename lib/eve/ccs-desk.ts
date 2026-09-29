@@ -220,7 +220,7 @@ export async function runHandoff(open: AskItem[], cfg: CcsDeskCfg, now = new Dat
   const st = (await getSetting<any>(HANDOFF_STATE_KEY, null)) || {}
   if (st.lastHandoff === slot) return { posted: false }
   const text = handoffText(open, now.getTime())
-  const gate = await agentAllowed('slack_post')
+  const gate = await agentAllowed('slack_post', { ask: true })
   const r = await stepDown(gate, { action: 'slack_post', summary: `CCS handoff in #ccs-and-jon (${open.length} open asks)`, exec: { channel: EVE_CHANNELS.ccsJon, channel_name: 'ccs-and-jon', text }, by: 'cron:slack-watch' },
     async () => { const p = await postToChannel(EVE_CHANNELS.ccsJon, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
   if (r.ok && r.mode !== 'observe') await setSetting(HANDOFF_STATE_KEY, { ...st, lastHandoff: slot }, 'ccs-desk')
@@ -230,7 +230,7 @@ export async function runHandoff(open: AskItem[], cfg: CcsDeskCfg, now = new Dat
 /** Escalate one ask in its own thread, gated. */
 export async function escalate(it: AskItem, why: string, tags: string[]): Promise<{ ok: boolean; mode: string }> {
   const text = escalationText(it, why, tags)
-  const gate = await agentAllowed('slack_post', { urgent: true })
+  const gate = await agentAllowed('slack_post', { urgent: true, ask: true })
   const r = await stepDown(gate, { action: 'slack_post', summary: `escalate guest ask (${why}) in #${it.channel_name}: ${it.summary.slice(0, 120)}`, exec: { channel: it.channel, channel_name: it.channel_name, thread_ts: it.thread_ts || it.msg_ts, text }, why: it.summary.slice(0, 200), by: 'cron:slack-watch' },
     async () => { const p = await postThreadReply(it.channel, it.thread_ts || it.msg_ts, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
   return { ok: r.ok, mode: r.mode }

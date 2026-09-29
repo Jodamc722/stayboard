@@ -354,12 +354,17 @@ export async function agentAllowed(action: ActionType, opts: { usd?: number; now
   if (mode === 'act' || mode === 'propose') {
     const c = await readCounters()
     if (mode === 'act' && c.actions >= s.budgets.actionsPerDay) { mode = 'propose'; why.push(`today's ${s.budgets.actionsPerDay} actions are spent`) }
-    const isAsk = action === 'telegram_ask' || opts.ask === true
-    if (isAsk && c.asks >= s.budgets.asksPerDay) { mode = lower(mode, 'draft'); why.push(`today's ${s.budgets.asksPerDay} asks are spent`) }
     if (mode === 'act' && s.budgets.aiUsdPerDay > 0) {
       const spend = await aiSpendToday()
       if (spend >= s.budgets.aiUsdPerDay) { mode = 'propose'; why.push(`AI spend $${spend} is over today's $${s.budgets.aiUsdPerDay}`) }
     }
+    // THE ASKS BUDGET IS FOR ASKS (2026-09-28 audit, F22). Every cron-originated proposal now passes
+    // ask:true, so a proposal that would ping an approver (or a Telegram message itself) counts
+    // against the daily asks. An act that pings nobody is not charged, so ask:true can never turn the
+    // morning roll-up into a draft just because six questions went out earlier. Decided after the two
+    // downgrades above, so an act they turned into a proposal is counted as the ask it now is.
+    const isAsk = action === 'telegram_ask' || opts.ask === true
+    if (isAsk && (mode === 'propose' || action === 'telegram_ask') && c.asks >= s.budgets.asksPerDay) { mode = lower(mode, 'draft'); why.push(`today's ${s.budgets.asksPerDay} asks are spent`) }
   }
 
   // QUIET HOURS: an act is held, not turned into a proposal nobody is told about. A Telegram ask

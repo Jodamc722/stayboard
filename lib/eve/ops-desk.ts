@@ -155,7 +155,7 @@ export async function runOpsDesk(opts: { force?: 'plan' | 'recap' | 'chase'; pre
 
   const day = await readDay(today)
   const post = async (text: string, summary: string) => {
-    const gate = await agentAllowed('slack_post')
+    const gate = await agentAllowed('slack_post', { ask: true })
     const r = await stepDown(gate, { action: 'slack_post', summary, exec: { channel: cfg.room, channel_name: 'vr-eve', text }, by: 'cron:ops-desk' },
       async () => { const p = await postToChannel(cfg.room, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
     if (r.mode !== 'act') out.notes.push(`${summary}: ${r.mode} — ${gate.reason}`)
@@ -180,17 +180,27 @@ export async function runOpsDesk(opts: { force?: 'plan' | 'recap' | 'chase'; pre
   }
   if (wantChase && !opts.preview) {
     const targets = day.tasks.filter(t => !t.done && !t.people.length && !t.clean && !proposed[t.id]).slice(0, 8)
-    for (const t of targets) {
-      const who = candidateFor(t, day)
-      if (!who) continue
-      const gate = await agentAllowed('task_assign')
+    // ONE ASK PER RUN (2026-09-28 audit, F22). Each unowned task used to be its own proposal — up to
+    // eight Telegram asks an hour, none counted against the daily asks budget. The run's assignments
+    // are now ONE proposal (one line each; one yes carries them all out, one undo puts them all back),
+    // and it counts as one ask.
+    const picks: { t: Task; who: string }[] = []
+    for (const t of targets) { const who = candidateFor(t, day); if (who) picks.push({ t, who }) }
+    if (picks.length) {
+      const one = picks.length === 1
+      const lines = picks.map(p => `"${p.t.name.replace(/^\[[^\]]*\]\s*/, '').slice(0, 60)}" on ${shortUnit(p.t.unit)} to ${p.who}`)
+      const gate = await agentAllowed('task_assign', { ask: true })
       const r = await stepDown(gate, {
-        action: 'task_assign', summary: `assign "${t.name.replace(/^\[[^\]]*\]\s*/, '').slice(0, 60)}" on ${shortUnit(t.unit)} to ${who}`,
-        exec: { taskId: t.id, person: who }, why: `${who} is already working in ${t.building || 'that building'} today and this ${t.dept} task has nobody on it${day.arrivals[t.listing] ? '; a guest lands in the unit today' : ''}.`,
-        by: 'cron:ops-desk', watchKey: 'ops_desk', subject: `task:${t.id}`, metric: 'cleans_unassigned', thoughtCooldownHours: 72,
+        action: 'task_assign',
+        summary: one ? `assign ${lines[0]}` : `assign ${picks.length} unowned tasks: ${lines.join('; ')}`.slice(0, 600),
+        exec: one ? { taskId: picks[0].t.id, person: picks[0].who } : { batch: picks.map(p => ({ taskId: p.t.id, person: p.who })) },
+        why: one
+          ? `${picks[0].who} is already working in ${picks[0].t.building || 'that building'} today and this ${picks[0].t.dept} task has nobody on it${day.arrivals[picks[0].t.listing] ? '; a guest lands in the unit today' : ''}.`
+          : `Each person is already working in that building today and each task has nobody on it${picks.some(p => day.arrivals[p.t.listing]) ? '; a guest lands in at least one of these units today' : ''}.`,
+        by: 'cron:ops-desk', watchKey: 'ops_desk', subject: one ? `task:${picks[0].t.id}` : `tasks:${picks.map(p => p.t.id).sort().join(',')}`, metric: 'cleans_unassigned', thoughtCooldownHours: 72,
       })
-      if (r.ok && r.mode !== 'observe') { proposed[t.id] = today; out.proposedAssign++ }
-      if (r.mode !== 'act') out.notes.push(`assign ${shortUnit(t.unit)} → ${who}: ${r.mode}`)
+      if (r.ok && r.mode !== 'observe') { for (const p of picks) proposed[p.t.id] = today; out.proposedAssign += picks.length }
+      if (r.mode !== 'act') out.notes.push(`assign ${picks.length} unowned: ${r.mode}`)
     }
   }
   if (wantRecap) {

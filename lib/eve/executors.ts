@@ -169,7 +169,26 @@ const task_create: Executor = async (p) => {
   }
 }
 
-const task_assign: Executor = async (p) => {
+// A BATCH (the ops desk's one-ask-per-run, 2026-09-28 audit F22): { batch: [{ taskId, person }, …] }.
+// Each item is assigned exactly as a single one would be; the receipt names them all and the undo
+// puts every one back.
+const task_assign: Executor = async (p, ctx) => {
+  if (!Array.isArray(p?.batch)) return assignOne(p, ctx)
+  const items = p.batch.slice(0, 12)
+  const done: string[] = [], failed: string[] = [], undos: Undo[] = []
+  for (const it of items) {
+    const r = await assignOne(it, ctx)
+    if (r.ok) { done.push(r.summary); if (r.undo) undos.push(r.undo) } else failed.push(`#${str(it?.taskId || it?.task_id)}: ${r.error || r.summary}`)
+  }
+  if (!done.length) return { ok: false, summary: 'none of the assignments went through', error: failed.join('; ').slice(0, 300) }
+  return {
+    ok: true, ref: items.map((i: any) => str(i?.taskId || i?.task_id)).join(',').slice(0, 120),
+    summary: `${done.join('; ')}${failed.length ? ` — ${failed.length} did not: ${failed.join('; ')}` : ''}`.slice(0, 600),
+    undo: undos.length ? { kind: 'batch', items: undos } : null,
+  }
+}
+
+const assignOne: Executor = async (p) => {
   const { updateBreezewayTask, retrieveBreezewayTask } = await import('@/lib/breezeway')
   const taskId = str(p?.taskId || p?.task_id).trim()
   if (!taskId) return { ok: false, summary: 'no task id', error: 'taskId required' }
@@ -498,6 +517,16 @@ async function applyUndo(u: Undo, by: string): Promise<{ ok: boolean; summary: s
     case 'memory_delete': {
       await db.from('eve_memory').delete().eq('id', str(u.id))
       return { ok: true, summary: 'forgot it' }
+    }
+    case 'batch': {
+      const items: Undo[] = Array.isArray(u.items) ? u.items : []
+      const done: string[] = [], failed: string[] = []
+      for (const it of items) {
+        const r = await applyUndo(it, by).catch((e: any) => ({ ok: false, summary: 'undo failed', error: str(e?.message || e) }))
+        if (r.ok) done.push(r.summary); else failed.push(r.error || r.summary)
+      }
+      if (!done.length) return { ok: false, summary: 'could not undo any of it', error: failed.join('; ').slice(0, 200) }
+      return { ok: true, summary: `${done.join('; ')}${failed.length ? ` — ${failed.length} could not be undone` : ''}`.slice(0, 400) }
     }
     default:
       return { ok: false, summary: `no undo for ${u.kind}`, error: 'unknown undo kind' }

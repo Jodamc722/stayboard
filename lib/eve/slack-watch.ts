@@ -556,7 +556,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
       const who = it.owner_slack ? `<@${it.owner_slack}>` : (it.owner_name || null)
       const text = isAsk ? askNudgeText(it as unknown as AskItem, who, ageMinutes(it, now)) : nudgeText(it, who)
       // AGENT MODE GATE (slack_post). Below "act" the nudge is proposed or drafted instead.
-      const gate = await agentAllowed('slack_post')
+      const gate = await agentAllowed('slack_post', { ask: true })
       const r = await stepDown(gate, { action: 'slack_post', summary: `nudge in #${it.channel_name}: ${text.slice(0, 160)}`, exec: { channel: it.channel, channel_name: it.channel_name, thread_ts: it.thread_ts || it.msg_ts, text }, why: it.summary.slice(0, 200), by: 'cron:slack-watch' },
         async () => { const p = await postThreadReply(it.channel, it.thread_ts || it.msg_ts, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
       // A proposed or drafted nudge still claims the slot: the proposal carries the text, and a
@@ -585,7 +585,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
       `• ${it.summary.slice(0, 140)}${it.unit ? ` (${it.unit})` : ''}${it.owner_name ? ` · ${it.owner_name}` : ''} — #${it.channel_name}`)
     const more = urgentNew.length > 12 ? `\n…and ${urgentNew.length - 12} more` : ''
     const text = `⚠️ *Affects a guest today (${urgentNew.length})*\n${lines.join('\n')}${more}`
-    const gate = await agentAllowed('slack_post')
+    const gate = await agentAllowed('slack_post', { ask: true })
     const r = await stepDown(gate, { action: 'slack_post', summary: `urgent-today post in #vr-eve (${urgentNew.length} items)`, exec: { channel: EVE_CHANNELS.approvals, channel_name: 'vr-eve', text }, by: 'cron:slack-watch' },
       async () => { const p = await postToChannel(EVE_CHANNELS.approvals, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
     if (r.mode !== 'act') out.notes.push(`urgent post ${r.mode}: ${gate.reason}`)
@@ -617,7 +617,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     if (late.length) needs.push(`*Promised 2+ days ago, still open (${late.length})*\n${late.slice(0, 2).map(line).join('\n')}`)
     if (needs.length) parts.push(needs.join('\n')); else parts.push('Nothing needs a person right now.')
     if (learnedTexts.length) parts.push(`_Learned ${learnedTexts.length} thing${learnedTexts.length === 1 ? '' : 's'} yesterday — on the Eve memory page._`)
-    const gate = await agentAllowed('slack_post')
+    const gate = await agentAllowed('slack_post', { ask: true })
     const text = parts.join('\n\n')
     const stepped = await stepDown(gate, { action: 'slack_post', summary: `morning roll-up in #vr-eve (${openNow.length} open)`, exec: { channel: EVE_CHANNELS.approvals, channel_name: 'vr-eve', text }, by: 'cron:slack-watch' },
       async () => { const p = await postToChannel(EVE_CHANNELS.approvals, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
