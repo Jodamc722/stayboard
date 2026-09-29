@@ -7,6 +7,7 @@ import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createBreezewayTask, mapBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
 import { getSetting } from '@/lib/app-settings'
+import { bustBoards } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -51,6 +52,8 @@ export async function POST(req: NextRequest) {
       m.reference_property_id = listingId
       m.synced_at = new Date().toISOString()
       await db.from('breezeway_tasks_sync').upsert(m, { onConflict: 'id' })
+      // The Scheduler and the day read this mirror through caches; bust them AFTER the write.
+      bustBoards()
     }
     await db.from('breezeway_billing_details').upsert({
       task_id: id,

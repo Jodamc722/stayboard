@@ -11,6 +11,7 @@ import { updateBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
 import { monthTasks } from '@/lib/billing'
 import { modelPairFor } from '@/lib/ai-models'
 import { anthropicMessages, textOf } from '@/lib/anthropic-call'
+import { bustBoards } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -75,5 +76,7 @@ export async function POST(req: NextRequest) {
       await sleep(100)
     }
   }
+  // Renamed tasks show on the Scheduler and the day through cached reads of the mirror.
+  if (translated > 0) bustBoards()
   return NextResponse.json({ ok: true, scanned: tasks.length, candidates: candidates.length, translated, failed, remaining: candidates.length - processed })
 }

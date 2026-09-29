@@ -4,6 +4,7 @@ import { syncBreezewayComments } from '@/lib/breezeway-comment-sync'
 import { runBehindAlert } from '@/lib/ops-behind'
 import { revalidateTag } from 'next/cache'
 import { bustOpsDay } from '@/lib/ops-day'
+import { bustBoards } from '@/lib/bust'
 import { withRouteReceipt, withReceipt as receipted } from '@/lib/automation-runs'
 import { assignVendorTasks } from '@/lib/vendor-assign'
 import { syncGarden } from '@/lib/garden/sync'
@@ -49,6 +50,9 @@ async function run(req: NextRequest) {
   let vendors: any = outOfTime
   if (left() > MIN_STEP_MS) {
     try { vendors = await assignVendorTasks() } catch (e) { vendors = { error: String((e as any)?.message || e).slice(0, 120) } }
+    // Vendor assignment writes assignees to the mirror AFTER the bust above; bust again so a board
+    // read in between does not keep "Unassigned" for the length of its cache.
+    bustBoards()
   }
   // THE GARDEN HOTEL rides this line (Jon, 2026-09-28: a separate business on Cloudbeds; see
   // lib/garden). Its own tables, its own ledger; not connected is a quiet no-op, never an error here.
