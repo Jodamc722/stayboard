@@ -87,7 +87,7 @@ function etDayOf(ts: any): string {
   return isNaN(d.getTime()) ? str(ts).slice(0, 10) : ET_DAY.format(d)
 }
 
-type Li = { id: string; name: string; building: string; market: string; active: boolean; listingFee: number }
+type Li = { id: string; name: string; building: string; market: string; active: boolean; full: boolean; listingFee: number }
 
 export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any> {
   // WHO SEES DOLLARS — one definition for the whole app (lib/access.ts). This used to be a second,
@@ -134,6 +134,9 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         building: rollupBuilding(l.building, name) || 'Unassigned',
         market: marketOf(l.building, l.address_city, name),
         active: !DEAD_LISTING.includes(str(l.status).toLowerCase()),
+        // A "Full …" combo listing sells units that also exist as listings of their own — Revenue
+        // Center keeps it out of the unit count (app/revenue/page.tsx), and so does this board now.
+        full: /\bfull\b/i.test(name),
         // Jon 2026-07-31: the cleaning fee also lives on the PROPERTY in Guesty (Fees). Some
         // channels fold cleaning into the nightly rate, so those checkouts carry no fareCleaning
         // and would otherwise read as a free clean. The listing fee is the fallback.
@@ -148,7 +151,17 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       if (buildingFilter !== 'all' && li.building !== buildingFilter) return false
       return true
     }
-    const scopedUnits = all.filter(l => l.active && inScope(l.id))
+    // THE STOCK — the units occupancy, ADR, RevPAR and revenue are measured over (2026-09-28 audit,
+    // P0-4 interim). Both sides of every ratio come from it: active listings that are real units
+    // (no `full` combos), in scope. The numerator used to take stays at inactive and unknown listings
+    // too while the denominator counted active units only, and the combos sat in the denominator —
+    // so Home's occupancy and ADR could not match Revenue Center's for the same window. The `closed`
+    // status rule and Botanica's cleaning-as-ADR are deliberately unchanged here.
+    const inStock = (lid: any): boolean => {
+      const li = lmap[String(lid)]
+      return !!li && li.active && !li.full && inScope(lid)
+    }
+    const scopedUnits = all.filter(l => l.active && !l.full && inScope(l.id))
     const unitCount = scopedUnits.length || 1
 
     // ---------------------------------------------------------------- reads
@@ -290,6 +303,8 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     const arrivalsToday = live.filter(r => dOf(r.check_in) === today)
     const departuresToday = live.filter(r => dOf(r.check_out) === today)
     const inHouseNow = live.filter(r => dOf(r.check_in) <= today && dOf(r.check_out) > today)
+    // The count above is operational (every guest in house); the occupancy % is over the stock.
+    const inHouseStock = inHouseNow.filter(r => inStock(r.listing_id)).length
     const sameDayTurns = departuresToday.filter(d => arrivalsToday.some(a => String(a.listing_id) === String(d.listing_id))).length
     const in7 = addDays(today, 7)
     const arrivals7 = live.filter(r => dOf(r.check_in) >= today && dOf(r.check_in) <= in7)
@@ -310,6 +325,10 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       const n = Math.round((new Date(e + 'T12:00:00Z').getTime() - new Date(s + 'T12:00:00Z').getTime()) / 86400000)
       return n > 0 ? n : 0
     }
+    // Nights in the whole stay — Guesty's count, else the dates. Both the headline and the market
+    // table prorate the fare by it (the market table used to fall back to 1 night, which put a whole
+    // stay's fare on every in-window night of a row with no `nights`).
+    const stayNights = (r: any): number => Math.max(1, Number(r.nights) || Math.round((new Date(dOf(r.check_out) + 'T12:00:00Z').getTime() - new Date(dOf(r.check_in) + 'T12:00:00Z').getTime()) / 86400000) || 1)
 
     const stayBlock = (a: string, b: string) => {
       const days = daysBetween(a, b)
@@ -318,11 +337,14 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       const byChannel: Record<string, { nights: number; revenue: number }> = {}
       const byBuilding: Record<string, { nights: number; revenue: number; cleaning: number; units: Record<string, true> }> = {}
       for (const r of live) {
+        // Numerator and denominator from the same stock (see inStock): a stay at an inactive,
+        // unknown or `full` combo listing is not a night of the units `available` counts.
+        if (!inStock(r.listing_id)) continue
         const n = nightsIn(r, a, b)
         const li = lmap[String(r.listing_id)]
         const bld = li ? li.building : 'Unassigned'
         if (n > 0) {
-          const totalNights = Math.max(1, Number(r.nights) || Math.round((new Date(dOf(r.check_out) + 'T12:00:00Z').getTime() - new Date(dOf(r.check_in) + 'T12:00:00Z').getTime()) / 86400000) || 1)
+          const totalNights = stayNights(r)
           const fare = num(r.fare) || num(r.fareBase) || num(r.money_total)
           const share = (fare / totalNights) * n
           nights += n; room += share
@@ -558,7 +580,9 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     const buildingRows = Object.keys(work.byBuilding).map(b => {
       const w = work.byBuilding[b]
       const s = stays.byBuilding[b] || { nights: 0, revenue: 0, cleaning: 0, units: {} }
-      const units = Object.keys(s.units || {}).length
+      // Every unit in the building's stock, booked or not (2026-09-28 audit, P1-1). It counted only
+      // the units that HAD nights, so a building half empty read as full to Eve and the GM brief.
+      const units = all.filter(l => l.active && !l.full && l.building === b && inScope(l.id)).length
       return {
         building: b, done: w.done, cleans: w.cleans, maintenance: w.maintenance, inspections: w.inspections,
         cost: Math.round(w.cost), nights: s.nights, revenue: Math.round(s.revenue + s.cleaning),
@@ -568,14 +592,16 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
 
     const marketRows = ['Miami', 'Broward', 'North'].map(m => {
       const w = work.byMarket[m] || { done: 0, cost: 0, minutes: 0 }
-      const units = all.filter(l => l.active && l.market === m && (buildingFilter === 'all' || l.building === buildingFilter)).length
+      // The same stock as the headline, per market — so a Miami-filtered board has no Broward row
+      // at 0%, and the nights come from the units being counted.
+      const units = all.filter(l => l.active && !l.full && l.market === m && inScope(l.id)).length
       let nights = 0, revenue = 0
       for (const r of live) {
         const li = lmap[String(r.listing_id)]
-        if (!li || li.market !== m) continue
+        if (!li || li.market !== m || !inStock(r.listing_id)) continue
         const n = nightsIn(r, from, to)
         if (n > 0) {
-          const totalNights = Math.max(1, Number(r.nights) || 1)
+          const totalNights = stayNights(r)
           nights += n
           revenue += ((num(r.fare) || num(r.fareBase) || num(r.money_total)) / totalNights) * n
         }
@@ -643,7 +669,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         departures: departuresToday.length,
         inHouse: inHouseNow.length,
         units: scopedUnits.length,
-        occupancy: round((inHouseNow.length / unitCount) * 100, 1),
+        occupancy: round((inHouseStock / unitCount) * 100, 1),
         sameDayTurns,
         cleansScheduled: cleansToday.length,
         cleansDone: cleansTodayDone,
