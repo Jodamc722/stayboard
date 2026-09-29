@@ -21,7 +21,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { isTaskDone } from '@/lib/task-categories'
-import { todayET, shiftDay, lc, num, round2, normStar, safe, DEAD_LISTING, pageRows } from './ctx'
+import { todayET, shiftDay, lc, num, round2, normStar, safe, DEAD_LISTING, pageRows, allRowsOrThrow } from './ctx'
 import { saveMemory, revalidateSweptMemories } from './memory'
 
 export function djb2(s: string): string {
@@ -70,15 +70,19 @@ async function buildCtx(days: number): Promise<Ctx> {
 const bOf = (c: Ctx, id: any) => c.listing[String(id)]?.building || 'Unassigned'
 const nOf = (c: Ctx, id: any) => c.listing[String(id)]?.name || 'Unknown unit'
 
+// THE MINERS READ THEIR WHOLE WINDOW (2026-09-29). PostgREST returns at most 1,000 rows per
+// response whatever .limit() asks for, so the window reads below are paged in a stable order. A read
+// that stops short throws (allRowsOrThrow): runSweep records that miner as failed and skips the
+// memory re-check, instead of learning — and expiring memories — from part of a window.
+
 // ---------------------------------------------------------------------------------------------
 // 1. OPS — which units and buildings keep generating work, and what kind.
 // ---------------------------------------------------------------------------------------------
 async function mineOps(c: Ctx): Promise<Finding[]> {
   const out: Finding[] = []
-  const res: any = await safe(c.db.from('breezeway_tasks_sync')
+  const tasks = await allRowsOrThrow('tasks since ' + c.from, (a, b) => c.db.from('breezeway_tasks_sync')
     .select('id,reference_property_id,name,status,scheduled_date,assignees,finished_at,total_minutes,type_department')
-    .gte('scheduled_date', c.from).order('id').limit(6000), { data: [] } as any)
-  const tasks = res.data || []
+    .gte('scheduled_date', c.from).order('id').range(a, b), 25)
   if (!tasks.length) return out
 
   // Units that repeatedly need unplanned work (a repeat visit is a symptom, not a task).
@@ -146,10 +150,10 @@ async function mineQuality(c: Ctx): Promise<Finding[]> {
   }
 
   // Building-level review standing, so she knows what "normal" looks like per building.
-  const rv: any = await safe(c.db.from('guesty_reviews').select('listing_id,rating,has_reply,excluded_from_score,created_at')
-    .gte('created_at', c.from).eq('excluded_from_score', false).order('id').limit(4000), { data: [] } as any)
+  const rv = await allRowsOrThrow('reviews since ' + c.from, (a, b) => c.db.from('guesty_reviews').select('listing_id,rating,has_reply,excluded_from_score,created_at')
+    .gte('created_at', c.from).eq('excluded_from_score', false).order('id').range(a, b))
   const byB: Record<string, { n: number; sum: number; low: number; unanswered: number }> = {}
-  for (const r of (rv.data || [])) {
+  for (const r of rv) {
     const stars = normStar((r as any).rating)
     if (stars == null) continue
     const b = bOf(c, (r as any).listing_id)
@@ -179,10 +183,9 @@ async function mineQuality(c: Ctx): Promise<Finding[]> {
 // ---------------------------------------------------------------------------------------------
 async function mineGuestComms(c: Ctx): Promise<Finding[]> {
   const out: Finding[] = []
-  const st: any = await safe(c.db.from('guesty_conversation_sentiment')
+  const rows = await allRowsOrThrow('scored threads since ' + c.from, (a, b) => c.db.from('guesty_conversation_sentiment')
     .select('listing_id,score,band,dissatisfied,top_issue,awaiting_reply,last_message_at,last_guest_at')
-    .gte('last_message_at', c.from).order('conversation_id').limit(2000), { data: [] } as any)
-  const rows = st.data || []
+    .gte('last_message_at', c.from).order('conversation_id').range(a, b))
   if (rows.length) {
     const issues: Record<string, number> = {}
     let dissatisfied = 0, awaiting = 0
@@ -268,10 +271,10 @@ async function mineMoney(c: Ctx): Promise<Finding[]> {
 // ---------------------------------------------------------------------------------------------
 async function minePeople(c: Ctx): Promise<Finding[]> {
   const out: Finding[] = []
-  const res: any = await safe(c.db.from('breezeway_tasks_sync').select('assignees,type_department,name,finished_at')
-    .gte('scheduled_date', c.from).order('id').limit(5000), { data: [] } as any)
+  const tasks = await allRowsOrThrow('tasks since ' + c.from, (a, b) => c.db.from('breezeway_tasks_sync').select('assignees,type_department,name,finished_at')
+    .gte('scheduled_date', c.from).order('id').range(a, b), 25)
   const byPerson: Record<string, { cleans: number; tasks: number }> = {}
-  for (const t of (res.data || [])) {
+  for (const t of tasks) {
     const list = Array.isArray((t as any).assignees) ? (t as any).assignees : []
     for (const a of list) {
       const nm = String(a?.name || '').trim()
@@ -315,9 +318,8 @@ async function minePortfolio(c: Ctx): Promise<Finding[]> {
 // ---------------------------------------------------------------------------------------------
 async function mineIssues(c: Ctx): Promise<Finding[]> {
   const out: Finding[] = []
-  const g: any = await safe(c.db.from('glitches').select('listing_id,unit,category,glitch_type,status,created_at')
-    .gte('created_at', c.from + 'T00:00:00Z').order('id').limit(2000), { data: [] } as any)
-  const rows = g.data || []
+  const rows = await allRowsOrThrow('guest issues since ' + c.from, (a, b) => c.db.from('glitches').select('listing_id,unit,category,glitch_type,status,created_at')
+    .gte('created_at', c.from + 'T00:00:00Z').order('id').range(a, b))
   if (!rows.length) return out
   const byCat: Record<string, number> = {}
   const byBld: Record<string, number> = {}
@@ -394,11 +396,11 @@ async function mineSelf(c: Ctx): Promise<Finding[]> {
 // ---------------------------------------------------------------------------------------------
 async function mineCompletion(c: Ctx): Promise<Finding[]> {
   const out: Finding[] = []
-  const res: any = await safe(c.db.from('breezeway_tasks_sync')
+  const read = await allRowsOrThrow('tasks ' + c.from + ' to ' + c.today, (a, b) => c.db.from('breezeway_tasks_sync')
     .select('id,reference_property_id,name,status,scheduled_date,assignees,finished_at,started_at,total_minutes,type_department')
     .gte('scheduled_date', c.from).lte('scheduled_date', c.today)
-    .order('id').limit(6000), { data: [] } as any)
-  const tasks = (res.data || []).filter((t: any) => !/delete|cancel/.test(lc(t.status)))
+    .order('id').range(a, b), 25)
+  const tasks = read.filter((t: any) => !/delete|cancel/.test(lc(t.status)))
   if (tasks.length < 20) return out
 
   const done = (t: any) => isTaskDone(t.status, t.finished_at)
@@ -463,11 +465,10 @@ async function mineCompletion(c: Ctx): Promise<Finding[]> {
 // ---------------------------------------------------------------------------------------------
 async function mineReviewResponses(c: Ctx): Promise<Finding[]> {
   const out: Finding[] = []
-  const res: any = await safe(c.db.from('guesty_reviews')
+  const rows = await allRowsOrThrow('reviews since ' + c.from, (a, b) => c.db.from('guesty_reviews')
     .select('id,listing_id,rating,has_reply,created_at,excluded_from_score,channel')
     .gte('created_at', c.from + 'T00:00:00Z').eq('excluded_from_score', false)
-    .order('id').limit(4000), { data: [] } as any)
-  const rows = res.data || []
+    .order('id').range(a, b))
   if (rows.length < 10) return out
 
   const byBuilding: Record<string, { n: number; replied: number; lowUnanswered: number }> = {}
@@ -571,15 +572,14 @@ async function mineGuestyFields(c: Ctx): Promise<Finding[]> {
 async function mineGuestKnowledge(c: Ctx): Promise<Finding[]> {
   const out: Finding[] = []
 
-  const [faqRes, bookRes, listRes, sentRes] = await Promise.all([
-    safe(c.db.from('listing_faq').select('listing_id,category,question,answer,status').order('created_at', { ascending: false }).limit(3000), { data: [] } as any),
+  const [faqs, bookRes, listRes, sentRows] = await Promise.all([
+    allRowsOrThrow('the FAQ bank', (a, b) => c.db.from('listing_faq').select('listing_id,category,question,answer,status').order('created_at', { ascending: false }).order('id').range(a, b), 25),
     safe(c.db.from('guidebooks').select('listing_id,status,sections').order('updated_at', { ascending: false }).limit(600), { data: [] } as any),
     // Only the raw fields read below (rules, arrival text, the photo fallback), not the whole record (02-F15).
     safe(c.db.from('guesty_listings').select('id,nickname,title,status,pictures,hr:raw->publicDescription->houseRules,acc:raw->publicDescription->access,cii:raw->checkInInstructions,rp:raw->pictures').order('id').limit(400), { data: [] } as any),
-    safe(c.db.from('guesty_conversation_sentiment').select('top_issue,listing_id,last_message_at')
-      .gte('last_message_at', c.from).order('conversation_id').limit(3000), { data: [] } as any),
+    allRowsOrThrow('threads since ' + c.from, (a, b) => c.db.from('guesty_conversation_sentiment').select('top_issue,listing_id,last_message_at')
+      .gte('last_message_at', c.from).order('conversation_id').range(a, b)),
   ])
-  const faqs: any[] = faqRes.data || []
   const books: any[] = bookRes.data || []
   const live: any[] = (listRes.data || []).map((l: any) => ({ ...l, raw: { publicDescription: { houseRules: l.hr, access: l.acc }, checkInInstructions: l.cii, pictures: l.rp } })).filter((l: any) => !DEAD_LISTING.test(lc(l.status)))
   if (!live.length) return out
@@ -621,7 +621,7 @@ async function mineGuestKnowledge(c: Ctx): Promise<Finding[]> {
 
   // ---- THE GAP: raised in messages, never written down ----
   const issueCount: Record<string, number> = {}
-  for (const r of (sentRes.data || [])) {
+  for (const r of sentRows) {
     const k = lc((r as any).top_issue).slice(0, 40)
     if (k) issueCount[k] = (issueCount[k] || 0) + 1
   }
