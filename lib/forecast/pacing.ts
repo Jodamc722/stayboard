@@ -3,7 +3,9 @@
 // The GM brief promised "booked-ahead" and printed six trailing numbers. This is the forward one:
 // for each window starting today, the nights and net room revenue on the books NOW, next to what
 // was on the books for the same dates a year ago AS OF THE SAME DAY a year ago — last year's stays
-// in the matching window that had been booked (created) by today minus 365 days.
+// in the matching window that had been booked (created) by today minus 364 days. 364, not 365: 52
+// weeks lands on the same weekday, so a window of Fridays and Saturdays is compared with Fridays and
+// Saturdays (2026-09-29 review, nb-10).
 //
 // RULES, NOT A MODEL:
 //   - A stay counts when its status is live (confirmed, checked in / out, closed — the KPI board's
@@ -42,7 +44,7 @@ export type Pacing = {
   ok: true
   generatedAt: string
   today: string
-  /** "As of" a year ago: last year's stays booked on or before this ET day. */
+  /** "As of" a year ago (52 weeks, same weekday): last year's stays booked on or before this ET day. */
   asOfLastYear: string
   windows: PaceWindow[]
   basis: string
@@ -57,7 +59,7 @@ const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0
 const LIVE = ['confirmed', 'checked_in', 'checked_out', 'closed']
 const pct = (a: number, b: number) => (b > 0 ? Math.round(((a - b) / b) * 1000) / 10 : null)
 
-export const PACING_BASIS = 'On the books = live stays (owner and friends & family out), nights and net room revenue (accommodation after channel fees, no cleaning) falling inside each window. Last year = the same dates a year earlier, counting only stays booked by this day last year. Directional — we do not hold cancellation dates, so this year\'s count still includes stays that may cancel.'
+export const PACING_BASIS = 'On the books = live stays (owner and friends & family out), nights and net room revenue (accommodation after channel fees, no cleaning) falling inside each window. Last year = the same weekdays 52 weeks earlier, counting only stays booked by this day last year. Directional — we do not hold cancellation dates, so this year\'s count still includes stays that may cancel.'
 
 /** The UTC instant of 00:00 in New York on `ymd` — "booked by the end of that ET day" is before it. */
 function etMidnightUtc(ymd: string): string {
@@ -105,7 +107,7 @@ const notOwner = (r: any) => {
 async function compute(today: string, windows: number[]): Promise<Pacing> {
   const notes: string[] = []
   const longest = Math.max(...windows)
-  const asOf = shift(today, -365)
+  const asOf = shift(today, -364)
   const lyStart = asOf
   const [now, ly, lRes] = await Promise.all([
     staysOverlapping(today, shift(today, longest - 1)),
@@ -114,8 +116,6 @@ async function compute(today: string, windows: number[]): Promise<Pacing> {
   ])
   if (now.truncated) notes.push('this year\'s stays read stopped early — figures are floors')
   if (ly.truncated) notes.push('last year\'s stays read stopped early — figures are floors')
-  const lyNoDate = ly.rows.filter(r => !r.created_at).length
-  if (lyNoDate) notes.push(`${lyNoDate} of last year's stays carry no booking date and are left out`)
   // Units already listed when last year's window began — the like-for-like set.
   const listedBy: Record<string, string> = {}
   let dated = 0
