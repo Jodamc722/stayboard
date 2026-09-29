@@ -30,7 +30,8 @@
 //     unclassified one (null) is given the benefit of the doubt, so this never cries wolf.
 //     Guesty's internal entries (log, note, …) are neither question nor answer.
 //   · AWAITING_SINCE — the first guest message of that unanswered run. The clock does not reset
-//     when the guest follows up.
+//     when the guest follows up — unless the run is older than AWAITING_HORIZON_H, when the new
+//     message starts a fresh run (a stale "thanks!" is not the question being asked today).
 //   · SLA_DUE_AT — a reply is due 60 minutes later when the message came in between 08:00 and
 //     22:00 ET, or on the guest's arrival day at any hour; overnight messages are due at 08:00 ET.
 // awaitingSet() below is the one reader: the /messages pills and Needs-reply tab use it, and the
@@ -146,7 +147,9 @@ export function analyseThread(sorted: Msg[], ctx: { checkIn?: string | null } = 
       // waiting has not reset our stopwatch.
       if (openGuestAt === null) openGuestAt = t
       if (humanOpenAt === null) humanOpenAt = t
-      if (waitingIso === null) waitingIso = m.sent_at
+      // A run older than the horizon is not a queue: a "thanks!" on the 20th, a template on the 25th
+      // and a new question on the 29th is a guest waiting since the 29th, not a reply 9 days late.
+      if (waitingIso === null || t - Date.parse(waitingIso) > AWAITING_HORIZON_H * 3600_000) waitingIso = m.sent_at
     } else if (m.sender === 'host') {
       // human_first_ms: the SAME first guest message, to the first reply a person typed. Known
       // template replies (is_automated true) are skipped — the clock keeps running past them, which
@@ -358,11 +361,11 @@ export type AwaitingSet = {
 const isoNoMs = (ms: number) => new Date(ms).toISOString().slice(0, 19) + 'Z'
 
 /**
- * Every guest waiting on us right now, by the one rule above: awaiting, and the wait started within
- * the last AWAITING_HORIZON_H hours. `overdue` is past sla_due_at.
+ * Every guest waiting on us right now, by the one rule above: awaiting, and the guest last wrote
+ * within the last AWAITING_HORIZON_H hours (filtered on last_guest_at — a guest who follows up today
+ * on a run that began earlier is still waiting). `overdue` is past sla_due_at.
  *
- * Rows computed before migration 134 (or before their thread moved again) carry no awaiting_since;
- * they fall back to last_guest_at for the horizon and simply have no reply-by time.
+ * Rows computed before migration 134 carry no awaiting_since and simply have no reply-by time.
  */
 export async function awaitingSet(opts: { db?: any; now?: number; horizonHours?: number } = {}): Promise<AwaitingSet> {
   const db = opts.db || supabaseAdmin()
@@ -371,8 +374,7 @@ export async function awaitingSet(opts: { db?: any; now?: number; horizonHours?:
   const cols = 'conversation_id,reservation_id,listing_id,channel,last_guest_at'
   let slaKnown = true
   let res: any = await db.from('conversation_response').select(cols + ',awaiting_since,sla_due_at')
-    .eq('awaiting', true)
-    .or(`awaiting_since.gte.${from},and(awaiting_since.is.null,last_guest_at.gte.${from})`)
+    .eq('awaiting', true).gte('last_guest_at', from)
     .order('last_guest_at', { ascending: false }).order('conversation_id', { ascending: true })
     .limit(1000)
   if (res.error && missingSlaColumns(res.error)) {
@@ -385,14 +387,22 @@ export async function awaitingSet(opts: { db?: any; now?: number; horizonHours?:
   if (res.error) return { rows: [], ids: [], overdue: 0, slaKnown: false, truncated: false, error: String(res.error.message || res.error).slice(0, 200) }
   const data: any[] = res.data || []
   const rows: AwaitingRow[] = data.map(r => {
-    const due = slaKnown && r.sla_due_at ? String(r.sla_due_at) : null
+    let since = slaKnown && r.awaiting_since ? String(r.awaiting_since) : null
+    let due = slaKnown && r.sla_due_at ? String(r.sla_due_at) : null
+    // analyseThread never stores a run that began more than the horizon before the guest's latest
+    // message. A row that does was written before that rule; until its thread is recomputed, read it
+    // as starting at that latest message rather than show a question asked today as days late.
+    if (since && r.last_guest_at && Date.parse(r.last_guest_at) - Date.parse(since) > AWAITING_HORIZON_H * 3600_000) {
+      since = String(r.last_guest_at)
+      due = slaDueAt(since)
+    }
     return {
       conversation_id: String(r.conversation_id),
       reservation_id: r.reservation_id || null,
       listing_id: r.listing_id || null,
       channel: r.channel || null,
       last_guest_at: r.last_guest_at || null,
-      awaiting_since: slaKnown && r.awaiting_since ? String(r.awaiting_since) : null,
+      awaiting_since: since,
       sla_due_at: due,
       overdue: !!due && Date.parse(due) <= now,
     }
