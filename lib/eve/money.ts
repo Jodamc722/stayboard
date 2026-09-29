@@ -28,7 +28,7 @@ function thisMonth(today: string): string { return today.slice(0, 7) }
 export const MONEY_TOOLS: EveTool[] = [
   {
     name: 'kpi',
-    description: 'THE revenue and performance numbers, computed exactly the way the app boards compute them: occupancy %, ADR, RevPAR, total revenue, channel mix, and the cleaning economics (fee per turn, cost per turn, margin) — each compared against the SAME-LENGTH window immediately before it, so you always have a change figure. Params: days (1-365, default 30) or from/to, plus optional market or building. Use this for ANY revenue/occupancy/ADR question. Revenue is prorated per night and cleaning is attributed to the checkout date, so these numbers reconcile with /revenue.',
+    description: 'THE revenue and performance numbers as the Home KPI board computes them: occupancy %, ADR, RevPAR, total revenue, channel mix and the cleaning fee per turn — each compared against the SAME-LENGTH window immediately before it, so you always have a change figure. Params: days (1-365, default 30) or from/to, plus optional market or building. Use this for ANY revenue/occupancy/ADR question. Revenue is prorated per night and cleaning is attributed to the checkout date. These are this board\'s figures and can differ from /revenue and from the revenue app — never say they reconcile; if someone quotes another number, say which source each comes from. Cleaning COST per turn is not computed here (it comes back empty): use labor_economics for that.',
     input_schema: obj({ days: S.num, from: S.str, to: S.str, market: S.str, building: S.str }),
     money: true,
     run: async (input, ctx) => {
