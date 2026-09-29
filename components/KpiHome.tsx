@@ -345,7 +345,7 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
               sub={canSeeMoney
                 ? (c.costKnown
                   ? 'fees ' + money(c.revenue) + ' − pay ' + money(c.cost) + (c.marginPct != null ? ' · ' + pct(c.marginPct, 0) : '')
-                  : 'no cleaner pay on record — upload a Homebase timesheet')
+                  : 'no cleaner pay in Breezeway — see Labor')
                 : undefined}
               delta={c.costKnown ? <Delta v={c.marginChange} suffix="%" /> : undefined}
               alert={canSeeMoney && c.costKnown && c.margin != null && c.margin < 0} />
@@ -703,7 +703,7 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
         Expedia-bundled fees are rebuilt from the unit&apos;s own booking history — the same rules as the Labor board.
         {c.costKnown
           ? ' Cleaning pay is what Breezeway records as paid on completed housekeeping tasks.'
-          : ' Breezeway is not recording what cleaners are paid, so margin and cost per turn stay blank rather than flattering — upload a Homebase timesheet on the Labor page and they fill in with real hours and payroll.'}
+          : ' Breezeway is not recording what cleaners are paid, so margin and cost per turn stay blank here rather than flattering — cost per clean from Homebase punches is on the Labor board.'}
       </p>
     </div>
   )
