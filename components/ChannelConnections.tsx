@@ -65,9 +65,11 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
   const [runNote, setRunNote] = useState('')
   const [err, setErr] = useState('')
   const [onlyProblems, setOnlyProblems] = useState(params.get('problems') === '1')
-  const [channel, setChannel] = useState<string>('all')
+  // ?channel= and ?building= come from the Command Center's building-wide rows ("Failed on Vrbo ·
+  // 14 units at 17 West"), so the page opens on exactly those units.
+  const [channel, setChannel] = useState<string>(() => { const c = params.get('channel') || ''; return CHANNELS.some(x => x.key === c) ? c : 'all' })
   const [market, setMarket] = useState('all')
-  const [building, setBuilding] = useState('all')
+  const [building, setBuilding] = useState(params.get('building') || 'all')
   const [q, setQ] = useState('')
   const [tab, setTab] = useState<'matrix' | 'missing' | 'inactive'>('matrix')
   const showInactive = tab === 'inactive'   // the CSV includes inactive rows while that tab is open

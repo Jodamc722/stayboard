@@ -738,26 +738,61 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     }
   }
 
-  // ── 5b. CHANNELS: a listing off Airbnb / Booking.com / Vrbo / Expedia (Jon, 2026-09-18) ───────
+  // ── 5b. CHANNELS: a connection that BROKE on Airbnb / Booking.com / Vrbo / Expedia ─────────────
   // Read from the snapshot the listings sync writes, never recomputed here — 290 listings × 9
   // channels is the check's job, and the Command Center only needs the rows that are red today.
-  // One row per listing (its worst channel first, the rest named), GM-owned: reconnecting is a
-  // Guesty job, not a field one.
+  // BROKEN only — failed, disconnected, suspended. "Not connected" is how a listing is set up, not
+  // something that went wrong today: 217 of the 235 channel rows were "Not connected on Expedia"
+  // (2026-09-29 audit), every day, burying the Fix lane. Coverage lives on the Channels page.
+  // A break shared by 3+ units of one building (14 units at 17 West failing on Vrbo at once) is ONE
+  // row that opens the Channels page filtered to it; the rest are one row per listing, its worst
+  // channel first. GM-owned: reconnecting is a Guesty job, not a field one.
   try {
     const snap = await readSnapshot()
-    const byListing: Record<string, ReturnType<typeof problemsFromSnapshot>> = {}
-    for (const p of problemsFromSnapshot(snap)) (byListing[p.listingId] ||= []).push(p)
+    const broken = problemsFromSnapshot(snap).filter(p => p.verdict !== 'missing')
+    const EFFECT: Record<string, [string, string]> = {
+      suspended: ['Airbnb is not selling it until the approval clears', 'Airbnb is not selling them until the approval clears'],
+      failed: ['updates are not getting through, so rates and the calendar there can drift', 'updates are not getting through, so rates and the calendars there can drift'],
+      disconnected: ['guests cannot book it there until it is reconnected', 'guests cannot book them there until they are reconnected'],
+    }
+    const effect = (v: string, many: boolean) => EFFECT[v] ? EFFECT[v][many ? 1 : 0] : 'check the connection in Guesty'
+    const listOf = (xs: string[]) => xs.length === 1 ? xs[0] : xs.slice(0, -1).join(', ') + ' and ' + xs[xs.length - 1]
+    const groups: Record<string, typeof broken> = {}
+    for (const p of broken) if (p.building) (groups[p.building + '|' + p.platform + '|' + p.verdict] ||= []).push(p)
+    const inGroup: Record<string, boolean> = {}
+    for (const gk of Object.keys(groups)) {
+      const g = groups[gk]
+      if (g.length < 3) continue
+      const lead = g[0]
+      for (const p of g) inGroup[p.listingId + ':' + p.platform] = true
+      const chan = CHANNEL_LABEL[lead.platform] || lead.platform
+      const label = VERDICT_LABEL[lead.verdict] || lead.verdict
+      const href = '/channels?building=' + encodeURIComponent(lead.building) + '&channel=' + encodeURIComponent(lead.platform) + '&problems=1'
+      const names = g.map(p => p.unit)
+      push({
+        key: 'channel:' + lead.building + ':' + lead.platform + ':' + lead.verdict, kind: 'channel', severity: 'today', rank: 5, owner: 'gm',
+        due: 'today',
+        unit: lead.building, listingId: null, market: lead.market || marketOfId(lead.listingId),
+        title: label + ' on ' + chan + ' · ' + g.length + ' units at ' + lead.building,
+        why: chan + ' ' + label.toLowerCase() + ' on ' + names.slice(0, 4).join(', ') + (names.length > 4 ? ' and ' + (names.length - 4) + ' more' : '') + ' — ' + effect(lead.verdict, true) + '.',
+        action: { type: 'open', href, label: 'Open channels' }, href,
+      })
+    }
+    const byListing: Record<string, typeof broken> = {}
+    for (const p of broken) if (!inGroup[p.listingId + ':' + p.platform]) (byListing[p.listingId] ||= []).push(p)
     for (const lid of Object.keys(byListing)) {
       const rows = byListing[lid]
       const lead = rows[0]
       const unit = lead.unit || nameOf(lid) || 'Unit'
       const chans = rows.map(r => CHANNEL_LABEL[r.platform] || r.platform)
+      const label = VERDICT_LABEL[lead.verdict] || lead.verdict
+      const same = rows.every(r => r.verdict === lead.verdict)
       push({
         key: 'channel:' + lid, kind: 'channel', severity: 'today', rank: 5, owner: 'gm',
         due: 'today',
         unit, listingId: lid, market: lead.market || marketOfId(lid),
-        title: (VERDICT_LABEL[lead.verdict] || lead.verdict) + ' on ' + (chans.length === 1 ? chans[0] : chans.slice(0, -1).join(', ') + ' and ' + chans[chans.length - 1]),
-        why: 'Guesty reports the listing ' + rows.map(r => (VERDICT_LABEL[r.verdict] || r.verdict).toLowerCase() + ' on ' + (CHANNEL_LABEL[r.platform] || r.platform)).join(', ') + ' — guests cannot book it there until it is reconnected.',
+        title: label + ' on ' + (same ? listOf(chans) : chans[0] + ' +' + (chans.length - 1)),
+        why: 'Guesty reports the listing ' + rows.map(r => (VERDICT_LABEL[r.verdict] || r.verdict).toLowerCase() + ' on ' + (CHANNEL_LABEL[r.platform] || r.platform)).join(', ') + ' — ' + effect(lead.verdict, false) + '.',
         action: { type: 'open', href: '/channels?listing=' + lid, label: 'Open channels' }, href: '/channels?listing=' + lid,
       })
     }
