@@ -241,7 +241,7 @@ export async function getCounters(): Promise<AgentCounters> { return readCounter
  * expectations desk and the Slack reader, so "over today's AI budget → no draft" never tripped on the
  * watches' own spend. The sentiment scan is its own job, Jon's call, and is not metered here.
  */
-export const EVE_AI_TASKS = ['eve', 'eve-review', 'eve-vision', 'eve-brain', 'eve-correction', 'learn', 'slack-watch',
+export const EVE_AI_TASKS = ['eve', 'eve-review', 'quality-audit', 'eve-vision', 'eve-brain', 'eve-correction', 'learn', 'slack-watch',
   'memory-recall', 'probe-writer', 'probe-judge', 'guest-reply', 'review-reply', 'translate', 'expectations', 'ops-focus']
 
 /** Dollars Eve's own tasks have spent today (ET), from the ai_usage ledger. */

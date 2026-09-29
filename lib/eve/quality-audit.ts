@@ -158,7 +158,9 @@ export async function runQualityAudit(opts: { by?: string; post?: boolean } = {}
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return { ok: false, error: 'ANTHROPIC_API_KEY is not set' }
   const pack = await buildQualityPack(90)
-  const { model, fallback } = await modelPairFor('eve-review')
+  // Its own task key (2026-09-29, 04-F42b): it inherits the operator's review tier in lib/ai-models,
+  // so the model is unchanged, but its spend no longer hides inside 'eve-review'.
+  const { model, fallback } = await modelPairFor('quality-audit')
   let parsed: any = null, answeredBy = model
   try {
     const r = await anthropicMessages(key, {
@@ -166,7 +168,7 @@ export async function runQualityAudit(opts: { by?: string; post?: boolean } = {}
       tools: [{ name: 'quality_findings', description: 'Deliver the three weaknesses as structured data.', input_schema: SCHEMA }],
       tool_choice: { type: 'tool', name: 'quality_findings' },
       messages: [{ role: 'user', content: `DATE: ${pack.today}. WINDOW: ${pack.from} → ${pack.today}.\n\nEVIDENCE PACK:\n\n${pack.text}` }],
-    }, fallback, 'eve-review')
+    }, fallback, 'quality-audit')
     answeredBy = r.model
     if (!r.ok) return { ok: false, error: clip(r.data?.error?.message, 200) || `model call failed (${r.status})`, pack: pack.stats }
     const toolUse = (r.data?.content || []).find((c: any) => c.type === 'tool_use' && c.input && typeof c.input === 'object')
