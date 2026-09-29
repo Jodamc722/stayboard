@@ -4,17 +4,18 @@
 // PUT  : OWNER ONLY. These settings change how the whole team's scheduler, forecast and ops board
 //        behave, so they sit alongside workspaces/page-access as an owner-level control.
 import { NextRequest, NextResponse } from 'next/server'
-import { getAccess, isSuperadmin } from '@/lib/access'
+import { getAccess, isSuperadmin, requireUser } from '@/lib/access'
 import { getOpsPresets, setSetting, OPS_PRESETS_KEY } from '@/lib/app-settings'
 import { mergePresets } from '@/lib/ops-presets'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const access = await getAccess()
-  if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // An active Lighthouse member, not just any Supabase session (2026-09-29, same class as 07-B4b).
+  const g = await requireUser()
+  if (!g.ok) return g.res
   const presets = await getOpsPresets()
-  return NextResponse.json({ presets, canEdit: isSuperadmin(access.email) })
+  return NextResponse.json({ presets, canEdit: isSuperadmin(g.access.email) })
 }
 
 export async function PUT(req: NextRequest) {

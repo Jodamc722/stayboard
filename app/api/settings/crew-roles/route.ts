@@ -11,7 +11,7 @@
 // paint a story… Breezeway is the color not the rule." So Breezeway numbers appear here purely as
 // EVIDENCE next to a person's name. They never set the answer; a human does.
 import { NextRequest, NextResponse } from 'next/server'
-import { getAccess, requireLevel, canSeeMoney } from '@/lib/access'
+import { getAccess, requireLevel, requireUser, canSeeMoney } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { getAgencies, upsertStaff, getStaff, staffSingleSourceReady, type Agency } from '@/lib/staffing'
@@ -58,8 +58,11 @@ type Person = {
 }
 
 export async function GET(req: NextRequest) {
-  const access = await getAccess()
-  if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // An active Lighthouse member, not just any Supabase session (2026-09-29, same class as 07-B4b) —
+  // this names the crew and their hours.
+  const g = await requireUser()
+  if (!g.ok) return g.res
+  const access = g.access
   const money = canSeeMoney(access)
 
   const days = Math.max(7, Math.min(90, Number(new URL(req.url).searchParams.get('days')) || 30))
