@@ -17,6 +17,7 @@ import { closeStaleCleans } from '@/lib/stale-cleans'
 import { closeStrayInspections } from '@/lib/task-audit'
 import { requireCron, tooSoon } from '@/lib/cron-auth'
 import { buildSuggestions, createFromSuggestion, logAccepted, getCadenceCfg } from '@/lib/suggestions'
+import { isTaskDone } from '@/lib/task-categories'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -101,7 +102,7 @@ export async function GET(req: NextRequest) {
       const visits: Record<string, string | null> = {}
       for (const t of (todays || []) as any[]) {
         if (/delete|cancel/i.test(String(t.status || ''))) continue
-        if (/\b(complete|finish|close|approv)/i.test(String(t.status || '')) || t.finished_at) continue
+        if (isTaskDone(t.status, t.finished_at)) continue
         if (deptOf(t.type_department) !== 'maintenance') continue
         const who = Array.isArray(t.assignees)
           ? (t.assignees.map((p: any) => String(p && typeof p === 'object' ? (p.name ?? '') : p).trim()).filter(Boolean)[0] || null)

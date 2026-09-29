@@ -17,6 +17,7 @@ import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex, benchmarkMinutes } from '@/lib/ops-presets'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { marketOf } from '@/lib/segments'
+import { isTaskDone } from '@/lib/task-categories'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -114,7 +115,7 @@ export async function GET(req: NextRequest) {
     const a = Array.isArray(t?.assignees) ? t.assignees : []
     return a.map((x: any) => str(typeof x === 'string' ? x : x?.name).trim()).filter(Boolean)
   }
-  const isDone = (t: any) => /complete|finish|close|approv|done/i.test(str(t.status)) || !!t.finished_at
+  const isDone = (t: any) => isTaskDone(t.status, t.finished_at)
 
   const rows: any[] = []
   for (const t of tasks) {
