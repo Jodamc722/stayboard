@@ -6,6 +6,8 @@
 // warm lambda. Docs: https://developer.breezeway.io/
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { fetchWithTimeout, retryAfterMs } from '@/lib/fetch-timeout'
+// lib/bust imports only next/cache, so this is not a cycle (ops-day → breezeway would otherwise be one).
+import { bustBoards } from '@/lib/bust'
 
 const AUTH = process.env.BREEZEWAY_AUTH_URL || 'https://api.breezeway.io/public/auth/v1'
 const BASE = process.env.BREEZEWAY_BASE_URL || 'https://api.breezeway.io/public/inventory/v1'
@@ -114,8 +116,14 @@ export function mapBreezewayTask(t: any) {
 // Create a task in Breezeway (POST /task). `body.name` is required; pass home_id (preferred,
 // integer) or reference_property_id. Returns the standard bzApi result; the created task is in
 // `.data` with id, type_task_status, report_url, scheduled_date, assignments.
+//
+// Every task write that lands (create, update, cancel, complete) busts the boards' caches: Today in
+// Ops, the Command Center and the Scheduler cache under 'day' / 'schedule', and a write that never
+// busts them reads back as "nothing happened" until the cache runs out. Best-effort, never throws.
 export async function createBreezewayTask(body: Record<string, any>): Promise<{ ok: boolean; status: number; data: any; text: string }> {
-  return bzApi('/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const r = await bzApi('/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  if (r.ok) bustBoards()
+  return r
 }
 
 // TASK TEMPLATES — the formats our team actually works to (preventative maintenance, field
@@ -242,7 +250,9 @@ export async function listBreezewayPeople(): Promise<{ id: number; name: string;
 export async function updateBreezewayTask(taskId: string | number, body: Record<string, any>): Promise<{ ok: boolean; status: number; data: any; text: string }> {
   // PATCH is the documented update method. `assignments` is a full array of person IDs and REPLACES
   // the task's current assignees (override, not append) — so re-pushing a different cleaner swaps them.
-  return bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const r = await bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  if (r.ok) bustBoards()
+  return r
 }
 
 // Best-effort: mark a Breezeway task complete. The exact completion enum is not documented for our
@@ -266,13 +276,15 @@ export async function cancelBreezewayTask(taskId: string | number): Promise<{ ok
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type_task_status: { code } }),
     })
-    if (r.ok) return r
+    if (r.ok) { bustBoards(); return r }
   }
   return { ok: false, status: 422, data: null, text: 'Breezeway rejected every cancel status code' }
 }
 
 export async function completeBreezewayTask(taskId: string | number): Promise<{ ok: boolean; status: number; data: any; text: string }> {
-  return bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type_task_status: { code: 'complete' } }) })
+  const r = await bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type_task_status: { code: 'complete' } }) })
+  if (r.ok) bustBoards()
+  return r
 }
 
 // Housekeeping tasks for ONE property over a scheduled-date window (YYYY-MM-DD). Breezeway requires
