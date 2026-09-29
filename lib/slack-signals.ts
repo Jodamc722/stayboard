@@ -18,6 +18,7 @@
 // lib/slack-alerts. None of them throw — a detector that fails returns nothing and the rest run.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { pageRows } from './db-page'
 import { buildingOf, marketOf, type Market } from './segments'
 import { blockedUnits, type BlockedRun } from './blocked-units'
 import { isLiveStay } from './stay-status'
@@ -58,15 +59,16 @@ export type RepeatOffender = {
 export async function findRepeatOffenders(windowDays = 14, minCount = 2): Promise<RepeatOffender[]> {
   const db = supabaseAdmin()
   const since = new Date(Date.now() - windowDays * DAY).toISOString()
-  const { data, error } = await db.from('glitches')
+  // Paged, oldest first: a capped read would drop the NEWEST tickets, which are the repeats.
+  const { rows, truncated } = await pageRows<any>((a, b) => db.from('glitches')
     .select('id, unit, category, overview, status, created_at')
     .gte('created_at', since)
-    .order('created_at', { ascending: true })
-    .limit(1000)
-  if (error || !Array.isArray(data)) return []
+    .order('created_at', { ascending: true }).order('id', { ascending: true })
+    .range(a, b), 6)
+  if (truncated) return []
 
   const buckets: Record<string, RepeatOffender> = {}
-  for (const r of data as any[]) {
+  for (const r of rows) {
     const unit = String(r.unit || '').trim()
     const category = String(r.category || '').trim()
     if (!unit || !category) continue
