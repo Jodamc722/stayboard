@@ -23,7 +23,10 @@ import {
 const PERIODS = [{ d: 7, l: '7 days' }, { d: 30, l: '30 days' }, { d: 90, l: '90 days' }, { d: 365, l: '12 months' }]
 
 /* ------------------------------------------------------------------ formatting */
+// null means UNKNOWN — a read that failed, a sample too small, a figure withheld — and Number(null)
+// is 0, so every formatter checks for it first. A blank reads as "not known"; a 0 reads as a fact.
 function money(n: any): string {
+  if (n == null) return '—'
   const v = Number(n)
   if (!Number.isFinite(v)) return '—'
   if (Math.abs(v) >= 1_000_000) return '$' + (v / 1_000_000).toFixed(2) + 'M'
@@ -31,14 +34,17 @@ function money(n: any): string {
   return '$' + Math.round(v).toLocaleString()
 }
 function exact(n: any): string {
+  if (n == null) return '—'
   const v = Number(n)
   return Number.isFinite(v) ? '$' + Math.round(v).toLocaleString() : '—'
 }
 function pct(n: any, dp = 1): string {
+  if (n == null) return '—'
   const v = Number(n)
   return Number.isFinite(v) ? v.toFixed(dp) + '%' : '—'
 }
 function count(n: any): string {
+  if (n == null) return '—'
   const v = Number(n)
   return Number.isFinite(v) ? v.toLocaleString() : '—'
 }
@@ -291,6 +297,12 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
           {market !== 'all' ? ' ' + market + ' only.' : ''}{building !== 'all' ? ' ' + building + ' only.' : ''}
         </p>
       )}
+      {/* A read that came back short says so, in one line — its figures are blank, not low. */}
+      {k && Array.isArray(k.partial) && k.partial.length > 0 && (
+        <p className="text-[12px] text-amber-800 mb-2.5 flex items-start gap-1.5" title="Blank figures below are not zero — their data did not load in full. Refresh to retry.">
+          <AlertTriangle size={12} className="shrink-0 mt-0.5" /> <span><span className="font-semibold">Partial:</span> {k.partial.join(' · ')}</span>
+        </p>
+      )}
 
       {/* ---------------------------------------------------------------- KPI grid */}
       {!k && loading ? (
@@ -396,7 +408,9 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
         <div className="lg:col-span-2">
           <Panel
             title="Work completed"
-            note={w.completed != null
+            note={w.partial
+              ? 'Breezeway tasks did not load in full — Refresh to retry'
+              : w.completed != null
               ? count(w.completed) + ' of ' + count(w.scheduled) + ' Breezeway tasks closed'
                 + (w.completionRate != null ? ' · ' + pct(w.completionRate, 0) + ' completion' : '')
                 + (w.onTimeRate != null ? ' · ' + pct(w.onTimeRate, 0) + ' finished on the day' : '')

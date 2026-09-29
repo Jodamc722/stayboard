@@ -60,17 +60,31 @@ function pctChange(now: number, prev: number): number | null {
   return round(((now - prev) / Math.abs(prev)) * 100, 1)
 }
 
-/** Read a whole table in 1000-row pages. PostgREST will not give you more in one request. */
-async function pageAll(build: (from: number, to: number) => any, maxPages = 14): Promise<any[]> {
-  const out: any[] = []
-  for (let i = 0; i < maxPages; i++) {
-    const { data, error } = await build(i * 1000, i * 1000 + 999)
-    if (error) break
-    const rows = (data || []) as any[]
-    out.push.apply(out, rows)
-    if (rows.length < 1000) break
-  }
-  return out
+// ── EVERY READ IS PAGED, AND A SHORT READ SAYS SO (2026-09-28 audit, P0-1) ────────────────────────
+// This file had its own pager: 14 pages, stop on the first error, no flag. The tasks read runs over
+// BOTH windows oldest-first at ~89 Breezeway tasks a day, so the 90-day view (~16,000 rows) lost the
+// newest three weeks of the current window and the 12-month view (~65,000) loaded almost none of it —
+// and a failed page read as "no more rows". Now every paged read goes through lib/db-page pageRows
+// (a failed page reports `truncated`), reads NEWEST FIRST so a ceiling can only ever cut the oldest
+// days of the PRIOR window, and gets a page budget sized to its span. Whatever still comes back short
+// is named on the board ("partial") and its numbers are blanked rather than printed low.
+
+/** Pages for `days` days of a table that grows by up to `perDay` rows a day — with room to spare. */
+function pagesFor(days: number, perDay: number, min = 2): number {
+  return Math.max(min, Math.ceil((Math.max(1, days) * perDay) / 1000) + 1)
+}
+/** The oldest day a newest-first read reached (the day itself may be only partly read). */
+function oldestDay(rows: any[], dayOf: (r: any) => string): string {
+  let min = ''
+  for (const r of rows) { const d = dayOf(r); if (d && (!min || d < min)) min = d }
+  return min
+}
+const ET_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
+/** The Eastern calendar day of a timestamp — the day it happened on here, not in UTC. */
+function etDayOf(ts: any): string {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return isNaN(d.getTime()) ? str(ts).slice(0, 10) : ET_DAY.format(d)
 }
 
 type Li = { id: string; name: string; building: string; market: string; active: boolean; listingFee: number }
@@ -105,8 +119,12 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     const buildingFilter = str(sp.get('building') || 'all')
 
     // ---------------------------------------------------------------- listings
-    const listingRows = await pageAll((a, b) =>
+    // Every number on the board is scoped through this map, so a partial read is not a partial board —
+    // it is a wrong one. It fails loudly instead.
+    const listingRead = await pageRows<any>((a, b) =>
       db.from('guesty_listings').select('id,nickname,title,building,address_city,status,listingFee:raw->prices->>cleaningFee').order('id').range(a, b), 3)
+    if (listingRead.truncated) throw new Error('The listings read came back short — refusing to build the board on part of the portfolio. Try Refresh.')
+    const listingRows = listingRead.rows
     const lmap: Record<string, Li> = {}
     for (const l of listingRows) {
       const name = l.nickname || l.title || 'Unit'
@@ -135,20 +153,29 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
 
     // ---------------------------------------------------------------- reads
     const resFrom = prevFrom
-    const resTo = addDays(to, 14)          // far enough forward for arrivals-next-7 and welcome calls
-    const [reservations, tasks, sentiment, lowReviews, glitchRows, openWork, syncRows, openGlitchRes, openTaskRes, welcome, welcomePrev, welcomeDue] = await Promise.all([
-      // No custom_fields any more (2026-09-28): the welcome-call numbers come from the call log
-      // (lib/call-desk), and that jsonb column on two windows of reservations was the heaviest thing
-      // this read carried.
-      pageAll((a, b) => db.from('guesty_reservations')
-        .select('id,listing_id,listing_name,guest_name,check_in,check_out,nights,status,source,money_total,cleaning:raw->money->>fareCleaning,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,channelFee:raw->money->>hostServiceFee')
-        .gte('check_out', resFrom).lte('check_in', resTo).order('check_out').range(a, b)),
-      pageAll((a, b) => db.from('breezeway_tasks_sync')
-        .select('id,reference_property_id,name,status,type_department,scheduled_date,started_at,finished_at,total_minutes,rate_paid,assignees')
-        .gte('scheduled_date', prevFrom).lte('scheduled_date', to).order('scheduled_date').range(a, b)),
-      pageAll((a, b) => db.from('guesty_conversation_sentiment')
+    const resTo = addDays(to, 14)          // far enough forward for arrivals-next-7
+    const readDays = daysBetween(prevFrom, to)
+    const [resRead, taskRead, sentRead, lowReviews, glitchRows, openWork, syncRows, openGlitchRes, openTaskRes, welcome, welcomePrev, welcomeDue] = await Promise.all([
+      // Live statuses only, filtered in the database (status is lowercased at sync): cancellations
+      // and inquiries were read over both windows only to be thrown away here. No custom_fields any
+      // more either — the welcome-call numbers come from the call log (lib/call-desk) — and that jsonb
+      // column on two windows of reservations was the heaviest thing this read carried.
+      // NEWEST FIRST (checkout desc, id to break ties) so a short read can only lose the oldest stays.
+      pageRows<any>((a, b) => db.from('guesty_reservations')
+        .select('id,listing_id,check_in,check_out,nights,status,source,money_total,cleaning:raw->money->>fareCleaning,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,channelFee:raw->money->>hostServiceFee')
+        .in('status', LIVE_RES)
+        .gte('check_out', resFrom).lte('check_in', resTo)
+        .order('check_out', { ascending: false }).order('id', { ascending: false }).range(a, b), pagesFor(daysBetween(resFrom, resTo), 50)),
+      // ~89 tasks a day (lib/task-done); budgeted at 120 over both windows. Only the columns this file
+      // reads — `assignees` (jsonb) and `started_at` rode along on every row for nothing.
+      pageRows<any>((a, b) => db.from('breezeway_tasks_sync')
+        .select('id,reference_property_id,name,status,type_department,scheduled_date,finished_at,total_minutes,rate_paid')
+        .gte('scheduled_date', prevFrom).lte('scheduled_date', to)
+        .order('scheduled_date', { ascending: false }).order('id', { ascending: false }).range(a, b), pagesFor(readDays, 120)),
+      pageRows<any>((a, b) => db.from('guesty_conversation_sentiment')
         .select('conversation_id,listing_id,band,dissatisfied,awaiting_reply,status,top_issue,last_message_at')
-        .gte('last_message_at', prevFrom + 'T00:00:00Z').order('last_message_at').range(a, b), 4),
+        .gte('last_message_at', prevFrom + 'T00:00:00Z')
+        .order('last_message_at', { ascending: false }).order('conversation_id').range(a, b), pagesFor(readDays, 50)),
       // LOW ON ITS OWN SCALE (2026-09-28): ≤3 stars, or ≤7/10 on Booking (stored 3.5) — the review
       // KPIs' isLowReview, applied below. Reviews excluded from the score stay off the list, as they
       // do everywhere else a review is judged.
@@ -159,7 +186,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       // PAGED (2026-09-03): both were .limit(1000) — the cap itself. Glitches over two windows
       // and open requests can exceed it; the counts under-reported exactly when they mattered.
       pageRows<any>((a, b) => db.from('glitches').select('id,status,category,market,unit,listing_id,created_at,refund_approved')
-        .gte('created_at', prevFrom + 'T00:00:00Z').order('created_at', { ascending: false }).order('id').range(a, b), 6),
+        .gte('created_at', prevFrom + 'T00:00:00Z').order('created_at', { ascending: false }).order('id').range(a, b), pagesFor(readDays, 15, 6)),
       pageRows<any>((a, b) => db.from('field_requests').select('id,status,due_at,priority,building').in('status', ['open', 'in_progress']).order('id').range(a, b), 4),
       db.from('guesty_sync_status').select('entity,last_sync_at').order('entity'),
       // OPEN WORK, the honest version. Requests alone under-report badly — the same rule the day
@@ -180,6 +207,39 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       welcomeRate(db, prevFrom, prevTo, inScope),
       welcomeCallsDue(db, today).catch(() => null),
     ])
+    const reservations = resRead.rows
+    const tasks = taskRead.rows
+    const sentiment = sentRead.rows
+
+    // ---------------------------------------------------------------- what each read covered
+    // A newest-first read that stopped early still holds every day AFTER the oldest one it touched,
+    // so a window is complete when the read finished or reached back past its first day. The current
+    // window's stays are the board: if they did not load, it fails loudly rather than print a low
+    // occupancy. Anything else short is blanked where it would mislead, and named in `partial`.
+    const partial: string[] = []
+    const covers = (truncated: boolean, oldest: string, a: string) => !truncated || (!!oldest && oldest < a)
+    const resOld = oldestDay(reservations, r => str(r.check_out).slice(0, 10))
+    if (!covers(resRead.truncated, resOld, from)) throw new Error('The reservations read came back short — occupancy and revenue would be understated. Try Refresh.')
+    const resPrevOk = covers(resRead.truncated, resOld, prevFrom)
+    if (!resPrevOk) partial.push('stays before ' + addDays(resOld, 1) + ' not read — revenue vs prior left blank')
+    const taskOld = oldestDay(tasks, t => str(t.scheduled_date).slice(0, 10))
+    const tasksCurOk = covers(taskRead.truncated, taskOld, from)
+    const tasksPrevOk = covers(taskRead.truncated, taskOld, prevFrom)
+    if (!tasksCurOk) partial.push('Breezeway tasks did not load in full — work figures left blank')
+    else if (!tasksPrevOk) partial.push('Breezeway tasks before ' + addDays(taskOld, 1) + ' not read — work vs prior left blank')
+    const sentOld = oldestDay(sentiment, s => etDayOf(s.last_message_at))
+    const sentCurOk = covers(sentRead.truncated, sentOld, from)
+    const sentPrevOk = covers(sentRead.truncated, sentOld, prevFrom)
+    if (!sentCurOk) partial.push('guest sentiment did not load in full — left blank')
+    else if (!sentPrevOk) partial.push('guest sentiment before ' + addDays(sentOld, 1) + ' not read — vs prior left blank')
+    const glOld = oldestDay(glitchRows.rows || [], g => etDayOf(g.created_at))
+    const glCurOk = covers(glitchRows.truncated, glOld, from)
+    const glPrevOk = covers(glitchRows.truncated, glOld, prevFrom)
+    if (!glCurOk) partial.push('glitches did not load in full — left blank')
+    else if (!glPrevOk) partial.push('glitches before ' + addDays(glOld, 1) + ' not read — vs prior left blank')
+    if (welcome.truncated || welcomePrev.truncated) partial.push('the call log read came back short — welcome rate left blank')
+    if (welcomeDue == null) partial.push('welcome calls due could not be read')
+    if (openWork.truncated || openTaskRes.truncated) partial.push('open work read came back short — the count is a floor')
 
     // ---------------------------------------------------------------- today
     const live = reservations.filter(r => !isCancelled(r.status) && LIVE_RES.indexOf(str(r.status).toLowerCase()) >= 0 && inScope(r.listing_id))
@@ -571,6 +631,8 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       // hides money from everyone including the owner.
       canSeeMoney: showMoney,
       lastSync,
+      // What did not load in full, one short line each — KpiHome prints them; empty = everything read.
+      partial,
 
       today: {
         arrivals: arrivalsToday.length,
@@ -691,6 +753,42 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
 
       negatives,
     }
+
+    // A SHORT READ BLANKS WHAT IT WOULD HAVE UNDERSTATED (see `partial` above). A comparison against
+    // half a prior window is not a smaller comparison, it is a wrong one — so it goes, and the note
+    // says why. The current window's work, sentiment and glitch figures go the same way when their
+    // own read failed; the stays that feed revenue and occupancy already threw.
+    const blank = (block: any, keys: string[]) => { if (block) for (const k of keys) block[k] = null }
+    if (!resPrevOk) {
+      blank(payload.revenue, ['occupancyPrev', 'occupancyChange', 'adrPrev', 'adrChange', 'revparPrev', 'revparChange', 'totalPrev', 'totalChange'])
+      blank(payload.cleaning, ['revenuePrev', 'revenueChange', 'revenueGrossPrev', 'turnsPrev', 'turnsInHousePrev', 'marginPrev', 'marginChange'])
+    }
+    if (!tasksPrevOk) {
+      blank(payload.work, ['completedPrev', 'completedChange', 'completionRatePrev', 'onTimeRatePrev', 'cleansPrev', 'maintenancePrev', 'inspectionsPrev'])
+      blank(payload.cleaning, ['costPrev', 'marginPrev', 'marginChange'])
+      if (!homebasePrev.hasData) blank(payload.labor, ['costPrev', 'costChange', 'hoursPrev'])
+    }
+    if (!tasksCurOk) {
+      blank(payload.work, ['scheduled', 'completed', 'completedChange', 'completionRate', 'onTimeRate', 'cleans', 'maintenance', 'inspections', 'hours', 'minutesPerTurn'])
+      ;(payload.work as any).byBuilding = []
+      ;(payload.work as any).byDay = []
+      for (const m of payload.work.byMarket as any[]) { m.done = null; m.cost = null; m.hours = null }
+      ;(payload.work as any).partial = true
+      blank(payload.today, ['cleansScheduled', 'cleansDone'])
+      blank(payload.cleaning, ['minutesPerTurn', 'cost', 'costPerTurn', 'margin', 'marginPct'])
+      blank(payload.labor, ['minutesPerTurn', 'breezewayCost'])
+      if (!homebase.hasData) blank(payload.labor, ['hours', 'cost', 'costChange', 'costRatio'])
+    }
+    if (!sentCurOk) {
+      blank(payload.sentiment, ['scanned', 'unhappy', 'unhappyPct', 'happyPct', 'happyPctPrev', 'openUnhappy', 'awaitingReply'])
+      ;(payload.sentiment as any).topIssues = []
+      blank(payload.today, ['openUnhappy', 'awaitingReply'])
+    } else if (!sentPrevOk) blank(payload.sentiment, ['happyPctPrev'])
+    if (!glCurOk) {
+      blank(payload.glitches, ['opened', 'openedPrev', 'closed', 'cost', 'costPrev', 'costChange'])
+      ;(payload.glitches as any).categories = []
+    } else if (!glPrevOk) blank(payload.glitches, ['openedPrev', 'costPrev', 'costChange'])
+
     // BELT AND BRACES. money() above only covers the fields somebody remembered to wrap, and two
     // did not get wrapped: marketRows and buildingRows shipped raw `cost` and `revenue` to every
     // ops user, quietly, for as long as that gate has existed. redactMoney() strips by field NAME,
