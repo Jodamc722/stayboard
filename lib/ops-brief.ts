@@ -1928,14 +1928,6 @@ const gmAccess = (): any => ({
 
 const money0 = (n: any) => (n == null || !Number.isFinite(Number(n))) ? '—' : '$' + Math.round(Number(n)).toLocaleString('en-US')
 const pct1 = (n: any) => (n == null || !Number.isFinite(Number(n))) ? '—' : Number(n).toFixed(1) + '%'
-// Change pills read as WORDS, never colour alone — half the team reads these on a phone in sun.
-function deltaPill(v: any, suffix = '%', goodIsUp = true): string {
-  if (v == null || !Number.isFinite(Number(v)) || Math.abs(Number(v)) < 0.05) return `<span style="${S.pill};background:#f3f4f6;color:#6b7280">flat</span>`
-  const up = Number(v) > 0
-  const good = goodIsUp ? up : !up
-  const txt = (up ? '▲ ' : '▼ ') + Math.abs(Number(v)).toFixed(1) + suffix
-  return `<span style="${S.pill};background:${good ? '#dcfce7' : '#fee2e2'};color:${good ? '#166534' : '#b91c1c'}">${txt}</span>`
-}
 
 export async function buildGmBrief(): Promise<OpsBrief> {
   // REBUILT 2026-08-22 (Jon's Morning System approval): the GM brief is now a DECISION document.
@@ -1950,6 +1942,17 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const d = await gather('GM')
   const db = supabaseAdmin()
   const today = d.today
+  // LOOKING AHEAD (audit 2026-09-28): the brief promised "booked-ahead" and printed six trailing
+  // numbers. Three forward ones, started now so they run alongside the reads below — each one is
+  // optional, and a failure prints a dash, never takes the brief down.
+  const { buildPacing, paceWord } = await import('./forecast/pacing')
+  const { buildStaffingForecast } = await import('./forecast/staffing')
+  const { buildDueCalendar } = await import('./pm-calendar')
+  const aheadP = Promise.all([
+    buildPacing().catch(() => null),
+    buildStaffingForecast({ days: 14 }).catch(() => null),
+    buildDueCalendar(today, { horizonDays: 30 }).catch(() => null),
+  ])
   const dateNice = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())
   const sheet: any = d.sheet || {}
 
@@ -2037,6 +2040,17 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       String(tod.overdueWork),
       'Aging work turns into guest issues — Ops Command carries the list.'))
   }
+  // A SHORT DAY INSIDE THREE DAYS is still fixable — a shift added, the on-call called in — so it
+  // is a decision for today. Further out it waits on the Looking ahead card below.
+  const [pace, staff, pm] = await aheadP
+  const soonShort = staff ? staff.short.filter(x => x.lead <= 3) : []
+  if (soonShort.length) {
+    const gap = soonShort.reduce((a, x) => a + Math.max(0, x.needed - x.rostered), 0)
+    decide.push(dRow('amber',
+      `<b>${soonShort.length} short day${soonShort.length === 1 ? '' : 's'} in the next 3</b> — ${esc(soonShort.slice(0, 2).map(x => `${x.label} ${x.market}: needs ${x.needed}, ${x.rostered} rostered`).join('; '))}${soonShort.length > 2 ? ` +${soonShort.length - 2}` : ''}`,
+      `${gap} ${gap === 1 ? 'person' : 'people'} short`,
+      'Add a shift or call in the on-call — the Weekly Planner has the day.'))
+  }
   for (const b of (d.bigArrivals || []).slice(0, 3)) {
     decide.push(dRow('blue',
       `<b>${esc(b.unit)}</b> · ${esc(b.guest)} · ${b.today ? '<b>lands today</b>' : esc(b.when)}${b.nights ? ` · ${b.nights}n` : ''}`,
@@ -2078,22 +2092,54 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     `<tr><td style="${S.td}">${label}${note ? `<br><span style="${S.muted};font-size:11.5px">${note}</span>` : ''}</td>
     <td style="${S.td};text-align:right;white-space:nowrap"><b>${week}</b></td>
     <td style="${S.td};text-align:right;white-space:nowrap;color:#6b7280">${settled}</td></tr>`
+  // Cost per clean left this card (audit 2026-09-28): it is the first tile, three centimetres up.
+  // So did the greyed room-revenue row — the revenue app owns that number, and a figure printed
+  // in grey with an apology beside it is noise. Pacing below is the forward revenue question.
   const trendRows = (E7 ? [
     tRow('Labor profit', money0(E7.allIn.margin) + (E7.allIn.marginPct != null ? ` <span style="${S.muted}">(${pct1(E7.allIn.marginPct)})</span>` : ''),
       snap ? money0(snap.margin) + ' · 30d' : '—', 'all crews & salaried management, revenue minus payroll'),
-    tRow('Cost / clean', H7t && H7t.costPerClean != null ? money0(H7t.costPerClean) : '—',
-      snap && snap.costPerClean != null ? money0(snap.costPerClean) + ' settled' : '—', 'housekeepers only'),
     tRow('Departure cleans', H7t ? String(H7t.cleans) : '—',
       snap ? String(snap.cleans) + ' · 30d' : '—'),
   ] : [`<tr><td colspan="3" style="${S.td}"><span style="${S.muted}">Labor engine unavailable this run — numbers in the Daily Labor email.</span></td></tr>`])
     .join('')
-    + `<tr><td style="${S.td};color:#9ca3af">Room revenue <span style="${S.muted}">· your revenue app owns this</span></td>
-      <td style="${S.td};text-align:right;color:#9ca3af">${money0(rev.total)} ${deltaPill(rev.totalChange)}</td>
-      <td style="${S.td};text-align:right;color:#9ca3af">ADR ${money0(rev.adr)}</td></tr>`
   const trendCard = card(`Trend · last 7 (${winNice}) vs settled 30`, null,
     `<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${S.th}"></th><th style="${S.th};text-align:right">Last 7 days</th><th style="${S.th};text-align:right">Settled 30</th></tr>${trendRows}</table>` +
     `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Same engine as the Labor board and the Daily Labor email — the settled column is this morning’s true-up snapshot${snap && snap.takenAt ? ' (' + String(snap.takenAt).slice(0, 10) + ')' : ''}.</p>`,
     '#047857')
+
+  // ── 3b. LOOKING AHEAD — the books, the roster, the preventive work ──────────────────────────
+  const aRow = (label: string, value: string, note?: string) =>
+    `<tr><td style="${S.td}">${label}${note ? `<br><span style="${S.muted};font-size:11.5px">${note}</span>` : ''}</td>
+    <td style="${S.td};text-align:right;white-space:nowrap;vertical-align:top">${value}</td></tr>`
+  const paceSpan = (p: number | null) => `<span style="${p == null || Math.abs(p) < 0.5 ? S.muted : p > 0 ? S.green : S.red}">${paceWord(p)}</span>`
+  const paceRows = pace && pace.windows.length
+    ? pace.windows.map(w => aRow(`Next ${w.days} days`,
+      `<b>${w.now.nights.toLocaleString('en-US')}</b> nights ${paceSpan(w.nightsPct)} &nbsp;·&nbsp; <b>${money0(w.now.revenue)}</b> ${paceSpan(w.revenuePct)}`,
+      `last year ${w.lastYear.nights.toLocaleString('en-US')} nights · ${money0(w.lastYear.revenue)}` +
+        (w.sameUnits ? ` · same units ${paceWord(w.sameUnits.nightsPct)} nights, ${paceWord(w.sameUnits.revenuePct)} revenue` : ''))).join('')
+    : aRow('On the books', '—', 'could not be read this morning')
+  const shortAll = staff ? staff.short : []
+  const staffValue = !staff ? '—'
+    : shortAll.length
+      ? `<b style="${S.red}">${shortAll.length}</b> <span style="${S.muted}">${esc(shortAll.slice(0, 3).map(x => `${x.label} ${x.market} ${x.needed}/${x.rostered}`).join(' · '))}${shortAll.length > 3 ? ` +${shortAll.length - 3}` : ''}</span>`
+      : `<span style="${S.green}">none</span>`
+  const staffNote = !staff ? 'forecast unavailable this morning'
+    : `people needed / rostered, housekeepers, Miami &amp; Broward${staff.rosterPublishedThrough ? ` · roster out to ${niceDay(staff.rosterPublishedThrough)}` : ' · no roster published yet'}`
+  const pmT = pm ? pm.totals : null
+  const pmValue = pmT
+    ? `<b>${pmT.week + pmT.later}</b> due · <b style="${pmT.late ? S.red : S.green}">${pmT.late}</b> late <span style="${S.muted}">· ${pmT.scheduled} booked</span>`
+    : '—'
+  const pmNote = !pm ? 'could not be read this morning'
+    : !pm.enabled ? 'cadences are switched off (Settings → Cadences)'
+      : `about ${Math.round((pmT ? pmT.minutes : 0) / 60)}h of work${pmT && pmT.unknown ? ` · ${pmT.unknown} never recorded, not counted` : ''}`
+  const aheadCard = card('Looking ahead', null,
+    `<table width="100%" cellspacing="0" cellpadding="0">` +
+    `<tr><th style="${S.th}">On the books vs same time last year</th><th style="${S.th};text-align:right">Nights · net room revenue</th></tr>` +
+    paceRows +
+    aRow('Short days · next 14', staffValue, staffNote) +
+    aRow('Preventive maintenance · next 30', pmValue, pmNote) +
+    `</table><p style="margin:8px 0 0;font-size:11px;color:#9ca3af">On the books is directional — we do not hold cancellation dates, so this year still counts stays that may cancel; owner and friends &amp; family stays are out; net = accommodation after channel fees. Short days = checkouts on the books × the learned booking pickup, at measured clean minutes, ÷ 414 minutes per person-day, against housekeepers Working or On Call.</p>`,
+    '#4338ca')
 
   // ── 4. GUESTS & RISK — one card ─────────────────────────────────────────────────────────────
   const repBits = (d.repByMarket || []).map((m: any) =>
@@ -2132,6 +2178,9 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   ${eyebrow('Decide today')}
   ${decideCard}
   ${blockedCard(blocked, { showMarket: true, limit: 12, linked: blockedLinked, failed: blockedFailed })}
+
+  ${eyebrow('Looking ahead')}
+  ${aheadCard}
 
   ${eyebrow('Where the business stands')}
   <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
