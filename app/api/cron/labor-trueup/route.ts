@@ -93,7 +93,9 @@ const receipted = withRouteReceipt<NextRequest>('labor-trueup', send, { skipWhen
 // Homebase reads, the snapshot or any send (lib/et-clock). A person's run — ?force, preview, test,
 // checks — carries no bearer and is never skipped.
 export async function GET(req: NextRequest) {
-  if (cronAllowed(req).viaSecret && !atEasternHour(7)) return NextResponse.json({ ok: true, skipped: 'daylight-saving twin — this job runs at 7am Eastern' })
+  // :58 sits two minutes before the hour turns: read the clock ten minutes back so a call Vercel
+  // delivers a little late (12:00 UTC for the 11:58 fire) is still this morning's 7am run, not a twin.
+  if (cronAllowed(req).viaSecret && !atEasternHour(7, undefined, new Date(Date.now() - 10 * 60_000))) return NextResponse.json({ ok: true, skipped: 'daylight-saving twin — this job runs at 7am Eastern' })
   return receipted(req)
 }
 
