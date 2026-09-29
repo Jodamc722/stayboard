@@ -36,6 +36,7 @@
 //   claim       a claim in Jon's review, or with its filing deadline inside 5 days / passed
 //   refund      a glitch refund over the cap waiting on a sign-off (Decide; the amount only for
 //               viewers who may see money)
+//   staffing    a short-staffed day one to three days out, from the 14-day forecast (Decide)
 //   guest       a guest waiting on a reply (the one rule, lib/response-times) or one the sentiment
 //               scan marked unhappy — one row per thread, both tags when it is both
 //   unassigned  open non-clean work on today's board with nobody attached (cleans are covered by
@@ -66,6 +67,7 @@ import { readSnapshot, problemsFromSnapshot } from './channel-health'
 import { CHANNEL_LABEL, VERDICT_LABEL } from './channel-types'
 import { awaitingSet, slaDueAt, SLA_RULE_TEXT, type AwaitingRow, type AwaitingSet } from './response-times'
 import { getAccess, canSeeMoney } from './access'
+import type { StaffDay } from './forecast/staffing'
 
 const str = (v: any) => String(v ?? '').trim()
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
@@ -96,7 +98,7 @@ export const DISMISS_KEY = 'command_dismissed'
 /** The key prefix of a refund sign-off row — how its cleared entries are recognised too. */
 const REFUND_KEY = 'refund:'
 
-export type NextKind = 'turn' | 'late' | 'inspection' | 'feedback' | 'pending' | 'duplicate' | 'glitch' | 'claim' | 'refund' | 'guest' | 'unassigned' | 'channel'
+export type NextKind = 'turn' | 'late' | 'inspection' | 'feedback' | 'pending' | 'duplicate' | 'glitch' | 'claim' | 'refund' | 'staffing' | 'guest' | 'unassigned' | 'channel'
 /** A short label on a row ("Unhappy", "Late 25m"), with the hover that explains it. */
 export type RowTag = { label: string; tone: 'rose' | 'amber' | 'violet' | 'sky' | 'slate'; title?: string }
 /** Who owns clearing it. The lane a supervisor filters to. Lives in lib/command-types (client-safe). */
@@ -296,6 +298,9 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     .not('status', 'ilike', '%complet%').not('status', 'ilike', '%finish%')
     .not('status', 'ilike', '%close%').not('status', 'ilike', '%approv%')
     .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
+
+  // Started first and awaited last (section 7), so the forecast's reads overlap the day's.
+  const staffingP = shortDaysAhead()
 
   // ── WAVE 1: everything that does not depend on anything else ──────────────────────────────────
   const [day, automation, presets, arrivalsRes, glitchesRes, claimsRes, sentimentRes, reviewsToReplyRes, waiting, approvalsRes, fieldOverdueRes, openTasksP, bzOverdueCountRes, callsDoneRes, refundsRes] = await Promise.all([
@@ -846,6 +851,20 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   const idle = teamRows.filter(p => p.verdict !== 'implausible' && p.capacityMinutes > 0 && p.cleans + p.otherTasks === 0).map(p => p.person)
   const k = cap?.kpi
 
+  // ── 7. STAFFING: a short-staffed day one to three days out (the 14-day forecast) ──────────────
+  // Booked checkouts × the pickup learned by lead time, priced in minutes, against the housekeepers
+  // rostered (lib/forecast/staffing). Two at most, soonest first; the call — somebody on call comes
+  // in, a day off moves — is made on /team, so the row goes there.
+  for (const d of await staffingP) {
+    const due = d.lead === 1 ? 'tomorrow' : 'in ' + d.lead + ' days'
+    push({
+      key: 'staff:' + d.market + ':' + d.date, kind: 'staffing', severity: d.lead === 1 ? 'today' : 'soon', rank: 6, owner: 'gm',
+      due, unit: d.market, listingId: null, market: d.market,
+      title: d.line, why: 'Staffing forecast · ' + due,
+      action: { type: 'open', href: '/team', label: 'Team' }, href: '/team',
+    })
+  }
+
   // ── rank ────────────────────────────────────────────────────────────────────────────────────
   // The order never depends on who cleared what, so it is decided here, once, in the cached core.
   const sevRank = { now: 0, today: 1, soon: 2 }
@@ -998,6 +1017,30 @@ function withoutRefundAmounts(day: CommandDay): CommandDay {
 function cleanOrder(r: CleanRow) { return r.status === 'late' ? 0 : r.status === 'atRisk' ? 1 : r.sameDay && r.status !== 'done' ? 2 : r.status === 'open' ? 3 : r.status === 'running' ? 4 : r.status === 'vendor' ? 5 : r.status === 'extended' ? 7 : 6 }
 function taskOrder(t: TaskRow) { return t.state === 'done' ? 9 : t.late ? 0 : t.prio === 'urgent' ? 1 : t.prio === 'high' ? 2 : !t.who ? 3 : t.state === 'running' ? 5 : 4 }
 function deptOf(v: any): string { const s = str(v).toLowerCase(); if (/housekeep|clean/.test(s)) return 'housekeeping'; if (/maint/.test(s)) return 'maintenance'; if (/inspect/.test(s)) return 'inspection'; return 'maintenance' }
+
+/** How long a day build waits on the staffing forecast before going on without its rows. */
+const STAFFING_WAIT_MS = 8000
+
+/**
+ * Short-staffed days one to three days out, at most two, soonest first — lib/forecast/staffing, on
+ * its own ten-minute cache. A forecast that fails, or that is still computing after
+ * STAFFING_WAIT_MS on a cold cache, leaves the rows out of this build and says so in the log only:
+ * the day never waits on it longer than that, and never fails because of it.
+ */
+async function shortDaysAhead(): Promise<StaffDay[]> {
+  let timer: any = null
+  try {
+    const fc = await Promise.race([
+      import('./forecast/staffing').then(m => m.buildStaffingForecast({ days: 14 })),
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), STAFFING_WAIT_MS) }),
+    ])
+    if (!fc) { console.error('[command-day] staffing forecast took over ' + STAFFING_WAIT_MS + 'ms — short-day rows left out of this build'); return [] }
+    return fc.short.filter(d => d.lead >= 1 && d.lead <= 3).slice(0, 2)
+  } catch (e: any) {
+    console.error('[command-day] staffing forecast failed — short-day rows left out:', String(e?.message || e).slice(0, 200))
+    return []
+  } finally { clearTimeout(timer) }
+}
 
 /** A waiting guest's reply-by state, as the row says it. */
 type Reply = { at: string | null; late: boolean; label: string }

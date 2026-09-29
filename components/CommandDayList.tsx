@@ -10,7 +10,8 @@
 //
 //   DECIDE  things only Jon can do: Eve's questions (answer in place), spend approvals (approve /
 //           reject), claims in his review or near a filing deadline (review), refunds over the cap
-//           waiting on a sign-off (open the card), Slack messages waiting to send (send / skip).
+//           waiting on a sign-off (open the card), a short-staffed day 1–3 days out (open /team),
+//           Slack messages waiting to send (send / skip).
 //   FIX     exceptions only, from the engine's `next` list: a late clean, a turn nobody is on, a
 //           guest waiting on a reply, a big arrival with no inspection, an overdue guest issue.
 //   CLEAR   batches, one row per batch: cancel every duplicate (admin password once), copy one vendor
@@ -88,6 +89,7 @@ const isGlitchException = (i: NextItem) => i.kind === 'glitch' && (i.severity ==
 /** Decide rows whose decision is made on another page, one tap away — the tag, and what the clear button means there. */
 const DECIDE_LINK: Partial<Record<NextItem['kind'], { tag: string; tone: LeanTone; hover: string; clear: 'done' | 'skipped'; clearTitle: string }>> = {
   refund: { tag: 'Refund', tone: 'violet', hover: 'A refund over the cap — Approve or Reject it on the glitch card', clear: 'skipped', clearTitle: 'Not today — hide it until tomorrow' },
+  staffing: { tag: 'Staffing', tone: 'amber', hover: 'The 14-day staffing forecast: checkouts on the books, priced in cleaning minutes, against the housekeepers rostered', clear: 'done', clearTitle: 'Handled — somebody is covering it' },
 }
 const isDecideLink = (i: NextItem) => !!DECIDE_LINK[i.kind]
 
