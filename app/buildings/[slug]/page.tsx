@@ -38,12 +38,25 @@ export default async function BuildingPage({ params }: { params: { slug: string 
 
   const target = slugToBuilding(params.slug)
 
-  const { data: all } = await supabase
-    .from('guesty_listings')
-    .select('id, title, nickname, building, unit, room_type, status, bedrooms, bathrooms, max_occupancy, address_city, address_state, amenities, pictures, raw, last_optimized, photo_score')
-    .limit(1000)
+  // THIS BUILDING'S ROWS ONLY (2026-09-29). This read pulled every listing's full Guesty `raw` —
+  // tens of MB across the portfolio — to keep one building's units, from an unordered first 1,000.
+  // The building is now picked from a slim id + building index (paged, by id), and the full row,
+  // raw included (computeScore reads a dozen raw paths), is read for this building's units alone.
+  const index = await pageRows<any>((a, b) => supabase.from('guesty_listings').select('id, building').order('id').range(a, b))
+  if (index.truncated) console.error('[buildings/' + params.slug + '] listing index read stopped early — units may be missing')
+  const ids = index.rows.filter((l: any) => rollupBuilding(l.building).toLowerCase() === target).map((l: any) => String(l.id))
+  const all: any[] = []
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await supabase
+      .from('guesty_listings')
+      .select('id, title, nickname, building, unit, room_type, status, bedrooms, bathrooms, max_occupancy, address_city, address_state, amenities, pictures, raw, last_optimized, photo_score')
+      .in('id', ids.slice(i, i + 100))
+      .order('id')
+    if (error) console.error('[buildings/' + params.slug + '] unit read failed', error.message)
+    all.push(...(data ?? []))
+  }
 
-  const units = (all ?? []).filter((l: any) => rollupBuilding(l.building).toLowerCase() === target)
+  const units = all.filter((l: any) => rollupBuilding(l.building).toLowerCase() === target)
   if (units.length === 0) notFound()
 
   const buildingName = rollupBuilding(units[0].building)
