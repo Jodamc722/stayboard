@@ -2,7 +2,8 @@
 //
 //   GET                                   → { staff, members?, roles?, pages, me }   (staff view; members/roles need users view)
 //   POST { op: 'staff', id?, name, role, department?, manager_id?, phone?, email?, active?, note? }   (staff edit)
-//        { op: 'member', email, garden_role, name?, password?, vr? }  add or change a login (users full)
+//        { op: 'member', email, garden_role, name?, password?, vr_role? }  add or change a login (users full)
+//            vr_role: '' = no VR side · an app_roles key = the VR side with that role (owner / VR admin only)
 //        { op: 'remove_member', email }                              take them off the hotel (users full)
 //        { op: 'role', key, label, blurb?, perms, landing? }         create or edit a hotel role (users full)
 //        { op: 'delete_role', key }                                  only when nobody holds it (users full)
@@ -33,12 +34,16 @@ export async function GET() {
     me: { email: gate.access.email, role: gate.access.garden?.role, canUsers, canAdmin: gAtLeast(gate.access.garden?.levels?.users, 'full'), canVr: isSuperadmin(gate.access.email) || gate.access.role === 'admin' },
   }
   if (canUsers) {
-    const [{ data: users }, { data: roles }] = await Promise.all([
-      db.from('app_users').select('email,status,role,garden_role,businesses,profile,last_seen_at,created_at').not('garden_role', 'is', null).order('email'),
+    const [{ data: users }, { data: roles }, { data: vrRoles }] = await Promise.all([
+      db.from('app_users').select('email,status,role,access_role,garden_role,businesses,profile,last_seen_at,created_at').not('garden_role', 'is', null).order('email'),
       db.from('garden_roles').select('*').order('sort'),
+      db.from('app_roles').select('key,label').order('sort'),
     ])
-    out.members = (users || []).map((u: any) => ({ email: u.email, name: u.profile?.name || null, status: u.status, garden_role: u.garden_role, vr: !Array.isArray(u.businesses) || u.businesses.includes('vr'), vrAdmin: u.role === 'admin', last_seen_at: u.last_seen_at }))
+    // DUAL ROLES (Jon, 2026-09-29: "you can have dual roles that you manage both"). Each login shows
+    // its hotel role AND its VR role, both set from here (the VR half by the owner or a VR admin).
+    out.members = (users || []).map((u: any) => { const vr = !Array.isArray(u.businesses) || u.businesses.includes('vr'); return { email: u.email, name: u.profile?.name || null, status: u.status, garden_role: u.garden_role, vr, vr_role: vr ? (u.role === 'admin' ? 'admin' : u.access_role || null) : null, vrAdmin: u.role === 'admin', last_seen_at: u.last_seen_at } })
     out.roles = roles || []
+    out.vrRoles = (vrRoles || []).filter((r: any) => r.key !== 'admin' || isSuperadmin(gate.access.email))
   }
   return NextResponse.json(out)
 }
@@ -77,12 +82,22 @@ export async function POST(req: NextRequest) {
     const { data: ex } = await db.from('app_users').select('email,businesses,role,profile').eq('email', email).maybeSingle()
     let businesses: string[] = Array.isArray((ex as any)?.businesses) ? (ex as any).businesses : ex ? ['vr'] : []
     businesses = businesses.filter(x => x !== 'garden').concat('garden')
-    if (typeof b?.vr === 'boolean') {
+    let vrPatch: any = {}
+    if (b?.vr_role !== undefined) {
       if (!canVr) return NextResponse.json({ error: 'Only the owner or a VR admin can change access to the vacation-rental side.' }, { status: 403 })
-      businesses = b.vr ? Array.from(new Set([...businesses, 'vr'])) : businesses.filter(x => x !== 'vr')
-    }
-    const row: any = { email, garden_role: role.key, businesses, status: 'active' }
-    if (!ex) Object.assign(row, { role: 'member', invited_by: by, last_invited_at: new Date().toISOString() })
+      const want = String(b.vr_role || '')
+      if ((ex as any)?.role === 'admin' && !isSuperadmin(gate.access.email)) return NextResponse.json({ error: 'Only the owner can change a VR admin.' }, { status: 403 })
+      if (!want) { businesses = businesses.filter(x => x !== 'vr'); vrPatch = { role: 'member', access_role: null } }
+      else {
+        if (want === 'admin' && !isSuperadmin(gate.access.email)) return NextResponse.json({ error: 'Only the owner can make someone a VR admin.' }, { status: 403 })
+        const { data: vr } = await db.from('app_roles').select('key').eq('key', want).maybeSingle()
+        if (!vr) return NextResponse.json({ error: 'Unknown VR role.' }, { status: 400 })
+        businesses = Array.from(new Set([...businesses, 'vr']))
+        vrPatch = { access_role: want, role: want === 'admin' ? 'admin' : 'member' }
+      }
+    } else if (!ex) businesses = ['garden']   // a new login made here is hotel-only unless a VR role is given
+    const row: any = { email, garden_role: role.key, businesses, status: 'active', ...vrPatch }
+    if (!ex) Object.assign(row, { role: row.role || 'member', invited_by: by, last_invited_at: new Date().toISOString() })
     if (b?.name) row.profile = { ...((ex as any)?.profile || {}), name: String(b.name).slice(0, 80) }
     const { error } = await db.from('app_users').upsert(row, { onConflict: 'email' })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })

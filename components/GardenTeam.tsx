@@ -77,8 +77,9 @@ function Roster({ d, canEdit, say }: { d: any; canEdit: boolean; say: (r: any, o
 
 function Logins({ d, say }: { d: any; say: (r: any, ok?: string) => void }) {
   const admin = d.me.canAdmin
-  const [f, setF] = useState<any>({ email: '', name: '', garden_role: d.roles?.[1]?.key || 'manager', password: '', vr: false })
+  const [f, setF] = useState<any>({ email: '', name: '', garden_role: d.roles?.[1]?.key || 'manager', password: '', vr_role: '' })
   const roleLabel = (k: string) => d.roles.find((r: any) => r.key === k)?.label || k
+  const vrLabel = (k: string | null) => k ? ((d.vrRoles || []).find((r: any) => r.key === k)?.label || (k === 'admin' ? 'Admin' : k)) : 'no role yet'
   return (
     <>
       {admin ? (
@@ -87,18 +88,18 @@ function Logins({ d, say }: { d: any; say: (r: any, ok?: string) => void }) {
           <input className={input + ' w-40'} placeholder="Name" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} />
           <select className={input} value={f.garden_role} onChange={e => setF({ ...f, garden_role: e.target.value })}>{d.roles.map((r: any) => <option key={r.key} value={r.key}>{r.label}</option>)}</select>
           <input className={input + ' w-40'} type="password" placeholder="Password (or invite)" value={f.password} onChange={e => setF({ ...f, password: e.target.value })} />
-          {d.me.canVr ? <label className="text-[12px] text-muted inline-flex items-center gap-1.5"><input type="checkbox" checked={f.vr} onChange={e => setF({ ...f, vr: e.target.checked })} /> also VR side</label> : null}
-          <button onClick={async () => { const body: any = { op: 'member', ...f }; if (!d.me.canVr) delete body.vr; say(await post(body), f.password ? 'Login created' : 'Added — invite sent'); setF({ ...f, email: '', name: '', password: '' }) }} className="rounded-lg bg-ink text-white px-3 text-[12px] font-semibold inline-flex items-center gap-1"><Plus size={13} /> Add login</button>
+          {d.me.canVr ? <select className={input} value={f.vr_role} title="Their role on the Stay Hospitality (VR) side — leave on hotel only for Garden staff" onChange={e => setF({ ...f, vr_role: e.target.value })}><option value="">Hotel only — no VR</option>{(d.vrRoles || []).map((r: any) => <option key={r.key} value={r.key}>VR: {r.label}</option>)}</select> : null}
+          <button onClick={async () => { const body: any = { op: 'member', ...f }; if (!d.me.canVr) delete body.vr_role; say(await post(body), f.password ? 'Login created' : 'Added — invite sent'); setF({ ...f, email: '', name: '', password: '' }) }} className="rounded-lg bg-ink text-white px-3 text-[12px] font-semibold inline-flex items-center gap-1"><Plus size={13} /> Add login</button>
         </div>
       ) : null}
       <LeanList>
-        <LeanRow name="jon@stay-hospitality.com" meta="owner" tags={<><Tag tone="emerald">General manager</Tag><Tag tone="brand">VR + hotel</Tag></>} />
+        <LeanRow name="jon@stay-hospitality.com" meta="owner" tags={<><Tag tone="emerald">Hotel: General manager</Tag><Tag tone="brand">VR: Owner (everything)</Tag></>} />
         {(d.members || []).map((m: any) => (
           <LeanRow key={m.email} name={m.name || m.email} meta={m.name ? m.email : undefined}
-            tags={<><Tag tone="emerald">{roleLabel(m.garden_role)}</Tag>{m.vr ? <Tag tone="brand">VR + hotel</Tag> : <Tag>hotel only</Tag>}{m.status !== 'active' ? <Tag tone="rose">{m.status}</Tag> : null}</>}
+            tags={<><Tag tone="emerald">Hotel: {roleLabel(m.garden_role)}</Tag>{m.vr ? <Tag tone="brand">VR: {vrLabel(m.vr_role)}</Tag> : <Tag>hotel only</Tag>}{m.status !== 'active' ? <Tag tone="rose">{m.status}</Tag> : null}</>}
             actions={admin ? <>
-              <select className={input + ' h-8 py-0'} value={m.garden_role} onChange={async e => say(await post({ op: 'member', email: m.email, garden_role: e.target.value }))}>{d.roles.map((r: any) => <option key={r.key} value={r.key}>{r.label}</option>)}</select>
-              {d.me.canVr ? <IconBtn title={m.vr ? 'Close the VR side to them' : 'Open the VR side to them'} tone="brand" onClick={async () => say(await post({ op: 'member', email: m.email, garden_role: m.garden_role, vr: !m.vr }))}><span className="text-[10px] font-bold">VR</span></IconBtn> : null}
+              <select className={input + ' h-8 py-0'} title="Hotel role" value={m.garden_role} onChange={async e => say(await post({ op: 'member', email: m.email, garden_role: e.target.value }))}>{d.roles.map((r: any) => <option key={r.key} value={r.key}>Hotel: {r.label}</option>)}</select>
+              {d.me.canVr ? <select className={input + ' h-8 py-0'} title="VR role — the Stay Hospitality side" value={m.vr ? (m.vr_role || '') : ''} onChange={async e => say(await post({ op: 'member', email: m.email, garden_role: m.garden_role, vr_role: e.target.value }))}><option value="">No VR</option>{(d.vrRoles || []).concat(m.vr_role === 'admin' && !(d.vrRoles || []).some((r: any) => r.key === 'admin') ? [{ key: 'admin', label: 'Admin' }] : []).map((r: any) => <option key={r.key} value={r.key}>VR: {r.label}</option>)}</select> : null}
               <IconBtn title={m.vr ? 'Take off the hotel (keeps VR)' : 'Take off the hotel (login disabled)'} tone="bad" onClick={async () => say(await post({ op: 'remove_member', email: m.email }), 'Removed')}><Trash2 size={14} /></IconBtn>
             </> : undefined} />
         ))}

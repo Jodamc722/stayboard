@@ -17,6 +17,8 @@ type Row = {
   features?: Record<string, any> | null
   workspace?: string | null
   access_role?: string | null
+  garden_role?: string | null
+  businesses?: string[] | null
   profile?: Record<string, any> | null
   prefs?: Record<string, any> | null
   invited_by: string | null; created_at: string; last_invited_at: string | null
@@ -53,6 +55,16 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
   const [addRole, setAddRole] = useState('cs')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
+  // DUAL ROLES (Jon, 2026-09-29): the hotel role is set here too, beside the VR role — owner only.
+  const [gRoles, setGRoles] = useState<{ key: string; label: string }[]>([])
+  useEffect(() => { if (!isOwner) return; fetch('/api/garden/team', { cache: 'no-store' }).then(r => r.json()).then(j => { if (Array.isArray(j?.roles)) setGRoles(j.roles) }).catch(() => {}) }, [isOwner])
+  async function setGarden(u: Row, key: string) {
+    const body = key ? { op: 'member', email: u.email, garden_role: key } : { op: 'remove_member', email: u.email }
+    const r = await fetch('/api/garden/team', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    const j = await r.json().catch(() => ({}))
+    setMsg(r.ok && !j?.error ? (key ? `Garden Hotel: ${gRoles.find(g => g.key === key)?.label || key}.` : 'Taken off the Garden Hotel.') : (j?.error || j?.message || 'Could not change the hotel role.'))
+    load()
+  }
 
   async function load() {
     setLoading(true); setError(null)
@@ -183,7 +195,7 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
             {filtered.map(u => (
               <UserRow key={u.email} u={u} me={u.email === myEmail} isOwner={isOwner} roles={roles} rolesReady={rolesReady} roleInfo={roleOf(u)}
                 expanded={open === u.email} onToggle={() => setOpen(open === u.email ? null : u.email)}
-                onPatch={patch} onResetPw={() => resetPw(u.email)} onDelete={() => del(u.email)} />
+                onPatch={patch} onResetPw={() => resetPw(u.email)} onDelete={() => del(u.email)} gRoles={gRoles} onGarden={k => setGarden(u, k)} />
             ))}
           </ul>
         )}
@@ -192,11 +204,12 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
   )
 }
 
-function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onToggle, onPatch, onResetPw, onDelete }: {
+function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onToggle, onPatch, onResetPw, onDelete, gRoles, onGarden }: {
   u: Row; me: boolean; isOwner: boolean; roles: RoleRow[]; rolesReady: boolean; roleInfo: { key: string; label: string }
   expanded: boolean; onToggle: () => void
   onPatch: (email: string, body: any, okMsg?: string) => Promise<void>
   onResetPw: () => void; onDelete: () => void
+  gRoles: { key: string; label: string }[]; onGarden: (key: string) => void
 }) {
   const isOwnerRow = u.email === OWNER
   // A non-owner admin looking at the owner or at another admin.
@@ -231,6 +244,7 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
               {name && <span className="text-[11px] text-muted font-normal">{u.email}</span>}
               {me && <span className="text-[11px] text-muted font-normal">(you)</span>}
               <span className="text-[10px] font-semibold px-1.5 py-px rounded bg-brand-50 text-brand-700">{roleInfo.label}</span>
+              {(u.garden_role || isOwnerRow) && <span className="text-[10px] font-semibold px-1.5 py-px rounded bg-emerald-100 text-emerald-700">Garden: {isOwnerRow ? 'General manager' : (gRoles.find(g => g.key === u.garden_role)?.label || u.garden_role)}</span>}
               {u.status === 'disabled' && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">Disabled</span>}
             </div>
             <div className="text-[11px] text-muted mt-0.5 inline-flex items-center gap-1">
@@ -288,6 +302,27 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
               </>
             )}
           </div>
+
+          {/* The Garden Hotel role — the other half of a dual role (migration 118). The hotel's own
+              Team & access sets the same thing; this is here so both roles are managed in one place. */}
+          {isOwner && !isOwnerRow && gRoles.length > 0 && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 lg:col-span-2">
+              <div className="text-[12px] font-bold text-ink mb-2">Garden Hotel role</div>
+              <div className="flex flex-wrap gap-1.5">
+                {[{ key: '', label: 'No hotel access' }].concat(gRoles).map(g => {
+                  const active = (u.garden_role || '') === g.key
+                  return (
+                    <button key={g.key || 'none'} disabled={me} onClick={() => { if (!active) onGarden(g.key) }}
+                      className={`text-[11px] px-2.5 py-1.5 rounded-lg border font-semibold ${active ? 'bg-emerald-700 border-emerald-700 text-white' : 'bg-white border-line text-muted hover:border-emerald-300'}`}>{g.label}</button>
+                  )
+                })}
+              </div>
+              <p className="text-[10px] text-muted mt-1.5">One login, two roles: the VR role above decides the Stay Hospitality side, this one decides the hotel. What each hotel role can do is set on Garden Hotel → Team &amp; access → Roles.</p>
+            </div>
+          )}
+          {isOwnerRow && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 lg:col-span-2 text-[12px] text-muted"><b className="text-ink">Garden Hotel:</b> General manager — the owner always has both businesses in full.</div>
+          )}
 
           {/* WHAT THEY MAY SEE, as opposed to which tabs they may open (Jon 2026-08-10: "only view
               of that data should be me … meaning i should be able to toggle on and off per user").
