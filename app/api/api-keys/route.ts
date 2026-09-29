@@ -3,21 +3,22 @@
 //   POST { label }               → make one; the plaintext comes back ONCE
 //   DELETE { id }                → revoke
 import { NextRequest, NextResponse } from 'next/server'
-import { requireUser, isSuperadmin } from '@/lib/access'
+import { isSuperadmin } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { createApiKey, listApiKeys, revokeApiKey, listAllApiKeys, decideApiKey } from '@/lib/api-keys'
 import { logAdmin } from '@/lib/activity'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const g = await requireUser(); if (!g.ok) return g.res
+  const g = await requireVrUser(); if (!g.ok) return g.res
   const email = String(g.access.email || '')
   const superuser = isSuperadmin(email)
   // The superadmin sees every key so he can approve them (2026-09-25); everyone else sees their own.
   return NextResponse.json({ ok: true, superuser, keys: await listApiKeys(email), all: superuser ? await listAllApiKeys() : [] })
 }
 export async function POST(req: NextRequest) {
-  const g = await requireUser(); if (!g.ok) return g.res
+  const g = await requireVrUser(); if (!g.ok) return g.res
   const b = await req.json().catch(() => ({}))
   const email = String(g.access.email || '')
   const live = (await listApiKeys(email)).filter(k => !k.revoked_at)
@@ -37,7 +38,7 @@ export async function POST(req: NextRequest) {
 }
 // PATCH { id, approve: true|false } — the superadmin decides.
 export async function PATCH(req: NextRequest) {
-  const g = await requireUser(); if (!g.ok) return g.res
+  const g = await requireVrUser(); if (!g.ok) return g.res
   const email = String(g.access.email || '')
   if (!isSuperadmin(email)) return NextResponse.json({ error: 'Only Jon approves API keys.' }, { status: 403 })
   const b = await req.json().catch(() => ({}))
@@ -46,7 +47,7 @@ export async function PATCH(req: NextRequest) {
   return NextResponse.json({ ok })
 }
 export async function DELETE(req: NextRequest) {
-  const g = await requireUser(); if (!g.ok) return g.res
+  const g = await requireVrUser(); if (!g.ok) return g.res
   const b = await req.json().catch(() => ({}))
   const ok = await revokeApiKey(String(b?.id || ''), String(g.access.email || ''))
   if (ok) await logAdmin({ email: g.access.email, area: 'api-keys', action: 'revoke', target: String(b?.id || ''), req })

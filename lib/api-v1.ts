@@ -6,6 +6,7 @@
 import 'server-only'
 import { NextResponse } from 'next/server'
 import { getAccess, canSeeMoney, type Access } from './access'
+import { isVrLogin, hotelOnlyRes } from './vr-gate'
 import { atLeast } from './features'
 import { keyFromRequest, accessForApiKey } from './api-keys'
 
@@ -26,6 +27,9 @@ export async function v1Gate(req: Request, feature: string): Promise<V1Gate> {
     if (!a.allowed) return { ok: false, res: NextResponse.json({ error: 'no-access' }, { status: 403 }) }
     access = a
   }
+  // Every v1 feed is the vacation-rental side's. A hotel-only login's KEY would skip the level check
+  // below ("reads everything"), so its business decides here (lib/vr-gate); 'me' stays answerable.
+  if (feature !== 'me' && !isVrLogin(access)) return { ok: false, res: hotelOnlyRes() }
   // An approved key reads everything (Jon, 2026-09-25: "they can read whatever they want"); a
   // browser session still answers by its own role.
   if (!viaKey && feature !== 'me' && !atLeast(access.levels[feature], 'view')) {
