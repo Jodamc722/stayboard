@@ -1322,11 +1322,11 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               <div className="text-[10px] text-muted mt-0.5">Owner charges, and money on bookings with no room revenue, from this size up.</div>
             </div>
             <div>
-              <label className="text-[10px] font-semibold uppercase tracking-wide text-muted">Cleaning fee — stays before a unit “normally charges”</label>
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-muted cursor-help" title="A $0 cleaning fee is only called a gap once the unit has charged at least this many other stays in the month. Below it the stay is raised for a look, not as a finding.">Cleaning fee — stays before a unit “normally charges”</label>
               <input type="number" min={1} max={20} step={1} value={rulesDraft.cleaningPeerMin}
                 onChange={e => setRulesDraft(rd => rd ? { ...rd, cleaningPeerMin: Number(e.target.value) } : rd)}
                 className="block mt-0.5 w-24 text-sm border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-              <div className="text-[10px] text-muted mt-0.5">A $0 cleaning fee is only called a gap once the unit has charged at least this many other stays in the month. Below it the stay is raised for a look, not as a finding.</div>
+              <div className="text-[10px] text-muted mt-0.5">Below it a $0 fee is a look, not a finding.</div>
             </div>
           </div>
           <div className="grid sm:grid-cols-2 gap-1.5 max-w-2xl">

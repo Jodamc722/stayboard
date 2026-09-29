@@ -1126,9 +1126,9 @@ function CodePrompt({ purpose, askReason, onAnswer }: { purpose: string; askReas
         className="w-full max-w-sm rounded-2xl border border-line bg-white shadow-xl p-4 space-y-3 pb-safe">
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-amber-50 text-amber-700"><Lock size={15} /></span>
-          <div className="min-w-0">
+          <div className="min-w-0 cursor-help" title="This opens the vault for one minute. Revealing is still a click per item, and your name, the time and what you opened are recorded on each one. A wrong code is recorded too.">
             <div className="text-[13.5px] font-bold text-ink">Vault code</div>
-            <div className="text-[11.5px] text-muted truncate">To {purpose}</div>
+            <div className="text-[11.5px] text-muted truncate">To {purpose} · opens 1 min · logged</div>
           </div>
         </div>
         <input ref={ref} type="password" autoComplete="off" inputMode="text" value={code} onChange={e => setCode(e.target.value)}
@@ -1137,7 +1137,6 @@ function CodePrompt({ purpose, askReason, onAnswer }: { purpose: string; askReas
           <input value={reason} onChange={e => setReason(e.target.value)} maxLength={160}
             placeholder="Why? (optional — goes in the log)" className={field} />
         )}
-        <p className="text-[11px] text-muted">This opens the vault for one minute. Revealing is still a click per item, and your name, the time and what you opened are recorded on each one. A wrong code is recorded too.</p>
         <div className="flex items-center gap-2">
           <button type="submit" disabled={!code.trim()}
             className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-2 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-40">
@@ -1258,7 +1257,8 @@ function CodeLogView({ askCode, canExport }: { askCode: AskCode; canExport: bool
       <div className="rounded-2xl border border-line bg-white shadow-soft">
         <div className="px-4 py-3 border-b border-line/60 flex items-center gap-2 flex-wrap">
           <Database size={14} className="text-emerald-700" />
-          <span className="text-[13px] font-bold text-ink">Backups</span>
+          <span className="text-[13px] font-bold text-ink cursor-help"
+            title="Snapshots are sealed with the server key and stay in the private vault bucket. The CSV download is the human copy — Super Admin only, vault code every time, logged as an export — and its columns are exactly what Import CSV reads, so a backup is also a restore.">Backups</span>
           <span className="text-[11.5px] text-muted">A sealed copy of the whole vault is written automatically after every change · last {snaps ? snaps.length : '…'} kept</span>
           <span className="grow" />
           <button onClick={snapshotNow} disabled={busy === 'snap'} className="rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold shadow-soft disabled:opacity-50">{busy === 'snap' ? 'Writing…' : 'Snapshot now'}</button>
@@ -1279,10 +1279,6 @@ function CodeLogView({ askCode, canExport }: { askCode: AskCode; canExport: bool
               {canExport && <button onClick={() => download(sn.name)} disabled={busy === sn.name} className="text-[11.5px] font-semibold text-brand-700 hover:underline disabled:opacity-50">{busy === sn.name ? 'Building…' : 'Download as CSV'}</button>}
             </div>
           )) : <div className="px-4 py-6 text-center text-[12.5px] text-muted">No snapshots yet — the first one is written the moment anything in the vault changes.</div>}
-        <p className="px-4 py-3 text-[11px] text-muted">
-          Snapshots are sealed with the server key and stay in the private vault bucket. The CSV download is the human copy — Super Admin only,
-          vault code every time, logged as an export — and its columns are exactly what <b>Import CSV</b> reads, so a backup is also a restore.
-        </p>
       </div>
     </div>
   )

@@ -819,7 +819,8 @@ export function LaborPanel() {
           and what 17WEST covers. Pick any window above — this trues up with it. */}
       {!hideMoney && econ?.feeAudit && (
         <div className="rounded-xl border border-line bg-white px-3 py-4">
-          <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3" title="Re-checked on every load">
+          <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3 cursor-help"
+            title="Yesterday always reads expensive — its fees sit on cleans nobody has closed yet. Manage on a settled window; this page recomputes every line from scratch on every load, so corrections in Breezeway, Homebase or Guesty true up here automatically.">
             True-up · where every cleaning fee landed <span className="normal-case font-normal">· {d?.range ? `${d.range.start} → ${d.range.end}` : ''}</span>
           </p>
           {econ?.payrollAudit && !econ.payrollAudit.complete && (
@@ -841,6 +842,9 @@ export function LaborPanel() {
               </tbody>
             </table>
           </div>
+          {/* Drawn only when at least one adjustment below applies — never a disclosure that opens onto nothing. */}
+          {(econ.feeAudit.movedCleansMatched > 0 || econ?.kpi?.housekeeping?.channelCut > 0 || econ?.bundledFeeBackfill?.checkouts > 0
+            || econ?.kpi?.agencyLoad?.total > 0 || econ?.kpi?.management?.salaryWindow > 0 || econ?.kpi?.seventeenWest?.covered > 0) && (
           <details className="px-2 mt-3">
           <summary className="text-[12px] font-semibold text-muted cursor-pointer hover:text-ink">How the fees and wages were adjusted</summary>
           <div className="mt-1.5 space-y-1 text-[11.5px] text-muted">
@@ -862,9 +866,9 @@ export function LaborPanel() {
             {econ?.kpi?.seventeenWest?.covered > 0 && (
               <p>17WEST covers {fmt$(econ.kpi.seventeenWest.covered)} of George Paz + Yoslenis&apos;s {fmt$(econ.kpi.seventeenWest.wages)} wages this window ($100k/yr, pro-rated) — maintenance and supervisor lines carry only Stay&apos;s share, and 17WEST tasks are unbilled by design.</p>
             )}
-            <p>Yesterday always reads expensive — its fees sit on cleans nobody has closed yet. Manage on a settled window; this page recomputes every line from scratch on every load, so corrections in Breezeway, Homebase or Guesty true up here automatically.</p>
           </div>
           </details>
+          )}
         </div>
       )}
       {/* VENDOR-MANAGED UNITS WE WORKED ON OURSELVES.

@@ -1045,7 +1045,7 @@ function Scoreboard() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <p className="text-[12px] text-muted">Completed vs closed-incomplete, by tier and by person. A call is only a verdict once it is done or the night has closed it — open calls are shown but not counted against anyone yet.</p>
+        <p className="text-[12px] text-muted cursor-help" title="A call is only a verdict once it is done or the night has closed it — open calls are shown but not counted against anyone yet.">Completed vs closed-incomplete, by tier and by person</p>
         <div className="inline-flex rounded-xl border border-line overflow-hidden text-[12px]">
           {([7, 14, 30] as const).map(n => <button key={n} onClick={() => setDays(n)} className={`px-3 py-1.5 font-semibold border-l border-line first:border-l-0 ${days === n ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink'}`}>{n} days</button>)}
         </div>

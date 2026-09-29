@@ -410,11 +410,9 @@ function AudienceCard() {
               </div>
             </div>
           ) : null}
-          <p className="px-4 py-2.5 text-[11px] text-muted border-t border-line">
-            {Number(a.relay || 0).toLocaleString()} of these only ever gave a channel forwarding address
-            (<span className="font-mono text-[10.5px]">…@guest.airbnb.com</span> and the like), which expires and
-            cannot be marketed to — winning the direct booking is what turns one into a real contact.
-            No names, email addresses or phone numbers are shared on this link.
+          <p className="px-4 py-2.5 text-[11px] text-muted border-t border-line cursor-help"
+            title="These guests only ever gave a channel forwarding address (…@guest.airbnb.com and the like), which expires and cannot be marketed to — winning the direct booking is what turns one into a real contact. No names, email addresses or phone numbers are shared on this link.">
+            {Number(a.relay || 0).toLocaleString()} reachable only through a channel relay address · not marketable · no contact details shared here
           </p>
         </>
       )}
@@ -788,10 +786,8 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
             <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
               <div className="px-6 py-4 border-b border-line">
                 <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">Traction</div>
-                <h3 className="text-base font-bold text-ink tracking-tight mt-1">Which buildings direct bookings are landing in</h3>
-                <p className="text-xs text-muted mt-1.5 max-w-[74ch] leading-relaxed">
-                  Direct bookings only, per building, against the same length of time before it. If spend went into one building, this is where it should show up.
-                </p>
+                <h3 className="text-base font-bold text-ink tracking-tight mt-1 cursor-help"
+                  title="Direct bookings only, per building, against the same length of time before it. If spend went into one building, this is where it should show up.">Which buildings direct bookings are landing in</h3>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">

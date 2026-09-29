@@ -16,8 +16,14 @@ import {
   Search, AlertTriangle, CarFront, Layers, ArrowUpDown, ChevronUp, ChevronDown, CalendarClock,
   Minus, Users, ClipboardCheck, X, Filter, Gauge
 } from 'lucide-react'
+import { Tag } from '@/components/lean'
 
 type Tab = 'overview' | 'performance' | 'actions'
+
+// Lean pass: the Performance tab's reading guide is the hover on its label, not a box above it.
+const PERF_HOW_TO_READ = 'How to read this: every unit is indexed against its building comp set (the other units in the same building). '
+  + '100 = at pace · above 100 = winning share · below 90 = losing share. RGI is the RevPAR index — the single "how are we doing" number. '
+  + 'ADR & RevPAR use room revenue. Buildings & Owners views index against the whole portfolio.'
 
 function fmtMoney(n: number): string {
   const abs = Math.abs(n)
@@ -448,8 +454,10 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
 
             {/* Channel mix */}
             <section className="lg:col-span-2 rounded-2xl border border-line bg-white p-5">
-              <h2 className="text-sm font-bold text-ink mb-0.5">Channel mix <span className="text-[10px] font-semibold text-muted uppercase tracking-wider ml-1">portfolio</span></h2>
-              <p className="text-[12px] text-muted mb-3">Prorated revenue by booking source. Cancel = cancelled ÷ guest bookings in this range — owner and friends-&amp;-family holds are excluded from both sides, and a channel with too few bookings to be meaningful shows no rate at all.</p>
+              <h2 className="text-sm font-bold text-ink mb-3 cursor-help"
+                title={'Prorated revenue by booking source. Cancel = cancelled ÷ guest bookings in this range — owner and friends-&-family holds are excluded from both sides, and a channel with too few bookings to be meaningful shows no rate at all.'}>
+                Channel mix <span className="text-[10px] font-semibold text-muted uppercase tracking-wider ml-1">portfolio</span>
+              </h2>
               {d.channels.length === 0 ? (
                 <div className="text-sm text-muted italic py-4 text-center">No revenue in this range.</div>
               ) : (
@@ -558,15 +566,14 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
       {/* ============================== PERFORMANCE ============================== */}
       {tab === 'performance' && (
         <>
-          <div className="mb-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-2.5 text-[12px] text-brand-800">
-            <span className="font-semibold">How to read this:</span> every unit is indexed against its <span className="font-semibold">building comp set</span> (the other units in the same building). <span className="font-semibold">100 = at pace</span> · above 100 = winning share · <span className="font-semibold">below 90 = losing share</span>. RGI is the RevPAR index — the single "how are we doing" number. ADR & RevPAR use room revenue. Buildings & Owners views index against the whole portfolio.
-          </div>
           <section className="rounded-2xl border border-line bg-white">
             <div className="p-4 pb-3 flex items-center gap-2 flex-wrap border-b border-line">
               <div className="lh-actions sm:contents flex items-center gap-2">
-              <h2 className="text-sm font-bold text-ink mr-1 inline-flex items-center gap-1.5">
+              {/* The "how to read this" legend that sat in a box above the table lives on the hover. */}
+              <h2 className="text-sm font-bold text-ink mr-1 inline-flex items-center gap-1.5 cursor-help" title={PERF_HOW_TO_READ}>
                 {view === 'owners' ? <Users size={14} /> : <Building2 size={14} />} Performance
               </h2>
+              <Tag title={PERF_HOW_TO_READ}>100 = at pace</Tag>
               <div className="inline-flex rounded-lg border border-line overflow-hidden">
                 {(['units', 'buildings', 'owners'] as const).map(v => (
                   <button key={v} onClick={() => setView(v)}
