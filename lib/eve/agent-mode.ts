@@ -812,13 +812,30 @@ export async function executeProposal(id: string, by: string): Promise<{ ok: boo
   if (!s.enabled) return { ok: false, error: 'Agent mode is OFF — switch it on to let her carry this out, or do it by hand.' }
 
   const nowISO = new Date().toISOString()
+  // CLAIM FIRST (2026-09-28 audit, F20). A Telegram "yes" and a panel Approve a second apart both
+  // passed the status check above and both ran the executor — two Breezeway tasks, two posts, a guest
+  // messaged twice. The row now moves to 'executing' with a conditional update and only the caller
+  // whose update lands carries on (flushDeferred and undoAction already work this way). If the
+  // executor never gets to answer, the claim is put back so a person can approve it again.
+  let claimed = false
+  try {
+    const { data, error } = await supabaseAdmin().from('eve_actions').update({ status: 'executing', decided_by: by, decided_at: nowISO }).eq('id', id).eq('status', 'proposed').select('id')
+    claimed = !error && !!((data as any[]) || []).length
+  } catch { claimed = false }
+  if (!claimed) return { ok: false, error: 'already being carried out — it was approved a moment ago' }
   const close = async (status: string, result: any) => {
     try { await supabaseAdmin().from('eve_actions').update({ status, decided_by: by, decided_at: nowISO, executed_at: status === 'executed' ? nowISO : null, result }).eq('id', id) } catch { /* fine */ }
   }
 
-  const out: ExecResult = row.payload?.deferKind === 'proposal_notify'
-    ? await (async () => { const n = await notifyProposal(String(exec?.proposal_id || ''), s); return n.notified.length ? { ok: true, done: `approver told via ${n.notified.join('+')}` } : { ok: false, error: n.error || 'undeliverable' } })()
-    : await runExec(action, exec, 'chat', { actor: by, human: true })
+  let out: ExecResult
+  try {
+    out = row.payload?.deferKind === 'proposal_notify'
+      ? await (async () => { const n = await notifyProposal(String(exec?.proposal_id || ''), s); return n.notified.length ? { ok: true, done: `approver told via ${n.notified.join('+')}` } : { ok: false, error: n.error || 'undeliverable' } })()
+      : await runExec(action, exec, 'chat', { actor: by, human: true })
+  } catch (e: any) {
+    try { await supabaseAdmin().from('eve_actions').update({ status: 'proposed', decided_by: null, decided_at: null }).eq('id', id).eq('status', 'executing') } catch { /* stays executing; the panel shows it */ }
+    return { ok: false, error: String(e?.message || e).slice(0, 200) }
+  }
 
   await close(out.ok ? 'executed' : 'failed', { by, ok: out.ok, done: out.done, error: out.error, ref: out.ref })
   if (out.ok && row.payload?.recommendation_id) { try { const { decideRecommendation } = await import('./recommendations'); await decideRecommendation(String(row.payload.recommendation_id), 'accepted', by, 'accepted: the action was carried out') } catch { /* fine */ } }
