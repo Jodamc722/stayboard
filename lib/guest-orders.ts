@@ -19,6 +19,7 @@
 // day depending on the time." → deliveryDateFor() below; every number is a setting.
 import 'server-only'
 import { isLiveStay } from './stay-status'
+import { isTaskDone } from './task-categories'
 import { pageRows } from './db-page'
 import { randomBytes } from 'crypto'
 import { supabaseAdmin } from './supabase-admin'
@@ -1507,7 +1508,6 @@ export type OrderTask = {
   id: string; status: string; done: boolean; finishedAt: string | null
   scheduledDate: string | null; assignees: string[]; reportUrl: string | null
 }
-const TASK_DONE_RE = /complete|finish|done/i
 export async function orderTasks(orders: OrderRow[]): Promise<Record<string, OrderTask>> {
   const ids = Array.from(new Set(orders.map(o => String(o.breezeway_task_id || '')).filter(Boolean)))
   if (!ids.length) return {}
@@ -1521,8 +1521,9 @@ export async function orderTasks(orders: OrderRow[]): Promise<Record<string, Ord
         id: String(r.id), status,
         // finished_at is the fact; the status string is the label. Either one alone has been
         // wrong before — a task can carry a finished timestamp while its status still reads the
-        // stage it was in, and vice versa on a hand-closed task.
-        done: !!r.finished_at || TASK_DONE_RE.test(status),
+        // stage it was in, and vice versa on a hand-closed task. The shared rule (lib/task-categories)
+        // also reads Breezeway's "closed" as done, which this file's own pattern did not.
+        done: isTaskDone(status, r.finished_at),
         finishedAt: r.finished_at ? String(r.finished_at) : null,
         scheduledDate: r.scheduled_date ? String(r.scheduled_date) : null,
         assignees: Array.isArray(r.assignees) ? r.assignees.map((x: any) => String(x)) : [],
