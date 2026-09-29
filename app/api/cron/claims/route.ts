@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireCron } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
+import { getRoles, resolveLevels } from '@/lib/access'
 import { notify } from '@/lib/notify'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { nextCheckInMap } from '@/lib/claim-turnover'
@@ -31,6 +32,29 @@ export const maxDuration = 60
 const OPEN_STAGES = ['draft', 'review', 'ready']
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
+
+/**
+ * Active people whose resolved level on Claims is 'full' (lib/access resolveLevels — the same
+ * resolution the app gates with), not counting admins, who hold everything by role. When nobody
+ * holds it, the active admins. Empty on a read error — the claim's owner still gets the bell.
+ */
+async function claimsApprovers(db: any): Promise<{ emails: string[]; basis: 'claims-full' | 'admins' | 'none' }> {
+  try {
+    const { data, error } = await db.from('app_users').select('*').eq('status', 'active')
+    if (error) return { emails: [], basis: 'none' }
+    const roles = await getRoles()
+    const full: string[] = []
+    const admins: string[] = []
+    for (const u of (data || []) as any[]) {
+      const email = str(u.email).toLowerCase()
+      if (!email) continue
+      if (u.role === 'admin') { admins.push(email); continue }
+      if (resolveLevels(u, roles).levels['claims'] === 'full') full.push(email)
+    }
+    if (full.length) return { emails: full, basis: 'claims-full' }
+    return { emails: admins, basis: admins.length ? 'admins' : 'none' }
+  } catch { return { emails: [], basis: 'none' } }
+}
 
 async function run(req: NextRequest) {
   const gate = await requireCron(req)
@@ -74,13 +98,10 @@ async function run(req: NextRequest) {
       return NextResponse.json({ ok: true, ranAt: new Date().toISOString(), elapsed_ms: Date.now() - started, checked: claims.length, nudged: 0 })
     }
 
-    // Who hears about it: the claim's owner, plus every admin, because an ageing claim is money
-    // leaving the building and that is not one person's private problem.
-    let admins: string[] = []
-    try {
-      const { data: au } = await db.from('app_users').select('email').eq('role', 'admin').eq('status', 'active')
-      admins = ((au || []) as any[]).map(a => str(a.email).toLowerCase()).filter(Boolean)
-    } catch { /* the owner still gets it */ }
+    // WHO HEARS ABOUT IT (2026-09-28, 09 D20): the claim's owner, plus the people whose role holds
+    // Claims at FULL — the ones who approve and file — instead of every admin. Admins are the
+    // fallback only when no role holds claims:full, so an ageing claim always reaches somebody.
+    const approvers = await claimsApprovers(db)
 
     let sent = 0
     const nextNudged: Record<string, string> = {}
@@ -91,7 +112,7 @@ async function run(req: NextRequest) {
       const c = u.claim
       const amount = num(c.amount_sought) || itemsTotal(c.items)
       const eff = effectiveDue(c)
-      const to = Array.from(new Set(admins.concat([str(c.assignee_email).toLowerCase()]).filter(Boolean)))
+      const to = Array.from(new Set(approvers.emails.concat([str(c.assignee_email).toLowerCase()]).filter(Boolean)))
       if (!to.length) continue
       try {
         await notify(to, {
@@ -108,7 +129,7 @@ async function run(req: NextRequest) {
 
     return NextResponse.json({
       ok: true, ranAt: new Date().toISOString(), elapsed_ms: Date.now() - started,
-      checked: claims.length, nudged: sent,
+      checked: claims.length, nudged: sent, audience: approvers.basis,
     })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
