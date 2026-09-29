@@ -609,7 +609,7 @@ export async function runAudit(): Promise<AuditRun> {
   }
 
   // What was already on the tab?
-  const prev: any = await safe(db.from('eve_audits').select('id,status,first_seen_at,snooze_until').limit(2000), { data: [] })
+  const prev: any = await safe(db.from('eve_audits').select('id,status,first_seen_at,snooze_until').limit(1000), { data: [] }) // deliberate cap: Jon to decide — this history decides what reopens, stays snoozed or auto-resolves; past 1,000 findings it sees an arbitrary 1,000, and paging it would let the run close findings it cannot see today
   const prevRows: any[] = prev?.data || []
   const prevById: Record<string, any> = {}
   for (const r of prevRows) prevById[String(r.id)] = r
