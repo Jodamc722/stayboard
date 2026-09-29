@@ -109,6 +109,9 @@ async function handle(req: NextRequest): Promise<Response> {
       const missing: any[] = []; const changed: any[] = []; const canceledAfter: any[] = []
       const seenCode = new Set<string>()   // the mirror duplicates bookings — dedupe on code+listing
       let scanned = 0, missingMoney = 0
+      // "Finished" is judged against the EASTERN date (2026-09-29): the UTC date is already tomorrow
+      // from 8pm ET, when it counted tomorrow's checkouts as owing the ledger money.
+      const todayEt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
       for (let off = 0; off < 20_000; off += 1000) {
         const { data, error } = await sb.from('guesty_reservations')
           .select('id, confirmation_code, guest_name, check_in, check_out, status, source, listing_id, money_total, upd:raw->>lastUpdatedAt')
@@ -135,7 +138,7 @@ async function handle(req: NextRequest): Promise<Response> {
           // Mid-month, a guest who has not checked out yet has legitimately posted little or
           // nothing — counting future arrivals made August look $183k short when it was mostly
           // stays that simply have not happened. Only a FINISHED stay owes the ledger its money.
-          const finished = String(r.check_out || '') <= new Date().toISOString().slice(0, 10)
+          const finished = String(r.check_out || '') <= todayEt
           if (!dead && finished && money > 1 && code && !onStatement.has(code) && !seenCode.has(dupKey)) {
             seenCode.add(dupKey); missing.push(row); missingMoney += money
           }

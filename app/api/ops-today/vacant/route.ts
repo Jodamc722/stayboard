@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
   const gate = await requireLevel('plan', 'view')
   if (!gate.ok) return gate.res
   const body = await req.json().catch(() => ({} as any))
-  const today = typeof body?.today === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.today) ? body.today : new Date().toISOString().slice(0, 10)
+  const today = typeof body?.today === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.today) ? body.today : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
   const list: any[] = Array.isArray(body?.vacants) ? body.vacants.slice(0, 400) : []
   const input: VacantUnit[] = list.filter(v => v && v.listingId).map(v => ({
     listingId: String(v.listingId), unit: String(v.unit || ''), market: v.market || null,
