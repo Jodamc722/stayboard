@@ -172,6 +172,8 @@ export type RunLogEntry = {
   ok: boolean
   verified: boolean | null
   note: string
+  /** A deliberate skip (not cleared for short stays) — no write was attempted, so not a failure. */
+  skipped?: boolean
 }
 
 export type StayWindowConfig = {
@@ -266,6 +268,7 @@ export async function runDirection(
     // cleared for under-30-night stays in its own city.
     if (direction === 'open' && target < 30 && !l.cleared) {
       entry.note = 'Skipped — not marked cleared for short stays. Confirm the city registration first.'
+      entry.skipped = true
       results.push(entry)
       continue
     }
