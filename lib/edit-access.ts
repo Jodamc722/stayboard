@@ -3,12 +3,17 @@
 // The cookie is HMAC-signed with the server-only service-role key, so it can't be forged client-side.
 import crypto from 'crypto'
 import { cookies } from 'next/headers'
+import { serverSecret } from './signing'
 
 export const EDIT_COOKIE = 'sb_edit'
 export const EDIT_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
+// The service-role key stays the key (every edit cookie out there is signed with it). The old
+// fallbacks were the project URL — public, it is in every page bundle — and 'dev-only-secret', so a
+// deployment missing the key minted cookies anyone could forge (2026-09-28 audit, B-14). Without it
+// this now uses the shared server secret, and throws if there is none: the gate stays shut.
 function secret(): string {
-  return process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_URL || 'dev-only-secret'
+  return process.env.SUPABASE_SERVICE_ROLE_KEY || serverSecret()
 }
 
 // token = "<expiryMs>.<hmac>"

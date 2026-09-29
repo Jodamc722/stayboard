@@ -15,12 +15,15 @@
 //
 // Signed with the service-role key, same as lib/edit-access.ts, so it cannot be forged client-side.
 import crypto from 'crypto'
+import { serverSecret } from './signing'
 
 const TTL_MS = 2 * 60 * 60 * 1000   // two hours: long enough to fill in a form, short enough that a
                                     // token copied out of a network tab is stale before it is useful
 
+// Same key as before; the public-URL and 'dev-only-secret' fallbacks are gone (2026-09-28 audit,
+// B-14) — without the service key this uses the shared server secret or throws.
 function secret(): string {
-  return process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_URL || 'dev-only-secret'
+  return process.env.SUPABASE_SERVICE_ROLE_KEY || serverSecret()
 }
 
 /** token = "<auditId>.<expiryMs>.<hmac>" */

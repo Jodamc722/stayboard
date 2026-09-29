@@ -15,6 +15,7 @@
 import 'server-only'
 import { createHash } from 'crypto'
 import { getSetting, setSetting } from './app-settings'
+import { serverSecret } from './signing'
 
 export const CONNECTIONS_KEY = 'integration_connections'
 
@@ -46,12 +47,14 @@ export type PublicConnection = {
   scopes?: string
 }
 
+// Same chain as before; the literal 'stayboard' last resort (public in this repo) is now the shared
+// server secret, which throws when nothing is set (2026-09-28 audit, B-14).
 function secret(): string {
   return process.env.OWNER_SHARE_SECRET
     || process.env.SUPABASE_SERVICE_ROLE_KEY
     || process.env.SUPABASE_SERVICE_ROLE
     || process.env.SUPABASE_SERVICE_KEY
-    || 'stayboard'
+    || serverSecret()
 }
 
 /**
