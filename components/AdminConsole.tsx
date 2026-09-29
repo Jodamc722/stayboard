@@ -344,7 +344,7 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
             <input value={q} onChange={e => setQ(e.target.value)} autoComplete="off"
               placeholder="What do you want to change? Try “spanish”, “password”, “approve”…"
               className="w-full rounded-xl border-2 border-line bg-white pl-9 pr-8 py-2.5 text-[13.5px] focus:outline-none focus:border-ink" />
-            {q && <button onClick={() => setQ('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={13} /></button>}
+            {q && <button onClick={() => setQ('')} title="Clear search" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={13} /></button>}
           </div>
 
           {hits.length === 0 && (

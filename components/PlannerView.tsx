@@ -159,7 +159,7 @@ export function PlannerView({ days, blocks, dept, showLinks, marketFilter, group
       {/* which week */}
       {weeks > 1 ? (
         <div className="flex items-center gap-2">
-          <button onClick={() => setWeek(w => Math.max(0, w - 1))} disabled={week === 0}
+          <button onClick={() => setWeek(w => Math.max(0, w - 1))} disabled={week === 0} title="Previous week" aria-label="Previous week"
             className="h-9 w-9 grid place-items-center rounded-xl border border-line bg-white text-muted hover:text-ink disabled:opacity-30">
             <ChevronLeft size={16} />
           </button>
@@ -169,7 +169,7 @@ export function PlannerView({ days, blocks, dept, showLinks, marketFilter, group
             </p>
             <p className="text-[11.5px] text-muted">{longDay(from.date)} — {longDay(to.date)}</p>
           </div>
-          <button onClick={() => setWeek(w => Math.min(weeks - 1, w + 1))} disabled={week >= weeks - 1}
+          <button onClick={() => setWeek(w => Math.min(weeks - 1, w + 1))} disabled={week >= weeks - 1} title="Next week" aria-label="Next week"
             className="h-9 w-9 grid place-items-center rounded-xl border border-line bg-white text-muted hover:text-ink disabled:opacity-30">
             <ChevronRight size={16} />
           </button>

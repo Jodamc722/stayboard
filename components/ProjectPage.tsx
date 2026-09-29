@@ -897,10 +897,10 @@ function CalendarView({ tasks, onOpen, accent, hideDone }: { tasks: Task[]; onOp
   return (
     <div className="rounded-2xl border border-line bg-white overflow-hidden">
       <div className={'flex items-center gap-2 px-3 py-2 border-b ' + accent.bar}>
-        <button onClick={() => shift(-1)} className="text-muted hover:text-ink"><ChevronLeft size={15} /></button>
+        <button onClick={() => shift(-1)} title="Previous month" className="text-muted hover:text-ink"><ChevronLeft size={15} /></button>
         <span className="text-[13px] font-bold text-ink flex-1 text-center">{label}</span>
         <button onClick={() => setYm(tdy.slice(0, 7))} className="text-[11px] font-semibold text-muted hover:text-ink">Today</button>
-        <button onClick={() => shift(1)} className="text-muted hover:text-ink"><ChevronRight size={15} /></button>
+        <button onClick={() => shift(1)} title="Next month" className="text-muted hover:text-ink"><ChevronRight size={15} /></button>
       </div>
       <div className="grid grid-cols-7 text-[10.5px] font-bold uppercase tracking-wider text-muted border-b border-line">
         {WEEKDAYS.map(d => <div key={d} className="px-2 py-1 text-center">{d}</div>)}
@@ -1054,8 +1054,8 @@ function Customize({ settings, prefs, sections, canEdit, act, setPrefs, busy }: 
                   {order.map((name, i) => (
                     <div key={name} className="flex items-center gap-1 px-2 py-1">
                       <span className="text-[12px] text-ink flex-1 truncate">{name}</span>
-                      <button onClick={() => move(i, -1)} disabled={busy || i === 0} className="text-muted hover:text-ink disabled:opacity-30"><ArrowUp size={11} /></button>
-                      <button onClick={() => move(i, 1)} disabled={busy || i === order.length - 1} className="text-muted hover:text-ink disabled:opacity-30"><ArrowDown size={11} /></button>
+                      <button onClick={() => move(i, -1)} disabled={busy || i === 0} title="Move section up" className="text-muted hover:text-ink disabled:opacity-30"><ArrowUp size={11} /></button>
+                      <button onClick={() => move(i, 1)} disabled={busy || i === order.length - 1} title="Move section down" className="text-muted hover:text-ink disabled:opacity-30"><ArrowDown size={11} /></button>
                     </div>
                   ))}
                 </div>
@@ -1337,7 +1337,7 @@ function PeoplePicker({ value, onChange, roster, disabled, placeholder, tone }: 
               <span key={v} className={'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[12px] ' + chip}>
                 {r?.display || v}
                 {r && !r.notifiable && <span className="text-muted" title="No login — can be named, not notified">·</span>}
-                {!disabled && <button type="button" onClick={() => drop(v)} className="text-muted hover:text-rose-600"><X size={10} /></button>}
+                {!disabled && <button type="button" onClick={() => drop(v)} title="Remove" className="text-muted hover:text-rose-600"><X size={10} /></button>}
               </span>
             )
           })}
@@ -1518,7 +1518,7 @@ function NewTaskModal({ section, sections, roster, busy, act, onClose, onDone, s
           <div className="px-4 py-3 border-b border-line flex items-center gap-2">
             <Plus size={15} className="text-muted" />
             <span className="text-[14px] font-bold text-ink flex-1">New task</span>
-            <button onClick={onClose} disabled={saving} className="text-muted hover:text-ink"><X size={16} /></button>
+            <button onClick={onClose} disabled={saving} title="Close" className="text-muted hover:text-ink"><X size={16} /></button>
           </div>
 
           <div className="flex-1 overflow-y-auto px-4 py-3.5 space-y-3.5">
@@ -1661,7 +1661,7 @@ function NewSection({ onAdd, busy }: { onAdd: (name: string) => void; busy: bool
         className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px]" disabled={busy} />
       <button onClick={() => { if (v.trim()) { onAdd(v.trim()); setV(''); setOn(false) } }} disabled={busy || !v.trim()}
         className="rounded-lg bg-ink text-white px-2.5 py-1.5 text-[12px] font-bold disabled:opacity-40">Add</button>
-      <button onClick={() => setOn(false)} className="text-muted hover:text-ink"><X size={13} /></button>
+      <button onClick={() => setOn(false)} title="Cancel" className="text-muted hover:text-ink"><X size={13} /></button>
     </div>
   )
 }
@@ -1712,7 +1712,7 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, onOpe
             <button onClick={async () => { if (confirm(task.homed ? `Remove this task from this project? It stays in ${task.home_project_title}.` : 'Delete this task' + (task.subtasks.length ? ' and its subtasks' : '') + '?')) { await act({ action: 'taskDelete', taskId: task.id }); onClose() } }}
               disabled={busy} className="text-muted hover:text-rose-600" title={task.homed ? 'Remove from this project' : 'Delete task'}><Trash2 size={14} /></button>
           )}
-          <button onClick={onClose} className="text-muted hover:text-ink"><X size={16} /></button>
+          <button onClick={onClose} title="Close" className="text-muted hover:text-ink"><X size={16} /></button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
@@ -1947,8 +1947,8 @@ function TaskAttached({ task, p, canEdit, busy, act }: { task: Task; p: ProjectF
                 {st?.detail && <span className="block text-[10.5px] text-muted truncate">{st.detail}</span>}
               </span>
               {st ? <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border ' + (TONE_CLS[st.tone] || TONE_CLS.open)}>{st.label}</span> : <span className="text-[9.5px] font-bold uppercase tracking-wide text-muted">{o.kind}</span>}
-              {st?.href && <a href={st.href} target="_blank" rel="noreferrer" className="text-muted hover:text-ink"><ExternalLink size={11} /></a>}
-              {canEdit && <button onClick={() => act({ action: 'unlink', kind: o.kind, refId: o.ref_id, taskId: task.id })} disabled={busy} className="text-muted hover:text-rose-600"><X size={11} /></button>}
+              {st?.href && <a href={st.href} target="_blank" rel="noreferrer" title="Open" className="text-muted hover:text-ink"><ExternalLink size={11} /></a>}
+              {canEdit && <button onClick={() => act({ action: 'unlink', kind: o.kind, refId: o.ref_id, taskId: task.id })} disabled={busy} title="Unlink from this task" className="text-muted hover:text-rose-600"><X size={11} /></button>}
             </div>
           )})}
         </div>
@@ -2684,7 +2684,7 @@ function InvoiceRow({ inv, canEdit, busy, act, superadmin }: {
           {inv.status !== 'void' && inv.status !== 'paid' && <button onClick={() => act({ action: 'invoiceSet', invoiceId: inv.id, status: 'void' })} disabled={busy} className="text-[11px] text-muted hover:text-ink">Void</button>}
           {(inv.status !== 'paid' || superadmin) && (
             <button onClick={() => { if (confirm('Delete this invoice? The history keeps the event but the line goes.')) act({ action: 'invoiceDelete', invoiceId: inv.id }) }}
-              disabled={busy} className="ml-auto text-muted hover:text-rose-600"><Trash2 size={11} /></button>
+              disabled={busy} title="Delete invoice" className="ml-auto text-muted hover:text-rose-600"><Trash2 size={11} /></button>
           )}
         </div>
       )}
@@ -3059,7 +3059,7 @@ function LinksPanel({ p, canEdit, act, busy, onHide }: { p: ProjectFull; canEdit
               <Building2 size={12} className="text-muted shrink-0" />
               <span className="text-[12.5px] font-semibold text-ink flex-1 truncate">{b.label || b.ref_id}</span>
               <span className="text-[11px] text-muted tabular-nums">{units.length} units</span>
-              {canEdit && <button onClick={() => act({ action: 'unlink', kind: 'building', refId: b.ref_id })} disabled={busy} className="text-muted hover:text-rose-600"><X size={11} /></button>}
+              {canEdit && <button onClick={() => act({ action: 'unlink', kind: 'building', refId: b.ref_id })} disabled={busy} title="Unlink this building" className="text-muted hover:text-rose-600"><X size={11} /></button>}
             </div>
           </div>
         ))}
@@ -3085,7 +3085,7 @@ function LinksPanel({ p, canEdit, act, busy, onHide }: { p: ProjectFull; canEdit
                 <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border ' + (TONE_CLS[st.tone] || TONE_CLS.open)} title="Live from the source">{st.label}</span>
               ) : <span className="text-[9.5px] font-bold uppercase tracking-wide text-muted">{o.kind}</span>}
               {st?.href && <a href={st.href} target="_blank" rel="noreferrer" className="text-muted hover:text-ink" title="Open"><ExternalLink size={11} /></a>}
-              {canEdit && <button onClick={() => act({ action: 'unlink', kind: o.kind, refId: o.ref_id })} disabled={busy} className="text-muted hover:text-rose-600"><X size={11} /></button>}
+              {canEdit && <button onClick={() => act({ action: 'unlink', kind: o.kind, refId: o.ref_id })} disabled={busy} title="Unlink" className="text-muted hover:text-rose-600"><X size={11} /></button>}
             </div>
             {(st?.detail || (canEdit && o.kind !== 'owner')) && (
               <div className="pl-5 mt-0.5 flex items-center gap-2 text-[10.5px] text-muted">

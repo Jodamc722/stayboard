@@ -172,7 +172,7 @@ export function EveFloat() {
       {/* The bubble. Always present, never in the way — and on a phone it clears the bottom nav
           bar AND the home indicator, which is where it used to sit. */}
       {!open && (
-        <button onClick={() => setOpen(true)} aria-label="Ask Eve"
+        <button onClick={() => setOpen(true)} aria-label="Ask Eve" title="Ask Eve"
           className="print:hidden fixed above-bar lg:bottom-5 right-4 z-40 w-14 h-14 lg:w-12 lg:h-12 rounded-full bg-brand-600 text-white shadow-lg hover:bg-brand-700 grid place-items-center transition-transform active:scale-95">
           <Sparkles size={22} />
         </button>
@@ -201,7 +201,7 @@ export function EveFloat() {
                 <button onClick={() => setMsgs([])} title="Clear the conversation"
                   className="p-2 rounded-lg text-muted hover:text-ink"><Eraser size={15} /></button>
               )}
-              <button onClick={() => setOpen(false)} aria-label="Close"
+              <button onClick={() => setOpen(false)} aria-label="Close" title="Close"
                 className="p-2 rounded-lg text-muted hover:text-ink"><X size={17} /></button>
             </div>
           </div>
@@ -258,7 +258,7 @@ export function EveFloat() {
 
           <div className="border-t border-line p-2 pb-safe-keep flex items-end gap-1.5 flex-shrink-0 bg-white">
             {micOk && (
-              <button onClick={toggleMic} aria-label={listening ? 'Stop listening' : 'Ask by voice'}
+              <button onClick={toggleMic} aria-label={listening ? 'Stop listening' : 'Ask by voice'} title={listening ? 'Stop listening' : 'Ask by voice'}
                 className={`inline-flex items-center justify-center rounded-xl p-2.5 flex-shrink-0 ${listening ? 'bg-red-600 text-white animate-pulse' : 'bg-app border border-line text-muted hover:text-ink'}`}>
                 <Mic size={17} />
               </button>
@@ -266,7 +266,7 @@ export function EveFloat() {
             <textarea ref={boxRef} value={text} onChange={e => setText(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
               rows={1} placeholder={listening ? 'Listening…' : 'Ask Eve…'} className={`${input} resize-none max-h-28`} />
-            <button onClick={() => send()} disabled={busy || !text.trim()} aria-label="Send"
+            <button onClick={() => send()} disabled={busy || !text.trim()} aria-label="Send" title="Send"
               className="inline-flex items-center justify-center rounded-xl bg-brand-600 text-white p-2.5 flex-shrink-0 hover:bg-brand-700 disabled:opacity-50"><Send size={17} /></button>
           </div>
         </div>

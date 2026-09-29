@@ -49,7 +49,7 @@ function Item({ a, onSet }: { a: Action; onSet: (id: string, status: string) => 
   return (
     <div className={'border-t border-line/60 ' + (busyDone ? 'opacity-55' : '')}>
       <div className="flex items-start gap-2 py-1.5">
-        <button onClick={() => setOpen(o => !o)} className="pt-0.5 flex-shrink-0">
+        <button onClick={() => setOpen(o => !o)} title={open ? 'Hide what guests said' : 'Show what guests said'} className="pt-0.5 flex-shrink-0">
           <ChevronRight size={12} className={'text-muted transition-transform ' + (open ? 'rotate-90' : '')} />
         </button>
         <div className="min-w-0 flex-1">

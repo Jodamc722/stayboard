@@ -537,9 +537,9 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
           <button onClick={refresh} title="Refresh cleans, forecast and fees" className="inline-flex items-center justify-center text-sm w-8 h-8 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-700"><RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /></button>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={() => data && setWeekStart(data.prevWeekStart)} className="p-1.5 rounded border border-neutral-200 hover:bg-neutral-50"><ChevronLeft size={16} /></button>
+          <button onClick={() => data && setWeekStart(data.prevWeekStart)} title="Previous week" aria-label="Previous week" className="p-1.5 rounded border border-neutral-200 hover:bg-neutral-50"><ChevronLeft size={16} /></button>
           <div className="text-sm font-semibold text-neutral-800 min-w-[140px] text-center">{data ? fmtRange(data.weekStart, data.weekEnd) : '…'}</div>
-          <button onClick={() => data && setWeekStart(data.nextWeekStart)} className="p-1.5 rounded border border-neutral-200 hover:bg-neutral-50"><ChevronRight size={16} /></button>
+          <button onClick={() => data && setWeekStart(data.nextWeekStart)} title="Next week" aria-label="Next week" className="p-1.5 rounded border border-neutral-200 hover:bg-neutral-50"><ChevronRight size={16} /></button>
           {data && !data.isCurrentWeek && (<button onClick={() => setWeekStart('')} className="text-xs px-2 py-1 rounded border border-neutral-200 hover:bg-neutral-50">This week</button>)}
           <span className="text-xs text-neutral-400 flex items-center gap-1 ml-1">
             {saveState === 'saving' && (<><Loader2 size={12} className="animate-spin" />Saving…</>)}
@@ -598,7 +598,7 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
                 <tr key={mem} className="border-t border-neutral-100 group">
                   <td className="px-3 py-1.5 text-left sticky left-0 bg-white">
                     <div className="flex items-center gap-1.5">
-                      <button onClick={() => removeMember(mem)} className="opacity-0 group-hover:opacity-100 text-neutral-300 hover:text-rose-500"><X size={12} /></button>
+                      <button onClick={() => removeMember(mem)} title="Take off this week's roster" aria-label="Take off this week's roster" className="opacity-0 group-hover:opacity-100 text-neutral-300 hover:text-rose-500"><X size={12} /></button>
                       <span className="font-medium text-neutral-800">{shortName(mem)}{NON_CLEANERS[mem] && <span className="text-neutral-400 text-[11px] font-normal"> · {NON_CLEANERS[mem]}</span>}</span>
                     </div>
                   </td>
@@ -666,7 +666,7 @@ export function ForecastBoard({ mode }: { mode?: 'weekly' } = {}) {
                     const v = cells[`${mem}__${selDate}`] || ''
                     return (
                       <div key={mem} className="flex items-center gap-2 group">
-                        <button onClick={() => removeMember(mem)} className="opacity-0 group-hover:opacity-100 text-neutral-300 hover:text-rose-500"><X size={12} /></button>
+                        <button onClick={() => removeMember(mem)} title="Take off this week's roster" aria-label="Take off this week's roster" className="opacity-0 group-hover:opacity-100 text-neutral-300 hover:text-rose-500"><X size={12} /></button>
                         <span className="flex-1 text-sm text-neutral-800">{shortName(mem)}{NON_CLEANERS[mem] && <span className="text-neutral-400 text-[11px]"> · {NON_CLEANERS[mem]}</span>}</span>
                         <select value={v} onChange={e => setCell(mem, selDate, e.target.value)} className={`text-xs rounded-full px-2.5 py-1 border-0 cursor-pointer font-medium ${statusChip(v)}`}>
                           <option value="">— set —</option>
