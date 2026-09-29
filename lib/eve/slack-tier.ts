@@ -140,7 +140,7 @@ async function baseTierFor(access: Access | null, channelId: string): Promise<Ti
     // through the Agent-mode rungs, and a guest message, a Guesty write or a calendar block still
     // waits for an approver's yes; door codes and money stay out as everywhere in Slack.
     const eveRoom = await isEveRoom(channelId)
-    return { tier: 'staff', buildings: [], canMoney: false, canDirect: eveRoom, denyTools: ENTRY_TOOLS.concat(ADMIN_ONLY), memoryWeightCap: 5, group, eveRoom }
+    return { tier: 'staff', buildings: [], canMoney: false, canDirect: eveRoom, denyTools: ENTRY_TOOLS.concat(ADMIN_ONLY, LINK_TOOLS), memoryWeightCap: 5, group, eveRoom }
   }
   // Unrecognised, or a vendor room. Still answered — about their own buildings, minus what is ours.
   return {
