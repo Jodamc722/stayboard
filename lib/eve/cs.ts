@@ -19,7 +19,7 @@ import type { EveTool } from './types'
 import { obj, S } from './types'
 import { clampLimit, clampDays, lc, has, safe, cap, num, round2, pageRows } from './ctx'
 import { customFieldNameMap, filledCustomFields } from '@/lib/custom-fields'
-import { fmtDuration, median } from '@/lib/response-times'
+import { fmtDuration, median, awaitingSet, stillAwaiting, AWAITING_HORIZON_H, SLA_RULE_TEXT, type AwaitingRow } from '@/lib/response-times'
 import { otaPlaybookView } from '@/lib/ota-playbook-server'
 import { otaChannelOf, otaTopicOf } from '@/lib/ota-playbook'
 import { ladderFor, buildMatrix, authorityTiers, normAuthority, tierFor, RULES, SEVERITY_TEST, REMEDIES } from '@/lib/refund-doctrine'
@@ -143,7 +143,9 @@ export const CS_TOOLS: EveTool[] = [
       const gaps = answered.map(r => Number(r.first_ms))
       const humanGaps = rows.filter(r => Number.isFinite(r.human_first_ms)).map(r => Number(r.human_first_ms))
       const withinHour = gaps.filter(g => g <= 3600_000).length
-      const waiting = rows.filter(r => r.awaiting)
+      // Waiting NOW is the one rule (lib/response-times): a guest who wrote inside the horizon. The
+      // window above can be months; a thread whose last word was a guest's "thanks!" weeks ago is not.
+      const waiting = rows.filter(r => stillAwaiting(r.awaiting, r.last_guest_at))
       const knownOrigin = rows.filter(r => Number.isFinite(r.human_first_ms)).length
 
       const group = lc(input?.by)
@@ -154,7 +156,7 @@ export const CS_TOOLS: EveTool[] = [
         for (const r of rows) {
           const k = String((group === 'building' ? r.building : r.channel) || 'unknown')
           if (Number.isFinite(r.first_ms)) (buckets[k] = buckets[k] || []).push(Number(r.first_ms))
-          if (r.awaiting) waits[k] = (waits[k] || 0) + 1
+          if (stillAwaiting(r.awaiting, r.last_guest_at)) waits[k] = (waits[k] || 0) + 1
         }
         breakdown = Object.keys(buckets).concat(Object.keys(waits).filter(k => !buckets[k]))
           .filter((v, i, a) => a.indexOf(v) === i)
@@ -243,7 +245,7 @@ export const CS_TOOLS: EveTool[] = [
         ? await safe(ctx.db.from('guesty_conversations').select('id,channel,unread_count,last_message_at').eq('id', row.conversation_id).maybeSingle(), { data: null } as any)
         : { data: null } as any
       const sent = row.conversation_id
-        ? await safe(ctx.db.from('guesty_conversation_sentiment').select('score,band,dissatisfied,top_issue,reason,awaiting_reply').eq('conversation_id', row.conversation_id).maybeSingle(), { data: null } as any)
+        ? await safe(ctx.db.from('guesty_conversation_sentiment').select('score,band,dissatisfied,top_issue,reason,awaiting_reply,last_guest_at').eq('conversation_id', row.conversation_id).maybeSingle(), { data: null } as any)
         : { data: null } as any
       const resp = row.conversation_id
         ? await safe(ctx.db.from('conversation_response').select('first_ms,human_first_ms,replies,awaiting,last_guest_at,last_responder').eq('conversation_id', row.conversation_id).maybeSingle(), { data: null } as any)
@@ -274,7 +276,7 @@ export const CS_TOOLS: EveTool[] = [
           sentiment: sent?.data || null,
           first_response: resp?.data ? fmtDuration(resp.data.first_ms) : null,
           first_response_by_a_person: resp?.data ? fmtDuration(resp.data.human_first_ms) : null,
-          awaiting_our_reply: resp?.data?.awaiting ?? sent?.data?.awaiting_reply ?? null,
+          awaiting_our_reply: resp?.data ? stillAwaiting(resp.data.awaiting, resp.data.last_guest_at) : sent?.data ? stillAwaiting(sent.data.awaiting_reply, sent.data.last_guest_at) : null,
           last_responder: resp?.data?.last_responder || null,
         } : 'no conversation linked',
         glitches: ((gl as any)?.data || []).map((g: any) => ({ id: g.id, what: g.overview, status: g.status, unit: g.unit, at: g.created_at })),
@@ -384,42 +386,57 @@ export const CS_TOOLS: EveTool[] = [
 
   {
     name: 'awaiting_reply',
-    description: 'Guest threads waiting on US right now — the guest spoke last and nobody has answered — oldest first, with how long they have been waiting and what the thread is about. Use this for "who is waiting", "anything unanswered", and at the start of any customer-service sweep.',
+    description: `Guest threads waiting on US right now — the guest wrote in the last ${AWAITING_HORIZON_H} hours and no person has answered since (a Guesty template does not count) — newest first, with how long they have been waiting, the reply-by time, whether it has passed, and what the thread is about. The same set as the inbox's "waiting" pill and the Command Center. Use this for "who is waiting", "anything unanswered", and at the start of any customer-service sweep.`,
     input_schema: obj({ building: S.str, hours: S.num, limit: S.num }),
     run: async (input, ctx) => {
       const lim = clampLimit(input?.limit, 25, 80)
       const minHours = Math.max(Number(input?.hours) || 0, 0)
-      let q = ctx.db.from('conversation_response')
-        .select('conversation_id,reservation_id,listing_id,building,channel,last_guest_at,guest_msgs,replies')
-        .eq('awaiting', true)
-        .order('last_guest_at', { ascending: true })
-        .limit(lim * 2)
-      if (input?.building) q = q.ilike('building', `%${String(input.building)}%`)
-      const { data } = await safe(q, { data: [] } as any)
-      let rows = ((data as any[]) || [])
-      if (minHours) rows = rows.filter(r => Date.now() - new Date(r.last_guest_at || 0).getTime() >= minHours * 3600_000)
+      // THE ONE RULE (lib/response-times awaitingSet, 2026-09-29 review). This read every awaiting row
+      // OLDEST first, so a "thanks!" from last month led the list and today's question fell off the
+      // end of the limit.
+      const set = await awaitingSet({ db: ctx.db })
+      if (set.error) return { error: 'Could not read who is waiting: ' + set.error }
+      const since = (r: AwaitingRow) => r.awaiting_since || r.last_guest_at
+      let rows = set.rows
+      if (minHours) rows = rows.filter(r => Date.now() - new Date(since(r) || 0).getTime() >= minHours * 3600_000)
+      // The building and the exchange counts are on the stored row.
+      const det: Record<string, any> = {}
+      const need = input?.building ? rows : rows.slice(0, lim)
+      for (let i = 0; i < need.length; i += 200) {
+        const { data } = await safe(ctx.db.from('conversation_response').select('conversation_id,building,guest_msgs,replies').in('conversation_id', need.slice(i, i + 200).map(r => r.conversation_id)), { data: [] } as any)
+        for (const d of ((data as any[]) || [])) det[String(d.conversation_id)] = d
+      }
+      if (input?.building) { const b = lc(input.building); rows = rows.filter(r => lc(det[r.conversation_id]?.building).indexOf(b) >= 0) }
+      const total = rows.length
       rows = rows.slice(0, lim)
       if (!rows.length) return { waiting: 0, note: 'Nothing is waiting on us in that scope. If that seems too good, check that the conversations sync ran — awaiting_reply is only as fresh as the last message pull.' }
 
-      const ids = rows.map(r => String(r.conversation_id))
-      const sent: any = await safe(ctx.db.from('guesty_conversation_sentiment').select('conversation_id,score,band,top_issue,dissatisfied').in('conversation_id', ids.slice(0, 60)), { data: [] } as any)
+      const ids = rows.map(r => r.conversation_id)
+      const sent: any = await safe(ctx.db.from('guesty_conversation_sentiment').select('conversation_id,score,band,top_issue,dissatisfied').in('conversation_id', ids.slice(0, 80)), { data: [] } as any)
       const byConv: Record<string, any> = {}
       for (const s of ((sent?.data as any[]) || [])) byConv[String(s.conversation_id)] = s
 
       return {
-        waiting: rows.length,
+        waiting: total,
+        shown: total > rows.length ? rows.length : undefined,
+        late: rows.filter(r => r.overdue).length,
+        truncated: set.truncated || undefined,
+        rule: SLA_RULE_TEXT,
         threads: rows.map(r => {
-          const s = byConv[String(r.conversation_id)]
+          const s = byConv[r.conversation_id]
+          const d = det[r.conversation_id] || {}
           return {
             conversation_id: r.conversation_id,
-            unit: ctx.nameOf(r.listing_id), building: r.building, channel: r.channel,
+            unit: ctx.nameOf(r.listing_id), building: d.building || ctx.buildingOf(r.listing_id) || null, channel: r.channel,
             guest_last_spoke: r.last_guest_at,
-            waiting_for: fmtDuration(Date.now() - new Date(r.last_guest_at || 0).getTime()),
-            exchanges: `${r.guest_msgs} from them / ${r.replies} from us`,
+            waiting_for: fmtDuration(Date.now() - new Date(since(r) || 0).getTime()),
+            reply_by: r.sla_due_at,
+            late: r.overdue,
+            exchanges: d.guest_msgs != null ? `${d.guest_msgs} from them / ${d.replies} from us` : null,
             sentiment: s ? { score: s.score, band: s.band, issue: s.top_issue, unhappy: s.dissatisfied } : null,
           }
         }),
-        unhappy_and_waiting: rows.filter(r => byConv[String(r.conversation_id)]?.dissatisfied).length,
+        unhappy_and_waiting: rows.filter(r => byConv[r.conversation_id]?.dissatisfied).length,
         next: 'Read any of these with guest_thread before drafting anything.',
       }
     },

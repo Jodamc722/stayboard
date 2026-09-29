@@ -361,6 +361,16 @@ export type AwaitingSet = {
 const isoNoMs = (ms: number) => new Date(ms).toISOString().slice(0, 19) + 'Z'
 
 /**
+ * The one rule for a single thread: a stored `awaiting` flag counts only while the guest's last
+ * message is inside AWAITING_HORIZON_H — the same line awaitingSet draws for the whole inbox.
+ */
+export function stillAwaiting(awaiting: any, lastGuestAt: any, now: number = Date.now()): boolean {
+  if (!awaiting) return false
+  const t = Date.parse(String(lastGuestAt || ''))
+  return Number.isFinite(t) && now - t <= AWAITING_HORIZON_H * 3600_000
+}
+
+/**
  * Every guest waiting on us right now, by the one rule above: awaiting, and the guest last wrote
  * within the last AWAITING_HORIZON_H hours (filtered on last_guest_at — a guest who follows up today
  * on a run that began earlier is still waiting). `overdue` is past sla_due_at.

@@ -20,6 +20,7 @@
 //   • Money is returned raw; the route strips it for people without money access.
 import 'server-only'
 import { loadContactHistory, type ContactHistory } from './reservation-contact'
+import { stillAwaiting } from './response-times'
 import { channelOf, channelPolicy } from './welcome-call-guide'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
@@ -111,8 +112,8 @@ export async function loadReservation360(db: any, reservationId: string, opts: {
     soft<any[]>(db.from('glitches').select('id,overview,status,category,created_at,refund_approved').eq('reservation_id', reservationId).order('created_at', { ascending: false }).limit(20), []),
     soft<any[]>(db.from('claims').select('id,stage,summary,amount_sought,amount_paid,deadline_on,outcome').eq('reservation_id', reservationId).is('deleted_at', null).order('created_at', { ascending: false }).limit(10), []),
     conv ? soft<any>(db.from('guesty_conversations').select('unread_count,last_message_at').eq('id', conv).maybeSingle(), null) : Promise.resolve(null),
-    conv ? soft<any>(db.from('guesty_conversation_sentiment').select('score,band,dissatisfied,top_issue,reason,awaiting_reply').eq('conversation_id', conv).maybeSingle(), null) : Promise.resolve(null),
-    conv ? soft<any>(db.from('conversation_response').select('first_ms,awaiting').eq('conversation_id', conv).maybeSingle(), null) : Promise.resolve(null),
+    conv ? soft<any>(db.from('guesty_conversation_sentiment').select('score,band,dissatisfied,top_issue,reason,awaiting_reply,last_guest_at').eq('conversation_id', conv).maybeSingle(), null) : Promise.resolve(null),
+    conv ? soft<any>(db.from('conversation_response').select('first_ms,awaiting,last_guest_at').eq('conversation_id', conv).maybeSingle(), null) : Promise.resolve(null),
     conv ? (async () => { try { const x = await db.from('guesty_messages').select('id', { count: 'exact', head: true }).eq('conversation_id', conv); return Number(x?.count) || 0 } catch { return 0 } })() : Promise.resolve(0),
     soft<any[]>(db.from('guesty_reviews').select('id,rating,channel,created_at,content,has_reply').eq('raw->>reservationId', reservationId).limit(1), []),
     soft<any[]>(db.from('breezeway_tasks_sync').select('id,name,status,type_department,scheduled_date,finished_at,assignees,report_url').eq('linked_reservation_id', reservationId).order('scheduled_date', { ascending: true }).limit(30), []),
@@ -199,7 +200,9 @@ export async function loadReservation360(db: any, reservationId: string, opts: {
     },
     messages: {
       conversationId: conv, unread: Number(convRow?.unread_count) || 0, lastMessageAt: convRow?.last_message_at || null, count: msgCount,
-      awaitingReply: resp ? !!resp.awaiting : (sentiment ? !!sentiment.awaiting_reply : null),
+      // The one rule (lib/response-times): waiting only while the guest's last word is inside the
+      // 72h horizon — a stale "thanks!" is not an "Awaiting reply" tag.
+      awaitingReply: resp ? stillAwaiting(resp.awaiting, resp.last_guest_at) : (sentiment ? stillAwaiting(sentiment.awaiting_reply, sentiment.last_guest_at) : null),
       firstResponseMin: resp?.first_ms != null ? Math.round(Number(resp.first_ms) / 60000) : null,
       sentiment: sentiment ? { score: num(sentiment.score), band: sentiment.band || null, dissatisfied: !!sentiment.dissatisfied, topIssue: sentiment.top_issue || null, reason: sentiment.reason || null } : null,
     },
