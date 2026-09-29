@@ -71,9 +71,6 @@ export async function POST(req: NextRequest) {
       await logAdmin({ email: user.email, area: 'share-settings', action: 'rules_password', req })
       return NextResponse.json({ ok: true, rulesSet: true, rules: r.state })
     }
-    if (body.password !== undefined || body.marketingPassword !== undefined || body.auditPassword !== undefined || body.botanicaPassword !== undefined) {
-      return NextResponse.json({ ok: false, error: 'Share-link passcodes are set per link on the Share Links page (/links) now.' }, { status: 410 })
-    }
     return NextResponse.json({ ok: false, error: 'Nothing to change.' }, { status: 400 })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
