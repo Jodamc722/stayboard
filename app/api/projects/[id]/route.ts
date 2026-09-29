@@ -17,6 +17,7 @@ import {
 } from '@/lib/projects'
 import { saveVendor, slugVendor } from '@/lib/project-vendors'
 import { onAssigned, onAdded, onComment } from '@/lib/project-notify'
+import { bustBoards } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -881,6 +882,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         try {
           await sb.from('breezeway_tasks_sync').upsert({ id: bzId, reference_property_id: listingId, name: t.title, status: 'created', scheduled_date: date, type_department: department, assignees: [], report_url: r.data.report_url || null, raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString() }, { onConflict: 'id' })
         } catch { /* the sync catches up */ }
+        // Today in Ops and the Scheduler show the new field task at their next load, not up to 5 minutes later.
+        bustBoards()
         await logEvent(id, me, 'task_moved', `sent to Breezeway (${department}, ${date}${assigned ? ', assigned' : ''})`, { task_id: t.id, task_title: t.title, to: 'breezeway', name: bzId })
         return NextResponse.json({ ok: true, breezewayTaskId: bzId, reportUrl: r.data.report_url || null, assigned, project: await getProject(id) })
       }
@@ -900,6 +903,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         const r = await updateBreezewayTask(cur.breezeway_task_id, patch)
         if (!r.ok) return NextResponse.json({ error: 'Breezeway ' + r.status + ': ' + String(r.text || '').slice(0, 160) }, { status: 502 })
         if (patch.scheduled_date) await sb.from('breezeway_tasks_sync').update({ scheduled_date: patch.scheduled_date }).eq('id', cur.breezeway_task_id)
+        bustBoards()
         await logEvent(id, me, 'task_moved', `updated the Breezeway task${patch.assignments ? ' — reassigned' : ''}${patch.scheduled_date ? ' — ' + patch.scheduled_date : ''}`, { task_id: t.id, task_title: t.title, to: 'breezeway' })
         break
       }

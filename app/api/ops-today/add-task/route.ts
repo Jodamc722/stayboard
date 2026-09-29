@@ -7,7 +7,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createBreezewayTask, updateBreezewayTask, retrieveBreezewayTask } from '@/lib/breezeway'
 import { buildIntel, intelKindFor, INTEL_STRIP_RE } from '@/lib/listingIntel'
 import { requireLevel } from '@/lib/access'
-import { bustOpsDay } from '@/lib/ops-day'
+import { bustBoards } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -135,9 +135,11 @@ async function handlePost(req: NextRequest) {
   }
 }
 
-// Every write from the board invalidates the shared 45-second day picture (lib/ops-day).
+// Every write from the board invalidates the shared 45-second day picture (lib/ops-day) AND the
+// Scheduler's snapshot — the new task is on both boards. A refused or failed request wrote nothing,
+// so it busts nothing (2026-09-29, 02-B3).
 export async function POST(req: NextRequest) {
   const res = await handlePost(req)
-  bustOpsDay()
+  if (res.ok) bustBoards()
   return res
 }

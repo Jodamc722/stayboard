@@ -19,6 +19,7 @@ import { checkRowPasscode, lockedResponse } from '@/lib/passcode-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createBreezewayTask, updateBreezewayTask } from '@/lib/breezeway'
 import { getBoardLink, buildFieldBoard } from '@/lib/field-board'
+import { bustBoards } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -124,6 +125,8 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
         raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString(),
       }, { onConflict: 'id' })
     } catch { /* the sync catches up */ }
+    // The office boards (Today in Ops, the Scheduler) show the job at their next load.
+    bustBoards()
     return NextResponse.json({
       ok: true, taskId: String(r.data.id), unit: unitName, listingId, date,
       assigned: assignWarning ? [] : assignNames,

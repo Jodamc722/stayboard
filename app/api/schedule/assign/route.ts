@@ -105,9 +105,10 @@ async function handlePost(req: NextRequest) {
   return NextResponse.json({ ok: true, pushed, failed: results.length - pushed, results })
 }
 
-// Every write from the board invalidates the shared 45-second day picture (lib/ops-day).
+// Every write from the board invalidates the shared 45-second day picture (lib/ops-day). A refused
+// request (signed out, no edit level, nothing to push) wrote nothing, so it busts nothing.
 export async function POST(req: NextRequest) {
   const res = await handlePost(req)
-  bustOpsDay()
+  if (res.ok) bustOpsDay()
   return res
 }

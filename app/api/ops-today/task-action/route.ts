@@ -9,7 +9,7 @@ import { bzApi, updateBreezewayTask, retrieveBreezewayTask, completeBreezewayTas
 import { adminPasswordOk } from '@/lib/shareAuth'
 import { requireLevel } from '@/lib/access'
 import { isTaskDone } from '@/lib/task-categories'
-import { bustOpsDay } from '@/lib/ops-day'
+import { bustBoards } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -162,9 +162,11 @@ async function handlePost(req: NextRequest) {
   }
 }
 
-// Every write from the board invalidates the shared 45-second day picture (lib/ops-day).
+// Every write from the board invalidates the shared 45-second day picture (lib/ops-day) AND the
+// Scheduler's snapshot — a moved, renamed, closed or deleted task is on both boards. A refused or
+// failed request wrote nothing, so it busts nothing (2026-09-29, 02-B3).
 export async function POST(req: NextRequest) {
   const res = await handlePost(req)
-  bustOpsDay()
+  if (res.ok) bustBoards()
   return res
 }
