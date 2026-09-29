@@ -79,13 +79,20 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (req.nextUrl.searchParams.get('orders')) {
     // Property-wide order sheet: every Replace/Add need across all audits, with lifecycle status.
+    // PAGED, newest first: the first 1,000 of a .limit(2000) dropped the oldest needs — including ones
+    // still open — off the desk. Bounded at 5 pages (a page load); a failed read is an error, not an
+    // empty desk.
+    let readErr = ''
     const [oi, ol] = await Promise.all([
-      db.from('audit_items').select('id,audit_id,listing_id,room,kind,title,qty,note,photo_url,severity,status,details,created_at').in('kind', ['replace', 'add']).neq('status', 'dismissed').order('created_at', { ascending: false }).limit(2000),
+      pageRows<any>((a, b) => db.from('audit_items').select('id,audit_id,listing_id,room,kind,title,qty,note,photo_url,severity,status,details,created_at').in('kind', ['replace', 'add']).neq('status', 'dismissed').order('created_at', { ascending: false }).order('id').range(a, b)
+        .then((r: any) => { if (r.error) readErr = String(r.error.message || 'read failed'); return r }), 5),
       db.from('guesty_listings').select('id,nickname,title,building').limit(1000), // deliberate cap: one row per Guesty listing (~290, inactive included)
     ])
+    if (readErr) return NextResponse.json({ ok: false, error: 'Could not load orders: ' + readErr }, { status: 500 })
+    if (oi.truncated) console.error('[audit] order desk stopped at 5,000 needs — the oldest are not shown')
     const lm: Record<string, any> = {}
     for (const l of ol.data || []) lm[String(l.id)] = { name: l.nickname || l.title || 'Unit', building: l.building || '' }
-    const orders = (oi.data || []).map((x: any) => { const lid = String(x.listing_id || ''); const meta = lm[lid]; return { ...x, unit: meta ? meta.name : (lid.indexOf(':') >= 0 ? lid.split(':').slice(1).join(':') : lid), building: meta ? meta.building : '' } })
+    const orders = oi.rows.map((x: any) => { const lid = String(x.listing_id || ''); const meta = lm[lid]; return { ...x, unit: meta ? meta.name : (lid.indexOf(':') >= 0 ? lid.split(':').slice(1).join(':') : lid), building: meta ? meta.building : '' } })
     return NextResponse.json({ ok: true, orders })
   }
   const [ar, lr, ir, rr] = await Promise.all([
