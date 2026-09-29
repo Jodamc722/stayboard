@@ -217,10 +217,11 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
   const unitGroups: any[] = d?.unitRows || []
   const gOrders: any[] = d?.orders || []
   const gReqs: any[] = d?.requests || []
-  const ALL_TABS: { key: Tab; label: string; n: number }[] = [
+  const ALL_TABS: { key: Tab; label: string; n: number | string }[] = [
     { key: 'today', label: 'Priorities', n: prios.length + bigs.length + watch.length },
     { key: 'units', label: 'Units', n: unitGroups.reduce((a: number, g: any) => a + g.rows.length, 0) },
-    { key: 'crew', label: 'Crew', n: crew?.onShift ?? 0 },
+    // A crew that was not read is "—", never a 0 that reads like nobody is working.
+    { key: 'crew', label: 'Crew', n: crew ? (crew.onShift ?? 0) : '—' },
     { key: 'cleans', label: 'Cleans', n: deps.length },
     { key: 'arrivals', label: 'Arrivals', n: arrs.length },
     { key: 'vacant', label: 'Vacant', n: vacs.length },
@@ -254,7 +255,13 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
         </div>
 
         <div className="fb-stats">
-          {sec.crew ? <Stat label="Clocked in" value={`${crew?.clockedIn ?? 0}/${crew?.onShift ?? 0}`} tone={crew && crew.clockedIn < crew.onShift ? 'warn' : 'ok'} note={crew?.notClocked?.length ? crew.notClocked.length + ' not in' : 'all in'} /> : null}
+          {/* A FAILED CREW READ IS NOT A FULL CREW (2026-09-28 audit). With no crew object this tile
+              used to print "0/0 · all in" in green on the crew's phone. */}
+          {sec.crew ? (crew
+            ? <Stat label="Clocked in" value={`${crew.clockedIn ?? 0}/${crew.onShift ?? 0}`}
+                tone={!crew.onShift ? '' : crew.clockedIn < crew.onShift ? 'warn' : 'ok'}
+                note={crew.notClocked?.length ? crew.notClocked.length + ' not in' : crew.onShift ? 'all in' : 'none on shift'} />
+            : <Stat label="Clocked in" value="—" tone="warn" note="not read" />) : null}
           {sec.cleans ? <Stat label="Same-day" value={String(deps.filter(r => sameDayIds.has(String(r.listingId))).length)} tone="hot" note="turns" /> : null}
           {sec.cleans ? <Stat label="Left" value={String(deps.length - cleansDone)} note="to clean" /> : null}
           {sec.work ? <Stat label="Work" value={String(work.filter(w => w.status !== 'done').length)} note="open" /> : null}
@@ -457,7 +464,7 @@ export default function FieldBoardPage({ params }: { params: { code: string } })
                 </div>
               )
             })}
-            {!(crew?.people || []).length && <div className="fb-card fb-pad fb-note">Nobody on the schedule for these units today.</div>}
+            {!(crew?.people || []).length && <div className="fb-card fb-pad fb-note">{crew ? 'Nobody on the schedule for these units today.' : 'The crew could not be read just now — try again in a minute.'}</div>}
           </>
         ) : null}
 
