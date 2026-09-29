@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireLevel } from '@/lib/access'
+import { requireLevel, doorCodePolicy } from '@/lib/access'
 import { requireVrUser } from '@/lib/vr-gate'
 import { otaLinksFrom } from '@/lib/ota-links'
 import { pageRows } from '@/lib/db-page'
+import { DOOR_CODE_FIELD_ID, RES_CODE_FIELD, isCodeValue, scrubStoredText } from '@/lib/eve/redact'
+import { DOOR_CODE_ROOM_NAMES } from '@/lib/eve/door-code-rooms'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -13,7 +15,19 @@ async function getUser() {
   try { const supabase = createClient(); const { data } = await supabase.auth.getUser(); return data.user || null } catch { return null }
 }
 
-function facts(raw: any, cfMap?: Record<string, string>) {
+// DOOR CODES ARE NOT READ OFF THE FAQ DESK (Jon, 2026-09-29: codes are requested by Customer Service in
+// #ccs-and-jon or #vr-customercareteam, "never in team channels with field team"; and every release is
+// approved, except his own). This desk showed the door-code field — and any code written into the other
+// fields or the access notes — to everyone who can open it, field team included. Now only someone set
+// to Direct (Jon, and whoever he sets) sees them; everyone else sees where a code comes from. The facts
+// are read-only (they come from Guesty; nothing here saves them back), so hiding them can't lose
+// anything. FAQ entries and how-tos are NOT touched: they are edited and saved from this desk, and a
+// redacted answer saved back would erase the real one.
+const CODE_HIDDEN = `Hidden — Customer Service requests door codes in ${DOOR_CODE_ROOM_NAMES}`
+
+function facts(raw: any, cfMap?: Record<string, string>, codes: 'direct' | 'ask' | 'off' = 'off') {
+  const hide = codes !== 'direct'
+  const text = (v: any) => (hide ? scrubStoredText(v) : String(v))
   const out: { label: string; value: string }[] = []
   if (!raw || typeof raw !== 'object') return out
   const addr = raw.address
@@ -32,6 +46,10 @@ function facts(raw: any, cfMap?: Record<string, string>) {
     let val: any = (it as any).value
     if (val == null || val === '') continue
     if (typeof val === 'object') { try { val = JSON.stringify(val) } catch { val = String(val) } }
+    // The two code fields by id, any field whose name says it holds a code, a lock or keypad field
+    // with a code-shaped value — and a code written into any other field's text.
+    if (hide && (fid === DOOR_CODE_FIELD_ID || fid === RES_CODE_FIELD || isCodeValue(label, val))) val = CODE_HIDDEN
+    else val = text(val)
     out.push({ label: String(label).slice(0, 60), value: String(val).slice(0, 800) })
   }
   if (raw.propertyType) out.push({ label: 'Property type', value: String(raw.propertyType) })
@@ -40,8 +58,8 @@ function facts(raw: any, cfMap?: Record<string, string>) {
   if (layout) out.push({ label: 'Layout', value: layout })
   const pd = raw.publicDescription
   if (pd && typeof pd === 'object') {
-    if (pd.access) out.push({ label: 'Access', value: String(pd.access).slice(0, 800) })
-    if (pd.transit) out.push({ label: 'Getting around', value: String(pd.transit).slice(0, 800) })
+    if (pd.access) out.push({ label: 'Access', value: text(pd.access).slice(0, 800) })
+    if (pd.transit) out.push({ label: 'Getting around', value: text(pd.transit).slice(0, 800) })
   }
   return out
 }
@@ -76,7 +94,7 @@ export async function GET(req: NextRequest) {
   const otaLinks = otaLinksFrom(rawL)
   const cfMap: Record<string, string> = {}
   for (const f of (cfr.data || [])) cfMap[String((f as any).id)] = String((f as any).display_name || (f as any).name || '')
-  const factList = lrow ? facts(lrow.raw, cfMap) : []
+  const factList = lrow ? facts(lrow.raw, cfMap, doorCodePolicy(gate.access)) : []
   const allFaq: any[] = fr.data || []
   const entries = allFaq.filter(e => e.status !== 'draft' && e.status !== 'dismissed')
   const drafts = allFaq.filter(e => e.status === 'draft')

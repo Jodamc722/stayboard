@@ -249,6 +249,16 @@ export function maskCodeNearDigits(text: any): string {
 /** A scalar under a code or device name: a code field loses it; a device field only when code-shaped. */
 const hides = (kind: CodeKind, val: any) => kind === 'code' || (kind === 'device' && holdsCodeDigits(val))
 
+/**
+ * Is this custom-field VALUE a code, judged by the field's name? A field that says it holds a code
+ * ("Door code", "Gate PIN", "Lockbox combo") — always; a lock or keypad named alone ("Keypad",
+ * "Lockbox", "Salto") — only when the value is code-shaped, so "Smart lock battery: 20%" stays. For a
+ * screen that lists a unit's fields to people who may not see codes (the FAQ desk, 2026-09-29).
+ */
+export function isCodeValue(fieldName: any, value: any): boolean {
+  return hides(codeFieldNameKind(fieldName), value)
+}
+
 function walk(v: any, keyHint: string, ids: FieldIds): any {
   if (typeof v === 'string') return v && hides(keyKind(keyHint), v) ? REDACTED : scrubText(v)
   if (typeof v === 'number') return hides(keyKind(keyHint), v) ? REDACTED : v
