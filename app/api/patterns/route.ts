@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
         .select('id,listing_id,rating,content,guest_name,channel,created_at')
         .eq('excluded_from_score', false).gte('created_at', priorFrom)
         .order('created_at', { ascending: false }).order('id').range(a, b), 6),
-      pageRows((a, b) => db.from('glitches').select('id,listing_id,unit,overview,status,created_at').gte('created_at', priorFrom).order('created_at', { ascending: false }).order('id').range(a, b), 2),
+      pageRows((a, b) => db.from('glitches').select('id,listing_id,unit,overview,status,created_at').gte('created_at', priorFrom).order('created_at', { ascending: false }).order('id').range(a, b), 6),
       pageRows((a, b) => db.from('review_actions').select('id,listing_id,theme_key,severity,status').in('status', ['open', 'doing']).order('id').range(a, b)),
     ])
     const listings = listingsR.rows, reviews = reviewsR.rows, glitches = glitchesR.rows
