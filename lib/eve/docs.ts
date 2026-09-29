@@ -19,7 +19,7 @@
 // heading bonus. It finds what it finds; when it finds nothing it says the corpus does not cover
 // the question rather than reaching for the nearest paragraph.
 import 'server-only'
-import type { EveTool, EveDomain } from './types'
+import type { EveTool } from './types'
 import { obj, S } from './types'
 import { clampLimit, lc, safe, pageRows } from './ctx'
 
@@ -178,10 +178,3 @@ export const DOC_TOOLS: EveTool[] = [
     },
   },
 ]
-
-export const DOCS_DOMAIN: EveDomain = {
-  key: 'docs',
-  label: 'Written playbooks & policy',
-  blurb: 'the company\'s own written documents — SOPs, checklists, playbooks, policies — searchable by passage',
-  tools: DOC_TOOLS,
-}

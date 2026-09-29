@@ -36,7 +36,7 @@
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { bustBoards } from '@/lib/bust'
-import { ACTIONS, type ActionType } from './agent-mode'
+import type { ActionType } from './agent-mode'
 
 export type Undo = { kind: string; [k: string]: any }
 export type ExecOut = { ok: boolean; ref?: string | null; summary: string; undo?: Undo | null; error?: string; done?: string }
@@ -438,14 +438,6 @@ export async function runExecutor(action: ActionType, payload: any, ctx: ExecCtx
   }
   try { return await fn(payload || {}, ctx) }
   catch (e: any) { return { ok: false, summary: `${action} failed`, error: str(e?.message || e).slice(0, 300) } }
-}
-
-/** Is this an action that has an executor which actually does something? For the prompt and the panel. */
-export function executorWired(action: ActionType): boolean {
-  return action !== 'email_send' && action !== 'door_code_release'
-}
-export function actionLabel(action: ActionType): string {
-  return ACTIONS.find(a => a.key === action)?.label || action
 }
 
 // ---- UNDO ----------------------------------------------------------------------------------------

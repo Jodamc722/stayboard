@@ -232,8 +232,6 @@ async function readCounters(): Promise<AgentCounters> {
   return { date: today, actions: 0, asks: 0, byAction: {} }
 }
 
-export async function getCounters(): Promise<AgentCounters> { return readCounters() }
-
 /**
  * Every AI task Eve's own loop, watches and desks run — what the daily AI budget meters (2026-09-28
  * audit, F21). The old test was a prefix regex (eve…, learn, ops-focus) that missed the watch drafts

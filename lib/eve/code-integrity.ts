@@ -107,18 +107,6 @@ export function crossCheck(raw: any, code: string): { checked: number; conflicts
 // -------------------------------------------------------------------------------------------
 // 3 + 4. STATE: drift over time, and whether it has ever actually opened a door
 // -------------------------------------------------------------------------------------------
-export type CodeState = {
-  listing_id: string
-  code_fp: string
-  digits: number | null
-  changed_at: string
-  last_verified_at: string | null
-  last_verified_by: string | null
-  last_failed_at: string | null
-  last_failed_by: string | null
-  fail_count: number
-}
-
 export type Confidence = {
   level: 'verified' | 'unverified' | 'reported_wrong' | 'unknown'
   label: string

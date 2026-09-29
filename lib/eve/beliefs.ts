@@ -160,9 +160,6 @@ export async function moveBeliefs(ids: string[], dir: 1 | -1, why: string, stren
   return out
 }
 
-export const reinforceBeliefs = (ids: string[], why: string, strength = 1) => moveBeliefs(ids, 1, why, strength)
-export const contradictBeliefs = (ids: string[], why: string, strength = 1) => moveBeliefs(ids, -1, why, strength)
-
 /** For "how sure are you" questions and the nightly journal: the shape of what she believes. */
 export async function beliefStats(): Promise<{
   total: number; bySource: Record<string, number>; unsure: number; disputed: number; fading: number
