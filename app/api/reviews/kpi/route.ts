@@ -445,7 +445,7 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
     if (!li || !inScope(lid)) continue
     const ch = str(r.channel) || 'Other'
     const ts = str(r.created_at)
-    const at = ts.slice(0, 10)
+    const at = etDay(ts)
     ;(lifeByListing[lid] = lifeByListing[lid] || []).push({ rating, channel: ch, at, ts })
     const u = lifeUnit[lid] = lifeUnit[lid] || {}
     const ue = u[ch] = u[ch] || { n: 0, sum: 0, last: '' }
@@ -531,7 +531,7 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
     // The one review to read before walking the unit. Lowest wins; ties go to the most recent.
     if (isLowReview(rating, chKey)) {
       const w = worstByUnit[lid]
-      const at = str(r.created_at).slice(0, 10)
+      const at = etDay(r.created_at)
       if (!w || rating < w.rating || (rating === w.rating && at > w.at)) {
         worstByUnit[lid] = {
           reviewId: String(r.id), rating, at, channel: chKey,
@@ -564,7 +564,7 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
           tu[h] = (tu[h] || 0) + 1
         }
         if (td.samples.length < 6) td.samples.push({
-          listingId: lid, unit: li.name, at: str(r.created_at).slice(0, 10),
+          listingId: lid, unit: li.name, at: etDay(r.created_at),
           rating, catRating: c.rating, channel: chKey,
           comment: (c.comment || str(r.content)).slice(0, 220),
         })
@@ -644,7 +644,7 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
       const done = await finishedInspectionsSince(db, all.map(u => String(u.listingId)), oldest)
       for (const u of all) {
         const hit = inspectionCovering(done, u.listingId, u.worst.at)
-        if (hit) u.walked = { at: hit.finishedAt.slice(0, 10), taskId: hit.id, name: hit.name }
+        if (hit) u.walked = { at: etDay(hit.finishedAt), taskId: hit.id, name: hit.name }
       }
     }
   } catch { /* no mirror: every unit still offers the walk */ }
@@ -724,7 +724,7 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
         link.push({
           resId: rid, rating: c.rating, listingId: String(r.listing_id),
           unit: (lmap[String(r.listing_id)] || {}).name || 'Unit',
-          at: str(r.created_at).slice(0, 10),
+          at: etDay(r.created_at),
           comment: (c.comment || str(r.content)).slice(0, 220),
         })
       }
@@ -887,7 +887,7 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
 
         const revs = revByListing[lid] || []
         const afterEnd = addDays(d0, AFTER), beforeStart = addDays(d0, -BEFORE)
-        const after = revs.filter(r => { const d = str(r.created_at).slice(0, 10); return d > d0 && d <= afterEnd })
+        const after = revs.filter(r => { const d = etDay(r.created_at); return d > d0 && d <= afterEnd })
         if (!after.length) continue                 // no guest verdict yet — counted, not judged
         e.covered++
         const aAvg = after.reduce((s, r) => s + Number(r.rating), 0) / after.length
@@ -898,7 +898,7 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
           e.missed++
           e.misses.push({
             unit: (lmap[lid] || {}).name || 'Unit', listingId: lid, inspected: d0,
-            at: str(bad.created_at).slice(0, 10), rating: Number(bad.rating), channel: str(bad.channel),
+            at: etDay(bad.created_at), rating: Number(bad.rating), channel: str(bad.channel),
             given: Number.isFinite(given) ? given : null,
             comment: str(bad.content).replace(/\s+/g, ' ').trim().slice(0, 200),
           })
