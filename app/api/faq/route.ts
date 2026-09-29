@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel, requireUser } from '@/lib/access'
 import { otaLinksFrom } from '@/lib/ota-links'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -61,9 +62,11 @@ export async function GET(req: NextRequest) {
   const [lr, fr, ir, cfr] = await Promise.all([
     db.from('guesty_listings').select('id,nickname,title,building,raw').eq('id', listingId).limit(1),
     db.from('listing_faq').select('*').eq('listing_id', listingId).order('created_at', { ascending: true }).limit(500),
-    db.from('audit_items').select('id,room,title,item_type,photo_url,details,kind,note').eq('listing_id', listingId).limit(1000),
+    // Every audit item on the unit (re-walks add up), paged in capture order — not an unordered 1,000.
+    pageRows((a, b) => db.from('audit_items').select('id,room,title,item_type,photo_url,details,kind,note').eq('listing_id', listingId).order('created_at').order('id').range(a, b)),
     db.from('guesty_custom_fields').select('id,name,display_name'),
   ])
+  if (ir.truncated) console.error('[faq] audit items read incomplete for listing', listingId)
   const lrow = lr.data && lr.data[0]
   const listing = lrow ? { id: String(lrow.id), name: lrow.nickname || lrow.title || 'Unit', building: lrow.building || '' } : { id: listingId, name: 'Unit', building: '' }
   const rawL: any = lrow ? lrow.raw : null
@@ -81,7 +84,7 @@ export async function GET(req: NextRequest) {
   const howtos: any[] = []
   const highlights: any[] = []
   const keyDetails: any[] = []
-  for (const it of (ir.data || [])) {
+  for (const it of ir.rows) {
     const d = (it as any).details || {}
     const q = it.title || it.item_type || 'How-to'
     if (d.howTo && !promoted[String(q).toLowerCase()]) howtos.push({ id: it.id, room: it.room, title: q, howTo: d.howTo, photo_url: it.photo_url })
