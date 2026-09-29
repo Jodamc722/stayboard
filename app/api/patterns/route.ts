@@ -17,6 +17,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { THEMES, looksNegative, sentenceAbout } from '@/lib/review-themes'
 import { marketOf, buildingOf } from '@/lib/segments'
 import { requireUser } from '@/lib/access'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -27,18 +28,10 @@ function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '
 function ymdET(d: Date): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(s: string, n: number): string { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return ymdET(d) }
 
-// PostgREST caps every request at 1000 rows regardless of .limit() — page anything that can exceed it.
-async function page(build: () => any, pages: number): Promise<any[]> {
-  const out: any[] = []
-  for (let i = 0; i < pages; i++) {
-    const { data, error } = await build().range(i * 1000, i * 1000 + 999)
-    if (error) break
-    const rows = (data || []) as any[]
-    out.push(...rows)
-    if (rows.length < 1000) break
-  }
-  return out
-}
+// PostgREST caps every request at 1000 rows regardless of .limit() — so every read below is paged
+// (lib/db-page), each on a stable order. The local pager this replaced (2026-09-29) read the listings
+// and glitches with no order at all (pages could repeat or skip rows) and took a failed page for the
+// end of the data; the open fix-jobs were one capped read.
 
 export async function GET(req: NextRequest) {
   const gate = await requireUser()
@@ -52,15 +45,18 @@ export async function GET(req: NextRequest) {
     const priorFrom = addDays(today, -2 * days)
     const db = supabaseAdmin()
 
-    const [listings, reviews, glitches, actsR] = await Promise.all([
-      page(() => db.from('guesty_listings').select('id,nickname,title,building,unit,status,address_city'), 3),
-      page(() => db.from('guesty_reviews')
-        .select('listing_id,rating,content,guest_name,channel,created_at')
+    const [listingsR, reviewsR, glitchesR, actsR] = await Promise.all([
+      pageRows((a, b) => db.from('guesty_listings').select('id,nickname,title,building,unit,status,address_city').order('id').range(a, b), 3),
+      pageRows((a, b) => db.from('guesty_reviews')
+        .select('id,listing_id,rating,content,guest_name,channel,created_at')
         .eq('excluded_from_score', false).gte('created_at', priorFrom)
-        .order('created_at', { ascending: false }), 6),
-      page(() => db.from('glitches').select('listing_id,unit,overview,status,created_at').gte('created_at', priorFrom), 2),
-      db.from('review_actions').select('listing_id,theme_key,severity,status').in('status', ['open', 'doing']).limit(1000),
+        .order('created_at', { ascending: false }).order('id').range(a, b), 6),
+      pageRows((a, b) => db.from('glitches').select('id,listing_id,unit,overview,status,created_at').gte('created_at', priorFrom).order('created_at', { ascending: false }).order('id').range(a, b), 2),
+      pageRows((a, b) => db.from('review_actions').select('id,listing_id,theme_key,severity,status').in('status', ['open', 'doing']).order('id').range(a, b)),
     ])
+    const listings = listingsR.rows, reviews = reviewsR.rows, glitches = glitchesR.rows
+    const cut = [listingsR.truncated && 'listings', reviewsR.truncated && 'reviews', glitchesR.truncated && 'glitches', actsR.truncated && 'review actions'].filter(Boolean)
+    if (cut.length) console.error('patterns: read stopped early (failed page or page budget) — counts may be low:', cut.join(', '))
 
     // listing → building/market/name; dead listings keep their history attributed (reviews on a
     // delisted unit still describe the building) but do not count toward the unit total.
@@ -151,7 +147,7 @@ export async function GET(req: NextRequest) {
     }
 
     // ---- open fix-jobs from the action board ----
-    for (const a of (((actsR as any).data || []) as any[])) {
+    for (const a of (actsR.rows as any[])) {
       const li = L[str(a.listing_id)]
       if (!li) continue
       const t = THEMES.find(x => x.key === str(a.theme_key))

@@ -8,6 +8,7 @@ import { customFieldNameMap } from '@/lib/custom-fields'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { salatoListings } from '@/lib/salato-units'
 import { salatoVerifyToken } from '@/lib/salato-verify-token'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -116,14 +117,11 @@ export async function GET(req: NextRequest) {
     // falls back to Guesty's live definitions, cached 1h — so names work even if the table is unpopulated.
     const cfNameById = await customFieldNameMap()
     // Pull reservations touching [start, farEnd] (a 30-day horizon so we can also show what's upcoming),
-    // paged to clear the 1000-row cap on bigger scopes.
-    let resAll: any[] = []
-    for (let p = 0; p < 6; p++) {
-      const { data } = await db.from('guesty_reservations').select('id,listing_id,guest_name,guest_phone,check_in,check_out,nights,status,source,confirmation_code,notes,custom_fields,raw').in('listing_id', ids).lte('check_in', farEnd).gte('check_out', pastStart).range(p * 1000, p * 1000 + 999)
-      if (!data || !data.length) break
-      resAll = resAll.concat(data)
-      if (data.length < 1000) break
-    }
+    // paged to clear the 1000-row cap on bigger scopes — on a stable order, so a page boundary can
+    // never repeat or skip a booking (lib/db-page).
+    const resPaged = await pageRows((a, b) => db.from('guesty_reservations').select('id,listing_id,guest_name,guest_phone,check_in,check_out,nights,status,source,confirmation_code,notes,custom_fields,raw').in('listing_id', ids).lte('check_in', farEnd).gte('check_out', pastStart).order('id').range(a, b), 6)
+    if (resPaged.truncated) console.error('public/board: reservation read stopped early —', v)
+    const resAll: any[] = resPaged.rows
     const live = resAll.filter(r => LIVE.test(str(r.status)))
     const arrKey: Record<string, boolean> = {}
     for (const r of live) arrKey[String(r.listing_id) + '|' + str(r.check_in).slice(0, 10)] = true
@@ -194,8 +192,11 @@ export async function GET(req: NextRequest) {
     // so a guest can never pile up as 3+ rows. (Real departure + a single extension row IS intended.)
     const resKeyOf = (r: any) => String(r.confirmation_code || '') || (String(r.listing_id) + '|' + str(r.check_in).slice(0, 10) + '|' + str(r.check_out).slice(0, 10))
     const extAdded = new Set()
-    const { data: bz } = await db.from('breezeway_tasks_sync').select('reference_property_id,scheduled_date,status,name').eq('type_department', 'housekeeping').in('reference_property_id', ids).gte('scheduled_date', today).lte('scheduled_date', end).limit(1000)
-    for (const t of (bz || []) as any[]) {
+    // Every housekeeping task this week, paged in date order (was one capped, unordered read): a stale
+    // clean that fell past the cap was an extension nobody got warned about.
+    const bzPaged = await pageRows((a, b) => db.from('breezeway_tasks_sync').select('id,reference_property_id,scheduled_date,status,name').eq('type_department', 'housekeeping').in('reference_property_id', ids).gte('scheduled_date', today).lte('scheduled_date', end).order('scheduled_date').order('id').range(a, b))
+    if (bzPaged.truncated) console.error('public/board: housekeeping read stopped early —', v)
+    for (const t of bzPaged.rows as any[]) {
       const lid = String(t.reference_property_id)
       const dd = str(t.scheduled_date).slice(0, 10)
       if (!match[lid] || !dd) continue

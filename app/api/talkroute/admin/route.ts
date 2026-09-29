@@ -18,6 +18,7 @@ import {
   getTranscribeSettings, saveTranscribeSettings, storeTranscribeKey, clearTranscribeKey,
   transcribeReady, transcribeFrom, todayET, TRANSCRIBE_DEFAULTS, USD_PER_MINUTE,
 } from '@/lib/transcribe'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -41,14 +42,18 @@ async function status() {
   // and the map between them — so a device that resolves to nobody can be named once and stay named.
   try {
     const db = supabaseAdmin()
+    // Every call of the last 30 days, paged — the per-device call counts were taken from one capped,
+    // unordered read, so past 1,000 calls they were counts of an arbitrary sample (2026-09-29).
+    const since30 = new Date(Date.now() - 30 * 86400_000).toISOString()
     const [dir, map, seen] = await Promise.all([
       talkroutePeople().catch(() => []),
       getPeopleMap(),
-      db.from('talkroute_calls').select('caller_device,caller_name').not('caller_device', 'is', null)
-        .gte('call_at', new Date(Date.now() - 30 * 86400_000).toISOString()).limit(1000),
+      pageRows((a, b) => db.from('talkroute_calls').select('id,caller_device,caller_name').not('caller_device', 'is', null)
+        .gte('call_at', since30).order('id').range(a, b)),
     ])
+    if (seen.truncated) console.error('talkroute/admin: caller read stopped early — device counts may be low')
     const counts = new Map<string, { device: string; name: string; calls: number }>()
-    for (const r of ((seen.data as any[]) || [])) {
+    for (const r of (seen.rows as any[])) {
       const d = String(r.caller_device || '').trim(); if (!d) continue
       const k = d.toLowerCase()
       const cur = counts.get(k) || { device: d, name: String(r.caller_name || ''), calls: 0 }

@@ -12,6 +12,7 @@ import { recordRun } from '@/lib/automation-runs'
 import { modelPairFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 import { flushDeferred } from '@/lib/eve/agent-mode'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -151,12 +152,17 @@ export async function POST(req: NextRequest) {
   if (withRow.length && oldestPrev) {
     const ids = withRow.map(c => c.id)
     for (let i = 0; i < ids.length; i += 200) {
-      const { data: newer } = await sb.from('guesty_messages')
-        .select('conversation_id, sender, sent_at')
+      // PAGED (2026-09-29). The window starts at the OLDEST watermark in the chunk, so older traffic
+      // could fill a capped 1,000 rows and push other conversations' new messages past the cut —
+      // those threads then read as "not landed yet" and waited, run after run.
+      const newerPaged = await pageRows((a, b) => sb.from('guesty_messages')
+        .select('id, conversation_id, sender, sent_at')
         .in('conversation_id', ids.slice(i, i + 200))
         .gt('sent_at', oldestPrev)
-        .order('sent_at', { ascending: true })
-        .limit(1000)
+        .order('sent_at', { ascending: true }).order('id')
+        .range(a, b))
+      if (newerPaged.truncated) console.error('sentiment/scan: newer-message read stopped early')
+      const newer = newerPaged.rows
       for (const m of (newer ?? [])) {
         const cid = str((m as any).conversation_id)
         const prev = seen.get(cid)

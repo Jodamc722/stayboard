@@ -12,6 +12,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { RESERVATION_EMAILS_KEY, mergeProperties } from '@/lib/reservation-emails'
 import { buildDraft, dupeKeyFor, urgencyOf, type Notice } from '@/lib/reservation-draft'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -83,11 +84,20 @@ export async function GET(req: NextRequest) {
     // what survives the filter afterwards: today's notices (sent or not) AND anything older that
     // was never sent. A missed notice from a previous day must never quietly disappear — that is
     // the exact failure this whole screen exists to catch.
-    const { data, error } = await supabaseAdmin().from(TABLE).select('*')
+    //
+    // PAGED (2026-09-29). The auto-pull files a notice for every booking at a configured building (30
+    // days ahead hourly, up to 120 by hand), so 60 days back plus what is ahead can pass 1,000 rows —
+    // and one capped read, soonest first, would silently drop the furthest-out notices and undercount
+    // Upcoming. The first query error is kept so the missing-table message below still works.
+    let error: any = null
+    const paged = await pageRows((a, b) => supabaseAdmin().from(TABLE).select('*')
       .is('deleted_at', null)
       .gte('arrival_date', floor)
-      .order('arrival_date', { ascending: true })
-      .limit(1000)
+      .order('arrival_date', { ascending: true }).order('id')
+      .range(a, b)
+      .then((r: any) => { if (r && r.error && !error) error = r.error; return r }))
+    const data = paged.rows
+    if (paged.truncated && !error) console.error('reservation-notices: read stopped at the page budget')
     // The table only exists after migration 015 — say so plainly instead of throwing a 500.
     if (error) {
       return NextResponse.json({

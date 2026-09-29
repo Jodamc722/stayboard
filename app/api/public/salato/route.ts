@@ -7,6 +7,7 @@ import { linkGate } from '@/lib/passcode-gate'
 import { salatoVerifyToken } from '@/lib/salato-verify-token'
 import { underMinimum, SALATO_MIN_NIGHTS } from '@/lib/salato-watch'
 import { getSetting } from '@/lib/app-settings'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -68,9 +69,13 @@ export async function GET(req: NextRequest) {
     // today), newest first, with its verification status — so the desk can see who was never verified.
     if (new URL(req.url).searchParams.get('past')) return NextResponse.json(await pastStays(db, ids, match, today))
     // Only the raw fields this board reads — the full `raw` for 600 bookings was megabytes on a phone.
-    const { data: res } = await db.from('guesty_reservations')
+    // Paged (lib/db-page): one capped read would silently drop bookings off the desk's list once the
+    // window held more than 1,000 of them.
+    const resPaged = await pageRows((a, b) => db.from('guesty_reservations')
       .select('id,listing_id,check_in,check_out,nights,status,source,ciLocal:raw->>checkInDateLocalized,coLocal:raw->>checkOutDateLocalized,planned:raw->>plannedArrival,g1:raw->>guestsCount,g2:raw->>numberOfGuests,rawSource:raw->>source')
-      .in('listing_id', ids).lte('check_in', end).gte('check_out', start).order('id').limit(1000)
+      .in('listing_id', ids).lte('check_in', end).gte('check_out', start).order('id').range(a, b))
+    if (resPaged.truncated) console.error('public/salato: reservation read stopped early')
+    const res = resPaged.rows
     const toRow = (r: any) => {
       const checkInTime = r.ciLocal ? String(r.ciLocal).slice(11, 16) : (r.planned ? String(r.planned) : null)
       const checkOutTime = r.coLocal ? String(r.coLocal).slice(11, 16) : null
