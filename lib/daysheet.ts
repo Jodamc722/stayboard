@@ -3,6 +3,7 @@
 // which is exactly the failure this whole feature exists to prevent.
 import { unstable_cache } from 'next/cache'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 import { marketOf } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex, vendorNameOf } from '@/lib/ops-presets'
@@ -148,17 +149,23 @@ async function _buildDaySheet(dateIn?: string, marketIn?: string): Promise<any> 
     const [lRes, tRes, rRes, oRes, gRes, sRes, fRes, gsRes, iRes] = await Promise.all([
       db.from('guesty_listings').select('id,nickname,title,building,address_city,address_full,status,bedrooms:raw->>bedrooms,checkIn:raw->>defaultCheckInTime,checkOut:raw->>defaultCheckOutTime,cf:raw->customFields,lat:raw->address->>lat,lng:raw->address->>lng'),
       db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,type_department,report_url').eq('scheduled_date', date).order('reference_property_id', { ascending: true }).limit(1000), // deliberate cap: one day of tasks (~90–300)
-      db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_id,guest_name,guest_phone,nights,source,notes,money_total,created_at')
-        .lte('check_in', addDays(date, 1)).gte('check_out', date).order('check_in', { ascending: true }).limit(3000),
+      // PAGED (2026-09-29). Both reservation reads asked for 3,000 / 4,000 rows and PostgREST returns
+      // 1,000 whatever the limit says, so the "Booking list may be incomplete" guard below — which
+      // tested for 3,000 and 4,000 — could never fire. Paged in check-in order with an id tiebreaker;
+      // `truncated` (a page failed, or the page budget ran out) now drives that guard honestly.
+      pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_id,guest_name,guest_phone,nights,source,notes,money_total,created_at')
+        .lte('check_in', addDays(date, 1)).gte('check_out', date).order('check_in', { ascending: true }).order('id').range(a, b), 3)
+        .then(r => ({ data: r.rows, truncated: r.truncated })),
       db.from('guesty_owners').select('id,full_name,listing_ids').limit(1000), // deliberate cap: one row per owner, far fewer than 1,000
       db.from('glitches').select('id,unit,listing_id,overview,status,created_at,breezeway_task_id').not('status', 'in', '("done","resolved","closed")').order('created_at', { ascending: false }).limit(300),
       db.from('breezeway_tasks_sync').select('synced_at').order('synced_at', { ascending: false }).limit(1),
       // NEXT ARRIVAL — a separate forward look. The day window above stops at tomorrow, so the
       // vacant list used to sort on a next-arrival it could not actually see.
-      db.from('guesty_reservations').select('listing_id,check_in,status')
-        // ordered so that if the cap is ever reached it drops the FURTHEST-OUT arrivals, which are
-        // the ones nobody is planning around today.
-        .gt('check_in', date).lte('check_in', addDays(date, 45)).order('check_in', { ascending: true }).limit(4000),
+      pageRows<any>((a, b) => db.from('guesty_reservations').select('listing_id,check_in,status')
+        // ordered so that if the page budget is ever reached it drops the FURTHEST-OUT arrivals, which
+        // are the ones nobody is planning around today.
+        .gt('check_in', date).lte('check_in', addDays(date, 45)).order('check_in', { ascending: true }).order('id').range(a, b), 5)
+        .then(r => ({ data: r.rows, truncated: r.truncated })),
       // How fresh is the RESERVATION feed? Breezeway freshness alone says nothing about whether a
       // booking made an hour ago is on this sheet.
       // All feeds, not just reservations: when one cron silently stops, the fastest way to see it is
@@ -349,8 +356,24 @@ async function _buildDaySheet(dateIn?: string, marketIn?: string): Promise<any> 
         ...departures.map(d => d.listingId),
         ...vacantIds,
       ])).filter(Boolean)
-      // 25 units x 400 days stays comfortably under the row cap, so nothing is silently truncated.
+      // NEWEST FIRST, 25 units a read. This used to promise "25 units x 400 days stays comfortably
+      // under the row cap" — it did not: the cap is 1,000 whatever .limit() says, and 25 busy units
+      // carry a few thousand tasks in 400 days, so a full page stops a few months back and a quiet
+      // unit sharing it with busy ones read as "never logged" or "no clean on record" (2026-09-29).
+      // A unit a full page left without a touch or a clean is now re-read on its own, paged, below.
       const CHUNK = 25
+      const priorTouch = (t: any) => {
+        const st = str(t.status).toLowerCase()
+        if (isGone(st)) return
+        // it only counts if it actually HAPPENED
+        if (!t.finished_at && !isDone(st)) return
+        // finished_at is a UTC timestamp: anything finished after 8pm ET reads as tomorrow unless
+        // it is converted first.
+        const when = t.finished_at ? etDate(t.finished_at) : str(t.scheduled_date).slice(0, 10)
+        if (!when) return
+        take(str(t.reference_property_id), when, str(t.name), str(t.type_department), t.assignees)
+      }
+      const recheck: string[] = []
       for (let i = 0; i < needIds.length; i += CHUNK) {
         const slice = needIds.slice(i, i + CHUNK)
         if (!slice.length) continue
@@ -360,19 +383,23 @@ async function _buildDaySheet(dateIn?: string, marketIn?: string): Promise<any> 
           .lt('scheduled_date', date)
           .gte('scheduled_date', addDays(date, -400))
           .order('scheduled_date', { ascending: false })
-          .limit(5000)
+          .limit(1000) // deliberate cap: newest-first page per 25 units — a unit it leaves without a touch or a clean is re-read on its own below
         if (error) { touchLookupOk = false; continue }
-        for (const t of ((prior || []) as any[])) {
-          const st = str(t.status).toLowerCase()
-          if (isGone(st)) continue
-          // it only counts if it actually HAPPENED
-          if (!t.finished_at && !isDone(st)) continue
-          // finished_at is a UTC timestamp: anything finished after 8pm ET reads as tomorrow unless
-          // it is converted first.
-          const when = t.finished_at ? etDate(t.finished_at) : str(t.scheduled_date).slice(0, 10)
-          if (!when) continue
-          take(str(t.reference_property_id), when, str(t.name), str(t.type_department), t.assignees)
-        }
+        const rows = (prior || []) as any[]
+        for (const t of rows) priorTouch(t)
+        if (rows.length >= 1000) for (const k of slice) if (!lastTouchOf[k] || !lastCleanOf[k]) recheck.push(k)
+      }
+      // Only the units a full page cut short — quiet ones, mostly — over the same 400 days.
+      for (let i = 0; i < recheck.length; i += CHUNK) {
+        const more = await pageRows<any>((a, b) => db.from('breezeway_tasks_sync')
+          .select('id,reference_property_id,name,scheduled_date,finished_at,status,assignees,type_department')
+          .in('reference_property_id', recheck.slice(i, i + CHUNK))
+          .lt('scheduled_date', date)
+          .gte('scheduled_date', addDays(date, -400))
+          .order('scheduled_date', { ascending: false }).order('id')
+          .range(a, b), 4)
+        if (more.truncated) touchLookupOk = false
+        for (const t of more.rows) priorTouch(t)
       }
       // Work FINISHED TODAY counts too — a unit inspected at 9am with a 4pm arrival was reporting a
       // touch from days ago, and could even raise a "never checked" alarm.
@@ -681,9 +708,9 @@ async function _buildDaySheet(dateIn?: string, marketIn?: string): Promise<any> 
       if (staySpans(r, date)) recountIds.add(lid)
     }
     const recountOccupied = recountIds.size
-    // If a query came back at its cap we cannot promise the list is complete — say so out loud.
-    const reservationsTruncated = ((rRes.data || []) as any[]).length >= 3000
-    const futureTruncated = ((fRes.data || []) as any[]).length >= 4000
+    // If a paged read stopped early we cannot promise the list is complete — say so out loud.
+    const reservationsTruncated = rRes.truncated
+    const futureTruncated = fRes.truncated
     if (reservationsTruncated || futureTruncated) add('high', 'Booking list may be incomplete', '—',
       'The sheet hit its limit while reading bookings, so some may be missing.',
       'Tell Jon — this needs a code change, do not plan the day off this sheet alone.')
