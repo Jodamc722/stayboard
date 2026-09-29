@@ -47,6 +47,7 @@ import { agentAllowed, stepDown } from './agent-mode'
 import { getOperatingModel, weDo } from './operating-model'
 import { buildingOf } from '@/lib/segments'
 import { isTaskDone } from '@/lib/task-categories'
+import { pageRows } from '@/lib/db-page'
 
 export const ON_WATCH_KEY = 'eve_on_watch'
 const STATE_KEY = 'eve_on_watch_state'
@@ -289,8 +290,11 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
   const handled = new Set<string>()
   if (aLids.length) {
     const since = new Date(Date.now() - 36 * 3600_000).toISOString().slice(0, 10)
-    const { data: bt } = await db.from('breezeway_tasks_sync').select('reference_property_id,name,status').in('reference_property_id', aLids).gte('scheduled_date', since).limit(1000)
-    for (const t of (bt as any[]) || []) {
+    // Paged in id order (2026-09-29): no upper date bound, so a few units' future work can pass the
+    // 1,000-row page, and an unordered cut could miss the one task that says a unit is handled.
+    const { rows: bt, truncated: btShort } = await pageRows<any>((a, b) => db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status').in('reference_property_id', aLids).gte('scheduled_date', since).order('id').range(a, b))
+    if (btShort) out.notes.push('unit task check read incomplete — an A flag may name a unit that is handled')
+    for (const t of bt) {
       if (/delete|cancel/i.test(String(t.status || '')) || /departure|turnover|limpieza de salida|check-?out clean/i.test(String(t.name || ''))) continue
       handled.add(String(t.reference_property_id))
     }

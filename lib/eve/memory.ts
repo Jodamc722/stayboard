@@ -13,7 +13,7 @@
 // the new one rather than being dropped, so the audit trail survives and /eve can show what changed.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { lc } from './ctx'
+import { lc, pageRows } from './ctx'
 import { otaChannelOf, channelsInText } from '@/lib/ota-playbook'
 import { isSuperadmin } from '@/lib/access'
 import { beliefStrength, beliefTag, currentConfidence, isHuman, RETIRE_BELOW, beliefOf, storedConfidence, withBelief } from './beliefs'
@@ -620,11 +620,14 @@ export async function revalidateSweptMemories(currentFindingIds: string[], grace
   const db = supabaseAdmin()
   const live = new Set(currentFindingIds.map(String))
   try {
-    const { data } = await db.from('eve_memory')
+    // Paged (2026-09-29): graded plans are 'system' memories too, so past 1,000 live rows the oldest
+    // swept findings — the likeliest to be stale — would never be re-checked. A short read only
+    // means fewer rows checked, never an expiry that should not happen.
+    const { rows, truncated } = await pageRows<any>((a, b) => db.from('eve_memory')
       .select('id,evidence,updated_at')
       .eq('source', 'system').is('superseded_by', null).is('expires_on', null)
-      .order('updated_at', { ascending: false }).limit(1000)
-    const rows = (data || []) as any[]
+      .order('updated_at', { ascending: false }).order('id').range(a, b))
+    if (truncated) console.error('revalidateSweptMemories: read of live system memories incomplete — some were not re-checked')
     const cutoff = Date.now() - graceDays * 864e5
     const stale = rows.filter(r => {
       const fid = r?.evidence?.finding

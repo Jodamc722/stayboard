@@ -30,7 +30,7 @@ import { rollupBuilding } from '@/lib/optimize-score'
 import { crewScorecard } from './accountability'
 import { createRecommendation } from './recommendations'
 import { agentAllowed, stepDown } from './agent-mode'
-import { todayET, shiftDay, lc } from './ctx'
+import { todayET, shiftDay, lc, pageRows } from './ctx'
 import { isTaskDone } from '@/lib/task-categories'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
@@ -117,8 +117,9 @@ export async function buildQualityPack(days = 90): Promise<QualityPack> {
 
   // 5. unhappy guest threads
   try {
-    const { data } = await db.from('guesty_conversation_sentiment').select('listing_id,dissatisfied,top_issue,band,last_message_at').gte('last_message_at', from30 + 'T00:00:00Z').eq('dissatisfied', true).limit(1000)
-    const rows = ((data || []) as any[])
+    // Paged in conversation order (2026-09-29): the total printed below is a count, and a capped read cannot say it was cut.
+    const { rows, truncated } = await pageRows<any>((a, b) => db.from('guesty_conversation_sentiment').select('conversation_id,listing_id,dissatisfied,top_issue,band,last_message_at').gte('last_message_at', from30 + 'T00:00:00Z').eq('dissatisfied', true).order('conversation_id').range(a, b))
+    if (truncated) console.error('buildQualityPack: unhappy-thread read incomplete — the 30-day count may be short')
     const byB: Record<string, number> = {}, issues: Record<string, number> = {}
     for (const r of rows) { byB[bldOf(r.listing_id) || '?'] = (byB[bldOf(r.listing_id) || '?'] || 0) + 1; const i = clip(r.top_issue, 30).toLowerCase() || 'unspecified'; issues[i] = (issues[i] || 0) + 1 }
     stats.sentiment = { total: rows.length, shown: Math.min(8, rows.length) }

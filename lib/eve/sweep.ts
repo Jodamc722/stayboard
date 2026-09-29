@@ -21,7 +21,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { isTaskDone } from '@/lib/task-categories'
-import { todayET, shiftDay, lc, num, round2, normStar, safe, DEAD_LISTING } from './ctx'
+import { todayET, shiftDay, lc, num, round2, normStar, safe, DEAD_LISTING, pageRows } from './ctx'
 import { saveMemory, revalidateSweptMemories } from './memory'
 
 export function djb2(s: string): string {
@@ -232,9 +232,11 @@ async function mineGuestComms(c: Ctx): Promise<Finding[]> {
 // ---------------------------------------------------------------------------------------------
 async function mineMoney(c: Ctx): Promise<Finding[]> {
   const out: Finding[] = []
-  const ar: any = await safe(c.db.from('owner_audit_reviews').select('month,owner_id,item_key,status,note')
-    .order('month', { ascending: false }).limit(1000), { data: [] } as any)
-  const rows = ar.data || []
+  // Paged on the table's key (2026-09-29): line reviews pile up month after month, and past one
+  // 1,000-row page the count and the "review" total below would quietly stop counting.
+  const { rows, truncated } = await pageRows<any>((a, b) => c.db.from('owner_audit_reviews').select('month,owner_id,item_key,status,note')
+    .order('month', { ascending: false }).order('owner_id').order('item_key').range(a, b))
+  if (truncated) console.error('mineMoney: owner_audit_reviews read incomplete — the standing counts may be short')
   if (rows.length) {
     const byStatus: Record<string, number> = {}
     for (const r of rows) byStatus[String(r.status)] = (byStatus[String(r.status)] || 0) + 1
