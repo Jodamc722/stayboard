@@ -45,7 +45,8 @@ const KEY_RE = /(door|entry|access|gate|lock|garage)[\W_]{0,3}(code|pin|combo)|k
 const SAYS_CODE_RE = /(?:^|[^a-z0-9])(?:codes?|pins?|pass[\s_-]*codes?|combinations?|combos?|key[\s_-]*codes?|c[oó]digos?|secrets?)(?![a-z0-9])/i
 // A 4-8 digit run (or 3 digits closed by # or *) that is not a count, a percentage, money, a date, a
 // phone number, part of a model number, or a unit number ("unit 1102").
-const DEVICE_CODE_RE = /(?<![\p{L}\p{N}.$\/-])(?<!\b(?:unit|apt|apartment|suite|ste|room|rm)\.?\s*#?\s*)(?:\d{4,8}(?![\p{N}%]|[.\/-]\d)|\d{3}[#*])/iu
+// (tsconfig targets ES5: no /u flag and no \p{…} in a regex literal — Latin plus the accented set.)
+const DEVICE_CODE_RE = /(?<![A-Za-z\u00C0-\u024F0-9.$\/-])(?<!\b(?:unit|apt|apartment|suite|ste|room|rm)\.?\s*#?\s*)(?:\d{4,8}(?![0-9%]|[.\/-]\d)|\d{3}[#*])/i
 // …and a value that is nothing BUT digits is a code whatever its length ("246", "246#").
 const WHOLE_CODE_RE = /^\s*[#*]?\d{3,8}[#*]?\s*$/
 function holdsCodeDigits(v: any): boolean {
