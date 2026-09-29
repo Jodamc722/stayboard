@@ -23,6 +23,12 @@
 -- Idempotent: safe to run twice. Every statement is guarded so a table that does not exist yet is
 -- skipped instead of failing the script.
 
+-- WAIT AT MOST 3 SECONDS FOR A LOCK. `alter table … enable row level security` and the policy swaps
+-- need a brief exclusive lock on busy tables (reservations, messages); without a limit the script
+-- could queue behind a long sync and hold every reader up behind it. If it stops with
+-- "canceling statement due to lock timeout", nothing is broken — just run the whole script again.
+set lock_timeout = '3s';
+
 -- ── B-1: RLS on, no policy (service role only) ──────────────────────────────────────────────────
 do $$
 declare
