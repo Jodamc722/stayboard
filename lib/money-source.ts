@@ -86,10 +86,11 @@ export type MonthMoney = {
   otherRevenue: number | null
   stayRevenue: number | null
   total: number | null           // gross accom + cleaning — what the KPI board calls total revenue
-  adr: number | null             // total ÷ nights sold   (matches our Gross basis: accom + cleaning)
+  adr: number | null             // gross accom ÷ nights sold — lib/kpi's ADR (room only)
   adrRoomOnly: number | null
-  adrGross: number | null
-  revpar: number | null
+  adrGross: number | null        // total ÷ nights sold (accom + cleaning)
+  revpar: number | null          // gross accom ÷ nights available — Occupancy × ADR
+  revparGross: number | null     // total ÷ nights available (accom + cleaning)
   kind: 'eom' | 'live' | null
   syncedAt: string | null
   byUnit: Record<string, RevUnitMonthRow>
@@ -134,7 +135,10 @@ export function aggregateUnitRows(
     adr: nights > 0 ? Math.round(grossAccom / nights) : null,
     adrGross: nights > 0 ? Math.round(total / nights) : null,
     adrRoomOnly: nights > 0 ? Math.round(grossAccom / nights) : null,
-    revpar: available > 0 ? Math.round(total / available) : null,
+    // RevPAR on the SAME numerator as ADR, so RevPAR = Occupancy × ADR (2026-09-28 audit, P0-2);
+    // it used `total` (accom + cleaning) while ADR did not. Cleaning-inclusive is revparGross.
+    revpar: available > 0 ? Math.round(grossAccom / available) : null,
+    revparGross: available > 0 ? Math.round(total / available) : null,
     kind, syncedAt, byUnit,
   }
 }
@@ -360,6 +364,7 @@ export async function applyMoneyOverride(
   set(rev, 'adrRoomOnly', m.adrRoomOnly, 'revenue.adrRoomOnly')
   set(rev, 'adrGross', m.adrGross, 'revenue.adrGross')
   set(rev, 'revpar', m.revpar, 'revenue.revpar')
+  set(rev, 'revparGross', m.revparGross, 'revenue.revparGross')
   set(rev, 'occupancy', m.occupancy, 'revenue.occupancy')
   if (m.nights) { rev.nights = m.nights; fields.push('revenue.nights') }
   if (m.available) { rev.available = m.available; fields.push('revenue.available') }

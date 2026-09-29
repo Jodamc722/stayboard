@@ -382,7 +382,11 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         adr: nights ? Math.round(room / nights) : 0,
         adrGross: nights ? Math.round((room + cleaning) / nights) : 0,
         adrRoomOnly: nights ? Math.round(room / nights) : 0,
-        revpar: available ? round((room + cleaning) / available, 2) : 0,
+        // RevPAR IS OCCUPANCY × ADR (lib/pacing-check, 2026-09-28 audit P0-2): room revenue ÷
+        // available unit-nights — the same numerator as `adr`. It carried cleaning while ADR did not,
+        // so RevPAR ÷ occupancy gave an ADR the board did not show. Cleaning-inclusive: `revparGross`.
+        revpar: available ? round(room / available, 2) : 0,
+        revparGross: available ? round((room + cleaning) / available, 2) : 0,
         byChannel, byBuilding,
       }
     }
@@ -662,6 +666,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         adr: money(stays.adr), adrPrev: money(staysPrev.adr), adrChange: money(pctChange(stays.adr, staysPrev.adr)),
         adrGross: money(stays.adrGross), adrRoomOnly: money(stays.adrRoomOnly),
         revpar: money(stays.revpar), revparPrev: money(staysPrev.revpar), revparChange: money(pctChange(stays.revpar, staysPrev.revpar)),
+        revparGross: money(stays.revparGross),
         total: money(stays.totalRevenue), totalPrev: money(staysPrev.totalRevenue), totalChange: money(pctChange(stays.totalRevenue, staysPrev.totalRevenue)),
         channels: Object.keys(stays.byChannel).map(c => ({
           channel: c, nights: stays.byChannel[c].nights, revenue: money(Math.round(stays.byChannel[c].revenue)),

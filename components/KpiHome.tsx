@@ -319,7 +319,8 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
               sub={canSeeMoney && r.adrGross != null ? exact(r.adrGross) + ' incl. cleaning' : undefined}
               delta={<Delta v={r.adrChange} suffix="%" />} />
             <Tile label="RevPAR" value={canSeeMoney ? exact(r.revpar) : '—'} Icon={TrendingUp} href="/revenue"
-              sub="revenue per available unit-night" delta={<Delta v={r.revparChange} suffix="%" />} />
+              sub={canSeeMoney && r.revparGross != null ? exact(r.revparGross) + ' incl. cleaning' : 'room revenue per available unit-night'}
+              delta={<Delta v={r.revparChange} suffix="%" />} />
             <Tile label="Revenue" value={canSeeMoney ? money(r.total) : '—'} Icon={DollarSign} href="/revenue"
               sub="stay nights in window + cleaning" delta={<Delta v={r.totalChange} suffix="%" />} />
           </div>
@@ -693,7 +694,7 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
       )}
 
       <p className="text-[11px] text-muted mt-4 leading-relaxed">
-        Occupancy counts booked unit-nights against active units × days in the window. ADR includes the cleaning fee.
+        Occupancy counts booked unit-nights against active units × days in the window. ADR and RevPAR are room revenue (RevPAR = occupancy × ADR); the cleaning-inclusive figure sits under each.
         Cleaning revenue is NET of the channel&apos;s cut, on units our own crew turns (vendor checkouts counted separately);
         Expedia-bundled fees are rebuilt from the unit&apos;s own booking history — the same rules as the Labor board.
         {c.costKnown
