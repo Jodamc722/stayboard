@@ -34,6 +34,7 @@ import { marketOf, buildingOf } from '@/lib/segments'
 import { setSetting } from '@/lib/app-settings'
 import { ratingToStars } from '@/lib/optimize-score'
 import { isBookingChannel, isFiveStarReview, isLowReview } from '@/lib/review-scale'
+import { isDepartureCleanName } from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -757,8 +758,10 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
             if (error) throw new Error(error.message)
             const rows = (data || []) as any[]
             for (const t of rows) {
-              const nm = str(t.name)
-              if (!/clean/i.test(nm) || /strip|walk-?through|inspect/i.test(nm)) continue
+              // THE departure clean, by the one shared rule (lib/breezeway). The old test — any name
+              // with "clean" that is not a strip or walkthrough — credited oven cleans, refresh cleans
+              // and mid-stays with the next guest's cleanliness score.
+              if (!isDepartureCleanName(t.name)) continue
               taskByKey[String(t.reference_property_id) + '|' + str(t.scheduled_date).slice(0, 10)] = t
             }
             if (rows.length < 1000) break

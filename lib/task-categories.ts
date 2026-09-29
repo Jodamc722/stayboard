@@ -77,7 +77,9 @@ export const DEFAULT_CATS: CatDef[] = [
       // clean", "Checkout Clean" all appear in the wild. [\s-]? catches all three; a bare -? caught
       // only one, and the misses landed elsewhere — which is the number the 4pm deadline is
       // measured against, so they were invisible in the place it mattered most.
-      { name: 'departure clean|turnover clean|check[\\s-]?out clean|move[\\s-]?out clean' },
+      // "Limpieza de salida" is the same turn named in Spanish — lib/breezeway isDepartureCleanName
+      // (the labor engine's rule) already counts it, so it no longer falls into Other here.
+      { name: 'departure clean|turnover clean|check[\\s-]?out clean|move[\\s-]?out clean|limpieza de salida' },
     ],
   },
   {
@@ -179,6 +181,8 @@ export const CAT_LABEL: Record<string, string> = DEFAULT_CATS.reduce((m, c) => {
 // (caught in review, 2026-09-09 — it would have made every started-but-untimed task read as open).
 // DONE keeps \b, which is exactly what stops "incomplete" and "unfinished" counting as finished.
 const DONE_RE = /\b(complete|finish|close|approv)/i
+/** The done-status pattern itself, for callers that test a status string on its own (lib/billing). */
+export const TASK_DONE_RE = DONE_RE
 const RUNNING_RE = /(^|[^a-z0-9])(progress|started)/i
 const GONE_RE = /(^|[^a-z0-9])(delete|cancel|void)/i
 /** Finished — including a Breezeway `finished_at`, which is the fact the status is meant to describe. */
