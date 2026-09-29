@@ -5,10 +5,6 @@
   "installCommand": "npm install",
   "crons": [
     {
-      "path": "/api/cron/parking-guesty",
-      "schedule": "27 */4 * * *"
-    },
-    {
       "path": "/api/cron/reservations",
       "schedule": "2-57/5 * * * *"
     },
