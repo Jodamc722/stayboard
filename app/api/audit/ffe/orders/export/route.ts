@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
     const [{ data: ords }, { data: lines }, { data: ovRows }] = await Promise.all([
       db.from('ffe_orders').select('*').eq('id', id).limit(1),
       db.from('ffe_order_lines').select('*').eq('order_id', id).limit(5000),
-      db.from('ffe_checklist_items').select('room,item_key,en,es,ask,hidden,sort').limit(2000),
+      db.from('ffe_checklist_items').select('room,item_key,en,es,ask,hidden,sort').limit(1000), // deliberate cap: the checklist overlay is one row per (room, item), unique — a hand-edited list of a few hundred at most
     ])
     const order = (ords || [])[0]
     if (!order) return NextResponse.json({ error: 'order not found' }, { status: 404 })

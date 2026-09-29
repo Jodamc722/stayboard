@@ -53,7 +53,7 @@ type Lst = FfeUnit
 async function checklistOverrides(db: any): Promise<FfeOverride[]> {
   try {
     const { data } = await db.from('ffe_checklist_items')
-      .select('room,item_key,en,es,ask,hidden,sort').limit(2000)
+      .select('room,item_key,en,es,ask,hidden,sort').limit(1000) // deliberate cap: the checklist overlay is one row per (room, item), unique — a hand-edited list of a few hundred at most
     return (data || []) as FfeOverride[]
   } catch { return [] }
 }
@@ -116,7 +116,7 @@ async function progress(db: any, ids: string[]) {
     }
   } catch { setupRequired = true }
   try {
-    const { data } = await db.from('ffe_unit_status').select('listing_id,completed_at').in('listing_id', ids).limit(3000)
+    const { data } = await db.from('ffe_unit_status').select('listing_id,completed_at').in('listing_id', ids).limit(1000) // deliberate cap: one row per unit (primary key listing_id, ~290 units)
     for (const s of ((data || []) as any[])) done[String(s.listing_id)] = s.completed_at || null
   } catch { /* optional */ }
   // Absent before migration 040 — every unit then reads zero rooms checked, which is true.

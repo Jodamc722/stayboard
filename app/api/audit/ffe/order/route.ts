@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
       db.from('ffe_order_lines').select('*').eq('order_id', order.id).limit(3000),
       ffePortfolio(db),
       // The overlay is a nicety on this page — labels fall back to the built-in list without it.
-      Promise.resolve(db.from('ffe_checklist_items').select('room,item_key,en,es,ask,hidden,sort').limit(2000))
+      Promise.resolve(db.from('ffe_checklist_items').select('room,item_key,en,es,ask,hidden,sort').limit(1000)) // deliberate cap: the checklist overlay is one row per (room, item), unique — a hand-edited list of a few hundred at most
         .catch(() => ({ data: [] as any[] })),
     ])
     const ov = ((ovRes as any)?.data || []) as FfeOverride[]

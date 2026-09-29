@@ -92,8 +92,8 @@ export async function GET(req: NextRequest) {
       const db = supabaseAdmin()
       const { data: todays } = await db.from('breezeway_tasks_sync')
         .select('reference_property_id,name,status,type_department,assignees,finished_at')
-        .eq('scheduled_date', date).limit(2000)
-      const { data: ls } = await db.from('guesty_listings').select('id,nickname,title').limit(2000)
+        .eq('scheduled_date', date).limit(1000) // deliberate cap: one day of Breezeway tasks (~90–300) — the cap never bites, so the consolidation acts on exactly what it did before
+      const { data: ls } = await db.from('guesty_listings').select('id,nickname,title').limit(1000) // deliberate cap: one row per Guesty listing (~290, inactive included)
       const nameOf: Record<string, string> = {}
       for (const l of (ls || []) as any[]) nameOf[String(l.id)] = String(l.nickname || l.title || 'Unit')
 

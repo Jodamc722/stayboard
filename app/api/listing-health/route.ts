@@ -61,7 +61,7 @@ const computeHealth = unstable_cache(async () => {
       // integrations, instant-book, times, _photoScore, cancellation) — not the full raw blob.
       sb.from('guesty_listings')
         .select('id, title, nickname, building, unit, status, bedrooms, bathrooms, max_occupancy, amenities, pictures, address_city, rawPub:raw->publicDescription, rawPubs:raw->publicDescriptions, rawTerms:raw->terms, rawPrices:raw->prices, rawInts:raw->integrations, rawIb:raw->instantBookable, rawIb2:raw->instantBook, rawCi:raw->>defaultCheckInTime, rawCi2:raw->>checkInTime, rawCo:raw->>defaultCheckOutTime, rawCo2:raw->>checkOutTime, rawPs:raw->_photoScore, rawCp:raw->>cancellationPolicy, rawAirbnb:raw->airbnb, rawBcom:raw->bookingcom, rawTitle:raw->>title, rawMinN:raw->defaultListingMinNights, rawAmen:raw->amenities')
-        .limit(2000),
+        .limit(1000), // deliberate cap: one row per Guesty listing (~290, inactive included)
       openWorkByListing(sb),
       fetchOccResv(),
     ])

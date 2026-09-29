@@ -174,12 +174,12 @@ async function send(req: NextRequest) {
       const VENDOR = vendorRegex(presets.vendorBuildings)
       const [shifts, lRes, coRes, tRes] = await Promise.all([
         getShifts(today, TZ),
-        db.from('guesty_listings').select('id,nickname,title,building').limit(2000),
+        db.from('guesty_listings').select('id,nickname,title,building').limit(1000), // deliberate cap: one row per Guesty listing (~290, inactive included)
         db.from('guesty_reservations').select('listing_id,check_out,status')
           .eq('check_out', today)
-          .not('status', 'in', '("canceled","cancelled","declined")').limit(2000),
+          .not('status', 'in', '("canceled","cancelled","declined")').limit(1000), // deliberate cap: one day's checkouts — about one per listing (~290), inquiries included
         db.from('breezeway_tasks_sync').select('name,type_department,status')
-          .eq('scheduled_date', today).limit(3000),
+          .eq('scheduled_date', today).limit(1000), // deliberate cap: one day of Breezeway tasks (~90–300)
       ])
       // In-house checkouts = today's cleans (a checkout is a clean, whoever remembers the task).
       const vendorUnit: Record<string, boolean> = {}

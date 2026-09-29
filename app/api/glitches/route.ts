@@ -131,7 +131,7 @@ export async function POST(req: NextRequest) {
     const typedUnit = str(b.unit).trim()
     if (!listingId && typedUnit) {
       try {
-        const { data: ls } = await supabaseAdmin().from('guesty_listings').select('id, nickname, title, status').limit(2000)
+        const { data: ls } = await supabaseAdmin().from('guesty_listings').select('id, nickname, title, status').limit(1000) // deliberate cap: one row per Guesty listing (~290, inactive included)
         const toks = typedUnit.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
         const hits = ((ls || []) as any[]).filter(l => {
           if (String(l.status || '').trim().toLowerCase() !== 'active') return false

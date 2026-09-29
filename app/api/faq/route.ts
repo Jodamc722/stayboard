@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
   const db = supabaseAdmin()
   const listingId = req.nextUrl.searchParams.get('listingId') || ''
   if (!listingId) {
-    const lr = await db.from('guesty_listings').select('id,nickname,title,building,status').limit(2000)
+    const lr = await db.from('guesty_listings').select('id,nickname,title,building,status').limit(1000) // deliberate cap: one row per Guesty listing (~290, inactive included)
     const listings = (lr.data || []).filter((l: any) => !/inactive/i.test(String(l.status || ''))).map((l: any) => ({ id: String(l.id), name: l.nickname || l.title || 'Unit', building: l.building || '' }))
     listings.sort((a: any, b: any) => (a.building || '').localeCompare(b.building || '') || a.name.localeCompare(b.name))
     return NextResponse.json({ ok: true, listings })

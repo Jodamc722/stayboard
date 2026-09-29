@@ -146,7 +146,7 @@ export async function GET(req: NextRequest) {
       const mkOf: Record<string, string> = {}
       if (lids.length) {
         const { data: ls } = await supabaseAdmin().from('guesty_listings')
-          .select('id,nickname,title,building,address_city').in('id', lids).limit(2000)
+          .select('id,nickname,title,building,address_city').in('id', lids).limit(1000) // deliberate cap: one row per listing on the month's maintenance tasks — at most the ~290 listings
         for (const l of ((ls || []) as any[])) {
           const nm = l.nickname || l.title || ''
           mkOf[String(l.id)] = String(marketOf(l.building, l.address_city, nm) || 'Other')

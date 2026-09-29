@@ -14,7 +14,7 @@ async function listingIdForBuilding(building: string): Promise<string | null> {
   const b = String(building || '').trim().toLowerCase()
   if (!b) return null
   try {
-    const { data } = await supabaseAdmin().from('guesty_listings').select('id,nickname,title,building').limit(2000)
+    const { data } = await supabaseAdmin().from('guesty_listings').select('id,nickname,title,building').limit(1000) // deliberate cap: one row per Guesty listing (~290, inactive included)
     for (const l of ((data || []) as any[])) {
       const name = String(l.nickname || l.title || '')
       if (String(buildingOf(l.building, name) || '').toLowerCase() === b) return String(l.id)

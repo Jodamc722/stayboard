@@ -80,7 +80,7 @@ async function productsWithSource(db: any, ids: string[]): Promise<Record<string
 
 async function overrides(db: any): Promise<FfeOverride[]> {
   try {
-    const { data } = await db.from('ffe_checklist_items').select('room,item_key,en,es,ask,hidden,sort').limit(2000)
+    const { data } = await db.from('ffe_checklist_items').select('room,item_key,en,es,ask,hidden,sort').limit(1000) // deliberate cap: the checklist overlay is one row per (room, item), unique — a hand-edited list of a few hundred at most
     return (data || []) as FfeOverride[]
   } catch { return [] }
 }

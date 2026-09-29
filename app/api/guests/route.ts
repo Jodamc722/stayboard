@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
   }
   res = res.filter(r => LIVE.has(str(r.status).toLowerCase()))
 
-  const { data: listings } = await db.from('guesty_listings').select('id, nickname, title').limit(2000)
+  const { data: listings } = await db.from('guesty_listings').select('id, nickname, title').limit(1000) // deliberate cap: one row per Guesty listing (~290, inactive included)
   const nameOf: Record<string, string> = {}
   for (const l of listings || []) nameOf[str((l as any).id)] = str((l as any).nickname || (l as any).title)
 

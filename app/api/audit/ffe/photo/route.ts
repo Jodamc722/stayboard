@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
   const kind = String(form.get('kind') || 'existing') === 'replacement' ? 'replacement' : 'existing'
   if (!room || !itemKey) return NextResponse.json({ error: 'room and itemKey required' }, { status: 400 })
 
-  const { data: ls } = await db.from('guesty_listings').select('id,status').limit(2000)
+  const { data: ls } = await db.from('guesty_listings').select('id,status').limit(1000) // deliberate cap: one row per Guesty listing (~290, inactive included)
   const ids = ((ls || []) as any[])
     .filter(l => !DEAD.includes(String(l.status || '').toLowerCase()))
     .map(l => String(l.id))

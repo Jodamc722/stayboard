@@ -81,7 +81,7 @@ export async function GET(req: NextRequest) {
     // Property-wide order sheet: every Replace/Add need across all audits, with lifecycle status.
     const [oi, ol] = await Promise.all([
       db.from('audit_items').select('id,audit_id,listing_id,room,kind,title,qty,note,photo_url,severity,status,details,created_at').in('kind', ['replace', 'add']).neq('status', 'dismissed').order('created_at', { ascending: false }).limit(2000),
-      db.from('guesty_listings').select('id,nickname,title,building').limit(2000),
+      db.from('guesty_listings').select('id,nickname,title,building').limit(1000), // deliberate cap: one row per Guesty listing (~290, inactive included)
     ])
     const lm: Record<string, any> = {}
     for (const l of ol.data || []) lm[String(l.id)] = { name: l.nickname || l.title || 'Unit', building: l.building || '' }
@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
   }
   const [ar, lr, ir, rr] = await Promise.all([
     db.from('property_audits').select('*').order('created_at', { ascending: false }).limit(300),
-    db.from('guesty_listings').select('id,nickname,title,building,status').limit(2000),
+    db.from('guesty_listings').select('id,nickname,title,building,status').limit(1000), // deliberate cap: one row per Guesty listing (~290, inactive included)
     // PAGED + ORDERED (2026-09-03): .limit(5000) with no order handed back an arbitrary 1,000
     // audit items, so a large audit's progress counts were wrong and unstable between reloads.
     pageRows<any>((a, b) => db.from('audit_items').select('id,audit_id,status,kind').order('id').range(a, b), 20),
@@ -127,8 +127,8 @@ export async function POST(req: NextRequest) {
     const user = await getEditor()
     if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const [lr2, ar2] = await Promise.all([
-      db.from('guesty_listings').select('id,status').limit(2000),
-      db.from('property_audits').select('listing_id').eq('status', 'open').limit(2000),
+      db.from('guesty_listings').select('id,status').limit(1000), // deliberate cap: one row per Guesty listing (~290, inactive included)
+      db.from('property_audits').select('listing_id').eq('status', 'open').limit(1000), // deliberate cap: every create path reuses a unit's open audit, so at most one per unit (~290) plus a few building/prospect audits
     ])
     const have: Record<string, boolean> = {}
     for (const a of ar2.data || []) have[String(a.listing_id)] = true
