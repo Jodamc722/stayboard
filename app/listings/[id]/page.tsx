@@ -68,7 +68,7 @@ function hostReplyFromRaw(raw: any): string | null {
 // worth. Same 120s cache the Portfolio page already uses, keyed by building.
 const getSiblings = unstable_cache(async (building: string) => {
   const sb = supabaseAdmin()
-  const { data } = await sb.from('guesty_listings').select('id, building, amenities').limit(1000)
+  const { data } = await sb.from('guesty_listings').select('id, building, amenities').limit(1000) // deliberate cap: one row per listing, ~290
   const rows = (data ?? []).filter((s: any) => rollupBuilding(s.building) === building)
   const siblingAmenities: string[] = Array.from(new Set(
     rows.flatMap((s: any) => (Array.isArray(s.amenities) ? s.amenities : [])).map((a: any) => String(a)).filter(Boolean)

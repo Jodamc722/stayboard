@@ -15,7 +15,7 @@ export default async function NewRequestPage({ searchParams }: { searchParams: {
     .select('id, nickname, title, building, unit')
     .eq('status', 'active')
     .order('building')
-    .limit(1000)
+    .limit(1000) // deliberate cap: one row per active listing, ~290
 
   return (
     <Shell>
