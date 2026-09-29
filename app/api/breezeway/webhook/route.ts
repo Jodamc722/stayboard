@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, getBreezewayToken, retrieveBreezewayTask, mapBreezewayTask } from '@/lib/breezeway'
 import { requireAdmin } from '@/lib/access'
+import { bustBoards } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -40,7 +41,10 @@ export async function POST(req: NextRequest) {
     const task = r.ok ? (r.data && (r.data.task || r.data)) : null
     if (!task || task.id == null) return NextResponse.json({ ok: true, ignored: true })
     const row: any = { ...mapBreezewayTask(task), synced_at: new Date().toISOString() }
-    await supabaseAdmin().from('breezeway_tasks_sync').upsert(row, { onConflict: 'id' })
+    const { error } = await supabaseAdmin().from('breezeway_tasks_sync').upsert(row, { onConflict: 'id' })
+    // A field change in Breezeway (started, finished, reassigned) reaches the boards on the next
+    // read, not when their cache happens to expire.
+    if (!error) bustBoards()
   } catch { /* never fail the webhook delivery */ }
   return NextResponse.json({ ok: true })
 }

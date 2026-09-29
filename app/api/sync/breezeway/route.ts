@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, getBreezewayToken, bzApi, mapBreezewayTask } from '@/lib/breezeway'
 import { requireAdmin } from '@/lib/access'
+import { bustBoards } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -118,9 +119,11 @@ if (!arr.length) continue
 const now = new Date().toISOString()
 const rows = arr.map(mapBreezewayTask).filter((t: any) => t.id).map((t: any) => { const rp = parseFloat(String(t.rate_paid == null ? '' : t.rate_paid).replace(/[^0-9.-]/g, '')); return { ...t, rate_paid: Number.isFinite(rp) ? rp : null, home_id: p.home_id, reference_property_id: p.reference_property_id, synced_at: now } })
 const { error } = await db.from('breezeway_tasks_sync').upsert(rows, { onConflict: 'id' })
-if (error) return NextResponse.json({ error: 'breezeway_tasks_sync upsert: ' + error.message }, { status: 200 })
+if (error) { if (upserted) bustBoards(); return NextResponse.json({ error: 'breezeway_tasks_sync upsert: ' + error.message }, { status: 200 }) }
 upserted += rows.length
 }
+// The boards read this mirror through their caches — a manual Sync shows on the next read.
+if (upserted) bustBoards()
 return NextResponse.json({ ok: true, processed: i - offset, totalProperties: active.length, nextOffset: i < active.length ? i : null, upserted, failed })
 }
 

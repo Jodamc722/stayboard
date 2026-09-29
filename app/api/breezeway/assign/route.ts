@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, updateBreezewayTask, retrieveBreezewayTask } from '@/lib/breezeway'
 import { requireLevel } from '@/lib/access'
+import { bustBoards } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -31,6 +32,10 @@ export async function POST(req: NextRequest) {
     const nextName = curName + '  ⚠ SAME-DAY TURN'
     const w = await updateBreezewayTask(taskId, { name: nextName })
     if (!w.ok) return NextResponse.json({ error: `Breezeway ${w.status}: ${w.text.slice(0, 200)}` }, { status: 502 })
+    // Write the new name through to the mirror and bust the boards, so the flag shows on the next
+    // read instead of after the next sync (the same write-through the assign below does).
+    try { await supabaseAdmin().from('breezeway_tasks_sync').update({ name: nextName }).eq('id', taskId) } catch { /* the sync catches up */ }
+    bustBoards()
     return NextResponse.json({ ok: true, taskId, wroteName: nextName })
   }
   const r = await updateBreezewayTask(taskId, { assignments: assigneeIds })
@@ -47,5 +52,9 @@ export async function POST(req: NextRequest) {
     verified = people.map((p: any) => String(p.name || '')).filter(Boolean)
     await supabaseAdmin().from('breezeway_tasks_sync').update({ assignees: people }).eq('id', taskId)
   } catch { /* the 15-min sync still catches up; the write itself succeeded */ }
+  // …and the boards read that mirror through a 45-second cache (Today in Ops, the Command Center)
+  // and a 5-minute one (the Scheduler). Without the bust the reload each caller does right after an
+  // assign read the cached pre-assign day — "Unassigned" again, the exact symptom above.
+  bustBoards()
   return NextResponse.json({ ok: true, taskId, assigneeIds, assignees: verified })
 }

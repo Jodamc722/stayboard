@@ -4,12 +4,12 @@
 // unit + date. GET diagnoses one unit/date (existing tasks + whether Breezeway even has
 // the reservation). Logged-in users only.
 import { NextRequest, NextResponse } from 'next/server'
-import { revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, bzApi, createBreezewayTask, listPropertyHousekeeping, pickDepartureClean } from '@/lib/breezeway'
 import { adminPasswordOk } from '@/lib/shareAuth'
 import { requireLevel } from '@/lib/access'
+import { bustBoards } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -75,7 +75,8 @@ export async function DELETE(req: NextRequest) {
       results.push({ taskId: id, ok: false, error: String(e?.message || e).slice(0, 160) })
     }
   }
-  try { revalidateTag('schedule') } catch {}
+  // The Scheduler AND the day (Today in Ops, the Command Center) — both read these tasks.
+  bustBoards()
   return NextResponse.json({ ok: true, deleted: results.filter(x => x.ok).length, failed: results.filter(x => !x.ok).length, results })
 }
 
@@ -119,7 +120,7 @@ export async function POST(req: NextRequest) {
       results.push({ listingId, date, ok: false, error: String(e?.message || e).slice(0, 160) })
     }
   }
-  try { revalidateTag('schedule') } catch {}
+  bustBoards()
   return NextResponse.json({
     ok: true,
     created: results.filter(x => x.created).length,
