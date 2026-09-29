@@ -44,6 +44,13 @@ export type EveCtx = {
   guestSafe?: boolean
   /** Set when listingMeta was narrowed to a vendor's own buildings (buildCtx onlyBuildings). */
   scopedBuildings?: string[]
+  /**
+   * Set when the question came from Slack: the conversation it was asked in and who asked (their Slack
+   * user id, verified by Slack's signature, and their name from the workspace directory). The door-code
+   * tool uses it to decide by ROOM and to deliver a code to the asker by DM, never into the room
+   * (lib/eve/door-code-rooms.ts, Jon 2026-09-29).
+   */
+  slack?: { channel: string; user: string; name?: string | null }
 }
 
 export type ListingMeta = { name: string; status: string; building: string; rollup: string }

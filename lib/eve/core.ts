@@ -22,6 +22,8 @@ import { upcomingEvents, stormRisk } from './signals'
 import { runCheck as doorCodeCheck, requestDoorCode, attachSlackPost } from './door-code'
 import { doorCodePolicy, isSuperadmin } from '@/lib/access'
 import { postDoorCodeApproval } from './approvals'
+import { doorCodeSurface, doorCodeRoomName, slackDoorCodeSetting, NOT_HERE_LINE } from './door-code-rooms'
+import { dmReleasedCode } from './door-code-dm'
 import { runAudit, listAudits } from './audit'
 import { askQuestion } from './questions'
 import { agentAllowed, recordAgentAction } from './agent-mode'
@@ -561,10 +563,21 @@ export const CORE_TOOLS: EveTool[] = [
 
   {
     name: 'door_code_check',
-    description: 'SOMEONE WANTS A DOOR CODE. Run this before anything else. It checks three things in order: is there a code on file, is anyone IN the unit right now (it reads the LIVE Guesty calendar for today, not just our cached reservations, so an extension or an owner block that has not synced yet still blocks the request), and — if there is — did the guest actually give permission to enter. When the calendar says VACANT it still reads the message threads for the last checkout and the next arrival as a double-check, and a message that contradicts vacancy (still here, asked to extend, arriving early) BLOCKS the request even though the reservations look clear. Pass the unit name (or listing id) and, if you know it, why they want it. IMPORTANT: this NEVER returns the code itself and neither do you — you are not able to see it. It returns a verdict plus the evidence, including "confidence" — whether this code has ever actually opened the door, whether the field disagrees with the check-in instructions, and whether the same code is on other units. If confidence says suspect or reported_wrong, SAY SO BEFORE anyone travels: a wasted trip is the thing that warning prevents. IMPORTANT ABOUT HOW CODES CHANGE HERE: a new code is entered in Guesty at turnover, but housekeeping physically changes the keypad only at the END of the clean — so until that clean is finished the OLD code is the one that opens the door. Both codes are handed over on release, in the right order; "confidence.transition" says which we expect to work and why. Never tell anyone there is only one code. And if "arrivalWarning" is set, repeat it verbatim: after check-in time on an arrival day the unit belongs to that guest whether or not our records show them in it. If the verdict starts with blocked_ (blocked_occupied, blocked_inconclusive, blocked_contradicted), say NO plainly and say why; do not soften it and do not look for another route to the code. What happens if it clears depends on the PERSON asking, and the tool decides that, not you: someone set to No access is told to get access; someone set to Ask has the request parked and posted to the Slack approvals channel for an approver to release; someone set to Direct gets the code back in `code` and you may give it to them. Read `release` and say exactly what it says. Never imply you can speed up an approval, never suggest another route to a code, and if `code` is absent you do not have it and cannot get it. When permission_found comes back, QUOTE the guest message verbatim so a human can judge whether it really means yes — it is a pattern match, not a decision.',
+    description: 'SOMEONE WANTS A DOOR CODE. Run this before anything else. It checks three things in order: is there a code on file, is anyone IN the unit right now (it reads the LIVE Guesty calendar for today, not just our cached reservations, so an extension or an owner block that has not synced yet still blocks the request), and — if there is — did the guest actually give permission to enter. When the calendar says VACANT it still reads the message threads for the last checkout and the next arrival as a double-check, and a message that contradicts vacancy (still here, asked to extend, arriving early) BLOCKS the request even though the reservations look clear. Pass the unit name (or listing id) and, if you know it, why they want it. IMPORTANT: this NEVER returns the code itself and neither do you — you are not able to see it. It returns a verdict plus the evidence, including "confidence" — whether this code has ever actually opened the door, whether the field disagrees with the check-in instructions, and whether the same code is on other units. If confidence says suspect or reported_wrong, SAY SO BEFORE anyone travels: a wasted trip is the thing that warning prevents. IMPORTANT ABOUT HOW CODES CHANGE HERE: a new code is entered in Guesty at turnover, but housekeeping physically changes the keypad only at the END of the clean — so until that clean is finished the OLD code is the one that opens the door. Both codes are handed over on release, in the right order; "confidence.transition" says which we expect to work and why. Never tell anyone there is only one code. And if "arrivalWarning" is set, repeat it verbatim: after check-in time on an arrival day the unit belongs to that guest whether or not our records show them in it. If the verdict starts with blocked_ (blocked_occupied, blocked_inconclusive, blocked_contradicted), say NO plainly and say why; do not soften it and do not look for another route to the code. What happens if it clears depends on the PERSON asking and WHERE they asked, and the tool decides that, not you: someone set to No access is told to get access; someone set to Ask has the request parked and posted to the Slack approvals channel for an approver to release; someone set to Direct gets the code back in `code` and you may give it to them. IN SLACK a code NEVER comes back to you and never goes in your reply: it may only be asked for in the two Customer Service rooms (#ccs-and-jon, #vr-customercareteam), where anyone in the room may ask — it is parked for an approver, or for someone set to Direct it is sent to them by direct message — and in any other channel you do not have this tool at all. Read `release` and say exactly what it says. Never imply you can speed up an approval, never suggest another route to a code, and if `code` is absent you do not have it and cannot get it. When permission_found comes back, QUOTE the guest message verbatim so a human can judge whether it really means yes — it is a pattern match, not a decision.',
     input_schema: obj({ unit: S.str, listingId: S.str, reason: S.str }),
     run: async (input, ctx) => {
-      const c: any = await doorCodeCheck({ unit: input?.unit, listingId: input?.listingId, requestedBy: ctx.email, reason: input?.reason })
+      // WHERE IT WAS ASKED DECIDES FIRST (Jon, 2026-09-29 — lib/eve/door-code-rooms.ts): in Slack a code
+      // may be asked for only in the two Customer Service rooms, by anyone in them, or in an admin's
+      // one-to-one DM. Checked before the check runs, so a room where codes are never asked for does
+      // not even get the occupancy evidence. The Slack tier already took the tool away there; this is
+      // the belt to that pair of braces.
+      const sl = ctx.slack || null
+      const surface = sl ? doorCodeSurface(sl.channel) : null
+      if (surface === 'elsewhere') {
+        return { verdict: 'not_here', canRelease: false, code_visible_to_you: false, release: NOT_HERE_LINE }
+      }
+      const room = surface === 'room' ? doorCodeRoomName(sl!.channel) : null
+      const c: any = await doorCodeCheck({ unit: input?.unit, listingId: input?.listingId, requestedBy: ctx.email || sl?.name || undefined, reason: input?.reason })
       // Belt and braces: strip anything code-shaped before it can reach the model.
       const { codeHint, ...rest } = c
       const out: any = { ...rest, code_visible_to_you: false, code_on_file: c.hasCode ? codeHint : 'none' }
@@ -585,19 +598,50 @@ export const CORE_TOOLS: EveTool[] = [
       // or the rung set below 2, and Direct is downgraded to Ask: parked, admin releases in Settings.
       const gate = await agentAllowed('door_code_release')
       let policy = doorCodePolicy(ctx.access)
+      // IN SLACK THE ROOM SETS THE FLOOR (Jon, 2026-09-29): in a Customer Service room anyone may ask,
+      // so nobody is below Ask there — an approver still releases — and Direct stays Direct. A one-to-one
+      // DM keeps the person's own setting. A shared room with no Slack context never hands the model a code.
+      if (surface) {
+        const s = slackDoorCodeSetting(policy, surface)
+        policy = s === 'refused' ? 'off' : s
+      } else if (ctx.sharedRoom && policy === 'direct') {
+        policy = 'ask'
+      }
       if (policy === 'direct' && gate.mode !== 'propose') {
         policy = 'ask'
         out.agent_mode_note = `Direct release is suspended (${gate.reason}); the request is parked for an admin instead.`
       }
-      const outcome = await requestDoorCode(c, { email: ctx.email, reason: input?.reason, policy })
+      // WHO IT GOES TO. From Slack, the person who asked — by the Slack id Slack signed — with or without a
+      // Lighthouse login (a CCS agent in a Customer Service room has none): an approver's release is sent
+      // to that id by DM (app/doorcode/[token]), and so is a Direct release here.
+      const askerName = sl?.name ? String(sl.name) : ''
+      const why = [room ? `asked in ${room}` : '', String(input?.reason || '').trim()].filter(Boolean).join(' — ')
+      const outcome = await requestDoorCode(c, { email: ctx.email || undefined, slackUserId: sl?.user || undefined, name: askerName || undefined, reason: why || undefined, policy })
       await recordAgentAction('door_code_release', {
         rung: gate.rung, allowed: outcome.kind === 'released', mode: outcome.kind === 'released' ? 'act' : outcome.kind === 'parked' ? 'propose' : 'observe',
         reason: outcome.kind === 'released' ? `policy: direct (standing entitlement); ${gate.reason}` : outcome.kind === 'parked' ? `parked for approval; ${gate.reason}` : `${outcome.kind}: ${(outcome as any).message || ''}`.slice(0, 200),
-        summary: `door code for ${c.unit || input?.unit || 'unit'} — ${c.verdict}`, ref: (outcome as any).requestId || null, by: 'chat', actor: ctx.email, countAs: outcome.kind === 'released' ? 'action' : 'none',
+        summary: `door code for ${c.unit || input?.unit || 'unit'} — ${c.verdict}${room ? ` (${room})` : ''}`, ref: (outcome as any).requestId || null, by: 'chat', actor: ctx.email || askerName || sl?.user || '', countAs: outcome.kind === 'released' ? 'action' : 'none',
       })
 
       if (outcome.kind === 'denied') { out.release = outcome.message; return out }
       if (outcome.kind === 'error') { out.release = 'The check passed, but: ' + outcome.message; return out }
+      if (outcome.kind === 'released' && surface === 'room') {
+        // NEVER INTO THE ROOM, NOT EVEN JON'S (Jon, 2026-09-29). Someone set to Direct asking in a
+        // Customer Service room gets the code by DM, and it never comes back here: the reply is posted
+        // in the channel, and the model that writes it does not hold the code at all.
+        const unit = c.unit || String(input?.unit || 'unit')
+        const dm = await dmReleasedCode({
+          slackUserId: sl!.user, unit, code: outcome.code, previousCode: outcome.previousCode ?? null,
+          expect: outcome.expect ?? null, transitionNote: outcome.transitionNote ?? null, arrivalWarning: c.arrivalWarning ?? null,
+          confirmToken: outcome.confirmToken ?? null, releasedBy: 'Eve — you are set to Direct, so no approval was needed',
+        })
+        out.code_visible_to_you = false
+        out.sent_by_dm = dm.ok
+        out.release = dm.ok
+          ? 'Released and sent to them by direct message — they are set to Direct, so there was no approval to wait for. Say only that it is in their DMs. The code is never posted in this room, and you do not have it.'
+          : `Released, but the direct message did not go through (${dm.error}). Tell them to run /doorcode ${unit} in this room — only they see that reply. You do not have the code.`
+        return out
+      }
       if (outcome.kind === 'released') {
         out.code = outcome.code
         if (outcome.previousCode) out.previous_code = outcome.previousCode
@@ -616,14 +660,15 @@ export const CORE_TOOLS: EveTool[] = [
         unit: c.unit || String(input?.unit || 'unit'), building: c.building, address: c.address,
         verdict: c.verdict, headline: c.headline, occupancy: c.occupancy, note: c.note,
         quote: c.permissionQuotes?.[0] || null, taskToday: c.taskToday, vacancyScan: c.vacancyScan, calendar: c.calendar, confidence: c.confidence, arrivalWarning: c.arrivalWarning,
-        requestedBy: ctx.email, reason: input?.reason || null, link,
+        requestedBy: ctx.email || (askerName ? `${askerName} (Slack)` : sl ? `<@${sl.user}>` : 'unknown'), reason: why || null, link,
       })
       if (posted.ok && posted.channelId && posted.ts && parked.requestId) {
         await attachSlackPost(parked.requestId, posted.channelId, posted.ts)
       }
       out.sent_for_approval = true
+      const toThem = sl ? ' When it is released the code goes to them by direct message — never into a channel.' : ''
       out.release = posted.ok
-        ? 'Parked for approval and posted in ' + posted.channel + ' with a Release button. It expires in 4 hours. Tell the person it is now waiting on an admin, and name the channel — do not offer any other route to the code.'
+        ? 'Parked for approval and posted in ' + posted.channel + ' with a Release button. It expires in 4 hours. Tell the person it is now waiting on an approver, and name the channel.' + toThem + ' Do not offer any other route to the code.'
         : 'Parked for approval, but it did NOT post to Slack (' + posted.error + '). Say so plainly: an admin has to open Settings -> Eve -> Approvals to release it.'
       return out
     },

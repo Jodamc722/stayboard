@@ -115,6 +115,15 @@ async function channelName(id: string): Promise<string> {
   } catch { return id }
 }
 
+/** The asker's name from the workspace directory — what an approver reads on a door-code request. */
+async function personName(id: string): Promise<string | null> {
+  try {
+    const dir = await getDirectory()
+    const u = (dir?.users || []).find((x: any) => String(x.id) === String(id))
+    return u?.name ? String(u.name) : null
+  } catch { return null }
+}
+
 async function say(channel: string, threadTs: string, text: string): Promise<void> {
   // ALWAYS in a thread, even for a one-liner. Consistency is the point: the team learns that Eve
   // never takes more than one line of channel, so nobody has a reason to stop @-ing her.
@@ -406,6 +415,9 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
       // buildings set (then it sees no units); an unmapped asker in one of our group rooms is scoped to
       // that group. Only an unmapped asker in a room with no routing group stays unscoped, as before.
       onlyBuildings: grant.tier === 'vendor' && (grant.vendorRoom || grant.buildings.length) ? grant.buildings : undefined,
+      // The room and the asker, for the door-code tool: in the two Customer Service rooms anyone may ask,
+      // and whatever is released goes to THIS Slack user by DM, never into the room (lib/eve/door-code-rooms.ts).
+      slack: { channel, user, name: await personName(user) },
       surfaceNote: [
         `This is ${where}. Whatever that channel is for is the likely subject — if it is a building's channel, assume the question is about that building unless told otherwise.`,
         history,

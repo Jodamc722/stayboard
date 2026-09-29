@@ -13,6 +13,7 @@ import { atLeast } from '@/lib/features'
 import { releaseByToken, rejectByToken, peekRequest, revealByConfirmToken } from '@/lib/eve/door-code'
 import { postApprovalOutcome } from '@/lib/eve/approvals'
 import { dmUser } from '@/lib/slack'
+import { dmReleasedCode } from '@/lib/eve/door-code-dm'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,36 +49,36 @@ async function release(formData: FormData) {
 
   // Deliver privately to the person who asked, never into a channel — and ASK WHETHER IT WORKED.
   // That answer is the only real evidence a code is correct, and it is only ever available in the
-  // ninety seconds after somebody stands at the lock. Ask then or never find out.
-  const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
-  const confirmUrl = res.confirmToken ? `${base}/doorcode/worked/${res.confirmToken}` : null
-  if (res.slackUserId) {
-    const tryFirst = res.expect === 'old' && res.previousCode ? res.previousCode : res.code
-    const thenTry = res.expect === 'old' && res.previousCode ? res.code : res.previousCode
-    const lines = [`🔑 *${res.unit}*`, `*Try this first:* \`${tryFirst}\``]
-    if (thenTry) lines.push(`*If that fails:* \`${thenTry}\``)
-    if (res.transitionNote) lines.push(`_${res.transitionNote}_`)
-    lines.push(`Released by ${a.email}. Please do not paste this into a channel.`)
-    const blocks: any[] = [{ type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') } }]
-    if (res.arrivalWarning) {
-      blocks.push({ type: 'section', text: { type: 'mrkdwn', text: res.arrivalWarning } })
-    }
-    if (confirmUrl) {
-      blocks.push({ type: 'section', text: { type: 'mrkdwn', text: '*Which one opened it?* One tap — it is how we find out whether the lock has actually been changed yet.' } })
-      blocks.push({ type: 'actions', elements: [
-        { type: 'button', style: 'primary', text: { type: 'plain_text', text: 'The new code' }, url: `${confirmUrl}?ok=new` },
-        { type: 'button', text: { type: 'plain_text', text: 'The old one' }, url: `${confirmUrl}?ok=old` },
-        { type: 'button', text: { type: 'plain_text', text: 'Neither' }, url: `${confirmUrl}?ok=neither` },
-      ] })
-    }
-    await dmUser(res.slackUserId, `Door code for ${res.unit} released by ${a.email}.`, blocks)
+  // ninety seconds after somebody stands at the lock. Ask then or never find out. The message is
+  // built in lib/eve/door-code-dm.ts, shared with a Direct release in a Customer Service room.
+  //
+  // A DM THAT DID NOT GO IS SAID OUT LOUD (2026-09-29). Since the Customer Service rooms, this DM is
+  // how a code reaches the person who asked; it used to be fire-and-forget, and the page then told
+  // the approver "sent privately" whether or not it was. `dm` in the redirect says which: sent, failed,
+  // or nobody to send it to (asked for in the app) — so the approver knows to pass it on themselves.
+  let dm: 'sent' | 'failed' | 'none' = 'none'
+  if (res.slackUserId && res.code) {
+    const sent = await dmReleasedCode({
+      slackUserId: res.slackUserId, unit: res.unit || 'Unit', code: res.code, previousCode: res.previousCode ?? null,
+      expect: res.expect ?? null, transitionNote: res.transitionNote ?? null, arrivalWarning: res.arrivalWarning ?? null,
+      confirmToken: res.confirmToken ?? null, releasedBy: a.email,
+    })
+    dm = sent.ok ? 'sent' : 'failed'
+    if (!sent.ok) console.error('[doorcode] release DM failed', sent.error)
   }
   await postApprovalOutcome(res.slackChannel, res.slackTs,
-    `✅ Released by ${a.email}${res.slackUserId ? ' — code sent by DM to whoever asked.' : '.'} This request is now closed.`)
+    `✅ Released by ${a.email}${dm === 'sent' ? ' — code sent by DM to whoever asked.' : dm === 'failed' ? `. The DM to whoever asked did not go through — ${a.email} has the code to pass on privately.` : '.'} This request is now closed.`)
   // The code used to travel here in the query string, which put it in browser history, in any
   // proxy or access log along the way, and in the Referer of anything the page then loaded. It
   // rides in a server-side one-shot instead; the URL carries only a claim ticket.
-  redirect(`/doorcode/${token}?done=1&c=${encodeURIComponent(res.confirmToken || '')}`)
+  redirect(`/doorcode/${token}?done=1&dm=${dm}&c=${encodeURIComponent(res.confirmToken || '')}`)
+}
+
+/** What the approver is told about delivery, from the release's `dm` (sent / failed / none). */
+function deliveryLine(dm: string | undefined): { text: string; warn: boolean } {
+  if (dm === 'failed') return { text: 'The DM to the person who asked did not go through. Give it to them yourself, privately — never in a channel.', warn: true }
+  if (dm === 'none') return { text: 'This one was asked for in the app, so there was nobody to DM. Pass it on privately — never in a channel.', warn: true }
+  return { text: 'Sent privately to whoever asked.', warn: false }
 }
 
 async function reject(formData: FormData) {
@@ -116,11 +117,12 @@ export default async function DoorCodePage(props: { params: { token: string }; s
     // The code is re-read server-side from the confirm token rather than carried here in the URL.
     // Only an approver reaches this branch, and only for a few minutes after the release.
     const shown = await revealByConfirmToken(String(sp.c || ''))
+    const delivery = deliveryLine(sp.dm)
     if (!shown.ok) {
       return <div className={wrap}><div className={card}>
         <p className="text-sm font-semibold text-ink">Released</p>
         <p className="text-[13px] text-muted mt-1">{shown.error}</p>
-        <p className="text-[12px] text-muted mt-3">The person who asked has it — it went to them privately when you tapped.</p>
+        <p className={`text-[12px] mt-3 ${delivery.warn ? 'text-[#7A1A1A] font-semibold' : 'text-muted'}`}>{delivery.warn ? delivery.text : 'The person who asked has it — it went to them privately when you tapped.'}</p>
       </div></div>
     }
     const first = shown.expect === 'old' && shown.previousCode ? shown.previousCode : shown.code
@@ -138,7 +140,7 @@ export default async function DoorCodePage(props: { params: { token: string }; s
       )}
       {shown.transitionNote && <p className="text-[12px] text-muted mb-3">{shown.transitionNote}</p>}
       {shown.arrivalWarning && <p className="text-[13px] text-[#7A1A1A] font-semibold mb-3">{shown.arrivalWarning}</p>}
-      <p className="text-[13px] text-muted">Sent privately to whoever asked. This link is now dead — it will not show the code again.</p>
+      <p className={`text-[13px] ${delivery.warn ? 'text-[#7A1A1A] font-semibold' : 'text-muted'}`}>{delivery.text} This link is now dead — it will not show the code again.</p>
       <p className="text-[12px] text-muted mt-3">Don&apos;t paste it into a channel; channel history outlives the code.</p>
       {sp.c && (
         <div className="mt-5 pt-4 border-t border-line">

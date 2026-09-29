@@ -25,6 +25,7 @@ import { rollupBuilding } from '@/lib/optimize-score'
 import { getListingCalendar } from '@/lib/guesty'
 import { todayET, lc, shiftDay, DEAD_LISTING } from './ctx'
 import { codeConfidence, fingerprint, recordVerification, refreshOne, transitionFor, bothCodes, inspectCode, type Confidence } from './code-integrity'
+import { DOOR_CODE_ROOM_NAMES } from './door-code-rooms'
 
 /** The Guesty custom field that holds the door code (same id daysheet + listingIntel use). */
 const DOOR_CODE_FIELD = '695af1454ebbdc00137c3f41'
@@ -545,7 +546,7 @@ export async function runCheck(input: { unit?: string; listingId?: string; reque
  * Park an approved-pending request. Stored in eve_actions (migration 045) with a one-time token, so
  * the release link cannot be replayed. The CODE IS NOT STORED HERE — only the listing id.
  */
-export async function createRequest(check: DoorCheck, who: { email?: string; slackUserId?: string; reason?: string }): Promise<{ ok: boolean; requestId?: string; token?: string; confirmToken?: string; error?: string }> {
+export async function createRequest(check: DoorCheck, who: { email?: string; slackUserId?: string; name?: string; reason?: string }): Promise<{ ok: boolean; requestId?: string; token?: string; confirmToken?: string; error?: string }> {
   if (!check.canRelease || !check.listingId) return { ok: false, error: 'This check did not clear — nothing to park.' }
   const db = supabaseAdmin()
   const token = randomBytes(24).toString('hex')
@@ -560,6 +561,9 @@ export async function createRequest(check: DoorCheck, who: { email?: string; sla
       payload: {
         listingId: check.listingId, unit: check.unit, building: check.building, address: check.address || null,
         requesterSlackId: who.slackUserId || null, requesterEmail: who.email || null,
+        // A Customer Service agent with no Lighthouse login asks by their Slack identity (lib/eve/
+        // door-code-rooms.ts); the name is what the approver reads, the Slack id is where it goes.
+        requesterName: who.name || null,
         reason: who.reason || null, token, confirmToken,
       },
       why: check.headline,
@@ -606,16 +610,16 @@ export type DoorRequestOutcome =
 
 export async function requestDoorCode(
   check: DoorCheck,
-  who: { email?: string; slackUserId?: string; reason?: string; policy: 'off' | 'ask' | 'direct' },
+  who: { email?: string; slackUserId?: string; name?: string; reason?: string; policy: 'off' | 'ask' | 'direct' },
 ): Promise<DoorRequestOutcome> {
   if (who.policy === 'off') {
-    return { kind: 'denied', message: 'You are not set up to receive door codes. Ask Jon, or whoever handles access, to switch it on for you in Users & admin → People.' }
+    return { kind: 'denied', message: `You are not set up to receive door codes. Customer Service can request one in ${DOOR_CODE_ROOM_NAMES}; for your own access, ask Jon to switch it on in Users & admin → People.` }
   }
   if (!check.canRelease || !check.listingId) {
     return { kind: 'denied', message: check.note || 'That check did not clear, so there is nothing to release.' }
   }
 
-  const parked = await createRequest(check, { email: who.email, slackUserId: who.slackUserId, reason: who.reason })
+  const parked = await createRequest(check, { email: who.email, slackUserId: who.slackUserId, name: who.name, reason: who.reason })
   if (!parked.ok || !parked.token) return { kind: 'error', message: parked.error || 'Could not park the request.' }
 
   if (who.policy === 'ask') {
@@ -634,6 +638,19 @@ export async function requestDoorCode(
 }
 
 /**
+ * The one request a link's token belongs to. Looked up BY the token (2026-09-29): this used to read
+ * 200 door-code rows in no order and search them in memory, so once there were more than 200 a live
+ * link could come back "no longer valid" — and the Customer Service rooms are about to make these
+ * routine. A blanked token (released or turned down) matches nothing, as before.
+ */
+async function rowByToken(db: ReturnType<typeof supabaseAdmin>, key: 'token' | 'confirmToken', t: string): Promise<{ row: any | null; error?: string }> {
+  const { data, error } = await db.from('eve_actions').select('*').eq('kind', 'door_code')
+    .eq(`payload->>${key}`, t).order('created_at', { ascending: false }).limit(1)
+  if (error) return { row: null, error: error.message }
+  return { row: ((data as any[]) || [])[0] || null }
+}
+
+/**
  * Release. This is the ONLY place the code is read, and it happens after a human has approved.
  * One-time: the token is cleared so a forwarded link is dead on arrival.
  */
@@ -646,9 +663,8 @@ export async function releaseByToken(token: string, approvedBy: string, opts?: {
   const db = supabaseAdmin()
   const t = String(token || '').trim()
   if (!t) return { ok: false, error: 'no token' }
-  const { data, error } = await db.from('eve_actions').select('*').eq('kind', 'door_code').limit(200)
+  const { row, error } = await rowByToken(db, 'token', t)
   if (error) return { ok: false, error: 'lookup failed' }
-  const row: any = (data || []).find((r: any) => r?.payload?.token === t)
   if (!row) return { ok: false, error: 'This link is no longer valid. Door-code links work once and then expire.' }
   // NOBODY RELEASES THEIR OWN REQUEST (Jon, 2026-08-26). Until now an admin could ask for a code
   // through the API and then open their own approval link, which made the approval step a formality
@@ -711,8 +727,7 @@ export async function confirmByToken(confirmToken: string, which: 'new' | 'old' 
   const db = supabaseAdmin()
   const t = String(confirmToken || '').trim()
   if (!t) return { ok: false, error: 'no token' }
-  const { data } = await db.from('eve_actions').select('*').eq('kind', 'door_code').order('created_at', { ascending: false }).limit(400)
-  const row: any = (data || []).find((r: any) => r?.payload?.confirmToken === t)
+  const { row } = await rowByToken(db, 'confirmToken', t)
   if (!row) return { ok: false, error: 'That link is not one of ours, or it is too old to match.' }
   if (row.status !== 'executed') return { ok: false, error: 'That code was never released, so there is nothing to confirm.' }
   const fp = row?.result?.codeFp
@@ -754,8 +769,7 @@ export async function revealByConfirmToken(confirmToken: string): Promise<{
   const db = supabaseAdmin()
   const t = String(confirmToken || '').trim()
   if (!t) return { ok: false, error: 'no token' }
-  const { data } = await db.from('eve_actions').select('*').eq('kind', 'door_code').order('created_at', { ascending: false }).limit(400)
-  const row: any = (data || []).find((r: any) => r?.payload?.confirmToken === t)
+  const { row } = await rowByToken(db, 'confirmToken', t)
   if (!row) return { ok: false, error: 'That link is not one of ours, or it is too old to match.' }
   if (row.status !== 'executed') return { ok: false, error: 'That request was never released.' }
   const at = row.executed_at ? Date.parse(row.executed_at) : 0
@@ -835,7 +849,7 @@ function toPending(row: any): PendingRequest {
     arrivalWarning: ev.arrivalWarning || null,
     calendar: ev.calendar || null,
     confidence: ev.confidence || null,
-    requestedBy: pl.requesterEmail || pl.requesterSlackId || row.created_by || 'unknown',
+    requestedBy: pl.requesterEmail || (pl.requesterName ? `${pl.requesterName} (Slack)` : '') || pl.requesterSlackId || row.created_by || 'unknown',
     reason: pl.reason || null,
     createdAt: row.created_at,
     expiresAt: row.expires_at || null,
@@ -863,8 +877,7 @@ export async function peekRequest(token: string): Promise<{ ok: boolean; request
   const t = String(token || '').trim()
   if (!t) return { ok: false, error: 'no token' }
   const db = supabaseAdmin()
-  const { data } = await db.from('eve_actions').select('*').eq('kind', 'door_code').limit(200)
-  const row: any = (data || []).find((r: any) => r?.payload?.token === t)
+  const { row } = await rowByToken(db, 'token', t)
   if (!row) return { ok: false, error: 'This link is no longer valid. Door-code links work once and then expire.' }
   return { ok: true, request: toPending(row) }
 }
@@ -874,8 +887,7 @@ export async function rejectByToken(token: string, by: string): Promise<{ ok: bo
   const db = supabaseAdmin()
   const t = String(token || '').trim()
   if (!t) return { ok: false, error: 'no token' }
-  const { data } = await db.from('eve_actions').select('*').eq('kind', 'door_code').limit(200)
-  const row: any = (data || []).find((r: any) => r?.payload?.token === t)
+  const { row } = await rowByToken(db, 'token', t)
   if (!row) return { ok: false, error: 'This link is no longer valid.' }
   if (row.status !== 'proposed') return { ok: false, error: `This request was already ${row.status}.` }
   await db.from('eve_actions').update({

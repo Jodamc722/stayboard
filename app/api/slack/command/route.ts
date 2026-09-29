@@ -12,12 +12,20 @@
 // SIGNATURE VERIFICATION is mandatory here, not optional: without it anyone who learns this URL can
 // ask for door codes. We verify Slack's v0 HMAC over the raw body and reject anything older than
 // five minutes (replay protection).
+//
+// WHERE IT WORKS (Jon, 2026-09-29: "Door codes can be requested by any Customer Service team member in
+// CCS and Jon Channel, VR Customer Care channel. Never in team channels with field team"). In
+// #ccs-and-jon and #vr-customercareteam anyone in the room may ask — a CCS agent with no Lighthouse
+// login included, by their Slack identity — and it is parked for an approver unless they are set to
+// Direct. In a one-to-one DM the person's own setting stands, as before. Anywhere else it refuses
+// before a single check runs. See lib/eve/door-code-rooms.ts.
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { runCheck, requestDoorCode, attachSlackPost } from '@/lib/eve/door-code'
 import { emailForSlackUser } from '@/lib/slack'
 import { accessForEmail, doorCodePolicy } from '@/lib/access'
 import { postDoorCodeApproval } from '@/lib/eve/approvals'
+import { doorCodeSurface, doorCodeRoomName, slackDoorCodeSetting, NOT_HERE_LINE } from '@/lib/eve/door-code-rooms'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -45,7 +53,13 @@ export async function POST(req: NextRequest) {
   const unit = String(p.get('text') || '').trim()
   const userId = String(p.get('user_id') || '')
   const userName = String(p.get('user_name') || '')
+  const channelId = String(p.get('channel_id') || '')
+  // The room first, before any check runs: a field-team channel gets the pointer and nothing else.
+  const surface = doorCodeSurface(channelId)
+  if (surface === 'elsewhere') return say(`🔒 ${NOT_HERE_LINE}`)
+  const room = doorCodeRoomName(channelId)
   if (!unit) return say('Which unit? Try `/doorcode 3707` or `/doorcode Rustic 12`.')
+  if (!userId) return say('Slack did not say who is asking, so I cannot send anything anywhere.')
 
   const check = await runCheck({ unit, requestedBy: userName, requesterSlackId: userId })
 
@@ -58,20 +72,24 @@ export async function POST(req: NextRequest) {
 
   // WHO IS ASKING. Slack hands us a user id and a display NAME; the name is a nickname anyone can
   // change, so it is never used to decide anything. The id is resolved to the email on their Slack
-  // profile and then to their app user. Nobody we cannot place resolves to 'off' — which also
-  // closes the old hole where any member of the workspace could run this command.
+  // profile and then to their app user. Outside the two Customer Service rooms, nobody we cannot
+  // place resolves to 'off' — which also closes the old hole where any member of the workspace could
+  // run this command. Inside them, the room is the team: anyone there is at least Ask (an approver
+  // releases, and the code goes to their Slack id by DM), and Direct stays Direct.
   const requesterEmail = await emailForSlackUser(userId)
   const requesterAccess = requesterEmail ? await accessForEmail(requesterEmail) : null
-  const policy = requesterAccess ? doorCodePolicy(requesterAccess) : 'off'
+  const personal = requesterAccess ? doorCodePolicy(requesterAccess) : 'off'
+  const setting = slackDoorCodeSetting(personal, surface)
+  const policy = setting === 'refused' ? 'off' : setting
 
   const outcome = await requestDoorCode(check, {
-    email: requesterEmail || undefined, slackUserId: userId,
-    reason: `slash command by @${userName}`, policy,
+    email: requesterEmail || undefined, slackUserId: userId, name: userName ? `@${userName}` : undefined,
+    reason: `slash command by @${userName}${room ? ` in ${room}` : ''}`, policy,
   })
   if (outcome.kind === 'denied') {
     return say(requesterEmail
       ? `🔒 ${outcome.message}`
-      : `🔒 I could not match your Slack account to a Lighthouse user, so I cannot give you a code. Ask Jon to connect your account, or request it in the app.`)
+      : `🔒 I could not match your Slack account to a Lighthouse user, so I cannot give you a code here. Customer Service can request one in #ccs-and-jon or #vr-customercareteam.`)
   }
   if (outcome.kind === 'error') return say(`Checks passed for *${check.unit}*, but I could not park the request: ${outcome.message}`)
   if (outcome.kind === 'released') {
@@ -84,21 +102,25 @@ export async function POST(req: NextRequest) {
   const origin = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin
   const link = `${origin}/doorcode/${parked.token}`
   const quote = check.permissionQuotes?.length
-    ? `\n\n> _"${check.permissionQuotes[0].text.slice(0, 180)}"_ — the guest, ${String(check.permissionQuotes[0].at).slice(0, 10)}\nRead that before you tap.`
+    ? `\n\n> _"${check.permissionQuotes[0].text.slice(0, 180)}"_ — the guest, ${String(check.permissionQuotes[0].at).slice(0, 10)}`
     : ''
 
-  // Also drop it in the approvals channel, so whoever approves sees it without being asked.
+  // Into the approvals channel, where an approver sees it without being asked. The release link is
+  // THEIRS: nobody releases their own request (releaseByToken), so it is not handed to the asker —
+  // unless the post failed, when forwarding it to an approver is the only way it moves.
   const posted = await postDoorCodeApproval({
     unit: check.unit || unit, building: check.building, address: check.address,
     verdict: check.verdict, headline: check.headline, occupancy: check.occupancy, note: check.note,
     quote: check.permissionQuotes?.[0] || null, taskToday: check.taskToday, vacancyScan: check.vacancyScan, calendar: check.calendar, confidence: check.confidence, arrivalWarning: check.arrivalWarning,
-    requestedBy: `@${userName}`, reason: null, link,
+    requestedBy: `@${userName}`, reason: room ? `asked in ${room}` : null, link,
   })
   if (posted.ok && posted.channelId && posted.ts && parked.requestId) {
     await attachSlackPost(parked.requestId, posted.channelId, posted.ts)
   }
-  const where = posted.ok ? `\n\n_Also posted in ${posted.channel} for approval._` : ''
+  const next = posted.ok
+    ? `Sent for approval in ${posted.channel}. When an approver releases it, the code comes to you by DM — never into a channel. Expires in 4 hours.`
+    : `I could not post it for approval (${posted.error}). Send this link to an approver — it works once and expires in 4 hours:\n${link}`
 
   const addr = check.address ? `\n📍 ${check.address}` : ''
-  return say(`✅ *${check.headline}*${addr}\n${check.note}${quote}\n\nTap to reveal the code (works once, expires in 4h):\n${link}${where}`)
+  return say(`✅ *${check.headline}*${addr}\n${check.note}${quote}\n\n${next}`)
 }
