@@ -19,6 +19,7 @@ import {
 import { expireStale, dispatchApproved } from '@/lib/slack-queue'
 import { botConnected } from '@/lib/slack'
 import { requireCron } from '@/lib/cron-auth'
+import { withRouteReceipt } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -54,14 +55,27 @@ async function run(req: NextRequest) {
   const blockedArrivals = await safe(runBlockedArrivalAlert())
   const marketBrief = await safe(runMarketBrief())
   const handover = await safe(runHandover())
-  const dispatched = await dispatchApproved().catch(() => ({ sent: 0, failed: 0 }))
+  // An outbox crash is NOT "nothing to send" (2026-09-28 audit #23) — it is reported as such.
+  const dispatched: { sent: number; failed: number; error?: string } =
+    await dispatchApproved().catch((e: any) => ({ sent: 0, failed: 0, error: String((e && e.message) || e).slice(0, 200) }))
+
+  // HONEST OK: false when the outbox crashed or any engine errored, naming which.
+  const engines: Record<string, any> = { readiness, labor, notable, walkIn, lateCleans, glitches, overtime, repeats, doorCodes, blockedArrivals, marketBrief, handover }
+  const errors = Object.keys(engines)
+    .filter(k => engines[k] && typeof engines[k] === 'object' && engines[k].error)
+    .map(k => k + ': ' + String(engines[k].error).slice(0, 120))
+  if (dispatched.error) errors.unshift('dispatch: ' + dispatched.error)
 
   return NextResponse.json({
-    ok: true, ranAt: new Date().toISOString(), expired,
+    ok: errors.length === 0, ranAt: new Date().toISOString(), expired,
     readiness, labor, notable, walkIn, lateCleans, glitches, overtime, repeats, doorCodes, blockedArrivals,
     marketBrief, handover, dispatched,
+    ...(errors.length ? { error: errors.join('; ').slice(0, 480) } : {}),
   })
 }
 
-export async function GET(req: NextRequest) { return run(req) }
-export async function POST(req: NextRequest) { return run(req) }
+// RECEIPT (2026-09-28): the registry has always said this job writes one; it never did. Named by
+// its registry key (lib/eve/automations.ts 'slack-alerts'), counting messages dispatched.
+const receipted = withRouteReceipt<NextRequest>('slack-alerts', run, { count: (b) => (b.dispatched && typeof b.dispatched.sent === 'number' ? b.dispatched.sent : undefined) })
+export async function GET(req: NextRequest) { return receipted(req) }
+export async function POST(req: NextRequest) { return receipted(req) }

@@ -91,5 +91,7 @@ async function run(req: NextRequest) {
     ms: Date.now() - started,
   })
 
-  return NextResponse.json({ ok: true, ...out })
+  // HONEST OK (2026-09-28): a conversations or messages failure was answered ok:true beside the
+  // error; the receipt above already said otherwise.
+  return NextResponse.json({ ...out, ok: !out.conversationsError && !out.messagesError })
 }

@@ -14,6 +14,7 @@ import { pullNotices } from '@/lib/reservation-pull'
 import { runNoticeDrafts } from '@/lib/notice-drafts'
 import { getTaskAutomation } from '@/lib/auto-inspections'
 import { requireCron } from '@/lib/cron-auth'
+import { withRouteReceipt } from '@/lib/automation-runs'
 
 // GMAIL DRAFTS RIDE THIS CRON (2026-09-18). vercel.json sits at the 40-cron Pro cap and Eve's
 // weekly review needed a line, so /api/cron/notice-drafts lost its own schedule. It used to fire at
@@ -44,11 +45,17 @@ async function run(req: NextRequest) {
         drafts = on ? await runNoticeDrafts({}) : { skipped: 'notice drafts are off' }
       } catch (e: any) { drafts = { ok: false, error: String(e?.message || e).slice(0, 160) } }
     }
-    return NextResponse.json({ ranAt: new Date().toISOString(), elapsed_ms: Date.now() - started, ...res, ...(drafts !== undefined ? { drafts } : {}) })
+    // An `error` beside ok:true is a configuration note ("no properties are switched on"), not a
+    // failure — carried as `note` so the run receipt stays honest in both directions.
+    const body: any = { ranAt: new Date().toISOString(), elapsed_ms: Date.now() - started, ...res, ...(drafts !== undefined ? { drafts } : {}) }
+    if (body.ok !== false && body.error) { body.note = body.error; delete body.error }
+    return NextResponse.json(body)
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
 }
 
-export async function GET(req: NextRequest) { return run(req) }
-export async function POST(req: NextRequest) { return run(req) }
+// RECEIPT (2026-09-28): one row per run with the notices filed.
+const receipted = withRouteReceipt<NextRequest>('reservation-notices', run, { count: (b) => (typeof b.created === 'number' ? b.created : undefined) })
+export async function GET(req: NextRequest) { return receipted(req) }
+export async function POST(req: NextRequest) { return receipted(req) }

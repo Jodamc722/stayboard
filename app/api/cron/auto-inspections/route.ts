@@ -10,11 +10,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { runAutoInspections, runLowReviewInspections, retireArrivalInspections } from '@/lib/auto-inspections'
 import { runPmRecurrence, pmRecurrenceRanWithin } from '@/lib/pm-recurrence'
 import { requireCron } from '@/lib/cron-auth'
+import { withRouteReceipt } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
-export async function GET(req: NextRequest) {
+// RECEIPT (2026-09-28): one row per real run (a preview writes none), counting inspections created.
+const receipted = withRouteReceipt<NextRequest>('auto-inspections', run, {
+  skipWhen: (req) => new URL(req.url).searchParams.get('preview') === '1',
+  count: (b) => (typeof b.created === 'number' ? b.created : undefined),
+})
+export async function GET(req: NextRequest) { return receipted(req) }
+
+async function run(req: NextRequest) {
   // The scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron). The spoofable
   // `x-vercel-cron` leniency is gone.
   const gate = await requireCron(req)

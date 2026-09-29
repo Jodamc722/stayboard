@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireCron } from '@/lib/cron-auth'
+import { withRouteReceipt } from '@/lib/automation-runs'
 import { notify } from '@/lib/notify'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { nextCheckInMap } from '@/lib/claim-turnover'
@@ -114,5 +115,7 @@ async function run(req: NextRequest) {
   }
 }
 
-export async function GET(req: NextRequest) { return run(req) }
-export async function POST(req: NextRequest) { return run(req) }
+// RECEIPT (2026-09-28), under the registry's key for this job (lib/eve/automations 'claims-nudge').
+const receipted = withRouteReceipt<NextRequest>('claims-nudge', run, { count: (b) => (typeof b.nudged === 'number' ? b.nudged : undefined) })
+export async function GET(req: NextRequest) { return receipted(req) }
+export async function POST(req: NextRequest) { return receipted(req) }

@@ -42,6 +42,8 @@ function parseJson(raw: string): any | null {
 // runSweep() adds seven more deterministic miners across ops, quality, guest comms, money, people,
 // portfolio shape and Eve's own failures — see lib/eve/sweep.ts for why those count records rather
 // than asking a model what is true.
+type LearnReceipt = { ok: boolean; itemCount?: number; detail?: any; error?: string | null }
+
 export async function POST(req: NextRequest) {
   // AUTH: the scheduler's bearer, or a signed-in admin pressing "Learn now" in Users & admin → Eve
   // (lib/cron-auth requireCron). It spends real money (the FAQ/complaint phase calls Anthropic),
@@ -52,6 +54,23 @@ export async function POST(req: NextRequest) {
     const skip = await tooSoon('eve-learn', 170)
     if (skip) return NextResponse.json({ ok: true, ...skip })
   }
+  // THE RECEIPT IS WRITTEN IN A FINALLY (2026-09-28 audit #9). It used to be the last line, so the
+  // three early returns (no model key, nothing to read, the knowledge upsert failing) and any throw
+  // left no run at all — the nights the learning went wrong were exactly the nights with no record.
+  const t0 = Date.now()
+  const receipt: LearnReceipt = { ok: false, error: 'the learning pass stopped before it finished' }
+  try {
+    return await learn(req, receipt)
+  } catch (e: any) {
+    receipt.ok = false
+    receipt.error = String(e?.message || e).slice(0, 300)
+    throw e
+  } finally {
+    await recordRun({ name: 'eve-learn', ms: Date.now() - t0, ...receipt })
+  }
+}
+
+async function learn(req: NextRequest, receipt: LearnReceipt): Promise<NextResponse> {
   const days = Math.min(120, Math.max(7, Number(new URL(req.url).searchParams.get('days')) || 60))
 
   // THE SWEEP RUNS FIRST, and deliberately does not need the model. It counts real records across
@@ -127,7 +146,10 @@ export async function POST(req: NextRequest) {
   catch (e: any) { audit = { ok: false, error: String(e?.message || e).slice(0, 200) } }
 
   const key = process.env.ANTHROPIC_API_KEY
-  if (!key) return NextResponse.json({ ok: true, sweep, ota, studied, vision, questions, lingo, audit, note: 'Deterministic sweep ran; the AI FAQ pass was skipped (no ANTHROPIC_API_KEY).' })
+  if (!key) {
+    Object.assign(receipt, { ok: true, error: null, itemCount: 0, detail: { sweep, studied, vision, questions, audit, note: 'AI FAQ pass skipped: no ANTHROPIC_API_KEY' } })
+    return NextResponse.json({ ok: true, sweep, ota, studied, vision, questions, lingo, audit, note: 'Deterministic sweep ran; the AI FAQ pass was skipped (no ANTHROPIC_API_KEY).' })
+  }
 
   const cutoff = new Date(Date.now() - days * 86400000).toISOString()
   const sb = supabaseAdmin()
@@ -157,6 +179,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (guestMsgs.length === 0 && reviewText.length === 0) {
+    Object.assign(receipt, { ok: true, error: null, itemCount: 0, detail: { sweep, studied, vision, questions, audit, note: 'no recent guest messages or reviews for the AI FAQ pass' } })
     return NextResponse.json({ ok: true, sweep, ota, studied, vision, questions, lingo, audit, note: 'Sweep ran. No recent guest messages or reviews for the AI FAQ pass.', learned: 0 })
   }
 
@@ -196,10 +219,14 @@ Generalize (don't repeat one guest's wording). Max 12 faqs, max 10 complaints. B
   let learned = 0
   if (rows.length) {
     const { error } = await sb.from('eve_knowledge').upsert(rows, { onConflict: 'id' })
-    if (error) return NextResponse.json({ error: `eve_knowledge upsert: ${error.message}. Run migration 008.` }, { status: 200 })
+    if (error) {
+      // A failed write is a failed run — it used to answer HTTP 200 and write no receipt at all.
+      Object.assign(receipt, { ok: false, error: 'eve_knowledge upsert: ' + error.message, detail: { sweep, studied, vision, questions, audit } })
+      return NextResponse.json({ ok: false, error: `eve_knowledge upsert: ${error.message}. Run migration 008.` }, { status: 500 })
+    }
     learned = rows.length
   }
-  recordRun({ name: 'eve-learn', ok: true, itemCount: learned, detail: { sweep, studied, vision, questions, learned, audit } })
+  Object.assign(receipt, { ok: true, error: null, itemCount: learned, detail: { sweep, studied, vision, questions, learned, audit } })
   return NextResponse.json({ ok: true, sweep, ota, studied, vision, questions, lingo, audit, learned, faqs: (parsed?.faqs || []).length, complaints: rows.filter(r => r.type === 'complaint').length, windowDays: days })
 }
 export const GET = POST

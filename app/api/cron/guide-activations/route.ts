@@ -14,6 +14,7 @@ import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireUser } from '@/lib/access'
 import { requireCron } from '@/lib/cron-auth'
+import { withRouteReceipt } from '@/lib/automation-runs'
 import { adminPasswordOk } from '@/lib/shareAuth'
 import { verifyEditToken } from '@/lib/edit-access'
 import { guideKey, normSlug, seedFor, todayIso, DOW_NAMES, type Guide, type Activation } from '@/lib/guide'
@@ -179,13 +180,23 @@ function slugOf(req: NextRequest): string {
 }
 
 // Vercel cron: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron).
-export async function GET(req: NextRequest) {
+// RECEIPT (2026-09-28): one row per scheduled run, counting activations synced.
+const receipted = withRouteReceipt<NextRequest>('guide-activations', cronRun, {
+  count: (b) => (Array.isArray(b.results) ? b.results.reduce((a: number, r: any) => a + (Number(r && r.synced) || 0), 0) : undefined),
+})
+export async function GET(req: NextRequest) { return receipted(req) }
+
+async function cronRun(req: NextRequest) {
   const gate = await requireCron(req)
   if (!gate.ok) return gate.res
   const slugs = str(new URL(req.url).searchParams.get('slugs') || slugOf(req)).split(',').map(normSlug).filter(Boolean)
   const results: any[] = []
   for (const s of slugs.slice(0, 10)) results.push({ slug: s, ...(await run(s)) })
-  return NextResponse.json({ ok: results.some(r => r.ok), results })
+  const bad = results.filter(r => !r.ok)
+  return NextResponse.json({
+    ok: results.some(r => r.ok), results,
+    ...(bad.length ? { error: bad.map(r => r.slug + ': ' + String(r.error || 'failed')).join('; ').slice(0, 300) } : {}),
+  })
 }
 
 // The "Sync now" button on the page: an active team member (the allowlist, not merely any

@@ -21,6 +21,7 @@ import { retrieveBreezewayTask, mapBreezewayTask, breezewayConfigured } from '@/
 import { monthTasks } from '@/lib/billing'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { requireCron } from '@/lib/cron-auth'
+import { withRouteReceipt } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -39,7 +40,11 @@ function shiftMonth(ym: string, n: number): string {
 // Auth: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron). Until 2026-08-20
 // this route had no check of any kind while running for up to five minutes, hammering the
 // Breezeway API and writing to two tables.
-export async function GET(req: NextRequest) {
+// RECEIPT (2026-09-28): the registry has always said this job writes one; it never did.
+const receipted = withRouteReceipt<NextRequest>('billing-detail', run, { count: (b) => (typeof b.done === 'number' ? b.done : undefined) })
+export async function GET(req: NextRequest) { return receipted(req) }
+
+async function run(req: NextRequest) {
   const gate = await requireCron(req)
   if (!gate.ok) return gate.res
   if (!breezewayConfigured()) return NextResponse.json({ ok: false, error: 'Breezeway not configured' })
@@ -47,7 +52,10 @@ export async function GET(req: NextRequest) {
   const month = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()).slice(0, 7)
   const started = Date.now()
   const BUDGET_MS = 250_000
-  let done = 0, failed = 0, remaining = 0
+  // `gone` = Breezeway answered 404: the task no longer exists, so it is not a failure — but it is
+  // counted, because it will be asked about again every night until the mirror forgets it.
+  let done = 0, failed = 0, gone = 0, remaining = 0
+  let firstError = ''
   const monthsTouched: string[] = []
 
   /** Which tasks in one month still have no billing detail, money-first. */
@@ -75,8 +83,9 @@ export async function GET(req: NextRequest) {
       if (Date.now() - started > BUDGET_MS) break
       const id = ids[i]
       let r: any
-      try { r = await retrieveBreezewayTask(id) } catch { failed++; continue }
-      if (!r?.ok || !r.data) { failed++; await sleep(120); continue }
+      try { r = await retrieveBreezewayTask(id) } catch (e: any) { failed++; if (!firstError) firstError = String(e?.message || e).slice(0, 160); continue }
+      if (r?.status === 404) { gone++; await sleep(120); continue }
+      if (!r?.ok || !r.data) { failed++; if (!firstError) firstError = 'Breezeway ' + (r?.status ?? '?') + ' on task ' + id; await sleep(120); continue }
       const t = r.data
       try {
         await db.from('breezeway_billing_details').upsert({
@@ -129,5 +138,11 @@ export async function GET(req: NextRequest) {
   }
   await setSetting(BACKFILL_KEY, cursor, 'billing-detail-cron')
 
-  return NextResponse.json({ ok: true, month, monthsTouched, backfillCursor: cursor, done, failed, remaining })
+  // HONEST OK (2026-09-28): a night where calls failed and nothing landed is a failure, not
+  // `ok: true` — that is what a dead token or a Breezeway outage looks like from here.
+  const ok = failed === 0 || done > 0
+  return NextResponse.json({
+    ok, month, monthsTouched, backfillCursor: cursor, done, failed, gone, remaining,
+    ...(ok ? {} : { error: failed + ' task detail call(s) failed and none landed — first: ' + firstError }),
+  })
 }

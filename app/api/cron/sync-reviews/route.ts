@@ -15,11 +15,16 @@ import { revalidateTag } from 'next/cache'
 import { syncReviewsDetailed } from '@/lib/guesty'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireCron } from '@/lib/cron-auth'
+import { withRouteReceipt } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
-export async function GET(req: NextRequest) {
+// RECEIPT (2026-09-28): one row per run with the reviews written.
+const receipted = withRouteReceipt<NextRequest>('sync-reviews', run, { count: (b) => (typeof b.kept === 'number' ? b.kept : undefined) })
+export async function GET(req: NextRequest) { return receipted(req) }
+
+async function run(req: NextRequest) {
   // The scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron). The old
   // `x-vercel-cron` header leniency is gone — it was spoofable by anyone.
   const gate = await requireCron(req)
