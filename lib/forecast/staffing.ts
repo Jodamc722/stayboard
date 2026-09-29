@@ -119,17 +119,24 @@ const median = (xs: number[]) => { const s = xs.slice().sort((a, b) => a - b); c
 export const STAFFING_BASIS = 'Confirmed checkouts on the books × the booking pickup learned by lead time, priced at the measured clean minutes by bedrooms and market plus prep, wrap and the day\'s route (travel assumed — no GPS), ÷ 414 minutes per person-day; rostered = housekeepers (not supervisors) Working or On Call on the Turnover Schedule roster over Homebase shifts. Vendor buildings and North are out.'
 
 // ── listings → market / vendor, shared by the strip rate and the grader ──────────────────────────
-async function listingMeta(): Promise<Record<string, { market: string; vendor: boolean }>> {
+type ListingMeta = Record<string, { market: string; vendor: boolean }>
+async function listingMetaRead(): Promise<{ meta: ListingMeta; truncated: boolean }> {
   const VENDOR = vendorRegex((await getOpsPresets()).vendorBuildings)
-  const { rows } = await pageRows<any>((a, b) => supabaseAdmin().from('guesty_listings')
+  const { rows, truncated } = await pageRows<any>((a, b) => supabaseAdmin().from('guesty_listings')
     .select('id,nickname,title,building,address_city').order('id').range(a, b), 4)
-  const out: Record<string, { market: string; vendor: boolean }> = {}
+  const out: ListingMeta = {}
   for (const l of rows) {
     const name = str(l.nickname || l.title) || 'Unit'
     const building = str(l.building)
     out[str(l.id)] = { market: String(marketOf(building, l.address_city, name) || 'Miami'), vendor: VENDOR.test(building) || VENDOR.test(name) }
   }
-  return out
+  return { meta: out, truncated }
+}
+async function listingMeta(): Promise<ListingMeta> { return (await listingMetaRead()).meta }
+
+/** A standard clean in a market — mid-size, floor, prep and wrap, no route — for a day nothing priced. */
+function standardPerClean(market: string): number {
+  return Math.max(PERFORMED_FLOOR_MIN, cleanMinutes(null, cleanTableFor(market))) + UNIT_OVERHEAD.prepMin + UNIT_OVERHEAD.wrapMin
 }
 
 /** Departure cleans and strips scheduled in [from, to] — one read for the strip rate and the grader. */
@@ -341,20 +348,25 @@ export async function snapshotForecasts(opts: { forecast?: StaffingForecast } = 
  * GRADE WHAT HAS HAPPENED: every ungraded 'cleans' / 'people_needed' forecast for a day before
  * today (ET, last 30 days) against the departure cleans that day actually finished.
  *   cleans         actual = departure cleans finished for that market and day (one per unit)
- *   people_needed  actual = ⌈actual cleans × the forecast's own minutes per clean ÷ 414⌉ — the
- *                  need the real day implied on the same yardstick; the people who actually
- *                  cleaned are kept beside it in meta.peopleWorked.
+ *   people_needed  actual = the people on those finished cleans (their assignees) — how many it
+ *                  really took (2026-09-29 review, nb-6). A day with cleans but no names on them
+ *                  cannot say, so that kind is left ungraded. The need the day implied on the
+ *                  forecast's own yardstick (⌈cleans × minutes per clean ÷ 414⌉, the standard
+ *                  minutes per clean when the forecast priced nothing) is kept in meta.impliedNeed.
  * A day on which the task mirror shows NO in-house departure clean at all is almost always a sync
- * gap, not a quiet day: it is left ungraded for a week before being graded as it stands.
+ * gap, not a quiet day: it is left ungraded for a week before being graded as it stands. Nothing is
+ * graded from a short read — a day cut off mid-read would be graded low for good.
  */
-export async function gradeForecasts(opts: { today?: string } = {}): Promise<{ ok: boolean; graded: number; held: number; missing?: boolean; error?: string }> {
+export async function gradeForecasts(opts: { today?: string } = {}): Promise<{ ok: boolean; graded: number; held: number; skipped?: number; missing?: boolean; error?: string }> {
   const today = opts.today || ymdET()
   const open = await ungradedBefore(today, ['cleans', 'people_needed'], { sinceDays: 30 })
   if (!open.ok) return { ok: false, graded: 0, held: 0, missing: open.missing, error: open.error }
   if (!open.rows.length) return { ok: true, graded: 0, held: 0 }
   const dates = Array.from(new Set(open.rows.map(r => str(r.for_date).slice(0, 10)))).sort()
-  const [meta, read] = await Promise.all([listingMeta(), cleanTasks(dates[0], dates[dates.length - 1])])
-  if (read.truncated && !read.rows.length) return { ok: false, graded: 0, held: 0, error: 'could not read the finished cleans' }
+  const [lm, read] = await Promise.all([listingMetaRead(), cleanTasks(dates[0], dates[dates.length - 1])])
+  if (read.truncated) return { ok: false, graded: 0, held: open.rows.length, error: 'the finished-cleans read came back short — nothing graded, the next run tries again' }
+  if (lm.truncated) return { ok: false, graded: 0, held: open.rows.length, error: 'the listings read came back short — nothing graded, the next run tries again' }
+  const meta = lm.meta
   // market|date → finished cleans (one per unit) and the people on them
   const acc: Record<string, { units: Record<string, true>; people: Record<string, true> }> = {}
   const dayTotal: Record<string, number> = {}
@@ -373,6 +385,7 @@ export async function gradeForecasts(opts: { today?: string } = {}): Promise<{ o
   }
   const grades: { id: number; predicted: number; actual: number; meta?: Record<string, any> }[] = []
   let held = 0
+  let skipped = 0
   for (const r of open.rows) {
     const date = str(r.for_date).slice(0, 10)
     if (!dayTotal[date] && daysBetween(date, today) < 7) { held++; continue }
@@ -382,11 +395,14 @@ export async function gradeForecasts(opts: { today?: string } = {}): Promise<{ o
     if (r.kind === 'cleans') {
       grades.push({ id: r.id, predicted: Number(r.predicted), actual: cleans })
     } else {
-      const mpc = Number(r.meta && r.meta.minutesPerClean) || 0
-      const need = cleans > 0 && mpc > 0 ? Math.ceil((cleans * mpc) / (Number(r.meta && r.meta.capacityMin) || PERSON_DAY_MIN)) : 0
-      grades.push({ id: r.id, predicted: Number(r.predicted), actual: need, meta: { ...(r.meta || {}), actualCleans: cleans, peopleWorked: people } })
+      if (cleans > 0 && people === 0) { skipped++; continue }
+      // A forecast made for a day with nothing booked priced nothing (minutesPerClean null): the
+      // standard clean for the market is the yardstick, not zero.
+      const mpc = Number(r.meta && r.meta.minutesPerClean) || standardPerClean(str(r.subject))
+      const impliedNeed = cleans > 0 ? Math.ceil((cleans * mpc) / (Number(r.meta && r.meta.capacityMin) || PERSON_DAY_MIN)) : 0
+      grades.push({ id: r.id, predicted: Number(r.predicted), actual: people, meta: { ...(r.meta || {}), actualCleans: cleans, peopleWorked: people, impliedNeed } })
     }
   }
   const g = await gradePredictions(grades)
-  return { ok: g.ok, graded: g.written, held, missing: g.missing, error: g.error }
+  return { ok: g.ok, graded: g.written, held, skipped: skipped || undefined, missing: g.missing, error: g.error }
 }
