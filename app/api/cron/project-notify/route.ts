@@ -1,10 +1,19 @@
-// PROJECT NOTIFICATIONS — the two scheduled passes.
+// PROJECT NOTIFICATIONS — one cron line, three passes chosen by the Eastern hour.
 //
-//   GET /api/cron/project-notify              every 15 min: the immediate emails (assigned, mentioned,
-//                                             comment, added), one message per person
-//   GET /api/cron/project-notify?digest=1     7:05am ET: due-tomorrow / overdue reminders are generated,
-//                                             then the morning digest goes out
-//   GET ?dry=1                                signed-in only: counts, nothing sent or stamped
+//   GET /api/cron/project-notify              every 30 min: the immediate emails (assigned, mentioned,
+//                                             comment, added), one message per person — plus, on
+//                                             the 6am ET runs, the recurring-projects pass, and on
+//                                             the 7am ET runs, the reminders + morning digest
+//   GET ?digest=1                             just the morning digest pass (by hand)
+//   GET ?recur=1                              just the recurring-projects pass (by hand)
+//   GET ?dry=1                                counts only, nothing sent, stamped or created
+//
+// ONE LINE, NOT THREE (2026-09-28). The morning digest (/api/cron/project-digest, 11:05 UTC) and
+// the recurring-projects pass (/api/cron/project-recur, 10:35 UTC) had cron lines of their own, both
+// pinned to UTC — so both drifted an hour earlier every winter. They now ride this line and key on
+// the EASTERN hour: recurrences at 6am (before the reminders, so a new 1:1 already exists when its
+// owner's digest is built), the digest at 7am. The recur pass is idempotent (its 6:13 and 6:43 runs
+// create nothing the second time); the digest keeps its 20-hour guard, so it goes once.
 //
 // Auth: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron); a dry run is
 // counts only and open to any active team member. Anonymous gets nothing — this sends email.
@@ -12,14 +21,49 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireUser } from '@/lib/access'
 import { requireCron, tooSoon } from '@/lib/cron-auth'
 import { withReceipt } from '@/lib/automation-runs'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { generateReminders, sendImmediate, sendDigest } from '@/lib/project-notify'
+import { runRecurrences } from '@/lib/project-templates'
+import { todayISO } from '@/lib/projects-shared'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
+const RECUR_HOUR_ET = 6
+const DIGEST_HOUR_ET = 7
+
+function hourET(): number {
+  const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(new Date()))
+  return h === 24 ? 0 : h
+}
+
+/** Reminders + the morning digest. Once a morning (20h guard); a dry run is never throttled. */
+async function digestPass(dry: boolean): Promise<any> {
+  if (!dry) { const skip = await tooSoon('project-digest', 20 * 60); if (skip) return { ok: true, digest: true, ...skip } }
+  const out = await withReceipt('project-digest', async () => {
+    const reminders = dry ? { dueSoon: -1, overdue: -1 } : await generateReminders()
+    const sent = await sendDigest({ dryRun: dry })
+    return { reminders, ...sent }
+  }, o => ({ itemCount: o.sent, detail: o }))
+  return { ok: true, digest: true, dry, ...out }
+}
+
+/** The next instance of every recurring project that is due. Dry = list what is due. */
+async function recurPass(dry: boolean): Promise<any> {
+  const today = todayISO()
+  if (dry) {
+    const { data } = await supabaseAdmin().from('projects').select('id,title,recurs').not('recurs', 'is', null).eq('archived', false).limit(200)
+    const due = ((data || []) as any[]).filter(p => p.recurs?.next_on && p.recurs.next_on <= today).map(p => ({ id: p.id, title: p.title, next_on: p.recurs.next_on }))
+    return { ok: true, recur: true, dry: true, today, due }
+  }
+  const out = await withReceipt('project-recur', () => runRecurrences(today), o => ({ itemCount: o.created.length, detail: o }))
+  return { ok: true, recur: true, today, ...out }
+}
+
 export async function GET(req: NextRequest) {
   const sp = new URL(req.url).searchParams
   const digest = sp.get('digest') === '1'
+  const recur = sp.get('recur') === '1'
   const dry = sp.get('dry') === '1'
   if (dry) {
     const g = await requireUser()
@@ -30,19 +74,26 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    if (digest) {
-      // Once a morning. Reminders are idempotent per day anyway; this stops a double digest.
-      if (!dry) { const skip = await tooSoon('project-digest', 20 * 60); if (skip) return NextResponse.json({ ok: true, ...skip }) }
-      const out = await withReceipt('project-digest', async () => {
-        const reminders = dry ? { dueSoon: -1, overdue: -1 } : await generateReminders()
-        const sent = await sendDigest({ dryRun: dry })
-        return { reminders, ...sent }
-      }, o => ({ itemCount: o.sent, detail: o }))
-      return NextResponse.json({ ok: true, digest: true, dry, ...out })
+    // A single pass by hand.
+    if (digest) return NextResponse.json(await digestPass(dry))
+    if (recur) return NextResponse.json(await recurPass(dry))
+
+    // The scheduled run: the morning pass for this Eastern hour (each in its own try, so a failed
+    // morning pass never stops the immediate emails), then the immediate emails.
+    const out: any = { ok: true, dry }
+    if (!dry) {
+      const h = hourET()
+      if (h === RECUR_HOUR_ET) {
+        try { out.recur = await recurPass(false) } catch (e: any) { out.recur = { ok: false, error: String(e?.message || e).slice(0, 300) } }
+      }
+      if (h === DIGEST_HOUR_ET) {
+        try { out.digest = await digestPass(false) } catch (e: any) { out.digest = { ok: false, error: String(e?.message || e).slice(0, 300) } }
+      }
+      const skip = await tooSoon('project-notify', 5)
+      if (skip) return NextResponse.json({ ...out, ...skip })
     }
-    if (!dry) { const skip = await tooSoon('project-notify', 5); if (skip) return NextResponse.json({ ok: true, ...skip }) }
-    const out = await withReceipt('project-notify', () => sendImmediate({ dryRun: dry }), o => ({ itemCount: o.sent, detail: o }))
-    return NextResponse.json({ ok: true, dry, ...out })
+    const imm = await withReceipt('project-notify', () => sendImmediate({ dryRun: dry }), o => ({ itemCount: o.sent, detail: o }))
+    return NextResponse.json({ ...out, ...imm })
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
