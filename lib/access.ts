@@ -88,8 +88,11 @@ export async function getAccess(): Promise<Access> {
       return base({ user, email })
     }
     if (!data) {
-      const { count } = await sb.from('app_users').select('email', { count: 'exact', head: true }).eq('status', 'active')
-      if (!count || count === 0) return base({ user, email, role: 'member', allowed: true, bootstrap: true, levels: ALL_FULL() })
+      // BOOTSTRAP only on a PROVEN empty allowlist (2026-09-28 audit, B-3). A failed or timed-out
+      // count comes back as { count: null, error } — it used to read as "empty" and hand a stranger
+      // every feature at full. Same rule as middleware.ts: an error is a no.
+      const { count, error: countErr } = await sb.from('app_users').select('email', { count: 'exact', head: true }).eq('status', 'active')
+      if (!countErr && count === 0) return base({ user, email, role: 'member', allowed: true, bootstrap: true, levels: ALL_FULL() })
       return base({ user, email })
     }
     if (data.status !== 'active') return base({ user, email })
