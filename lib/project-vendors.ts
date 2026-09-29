@@ -9,6 +9,7 @@
 // selects fewer columns.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { clearVendorsCache } from './staffing'
 import { type VendorRecord, VENDOR_TRADES, RATE_UNITS, CADENCES } from './projects-shared'
 
 const str = (v: any) => (typeof v === 'string' ? v.trim() : '')
@@ -121,6 +122,9 @@ export async function saveVendor(v: Record<string, any>, by?: string): Promise<{
       const retry = await sb.from('vendors').upsert(legacy, { onConflict: 'key' })
       if (retry.error) return { ok: false, error: retry.error.message }
     }
+    // Every path that reaches here wrote the row. lib/staffing's getVendors caches this table for a
+    // minute; a vendor saved from a project must show on the staffing and scheduler side next read.
+    clearVendorsCache()
     const saved = await getVendor(key)
     return saved ? { ok: true, vendor: saved } : { ok: false, error: 'Saved, but could not read it back.' }
   } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
