@@ -13,7 +13,9 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 const WEBHOOK_BASE = process.env.BREEZEWAY_WEBHOOK_URL || 'https://api.breezeway.io/public/webhook/v1'
-const RECEIVER_URL = 'https://stayboard-three.vercel.app/api/breezeway/webhook'
+// The app's own address, the same base every other link the app sends uses (was the old
+// stayboard-three alias, 2026-09-29). Only the admin-only ?subscribe=1 reads it.
+const RECEIVER_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '') + '/api/breezeway/webhook'
 
 // AT MOST ONE BUST EVERY 15 SECONDS PER INSTANCE (2026-09-29 review, R1-8). Events come in bursts —
 // a cleaner closing a unit fires started / checklist / finished within seconds, a morning's
