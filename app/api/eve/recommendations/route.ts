@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { decideRecommendation, gradeDue, scorecard, createRecommendation } from '@/lib/eve/recommendations'
 import { eveGate } from '../../agent/route'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -10,6 +11,7 @@ export const maxDuration = 120
 export async function GET(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const sp = new URL(req.url).searchParams
   const db = supabaseAdmin()
   let q = db.from('eve_recommendations').select('*').order('created_at', { ascending: false }).limit(200)
@@ -23,6 +25,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   const actor = String(gate.access.email || '')
 

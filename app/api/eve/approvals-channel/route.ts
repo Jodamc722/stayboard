@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getApprovalsChannel, setApprovalsChannel } from '@/lib/eve/approvals'
 import { getDirectory, botConnected, botHandle } from '@/lib/slack'
 import { eveGate } from '../../agent/route'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -13,6 +14,7 @@ export const maxDuration = 30
 export async function GET() {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const connected = await botConnected()
   let channels: any[] = []
   if (connected) {
@@ -32,6 +34,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   const res = await setApprovalsChannel(String(body?.channel || ''), String(gate.access.email || 'unknown'))
   return NextResponse.json(res, { status: res.ok ? 200 : 400 })

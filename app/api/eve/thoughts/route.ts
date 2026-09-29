@@ -10,7 +10,7 @@
 //        seen          marks ids seen, or everything when no ids are given
 //        ask_next_time raises that watch's rung override to 2
 import { NextRequest, NextResponse } from 'next/server'
-import { requireAdmin } from '@/lib/access'
+import { requireVrAdmin } from '@/lib/vr-gate'
 import { listThoughts, readSeen, isUnseen, markSeen, doThought, dismissThought, askNextTime, allObserving, unseenCount } from '@/lib/eve/thoughts'
 import { getAgentSettings } from '@/lib/eve/agent-mode'
 
@@ -20,7 +20,7 @@ export const maxDuration = 60
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 
 export async function GET(req: NextRequest) {
-  const gate = await requireAdmin('admin')
+  const gate = await requireVrAdmin('admin')
   if (!gate.ok) return gate.res
   const email = str(gate.access.email).toLowerCase()
   const sp = new URL(req.url).searchParams
@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireAdmin('admin')
+  const gate = await requireVrAdmin('admin')
   if (!gate.ok) return gate.res
   const by = str(gate.access.email).toLowerCase() || 'admin'
   const body = await req.json().catch(() => ({} as any))

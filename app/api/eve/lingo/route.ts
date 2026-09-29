@@ -7,6 +7,7 @@
 import { NextResponse } from 'next/server'
 import { getLingo, learnLingo } from '@/lib/eve/voice'
 import { eveGate } from '../../agent/route'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -14,6 +15,7 @@ export const maxDuration = 120
 export async function GET() {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const lingo = await getLingo()
   return NextResponse.json({
     ok: true,
@@ -26,6 +28,7 @@ export async function GET() {
 export async function POST() {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const res = await learnLingo()
   return NextResponse.json(res, { status: res.ok ? 200 : 400 })
 }

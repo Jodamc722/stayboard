@@ -8,6 +8,7 @@ import { postDoorCodeApproval, postApprovalOutcome } from '@/lib/eve/approvals'
 import { dmUser } from '@/lib/slack'
 import { eveGate } from '../../agent/route'
 import { doorCodePolicy } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -16,12 +17,14 @@ export const maxDuration = 60
 export async function GET() {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   return NextResponse.json({ ok: true, pending: await listPending(20) })
 }
 
 export async function POST(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   const email = String(gate.access.email || '')
 

@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auditMemory, applyMemoryDecision } from '@/lib/eve/memory-audit'
 import { eveGate } from '../../agent/route'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -9,12 +10,14 @@ export const maxDuration = 120
 export async function GET() {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   return NextResponse.json({ ok: true, ...(await auditMemory()) })
 }
 
 export async function POST(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   const op = String(body?.op || '')
   if (op !== 'expire' && op !== 'merge' && op !== 'keep') {

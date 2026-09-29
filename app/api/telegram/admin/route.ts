@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { eveGate } from '../../agent/route'
 import { isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { botConfigured, webhookSecret, getMe, getWebhookInfo, setWebhook, deleteWebhook, redact } from '@/lib/telegram'
 import { listContacts, listRooms, approveContact, blockContact, setRoomStatus } from '@/lib/eve/telegram'
@@ -25,6 +26,7 @@ function originOf(req: NextRequest): string {
 export async function GET(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
 
   const configured = botConfigured()
   const hasSecret = !!webhookSecret()
@@ -71,6 +73,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const access = gate.access
   if (!(isSuperadmin(access.email) || access.role === 'admin')) {
     return NextResponse.json({ error: 'forbidden', message: 'Only an admin can approve Telegram contacts.' }, { status: 403 })

@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getEvents, setEvents, upcomingEvents, stormRisk } from '@/lib/eve/signals'
 import { eveGate } from '../../agent/route'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -11,6 +12,7 @@ export const maxDuration = 30
 export async function GET(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const sp = new URL(req.url).searchParams
   const [all, upcoming, weather] = await Promise.all([
     getEvents(),
@@ -23,6 +25,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   if (!Array.isArray(body?.events)) return NextResponse.json({ error: 'events array required' }, { status: 400 })
   const clean = body.events

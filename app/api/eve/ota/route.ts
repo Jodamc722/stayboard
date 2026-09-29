@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { eveGate } from '../../agent/route'
 import { loadOtaPlaybook, saveOtaCell, resetOtaCell, syncOtaPlaybook, openOtaQuestions } from '@/lib/ota-playbook-server'
 import { OTA_CHANNELS, OTA_TOPICS, otaChannelOf, otaTopicOf, playbookGaps } from '@/lib/ota-playbook'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -17,6 +18,7 @@ const canEdit = (access: any) => access?.role === 'admin'
 export async function GET() {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const [{ playbook, overrides, memoryMap, lastSync }, open] = await Promise.all([loadOtaPlaybook(), openOtaQuestions()])
   const overridden: Record<string, true> = {}
   for (const ch of OTA_CHANNELS) for (const t of OTA_TOPICS) if (overrides[ch] && (overrides[ch] as any)[t.key]) overridden[`${ch}|${t.key}`] = true
@@ -32,6 +34,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   if (!canEdit(gate.access)) return NextResponse.json({ error: 'forbidden', message: 'Only an admin edits the playbook.' }, { status: 403 })
   const body = await req.json().catch(() => ({} as any))
   const by = String(gate.access.email || '')

@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getOperatingModel, renderOperatingModel, askCalibrationQuestions, applyCalibrationAnswer } from '@/lib/eve/operating-model'
 import { eveGate } from '../../agent/route'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -15,6 +16,7 @@ export const maxDuration = 60
 export async function GET() {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const m = await getOperatingModel()
   return NextResponse.json({
     ok: true,
@@ -27,6 +29,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   if (body?.op === 'ask') {
     const r = await askCalibrationQuestions()

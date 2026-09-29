@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { listAudits, decideAudit, runAudit } from '@/lib/eve/audit'
 import { eveGate } from '../../agent/route'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -9,6 +10,7 @@ export const maxDuration = 300
 export async function GET(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const sp = new URL(req.url).searchParams
   const items = await listAudits({ status: sp.get('status') || 'open', limit: Number(sp.get('limit')) || 120 })
   return NextResponse.json({ ok: true, items })
@@ -17,6 +19,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   const by = String(gate.access.email || 'unknown')
 

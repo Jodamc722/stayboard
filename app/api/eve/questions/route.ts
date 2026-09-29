@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { listQuestions, answerQuestion, dismissQuestion, generateQuestions, countOpenQuestions } from '@/lib/eve/questions'
 import { eveGate } from '../../agent/route'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -9,6 +10,7 @@ export const maxDuration = 120
 export async function GET(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const sp = new URL(req.url).searchParams
   // ?count=1 — the badge and the Command Center card. One digit, no rows.
   if (sp.get('count')) return NextResponse.json({ ok: true, count: await countOpenQuestions() })
@@ -18,6 +20,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   const by = String(gate.access.email || 'unknown')
   const op = String(body?.op || '')

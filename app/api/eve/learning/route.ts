@@ -19,6 +19,7 @@ import { getGoogleReadGrant } from '@/lib/google-read'
 import { getSetting } from '@/lib/app-settings'
 import { probeForMemory, runLearningAudit, learningSnapshot, setProbeActive, pruneMemory } from '@/lib/eve/learning-audit'
 import { pageRows } from '@/lib/db-page'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -51,6 +52,7 @@ async function latest(table: string, col: string, mod?: (q: any) => any): Promis
 export async function GET() {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const db = supabaseAdmin()
 
   const [syncRows, runs, watch, google] = await Promise.all([
@@ -147,6 +149,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   const by = String(gate.access.email || '')
 

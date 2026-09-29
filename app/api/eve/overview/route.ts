@@ -20,6 +20,7 @@ import { getAgentSettings } from '@/lib/eve/agent-mode'
 import { allAutomationStates } from '@/lib/eve/automations'
 import { lastRuns } from '@/lib/automation-runs'
 import { todayET } from '@/lib/eve/ctx'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -31,6 +32,7 @@ const DESKS = ['slack-watch', 'on-watch', 'ops-desk', 'scheduler-shadow', 'eve-a
 export async function GET() {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const email = String(gate.access.email || '').toLowerCase()
   const day = todayET()
 

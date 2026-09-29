@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { listReviews, latestReviewPlans, runReview } from '@/lib/eve/review'
 import { recordRun } from '@/lib/automation-runs'
 import { eveGate } from '../../agent/route'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -13,6 +14,7 @@ export const maxDuration = 300
 export async function GET(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const n = Math.min(Math.max(Number(new URL(req.url).searchParams.get('n')) || 5, 1), 20)
   const [reviews, open] = await Promise.all([listReviews(n), latestReviewPlans()])
   return NextResponse.json({ ok: true, reviews, open })
@@ -21,6 +23,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   const focus = String(body?.focus || '').trim().slice(0, 300)
   const res = await runReview({ trigger: 'manual', focus: focus || undefined, by: String(gate.access.email || '') })

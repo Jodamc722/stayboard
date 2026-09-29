@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { saveMemory, normKind, normScope, normWeight, MEMORY_KINDS, personSource, STAFF_MAX_WEIGHT } from '@/lib/eve/memory'
 import { isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { eveGate } from '../../agent/route'
 
 export const dynamic = 'force-dynamic'
@@ -15,6 +16,7 @@ export const maxDuration = 30
 export async function GET(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const sp = new URL(req.url).searchParams
   const db = supabaseAdmin()
   let q = db.from('eve_memory').select('*').order('weight', { ascending: false }).order('updated_at', { ascending: false }).limit(400)
@@ -32,6 +34,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   const db = supabaseAdmin()
   const actor = String(gate.access.email || '')

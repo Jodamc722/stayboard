@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { EVE_VOICE_KEY } from '@/lib/eve/prompt'
 import { eveGate } from '../../agent/route'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 20
@@ -11,6 +12,7 @@ export const maxDuration = 20
 export async function GET() {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const v = await getSetting<any>(EVE_VOICE_KEY, null)
   return NextResponse.json({ ok: true, text: v && typeof v === 'object' ? String(v.text || '') : '' })
 }
@@ -18,6 +20,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
+  if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   // app_settings.value is TEXT and a BARE SCALAR round-trips to the fallback — always wrap.
   const res = await setSetting(EVE_VOICE_KEY, { text: String(body?.text || '').slice(0, 2000) }, String(gate.access.email || ''))
