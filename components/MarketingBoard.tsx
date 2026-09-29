@@ -484,7 +484,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   const applyPreset = (k: PresetKey) => {
     setPreset(k)
     if (k === 'custom') return
-    const today = (data && data.today) || new Date().toISOString().slice(0, 10)
+    const today = (data && data.today) || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
     const r = rangeFor(k, today)
     setFromD(r.from); setToD(r.to)
     load(r.from, r.to, true)
