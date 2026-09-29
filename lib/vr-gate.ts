@@ -15,13 +15,19 @@ import { NextResponse } from 'next/server'
 import { requireUser, requireAdmin, isSuperadmin, type Access, type Gate } from './access'
 
 /**
- * True for every login except one that holds ONLY the hotel. An empty list is what lib/access
- * base() hands the legacy, bootstrap and fail-closed-owner shapes — treated as VR, exactly as
- * before business units existed. The owner is VR whatever his row says.
+ * True for every login except one that holds ONLY the hotel. The owner is VR whatever his row says.
+ * An EMPTY list is only trusted from the two shapes that legitimately have one — the first-login
+ * bootstrap and the owner's fail-closed path (both `bootstrap: true`). A real row resolves to an
+ * empty list when it has no 'vr' and its hotel role did not resolve (garden_role unset or unknown,
+ * or a cached roles read error), which is a hotel-only login and is refused like one (2026-09-29
+ * review). Rows from before business units have no `businesses` value and resolve to ['vr'].
  */
-export function isVrLogin(access: Pick<Access, 'businesses' | 'email'>): boolean {
+export function isVrLogin(access: Pick<Access, 'businesses' | 'email' | 'bootstrap'>): boolean {
+  if (isSuperadmin(access.email)) return true
   const units = access.businesses
-  return !(Array.isArray(units) && units.length > 0 && !units.includes('vr') && !isSuperadmin(access.email))
+  if (!Array.isArray(units)) return true
+  if (units.length === 0) return !!access.bootstrap
+  return units.includes('vr')
 }
 
 export const HOTEL_ONLY_MESSAGE = 'This is part of the vacation-rental side. Your login is for the Garden Hotel only.'
