@@ -9,7 +9,7 @@ import { requireLevel } from '@/lib/access'
 import { markReservationSensitive } from '@/lib/sensitive'
 import { cronAllowed, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
-import { modelFor } from '@/lib/ai-models'
+import { modelPairFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 import { flushDeferred } from '@/lib/eve/agent-mode'
 
@@ -189,7 +189,10 @@ export async function POST(req: NextRequest) {
   }
   const batch = todo.slice(0, limit)
 
-  let scanned = 0, flagged = 0
+  // The model and the one to retry on come from the registry (lib/ai-models), once per run.
+  const { model, fallback } = await modelPairFor('sentiment')
+  let scanned = 0, flagged = 0, failed = 0, rateLimited = false
+  let lastFail = ''
   for (const c of batch) {
     try {
       const { data: msgs } = await sb
@@ -224,9 +227,9 @@ Return STRICT minified JSON only, no markdown:
         // (Jon: "make sure we do not lose performance where it matters"). Sonnet 5 is the newer
         // generation of the model that ran here yesterday and a third cheaper; the real saving is
         // above, in not rescanning a thread every time the front desk replies.
-        body: JSON.stringify({ model: await modelFor('sentiment'), max_tokens: 400, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
+        body: JSON.stringify({ model, max_tokens: 400, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
       })
-      if (r.status === 429) break // hit the rate limit - stop; the rest stays in `remaining` for the next run
+      if (r.status === 429) { rateLimited = true; break } // hit the rate limit - stop; the rest stays in `remaining` for the next run
       let d: any = await r.json().catch(() => ({}))
       // If the account cannot see the Sonnet 5 alias, fall back to yesterday's model rather than
       // skip the scan — the cost is the smaller problem.
@@ -234,14 +237,14 @@ Return STRICT minified JSON only, no markdown:
         const r2 = await aiFetch('sentiment', {
           method: 'POST',
           headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-          body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 400, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
+          body: JSON.stringify({ model: fallback, max_tokens: 400, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
         })
         d = await r2.json().catch(() => ({}))
-        if (!r2.ok) continue
-      } else if (!r.ok) continue
+        if (!r2.ok) { failed++; lastFail = `model ${r2.status}: ${str(d?.error?.message).slice(0, 120)}`; continue }
+      } else if (!r.ok) { failed++; lastFail = `model ${r.status}: ${str(d?.error?.message).slice(0, 120)}`; continue }
       const text = Array.isArray(d?.content) ? d.content.map((x: any) => x?.text || '').join('').trim() : ''
       const parsed = parseJson(text)
-      if (!parsed) continue
+      if (!parsed) { failed++; lastFail = 'the model answer was not readable JSON'; continue }
 
       const score = Math.max(1, Math.min(5, Math.round(Number(parsed.score) || 3)))
       const band = score <= 2 ? 'negative' : score >= 4 ? 'positive' : 'neutral'
@@ -300,9 +303,14 @@ Return STRICT minified JSON only, no markdown:
     } catch { /* skip this conversation, continue the batch */ }
   }
 
-  recordRun({ name: 'sentiment', ok: true, itemCount: scanned, detail: { scanned, flagged, remaining: Math.max(0, todo.length - scanned), windowDays: days } })
+  // AN HONEST RECEIPT (2026-09-28 audit, 03 #23). A run where every model call failed used to be
+  // recorded as ok with "scanned 0", so the watchdog saw a healthy job while nothing was being read.
+  const remaining = Math.max(0, todo.length - scanned)
+  const allFailed = batch.length > 0 && scanned === 0 && failed > 0
+  const error = allFailed ? `every model call failed (${failed}) — ${lastFail}` : null
+  recordRun({ name: 'sentiment', ok: !allFailed, itemCount: scanned, detail: { scanned, flagged, failed, rateLimited, remaining, windowDays: days }, error })
 
-  return NextResponse.json({ ok: true, scanned, flagged, remaining: Math.max(0, todo.length - scanned), windowDays: days, flushed, watched })
+  return NextResponse.json({ ok: !allFailed, scanned, flagged, failed, rateLimited, remaining, windowDays: days, flushed, watched, ...(error ? { error } : {}) })
 }
 
 export const GET = POST
