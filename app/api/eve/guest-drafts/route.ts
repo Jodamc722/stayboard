@@ -107,6 +107,8 @@ export async function POST(req: NextRequest) {
   const r = await runExecutor('guest_reply_send', { conversationId, body: text }, { by: 'chat', actor: by, human: true })
   await db.from('eve_actions').update({ status: r.ok ? 'executed' : 'failed', decided_by: by, decided_at: nowISO, executed_at: r.ok ? nowISO : null, result: { by, ok: r.ok, done: r.ok ? r.summary : undefined, error: r.error, edited: text !== str(pl.draft).trim() } }).eq('id', id)
   await recordAgentAction('guest_reply_send', { rung: 2, allowed: r.ok, mode: 'act', reason: r.ok ? `sent by ${by} from the draft` : `send by ${by} failed: ${r.error}`, summary: r.summary, ref: r.ref || id, by: 'chat', actor: by, countAs: r.ok ? 'action' : 'none' })
+  // The thread leaves Needs reply now, not at the next guest-comms run (lib/response-times).
+  if (r.ok) { try { const { refreshConversationStats } = await import('@/lib/response-times'); await refreshConversationStats(conversationId) } catch { /* the next run catches up */ } }
   if (r.ok) await afterAct('guest_reply_send', { ok: true, done: r.summary, ref: r.ref }, { by: str(pl.by || 'chat'), actor: by, summary: r.summary, metric: 'sentiment_negative' })
   return NextResponse.json(r.ok ? { ok: true, done: r.summary } : { ok: false, error: r.error || r.summary }, { status: r.ok ? 200 : 502 })
 }
