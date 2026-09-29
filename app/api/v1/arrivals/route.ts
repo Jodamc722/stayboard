@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   const g = await v1Gate(req, 'reservations'); if (!g.ok) return g.res
   const date = ymd(req.nextUrl.searchParams.get('date'), todayET())
-  const { data } = await supabaseAdmin().from('guesty_reservations').select(RES_SEL).eq('check_in', date).order('listing_name').limit(1000)
+  const { data } = await supabaseAdmin().from('guesty_reservations').select(RES_SEL).eq('check_in', date).order('listing_name').limit(1000) // deliberate cap: one day's check-ins across ~290 listings — never near 1,000
   const rows = ((data as any[]) || []).filter(r => !/cancel|declin|inquir|expire/i.test(String(r.status || ''))).map(reservationShaper(g.canMoney))
   return json(rows, { date, count: rows.length })
 }

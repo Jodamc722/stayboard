@@ -104,7 +104,7 @@ export async function GET(req: NextRequest) {
   if (!scope) return NextResponse.json({ error: 'scope not found' }, { status: 404 })
 
   const [oi, ol, hist, revs, lab] = await Promise.all([
-    db.from('audit_items').select('id,listing_id,room,kind,title,qty,note,photo_url,severity,status,details,created_at').in('kind', ['replace', 'add']).in('status', LIVE_STATUS).in('listing_id', scope.ids).order('created_at', { ascending: false }).limit(1000),
+    db.from('audit_items').select('id,listing_id,room,kind,title,qty,note,photo_url,severity,status,details,created_at').in('kind', ['replace', 'add']).in('status', LIVE_STATUS).in('listing_id', scope.ids).order('created_at', { ascending: false }).limit(1000), // deliberate cap: the scope's newest 1,000 order lines — a review sheet an owner reads line by line
     db.from('guesty_listings').select('id,nickname,title,building').in('id', scope.ids).limit(300),
     // Everything ever flagged for these units - this is what turns "buy a new one" into
     // "we have already repaired this three times".

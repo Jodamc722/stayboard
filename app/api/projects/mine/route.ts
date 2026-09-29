@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
       // Assignee wins: being on the hook outranks being copied in, if somehow both are recorded.
       if (roleByTask[k] !== 'assignee') roleByTask[k] = String(a.role || 'assignee')
     }
-    const own = board ? await sb.from('project_steps').select('id').eq('project_id', board.id).neq('status', 'done').limit(1000) : { data: [] as any[] }
+    const own = board ? await sb.from('project_steps').select('id').eq('project_id', board.id).neq('status', 'done').limit(1000) : { data: [] as any[] } // deliberate cap: one person's own board, open tasks only — nowhere near 1,000, and the task read below takes at most 1,000 ids anyway
     let taskIds = Array.from(new Set([
       ...((asg || []) as any[]).filter(a => !visible || visible.has(String(a.project_id))).map(a => String(a.task_id)),
       ...((own.data || []) as any[]).map(t => String(t.id)),
