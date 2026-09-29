@@ -1942,17 +1942,9 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const d = await gather('GM')
   const db = supabaseAdmin()
   const today = d.today
-  // LOOKING AHEAD (audit 2026-09-28): the brief promised "booked-ahead" and printed six trailing
-  // numbers. Three forward ones, started now so they run alongside the reads below — each one is
-  // optional, and a failure prints a dash, never takes the brief down.
   const { buildPacing, paceWord } = await import('./forecast/pacing')
   const { buildStaffingForecast } = await import('./forecast/staffing')
   const { buildDueCalendar } = await import('./pm-calendar')
-  const aheadP = Promise.all([
-    buildPacing().catch(() => null),
-    buildStaffingForecast({ days: 14 }).catch(() => null),
-    buildDueCalendar(today, { horizonDays: 30 }).catch(() => null),
-  ])
   const dateNice = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())
   const sheet: any = d.sheet || {}
 
@@ -2040,9 +2032,19 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       String(tod.overdueWork),
       'Aging work turns into guest issues — Ops Command carries the list.'))
   }
+  // LOOKING AHEAD (audit 2026-09-28): the brief promised "booked-ahead" and printed six trailing
+  // numbers. Three forward ones — read AFTER the engine reads above so they never contend with them,
+  // in parallel with each other, and capped at a minute: this send shares one five-minute budget
+  // with every other morning brief. Each is optional; a failure or a timeout prints a dash.
+  const capped = <T,>(p: Promise<T>): Promise<T | null> =>
+    Promise.race([p.catch(() => null), new Promise<null>(res => setTimeout(() => res(null), 60_000))])
+  const [pace, staff, pm] = await Promise.all([
+    capped(buildPacing()),
+    capped(buildStaffingForecast({ days: 14 })),
+    capped(buildDueCalendar(today, { horizonDays: 30 })),
+  ])
   // A SHORT DAY INSIDE THREE DAYS is still fixable — a shift added, the on-call called in — so it
   // is a decision for today. Further out it waits on the Looking ahead card below.
-  const [pace, staff, pm] = await aheadP
   const soonShort = staff ? staff.short.filter(x => x.lead <= 3) : []
   if (soonShort.length) {
     const gap = soonShort.reduce((a, x) => a + Math.max(0, x.needed - x.rostered), 0)
