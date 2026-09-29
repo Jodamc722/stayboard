@@ -9,6 +9,7 @@
 // One builder, three variants (Miami / Broward / full portfolio) — market is the only parameter.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { pageRows } from './db-page'
 import { marketOf, type Market } from './segments'
 import { rollupBuilding, ratingToStars, ratingAsGuestSaw } from './optimize-score'
 import { REVIEW_THEMES } from './health-score'
@@ -1821,28 +1822,23 @@ async function weekCompliance(): Promise<{
   let totalBillable = 0, billableKnown = false
   const cleanersNoTimecard: string[] = []
   try {
-    const pageAll = async (build: () => any, maxPages = 12): Promise<any[]> => {
-      const out: any[] = []
-      for (let i = 0; i < maxPages; i++) {
-        const { data, error } = await build().range(i * 1000, i * 1000 + 999)
-        if (error) break
-        const rows = (data || []) as any[]
-        out.push(...rows)
-        if (rows.length < 1000) break
-      }
-      return out
-    }
-    const [lr3, rr3, cl3] = await Promise.all([
+    // Paged through lib/db-page, on an id tiebreaker. A page that failed used to end the read as if
+    // the week were complete, so a short read printed a low "cleans closed" rate that looked real.
+    // Now a short read blanks that one line (it shows "—"); billable and timecards still compute.
+    const [lr3, rr3Read, cl3Read] = await Promise.all([
       db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(2000),
-      pageAll(() => db.from('guesty_reservations').select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
+      pageRows<any>((a, b) => db.from('guesty_reservations').select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
         .gte('check_out', winFrom).lte('check_out', winTo)
         .not('status', 'in', '("canceled","cancelled","declined")')
-        .order('check_out', { ascending: false })),
-      pageAll(() => db.from('breezeway_tasks_sync')
+        .order('check_out', { ascending: false }).order('id').range(a, b)),
+      pageRows<any>((a, b) => db.from('breezeway_tasks_sync')
         .select('reference_property_id,name,type_department,status,scheduled_date,finished_at,assignees,assignee_name,finished_by_name')
         .gte('scheduled_date', winFrom).lte('scheduled_date', winTo)
-        .order('scheduled_date', { ascending: false })),
+        .order('scheduled_date', { ascending: false }).order('id').range(a, b)),
     ])
+    const complianceShort = rr3Read.truncated || cl3Read.truncated
+    if (complianceShort) console.error('[ops-brief] weekCompliance: a paged read stopped early — the cleans-closed line reads "—"')
+    const rr3 = rr3Read.rows, cl3 = cl3Read.rows
     const presets3 = await getOpsPresets()
     const VEN3 = vendorRegex(presets3.vendorBuildings)
     const vendorOf: Record<string, boolean> = {}
@@ -1875,6 +1871,8 @@ async function weekCompliance(): Promise<{
       for (const w of who) didClean[w.trim().toLowerCase()] = true
       if (!vendorOf[String(t.reference_property_id)]) winBzClosed++
     }
+    // A rate off part of the week is not a rate: zero checkouts is how the brief prints "—".
+    if (complianceShort) { winCheckouts = 0; winBzClosed = 0 }
     // Cleaners with no Homebase timecard — claimed ONLY when the timecard weeks are COMPLETE, so
     // a rate-limited Homebase morning can never manufacture a list of "missing" people.
     try {
