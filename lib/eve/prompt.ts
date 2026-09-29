@@ -238,9 +238,3 @@ HEADLINE SNAPSHOT (a glance only — use tools for anything real):
 ${JSON.stringify(p.headline)}`
   return { stable, dynamic }
 }
-
-/** The single-string form, for anything that still wants one. Same content as the two blocks. */
-export function buildSystem(p: PromptParts): string {
-  const b = buildSystemBlocks(p)
-  return b.stable + '\n\n' + b.dynamic
-}

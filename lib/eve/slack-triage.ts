@@ -49,11 +49,6 @@ export type Lang = 'es' | 'en'
 export { tagPosition }
 export type { TagPosition }
 
-/** Is the @mention the FIRST thing in the message? (front or middle — anything but the end.) */
-export function tagIsFront(rawText: string, botUserId: string): boolean {
-  return tagPosition(rawText, botUserId) !== 'end'
-}
-
 // Function words common in Spanish and rare-to-absent in English operational chatter.
 // Deliberately excludes what the two languages share or borrow (no, si, hotel, total, final).
 const ES_WORDS = /\b(que|qué|para|pero|porque|cuando|cuándo|donde|dónde|como|cómo|esta|está|están|este|esto|esos|esas|con|del|los|las|una|unos|unas|por|muy|más|también|ya|todo|toda|todos|hay|hace|hacer|tiene|tienen|tengo|puedo|puede|pueden|necesito|necesita|gracias|favor|ahora|hoy|mañana|ayer|listo|lista|terminé|termino|terminado|limpieza|limpio|limpia|habitación|cuarto|unidad|llave|llaves|puerta|agua|luz|aire|cama|toalla|toallas|sábanas|revisar|revisé|arreglar|arreglado|problema|reporte|entrada|salida|huésped|huespedes|trabajo|equipo|edificio|piso)\b/gi
