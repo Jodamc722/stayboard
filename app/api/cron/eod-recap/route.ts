@@ -48,6 +48,7 @@ import { etDay } from '@/lib/clean-day'
 import { sendGmail } from '@/lib/gmail-send'
 import { withRouteReceipt, recordRun } from '@/lib/automation-runs'
 import { cronAllowed } from '@/lib/cron-auth'
+import { atEasternHour } from '@/lib/et-clock'
 import { buildStaffingForecast, snapshotForecasts, gradeForecasts, type StaffingForecast } from '@/lib/forecast/staffing'
 
 export const dynamic = 'force-dynamic'
@@ -83,7 +84,16 @@ async function signedIn(): Promise<string | null> {
   return g && g.ok && g.access.email ? String(g.access.email).toLowerCase() : null
 }
 
-export const GET = withRouteReceipt<NextRequest>('eod-recap', send, { skipWhen: (req) => { const sp = new URL(req.url).searchParams; return !!sp.get('preview') || !!sp.get('test') } })
+const receipted = withRouteReceipt<NextRequest>('eod-recap', send, { skipWhen: (req) => { const sp = new URL(req.url).searchParams; return !!sp.get('preview') || !!sp.get('test') } })
+
+// 8:15PM EASTERN ALL YEAR (2026-09-29). vercel.json fires this at 00:15 AND 01:15 UTC (the next UTC
+// day); on the scheduler's own call, the one that is not 8pm in New York stops here — before the
+// receipt, the forecast ledger or any send (lib/et-clock). A person's preview, test or re-send
+// carries no bearer and is never skipped.
+export async function GET(req: NextRequest) {
+  if (cronAllowed(req).viaSecret && !atEasternHour(20)) return NextResponse.json({ ok: true, skipped: 'daylight-saving twin — this job runs at 8pm Eastern' })
+  return receipted(req)
+}
 
 /** A slow optional step must never cost the email (or this route's own receipt) its time budget. */
 const within = <T,>(ms: number, p: Promise<T>, fallback: T): Promise<T> =>

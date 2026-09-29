@@ -122,7 +122,7 @@
     },
     {
       "path": "/api/cron/eod-recap",
-      "schedule": "15 0 * * *"
+      "schedule": "15 0,1 * * *"
     },
     {
       "path": "/api/cron/project-notify",
