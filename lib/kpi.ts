@@ -214,9 +214,10 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       db.from('guesty_sync_status').select('entity,last_sync_at').order('entity'),
       // OPEN WORK, the honest version. Requests alone under-report badly — the same rule the day
       // sheet uses counts open glitches plus Breezeway tasks from the last 45 days that nobody
-      // has finished. Kept as head-counts so it costs nothing.
-      db.from('glitches').select('id', { count: 'exact', head: true })
-        .not('status', 'in', '("done","resolved","closed")'),
+      // has finished. Open glitches are ROWS now, not a head count, so a filtered board can count
+      // only its own (a few hundred at most — three columns).
+      pageRows<any>((a, b) => db.from('glitches').select('id,listing_id,market')
+        .not('status', 'in', '("done","resolved","closed")').order('id').range(a, b), 4),
       pageRows<any>((a, b) => db.from('breezeway_tasks_sync').select('id,reference_property_id')
         .gte('scheduled_date', addDays(today, -45)).lte('scheduled_date', today)
         .is('finished_at', null)
@@ -262,7 +263,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     else if (!glPrevOk) partial.push('glitches before ' + addDays(glOld, 1) + ' not read — vs prior left blank')
     if (welcome.truncated || welcomePrev.truncated) partial.push('the call log read came back short — welcome rate left blank')
     if (welcomeDue == null) partial.push('welcome calls due could not be read')
-    if (openWork.truncated || openTaskRes.truncated) partial.push('open work read came back short — the count is a floor')
+    if (openWork.truncated || openTaskRes.truncated || openGlitchRes.truncated) partial.push('open work read came back short — the count is a floor')
 
     // ---------------------------------------------------------------- today
     const live = reservations.filter(r => !isCancelled(r.status) && LIVE_RES.indexOf(str(r.status).toLowerCase()) >= 0 && inScope(r.listing_id))
@@ -462,8 +463,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         // On time = finished on the day it was scheduled for. That is the promise we make.
         if (t.finished_at) {
           onTimeBase += 1
-          const fin = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(t.finished_at))
-          if (fin <= day) onTime += 1
+          if (etDayOf(t.finished_at) <= day) onTime += 1
         }
       }
       const dept = (k: string) => byDept[k] || { scheduled: 0, done: 0, minutes: 0, cost: 0 }
@@ -494,8 +494,10 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     // `null` = that read failed, which the board shows as a dash rather than a confident zero.
     const welcomeDueNow: number | null = welcomeDue ? welcomeDue.filter(d => inScope(d.listingId)).length : null
 
+    // TIMESTAMPS BUCKET BY THE EASTERN DAY (2026-09-28 audit, P2-4): slicing the UTC string put a
+    // message or a glitch from after 8pm ET on the next day — and across a window's edge.
     const sentimentBlock = (a: string, b: string) => {
-      const rows = sentiment.filter(s => inWin(dOf(s.last_message_at), a, b) && (!s.listing_id || inScope(s.listing_id)))
+      const rows = sentiment.filter(s => inWin(etDayOf(s.last_message_at), a, b) && (!s.listing_id || inScope(s.listing_id)))
       const bad = rows.filter(s => !!s.dissatisfied).length
       const issues: Record<string, number> = {}
       for (const s of rows) {
@@ -513,9 +515,15 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     const openUnhappy = sentiment.filter(s => s.dissatisfied && str(s.status || 'open') === 'open').length
     const awaitingReply = sentiment.filter(s => s.awaiting_reply && str(s.status || 'open') === 'open').length
 
+    // A glitch is in this board's scope by its LISTING when it has one; one with no listing can only
+    // be placed by market, so a building filter leaves it out (2026-09-28 audit, P2-8 — the block
+    // filtered by market alone, so a building view showed the whole market's glitches).
+    const glitchInScope = (g: any): boolean => g.listing_id
+      ? inScope(g.listing_id)
+      : buildingFilter === 'all' && (marketFilter === 'all' || str(g.market) === marketFilter)
+    const GLITCH_DONE = ['done', 'resolved', 'closed']
     const glitchBlock = (a: string, b: string) => {
-      const rows = (glitchRows.rows || []).filter((g: any) => inWin(dOf(g.created_at), a, b)
-        && (marketFilter === 'all' || str(g.market) === marketFilter))
+      const rows = (glitchRows.rows || []).filter((g: any) => inWin(etDayOf(g.created_at), a, b) && glitchInScope(g))
       // Refunds only. Cost recovery was retired 2026-08-27 — Jon: "cost recovery is not
       // something we track, the refund amount is."
       const cost = rows.reduce((s: number, g: any) => s + num(g.refund_approved), 0)
@@ -523,12 +531,15 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       for (const g of rows) { const k = str(g.category) || 'Other'; cats[k] = (cats[k] || 0) + 1 }
       return {
         opened: rows.length,
-        closed: rows.filter((g: any) => str(g.status) === 'closed').length,
+        // Closed = any finished state — the same three "open" excludes. Only `closed` was counted,
+        // so a glitch marked done or resolved was neither open nor closed.
+        closed: rows.filter((g: any) => GLITCH_DONE.indexOf(str(g.status).toLowerCase()) >= 0).length,
         cost: Math.round(cost),
         categories: Object.keys(cats).map(k => ({ category: k, n: cats[k] })).sort((x, y) => y.n - x.n).slice(0, 6),
       }
     }
-    const openGlitchesNow = Number(openGlitchRes.count) || 0
+    // Open glitches NOW, in this board's scope (P2-8: it was a portfolio-wide head count on every view).
+    const openGlitchesNow = ((openGlitchRes.rows || []) as any[]).filter(glitchInScope).length
 
     // PUNCHES, NOT THE CSV LEDGER (Jon, 2026-09-01: one source). This block read the uploaded
     // labor_timesheets table — a parallel ledger with its own math that could and did disagree
@@ -587,7 +598,8 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     const noBz = noBreezewayRegex((await getOpsPresets()).vendorBuildings)
     const openTasks = ((openTaskRes.rows || []) as any[]).filter(t => {
       const li = lmap[String(t.reference_property_id)]
-      return !li || !noBz.test(li.building + ' ' + li.name)
+      // In this board's scope, like the glitches beside them on the Open work tile.
+      return (!li || !noBz.test(li.building + ' ' + li.name)) && inScope(t.reference_property_id)
     }).length
     const openWorkTotal = openRows.length + openGlitchesNow + openTasks
 
@@ -646,7 +658,8 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     for (let d = from; d <= to; d = addDays(d, 1)) dayRows.push({ date: d, done: work.byDay[d] || 0 })
 
     const negatives = ((lowReviews.data || []) as any[])
-      .filter(r => isLowReview(r.rating, r.channel) && inScope(r.listing_id))
+      // The read starts at UTC midnight (hours early); the window is the Eastern day.
+      .filter(r => isLowReview(r.rating, r.channel) && inScope(r.listing_id) && etDayOf(r.created_at) >= from)
       .slice(0, 12)
       .map(r => {
         const li = lmap[String(r.listing_id)]
