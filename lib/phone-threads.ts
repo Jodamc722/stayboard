@@ -6,6 +6,7 @@
 // the booking it matched. The Messages list shows phone threads beside Guesty threads; the thread
 // page at /messages/phone/<number> shows the whole history and lets the team text back.
 import 'server-only'
+import { pageRows } from './db-page'
 import { formatPhone, phoneDigits } from './talkroute'
 
 export type PhoneThreadSummary = {
@@ -95,9 +96,13 @@ export async function loadPhoneThread(sb: any, numberRaw: string): Promise<{
     sb.from('talkroute_calls').select('id,direction,call_at,talkroute_number,external_name,duration,result,recording:raw->>recording,match_kind,reservation_id').eq('external_number', number).order('call_at', { ascending: false }).limit(200),
   ])
   const convoIds = (convos || []).map((c: any) => String(c.id))
-  const { data: texts } = convoIds.length
-    ? await sb.from('talkroute_texts').select('id,conversation_id,direction,body,user_email,sent_at,attachments').in('conversation_id', convoIds).order('sent_at', { ascending: true }).limit(1000)
-    : { data: [] }
+  // The whole thread, paged oldest first: a capped read would drop the NEWEST texts, the ones the
+  // person opened the thread to read.
+  const textRead = convoIds.length
+    ? await pageRows<any>((a, b) => sb.from('talkroute_texts').select('id,conversation_id,direction,body,user_email,sent_at,attachments').in('conversation_id', convoIds).order('sent_at', { ascending: true }).order('id', { ascending: true }).range(a, b), 5)
+    : { rows: [] as any[], truncated: false }
+  if (textRead.truncated) console.error('phone-threads: the text read for one number stopped early — the thread is incomplete')
+  const texts = textRead.rows
   const events: PhoneEvent[] = []
   for (const m of (texts || [])) events.push({ kind: 'sms', id: String(m.id), at: iso(m.sent_at), direction: m.direction === 'outgoing' ? 'outgoing' : 'incoming', body: String(m.body || ''), by: String(m.user_email || ''), conversationId: String(m.conversation_id), attachments: Array.isArray(m.attachments) ? m.attachments : [] })
   for (const v of (vms || [])) events.push({ kind: 'voicemail', id: String(v.id), at: iso(v.created_at), duration: Number(v.duration) || 0, transcript: String(v.transcript || ''), transcribing: !!v.transcribing, audio: String(v.audio_link || ''), callerName: String(v.caller_name || '') })
