@@ -159,7 +159,7 @@ export async function POST(req: NextRequest) {
       audit = ins.data && ins.data[0]
       if (auditType === 'quality' && body.carryForward) { try { await carryForwardItems(db, listingId, audit.id) } catch {} }
     }
-    try { await db.from('property_audits').update({ audit_type: auditType }).eq('id', audit.id); (audit as any).audit_type = auditType } catch {}
+    try { const { error: tErr } = await db.from('property_audits').update({ audit_type: auditType }).eq('id', audit.id); if (tErr) console.error('audit createAudit: audit_type update failed', tErr.message); (audit as any).audit_type = auditType } catch (e) { console.error('audit createAudit: audit_type update failed', e) }
     const url = req.nextUrl.origin + '/audit/' + audit.share_code
     return NextResponse.json({ ok: true, audit, url })
   }
@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
       if (ins.error) return NextResponse.json({ error: ins.error.message }, { status: 500 })
       audit = ins.data && ins.data[0]
     }
-    try { await db.from('property_audits').update({ audit_type: auditType, building: name, scope: 'unit' }).eq('id', audit.id); (audit as any).audit_type = auditType } catch {}
+    try { const { error: tErr } = await db.from('property_audits').update({ audit_type: auditType, building: name, scope: 'unit' }).eq('id', audit.id); if (tErr) console.error('audit createProspectAudit: audit_type update failed', tErr.message); (audit as any).audit_type = auditType } catch (e) { console.error('audit createProspectAudit: audit_type update failed', e) }
     const url = req.nextUrl.origin + '/audit/' + audit.share_code
     return NextResponse.json({ ok: true, audit, url })
   }
@@ -213,7 +213,7 @@ export async function POST(req: NextRequest) {
       if (ins.error) return NextResponse.json({ error: ins.error.message }, { status: 500 })
       audit = ins.data && ins.data[0]
     }
-    try { await db.from('property_audits').update({ audit_type: auditType, building, scope: 'building' }).eq('id', audit.id); (audit as any).audit_type = auditType } catch {}
+    try { const { error: tErr } = await db.from('property_audits').update({ audit_type: auditType, building, scope: 'building' }).eq('id', audit.id); if (tErr) console.error('audit createBuildingAudit: audit_type update failed', tErr.message); (audit as any).audit_type = auditType } catch (e) { console.error('audit createBuildingAudit: audit_type update failed', e) }
     const url = req.nextUrl.origin + '/audit/' + audit.share_code
     return NextResponse.json({ ok: true, audit, url })
   }
@@ -230,8 +230,11 @@ export async function POST(req: NextRequest) {
     if (!name) return NextResponse.json({ error: 'name required' }, { status: 400 })
     try {
       const ex = await db.from('tag_taxonomy').select('id').ilike('name', name).limit(1)
-      if (!(ex.data && ex.data[0])) await db.from('tag_taxonomy').insert({ name, approved: true, source: 'walkthrough' })
-    } catch {}
+      if (!(ex.data && ex.data[0])) {
+        const { error: tErr } = await db.from('tag_taxonomy').insert({ name, approved: true, source: 'walkthrough' })
+        if (tErr) console.error('audit learnTag: tag_taxonomy insert failed', tErr.message)
+      }
+    } catch (e) { console.error('audit learnTag: tag_taxonomy write failed', e) }
     return NextResponse.json({ ok: true })
   }
 
@@ -349,9 +352,12 @@ export async function POST(req: NextRequest) {
         const ex = await db.from('listing_faq').select('id,question').eq('listing_id', _lid).limit(500)
         let dup = false
         for (const e of (ex.data || []) as any[]) if (e.question && String(e.question).toLowerCase() === String(row.title).toLowerCase()) dup = true
-        if (!dup) await db.from('listing_faq').insert({ listing_id: _lid, category: room, question: row.title, answer: _ans.slice(0, 4000), photo_url: row.photo_url, source: 'audit', status: 'draft', created_by: 'audit-capture' })
+        if (!dup) {
+          const { error: fErr } = await db.from('listing_faq').insert({ listing_id: _lid, category: room, question: row.title, answer: _ans.slice(0, 4000), photo_url: row.photo_url, source: 'audit', status: 'draft', created_by: 'audit-capture' })
+          if (fErr) console.error('audit addItem: listing_faq draft insert failed', fErr.message)
+        }
       }
-    } catch {}
+    } catch (e) { console.error('audit addItem: listing_faq draft write failed', e) }
     return NextResponse.json({ ok: true, item: ins.data && ins.data[0] })
   }
 
