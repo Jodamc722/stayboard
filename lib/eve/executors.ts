@@ -485,13 +485,14 @@ async function applyUndo(u: Undo, by: string): Promise<{ ok: boolean; summary: s
       const r = await cancelBreezewayTask(u.taskId)
       if (r.ok) {
         try { await db.from('breezeway_tasks_sync').update({ status: 'cancelled' }).eq('id', str(u.taskId)) } catch { /* fine */ }
-        bustBoards()
         // THE LINKS GO WITH IT (2026-09-28 audit, F25). A task made for a glitch pointed the glitch at
         // itself, and an inspection wrote its exactly-once row. Left behind, the glitch pointed at a
         // cancelled task and the automation never filed that inspection again. Only rows that still
         // point at THIS task are touched.
         if (u.glitchId) { try { await db.from('glitches').update({ breezeway_task_id: null }).eq('id', str(u.glitchId)).eq('breezeway_task_id', str(u.taskId)) } catch { /* the board shows it next sync */ } }
         if (u.autoInspectionKey) { try { await db.from('auto_inspections').delete().eq('reservation_id', str(u.autoInspectionKey)).eq('task_id', str(u.taskId)) } catch { /* the cron still sees it as filed */ } }
+        // After the mirror AND the links: the Command Center and the Scheduler read both.
+        bustBoards()
       }
       return r.ok ? { ok: true, summary: `cancelled task #${u.taskId}` } : { ok: false, summary: `could not cancel #${u.taskId}`, error: str(r.text).slice(0, 160) }
     }
