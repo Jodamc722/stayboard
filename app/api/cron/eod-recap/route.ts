@@ -81,6 +81,10 @@ async function signedIn(): Promise<string | null> {
 
 export const GET = withRouteReceipt<NextRequest>('eod-recap', send, { skipWhen: (req) => { const sp = new URL(req.url).searchParams; return !!sp.get('preview') || !!sp.get('test') } })
 
+/** A slow optional step must never cost the email (or this route's own receipt) its time budget. */
+const within = <T,>(ms: number, p: Promise<T>, fallback: T): Promise<T> =>
+  Promise.race([p.catch(() => fallback), new Promise<T>(res => setTimeout(() => res(fallback), ms))])
+
 /** Record tonight's forecast and grade what has passed — never throws, always leaves a receipt. */
 async function nightlyLedger(fc: StaffingForecast | null): Promise<Record<string, any>> {
   const t0 = Date.now()
@@ -127,7 +131,7 @@ async function send(req: NextRequest) {
     const [sheetT, sheetTm, fcBuilt] = await Promise.all([
       buildDaySheet(today, 'all').catch(() => null) as Promise<any>,
       buildDaySheet(tomorrow, 'all').catch(() => null) as Promise<any>,
-      buildStaffingForecast({ from: tomorrow, days: 14, fresh: true }).catch(() => null),
+      within<StaffingForecast | null>(60_000, buildStaffingForecast({ from: tomorrow, days: 14, fresh: true }), null),
     ])
     fc = fcBuilt
     let shiftsTm: any[] = []; let shiftsLoaded = true
@@ -420,13 +424,13 @@ async function send(req: NextRequest) {
     const cc = test ? [] : STANDING_CC.filter(c => !to.includes(c))
     const r = await sendGmail({ fromEmail, to, cc, subject: (test ? '[TEST] ' : '') + subject, html })
     // After the email, never before it: tonight's forecast into the ledger, and the grades.
-    const ledger = test ? null : await nightlyLedger(fc)
+    const ledger = test ? null : await within(90_000, nightlyLedger(fc), { timedOut: true } as Record<string, any>)
     return NextResponse.json({ ok: r.ok, to: to.length, subject, error: r.error, counts: { revCleans, revenue, hkHours, hkPayroll, hkProfit, supPayroll, mtRev, mtPayroll, done: doneToday.length }, ledger })
   } catch (e: any) {
     // A recap that did not send looks like a quiet night — say so, to the owner.
     await sendGmail({ fromEmail: OWNER, to: [OWNER], subject: '⚠️ End-of-day recap did not send', html: `<p style="${FONT};font-size:14px">The EOD recap for ${today} failed to build: ${esc(String(e?.message || e)).slice(0, 300)}</p>` }).catch(() => null)
     // The forecast ledger does not depend on the email — a failed recap still records and grades.
-    const ledger = (preview || test) ? null : await nightlyLedger(fc)
+    const ledger = (preview || test) ? null : await within(90_000, nightlyLedger(fc), { timedOut: true } as Record<string, any>)
     return NextResponse.json({ ok: false, error: String(e?.message || e), ledger }, { status: 500 })
   }
 }
