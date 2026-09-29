@@ -107,7 +107,7 @@ export async function auditDuplicates(opts: {
   days?: number
   today?: string
 } = {}): Promise<DupAudit> {
-  const today = opts.today || new Date().toISOString().slice(0, 10)
+  const today = opts.today || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())   // Eastern, not UTC
   const days = Math.min(365, Math.max(1, opts.days ?? 30))
   const from = new Date(Date.parse(today + 'T12:00:00Z') - days * 86400000).toISOString().slice(0, 10)
   const base: DupAudit = {
@@ -239,7 +239,8 @@ export type StrayRun = {
 }
 
 export async function closeStrayInspections(opts: { dryRun?: boolean; olderThanDays?: number; maxPerRun?: number } = {}): Promise<StrayRun> {
-  const today = new Date().toISOString().slice(0, 10)
+  // Eastern, not UTC: after 8pm ET the UTC date is tomorrow, and the cutoff moved a day early.
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
   // THE WINDOW IS AN OPERATOR SETTING, AND IT IS SEVEN DAYS, NOT ONE.
   // Jon, 2026-08-31: "this again is 7 day old or more". The first cut defaulted to a single day,
   // which does not mean "stray" — it means "Tuesday's inspection that somebody is walking on

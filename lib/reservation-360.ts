@@ -94,7 +94,9 @@ export type Stay360 = {
 export async function loadReservation360(db: any, reservationId: string, opts: { withContact?: boolean } = {}): Promise<Stay360 | null> {
   const r: any = await soft(db.from('guesty_reservations').select('*').eq('id', reservationId).maybeSingle(), null)
   if (!r) return null
-  const today = new Date().toISOString().slice(0, 10)
+  // Eastern "today": after 8pm ET the UTC date is already tomorrow, and the stay panel called
+  // tomorrow's checkout "past" and tomorrow's arrival "in house".
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
   const gKey = guestKeyOf(r.guest_email, r.guest_id, r.guest_name)
   // The booking row often has no conversation_id; the conversation mirror links back by
   // reservation_id (backfilled in migration 007), so fall back to that.
