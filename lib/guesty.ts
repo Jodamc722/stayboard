@@ -417,7 +417,10 @@ function sinceFilter(iso: string): string {
   return `&filters=${encodeURIComponent(JSON.stringify(f))}`
 }
 
-const FIELDS = encodeURIComponent('status guest listing checkIn checkOut checkInDateLocalized checkOutDateLocalized nightsCount money source customFields confirmationCode createdAt note tags')
+// lastUpdatedAt (2026-09-28 audit #3): without it raw.lastUpdatedAt was always empty, so the owner
+// audit's "changed / canceled after its statement was built" check could never fire and the
+// incremental early-stop below was dead code. Rows pick it up on their next pull.
+const FIELDS = encodeURIComponent('status guest listing checkIn checkOut checkInDateLocalized checkOutDateLocalized nightsCount money source customFields confirmationCode createdAt lastUpdatedAt note tags')
 
 /**
  * Targeted re-pull: refresh specific reservations from Guesty RIGHT NOW (folio edits, fee
@@ -444,14 +447,26 @@ export async function pullReservationsByIds(ids: string[]): Promise<number> {
   return total
 }
 
-export async function syncReservations(maxPages = 40, since: string | null = null): Promise<number> {
+export async function syncReservations(
+  maxPages = 40,
+  since: string | null = null,
+  opts: { windowDays?: number; stamp?: boolean } = {},
+): Promise<number> {
   const sb = supabaseAdmin()
   let total = 0
-  // FULL sync (since=null) pulls the complete CURRENT window — every reservation checking out
-  // from 45 days ago onward — sorted by check-in, so current/upcoming bookings are ALWAYS captured
-  // regardless of when they were last updated (a stale in-house booking would otherwise be pushed
-  // past the page cap by more-recently-updated records). Incremental keeps using lastUpdatedAt.
-  const windowIso = new Date(Date.now() - 3 * 86_400_000).toISOString()
+  // FULL sync (since=null) pulls the complete CURRENT window — every reservation checking out from
+  // `windowDays` ago onward (3 by default, for the Sync buttons; 45 for the daily full resync, so
+  // money edits to stays that ended weeks ago are repaired) — sorted by check-out, so current and
+  // upcoming bookings are ALWAYS captured regardless of when they were last updated. Incremental
+  // (since set) keeps using lastUpdatedAt.
+  const windowDays = Math.max(1, Math.min(120, Math.round(Number(opts.windowDays) || 3)))
+  const windowIso = new Date(Date.now() - windowDays * 86_400_000).toISOString()
+  // ONLY A RUN THAT READ EVERYTHING CHANGED SINCE THE WATERMARK MAY MOVE IT (audit #20). A
+  // full-window pull stamping `reservations` told the 5-minute feed "all caught up" when it had
+  // never looked at edits to stays outside its window — so pressing Sync during an incremental
+  // outage silently skipped every past-stay edit made during it. Default: incremental runs stamp,
+  // full-window runs do not; the 5-minute cron passes stamp:true for its one bootstrap run.
+  const stamp = opts.stamp ?? !!since
   const filter = since ? sinceFilter(since) : `&filters=${encodeURIComponent(JSON.stringify([{ field: 'checkOut', operator: '$gte', value: windowIso }]))}`
   const sort = since ? '-lastUpdatedAt' : 'checkOut'
   for (let page = 0; page < maxPages; page++) {
@@ -468,7 +483,7 @@ export async function syncReservations(maxPages = 40, since: string | null = nul
     if (since && results.some((r: any) => (r.lastUpdatedAt || r.updatedAt) && new Date(r.lastUpdatedAt || r.updatedAt).getTime() < new Date(since).getTime())) break
     if (rows.length < 100) break
   }
-  await recordSync('reservations', total)
+  if (stamp) await recordSync('reservations', total)
   return total
 }
 

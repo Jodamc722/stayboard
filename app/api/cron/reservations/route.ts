@@ -3,9 +3,12 @@ import { syncReservations } from '@/lib/guesty'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { bustOpsDay } from '@/lib/ops-day'
 import { requireCron } from '@/lib/cron-auth'
+import { withRouteReceipt } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+// 300, not 60 (2026-09-28 audit #13): a recovery pass pages up to 80 times; a function killed at
+// 60s writes nothing, so a feed stuck in recovery would never have cleared its own error.
+export const maxDuration = 300
 
 // KEEP THE BOOKING FEED FRESH.
 //
@@ -22,27 +25,41 @@ async function run(req: NextRequest) {
   const started = Date.now()
   const full = new URL(req.url).searchParams.get('full') === '1'
   let since: string | null = null
+  let mode: 'incremental' | 'recovery' | 'bootstrap' | 'full-window' = 'full-window'
   if (!full) {
     const sb = supabaseAdmin()
-    const { data: st } = await sb.from('guesty_sync_status')
+    const { data: st, error: stErr } = await sb.from('guesty_sync_status')
       .select('last_sync_at,last_error').eq('entity', 'reservations').maybeSingle()
-    // 30-minute overlap so a booking that lands mid-run is never skipped. A previous error means the
-    // watermark cannot be trusted, so fall back to the full window.
-    if (st && st.last_sync_at && !st.last_error) since = new Date(new Date(st.last_sync_at).getTime() - 30 * 60_000).toISOString()
+    if (st && st.last_sync_at) {
+      // 30-minute overlap so a booking that lands mid-run is never skipped. A recorded error means
+      // the watermark cannot be trusted to the minute — but it is still a floor, so the overlap
+      // widens to 6 hours instead of falling back to the whole 80-page window on every 5-minute run
+      // (which is how one bad error could wedge the feed: every run too long, the error never
+      // cleared).
+      mode = st.last_error ? 'recovery' : 'incremental'
+      const backMin = st.last_error ? 6 * 60 : 30
+      since = new Date(new Date(st.last_sync_at).getTime() - backMin * 60_000).toISOString()
+    } else if (!stErr) {
+      // No watermark at all yet: one full-window run that is allowed to set it.
+      mode = 'bootstrap'
+    }
   }
   try {
-    const n = await syncReservations(since ? 20 : 80, since)
+    const n = await syncReservations(mode === 'incremental' ? 20 : 80, since, { stamp: mode !== 'full-window' })
     // SALATO BOOKING WATCH (Jon, 2026-09-24): every new Salato booking into #ccs-and-jon with
     // @channel, and a one-night booking flagged as not permitted and chased until it is canceled.
     // Right after the sync, so the post is minutes behind Guesty. See lib/salato-watch.ts.
     let salato: any = null
     try { const { runSalatoWatch } = await import('@/lib/salato-watch'); const w = await runSalatoWatch({ fromCron: true }); salato = { announced: w.announced, oneNight: w.oneNight, nudged: w.nudged, resolved: w.resolved, error: w.error } } catch (e: any) { salato = { error: String(e?.message || e).slice(0, 120) } }
-    return NextResponse.json({ ranAt: new Date().toISOString(), mode: since ? 'incremental' : 'full-window', reservations: n, salato, elapsed_ms: Date.now() - started })
+    return NextResponse.json({ ranAt: new Date().toISOString(), mode, reservations: n, salato, elapsed_ms: Date.now() - started })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
 }
 
-async function runAndBust(req: NextRequest) { const res = await run(req); bustOpsDay(); return res }
+// RECEIPT (2026-09-28): every run, so "did the booking feed run" has an answer that is not an
+// inference from guesty_sync_status.
+const receipted = withRouteReceipt<NextRequest>('reservations', run, { count: (b) => (typeof b.reservations === 'number' ? b.reservations : undefined) })
+async function runAndBust(req: NextRequest) { const res = await receipted(req); bustOpsDay(); return res }
 export async function GET(req: NextRequest) { return runAndBust(req) }
 export async function POST(req: NextRequest) { return runAndBust(req) }
