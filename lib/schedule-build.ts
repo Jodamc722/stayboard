@@ -9,7 +9,7 @@ import { getListingCalendar } from '@/lib/guesty'
 import { unstable_cache } from 'next/cache'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pageRows } from '@/lib/db-page'
-import { marketOf, type Market } from '@/lib/segments'
+import { marketOf, MARKETS, type Market } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorNameOf, noBreezewayRegex } from '@/lib/ops-presets'
 import { sameGuest } from '@/lib/same-guest'
@@ -425,7 +425,6 @@ for (const c of cleans) { if (c.syncStatus === 'guesty-only' && c.guestOut && !c
 // through that day (arrived before, checks out after) = cleaning an occupied unit.
 for (const c of cleans) { if (!c.date || c.vendor) continue; const occ = (outs || []).some((r: any) => { const st = String(r.status || '').toLowerCase(); if (!(st.includes('confirm') || st.includes('check'))) return false; if (String(r.listing_id) !== c.listingId) return false; const ci = String(r.check_in || '').slice(0, 10); const co = String(r.check_out || '').slice(0, 10); return !!ci && !!co && ci < c.date && co > c.date; }); if (occ) c.walkInRisk = true }
 
-const MARKETS: Market[] = ['Miami', 'Broward', 'North']
 const dayList: string[] = []
 for (let d = start; d <= end; d = addDays(d, 1)) dayList.push(d)
 // DEDUPE by listingId+date: the moved/orphan/manual passes can re-add a clean already present from

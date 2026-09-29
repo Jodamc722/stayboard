@@ -19,7 +19,7 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { pageRows } from './db-page'
-import { buildingOf, marketOf, type Market } from './segments'
+import { buildingOf, marketOf, MARKETS, type Market } from './segments'
 import { blockedUnits, type BlockedRun } from './blocked-units'
 import { isLiveStay } from './stay-status'
 import { loadBehind } from './ops-behind'
@@ -250,9 +250,6 @@ export type MarketPriority = {
   overdue: NamedUnit[]
 }
 
-/** Always report every market, even the quiet ones — a missing market reads as a broken report. */
-const ALL_MARKETS = ['Miami', 'Broward', 'North']
-
 /**
  * Jon: "short and to the point, top priorities per market." The first version obeyed the "short"
  * half and failed the rest — it posted *"1 guest booked into a unit that is out of service"* with
@@ -286,10 +283,11 @@ export async function marketPriorities(): Promise<MarketPriority[]> {
     }
     return markets[m]
   }
-  for (const m of ALL_MARKETS) bucket(m)
+  // Always report every market, even the quiet ones — a missing market reads as a broken report.
+  for (const m of MARKETS) bucket(m)
 
   const marketFor = (unit: string, known?: string | null): string => {
-    if (known && ALL_MARKETS.indexOf(known) >= 0) return known
+    if (known && (MARKETS as string[]).indexOf(known) >= 0) return known
     const b = buildingOf(null, unit)
     try { return marketOf(b, null, unit) as Market } catch { return 'Miami' }
   }
@@ -325,7 +323,7 @@ export async function marketPriorities(): Promise<MarketPriority[]> {
     })
   }
 
-  return ALL_MARKETS.map(m => markets[m]).filter(Boolean)
+  return MARKETS.map(m => markets[m]).filter(Boolean)
 }
 
 // ── 5. Tomorrow, per supervisor — the raw material for the handover ────────────────────────────
