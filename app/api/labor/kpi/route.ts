@@ -267,7 +267,6 @@ export async function GET(req: Request) {
       return null
     }
     void personMarketCount
-    const roleOfPerson = (name: string): string | null => resolveStaff(name, staffIdx)?.role || null
     const inMarket = (name: string) => marketParam === 'all' || marketOfPerson(name) === marketParam
     const timecards = marketParam === 'all' ? timecardsAll : timecardsAll.filter(t => inMarket(t.name))
     const dayShifts = marketParam === 'all' ? dayShiftsAll : dayShiftsAll.filter((s: any) => s.name && inMarket(s.name))
@@ -296,7 +295,6 @@ export async function GET(req: Request) {
     // tasks.clean now means DEPARTURE cleans; the rest of the housekeeping work is kept separately
     // so nothing is lost — it is real work, just not a turnover.
     tasks.clean = cleanTasks.length
-    const cleaningTaskPay = round2(cleanTasks.reduce((a, t) => a + (num(t.rate_paid) ?? 0), 0))
 
     // ---- Checkouts + cleaning fees ----------------------------------------
     const resPage = await pageAll((a, b) => sb.from('guesty_reservations')
@@ -344,8 +342,6 @@ export async function GET(req: Request) {
     // In-house vs vendor cleaning revenue — in-house margins are what we manage.
     const inhouseFees = round2(attributions.filter(x => !x.vendor).reduce((a, x) => a + (x.fee ?? 0), 0))
     const vendorFees = round2(totalFees - inhouseFees)
-    const attributed = attributions.filter(x => x.assignee && x.fee != null)
-    const attributedFees = round2(attributed.reduce((a, x) => a + (x.fee as number), 0))
     // ---- Per-cleaner + person task detail ---------------------------------
     const personNames = new Set<string>()
     taskRows.forEach(t => { const d = doer(t); if (d) personNames.add(d) })

@@ -15,7 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireUser } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { roomsFor, totalItems, mergeChecklist, FFE_ROOMS, FFE_ACTIONS, BUYS, type FfeOverride } from '@/lib/ffe-checklist'
+import { totalItems, mergeChecklist, FFE_ROOMS, FFE_ACTIONS, BUYS, type FfeOverride } from '@/lib/ffe-checklist'
 import { ffePortfolio, type FfeUnit } from '@/lib/ffe-portfolio'
 import { isLiveStay } from '@/lib/stay-status'
 import { unitCode, buildingCode, ownerCode, resolveCode } from '@/lib/ffe-links'

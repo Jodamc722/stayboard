@@ -246,7 +246,6 @@ const computeHealth = unstable_cache(async () => {
     const cityCount: Record<string, number> = {}
     for (const l of scored as any[]) { const c = l.city || '(none)'; cityCount[c] = (cityCount[c] || 0) + 1 }
 
-    const rated = scored.filter((s: any) => !s.unrated)
     const withReviews = scored.filter((s: any) => s.reviewCount > 0)
     const count = (b: string) => scored.filter((s: any) => s.band === b).length
     const avgOf = (pick: (x: any) => number | null) => { const v = scored.map(pick).filter((n: any) => n != null) as number[]; return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : 0 }

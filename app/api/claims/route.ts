@@ -5,9 +5,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { deadlineFor, dueDateFor, dueWithTurnover, policyFor, todayET, daysUntil, itemsTotal, num, type ChannelPolicy, type ClaimItem } from '@/lib/claims'
+import { deadlineFor, dueDateFor, policyFor, todayET, daysUntil, itemsTotal, num, type ChannelPolicy, type ClaimItem } from '@/lib/claims'
 import { getSetting } from '@/lib/app-settings'
-import { nextCheckInFor, nextCheckInMap } from '@/lib/claim-turnover'
+import { nextCheckInMap } from '@/lib/claim-turnover'
 import { requireLevel, requireUser } from '@/lib/access'
 import { bustDay } from '@/lib/bust'
 

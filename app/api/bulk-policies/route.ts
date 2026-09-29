@@ -15,7 +15,6 @@ const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 // Note: cancellation policy is NOT settable via Guesty's API (the integrations object is read-only),
 // so it's intentionally not handled here. Set cancellation in Guesty's UI.
 
-function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 async function token(sb: any): Promise<string | null> {
   const { data: tok } = await sb.from('guesty_tokens').select('access_token, expires_at').eq('id', 'singleton').maybeSingle()
   const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now() + 30_000)

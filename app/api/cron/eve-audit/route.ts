@@ -40,8 +40,6 @@ async function run(req: NextRequest) {
     if (skip) return NextResponse.json({ ok: true, ...skip })
   }
 
-  const sp = new URL(req.url).searchParams
-  const quiet = sp.get('quiet') === '1'
   const res = await runAudit()
 
   // NO SLACK. The findings live on /system-health. `posted` stays in the response shape so the
