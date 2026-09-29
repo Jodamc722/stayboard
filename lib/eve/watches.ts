@@ -49,6 +49,8 @@ export type Prepared = {
   exec: any | (() => Promise<any | null>)
   metric?: string
   usd?: number
+  /** A flag, not an action: recorded on the Thinking tab and never carried out, whatever the rung. */
+  observeOnly?: boolean
 }
 
 export type WatchDef = {
@@ -379,17 +381,47 @@ async function stockLow(env: WatchEnv): Promise<Prepared[]> {
   return out
 }
 
+// THE NO-SHOW WATCH, NARROWED (2026-09-28 audit, F24 + 06 F-11). It fired for every arrival today
+// with no welcome call and no message ever — which is most Booking.com and Expedia guests on an
+// ordinary day. Now it needs all of:
+//   - a Booking.com, Expedia or Direct booking (Airbnb and Vrbo guests talk through the channel),
+//     never an owner or friends-and-family stay (an inventory decision, not a guest);
+//   - for TODAY's arrival, a check-in time that has come (before it, silence is normal);
+//   - and TOMORROW's arrivals are raised as a flag on the Thinking tab — observe only, nothing is
+//     posted or noted — so there is a day to call.
+const NO_SHOW_CHANNELS = ['Booking.com', 'Expedia', 'Direct']
+const minutesOfClock = (v: any): number | null => {
+  const m = str(v).trim().match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/i)
+  if (!m) return null
+  let h = Number(m[1]) % 12
+  if (!m[3]) h = Number(m[1]) % 24
+  else if (/pm/i.test(m[3])) h += 12
+  return h * 60 + Number(m[2])
+}
+const minutesNowET = (d: Date) => { const p = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).format(d).split(':'); return (Number(p[0]) % 24) * 60 + Number(p[1]) }
+
 async function noShowRisk(env: WatchEnv): Promise<Prepared[]> {
   const cd = await env.commandDay()
   if (!cd) return []
-  const arrivals = cd.tiles.arrivals.rows.filter(a => a.today && !a.welcomeDone)
+  const tomorrow = shift(env.today, 1)
+  const arrivals = cd.tiles.arrivals.rows.filter(a => !a.welcomeDone && (a.today || a.checkIn === tomorrow))
   if (!arrivals.length) return []
   const db = env.db
   const resIds = arrivals.map(a => a.reservationId)
-  const [{ data: calls }, { data: convs }] = await Promise.all([
+  const lids = Array.from(new Set(arrivals.map(a => str(a.listingId)).filter(Boolean)))
+  const [{ data: calls }, { data: convs }, { data: rs }, { data: ls }] = await Promise.all([
     db.from('guest_calls').select('reservation_id,outcome').in('reservation_id', resIds).limit(500),
     db.from('guesty_conversations').select('id,reservation_id').in('reservation_id', resIds).limit(500),
+    db.from('guesty_reservations').select('id,source,guest_name,tags:raw->tags').in('id', resIds).limit(500),
+    lids.length ? db.from('guesty_listings').select('id,checkIn:raw->>defaultCheckInTime').in('id', lids) : Promise.resolve({ data: [] } as any),
   ])
+  const { otaChannelOf } = await import('@/lib/ota-playbook')
+  const { isOwnerOrFriendsFamily } = await import('@/lib/owner-audit')
+  const resById: Record<string, any> = {}
+  for (const r of ((rs as any[]) || [])) resById[str(r.id)] = r
+  const checkInMin: Record<string, number> = {}
+  for (const l of ((ls as any[]) || [])) { const m = minutesOfClock(l.checkIn); if (m != null) checkInMin[str(l.id)] = m }
+  const nowMin = minutesNowET(env.now)
   const { COMPLETED } = await import('@/lib/call-desk')
   const called = new Set<string>()
   for (const c of ((calls as any[]) || [])) if (COMPLETED.indexOf(str(c.outcome)) >= 0) called.add(str(c.reservation_id))
@@ -407,7 +439,23 @@ async function noShowRisk(env: WatchEnv): Promise<Prepared[]> {
     if (called.has(a.reservationId)) continue
     const conv = convOf[a.reservationId]
     if (conv && replied.has(conv)) continue
-    const note = `NO-SHOW RISK: ${a.guest} arrives today at ${a.unit} — no welcome call logged and the guest has never replied in their thread. Please call before check-in and confirm ETA.`
+    const res = resById[a.reservationId]
+    const channel = otaChannelOf(res?.source)
+    if (!channel || NO_SHOW_CHANNELS.indexOf(channel) < 0) continue
+    if (isOwnerOrFriendsFamily(str(res?.source), JSON.stringify(res?.tags || ''), str(res?.guest_name || a.guest))) continue
+    if (!a.today) {
+      // Tomorrow: a flag on the Thinking tab, never an action (observeOnly). The payload is the
+      // customer-care line, so "Do it" there posts it if a person decides to.
+      const channelId = cfg?.noticeDrafts?.slackChannel || ''
+      if (!channelId) continue
+      const line = `📞 ${a.guest} arrives TOMORROW at ${a.unit} (${channel}) — no welcome call logged and no reply in their thread yet. Worth a call today.`
+      out.push({ subject: `res:${a.reservationId}:tomorrow`, action: 'slack_post', observeOnly: true, metric: 'sentiment_negative', ask: `flag: ${a.guest} (${channel}) arrives tomorrow at ${a.unit} with no welcome call and no reply — call today?`, why: `A silent ${channel} arrival a day out; there is still time to reach them.`, exec: { channel: channelId, channel_name: 'customer care', text: line } })
+      continue
+    }
+    // Today: only once the unit's check-in time has come (the listing default, 4pm when unset).
+    const cin = a.listingId && checkInMin[a.listingId] != null ? checkInMin[a.listingId] : 16 * 60
+    if (nowMin < cin) continue
+    const note = `NO-SHOW RISK: ${a.guest} arrives today at ${a.unit} (${channel}) — no welcome call logged and the guest has never replied in their thread. Please call and confirm their ETA.`
     // The note goes on today's task for this unit (the inspection if there is one, else any open
     // task on the unit today); with no task to write on, it is a line in the customer-care channel.
     let taskId = a.inspectionTaskId
@@ -418,9 +466,9 @@ async function noShowRisk(env: WatchEnv): Promise<Prepared[]> {
     if (taskId) {
       out.push({ subject: `res:${a.reservationId}`, action: 'task_note', metric: 'sentiment_negative', ask: `note on today's task at ${a.unit}: ${a.guest} arrives today with no welcome call and no reply — call them?`, why: `No welcome call, no guest message; a silent arrival is the usual no-show.`, exec: { taskId, text: note } })
     } else {
-      const channel = cfg?.noticeDrafts?.slackChannel || ''
-      if (!channel) continue
-      out.push({ subject: `res:${a.reservationId}`, action: 'slack_post', metric: 'sentiment_negative', ask: `post in customer care: ${a.guest} arrives today at ${a.unit} with no welcome call and no reply — call them?`, why: `No welcome call, no guest message, and no task on the unit today to note it on.`, exec: { channel, channel_name: 'customer care', text: `📞 ${note}` } })
+      const careRoom = cfg?.noticeDrafts?.slackChannel || ''
+      if (!careRoom) continue
+      out.push({ subject: `res:${a.reservationId}`, action: 'slack_post', metric: 'sentiment_negative', ask: `post in customer care: ${a.guest} arrives today at ${a.unit} with no welcome call and no reply — call them?`, why: `No welcome call, no guest message, and no task on the unit today to note it on.`, exec: { channel: careRoom, channel_name: 'customer care', text: `📞 ${note}` } })
     }
   }
   return out
@@ -434,7 +482,7 @@ export const WATCHES: WatchDef[] = [
   { key: 'channel_broken', title: 'Listing off a major channel', what: 'The channel snapshot shows an active listing failed or disconnected on Airbnb, Booking.com, Vrbo or Expedia. She drafts the list to the approver and asks you to open Guesty channel settings. Always a proposal.', action: 'email_draft', cooldownHours: 48, maxMode: 'propose', trigger: channelBroken },
   { key: 'glitch_overdue', title: 'Glitch past due with no task', what: 'A glitch past its due date with no Breezeway task. She prepares the maintenance task and asks.', action: 'task_create', cooldownHours: 48, trigger: glitchOverdue },
   { key: 'stock_low', title: 'Guest-order stock below par', what: 'A tracked guest-order item at or below its low mark. She drafts the purchase list (one email per hub) and asks.', action: 'email_draft', cooldownHours: 72, trigger: stockLow },
-  { key: 'no_show_risk', title: 'Arrival today, no call, no reply', what: 'A guest arriving today with no welcome call logged and no reply in their thread. She notes it on today\'s task for the unit (or posts to customer care) and asks.', action: 'task_note', cooldownHours: 24, trigger: noShowRisk },
+  { key: 'no_show_risk', title: 'Arrival today, no call, no reply', what: 'A Booking.com, Expedia or Direct guest (never an owner or friends-and-family stay) arriving today with no welcome call logged and no reply in their thread, once the unit\'s check-in time has come. She notes it on today\'s task for the unit (or posts to customer care) and asks. Tomorrow\'s silent arrivals are flagged on the Thinking tab only.', action: 'task_note', cooldownHours: 24, trigger: noShowRisk },
 ]
 export const WATCH_BY_KEY: Record<string, WatchDef> = WATCHES.reduce((m, w) => { m[w.key] = w; return m }, {} as Record<string, WatchDef>)
 
@@ -592,6 +640,8 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
         // "ASK ME NEXT TIME" (Thinking tab): an override of 2 on a watch whose action still sits at
         // observe or draft RAISES it to propose — while agent mode is on, so the ask can be delivered.
         if (settings.enabled && row.rungOverride != null && row.rungOverride >= 2 && (verdict.mode === 'observe' || verdict.mode === 'draft')) verdict = { ...verdict, mode: 'propose', ok: false, needsApproval: true, reason: `${verdict.reason}; watch raised to propose (ask me next time)` }
+        // A FLAG IS NOT AN ACTION (no_show_risk's tomorrow arrivals): observed whatever the rung says.
+        if (f.observeOnly && verdict.mode !== 'observe') verdict = { ...verdict, mode: 'observe', ok: false, needsApproval: false, reason: `${verdict.reason}; a flag, not an action` }
         if (typeof f.exec === 'function' && overAiBudget && verdict.mode !== 'observe') verdict = { ...verdict, mode: 'observe', ok: false, needsApproval: false, reason: `${verdict.reason}; AI spend is over today's $${settings.budgets.aiUsdPerDay} — no draft` }
         // THE DRAFT IS THE THOUGHT (2026-09-21). At observe she still prepares the whole action so
         // the Thinking tab shows what she would have done — the one exception is a model draft
