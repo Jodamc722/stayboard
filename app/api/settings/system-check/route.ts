@@ -16,6 +16,7 @@ import { NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { botConnected } from '@/lib/slack'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -146,9 +147,12 @@ export async function GET() {
   const reviewChecks: Check[] = []
   try {
     const since = new Date(Date.now() - 60 * 86400000).toISOString()
-    const { data } = await db.from('guesty_reviews').select('channel,created_at').gte('created_at', since).limit(4000)
+    // Paged (was one unordered read capped at 1,000): a quiet channel's newest review has to be in the
+    // read for its row to exist at all, which is exactly the channel this check is for.
+    const read = await pageRows<any>((a, b) => db.from('guesty_reviews').select('channel,created_at').gte('created_at', since).order('created_at', { ascending: false }).order('id').range(a, b))
+    if (read.truncated) console.error('settings/system-check: review read stopped early — a channel row may be missing')
     const newest: Record<string, string> = {}
-    for (const r of ((data || []) as any[])) {
+    for (const r of read.rows) {
       const ch = String(r.channel || 'Other')
       const at = String(r.created_at || '')
       if (at && (!newest[ch] || at > newest[ch])) newest[ch] = at
