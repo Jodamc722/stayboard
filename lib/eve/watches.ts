@@ -30,6 +30,8 @@ const ymdET = (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: '
 const hourET = (d = new Date()) => Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(d)) % 24
 const shift = (ymd: string, n: number) => ymdET(new Date(Date.parse(ymd + 'T12:00:00Z') + n * 86400_000))
 const MAX_PER_WATCH = 5
+/** The watches that still run outside 07:00–22:00 ET (F43): a guest waiting, a silent arrival. */
+const NIGHT_WATCHES = ['guest_unanswered_1h', 'no_show_risk']
 /** Guesty activity logs and internal notes (the `module` on guesty_messages) — never sent to a guest. */
 const INTERNAL_MODULES = new Set(['log', 'note', 'notes', 'internal', 'internal_note', 'activity', 'system'])
 
@@ -549,6 +551,16 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
   const ranAt = new Date().toISOString()
   const rows = await listWatches()
   if (!rows.some(r => r.migrated)) return { ok: false, skipped: 'migration 102 has not run — eve_watches has no key column', ranAt, watches: [] }
+  // NOTHING TO WATCH, NOTHING TO BUILD (2026-09-28 audit, F43). This runs every half hour, chained to
+  // the sentiment scan, and it read the settings, the declined shapes and the AI ledger — and the
+  // watches built the two heaviest day pictures — even with every watch switched off. Now it stops
+  // here when nothing is due. Outside 07:00–22:00 ET only the two watches that matter at night run
+  // (a guest waiting on an answer, a silent arrival); a manual run (only / force) is not held back.
+  const h = hourET()
+  const offHours = h < 7 || h >= 22
+  const manual = !!opts.only || !!opts.force
+  const dueNow = (r: WatchRow) => opts.only ? r.key === opts.only : (r.enabled && (manual || !offHours || NIGHT_WATCHES.indexOf(r.key) >= 0))
+  if (!rows.some(dueNow)) return { ok: true, skipped: opts.only ? `no watch called ${opts.only}` : offHours ? 'off hours: no night watch is enabled' : 'no watch is enabled', ranAt, watches: [] }
   const settings = await getAgentSettings()
   // WHAT JON ALREADY SAID NO TO (2026-09-21, the learning audit). One read per run: every shape of
   // proposal he dismissed with a reason. A watch that would raise a declined shape skips it and
@@ -569,6 +581,7 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
   for (const row of rows) {
     if (opts.only && row.key !== opts.only) continue
     if (!row.enabled && !opts.only) continue
+    if (!dueNow(row)) continue
     const def = WATCH_BY_KEY[row.key]
     const t0 = Date.now()
     // Would she do more than observe for this watch right now? (The switch, the action's rung and
