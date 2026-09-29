@@ -12,12 +12,15 @@ const inter = Inter({
 // THE DECK SERIF (2026-09-22). Owner-facing documents set their titles and their figures in a
 // display serif — it is the single cheapest thing that separates a report an owner keeps from a
 // dashboard screenshot. Loaded as a variable so only the deck reaches for it; the app itself
-// stays on Inter.
+// stays on Inter. NOT PRELOADED (2026-09-28 audit): next/font preloads by default, so every page
+// of the app downloaded three serif weights only the decks and reports use. It still loads — on
+// the pages that set a Fraunces face.
 const fraunces = Fraunces({
   subsets: ['latin'],
   weight: ['300', '400', '500'],
   variable: '--font-serif',
-  display: 'swap'
+  display: 'swap',
+  preload: false,
 })
 
 export const metadata: Metadata = {
