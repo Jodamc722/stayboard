@@ -400,6 +400,8 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
       // The tier and the buildings are enforced in the tools now, not only described in the prompt:
       // a vendor room's results lose guest details and its registry is its own buildings (F2).
       tier: grant.tier,
+      // A vendor ROOM restricts the answer whoever asks — an admin included (2026-09-29 review, N3/N4).
+      vendorRoom: !!grant.vendorRoom,
       onlyBuildings: grant.tier === 'vendor' ? grant.buildings : undefined,
       surfaceNote: [
         `This is ${where}. Whatever that channel is for is the likely subject — if it is a building's channel, assume the question is about that building unless told otherwise.`,

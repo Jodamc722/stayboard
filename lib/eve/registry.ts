@@ -145,8 +145,9 @@ export async function runTool(name: string, input: any, ctx: EveCtx, open: strin
     const coded = tool.name === 'door_code_check' ? raw : redactSensitive(raw, { codeFieldIds: await codeFieldIds(ctx) })
     // A VENDOR ROOM GETS THE JOB, NOT THE GUEST (2026-09-28 audit, F2 / B-10). ops_today, unit_status,
     // the sentiment and glitch boards all carry guest names or a guest's own words; in a room with an
-    // outside company in it every result loses them here, whatever tool produced it.
-    const out = ctx.tier === 'vendor' ? redactGuestPII(coded) : coded
+    // outside company in it every result loses them here, whatever tool produced it — and since the
+    // 2026-09-29 review (N3/N4) whoever is asking: an admin in a vendor room is still in that room.
+    const out = ctx.tier === 'vendor' || ctx.guestSafe ? redactGuestPII(coded) : coded
     if (tool.money && !ctx.canMoney) {
       // redactMoney nulls amounts under money KEYS; a dollar figure written into a sentence ("refund
       // $300", a memory, a knowledge row) sits under `text` and passed. maskMoneyStrings takes those

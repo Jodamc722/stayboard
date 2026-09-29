@@ -28,7 +28,7 @@ import { getOperatingModel, renderOperatingModel } from './operating-model'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 import { getAgentSettings, normalizeAgentSettings, renderAgentModeForPrompt, agentAllowed } from './agent-mode'
-import { maskMoneyText, scrubReleasedCodes } from './redact'
+import { maskMoneyText, scrubReleasedCodes, isGuestOrPersonMemory } from './redact'
 
 // MODEL is resolved per request via modelFor('eve') — see lib/ai-models (editable on Users & admin).
 
@@ -128,6 +128,12 @@ export type RunEveInput = {
    * text from every tool result (registry.runTool redactGuestPII).
    */
   tier?: 'admin' | 'staff' | 'vendor'
+  /**
+   * The ROOM belongs to a vendor-run area (lib/eve/slack-tier.ts TierGrant.vendorRoom). Whoever is
+   * asking — an admin included — every tool result loses guest details, the mind block is left out
+   * and no memory about a person or a guest goes into the prompt (2026-09-29 review, N3/N4).
+   */
+  vendorRoom?: boolean
   /** A vendor grant's buildings: the listing registry is narrowed to them (lib/eve/ctx.ts buildCtx). */
   onlyBuildings?: string[]
   maxTurns?: number
@@ -188,6 +194,9 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   const allowed = (list: any[]) => (deny.length ? list.filter((t: any) => deny.indexOf(String(t?.name)) < 0) : list)
   const ctx = await buildCtx(access, canMoney, { onlyBuildings: input.tier === 'vendor' ? input.onlyBuildings : undefined })
   if (input.tier) ctx.tier = input.tier
+  // An outside company can read this room: the vendor tier anywhere, or anyone in a vendor room.
+  const guestSafe = input.tier === 'vendor' || !!input.vendorRoom
+  if (guestSafe) ctx.guestSafe = true
   const db = supabaseAdmin()
   const today = todayET()
 
@@ -222,15 +231,16 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   // after the other they added up — the memory rerank alone may take its full cap — before the
   // first token of every answer. They run together now; each keeps its own fallback and the
   // rerank keeps its own timeout.
-  const [headRows, memories, mind, voice, lingo, operatingModel, agent] = await Promise.all([
+  const [headRows, loadedMemories, mind, voice, lingo, operatingModel, agent] = await Promise.all([
     headlineP,
     // The question rides along so retrieval can rank by RELEVANCE, not just weight — the memories
     // about the thing being asked beat equally-weighted trivia about everything else.
     loadMemories(scopes, ctx.email, 60, lastUser || wholeThread, { nearScopes }),
     // THE LIVING MIND (lib/eve/brain.ts): the dossiers of whatever is in play, last night's reflection
     // and her track record, in her head before she reaches for a tool. Not for a probe: the learning
-    // audit tests what she REMEMBERS, and handing her the file would pass it for her.
-    isProbe ? Promise.resolve('') : safe(import('./brain').then(m => m.mindForPrompt({ text: wholeThread.slice(-4000), scopes, sharedRoom: ctx.sharedRoom })), ''),
+    // audit tests what she REMEMBERS, and handing her the file would pass it for her. Not in a room
+    // an outside company reads either (N3/N4): the dossiers quote reviews and name people.
+    isProbe || guestSafe ? Promise.resolve('') : safe(import('./brain').then(m => m.mindForPrompt({ text: wholeThread.slice(-4000), scopes, sharedRoom: ctx.sharedRoom })), ''),
     safe(getVoiceProfile(), ''),
     // How this team writes. Absent until the nightly pass has read enough real messages to have an
     // opinion, and absent is correct — an invented house style is worse than a neutral one.
@@ -242,6 +252,15 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     // Read fresh (no cache): the switch must be true in the very next answer after Jon flips it.
     safe(getAgentSettings(), normalizeAgentSettings(null)),
   ])
+  // NO PERSON OR GUEST MEMORY IN A ROOM AN OUTSIDE COMPANY READS (2026-09-29 review, N3/N4) — people
+  // mappings, person- and OTA-channel-scoped rows, anything about a guest or with contact details
+  // (lib/eve/redact.ts isGuestOrPersonMemory). The recall tags ride along to the telemetry below.
+  let memories = loadedMemories
+  if (guestSafe) {
+    memories = loadedMemories.filter(m => !isGuestOrPersonMemory(m))
+    ;(memories as any).reranked = (loadedMemories as any).reranked
+    ;(memories as any).rerank = (loadedMemories as any).rerank
+  }
   const [unansweredRows, unreadCount, checkinCount, checkoutCount, inhouseCount, openFW, apprFW] = headRows
   const headline = {
     today,

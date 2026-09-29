@@ -280,3 +280,20 @@ export function redactGuestPII<T>(value: T): T {
     return out as T
   } catch { return value }
 }
+
+// A vendor room's PROMPT, not only its tool results (2026-09-29 review, N3/N4). Whoever asks in a room
+// with an outside company in it, no memory about a person or a guest goes in: people mappings and
+// person-scoped rows, the OTA channel playbook (guest refunds and money), anything that talks about a
+// guest, and anything carrying an email address or a phone number. Deliberately blunt — a rule
+// about guests in general is lost in that room too, and a vendor's jobs do not need it.
+const MEM_GUEST_RE = /\bguests?\b|\bhu[eé]sped/i
+const MEM_CONTACT_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+|(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/
+export function isGuestOrPersonMemory(m: { kind?: any; scope?: any; text?: any; why?: any }): boolean {
+  const kind = String(m?.kind || '').toLowerCase()
+  const scope = String(m?.scope || '').toLowerCase()
+  if (kind === 'person' || scope.startsWith('person:') || scope.startsWith('channel:')) return true
+  const text = String(m?.text || '')
+  // `why` is provenance and often names the colleague who taught it ("said in chat by x@…"), so only
+  // the memory's own text is checked for contact details.
+  return MEM_GUEST_RE.test(text + ' ' + String(m?.why || '')) || MEM_CONTACT_RE.test(text)
+}

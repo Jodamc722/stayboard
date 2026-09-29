@@ -38,6 +38,9 @@ export type EveCtx = {
   sharedRoom?: boolean
   /** The Slack tier asking (lib/eve/slack-tier.ts). 'vendor' strips guest details from every tool result. */
   tier?: 'admin' | 'staff' | 'vendor'
+  /** An outside company can read this room (the vendor tier, or ANY asker in a vendor room): every tool
+   *  result loses guest details in registry.runTool (2026-09-29 review, N3/N4). */
+  guestSafe?: boolean
   /** Set when listingMeta was narrowed to a vendor's own buildings (buildCtx onlyBuildings). */
   scopedBuildings?: string[]
 }

@@ -50,6 +50,8 @@ export type TierGrant = {
   group: RoutingGroup | null
   /** True in Eve's own room (#vr-eve), where the team works WITH her (Jon, 2026-09-23). */
   eveRoom?: boolean
+  /** The channel belongs to a vendor-run area. Whoever asks, guest details and her mind stay out. */
+  vendorRoom?: boolean
 }
 
 // Jon, 2026-09-10, second pass: "anyone can ask if they need something, only approvals are PTE and
@@ -84,6 +86,12 @@ const VENDOR_ALSO = ['slack_search', 'slack_thread', 'open_items', 'dossier', 'm
 // Every share link's page IS the access for an open link (2026-09-28 audit, F10): listing them in a
 // shared room hands one vendor the others' boards. An admin asks for them; nobody else in Slack.
 const LINK_TOOLS = ['share_links']
+// THE ROOM, NOT THE ASKER (2026-09-29 review, N3/N4). An admin asking in a vendor room is still
+// answering in front of the vendor, and redacting guest NAMES from a guest thread still posts the
+// guest's own words. So in a vendor room, whoever asks, the guest tools go, and so do the ways into
+// her mind and notebook (dossiers quote reviews; memories name people and guests; the knowledge base
+// is mined from guest messages). run.ts leaves the mind block and those memories out of the prompt too.
+const VENDOR_ROOM_TOOLS = GUEST_TOOLS.concat(['my_mind', 'dossier', 'search_reviews', 'memory_search', 'knowledge_search'])
 
 // DIRECTING HER IS A TOOL, SO IT IS TAKEN AWAY AS A TOOL (Jon, 2026-09-23 review). `canDirect` was
 // declared on every grant and read by nothing, and propose_action — her hands: tasks, Slack posts,
@@ -132,10 +140,10 @@ async function baseTierFor(access: Access | null, channelId: string): Promise<Ti
     // 'direct', so "@Eve code for 402" in a staff room posted the code for the whole room to read.
     // Telegram groups already deny it; a channel now does too. /doorcode answers ephemerally.
     const dm = /^D/.test(String(channelId || ''))
-    return { tier: 'admin', buildings: [], canMoney: true, canDirect: true, denyTools: dm ? [] : ENTRY_TOOLS, memoryWeightCap: 10, group }
+    return { tier: 'admin', buildings: [], canMoney: true, canDirect: true, denyTools: dm ? [] : ENTRY_TOOLS, memoryWeightCap: 10, group, vendorRoom: false }
   }
   if (isAdmin && vendorRoom) {
-    return { tier: 'admin', buildings: [], canMoney: false, canDirect: true, denyTools: ENTRY_TOOLS, memoryWeightCap: 10, group }
+    return { tier: 'admin', buildings: [], canMoney: false, canDirect: true, denyTools: ENTRY_TOOLS.concat(VENDOR_ROOM_TOOLS), memoryWeightCap: 10, group, vendorRoom: true }
   }
   if (access && !vendorRoom) {
     // Staff are answered and may teach, but directing her is for admins (Jon, header)...
@@ -148,16 +156,17 @@ async function baseTierFor(access: Access | null, channelId: string): Promise<Ti
     // through the Agent-mode rungs, and a guest message, a Guesty write or a calendar block still
     // waits for an approver's yes; door codes and money stay out as everywhere in Slack.
     const eveRoom = await isEveRoom(channelId)
-    return { tier: 'staff', buildings: [], canMoney: false, canDirect: eveRoom, denyTools: ENTRY_TOOLS.concat(ADMIN_ONLY, LINK_TOOLS), memoryWeightCap: 5, group, eveRoom }
+    return { tier: 'staff', buildings: [], canMoney: false, canDirect: eveRoom, denyTools: ENTRY_TOOLS.concat(ADMIN_ONLY, LINK_TOOLS), memoryWeightCap: 5, group, eveRoom, vendorRoom: false }
   }
   // Unrecognised, or a vendor room. Still answered — about their own buildings, minus what is ours.
   return {
     tier: 'vendor',
     buildings: group ? (group.buildings || []).slice() : [],
     canMoney: false, canDirect: false,
-    denyTools: ENTRY_TOOLS.concat(ADMIN_ONLY, GUEST_TOOLS, VENDOR_ALSO, LINK_TOOLS, ['remember', 'recommend', 'ask_jon', 'close_item']),
+    denyTools: ENTRY_TOOLS.concat(ADMIN_ONLY, GUEST_TOOLS, VENDOR_ALSO, VENDOR_ROOM_TOOLS, LINK_TOOLS, ['remember', 'recommend', 'ask_jon', 'close_item']),
     memoryWeightCap: 0,
     group,
+    vendorRoom,
   }
 }
 
@@ -173,7 +182,7 @@ export function tierNote(g: TierGrant): string {
     return `${where} You are talking to an admin. Full answers.${codes}`.trim()
   }
   if (g.tier === 'admin') {
-    return `${where} You are talking to an admin, but this room is run by an OUTSIDE VENDOR and they can read everything posted here. Answer the operational question fully. Do not read out dollar amounts or door codes in this room — offer to send those directly instead.`.trim()
+    return `${where} You are talking to an admin, but this room is run by an OUTSIDE VENDOR and they can read everything posted here. Answer the operational question fully. Do not read out dollar amounts, door codes or guest details (names, contact details, what a guest wrote) in this room — offer to send those directly instead.`.trim()
   }
   if (g.tier === 'staff' && g.eveRoom) {
     return `This is #vr-eve, YOUR room: where you post what is slipping and the team picks it up. You are talking to a colleague who works here. They can answer you and direct you here: if they say "yes, create it", "assign it to George", "that's handled", do it (propose_action — the Agent-mode rungs still decide what needs an approver) or close the item, and say in one line what you did. Answer their questions properly and completely, the way you would for anyone. If they ask about one of YOUR posts, you know where it came from (it is stated below when it is on record) — say so plainly. Not in this room: dollar amounts and door codes (those go through the approvals flow).`
