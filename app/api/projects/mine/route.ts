@@ -13,6 +13,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { personKey } from '@/lib/person-name'
 import { todayISO } from '@/lib/projects-shared'
 import { ensureMyBoard } from '@/lib/projects'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,9 +29,10 @@ export async function GET(req: NextRequest) {
     // Which projects may I see? Same rule as the board: membership, or superadmin.
     let visible: Set<string> | null = null
     if (!isSuperadmin(email)) {
-      const { data, error } = await sb.from('project_members').select('project_id').eq('email', email).limit(2000)
-      if (error) throw new Error(error.message)
-      visible = new Set(((data || []) as any[]).map(m => String(m.project_id)))
+      // Paged: every recurring instance adds a membership row, so one person's list only grows.
+      const mem = await pageRows<any>((a, b) => sb.from('project_members').select('project_id').eq('email', email).order('id').range(a, b))
+      if (mem.truncated) throw new Error('could not read every project you are on')
+      visible = new Set(mem.rows.map(m => String(m.project_id)))
       if (!visible.size) return NextResponse.json({ ok: true, today, groups: empty(), total: 0 })
     }
 

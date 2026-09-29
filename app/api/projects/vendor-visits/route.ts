@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel, isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { todayISO, visitState, needsTelling, estLabel } from '@/lib/projects-shared'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,8 +33,10 @@ export async function GET(req: NextRequest) {
     // on a board you are not on is not yours to see, even though it is at one of our buildings.
     let visible: Set<string> | null = null
     if (!isSuperadmin(email)) {
-      const { data } = await sb.from('project_members').select('project_id').eq('email', email).limit(2000)
-      visible = new Set(((data || []) as any[]).map(m => String(m.project_id)))
+      // Paged: every recurring instance adds a membership row, so one person's list only grows.
+      const mem = await pageRows<any>((a, b) => sb.from('project_members').select('project_id').eq('email', email).order('id').range(a, b))
+      if (mem.truncated) console.error('projects/vendor-visits: membership read stopped early — some boards may be missing')
+      visible = new Set(mem.rows.map(m => String(m.project_id)))
       if (!visible.size) return NextResponse.json({ ok: true, today, visits: [] })
     }
 

@@ -2,12 +2,14 @@ import { NextRequest } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { v1Gate, json } from '@/lib/api-v1'
 import { isSuperadmin } from '@/lib/access'
+import { pageRows } from '@/lib/db-page'
 export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   const g = await v1Gate(req, 'projects'); if (!g.ok) return g.res
   const sb = supabaseAdmin(), email = String(g.access.email || '').toLowerCase()
   let ids: string[] | null = null
-  if (!isSuperadmin(email)) { const { data } = await sb.from('project_members').select('project_id').eq('email', email).limit(2000); ids = ((data as any[]) || []).map(m => String(m.project_id)) }
+  // Memberships paged: every recurring instance adds a row, so one person's list only grows.
+  if (!isSuperadmin(email)) { const mem = await pageRows((a, b) => sb.from('project_members').select('project_id').eq('email', email).order('id').range(a, b)); if (mem.truncated) console.error('api/v1/projects: membership read stopped early'); ids = (mem.rows as any[]).map(m => String(m.project_id)) }
   let q = sb.from('projects').select('id,title,kind,stage,building,market,archived,updated_at').eq('archived', false).order('updated_at', { ascending: false }).limit(500)
   if (ids) { if (!ids.length) return json([], { count: 0 }); q = q.in('id', ids) }
   const { data } = await q
