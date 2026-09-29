@@ -190,10 +190,10 @@ const MEM_UNIT_BEFORE_RE = /\b(?:unit|units|apt|apartment|suite|ste|room|rm|floo
 const MEM_YEAR_BEFORE_RE = /\b(?:in|since|during|until|till|before|after)\s+$/i
 const MEM_NEAR = 24
 
-/** Is a lock / door / code word within ~24 characters of a 4-8 digit run? saveMemory refuses it. */
-export function codeNearDigits(text: any): boolean {
-  const raw = String(text == null ? '' : text)
-  if (!/\d{4}/.test(raw)) return false
+/** The [start, end) of every 4-8 digit run that sits within ~24 characters of a lock word. */
+function codeRuns(raw: string): Array<[number, number]> {
+  const out: Array<[number, number]> = []
+  if (!/\d{4}/.test(raw)) return out
   // Phone numbers out first, same length, so every position below still lines up.
   const s = raw.replace(MEM_PHONE_RE, (m: string) => ' '.repeat(m.length))
   const words: Array<[number, number]> = []
@@ -206,7 +206,7 @@ export function codeNearDigits(text: any): boolean {
     }
     words.push([w.index, w.index + w[0].length])
   }
-  if (!words.length) return false
+  if (!words.length) return out
   MEM_RUN_RE.lastIndex = 0
   let d: RegExpExecArray | null
   while ((d = MEM_RUN_RE.exec(s))) {
@@ -216,10 +216,26 @@ export function codeNearDigits(text: any): boolean {
     const a = d.index, b = d.index + d[0].length
     for (const [x, y] of words) {
       const gap = x >= b ? x - b : a >= y ? a - y : 0
-      if (gap <= MEM_NEAR) return true
+      if (gap <= MEM_NEAR) { out.push([a, b]); break }
     }
   }
-  return false
+  return out
+}
+
+/** Is a lock / door / code word within ~24 characters of a 4-8 digit run? saveMemory refuses it. */
+export function codeNearDigits(text: any): boolean {
+  return codeRuns(String(text == null ? '' : text)).length > 0
+}
+
+/** The same runs, masked — for text that is kept or replayed rather than refused (scrubStoredText). */
+export function maskCodeNearDigits(text: any): string {
+  const s = String(text == null ? '' : text)
+  const runs = codeRuns(s)
+  if (!runs.length) return s
+  let out = ''
+  let last = 0
+  for (const [a, b] of runs) { out += s.slice(last, a) + '[redacted]'; last = b }
+  return out + s.slice(last)
 }
 
 /** A scalar under a code or device name: a code field loses it; a device field only when code-shaped. */
@@ -283,8 +299,51 @@ export const RELEASED_CODE_MARK = '[door code released — see Eve actions]'
 export function scrubReleasedCodes(text: string, codes: string[]): string {
   let out = String(text || '')
   const list = codes.map(c => String(c || '').trim()).filter(c => c.length >= 3).sort((a, b) => b.length - a.length)
-  for (const c of list) out = out.split(c).join(RELEASED_CODE_MARK)
+  for (const c of list) {
+    // THE DIGITS, HOWEVER THEY ARE WRITTEN (2026-09-29 review, N6). "4821#" released and the reply
+    // saying "4 8 2 1 #", "*4821" or "48-21" kept the code: only the exact string was replaced.
+    const digits = c.replace(/[^0-9]/g, '')
+    if (digits.length >= 3) {
+      const re = new RegExp('(?<![0-9])[#*]*' + digits.split('').join('[\\s#*.-]*') + '[#*]*(?![0-9])', 'g')
+      out = out.replace(re, RELEASED_CODE_MARK)
+    }
+    // A code with letters in it (or too few digits to match on) is also replaced exactly as written.
+    if (digits.length < 3 || /[^0-9#*\s]/.test(c)) out = out.split(c).join(RELEASED_CODE_MARK)
+  }
   return out
+}
+
+/** The free-text door-code redactor on its own, for text that is kept or replayed. Never throws. */
+export function redactCodeText(s: any): string {
+  const t = String(s == null ? '' : s)
+  try { return scrubText(t) } catch { return t }
+}
+
+/**
+ * TEXT THAT IS KEPT OR REPLAYED — the chat log, a transcript, an earlier answer handed back in, a
+ * payload that will be filed (2026-09-29 review, N6): every released code in any spelling, then the
+ * text redactor, then any lock word next to a 4-8 digit number. Stricter than a tool result on
+ * purpose; a unit number in a sentence about a door is a fair price in a log. Never throws.
+ */
+export function scrubStoredText(text: any, released: string[] = []): string {
+  const t = String(text == null ? '' : text)
+  try { return maskCodeNearDigits(redactCodeText(released.length ? scrubReleasedCodes(t, released) : t)) } catch { return t }
+}
+
+/** Every string inside a tool's arguments with the released codes taken out. Never throws. */
+export function scrubReleasedInValue<T>(value: T, released: string[]): T {
+  if (!released.length) return value
+  const go = (v: any): any => {
+    if (typeof v === 'string') return scrubReleasedCodes(v, released)
+    if (Array.isArray(v)) return v.map(go)
+    if (v && typeof v === 'object' && !(v instanceof Date)) {
+      const out: Record<string, any> = {}
+      for (const k of Object.keys(v)) out[k] = go(v[k])
+      return out
+    }
+    return v
+  }
+  try { return go(value) as T } catch { return value }
 }
 
 // ── Money in free text (2026-09-28, F9) ─────────────────────────────────────────────────────────

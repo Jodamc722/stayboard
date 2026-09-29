@@ -28,7 +28,7 @@ import { getOperatingModel, renderOperatingModel } from './operating-model'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 import { getAgentSettings, normalizeAgentSettings, renderAgentModeForPrompt, agentAllowed } from './agent-mode'
-import { maskMoneyText, scrubReleasedCodes, isGuestOrPersonMemory } from './redact'
+import { maskMoneyText, scrubStoredText, scrubReleasedInValue, isGuestOrPersonMemory } from './redact'
 
 // MODEL is resolved per request via modelFor('eve') — see lib/ai-models (editable on Users & admin).
 
@@ -144,8 +144,9 @@ export type RunEveOk = {
   reply: string
   /**
    * The reply as it may be STORED (a transcript, a chat log): any door code released to a Direct
-   * person in this turn is replaced with a pointer to the audit trail. `reply` keeps the code — the
-   * person asked for it — but nothing that is kept or replayed into a later prompt does.
+   * person in this turn is replaced with a pointer to the audit trail, in any spelling of its digits,
+   * and the rest of the text goes through the code redactor (lib/eve/redact.ts scrubStoredText).
+   * `reply` keeps the code — the person asked for it — but nothing that is kept or replayed does.
    */
   logReply: string
   chatId: string | null
@@ -180,7 +181,12 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return { ok: false, status: 503, error: 'AI not configured - add ANTHROPIC_API_KEY in Vercel env.' }
 
+  // HER EARLIER ANSWERS COME BACK SCRUBBED (2026-09-29 review, N6). The web chat hands the whole
+  // thread back, so a code released to a Direct person two turns ago arrived again here — to be
+  // re-quoted into a payload, a memory or captureCorrection. Assistant turns lose any code-shaped
+  // text on the way in (lib/eve/redact.ts scrubStoredText); a new release goes through door_code_check.
   const messages = (Array.isArray(input.messages) ? input.messages : []).filter(m => m && m.role && m.content).slice(-12)
+    .map(m => (m.role === 'assistant' && typeof m.content === 'string' ? { ...m, content: scrubStoredText(m.content) } : m))
   if (!messages.length) return { ok: false, status: 400, error: 'no messages' }
 
   const startedAt = Date.now()
@@ -215,7 +221,8 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
 
   // --- Memory, scoped to what this question is actually about. ---
   const lastUser = String([...messages].reverse().find(m => m.role === 'user')?.content || '')
-  ctx.question = lastUser.slice(0, 400)
+  // Filed as the snippet on any proposal this turn makes (core.ts propose_action), so kept code-free.
+  ctx.question = scrubStoredText(lastUser).slice(0, 400)
   const wholeThread = messages.map(m => String(m.content || '')).join(' \n ')
   const scopes = scopesForText(wholeThread, ctx.listingMeta)
   ctx.sharedRoom = source === 'slack' || !!input.forceNoMoney
@@ -394,6 +401,9 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
             continue
           }
           let args = block.input || {}
+          // A CODE RELEASED IN THIS TURN STAYS IN THE REPLY (N6): a propose_action payload, a memory or
+          // any other tool call after the release gets the code replaced with the audit-trail pointer.
+          if (released.length && block.name !== 'door_code_check') args = scrubReleasedInValue(args, released)
           if (block.name === 'remember' && Number.isFinite(input.memoryWeightCap)) {
             const cap = Number(input.memoryWeightCap)
             args = { ...args, weight: Math.min(cap, Number(args.weight) || cap), _maxWeight: cap, _source: source === 'slack' ? 'slack' : undefined, why: `${String(args.why || '').slice(0, 200)} [said by ${ctx.email || 'someone'} in Slack]`.trim() }
@@ -431,11 +441,13 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     // audit's self-test) is not a user chat and is not logged here — it lives in eve_probes.
     let chatId: string | null = null
     // A RELEASED CODE IS NOT KEPT (2026-09-28 audit, B-6). It is in the reply the Direct person reads;
-    // the chat log gets a pointer to the audit trail (eve_actions holds the fingerprint) instead.
-    const logReply = released.length ? scrubReleasedCodes(finalText, released) : finalText
+    // the chat log gets a pointer to the audit trail (eve_actions holds the fingerprint) instead —
+    // in any spelling of its digits, and the text redactor runs over what is kept (N6). The question
+    // is kept the same way: a code somebody typed is not a log line either.
+    const logReply = scrubStoredText(finalText, released)
     const row: any = {
       user_email: ctx.email,
-      question: lastUser.slice(0, 4000),
+      question: scrubStoredText(lastUser).slice(0, 4000),
       answer: logReply.slice(0, 8000),
       tools_used: toolsUsed,
       domains_opened: open,
