@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from './supabase-server'
 import { supabaseAdmin } from './supabase-admin'
 import { normWorkspace, type Workspace, type Level, type RoleDef, levelsForRole, legacyLevels, landingFor, atLeast, workspaceDef, FEATURES, applyHandPicked } from './features'
+import { gardenLevels, gardenLanding, gardenMax, GARDEN_ALL_FULL, type GLevel } from './garden/pages'
 
 export type Role = 'admin' | 'member'
 export type Access = {
@@ -21,7 +22,12 @@ export type Access = {
   accessRole: string | null                 // app_roles.key this user is assigned to (null = legacy)
   levels: Record<string, Level>             // resolved per-feature level for THIS user
   landing: string
+  // BUSINESS UNITS (migration 118). One login, two businesses: which ones this person may enter,
+  // and — separately — what their hotel role lets them do page by page. null = not on the hotel.
+  businesses: ('vr' | 'garden')[]
+  garden: GardenAccess | null
 }
+export type GardenAccess = { role: string; roleLabel: string; levels: Record<string, GLevel>; landing: string }
 
 const SUPERADMIN = 'jon@stay-hospitality.com'
 
@@ -34,7 +40,7 @@ const ALL_FULL = (): Record<string, Level> => {
 const base = (over: Partial<Access>): Access => ({
   user: null, email: null, role: null, allowed: false, bootstrap: false,
   features: {}, workspace: 'gm', profile: {}, prefs: {},
-  accessRole: null, levels: {}, landing: '/', ...over,
+  accessRole: null, levels: {}, landing: '/', businesses: [], garden: null, ...over,
 })
 
 // ---- app_roles cache (60s, per server instance). Fail-open: null = table missing/error. ----
@@ -69,12 +75,60 @@ export function resolveLevels(row: { role?: string | null; access_role?: string 
   return { levels, landing: landingFor(levels, workspaceDef(ws).landing), accessRole: null }
 }
 
+
+// ---- Business units (migration 118) ------------------------------------------------------------
+// The hotel's roles live in garden_roles, cached like app_roles. null = table missing (pre-118).
+let _gRolesAt = 0
+let _gRolesVal: any[] | null = null
+export async function getGardenRoles(): Promise<any[] | null> {
+  if (Date.now() - _gRolesAt < 60_000) return _gRolesVal
+  try {
+    const { data, error } = await supabaseAdmin().from('garden_roles').select('*').order('sort', { ascending: true })
+    _gRolesAt = Date.now()
+    _gRolesVal = error || !Array.isArray(data) ? null : data
+  } catch { _gRolesAt = Date.now(); _gRolesVal = null }
+  return _gRolesVal
+}
+export function bustGardenRolesCache() { _gRolesAt = 0 }
+
+const OWNER_UNITS = () => ({ businesses: ['vr', 'garden'] as ('vr' | 'garden')[], garden: { role: 'gm', roleLabel: 'General manager', levels: GARDEN_ALL_FULL(), landing: '/garden' } as GardenAccess })
+
+/** The hotel side of one app_users row. garden_role decides; before 118, the old per-person key. */
+export function resolveGarden(row: any, gRoles: any[] | null): GardenAccess | null {
+  const key = typeof row?.garden_role === 'string' && row.garden_role ? row.garden_role : null
+  if (key && gRoles) {
+    const def = gRoles.find(r => r.key === key)
+    if (!def) return null
+    const levels = gardenLevels(def.perms)
+    return { role: def.key, roleLabel: def.label, levels, landing: gardenLanding(levels, def.landing) }
+  }
+  if (row?.garden_role === undefined) {
+    const lv = String(row?.features?.garden || '').toLowerCase()
+    if (['view', 'edit', 'full'].includes(lv)) { const levels = gardenLevels(Object.fromEntries(Object.keys(GARDEN_ALL_FULL()).map(k => [k, lv]))); return { role: 'legacy', roleLabel: 'Hand-picked', levels, landing: '/garden' } }
+  }
+  return null
+}
+export const hasVr = (row: any) => !Array.isArray(row?.businesses) || row.businesses.includes('vr')
+const unitsOf = (row: any, g: GardenAccess | null): ('vr' | 'garden')[] => [...(hasVr(row) ? ['vr' as const] : []), ...(g ? ['garden' as const] : [])]
+async function withUnits(row: any, r: { levels: Record<string, Level>; landing: string; accessRole: string | null }) {
+  const g = resolveGarden(row, await getGardenRoles())
+  const levels = { ...r.levels }
+  let landing = r.landing
+  if (!hasVr(row)) {
+    // Hotel-only: nothing on the VR side, whatever the VR role or legacy workspace would say.
+    for (const f of FEATURES) levels[f.key] = 'off'
+    landing = g ? g.landing : '/no-access'
+  }
+  levels.garden = (g ? gardenMax(g.levels) : 'off') as Level
+  return { levels, landing, accessRole: r.accessRole, garden: g }
+}
+
 export async function getAccess(): Promise<Access> {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return base({})
   const email = String(user.email || '').toLowerCase()
-  if (email === SUPERADMIN) return base({ user, email, role: 'admin', allowed: true, workspace: 'admin', accessRole: 'admin', levels: ALL_FULL(), landing: '/command' })
+  if (email === SUPERADMIN) return base({ user, email, role: 'admin', allowed: true, workspace: 'admin', accessRole: 'admin', levels: ALL_FULL(), landing: '/command', ...OWNER_UNITS() })
   try {
     const sb = supabaseAdmin()
     // select('*') so optional columns (workspace/profile/prefs/access_role) are read when present
@@ -99,13 +153,13 @@ export async function getAccess(): Promise<Access> {
     const features = (data.features && typeof data.features === 'object') ? data.features as Record<string, boolean> : {}
     const role: Role = data.role === 'admin' ? 'admin' : 'member'
     const roles = await getRoles()
-    const { levels, landing, accessRole } = resolveLevels(data as any, roles)
+    const { levels, landing, accessRole, garden } = await withUnits(data as any, resolveLevels(data as any, roles))
     return base({
       user, email, role, allowed: true, features,
       workspace: role === 'admin' ? 'admin' : normWorkspace((data as any).workspace),
       profile: ((data as any).profile && typeof (data as any).profile === 'object') ? (data as any).profile : {},
       prefs: ((data as any).prefs && typeof (data as any).prefs === 'object') ? (data as any).prefs : {},
-      accessRole, levels, landing,
+      accessRole, levels, landing, businesses: unitsOf(data as any, garden), garden,
     })
   } catch {
     // FAIL CLOSED, same reasoning as the read-error path above.
@@ -141,7 +195,7 @@ export async function accessForEmail(email: string | null | undefined): Promise<
   if (!e) return null
   const user = { id: `offline:${e}`, email: e }
   if (e === SUPERADMIN) {
-    return base({ user, email: e, role: 'admin', allowed: true, workspace: 'admin', accessRole: 'admin', levels: ALL_FULL(), landing: '/command' })
+    return base({ user, email: e, role: 'admin', allowed: true, workspace: 'admin', accessRole: 'admin', levels: ALL_FULL(), landing: '/command', ...OWNER_UNITS() })
   }
   try {
     const sb = supabaseAdmin()
@@ -151,13 +205,13 @@ export async function accessForEmail(email: string | null | undefined): Promise<
     const features = ((data as any).features && typeof (data as any).features === 'object') ? (data as any).features as Record<string, boolean> : {}
     const role: Role = (data as any).role === 'admin' ? 'admin' : 'member'
     const roles = await getRoles()
-    const { levels, landing, accessRole } = resolveLevels(data as any, roles)
+    const { levels, landing, accessRole, garden } = await withUnits(data as any, resolveLevels(data as any, roles))
     return base({
       user, email: e, role, allowed: true, features,
       workspace: role === 'admin' ? 'admin' : normWorkspace((data as any).workspace),
       profile: ((data as any).profile && typeof (data as any).profile === 'object') ? (data as any).profile : {},
       prefs: ((data as any).prefs && typeof (data as any).prefs === 'object') ? (data as any).prefs : {},
-      accessRole, levels, landing,
+      accessRole, levels, landing, businesses: unitsOf(data as any, garden), garden,
     })
   } catch { return null }
 }

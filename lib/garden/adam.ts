@@ -66,6 +66,7 @@ const TOOLS = [
   { name: 'call_desk', description: 'What the front desk owes each guest right now: welcome calls due, verifications pending, post-stay calls — with attempts so far.', input_schema: { type: 'object', properties: {} } },
   { name: 'reviews', description: 'Recent reviews (90 days) with the average, the negative ones, the themes, and which still have no reply.', input_schema: { type: 'object', properties: { only: { type: 'string', description: 'optional: negative | unanswered' } } } },
   { name: 'schedule', description: 'This week: who is on shift each day and what the day holds (cleans, stayovers, arrivals), with where the roster is short.', input_schema: { type: 'object', properties: {} } },
+  { name: 'ask', description: "When you do not know something about the hotel that a person should tell you (a policy, a rule, who handles what), file the question so the GM answers it on Adam's page. The answer becomes a memory.", input_schema: { type: 'object', properties: { question: { type: 'string' }, context: { type: 'string', description: 'why it came up' }, subject: { type: 'string' } }, required: ['question'] } },
   { name: 'remember', description: 'Save something you were told about the hotel so you know it next time (a rule, a fact about a room or a guest, a preference). Only for things a person told you, never your own guesses.', input_schema: { type: 'object', properties: { content: { type: 'string' }, kind: { type: 'string', description: 'fact | rule | preference | person' }, subject: { type: 'string', description: 'a room number, a guest name, a vendor, or "hotel"' } }, required: ['content'] } },
 ]
 
@@ -87,9 +88,26 @@ async function runTool(name: string, args: any, by: string | null): Promise<any>
     if (name === 'call_desk') { const { callQueue } = await import('./call-desk'); const q = await callQueue({ days: 3 }); return { count: q.length, calls: q.map((x: any) => ({ kind: x.kind, guest: x.reservation?.guest_name, room: (x.reservation?.room_names || []).join(', '), check_in: x.reservation?.check_in, due: x.due_at, dueNow: x.dueNow, attempts: x.attempts, lastOutcome: x.last_outcome })) } }
     if (name === 'reviews') { const { reviewStats } = await import('./reviews'); const db = supabaseAdmin(); let q = db.from('garden_reviews').select('source,guest_name,rating,max_rating,title,body,received_at,sentiment,themes,reply_status').gte('received_at', new Date(Date.now() - 90 * 86400000).toISOString()).order('received_at', { ascending: false }).limit(40); if (args?.only === 'negative') q = q.eq('sentiment', 'negative'); if (args?.only === 'unanswered') q = q.in('reply_status', ['none', 'drafted']); const { data } = await q; return { stats: await reviewStats(90), reviews: data || [] } }
     if (name === 'schedule') { const { weekSchedule, weekStart } = await import('./schedule'); const w = await weekSchedule(weekStart(), 7); return { from: w.from, days: w.days.map((d: any) => ({ date: d.date, load: d.load, on: d.shifts.map((s: any) => `${s.staff?.name} (${s.role} ${s.start_time}–${s.end_time})`), short: d.suggest.gaps.filter((g: any) => g.short).map((g: any) => `${g.role} short ${g.short}`) })) } }
+    if (name === 'ask') { const q = String(args?.question || '').trim().slice(0, 500); if (!q) return { error: 'question required' }; const db = supabaseAdmin(); const { data: dup } = await db.from('garden_agent_questions').select('id').eq('status', 'open').eq('question', q).limit(1); if (dup?.length) return { ok: true, already: true }; const { data } = await db.from('garden_agent_questions').insert({ question: q, context: args?.context ? String(args.context).slice(0, 500) : null, subject: args?.subject ? String(args.subject).slice(0, 80) : null }).select('id').single(); return { ok: true, id: data?.id } }
     if (name === 'remember') { const id = await adamRemember({ content: args?.content, kind: args?.kind, subject: args?.subject, by, source: 'chat' }); return { ok: !!id, id } }
     return { error: 'unknown tool' }
   } catch (e: any) { return { error: String(e?.message || e).slice(0, 300) } }
+}
+
+// ---- The hotel's handbook and the shared bridge (migration 118) ----------------------------------
+export async function adamHandbook(maxChars = 12000): Promise<string> {
+  try {
+    const { data } = await supabaseAdmin().from('garden_handbook').select('section,title,body').order('sort')
+    let out = ''
+    for (const e of ((data || []) as any[])) { const b = String(e.body || '').trim(); if (!b) continue; const add = `## ${e.section} — ${e.title}\n${b}\n\n`; if (out.length + add.length > maxChars) break; out += add }
+    return out.trim()
+  } catch { return '' }
+}
+export async function adamShared(): Promise<string> {
+  try {
+    const { data } = await supabaseAdmin().from('shared_knowledge').select('title,body').eq('active', true).contains('businesses', ['garden']).order('created_at').limit(40)
+    return ((data || []) as any[]).map(k => `- ${k.title}: ${k.body}`).join('\n')
+  } catch { return '' }
 }
 
 // ---- The loop ------------------------------------------------------------------------------------
@@ -104,7 +122,7 @@ export async function runAdam(input: { access: Access; messages: { role: 'user' 
   if (!msgs.length || msgs[msgs.length - 1].role !== 'user') return { ok: false, status: 400, error: 'Ask something.' }
   const email = input.access.email || null
 
-  const [memories, status] = await Promise.all([adamMemories(120), gardenStatus().catch(() => null)])
+  const [memories, status, handbook, shared] = await Promise.all([adamMemories(120), gardenStatus().catch(() => null), adamHandbook(), adamShared()])
   const memoryBlock = memories.length
     ? memories.map(m => `- (${m.kind}${m.subject ? ` · ${m.subject}` : ''}) ${m.content}`).join('\n')
     : '- nothing yet — you are new here; ask, and remember what you are told'
@@ -114,6 +132,8 @@ export async function runAdam(input: { access: Access; messages: { role: 'user' 
     `Today is ${todayET(0)} (America/New_York). The person asking is ${email || 'a team member'}.`,
     status ? `Cloudbeds: ${status.mode === 'none' ? 'NOT CONNECTED yet — the hotel tables may be empty; say so plainly rather than inventing numbers' : `connected (${status.mode})`}. Rooms in mirror: ${status.rooms}. Reservations in mirror: ${status.reservations}.` : '',
     `Use the tools for anything about today, rooms, cleans, the call desk, verifications, reviews, the schedule or numbers — never guess a figure. When someone tells you a rule or a fact about the hotel, call remember. Answer in a few short lines; no headers.`,
+    handbook ? `The hotel's handbook (its own SOPs — ground truth; follow it over anything else):\n${handbook}` : `The hotel's handbook is still empty — when a question needs a policy you have not been told, call ask.`,
+    shared ? `Shared knowledge (the ONLY things from Stay Hospitality's vacation-rental side you know; everything else about that business is outside your world):\n${shared}` : '',
     `What you have been taught about the hotel:\n${memoryBlock}`,
   ].filter(Boolean).join('\n\n')
 

@@ -1,20 +1,17 @@
-// The Garden Hotel — today tab. One permission key ('garden') gates the whole set; see lib/garden.
-import { redirect } from 'next/navigation'
+// The Garden Hotel — today. Gated by the person's hotel role on 'today' (lib/garden/access).
 import { Shell } from '@/components/Shell'
 import { GardenDesk } from '@/components/GardenDesk'
-import { getAccess, isSuperadmin } from '@/lib/access'
+import { gardenPage } from '@/lib/garden/access'
 
 export const dynamic = 'force-dynamic'
 
 export default async function GardenTodayPage() {
-  const access = await getAccess()
-  if (!access.user) redirect('/login')
-  const level = String(access.levels?.garden || 'off')
-  if (level === 'off') redirect('/command')
+  const { canEdit, canFull } = await gardenPage('today')
+  void canFull
   return (
     <Shell>
       <div className="max-w-[1100px] mx-auto">
-        <GardenDesk view="today" canEdit={level === 'edit' || level === 'full'} owner={isSuperadmin(access.email)} />
+        <GardenDesk view="today" canEdit={canEdit} owner={canFull} />
       </div>
     </Shell>
   )

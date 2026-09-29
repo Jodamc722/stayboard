@@ -4,7 +4,7 @@
 //   PUT  { id?, name, event, conditions, action, params, enabled, sort }   (upsert; edit level)
 //   DELETE { id }
 import { NextRequest, NextResponse } from 'next/server'
-import { requireLevel } from '@/lib/access'
+import { requireGarden } from '@/lib/garden/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { runTriggers, seedTriggers, emitGardenEvent, EVENTS, ACTIONS } from '@/lib/garden/triggers'
 
@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 export async function GET(req: NextRequest) {
-  const gate = await requireLevel('garden', 'view')
+  const gate = await requireGarden('settings', 'view')
   if (!gate.ok) return gate.res
   const db = supabaseAdmin()
   const [{ data: triggers }, log, { count: pending }] = await Promise.all([
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('garden', 'edit')
+  const gate = await requireGarden('settings', 'edit')
   if (!gate.ok) return gate.res
   const b = await req.json().catch(() => ({}))
   const by = gate.access.email || 'someone'
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const gate = await requireLevel('garden', 'edit')
+  const gate = await requireGarden('settings', 'edit')
   if (!gate.ok) return gate.res
   const b = await req.json().catch(() => ({}))
   const row: any = { name: String(b?.name || '').slice(0, 120), event: String(b?.event || ''), action: String(b?.action || ''), conditions: b?.conditions && typeof b.conditions === 'object' ? b.conditions : {}, params: b?.params && typeof b.params === 'object' ? b.params : {}, enabled: b?.enabled !== false, sort: Number(b?.sort) || 100, updated_at: new Date().toISOString() }
@@ -47,7 +47,7 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const gate = await requireLevel('garden', 'edit')
+  const gate = await requireGarden('settings', 'edit')
   if (!gate.ok) return gate.res
   const b = await req.json().catch(() => ({}))
   if (!b?.id) return NextResponse.json({ error: 'id required' }, { status: 400 })

@@ -406,7 +406,7 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-line">
-                    {FEATURES.map((f, i) => {
+                    {FEATURES.filter(f => f.key !== 'garden').map((f, i) => {   // hotel access lives on the hotel's Team & access (migration 118)
                       const fromRole = roleLevelOf(f.key)
                       const over = overrideOf(f.key)
                       return (

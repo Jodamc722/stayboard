@@ -2,14 +2,14 @@
 //   GET                       → { hotel, voice, phone, phoneStatus }
 //   PUT { hotel? | voice? | phone? }
 import { NextRequest, NextResponse } from 'next/server'
-import { requireLevel, requireAdmin } from '@/lib/access'
+import { requireGarden } from '@/lib/garden/access'
 import { getHotel, getVoice, getPhone, saveHotel, saveVoice, savePhone } from '@/lib/garden/settings'
 import { ADAPTERS } from '@/lib/garden/phone'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const gate = await requireLevel('garden', 'view')
+  const gate = await requireGarden('settings', 'view')
   if (!gate.ok) return gate.res
   const [hotel, voice, phone] = await Promise.all([getHotel(), getVoice(), getPhone()])
   const ad = ADAPTERS[phone.provider]
@@ -18,7 +18,7 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
-  const gate = await requireAdmin('owner')
+  const gate = await requireGarden('settings', 'full')
   if (!gate.ok) return gate.res
   const b = await req.json().catch(() => ({}))
   const by = gate.access.email || 'owner'

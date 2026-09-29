@@ -3,7 +3,7 @@
 //   POST { op: 'import', reviews: ReviewIn[] } | { op: 'import_csv', csv } | { op: 'add', ...ReviewIn }
 //        { op: 'draft', id } | { op: 'reply', id, reply, sent?: boolean } | { op: 'skip', id }
 import { NextRequest, NextResponse } from 'next/server'
-import { requireLevel } from '@/lib/access'
+import { requireGarden } from '@/lib/garden/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { importReviews, parseReviewCsv, draftReviewReply, reviewStats } from '@/lib/garden/reviews'
 
@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 export async function GET(req: NextRequest) {
-  const gate = await requireLevel('garden', 'view')
+  const gate = await requireGarden('reviews', 'view')
   if (!gate.ok) return gate.res
   const sp = req.nextUrl.searchParams
   const days = Math.min(365, Math.max(7, Number(sp.get('days')) || 90))
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('garden', 'edit')
+  const gate = await requireGarden('reviews', 'edit')
   if (!gate.ok) return gate.res
   const b = await req.json().catch(() => ({}))
   const by = gate.access.email || null

@@ -7,7 +7,7 @@
 // Cloudbeds as clean; an 'inspection' finished writes inspected. Best effort — the task is marked
 // done here first, and a Cloudbeds refusal is returned as a warning, never as a failure.
 import { NextRequest, NextResponse } from 'next/server'
-import { requireLevel } from '@/lib/access'
+import { requireGarden } from '@/lib/garden/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { cloudbedsConfigured, setHousekeeping } from '@/lib/garden/cloudbeds'
 import { emitGardenEvent } from '@/lib/garden/triggers'
@@ -17,7 +17,7 @@ const KINDS = ['clean', 'stayover', 'inspection', 'deep_clean', 'maintenance']
 const STATUSES = ['open', 'in_progress', 'done', 'cancelled']
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('garden', 'edit')
+  const gate = await requireGarden('rooms', 'edit')
   if (!gate.ok) return gate.res
   const b = await req.json().catch(() => ({}))
   const date = String(b?.date || ''), kind = String(b?.kind || 'clean')
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const gate = await requireLevel('garden', 'edit')
+  const gate = await requireGarden('rooms', 'edit')
   if (!gate.ok) return gate.res
   const b = await req.json().catch(() => ({}))
   const id = String(b?.id || '')

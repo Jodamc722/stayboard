@@ -245,6 +245,9 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   const [features, setFeatures] = useState<Record<string, boolean> | null>(null)
   const [workspace, setWorkspace] = useState<string | null>(null)
   const [levels, setLevels] = useState<Record<string, string> | null>(null)
+  // Business units (migration 118): the businesses this login may enter + the hotel role's page levels.
+  const [units, setUnits] = useState<string[] | null>(null)
+  const [gLevels, setGLevels] = useState<Record<string, string> | null>(null)
   // The saved sidebar arrangement (lib/nav-layout.ts). Null until /api/access/me answers; the code
   // defaults render meanwhile, so the nav is never empty and never flickers into existence.
   const [navLayout, setNavLayout] = useState<NavLayout | null>(null)
@@ -271,7 +274,11 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     router.push(to)
   }
   // Hand-picked (lib/features HAND_PICKED): shown only once levels say so — never on a guess.
-  const canSeeGarden = () => isOwner || (!!levels && levels.garden != null && levels.garden !== 'off')
+  const canSeeGarden = () => isOwner || !!gLevels || (!!units && units.includes('garden'))
+  const canSeeVr = () => isOwner || !units || units.includes('vr')
+  // The hotel's sidebar shows what the hotel role can see; before /api/access/me answers, nothing.
+  const gVisible = (key: string) => isOwner || (!!gLevels && !!gLevels[key] && gLevels[key] !== 'off')
+  const gardenNav = GARDEN_NAV.filter(g => gVisible(g.key))
   const pinsLoaded = useRef(false)
   const dragFrom = useRef<number | null>(null)
 
@@ -293,6 +300,8 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
       setFeatures(j?.features && typeof j.features === 'object' ? j.features : {})
       setWorkspace(typeof j?.workspace === 'string' ? j.workspace : null)
       if (j?.levels && typeof j.levels === 'object') setLevels(j.levels)
+      if (Array.isArray(j?.businesses)) setUnits(j.businesses)
+      setGLevels(j?.garden?.levels && typeof j.garden.levels === 'object' ? j.garden.levels : null)
       if (j?.nav && typeof j.nav === 'object') setNavLayout(j.nav)
       if (typeof j?.accessRole === 'string' && j.accessRole) setRoleLabel(j.accessRole)
       if (j?.profile?.name) setDisplayName(String(j.profile.name))
@@ -466,7 +475,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     : (workspace ? workspaceDef(workspace).label : null)
 
   const here = byPath[path || '']
-  const currentLabel = business === 'garden' ? ((GARDEN_NAV.find(g => path === g.to || (g.to !== '/garden' && !!path && path.startsWith(g.to + '/'))) || GARDEN_NAV[0]).label) : here ? here.label : (activeGroup || 'Lighthouse')
+  const currentLabel = business === 'garden' ? ((GARDEN_NAV.slice().sort((a, b) => b.to.length - a.to.length).find(g => path === g.to || (g.to !== '/garden' && !!path && path.startsWith(g.to + '/'))) || GARDEN_NAV[0]).label) : here ? here.label : (activeGroup || 'Lighthouse')
 
   // DUPLICATE PAGE TITLE (Jon, 2026-08-26: "how do we make it visible and concise"). On a phone the
   // app bar two inches above the content already says "Today in Ops", and then the page says it
@@ -506,7 +515,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   // THE BUSINESS DROPDOWN — under the logo, in the sidebar and the phone drawer.
   const bizSwitcher = (compact?: boolean) => {
     const cur = businessDef(business)
-    const list = BUSINESSES.filter(b => b.key === 'vr' || (b.key === 'garden' && canSeeGarden()))
+    const list = BUSINESSES.filter(b => (b.key === 'vr' && canSeeVr()) || (b.key === 'garden' && canSeeGarden()))
     if (list.length < 2) return null
     return (
       <div className={compact ? 'px-3 pb-2' : 'px-3 pb-2'}>
@@ -548,7 +557,9 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     // hotel's pages and, for admins, the door back to Users & admin.
     <>
       {GARDEN_SECTIONS.map(section => {
-        const items = section.title === 'Settings' && isAdmin ? section.items.concat([{ to: '/users', label: 'Users & admin', Icon: UserCog }]) : section.items
+        // Users live in the hotel's own Team & access (migration 118), not in the VR admin.
+        const items = section.items.filter(it => gVisible(it.key))
+        if (!items.length) return null
         return (
           <div key={section.title}>
             <div className="mt-3.5 first:mt-1 px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] font-bold text-muted/60">{section.title}</div>
@@ -751,7 +762,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
             navigation. pb-safe keeps the labels off the iPhone home indicator, which viewport-fit
             cover otherwise draws straight through. */}
         <nav className={(full ? 'hidden' : 'lg:hidden flex') + ' flex-shrink-0 border-t border-line bg-white items-stretch pb-safe px-safe'}>
-          {(business === 'garden' ? GARDEN_NAV.slice(0, 4) : pinned.slice(0, 4)).map(({ to, label, Icon }) => {
+          {(business === 'garden' ? gardenNav.slice(0, 4) : pinned.slice(0, 4)).map(({ to, label, Icon }) => {
             const active = business === 'garden' ? (path === to || (to !== '/garden' && !!path && path.startsWith(to + '/'))) : isActive(to)
             return (
               <Link key={'bb-' + to} href={to} prefetch={false}

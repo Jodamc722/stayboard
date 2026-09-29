@@ -2,14 +2,14 @@
 //   GET  ?status=pending|done|skipped|expired&days=3&script=<reservationId>
 //   POST { op: 'rebuild' } | { op: 'skip' | 'done' | 'reopen', id, note? } | { op: 'assign', id, to }
 import { NextRequest, NextResponse } from 'next/server'
-import { requireLevel } from '@/lib/access'
+import { requireGarden } from '@/lib/garden/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { callQueue, buildCallQueue, welcomeScript } from '@/lib/garden/call-desk'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const gate = await requireLevel('garden', 'view')
+  const gate = await requireGarden('calls', 'view')
   if (!gate.ok) return gate.res
   const sp = req.nextUrl.searchParams
   try {
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('garden', 'edit')
+  const gate = await requireGarden('calls', 'edit')
   if (!gate.ok) return gate.res
   const b = await req.json().catch(() => ({}))
   const by = gate.access.email || 'someone'

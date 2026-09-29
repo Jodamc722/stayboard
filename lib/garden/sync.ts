@@ -30,7 +30,7 @@ async function mark(entity: string, ok: { count?: number } | { error: string }) 
   await db.from('garden_sync_status').upsert(row, { onConflict: 'entity' })
 }
 
-export type GardenSyncResult = { ok: boolean; connected: boolean; rooms?: number; reservations?: number; housekeeping?: number; cleans?: number; events?: number; queue?: any; triggers?: any; phone?: any; errors: string[] }
+export type GardenSyncResult = { ok: boolean; connected: boolean; rooms?: number; reservations?: number; housekeeping?: number; cleans?: number; events?: number; queue?: any; triggers?: any; phone?: any; hub?: any; errors: string[] }
 
 export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenSyncResult> {
   const out: GardenSyncResult = { ok: true, connected: cloudbedsConfigured(), errors: [] }
@@ -111,7 +111,9 @@ export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenS
 
   // 4) Auto cleans from the mirror
   try { out.cleans = await ensureCleans() } catch (e: any) { out.errors.push(`cleans: ${e?.message || e}`) }
-  // 5) The desks that ride the sync: the day's events, the call queue, the triggers, the phone.
+  // 5) The Cloudbeds hub: multi-calendar, channels, payments, messaging (lib/garden/hub).
+  try { const { syncHub } = await import('./hub'); out.hub = await syncHub() } catch (e: any) { out.errors.push(`hub: ${e?.message || e}`) }
+  // 6) The desks that ride the sync: the day's events, the call queue, the triggers, the phone.
   await runGardenDesks(out)
   return out
 }

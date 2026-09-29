@@ -12,7 +12,8 @@ import { hasEditCookie } from '@/lib/edit-access'
 import { resolveScope, pullTasks, weekBuckets, type ReportListing } from '@/lib/owner-report'
 import { aiFetch } from '@/lib/ai-usage'
 import { reconcilePacing, type OurTruth } from '@/lib/pacing-check'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireReportLevel } from '@/lib/garden/access'
+import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -216,11 +217,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('reports', 'edit')
-  if (!gate.ok && !hasEditCookie()) return gate.res
-  const user = gate.access.user
   const body = await req.json().catch(() => ({} as any))
   const reportId = str(body?.reportId)
+  const gate = await requireReportLevel(reportId, 'edit')
+  if (!gate.ok && !hasEditCookie()) return gate.res
+  const user = gate.access.user
   const kind = str(body?.kind)
   if (!reportId || (kind !== 'pacing' && kind !== 'statements' && kind !== 'completed' && kind !== 'refresh-work')) {
     return NextResponse.json({ error: 'reportId + kind (pacing|statements|completed|refresh-work) required' }, { status: 400 })

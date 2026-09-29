@@ -84,7 +84,9 @@ export async function GET() {
       if (au.users.length < 1000) break
     }
   } catch { /* ignore */ }
-  const users = (data || []).map((u: any) => ({ ...u, last_sign_in_at: lastSignIn[clean(u.email)] || null }))
+  // Business units (migration 118): hotel-only logins are managed on the hotel's Team & access,
+  // not here. Rows without the column (pre-118) are VR by definition.
+  const users = (data || []).filter((u: any) => !Array.isArray(u.businesses) || u.businesses.includes('vr')).map((u: any) => ({ ...u, last_sign_in_at: lastSignIn[clean(u.email)] || null }))
   return NextResponse.json({ users })
 }
 
@@ -117,6 +119,8 @@ export async function POST(req: NextRequest) {
     const { data: r } = await sb.from('app_roles').select('key').eq('key', body.access_role).maybeSingle()
     if (r) row.access_role = role === 'admin' ? 'admin' : body.access_role
   } else if (role === 'admin') row.access_role = 'admin'
+  // Inviting from the VR admin makes them a VR member, keeping any hotel membership they had.
+  try { const { data: ex } = await sb.from('app_users').select('businesses').eq('email', email).maybeSingle(); if (ex && Array.isArray((ex as any).businesses)) row.businesses = Array.from(new Set([...(ex as any).businesses, 'vr'])) } catch { /* pre-118 */ }
   let { error: upErr } = await sb.from('app_users').upsert(row, { onConflict: 'email' })
   if (upErr && (row.workspace || row.access_role) && /workspace|access_role/i.test(upErr.message || '')) {
     // Pre-migration fallback (013 workspace / 023 access_role): retry without the new columns.

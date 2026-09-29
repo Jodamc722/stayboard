@@ -7,7 +7,7 @@
 // so a link into the hotel lands in the hotel and the back button behaves.
 //
 // Shared by Shell (the dropdown + which nav to draw). Pure; safe on the client.
-import { Hotel, ListChecks, BedDouble, PhoneCall, BarChart3, Plug, Sparkles, CalendarRange, Star, FileText, Settings } from 'lucide-react'
+import { Hotel, ListChecks, BedDouble, PhoneCall, BarChart3, Plug, Sparkles, CalendarRange, CalendarDays, Star, FileText, Settings, MessageSquare, CreditCard, Users, BookOpen } from 'lucide-react'
 
 export type BusinessKey = 'vr' | 'garden'
 export type Business = { key: BusinessKey; label: string; short: string; landing: string; prefix: string | null }
@@ -25,19 +25,15 @@ export function businessForPath(path: string | null | undefined): BusinessKey {
 }
 export const businessDef = (key: BusinessKey): Business => BUSINESSES.find(b => b.key === key) || BUSINESSES[0]
 
-/**
- * The hotel's own sidebar, in the same shape as the VR board (Jon: "should look like my current
- * board — user settings, an AI agent"): Overview / Operations / Guests / Money / Settings. One
- * permission key ('garden') covers all of it; Users & admin is appended by Shell for admins.
- */
-export const GARDEN_SECTIONS: { title: string; items: { to: string; label: string; Icon: any }[] }[] = [
-  { title: 'Overview',   items: [{ to: '/garden',               label: 'Today',                 Icon: ListChecks }] },
-  { title: 'Operations', items: [{ to: '/garden/rooms',         label: 'Rooms & cleans',        Icon: BedDouble }, { to: '/garden/schedule', label: 'Scheduler', Icon: CalendarRange }] },
-  { title: 'Guests',     items: [{ to: '/garden/calls',         label: 'Calls & verifications', Icon: PhoneCall }, { to: '/garden/reviews', label: 'Reviews', Icon: Star }] },
-  { title: 'Money',      items: [{ to: '/garden/reports',       label: 'Reports',               Icon: BarChart3 }, { to: '/garden/owner-reports', label: 'Owner reports', Icon: FileText }] },
-  { title: 'Settings',   items: [{ to: '/garden/adam',          label: 'Adam',                  Icon: Sparkles }, { to: '/garden/settings', label: 'Settings', Icon: Settings }, { to: '/garden/setup', label: 'Cloudbeds & feeds', Icon: Plug }] },
-]
-export const GARDEN_NAV = GARDEN_SECTIONS.flatMap(s => s.items)
+import { GARDEN_PAGE_DEFS, type GardenPageDef } from './garden/pages'
+export * from './garden/pages'
+const GARDEN_ICONS: Record<string, any> = { today: ListChecks, rooms: BedDouble, schedule: CalendarRange, calls: PhoneCall, messages: MessageSquare, reviews: Star, calendar: CalendarDays, payments: CreditCard, reports: BarChart3, 'owner-reports': FileText, staff: Users, handbook: BookOpen, adam: Sparkles, settings: Settings, setup: Plug }
+export type GardenPage = GardenPageDef & { Icon: any }
+export const GARDEN_PAGES: GardenPage[] = GARDEN_PAGE_DEFS.map(d => ({ ...d, Icon: GARDEN_ICONS[d.key] || ListChecks }))
+const SECTION_ORDER = ['Overview', 'Operations', 'Guests', 'Money', 'Team', 'Settings']
+export const GARDEN_SECTIONS: { title: string; items: GardenPage[] }[] = SECTION_ORDER.map(title => ({ title, items: GARDEN_PAGES.filter(p => p.section === title) }))
+
+export const GARDEN_NAV = GARDEN_PAGES
 export const GARDEN_ICON = Hotel
 
 /** Where the VR side was last, so switching back lands where you were. Device-local, best effort. */

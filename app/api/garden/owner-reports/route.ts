@@ -4,7 +4,7 @@
 //   POST { op: 'generate', from, to, templateKey, theme?, title? }   → { id, code }
 //        { op: 'save_template', template } | { op: 'reset_template', key }
 import { NextRequest, NextResponse } from 'next/server'
-import { requireLevel } from '@/lib/access'
+import { requireGarden } from '@/lib/garden/access'
 import { generateGardenReport, listGardenReports } from '@/lib/garden/owner-report'
 import { listTemplates, saveTemplate, resetTemplate, SECTIONS, CARD_KEYS } from '@/lib/garden/report-templates'
 import { datasetsFor } from '@/lib/garden/report-datasets'
@@ -16,7 +16,7 @@ const FONTS = ['garden', 'modern', 'stay', 'editorial', 'classic']
 const ok = (v: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''))
 
 export async function GET(req: NextRequest) {
-  const gate = await requireLevel('garden', 'view')
+  const gate = await requireGarden('owner-reports', 'view')
   if (!gate.ok) return gate.res
   const sp = req.nextUrl.searchParams
   try {
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('garden', 'edit')
+  const gate = await requireGarden('owner-reports', 'edit')
   if (!gate.ok) return gate.res
   const b = await req.json().catch(() => ({}))
   const by = gate.access.email || 'someone'

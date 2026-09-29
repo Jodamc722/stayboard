@@ -12,7 +12,9 @@ const TIER_LABEL: Record<string, string> = { fable: 'Fable 5.1', opus: 'Opus 4.8
 
 export function AdamAdmin({ owner, canEdit }: { owner: boolean; canEdit: boolean }) {
   const [d, setD] = useState<any | null>(null)
-  const [tab, setTab] = useState<'memory' | 'chats' | 'voice'>('memory')
+  const [tab, setTab] = useState<'memory' | 'questions' | 'shared' | 'chats' | 'voice'>('memory')
+  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [share, setShare] = useState({ title: '', body: '' })
   const [teach, setTeach] = useState('')
   const [name, setName] = useState('')
   const [direction, setDirection] = useState('')
@@ -22,6 +24,7 @@ export function AdamAdmin({ owner, canEdit }: { owner: boolean; canEdit: boolean
 
   const addTeach = async () => { if (!teach.trim()) return; await j('/api/garden/adam', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ teach: teach.trim() }) }); setTeach(''); load() }
   const forget = async (id: string) => { await j('/api/garden/adam', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }); load() }
+  const postJ = async (body: any) => { await j('/api/garden/adam', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); load() }
   const save = async (patch: any) => { const r = await j('/api/garden/adam', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) }); setSaved(r?.ok ? 'Saved' : (r?.error || 'Could not save')); setTimeout(() => setSaved(''), 2000); load() }
 
   if (!d) return <p className="text-[13px] text-muted inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading…</p>
@@ -37,7 +40,7 @@ export function AdamAdmin({ owner, canEdit }: { owner: boolean; canEdit: boolean
         <button onClick={() => openAdam()} className="rounded-lg bg-emerald-700 text-white px-2.5 h-7 text-[12px] font-semibold">Ask {s.name}</button>
       </LeanHead>
       <p className="text-[12.5px] text-muted mb-3">The Garden Hotel&apos;s own agent — his own memory, his own chat log, his own model. He knows nothing about the vacation rentals and Eve knows nothing about the hotel; that is by design.</p>
-      <LeanTabs value={tab} onChange={setTab} tabs={[{ key: 'memory', label: 'What he knows', n: d.memories.length }, { key: 'chats', label: 'Recent chats', n: d.chats.length }, { key: 'voice', label: 'Voice & model' }]} />
+      <LeanTabs value={tab} onChange={setTab} tabs={[{ key: 'memory', label: 'What he knows', n: d.memories.length }, { key: 'questions', label: 'His questions', n: (d.questions || []).filter((q: any) => q.status === 'open').length }, { key: 'shared', label: 'Shared from Stay', n: (d.shared || []).length }, { key: 'chats', label: 'Recent chats', n: d.chats.length }, { key: 'voice', label: 'Voice & model' }]} />
       {tab === 'memory' ? (<>
         {canEdit ? (
           <div className="flex gap-2 mb-3">
@@ -52,6 +55,36 @@ export function AdamAdmin({ owner, canEdit }: { owner: boolean; canEdit: boolean
               actions={canEdit ? <IconBtn title="Forget this" tone="bad" onClick={() => forget(m.id)}><Trash2 size={14} /></IconBtn> : undefined} />
           ))}</LeanList>
         ) : <LeanEmpty>Nothing yet. Tell him how the hotel works — here, or in a chat — and it lands on this list.</LeanEmpty>}
+      </>) : null}
+      {tab === 'questions' ? ((d.questions || []).length ? (
+        <LeanList>{(d.questions || []).map((q: any) => (
+          <LeanRow key={q.id} name={q.question} meta={`${q.subject ? q.subject + ' · ' : ''}${when(q.created_at)}`} defaultOpen={q.status === 'open'}
+            tags={<Tag tone={q.status === 'open' ? 'amber' : q.status === 'answered' ? 'emerald' : 'slate'}>{q.status}</Tag>}>
+            {q.context ? <p className="text-[12px] text-muted">{q.context}</p> : null}
+            {q.status === 'open' && canEdit ? (
+              <div className="flex gap-2">
+                <input value={answers[q.id] || ''} onChange={e => setAnswers(a => ({ ...a, [q.id]: e.target.value }))} placeholder="The answer — it becomes one of his memories" className="flex-1 rounded-xl border border-line bg-white px-3 py-2 text-sm" />
+                <button onClick={() => postJ({ answer: { id: q.id, text: answers[q.id] || '' } })} className="rounded-xl bg-ink text-white px-3 text-[12px] font-semibold">Answer</button>
+                <button onClick={() => postJ({ answer: { id: q.id, dismiss: true } })} className="rounded-xl border border-line px-3 text-[12px] font-semibold">Dismiss</button>
+              </div>
+            ) : q.answer ? <p className="text-[12.5px] text-ink/85">{q.answer} <span className="text-muted">— {q.answered_by}</span></p> : null}
+          </LeanRow>
+        ))}</LeanList>
+      ) : <LeanEmpty>No questions yet. When he meets a policy he has not been told, he asks here; your answer becomes a memory.</LeanEmpty>) : null}
+      {tab === 'shared' ? (<>
+        <p className="text-[12.5px] text-muted mb-2">The only bridge between the two brains: company-wide facts from the Stay Hospitality side that also apply to the hotel. Adam reads these; nothing else Eve knows reaches him.</p>
+        {owner ? (
+          <div className="flex flex-wrap gap-2 mb-3">
+            <input value={share.title} onChange={e => setShare({ ...share, title: e.target.value })} placeholder="Title, e.g. Company payroll day" className="w-56 rounded-xl border border-line bg-white px-3 py-2 text-sm" />
+            <input value={share.body} onChange={e => setShare({ ...share, body: e.target.value })} placeholder="What both agents should know" className="flex-1 min-w-[14rem] rounded-xl border border-line bg-white px-3 py-2 text-sm" />
+            <button onClick={async () => { await postJ({ share }); setShare({ title: '', body: '' }) }} className="rounded-xl bg-ink text-white px-3 text-[12px] font-semibold">Share</button>
+          </div>
+        ) : null}
+        {(d.shared || []).length ? <LeanList>{(d.shared || []).map((k: any) => (
+          <LeanRow key={k.id} name={k.title} meta={`${k.created_by || ''} · ${when(k.created_at)}`} actions={owner ? <IconBtn title="Stop sharing" tone="bad" onClick={() => postJ({ unshare: k.id })}><Trash2 size={14} /></IconBtn> : undefined}>
+            <p className="text-[12.5px] text-ink/85">{k.body}</p>
+          </LeanRow>
+        ))}</LeanList> : <LeanEmpty>Nothing shared. Adam knows nothing of the vacation-rental side.</LeanEmpty>}
       </>) : null}
       {tab === 'chats' ? (d.chats.length ? (
         <LeanList>{d.chats.map((c: any) => (

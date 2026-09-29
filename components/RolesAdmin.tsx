@@ -27,7 +27,8 @@ const GROUPS: { title: string; keys: string[] }[] = (() => {
   for (const g of gs) for (const k of g.keys) claimed.push(k)
   const extra = FEATURES.filter(f => claimed.indexOf(f.key) < 0).map(f => f.key)
   if (extra.length > 0) gs.push({ title: 'New tabs', keys: extra })
-  return gs
+  // The Garden Hotel is its own business with its own roles (migration 118) — not on VR roles.
+  return gs.map(g => ({ ...g, keys: g.keys.filter(k => k !== 'garden') })).filter(g => g.keys.length > 0)
 })()
 
 const label = (key: string) => FEATURES.find(f => f.key === key)?.label || key

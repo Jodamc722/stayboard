@@ -6,7 +6,7 @@
 // A call is an attempt (one row each, never edited); a verification is one status per
 // reservation per kind (upserted), so the tab can say "ID ✓ · card pending" on a single line.
 import { NextRequest, NextResponse } from 'next/server'
-import { requireLevel } from '@/lib/access'
+import { requireGarden } from '@/lib/garden/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { noteAttempt } from '@/lib/garden/call-desk'
 
@@ -17,7 +17,7 @@ const VER_KINDS = ['id', 'card', 'deposit', 'agreement', 'age']
 const VER_STATUS = ['pending', 'passed', 'failed', 'waived']
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('garden', 'edit')
+  const gate = await requireGarden('calls', 'edit')
   if (!gate.ok) return gate.res
   const b = await req.json().catch(() => ({}))
   const db = supabaseAdmin()

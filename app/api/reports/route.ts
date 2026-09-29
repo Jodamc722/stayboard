@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { hasEditCookie } from '@/lib/edit-access'
-import { requireLevel } from '@/lib/access'
+import { requireReportLevel } from '@/lib/garden/access'
 
 export const dynamic = 'force-dynamic'
 
@@ -49,11 +49,11 @@ export async function GET(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   // Roles+levels write gate (2026-08-04): below-edit access on 'reports' is rejected here,
   // whatever the UI shows. requireLevel also covers the signed-out 401.
-  const __gate = await requireLevel('reports', 'edit')
-  if (!__gate.ok) return __gate.res
-  if (!(await canEdit())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({} as any))
   const id = str(body?.id)
+  const __gate = await requireReportLevel(id, 'edit')
+  if (!__gate.ok) return __gate.res
+  if (!(await canEdit())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
   const patch: Record<string, any> = { updated_at: new Date().toISOString() }
   if (body.content && typeof body.content === 'object') patch.content = body.content
@@ -68,11 +68,11 @@ export async function PUT(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   // Roles+levels write gate (2026-08-04): below-full access on 'reports' is rejected here,
   // whatever the UI shows. requireLevel also covers the signed-out 401.
-  const __gate = await requireLevel('reports', 'full')
+  const id = new URL(req.url).searchParams.get('id') || ''
+  const __gate = await requireReportLevel(id, 'full')
   if (!__gate.ok) return __gate.res
   const user = await requireUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const id = new URL(req.url).searchParams.get('id') || ''
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
   const { error } = await supabaseAdmin().from('owner_reports').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

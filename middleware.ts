@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
+import { gardenLevels, gardenLanding, gardenPageForPath } from './lib/garden/pages'
 import { featureForPath, pageAllowed, firstEnabled, levelsForRole, legacyLevels, landingFor, workspaceDef, normWorkspace, isOpenPath as openPath, type RoleDef } from './lib/features'
 
 type CookieToSet = { name: string; value: string; options: CookieOptions }
@@ -14,7 +15,7 @@ const SUPERADMIN = 'jon@stay-hospitality.com'
 // and the result is NOT cached so the next request retries. The one deliberate fail-open that
 // remains is the empty allowlist (fresh install, nobody set up yet). The superadmin never reaches
 // this function at all.
-type Member = { allowed: boolean; features: Record<string, any> | null; workspace: string | null; role: string | null; access_role: string | null; error?: boolean }
+type Member = { allowed: boolean; features: Record<string, any> | null; workspace: string | null; role: string | null; access_role: string | null; businesses?: string[] | null; garden_role?: string | null; error?: boolean }
 const DENY: Member = { allowed: false, features: null, workspace: null, role: null, access_role: null, error: true }
 const _memberCache = new Map<string, { at: number; val: Member }>()
 const _MEMBER_TTL = 60_000
@@ -59,6 +60,9 @@ async function getMemberRaw(email: string): Promise<Member> {
         workspace: typeof row.workspace === 'string' ? row.workspace : null,
         role: typeof row.role === 'string' ? row.role : null,
         access_role: typeof row.access_role === 'string' ? row.access_role : null,
+        // Business units (migration 118). undefined before the migration → VR-only, legacy hotel key.
+        businesses: Array.isArray(row.businesses) ? row.businesses : null,
+        garden_role: row.garden_role === undefined ? undefined : (typeof row.garden_role === 'string' && row.garden_role ? row.garden_role : null),
       }
     }
     // No row for this user. Allow only if the allowlist is still empty (pre-setup); otherwise deny.
@@ -88,6 +92,23 @@ async function getRolesEdge(): Promise<RoleDef[] | null> {
     _rolesVal = Array.isArray(rows) ? (rows as RoleDef[]) : null
   } catch { _rolesAt = Date.now(); _rolesVal = null }
   return _rolesVal
+}
+
+// ---- garden_roles cache (migration 118) — the hotel's own roles, same pattern as app_roles.
+let _gRolesAt = 0
+let _gRolesVal: any[] | null = null
+async function getGardenRolesEdge(): Promise<any[] | null> {
+  if (Date.now() - _gRolesAt < _MEMBER_TTL) return _gRolesVal
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY1 || process.env.SUPABASE_SERVICE_ROLE || process.env.SUPABASE_SERVICE_KEY
+  if (!url || !key) return null
+  try {
+    const r = await fetch(`${url}/rest/v1/garden_roles?select=key,perms,landing`, { headers: { apikey: key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(2500) })
+    _gRolesAt = Date.now()
+    const rows = r.ok ? await r.json().catch(() => null) : null
+    _gRolesVal = Array.isArray(rows) ? rows : null
+  } catch { _gRolesAt = Date.now(); _gRolesVal = null }
+  return _gRolesVal
 }
 
 export async function middleware(request: NextRequest) {
@@ -124,7 +145,7 @@ export async function middleware(request: NextRequest) {
   if (user && !isOpenPath) {
     const email = String(user.email || '').toLowerCase()
     if (email && email !== SUPERADMIN) {
-      const { allowed, features, workspace, role, access_role, error } = await getMember(email)
+      const { allowed, features, workspace, role, access_role, businesses, garden_role, error } = await getMember(email)
       if (error) {
         // The allowlist could not be read. Deny, like getAccess() does, and send them to /login
         // rather than /no-access: this is not a verdict on the person, and a retry usually clears it.
@@ -138,6 +159,36 @@ export async function middleware(request: NextRequest) {
         url.pathname = '/no-access'
         url.search = ''
         return NextResponse.redirect(url)
+      }
+      // BUSINESS UNITS (migration 118). The hotel is gated by the hotel role alone — a VR admin is
+      // not a hotel member — and a hotel-only person never lands on a VR page.
+      const redirectTo = (p: string) => { const url = request.nextUrl.clone(); url.pathname = p; url.search = ''; return NextResponse.redirect(url) }
+      const inGarden = path === '/garden' || path.startsWith('/garden/')
+      const vrMember = !Array.isArray(businesses) || businesses.includes('vr')
+      if (inGarden) {
+        if (garden_role === undefined) {
+          // Pre-118: the old hand-picked per-person key.
+          const lv = String((features as any)?.garden || 'off')
+          if (!['view', 'edit', 'full'].includes(lv)) return redirectTo(vrMember ? '/command' : '/no-access')
+          return response
+        }
+        const gRoles = garden_role ? await getGardenRolesEdge() : null
+        const def = gRoles && garden_role ? gRoles.find(r => r.key === garden_role) : null
+        if (!def) return redirectTo(vrMember ? '/command' : '/no-access')
+        const gl = gardenLevels(def.perms)
+        const page = gardenPageForPath(path)
+        if (page && gl[page.key] === 'off') return redirectTo(gardenLanding(gl, def.landing))
+        return response
+      }
+      if (!vrMember) {
+        // Hotel-only: every VR tab sends them to the hotel. Non-tab paths (account, no-access) pass.
+        if (featureForPath(path)) {
+          if (!garden_role) return redirectTo('/no-access')
+          const gRoles = await getGardenRolesEdge()
+          const def = gRoles ? gRoles.find(r => r.key === garden_role) : null
+          return redirectTo(def ? gardenLanding(gardenLevels(def.perms), def.landing) : '/garden')
+        }
+        return response
       }
       // Page gate (2026-08-04, roles + levels): the user's DB role assigns off/view/edit/full per
       // tab — 'off' blocks here. Admins always pass. If app_roles is missing or the user has no

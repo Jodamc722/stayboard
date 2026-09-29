@@ -18,5 +18,7 @@ export async function GET() {
     // Roles + levels (migration 023): resolved off/view/edit/full per tab, this user's role key
     // and landing page. The nav hides 'off'; pages use levels to render read-only on 'view'.
     accessRole: a.accessRole, levels: a.levels, landing: a.landing,
+    // Business units (migration 118): which businesses this login may enter, and the hotel role.
+    businesses: a.businesses, garden: a.garden,
   })
 }
