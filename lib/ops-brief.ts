@@ -93,9 +93,12 @@ async function gather(variant: BriefVariant) {
     // custom_fields carries the two-way reservation note the welcome-call and front-desk boards
     // write into. A supervisor briefing their crew needs it: "guest arriving 11pm, leave the bag
     // in the closet" changes how the day is run and is invisible everywhere else.
-    db.from('guesty_reservations')
+    // PAGED, in check-in order (2026-09-29): up to fifteen days of arrivals of every status can pass
+    // 1,000 at the longest lookahead, and past that the single unordered read kept an arbitrary 1,000.
+    pageRows<any>((a, b) => db.from('guesty_reservations')
       .select('listing_id,check_in,check_out,nights,status,guest_name,money_total,custom_fields,source')
-      .gte('check_in', today).lte('check_in', inN).limit(1500),
+      .gte('check_in', today).lte('check_in', inN).order('check_in').order('id').range(a, b), 5)
+      .then(r => { if (r.truncated) console.error('[ops-brief] the arrivals read stopped early — the brief may be missing arrivals'); return { data: r.rows } }),
     // REPUTATION IS NOT A FIELD SUBJECT (audit 2026-09-21). These two reads — a 300-row feedback
     // queue and a 3,000-row month of reviews — feed the New reviews, Reputation and Units-to-inspect
     // cards, none of which a day sheet renders. They ran on all four sends every morning and their
@@ -108,9 +111,12 @@ async function gather(variant: BriefVariant) {
           .in('status', ['open', 'doing']).limit(300),
     variant === 'Miami' || variant === 'Broward'
       ? Promise.resolve({ data: [] as any[] })
-      : db.from('guesty_reviews')
+      // Paged, NEWEST FIRST (2026-09-29): past 1,000 the unordered read kept an arbitrary 1,000, and the
+      // "most recent review" fallback below takes the FIRST row — which only newest-first makes true.
+      : pageRows<any>((a, b) => db.from('guesty_reviews')
           .select('listing_id,rating,content,guest_name,channel,has_reply,dismissed,created_at')
-          .gte('created_at', monthAgo).limit(3000),
+          .gte('created_at', monthAgo).order('created_at', { ascending: false }).order('id').range(a, b), 4)
+          .then(r => { if (r.truncated) console.error('[ops-brief] the 30-day review read stopped early — reputation figures may be short'); return { data: r.rows } }),
   ])
 
   type Meta = { name: string; market: Market; building: string; active: boolean }
