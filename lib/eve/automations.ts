@@ -22,7 +22,9 @@
 // key is reported as "unset (off)" rather than assumed on — the maintenance briefs were
 // `enabled:true` with empty recipient lists for weeks, sending nothing, and every dashboard said
 // they were fine. Default-off automations are marked so, because "no orders today" and "the orders
-// automation has never been switched on" are different sentences.
+// automation has never been switched on" are different sentences. The one exception is a switch the
+// CODE reads as on when it is missing (`defaultOn`): that entry is reported on, because calling a
+// live automation off is the same lie told the other way.
 import 'server-only'
 import { getSetting } from '@/lib/app-settings'
 
@@ -47,6 +49,8 @@ export type AutomationDef = {
   settingsPath?: string
   /** True when the shipped default is OFF and someone must switch it on deliberately. */
   defaultOff?: boolean
+  /** True when the code reads a MISSING switch as ON — only an explicit false turns it off. */
+  defaultOn?: boolean
   /** What it records into automation_runs / email_log, when it records anything. */
   receipt?: 'automation_runs' | 'email_log' | 'slack_outbox' | 'none'
   notes?: string
@@ -55,26 +59,31 @@ export type AutomationDef = {
 export const AUTOMATIONS: AutomationDef[] = [
   // ---- Keeping the mirror true to Guesty / Breezeway / Homebase ------------------------------
   { key: 'reservations', label: 'Bookings sync', area: 'sync', path: '/api/cron/reservations',
-    what: 'Pulls new and changed Guesty reservations into our mirror every five minutes. Everything dated in this app rests on it.', receipt: 'none' },
+    what: 'Pulls new and changed Guesty reservations into our mirror every five minutes. Everything dated in this app rests on it.', receipt: 'automation_runs' },
   { key: 'reservations-full', label: 'Bookings full resync', area: 'sync', path: '/api/cron/reservations-full',
-    what: 'Once a day, re-pulls an 80-day window rather than trusting the incremental watermark, so a missed webhook cannot rot quietly.', receipt: 'none' },
+    what: 'Once a day, re-pulls every booking checking out from 45 days ago onward rather than trusting the incremental watermark, so a missed webhook, a late refund or an owner-stay reclassification on a stay already over cannot rot quietly.', receipt: 'automation_runs' },
   { key: 'sync-reviews', label: 'Reviews sync', area: 'guests', path: '/api/cron/sync-reviews',
-    what: 'Pulls guest reviews from Guesty on their own cadence, per channel — the feed whose per-channel death hid behind a portfolio-wide freshness check for a week.', receipt: 'none' },
-  { key: 'guesty-full', label: 'Guesty full reconcile', area: 'sync', path: '/api/sync/guesty',
-    what: 'Every two hours, reconciles listings, custom-field definitions, conversations and reviews.', receipt: 'none' },
+    what: 'Pulls guest reviews from Guesty on their own cadence, per channel — the feed whose per-channel death hid behind a portfolio-wide freshness check for a week.', receipt: 'automation_runs' },
+  { key: 'guesty-full', label: 'Guesty full reconcile', area: 'sync', path: '/api/sync/guesty', trigger: 'manual — Sync button',
+    what: 'When someone presses Sync now (Home, Messages): re-pulls custom fields, listings, reservations, conversations, reviews and recent messages in one pass. Not on a schedule — each of those has its own cron.', receipt: 'none' },
+  { key: 'guesty-catalog', label: 'Listings & custom fields sync', area: 'sync', path: '/api/cron/guesty-catalog',
+    what: 'Twice a day, re-pulls listings and custom-field definitions from Guesty — the only entities nothing else syncs — then runs the channel-connections check on the fresh listings.', receipt: 'automation_runs' },
   { key: 'guest-comms', label: 'Conversations & messages sync', area: 'guests', path: '/api/cron/guest-comms',
-    what: 'Pulls guest conversations and their recent messages, then recomputes response times for anything that moved.', receipt: 'none' },
+    what: 'Pulls guest conversations and their recent messages, then recomputes response times for anything that moved.', receipt: 'automation_runs' },
   { key: 'breezeway-tasks', label: 'Breezeway task mirror', area: 'ops', path: '/api/cron/breezeway-tasks',
     what: 'Mirrors Breezeway tasks and their comments, and raises the behind-schedule signal the ops board reads.', receipt: 'automation_runs' },
   { key: 'owner-statements', label: 'Owner statements sync', area: 'money', path: '/api/sync/owner-statements',
-    what: 'Mirrors Guesty owner statements and their line items — the source of truth for anything owner-facing.', receipt: 'none' },
+    what: 'Mirrors Guesty owner statements and their line items — the source of truth for anything owner-facing.', receipt: 'automation_runs' },
   { key: 'revenue-sync', label: 'Revenue app mirror', area: 'money', path: '/api/cron/revenue-sync',
-    what: "Hourly pull of the boss's revenue app feeds (snapshots, budget, owner map) into the rev_* mirror.", receipt: 'automation_runs' },
-  { key: 'schedule-sync', label: 'Turnover schedule refresh', area: 'ops', path: '/api/schedule/sync',
-    what: 'Twice a day, forces the turnover schedule cache to rebuild so the board is not served stale.', receipt: 'none' },
+    what: "Every four hours, pulls the boss's revenue app feeds (snapshots, budget, owner map) into the rev_* mirror.", receipt: 'automation_runs' },
+  { key: 'schedule-sync', label: 'Scheduler refresh', area: 'ops', path: '/api/schedule/sync', trigger: 'manual — Sync button',
+    what: 'When someone presses Sync on the Scheduler (or its Weekly tab): re-pulls the reservations and the Breezeway task mirror and rebuilds the schedule, so a change made moments ago shows at once. Not on a schedule.', receipt: 'none' },
   { key: 'billing-detail', label: 'Billable-hours backfill', area: 'money', path: '/api/cron/billing-detail',
     what: 'Walks Breezeway task cost and supply detail into the billing mirror, current month first then backwards.', receipt: 'automation_runs',
     notes: 'Until it catches up, every maintenance recovery rate reads LOWER than reality.' },
+  { key: 'billing-ai', label: 'Routine-task billing check', area: 'money', path: '/api/cron/billing-ai',
+    what: 'Nightly: every routine task (unit check / strip) with a real description, this month and last, gets one model verdict — no charge (it closes itself at $0) or bill (it stays open with the reason and a suggested amount). A human still approves every dollar; a blank or template description closes at $0 with no model call.', receipt: 'automation_runs',
+    notes: 'lib/billing-ai.ts. Up to three batches per month per night; the billing desk judges the rest on demand.' },
 
   { key: 'channel-check', label: 'Channel connections check', area: 'sync', trigger: 'chained — runs inside the listings sync (/api/cron/guesty-catalog), twice a day',
     what: 'Reads every listing\u2019s channel connections from the fresh Guesty pull, compares them with the last snapshot, and says in Slack when a listing has dropped off Airbnb, Booking.com, Vrbo or Expedia. Opens an audit finding per listing until it is live again.', receipt: 'automation_runs',
@@ -82,19 +91,19 @@ export const AUTOMATIONS: AutomationDef[] = [
 
   // ---- Watching the machine ------------------------------------------------------------------
   { key: 'watchdog', label: 'Sync watchdog', area: 'sync', path: '/api/cron/watchdog',
-    what: 'Checks that each feed actually ran, per channel, and says so in Slack when one dies or recovers.', receipt: 'slack_outbox' },
+    what: 'Checks that each feed actually ran, per channel, and says so in Slack when one dies or recovers.', receipt: 'automation_runs' },
   { key: 'eve-audit', label: "Eve's standing audit", area: 'eve', path: '/api/cron/eve-audit',
     what: 'Runs her own audit of what is broken right now and posts only NEW findings, with one roll-up after 7am.', receipt: 'automation_runs',
     settingsPath: '/users → Settings → Eve → Audits' },
   { key: 'eve-metrics', label: 'Daily baselines', area: 'eve', path: '/api/cron/eve-metrics',
     what: 'Snapshots the day\'s numbers so trends and anomalies have a history to sit against, and grades recommendations that came due.', receipt: 'automation_runs',
     notes: 'Without this, trend() and anomaly_scan() have nothing to compare against.' },
-  { key: 'eve-brain', label: "Eve's nightly reflection", area: 'eve', path: '/api/cron/eve-metrics?phase=brain',
-    what: 'At 4:43am ET: grades yesterday\'s predictions against the records, strengthens or weakens the beliefs behind them, retires faded self-made beliefs and merges duplicates, reflects on yesterday (journal, new patterns, beliefs borne out or contradicted, at most one question for Jon), then makes today\'s checkable calls on late cleans and guest issues against the plain base rate.', receipt: 'automation_runs',
-    notes: 'Rides the eve-metrics cron line at 08:43 UTC (vercel.json is at its cron cap). Stored in eve_knowledge as journal:<day> and predictions:<day>; belief confidence on eve_memory. Two model calls (task eve-brain). A person\'s belief is never lowered by data, only asked about.' },
-  { key: 'eve-dossiers', label: "Eve's dossiers", area: 'eve', path: '/api/cron/eve-metrics?phase=dossiers',
-    what: 'At 5:43am ET: rebuilds a file on every building, every unit with something going on, and every cleaner active in the last 30 days: cleans and how many were done before 4pm, guest issues, reviews, arrivals, what changed since the last file, and her two-line read of each building. Loaded into her head whenever one comes up.', receipt: 'automation_runs',
-    notes: 'Rides the eve-metrics cron line at 09:43 UTC. eve_knowledge type dossier. One model call for all the building reads. People\'s files are facts, not verdicts, and stay out of shared rooms.' },
+  { key: 'eve-brain', label: "Eve's nightly reflection", area: 'eve', path: '/api/cron/eve-metrics', trigger: 'chained — the 08:50 UTC pass of /api/cron/eve-metrics',
+    what: 'At 08:50 UTC (4:50am ET; 3:50am in winter): grades yesterday\'s predictions against the records, strengthens or weakens the beliefs behind them, retires faded self-made beliefs and merges duplicates, reflects on yesterday (journal, new patterns, beliefs borne out or contradicted, at most one question for Jon), then makes today\'s checkable calls on late cleans and guest issues against the plain base rate.', receipt: 'automation_runs',
+    notes: 'Rides the eve-metrics cron line: its 08:50 UTC pass (a signed-in admin can run it with ?phase=brain). Stored in eve_knowledge as journal:<day> and predictions:<day>; belief confidence on eve_memory. Two model calls (task eve-brain). A person\'s belief is never lowered by data, only asked about.' },
+  { key: 'eve-dossiers', label: "Eve's dossiers", area: 'eve', path: '/api/cron/eve-metrics', trigger: 'chained — the 09:50 UTC pass of /api/cron/eve-metrics',
+    what: 'At 09:50 UTC (5:50am ET; 4:50am in winter): rebuilds a file on every building, every unit with something going on, and every cleaner active in the last 30 days: cleans and how many were done before 4pm, guest issues, reviews, arrivals, what changed since the last file, and her two-line read of each building. Loaded into her head whenever one comes up.', receipt: 'automation_runs',
+    notes: 'Rides the eve-metrics cron line: its 09:50 UTC pass (?phase=dossiers by hand). eve_knowledge type dossier. One model call for all the building reads. People\'s files are facts, not verdicts, and stay out of shared rooms.' },
   { key: 'slack-eve', label: '@Eve in Slack', area: 'eve', trigger: 'Slack Events API — app_mention',
     what: 'Answers when somebody @-mentions her in a Slack channel, in a thread, shaped for a shared room. The asker\'s Lighthouse permissions govern the answer, money redaction included.',
     receipt: 'none',
@@ -120,7 +129,7 @@ export const AUTOMATIONS: AutomationDef[] = [
     receipt: 'automation_runs', settingsPath: '/eve → Expectations',
     notes: 'lib/eve/expectations.ts. Skip with ?expectations=0 on the review route. One sonnet-tier call (task expectations). A note marked updated that guests hit again reopens and says so.' },
   { key: 'slack-watch', label: 'Keeping tabs on Slack', area: 'eve', path: '/api/cron/slack-watch',
-    what: 'Reads the team channels every hour, around the clock (CCS runs 24/7). Pulls out commitments, open problems, unanswered questions, decisions and GUEST ASKS (a discount, an extension, a call back, a refund, a booking inquiry); closes them from thread replies, finished Breezeway tasks, closed glitches or — for a guest ask — the booking itself in Guesty; nudges the owner (once after a day; a guest ask after 60 min and again at 4h); escalates a guest ask on Salato or a big booking to Jon, Karla, Roberto and Bernadette in its thread at once; posts a CCS handoff list of open guest asks at 7am, 3pm and 11pm ET in #ccs-and-jon; posts a morning roll-up in #vr-eve; and files what it learned into memory.', receipt: 'automation_runs',
+    what: 'Reads the team channels at :48 past the hour in UTC hours 0–4 and 11–23 (7:48am to 12:48am ET in summer, an hour earlier in winter; nothing in the small hours). Pulls out commitments, open problems, unanswered questions, decisions and GUEST ASKS (a discount, an extension, a call back, a refund, a booking inquiry); closes them from thread replies, finished Breezeway tasks, closed glitches or — for a guest ask — the booking itself in Guesty; nudges the owner (once after a day; a guest ask after 60 min and again at 4h); escalates a guest ask on Salato or a big booking to Jon, Karla, Roberto and Bernadette in its thread at once; posts a CCS handoff list of open guest asks at 7am, 3pm and 11pm ET in #ccs-and-jon; posts a morning roll-up in #vr-eve; and files what it learned into memory.', receipt: 'automation_runs',
     configKey: 'eve_ccs_desk', settingsPath: '/vr-eve in Slack · desk settings in app_settings eve_ccs_desk',
     notes: 'Hard caps per run: 12 channels, 60 candidates per model call, 8 model calls, 80 thread reads. A quiet hour costs a Slack read and nothing else. Every post goes through the slack_post Agent mode rung (propose = a ✅ in #vr-eve sends it). Needs migration 084. The CCS desk lives in lib/eve/ccs-desk.ts.' },
   { key: 'on-watch', label: 'Eve on watch (command rooms)', area: 'eve', path: '/api/cron/slack-watch',
@@ -133,11 +142,11 @@ export const AUTOMATIONS: AutomationDef[] = [
     configKey: 'preventative_cadences', receipt: 'none', settingsPath: '/users → Settings → Cadences',
     notes: 'lib/pm-recurrence.ts, riding the hourly auto-inspections cron at most every 6 hours. Needs migration 113 (pm_schedule) and the cadences master switch on. Manual: POST /api/pm/schedule {dryRun}.' },
   { key: 'ops-desk', label: 'Eve runs the day\'s task list', area: 'eve', path: '/api/cron/slack-watch',
-    what: '7am ET: today\'s plan by person in #vr-eve (cleans / maintenance / inspections each, the buildings, the arrivals that set the deadline, and the work nobody has). 11am–6pm hourly: every task due today with nobody on it (never a departure clean) gets a proposed assignee — the least-loaded person from that department already working in the building — through the task_assign rung, once per task. 6pm: end-of-day recap — what is still open, by person, and which of it sits in a unit with a guest landing tomorrow.',
+    what: '7am ET: today\'s plan in #vr-eve — one summary line (open work, people, arrivals, unowned → /plan), then the work nobody has with the check-in time that sets each deadline, and the shadow scheduler\'s suggested assignments once it has earned them. 11am–6pm hourly: every task due today with nobody on it (never a departure clean) gets a proposed assignee — the least-loaded person from that department already working in the building — through the task_assign rung, once per task. 6pm: end-of-day recap — what is still open, by person, and which of it sits in a unit with a guest landing tomorrow.',
     configKey: 'eve_ops_desk', receipt: 'automation_runs',
     notes: 'lib/eve/ops-desk.ts, riding the hourly slack-watch cron. Hours and room in app_settings eve_ops_desk. Preview: GET /api/cron/slack-watch?desk=plan|recap. No model call.' },
   { key: 'scheduler-shadow', label: 'Scheduler in shadow', area: 'eve', path: '/api/cron/slack-watch',
-    what: 'Evenings (8–11pm ET): builds tomorrow\'s departure-clean assignments with the Schedule page\'s own suggester (fewer people, fuller days, one building per person, same-day turns first) and, the next evening, scores that plan against what actually happened — a win is no more people, no more than 110% of the travel, and nothing left unassigned that reality covered. Sunday readout in #vr-eve. When 10 of the last 14 days are wins, the 7am plan carries her suggested assignments for unowned cleans as a proposal. Never assigns anything itself.',
+    what: 'Evenings (8–11pm ET): builds tomorrow\'s departure-clean assignments with the Schedule page\'s own suggester (fewer people, fuller days, one building per person, same-day turns first) and, the next evening, scores that plan against what actually happened — a win is no more people, no more than 110% of the travel, and nothing left unassigned that reality covered. It is scored only on the cleans in both the plan and the day; a win also needs every same-day turn to land before its check-in; days scored before 2026-09-28 do not count toward readiness. Sunday readout in #vr-eve. When 10 of the last 14 days are wins, the 7am plan carries her suggested assignments for unowned cleans as a proposal. Never assigns anything itself.',
     configKey: 'eve_scheduler_shadow', receipt: 'automation_runs',
     notes: 'lib/eve/scheduler-shadow.ts, riding the hourly slack-watch cron. State: 21 days in app_settings eve_scheduler_shadow. Run now: GET /api/cron/slack-watch?shadow=1 (signed in).' },
   { key: 'garden-sync', label: 'Garden Hotel ← Cloudbeds', area: 'ops', path: '/api/cron/breezeway-tasks',
@@ -146,51 +155,75 @@ export const AUTOMATIONS: AutomationDef[] = [
     notes: 'lib/garden/sync.ts. Needs migration 115 and CLOUDBEDS_API_KEY + CLOUDBEDS_PROPERTY_ID (or the OAuth trio). Own route for a manual run: GET /api/cron/garden-sync?full=1 (signed in).' },
   { key: 'salato-watch', label: 'Salato booking watch', area: 'guests', path: '/api/cron/reservations',
     what: 'After every booking sync (every 5 minutes): each new Salato booking goes to #ccs-and-jon with @channel (unit, dates, nights, guest, channel, code). A 1-night booking is flagged NOT PERMITTED (Salato has a 2-night minimum) and must be canceled or extended; it gets a reminder in its thread every 3 hours in the daytime until it is, and a ✅ when it is. The Salato front desk board shows 1-night stays in red with who to call.',
-    receipt: 'none', notes: 'lib/salato-watch.ts. State in app_settings salato_watch_state; each message claimed once in telegram_updates. Manual check: GET /api/salato/watch (dry run). Front-desk contact line: app_settings salato_desk_contact.' },
+    configKey: 'salato_watch', enabledPath: 'enabled', defaultOn: true,
+    receipt: 'none', notes: 'lib/salato-watch.ts. Off switch: app_settings salato_watch.enabled = false — missing means on; it stops the 5-minute hook only, a manual run still works. State in app_settings salato_watch_state; each message claimed once in telegram_updates. Manual check: GET /api/salato/watch (dry run). Front-desk contact line: app_settings salato_desk_contact.' },
 
   // ---- Guests ---------------------------------------------------------------------------------
   { key: 'sentiment', label: 'Guest sentiment scan', area: 'guests', path: '/api/sentiment/scan',
-    what: 'Scores recently active guest threads for unhappiness and flags the reservation Sensitive in Guesty when it is bad.', receipt: 'none' },
+    what: 'Scores recently active guest threads for unhappiness and flags the reservation Sensitive in Guesty when it is bad.', receipt: 'automation_runs' },
+  { key: 'eve-watches', label: "Eve's watches", area: 'eve', path: '/api/sentiment/scan', trigger: 'chained — every scheduled pass of /api/sentiment/scan (every 30 minutes)',
+    what: 'Eight standing watches over the day picture — a guest waiting on a reply, a late clean with nobody on it, a big arrival nobody has walked, a bad review that just landed, a listing that fell off a channel, a glitch past due with no task, guest-order stock running low, a guest arriving today who never answered. Each prepares one action and puts it through her Agent mode rung (act, ask, draft or just observe); the same subject is never asked about twice inside its cooldown, and at most five per watch per run. Outside 7am–10pm ET only the guest-waiting and silent-arrival watches run.',
+    receipt: 'automation_runs', settingsPath: '/users → Settings → Eve → Agent mode → Watches',
+    notes: 'lib/eve/watches.ts. Switch, cooldown and rung per watch live in the eve_watches table (migration 102); without it the runner does nothing and says so.' },
+  { key: 'eve-deferred', label: "Eve's held work", area: 'eve', path: '/api/sentiment/scan', trigger: 'chained — every pass of /api/sentiment/scan (every 30 minutes)',
+    what: 'Carries out whatever Eve held for quiet hours (a roll-up, a nudge) once quiet hours end.', receipt: 'automation_runs',
+    notes: 'Writes a receipt only when something was held.' },
   { key: 'reservation-notices', label: 'Front-desk notice queue', area: 'guests', path: '/api/cron/reservation-notices',
     what: 'Builds the per-building front-desk notice queue for arrivals.', configKey: 'reservation_emails',
-    settingsPath: '/users → Settings → Reservation emails', receipt: 'none' },
-  { key: 'notice-drafts', label: 'Notice drafts into Gmail', area: 'guests', path: '/api/cron/notice-drafts',
+    settingsPath: '/users → Settings → Reservation emails', receipt: 'automation_runs' },
+  { key: 'notice-drafts', label: 'Notice drafts into Gmail', area: 'guests', path: '/api/cron/reservation-notices',
     what: 'Drafts those notices into the sending mailbox so a human only has to read and press send.',
     configKey: 'task_automation', enabledPath: 'noticeDrafts.enabled', defaultOff: true,
     settingsPath: '/users → Settings → Task automation', receipt: 'none', trigger: 'chained — runs inside /api/cron/reservation-notices',
-    notes: 'Since 2026-09-18 it has no vercel.json line of its own (the 40-cron cap): the hourly notice-queue cron runs it at 03:13, 11:13, 15:13, 19:13 and 23:13 UTC — the same five hours it used to fire. Exactly-once per notice either way.' },
+    notes: 'It has no route or cron line of its own: the hourly notice-queue cron runs it at 03:28, 11:28, 15:28, 19:28 and 23:28 UTC, on the scheduler\'s own call only. Exactly-once per notice.' },
   { key: 'guest-orders', label: 'Guest orders', area: 'guests', path: '/api/cron/guest-orders',
     what: 'Writes the per-reservation order link into Guesty, and on the delivery day pushes paid orders to Breezeway, Slack and email.',
     configKey: 'guest_orders', enabledPath: 'enabled', defaultOff: true,
     settingsPath: '/users → Settings → Guest orders', receipt: 'automation_runs' },
+  { key: 'parking-guesty', label: 'Parking permits into Guesty', area: 'guests', path: '/api/cron/guest-orders', trigger: 'chained — every pass of /api/cron/guest-orders (every 2 hours)',
+    what: 'Retries writing a parking permit link (/permit/<token>) onto its Guesty reservation when the vendor upload\'s own write missed — up to twenty a run, usually none. Runs whether or not guest orders is on.',
+    configKey: 'parking_cfg', enabledPath: 'writeToGuesty', defaultOn: true, receipt: 'automation_runs',
+    notes: 'lib/parking.ts retryPendingGuestyWrites. Off only when parking_cfg.writeToGuesty is false.' },
   { key: 'guide-activations', label: 'Guidebook events', area: 'guests', path: '/api/cron/guide-activations',
-    what: 'Scrapes building event calendars into the guest guidebook so what a guest reads is current.', receipt: 'none' },
+    what: 'Scrapes building event calendars into the guest guidebook so what a guest reads is current.', receipt: 'automation_runs' },
   { key: 'welcome-calls', label: 'Welcome calls', area: 'guests', trigger: 'in-app',
-    what: 'Tracks the pre-arrival welcome call on a reservation custom field; not scheduled, driven by the desk.', receipt: 'none' },
+    what: 'The pre-arrival welcome call, worked from the Calls desk: a completed call in the call log (or the Guesty field ticked) closes it. Not scheduled; the nightly close-out marks the missed ones incomplete.', receipt: 'none' },
+  { key: 'calls-closeout', label: 'Calls desk close-out', area: 'guests', path: '/api/cron/calls-closeout',
+    what: 'Nightly, after midnight ET: every welcome call whose arrival day is over, and every post-checkout call past its 48 hours, with no completed outcome is closed incomplete in the call log — exactly the rows the Calls desk shows as Missed.', receipt: 'automation_runs' },
+  { key: 'talkroute-sync', label: 'Phone system sync', area: 'guests', path: '/api/cron/talkroute',
+    what: 'Every 30 minutes: mirrors Talkroute calls, changed text threads and voicemails and matches them to bookings — the backstop that never misses what the webhook did. Does nothing until Talkroute is connected.', receipt: 'automation_runs' },
+  { key: 'call-notes', label: 'Call notes', area: 'guests', path: '/api/cron/call-notes',
+    what: 'Every 30 minutes: transcribes recorded calls and turns each into a note on the booking (Contact history) and a one-line summary in the Guesty reservation notes — newest first, time-boxed, a backlog drains over several passes.', receipt: 'automation_runs',
+    notes: 'lib/call-notes.ts. Does nothing until Talkroute is connected.' },
 
   // ---- Ops ------------------------------------------------------------------------------------
   { key: 'auto-inspections', label: 'Automatic inspections', area: 'ops', path: '/api/cron/auto-inspections',
     what: 'Creates and assigns an inspection ahead of big, VIP or owner arrivals, and for units whose reviews have slipped.',
     configKey: 'task_automation', enabledPath: 'enabled', defaultOff: true,
-    settingsPath: '/users → Settings → Task automation', receipt: 'none',
+    settingsPath: '/users → Settings → Task automation', receipt: 'automation_runs',
     notes: 'Writes to auto_inspections — a DIFFERENT table from the manual unit_inspections the inspections tool reads.' },
   { key: 'suggestions', label: 'Preventative suggestions', area: 'ops', path: '/api/cron/suggestions',
     what: 'Each morning works out which preventative jobs are due, throws away everything that cannot happen today, and proposes a capped handful on Today in Ops — creating only the cadences set to run themselves.',
-    configKey: 'preventative_cadences', enabledPath: 'enabled', defaultOff: true,
+    configKey: 'preventative_cadences', enabledPath: 'enabled', defaultOn: true,
     settingsPath: '/users \u2192 Settings \u2192 Preventative cadences', receipt: 'automation_runs',
-    notes: 'On a heavy turn day it deliberately proposes and creates nothing — that is the day read working, not a failure.' },
+    notes: 'On by default: a saved config without the switch keeps it on; only an explicit false turns it off. On a heavy turn day it deliberately proposes and creates nothing — that is the day read working, not a failure.' },
   { key: 'stay-window', label: 'Minimum-stay switch', area: 'ops', path: '/api/cron/stay-window',
     what: 'Flips the minimum-stay rule at the hour Jon set, so the calendar opens up without anyone remembering to do it.',
-    configKey: 'stay_window', enabledPath: 'enabled', defaultOff: true, receipt: 'none' },
+    configKey: 'stay_window', enabledPath: 'enabled', defaultOff: true, receipt: 'automation_runs' },
   { key: 'claims-nudge', label: 'Claims nudge', area: 'ops', path: '/api/cron/claims',
-    what: 'Chases claims that are unfiled, overdue, or about to fall outside the channel filing window.', receipt: 'none' },
+    what: 'Chases claims that are unfiled, overdue, or about to fall outside the channel filing window.', receipt: 'automation_runs' },
+  { key: 'ops-focus', label: 'Today in Ops focus read', area: 'ops', path: '/api/cron/ops-focus',
+    what: 'Four considered looks a day — 7am, noon, 3pm and 8pm ET: one model read per market of the day as a whole (the crew against the work), ready on Today in Ops before anyone opens it. Between those the board ranks in code. Fires at both candidate UTC hours for each slot and acts only on the Eastern one, once per slot.', receipt: 'automation_runs',
+    notes: 'lib/ops-focus.ts. A market whose candidates have not changed since the last read is not asked again.' },
 
   // ---- Slack ----------------------------------------------------------------------------------
   { key: 'slack-alerts', label: 'Slack alert engines', area: 'slack', path: '/api/cron/slack',
-    what: 'Every half hour, runs fourteen alert engines (late cleans, glitches, overtime, readiness, walk-in risk, door codes, handover and the rest) and dispatches whatever has been approved.',
+    what: 'Every half hour, runs twelve alert engines (late cleans, glitches, overtime, readiness, walk-in risk, door codes, handover and the rest) — plus the morning digest on its 07:19 ET pass — and dispatches whatever has been approved.',
     configKey: 'slack_rules', settingsPath: '/users → Settings → Slack alerts & rules', receipt: 'automation_runs' },
-  { key: 'slack-digest', label: 'Morning Slack digest', area: 'slack', path: '/api/cron/slack-digest',
-    what: 'Posts the day-ahead summary into the ops channel.', configKey: 'slack_rules', receipt: 'slack_outbox' },
+  { key: 'slack-digest', label: 'Morning Slack digest', area: 'slack', path: '/api/cron/slack', trigger: 'chained — the 07:19 ET pass of /api/cron/slack',
+    what: 'Posts the day-ahead summary into the ops channel, once a morning.', configKey: 'slack_rules', enabledPath: 'events.digest.enabled', defaultOff: true,
+    settingsPath: '/users → Settings → Slack alerts & rules', receipt: 'slack_outbox',
+    notes: 'Its own cron line went on 2026-09-28; the Slack alerts cron runs it only on the pass inside 07:15–07:45 ET, all year. Its receipt is the Slack alerts run (slack-alerts).' },
   { key: 'weekly-planner', label: 'Weekly plan', area: 'slack', path: '/api/cron/weekly-planner',
     what: 'Sunday night, posts next week\'s plan per market.', configKey: 'slack_rules', enabledPath: 'events.weekly_planner.enabled',
     settingsPath: '/users → Settings → Slack alerts & rules', receipt: 'slack_outbox' },
@@ -200,17 +233,27 @@ export const AUTOMATIONS: AutomationDef[] = [
     what: 'The 7am email: Miami, Broward, the full portfolio, the GM edition and the vendor buildings.',
     configKey: 'ops_brief', enabledPath: 'enabled', recipientPaths: ['recipients', 'miami', 'broward', 'gm', 'vendor'],
     settingsPath: '/users → Settings → Morning brief', receipt: 'email_log' },
-  { key: 'maint-brief', label: 'Maintenance brief — retired', area: 'ops', path: '/api/cron/maint-brief',
-    what: 'RETIRED 2026-09-09. It no longer sends: the maintenance table is on each market day sheet and the carryover worklist is in Ops Command\'s Review card. The cron still fires and answers, so nothing alarms — it just has nothing to send.',
-    configKey: 'ops_brief', enabledPath: 'maint.enabled',
-    recipientPaths: ['maint.miami', 'maint.broward'], settingsPath: '/users → Settings → Morning brief', receipt: 'email_log',
-    notes: 'Two separate bugs, both now moot: it shipped enabled with empty recipient lists, and the list saved in the UI was written to app_settings[\'maint_brief\'] while the send read cfg.maint on \'ops_brief\' — a key nothing ever wrote. So it went to the owner alone, CC Roberto, and the off switch could never fire.' },
   { key: 'labor-trueup', label: 'Daily labor email', area: 'money', path: '/api/cron/labor-trueup',
-    what: 'Yesterday against the last 7 and 30 days: cleans completed, actual clocked hours, revenue and profit.',
+    what: 'Yesterday against the last 7 and 30 days: cleans completed, actual clocked hours, revenue and profit. Then it runs the labor integrity checks on the same 30 days and emails the owner only when one fails.',
     configKey: 'labor_trueup', recipientPaths: ['recipients'], settingsPath: '/users → Settings → Morning brief', receipt: 'email_log' },
   { key: 'salato-daily', label: 'Salato daily', area: 'guests', path: '/api/cron/salato-daily',
     what: 'The arrivals-and-departures email for the Salato front desk.', configKey: 'salato_daily', enabledPath: 'enabled',
-    recipientPaths: ['recipients'], defaultOff: true, settingsPath: '/users → Settings → Morning brief', receipt: 'email_log' },
+    recipientPaths: ['recipients'], defaultOff: true, settingsPath: '/users → Settings → Morning brief', receipt: 'automation_runs' },
+  { key: 'eod-recap', label: 'End-of-day recap', area: 'ops', path: '/api/cron/eod-recap',
+    what: 'The evening email (00:15 UTC, about 8:15pm ET): the priorities the 7am brief set and whether they got done, tomorrow (who is on, what is booked and unassigned, the staffing forecast per market), one money line, then housekeeping, supervision and maintenance economics, the cleans completed and the last 7 days.',
+    configKey: 'ops_brief', recipientPaths: ['full'], settingsPath: '/users → Settings → Morning brief', receipt: 'automation_runs',
+    notes: 'Goes to the Ops Command list (ops_brief.full) plus the owner. Same engine as the Labor board (lib/labor-econ).' },
+  { key: 'forecast-ledger', label: 'Staffing forecast ledger', area: 'ops', path: '/api/cron/eod-recap', trigger: 'chained — runs after the EOD recap on /api/cron/eod-recap',
+    what: 'Nightly after the EOD recap: records the next 14 days of the staffing forecast and grades every past forecast day against the departure cleans that finished.', receipt: 'automation_runs',
+    notes: 'lib/forecast/staffing.ts; needs migration 133. Runs even when the recap email fails.' },
+
+  // ---- Projects -------------------------------------------------------------------------------
+  { key: 'project-notify', label: 'Project notifications', area: 'ops', path: '/api/cron/project-notify',
+    what: 'Every 30 minutes: the immediate project emails — assigned, mentioned, a comment, added — one message per person.', receipt: 'automation_runs' },
+  { key: 'project-recur', label: 'Recurring projects', area: 'ops', path: '/api/cron/project-notify', trigger: 'chained — the 6am ET passes of /api/cron/project-notify',
+    what: 'Creates the next instance of every recurring project that has come due, before the morning reminders are built. Running twice creates nothing the second time.', receipt: 'automation_runs' },
+  { key: 'project-digest', label: 'Project reminders & morning digest', area: 'ops', path: '/api/cron/project-notify', trigger: 'chained — the 7am ET passes of /api/cron/project-notify',
+    what: 'Builds the due-soon and overdue reminders and sends each person their morning project digest — once a morning (20-hour guard).', receipt: 'automation_runs' },
 
   // ---- The only job whose purpose is to destroy data -------------------------------------------
   { key: 'trash-sweep', label: 'Trash sweep', area: 'ops', path: '/api/cron/trash-sweep',
@@ -232,8 +275,8 @@ export const AUTOMATION_KEYS = AUTOMATIONS.map(a => a.key)
 export function expectedCronPaths(): string[] {
   const out: string[] = []
   for (const a of AUTOMATIONS) {
-    // Anything with its own trigger (a webhook, an in-app action, a chained run inside another
-    // cron) is not a vercel.json line and must not be reported as a missing one.
+    // Anything with its own trigger (a webhook, an in-app action, a Sync button, a chained run inside
+    // another cron) is not a vercel.json line and must not be reported as a missing one.
     if (a.trigger) continue
     if (a.path && out.indexOf(a.path) < 0) out.push(a.path)
   }
@@ -339,11 +382,13 @@ export async function automationState(def: AutomationDef): Promise<AutomationSta
   if (def.enabledPath) {
     const v = readPath(cfg, def.enabledPath)
     if (v === undefined || v === null) {
-      on = false
-      onWhy = cfg ? `never set (${def.configKey}.${def.enabledPath} is missing) — treated as off`
-                  : `never configured (${def.configKey} has no saved value) — treated as off`
+      // A switch the code itself reads as ON when missing (defaultOn) is on — only false is off.
+      on = !!def.defaultOn
+      onWhy = def.defaultOn ? `on by default (${def.configKey}.${def.enabledPath} is not set; only false turns it off)`
+        : cfg ? `never set (${def.configKey}.${def.enabledPath} is missing) — treated as off`
+        : `never configured (${def.configKey} has no saved value) — treated as off`
     } else {
-      on = v === true
+      on = def.defaultOn ? v !== false : v === true
       onWhy = on ? `on (${def.configKey}.${def.enabledPath})` : `off (${def.configKey}.${def.enabledPath})`
     }
   } else if (def.configKey) {
@@ -351,9 +396,12 @@ export async function automationState(def: AutomationDef): Promise<AutomationSta
     onWhy = cfg ? `always runs; configured by ${def.configKey}` : `always runs; ${def.configKey} has no saved config yet`
   }
   const sch = (await schedules())[def.path || ''] || []
-  const runs = sch.length ? sch.map(describeSchedule).join(' and ')
-    : def.trigger === 'webhook' ? 'when the other system calls us'
+  const runs = def.trigger === 'webhook' ? 'when the other system calls us'
     : def.trigger === 'in-app' ? 'when someone uses it'
+    // Chained into another cron, or a button: the trigger says when — the host's own schedule would
+    // not (the digest rides a half-hourly line but runs once a morning).
+    : def.trigger ? def.trigger
+    : sch.length ? sch.map(describeSchedule).join(' and ')
     : 'NOT SCHEDULED — no cron entry found'
   return {
     key: def.key, label: def.label, what: def.what, area: def.area, runs, path: def.path,
