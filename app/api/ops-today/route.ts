@@ -13,7 +13,11 @@ export async function GET(req: NextRequest) {
   const user = gate.access.user
   try {
     const day = await buildOpsDay(req.nextUrl.searchParams.get('date'), { fresh: req.nextUrl.searchParams.get('refresh') === '1' })
-    return NextResponse.json(day)
+    // The cached day carries the listing directory and the capacity picture for the Command Center,
+    // which reads them in-process. The board uses neither (it fetches /api/capacity for the crew
+    // strip), so they stay off the wire — they are most of the payload.
+    const { listingMeta: _meta, picture: _picture, ...board } = day
+    return NextResponse.json(board)
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }

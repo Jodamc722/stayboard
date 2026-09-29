@@ -6,7 +6,8 @@
 // The clock that matters: DEPARTURE CLEANS must be finished by 4pm, because that's when the
 // next guest can check in. Strips / PM / inspections don't carry that deadline.
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { unstable_cache, revalidateTag } from 'next/cache'
+import { unstable_cache } from 'next/cache'
+import { DAY_TAG, bustDay, freshEnough } from '@/lib/bust'
 import { marketOf, MARKETS } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex, untrackedRegex, noBreezewayRegex } from '@/lib/ops-presets'
@@ -15,7 +16,7 @@ import { summariseBehind, fmt12, type BehindRow } from '@/lib/ops-behind'
 import { TASK_CATS_KEY, resolveCats, catOfTaskWith, isTaskDone, isTaskRunning, isTaskGone } from '@/lib/task-categories'
 import { getSetting } from '@/lib/app-settings'
 import { pageRows } from '@/lib/db-page'
-import { buildDayPicture } from '@/lib/capacity-day'
+import { buildDayPicture, type DayPicture } from '@/lib/capacity-day'
 import { projectLandings, againstDeadline, clockOf as landingClock } from '@/lib/lands-at'
 
 // Botanica is cleaned by a vendor who does NOT close the task in Breezeway, so its cleans sit at
@@ -82,18 +83,28 @@ export const NO_UNIT_LABEL = 'Building & common areas'
  * and Breezeway crons, and every write from the board (add task, task action, assign), do that,
  * so a change you make shows on the next read; a change made in Breezeway shows within the
  * mirror's cadence exactly as before.
+ *
+ * ONE ENTRY PER DAY (2026-09-28 audit). The cache was keyed on the raw ?date= string and the meta
+ * flag, so the board ('' without meta), the Command Center ('' with meta) and the Focus cron (an
+ * explicit date) each built the same morning — up to three full builds per 45 seconds. The date is
+ * resolved first and is the whole key; the listing map always rides along (the board's route strips
+ * it), so `includeMeta` is accepted and no longer matters. A cached day older than two minutes is
+ * rebuilt in place rather than served as now (lib/bust freshEnough).
  */
 export async function buildOpsDay(dateParam: string | null, opts: { includeMeta?: boolean; fresh?: boolean } = {}) {
-  if (opts.fresh) return buildOpsDayFresh(dateParam, opts)
-  return cachedOpsDay(dateParam || '', !!opts.includeMeta)
+  const qd = String(dateParam || '')
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(qd) ? qd : ymd(new Date())
+  if (opts.fresh) return buildOpsDayFresh(date)
+  return freshEnough(() => cachedOpsDay(date), () => buildOpsDayFresh(date), d => d.builtAt, OPS_DAY_MAX_AGE_MS)
 }
+const OPS_DAY_MAX_AGE_MS = 120_000
 const cachedOpsDay = unstable_cache(
-  async (dateParam: string, includeMeta: boolean) => buildOpsDayFresh(dateParam || null, { includeMeta }),
-  ['ops-day-v1'], { tags: ['day'], revalidate: 45 },
+  async (date: string) => buildOpsDayFresh(date),
+  ['ops-day-v2'], { tags: [DAY_TAG], revalidate: 45 },
 )
-export function bustOpsDay() { try { revalidateTag('day') } catch { /* best-effort */ } }
+export function bustOpsDay() { bustDay() }
 
-async function buildOpsDayFresh(dateParam: string | null, opts: { includeMeta?: boolean; fresh?: boolean } = {}) {
+async function buildOpsDayFresh(dateParam: string | null) {
   const db = supabaseAdmin()
   // Vendor buildings + the 4pm deadline are operator-editable (/users -> Ops presets).
   // THE TAXONOMY IS DECIDED HERE, ONCE. The board used to classify tasks in the browser from its
@@ -135,7 +146,7 @@ async function buildOpsDayFresh(dateParam: string | null, opts: { includeMeta?: 
   }
   const [lRes, tRes, qRes, rRes] = await Promise.all([
     db.from('guesty_listings').select('id,nickname,title,building,address_city,address_full,bedrooms,status,lat:raw->address->>lat,lng:raw->address->>lng,city2:raw->address->>city,checkIn:raw->>defaultCheckInTime,checkOut:raw->>defaultCheckOutTime'),
-    db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,total_minutes,report_url,type_department').eq('scheduled_date', today).limit(2000),
+    db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,total_minutes,report_url,type_department,synced_at').eq('scheduled_date', today).limit(2000),
     db.from('qc_tasks').select('listing_id,status,issue_type,report_url').neq('status', 'closed').limit(300),
     db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_name,nights').or('check_out.eq.' + today + ',check_in.eq.' + today).limit(1000),
   ])
@@ -204,7 +215,7 @@ async function buildOpsDayFresh(dateParam: string | null, opts: { includeMeta?: 
   // they'd be in the unit by 4pm, so it is not free to work in.
   const backFrom = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(new Date(today + 'T12:00:00Z').getTime() - 21 * 86400000))
   const ahead90 = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(new Date(today + 'T12:00:00Z').getTime() + 90 * 86400000))
-  const [occRes, nextRes, pastRes, stagedRes] = await Promise.all([
+  const [occRes, nextRes, pastRes, stagedRes, syncRes] = await Promise.all([
     // PAGED (2026-09-03): .limit(4000) is 1,000 in practice. Future arrivals alone pass that in
     // season, and the board's "next arrival" for a vacant unit was the first 1,000 by date.
     pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_name').lte('check_in', today).gt('check_out', today).order('id').range(a, b), 6),
@@ -219,6 +230,9 @@ async function buildOpsDayFresh(dateParam: string | null, opts: { includeMeta?: 
     // happily proposed a second person for a clean the Scheduler had already spoken for — two
     // writers, no shared staging. A staged clean is not unowned; it is spoken for.
     db.from('schedule_staged').select('listing_id,cleaner_name').eq('date', today),
+    // lastSync (below) — independent of everything else, so it rides this wave instead of adding a
+    // serial round trip at the end of the build.
+    db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle(),
   ])
   // A TRUNCATED OCCUPANCY SCAN IS NOT AN EMPTY ONE. pageRows returns truncated:true on a PostgREST
   // error; unread occupancy makes every departure clean look 'moved' and every unit vacant.
@@ -414,9 +428,13 @@ async function buildOpsDayFresh(dateParam: string | null, opts: { includeMeta?: 
   // Best-effort: a failure here must never take the board down, and a clean the model cannot price
   // keeps the old clock-threshold flag rather than losing its warning.
   const landings: Record<string, any> = {}
+  // The picture rides out with the day (2026-09-28 audit): the Command Center's team tile read a
+  // second copy of the same computation in the same second.
+  let picture: DayPicture | null = null
   if (isToday) {
     try {
       const pic = await buildDayPicture(today)
+      picture = pic
       const startedAt: Record<string, string | null> = {}
       // Work that will not happen today costs the day nothing and must not push the rest of the run
       // to the right: anything already finished, and any clean on a stay that ran past it.
@@ -521,12 +539,15 @@ async function buildOpsDayFresh(dateParam: string | null, opts: { includeMeta?: 
     vacant: vacants.length,
   }
   // lastSync tells the coordinator how fresh the vacancy picture is — a stale list is how walk-ins happen
-  const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
+  const syncSt: any = syncRes && !(syncRes as any).error ? (syncRes as any).data : null
   const lastSync = syncSt && syncSt.last_sync_at ? String(syncSt.last_sync_at) : null
-  // The listing map is only shipped when asked for (the Command Center engine reads it in-process
-  // so it does not re-read guesty_listings); the board route never pays for it.
-  const listingMeta = opts.includeMeta
-    ? Object.fromEntries(Object.entries(lmap).map(([id, l]) => [id, { name: l.name, market: l.market, building: l.building, active: l.active }]))
-    : undefined
-  return { ok: true as const, today, isToday, nowMin, lastSync, degraded: degradedReads, categories: taskCats, deadline, behind, totals, byMarket, units, vacants, longStayNights: presets.timing.longStayNights, areaRadiusKm: presets.timing.areaRadiusKm, pulse, listingMeta }
+  // …and bzSync how fresh the TASKS are (2026-09-28 audit, 06 F-21): the board is the Breezeway
+  // mirror, whose age was never shown. The newest refresh of any of today's rows — a webhook or the
+  // task sync touching one of them — is what "the board is N minutes old" means.
+  let bzSync: string | null = null
+  for (const t of taskRows as any[]) { const s = t && t.synced_at ? String(t.synced_at) : ''; if (s && (!bzSync || Date.parse(s) > Date.parse(bzSync))) bzSync = s }
+  // The listing map always rides along (the Command Center engine reads it in-process so it does
+  // not re-read guesty_listings); the board's route strips it, with the picture, before sending.
+  const listingMeta = Object.fromEntries(Object.entries(lmap).map(([id, l]) => [id, { name: l.name, market: l.market, building: l.building, active: l.active }]))
+  return { ok: true as const, today, isToday, nowMin, builtAt: now.toISOString(), lastSync, bzSync, degraded: degradedReads, categories: taskCats, deadline, behind, totals, byMarket, units, vacants, longStayNights: presets.timing.longStayNights, areaRadiusKm: presets.timing.areaRadiusKm, pulse, listingMeta, picture }
 }
