@@ -8,6 +8,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Reputation, type RepFilter, type RepTab, type RepFeedCounts } from '@/components/Reputation'
 import { ReviewsPanel, type FeedCounts } from '@/app/command/ReviewsPanel'
+import { ReviewActionBoard } from '@/components/ReviewActionBoard'
+
+const TAB_KEYS: RepTab[] = ['reply', 'units', 'buildings', 'all', 'actions']
 
 export function ReviewsPage() {
   const [f, setF] = useState<RepFilter>({ market: 'all', building: 'all', owner: 'all', channel: 'all', days: 90 })
@@ -21,9 +24,13 @@ export function ReviewsPage() {
   const setTab = useCallback((t: RepTab) => { picked.current = true; setTabRaw(t) }, [])
   const [counts, setCounts] = useState<RepFeedCounts | null>(null)
 
-  // The Calls desk links to /reviews#recovery for "N units in recovery" — open the Units tab.
+  // DEEP LINKS. /reviews?tab=actions is where the old /reviews/actions page redirects (any page tab
+  // works the same way), and the Calls desk links to /reviews#recovery for "N units in recovery".
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.location.hash === '#recovery') { picked.current = true; setTabRaw('units') }
+    if (typeof window === 'undefined') return
+    const t = new URLSearchParams(window.location.search).get('tab') as RepTab | null
+    if (t && TAB_KEYS.indexOf(t) >= 0) { picked.current = true; setTabRaw(t) }
+    else if (window.location.hash === '#recovery') { picked.current = true; setTabRaw('units') }
   }, [])
 
   // DEFAULT TAB: "To reply" when anything is waiting, otherwise Units — an empty work queue as the
@@ -37,6 +44,7 @@ export function ReviewsPage() {
     <Reputation f={f} setF={setF}
       onFocusUnit={u => { setFocus(p => ({ unit: u, n: (p ? p.n : 0) + 1 })); setTab('reply') }}
       tab={tab} setTab={setTab} feedCounts={counts}
+      actions={<ReviewActionBoard />}
       feed={
         // Every row's Answer button scrolls to this id.
         <div id="review-feed" className="scroll-mt-4">

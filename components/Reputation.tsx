@@ -37,7 +37,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   ChevronRight, RefreshCw, ExternalLink,
-  AlertTriangle, MessageSquare, ClipboardCheck, ClipboardList, Check, X,
+  AlertTriangle, MessageSquare, ClipboardCheck, Check, X,
 } from 'lucide-react'
 import { Tag, Pill, LeanHead, LeanTabs, IconBtn, LeanList, LeanRow, LeanEmpty } from '@/components/lean'
 import { isBookingChannel, ratingDisplay } from '@/lib/review-scale'
@@ -64,10 +64,6 @@ function ParBar({ v }: { v: number | null }) {
         style={v < 0 ? { right: '50%', width: pct + '%' } : { left: '50%', width: pct + '%' }} />
     </span>
   )
-}
-
-function Chip({ tone = 'plain', title, children }: { tone?: 'plain' | 'bad' | 'warn' | 'good'; title?: string; children: any }) {
-  return <Tag tone={tone === 'bad' ? 'rose' : tone === 'warn' ? 'amber' : tone === 'good' ? 'emerald' : 'slate'} title={title}>{children}</Tag>
 }
 
 function UnitLink({ id, children }: { id: string; children: any }) {
@@ -263,8 +259,8 @@ function League({ rows, nameOf, subOf, href }: { rows: any[]; nameOf: (r: any) =
               <span className="text-[13px] font-semibold text-ink truncate">{nameOf(r)}</span>
               <span className="hidden sm:inline text-[11.5px] text-muted truncate">{sub}</span>
             </span>
-            {!!r.inRecovery && <Chip tone="bad" title="Units waiting for a good review">{r.inRecovery} waiting</Chip>}
-            {!!r.awaiting && <Chip tone="warn">{r.awaiting} to answer</Chip>}
+            {!!r.inRecovery && <Tag tone="rose" title="Units waiting for a good review">{r.inRecovery} waiting</Tag>}
+            {!!r.awaiting && <Tag tone="amber" title="Reviews waiting for a reply">{r.awaiting} to answer</Tag>}
             <span className="text-[11px] text-muted tabular-nums w-8 text-right" title="Reviews in this window">{r.n}</span>
             <span className={'text-[13px] font-bold tabular-nums w-10 text-right ' + (bad ? 'text-rose-700' : 'text-ink')}>{r.avg ?? '—'}</span>
             <ParBar v={r.vsPar} />
@@ -328,8 +324,9 @@ const TAB_TITLE: Partial<Record<Tab, string>> = {
   team: 'Cleaning and inspection scores — coaching data',
 }
 
-/** The page-level tabs. "reply" and "all" are two views of the feed, which the page passes in. */
-export type RepTab = 'reply' | 'units' | 'buildings' | 'all'
+/** The page-level tabs. "reply" and "all" are two views of the feed, which the page passes in;
+ *  "actions" is the complaints-turned-into-jobs board (was its own page, /reviews/actions). */
+export type RepTab = 'reply' | 'units' | 'buildings' | 'all' | 'actions'
 /** Counts the feed reports up, so the header and the tabs can show them. */
 export type RepFeedCounts = { loading: boolean; needs: number; overdue: number; total: number }
 
@@ -338,7 +335,7 @@ export type RepFeedCounts = { loading: boolean; needs: number; overdue: number; 
  * obeys the same bar — one owner of the state, two readers. The page tab lives there too, so a
  * unit's "Answer" button can flip the page to the feed.
  */
-export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabProp, feed, feedCounts }: {
+export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabProp, feed, feedCounts, actions }: {
   f: RepFilter
   setF: (fn: (p: RepFilter) => RepFilter) => void
   /** Point the feed's own search box at one unit. Never touches the filter bar — clicking "answer"
@@ -350,6 +347,9 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
    *  other tabs so half-written drafts survive a look at the units. */
   feed?: ReactNode
   feedCounts?: RepFeedCounts | null
+  /** The action board, shown on the "Actions" tab. Mounted only while that tab is open — it runs
+   *  its own fetch, and nobody should pay for it on every visit to the reviews page. */
+  actions?: ReactNode
 }) {
   const { days, market, building, owner, channel } = f
   const setDays = (v: number) => setF(p => ({ ...p, days: v }))
@@ -494,16 +494,11 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
           { key: 'units', label: 'Units', n: d ? failing.length : null },
           { key: 'buildings', label: 'Buildings', n: d?.buildings ? d.buildings.length : null },
           { key: 'all', label: 'All reviews', n: feedCounts && !feedCounts.loading ? feedCounts.total : null },
+          // The action board (last 10 days of complaints turned into jobs, grouped by unit) was its own
+          // page until 2026-09-28; /reviews/actions now redirects to this tab.
+          ...(actions ? [{ key: 'actions' as const, label: 'Actions' }] : []),
         ]}
-        value={page} onChange={setPage}
-        right={
-          /* The action board is a work queue built from complaint THEMES — a different job from
-             reading the score — so it keeps its own page. */
-          <a href="/reviews/actions" title="Turn the last 10 days of guest complaints into jobs, grouped by unit"
-            className="inline-flex items-center gap-1 text-[12px] font-semibold text-brand-700 hover:underline">
-            <ClipboardList size={13} /> Actions from feedback
-          </a>
-        } />
+        value={page} onChange={setPage} />
 
       {/* ── UNITS THAT NEED SOMEONE ──────────────────────────────────────────────────────────── */}
       {/* id="recovery": the Calls desk links to /reviews#recovery; ReviewsPage opens this tab for it. */}
@@ -661,6 +656,9 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
           )}
         </div>
       </div>
+
+      {/* ── ACTIONS FROM FEEDBACK ────────────────────────────────────────────────────────────── */}
+      {actions && page === 'actions' ? actions : null}
 
       {/* ── THE FEED (To reply / All reviews) ────────────────────────────────────────────────── */}
       {feed ? <div className={page === 'reply' || page === 'all' ? '' : 'hidden'}>{feed}</div> : null}

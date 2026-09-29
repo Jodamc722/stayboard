@@ -382,7 +382,8 @@ export function ReviewActionBoard() {
   return (
     <section className="mb-5">
       <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-line bg-white mb-3 flex-wrap">
-        <span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted font-semibold">
+        <span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted font-semibold cursor-help"
+          title="What guests raised in the last 10 days, turned into jobs and grouped by unit — so one visit closes everything outstanding on that door. Tick them off as they are done. Anything marked done that a guest raises again comes back flagged, because a fix that did not hold is the argument for replacing something rather than repairing it again.">
           <ClipboardList size={13} /> Actions from feedback
         </span>
         {!!counts.open && <span className="text-[12px] font-semibold text-ink">{counts.open} to do</span>}

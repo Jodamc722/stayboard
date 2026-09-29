@@ -24,7 +24,8 @@ export default async function ReviewsRoute() {
   const { data } = await supabase.auth.getUser()
   if (!data.user) redirect('/login')
 
-  // Header, tabs and the "Actions from feedback" link all live in <ReviewsPage> now (lean pass).
+  // Header and tabs — including Actions, which was /reviews/actions until 2026-09-28 — all live in
+  // <ReviewsPage> (lean pass).
   return (
     <Shell>
       <ReviewsPage />
