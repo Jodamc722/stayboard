@@ -12,7 +12,7 @@ const STATUS_CLS: Record<string, string> = { approved: 'bg-emerald-100 text-emer
 export default function DeliveryPage() {
   const [items, setItems] = useState<Item[]>([])
   const [loading, setLoading] = useState(true)
-  const [, setErr] = useState('')
+  const [err, setErr] = useState('')
   const [needsPw, setNeedsPw] = useState(false)
   const [pw, setPw] = useState('')
   const [pwErr, setPwErr] = useState('')
@@ -88,7 +88,8 @@ export default function DeliveryPage() {
           <button onClick={() => window.print()} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-neutral-900 text-white">Print</button>
         </span>
       </div>
-      {bldgs.length === 0 ? <div className="text-sm text-neutral-500">Nothing in flight right now. Approved, ordered and arriving order lines show here with their placement.</div> : null}
+      {err ? <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Could not load the delivery list: {err}</div>
+        : bldgs.length === 0 ? <div className="text-sm text-neutral-500">Nothing in flight right now. Approved, ordered and arriving order lines show here with their placement.</div> : null}
       <div className="space-y-4">
         {bldgs.map(b => {
           const units = Object.keys(byBldg[b]).sort()
