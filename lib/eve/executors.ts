@@ -35,6 +35,7 @@
 //   recommendation     { title, metric, detail?, scope?, expect_direction?, expect_pct?, measure_in_days? }
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { bustBoards } from '@/lib/bust'
 import { ACTIONS, type ActionType } from './agent-mode'
 
 export type Undo = { kind: string; [k: string]: any }
@@ -163,7 +164,8 @@ const task_create: Executor = async (p) => {
       }, { onConflict: 'reservation_id' })
     } catch { /* the watch's own cooldown still holds */ }
   }
-  try { const { bustOpsDay } = await import('@/lib/ops-day'); bustOpsDay() } catch { /* fine */ }
+  // After the mirror write, and both boards: the Scheduler caches its snapshot too (2026-09-29, 02-B3).
+  bustBoards()
   return {
     ok: true, ref: taskId,
     summary: `created ${department} task #${taskId} "${title}" on ${home.unit} for ${date}${assignedNames.length ? ` → ${assignedNames.join(', ')}` : ''}`,
@@ -216,7 +218,7 @@ const assignOne: Executor = async (p) => {
   try {
     await supabaseAdmin().from('breezeway_tasks_sync').update({ assignees: names.map(n => ({ id: null, name: n })), synced_at: new Date().toISOString() }).eq('id', taskId)
   } catch { /* sync catches up */ }
-  try { const { bustOpsDay } = await import('@/lib/ops-day'); bustOpsDay() } catch { /* fine */ }
+  bustBoards()
   return { ok: true, ref: taskId, summary: `assigned task #${taskId} to ${names.length ? names.join(', ') : ids.join(', ')}`, undo: { kind: 'task_assign', taskId, assignments: before } }
 }
 
@@ -255,7 +257,7 @@ const task_cancel: Executor = async (p) => {
   const r = await cancelBreezewayTask(taskId)
   if (!r.ok) return { ok: false, summary: `Breezeway would not cancel #${taskId}`, error: str(r.text).slice(0, 160) }
   try { await supabaseAdmin().from('breezeway_tasks_sync').update({ status: 'cancelled', synced_at: new Date().toISOString() }).eq('id', taskId) } catch { /* fine */ }
-  try { const { bustOpsDay } = await import('@/lib/ops-day'); bustOpsDay() } catch { /* fine */ }
+  bustBoards()
   return { ok: true, ref: taskId, summary: `cancelled task #${taskId} "${name.slice(0, 60)}"${p?.reason ? ` — ${str(p.reason).slice(0, 80)}` : ''}`, undo: { kind: 'task_reopen', taskId, name } }
 }
 
@@ -483,6 +485,7 @@ async function applyUndo(u: Undo, by: string): Promise<{ ok: boolean; summary: s
       const r = await cancelBreezewayTask(u.taskId)
       if (r.ok) {
         try { await db.from('breezeway_tasks_sync').update({ status: 'cancelled' }).eq('id', str(u.taskId)) } catch { /* fine */ }
+        bustBoards()
         // THE LINKS GO WITH IT (2026-09-28 audit, F25). A task made for a glitch pointed the glitch at
         // itself, and an inspection wrote its exactly-once row. Left behind, the glitch pointed at a
         // cancelled task and the automation never filed that inspection again. Only rows that still
@@ -496,7 +499,8 @@ async function applyUndo(u: Undo, by: string): Promise<{ ok: boolean; summary: s
       const { bzApi } = await import('@/lib/breezeway')
       for (const code of ['created', 'new', 'open']) {
         const r = await bzApi(`/task/${encodeURIComponent(str(u.taskId))}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type_task_status: { code } }) })
-        if (r.ok) { try { await db.from('breezeway_tasks_sync').update({ status: code }).eq('id', str(u.taskId)) } catch { /* fine */ } return { ok: true, summary: `reopened task #${u.taskId}` } }
+        // Raw bzApi busts nothing, so the reopen busts the boards itself once the mirror says so.
+        if (r.ok) { try { await db.from('breezeway_tasks_sync').update({ status: code }).eq('id', str(u.taskId)) } catch { /* fine */ } bustBoards(); return { ok: true, summary: `reopened task #${u.taskId}` } }
       }
       return { ok: false, summary: `Breezeway would not reopen #${u.taskId}`, error: 'no reopen status accepted — open it in Breezeway' }
     }
