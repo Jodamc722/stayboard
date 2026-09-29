@@ -39,6 +39,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireUser } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 import { getSetting } from '@/lib/app-settings'
 import { laborEconomics, kindOfTask } from '@/lib/labor-econ'
 import { buildDaySheet } from '@/lib/daysheet'
@@ -145,10 +146,12 @@ async function send(req: NextRequest) {
     // ── tasks closed today, by kind (ET finish day) ────────────────────────────────────────────
     const db = supabaseAdmin()
     const qFrom = addDays(today, -1), qTo = addDays(today, 1)
-    const { data: doneRows } = await db.from('breezeway_tasks_sync')
+    // Every task finished in the window, paged in id order — the counts below cover the whole day.
+    const doneRead = await pageRows((a, b) => db.from('breezeway_tasks_sync')
       .select('id,name,type_department,status,finished_at,assignees,finished_by_name,reference_property_id,total_minutes,scheduled_date')
-      .gte('finished_at', qFrom).lte('finished_at', qTo + 'T23:59:59').limit(3000)
-    const doneToday = ((doneRows || []) as any[]).filter(t => etDay(t.finished_at) === today && !/delete|cancel/i.test(str(t.status)))
+      .gte('finished_at', qFrom).lte('finished_at', qTo + 'T23:59:59').order('id').range(a, b), 3)
+    if (doneRead.truncated) console.error('[eod-recap] finished-task read incomplete — the completed counts in this recap may be short')
+    const doneToday = doneRead.rows.filter(t => etDay(t.finished_at) === today && !/delete|cancel/i.test(str(t.status)))
     const byKind = { clean: 0, other: 0, maintenance: 0, inspection: 0 }
     const byPerson: Record<string, { clean: number; jobs: number }> = {}
     for (const t of doneToday) {
