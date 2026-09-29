@@ -7,7 +7,7 @@
 // EVERY number on this route is keyed on guesty_reservations.created_at (when the booking was
 // MADE), never on the stay date. Bucketed in Eastern time.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
+import { getAccess, canSeeMoney } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { linkGate } from '@/lib/passcode-gate'
 import { stripMoney, type LinkScope } from '@/lib/share-links'
@@ -114,12 +114,15 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url)
 
   // ── who is asking ────────────────────────────────────────────────────────
+  // Internal = a TEAM MEMBER (allowlisted, active), not merely a Supabase session (2026-09-28, B-5).
+  // Dollars then follow that person's own permission; a link holder gets what the link's scope says.
   let internal = false
+  let canMoney = false
   try {
-    const sb = createClient()
-    const { data: { user } } = await sb.auth.getUser()
-    internal = !!user
-  } catch { internal = false }
+    const a = await getAccess()
+    internal = !!a.user && !!a.allowed
+    canMoney = internal && canSeeMoney(a)
+  } catch { internal = false; canMoney = false }
   // share_links row 'marketing' (2026-09-18): its own passcode, and a scope that can pin the date
   // range and switch dollars off for this link alone.
   let linkScope: LinkScope = {}
@@ -345,7 +348,7 @@ export async function GET(req: NextRequest) {
 
     const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
 
-    const noMoney = linkScope.showMoney === false
+    const noMoney = internal ? !canMoney : linkScope.showMoney === false
     return NextResponse.json({
       ok: true,
       internal,

@@ -42,7 +42,9 @@ export async function GET(req: NextRequest) {
   // ITS OWN PASSWORD (2026-09-18, P0-4). This report carries owner money and used to open on the
   // vendor share password every cleaning crew holds. A signed-in Lighthouse user opens it too.
   // share_links row 'botanica-report' since 2026-09-18 — its own passcode, its own revoke.
-  const gate = await linkGate('botanica-report', { kinds: ['botanica'] })
+  // Every figure here is owner money, so a signed-in teammate opens it on their login only with
+  // dollar access; without it they are asked for the link's passcode like any visitor (B-5).
+  const gate = await linkGate('botanica-report', { kinds: ['botanica'], money: true })
   if (!gate.ok) return gate.res
   const debug = new URL(req.url).searchParams.get('debug') === '1'
   try {

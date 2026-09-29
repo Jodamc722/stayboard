@@ -38,7 +38,7 @@ import { hashPassword, verifyPassword } from './edit-access'
 import { hmacHex, safeEqual, sha256Hex } from './signing'
 import { logParking, tooManyWrong, LOCKOUT_MINUTES } from './parking'
 import { cookies } from 'next/headers'
-import { getAccess } from './access'
+import { getAccess, canSeeMoney } from './access'
 import { linkUsable, hintOf, type ShareLinkRow } from './share-links'
 import { getLink, touchLink, legacySettingsId, isLegacyLink } from './share-links-server'
 
@@ -132,13 +132,21 @@ export function linkCookieOk(link: Pick<ShareLinkRow, 'code' | 'passcode_hash'>,
   return safeEqual(gen, linkGen(link.code, String(link.passcode_hash)))
 }
 
-/** A signed-in LIGHTHOUSE user (allowlisted, active) — the office opens any link without its passcode. */
-export async function signedInUser(): Promise<{ signedIn: boolean; who: string | null }> {
-  try { const a = await getAccess(); return { signedIn: !!a.user && !!a.allowed, who: a.email ? String(a.email) : null } } catch { return { signedIn: false, who: null } }
+/**
+ * A signed-in LIGHTHOUSE user (allowlisted, active) — the office opens any link without its passcode.
+ * `canMoney` is that person's own dollar permission (lib/access canSeeMoney): being signed in opens
+ * the page, it does not by itself open the dollars on it (2026-09-28 audit, B-5).
+ */
+export async function signedInUser(): Promise<{ signedIn: boolean; who: string | null; canMoney: boolean }> {
+  try {
+    const a = await getAccess()
+    const signedIn = !!a.user && !!a.allowed
+    return { signedIn, who: a.email ? String(a.email) : null, canMoney: signedIn && canSeeMoney(a) }
+  } catch { return { signedIn: false, who: null, canMoney: false } }
 }
 
 export type LinkGate =
-  | { ok: true; link: ShareLinkRow; signedIn: boolean; who: string | null }
+  | { ok: true; link: ShareLinkRow; signedIn: boolean; who: string | null; canMoney?: boolean }
   | { ok: false; res: NextResponse; link: ShareLinkRow | null; reason: 'unknown' | 'expired' | 'unset' | 'locked' }
 
 const gone = (msg: string, status = 404) => NextResponse.json({ ok: false, error: msg, gone: true }, { status })
@@ -147,13 +155,19 @@ const gone = (msg: string, status = 404) => NextResponse.json({ ok: false, error
  * THE CHECK for a page that opens on a link row: resolve the code, refuse revoked / expired, let a
  * signed-in user through, otherwise require this link's cookie. Bumps uses / last_used_at on a
  * pass. `needsPassword: true` on the 401 is what every public page already looks for.
+ *
+ * `money: true` is for a page whose payload IS dollars (the Botanica owner report): a signed-in
+ * viewer passes on their login only when they may see dollars; one who may not is asked for this
+ * link's passcode like any other visitor, and then sees what the link shows.
+ * `cookieOnly: true` is for a caller that has ALREADY judged the login and found it short (the
+ * owner-audit fallback): only this link's own cookie opens it.
  */
-export async function linkGate(code: string, opts: { kinds?: string[]; touch?: boolean } = {}): Promise<LinkGate> {
+export async function linkGate(code: string, opts: { kinds?: string[]; touch?: boolean; money?: boolean; cookieOnly?: boolean } = {}): Promise<LinkGate> {
   const link = await getLink(code)
   if (!link || (opts.kinds && opts.kinds.indexOf(String(link.kind)) < 0)) return { ok: false, res: gone('This link is not active.'), link: null, reason: 'unknown' }
   if (!linkUsable(link)) return { ok: false, res: gone(link.revoked_at ? 'This link was turned off.' : 'This link has expired.', 410), link, reason: 'expired' }
   const me = await signedInUser()
-  if (me.signedIn) return { ok: true, link, signedIn: true, who: me.who }
+  if (me.signedIn && !opts.cookieOnly && (!opts.money || me.canMoney)) return { ok: true, link, signedIn: true, who: me.who, canMoney: me.canMoney }
   if (link.open) { if (opts.touch !== false) touchLink(link); return { ok: true, link, signedIn: false, who: null } }
   if (!link.passcode_hash) {
     return { ok: false, link, reason: 'unset', res: NextResponse.json({ ok: false, needsPassword: true, unset: true, label: link.title || link.label || 'Shared page',
@@ -164,7 +178,10 @@ export async function linkGate(code: string, opts: { kinds?: string[]; touch?: b
   if (!linkCookieOk(link, cookieVal)) {
     // NO HINT HERE: the hint is the passcode's last two characters, for the hub after the reveal.
     // It never goes to an unauthenticated caller.
-    return { ok: false, link, reason: 'locked', res: NextResponse.json({ ok: false, needsPassword: true, label: link.title || link.label || 'Shared page', error: 'This link needs its passcode — ask Jon for this link’s passcode.' }, { status: 401 }) }
+    const why = me.signedIn && opts.money
+      ? 'This page shows dollar amounts and your login does not include them — enter this link’s passcode, or ask Jon for dollar access.'
+      : 'This link needs its passcode — ask Jon for this link’s passcode.'
+    return { ok: false, link, reason: 'locked', res: NextResponse.json({ ok: false, needsPassword: true, label: link.title || link.label || 'Shared page', error: why }, { status: 401 }) }
   }
   if (opts.touch !== false) touchLink(link)
   return { ok: true, link, signedIn: false, who: null }

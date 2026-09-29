@@ -83,7 +83,9 @@ function toCsv(header: string[], rows: any[][]): string {
 }
 
 export async function GET(req: NextRequest) {
-  const gate = await linkGate('botanica-report', { kinds: ['botanica'] })
+  // Revenue is in every view (stays, nights, daily, raw), so the same money gate as the report: a
+  // signed-in teammate without dollar access is asked for the link's passcode (2026-09-28, B-5).
+  const gate = await linkGate('botanica-report', { kinds: ['botanica'], money: true })
   if (!gate.ok) return gate.res
   const sp = req.nextUrl.searchParams
   const today = ymd(new Date())

@@ -14,7 +14,7 @@
 // table. Rather than draw a flattering hockey stick out of missing history, every month earlier
 // than the mirror's own floor is returned with partial:true and the UI greys it out.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
+import { getAccess, canSeeMoney } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { linkGate } from '@/lib/passcode-gate'
 import { stripMoney, type LinkScope } from '@/lib/share-links'
@@ -53,12 +53,15 @@ function addMonths(ym: string, n: number): string {
 }
 
 export async function GET(req: NextRequest) {
+  // Internal = a TEAM MEMBER (allowlisted, active), not merely a Supabase session (2026-09-28, B-5);
+  // dollars follow that person's own permission, a link holder's follow the link's scope.
   let internal = false
+  let canMoney = false
   try {
-    const sb = createClient()
-    const { data: { user } } = await sb.auth.getUser()
-    internal = !!user
-  } catch { internal = false }
+    const a = await getAccess()
+    internal = !!a.user && !!a.allowed
+    canMoney = internal && canSeeMoney(a)
+  } catch { internal = false; canMoney = false }
   // share_links row 'marketing' (2026-09-18): its own passcode, and a scope that can pin the date
   // range and switch dollars off for this link alone.
   let linkScope: LinkScope = {}
@@ -208,8 +211,9 @@ export async function GET(req: NextRequest) {
     const lo = linkScope.from ? linkScope.from.slice(0, 7) : ''
     const hi = linkScope.to ? linkScope.to.slice(0, 7) : ''
     const inRange = months.filter(r => (!lo || r.m >= lo) && (!hi || r.m <= hi))
-    const shown = linkScope.showMoney === false ? stripMoney(inRange) : inRange
-    return NextResponse.json({ ok: true, today, floorMonth, truncated, failed, months: shown, showMoney: linkScope.showMoney !== false })
+    const noMoney = internal ? !canMoney : linkScope.showMoney === false
+    const shown = noMoney ? stripMoney(inRange) : inRange
+    return NextResponse.json({ ok: true, today, floorMonth, truncated, failed, months: shown, showMoney: !noMoney })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }

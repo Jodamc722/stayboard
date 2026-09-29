@@ -10,7 +10,7 @@
 // this link, and audienceSummary() is built so there is no shape in which a name, an email address
 // or a phone number can come out of here — the contacts themselves never leave the server.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
+import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { linkGate } from '@/lib/passcode-gate'
 import type { LinkScope } from '@/lib/share-links'
@@ -24,12 +24,12 @@ export const maxDuration = 60
 const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 
 export async function GET(_req: NextRequest) {
-  // Same door as the report itself: a logged-in teammate, or the marketing password cookie.
+  // Same door as the report itself: a logged-in TEAM MEMBER (allowlisted, active — not merely a
+  // Supabase session, 2026-09-28 B-5), or the marketing link's cookie.
   let internal = false
   try {
-    const sb = createClient()
-    const { data: { user } } = await sb.auth.getUser()
-    internal = !!user
+    const a = await getAccess()
+    internal = !!a.user && !!a.allowed
   } catch { internal = false }
   // share_links row 'marketing' (2026-09-18): its own passcode, and a scope that can pin the date
   // range and switch dollars off for this link alone.
