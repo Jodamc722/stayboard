@@ -35,6 +35,7 @@ import 'server-only'
 // /users -> Task automation. There is one definition of "long stay" and one of "big booking", and
 // this file does not get to invent its own.
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 import { marketOf } from '@/lib/segments'
 import { getSlackRules } from '@/lib/slack-rules'
 import { nameMatchesRoster } from '@/lib/homebase'
@@ -123,6 +124,8 @@ export type TeamSchedule = {
   markets: MarketBlock[]
   rules: { longStayNights: number; bigBookingUsd: number }
   counts: { tasksRead: number; vendorDropped: number; unassignedDropped: number; rosterWeeks: number; clashes: number }
+  /** True when a task or stay read stopped early (logged): jobs or their tags may be missing. */
+  partial: boolean
   generatedAt: string
 }
 
@@ -154,16 +157,16 @@ function isWeekend(iso: string): boolean {
   const d = new Date(iso + 'T12:00:00Z').getUTCDay(); return d === 0 || d === 6
 }
 
-/** PostgREST caps a response at 1000 rows whatever .limit() says. Everything here is paged. */
-async function pageAll(build: (from: number, to: number) => any, maxPages = 12): Promise<any[]> {
-  const out: any[] = []
-  for (let i = 0; i < maxPages; i++) {
-    const { data, error } = await build(i * 1000, i * 1000 + 999)
-    if (error || !data || !data.length) break
-    out.push(...data)
-    if (data.length < 1000) break
-  }
-  return out
+/**
+ * PostgREST caps a response at 1000 rows whatever .limit() says. Everything here is paged — through
+ * lib/db-page, on an order with an id tiebreaker (a date alone repeats and skips rows between pages).
+ * A page that fails no longer passes for the end of the data: it is logged, and the planner comes
+ * back marked `partial`.
+ */
+async function pageAll(build: (from: number, to: number) => any, maxPages = 12): Promise<{ rows: any[]; truncated: boolean }> {
+  const read = await pageRows<any>(build, maxPages)
+  if (read.truncated) console.error('[team-schedule] a paged read stopped early — the planner may be missing work')
+  return read
 }
 
 function deptOf(v: any): string {
@@ -249,15 +252,17 @@ export async function buildTeamSchedule(opts: {
   // .in() is chunked at 300 ids: a portfolio-wide call is 233 today but a truncated id list is a
   // WRONG answer rather than a slow one, and this app has shipped that bug before.
   let tasks: any[] = []
+  let partial = false
   for (let i = 0; i < ids.length; i += 300) {
     const chunk = ids.slice(i, i + 300)
     const got = await pageAll((a, b) => db.from('breezeway_tasks_sync')
       .select('id,reference_property_id,name,status,scheduled_date,assignees,type_department,finished_at,report_url')
       .in('reference_property_id', chunk)
       .gte('scheduled_date', from).lte('scheduled_date', to)
-      .order('scheduled_date').range(a, b))
+      .order('scheduled_date').order('id').range(a, b))
+    if (got.truncated) partial = true
     // Ghosts of moved tasks stay out — the replacement row on the new day is the real one.
-    tasks = tasks.concat(got.filter((t: any) => String(t.status || '').toLowerCase() !== 'deleted'))
+    tasks = tasks.concat(got.rows.filter((t: any) => String(t.status || '').toLowerCase() !== 'deleted'))
   }
 
   // ── the stays that give a job its tags ──────────────────────────────────────────────────────
@@ -269,8 +274,9 @@ export async function buildTeamSchedule(opts: {
       .select('listing_id,guest_name,guest_email,check_in,check_out,nights,status,source,money_total,created_at')
       .in('listing_id', chunk)
       .gte('check_out', addDays(from, -1)).lte('check_in', addDays(to, 1))
-      .range(a, b))
-    res = res.concat(got)
+      .order('id').range(a, b))
+    if (got.truncated) partial = true
+    res = res.concat(got.rows)
   }
   res = res.filter(r => !/cancel|inquir|declin|expir/i.test(str(r.status)))
 
@@ -521,6 +527,7 @@ export async function buildTeamSchedule(opts: {
     from, to, dept, days, markets,
     rules: { longStayNights: LONG, bigBookingUsd: BIG },
     counts: { tasksRead: tasks.length, vendorDropped, unassignedDropped, rosterWeeks, clashes },
+    partial,
     generatedAt: new Date().toISOString(),
   }
 }
