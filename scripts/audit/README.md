@@ -23,7 +23,8 @@ gate (the `CRON_SECRET` bearer check, `cronAllowed()`, `requireCron()` or `requi
 tombstone, or a wrapper that hands off to another route's gated handler, is not open); pages that
 forget `<Shell>` and therefore ship with no navigation (a nested layout that renders `<Shell>`
 counts, and redirect-only stubs are skipped); queries capped at exactly 1000 rows where PostgREST
-cannot tell you it truncated (comments that merely mention it are ignored); empty `catch` blocks
+cannot tell you it truncated (comments that merely mention it are ignored, and a cap whose own line
+ends in `// deliberate cap: <reason>` is a stated limit, not a finding); empty `catch` blocks
 whose own `try` wraps a database write; React hooks declared below an early return; duplicate
 exported helpers in `lib/` with incompatible signatures; tables created without RLS (switched on
 in any migration, `alter table if exists …` included); tables the code reads that no migration
