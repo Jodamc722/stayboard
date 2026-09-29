@@ -28,7 +28,7 @@ export async function GET() {
   const db = supabaseAdmin()
   try {
     const { data, error } = await db.from('eve_docs')
-      .select('id,title,category,source,words,active,added_by,created_at,updated_at')
+      .select('*')
       .order('updated_at', { ascending: false }).limit(200)
     if (error) return NextResponse.json({ error: error.message, hint: 'Run migration 058.' }, { status: 200 })
     const ids = ((data as any[]) || []).map(d => d.id)
@@ -41,7 +41,7 @@ export async function GET() {
     // cannot answer the question a person actually has, which is "did she understand it".
     const studied = await studyStatus(ids)
     return NextResponse.json({
-      docs: ((data as any[]) || []).map(d => ({
+      docs: ((data as any[]) || []).map(({ body: _b, ...d }: any) => ({
         ...d,
         sections: counts[String(d.id)] || 0,
         study: studied[String(d.id)] || null,
@@ -75,10 +75,12 @@ export async function POST(req: NextRequest) {
     // Re-uploading a title REPLACES it rather than making a second copy. Two versions of the same
     // policy, both live, is how a rule quietly contradicts itself.
     const { data: existing } = await db.from('eve_docs').select('id').eq('title', title).maybeSingle()
-    const row = {
+    const filePath = /^eve\/[^/]+$/.test(String(body?.file_path || '')) ? String(body.file_path) : null
+    const row: any = {
       title, category, source, body: text, words: countWords(text),
       active: true, added_by: access.email, updated_at: new Date().toISOString(),
     }
+    if (filePath) row.file_path = filePath   // the uploaded original (migration 119)
     let docId: string
     if (existing?.id) {
       docId = String(existing.id)

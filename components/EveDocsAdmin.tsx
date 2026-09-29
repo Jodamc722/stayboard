@@ -7,15 +7,18 @@
 // exactly why adding to it is admin-only and why re-uploading a title REPLACES it — two live
 // versions of one rule is how a policy quietly contradicts itself.
 //
-// Drop a .md or .txt and the browser reads it; anything else, paste the text. Extracting text from
-// a .docx or a scanned PDF is a different job with different failure modes, and a library that
-// silently stores an empty document is worse than one that asks you to paste.
+// FILE UPLOAD (2026-09-29, Jon: "Adam and Eve should have file upload"). A .md/.txt is read by the
+// browser; a PDF (typed or scanned), a Word .docx or a photo of a page goes to /api/files/extract,
+// which turns it into text (PDF and images are transcribed by the model) and keeps the original.
+// The text lands in the box below for a look BEFORE it is filed — an empty or garbled read is caught
+// by a person, not stored as policy.
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { BookOpen, Upload, Trash2, RefreshCw, Check, AlertTriangle, FileText } from 'lucide-react'
 
 type Doc = {
   id: string; title: string; category: string; source: string | null
   words: number; sections: number; active: boolean; added_by: string | null; updated_at: string
+  file_path?: string | null
 }
 
 const card = 'bg-white border border-line rounded-2xl shadow-soft'
@@ -37,7 +40,7 @@ export function EveDocsAdmin({ canEdit }: { canEdit: boolean }) {
   const [busy, setBusy] = useState('')
   const [note, setNote] = useState('')
   const [err, setErr] = useState('')
-  const [draft, setDraft] = useState({ title: '', category: 'sop', source: '', body: '' })
+  const [draft, setDraft] = useState({ title: '', category: 'sop', source: '', body: '', file_path: '' })
   const fileRef = useRef<HTMLInputElement | null>(null)
 
   const load = useCallback(async () => {
@@ -52,18 +55,21 @@ export function EveDocsAdmin({ canEdit }: { canEdit: boolean }) {
 
   async function pickFile(f: File | null) {
     if (!f) return
-    if (!/\.(md|txt|markdown|csv)$/i.test(f.name)) {
-      setErr(`${f.name} is not a text file. Open it, copy the content, and paste it below — a document I cannot read is a document that would sit in her library saying nothing.`)
+    const nice = (n: string) => n.replace(/\.[a-z0-9]+$/i, '').replace(/[-_]+/g, ' ').trim()
+    setErr('')
+    if (/\.(md|txt|markdown|csv)$/i.test(f.name)) {
+      const text = await f.text()
+      setDraft(d => ({ ...d, body: text, source: f.name, file_path: '', title: d.title || nice(f.name) }))
       return
     }
-    const text = await f.text()
-    setErr('')
-    setDraft(d => ({
-      ...d,
-      body: text,
-      source: f.name,
-      title: d.title || f.name.replace(/\.(md|txt|markdown|csv)$/i, '').replace(/[-_]+/g, ' ').trim(),
-    }))
+    setBusy('read'); setNote(`Reading ${f.name}…`)
+    try {
+      const fd = new FormData(); fd.append('file', f); fd.append('for', 'eve')
+      const r = await fetch('/api/files/extract', { method: 'POST', body: fd }).then(x => x.json())
+      if (!r?.ok) { setErr(r?.error || r?.message || 'Could not read that file.'); setNote(''); return }
+      setDraft(d => ({ ...d, body: r.text, source: r.name, file_path: r.path || '', title: d.title || nice(r.name) }))
+      setNote(`Read ${r.name} (${r.method}) — ${Number(r.words).toLocaleString()} words. Check the text below, then add it.`)
+    } catch (e: any) { setErr(String(e?.message || e)); setNote('') } finally { setBusy('') }
   }
 
   async function save() {
@@ -74,7 +80,7 @@ export function EveDocsAdmin({ canEdit }: { canEdit: boolean }) {
       }).then(x => x.json())
       if (r?.ok) {
         setNote(`${r.replaced ? 'Replaced' : 'Added'} "${r.title}" — ${r.words.toLocaleString()} words in ${r.sections} sections. She can quote it now.`)
-        setDraft({ title: '', category: draft.category, source: '', body: '' })
+        setDraft({ title: '', category: draft.category, source: '', body: '', file_path: '' })
         if (fileRef.current) fileRef.current.value = ''
         await load()
       } else setErr(r?.error || r?.message || 'That did not save.')
@@ -123,6 +129,7 @@ export function EveDocsAdmin({ canEdit }: { canEdit: boolean }) {
                 <p className="text-[12px] text-muted">
                   {d.category} · {d.words.toLocaleString()} words · {d.sections} sections{d.source ? ` · from ${d.source}` : ''}
                   {d.added_by ? ` · added by ${d.added_by}` : ''}
+                  {d.file_path ? <> · <a href={`/api/files/open?path=${encodeURIComponent(d.file_path)}`} target="_blank" rel="noreferrer" className="text-brand-700 hover:underline">original</a></> : null}
                 </p>
               </div>
               <button disabled={!canEdit || busy === d.id} onClick={() => retire(d)}
@@ -141,7 +148,7 @@ export function EveDocsAdmin({ canEdit }: { canEdit: boolean }) {
       <div className={`${card} p-4`}>
         <p className="text-sm font-semibold text-ink inline-flex items-center gap-1.5"><Upload size={14} /> Add a document</p>
         <p className="text-[13px] text-muted mt-1 max-w-2xl">
-          Drop a <b>.md</b> or <b>.txt</b> and it fills itself in, or paste the text. Re-using a title replaces
+          Upload a <b>PDF</b>, <b>Word</b> file, <b>photo of a page</b>, or <b>.md/.txt</b> — it is read into text for you to check — or paste the text. Re-using a title replaces
           that document rather than adding a second copy. It is split on its own headings, so she can answer
           from the one relevant section instead of reciting the whole thing.
         </p>
@@ -157,7 +164,7 @@ export function EveDocsAdmin({ canEdit }: { canEdit: boolean }) {
         <p className="text-[12px] text-muted mt-1">{CATEGORY_HELP[draft.category] || ''}</p>
 
         <div className="mt-2">
-          <input ref={fileRef} type="file" accept=".md,.txt,.markdown,.csv" disabled={!canEdit}
+          <input ref={fileRef} type="file" accept=".pdf,.docx,.txt,.md,.markdown,.csv,.png,.jpg,.jpeg,.webp" disabled={!canEdit || busy === 'read'}
             onChange={e => pickFile(e.target.files?.[0] || null)}
             className="text-[13px] text-muted file:mr-3 file:rounded-xl file:border file:border-line file:bg-app file:px-3 file:py-1.5 file:text-[13px] file:font-semibold file:text-ink" />
         </div>

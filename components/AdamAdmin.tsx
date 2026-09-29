@@ -2,9 +2,10 @@
 // ADAM'S PAGE — what the Garden Hotel's agent knows, how he is told to sound, which model he runs
 // on, and what he has been asked. The hotel's counterpart to Settings → Eve, kept on the hotel side.
 import { useCallback, useEffect, useState } from 'react'
-import { Hotel, Trash2, Loader2, Check, ThumbsUp, ThumbsDown } from 'lucide-react'
+import { Hotel, Trash2, Loader2, Check, ThumbsUp, ThumbsDown, FileText } from 'lucide-react'
 import { LeanHead, LeanTabs, LeanList, LeanRow, LeanSection, LeanEmpty, Tag, Pill, IconBtn } from '@/components/lean'
 import { openAdam } from '@/components/AdamFloat'
+import { AgentFileDrop } from '@/components/AgentFileDrop'
 
 const j = async (url: string, init?: RequestInit) => { const r = await fetch(url, { cache: 'no-store', ...init }); return r.json() }
 const when = (iso: string) => new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
@@ -12,7 +13,12 @@ const TIER_LABEL: Record<string, string> = { fable: 'Fable 5.1', opus: 'Opus 4.8
 
 export function AdamAdmin({ owner, canEdit }: { owner: boolean; canEdit: boolean }) {
   const [d, setD] = useState<any | null>(null)
-  const [tab, setTab] = useState<'memory' | 'questions' | 'shared' | 'chats' | 'voice'>('memory')
+  const [tab, setTab] = useState<'memory' | 'files' | 'questions' | 'shared' | 'chats' | 'voice'>('memory')
+  const [lib, setLib] = useState<any | null>(null)
+  const [fd, setFd] = useState<any>({ title: '', category: 'sop', body: '', source: '', file_path: '' })
+  const [fmsg, setFmsg] = useState('')
+  const loadLib = useCallback(async () => setLib(await j('/api/garden/adam/docs')), [])
+  useEffect(() => { if (tab === 'files' && !lib) loadLib() }, [tab, lib, loadLib])
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [share, setShare] = useState({ title: '', body: '' })
   const [teach, setTeach] = useState('')
@@ -40,7 +46,7 @@ export function AdamAdmin({ owner, canEdit }: { owner: boolean; canEdit: boolean
         <button onClick={() => openAdam()} className="rounded-lg bg-emerald-700 text-white px-2.5 h-7 text-[12px] font-semibold">Ask {s.name}</button>
       </LeanHead>
       <p className="text-[12.5px] text-muted mb-3">The Garden Hotel&apos;s own agent — his own memory, his own chat log, his own model. He knows nothing about the vacation rentals and Eve knows nothing about the hotel; that is by design.</p>
-      <LeanTabs value={tab} onChange={setTab} tabs={[{ key: 'memory', label: 'What he knows', n: d.memories.length }, { key: 'questions', label: 'His questions', n: (d.questions || []).filter((q: any) => q.status === 'open').length }, { key: 'shared', label: 'Shared from Stay', n: (d.shared || []).length }, { key: 'chats', label: 'Recent chats', n: d.chats.length }, { key: 'voice', label: 'Voice & model' }]} />
+      <LeanTabs value={tab} onChange={setTab} tabs={[{ key: 'memory', label: 'What he knows', n: d.memories.length }, { key: 'files', label: 'Files', n: lib?.docs?.filter((x: any) => x.active).length }, { key: 'questions', label: 'His questions', n: (d.questions || []).filter((q: any) => q.status === 'open').length }, { key: 'shared', label: 'Shared from Stay', n: (d.shared || []).length }, { key: 'chats', label: 'Recent chats', n: d.chats.length }, { key: 'voice', label: 'Voice & model' }]} />
       {tab === 'memory' ? (<>
         {canEdit ? (
           <div className="flex gap-2 mb-3">
@@ -55,6 +61,36 @@ export function AdamAdmin({ owner, canEdit }: { owner: boolean; canEdit: boolean
               actions={canEdit ? <IconBtn title="Forget this" tone="bad" onClick={() => forget(m.id)}><Trash2 size={14} /></IconBtn> : undefined} />
           ))}</LeanList>
         ) : <LeanEmpty>Nothing yet. Tell him how the hotel works — here, or in a chat — and it lands on this list.</LeanEmpty>}
+      </>) : null}
+      {tab === 'files' ? (<>
+        <p className="text-[12.5px] text-muted mb-2">The hotel&apos;s written material — handbook files, SOPs, policies, training, reference. Upload a file, check the text, and file it: he reads it once and keeps the rules it states as memories, and can search and quote the whole thing any time.</p>
+        {canEdit ? (
+          <div className="rounded-2xl border border-line bg-white p-3 mb-3 space-y-2">
+            <AgentFileDrop forWho="adam" onText={f => { setFd((x: any) => ({ ...x, body: f.text, source: f.name, file_path: f.path || '', title: x.title || f.name.replace(/\.[a-z0-9]+$/i, '').replace(/[-_]+/g, ' ') })); setFmsg(`Read ${f.name} (${f.method}) — ${f.words.toLocaleString()} words. Check it, then file it.`) }} />
+            {fd.body ? (<>
+              <div className="flex gap-2 flex-wrap">
+                <input value={fd.title} onChange={e => setFd({ ...fd, title: e.target.value })} placeholder="Title — he quotes this name" className="flex-1 min-w-[12rem] rounded-xl border border-line bg-white px-3 py-2 text-sm" />
+                <select value={fd.category} onChange={e => setFd({ ...fd, category: e.target.value })} className="rounded-xl border border-line bg-white px-3 py-2 text-sm">{(lib?.categories || ['handbook', 'sop', 'policy', 'training', 'reference']).map((c: string) => <option key={c} value={c}>{c}</option>)}</select>
+              </div>
+              <textarea value={fd.body} onChange={e => setFd({ ...fd, body: e.target.value })} rows={10} className="w-full rounded-xl border border-line bg-white px-3 py-2 text-[12px] font-mono" />
+              <div className="flex items-center gap-2">
+                <button onClick={async () => { setFmsg('Filing and reading…'); const r = await j('/api/garden/adam/docs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(fd) }); if (r?.ok) { setFmsg(`${r.replaced ? 'Replaced' : 'Filed'} "${r.title}" — ${r.sections} sections; learned ${r.learned.length} rules.`); setFd({ title: '', category: fd.category, body: '', source: '', file_path: '' }); loadLib(); load() } else setFmsg(r?.error || r?.message || 'Could not file it.') }} className="rounded-xl bg-ink text-white px-3 py-1.5 text-[12px] font-semibold">File it &amp; learn</button>
+                <button onClick={() => { setFd({ title: '', category: fd.category, body: '', source: '', file_path: '' }); setFmsg('') }} className="rounded-xl border border-line px-3 py-1.5 text-[12px] font-semibold">Discard</button>
+              </div>
+            </>) : null}
+            {fmsg ? <p className="text-[12px] text-emerald-800">{fmsg}</p> : null}
+          </div>
+        ) : null}
+        {!lib ? <p className="text-[13px] text-muted">Loading…</p> : !lib.ok ? <LeanEmpty>{/does not exist|schema cache/i.test(lib.error || '') ? 'Run migration 136_agent_files.sql, then reload.' : lib.error}</LeanEmpty> : lib.docs.filter((x: any) => x.active).length ? (
+          <LeanList>{lib.docs.filter((x: any) => x.active).map((x: any) => (
+            <LeanRow key={x.id} name={x.title} meta={`${x.words.toLocaleString()} words · ${x.added_by || ''} · ${when(x.updated_at)}`}
+              tags={<><Tag>{x.category}</Tag>{x.learned ? <Tag tone="emerald">{x.learned} learned</Tag> : null}</>}
+              actions={<>
+                {x.file_path ? <IconBtn title="Open the original" href={`/api/files/open?path=${encodeURIComponent(x.file_path)}`}><FileText size={14} /></IconBtn> : null}
+                {canEdit ? <IconBtn title="Retire (he stops quoting it; memories stay until you forget them)" tone="bad" onClick={async () => { await j('/api/garden/adam/docs', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: x.id }) }); loadLib() }}><Trash2 size={14} /></IconBtn> : null}
+              </>} />
+          ))}</LeanList>
+        ) : <LeanEmpty>No files yet. Upload the hotel&apos;s handbook, SOPs and policies — he learns from each one.</LeanEmpty>}
       </>) : null}
       {tab === 'questions' ? ((d.questions || []).length ? (
         <LeanList>{(d.questions || []).map((q: any) => (

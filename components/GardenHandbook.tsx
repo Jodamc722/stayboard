@@ -2,8 +2,9 @@
 // THE HOTEL'S HANDBOOK — the Garden Hotel's own SOPs, by section. Adam answers from what is written
 // here. Empty entries are the outline still to fill.
 import { useCallback, useEffect, useState } from 'react'
-import { BookOpen, Loader2, Plus, Save, Trash2 } from 'lucide-react'
+import { BookOpen, Loader2, Plus, Save, Trash2, FileText } from 'lucide-react'
 import { LeanHead, LeanList, LeanRow, LeanEmpty, Tag, Pill, IconBtn } from '@/components/lean'
+import { AgentFileDrop } from '@/components/AgentFileDrop'
 
 const j = async (url: string, init?: RequestInit) => { const r = await fetch(url, { cache: 'no-store', ...init }); return r.json().catch(() => ({})) }
 const send = (method: string, body: any) => j('/api/garden/handbook', { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -30,6 +31,9 @@ export function GardenHandbook({ canEdit, canFull }: { canEdit: boolean; canFull
           <datalist id="hb-sections">{sections.map(s => <option key={s} value={s} />)}</datalist>
           <input className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] flex-1 min-w-[12rem]" placeholder="Entry title" value={add.title} onChange={e => setAdd({ ...add, title: e.target.value })} />
           <button onClick={async () => { if (!add.section.trim() || !add.title.trim()) return; await send('POST', add); setAdd({ section: add.section, title: '' }); load() }} className="rounded-lg bg-ink text-white px-3 text-[12px] font-semibold inline-flex items-center gap-1"><Plus size={13} /> Add entry</button>
+          <div className="basis-full">
+            <AgentFileDrop forWho="handbook" label="Import a file as an entry" onText={async f => { await send('POST', { section: add.section.trim() || 'Imported', title: add.title.trim() || f.name.replace(/\.[a-z0-9]+$/i, '').replace(/[-_]+/g, ' '), body: f.text, file_path: f.path }); setAdd({ section: add.section, title: '' }); load() }} />
+          </div>
         </div>
       ) : null}
       {sections.map(sec => (
@@ -44,6 +48,8 @@ export function GardenHandbook({ canEdit, canFull }: { canEdit: boolean; canFull
                   {canEdit && draft[e.id] != null && draft[e.id] !== e.body ? <IconBtn title="Save" tone="ok" onClick={async () => { await send('POST', { ...e, body: draft[e.id] }); setDraft(x => { const n = { ...x }; delete n[e.id]; return n }); load() }}><Save size={14} /></IconBtn> : null}
                   {canFull ? <IconBtn title="Delete entry" tone="bad" onClick={async () => { await send('DELETE', { id: e.id }); load() }}><Trash2 size={14} /></IconBtn> : null}
                 </>}>
+                {canEdit ? <AgentFileDrop forWho="handbook" label="Fill this entry from a file" onText={f => setDraft(x => ({ ...x, [e.id]: f.text }))} /> : null}
+                {e.file_path ? <a href={`/api/files/open?path=${encodeURIComponent(e.file_path)}`} target="_blank" rel="noreferrer" className="text-[12px] text-brand-700 hover:underline inline-flex items-center gap-1"><FileText size={12} /> Original file</a> : null}
                 {canEdit
                   ? <textarea value={val} onChange={ev => setDraft(x => ({ ...x, [e.id]: ev.target.value }))} rows={Math.min(16, Math.max(4, String(val || '').split('\n').length + 1))} className="w-full rounded-xl border border-line bg-white px-3 py-2 text-[13px] focus:outline-none focus:border-brand-500" placeholder="How the hotel does this…" />
                   : <p className="text-[13px] text-ink/85 whitespace-pre-wrap">{e.body || '—'}</p>}

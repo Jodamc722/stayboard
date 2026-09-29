@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
   if (!String(b?.section || '').trim() || !String(b?.title || '').trim()) return NextResponse.json({ error: 'section and title required' }, { status: 400 })
   const row: any = { section: String(b.section).slice(0, 60), title: String(b.title).slice(0, 160), body: String(b?.body || '').slice(0, 20000), audience: Array.isArray(b?.audience) ? b.audience.map(String).slice(0, 10) : [], updated_by: gate.access.email || null, updated_at: new Date().toISOString() }
   if (typeof b?.sort === 'number') row.sort = b.sort
+  if (/^handbook\/[^/]+$/.test(String(b?.file_path || ''))) row.file_path = b.file_path   // the uploaded original (migration 136)
   const db = supabaseAdmin()
   const r = b?.id ? await db.from('garden_handbook').update(row).eq('id', String(b.id)).select('*').single() : await db.from('garden_handbook').insert(row).select('*').single()
   return r.error ? NextResponse.json({ error: r.error.message }, { status: 500 }) : NextResponse.json({ ok: true, entry: r.data })

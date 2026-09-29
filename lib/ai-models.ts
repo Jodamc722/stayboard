@@ -129,6 +129,16 @@ export const AI_TASKS: AiTask[] = [
   { key: 'expectations', title: 'Eve — expectation notes for CS and admin', group: 'Eve', def: 'sonnet', background: true,
     what: 'One call a week over the evidence pack (reviews of every rating, inbound guest messages that ask or complain about things upfront copy should cover, unhappy threads). Returns up to twelve notes: building, theme, what guests hit, their words, the gap, where the fix belongs and the proposed copy.',
     matters: 'The copy it proposes is what a person pastes into the listing or the pre-arrival message. A weak model writes vague notes nobody acts on; nothing reaches a guest without a person.' },
+  // FILE READING (2026-09-29, lib/files/extract.ts). Jon: "Adam and Eve should have file upload…
+  // for learning or reference for handbooks, SOPs". A PDF (typed or scanned) or a photo of a page
+  // is transcribed to text once, at upload, so the agents can search and quote it.
+  { key: 'file-read', title: 'Adam & Eve — reading uploaded files', group: 'Background', def: 'sonnet', background: true,
+    what: 'Transcribes an uploaded PDF or image of a document into faithful markdown (headings, lists, tables kept) so it can be filed, searched and learned from.',
+    matters: 'What the agents quote as written policy is this transcription. A weak model drops lines; a missing line in an SOP is a rule nobody follows. One call per upload.' },
+  // And what Adam takes from a document: the rules he files as memories.
+  { key: 'adam-study', title: 'Adam — learning from an uploaded file', group: 'Garden Hotel', def: 'sonnet', background: true,
+    what: 'Reads one uploaded hotel document and lists the rules and facts it states, which become Adam\'s memories.',
+    matters: 'These become what Adam believes about the hotel. One call per upload.' },
   { key: 'eve-correction', title: 'Eve — catching corrections in chat', group: 'Background', def: 'haiku', background: true,
     what: 'When someone replies "no, that\'s wrong…" to one of her answers, works out what was wrong and what is right, so the right thing is kept and the beliefs behind the wrong answer are weakened.',
     matters: 'A few hundred tokens, only when a reply pushes back. A miss loses one lesson; nothing reaches anyone.' },
