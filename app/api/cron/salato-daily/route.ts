@@ -20,9 +20,10 @@ import { getSetting, setSetting } from '@/lib/app-settings'
 import { sendGmail } from '@/lib/gmail-send'
 import { isLiveStay } from '@/lib/stay-status'
 import { salatoListings } from '@/lib/salato-units'
-import { requireCron } from '@/lib/cron-auth'
+import { requireCron, cronAllowed } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
 import { notify } from '@/lib/notify'
+import { atEasternHour } from '@/lib/et-clock'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -198,7 +199,13 @@ async function run(req: NextRequest): Promise<Response> {
 const receipted = withRouteReceipt<NextRequest>('salato-daily', run, {
   skipWhen: (req) => { const sp = new URL(req.url).searchParams; return sp.get('preview') === '1' || sp.get('test') === '1' },
 })
-export async function GET(req: NextRequest) { return receipted(req) }
+// 7:14AM EASTERN ALL YEAR (2026-09-29). vercel.json fires this at 11:14 AND 12:14 UTC; on the
+// scheduler's own call, the one that is not 7am in New York stops here — before the receipt, the
+// owner bell or any send (lib/et-clock). A person's preview or test is never skipped.
+export async function GET(req: NextRequest) {
+  if (cronAllowed(req).viaSecret && !atEasternHour(7)) return NextResponse.json({ ok: true, skipped: 'daylight-saving twin — this job runs at 7am Eastern' })
+  return receipted(req)
+}
 
 const OWNER = 'jon@stay-hospitality.com'
 const ALERT_KEY = 'salato_daily_alert'
