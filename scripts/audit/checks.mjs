@@ -341,11 +341,18 @@ function buckets() {
 // commented-out statement neither creates a table nor secures one.
 // ─────────────────────────────────────────────────────────────────────────────
 const RLS_ON = /alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?(?:"?public"?\.)?"?([a-z0-9_]+)"?\s+enable\s+row\s+level\s+security/gi
+// The sweeps 130 and 135 use (2026-09-29): a `foreach t in array array['a', 'b'] loop … enable row
+// level security … end loop` over a named list, and a `for t in select … relname like 'garden\_%' …
+// loop … enable row level security … end loop` over a name prefix (or `relname = 'x'`).
+const RLS_LIST_LOOP = /foreach\s+\w+\s+in\s+array\s+array\s*\[([^\]]*)\]\s*loop([\s\S]*?)end\s+loop/gi
+const RLS_SELECT_LOOP = /for\s+\w+\s+in\s+select([\s\S]*?)\sloop([\s\S]*?)end\s+loop/gi
+const RLS_TEXT = /enable\s+row\s+level\s+security/i
 function rlsRegister() {
   const out = []
   const dir = 'supabase/migrations'
   if (!has(dir)) return out
   const enabled = new Set()
+  const prefixes = []
   const created = new Map()
   for (const f of fs.readdirSync(path.join(ROOT, dir)).sort()) {
     if (!f.endsWith('.sql')) continue
@@ -355,9 +362,18 @@ function rlsRegister() {
       if (!created.has(t)) created.set(t, f)   // report the migration that FIRST created it
     }
     for (const m of src.matchAll(RLS_ON)) enabled.add(m[1].toLowerCase())
+    for (const m of src.matchAll(RLS_LIST_LOOP)) {
+      if (!RLS_TEXT.test(m[2])) continue
+      for (const n of m[1].matchAll(/'([a-z0-9_]+)'/gi)) enabled.add(n[1].toLowerCase())
+    }
+    for (const m of src.matchAll(RLS_SELECT_LOOP)) {
+      if (!RLS_TEXT.test(m[2])) continue
+      for (const p of m[1].matchAll(/relname\s+like\s+'([a-z0-9_]+?)\\?_%'/gi)) prefixes.push(p[1].toLowerCase() + '_')
+      for (const n of m[1].matchAll(/relname\s*=\s*'([a-z0-9_]+)'/gi)) enabled.add(n[1].toLowerCase())
+    }
   }
   for (const [t, f] of created) {
-    if (!enabled.has(t)) {
+    if (!enabled.has(t) && !prefixes.some(p => t.startsWith(p))) {
       out.push({ id: `no-rls:${t}`, sev: 'amber', area: 'Security',
         title: `Table \`${t}\` was created without row level security`,
         detail: 'Without RLS the table is reachable with the public anon key from any browser. Confirm against pg_class.relrowsecurity — a later migration may have fixed it.',

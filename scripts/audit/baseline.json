@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-29T15:50:26.026Z",
+  "updated": "2026-09-29T16:16:09.556Z",
   "note": "Known findings. The runner only shouts about ids that are not in here, or whose severity rose.",
   "known": {
     "dup-helper:addDays": "amber",
@@ -97,24 +97,6 @@
     "swallowed-write:app/api/public/salato-verify/route.ts:302": "amber",
     "swallowed-write:lib/eve/ralph.ts:273": "amber",
     "swallowed-write:lib/projects.ts:543": "amber",
-    "no-rls:garden_agent_chats": "amber",
-    "no-rls:garden_agent_memory": "amber",
-    "no-rls:garden_call_queue": "amber",
-    "no-rls:garden_calls": "amber",
-    "no-rls:garden_events": "amber",
-    "no-rls:garden_owner_reports": "amber",
-    "no-rls:garden_phone_calls": "amber",
-    "no-rls:garden_reservations": "amber",
-    "no-rls:garden_reviews": "amber",
-    "no-rls:garden_rooms": "amber",
-    "no-rls:garden_shifts": "amber",
-    "no-rls:garden_staff": "amber",
-    "no-rls:garden_sync_status": "amber",
-    "no-rls:garden_tasks": "amber",
-    "no-rls:garden_trigger_log": "amber",
-    "no-rls:garden_triggers": "amber",
-    "no-rls:garden_verifications": "amber",
-    "no-rls:pm_schedule": "amber",
     "schema-drift": "note"
   }
 }
