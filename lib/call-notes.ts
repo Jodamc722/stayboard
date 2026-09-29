@@ -20,6 +20,7 @@
 // The worker is idempotent at every step: transcript_status gates transcription, note_pushed_at
 // gates the Guesty write, and both are set before the next stage runs.
 import 'server-only'
+import { pageRows } from './db-page'
 import { trAllCallsSince, phoneDigits } from './talkroute'
 import { transcribeUrl, transcriptScript, transcribeReady, getTranscribeSettings, transcribeFrom, TRANSCRIBE_DEFAULTS } from './transcribe'
 import { readCall, type CallIntel } from './call-intel'
@@ -42,9 +43,13 @@ export type IntelReport = {
 async function spentToday(sb: any): Promise<number> {
   try {
     const since = new Date(Date.now() - 24 * 3600_000).toISOString()
-    const { data } = await sb.from('talkroute_calls').select('cost_usd').gte('transcript_at', since).limit(2000)
+    // Paged (2026-09-29): this sum IS the daily cap's guard, and .limit(2000) returned 1,000 — past
+    // that the spend would read low and the cap would let more through. A read that stops early is
+    // logged and sums what it has, as an error always did.
+    const read = await pageRows<any>((a, b) => sb.from('talkroute_calls').select('id,cost_usd').gte('transcript_at', since).order('id').range(a, b))
+    if (read.truncated) console.error('[call-notes] spentToday: the spend read stopped early — the daily cap may read low')
     let usd = 0
-    for (const r of (data || [])) usd += Number(r.cost_usd) || 0
+    for (const r of read.rows) usd += Number(r.cost_usd) || 0
     return Math.round(usd * 10000) / 10000
   } catch { return 0 }
 }
