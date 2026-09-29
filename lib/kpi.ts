@@ -93,6 +93,26 @@ function etDayOf(ts: any): string {
 
 type Li = { id: string; name: string; building: string; market: string; active: boolean; full: boolean; listingFee: number }
 
+/**
+ * The query a board is ASKING for, resolved — window, scope and today's Eastern date — as one
+ * canonical string. /api/kpi caches on it, so "30 days" asked at 23:59 and at 00:01 are two different
+ * boards, and `?days=30` and the same explicit from/to are one.
+ */
+export function kpiQuery(sp: URLSearchParams): string {
+  const today = todayET()
+  const isDate = (v: any) => /^\d{4}-\d{2}-\d{2}$/.test(str(v))
+  let to = isDate(sp.get('to')) ? str(sp.get('to')) : today
+  let from = isDate(sp.get('from')) ? str(sp.get('from')) : ''
+  if (!from) {
+    const d = Math.max(1, Math.min(365, parseInt(str(sp.get('days')) || '30', 10) || 30))
+    from = addDays(to, -(d - 1))
+  }
+  if (from > to) { const t = from; from = to; to = t }
+  return new URLSearchParams({
+    from, to, market: str(sp.get('market') || 'all'), building: str(sp.get('building') || 'all'), today,
+  }).toString()
+}
+
 export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any> {
   // WHO SEES DOLLARS — one definition for the whole app (lib/access.ts). This used to be a second,
   // local rule: admin OR workspace admin/gm/data. That is the rule Jon replaced on 2026-08-10
@@ -102,8 +122,14 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
   // portfolio's revenue to every un-migrated user.
   //
   // Everything non-money on this board is unchanged: counts, completion, sentiment, reviews.
-  const showMoney = canSeeMoney(access)
+  return buildKpiFor(sp, canSeeMoney(access))
+}
 
+/**
+ * The board itself. The ONLY thing it takes from the viewer is whether they see dollars, which is
+ * what lets /api/kpi cache it — one entry per query per money state, never one copy for everybody.
+ */
+export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Promise<any> {
   {
     const db = supabaseAdmin()
     const today = todayET()
