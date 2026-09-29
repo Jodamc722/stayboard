@@ -9,6 +9,7 @@
 // SAFE BY DEFAULT: until recipients are configured, nothing sends to anyone but the tester.
 // Auth mirrors the other crons: CRON_SECRET bearer when set; a plain cron send may run without it.
 import { NextRequest, NextResponse } from 'next/server'
+import { cronAllowed } from '@/lib/cron-auth'
 import { setSetting } from '@/lib/app-settings'
 import { createClient } from '@/lib/supabase-server'
 import { getSetting } from '@/lib/app-settings'
@@ -61,14 +62,14 @@ export const GET = withRouteReceipt<NextRequest>('ops-brief', send, {
 })
 
 async function send(req: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  const auth = req.headers.get('authorization') || ''
   // ANONYMOUS CALLERS ARE NOT CRON (2026-09-02). This read `|| auth === ''`, and an anonymous
   // request sends no Authorization header — so `auth` IS '' and the clause was true for exactly the
   // caller it was meant to exclude. CRON_SECRET has never been set on this project, so that branch
   // was the live one. Vercel's scheduler stamps `x-vercel-cron` on every call; that header is the
   // whole of the leniency it needs. Same shape as app/api/cron/suggestions.
-  const isCron = secret ? auth === 'Bearer ' + secret : !!req.headers.get('x-vercel-cron')
+  // 2026-09-29: the shared gate — a constant-time bearer compare, and no trust in the spoofable
+  // x-vercel-cron header (a missing secret in production now means no scheduled send, not an open one).
+  const isCron = cronAllowed(req).viaSecret
   const me = await currentUser()
   const sp = new URL(req.url).searchParams
 

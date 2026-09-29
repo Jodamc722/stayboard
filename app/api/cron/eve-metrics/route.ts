@@ -24,10 +24,8 @@ async function run(req: NextRequest) {
   // AUTH (fixed 2026-08-26). This used to be: bearer-or-a-logged-in-session. With CRON_SECRET
   // unset — which it has always been — Vercel's scheduler had no bearer, failed the session check,
   // and got a 401 on every single run. See lib/cron-auth.ts for the whole story.
-  const secret = process.env.CRON_SECRET
-  const auth = req.headers.get('authorization') || ''
-  const viaCron = !!secret && auth === `Bearer ${secret}`
   const allowed = cronAllowed(req)
+  const viaCron = allowed.viaSecret // constant-time bearer compare (lib/cron-auth)
   let human = false
   // With CRON_SECRET set, a request without the bearer used to stop here, which meant an admin could
   // no longer run this by hand ("Run now") at all. A signed-in admin passes; anyone else still does not.

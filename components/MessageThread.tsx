@@ -177,7 +177,7 @@ function ReplyBox({ conversationId, guest, channel, onSent }: { conversationId: 
     try {
       const res = await fetch('/api/messages/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId, body }) })
       const r = await res.json().catch(() => ({} as any))
-      if (!res.ok || !r?.ok) { setErr(r?.error || r?.message || 'Guesty did not send it — nothing reached the guest.'); return }
+      if (!res.ok || !r?.ok) { setErr(r?.error || r?.message || "Guesty didn't confirm — check the thread in Guesty before resending."); return }
       onSent(body, String(r.by || 'You'))
       setText('')
       const mod = String(r.module || '')

@@ -35,6 +35,7 @@ import { findAsk, resolveAsk, runMorningAsk, UNDO, undoLast } from '@/lib/eve/as
 import { acceptsFrom, recordReply } from '@/lib/eve/ralph'
 import { canSeeMoney, doorCodePolicy } from '@/lib/access'
 import { runEve } from '@/lib/eve/run'
+import { scrubStoredText } from '@/lib/eve/redact'
 import { runCheck, requestDoorCode, attachSlackPost } from '@/lib/eve/door-code'
 import { postDoorCodeApproval, getApprovalsChannel } from '@/lib/eve/approvals'
 import { postToChannel } from '@/lib/slack'
@@ -189,7 +190,7 @@ export async function POST(req: NextRequest) {
   if (!command && !isGroup) {
     // "undo" on its own reverses the last thing she did, whether or not it answers an ask.
     if (UNDO.test(question)) {
-      await recordMessage(chat.id, String(from.id), 'user', question)
+      await recordMessage(chat.id, String(from.id), 'user', scrubStoredText(question))
       const said = await undoLast(contact.email || String(from.id))
       await recordMessage(chat.id, null, 'assistant', said)
       await sendMessage(chat.id, said, { replyTo: msg.message_id })
@@ -197,7 +198,7 @@ export async function POST(req: NextRequest) {
     }
     const binding = await findAsk(chat.id, msg.reply_to_message?.message_id || null, question)
     if (binding) {
-      await recordMessage(chat.id, String(from.id), 'user', question)
+      await recordMessage(chat.id, String(from.id), 'user', scrubStoredText(question))
       const said = await resolveAsk(binding, question, contact.email || String(from.id))
       await recordMessage(chat.id, null, 'assistant', said)
       await sendMessage(chat.id, said, { replyTo: msg.message_id })
@@ -312,7 +313,7 @@ export async function POST(req: NextRequest) {
     const history = await threadFor(chat.id)
     // In a group, the question carries who asked — several people share one thread in there.
     const asked = isGroup ? `[${displayName(from)}] ${question}` : question
-    await recordMessage(chat.id, String(from.id), 'user', asked)
+    await recordMessage(chat.id, String(from.id), 'user', scrubStoredText(asked))
 
     const out = await runEve({
       access,
