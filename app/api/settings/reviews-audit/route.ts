@@ -63,18 +63,21 @@ export async function GET(req: NextRequest) {
   const today = ymd(new Date())
   const db = supabaseAdmin()
 
+  // Both windows paged (each was one unordered read capped at 1,000 — the default 120 days is ~1,300
+  // reviews and several thousand check-outs, so every weekly rate below came from a sample).
   const [revRes, resRes, lstRes] = await Promise.all([
-    db.from('guesty_reviews').select('id,listing_id,channel,channel_raw,created_at,guest_name,rating')
-      .gte('created_at', since).limit(6000),
-    db.from('guesty_reservations').select('listing_id,check_out,status,source,guest_name,confirmation_code')
-      .gte('check_out', since).lte('check_out', today).limit(6000),
+    pageRows<any>((a, b) => db.from('guesty_reviews').select('id,listing_id,channel,channel_raw,created_at,guest_name,rating')
+      .gte('created_at', since).order('id').range(a, b)),
+    pageRows<any>((a, b) => db.from('guesty_reservations').select('listing_id,check_out,status,source,guest_name,confirmation_code')
+      .gte('check_out', since).lte('check_out', today).order('check_out').order('id').range(a, b), 20),
     db.from('guesty_listings').select('id,nickname,title').limit(1000), // deliberate cap: one row per listing, ~290
   ])
 
   const unitOf: Record<string, string> = {}
   for (const l of ((lstRes.data || []) as any[])) unitOf[str(l.id)] = l.nickname || l.title || str(l.id)
 
-  const reviews = ((revRes.data || []) as any[]).filter(r => r.created_at)
+  if (revRes.truncated || resRes.truncated) console.error('settings/reviews-audit: ' + (revRes.truncated ? 'review' : 'check-out') + ' read stopped early — rates are from a partial read')
+  const reviews = revRes.rows.filter(r => r.created_at)
   // Our whole-table count, not just the window: the deep comparison below needs it to judge
   // whether Guesty's pull came back complete enough to trust.
   let ourTotal = 0
@@ -82,7 +85,7 @@ export async function GET(req: NextRequest) {
     const { count } = await db.from('guesty_reviews').select('*', { count: 'exact', head: true })
     ourTotal = Number(count) || 0
   } catch { ourTotal = 0 }
-  const stays = ((resRes.data || []) as any[])
+  const stays = resRes.rows
     .filter(r => !/cancel|denied|declined|expired|inquir/i.test(str(r.status)))
 
   // ── 1. EXPECTED vs ACTUAL, per channel per week ────────────────────────────────────────────
