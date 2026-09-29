@@ -146,7 +146,7 @@ export const AI_TASKS: AiTask[] = [
     what: 'Reads the transcript of a recorded guest call and writes the two-line note that lands on the booking and in Guesty — plus what was asked, what we promised, and how it went.',
     matters: 'Runs on every recorded call, so the tier is the cost. Haiku is enough to summarise a phone call; move it up if the notes read thin.' },
   { key: 'guest-reply', title: 'Eve — guest reply drafts', group: 'Guests', def: 'sonnet',
-    what: 'Drafts a reply to a guest who has been waiting over an hour (the guest_unanswered_1h watch) from the thread and the booking. Saved as a draft; a person presses Send.',
+    what: 'Drafts a reply to a guest who is past the reply-by time (the guest_unanswered_1h watch) from the thread and the booking. Saved as a draft; a person presses Send.',
     matters: 'Nothing reaches the guest without a person. A weak draft costs a rewrite, not a guest.' },
   { key: 'review-reply', title: 'Review replies', group: 'Guests', def: 'opus',
     what: 'Drafts the public reply to a guest review in the house voice.',
