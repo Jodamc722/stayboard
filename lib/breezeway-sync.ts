@@ -29,7 +29,7 @@ function addDays(iso: string, n: number): string {
 
 export async function syncBreezewayTasks(
   budgetMs = 250000
-): Promise<{ ok: boolean; upserted: number; properties: number; total: number; done: boolean; reason?: string; sweepFrom?: number; sweepSize?: number }> {
+): Promise<{ ok: boolean; upserted: number; properties: number; total: number; done: boolean; reason?: string; error?: string; failedCalls?: number; upsertErrors?: number; sweepFrom?: number; sweepSize?: number }> {
   if (!breezewayConfigured()) return { ok: false, upserted: 0, properties: 0, total: 0, done: false, reason: 'not configured' }
   const db = supabaseAdmin()
 
@@ -114,6 +114,12 @@ export async function syncBreezewayTasks(
   const started = Date.now()
   let i = 0
   let upserted = 0
+  // FAILURES ARE COUNTED, NOT SWALLOWED (2026-09-28 audit #5). Every failed property used to be a
+  // silent `continue` and every upsert error was ignored, so a token failure, a 429 storm or a
+  // schema drift in mapBreezewayTask recorded a green receipt with nothing written.
+  let failedCalls = 0
+  let upsertErrors = 0
+  let firstError = ''
   for (; i < ordered.length; i++) {
     if (Date.now() - started > budgetMs) break
     const p: any = ordered[i]
@@ -121,10 +127,16 @@ export async function syncBreezewayTasks(
     try {
       const scoped = windowed.has(String(p.home_id))
       r = await bzApi('/task/?home_id=' + encodeURIComponent(String(p.home_id)) + (scoped ? scopedRange : '') + '&limit=500')
-    } catch {
+    } catch (e: any) {
+      failedCalls++
+      if (!firstError) firstError = String(e?.message || e).slice(0, 160)
       continue
     }
-    if (!r?.ok) continue
+    if (!r?.ok) {
+      failedCalls++
+      if (!firstError) firstError = 'Breezeway ' + (r?.status ?? '?') + ' on home ' + String(p.home_id) + ': ' + String(r?.text || '').slice(0, 120)
+      continue
+    }
     const arr = asArray(r.data)
     if (!arr.length) continue
     const now = new Date().toISOString()
@@ -142,12 +154,28 @@ export async function syncBreezewayTasks(
         }
       })
     if (!rows.length) continue
+    // Keep going either way — a single property failure should not abort the whole refresh — but
+    // count it: any upsert error fails the run.
     try {
       const { error } = await db.from('breezeway_tasks_sync').upsert(rows, { onConflict: 'id' })
       if (!error) upserted += rows.length
-    } catch {
-      // keep going; a single property failure should not abort the whole refresh
+      else { upsertErrors++; if (!firstError) firstError = 'upsert: ' + String(error.message).slice(0, 160) }
+    } catch (e: any) {
+      upsertErrors++
+      if (!firstError) firstError = 'upsert: ' + String(e?.message || e).slice(0, 160)
     }
   }
-  return { ok: true, upserted, properties: i, total: ordered.length, done: i >= ordered.length, sweepFrom: cursor, sweepSize: SWEEP }
+  // ok:false when more than a fifth of the properties this run reached failed, or any upsert did.
+  const tooManyFailed = i > 0 && failedCalls > i * 0.2
+  const ok = !tooManyFailed && upsertErrors === 0
+  const reason = ok ? undefined
+    : (tooManyFailed ? failedCalls + ' of ' + i + ' properties failed' : '') +
+      (tooManyFailed && upsertErrors ? '; ' : '') +
+      (upsertErrors ? upsertErrors + ' upsert error(s)' : '') +
+      (firstError ? ' — first: ' + firstError : '')
+  return {
+    ok, upserted, properties: i, total: ordered.length, done: i >= ordered.length,
+    failedCalls, upsertErrors, ...(ok ? {} : { reason, error: reason }),
+    sweepFrom: cursor, sweepSize: SWEEP,
+  }
 }

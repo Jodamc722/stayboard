@@ -60,8 +60,13 @@ export async function importTaskComments(
   return out
 }
 
-export async function syncBreezewayComments(maxThreads = 120): Promise<{ threads: number; added: number; notified: number; errors: number }> {
-  const out = { threads: 0, added: 0, notified: 0, errors: 0 }
+/**
+ * `deadline` (epoch ms): stop starting new threads once it has passed, and say how many were left.
+ * The task-mirror cron shares one deadline across everything it runs (2026-09-28 audit #6) — this
+ * sweep goes last and takes whatever time remains, so it can never be the reason the run is killed.
+ */
+export async function syncBreezewayComments(maxThreads = 120, opts: { deadline?: number } = {}): Promise<{ threads: number; added: number; notified: number; errors: number; skipped?: number }> {
+  const out: { threads: number; added: number; notified: number; errors: number; skipped?: number } = { threads: 0, added: 0, notified: 0, errors: 0 }
   if (!breezewayConfigured()) return out
   const db = supabaseAdmin()
 
@@ -80,7 +85,9 @@ export async function syncBreezewayComments(maxThreads = 120): Promise<{ threads
   const ids = seen.slice(0, maxThreads)
   out.threads = ids.length
 
-  for (const taskId of ids) {
+  for (let n = 0; n < ids.length; n++) {
+    const taskId = ids[n]
+    if (opts.deadline && Date.now() > opts.deadline) { out.skipped = ids.length - n; break }
     // ONE importer, shared with /api/comments — the background sweep and the live read can never
     // dedupe differently or notify different people.
     try {
