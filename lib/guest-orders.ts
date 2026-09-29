@@ -1398,7 +1398,7 @@ export async function pushOrder(order: OrderRow, cfg: GuestOrdersCfg, opts?: { d
         id: taskId, reference_property_id: order.listing_id, name: title, status: 'created', scheduled_date: date, type_department: 'housekeeping',
         assignees: who.names, report_url: r.data.report_url || null, raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString(),
       }, { onConflict: 'id' })
-    } catch { /* the 15-minute sync catches up */ }
+    } catch { /* the 30-minute sync catches up */ }
   }
   await patch(order.id, { status: 'pushed', pushed_at: new Date().toISOString(), breezeway_task_id: taskId, assignee_names: who.names, assignee_ids: who.ids, assign_note: who.note, push_error: null, delivery_date: date })
 
@@ -1500,7 +1500,7 @@ export async function listOrders(opts?: { status?: string[]; days?: number; limi
  * The order stores breezeway_task_id and then never looks at it again, so the board could say a
  * task had been created and never that it was done — the team's own question ("did this actually
  * get delivered?") had to be answered in another app. breezeway_tasks_sync already mirrors every
- * task's status on a 15-minute cron, so this is a read, not a new integration: no extra API calls
+ * task's status on a 30-minute cron, so this is a read, not a new integration: no extra API calls
  * and nothing new to keep in step.
  */
 export type OrderTask = {

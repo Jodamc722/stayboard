@@ -12,8 +12,8 @@
 //
 // Every one of these becomes a row in project_notifications. The bell in the app shows all of
 // them. Email is governed by each member's `notify` prefs on that project — the bell is never
-// silenced, only the inbox. Two email cadences: the IMMEDIATE pass (every 15 minutes, batches the
-// last quarter-hour per person into one message) for the first four types, and the MORNING DIGEST
+// silenced, only the inbox. Two email cadences: the IMMEDIATE pass (every 30 minutes, :13 and :43;
+// everything not yet emailed, one message per person) for the first four types, and the MORNING DIGEST
 // (with the ops brief) which carries reminders plus anything still unread.
 //
 // Sender: the same Gmail the briefs go out from, so replies land where the team already looks and
@@ -215,8 +215,8 @@ async function titlesFor(ids: string[]): Promise<Record<string, string>> {
 }
 
 /**
- * IMMEDIATE PASS — every 15 minutes. Anything from the last quarter-hour that has not gone out,
- * one email per person. Rows older than two minutes only, so a burst of edits arrives as one
+ * IMMEDIATE PASS — every 30 minutes (:13 and :43). Everything that has not gone out yet, however
+ * old, one email per person. Rows older than two minutes only, so a burst of edits arrives as one
  * message rather than six.
  */
 export async function sendImmediate(opts: { dryRun?: boolean } = {}): Promise<{ people: number; items: number; sent: number; errors: string[] }> {

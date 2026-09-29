@@ -5,7 +5,7 @@
 //
 // WHEN IT RUNS. Chained into the listings sync (app/api/cron/guesty-catalog) rather than given a
 // cron of its own: `raw.integrations` only changes when that sync writes it, so running this at any
-// other moment compares the same data with itself — and vercel.json is at its 40-cron cap anyway.
+// other moment compares the same data with itself.
 // The Refresh button on /channels and POST /api/channels/check run the same function.
 //
 // THREE OUTPUTS, one snapshot:

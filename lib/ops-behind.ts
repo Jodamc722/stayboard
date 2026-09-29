@@ -11,7 +11,7 @@
 // cries wolf at 9am is ignored by 10.
 //
 // One computation, two callers: the board (/api/ops-today, which already has the tasks in hand and
-// must not pay for extra queries) and the 15-minute Breezeway cron (which loads its own).
+// must not pay for extra queries) and the 30-minute Breezeway cron (which loads its own).
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { getOpsPresets, getSetting, setSetting } from './app-settings'

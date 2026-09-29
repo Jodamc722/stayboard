@@ -318,7 +318,7 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
       if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
       const taskId = str(r.data.id)
       if (assigneeIds.length) { try { await updateBreezewayTask(taskId, { assignments: assigneeIds }) } catch { /* shows unassigned; humans see it in the brief */ } }
-      // Write-through so the boards see it before the next 15-minute sync (same as add-task).
+      // Write-through so the boards see it before the next 30-minute sync (same as add-task).
       try {
         await db.from('breezeway_tasks_sync').upsert({
           id: taskId, reference_property_id: c.listing_id, name, status: 'created',
