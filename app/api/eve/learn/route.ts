@@ -163,7 +163,7 @@ async function learn(req: NextRequest, receipt: LearnReceipt): Promise<NextRespo
 
   // Pull recent GUEST messages + low/negative reviews as the learning corpus.
   const [{ data: msgs }, { data: revs }, { data: sent }] = await Promise.all([
-    sb.from('guesty_messages').select('body, sender').gte('sent_at', cutoff).limit(1200),
+    sb.from('guesty_messages').select('body, sender').gte('sent_at', cutoff).order('sent_at', { ascending: false }).limit(1000), // deliberate cap: newest-first sample of the window — at most 400 guest messages are used below
     sb.from('guesty_reviews').select('content, rating, listing_id').eq('excluded_from_score', false).gte('created_at', cutoff).limit(800),
     sb.from('guesty_conversation_sentiment').select('top_issue, listing_id, dissatisfied').gte('last_message_at', cutoff).limit(800),
   ])
