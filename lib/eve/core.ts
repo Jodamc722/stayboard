@@ -346,9 +346,9 @@ export const CORE_TOOLS: EveTool[] = [
 
   {
     name: 'remember',
-    description: 'WRITE something to your own memory so you still know it next week. Use this when Jon teaches you a rule or a preference, when a decision is made, when you work out a mapping (a person, a name alias, a quirk of a building), or when you are corrected — a correction is the most valuable kind. Set scope to "portfolio" (default), "building:<Name>" or "unit:<listingId>" so it loads when it is relevant. weight 1-10, default 5; use 8-10 only for things Jon told you directly. Do NOT use this to store facts you could just look up with a tool.',
+    description: 'WRITE something to your own memory so you still know it next week. Use this when Jon teaches you a rule or a preference, when a decision is made, when you work out a mapping (a person, a name alias, a quirk of a building), or when you are corrected — a correction is the most valuable kind. Set scope to "portfolio" (default), "building:<Name>" or "unit:<listingId>" so it loads when it is relevant. weight 1-10, default 5; use 8-10 only for things Jon told you directly. ANYTHING TIME-BOUND GETS expires_on (YYYY-MM-DD, the last day it holds): "Maria is out this week", a temporary rule, a one-off arrangement — otherwise it stays in your head forever. Do NOT use this to store facts you could just look up with a tool, and never a door code.',
     input_schema: obj({
-      text: S.str, kind: S.str, why: S.str, scope: S.str, weight: S.num, supersedes: S.str,
+      text: S.str, kind: S.str, why: S.str, scope: S.str, weight: S.num, supersedes: S.str, expires_on: S.str,
     }, ['text']),
     run: async (input, ctx) => {
       const kinds = (MEMORY_KINDS as readonly string[]).join('|')
@@ -366,6 +366,11 @@ export const CORE_TOOLS: EveTool[] = [
       // (`staff` is being added to lib/eve/memory.ts SOURCES; until it lands, normSource files it
       // as 'eve', which is the old behaviour.) Jon is 'jon' on every surface, Slack included.
       const who = isSuperadmin(ctx.email) ? 'jon' : input?._source === 'slack' ? 'slack' : ctx.email ? 'staff' : 'eve'
+      // TIME-BOUND FACTS EXPIRE (2026-09-28 audit, F13). saveMemory always supported expires_on; the
+      // tool never asked for it, so "Maria is out this week" from a colleague stayed forever. A date
+      // today or later is kept; anything else is ignored and said so.
+      const exp = String(input?.expires_on || '').trim()
+      const expiresOn = /^\d{4}-\d{2}-\d{2}$/.test(exp) && exp >= ctx.today ? exp : null
       const res = await saveMemory({
         text: input?.text, kind: input?.kind, why: input?.why, scope: input?.scope,
         // `_source` / `_maxWeight` are stamped by run.ts for a Slack turn (never by the model in a
@@ -373,9 +378,11 @@ export const CORE_TOOLS: EveTool[] = [
         weight: input?.weight, source: who, created_by: ctx.email,
         maxWeight: Number.isFinite(Number(input?._maxWeight)) ? Number(input._maxWeight) : undefined,
         supersedes: input?.supersedes || null,
+        expires_on: expiresOn,
       })
       if (!res.ok) return { saved: false, error: res.error, hint: `kind must be one of ${kinds}` }
-      return { saved: true, id: res.id, note: 'Stored. Jon can see and delete this on /eve.' }
+      const expNote = exp && !expiresOn ? ` expires_on "${exp}" was ignored — it must be YYYY-MM-DD, today or later.` : expiresOn ? ` It expires after ${expiresOn}.` : ''
+      return { saved: true, id: res.id, note: 'Stored. Jon can see and delete this on /eve.' + expNote }
     },
   },
 
