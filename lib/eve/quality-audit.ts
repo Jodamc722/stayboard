@@ -57,8 +57,9 @@ export async function buildQualityPack(days = 90): Promise<QualityPack> {
 
   // 1. repeat guest issues per unit
   try {
-    const { data } = await db.from('glitches').select('id,listing_id,unit,category,overview,status,created_at').gte('created_at', from + 'T00:00:00Z').limit(3000)
-    const rows = ((data || []) as any[])
+    // Paged in id order (2026-09-29): the totals below are counts, and a capped, unordered read cannot say it was cut.
+    const { rows, truncated } = await pageRows<any>((a, b) => db.from('glitches').select('id,listing_id,unit,category,overview,status,created_at').gte('created_at', from + 'T00:00:00Z').order('id').range(a, b))
+    if (truncated) console.error('buildQualityPack: guest-issue read incomplete — the issue counts may be short')
     const byUnit: Record<string, { n: number; open: number; cats: Record<string, number>; last: string; unit: string; building: string }> = {}
     for (const g of rows) {
       const k = str(g.listing_id) || str(g.unit)
@@ -76,8 +77,9 @@ export async function buildQualityPack(days = 90): Promise<QualityPack> {
 
   // 2. what low reviews say
   try {
-    const { data } = await db.from('guesty_reviews').select('listing_id,rating,content,channel,created_at').gte('created_at', from + 'T00:00:00Z').eq('excluded_from_score', false).is('removed_at', null).order('created_at', { ascending: false }).limit(3000)
-    const rows = ((data || []) as any[])
+    // Paged newest first, id as tiebreaker (2026-09-29): the totals and themes below are counts.
+    const { rows, truncated } = await pageRows<any>((a, b) => db.from('guesty_reviews').select('listing_id,rating,content,channel,created_at').gte('created_at', from + 'T00:00:00Z').eq('excluded_from_score', false).is('removed_at', null).order('created_at', { ascending: false }).order('id').range(a, b))
+    if (truncated) console.error('buildQualityPack: review read incomplete — the review counts and themes may be short')
     const low = rows.filter(r => { const n = norm5(r.rating); return Number.isFinite(n) && n > 0 && n <= 3 })
     const byB: Record<string, { n: number; low: number }> = {}
     for (const r of rows) { const b = bldOf(r.listing_id) || '?'; const e = byB[b] = byB[b] || { n: 0, low: 0 }; e.n++; if (low.includes(r)) e.low++ }
