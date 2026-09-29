@@ -22,6 +22,7 @@
 // the reservation, and a supervisor creates one by hand because the sync had not run yet. Both are
 // reasonable acts. Nobody is at fault, which is exactly why nobody catches it.
 import { supabaseAdmin } from './supabase-admin'
+import { pageRows } from './db-page'
 import { completeBreezewayTask, cancelBreezewayTask, breezewayConfigured } from './breezeway'
 import { deptOf } from './pending-work'
 
@@ -114,18 +115,22 @@ export async function auditDuplicates(opts: {
   }
   try {
     const db = supabaseAdmin()
-    let q = db.from('breezeway_tasks_sync')
-      .select('id,reference_property_id,name,status,scheduled_date,finished_at,assignees,type_department,description:raw->>description')
-      .gte('scheduled_date', from).lte('scheduled_date', today)
+    // PAGED (2026-09-29). One capped read held about eleven days of the portfolio's tasks (~90 a
+    // day), so the 30-day audit — and the 180-day one on the settings panel — covered only the most
+    // recent fortnight while its header said "from … to …" for the whole window. About a page a
+    // week, with room. A page that fails is a failed audit, the way a failed read always was.
+    const read = await pageRows((a, b) => {
+      let q = db.from('breezeway_tasks_sync')
+        .select('id,reference_property_id,name,status,scheduled_date,finished_at,assignees,type_department,description:raw->>description')
+        .gte('scheduled_date', from).lte('scheduled_date', today)
+      if (opts.listingIds?.length) q = q.in('reference_property_id', opts.listingIds.slice(0, 400))
       // Recent-first, and a secondary sort key so paging cannot drop or repeat rows — the same
       // PostgREST trap that made the stale-clean job blind to everything newer than six months.
-      .order('scheduled_date', { ascending: false }).order('id', { ascending: true })
-      .limit(1000)
-    if (opts.listingIds?.length) q = q.in('reference_property_id', opts.listingIds.slice(0, 400))
-    const { data, error } = await q
-    if (error) return { ...base, ok: false, error: error.message }
+      return q.order('scheduled_date', { ascending: false }).order('id', { ascending: true }).range(a, b)
+    }, Math.max(4, Math.ceil(days / 7)))
+    if (read.truncated) return { ...base, ok: false, error: 'Could not read every task in this window — try again.' }
 
-    const rows = (data || []) as any[]
+    const rows = read.rows as any[]
     base.scanned = rows.length
 
     // UNIT NAMES COME FROM THE LISTINGS TABLE. `property_name` is not a column on the task mirror
@@ -192,14 +197,16 @@ export async function completedRecently(listingIds: string[], today: string, day
   try {
     const db = supabaseAdmin()
     const from = new Date(Date.parse(today + 'T12:00:00Z') - Math.max(1, days) * 86400000).toISOString().slice(0, 10)
-    const { data, error } = await db.from('breezeway_tasks_sync')
+    // Paged: a portfolio-wide ask is past 1,000 rows, and a gate that saw part of the window would
+    // wave a finished job back onto the visit. A failed page stops the filtering, as an error did.
+    const read = await pageRows((a, b) => db.from('breezeway_tasks_sync')
       .select('id,reference_property_id,name,status,scheduled_date,finished_at,type_department')
       .in('reference_property_id', listingIds.slice(0, 400))
       .gte('scheduled_date', from).lte('scheduled_date', today)
       .order('scheduled_date', { ascending: false }).order('id', { ascending: true })
-      .limit(1000)
-    if (error) return out
-    for (const t of (data || []) as any[]) {
+      .range(a, b), 4)
+    if (read.truncated) return out
+    for (const t of read.rows as any[]) {
       const st = str(t.status).toLowerCase()
       if (GONE.test(st)) continue
       if (!DONE.test(st) && !t.finished_at) continue
@@ -257,7 +264,7 @@ export async function closeStrayInspections(opts: { dryRun?: boolean; olderThanD
       .gte('scheduled_date', from).lte('scheduled_date', cutoff)
       .ilike('name', '%inspect%')
       .order('scheduled_date', { ascending: false }).order('id', { ascending: true })
-      .limit(1000)
+      .limit(1000) // deliberate cap: the newest 1,000 before the cutoff — bounds what the live daily run cancels and moves; reaching older ones is Jon's call
     if (error) return { ...base, ok: false, error: error.message }
 
     // Unit names for the rows we are about to report. Same reason as above: the mirror carries the
