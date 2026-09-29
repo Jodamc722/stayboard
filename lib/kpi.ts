@@ -65,23 +65,64 @@ function pctChange(now: number, prev: number): number | null {
 }
 
 // ── EVERY READ IS PAGED, AND A SHORT READ SAYS SO (2026-09-28 audit, P0-1) ────────────────────────
-// This file had its own pager: 14 pages, stop on the first error, no flag. The tasks read runs over
+// This file had its own pager: 14 pages, stop on the first error, no flag. The tasks read ran over
 // BOTH windows oldest-first at ~89 Breezeway tasks a day, so the 90-day view (~16,000 rows) lost the
 // newest three weeks of the current window and the 12-month view (~65,000) loaded almost none of it —
 // and a failed page read as "no more rows". Now every paged read goes through lib/db-page pageRows
-// (a failed page reports `truncated`), reads NEWEST FIRST so a ceiling can only ever cut the oldest
-// days of the PRIOR window, and gets a page budget sized to its span. Whatever still comes back short
-// is named on the board ("partial") and its numbers are blanked rather than printed low.
+// (a failed page reports `truncated`) with a page budget sized to its span, the dated reads run
+// NEWEST FIRST, and whatever still comes back short is named on the board ("partial") with its
+// numbers blanked rather than printed low.
+//
+// LONG RANGES ARE READ IN SLICES. PostgREST pages by OFFSET, and OFFSET re-walks every row it skips:
+// one query over a year of tasks re-reads ~4 million rows by its last page (page 60 alone skips
+// 60,000). On this database — two saturation outages behind it — that is not a board load, it is a
+// load test. So a long range is cut into month-long slices of a few pages each, read two at a time
+// (three such reads run together — at most six short queries in flight): the same rows, linear work,
+// and a short slice names exactly which dates it lost.
 
 /** Pages for `days` days of a table that grows by up to `perDay` rows a day — with room to spare. */
 function pagesFor(days: number, perDay: number, min = 2): number {
   return Math.max(min, Math.ceil((Math.max(1, days) * perDay) / 1000) + 1)
 }
-/** The oldest day a newest-first read reached (the day itself may be only partly read). */
+const SLICE_DAYS = 31
+type Sliced = { rows: any[]; short: { from: string; to: string }[] }
+/**
+ * [from, to] (Eastern dates, inclusive) as SLICE_DAYS-day slices, newest first, `conc` at a time.
+ * `q(a, b, newest)` builds one slice's already-ORDERED query; `newest` is the slice ending at `to`,
+ * which a caller may leave open-ended above. Every slice is paged to completion or reported short.
+ */
+async function readSlices(from: string, to: string, perDay: number, q: (a: string, b: string, newest: boolean) => any, conc = 2): Promise<Sliced> {
+  const slices: { a: string; b: string }[] = []
+  for (let b = to; b >= from;) {
+    const a0 = addDays(b, -(SLICE_DAYS - 1))
+    const a = a0 < from ? from : a0
+    slices.push({ a, b })
+    b = addDays(a, -1)
+  }
+  const out: Sliced = { rows: [], short: [] }
+  for (let i = 0; i < slices.length; i += conc) {
+    const batch = slices.slice(i, i + conc)
+    const got = await Promise.all(batch.map(s => pageRows<any>((lo, hi) => q(s.a, s.b, s.b === to).range(lo, hi), pagesFor(SLICE_DAYS, perDay, 3))))
+    got.forEach((r, j) => {
+      for (const row of r.rows) out.rows.push(row)
+      if (r.truncated) out.short.push({ from: batch[j].a, to: batch[j].b })
+    })
+  }
+  return out
+}
+/** Did every slice touching [a, b] come back whole? */
+const whole = (read: Sliced, a: string, b: string) => read.short.every(s => s.to < a || s.from > b)
+/** The oldest day a single newest-first read reached (that day itself may be only partly read). */
 function oldestDay(rows: any[], dayOf: (r: any) => string): string {
   let min = ''
   for (const r of rows) { const d = dayOf(r); if (d && (!min || d < min)) min = d }
   return min
+}
+/** The dates a short read lost, for the note: "Aug 3–Sep 2". */
+const lostSpan = (read: Sliced): string => {
+  let lo = '', hi = ''
+  for (const s of read.short) { if (!lo || s.from < lo) lo = s.from; if (!hi || s.to > hi) hi = s.to }
+  return lo === hi ? lo : lo + ' to ' + hi
 }
 const ET_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
 /** The Eastern calendar day of a timestamp — the day it happened on here, not in UTC. */
@@ -209,22 +250,31 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
       // and inquiries were read over both windows only to be thrown away here. No custom_fields any
       // more either — the welcome-call numbers come from the call log (lib/call-desk) — and that jsonb
       // column on two windows of reservations was the heaviest thing this read carried.
-      // NEWEST FIRST (checkout desc, id to break ties) so a short read can only lose the oldest stays.
-      pageRows<any>((a, b) => db.from('guesty_reservations')
-        .select('id,listing_id,check_in,check_out,nights,status,source,money_total,cleaning:raw->money->>fareCleaning,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,channelFee:raw->money->>hostServiceFee')
-        .in('status', LIVE_RES)
-        .gte('check_out', resFrom).lte('check_in', resTo)
-        .order('check_out', { ascending: false }).order('id', { ascending: false }).range(a, b), pagesFor(daysBetween(resFrom, resTo), 50)),
-      // ~89 tasks a day (lib/task-done); budgeted at 120 over both windows. Only the columns this file
-      // reads — `assignees` (jsonb) and `started_at` rode along on every row for nothing.
-      pageRows<any>((a, b) => db.from('breezeway_tasks_sync')
+      // Sliced by checkout; the newest slice stays open above, for the long stay that checks out
+      // after the window but began inside it.
+      readSlices(resFrom, resTo, 50, (a, b, newest) => {
+        let x = db.from('guesty_reservations')
+          .select('id,listing_id,check_in,check_out,nights,status,source,money_total,cleaning:raw->money->>fareCleaning,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,channelFee:raw->money->>hostServiceFee')
+          .in('status', LIVE_RES)
+          .gte('check_out', a).lte('check_in', resTo)
+        if (!newest) x = x.lte('check_out', b)
+        return x.order('check_out', { ascending: false }).order('id', { ascending: false })
+      }),
+      // ~89 tasks a day (lib/task-done); budgeted at 120. Only the columns this file reads —
+      // `assignees` (jsonb) and `started_at` rode along on every row for nothing.
+      readSlices(prevFrom, to, 120, (a, b) => db.from('breezeway_tasks_sync')
         .select('id,reference_property_id,name,status,type_department,scheduled_date,finished_at,total_minutes,rate_paid')
-        .gte('scheduled_date', prevFrom).lte('scheduled_date', to)
-        .order('scheduled_date', { ascending: false }).order('id', { ascending: false }).range(a, b), pagesFor(readDays, 120)),
-      pageRows<any>((a, b) => db.from('guesty_conversation_sentiment')
-        .select('conversation_id,listing_id,band,dissatisfied,awaiting_reply,status,top_issue,last_message_at')
-        .gte('last_message_at', prevFrom + 'T00:00:00Z')
-        .order('last_message_at', { ascending: false }).order('conversation_id').range(a, b), pagesFor(readDays, 50)),
+        .gte('scheduled_date', a).lte('scheduled_date', b)
+        .order('scheduled_date', { ascending: false }).order('id', { ascending: false })),
+      // Sliced on UTC day edges (an exact partition of time; the Eastern bucketing happens below).
+      // The newest slice stays open above so "open unhappy right now" sees today's threads.
+      readSlices(prevFrom, to, 50, (a, b, newest) => {
+        let x = db.from('guesty_conversation_sentiment')
+          .select('conversation_id,listing_id,band,dissatisfied,awaiting_reply,status,top_issue,last_message_at')
+          .gte('last_message_at', a + 'T00:00:00Z')
+        if (!newest) x = x.lt('last_message_at', addDays(b, 1) + 'T00:00:00Z')
+        return x.order('last_message_at', { ascending: false }).order('conversation_id')
+      }),
       // LOW ON ITS OWN SCALE (2026-09-28): ≤3 stars, or ≤7/10 on Booking (stored 3.5) — the review
       // KPIs' isLowReview, applied below. Reviews excluded from the score stay off the list, as they
       // do everywhere else a review is judged.
@@ -262,26 +312,27 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
     const sentiment = sentRead.rows
 
     // ---------------------------------------------------------------- what each read covered
-    // A newest-first read that stopped early still holds every day AFTER the oldest one it touched,
-    // so a window is complete when the read finished or reached back past its first day. The current
-    // window's stays are the board: if they did not load, it fails loudly rather than print a low
-    // occupancy. Anything else short is blanked where it would mislead, and named in `partial`.
+    // A window is complete when every slice touching it came back whole. The current window's stays
+    // are the board: if they did not load, it fails loudly rather than print a low occupancy.
+    // Anything else short is blanked where it would mislead, and named in `partial`.
     const partial: string[] = []
+    // Stays: a stay checking out on the window's first day still carries its cleaning fee into it.
+    if (!whole(resRead, from, resTo)) throw new Error('The reservations read came back short (' + lostSpan(resRead) + ') — occupancy and revenue would be understated. Try Refresh.')
+    const resPrevOk = whole(resRead, prevFrom, prevTo)
+    if (!resPrevOk) partial.push('stays checking out ' + lostSpan(resRead) + ' not read — revenue vs prior left blank')
+    const tasksCurOk = whole(taskRead, from, to)
+    const tasksPrevOk = whole(taskRead, prevFrom, prevTo)
+    if (!tasksCurOk) partial.push('Breezeway tasks ' + lostSpan(taskRead) + ' did not load — work figures left blank')
+    else if (!tasksPrevOk) partial.push('Breezeway tasks ' + lostSpan(taskRead) + ' did not load — work vs prior left blank')
+    // Sentiment slices sit on UTC day edges, so a short slice also reaches the Eastern evening of the
+    // day before it: widen the test by a day.
+    const sentCurOk = whole(sentRead, from, addDays(to, 1))
+    const sentPrevOk = whole(sentRead, prevFrom, addDays(prevTo, 1))
+    if (!sentCurOk) partial.push('guest sentiment ' + lostSpan(sentRead) + ' did not load — left blank')
+    else if (!sentPrevOk) partial.push('guest sentiment ' + lostSpan(sentRead) + ' did not load — vs prior left blank')
+    // Glitches are one newest-first read (a small table): complete for every day after the oldest
+    // one it reached.
     const covers = (truncated: boolean, oldest: string, a: string) => !truncated || (!!oldest && oldest < a)
-    const resOld = oldestDay(reservations, r => str(r.check_out).slice(0, 10))
-    if (!covers(resRead.truncated, resOld, from)) throw new Error('The reservations read came back short — occupancy and revenue would be understated. Try Refresh.')
-    const resPrevOk = covers(resRead.truncated, resOld, prevFrom)
-    if (!resPrevOk) partial.push('stays before ' + addDays(resOld, 1) + ' not read — revenue vs prior left blank')
-    const taskOld = oldestDay(tasks, t => str(t.scheduled_date).slice(0, 10))
-    const tasksCurOk = covers(taskRead.truncated, taskOld, from)
-    const tasksPrevOk = covers(taskRead.truncated, taskOld, prevFrom)
-    if (!tasksCurOk) partial.push('Breezeway tasks did not load in full — work figures left blank')
-    else if (!tasksPrevOk) partial.push('Breezeway tasks before ' + addDays(taskOld, 1) + ' not read — work vs prior left blank')
-    const sentOld = oldestDay(sentiment, s => etDayOf(s.last_message_at))
-    const sentCurOk = covers(sentRead.truncated, sentOld, from)
-    const sentPrevOk = covers(sentRead.truncated, sentOld, prevFrom)
-    if (!sentCurOk) partial.push('guest sentiment did not load in full — left blank')
-    else if (!sentPrevOk) partial.push('guest sentiment before ' + addDays(sentOld, 1) + ' not read — vs prior left blank')
     const glOld = oldestDay(glitchRows.rows || [], g => etDayOf(g.created_at))
     const glCurOk = covers(glitchRows.truncated, glOld, from)
     const glPrevOk = covers(glitchRows.truncated, glOld, prevFrom)
@@ -869,7 +920,11 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
       blank(payload.sentiment, ['scanned', 'unhappy', 'unhappyPct', 'happyPct', 'happyPctPrev', 'openUnhappy', 'awaitingReply'])
       ;(payload.sentiment as any).topIssues = []
       blank(payload.today, ['openUnhappy', 'awaitingReply'])
-    } else if (!sentPrevOk) blank(payload.sentiment, ['happyPctPrev'])
+    } else if (!sentPrevOk) {
+      // The open-thread counts run over every loaded thread, so a lost prior slice makes them a floor.
+      blank(payload.sentiment, ['happyPctPrev', 'openUnhappy', 'awaitingReply'])
+      blank(payload.today, ['openUnhappy', 'awaitingReply'])
+    }
     if (!glCurOk) {
       blank(payload.glitches, ['opened', 'openedPrev', 'closed', 'cost', 'costPrev', 'costChange'])
       ;(payload.glitches as any).categories = []
