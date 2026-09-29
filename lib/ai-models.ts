@@ -120,7 +120,7 @@ export const AI_TASKS: AiTask[] = [
   // next to the thirty-odd memories that share words with it and picks the ones a colleague would
   // want in mind. Word overlap alone loaded the same sixty heavy lines every turn; 0.4% were used.
   { key: 'memory-recall', title: 'Eve — choosing what to remember for a question', group: 'Background', def: 'haiku', background: true,
-    what: 'Given the question and up to 36 candidate memories, returns the numbers of the ones that would change or sharpen the answer. Runs once per turn, capped at four seconds; if it fails the word-overlap order stands.',
+    what: 'Given the question and up to 36 candidate memories, returns the numbers of the ones that would change or sharpen the answer. Runs once per turn, capped at six seconds; if it fails the word-overlap order stands.',
     matters: 'A few hundred tokens per turn. This is what turns 300 stored memories into the three that matter right now; a weak model here makes her forgetful, not wrong.' },
   // THE EXPECTATIONS DESK (2026-09-28, lib/eve/expectations.ts). Reads 45 days of reviews, guest
   // messages and flagged threads per building and writes the notes for CS and admin: what guests
