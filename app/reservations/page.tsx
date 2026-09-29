@@ -139,7 +139,7 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
   const checkInsToday = up.filter(r => r.check_in === todayStr && !isCanceled(r.status)).length
   const checkOutsToday = up.filter(r => r.check_out === todayStr && !isCanceled(r.status)).length
   const inHouse = up.filter(r => r.check_in && r.check_out && r.check_in <= todayStr && r.check_out > todayStr && !isCanceled(r.status)).length
-  const arrivals7 = up.filter(r => r.check_in && r.check_in >= todayStr && r.check_in <= in7Str && !isCanceled(r.status))
+  const arrivals7 = up.filter(r => r.check_in && r.check_in >= todayStr && r.check_in < in7Str && !isCanceled(r.status))
   const arrivals7Count = arrivals7.length
   const revenue7 = arrivals7.reduce((sum, r) => sum + (Number(r.money_total) || 0), 0)
   const currency = (up.find(r => r.money_currency)?.money_currency) || 'USD'
