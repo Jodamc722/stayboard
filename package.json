@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "node scripts/test-money.mjs && node lib/eve/__tests__/fit.test.mjs && node lib/eve/__tests__/redact.test.mjs && node lib/eve/__tests__/slack-identity.test.mjs && node lib/eve/__tests__/tag-position.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.0",
