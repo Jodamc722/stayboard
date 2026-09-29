@@ -13,8 +13,9 @@
 // Auth: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron).
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireCron } from '@/lib/cron-auth'
+import { requireCron, cronAllowed } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
+import { atEasternHour } from '@/lib/et-clock'
 import { getRoles, resolveLevels } from '@/lib/access'
 import { notify } from '@/lib/notify'
 import { getSetting, setSetting } from '@/lib/app-settings'
@@ -138,5 +139,13 @@ async function run(req: NextRequest) {
 
 // RECEIPT (2026-09-28), under the registry's key for this job (lib/eve/automations 'claims-nudge').
 const receipted = withRouteReceipt<NextRequest>('claims-nudge', run, { count: (b) => (typeof b.nudged === 'number' ? b.nudged : undefined) })
-export async function GET(req: NextRequest) { return receipted(req) }
-export async function POST(req: NextRequest) { return receipted(req) }
+
+// 8:08AM EASTERN ALL YEAR (2026-09-29). vercel.json fires this at 12:08 AND 13:08 UTC; on the
+// scheduler's own call, the one that is not 8am in New York stops here — before the receipt or a
+// single nudge (lib/et-clock). An admin's "Run now" carries no bearer and is never skipped.
+async function scheduled(req: NextRequest) {
+  if (cronAllowed(req).viaSecret && !atEasternHour(8)) return NextResponse.json({ ok: true, skipped: 'daylight-saving twin — this job runs at 8am Eastern' })
+  return receipted(req)
+}
+export async function GET(req: NextRequest) { return scheduled(req) }
+export async function POST(req: NextRequest) { return scheduled(req) }

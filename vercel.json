@@ -98,7 +98,7 @@
     },
     {
       "path": "/api/cron/claims",
-      "schedule": "8 12 * * *"
+      "schedule": "8 12,13 * * *"
     },
     {
       "path": "/api/cron/weekly-planner",
