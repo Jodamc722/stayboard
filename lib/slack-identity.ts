@@ -16,102 +16,71 @@
 // "no account" and "account exists but is inactive" and "two people share that name" need three
 // different fixes from a human, and one error message for all three sends them looking in the wrong
 // place.
+//
+// THE RULES THEMSELVES live in lib/slack-identity-rules.ts (no imports, proven by a plain-node test):
+// the local-part bridge only between our own domains, never the owner or an admin by name alone, and
+// never a Slack guest account by name (2026-09-29 security review, N1). This file only fetches.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getDirectory, slackUserMap } from '@/lib/slack'
 import { nameMatches } from '@/lib/person-name'
+import { isSuperadmin } from '@/lib/access'
+import { decideIdentity, identityHint, type Resolved, type IdentityUser, type SlackProfile } from '@/lib/slack-identity-rules'
 
-export type Resolved = {
-  email: string | null
-  /** How we got there. Surfaced in errors and logs; never shown as jargon to a person. */
-  how: 'map-id' | 'map-email' | 'profile' | 'alias-domain' | 'name' | null
-  /** What the Slack profile itself said, for telling someone why they were not recognised. */
-  profileEmail: string | null
-  slackName: string | null
-  /** Set when we found something but deliberately refused it. */
-  problem?: string
-}
+export type { Resolved }
+export { identityHint }
 
-type AppUser = { email: string; status: string; name: string }
-
-async function activeUsers(): Promise<AppUser[]> {
+async function appUsers(): Promise<IdentityUser[]> {
   try {
-    const { data } = await supabaseAdmin().from('app_users').select('email, status, profile').limit(500)
-    return ((data || []) as any[]).map(r => ({
-      email: String(r?.email || '').toLowerCase().trim(),
-      status: String(r?.status || ''),
-      name: String((r?.profile && typeof r.profile === 'object' ? r.profile.name : '') || '').trim(),
-    })).filter(u => u.email)
+    // select('*'): role and access_role are read when present, and a missing optional column never
+    // empties the list (an error here means nobody matches, which is the safe way to fail).
+    const { data, error } = await supabaseAdmin().from('app_users').select('*').order('email').limit(500)
+    if (error) return []
+    return ((data || []) as any[]).map(r => {
+      const email = String(r?.email || '').toLowerCase().trim()
+      return {
+        email,
+        status: String(r?.status || ''),
+        name: String((r?.profile && typeof r.profile === 'object' ? r.profile.name : '') || '').trim(),
+        // The owner, or anyone who gets the admin tier in Slack — never reachable by a name alone.
+        privileged: isSuperadmin(email) || r?.role === 'admin' || r?.access_role === 'admin',
+      }
+    }).filter(u => u.email)
   } catch { return [] }
 }
 
+// Guest flags arrived with this file's 2026-09-29 change; a directory cached before it has none. Read
+// it fresh ONCE per instance rather than guess — and if that fails the flag stays unknown, which
+// resolveLighthouseEmail treats as "do not match by name".
+let _refreshedForGuestFlag = false
+
+async function slackProfile(id: string): Promise<SlackProfile | null> {
+  const find = (dir: any) => (dir?.users || []).find((u: any) => u && String(u.id).toLowerCase() === id && !u.deleted && !u.bot)
+  try {
+    let hit: any = find(await getDirectory())
+    if (hit && typeof hit.guest !== 'boolean' && !_refreshedForGuestFlag) {
+      _refreshedForGuestFlag = true
+      hit = find(await getDirectory(true)) || hit
+    }
+    if (!hit) return null
+    return {
+      email: String(hit.email || '').toLowerCase().trim(),
+      name: String(hit.name || '').trim(),
+      guest: typeof hit.guest === 'boolean' ? hit.guest : null,
+    }
+  } catch { return null }   // directory unavailable; the later steps simply find nothing
+}
+
 /**
- * Turn a Slack user id into the Lighthouse email that owns that person's permissions.
- *
- * ORDER IS DELIBERATE, cheapest and most certain first:
- *   1. the manual map by Slack id — an explicit human decision always wins
- *   2. their Slack profile email, IF it is an active Lighthouse user
- *   3. the manual map keyed by that email
- *   4. SAME LOCAL PART ON ANOTHER OF OUR DOMAINS — jon@staysoflo.com -> jon@stay-hospitality.com.
- *      Only ever matches domains that already appear in app_users, so it cannot reach outside the
- *      company, and only when EXACTLY ONE active account matches. Two "maria@"s means no answer.
- *   5. their Slack display name against the name on the Lighthouse profile, again only on a single
- *      unambiguous match. This is what covers people who signed up with a personal address.
+ * Turn a Slack user id into the Lighthouse email that owns that person's permissions. The order and
+ * the fences are documented in lib/slack-identity-rules.ts decideIdentity.
  */
 export async function resolveLighthouseEmail(slackUserId: string): Promise<Resolved> {
   const id = String(slackUserId || '').trim().toLowerCase()
-  const out: Resolved = { email: null, how: null, profileEmail: null, slackName: null }
-  if (!id) return out
-
+  if (!id) return { email: null, how: null, profileEmail: null, slackName: null }
   const map = await slackUserMap()
-  if (map[id]) return { ...out, email: map[id], how: 'map-id' }
-
-  let slackName = ''
-  let profileEmail = ''
-  try {
-    const dir = await getDirectory()
-    const hit = (dir.users || []).find((u: any) => u && String(u.id).toLowerCase() === id && !u.deleted && !u.bot)
-    profileEmail = String((hit as any)?.email || '').toLowerCase().trim()
-    slackName = String((hit as any)?.name || '').trim()
-  } catch { /* directory unavailable; the later steps simply find nothing */ }
-  out.profileEmail = profileEmail || null
-  out.slackName = slackName || null
-
-  const users = await activeUsers()
-  const active = users.filter(u => u.status === 'active')
-
-  if (profileEmail) {
-    const direct = active.find(u => u.email === profileEmail)
-    if (direct) return { ...out, email: direct.email, how: 'profile' }
-    if (map[profileEmail]) return { ...out, email: map[profileEmail], how: 'map-email' }
-    // Exists but switched off is NOT the same as absent, and saying so saves somebody ten minutes.
-    const inactive = users.find(u => u.email === profileEmail && u.status !== 'active')
-    if (inactive) return { ...out, problem: `their Lighthouse account ${profileEmail} is ${inactive.status}, not active` }
-  }
-
-  // 4. Same person, our other domain.
-  if (profileEmail.includes('@')) {
-    const local = profileEmail.split('@')[0]
-    const sameLocal = active.filter(u => u.email.split('@')[0] === local)
-    if (sameLocal.length === 1) return { ...out, email: sameLocal[0].email, how: 'alias-domain' }
-    if (sameLocal.length > 1) return { ...out, problem: `"${local}@" matches ${sameLocal.length} Lighthouse accounts, so I cannot tell which is theirs` }
-  }
-
-  // 5. By name. nameMatches is the same fuzzy matcher the staffing check uses, so it already bridges
-  // the married/maiden drift that defeats an exact comparison.
-  if (slackName) {
-    const byName = active.filter(u => u.name && nameMatches(u.name, slackName))
-    if (byName.length === 1) return { ...out, email: byName[0].email, how: 'name' }
-    if (byName.length > 1) return { ...out, problem: `${byName.length} Lighthouse accounts are named like "${slackName}"` }
-  }
-
-  return out
-}
-
-/** One sentence a person can act on, given a failed or partial resolution. */
-export function identityHint(r: Resolved, slackUserId: string): string {
-  if (r.problem) return r.problem
-  if (!r.profileEmail && !r.slackName) return 'Slack did not give me an email or a name for you'
-  if (r.profileEmail) return `your Slack address ${r.profileEmail} is not a Lighthouse account, and nothing else matched you`
-  return `nothing matched the name "${r.slackName}"`
+  // An explicit human decision wins before anything is fetched.
+  if (map[id]) return { email: map[id], how: 'map-id', profileEmail: null, slackName: null }
+  const [profile, users] = await Promise.all([slackProfile(id), appUsers()])
+  return decideIdentity({ slackUserId: id, map, profile, users, nameMatches })
 }

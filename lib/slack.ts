@@ -29,6 +29,8 @@ export type SlackUser = {
   title: string | null
   bot: boolean
   deleted: boolean
+  /** A Slack GUEST (is_restricted / is_ultra_restricted): never matched to a Lighthouse user by name. */
+  guest?: boolean
 }
 
 /** A channel the bot could post to. */
@@ -233,6 +235,8 @@ function mapUser(m: any): SlackUser {
     title: p.title ? String(p.title) : null,
     bot: !!(m.is_bot || m.id === 'USLACKBOT'),
     deleted: !!m.deleted,
+    // Multi- and single-channel guests — outside people, usually vendors (lib/slack-identity-rules.ts).
+    guest: !!(m.is_restricted || m.is_ultra_restricted),
   }
 }
 
