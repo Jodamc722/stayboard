@@ -13,6 +13,7 @@
 //
 // Snapshots are best-effort: a backup failure never blocks the change that triggered it.
 import { supabaseAdmin } from './supabase-admin'
+import { pageRows } from './db-page'
 import { ITEMS, GRANTS, VAULT_BUCKET, encryptSecret, decryptSecret, vaultKeyReady, logAccess } from './vault'
 
 export const BACKUP_PREFIX = 'backups/'
@@ -36,18 +37,21 @@ export async function snapshotVault(trigger: string, by: string): Promise<string
   try {
     if (!vaultKeyReady()) return null          // nothing to seal with — the vault itself refuses secrets too
     const db = supabaseAdmin()
+    // PAGED (2026-09-29). .limit(5000) / .limit(20000) returned 1,000 each, so a vault past 1,000
+    // items or grants was backed up short and logged as a whole backup. A read that does not complete
+    // now writes no snapshot, as a failed item read always did — the next change tries again.
     const [items, grants] = await Promise.all([
-      db.from(ITEMS).select('*').is('deleted_at', null).order('updated_at', { ascending: false }).limit(5000),
-      db.from(GRANTS).select('*').limit(20000),
+      pageRows<any>((a, b) => db.from(ITEMS).select('*').is('deleted_at', null).order('updated_at', { ascending: false }).order('id').range(a, b), 20),
+      pageRows<any>((a, b) => db.from(GRANTS).select('*').order('id').range(a, b), 40),
     ])
-    if (items.error) return null
+    if (items.truncated || grants.truncated) { console.error('[vault-backup] the vault read did not complete — no snapshot written'); return null }
     const payload = {
       version: 1,
       at: new Date().toISOString(),
       trigger: String(trigger).slice(0, 80),
       by: String(by || '').toLowerCase().slice(0, 200),
-      items: items.data || [],
-      grants: grants.data || [],
+      items: items.rows,
+      grants: grants.rows,
     }
     const sealed = encryptSecret(JSON.stringify(payload))
     await ensureBucket(db)
