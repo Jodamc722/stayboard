@@ -31,7 +31,7 @@
 //   · EveLine, VendorVisitsCard (→ "· N vendors on site" on the day line), the owner-lane filter.
 //
 // Data: the same one read (/api/command/day, lib/command-day unchanged). Everything is derived here.
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import {
   RefreshCw, ExternalLink, UserPlus, Loader2, Check, X, AlertTriangle, ChevronDown, ChevronRight,
@@ -122,8 +122,12 @@ export function CommandDayList() {
   const roster = useMemo(() => Array.isArray(rosterRes?.people) ? rosterRes!.people : [], [rosterRes])
   const vendorsOnSite = useMemo(() => (Array.isArray(vendorRes?.visits) ? vendorRes!.visits : []).filter(v => v.tone === 'today').length, [vendorRes])
   const [tick, setTick] = useState(0)
+  // When the day was last read. A tab switch re-reads it only when that is over a minute ago
+  // (2026-09-28 audit): every glance back at the tab used to rebuild the whole day.
+  const readAt = useRef(0)
+  useEffect(() => { if (data) readAt.current = Date.now() }, [data])
   useEffect(() => {
-    const onShow = () => { if (document.visibilityState === 'visible') refresh() }
+    const onShow = () => { if (document.visibilityState === 'visible' && Date.now() - readAt.current > 60_000) refresh() }
     const t = setInterval(onShow, 5 * 60 * 1000)
     const t2 = setInterval(() => setTick(x => x + 1), 30_000)
     document.addEventListener('visibilitychange', onShow)
@@ -133,7 +137,11 @@ export function CommandDayList() {
   /** Rows cleared from this screen since the last read — so a cleared row leaves at once. */
   const [gone, setGone] = useState<Record<string, boolean>>({})
   const hide = (key: string) => setGone(g => ({ ...g, [key]: true }))
-  useEffect(() => { setGone({}) }, [data?.generatedAt])
+  // Every new read carries the server's own cleared rows, so the local ones reset on each response.
+  // Keyed on the response, not on generatedAt: the day core is shared and cached now, so two reads a
+  // few seconds apart carry the same generatedAt — and a row brought back ("Bring it back") must
+  // reappear on the very next read.
+  useEffect(() => { setGone({}) }, [data])
 
   if (!data && loading) return <Skeleton />
   if (!data || !data.ok) {

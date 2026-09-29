@@ -39,7 +39,15 @@
 //               turn/late rows — never the same task twice)
 //
 // The model recommends; a person commits. Nothing here writes to Breezeway.
+//
+// ── ONE BUILD FOR EVERYONE, THE CLEARED ROWS PER REQUEST (2026-09-28 audit) ────────────────────
+// Every read and every rule in buildCommandCore is the same for every viewer, so the core is cached
+// (tag 'day', 30 seconds) and shared. Only the rows cleared today differ between two reads a second
+// apart, so they are applied after the cache, read straight from the table — see withDismissals,
+// which holds the cap, the counts, Handled/Completed and the verdict (all of which read them).
+import { unstable_cache } from 'next/cache'
 import { supabaseAdmin } from './supabase-admin'
+import { DAY_TAG, tooOld } from './bust'
 import { buildOpsDay } from './ops-day'
 import { buildDayPicture, type DayPicture } from './capacity-day'
 import { getTaskAutomation } from './auto-inspections'
@@ -177,10 +185,70 @@ export type CommandDay = {
 
 type Meta = { name: string; market: string; building: string | null; active: boolean }
 
+type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; running: number; remaining: number; late: number; atRisk: number; missed: number; untracked: number }
+
+/** Everything on the page that is the same for every viewer — the part that is cached. */
+type CommandCore = {
+  today: string
+  generatedAt: string
+  degraded: string[]
+  pulse: CommandDay['pulse']
+  tiles: CommandDay['tiles']
+  /** Every row the engine generated, ranked. Nothing capped and nothing cleared yet: both depend on the rows cleared today. */
+  rows: Omit<NextItem, 'dismissed'>[]
+  /** The board's 4pm clock — what the verdict reads besides the live rows. */
+  clock: Deadline
+  util: number | null
+  unowned: number
+  glitchesOverdue: number
+  /** Tomorrow's shape (the verdict's last line). */
+  tomorrow: string
+  completed: Omit<CommandDay['completed'], 'handledDone'>
+  /** The day board read failed outright. This core degrades the one request, as it always did, and is never cached. */
+  dayFailed: boolean
+}
+
+/**
+ * THE DAY, BUILT ONCE FOR EVERYONE (2026-09-28 audit, 02-cache-perf D1). The page asked for the
+ * whole day on every 5-minute poll, every tab focus and every click, for every viewer — ~25-30
+ * PostgREST reads per build, ~40 with a cold board. The core is now built at most every 30 seconds
+ * and shared (tag 'day': an assign, a staged pick or a Breezeway change still shows on the next
+ * read), and the rows cleared today are applied after it, read straight from the table as before.
+ */
 export async function buildCommandDay(): Promise<CommandDay> {
+  const today = ymd(new Date())
+  const [core, dismissRow] = await Promise.all([
+    commandCore(today),
+    // Dismissals are read STRAIGHT from the table, not through the 60s settings cache (and never
+    // through the day cache): a row you just dismissed must not bounce back because the next
+    // request landed on another instance.
+    supabaseAdmin().from('app_settings').select('value').eq('key', DISMISS_KEY).maybeSingle(),
+  ])
+  return withDismissals(core, dismissRow)
+}
+
+/** A cached core older than this is rebuilt in place rather than served as now (lib/bust). */
+const CORE_MAX_AGE_MS = 90_000
+
+async function commandCore(today: string): Promise<CommandCore> {
+  let core: CommandCore
+  try { core = await cachedCore(today) }
+  catch (e: any) { if (e && e.uncachedCore) return e.uncachedCore as CommandCore; throw e }
+  return tooOld(core.generatedAt, CORE_MAX_AGE_MS) ? buildCommandCore(today) : core
+}
+
+const cachedCore = unstable_cache(async (today: string): Promise<CommandCore> => {
+  const core = await buildCommandCore(today)
+  // A FAILED BOARD READ IS NEVER SHARED: it degrades this request and the next one tries again,
+  // instead of every viewer reading a zeroed day for the next 30 seconds. Throwing is how a value
+  // is kept out of unstable_cache; commandCore catches it and uses the core all the same.
+  if (core.dayFailed) { const e: any = new Error('command day not cached: the day board read failed'); e.uncachedCore = core; throw e }
+  return core
+}, ['command-day-core-v1'], { tags: [DAY_TAG], revalidate: 30 })
+
+async function buildCommandCore(today: string): Promise<CommandCore> {
   const db = supabaseAdmin()
   const now = new Date()
-  const today = ymd(now)
   const tomorrow = shift(today, 1)
   const in2 = shift(today, 2)
   const back45 = shift(today, -45)
@@ -210,17 +278,13 @@ export async function buildCommandDay(): Promise<CommandDay> {
     .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
 
   // ── WAVE 1: everything that does not depend on anything else ──────────────────────────────────
-  const [day, cap, automation, presets, dismissRow, arrivalsRes, glitchesRes, claimsRes, sentimentRes, reviewsToReplyRes, convosRes, approvalsRes, fieldOverdueRes, openTasksP, bzOverdueCountRes, callsDoneRes] = await Promise.all([
+  const [day, automation, presets, arrivalsRes, glitchesRes, claimsRes, sentimentRes, reviewsToReplyRes, convosRes, approvalsRes, fieldOverdueRes, openTasksP, bzOverdueCountRes, callsDoneRes] = await Promise.all([
     // .catch, because buildOpsDay now THROWS on a failed read (2026-09-09) — right for the board's
     // own route, wrong here: a listings blip must not take claims, reviews, messages and the calls
     // desk down with it. A null day degrades; every `day.*` read below is guarded.
     buildOpsDay(null, { includeMeta: true }).catch((e: any) => { degraded.push('the day board — ' + String(e?.message || e).slice(0, 80)); return null }),
-    buildDayPicture(today).catch((e: any) => { degraded.push('capacity model — ' + String(e?.message || e).slice(0, 80)); return null as DayPicture | null }),
     getTaskAutomation(),
     getOpsPresets(),
-    // Dismissals are read STRAIGHT from the table, not through the 60s settings cache: a row you
-    // just dismissed must not bounce back because the next request landed on another instance.
-    db.from('app_settings').select('value').eq('key', DISMISS_KEY).maybeSingle(),
     db.from('guesty_reservations')
       .select('id,listing_id,listing_name,guest_name,check_in,check_out,nights,money_total,status,custom_fields')
       .gte('check_in', today).lte('check_in', in2).order('check_in').limit(400),
@@ -256,6 +320,11 @@ export async function buildCommandDay(): Promise<CommandDay> {
     db.from('guest_calls').select('reservation_id', { count: 'exact', head: true })
       .in('outcome', COMPLETED as any).gte('called_at', etMidnightIso(today)).lt('called_at', etMidnightIso(shift(today, 1))),
   ])
+  // THE CAPACITY MODEL rides in with the day: lib/ops-day prices it for its landings, and this used
+  // to price the same day a second time in the same second. Read on its own only when the board read
+  // failed or came back without one.
+  const cap: DayPicture | null = day && day.picture && day.picture.date === today ? day.picture
+    : await buildDayPicture(today).catch((e: any) => { degraded.push('capacity model — ' + String(e?.message || e).slice(0, 80)); return null as DayPicture | null })
 
   // ── listing meta comes from the board's own map (vendor-aware market, no second read) ─────────
   // A null `day` means the board read failed and was caught above: the page still renders claims,
@@ -273,15 +342,6 @@ export async function buildCommandDay(): Promise<CommandDay> {
   const marketOfId = (id: any) => (meta[str(id)] || {}).market || null
   const noBzRe = noBreezewayRegex(presets.vendorBuildings)
   const canFile = (lid: string) => { const m = meta[lid]; return !!m && !noBzRe.test((m.building || '') + ' ' + m.name) }
-
-  const dismissedAll = (() => { try { const v = (dismissRow as any)?.data?.value; const o = typeof v === 'string' ? JSON.parse(v) : v; return o && typeof o === 'object' ? o : {} } catch { return {} } })()
-  const dismissedRaw: Record<string, any> = (dismissedAll[today] && typeof dismissedAll[today] === 'object') ? dismissedAll[today] : {}
-  // Entries written before outcomes existed carry only by/at — they were plain dismissals.
-  const dismissed: Record<string, Handled> = {}
-  for (const k of Object.keys(dismissedRaw)) {
-    const v = dismissedRaw[k] || {}
-    dismissed[k] = { key: k, by: str(v.by) || 'someone', at: str(v.at), outcome: v.outcome === 'done' ? 'done' : 'skipped', title: v.title ? str(v.title).slice(0, 160) : undefined, unit: v.unit ? str(v.unit).slice(0, 80) : undefined }
-  }
 
   const openTasks = guard<any[]>('open tasks', openTasksP as any, [])
   const openByListing: Record<string, any[]> = {}
@@ -326,8 +386,9 @@ export async function buildCommandDay(): Promise<CommandDay> {
       : Promise.resolve([] as any[]),
   ])
 
-  const next: NextItem[] = []
-  const push = (i: Omit<NextItem, 'dismissed'>) => next.push({ ...i, dismissed: dismissed[i.key] || null })
+  // The rows as the engine generates them — whether anybody cleared one today is withDismissals' job.
+  const next: Omit<NextItem, 'dismissed'>[] = []
+  const push = (i: Omit<NextItem, 'dismissed'>) => { next.push(i) }
   const bz = (id: string) => 'https://app.breezeway.io/task/' + id
   const FOUR = '4:00 PM'
   const past4Now = dayDeadline.minsLeft < 0
@@ -669,9 +730,67 @@ export async function buildCommandDay(): Promise<CommandDay> {
   const idle = teamRows.filter(p => p.verdict !== 'implausible' && p.capacityMinutes > 0 && p.cleans + p.otherTasks === 0).map(p => p.person)
   const k = cap?.kpi
 
-  // ── rank, cap, count ────────────────────────────────────────────────────────────────────────
+  // ── rank ────────────────────────────────────────────────────────────────────────────────────
+  // The order never depends on who cleared what, so it is decided here, once, in the cached core.
   const sevRank = { now: 0, today: 1, soon: 2 }
   next.sort((a, b) => sevRank[a.severity] - sevRank[b.severity] || a.rank - b.rank || a.unit.localeCompare(b.unit))
+  const callsDone = (callsDoneRes as any)?.error ? (degraded.push('calls done'), 0) : (Number((callsDoneRes as any)?.count) || 0)
+
+  const dl = dayDeadline
+  const util = k?.utilisationPct ?? null
+  const tomorrowRows = arrivalRows.filter(a => a.checkIn === tomorrow)
+  const tomorrowBig = tomorrowRows.filter(a => a.big).length
+  const tomorrowMissing = tomorrowRows.filter(a => a.big && a.inspection === 'none').length
+  const tomorrowStr = 'Tomorrow: ' + tomorrowRows.length + ' arrival' + (tomorrowRows.length === 1 ? '' : 's') + (tomorrowBig ? ' · ' + tomorrowBig + ' big' : '') + (tomorrowMissing ? ' · ' + tomorrowMissing + ' still need an inspection' : tomorrowBig ? ' · all inspected' : '')
+
+  return {
+    today, generatedAt: nowIso, degraded,
+    pulse: { ...dayPulse, cleansDone: dl.done, cleansTotal: dl.cleans, minsLeft: dl.minsLeft, lastSync: day ? day.lastSync : null },
+    tiles: {
+      // ONE denominator: cleans on the 4pm clock + vendor cleans. Extended stays are listed but not counted.
+      cleans: { total: dl.cleans + dl.untracked, done: dl.done, running: dl.running, late: dl.late, atRisk: dl.atRisk, vendor: dl.untracked, extended: extendedN, rows: cleanRows.sort((a, b) => cleanOrder(a) - cleanOrder(b) || a.unit.localeCompare(b.unit)) },
+      arrivals: { today: arrivalRows.filter(a => a.today).length, big: arrivalRows.filter(a => a.big).length, bigToday: arrivalRows.filter(a => a.big && a.today).length, missingInspection, rows: arrivalRows.sort((a, b) => a.checkIn.localeCompare(b.checkIn) || (b.big ? 1 : 0) - (a.big ? 1 : 0) || b.value - a.value) },
+      tasks: { total: taskRows.length, open: tOpen, running: tRunning, done: tDone, unassigned: tUnassigned, late: tLate, urgent: tUrgent, byDept, rows: taskRows.sort((a, b) => taskOrder(a) - taskOrder(b) || a.unit.localeCompare(b.unit)) },
+      team: { onShift: k?.peopleOnShift ?? teamRows.length, utilisationPct: util ?? 0, overloaded: k?.overloaded ?? 0, underloaded: k?.underloaded ?? 0, idle, unowned: k?.unassignedCount ?? 0, implausible: k?.implausible ?? 0, moves: (cap?.suggestions || []).slice(0, 6), notes: cap?.notes || [], rows: teamRows },
+      glitches: { open: glitchRows.length, overdue: glOverdue, noTask: glNoTask, byLane, rows: glitchRows.sort((a, b) => (b.overdue ? 1 : 0) - (a.overdue ? 1 : 0) || b.ageDays - a.ageDays) },
+      claims: { open: claimRows.length, review: clReview, dueSoon: clDueSoon, rows: claimRows.sort((a, b) => (a.daysLeft ?? 999) - (b.daysLeft ?? 999)) },
+      overdue: { total: overdueTotal, breezeway: bzOverdue, field: fieldOverdue.length, glitches: glOverdue, urgent: urgentOpen.length, rows: overdueRows },
+      guestDesk: { reviews: reviewsTotal, messages: convosTotal, welcome: welcomeDue.length, approvals: approvals.length, total: deskTotal, shown: deskRows.length, rows: deskRows },
+    },
+    rows: next,
+    clock: dl,
+    util,
+    unowned: tUnassigned,
+    glitchesOverdue: glOverdue,
+    tomorrow: tomorrowStr,
+    completed: {
+      cleansDone: dl.done, cleansTotal: dl.cleans,
+      tasksDone: tDone, tasksTotal: taskRows.length,
+      callsDone,
+    },
+    dayFailed: !day,
+  }
+}
+
+/**
+ * THE PER-REQUEST PART: the rows cleared today, and everything that reads them — the 48-hour caps,
+ * the counts, Handled/Completed and the verdict. Moved out of the build unchanged (2026-09-28) so a
+ * cached core gives exactly the page an uncached build gave.
+ */
+function withDismissals(core: CommandCore, dismissRow: any): CommandDay {
+  const today = core.today
+  const dismissedAll = (() => { try { const v = (dismissRow as any)?.data?.value; const o = typeof v === 'string' ? JSON.parse(v) : v; return o && typeof o === 'object' ? o : {} } catch { return {} } })()
+  const dismissedRaw: Record<string, any> = (dismissedAll[today] && typeof dismissedAll[today] === 'object') ? dismissedAll[today] : {}
+  // Entries written before outcomes existed carry only by/at — they were plain dismissals.
+  const dismissed: Record<string, Handled> = {}
+  for (const k of Object.keys(dismissedRaw)) {
+    const v = dismissedRaw[k] || {}
+    dismissed[k] = { key: k, by: str(v.by) || 'someone', at: str(v.at), outcome: v.outcome === 'done' ? 'done' : 'skipped', title: v.title ? str(v.title).slice(0, 160) : undefined, unit: v.unit ? str(v.unit).slice(0, 80) : undefined }
+  }
+  // The core's rows arrive ranked; this only marks the ones cleared today.
+  const next: NextItem[] = core.rows.map(i => ({ ...i, dismissed: dismissed[i.key] || null }))
+
+  // ── cap, count ──────────────────────────────────────────────────────────────────────────────
   // The 48-hour band is a heads-up, not a worklist: cap each kind so tomorrow never buries today —
   // and SAY how many were hidden, because a list that silently truncates reads as "done".
   const SOON_CAP: Partial<Record<NextKind, number>> = { feedback: 5, pending: 5, duplicate: 6 }
@@ -696,16 +815,16 @@ export async function buildCommandDay(): Promise<CommandDay> {
   const handled: Handled[] = Object.values(dismissed)
     .map(h => { const n = liveByKey[h.key]; return n ? { ...h, title: n.title, unit: n.unit } : h })
     .sort((a, b) => b.at.localeCompare(a.at))
-  const callsDone = (callsDoneRes as any)?.error ? (degraded.push('calls done'), 0) : (Number((callsDoneRes as any)?.count) || 0)
 
   // ── THE VERDICT ─────────────────────────────────────────────────────────────────────────────
-  const dl = dayDeadline
-  const pulse = dayPulse
+  const dl = core.clock
+  const util = core.util
+  const tUnassigned = core.unowned
+  const glOverdue = core.glitchesOverdue
   const live = next.filter(n => !n.dismissed)
   const nowRows = live.filter(n => n.severity === 'now')
   const turnsOpen = live.filter(n => n.kind === 'turn').length
   const remaining = dl.remaining
-  const util = k?.utilisationPct ?? null
   const past4 = dl.minsLeft < 0
   let state: Verdict['state'] = 'on_track'
   const drivers: string[] = []
@@ -727,35 +846,19 @@ export async function buildCommandDay(): Promise<CommandDay> {
     : past4 ? 'Every clean landed. ' + (live.length ? live.length + ' item' + (live.length === 1 ? '' : 's') + ' left on the list for tomorrow.' : 'Nothing left on the list.')
     : dl.cleans ? dl.done + ' of ' + dl.cleans + ' cleans done' + (util != null ? ' · crew ' + util + '% loaded' : '') + ' · ' + live.length + ' item' + (live.length === 1 ? '' : 's') + ' on the list'
     : 'No cleans on the clock today' + (live.length ? ' · ' + live.length + ' item' + (live.length === 1 ? '' : 's') + ' on the list' : '')
-  const tomorrowRows = arrivalRows.filter(a => a.checkIn === tomorrow)
-  const tomorrowBig = tomorrowRows.filter(a => a.big).length
-  const tomorrowMissing = tomorrowRows.filter(a => a.big && a.inspection === 'none').length
-  const tomorrowStr = 'Tomorrow: ' + tomorrowRows.length + ' arrival' + (tomorrowRows.length === 1 ? '' : 's') + (tomorrowBig ? ' · ' + tomorrowBig + ' big' : '') + (tomorrowMissing ? ' · ' + tomorrowMissing + ' still need an inspection' : tomorrowBig ? ' · all inspected' : '')
 
   return {
-    ok: true, today, generatedAt: nowIso, degraded,
-    verdict: { state, headline, detail, tomorrow: tomorrowStr },
-    pulse: { ...pulse, cleansDone: dl.done, cleansTotal: dl.cleans, minsLeft: dl.minsLeft, lastSync: day ? day.lastSync : null },
-    tiles: {
-      // ONE denominator: cleans on the 4pm clock + vendor cleans. Extended stays are listed but not counted.
-      cleans: { total: dl.cleans + dl.untracked, done: dl.done, running: dl.running, late: dl.late, atRisk: dl.atRisk, vendor: dl.untracked, extended: extendedN, rows: cleanRows.sort((a, b) => cleanOrder(a) - cleanOrder(b) || a.unit.localeCompare(b.unit)) },
-      arrivals: { today: arrivalRows.filter(a => a.today).length, big: arrivalRows.filter(a => a.big).length, bigToday: arrivalRows.filter(a => a.big && a.today).length, missingInspection, rows: arrivalRows.sort((a, b) => a.checkIn.localeCompare(b.checkIn) || (b.big ? 1 : 0) - (a.big ? 1 : 0) || b.value - a.value) },
-      tasks: { total: taskRows.length, open: tOpen, running: tRunning, done: tDone, unassigned: tUnassigned, late: tLate, urgent: tUrgent, byDept, rows: taskRows.sort((a, b) => taskOrder(a) - taskOrder(b) || a.unit.localeCompare(b.unit)) },
-      team: { onShift: k?.peopleOnShift ?? teamRows.length, utilisationPct: util ?? 0, overloaded: k?.overloaded ?? 0, underloaded: k?.underloaded ?? 0, idle, unowned: k?.unassignedCount ?? 0, implausible: k?.implausible ?? 0, moves: (cap?.suggestions || []).slice(0, 6), notes: cap?.notes || [], rows: teamRows },
-      glitches: { open: glitchRows.length, overdue: glOverdue, noTask: glNoTask, byLane, rows: glitchRows.sort((a, b) => (b.overdue ? 1 : 0) - (a.overdue ? 1 : 0) || b.ageDays - a.ageDays) },
-      claims: { open: claimRows.length, review: clReview, dueSoon: clDueSoon, rows: claimRows.sort((a, b) => (a.daysLeft ?? 999) - (b.daysLeft ?? 999)) },
-      overdue: { total: overdueTotal, breezeway: bzOverdue, field: fieldOverdue.length, glitches: glOverdue, urgent: urgentOpen.length, rows: overdueRows },
-      guestDesk: { reviews: reviewsTotal, messages: convosTotal, welcome: welcomeDue.length, approvals: approvals.length, total: deskTotal, shown: deskRows.length, rows: deskRows },
-    },
+    ok: true, today, generatedAt: core.generatedAt, degraded: core.degraded,
+    verdict: { state, headline, detail, tomorrow: core.tomorrow },
+    pulse: core.pulse,
+    tiles: core.tiles,
     next,
     hiddenSoon,
     dismissedCount,
     byOwner,
     handled,
     completed: {
-      cleansDone: dl.done, cleansTotal: dl.cleans,
-      tasksDone: tDone, tasksTotal: taskRows.length,
-      callsDone,
+      ...core.completed,
       handledDone: handled.filter(h => h.outcome === 'done').length,
     },
   }

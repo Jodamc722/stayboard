@@ -9,8 +9,13 @@
 //        so "no inspection" is gone) can still be listed under Completed with its words.
 // DELETE { key }  → bring it back (omit key to bring back everything cleared today)
 // Days older than yesterday are pruned on every write so the setting never grows.
+//
+// No cache bust here (2026-09-28): the Command Center applies these rows AFTER its cached day, read
+// straight from the table on every request, so a clear shows on the next read by itself — busting
+// the day would only rebuild the whole board for nothing.
 import { NextRequest, NextResponse } from 'next/server'
-import { getSetting, setSetting } from '@/lib/app-settings'
+import { setSetting } from '@/lib/app-settings'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { DISMISS_KEY } from '@/lib/command-day'
 import { requireUser } from '@/lib/access'
 
@@ -29,7 +34,13 @@ async function mutate(req: NextRequest, remove: boolean) {
   if (!remove && !key) return NextResponse.json({ ok: false, error: 'key required' }, { status: 400 })
   const today = ymd(new Date())
   const yesterday = ymd(new Date(Date.now() - 86400000))
-  const cur = (await getSetting<any>(DISMISS_KEY, null)) || {}
+  // READ STRAIGHT FROM THE TABLE, like the Command Center does (2026-09-28). Through the 60-second
+  // settings cache, two people clearing rows on two instances inside a minute overwrote each
+  // other's entries — and a failed read (the cache fails open to empty) wrote an empty day over
+  // every row already cleared. A failed read now fails the write instead.
+  const { data: row, error: readErr } = await supabaseAdmin().from('app_settings').select('value').eq('key', DISMISS_KEY).maybeSingle()
+  if (readErr) return NextResponse.json({ ok: false, error: 'could not read the rows cleared today — try again' }, { status: 500 })
+  const cur: Record<string, any> = (() => { try { const v = (row as any)?.value; const o = typeof v === 'string' ? JSON.parse(v) : v; return o && typeof o === 'object' ? o : {} } catch { return {} } })()
   const next: Record<string, Record<string, Entry>> = {}
   for (const d of Object.keys(cur)) if (d === today || d === yesterday) next[d] = cur[d]
   next[today] = next[today] || {}
