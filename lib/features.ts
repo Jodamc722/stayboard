@@ -13,7 +13,7 @@ export type Feature = { key: string; label: string; path: string; group: string 
 // Group titles for the /users → Roles grid (mirrors the sidebar). Every feature MUST name one of
 // these groups — anything else lands in an auto-generated "New tabs" bucket in the grid, so a tab
 // can never silently miss the permission editor again.
-export const GROUP_ORDER = ['Overview', 'Guests', 'Operations', 'Portfolio', 'Money', 'Team', 'Admin']
+export const GROUP_ORDER = ['Overview', 'Guests', 'Operations', 'Portfolio', 'Money', 'Team', 'Settings', 'Admin', 'Garden Hotel']
 
 export const FEATURES: Feature[] = [
   { key: 'command',       label: 'Command Center',    path: '/command', group: 'Overview' },
@@ -197,7 +197,8 @@ export const OPEN_EXACT = ['/no-access', '/day', '/manifest.json', '/robots.txt'
 // matching single-quoted strings, so one stray apostrophe in a comment swallows every entry after
 // it and the build fails claiming a page is unregistered.
 export const OPEN_PREFIXES = [
-  '/login', '/auth', '/api', '/g/', '/day/', '/guide/', '/r/', '/audit/', '/walk/',
+  // /api/ WITH the slash: a bare /api also matched the /api-keys page and skipped its role gate.
+  '/login', '/auth', '/api/', '/g/', '/day/', '/guide/', '/r/', '/audit/', '/walk/',
   '/field/', '/approve/', '/new-order', '/vendor/', '/delivery', '/owner-orders',
   '/salato/share', '/salato/verify', '/report/', '/favicon', '/project/', '/share/',
   '/order/', '/orders-live',
