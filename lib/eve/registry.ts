@@ -11,6 +11,7 @@
 import 'server-only'
 import { redactMoney } from '@/lib/money'
 import { redactSensitive, isCodeFieldName, redactGuestPII, maskMoneyStrings } from './redact'
+import { fitResult } from './fit'
 import type { EveTool, EveDomain } from './types'
 import { wireShape, obj, S } from './types'
 import type { EveCtx } from './ctx'
@@ -150,9 +151,11 @@ export async function runTool(name: string, input: any, ctx: EveCtx, open: strin
       // redactMoney nulls amounts under money KEYS; a dollar figure written into a sentence ("refund
       // $300", a memory, a knowledge row) sits under `text` and passed. maskMoneyStrings takes those
       // out too (2026-09-28 audit, F9).
-      return { output: { ...maskMoneyStrings(redactMoney(out)), _money_redacted: 'Dollar amounts are hidden for this user. Occupancy, counts, minutes and percentages are still accurate; ADR and RevPAR are dollar figures and are hidden too. Do not guess at the hidden numbers.' } }
+      return { output: fitResult({ ...maskMoneyStrings(redactMoney(out)), _money_redacted: 'Dollar amounts are hidden for this user. Occupancy, counts, minutes and percentages are still accurate; ADR and RevPAR are dollar figures and are hidden too. Do not guess at the hidden numbers.' }) }
     }
-    return { output: out }
+    // FITS THE BUDGET WITHOUT TEARING THE JSON (2026-09-28 audit, F3): the longest lists are halved
+    // until it fits, and `_cut` names each one ("departures": "60→15") so she says it is partial.
+    return { output: fitResult(out) }
   } catch (e: any) {
     return { output: { error: String(e?.message || e).slice(0, 200) } }
   }

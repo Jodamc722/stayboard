@@ -71,7 +71,8 @@ function withCacheBreakpoint(convo: any[]): any[] {
   return out
 }
 
-const TOOL_RESULT_CHARS = 9000
+// Tool results are fitted to 9,000 characters in registry.runTool (lib/eve/fit.ts) — whole JSON,
+// with a `_cut` note naming each list it shortened — never sliced mid-record here.
 
 /**
  * May this person use Eve at all? Owner, anyone with role=admin, or a DB role explicitly granted
@@ -374,7 +375,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
           if (block.name === 'door_code_check' && output && typeof output === 'object') {
             for (const k of ['code', 'previous_code']) if (output[k] != null && String(output[k]).trim()) released.push(String(output[k]).trim())
           }
-          results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(output).slice(0, TOOL_RESULT_CHARS) })
+          results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(output) })
         }
         convo.push({ role: 'user', content: results })
         continue

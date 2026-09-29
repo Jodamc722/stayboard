@@ -269,21 +269,40 @@ export const CORE_TOOLS: EveTool[] = [
       if (own) for (const id of Object.keys(ctx.listingMeta)) own[lc(ctx.listingMeta[id].name)] = true
       const scoped = (rows: any[]) => (own ? (rows || []).filter((r: any) => !!own[lc(r?.unit)]) : (rows || []))
       // Trim to what a language model can actually reason over — the raw sheet is very large.
-      const slim = (rows: any[], n: number, pick: (r: any) => any) => scoped(rows).slice(0, n).map(pick)
+      // WORST FIRST, TWENTY-FIVE AT MOST (2026-09-28 audit, F3). On a 40-departure day the departures
+      // alone ran past the result budget and everything after them — arrivals, vacants, glitches, the
+      // note — silently fell off. Each list is now ordered by what needs a person first and capped at
+      // 25, and `more` says how many were left out of each.
+      const CAP = 25
+      const more: Record<string, number> = {}
+      const slim = (key: string, rows: any[], rank: ((r: any) => number) | null, pick: (r: any) => any) => {
+        const all = scoped(rows)
+        const ordered = rank ? all.map((r: any, i: number) => ({ r, i, k: rank(r) })).sort((a: any, b: any) => a.k - b.k || a.i - b.i).map((x: any) => x.r) : all
+        if (ordered.length > CAP) more[key] = ordered.length - CAP
+        return ordered.slice(0, CAP).map(pick)
+      }
+      // A same-day turn not ready, then no clean booked, then a clean nobody has, then the rest.
+      const depRank = (r: any) => r.status === 'TURNING' ? 0 : (!r.clean && r.status === 'CHECKING OUT') ? 1
+        : (r.clean && r.clean.status !== 'done' && !(r.clean.assignees || []).length) ? 2 : r.status === 'CHECKING OUT' ? 3 : r.status === 'READY' ? 4 : 5
+      // A clean still running on an arrival day, then an arrival nobody has been into, then the rest.
+      const arrRank = (r: any) => (r.cleanToday && r.cleanToday.status !== 'done') ? 0 : (!r.lastTouch && r.status === 'ARRIVING') ? 1 : r.status === 'ARRIVING' ? 2 : 3
       const counts = own
         ? { departures: scoped(sheet.departures).length, arrivals: scoped(sheet.arrivals).length, vacants: scoped(sheet.vacants).length, exceptions: scoped(sheet.exceptions).length, glitches: scoped(sheet.glitches).length, scope: 'this room\'s buildings only' }
         : sheet.counts
       return {
         date: sheet.date, market: sheet.market, markets: own ? undefined : sheet.markets, counts,
         sync: sheet.sync, lastSync: sheet.lastSync,
-        exceptions: slim(sheet.exceptions, 40, (e: any) => ({ kind: e.kind, unit: e.unit, detail: e.detail, action: e.action, severity: e.severity })),
-        departures: slim(sheet.departures, 60, (r: any) => ({ unit: r.unit, building: r.building, guest: r.guest, checkOutTime: r.checkOutTime, status: r.status, sameDayTurn: r.sameDayTurn, nextGuest: r.nextGuest, clean: r.clean ? { status: r.clean.status, assignees: r.clean.assignees, label: r.clean.label } : null })),
-        arrivals: slim(sheet.arrivals, 60, (r: any) => ({ unit: r.unit, building: r.building, guest: r.guest, checkInTime: r.checkInTime, nights: r.nights, status: r.status, cleanToday: r.cleanToday, lastTouch: r.lastTouch, lastTouchReason: r.lastTouchReason })),
-        vacants: slim(sheet.vacants, 40, (r: any) => ({ unit: r.unit, market: r.market, idleDays: r.idleDays, nextArrival: r.nextArrival, daysUntilArrival: r.daysUntilArrival })),
-        glitches: slim(sheet.glitches, 30, (g: any) => ({ unit: g.unit, overview: g.overview || g.issue, status: g.status })),
-        inspections: slim(sheet.inspections, 20, (i: any) => ({ unit: i.unit, cleaner: i.cleaner, rating: i.rating, follow_up: i.follow_up })),
+        // Exceptions arrive high-severity first and vacants soonest-arrival first: their order is kept.
+        exceptions: slim('exceptions', sheet.exceptions, null, (e: any) => ({ kind: e.kind, unit: e.unit, detail: e.detail, action: e.action, severity: e.severity })),
+        departures: slim('departures', sheet.departures, depRank, (r: any) => ({ unit: r.unit, building: r.building, guest: r.guest, checkOutTime: r.checkOutTime, status: r.status, sameDayTurn: r.sameDayTurn, nextGuest: r.nextGuest, clean: r.clean ? { status: r.clean.status, assignees: r.clean.assignees, label: r.clean.label } : null })),
+        arrivals: slim('arrivals', sheet.arrivals, arrRank, (r: any) => ({ unit: r.unit, building: r.building, guest: r.guest, checkInTime: r.checkInTime, nights: r.nights, status: r.status, cleanToday: r.cleanToday, lastTouch: r.lastTouch, lastTouchReason: r.lastTouchReason })),
+        vacants: slim('vacants', sheet.vacants, null, (r: any) => ({ unit: r.unit, market: r.market, idleDays: r.idleDays, nextArrival: r.nextArrival, daysUntilArrival: r.daysUntilArrival })),
+        glitches: slim('glitches', sheet.glitches, null, (g: any) => ({ unit: g.unit, overview: g.overview || g.issue, status: g.status })),
+        inspections: slim('inspections', sheet.inspections, null, (i: any) => ({ unit: i.unit, cleaner: i.cleaner, rating: i.rating, follow_up: i.follow_up })),
+        more: Object.keys(more).length ? more : undefined,
         audit: sheet.audit,
-        note: 'Counts come from the same builder the /plan board renders, so these numbers match what the team sees.',
+        note: 'Counts come from the same builder the /plan board renders, so these numbers match what the team sees.'
+          + (Object.keys(more).length ? ' Each list shows at most 25, worst first; `more` says how many were left out — say the list is partial, and filter by market or ask about one unit for the rest.' : ''),
       }
     },
   },
