@@ -425,7 +425,7 @@ export async function runSchedulerShadow(opts: { force?: boolean; preview?: bool
       const text = `*Shadow scheduler — week's scorecard*\nMy plan beat the real schedule on ${recent.filter(d => d.score!.win).length} of ${recent.length} days this week (${r.wins} of the last ${r.scored} overall; ${r.needed} of ${r.window} makes me ready to propose).\n` +
         recent.map(d => `• ${d.plan.date}: ${d.score!.win ? '✓' : '✗'} ${d.score!.why}`).join('\n') +
         (r.ready ? `\n*Ready.* From tomorrow the 7am plan carries my suggested assignments for the unowned cleans; nothing is assigned without a ✅.` : `\nStill learning — no assignments proposed yet.`)
-      const gate = await agentAllowed('slack_post')
+      const gate = await agentAllowed('slack_post', { ask: true })
       const rr = await stepDown(gate, { action: 'slack_post', summary: `shadow scheduler weekly readout (${r.wins}/${r.scored})`, exec: { channel: EVE_CHANNELS.approvals, channel_name: 'vr-eve', text }, by: 'cron:scheduler-shadow' },
         async () => { const p = await postToChannel(EVE_CHANNELS.approvals, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
       if (rr.ok && rr.mode !== 'observe') { st.lastReadout = today; out.readout = rr.mode }

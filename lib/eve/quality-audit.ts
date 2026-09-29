@@ -196,7 +196,7 @@ export async function runQualityAudit(opts: { by?: string; post?: boolean } = {}
   let posted = 'skipped'
   if (opts.post !== false && findings.length) {
     const text = `*Quality this week* — ${clip(parsed.headline, 200)}\n` + findings.map((f: any, i: number) => `${i + 1}. *${f.title}* — ${f.root_cause} → ${f.action} (${f.owner}; watch ${lc(f.metric).replace(/_/g, ' ')} ${f.expect_direction})`).join('\n') + `\nFull evidence on /command → Eve → Recommendations. Accept or reject each there; I grade them in 3 weeks.`
-    const gate = await agentAllowed('slack_post')
+    const gate = await agentAllowed('slack_post', { ask: true })
     const r = await stepDown(gate, { action: 'slack_post', summary: `quality audit in #leadership (${findings.length} findings)`, exec: { channel: EVE_CHANNELS.leadership, channel_name: 'leadership', text }, by: opts.by || 'cron:quality-audit' },
       async () => { const p = await postToChannel(EVE_CHANNELS.leadership, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
     posted = r.mode + (r.ok ? '' : ` (${r.error || gate.reason})`)

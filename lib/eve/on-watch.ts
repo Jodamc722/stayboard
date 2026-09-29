@@ -382,7 +382,7 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     const shown = rows.slice(0, MAX_LINES)
     const more = rows.length > shown.length ? `\n…and ${rows.length - shown.length} more. Ask me for the list.` : ''
     const text = `${head}\n${shown.map(([, f]) => `• ${f.line}`).join('\n')}${more}${tail ? '\n' + tail : ''}`
-    const gate = await agentAllowed('slack_post')
+    const gate = await agentAllowed('slack_post', { ask: true })
     const r = await stepDown(gate, { action: 'slack_post', summary: `on watch · ${room}: ${rows.length} item${rows.length === 1 ? '' : 's'}`, exec: { channel, text }, by: 'cron:on-watch' },
       async () => { const p = await postToChannel(channel, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
     if (r.mode !== 'act') out.notes.push(`${room} ${r.mode}: ${gate.reason}`)
