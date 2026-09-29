@@ -19,6 +19,7 @@ import { roomsFor, totalItems, mergeChecklist, FFE_ROOMS, FFE_ACTIONS, BUYS, typ
 import { ffePortfolio, type FfeUnit } from '@/lib/ffe-portfolio'
 import { isLiveStay } from '@/lib/stay-status'
 import { unitCode, buildingCode, ownerCode, resolveCode } from '@/lib/ffe-links'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
@@ -69,11 +70,14 @@ async function todayStatus(db: any, ids: string[]): Promise<Record<string, strin
   if (!ids.length) return out
   const today = ymd(new Date())
   try {
-    const { data } = await db.from('guesty_reservations')
+    // Paged in id order: every stay touching today, inquiries and cancellations included (filtered
+    // below), can pass 1,000 across the portfolio.
+    const res = await pageRows((a, b) => db.from('guesty_reservations')
       .select('listing_id,check_in,check_out,status')
-      .in('listing_id', ids).lte('check_in', today).gte('check_out', today).limit(3000)
+      .in('listing_id', ids).lte('check_in', today).gte('check_out', today).order('id').range(a, b), 3)
+    if (res.truncated) console.error('[ffe] today-status read incomplete — some units may read vacant')
     for (const id of ids) out[id] = 'vacant'
-    for (const r of ((data || []) as any[])) {
+    for (const r of res.rows) {
       if (!isLiveStay(r.status)) continue
       const id = String(r.listing_id)
       const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
@@ -107,9 +111,14 @@ async function progress(db: any, ids: string[]) {
   let setupRequired = false
   if (!ids.length) return { answered, toOrder, done, roomsChecked, setupRequired }
   try {
-    const { data, error } = await db.from('ffe_answers').select('listing_id,answer').in('listing_id', ids).limit(20000)
-    if (error && isMissingTable(error.message)) setupRequired = true
-    for (const a of ((data || []) as any[])) {
+    // Every answer, paged in id order (counted per unit below), bounded at 5 pages on a page load.
+    // The query's own error is kept so a missing table still reads as "not set up yet".
+    let readErr = ''
+    const ans = await pageRows((a, b) => db.from('ffe_answers').select('listing_id,answer').in('listing_id', ids).order('id').range(a, b)
+      .then((r: any) => { if (r.error) readErr = String(r.error.message || ''); return r }), 5)
+    if (readErr && isMissingTable(readErr)) setupRequired = true
+    else if (ans.truncated) console.error('[ffe] findings read incomplete — some units show fewer findings than they have')
+    for (const a of ans.rows) {
       const id = String(a.listing_id)
       answered[id] = (answered[id] || 0) + 1
       if (BUYS.includes(str(a.answer))) toOrder[id] = (toOrder[id] || 0) + 1
@@ -121,9 +130,11 @@ async function progress(db: any, ids: string[]) {
   } catch { /* optional */ }
   // Absent before migration 040 — every unit then reads zero rooms checked, which is true.
   try {
-    const { data } = await db.from('ffe_room_status')
-      .select('listing_id,checked_at').in('listing_id', ids).not('checked_at', 'is', null).limit(20000)
-    for (const s of ((data || []) as any[])) {
+    // One row per (unit, room), paged in key order — a few rooms a unit passes 1,000 portfolio-wide.
+    const rs = await pageRows((a, b) => db.from('ffe_room_status')
+      .select('listing_id,checked_at').in('listing_id', ids).not('checked_at', 'is', null).order('listing_id').order('room').range(a, b), 5)
+    if (rs.truncated) console.error('[ffe] rooms-checked read incomplete — some units show fewer rooms checked')
+    for (const s of rs.rows) {
       const id = String(s.listing_id)
       roomsChecked[id] = (roomsChecked[id] || 0) + 1
     }
