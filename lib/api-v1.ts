@@ -5,11 +5,13 @@
 // never writes; a key cannot reach anything else because nothing else looks for one.
 import 'server-only'
 import { NextResponse } from 'next/server'
-import { getAccess, type Access } from './access'
+import { getAccess, canSeeMoney, type Access } from './access'
 import { atLeast } from './features'
 import { keyFromRequest, accessForApiKey } from './api-keys'
 
-export type V1Gate = { ok: true; access: Access; viaKey: boolean } | { ok: false; res: NextResponse }
+// `canMoney`: may this caller read dollar amounts (lib/access canSeeMoney — the owner, or someone Jon
+// switched on at /users → Dollar amounts). Every handler drops money fields when it is false.
+export type V1Gate = { ok: true; access: Access; viaKey: boolean; canMoney: boolean } | { ok: false; res: NextResponse }
 
 export async function v1Gate(req: Request, feature: string): Promise<V1Gate> {
   let access: Access | null = null, viaKey = false
@@ -29,13 +31,15 @@ export async function v1Gate(req: Request, feature: string): Promise<V1Gate> {
   if (!viaKey && feature !== 'me' && !atLeast(access.levels[feature], 'view')) {
     return { ok: false, res: NextResponse.json({ error: 'forbidden', message: `This key's owner has no access to ${feature}.` }, { status: 403 }) }
   }
-  return { ok: true, access, viaKey }
+  // DOLLARS FOLLOW THE PERSON (2026-09-28 audit, B-12). "An approved key reads everything" is about
+  // features; it never reads more money than its owner could see in the app.
+  return { ok: true, access, viaKey, canMoney: canSeeMoney(access) }
 }
 
 export const V1_ENDPOINTS: { path: string; feature: string; what: string; params?: string }[] = [
   { path: '/api/v1/me', feature: 'me', what: 'Who this key acts as, and the features it can read.' },
   { path: '/api/v1/listings', feature: 'listings', what: 'Active listings: id, name, building, city, bedrooms, status.' },
-  { path: '/api/v1/reservations', feature: 'reservations', what: 'Reservations by check-in date.', params: 'from=YYYY-MM-DD&to=YYYY-MM-DD (default: today → +14d), building=' },
+  { path: '/api/v1/reservations', feature: 'reservations', what: 'Reservations by check-in date. Total / paid / balance only when the key’s owner has dollar access.', params: 'from=YYYY-MM-DD&to=YYYY-MM-DD (default: today → +14d), building=' },
   { path: '/api/v1/arrivals', feature: 'reservations', what: 'Arrivals on one day.', params: 'date=YYYY-MM-DD (default today)' },
   { path: '/api/v1/departures', feature: 'reservations', what: 'Departures on one day.', params: 'date=YYYY-MM-DD (default today)' },
   { path: '/api/v1/glitches', feature: 'glitches', what: 'Guest issues.', params: 'status=open|closed|all (default open), since=YYYY-MM-DD' },
@@ -50,7 +54,13 @@ export const ymd = (v: any, d: string) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v |
 export const shift = (ymdStr: string, n: number) => { const d = new Date(ymdStr + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
 export const json = (data: any, extra: Record<string, any> = {}) => NextResponse.json({ ok: true, ...extra, data }, { headers: { 'Cache-Control': 'private, no-store' } })
 
-// One reservation, the way every v1 handler returns it.
+// One reservation, the way every v1 handler returns it. A factory rather than a plain mapper so it
+// can never be handed to .map() without the money decision (.map would pass the index as arg 2).
+// Without `canMoney` the dollar fields are absent, not zero.
 import { buildingOf } from './segments'
 export const RES_SEL = 'id,listing_id,listing_name,guest_name,check_in,check_out,nights,status,source,confirmation_code,money_total,money_paid,money_balance,money_currency'
-export const shapeReservation = (r: any) => ({ id: r.id, listingId: r.listing_id, listing: r.listing_name, building: buildingOf(null, r.listing_name), guest: r.guest_name, checkIn: r.check_in, checkOut: r.check_out, nights: r.nights, status: r.status, source: r.source, confirmation: r.confirmation_code, total: r.money_total, paid: r.money_paid, balance: r.money_balance, currency: r.money_currency })
+export const reservationShaper = (canMoney: boolean) => (r: any) => {
+  const out: Record<string, any> = { id: r.id, listingId: r.listing_id, listing: r.listing_name, building: buildingOf(null, r.listing_name), guest: r.guest_name, checkIn: r.check_in, checkOut: r.check_out, nights: r.nights, status: r.status, source: r.source, confirmation: r.confirmation_code }
+  if (canMoney) { out.total = r.money_total; out.paid = r.money_paid; out.balance = r.money_balance; out.currency = r.money_currency }
+  return out
+}
