@@ -27,6 +27,11 @@ import { askQuestion } from './questions'
 import { agentAllowed, recordAgentAction } from './agent-mode'
 
 const GBASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
+// AN EXAMPLE ONLY FOR A FIELD THAT CANNOT HOLD A SECRET (2026-09-28 audit, F1). guesty_fields used to
+// show the first filled value of EVERY field as `example` — for the door-code field that was a live
+// code, on every surface. Now only fields on this allow-list show one; the rest show how often they
+// are filled, never what they say.
+const SAFE_EXAMPLE_FIELD = /^(?:guest order form\s*\d*|order form|guidebook(?: link)?|bedrooms?|bathrooms?|beds?|floor|view|building|hub|market|zone|listing type|unit type|square (?:feet|footage)|sq\.? ?ft\.?|max guests|pets?(?: allowed| policy)?|pool|gym|elevator|laundry|trash (?:day|pickup)|check.?in time|check.?out time)$/i
 // What guesty_live may read with a raw path (first segment). Objects Eve already reasons about.
 const GUESTY_LIVE_PREFIXES = ['reservations', 'listings', 'calendar', 'availability-pricing', 'reviews', 'guests-crud', 'guests', 'custom-fields', 'tasks-open-api', 'owners']
 
@@ -601,14 +606,16 @@ export const CORE_TOOLS: EveTool[] = [
             fill[key].filled++
             if (!fill[key].sample) fill[key].sample = String(v).slice(0, 40)
           }
-          if (isTarget && has) oneUnit.fields.push({ field: nm, value: String(v).slice(0, 120) })
+          // {name, value} — the shape the redactor recognises as a custom field (it was {field, value},
+          // which it did not, so a code field on one unit went out whole).
+          if (isTarget && has) oneUnit.fields.push({ name: nm, field_id: id || undefined, value: String(v).slice(0, 120) })
         }
       }
       let rows = Object.keys(fill).map(k => ({
         field: fill[k].name, field_id: k,
         filled_on_units: fill[k].filled,
         coverage_pct: scanned ? Math.round((fill[k].filled / scanned) * 100) : 0,
-        example: fill[k].sample,
+        example: SAFE_EXAMPLE_FIELD.test(fill[k].name.trim()) ? fill[k].sample : undefined,
       })).sort((a, b) => b.filled_on_units - a.filled_on_units)
       if (input?.query) rows = rows.filter(r => has(r.field, input.query))
       if (input?.populated_only) rows = rows.filter(r => r.filled_on_units > 0)
@@ -758,6 +765,14 @@ export const RELOCATED = {
       const l: any = (data || [])[0]
       if (!l) return { error: 'listing not found' }
       const raw = l.raw || {}; const terms = raw.terms || {}
+      // FIELD NAMES FROM THE DEFINITIONS (2026-09-28 audit, F1). A listing's customFields are
+      // {fieldId, value} with no name, so this used to emit {name: undefined, value} — a row the
+      // redactor could neither name nor place. Each entry now carries its field id and its name.
+      const cfNames: Record<string, string> = {}
+      try {
+        const { data: defs } = await ctx.db.from('guesty_custom_fields').select('id,name').order('id').limit(500)
+        for (const d of ((defs as any[]) || [])) cfNames[String(d.id)] = String(d.name || '')
+      } catch { /* names stay blank; the ids still redact */ }
       const ints = Array.isArray(raw.integrations) ? raw.integrations : []
       const intField = (k: string) => {
         for (const it of ints) {
@@ -779,7 +794,10 @@ export const RELOCATED = {
         address: l.address_full || raw?.address?.full || l.address_city || null,
         has_checkin_instructions: !!(raw.checkInInstructions || raw?.publicDescription?.access),
         house_rules: String(raw?.publicDescription?.houseRules || '').slice(0, 400),
-        custom_fields: Array.isArray(raw.customFields) ? raw.customFields.map((c: any) => ({ name: c?.fieldId?.name || c?.name, value: typeof c?.value === 'string' ? c.value.slice(0, 160) : c?.value })).slice(0, 40) : [],
+        custom_fields: Array.isArray(raw.customFields) ? raw.customFields.map((c: any) => {
+          const fid = String(c?.fieldId?._id || c?.fieldId?.id || (typeof c?.fieldId === 'string' ? c.fieldId : '') || '')
+          return { name: c?.fieldId?.name || c?.name || cfNames[fid] || null, field_id: fid || undefined, value: typeof c?.value === 'string' ? c.value.slice(0, 160) : c?.value }
+        }).slice(0, 40) : [],
       }
     },
   } as EveTool,

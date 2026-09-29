@@ -10,7 +10,7 @@
 // extra turn on the first deep question of a thread; benefit is she picks from twelve, then six.
 import 'server-only'
 import { redactMoney } from '@/lib/money'
-import { redactSensitive } from './redact'
+import { redactSensitive, isCodeFieldName } from './redact'
 import type { EveTool, EveDomain } from './types'
 import { wireShape, obj, S } from './types'
 import type { EveCtx } from './ctx'
@@ -94,6 +94,22 @@ export function domainOfTool(name: string): string | null {
 
 export type ToolRunResult = { output: any; opened?: string }
 
+// THE CODE FIELDS BY ID (2026-09-28 audit, F1). A raw Guesty entry is {fieldId, value} with no name
+// beside it, so a field called "Salto code" or "Lockbox" was invisible to the redactor unless its id
+// was one of the two it already knew. The ids of every field whose NAME marks it as a code are read
+// from the definitions mirror (a few dozen rows) once every ten minutes and handed to redactSensitive.
+let _codeIds: { at: number; ids: string[] } | null = null
+async function codeFieldIds(ctx: EveCtx): Promise<string[]> {
+  if (_codeIds && Date.now() - _codeIds.at < 10 * 60_000) return _codeIds.ids
+  try {
+    const { data, error } = await ctx.db.from('guesty_custom_fields').select('id,name,slug').order('id').limit(500)
+    if (error) throw error
+    const ids = ((data as any[]) || []).filter(d => isCodeFieldName(d?.name) || isCodeFieldName(d?.slug)).map(d => String(d.id))
+    _codeIds = { at: Date.now(), ids }
+    return ids
+  } catch { return _codeIds ? _codeIds.ids : [] }
+}
+
 /**
  * Run a tool with the money gate applied. Rule 4: redaction happens HERE, before the output is
  * serialized into the conversation — not in the UI, where the model has already seen the number.
@@ -125,7 +141,7 @@ export async function runTool(name: string, input: any, ctx: EveCtx, open: strin
     // of door / access codes except the door-code tool's own, which returns a code only when the
     // per-person policy in lib/eve/door-code.ts says it may.
     const raw = await tool.run(input || {}, ctx)
-    const out = tool.name === 'door_code_check' ? raw : redactSensitive(raw)
+    const out = tool.name === 'door_code_check' ? raw : redactSensitive(raw, { codeFieldIds: await codeFieldIds(ctx) })
     if (tool.money && !ctx.canMoney) {
       return { output: { ...redactMoney(out), _money_redacted: 'Dollar amounts are hidden for this user. Occupancy, counts, minutes and percentages are still accurate; ADR and RevPAR are dollar figures and are hidden too. Do not guess at the hidden numbers.' } }
     }
