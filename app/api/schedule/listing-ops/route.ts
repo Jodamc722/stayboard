@@ -89,7 +89,7 @@ const GENERIC_CHECKS = [
   'Confirm entry codes and building access work',
 ]
 
-export type FocusRow = {
+type FocusRow = {
   item: string
   because: string          // the guest's words, or the glitch overview
   source: 'review' | 'glitch'

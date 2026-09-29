@@ -36,7 +36,7 @@ const dISO = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: TZ })
 //               Null when Homebase carries no such tag: see agencyFromText.
 //
 // Nothing here is stored. A raise entered in Homebase shows up on the next page load.
-export type RosterPerson = {
+type RosterPerson = {
   name: string
   wageRate: number | null
   role: string | null

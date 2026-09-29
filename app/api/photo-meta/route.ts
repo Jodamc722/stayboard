@@ -25,7 +25,7 @@ export const dynamic = 'force-dynamic'
 // One taxonomy. It was previously written out in five places that had already drifted — the model
 // enum, the server sort ranks, the card dropdown, a different set of ranks in the bulk panel, and
 // Eve's own vision table. This is the list the UI and this route agree on.
-export const PHOTO_CATEGORIES = [
+const PHOTO_CATEGORIES = [
   'living', 'kitchen', 'dining', 'bedroom', 'bathroom',
   'outdoor', 'view', 'amenity', 'exterior', 'detail', 'other',
 ] as const

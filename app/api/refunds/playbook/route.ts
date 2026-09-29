@@ -17,7 +17,7 @@ import { solveAll, checkScenarios } from '@/lib/refund-scenarios'
 
 export const dynamic = 'force-dynamic'
 
-export const AUTHORITY_KEY = 'refund_authority'
+const AUTHORITY_KEY = 'refund_authority'
 
 export async function GET(req: NextRequest) {
   const access = await getAccess()

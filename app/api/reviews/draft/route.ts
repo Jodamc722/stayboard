@@ -84,7 +84,7 @@ Output ONLY the final reply text, ready to post. No preamble, no quotes around i
  * Possessives are rewritten to "our" ("our host's communication" -> "our communication") rather than
  * to "our team's", because the shorter form is what a tight reply actually wants.
  */
-export function weNotThem(s: string): string {
+function weNotThem(s: string): string {
   let t = String(s == null ? '' : s)
   const rules: [RegExp, string][] = [
     // Possessive first — otherwise the plain-noun rules eat the apostrophe form.

@@ -7,13 +7,13 @@ import { sendGmail } from '@/lib/gmail-send'
 
 export const dynamic = 'force-dynamic'
 
-export const SALATO_NOTIFY_KEY = 'salato_verify_notify'
+const SALATO_NOTIFY_KEY = 'salato_verify_notify'
 type NotifyCfg = { emails: string; enabled: boolean; from?: string; cc?: string }
 const DEFAULT_FROM = 'jon@stay-hospitality.com'
 const DEFAULT_CFG: NotifyCfg = { emails: '', enabled: true, from: DEFAULT_FROM, cc: '' }
 
 // Split a free-text list ("a@x.com, b@y.com; c@z.com") into clean, de-duped, valid-looking emails.
-export function parseEmails(s: string): string[] {
+function parseEmails(s: string): string[] {
   const out: string[] = []
   const seen: Record<string, boolean> = {}
   const parts = String(s || '').split(/[,;\s]+/)

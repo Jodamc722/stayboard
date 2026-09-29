@@ -23,7 +23,7 @@ export const dynamic = 'force-dynamic'
 const str = (v: any) => (typeof v === 'string' ? v.trim() : '')
 const like = (q: string) => '%' + q.replace(/[%_]/g, ' ') + '%'
 
-export type Hit =
+type Hit =
   | { kind: 'building'; id: string; label: string; sub: string; unitIds: string[] }
   | { kind: 'listing'; id: string; label: string; sub: string; building: string | null }
   | { kind: 'reservation'; id: string; label: string; sub: string; listingId: string; checkIn: string; checkOut: string; status: string }
