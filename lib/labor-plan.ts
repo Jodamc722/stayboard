@@ -121,18 +121,32 @@ function calFor(cal: Calibration, marketKey: string): MarketCal {
 // ---------------------------------------------------------------------------
 // Demand: confirmed in-house checkouts per day and market for a date range.
 // Same rules as /api/schedule/forecast: LIVE statuses, one clean per unit/day.
+//
+// ONE READ, TWO SHAPES (2026-09-28). The staffing forecast (lib/forecast/staffing) needs each
+// checkout's unit — its size and where it is — to price the day in minutes; this planner needs the
+// counts. Both come from forwardCheckoutUnits, so the two can never disagree about what is booked.
 // ---------------------------------------------------------------------------
-export async function forwardCheckouts(from: string, to: string): Promise<Record<string, Record<string, number>>> {
+export type CheckoutUnit = {
+  listingId: string; date: string
+  /** 'Miami' | 'Broward' | 'North' — lib/segments. */
+  market: string
+  name: string; building: string | null; bedrooms: number | null; lat: number | null; lng: number | null
+}
+export async function forwardCheckoutUnits(from: string, to: string): Promise<CheckoutUnit[]> {
   const db = supabaseAdmin()
   const VENDOR = vendorRegex((await getOpsPresets()).vendorBuildings)
-  const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(5000)
-  const meta: Record<string, { market: string; vendor: boolean }> = {}
+  const { data: listings } = await db.from('guesty_listings')
+    .select('id,nickname,title,building,address_city,bedrooms,lat:raw->address->>lat,lng:raw->address->>lng').order('id').limit(5000)
+  const meta: Record<string, { market: string; vendor: boolean; name: string; building: string | null; bedrooms: number | null; lat: number | null; lng: number | null }> = {}
+  const numOr = (v: any) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v))
   for (const l of (listings || []) as any[]) {
     const name = l.nickname || l.title || 'Unit'
     const building = String(l.building || '')
     meta[String(l.id)] = {
-      market: String(marketOf(building, l.address_city, name) || 'Miami').toLowerCase(),
+      market: String(marketOf(building, l.address_city, name) || 'Miami'),
       vendor: VENDOR.test(building) || VENDOR.test(String(name)),
+      name: String(name), building: building || null,
+      bedrooms: numOr(l.bedrooms), lat: numOr(l.lat), lng: numOr(l.lng),
     }
   }
   const rows: any[] = []
@@ -147,7 +161,7 @@ export async function forwardCheckouts(from: string, to: string): Promise<Record
     if (data.length < 1000) break
   }
   const seen = new Set<string>()
-  const byDay: Record<string, Record<string, number>> = {}
+  const out: CheckoutUnit[] = []
   for (const r of rows) {
     if (!LIVE.test(String(r.status || ''))) continue
     const id = String(r.listing_id)
@@ -158,8 +172,17 @@ export async function forwardCheckouts(from: string, to: string): Promise<Record
     seen.add(key)
     const m = meta[id]
     if (!m || m.vendor) continue                 // vendor buildings: their crews, their cost
-    if (!byDay[date]) byDay[date] = {}
-    byDay[date][m.market] = (byDay[date][m.market] || 0) + 1
+    out.push({ listingId: id, date, market: m.market, name: m.name, building: m.building, bedrooms: m.bedrooms, lat: m.lat, lng: m.lng })
+  }
+  return out
+}
+
+export async function forwardCheckouts(from: string, to: string): Promise<Record<string, Record<string, number>>> {
+  const byDay: Record<string, Record<string, number>> = {}
+  for (const u of await forwardCheckoutUnits(from, to)) {
+    const mk = u.market.toLowerCase()
+    if (!byDay[u.date]) byDay[u.date] = {}
+    byDay[u.date][mk] = (byDay[u.date][mk] || 0) + 1
   }
   return byDay
 }
