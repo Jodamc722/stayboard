@@ -43,6 +43,9 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
+  // The save landed but a side effect did not — e.g. a disabled person's login could not be signed
+  // out (app/api/users setBan). Said in amber, next to the success, never swallowed.
+  const [warn, setWarn] = useState<string | null>(null)
   const [open, setOpen] = useState<string | null>(null)
   const [q, setQ] = useState('')
   // add form
@@ -68,7 +71,7 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
   useEffect(() => { load() }, [])
 
   async function invite(e: React.FormEvent) {
-    e.preventDefault(); setBusy(true); setError(null); setMsg(null)
+    e.preventDefault(); setBusy(true); setError(null); setMsg(null); setWarn(null)
     try {
       const body: any = { email, password: password || undefined }
       if (rolesReady) { body.role = addRole === 'admin' ? 'admin' : 'member'; body.access_role = addRole }
@@ -77,16 +80,18 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to add user.')
       if (j.password) setMsg(j.password.passwordSet ? `Login created for ${j.email}. Share the email + password with them securely — they can sign in right away.` : (j.password.note || `Access granted to ${j.email}.`))
       else setMsg(j.invite?.sent ? `Invite sent to ${j.email}. They'll set a password from the email.` : (j.invite?.note || `Access granted to ${j.email}.`))
+      if (j.warning) setWarn(String(j.warning))
       setEmail(''); setPassword(''); load()
     } catch (e: any) { setError(e.message || String(e)) } finally { setBusy(false) }
   }
 
   async function patch(email: string, body: any, okMsg?: string) {
-    setError(null); setMsg(null)
+    setError(null); setMsg(null); setWarn(null)
     try {
       const r = await fetch('/api/users', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, ...body }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to update.')
       if (okMsg) setMsg(okMsg)
+      if (j.warning) setWarn(String(j.warning))
       load()
     } catch (e: any) { setError(e.message || String(e)); load() }
   }
@@ -100,7 +105,7 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
 
   async function del(email: string) {
     if (!window.confirm(`Remove ${email}? This deletes their access AND their login account. They will no longer be able to sign in. This cannot be undone.`)) return
-    setError(null); setMsg(null)
+    setError(null); setMsg(null); setWarn(null)
     try {
       const r = await fetch('/api/users', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to delete user.')
@@ -160,6 +165,7 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
 
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
       {msg && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-[13px] text-emerald-700 flex items-center gap-2"><Check size={14} /> {msg}</div>}
+      {warn && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[13px] text-amber-800 flex items-center gap-2"><AlertTriangle size={14} /> {warn}</div>}
 
       <div className="rounded-2xl border border-line bg-white overflow-hidden">
         {/* Title + a 224px search box did not fit on a 375px screen: the box ran off the card. */}
