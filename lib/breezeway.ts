@@ -50,10 +50,13 @@ try { await supabaseAdmin().from('breezeway_token_cache').upsert({ id: 1, token,
 }
 
 // RATE LIMITS AND HUNG CALLS (2026-09-28 cron audit, #4/#5). Every call gives up after 20s (a
-// read is retried once first — lib/fetch-timeout), and a 429 is retried up to three times, waiting
-// what Breezeway's Retry-After asks (capped at 10s) or 1s/2s/4s when it does not say. A 429 means
-// the request was refused, not performed, so retrying it is safe for any method.
+// read is retried once first — lib/fetch-timeout). A 429 on a READ is retried up to three times,
+// waiting what Breezeway's Retry-After asks or 1s/2s/4s when it does not say — never more than 5s
+// a wait. A 429 on a WRITE is returned at once (2026-09-29 review, R1-8): writes come from
+// interactive routes (assign, create, cancel) where a person is waiting on the button, and up to
+// half a minute of silent retries read as a hung app; the 429 comes straight back instead.
 const BZ_429_RETRIES = 3
+const BZ_429_MAX_WAIT_MS = 5_000
 export async function bzApi(path: string, init?: RequestInit): Promise<{ ok: boolean; status: number; data: any; text: string }> {
   const token = await getBreezewayToken()
   const method = String(init?.method || 'GET').toUpperCase()
@@ -64,8 +67,8 @@ export async function bzApi(path: string, init?: RequestInit): Promise<{ ok: boo
     cache: 'no-store',
   }, { label })
   let r = await send()
-  for (let attempt = 0; r.status === 429 && attempt < BZ_429_RETRIES; attempt++) {
-    const wait = Math.min(retryAfterMs(r.headers.get('retry-after')) ?? 1000 * Math.pow(2, attempt), 10_000)
+  for (let attempt = 0; method === 'GET' && r.status === 429 && attempt < BZ_429_RETRIES; attempt++) {
+    const wait = Math.min(retryAfterMs(r.headers.get('retry-after')) ?? 1000 * Math.pow(2, attempt), BZ_429_MAX_WAIT_MS)
     await r.text().catch(() => '')   // release the connection before waiting
     await new Promise(res => setTimeout(res, wait))
     r = await send()
