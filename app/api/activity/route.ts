@@ -46,16 +46,47 @@ export async function GET(req: NextRequest) {
   const db = supabaseAdmin()
   try {
     let sel = db.from('user_activity').select('at,email,kind,path,feature,need,allowed,meta')
-      .gte('at', since).order('at', { ascending: false }).limit(1000)
+      .gte('at', since).order('at', { ascending: false }).limit(1000) // deliberate cap: newest-first feed (the tab lists the newest 400); picker + totals below cover the whole window
     if (email) sel = sel.eq('email', email)
     const { data, error } = await sel
     if (error) {
       const missing = /relation .*user_activity.* does not exist|could not find the table/i.test(error.message)
       return NextResponse.json({ ok: false, needsMigration: missing, error: error.message, rows: [] })
     }
-    // Who has activity in the window, for the user picker.
-    const users = Array.from(new Set(((data || []) as any[]).map(r => String(r.email)))).sort()
-    return NextResponse.json({ ok: true, rows: data || [], users, days })
+    const rows = (data || []) as any[]
+    // THE FEED IS ONLY THE NEWEST 1,000 ROWS — on a busy week, a few hours. When it was cut off, the
+    // user picker and the totals are worked out over the WHOLE window instead of from those rows
+    // (2026-09-29: the picker listed only whoever was active in the last few hours, and the counts
+    // topped out at 1,000, whatever window was picked).
+    const capped = rows.length >= 1000
+    const feedUsers = Array.from(new Set(rows.map(r => String(r.email))))
+    let users = feedUsers
+    if (capped && !email) {
+      // Anyone on the allowlist missing from the feed: one indexed one-row probe each (email, at).
+      const { data: people } = await db.from('app_users').select('email')
+      const extra = Array.from(new Set(((people || []) as any[]).map(p => String(p.email || '').trim().toLowerCase())))
+        .filter(e => !!e && feedUsers.indexOf(e) < 0)
+      const probes = await Promise.all(extra.map(e => db.from('user_activity').select('id').eq('email', e).gte('at', since).limit(1)))
+      users = feedUsers.concat(extra.filter((_, i) => (((probes[i] as any).data || []) as any[]).length > 0))
+    }
+    users.sort()
+    // "N screens · M actions · K refused": exact counts when the feed was cut off (null if a count
+    // fails), otherwise straight from the rows, which are then the whole window.
+    const count = async (f: (q: any) => any): Promise<number | null> => {
+      let q: any = db.from('user_activity').select('id', { count: 'exact', head: true }).gte('at', since)
+      if (email) q = q.eq('email', email)
+      const { count: n, error: cErr } = await f(q)
+      return cErr ? null : (n ?? 0)
+    }
+    let totals: { pages: number; apis: number; refused: number } | null = {
+      pages: rows.filter(r => r.kind === 'page').length, apis: rows.filter(r => r.kind === 'api').length,
+      refused: rows.filter(r => r.allowed === false).length,
+    }
+    if (capped) {
+      const [pages, apis, refused] = await Promise.all([count(q => q.eq('kind', 'page')), count(q => q.eq('kind', 'api')), count(q => q.eq('allowed', false))])
+      totals = pages == null || apis == null || refused == null ? null : { pages, apis, refused }
+    }
+    return NextResponse.json({ ok: true, rows, users, days, totals, capped })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200), rows: [] }, { status: 500 })
   }
