@@ -24,6 +24,7 @@
 // are — the rate and money tiles compare SETTLED days (see buildScoreboard).
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 import { getSetting } from '@/lib/app-settings'
 import { getLaborSettings } from '@/lib/labor-settings'
 import { ymdET, addDays } from '@/lib/team-schedule'
@@ -151,18 +152,20 @@ export async function buildScoreboard(): Promise<Scoreboard> {
       const [open, closed] = await Promise.all([
         sb.from('glitches').select('id,unit,status,overview,glitch_type,category,due_date,created_at,assignee')
           .not('status', 'in', '("done","resolved","closed")').order('created_at', { ascending: false }).limit(500),
-        sb.from('glitches').select('id,unit,created_at,closed_at,closed_at_estimated,status')
-          .gte('closed_at', etMidnight(monthStart)).limit(1000),
+        // Every glitch closed this month — the count and the median are computed off all of them,
+        // so this is paged in id order rather than an unordered first 1,000.
+        pageRows<any>((a, b) => sb.from('glitches').select('id,unit,created_at,closed_at,closed_at_estimated,status')
+          .gte('closed_at', etMidnight(monthStart)).order('id').range(a, b), 6),
       ])
       if (open.error) throw new Error(open.error.message)
-      if (closed.error) throw new Error(closed.error.message)
+      if (closed.truncated) throw new Error('the closed-glitch read came back short')
       // New this week / last week (same days) — a count, from created_at, so the delta is about volume.
       // Eastern-midnight bounds: a glitch logged at 9pm ET on Sunday belongs to Sunday, not Monday.
       const [cntNow, cntPrev] = await Promise.all([
         sb.from('glitches').select('id', { count: 'exact', head: true }).gte('created_at', etMidnight(weekStart)),
         sb.from('glitches').select('id', { count: 'exact', head: true }).gte('created_at', etMidnight(lastStart)).lt('created_at', etMidnight(addDays(lastSame, 1))),
       ])
-      return { open: (open.data || []) as any[], closed: (closed.data || []) as any[], newNow: cntNow.count || 0, newPrev: cntPrev.count || 0 }
+      return { open: (open.data || []) as any[], closed: closed.rows, newNow: cntNow.count || 0, newPrev: cntPrev.count || 0 }
     }),
     // THE LABOR WINDOWS ONE AFTER ANOTHER (2026-09-29 review, R1-9): each laborEconomics already fans
     // out ~18 reads, so three at once put ~54 queries in flight beside everything else on this strip.
