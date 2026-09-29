@@ -43,6 +43,7 @@ export default function SalatoShare() {
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [syncMsg, setSyncMsg] = useState('')
   const [seen, setSeen] = useState<Set<string>>(new Set())
   const seenInit = useRef(false)
 
@@ -102,9 +103,21 @@ export default function SalatoShare() {
     setSentId(r.id || null); setTimeout(() => setSentId(null), 2500)
   }
 
+  // The desk opens this on the link's passcode, not a Lighthouse login, and /api/sync/guesty is for
+  // crons and signed-in staff — it 401'd here, so Resync quietly did nothing. board-resync is the
+  // board links' own helper (this link's cookie or a login), incremental and at most every 30 min;
+  // the 5-minute reservations feed usually got there first, which is what the line then says.
   const resync = useCallback(async () => {
-    setSyncing(true)
-    try { await fetch('/api/sync/guesty?only=reservations', { method: 'POST' }) } catch {}
+    setSyncing(true); setSyncMsg('')
+    try {
+      const r = await fetch('/api/public/board-resync', { method: 'POST' })
+      const j: any = await r.json().catch(() => ({}))
+      if (r.status === 429 && j.lastSync) {
+        const mins = Math.max(0, Math.round((Date.now() - new Date(j.lastSync).getTime()) / 60000))
+        setSyncMsg('Up to date — synced ' + (mins < 1 ? 'just now' : mins + ' min ago'))
+      } else if (!r.ok || !j.ok) setSyncMsg(j.error || 'Sync failed')
+      else setSyncMsg('Synced ' + (j.synced || 0) + ' reservations')
+    } catch (e: any) { setSyncMsg(String(e?.message || e)) }
     await load()
     setSyncing(false)
   }, [load])
@@ -202,6 +215,7 @@ export default function SalatoShare() {
                 </div>
                 <h1 className='text-2xl sm:text-3xl font-bold text-white mt-1.5 tracking-tight'>Salato</h1>
                 <p className='text-xs text-neutral-400 mt-1.5'>Front desk{data?.unitCount ? ' · ' + data.unitCount + ' units' : ''}{lastUpdated ? ' · updated ' + lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''} · auto-refreshes every 30 min</p>
+                {syncMsg && <p className='text-xs text-amber-300 mt-1'>{syncMsg}</p>}
               </div>
               <div className='flex items-center gap-2 flex-wrap gap-y-2'>
                 {newCount > 0 && <button onClick={markSeen} className='text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-amber-400 text-neutral-900 hover:bg-amber-300 transition-colors'>{newCount} new</button>}
