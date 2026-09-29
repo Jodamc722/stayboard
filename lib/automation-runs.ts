@@ -92,9 +92,29 @@ export function withRouteReceipt<R extends Request>(
 
 export type LastRun = { name: string; ok: boolean; at: string; itemCount: number | null; error: string | null; ms: number | null }
 
-/** The most recent run of each named automation, in one query. */
+/**
+ * The most recent run of each named automation, in one query.
+ *
+ * Reads the `automation_last_runs` view (migration 131: one row per name, off the name index).
+ * The old read — the newest 600 receipts, first per name — only saw about a day, so weekly jobs
+ * always looked like they had never run. If the view is not there yet (migration pending) or the
+ * read fails, it falls back to that old query rather than returning nothing.
+ */
 export async function lastRuns(names?: string[]): Promise<Record<string, LastRun>> {
   const out: Record<string, LastRun> = {}
+  const take = (rows: any[]) => {
+    for (const r of rows) {
+      const n = String(r.name)
+      if (out[n]) continue          // ordered desc (fallback), so the first one we meet is the latest
+      out[n] = { name: n, ok: r.ok !== false, at: r.ran_at, itemCount: r.item_count ?? null, error: r.error ?? null, ms: r.ms ?? null }
+    }
+  }
+  try {
+    let v = supabaseAdmin().from('automation_last_runs').select('name,ok,ran_at,item_count,error,ms')
+    if (names && names.length) v = v.in('name', names)
+    const { data, error } = await v
+    if (!error) { take((data as any[]) || []); return out }
+  } catch { /* fall through to the old read */ }
   try {
     let q = supabaseAdmin().from('automation_runs')
       .select('name,ok,ran_at,item_count,error,ms')
@@ -102,11 +122,7 @@ export async function lastRuns(names?: string[]): Promise<Record<string, LastRun
       .limit(600)
     if (names && names.length) q = q.in('name', names)
     const { data } = await q
-    for (const r of ((data as any[]) || [])) {
-      const n = String(r.name)
-      if (out[n]) continue          // ordered desc, so the first one we meet is the latest
-      out[n] = { name: n, ok: r.ok !== false, at: r.ran_at, itemCount: r.item_count ?? null, error: r.error ?? null, ms: r.ms ?? null }
-    }
+    take((data as any[]) || [])
   } catch { /* no receipts yet is a real answer, not an error */ }
   return out
 }
