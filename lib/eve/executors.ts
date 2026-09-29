@@ -44,6 +44,8 @@ export type ExecCtx = {
   by: string
   /** The person, when a person was involved. */
   actor?: string | null
+  /** That person's display name, when the caller already has it (the reply box); else looked up from `actor`. */
+  actorName?: string | null
   /** True only when a human said yes to THIS action (executeProposal, the Send button). */
   human?: boolean
 }
@@ -285,17 +287,40 @@ const guest_reply_draft: Executor = async (p, ctx) => {
   return { ok: true, ref: id, summary: `drafted a ${conversationId ? 'reply' : 'review reply'} to ${str(p?.guest) || 'the guest'}${p?.unit ? ` (${str(p.unit)})` : ''} — ${where}`, undo: { kind: 'draft_discard', id } }
 }
 
-const guest_reply_send: Executor = async (p) => {
+/** The name a person's message is filed under: the caller's, their Lighthouse profile name, else the address before the @. */
+async function personName(ctx: ExecCtx): Promise<string> {
+  const given = str(ctx.actorName).trim()
+  if (given) return given
+  const actor = str(ctx.actor).trim()
+  if (actor.indexOf('@') < 0) return actor || 'Team'
+  try {
+    const { data } = await supabaseAdmin().from('app_users').select('profile').eq('email', actor.toLowerCase()).maybeSingle()
+    const pr: any = (data as any)?.profile
+    const name = str(pr && typeof pr === 'object' ? (pr.name || pr.full_name) : '').trim()
+    if (name) return name
+  } catch { /* the address will do */ }
+  return actor.split('@')[0]
+}
+
+const guest_reply_send: Executor = async (p, ctx) => {
   const { sendGuestMessage } = await import('@/lib/guesty')
   const conversationId = str(p?.conversationId || p?.conversation_id).trim()
   const body = str(p?.body || p?.draft || p?.text).trim()
   if (!conversationId || !body) return { ok: false, summary: 'need a conversation and a message', error: 'conversationId and body required' }
   const r = await sendGuestMessage(conversationId, body, { module: p?.module ? str(p.module) : undefined })
   if (!r.ok) return { ok: false, summary: `Guesty did not send the message`, error: str(r.error).slice(0, 300) }
+  // A PERSON PRESSED SEND (the reply box, or Send on an Eve draft): the mirrored message carries
+  // their name and is NOT automated, so the thread says who answered and the human response time
+  // counts it (lib/response-times). It was filed as "Eve" with no flag, and the reply box patched
+  // the row afterwards.
+  const person = ctx.human ? await personName(ctx) : null
   try {
-    await supabaseAdmin().from('guesty_messages').upsert({
-      id: r.id || `eve-${Date.now()}`, conversation_id: conversationId, sender: 'host', sender_name: 'Eve', body, sent_at: new Date().toISOString(), raw: { module: r.module, sentByEve: true },
+    const { error } = await supabaseAdmin().from('guesty_messages').upsert({
+      id: r.id || `eve-${Date.now()}`, conversation_id: conversationId, sender: 'host', sender_name: person || 'Eve', body, sent_at: new Date().toISOString(),
+      ...(person ? { is_automated: false } : {}),
+      raw: { module: r.module, sentByEve: !person, by: ctx.actor || null },
     }, { onConflict: 'id' })
+    if (error) console.error('[executors] guest_reply_send: sent, but the mirror row was not saved —', str(error.message).slice(0, 200))
   } catch { /* the next messages sync brings it back */ }
   // A sent message cannot be unsent — the receipt is the undo.
   return { ok: true, ref: r.id || conversationId, summary: `sent to the guest via ${r.module}: "${body.slice(0, 80)}"`, undo: null }

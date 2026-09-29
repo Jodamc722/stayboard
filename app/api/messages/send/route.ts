@@ -5,8 +5,9 @@
 // the reply and presses Send, and it goes through exactly the path an Eve draft's Send uses:
 // guest_reply_send with human:true (lib/eve/executors), which calls Guesty's send-message on the
 // thread's own channel, returns Guesty's message id and the module it went out on as the receipt,
-// and mirrors the message into our copy of the thread. Nothing here sends on its own: every
-// message is one person's press of Send, gated on edit access to Messages.
+// and mirrors the message into our copy of the thread under this person's name, as a human reply.
+// Nothing here sends on its own: every message is one person's press of Send, gated on edit access
+// to Messages.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -31,8 +32,11 @@ export async function POST(req: NextRequest) {
   if (cErr) return NextResponse.json({ ok: false, error: 'Could not read the conversation: ' + cErr.message }, { status: 500 })
   if (!conv) return NextResponse.json({ ok: false, error: 'That conversation is not in Lighthouse — sync, or reply in Guesty.' }, { status: 404 })
 
+  // A PERSON WROTE THIS: the executor files the mirrored message under this name, as not automated,
+  // so the thread and the human response time say so until the next sync brings Guesty's own copy.
+  const who = str((gate.access.profile as any)?.name || (gate.access.profile as any)?.full_name).trim() || actor.split('@')[0]
   const { runExecutor } = await import('@/lib/eve/executors')
-  const r = await runExecutor('guest_reply_send', { conversationId, body }, { by: 'chat', actor, human: true })
+  const r = await runExecutor('guest_reply_send', { conversationId, body }, { by: 'chat', actor, actorName: who, human: true })
   if (!r.ok) return NextResponse.json({ ok: false, error: r.error || r.summary || 'Guesty did not send the message.' }, { status: 502 })
 
   // THE RECEIPT. The executor says which Guesty module carried it ("sent to the guest via airbnb2:
@@ -41,13 +45,6 @@ export async function POST(req: NextRequest) {
   const via = (str(r.summary).match(/ via ([A-Za-z0-9_.-]+):/) || [])[1] || ''
   const at = new Date().toISOString()
 
-  // A PERSON WROTE THIS. The executor files its mirror row as "Eve" with no automation flag; this
-  // one was typed and sent by a person, so the thread (and the human response time) say so until
-  // the next sync brings Guesty's own copy back.
-  const who = str((gate.access.profile as any)?.name || (gate.access.profile as any)?.full_name).trim() || actor.split('@')[0]
-  if (r.ref && r.ref !== conversationId) {
-    try { await db.from('guesty_messages').update({ sender_name: who, is_automated: false }).eq('id', r.ref) } catch { /* cosmetic */ }
-  }
   // The thread leaves Needs reply now, not at the next guest-comms run.
   try { const { refreshConversationStats } = await import('@/lib/response-times'); await refreshConversationStats(conversationId) } catch { /* the next run catches up */ }
 
