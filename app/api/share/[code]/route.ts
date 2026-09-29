@@ -126,7 +126,7 @@ async function handle(req: NextRequest, code: string, pw: string, body?: any) {
         .select('id, listing_id, guest_name, check_in, check_out, nights, status, source, money_total, custom_fields, notes, created_at')
         .in('listing_id', idList.slice(0, 400))
         .gte('check_out', since).lte('check_in', until)
-        .order('check_in').range(i * 1000, i * 1000 + 999)
+        .order('check_in').order('id').range(i * 1000, i * 1000 + 999)
       res = res.concat(page || [])
       if (!page || page.length < 1000) break
     }
@@ -192,7 +192,7 @@ async function handle(req: NextRequest, code: string, pw: string, body?: any) {
         .select('listing_id, guest_id, guest_name, guest_email, guest_phone, check_in, check_out, nights, status, source, money_total')
         .in('listing_id', idList.slice(0, 400))
         .gte('check_in', twoYears)
-        .order('check_in', { ascending: false }).range(i * 1000, i * 1000 + 999)
+        .order('check_in', { ascending: false }).order('id').range(i * 1000, i * 1000 + 999)
       ares = ares.concat(page || [])
       if (!page || page.length < 1000) break
     }
@@ -228,7 +228,7 @@ async function handle(req: NextRequest, code: string, pw: string, body?: any) {
           .select('listing_id, guest_id, guest_name, guest_email, guest_phone, check_in, check_out, nights, status, source, money_total')
           .in('listing_id', idList.slice(0, 400))
           .gte('check_in', twoYears)
-          .order('check_in', { ascending: false }).range(i * 1000, i * 1000 + 999)
+          .order('check_in', { ascending: false }).order('id').range(i * 1000, i * 1000 + 999)
         cres = cres.concat(page || [])
         if (!page || page.length < 1000) break
       }
