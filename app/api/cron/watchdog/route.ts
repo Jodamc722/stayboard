@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { runSyncAlert } from '@/lib/slack-alerts'
 import { requireCron } from '@/lib/cron-auth'
+import { withRouteReceipt } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 // 2026-08-20: this was 30 — the LOWEST maxDuration of any cron in the app, set back when the
@@ -21,13 +22,15 @@ export const maxDuration = 60
 // It alerts at most once every 6 hours per feed, and posts a single recovery line when a feed comes
 // back, so a broken sync cannot turn into background noise people learn to ignore.
 
-type Feed = { key: string; label: string; maxMin: number; silent?: boolean }
+// title/detail/fix: what a SILENT feed's System health finding says. Absent = the review wording.
+type Feed = { key: string; label: string; maxMin: number; silent?: boolean; title?: string; detail?: string; fix?: string }
 type Ages = Record<string, { age: number | null; error: string | null }>
 const FEEDS: Feed[] = [
   { key: 'reservations', label: 'Bookings (Guesty)', maxMin: 20 },   // pulls every 5 min
   { key: 'listings', label: 'Listings (Guesty)', maxMin: 24 * 60 },
   { key: 'reviews', label: 'Reviews (Guesty)', maxMin: 24 * 60 },
-  { key: 'breezeway_tasks', label: 'Tasks (Breezeway)', maxMin: 60 }, // pulls every 15 min
+  // Judged from the job's own receipt, not max(synced_at) — see breezewayAge() below.
+  { key: 'breezeway_tasks', label: 'Tasks (Breezeway)', maxMin: 60 }, // pulls every 30 min
   // Not a job — a data pulse. Fires when NO new review has arrived in 4 days even though the sync
   // itself is green, which at this portfolio's ~8-reviews/day baseline means the channel feed into
   // Guesty (usually Airbnb) has stalled, not us.
@@ -41,10 +44,124 @@ const ALERT_KEY = 'sync_watchdog_state'
 const REALERT_MIN = 6 * 60
 
 function minsSince(iso: any): number | null {
-  const t = new Date(String(iso || '')).getTime()
+  if (!iso) return null
+  const t = new Date(String(iso)).getTime()
   return Number.isFinite(t) ? Math.round((Date.now() - t) / 60000) : null
 }
 function human(m: number | null): string { return m == null ? 'never' : m < 90 ? m + ' min' : Math.round(m / 60) + ' h' }
+const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
+
+// ── MORE FEEDS (2026-09-28 audit #10) ──────────────────────────────────────────────────────────
+// This judged four feeds and loaded — then ignored — the rest. The guest conversations and
+// messages Eve answers from, the owner ledger, the Revenue App mirror and the Talkroute call feed
+// could all stop without a word. Each is added only when its source can be read: a table or
+// setting that does not exist yet is skipped silently, never reported as a dead feed. The guest
+// feeds are loud (Slack, like bookings and tasks); the back-office ones are silent — they go to
+// System health, where a finding stays open until someone deals with it.
+async function extraFeeds(db: any, gsRows: any[]): Promise<{ feeds: Feed[]; ages: Ages }> {
+  const feeds: Feed[] = []
+  const ages: Ages = {}
+  const row = (entity: string) => gsRows.find(r => str(r.entity) === entity)
+
+  const conv = row('conversations')
+  if (conv) {
+    feeds.push({ key: 'conversations', label: 'Guest conversations (Guesty)', maxMin: 60 })   // every 30 min
+    ages['conversations'] = { age: minsSince(conv.last_sync_at), error: str(conv.last_error) || null }
+  }
+  const msg = row('messages')
+  if (msg) {
+    // "partial: 40/60 conversations in budget" is a run that resumes next time, not an error.
+    const err = str(msg.last_error)
+    feeds.push({ key: 'messages', label: 'Guest messages (Guesty)', maxMin: 120 })
+    ages['messages'] = { age: minsSince(msg.last_sync_at), error: err && !/^partial/i.test(err) ? err : null }
+  }
+  const cf = row('custom_fields')
+  if (cf) {
+    feeds.push({
+      key: 'custom_fields', label: 'Guesty custom fields', maxMin: 26 * 60, silent: true,
+      title: 'Guesty custom fields have not synced in over a day',
+      detail: 'The field definitions door codes, welcome calls and order links are written through are refreshed by the twice-daily catalog sync (/api/cron/guesty-catalog).',
+      fix: 'Run /api/cron/guesty-catalog while signed in as an admin and read its errors.',
+    })
+    ages['custom_fields'] = { age: minsSince(cf.last_sync_at), error: str(cf.last_error) || null }
+  }
+
+  // The owner ledger's CURRENT month — what the Owner Audit tie-out reads during the month.
+  try {
+    const month = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()).slice(0, 7)
+    const { data, error } = await db.from('guesty_ledger_months').select('status,last_error,updated_at').eq('month', month).maybeSingle()
+    if (!error && data) {
+      const err = str(data.last_error)
+      feeds.push({
+        key: 'owner_ledger', label: 'Owner ledger (Guesty accounting)', maxMin: 26 * 60, silent: true,
+        title: 'The owner ledger has not synced in over a day',
+        detail: 'The current month of Guesty owner-ledger rows (guesty_ledger_months ' + month + ') has not been touched by the twice-daily sweep, so the Owner Audit tie-out is reading an old copy.',
+        fix: 'Run /api/sync/owner-statements while signed in as an admin; its swept[] says which month failed and why.',
+      })
+      // A sweep that paused at its deadline ('deadline reached at skip=N') resumes; not an error.
+      ages['owner_ledger'] = { age: minsSince(data.updated_at), error: str(data.status) === 'error' && err && !/deadline reached/i.test(err) ? err : null }
+    }
+  } catch { /* table not there — skip */ }
+
+  // The boss's Revenue App mirror (every 4h). The newest feed that came back OK.
+  try {
+    const { data, error } = await db.from('rev_sync_status').select('feed,last_ok_at').limit(50)
+    if (!error && Array.isArray(data) && data.length) {
+      let newest = ''
+      for (const r of data as any[]) { const t = str(r.last_ok_at); if (t > newest) newest = t }
+      feeds.push({
+        key: 'revenue_app', label: 'Revenue App mirror', maxMin: 8 * 60, silent: true,
+        title: 'The Revenue App mirror has not synced in over 8 hours',
+        detail: 'No Revenue App feed has come back OK recently, so revenue, budget and projections on /revenue are an old copy (they override our own numbers everywhere).',
+        fix: 'Open /revenue/reconcile and press Sync now; the per-feed status says which feed is failing.',
+      })
+      ages['revenue_app'] = { age: minsSince(newest || null), error: null }
+    }
+  } catch { /* table not there — skip */ }
+
+  // Talkroute calls (the Calls desk's proof a welcome call happened). Only when connected.
+  try {
+    const { talkrouteConfigured, getTalkrouteSettings } = await import('@/lib/talkroute')
+    if (await talkrouteConfigured()) {
+      const s = await getTalkrouteSettings()
+      feeds.push({
+        key: 'talkroute_calls', label: 'Phone calls (Talkroute)', maxMin: 60, silent: true,
+        title: 'Talkroute calls have not synced in over an hour',
+        detail: 'The call feed that completes welcome calls on the Calls desk has not finished a sync' + (s.lastError ? ' (last error: ' + str(s.lastError).slice(0, 160) + ')' : '') + '.',
+        fix: 'Check the Talkroute key on Users & admin → Talkroute, then run /api/cron/talkroute while signed in as an admin.',
+      })
+      ages['talkroute_calls'] = { age: minsSince(s.lastCallSyncAt), error: null }
+    }
+  } catch { /* not connected / settings unreadable — skip */ }
+
+  return { feeds, ages }
+}
+
+// BREEZEWAY FROM ITS RECEIPT, NOT FROM max(synced_at). The nightly billing-detail job rewrites
+// synced_at and the webhook keeps writing rows, so a dead 30-minute poller could look fresh for
+// hours. The question is "did a run finish and write something": the newest breezeway-tasks
+// receipt that is ok with item_count > 0. Falls back to the mirror while no receipt can be read.
+async function breezewayAge(db: any): Promise<{ age: number | null; error: string | null }> {
+  try {
+    const [good, last] = await Promise.all([
+      db.from('automation_runs').select('ran_at').eq('name', 'breezeway-tasks').eq('ok', true).gt('item_count', 0)
+        .order('ran_at', { ascending: false }).limit(1),
+      db.from('automation_runs').select('ran_at,ok,error').eq('name', 'breezeway-tasks')
+        .order('ran_at', { ascending: false }).limit(1),
+    ])
+    if (!good.error && !last.error) {
+      const g = ((good.data || []) as any[])[0]
+      const l = ((last.data || []) as any[])[0]
+      const age = minsSince(g && g.ran_at)
+      // The last run's error only explains a stale feed; one failed run inside the window is not
+      // itself a dead feed.
+      const stale = age == null || age > 60
+      return { age, error: stale && l && l.ok === false ? (str(l.error) || 'the last run failed') : null }
+    }
+  } catch { /* fall back */ }
+  const { data } = await db.from('breezeway_tasks_sync').select('synced_at').order('synced_at', { ascending: false }).limit(1)
+  return { age: minsSince(((data || []) as any[])[0]?.synced_at), error: null }
+}
 
 
 // PER-CHANNEL REVIEW FRESHNESS — because a portfolio-wide pulse cannot see one channel die.
@@ -123,13 +240,16 @@ async function run(req: NextRequest) {
   const db = supabaseAdmin()
   const [gs, bz] = await Promise.all([
     db.from('guesty_sync_status').select('entity,last_sync_at,last_error').limit(50),
-    db.from('breezeway_tasks_sync').select('synced_at').order('synced_at', { ascending: false }).limit(1),
+    breezewayAge(db),
   ])
   const ages: Ages = {}
-  for (const r of ((gs.data || []) as any[])) {
+  const gsRows = (gs.data || []) as any[]
+  for (const r of gsRows) {
     ages[String(r.entity)] = { age: minsSince(r.last_sync_at), error: String(r.last_error || '') || null }
   }
-  ages['breezeway_tasks'] = { age: minsSince(((bz.data || []) as any[])[0]?.synced_at), error: null }
+  ages['breezeway_tasks'] = bz
+  const extra = await extraFeeds(db, gsRows).catch(() => ({ feeds: [] as Feed[], ages: {} as Ages }))
+  Object.assign(ages, extra.ages)
 
   // CONTENT FRESHNESS, not just cadence (Jon, 2026-08-19: "make sure reviews are populating").
   // The Aug-2026 incident: the review sync ran perfectly every 2 hours — and mirrored a Guesty
@@ -150,12 +270,13 @@ async function run(req: NextRequest) {
   const next: Record<string, { since: string; alertedAt: string }> = {}
   const nowIso = new Date().toISOString()
   const alerts: string[] = []
-  /** Quiet silent-feed findings for the System health tab: [key, label, line]. */
-  const quiet: { key: string; label: string; line: string }[] = []
+  /** Quiet silent-feed findings for the System health tab. */
+  const quiet: { key: string; label: string; line: string; title?: string; detail?: string; fix?: string }[] = []
   const recovered: string[] = []
   const report: any[] = []
+  const allFeeds = FEEDS.concat(extra.feeds, perChannel.feeds)
 
-  for (const f of FEEDS.concat(perChannel.feeds)) {
+  for (const f of allFeeds) {
     const a = ages[f.key] || { age: null, error: null }
     const bad = a.age == null || a.age > f.maxMin || !!a.error
     report.push({ feed: f.key, ageMin: a.age, limit: f.maxMin, error: a.error, healthy: !bad })
@@ -185,6 +306,7 @@ async function run(req: NextRequest) {
           key: f.key,
           label: f.label,
           line: f.label + ' — quiet for ' + human(a.age) + ' (its own limit is ' + human(f.maxMin) + ').',
+          title: f.title, detail: f.detail, fix: f.fix,
         })
       }
     } else if (prev && !f.silent) {
@@ -202,10 +324,10 @@ async function run(req: NextRequest) {
         id: 'ext:feed:' + q.key,
         area: 'pipeline',
         severity: 'warn',
-        title: q.label + ' has stopped arriving',
-        detail: q.line + ' Our sync pulls everything Guesty has on every run, so a quiet review channel'
+        title: q.title || (q.label + ' has stopped arriving'),
+        detail: q.detail ? q.line + ' ' + q.detail : q.line + ' Our sync pulls everything Guesty has on every run, so a quiet review channel'
           + " almost always means that channel's connection INSIDE Guesty stopped delivering.",
-        fix: 'Guesty → Integrations → that channel, or ask Guesty support what happened after the date above.',
+        fix: q.fix || 'Guesty → Integrations → that channel, or ask Guesty support what happened after the date above.',
         count: 1,
         status: 'open',
         last_seen_at: nowStamp,
@@ -213,7 +335,7 @@ async function run(req: NextRequest) {
     }
     // A feed that started talking again closes its own finding. Nothing else will.
     const quietIds = new Set(quiet.map(q => 'ext:feed:' + q.key))
-    const allSilent = FEEDS.concat(perChannel.feeds).filter(f => f.silent).map(f => 'ext:feed:' + f.key)
+    const allSilent = allFeeds.filter(f => f.silent).map(f => 'ext:feed:' + f.key)
     const healed = allSilent.filter(id => !quietIds.has(id))
     if (healed.length) {
       await db.from('eve_audits').update({ status: 'resolved', resolved_at: nowStamp })
@@ -241,5 +363,10 @@ async function run(req: NextRequest) {
   })
 }
 
-export async function GET(req: NextRequest) { return run(req) }
-export async function POST(req: NextRequest) { return run(req) }
+// ITS OWN RECEIPT (2026-09-28). The one job that notices dead jobs was itself dead from 08-19 to
+// 08-20 and nothing could say so. Now every run is recorded; itemCount = feeds judged unhealthy.
+const receipted = withRouteReceipt<NextRequest>('watchdog', run, {
+  count: (b) => (Array.isArray(b.feeds) ? b.feeds.filter((f: any) => f && f.healthy === false).length : undefined),
+})
+export async function GET(req: NextRequest) { return receipted(req) }
+export async function POST(req: NextRequest) { return receipted(req) }
