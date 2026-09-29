@@ -9,7 +9,7 @@
 // Grouping is by what the thing IS: your private boards first (they are yours), then one-on-ones
 // (private to two people), then team projects. Done and cancelled projects fall to the bottom of
 // their group rather than vanishing — a finished 1:1 is still worth opening.
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Home, ListChecks, KanbanSquare, Plus, Lock, Search, ChevronDown, ChevronRight, Repeat, Menu } from 'lucide-react'
@@ -29,14 +29,38 @@ export function ProjectsRail() {
   const [open, setOpen] = useState<Record<string, boolean>>({ personal: true, one: true, team: true })
   const [mobileOpen, setMobileOpen] = useState(false)
 
+  // THE LIST: read once, then every 90s while the tab is visible (2026-09-28 audit, 02 F17). It used
+  // to re-read on every click through the rail as well, hidden tabs included. Now only landing on a
+  // project the list does not have yet — one you just created or were just added to — reads it again.
+  const alive = useRef(true)
+  const [loaded, setLoaded] = useState(false)
+  const load = useCallback(() => fetch('/api/projects?archived=0', { cache: 'no-store' }).then(r => r.json())
+    .then(j => { if (alive.current && j?.ok) { setProjects(j.projects || []); setLoaded(true) } }).catch(() => {}), [])
   useEffect(() => {
-    let alive = true
-    const load = () => fetch('/api/projects?archived=0', { cache: 'no-store' }).then(r => r.json())
-      .then(j => { if (alive && j?.ok) setProjects(j.projects || []) }).catch(() => {})
+    alive.current = true
     load()
-    const t = setInterval(load, 90000)
-    return () => { alive = false; clearInterval(t) }
-  }, [path])
+    const t = setInterval(() => { if (document.visibilityState === 'visible') load() }, 90000)
+    return () => { alive.current = false; clearInterval(t) }
+  }, [load])
+  const askedFor = useRef('')
+  useEffect(() => {
+    const m = path.match(/^\/projects\/([^/?#]+)/)
+    if (!loaded || !m || m[1] === 'mine' || m[1] === 'board' || askedFor.current === path) return
+    if (projects.some(p => p.id === m[1])) return
+    askedFor.current = path   // once per page, so an archived project cannot loop the read
+    load()
+  }, [path, loaded, projects, load])
+
+  // ONE BELL (2026-09-28 audit): the desktop rail and the phone bar are both in the page and CSS
+  // hides one, so the bell was mounted — and polled — twice. It now renders only where it shows.
+  const [wide, setWide] = useState<boolean | null>(null)
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)')   // Tailwind's `lg`, the rail's breakpoint
+    const on = () => setWide(mq.matches)
+    on()
+    if (mq.addEventListener) mq.addEventListener('change', on); else mq.addListener(on)
+    return () => { if (mq.removeEventListener) mq.removeEventListener('change', on); else mq.removeListener(on) }
+  }, [])
 
   const groups = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -129,7 +153,7 @@ export function ProjectsRail() {
       <aside className="hidden lg:flex w-[260px] shrink-0 h-full flex-col border-r border-line bg-app/70">
         <div className="px-2.5 pt-3 pb-2 flex items-center gap-1 border-b border-line">
           <div className="flex-1 min-w-0">{mark}</div>
-          <NotifyBell compact />
+          {wide === true && <NotifyBell compact />}
         </div>
         <div className="flex-1 overflow-y-auto p-2.5">{body}</div>
       </aside>
@@ -143,7 +167,7 @@ export function ProjectsRail() {
             <span className="truncate flex-1">{current ? current.title : path === '/projects/mine' ? 'My Tasks' : path.startsWith('/projects/board') ? 'Board overview' : 'Projects'}</span>
             <ChevronDown size={14} className="text-muted" />
           </button>
-          <NotifyBell compact />
+          {wide === false && <NotifyBell compact />}
         </div>
         {mobileOpen && <div className="mt-2 rounded-2xl border border-line bg-app/70 p-2.5 max-h-[70vh] overflow-y-auto">{body}</div>}
       </div>

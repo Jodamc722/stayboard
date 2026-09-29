@@ -29,7 +29,18 @@ export function NotifyBell({ compact }: { compact?: boolean }) {
       if (r.ok && j.ok) { setUnread(j.unread || 0); setItems(j.items || []) }
     } catch {}
   }, [])
-  useEffect(() => { load(); const t = setInterval(load, 60000); return () => clearInterval(t) }, [load])
+  // ONLY WHILE YOU CAN SEE IT (2026-09-28 audit, 02 F17): once a minute while the tab is visible,
+  // and once on coming back to it if the last read is over a minute old. Background tabs used to
+  // poll all day.
+  useEffect(() => {
+    let last = 0
+    const tick = () => { if (document.visibilityState !== 'visible') return; last = Date.now(); load() }
+    const onShow = () => { if (Date.now() - last > 60000) tick() }
+    tick()
+    const t = setInterval(tick, 60000)
+    document.addEventListener('visibilitychange', onShow)
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onShow) }
+  }, [load])
   useEffect(() => {
     if (!open) return
     const onDoc = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false) }
