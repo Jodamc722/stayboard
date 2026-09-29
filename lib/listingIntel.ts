@@ -21,6 +21,7 @@
 // ran 40 review queries. Single-shot callers use buildIntel().
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { pageRows } from './db-page'
 import { getSetting } from './app-settings'
 import { isLiveStay } from './stay-status'
 import { THEMES, THEME_BY_KEY, sentenceAbout, type Theme, type IntelKind } from './review-themes'
@@ -113,12 +114,13 @@ const emptyCtx = (date: string): IntelCtx => ({
 })
 
 // PostgREST caps EVERY request at 1000 rows no matter what .limit() says — the truncation bug that
-// made the day sheet report "no record" on live units. Anything that can exceed 1000 is paged.
+// made the day sheet report "no record" on live units. Anything that can exceed 1000 is paged, on
+// an order with an id tiebreaker (a date alone repeats and skips rows between pages).
 async function page(build: () => any, pages: number): Promise<any[]> {
   const out: any[] = []
   for (let i = 0; i < pages; i++) {
     const { data, error } = await build().range(i * 1000, i * 1000 + 999)
-    if (error) break
+    if (error) { console.error('listingIntel: a paged read stopped early —', String(error.message || error).slice(0, 200)); break }
     const rows = (data || []) as any[]
     out.push(...rows)
     if (rows.length < 1000) break
@@ -157,14 +159,16 @@ export async function loadIntel(listingIdsIn: string[], dateIn?: string): Promis
       // review raws is megabytes of payload for two numbers.
       page(() => db.from('guesty_reviews')
         .select('listing_id,rating,content,guest_name,channel,created_at,cats:raw->rawReview->category_ratings,cats2:raw->raw->category_ratings')
-        .in('listing_id', ids).gte('created_at', revFrom).is('removed_at', null).eq('excluded_from_score', false).order('created_at', { ascending: false }), 4),
-      db.from('guesty_reservations')
-        .select('listing_id,check_in,check_out,status,guest_name,nights,guests:raw->guests')
+        .in('listing_id', ids).gte('created_at', revFrom).is('removed_at', null).eq('excluded_from_score', false).order('created_at', { ascending: false }).order('id'), 4),
+      // PAGED (2026-09-29): up to 150 units over two months of stays passes 1,000 rows, and a stay
+      // that fell past the cap turned into "nothing booked" on the task a cleaner reads.
+      pageRows<any>((a, b) => db.from('guesty_reservations')
+        .select('id,listing_id,check_in,check_out,status,guest_name,nights,guests:raw->guests')
         .in('listing_id', ids).lte('check_in', addDays(date, 60)).gte('check_out', addDays(date, -1))
-        .order('check_in', { ascending: true }).limit(1000),
+        .order('check_in', { ascending: true }).order('id').range(a, b), 10),
       page(() => db.from('breezeway_tasks_sync')
         .select('id,reference_property_id,name,status,scheduled_date,finished_at,type_department')
-        .in('reference_property_id', ids).gte('scheduled_date', taskFrom).order('scheduled_date', { ascending: false }), 6),
+        .in('reference_property_id', ids).gte('scheduled_date', taskFrom).order('scheduled_date', { ascending: false }).order('id'), 6),
       db.from('glitches').select('id,unit,listing_id,overview,status,created_at,breezeway_task_id')
         .in('listing_id', ids).not('status', 'in', '("done","resolved","closed")')
         .order('created_at', { ascending: false }).limit(400),
@@ -201,7 +205,10 @@ export async function loadIntel(listingIdsIn: string[], dateIn?: string): Promis
     for (const r of revRows) { const k = str(r.listing_id); (ctx.reviews[k] = ctx.reviews[k] || []).push(r) }
     // Live stays only, decided in code: the shared rule is an EXCLUSION, so a status Guesty adds
     // later still reads as occupied instead of silently freeing a unit.
-    for (const s of (((staysRows as any).data || []) as any[])) {
+    // A stay read that stopped early is a failed load (ctx.ok below): a half-read calendar would
+    // tell the crew "no arrival today" about a unit that has one.
+    if (staysRows.truncated) console.error('listingIntel: the stay read stopped early — no intel is written from a half-read calendar')
+    for (const s of staysRows.rows) {
       if (!isLiveStay(s.status)) continue
       const k = str(s.listing_id)
       ;(ctx.stays[k] = ctx.stays[k] || []).push(s)
@@ -236,7 +243,7 @@ export async function loadIntel(listingIdsIn: string[], dateIn?: string): Promis
       for (const a of ((acts || []) as any[])) { const k = str(a.listing_id); (ctx.actions[k] = ctx.actions[k] || []).push(a) }
     } catch { /* table not migrated yet */ }
 
-    ctx.ok = Object.keys(ctx.listings).length > 0
+    ctx.ok = Object.keys(ctx.listings).length > 0 && !staysRows.truncated
   } catch (e) {
     console.error('listingIntel: loadIntel failed', e)
   }
