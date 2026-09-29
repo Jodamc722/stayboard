@@ -3,9 +3,9 @@
 // Jon, 2026-09-28: improve Eve to support the ops team and manage tasks. Three moments a day, all
 // read from the Breezeway mirror and the booking calendar, no model call:
 //
-//   7am  THE PLAN, BY PERSON. Who has what today — cleans, maintenance, inspections — with the
-//        arrivals that set each unit's deadline, and the work nobody has yet. One message in
-//        #vr-eve; one line per person; the unassigned block at the bottom.
+//   7am  THE PLAN. One summary line (open, people, arrivals, unowned → /plan), then the work
+//        nobody has yet with the check-in time that sets each deadline, and the shadow
+//        scheduler's suggestions once she has earned them. One message in #vr-eve.
 //   hourly (11am–6pm) THE CHASE. A task due today with nobody on it gets a proposed assignment:
 //        the person from the right department already working in that building today. Never a
 //        departure clean — those belong to the scheduler and the late-clean reminders. Each task is
@@ -55,51 +55,61 @@ const names = (t: any): string[] => (Array.isArray(t.assignees) ? t.assignees : 
 type Task = { id: string; name: string; dept: 'maintenance' | 'housekeeping' | 'inspection' | 'other'; listing: string; unit: string; building: string; people: string[]; done: boolean; running: boolean; clean: boolean; finished_at: string | null }
 type Day = { today: string; tasks: Task[]; arrivals: Record<string, { guest: string; at: string | null }>; arrivalsTomorrow: Record<string, string> }
 
+// "15:00" or "3:00 PM" → "3pm"; "15:30" → "3:30pm". The listing's default check-in time is the
+// same basis the day sheets use; unset means 4pm there too.
+const hm12 = (v: any): string | null => {
+  const m = str(v).trim().match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/i)
+  if (!m) return null
+  let h = Number(m[1]) % 24
+  if (m[3]) h = (Number(m[1]) % 12) + (/pm/i.test(m[3]) ? 12 : 0)
+  const suffix = h >= 12 ? 'pm' : 'am'
+  const h12 = h % 12 === 0 ? 12 : h % 12
+  return `${h12}${m[2] === '00' ? '' : ':' + m[2]}${suffix}`
+}
+
 async function readDay(today: string): Promise<Day> {
   const db = supabaseAdmin()
+  // ORDERED (2026-09-28 audit, F32 — ctx.ts rule 2): an unordered read on PostgREST can repeat and
+  // skip rows. The listing read also brings each unit's check-in time (one JSON path, not raw), so
+  // the plan can say when a guest lands (F31).
   const [{ data: ts }, { data: ls }, { data: arr }] = await Promise.all([
-    db.from('breezeway_tasks_sync').select('id,name,status,scheduled_date,finished_at,started_at,type_department,assignees,reference_property_id').eq('scheduled_date', today).limit(2000),
-    db.from('guesty_listings').select('id,nickname,title,building').limit(3000),
-    db.from('guesty_reservations').select('listing_id,guest_name,check_in,status').in('check_in', [today, shift(today, 1)]).in('status', ['confirmed', 'reserved', 'checked_in']).limit(2000),
+    db.from('breezeway_tasks_sync').select('id,name,status,scheduled_date,finished_at,started_at,type_department,assignees,reference_property_id').eq('scheduled_date', today).order('id').limit(2000),
+    db.from('guesty_listings').select('id,nickname,title,building,checkIn:raw->>defaultCheckInTime').order('id').limit(3000),
+    db.from('guesty_reservations').select('listing_id,guest_name,check_in,status').in('check_in', [today, shift(today, 1)]).in('status', ['confirmed', 'reserved', 'checked_in']).order('check_in').order('listing_id').limit(2000),
   ])
-  const meta: Record<string, { unit: string; building: string }> = {}
-  for (const l of ((ls || []) as any[])) { const nm = str(l.nickname || l.title) || 'Unit'; meta[str(l.id)] = { unit: nm, building: str(l.building) || buildingOf(nm) || nm } }
+  const meta: Record<string, { unit: string; building: string; checkIn: string | null }> = {}
+  for (const l of ((ls || []) as any[])) { const nm = str(l.nickname || l.title) || 'Unit'; meta[str(l.id)] = { unit: nm, building: str(l.building) || buildingOf(nm) || nm, checkIn: hm12(l.checkIn) } }
   const tasks: Task[] = ((ts || []) as any[]).filter(t => !isGone(t)).map(t => {
     const m = meta[str(t.reference_property_id)] || { unit: 'a unit', building: '' }
     return { id: str(t.id), name: str(t.name), dept: deptOf(t.type_department), listing: str(t.reference_property_id), unit: m.unit, building: m.building, people: names(t), done: isDone(t), running: isRunning(t), clean: isDepartureCleanName(str(t.name)), finished_at: t.finished_at || null }
   })
   const arrivals: Day['arrivals'] = {}, arrivalsTomorrow: Day['arrivalsTomorrow'] = {}
   for (const r of ((arr || []) as any[])) {
-    if (str(r.check_in).slice(0, 10) === today) arrivals[str(r.listing_id)] = { guest: str(r.guest_name) || 'Guest', at: null }
+    if (str(r.check_in).slice(0, 10) === today) arrivals[str(r.listing_id)] = { guest: str(r.guest_name) || 'Guest', at: meta[str(r.listing_id)]?.checkIn || '4pm' }
     else arrivalsTomorrow[str(r.listing_id)] = str(r.guest_name) || 'Guest'
   }
   return { today, tasks, arrivals, arrivalsTomorrow }
 }
 
-// ── 7am: the plan, by person ────────────────────────────────────────────────────────────────────
+// ── 7am: the plan ──────────── ────────────────────────────────────────────────────────────────────
+// ONE LINE, THEN WHAT NEEDS A NAME (2026-09-28 audits: 06 F-28, 04 F31). The plan used to be a roll
+// call — up to fourteen person lines repeating the day sheets in Slack, against Jon's "Slack short;
+// lists live in the app". It is now one summary line with the link to /plan, then the work nobody
+// has, soonest guest first, each with the check-in time that sets its deadline.
 export function planText(day: Day): string {
-  const byPerson: Record<string, Task[]> = {}
-  const unassigned: Task[] = []
-  for (const t of day.tasks) {
-    if (t.done) continue
-    if (!t.people.length) { unassigned.push(t); continue }
-    for (const p of t.people) (byPerson[p] = byPerson[p] || []).push(t)
-  }
-  const people = Object.keys(byPerson).sort((a, b) => byPerson[b].length - byPerson[a].length)
-  const parts: string[] = [`*Today's plan — ${day.today}* · ${day.tasks.filter(t => !t.done).length} open across ${people.length} people${Object.keys(day.arrivals).length ? ` · ${Object.keys(day.arrivals).length} arrival${Object.keys(day.arrivals).length === 1 ? '' : 's'}` : ''}`]
-  const cnt = (ts: Task[]) => {
-    const c = ts.filter(t => t.clean).length, m = ts.filter(t => t.dept === 'maintenance').length, i = ts.filter(t => t.dept === 'inspection').length, o = ts.length - c - m - i
-    return [c ? `${c} clean${c === 1 ? '' : 's'}` : '', m ? `${m} maint` : '', i ? `${i} insp` : '', o ? `${o} other` : ''].filter(Boolean).join(' · ')
-  }
-  for (const p of people.slice(0, 14)) {
-    const ts = byPerson[p]
-    const arriving = ts.filter(t => day.arrivals[t.listing]).map(t => `${shortUnit(t.unit)}${day.arrivals[t.listing].at ? ' ' + day.arrivals[t.listing].at : ''}`)
-    const bld = Array.from(new Set(ts.map(t => t.building).filter(Boolean))).slice(0, 3).join(', ')
-    parts.push(`• *${p}* — ${cnt(ts)}${bld ? ` · ${bld}` : ''}${arriving.length ? ` · arrivals: ${Array.from(new Set(arriving)).slice(0, 4).join(', ')}` : ''}`)
-  }
-  if (people.length > 14) parts.push(`…and ${people.length - 14} more people`)
+  const open = day.tasks.filter(t => !t.done)
+  const people: Record<string, true> = {}
+  for (const t of open) for (const p of t.people) people[p] = true
+  const unassigned = open.filter(t => !t.people.length)
+  const nArr = Object.keys(day.arrivals).length
+  const sameDayUnowned = unassigned.filter(t => t.clean && day.arrivals[t.listing]).length
+  const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
+  const parts: string[] = [`*Today — ${day.today}* · ${open.length} open · ${Object.keys(people).length} people · ${nArr} arrival${nArr === 1 ? '' : 's'} · ${unassigned.length} unowned${sameDayUnowned ? ` · ${sameDayUnowned} same-day turn${sameDayUnowned === 1 ? '' : 's'} unowned` : ''} → <${base}/plan|the plan>`]
   if (unassigned.length) {
-    const lines = unassigned.slice(0, 8).map(t => `  – ${shortUnit(t.unit)} · ${t.name.replace(/^\[[^\]]*\]\s*/, '').slice(0, 50)}${day.arrivals[t.listing] ? ` · *guest lands today*` : ''}`)
+    // Units with a guest landing today first, earliest check-in first; the rest after.
+    const lands = (t: Task) => { const a = day.arrivals[t.listing]; if (!a) return 99 * 60; const m = str(a.at).match(/^(\d{1,2})(?::(\d{2}))?(am|pm)$/); return m ? ((Number(m[1]) % 12) + (m[3] === 'pm' ? 12 : 0)) * 60 + Number(m[2] || 0) : 16 * 60 }
+    const ranked = unassigned.slice().sort((a, b) => lands(a) - lands(b))
+    const lines = ranked.slice(0, 8).map(t => `  – ${shortUnit(t.unit)} · ${t.name.replace(/^\[[^\]]*\]\s*/, '').slice(0, 50)}${day.arrivals[t.listing] ? ` · *guest lands ${day.arrivals[t.listing].at || 'today'}*` : ''}`)
     parts.push(`*Nobody on it yet (${unassigned.length})*\n${lines.join('\n')}${unassigned.length > 8 ? `\n  …and ${unassigned.length - 8} more` : ''}\nI'll propose people for these through the day.`)
   }
   return parts.join('\n')
@@ -176,7 +186,7 @@ export async function runOpsDesk(opts: { force?: 'plan' | 'recap' | 'chase'; pre
       }
     } catch { /* the plan stands on its own */ }
     out.plan = text
-    if (!opts.preview && await post(text, `ops desk: today's plan by person (${day.tasks.length} tasks)`)) st.lastPlan = today
+    if (!opts.preview && await post(text, `ops desk: today's plan (${day.tasks.length} tasks)`)) st.lastPlan = today
   }
   if (wantChase && !opts.preview) {
     const targets = day.tasks.filter(t => !t.done && !t.people.length && !t.clean && !proposed[t.id]).slice(0, 8)
