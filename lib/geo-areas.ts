@@ -21,7 +21,9 @@ export function distanceKm(a: { lat?: number | null; lng?: number | null }, b: {
 
 // "Botanica 1109 - King w/ Kitchenette" -> Botanica ; "17WEST - 410 - 2BR" -> 17WEST
 // "101/3 Lucerne - STU" -> Lucerne ; "906/5- 1BR" -> (none, falls back to the city)
-export function buildingOf(name: string): string | null {
+// Not exported (2026-09-29): lib/segments' buildingOf(building, name) is the app's canonical one, and a
+// one-argument call to it compiles — so a second exported buildingOf(name) was a silent wrong import.
+function buildingFromUnitName(name: string): string | null {
   const s = String(name || '').replace(/^[^A-Za-z0-9]+/, '').trim()
   if (!s) return null
   const words = s.split(/[\s\-/]+/).filter(Boolean)
@@ -55,7 +57,7 @@ export function clusterAreas<T extends GeoUnit>(units: T[], radiusKm = 4): Area<
     const list = groups[k]
     // name the area after the buildings inside it (up to two), else the city
     const counts: Record<string, number> = {}
-    for (const u of list) { const b = buildingOf(u.unit); if (b) counts[b] = (counts[b] || 0) + 1 }
+    for (const u of list) { const b = buildingFromUnitName(u.unit); if (b) counts[b] = (counts[b] || 0) + 1 }
     const names = Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b))
     const city = list.map(u => u.city).filter(Boolean)[0] || null
     const label = names.length === 0 ? (city || 'Area')

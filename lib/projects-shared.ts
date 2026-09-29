@@ -33,7 +33,9 @@ export type Project = {
   created_by: string | null; created_at: string; updated_at: string
 }
 
-export const money = (cents: number | null | undefined) =>
+// Named for what it does (2026-09-29): lib had three exported `money` helpers — two format dollars as
+// text, this one turns cents into a dollar NUMBER — and importing the wrong one is silent.
+export const centsToDollars = (cents: number | null | undefined) =>
   cents == null ? null : Math.round(Number(cents)) / 100
 export const toCents = (dollars: any): number | null => {
   // Strip currency furniture, but a string with NO DIGITS must be null, not 0. Number('') is 0,

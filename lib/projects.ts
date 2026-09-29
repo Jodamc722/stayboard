@@ -11,7 +11,7 @@ import { TASK_DONE_RE } from './task-categories'
 export * from './projects-shared'
 import {
   type Project, type ProjectFull, type Member, type Person, type Viewer, type EventType,
-  progressOf, healthOf, nestTasks, money, todayISO, canSee, canEdit, toPerson,
+  progressOf, healthOf, nestTasks, centsToDollars, todayISO, canSee, canEdit, toPerson,
   type Invoice, INVOICE_STATUSES, INVOICE_COUNTS, nextOccurrence, doneSectionName, isDoneSection, settingsOf, viewPrefsOf,
 } from './projects-shared'
 
@@ -573,7 +573,7 @@ export function newShareToken(): string {
 // project rather than from someone's memory — that is the whole point of drafting it here.
 export function ownerApprovalEmail(p: Project, steps: { title: string; done: boolean }[] = [], opts: { unitLabel?: string | null; fromName?: string } = {}) {
   const unit = opts.unitLabel || p.building || p.market || 'your property'
-  const budget = money(p.budget_cents)
+  const budget = centsToDollars(p.budget_cents)
   const fmt = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const scope = steps.filter(s => s.title).slice(0, 12)
   const subject = `Approval requested — ${p.title}${budget != null ? ` (${fmt(budget)})` : ''} at ${unit}`
