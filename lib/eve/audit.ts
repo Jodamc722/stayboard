@@ -28,7 +28,7 @@
 // ignored right now. warn = it will cost us if it runs another week. info = worth knowing.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { todayET, lc, DEAD_LISTING, shiftDay } from './ctx'
+import { todayET, lc, DEAD_LISTING, shiftDay, allRowsOrThrow } from './ctx'
 import { auditCodes } from './code-integrity'
 import { visionCoverage } from './vision'
 import { crewScorecard } from './accountability'
@@ -188,12 +188,19 @@ async function auditCrons(): Promise<AuditFinding[]> {
 /** Conversations that have moved recently but were never scored. Sentiment has form for this. */
 async function auditSentimentBacklog(c: Row): Promise<AuditFinding[]> {
   const since = new Date(Date.now() - 14 * 86400000).toISOString()
-  const conv: any = await safe(c.db.from('guesty_conversations').select('id').gte('last_message_at', since).order('id').limit(3000), { data: [] })
-  const ids: string[] = (conv?.data || []).map((x: any) => String(x.id))
+  // Every thread of the 14 days, paged in id order, and every one of them looked up — 200 ids per
+  // lookup (2026-09-29). This counted the first 1,000 threads only, in one 1,000-id lookup; a lookup
+  // that fails now fails the check instead of counting its threads as never scored.
+  const conv = await allRowsOrThrow('recent guest threads', (a, b) => c.db.from('guesty_conversations').select('id').gte('last_message_at', since).order('id').range(a, b))
+  const ids: string[] = conv.map((x: any) => String(x.id))
   if (!ids.length) return []
-  const sc: any = await safe(c.db.from('guesty_conversation_sentiment').select('conversation_id').in('conversation_id', ids.slice(0, 1000)).limit(3000), { data: [] })
-  const scored = new Set((sc?.data || []).map((x: any) => String(x.conversation_id)))
-  const gap = ids.slice(0, 1000).filter(i => !scored.has(i)).length
+  const scored = new Set<string>()
+  for (let i = 0; i < ids.length; i += 200) {
+    const sc: any = await c.db.from('guesty_conversation_sentiment').select('conversation_id').in('conversation_id', ids.slice(i, i + 200))
+    if (sc?.error) throw new Error('sentiment scores could not be read: ' + String(sc.error.message || sc.error).slice(0, 120))
+    for (const x of ((sc?.data || []) as any[])) scored.add(String(x.conversation_id))
+  }
+  const gap = ids.filter(i => !scored.has(i)).length
   if (gap < 25) return []
   return [{
     id: 'sentiment_backlog', area: 'pipeline', severity: gap > 200 ? 'critical' : 'warn', count: gap,
@@ -207,8 +214,11 @@ async function auditSentimentBacklog(c: Row): Promise<AuditFinding[]> {
 /** Days missing from the metric history. A hole here silently weakens every z-score built on it. */
 async function auditMetricGaps(c: Row): Promise<AuditFinding[]> {
   const from = shiftDay(c.today, -14)
-  const m: any = await safe(c.db.from('eve_metrics').select('day').gte('day', from).lte('day', c.today).order('day').limit(5000), { data: [] })
-  const have = new Set((m?.data || []).map((x: any) => String(x.day).slice(0, 10)))
+  // Paged on the table's key (2026-09-29): a day holds a few hundred rows (every metric × portfolio
+  // and each building), so the first 1,000 rows ended a few days in and the rest of the fortnight
+  // read as missing.
+  const m = await allRowsOrThrow('metric history', (a, b) => c.db.from('eve_metrics').select('day').gte('day', from).lte('day', c.today).order('day').order('scope').order('metric').range(a, b), 20)
+  const have = new Set(m.map((x: any) => String(x.day).slice(0, 10)))
   const missing: string[] = []
   for (let i = 1; i <= 14; i++) {
     const d = shiftDay(c.today, -i)
@@ -260,9 +270,9 @@ async function auditAwaitingReply(c: Row): Promise<AuditFinding[]> {
 
 async function auditUnansweredReviews(c: Row): Promise<AuditFinding[]> {
   const from = new Date(Date.now() - 45 * 86400000).toISOString()
-  const r: any = await safe(c.db.from('guesty_reviews').select('id,rating,has_reply,created_at,excluded_from_score')
-    .gte('created_at', from).eq('excluded_from_score', false).order('created_at').limit(2000), { data: [] })
-  const rows: any[] = r?.data || []
+  // Paged, oldest first with id as tiebreaker (2026-09-29).
+  const rows: any[] = await allRowsOrThrow('reviews of the last 45 days', (a, b) => c.db.from('guesty_reviews').select('id,rating,has_reply,created_at,excluded_from_score')
+    .gte('created_at', from).eq('excluded_from_score', false).order('created_at').order('id').range(a, b))
   const star = (n: any) => { const v = Number(n); return !Number.isFinite(v) || v <= 0 ? null : (v <= 5 ? v : v / 2) }
   const cutoff = Date.now() - 3 * 86400000
   const low = rows.filter(x => !x.has_reply && (star(x.rating) ?? 5) <= 3 && Date.parse(x.created_at) < cutoff)
@@ -278,10 +288,12 @@ async function auditUnansweredReviews(c: Row): Promise<AuditFinding[]> {
 
 async function auditOverdueTasks(c: Row): Promise<AuditFinding[]> {
   const from = shiftDay(c.today, -21)
-  const t: any = await safe(c.db.from('breezeway_tasks_sync')
+  // Paged (2026-09-29): three weeks of tasks is ~2,000 rows, and oldest-first the first 1,000 stopped
+  // about ten days in — the most recent overdue work was never counted.
+  const t = await allRowsOrThrow('tasks of the last 21 days', (a, b) => c.db.from('breezeway_tasks_sync')
     .select('id,name,status,scheduled_date,finished_at,started_at,type_department,reference_property_id')
-    .gte('scheduled_date', from).lt('scheduled_date', c.today).order('scheduled_date').limit(4000), { data: [] })
-  const rows: any[] = (t?.data || []).filter((x: any) => !/delete|cancel/.test(lc(x.status)))
+    .gte('scheduled_date', from).lt('scheduled_date', c.today).order('scheduled_date').order('id').range(a, b))
+  const rows: any[] = t.filter((x: any) => !/delete|cancel/.test(lc(x.status)))
   const done = (x: any) => isTaskDone(x.status, x.finished_at)
   const open = rows.filter(x => !done(x))
   if (open.length < 5) return []
@@ -306,10 +318,12 @@ async function auditArrivalsWithoutCleans(c: Row): Promise<AuditFinding[]> {
   const arrivals: any[] = (r?.data || []).filter((x: any) => !/cancel|declin|inquir|expire/i.test(lc(x.status)))
   if (!arrivals.length) return []
   const ids = Array.from(new Set(arrivals.map((a: any) => String(a.listing_id))))
-  const t: any = await safe(c.db.from('breezeway_tasks_sync').select('reference_property_id,scheduled_date,type_department,name,status,finished_at')
-    .in('reference_property_id', ids).gte('scheduled_date', shiftDay(c.today, -1)).lte('scheduled_date', tomorrow).order('scheduled_date').limit(2000), { data: [] })
+  // Paged (2026-09-29): a short read here names arrivals as having no clean. A failed read fails the
+  // check; it used to read as "no task for anyone" and flag every arrival.
+  const t = await allRowsOrThrow('tasks for the next two days of arrivals', (a, b) => c.db.from('breezeway_tasks_sync').select('reference_property_id,scheduled_date,type_department,name,status,finished_at')
+    .in('reference_property_id', ids).gte('scheduled_date', shiftDay(c.today, -1)).lte('scheduled_date', tomorrow).order('scheduled_date').order('id').range(a, b))
   const cleanBy: Record<string, boolean> = {}
-  for (const x of (t?.data || [])) {
+  for (const x of t) {
     const isClean = /clean|turnover|housekeep/i.test(String(x.type_department || '') + ' ' + String(x.name || ''))
     if (isClean) cleanBy[String(x.reference_property_id)] = true
   }
@@ -416,18 +430,22 @@ async function auditGuestContent(c: Row): Promise<AuditFinding[]> {
  */
 async function auditBillingDetailGap(c: Row): Promise<AuditFinding[]> {
   const from = shiftDay(c.today, -90)
-  const t: any = await safe(c.db.from('breezeway_tasks_sync')
+  // Paged (2026-09-29): 90 days is ~8,000 tasks, and the first 1,000 oldest-first covered only the
+  // window's first ~11 days, so the count and the % described those days, not the 90.
+  const t = await allRowsOrThrow('tasks of the last 90 days', (a, b) => c.db.from('breezeway_tasks_sync')
     .select('id,rate_paid,type_department,scheduled_date')
     .gte('scheduled_date', from).lte('scheduled_date', c.today)
-    .order('scheduled_date').limit(8000), { data: [] })
+    .order('scheduled_date').order('id').range(a, b), 20)
   // Only tasks that could plausibly carry money — a $0 inspection with no detail costs us nothing.
-  const worth = (t?.data || []).filter((x: any) => Number(x.rate_paid) > 0 || /maintenance/i.test(String(x.type_department || '')))
+  const worth = t.filter((x: any) => Number(x.rate_paid) > 0 || /maintenance/i.test(String(x.type_department || '')))
   if (worth.length < 20) return []
 
   const ids: string[] = worth.map((x: any) => String(x.id))
   const have = new Set<string>()
   for (let i = 0; i < ids.length; i += 400) {
-    const d: any = await safe(c.db.from('breezeway_billing_details').select('task_id').in('task_id', ids.slice(i, i + 400)), { data: [] })
+    // A lookup that fails fails the check; it used to count its 400 tasks as missing detail.
+    const d: any = await c.db.from('breezeway_billing_details').select('task_id').in('task_id', ids.slice(i, i + 400))
+    if (d?.error) throw new Error('billing details could not be read: ' + String(d.error.message || d.error).slice(0, 120))
     for (const r of (d?.data || [])) have.add(String((r as any).task_id))
   }
   const missing = ids.filter(id => !have.has(id))

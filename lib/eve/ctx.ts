@@ -16,6 +16,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { buildingOf as canonicalBuilding } from '@/lib/segments'
+import { pageRows } from '@/lib/db-page'
 import type { Access } from '@/lib/access'
 
 export type EveCtx = {
@@ -103,6 +104,22 @@ export function cap<T>(rows: T[], limit: number): { rows: T[]; truncated: boolea
 
 // One definition of paging for the whole app — see lib/db-page.ts for what it is undoing.
 export { pageRows } from '@/lib/db-page'
+
+/**
+ * EVERY ROW, OR THE STEP FAILS (2026-09-29). For jobs whose runner records a failed step — the
+ * standing audit (audit.ts) and the nightly sweep (sweep.ts): a paged read that stops short throws,
+ * so that step fails out loud instead of scoring part of a window as the whole of it. `q` is the
+ * (from, to) callback pageRows takes: an ordered query ending in .range(from, to).
+ */
+export async function allRowsOrThrow<T = any>(what: string, q: (from: number, to: number) => PromiseLike<any>, maxPages?: number): Promise<T[]> {
+  const { rows, truncated } = await pageRows<T>(q, maxPages)
+  if (truncated) {
+    const msg = `${what}: read stopped after ${rows.length} rows`
+    console.error('[eve] ' + msg)
+    throw new Error(msg)
+  }
+  return rows
+}
 
 export async function buildCtx(access: Access, canMoney: boolean, opts: { onlyBuildings?: string[] } = {}): Promise<EveCtx> {
   const db = supabaseAdmin()
