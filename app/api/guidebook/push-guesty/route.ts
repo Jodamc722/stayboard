@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getToken } from '@/lib/guesty'
 import { requireLevel } from '@/lib/access'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -81,9 +82,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'No Guesty custom field named "Guidebook" found (checked synced table + live Guesty).', available: Array.from(new Set(available)), debug: __DBG__, acctSet: !!process.env.GUESTY_ACCOUNT_ID }, { status: 400 })
   }
 
-  let q = sb.from('guidebooks').select('id, listing_id, listing_name, updated_at').not('sections', 'is', null).order('updated_at', { ascending: false }).limit(2000)
-  if (!all && bookIds.length) q = q.in('id', bookIds)
-  const { data: books } = await q
+  // Every guidebook, newest first, paged: the newest per listing is the one pushed, and the first
+  // 1,000 of a .limit(2000) skipped every listing whose newest book sat further down.
+  const read = await pageRows((a, b) => {
+    let q = sb.from('guidebooks').select('id, listing_id, listing_name, updated_at').not('sections', 'is', null).order('updated_at', { ascending: false }).order('id')
+    if (!all && bookIds.length) q = q.in('id', bookIds)
+    return q.range(a, b)
+  })
+  if (read.truncated) return NextResponse.json({ error: 'Could not read every guidebook — nothing was pushed. Try again.' }, { status: 500 })
+  const books = read.rows
   const seen = new Set<string>()
   const rows = (books || []).filter((b: any) => {
     if (!b?.listing_id) return false
