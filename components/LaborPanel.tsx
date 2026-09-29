@@ -871,11 +871,12 @@ export function LaborPanel() {
           Two jobs: allocate our own cost when we step onto a vendor's building, and check the
           vendor's invoice against the checkouts that actually happened. */}
       {!hideMoney && econ?.vendorWork?.byBuilding?.length > 0 && (
-        <div className="rounded-xl border border-line bg-white px-3 py-4 overflow-x-auto">
+        <div className="rounded-xl border border-line bg-white px-3 py-4">
           <p className="text-[10px] uppercase tracking-wide text-muted font-bold px-2 mb-3">
             Vendor buildings <span className="normal-case font-normal">· what they owe us a clean for, and what we did ourselves</span>
           </p>
-          <table className="w-full text-sm min-w-[820px]">
+          {/* The tables scroll themselves (.lh-hscroll), not the card, so the headings stay put on a phone. */}
+          <div className="lh-hscroll"><table className="w-full text-sm min-w-[820px]">
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
                 <th className="py-1 pr-3">Building</th><th className="py-1 pr-3">Checkouts</th>
@@ -900,7 +901,7 @@ export function LaborPanel() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
           {econ.vendorWork.ourTaskCount > 0 && (
             <div className="mt-3">
               <p className="text-[11px] text-amber-700 mb-1">
@@ -908,7 +909,7 @@ export function LaborPanel() {
                 {econ.vendorWork.ourCleanCount > 0 ? ' (' + econ.vendorWork.ourCleanCount + ' of them departure cleans)' : ''} —
                 {econ.vendorWork.unbilled > 0 ? ' ' + econ.vendorWork.unbilled + ' with nothing billed to anyone.' : ' all billed.'}
               </p>
-              <table className="w-full text-[12.5px] min-w-[680px]">
+              <div className="lh-hscroll"><table className="w-full text-[12.5px] min-w-[680px]">
                 <thead>
                   <tr className="text-left text-[10px] uppercase tracking-wide text-muted">
                     <th className="py-1 pr-3">Date</th><th className="py-1 pr-3">Unit</th><th className="py-1 pr-3">Who</th>
@@ -927,7 +928,7 @@ export function LaborPanel() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </div>
           )}
         </div>
