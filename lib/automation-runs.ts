@@ -167,7 +167,9 @@ export async function recordEmail(e: {
 export function sourceFromSubject(subject: string | null | undefined): string | null {
   const s = String(subject || '').toLowerCase()
   if (!s) return null
-  if (s.includes('maintenance')) return 'maint-brief'
+  // "EOD Mon Sep 29: 23 cleans · …" — first, so nothing in the numbers line is read as another job.
+  // (The maintenance brief is retired; its old 'maintenance' → 'maint-brief' rule went with it.)
+  if (s.startsWith('eod ')) return 'eod-recap'
   if (s.includes('labor') || s.includes('payroll')) return 'labor-trueup'
   if (s.includes('salato')) return 'salato-daily'
   if (s.includes('owner')) return 'owner'
