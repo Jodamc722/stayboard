@@ -162,7 +162,10 @@ async function _buildDaySheet(dateIn?: string, marketIn?: string): Promise<any> 
       pageRows<any>((a, b) => db.from('guesty_reservations').select('listing_id,check_in,status')
         // ordered so that if the page budget is ever reached it drops the FURTHEST-OUT arrivals, which
         // are the ones nobody is planning around today.
-        .gt('check_in', date).lte('check_in', addDays(date, 45)).order('check_in', { ascending: true }).order('id').range(a, b), 5)
+        // Dead statuses are dropped in SQL too (inquiries are most of them): the same rows isLive()
+        // keeps below, a fraction of the read, so the page budget is never the reason for a cut.
+        .gt('check_in', date).lte('check_in', addDays(date, 45)).not('status', 'in', '(inquiry,canceled,cancelled,declined,expired,denied,unavailable)')
+        .order('check_in', { ascending: true }).order('id').range(a, b), 5)
         .then(r => ({ data: r.rows, truncated: r.truncated })),
       // How fresh is the RESERVATION feed? Breezeway freshness alone says nothing about whether a
       // booking made an hour ago is on this sheet.
