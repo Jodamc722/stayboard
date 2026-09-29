@@ -128,7 +128,7 @@ export async function auditDuplicates(opts: {
       // Recent-first, and a secondary sort key so paging cannot drop or repeat rows — the same
       // PostgREST trap that made the stale-clean job blind to everything newer than six months.
       return q.order('scheduled_date', { ascending: false }).order('id', { ascending: true }).range(a, b)
-    }, Math.max(4, Math.ceil(days / 7)))
+    }, Math.max(6, Math.ceil(days / 4)))   // ~250 tasks a day of headroom (today ~90), so growth never fails the audit
     if (read.truncated) return { ...base, ok: false, error: 'Could not read every task in this window — try again.' }
 
     const rows = read.rows as any[]
