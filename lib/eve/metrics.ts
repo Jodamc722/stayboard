@@ -22,7 +22,7 @@ import { rollupBuilding } from '@/lib/optimize-score'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { isTaskDone } from '@/lib/task-categories'
 import { bucketFor, familyFor } from '@/lib/marketing'
-import { todayET, shiftDay, lc, num, round2, normStar, safe, DEAD_LISTING } from './ctx'
+import { todayET, shiftDay, lc, num, round2, normStar, DEAD_LISTING, pageRows } from './ctx'
 
 export type MetricRow = { day: string; scope: string; metric: string; value: number | null; n: number }
 
@@ -224,16 +224,20 @@ export async function computeRange(from: string, to: string): Promise<MetricRow[
   }
 
   // ---- 4. Guest issues + sentiment ----
-  const gl: any = await safe(db.from('glitches').select('id,listing_id,unit,created_at')
-    .gte('created_at', from + 'T00:00:00Z').lte('created_at', to + 'T23:59:59Z').order('id').limit(3000), { data: [] } as any)
-  for (const g of (gl.data || [])) {
+  // Paged in key order like the reads above (2026-09-29): a backfill window holds more than one
+  // 1,000-row page of either. A short read is logged, and those days count what was read.
+  const gl = await pageRows<any>((a, b) => db.from('glitches').select('id,listing_id,unit,created_at')
+    .gte('created_at', from + 'T00:00:00Z').lte('created_at', to + 'T23:59:59Z').order('id').range(a, b))
+  if (gl.truncated) console.error(`computeRange: glitch read ${from}..${to} incomplete — glitches_new may be short`)
+  for (const g of gl.rows) {
     const d = String(g.created_at || '').slice(0, 10)
     if (!dayIndex[d]) continue
     for (const s of scopesOf(g.listing_id)) bump(byDay[d], s, 'glitches_new', 1)
   }
-  const st: any = await safe(db.from('guesty_conversation_sentiment').select('conversation_id,listing_id,dissatisfied,last_message_at')
-    .gte('last_message_at', from + 'T00:00:00Z').lte('last_message_at', to + 'T23:59:59Z').order('conversation_id').limit(3000), { data: [] } as any)
-  for (const s0 of (st.data || [])) {
+  const st = await pageRows<any>((a, b) => db.from('guesty_conversation_sentiment').select('conversation_id,listing_id,dissatisfied,last_message_at')
+    .gte('last_message_at', from + 'T00:00:00Z').lte('last_message_at', to + 'T23:59:59Z').order('conversation_id').range(a, b), 25)
+  if (st.truncated) console.error(`computeRange: sentiment read ${from}..${to} incomplete — sentiment_negative may be short`)
+  for (const s0 of st.rows) {
     if (!s0.dissatisfied) continue
     const d = String(s0.last_message_at || '').slice(0, 10)
     if (!dayIndex[d]) continue
@@ -315,13 +319,18 @@ export async function computeToday(): Promise<MetricRow[]> {
     const keys = Object.keys(by)
     for (const s of keys) out.push({ day, scope: s, metric, value: by[s], n: by[s] })
   }
-  const fw: any = await safe(db.from('field_requests').select('listing_id').in('status', ['open', 'in_progress']).order('id').limit(3000), { data: [] } as any)
-  tally(fw.data || [], 'open_field_work')
-  const gl: any = await safe(db.from('glitches').select('listing_id').not('status', 'in', '("done","resolved","closed")').order('id').limit(3000), { data: [] } as any)
-  tally(gl.data || [], 'glitches_open')
-  const ur: any = await safe(db.from('guesty_reviews').select('listing_id').eq('has_reply', false).eq('excluded_from_score', false)
-    .gte('created_at', new Date(Date.now() - 60 * 86400000).toISOString()).order('id').limit(2000), { data: [] } as any)
-  tally(ur.data || [], 'unanswered_reviews')
+  // Every open item, paged in id order (2026-09-29): these are counts, and a capped read cannot say it
+  // was cut. A short read is logged; the count is what was read.
+  const fw = await pageRows<any>((a, b) => db.from('field_requests').select('listing_id').in('status', ['open', 'in_progress']).order('id').range(a, b))
+  if (fw.truncated) console.error('computeToday: open field work read incomplete — the count may be short')
+  tally(fw.rows, 'open_field_work')
+  const gl = await pageRows<any>((a, b) => db.from('glitches').select('listing_id').not('status', 'in', '("done","resolved","closed")').order('id').range(a, b))
+  if (gl.truncated) console.error('computeToday: open glitch read incomplete — the count may be short')
+  tally(gl.rows, 'glitches_open')
+  const ur = await pageRows<any>((a, b) => db.from('guesty_reviews').select('listing_id').eq('has_reply', false).eq('excluded_from_score', false)
+    .gte('created_at', new Date(Date.now() - 60 * 86400000).toISOString()).order('id').range(a, b))
+  if (ur.truncated) console.error('computeToday: unanswered-review read incomplete — the count may be short')
+  tally(ur.rows, 'unanswered_reviews')
   return out
 }
 
