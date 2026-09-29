@@ -48,6 +48,11 @@ const BELOW_PAR = 0.15
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
+// A review's EASTERN day (2026-09-29, 05-P2-4b). created_at is a UTC timestamp, so its first ten
+// characters are the UTC date: a review posted 8pm–midnight ET counted on tomorrow, and on the last
+// evening of a month it landed in next month's bar. One formatter, reused — this runs per review.
+const ET_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
+function etDay(v: any): string { const s = str(v); if (s.length <= 10) return s; const d = new Date(s); return isNaN(d.getTime()) ? s.slice(0, 10) : ET_DAY.format(d) }
 function addDays(s: string, n: number) { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return ymd(d) }
 function daysBetween(a: string, b: string): number {
   return Math.round((new Date(b + 'T12:00:00').getTime() - new Date(a + 'T12:00:00').getTime()) / 86400000)
@@ -346,14 +351,14 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
     return true
   }
 
-  const inWindow = (r: any) => { const d = str(r.created_at).slice(0, 10); return d >= from && d <= to }
+  const inWindow = (r: any) => { const d = etDay(r.created_at); return d >= from && d <= to }
   const windowed = ((rRes.data || []) as any[]).filter(r => Number.isFinite(Number(r.rating)))
   for (const r of windowed) if (inWindow(r) && !lmap[String(r.listing_id)]) unmappedReviews++
   const all = windowed
     .filter(r => inScope(String(r.listing_id)))
     .filter(r => channel === 'all' || str(r.channel) === channel)
   const cur = all.filter(inWindow)
-  const prev = all.filter(r => { const d = str(r.created_at).slice(0, 10); return d >= prevFrom && d < from })
+  const prev = all.filter(r => { const d = etDay(r.created_at); return d >= prevFrom && d < from })
 
   // ── PAR, PER CHANNEL — AND DELIBERATELY NOT FILTERED ────────────────────────────────────────
   // What a review on this channel normally scores FOR THE WHOLE PORTFOLIO in this window. Every
@@ -507,7 +512,8 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
     push(byBuilding[li.building] = byBuilding[li.building] || emptyAgg(), rating, chKey, p)
     push(byOwner[li.ownerId] = byOwner[li.ownerId] || emptyAgg(), rating, chKey, p)
     push(byChannel[chKey] = byChannel[chKey] || emptyAgg(), rating, chKey, p)
-    push(byMonth[str(r.created_at).slice(0, 7)] = byMonth[str(r.created_at).slice(0, 7)] || emptyAgg(), rating, chKey, p)
+    const mon = etDay(r.created_at).slice(0, 7)
+    push(byMonth[mon] = byMonth[mon] || emptyAgg(), rating, chKey, p)
     // per-unit channel mix — a unit can be fine on Airbnb and bleeding on Booking.com
     const cu2 = chByUnit[lid] = chByUnit[lid] || {}
     push(cu2[chKey] = cu2[chKey] || emptyAgg(), rating, chKey, p)
