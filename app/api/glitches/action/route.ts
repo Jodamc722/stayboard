@@ -11,6 +11,7 @@ import { buildIntel } from '@/lib/listingIntel'
 import { canDelete, trashRecord } from '@/lib/trash'
 import { requireLevel } from '@/lib/access'
 import { bustDay } from '@/lib/bust'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 
@@ -316,13 +317,16 @@ export async function POST(req: NextRequest) {
         const unitName = str(g.unit).trim()
         if (unitName) {
           const toks = unitName.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
-          const { data: cand } = await db.from('breezeway_properties').select('home_id, name, status, reference_property_id').limit(1000)
+          // Every property (paged, home_id order): "exactly one match" is only true over the whole
+          // list, so an incomplete read picks nothing and the operator is asked to name the unit.
+          const { rows: cand, truncated: candShort } = await pageRows((a, b) => db.from('breezeway_properties').select('home_id, name, status, reference_property_id').order('home_id').range(a, b))
+          if (candShort) console.error('[glitches/action] push: Breezeway property list read incomplete')
           const hits = ((cand || []) as any[]).filter(p => {
             if (String(p.status || '').toLowerCase() !== 'active') return false
             const ptoks = String(p.name || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
             return toks.every(t => ptoks.indexOf(t) >= 0)
           })
-          if (hits.length === 1) {
+          if (hits.length === 1 && !candShort) {
             homeId = Number(hits[0].home_id)
             if (hits[0].reference_property_id) refListing = String(hits[0].reference_property_id)
           }
