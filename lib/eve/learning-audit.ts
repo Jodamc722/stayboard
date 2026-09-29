@@ -38,6 +38,7 @@ import { runEve } from './run'
 import { saveMemory, neverUsedMemories } from './memory'
 import { scorecard } from './recommendations'
 import { listThoughts, shapeOf } from './thoughts'
+import { pageRows } from './ctx'
 
 export type ProbeKind = 'taught' | 'declined' | 'answered' | 'rule'
 export type Probe = {
@@ -321,9 +322,11 @@ async function gradingHitRate(): Promise<{ rate: number | null; graded: number; 
   try {
     const since8w = new Date(Date.now() - 56 * 864e5).toISOString()
     const cut4w = new Date(Date.now() - 28 * 864e5).toISOString()
-    const { data } = await db.from('eve_recommendations').select('outcome,measured_at').gte('measured_at', since8w).in('outcome', ['worked', 'didnt']).limit(1000)
+    // Paged in id order: eight weeks of graded plans can pass PostgREST's 1,000-row page (2026-09-29).
+    const { rows, truncated } = await pageRows((a, b) => db.from('eve_recommendations').select('id,outcome,measured_at').gte('measured_at', since8w).in('outcome', ['worked', 'didnt']).order('id').range(a, b))
+    if (truncated) console.error('gradingHitRate: graded-plan read incomplete — the 4-week rates may be short')
     let rw = 0, rn = 0, pw = 0, pn = 0
-    for (const r of ((data as any[]) || [])) {
+    for (const r of (rows as any[])) {
       const recent = str(r.measured_at) >= cut4w
       if (recent) { rn++; if (r.outcome === 'worked') rw++ } else { pn++; if (r.outcome === 'worked') pw++ }
     }
@@ -348,9 +351,11 @@ async function retentionWindow(days = 7): Promise<{ rate: number | null; asked: 
   const db = supabaseAdmin()
   try {
     const since = new Date(Date.now() - days * 864e5).toISOString()
-    const { data } = await db.from('eve_probes').select('kind,expected,last_pass').gte('last_asked_at', since).not('last_pass', 'is', null).limit(1000)
+    // Paged like the graded-plan read above (2026-09-29): a week of probes is small, but this is a rate, and a rate should not depend on a page size.
+    const { rows, truncated } = await pageRows((a, b) => db.from('eve_probes').select('id,kind,expected,last_pass').gte('last_asked_at', since).not('last_pass', 'is', null).order('id').range(a, b))
+    if (truncated) console.error('retentionWindow: probe read incomplete — the retention rate may be off')
     let asked = 0, passed = 0, taughtFailed = 0, hAsked = 0, hPassed = 0
-    for (const r of ((data as any[]) || [])) {
+    for (const r of (rows as any[])) {
       if (r.expected === NO_SIGNAL) { hAsked++; if (r.last_pass) hPassed++; continue }
       asked++
       if (r.last_pass) passed++

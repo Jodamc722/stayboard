@@ -39,7 +39,7 @@
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { setSetting } from '@/lib/app-settings'
-import { todayET } from './ctx'
+import { todayET, pageRows } from './ctx'
 
 export const AGENT_KEY = 'eve_agent'
 export const AGENT_COUNTERS_KEY = 'eve_agent_counters'
@@ -452,8 +452,10 @@ export async function agentToday(): Promise<{ date: string; actions: number; ask
   } catch { /* zero */ }
   try {
     const since30 = new Date(Date.now() - 30 * 86400_000).toISOString()
-    const { data } = await supabaseAdmin().from('eve_recommendations').select('outcome,status').eq('kind', 'action').gte('created_at', since30).limit(1000)
-    for (const r of ((data as any[]) || [])) {
+    // Paged in id order: thirty days of proposals can pass PostgREST's 1,000-row page (2026-09-29).
+    const { rows, truncated } = await pageRows((a, b) => supabaseAdmin().from('eve_recommendations').select('id,outcome,status').eq('kind', 'action').gte('created_at', since30).order('id').range(a, b))
+    if (truncated) console.error('agentToday: graded-action read incomplete — the counts may be short')
+    for (const r of (rows as any[])) {
       if (r.outcome === 'worked') gradedGood++
       else if (r.outcome === 'didnt') gradedBad++
       else if (!r.outcome && r.status === 'accepted') gradedPending++
