@@ -592,8 +592,11 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   }
 
   // ---- 6. The morning roll-up, once a day, in her room. ----------------------------------------
+  // BUILT IN THE MORNING, NOT AT MIDNIGHT (2026-09-28 audit, F26). The first run on a new ET date is
+  // 00:20, so the "morning" roll-up was a midnight snapshot held by quiet hours and posted at 7 —
+  // without anything raised overnight. It is built only between 07:00 and 10:59 ET now.
   const today = etDate()
-  if (opts?.digest && st.lastDigest !== today) {
+  if (opts?.digest && st.lastDigest !== today && hour >= 7 && hour <= 10) {
     const openNow = open.filter(i => i.status === 'open')
     const { data: closedRows } = await db.from('eve_slack_items').select('summary,closed_reason,unit').eq('status', 'closed').gte('closed_at', new Date(Date.now() - 26 * 3600_000).toISOString()).limit(30)
     const closed = (closedRows || []) as any[]

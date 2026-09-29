@@ -220,7 +220,10 @@ export async function runHandoff(open: AskItem[], cfg: CcsDeskCfg, now = new Dat
   const st = (await getSetting<any>(HANDOFF_STATE_KEY, null)) || {}
   if (st.lastHandoff === slot) return { posted: false }
   const text = handoffText(open, now.getTime())
-  const gate = await agentAllowed('slack_post', { ask: true })
+  // AT THE HOUR IT WAS SET FOR (2026-09-28 audit, F27). The 23:00 slot falls in quiet hours, so it
+  // was held and posted at 7am next to the fresh 7am handoff — stale on arrival. A handoff runs at
+  // the hours in this desk's settings, which are a person's schedule, not Eve's initiative: urgent.
+  const gate = await agentAllowed('slack_post', { ask: true, urgent: true })
   const r = await stepDown(gate, { action: 'slack_post', summary: `CCS handoff in #ccs-and-jon (${open.length} open asks)`, exec: { channel: EVE_CHANNELS.ccsJon, channel_name: 'ccs-and-jon', text }, by: 'cron:slack-watch' },
     async () => { const p = await postToChannel(EVE_CHANNELS.ccsJon, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
   if (r.ok && r.mode !== 'observe') await setSetting(HANDOFF_STATE_KEY, { ...st, lastHandoff: slot }, 'ccs-desk')
