@@ -12,6 +12,7 @@ import { getAccess, isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ITEMS, logAccess, checkVaultCode, codeFrom, codeEntered, vaultKeyReady } from '@/lib/vault'
 import { listSnapshots, readSnapshot, itemsToCsv, snapshotVault } from '@/lib/vault-backup'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -57,9 +58,10 @@ export async function POST(req: NextRequest) {
       rows = Array.isArray(snap.items) ? snap.items : []
       label = String(b.snapshot).replace(/\.json\.enc$/, '')
     } else {
-      const { data, error } = await supabaseAdmin().from(ITEMS).select('*').is('deleted_at', null).order('category').order('title').limit(5000)
-      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-      rows = (data || []) as any[]
+      // Paged (was one read capped at 1,000): a backup that silently stops at 1,000 items is not one.
+      const read = await pageRows<any>((lo, hi) => supabaseAdmin().from(ITEMS).select('*').is('deleted_at', null).order('category').order('title').order('id').range(lo, hi))
+      if (read.truncated) return NextResponse.json({ ok: false, error: 'Could not read the whole vault — try again.' }, { status: 500 })
+      rows = read.rows
     }
     // Log BEFORE answering, like reveal: the export happened even if the download is abandoned.
     await logAccess({ itemId: null, email: me, action: 'export', detail: codeEntered(label + ' · ' + rows.length + ' items'), ip: ipOf(req) })

@@ -12,6 +12,7 @@ import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ITEMS, CATEGORY_IDS, encryptSecret, maskHint, vaultKeyReady, logAccess, isMissingTable } from '@/lib/vault'
 import { csvToImportRows, snapshotVault } from '@/lib/vault-backup'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -40,9 +41,16 @@ export async function POST(req: NextRequest) {
 
   try {
     const db = supabaseAdmin()
-    const { data: existing, error } = await db.from(ITEMS).select('id, title, username').is('deleted_at', null).limit(5000)
-    if (error) return NextResponse.json({ ok: false, needsMigration: isMissingTable(error.message), error: error.message }, { status: 500 })
-    const seen = new Set(((existing || []) as any[]).map(r => lower(r.title) + '|' + lower(r.username)))
+    // Paged (was one read capped at 1,000): the "already there" check has to see every entry, or a
+    // re-run import past 1,000 items would double the shelf. A short read imports nothing.
+    const existing = await pageRows<any>((lo, hi) => db.from(ITEMS).select('id, title, username').is('deleted_at', null).order('id').range(lo, hi))
+    if (existing.truncated) {
+      // Say why when the database says why (a missing table still reads as "run the migration").
+      const { error } = await db.from(ITEMS).select('id').limit(1)
+      const msg = error ? error.message : 'Could not read every existing entry, so nothing was imported — try again.'
+      return NextResponse.json({ ok: false, needsMigration: error ? isMissingTable(error.message) : false, error: msg }, { status: 500 })
+    }
+    const seen = new Set(existing.rows.map(r => lower(r.title) + '|' + lower(r.username)))
 
     const toInsert: any[] = []
     let skipped = 0

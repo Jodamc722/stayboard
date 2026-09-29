@@ -13,6 +13,7 @@ import {
   ITEMS, COLLECTIONS, COLLECTION_MEMBERS, collectionsFor, logAccess, isMissingTable,
 } from '@/lib/vault'
 import { snapshotVault } from '@/lib/vault-backup'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -48,9 +49,11 @@ export async function GET() {
       members = (m.data || []) as any[]
     }
     // How many items sit in each vault, so an empty one is obvious before you trust it.
-    const { data: counts } = await db.from(ITEMS).select('collection_id').is('deleted_at', null).limit(5000)
+    // Paged (was one read capped at 1,000): the per-vault counts need every item.
+    const counts = await pageRows<any>((lo, hi) => db.from(ITEMS).select('collection_id').is('deleted_at', null).order('id').range(lo, hi))
+    if (counts.truncated) console.error('vault/collections: item read stopped early — vault counts may be low')
     const tally: Record<string, number> = {}
-    for (const r of (counts || []) as any[]) {
+    for (const r of counts.rows) {
       const k = r.collection_id ? String(r.collection_id) : 'none'
       tally[k] = (tally[k] || 0) + 1
     }
