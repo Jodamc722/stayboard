@@ -176,6 +176,52 @@ export function looksLikeDoorCode(text: any): boolean {
   return !!s && scrubText(s) !== s
 }
 
+// A CODE IS NEVER A MEMORY, HOWEVER IT IS PHRASED (2026-09-29 review, N5). The redactor's patterns
+// need a code phrased the usual ways; "The code for 402 is 4821", "the gate at Salato opens with
+// 4821", "use 4821# at the front door" or "Keypad at 17 West is 1234#" slipped past them and were
+// filed. A memory is refused when a lock word sits within ~24 characters of a 4-8 digit run (an
+// optional # or * after it). What is NOT a code run: a unit number ("unit 1102"), a year after
+// in / since ("since 2024"), a date, a phone number, money, a decimal, a percentage, or a run glued
+// to letters (a confirmation code). A zip / area / confirmation "code" is not a lock word.
+const MEM_CODE_WORD_RE = /\b(?:doors?|gates?|locks?|lockbox(?:es)?|keypads?|codes?|pins?|entry|entries|combos?|salto|access|passcodes?|keycodes?|c[oó]digos?)\b/gi
+const MEM_RUN_RE = /(?<![A-Za-z\u00C0-\u024F0-9$.,\/-])\d{4,8}(?![0-9%]|[.,\/-]\d)[#*]?/g
+const MEM_PHONE_RE = /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g
+const MEM_UNIT_BEFORE_RE = /\b(?:unit|units|apt|apartment|suite|ste|room|rm|floor|level)\.?\s*#?\s*$/i
+const MEM_YEAR_BEFORE_RE = /\b(?:in|since|during|until|till|before|after)\s+$/i
+const MEM_NEAR = 24
+
+/** Is a lock / door / code word within ~24 characters of a 4-8 digit run? saveMemory refuses it. */
+export function codeNearDigits(text: any): boolean {
+  const raw = String(text == null ? '' : text)
+  if (!/\d{4}/.test(raw)) return false
+  // Phone numbers out first, same length, so every position below still lines up.
+  const s = raw.replace(MEM_PHONE_RE, (m: string) => ' '.repeat(m.length))
+  const words: Array<[number, number]> = []
+  MEM_CODE_WORD_RE.lastIndex = 0
+  let w: RegExpExecArray | null
+  while ((w = MEM_CODE_WORD_RE.exec(s))) {
+    if (/^(?:codes?|c[oó]digos?)$/i.test(w[0])) {
+      const prev = /([a-z]+)\s*$/i.exec(s.slice(Math.max(0, w.index - 20), w.index))
+      if (prev && NOT_A_DOOR.test(prev[1])) continue
+    }
+    words.push([w.index, w.index + w[0].length])
+  }
+  if (!words.length) return false
+  MEM_RUN_RE.lastIndex = 0
+  let d: RegExpExecArray | null
+  while ((d = MEM_RUN_RE.exec(s))) {
+    const before = s.slice(Math.max(0, d.index - 16), d.index)
+    if (MEM_UNIT_BEFORE_RE.test(before)) continue
+    if (/^(?:19|20)\d\d$/.test(d[0]) && MEM_YEAR_BEFORE_RE.test(before)) continue
+    const a = d.index, b = d.index + d[0].length
+    for (const [x, y] of words) {
+      const gap = x >= b ? x - b : a >= y ? a - y : 0
+      if (gap <= MEM_NEAR) return true
+    }
+  }
+  return false
+}
+
 /** A scalar under a code or device name: a code field loses it; a device field only when code-shaped. */
 const hides = (kind: CodeKind, val: any) => kind === 'code' || (kind === 'device' && holdsCodeDigits(val))
 
