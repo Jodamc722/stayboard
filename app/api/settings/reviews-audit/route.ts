@@ -68,7 +68,7 @@ export async function GET(req: NextRequest) {
       .gte('created_at', since).limit(6000),
     db.from('guesty_reservations').select('listing_id,check_out,status,source,guest_name,confirmation_code')
       .gte('check_out', since).lte('check_out', today).limit(6000),
-    db.from('guesty_listings').select('id,nickname,title').limit(2000),
+    db.from('guesty_listings').select('id,nickname,title').limit(1000), // deliberate cap: one row per listing, ~290
   ])
 
   const unitOf: Record<string, string> = {}

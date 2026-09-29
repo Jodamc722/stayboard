@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
   // that exist. Names only: no ids, no money, no guest data.
   const db = supabaseAdmin()
   const [{ data: listings }, { data: owners }] = await Promise.all([
-    db.from('guesty_listings').select('nickname, title, building, status').limit(2000),
+    db.from('guesty_listings').select('nickname, title, building, status').limit(1000), // deliberate cap: one row per listing, ~290
     db.from('guesty_owners').select('full_name').limit(500),
   ])
   const active = ((listings || []) as any[]).filter(l => str(l.status).toLowerCase() !== 'inactive')
@@ -121,8 +121,8 @@ export async function POST(req: NextRequest) {
     const scope: any = d.scope && typeof d.scope === 'object' ? d.scope : {}
     if (scope.scopeType === 'owner' || scope.scopeType === 'listing') {
       const { data: rows } = scope.scopeType === 'owner'
-        ? await db.from('guesty_owners').select('id, full_name').limit(2000)
-        : await db.from('guesty_listings').select('id, nickname, title').limit(2000)
+        ? await db.from('guesty_owners').select('id, full_name').limit(1000) // deliberate cap: one row per owner, ~60
+        : await db.from('guesty_listings').select('id, nickname, title').limit(1000) // deliberate cap: one row per listing, ~290
       const byName: Record<string, string> = {}
       for (const x of (rows || []) as any[]) byName[str(x.full_name || x.nickname || x.title).toLowerCase()] = str(x.id)
       scope.scopeIds = (Array.isArray(scope.scopeIds) ? scope.scopeIds : []).map((n: any) => byName[str(n).toLowerCase()]).filter(Boolean)

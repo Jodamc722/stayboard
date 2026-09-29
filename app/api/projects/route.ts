@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
   try {
     const sb = supabaseAdmin()
     const [{ data: l }, { data: u }] = await Promise.all([
-      sb.from('guesty_listings').select('id,nickname,title,building').limit(2000),
+      sb.from('guesty_listings').select('id,nickname,title,building').limit(1000), // deliberate cap: one row per listing, ~290
       sb.from('app_users').select('email,profile').eq('status', 'active').limit(200),
     ])
     listings = ((l || []) as any[]).map(x => ({ id: String(x.id), label: x.nickname || x.title || 'Unit', building: x.building || null }))

@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
     const ws = searchParams.get('weekStart') || sunOf(today)
     const we = addDays(ws, 6)
 
-    const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(5000)
+    const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(1000) // deliberate cap: one row per listing, ~290
     const meta: Record<string, { market: string; vendor: boolean }> = {}
     for (const l of (listings || []) as any[]) {
       const id = String(l.id)

@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
       db.from('breezeway_tasks_sync')
         .select('id,name,status,assignees,type_department')
         .eq('scheduled_date', today)
-        .limit(2000),
+        .limit(1000), // deliberate cap: one day's Breezeway tasks (~90 a day portfolio-wide)
     ])
     if (tRes.error) throw new Error('could not read today\'s tasks — ' + String(tRes.error.message || tRes.error).slice(0, 120))
     const tasks = (tRes.data || []).filter(t => !isTaskGone(t.status))

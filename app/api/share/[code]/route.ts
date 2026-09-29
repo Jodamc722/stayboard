@@ -87,7 +87,7 @@ async function handle(req: NextRequest, code: string, pw: string, body?: any) {
   const since = ymdET(new Date(Date.now() - windowDays * 86400000))
 
   // ── Resolve the scope to listing ids ────────────────────────────────────────────────────────
-  const { data: listings } = await db.from('guesty_listings').select('id, nickname, title, building, address_city, status').limit(2000)
+  const { data: listings } = await db.from('guesty_listings').select('id, nickname, title, building, address_city, status').limit(1000) // deliberate cap: one row per listing, ~290
   const active = (listings || []).filter((l: any) => String(l.status || '').toLowerCase() !== 'inactive')
   const ids = new Set<string>()
   const scopeIds: string[] = Array.isArray(link.scope_ids) ? link.scope_ids.map(str) : []

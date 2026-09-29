@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
   try {
     const db = supabaseAdmin()
     const { data: lRes } = await db.from('guesty_listings')
-      .select('id,nickname,title,building,address_city,status').limit(2000)
+      .select('id,nickname,title,building,address_city,status').limit(1000) // deliberate cap: one row per listing, ~290
 
     const nameOf: Record<string, string> = {}
     const ids: string[] = []

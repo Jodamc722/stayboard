@@ -127,8 +127,8 @@ export async function GET(req: NextRequest) {
   const [{ data: live }, { data: dead }, { data: owners }, { data: listings }] = await Promise.all([
     db.from('share_links').select('*').is('revoked_at', null).order('created_at', { ascending: false }).limit(400),
     lite ? Promise.resolve({ data: [] } as any) : db.from('share_links').select('*').not('revoked_at', 'is', null).gte('revoked_at', since).order('revoked_at', { ascending: false }).limit(100),
-    lite ? Promise.resolve({ data: [] } as any) : db.from('guesty_owners').select('id, full_name, listing_ids').limit(2000),
-    db.from('guesty_listings').select('id, nickname, title, building, status').limit(2000),
+    lite ? Promise.resolve({ data: [] } as any) : db.from('guesty_owners').select('id, full_name, listing_ids').limit(1000), // deliberate cap: one row per owner, ~60
+    db.from('guesty_listings').select('id, nickname, title, building, status').limit(1000), // deliberate cap: one row per listing, ~290
   ])
   const names = { owners: {} as Record<string, string>, listings: {} as Record<string, string> }
   for (const o of (owners || []) as any[]) names.owners[str(o.id)] = str(o.full_name)
@@ -140,7 +140,7 @@ export async function GET(req: NextRequest) {
   let lockedCodes: string[] = []
   try {
     const since15 = new Date(Date.now() - 15 * 60000).toISOString()
-    const { data: den } = await db.from('parking_access_log').select('code').eq('action', 'denied').gte('created_at', since15).like('code', 'link:%').limit(2000)
+    const { data: den } = await db.from('parking_access_log').select('code').eq('action', 'denied').gte('created_at', since15).like('code', 'link:%').limit(1000) // deliberate cap: 15 minutes of refused passcodes — the lockout stops each link at ~40, so 1,000 means 25 links under attack at once
     const n: Record<string, number> = {}
     for (const d of (den || []) as any[]) { const c = str(d.code).slice(5); n[c] = (n[c] || 0) + 1 }
     lockedCodes = Object.keys(n).filter(c => n[c] >= 5)

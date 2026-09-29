@@ -76,7 +76,7 @@ export async function GET(req: Request) {
         // halves of the page would disagree about what you were looking at.
         const [{ data: ls }, { data: own }] = await Promise.all([
           sb.from('guesty_listings').select('id, nickname, title, status, building, address_city, listed:raw->>isListed').in('id', ids as string[]),
-          sb.from('guesty_owners').select('id, full_name, listing_ids').limit(2000),
+          sb.from('guesty_owners').select('id, full_name, listing_ids').limit(1000), // deliberate cap: one row per owner, ~60
         ])
         const ownerOf: Record<string, { id: string; name: string }> = {}
         for (const o of ((own || []) as any[])) {

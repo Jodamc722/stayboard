@@ -14,7 +14,7 @@ export async function GET() {
   const db = supabaseAdmin()
   const [oi, ol] = await Promise.all([
     db.from('audit_items').select('id,listing_id,room,kind,title,qty,note,photo_url,status,details').in('kind', ['replace', 'add']).in('status', ['approved', 'ordered', 'arriving']).order('created_at', { ascending: false }).limit(2000),
-    db.from('guesty_listings').select('id,nickname,title,building').limit(2000),
+    db.from('guesty_listings').select('id,nickname,title,building').limit(1000), // deliberate cap: one row per listing, ~290
   ])
   const lm: Record<string, any> = {}
   for (const l of ol.data || []) lm[String(l.id)] = { name: l.nickname || l.title || 'Unit', building: l.building || '' }

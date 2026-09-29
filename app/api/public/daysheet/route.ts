@@ -30,8 +30,8 @@ async function crewNow(date: string, market: string) {
   const [{ data: tRows }, { data: lRows }] = await Promise.all([
     db.from('breezeway_tasks_sync')
       .select('id,name,status,assignees,reference_property_id,started_at,finished_at')
-      .eq('scheduled_date', today).limit(2000),
-    db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(2000),
+      .eq('scheduled_date', today).limit(1000), // deliberate cap: one day's Breezeway tasks (~90 a day portfolio-wide)
+    db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(1000), // deliberate cap: one row per listing, ~290
   ])
   const meta: Record<string, { name: string; market: string }> = {}
   for (const l of ((lRows || []) as any[])) {

@@ -293,7 +293,7 @@ export async function POST(req: NextRequest) {
     // accepted on a PUT, so anything ticked here pushes back cleanly.
     const amenityCatalog: string[] = []
     try {
-      const { data: allAm } = await db0.from('guesty_listings').select('amenities').limit(2000)
+      const { data: allAm } = await db0.from('guesty_listings').select('amenities').limit(1000) // deliberate cap: one row per listing, ~290
       const seenAm = new Set<string>()
       for (const r of ((allAm || []) as any[])) {
         for (const a of (Array.isArray(r.amenities) ? r.amenities : [])) {
@@ -359,7 +359,7 @@ export async function POST(req: NextRequest) {
     // Whatever Guesty has is the starting point; the call is where it gets corrected.
     let ownerEmail = '', ownerPhone = '', ownerFullName = ''
     try {
-      const { data: ow } = await db0.from('guesty_owners').select('full_name, email, phone, listing_ids').limit(2000)
+      const { data: ow } = await db0.from('guesty_owners').select('full_name, email, phone, listing_ids').limit(1000) // deliberate cap: one row per owner, ~60
       const hit = ((ow || []) as any[]).find(o => (Array.isArray(o.listing_ids) ? o.listing_ids : []).some((x: any) => ids0.indexOf(String(x)) >= 0))
       if (hit) { ownerEmail = str(hit.email); ownerPhone = str(hit.phone); ownerFullName = str(hit.full_name) }
     } catch { /* the section renders empty and gets filled in on the call */ }

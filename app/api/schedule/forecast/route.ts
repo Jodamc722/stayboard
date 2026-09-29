@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
   const db = supabaseAdmin()
   const [outs, { data: listings }] = await Promise.all([
     fetchCheckouts(db, qFrom, qTo),
-    db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(5000),
+    db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(1000), // deliberate cap: one row per listing, ~290
   ])
   if (!listings || !listings.length) return NextResponse.json({ ok: false, error: 'Listing data unavailable - hit Sync and retry.' }, { status: 503 })
 

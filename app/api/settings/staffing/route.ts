@@ -176,7 +176,7 @@ export async function POST(req: NextRequest) {
     const agencyList = await getAgencies(true)
 
     const [{ data: listings }, { data: tasks }, people, existing] = await Promise.all([
-      sb.from('guesty_listings').select('id,nickname,title,building,address_city').limit(2000),
+      sb.from('guesty_listings').select('id,nickname,title,building,address_city').limit(1000), // deliberate cap: one row per listing, ~290
       sb.from('breezeway_tasks_sync')
         .select('assignee_name,finished_by_name,reference_property_id,type_department,name,finished_at')
         .gte('finished_at', start).lte('finished_at', end + 'T23:59:59').limit(5000),

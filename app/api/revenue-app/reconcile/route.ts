@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
     revenueAppUnitMonth(month),
     unitRevenue(from, to, 'netota'),
     unitRevenue(from, to, 'net'),
-    supabaseAdmin().from('guesty_listings').select('id,nickname,title,building').limit(2000),
+    supabaseAdmin().from('guesty_listings').select('id,nickname,title,building').limit(1000), // deliberate cap: one row per listing, ~290
     supabaseAdmin().from('rev_budget_month').select('*').eq('month', month),
   ])
   const byId = new Map<string, any>((listings || []).map((l: any) => [l.id, l]))

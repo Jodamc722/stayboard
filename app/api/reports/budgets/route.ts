@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
   const db = supabaseAdmin()
 
   if (sp.get('buildings')) {
-    const { data } = await db.from('guesty_listings').select('building').not('building', 'is', null).limit(2000)
+    const { data } = await db.from('guesty_listings').select('building').not('building', 'is', null).limit(1000) // deliberate cap: one row per listing, ~290
     const names: string[] = []
     for (const r of (data || []) as any[]) {
       const b = rollupBuilding(String(r.building || '').trim())
@@ -41,8 +41,8 @@ export async function GET(req: NextRequest) {
   // them a report about their neighbours' performance alongside their own.
   if (sp.get('owners')) {
     const [{ data: owners }, { data: listings }] = await Promise.all([
-      db.from('guesty_owners').select('id, full_name, listing_ids').limit(2000),
-      db.from('guesty_listings').select('id, status').limit(3000),
+      db.from('guesty_owners').select('id, full_name, listing_ids').limit(1000), // deliberate cap: one row per owner, ~60
+      db.from('guesty_listings').select('id, status').limit(1000), // deliberate cap: one row per listing, ~290
     ])
     const live = new Set(
       ((listings || []) as any[])

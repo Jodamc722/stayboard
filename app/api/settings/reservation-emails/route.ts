@@ -25,7 +25,7 @@ async function loadListings(): Promise<Listing[]> {
       .from('guesty_listings')
       .select('id,building,nickname,title,unit')
       .order('id', { ascending: true })
-      .limit(2000)              // PostgREST caps at 1000 without an explicit limit — say it out loud
+      .limit(1000) // deliberate cap: one row per listing, ~290
     if (error) return []
     return (data || []) as Listing[]
   } catch { return [] }

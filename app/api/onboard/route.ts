@@ -226,7 +226,7 @@ export async function GET(req: NextRequest) {
       const [{ data: rooms }, { data: items }, { data: listings }] = await Promise.all([
         ids.length ? db.from('onboarding_rooms').select('unit_id,key,name,kind,sort,photos,checked_at').in('unit_id', ids) : Promise.resolve({ data: [] as any[] }),
         ids.length ? db.from('onboarding_items').select('unit_id,room_id,id,name,brand,condition,qty,expected').in('unit_id', ids) : Promise.resolve({ data: [] as any[] }),
-        db.from('guesty_listings').select('id,nickname,title,building,status').limit(2000),
+        db.from('guesty_listings').select('id,nickname,title,building,status').limit(1000), // deliberate cap: one row per listing, ~290
       ])
       const lname: Record<string, string> = {}
       for (const l of (listings || []) as any[]) lname[String(l.id)] = String(l.nickname || l.title || l.id)

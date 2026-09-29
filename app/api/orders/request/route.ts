@@ -39,7 +39,7 @@ async function auditFor(db: any, listingId: string): Promise<{ id: string; code:
 
 export async function GET() {
   const db = supabaseAdmin()
-  const { data, error } = await db.from('guesty_listings').select('id,nickname,title,building,status').limit(2000)
+  const { data, error } = await db.from('guesty_listings').select('id,nickname,title,building,status').limit(1000) // deliberate cap: one row per listing, ~290
   if (error) return NextResponse.json({ error: 'Could not load units.' }, { status: 500 })
   const units = (data || [])
     .filter((l: any) => !/inactive/i.test(String(l.status || '')))

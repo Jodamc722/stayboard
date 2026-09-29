@@ -58,7 +58,7 @@ export async function GET(req: NextRequest) {
         .ilike('name', like(q)).order('scheduled_date', { ascending: false }).limit(12)),
     ])
     const [lRes, rRes, oRes] = await Promise.all([
-      db.from('guesty_listings').select('id,nickname,title,building,status').limit(2000),
+      db.from('guesty_listings').select('id,nickname,title,building,status').limit(1000), // deliberate cap: one row per listing, ~290
       db.from('guesty_reservations')
         .select('id,listing_id,listing_name,guest_name,check_in,check_out,status,confirmation_code')
         .or(`guest_name.ilike.${like(q)},confirmation_code.ilike.${like(q)},listing_name.ilike.${like(q)}`)
