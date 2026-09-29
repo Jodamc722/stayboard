@@ -9,6 +9,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getToken as refreshGuestyToken } from '@/lib/guesty'
 import { requireLevel } from '@/lib/access'
+import { bustDay } from '@/lib/bust'
 import { writeCustomFields } from '@/lib/guesty-custom-fields'
 import { notesDefId } from '@/lib/guesty-res-notes'
 
@@ -186,6 +187,7 @@ export async function POST(req: NextRequest) {
       ref_date: (meta as any)?.check_in || null, scheduled_for: (meta as any)?.check_in || null,
     }, { onConflict: 'reservation_id,kind' })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    bustDay()
     return NextResponse.json({ ok: true, outcome: outcome === 'claim' ? 'in_progress' : 'no_answer', attempts, by, at: at0 })
   }
   const { data: row, error } = await sb.from('guesty_reservations').select('custom_fields, raw').eq('id', reservationId).single()
@@ -212,6 +214,7 @@ export async function POST(req: NextRequest) {
       const cf = Array.isArray(wr.fields) ? wr.fields : []
       await sb.from('guesty_reservations').update({ custom_fields: cf, raw: { ...raw, customFields: cf } }).eq('id', reservationId)
     } catch { /* mirror best-effort */ }
+    bustDay()   // a field write can be the Welcome Call field itself
     return NextResponse.json({ ok: true, saved: writes.length })
   }
 
@@ -314,6 +317,8 @@ export async function POST(req: NextRequest) {
       await sb.from('guest_calls').delete().eq('reservation_id', reservationId).eq('kind', 'welcome')
     }
   } catch { /* the Guesty field is the source of truth for "was it called" */ }
+  // The Command Center's cached day counts welcome calls due and calls done from both (lib/bust).
+  bustDay()
 
   return NextResponse.json({ ok: true, done, outcome, value, callValue: value, by, at, attempts: loggedAttempts, notes: newNotes })
 }

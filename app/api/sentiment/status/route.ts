@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
+import { bustDay } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,5 +22,6 @@ export async function POST(req: NextRequest) {
     : { status: 'open', closed_at: null, closed_by: null }
   const { error } = await sb.from('guesty_conversation_sentiment').update(patch).eq('conversation_id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  bustDay()   // the Command Center's unhappy-guest rows read this table through its cached day
   return NextResponse.json({ ok: true, status: next })
 }

@@ -17,6 +17,7 @@ import { signedInName } from '@/lib/caller-name'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createClient } from '@/lib/supabase-server'
 import { requireLevel } from '@/lib/access'
+import { bustDay } from '@/lib/bust'
 import { getToken } from '@/lib/guesty'
 import { appendReservationNote } from '@/lib/guesty-res-notes'
 
@@ -47,6 +48,7 @@ export async function POST(req: NextRequest) {
   if (body?.undo === true) {
     const { error } = await sb.from('guest_calls').delete().eq('reservation_id', reservationId).eq('kind', 'post_checkout')
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    bustDay()
     return NextResponse.json({ ok: true, undone: true })
   }
 
@@ -89,6 +91,8 @@ export async function POST(req: NextRequest) {
     called_by: by, caller_email: callerEmail, called_at: at,
   }, { onConflict: 'reservation_id,kind' })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  // Calls done today are counted in the Command Center's cached day (lib/bust).
+  bustDay()
   if (outcome === 'claim') return NextResponse.json({ ok: true, outcome: 'in_progress', by, at })
 
   // Guesty note — best effort, never the reason this request fails.

@@ -1,6 +1,8 @@
 // Glitch actions: move along the escalation path, update fields, log a refund and sign off one
 // over the cap, push a Breezeway task for operations (explicit click only), check the pushed
 // task's status, delete.
+// Every write busts the Command Center's cached day (lib/bust): its glitch rows, refund sign-offs and
+// overdue counts are read from this table.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -8,6 +10,7 @@ import { createBreezewayTask, retrieveBreezewayTask, updateBreezewayTask, normal
 import { buildIntel } from '@/lib/listingIntel'
 import { canDelete, trashRecord } from '@/lib/trash'
 import { requireLevel } from '@/lib/access'
+import { bustDay } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 
@@ -96,6 +99,7 @@ export async function POST(req: NextRequest) {
         upd = await db.from('glitches').update(patch).eq('id', id)
       }
       if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 })
+      bustDay()
       return NextResponse.json({ ok: true, status })
     }
 
@@ -112,6 +116,7 @@ export async function POST(req: NextRequest) {
         const hint = /column|schema/i.test(error.message) ? ' — run migration 086 in Supabase first.' : ''
         return NextResponse.json({ ok: false, error: error.message.slice(0, 200) + hint }, { status: 500 })
       }
+      bustDay()
       return NextResponse.json({ ok: true, priority: want })
     }
 
@@ -141,6 +146,7 @@ export async function POST(req: NextRequest) {
         upd = await db.from('glitches').update(patch).eq('id', id)
       }
       if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 })
+      bustDay()
       return NextResponse.json({ ok: true, amount, needsApproval, cap })
     }
 
@@ -179,6 +185,7 @@ export async function POST(req: NextRequest) {
         const hint = /column|schema/i.test(error.message) ? ' — run migration 085 in Supabase first.' : ''
         return NextResponse.json({ ok: false, error: error.message.slice(0, 200) + hint }, { status: 500 })
       }
+      bustDay()
       return NextResponse.json({ ok: true, approved: approve, amount })
     }
 
@@ -252,6 +259,7 @@ export async function POST(req: NextRequest) {
         ;({ error } = await db.from('glitches').update(patch).eq('id', id))
       }
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      bustDay()
       return NextResponse.json({ ok: true })
     }
 
@@ -277,6 +285,7 @@ export async function POST(req: NextRequest) {
       const stamp2 = { vendor_team_told_at: new Date().toISOString(), vendor_team_told_for: visit, history: stamp('vendor announced' + (channel ? ' in ' + channel : '')), updated_at: new Date().toISOString() }
       const { error } = await db.from('glitches').update(stamp2).eq('id', id)
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      bustDay()
       return NextResponse.json({ ok: true, posted: posted.ok, channel, error: posted.ok ? undefined : posted.error })
     }
 
@@ -413,6 +422,7 @@ export async function POST(req: NextRequest) {
         pu = await db.from('glitches').update(patch).eq('id', id)
       }
       if (pu.error) return NextResponse.json({ ok: false, error: pu.error.message }, { status: 500 })
+      bustDay()
       return NextResponse.json({ ok: true, taskId, reportUrl: r.data.report_url || null, assignError: assignError || undefined, scheduledDate: wantDate })
     }
 
@@ -433,6 +443,7 @@ export async function POST(req: NextRequest) {
       if (!who.ok) return NextResponse.json({ ok: false, error: who.reason }, { status: 403 })
       const r = await trashRecord(db, 'glitch', id, who.email)
       if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: 500 })
+      bustDay()
       return NextResponse.json({ ok: true, deleted: true, trashId: r.trashId, label: r.label })
     }
 

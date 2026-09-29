@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { bustDay } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -45,8 +46,10 @@ export async function POST(req: NextRequest) {
   const via = (str(r.summary).match(/ via ([A-Za-z0-9_.-]+):/) || [])[1] || ''
   const at = new Date().toISOString()
 
-  // The thread leaves Needs reply now, not at the next guest-comms run.
+  // The thread leaves Needs reply now, not at the next guest-comms run — and the Command Center's
+  // cached day (its "waiting" rows read the same table) is rebuilt on its next read.
   try { const { refreshConversationStats } = await import('@/lib/response-times'); await refreshConversationStats(conversationId) } catch { /* the next run catches up */ }
+  bustDay()
 
   return NextResponse.json({ ok: true, module: via, id: r.ref && r.ref !== conversationId ? r.ref : null, at, by: who })
 }

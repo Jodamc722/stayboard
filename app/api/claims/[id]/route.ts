@@ -13,6 +13,7 @@ import { claimNoteLine, claimTitle, deadlineFor, dueDateFor, policyFor, gatesFor
 import { getSetting } from '@/lib/app-settings'
 import { nextCheckInFor } from '@/lib/claim-turnover'
 import { requireLevel } from '@/lib/access'
+import { bustDay } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -145,6 +146,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       upd = await db.from('claims').update(patch).eq('id', params.id)
     }
     if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 })
+    bustDay()   // stage, deadline and amount feed the Command Center's cached day
 
     const after: Claim = { ...before, ...patch } as Claim
 
@@ -205,5 +207,6 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   const db = supabaseAdmin()
   const r = await trashRecord(db, 'claim', params.id, who.email)
   if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: 500 })
+  bustDay()
   return NextResponse.json({ ok: true, trashId: r.trashId, label: r.label })
 }

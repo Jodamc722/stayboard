@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAnyLevel } from '@/lib/access'
 import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { bustDay } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -80,6 +81,7 @@ export async function POST(req: NextRequest) {
     await db.from('eve_actions').update({ status: 'rejected', decided_by: by, decided_at: nowISO, result: { note: str(body?.note).slice(0, 300) || 'discarded' } }).eq('id', id)
     const { logAgent } = await import('@/lib/eve/agent-mode')
     await logAgent({ action: 'guest_reply_draft', rung: 2, allowed: false, mode: 'observe', reason: `draft discarded by ${by}`, summary: `discarded draft to ${pl.guest || 'guest'}`, ref: id, by: 'chat', actor: by })
+    bustDay()
     return NextResponse.json({ ok: true })
   }
 
@@ -94,6 +96,7 @@ export async function POST(req: NextRequest) {
     await db.from('eve_actions').update({ status: out.ok ? 'executed' : closed ? 'rejected' : 'failed', decided_by: by, decided_at: nowISO, executed_at: out.ok ? nowISO : null, result: { by, ok: out.ok, done: out.ok ? 'posted the public review reply' : undefined, error: problem || undefined, closed: closed || undefined, edited: text !== str(pl.draft).trim() } }).eq('id', id)
     const { logAgent } = await import('@/lib/eve/agent-mode')
     await logAgent({ action: 'guest_reply_draft', rung: 2, allowed: out.ok, mode: 'act', reason: out.ok ? `review reply posted by ${by} from the draft` : `review reply by ${by} not posted: ${problem}`, summary: out.ok ? `posted a public reply to ${pl.guest || 'a guest'}'s review` : `review reply not posted: ${problem}`, ref: str(pl.reviewId), by: 'chat', actor: by })
+    if (out.ok) bustDay()   // reviews to answer are counted in the Command Center's cached day
     if (out.ok) return NextResponse.json({ ok: true, done: 'Posted the review reply' + (out.body.alreadyReplied ? ' (the channel already had one, so it is marked replied)' : '') + (out.body.saveError ? ' — ' + str(out.body.saveError) : '') })
     return NextResponse.json({ ok: false, error: problem, closed: closed || undefined }, { status: closed ? 200 : out.status >= 400 ? out.status : 502 })
   }
@@ -109,6 +112,7 @@ export async function POST(req: NextRequest) {
   await recordAgentAction('guest_reply_send', { rung: 2, allowed: r.ok, mode: 'act', reason: r.ok ? `sent by ${by} from the draft` : `send by ${by} failed: ${r.error}`, summary: r.summary, ref: r.ref || id, by: 'chat', actor: by, countAs: r.ok ? 'action' : 'none' })
   // The thread leaves Needs reply now, not at the next guest-comms run (lib/response-times).
   if (r.ok) { try { const { refreshConversationStats } = await import('@/lib/response-times'); await refreshConversationStats(conversationId) } catch { /* the next run catches up */ } }
+  if (r.ok) bustDay()   // …and the Command Center's cached day reads the same table
   if (r.ok) await afterAct('guest_reply_send', { ok: true, done: r.summary, ref: r.ref }, { by: str(pl.by || 'chat'), actor: by, summary: r.summary, metric: 'sentiment_negative' })
   return NextResponse.json(r.ok ? { ok: true, done: r.summary } : { ok: false, error: r.error || r.summary }, { status: r.ok ? 200 : 502 })
 }

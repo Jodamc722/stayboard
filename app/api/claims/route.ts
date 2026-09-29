@@ -9,6 +9,7 @@ import { deadlineFor, dueDateFor, dueWithTurnover, policyFor, todayET, daysUntil
 import { getSetting } from '@/lib/app-settings'
 import { nextCheckInFor, nextCheckInMap } from '@/lib/claim-turnover'
 import { requireLevel } from '@/lib/access'
+import { bustDay } from '@/lib/bust'
 
 const POLICY_KEY = 'claims_channel_policy'
 const loadPolicy = () => getSetting<Record<string, ChannelPolicy>>(POLICY_KEY, {})
@@ -224,6 +225,7 @@ export async function POST(req: NextRequest) {
     }
     const { data, error } = ins
     if (error || !data) return NextResponse.json({ ok: false, error: (error && error.message) || 'Could not create the claim.' }, { status: 500 })
+    bustDay()   // open claims feed the Command Center's cached day
     return NextResponse.json({ ok: true, id: String((data as any).id) })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
