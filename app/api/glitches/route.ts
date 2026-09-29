@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { requireLevel, requireUser } from '@/lib/access'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -27,8 +28,10 @@ export async function GET(req: NextRequest) {
     // EVERY glitch with photos[], history[] and AI text (a multi-MB payload) to render seven
     // one-word stage pills on task rows.
     if (str(req.nextUrl.searchParams.get('fields')) === 'stage') {
-      const { data } = await db.from('glitches').select('id,status,breezeway_task_id').not('breezeway_task_id', 'is', null).limit(1000)
-      return NextResponse.json({ ok: true, glitches: data || [] })
+      // A badge MAP is a lookup: every glitch that has a task, paged in id order (not the first 1,000).
+      const { rows, truncated } = await pageRows((a, b) => db.from('glitches').select('id,status,breezeway_task_id').not('breezeway_task_id', 'is', null).order('id').range(a, b))
+      if (truncated) console.error('[glitches] stage map read incomplete')
+      return NextResponse.json({ ok: true, glitches: rows, ...(truncated ? { partial: true } : {}) })
     }
     const guest = str(req.nextUrl.searchParams.get('guest')).trim()
 
