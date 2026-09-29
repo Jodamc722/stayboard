@@ -3,33 +3,21 @@ import { pageRows } from '@/lib/db-page'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { SyncNowButton } from '@/components/SyncNowButton'
-import { MessagesInbox, type InboxItem } from '@/components/MessagesInbox'
-import { LeanHead, Pill, type Tone } from '@/components/lean'
+import { MessagesInbox, type InboxItem, type WaitInfo } from '@/components/MessagesInbox'
+import { LeanHead, Pill } from '@/components/lean'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { listPhoneThreads, type PhoneThreadSummary } from '@/lib/phone-threads'
 import { talkrouteConfigured } from '@/lib/talkroute'
 import { getAccess } from '@/lib/access'
 import { atLeast } from '@/lib/features'
+import { awaitingSet, median, SLA_RULE_TEXT, AWAITING_HORIZON_H } from '@/lib/response-times'
 
 export const dynamic = 'force-dynamic'
 
-type Msg = { conversation_id: string; sender: string; sender_name?: string | null; sent_at: string }
-
-type Kpis = {
-  avgFirstMs: number | null
-  medianFirstMs: number | null
-  withinHourPct: number | null
-  replyRatePct: number | null
-  awaitingReply: number
-  unread: number
-  score: number | null
-  sampleConvos: number
-  sampleReplies: number
-  awaitingIds: Set<string>
-  lastResponderById: Map<string, string>
-}
-
 const HOUR_MS = 60 * 60 * 1000
+const CONVO_COLS = 'id, reservation_id, listing_id, guest_name, channel, last_message_at, last_message_preview, unread_count'
+/** Below this many threads a median or a percentage is an anecdote, not a number. */
+const MIN_SAMPLE = 5
 
 export default async function MessagesPage() {
   // MESSAGES ACCESS, NOT JUST A SESSION (2026-09-28 audit, D16). Guest words, phone numbers and
@@ -40,174 +28,124 @@ export default async function MessagesPage() {
   if (!access.allowed) redirect('/no-access')
   if (!atLeast(access.levels['messages'], 'view')) redirect(access.landing || '/no-access')
   const supabase = createClient()
+  const sb = supabaseAdmin()
+  const now = Date.now()
+  const since30 = new Date(now - 30 * 86400_000).toISOString().slice(0, 19) + 'Z'
 
-  const [{ data: convos }, { data: sync }, msgsPage] = await Promise.all([
-    supabase
-      .from('guesty_conversations')
-      .select('id, reservation_id, listing_id, guest_name, channel, last_message_at, last_message_preview, unread_count')
-      .order('last_message_at', { ascending: false })
-      .limit(100),
+  // ONE ROUND for everything independent (the phone read used to wait on its own, after the rest).
+  //
+  // THE HEADER READS conversation_response (2026-09-28 audit, D4). It used to recompute "Reply" and
+  // "Score" on every visit from the newest 4,000 messages (four sequential 1,000-row pages), taking
+  // the mean of every guest→host gap — Guesty's automated templates and log/note rows included, so
+  // a template firing in 40 seconds counted as us answering in 40 seconds. lib/response-times has
+  // measured every thread properly since 2026-08-26 and nothing here read it.
+  const [{ data: convos }, { data: sync }, waiting, speed, phone] = await Promise.all([
+    supabase.from('guesty_conversations').select(CONVO_COLS).order('last_message_at', { ascending: false }).limit(100),
     supabase.from('guesty_sync_status').select('last_sync_at').eq('entity', 'conversations').maybeSingle(),
-    // PAGED. `.limit(4000)` returned 1,000 of 25,110 messages, so these KPIs were computed from a
-    // quarter of the sample they claimed. Ordered newest-first and capped at 4 pages: the header is
-    // a recent-activity readout, not an all-time one, and 4,000 messages is the window it was
-    // written for — the difference now is that it actually gets them. See lib/db-page.ts.
-    pageRows((a, b) => supabase
-      .from('guesty_messages')
-      .select('conversation_id, sender, sender_name, sent_at')
-      .order('sent_at', { ascending: false })
-      .order('conversation_id')
-      .range(a, b), 4)
+    // THE ONE "WAITING ON US" SET (D3/D5): the pill and the Needs-reply tab both come from this.
+    awaitingSet({ db: sb, now }),
+    // Every thread the guest wrote in during the last 30 days, as already measured.
+    pageRows<any>((a, b) => sb.from('conversation_response').select('conversation_id,first_ms,human_first_ms')
+      .gte('last_guest_at', since30).order('conversation_id', { ascending: true }).range(a, b), 6),
+    phoneThreads(sb),
   ])
-  const msgs = msgsPage.rows
 
-  // THE PHONE SIDE (Talkroute, 2026-09-21). Texts, voicemails and calls keyed by guest number,
-  // merged into the same list by last activity. Empty until Talkroute is connected.
-  const phoneOn = await talkrouteConfigured()
-  const phone: PhoneThreadSummary[] = phoneOn ? await listPhoneThreads(supabaseAdmin(), 100).catch(() => []) : []
+  const list: any[] = (convos ?? []).slice()
+  const listed = new Set(list.map(c => String(c.id)))
+  // EVERY WAITING GUEST IS ON THE LIST. The first page is the 100 most recent threads; a guest who
+  // has been waiting while 100 newer threads moved would drop off it, and the tab would disagree
+  // with the pill again. Those threads are fetched by id and merged in, newest first like the rest.
+  const missing = waiting.ids.filter(id => !listed.has(id))
+  const lids = Array.from(new Set(list.map(c => String(c.listing_id || ''))
+    .concat(waiting.rows.map(r => String(r.listing_id || '')), phone.list.map(t => t.listingId)).filter(Boolean)))
+  const [more, ls, cr] = await Promise.all([
+    inChunks(missing, ids => supabase.from('guesty_conversations').select(CONVO_COLS).in('id', ids)),
+    inChunks(lids, ids => supabase.from('guesty_listings').select('id, nickname, title').in('id', ids)),
+    inChunks(list.map(c => String(c.id)).concat(missing), ids => sb.from('conversation_response').select('conversation_id,last_responder').in('conversation_id', ids)),
+  ])
+  for (const c of more) list.push(c)
 
-  const list = convos ?? []
-  const lids = Array.from(new Set(list.map((c: any) => c.listing_id).concat(phone.map(t => t.listingId)).filter(Boolean)))
   const unitById: Record<string, string> = {}
-  if (lids.length) {
-    const { data: ls } = await supabase.from('guesty_listings').select('id, nickname, title').in('id', lids as string[])
-    ;(ls ?? []).forEach((l: any) => { const n = String(l.nickname || l.title || ''); const m = n.match(/#?\s*([0-9]{2,5}[A-Za-z]?)\s*$/); unitById[l.id] = m ? m[1] : '' })
-  }
-  const kpis = computeKpis((msgs as Msg[] | null) ?? [], list)
+  for (const l of ls) { const n = String(l.nickname || l.title || ''); const m = n.match(/#?\s*([0-9]{2,5}[A-Za-z]?)\s*$/); unitById[l.id] = m ? m[1] : '' }
+  const lastResponderById: Record<string, string> = {}
+  for (const r of cr) if (r.last_responder) lastResponderById[String(r.conversation_id)] = String(r.last_responder)
+  const waitById: Record<string, WaitInfo> = {}
+  for (const r of waiting.rows) waitById[r.conversation_id] = { since: r.awaiting_since || r.last_guest_at, due: r.sla_due_at }
 
   // One list, two sources, newest first. Only the fields the inbox shows cross to the client.
   const items: InboxItem[] = (list.map((c: any) => ({
     kind: 'guesty' as const, at: String(c.last_message_at || ''),
     c: { id: c.id, guest_name: c.guest_name, channel: c.channel, listing_id: c.listing_id, last_message_at: c.last_message_at, last_message_preview: c.last_message_preview, unread_count: c.unread_count },
   })) as InboxItem[])
-    .concat(phone.map(t => ({ kind: 'phone' as const, at: t.lastAt, t })))
+    .concat(phone.list.map(t => ({ kind: 'phone' as const, at: t.lastAt, t })))
     .sort((a, b) => b.at.localeCompare(a.at))
-  const phoneAwaiting = phone.filter(t => t.awaiting).length
-  const lastResponderById: Record<string, string> = {}
-  Array.from(kpis.lastResponderById.entries()).forEach(([k, v]) => { lastResponderById[k] = v })
 
-  // LEAN PASS (2026-09-22): the six KPI tiles are four pills; what each number means (and the
-  // score's formula, which used to be a paragraph at the bottom) is in the pill's hover title.
-  const tone = (t: 'good' | 'amber' | 'red' | 'neutral'): Tone => t === 'good' ? 'emerald' : t === 'amber' ? 'amber' : t === 'red' ? 'rose' : 'slate'
-  const scoreTone = kpis.score == null ? 'neutral' : kpis.score >= 80 ? 'good' : kpis.score >= 60 ? 'amber' : 'red'
-  const avgTone = kpis.avgFirstMs == null ? 'neutral' : kpis.avgFirstMs <= HOUR_MS ? 'good' : kpis.avgFirstMs <= 4 * HOUR_MS ? 'amber' : 'red'
-  const waiting = kpis.awaitingReply + phoneAwaiting
-  const scoreTitle = `Response score 0–100 over the last ${kpis.sampleConvos} conversations: % answered within 1h × 60 (the benchmark OTAs reward) + avg response time × 25 (full credit ≤1h, sliding to 0 by ~8h) + reply rate × 15.`
-  const avgTitle = `Average first reply ${fmtDur(kpis.avgFirstMs)} · median ${fmtDur(kpis.medianFirstMs)}${kpis.sampleReplies ? ` across ${kpis.sampleReplies} guest-to-host replies` : ''} · ${kpis.withinHourPct == null ? '—' : kpis.withinHourPct + '%'} within 1h · reply rate ${kpis.replyRatePct == null ? '—' : kpis.replyRatePct + '%'}. Replying under an hour boosts OTA ranking.`
+  // The pill counts exactly what the Needs-reply tab lists: the waiting threads that are on the page.
+  const gWaiting = list.filter(c => waitById[String(c.id)]).length
+  const late = list.filter(c => { const w = waitById[String(c.id)]; return !!(w && w.due && Date.parse(w.due) <= now) }).length
+  const phoneAwaiting = phone.list.filter(t => t.awaiting).length
+  const waitingN = gWaiting + phoneAwaiting
+  const unread = list.reduce((s, c) => s + (Number(c.unread_count) || 0), 0)
 
+  // Response speed over 30 days. human_first_ms is null where we cannot tell a person from a
+  // template, so its coverage is part of the hover rather than assumed.
+  const num = (v: any) => (v == null || v === '' ? NaN : Number(v))
+  const firsts = speed.rows.map(r => num(r.first_ms)).filter(n => Number.isFinite(n) && n >= 0)
+  const humans = speed.rows.map(r => num(r.human_first_ms)).filter(n => Number.isFinite(n) && n >= 0)
+  const enough = humans.length >= MIN_SAMPLE
+  const humanMed = enough ? median(humans) : null
+  const within1h = enough ? Math.round((humans.filter(n => n <= HOUR_MS).length / humans.length) * 100) : null
+  const anyMed = firsts.length >= MIN_SAMPLE ? median(firsts) : null
+  const n = humans.length
+  const sample = `${n} thread${n === 1 ? '' : 's'} the guest wrote in during the last 30 days`
+  const replyTitle = `Median time to the first reply a person typed, across ${sample} (Guesty templates don't count)`
+    + (anyMed != null ? ` · any first reply, templates included: ${fmtDur(anyMed)}` : '')
+    + (enough ? '' : ' · too few to call')
+    + (speed.truncated ? ' · partial sample' : '')
+    + (speed.rows.length > n ? ` · ${speed.rows.length - n} more had no reply yet, or none we could attribute to a person` : '')
+  const within1hTitle = enough
+    ? `Share of ${sample} whose first reply from a person came within an hour — the benchmark the OTAs reward`
+    : `Too few threads to call (${n}) — needs ${MIN_SAMPLE}`
+  const waitingTitle = waiting.error ? `Could not read the waiting list: ${waiting.error}`
+    : `Guests who wrote in the last ${AWAITING_HORIZON_H}h with no reply from a person since (Guesty templates don't count)`
+      + (waiting.slaKnown ? ` · ${late} past their reply-by time — ${SLA_RULE_TEXT}` : ' · reply-by times appear once migration 134 has run')
+      + (phone.on ? ` · ${gWaiting} Guesty · ${phoneAwaiting} phone` : '')
+      + (waiting.truncated ? ' · first 1,000 only' : '')
+
+  // LEAN PASS (2026-09-22): numbers are pills; what each one means is in its hover title.
   return (
     <Shell>
       <LeanHead title="Messages">
-        <Pill tone={tone(scoreTone)} title={scoreTitle}>Score {kpis.score == null ? '—' : kpis.score}</Pill>
-        <Pill tone={tone(avgTone)} title={avgTitle}>Reply {fmtDur(kpis.avgFirstMs)}</Pill>
-        <Pill tone={waiting === 0 ? 'emerald' : waiting <= 5 ? 'amber' : 'rose'} title={`Threads whose latest message is from the guest${phoneOn ? ` (${kpis.awaitingReply} Guesty · ${phoneAwaiting} phone)` : ''}`}>{waiting} waiting</Pill>
-        <Pill tone={kpis.unread === 0 ? 'emerald' : kpis.unread <= 10 ? 'amber' : 'rose'} title="Unread Guesty messages">{kpis.unread} unread</Pill>
-        <span className="text-[11px] text-muted" title={`${list.length} Guesty threads${phoneOn ? ` · ${phone.length} phone threads` : ''}`}>{sync?.last_sync_at ? `synced ${timeAgo(new Date(sync.last_sync_at))}` : 'never synced'}</span>
+        <Pill tone={humanMed == null ? 'slate' : humanMed <= HOUR_MS ? 'emerald' : humanMed <= 4 * HOUR_MS ? 'amber' : 'rose'} title={replyTitle}>Reply {fmtDur(humanMed)}</Pill>
+        <Pill tone={within1h == null ? 'slate' : within1h >= 80 ? 'emerald' : within1h >= 60 ? 'amber' : 'rose'} title={within1hTitle}>{within1h == null ? '—' : within1h + '%'} in 1h</Pill>
+        <Pill tone={waiting.error ? 'slate' : late > 0 ? 'rose' : waitingN > 0 ? 'amber' : 'emerald'} title={waitingTitle}>{waiting.error ? '—' : waitingN} waiting{late > 0 ? ` · ${late} late` : ''}</Pill>
+        <Pill tone={unread === 0 ? 'emerald' : unread <= 10 ? 'amber' : 'rose'} title="Unread Guesty messages — Guesty's own read flag, not the same as unanswered">{unread} unread</Pill>
+        <span className="text-[11px] text-muted" title={`${list.length} Guesty threads${phone.on ? ` · ${phone.list.length} phone threads` : ''}`}>{sync?.last_sync_at ? `synced ${timeAgo(new Date(sync.last_sync_at))}` : 'never synced'}</span>
         <SyncNowButton />
       </LeanHead>
 
-      <MessagesInbox items={items} unitById={unitById} awaitingIds={Array.from(kpis.awaitingIds)} lastResponderById={lastResponderById} />
+      <MessagesInbox items={items} unitById={unitById} waiting={waitById} lastResponderById={lastResponderById} now={now} />
     </Shell>
   )
 }
 
-/* ---------- KPI computation (server-side) ---------- */
+/* ---------- Reads ---------- */
 
-function computeKpis(msgs: Msg[], convos: any[]): Kpis {
-  const unread = convos.reduce((s, c) => s + (c.unread_count || 0), 0)
+/** THE PHONE SIDE (Talkroute, 2026-09-21): texts, voicemails and calls keyed by guest number. */
+async function phoneThreads(sb: any): Promise<{ on: boolean; list: PhoneThreadSummary[] }> {
+  const on = await talkrouteConfigured().catch(() => false)
+  if (!on) return { on: false, list: [] }
+  return { on: true, list: await listPhoneThreads(sb, 100).catch(() => [] as PhoneThreadSummary[]) }
+}
 
-  // Group messages by conversation, ascending by time.
-  const byConvo = new Map<string, Msg[]>()
-  for (const m of msgs) {
-    if (!m.conversation_id || !m.sent_at) continue
-    const arr = byConvo.get(m.conversation_id)
-    if (arr) arr.push(m)
-    else byConvo.set(m.conversation_id, [m])
+/** `.in()` over a long id list, 200 at a time; the rows of every chunk that answered. */
+async function inChunks(ids: string[], q: (ids: string[]) => PromiseLike<any>): Promise<any[]> {
+  const out: any[] = []
+  for (let i = 0; i < ids.length; i += 200) {
+    const res: any = await q(ids.slice(i, i + 200))
+    for (const r of ((res?.data as any[]) || [])) out.push(r)
   }
-
-  const firstResponseGaps: number[] = [] // ms, per guest→host reply
-  const awaitingIds = new Set<string>()
-  const lastResponderById = new Map<string, string>()
-  let lastIsGuestConvos = 0
-  let convosWithThreads = 0
-
-  for (const [cid, arrDesc] of Array.from(byConvo.entries())) {
-    const arr = arrDesc.slice().sort((a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime())
-    if (arr.length === 0) continue
-    convosWithThreads++
-
-    // Awaiting-reply: latest message is from guest.
-    const last = arr[arr.length - 1]
-    if (last.sender === 'guest') {
-      awaitingIds.add(cid)
-      lastIsGuestConvos++
-    } else if (last.sender === 'host') {
-      lastResponderById.set(cid, last.sender_name || 'Team')
-    }
-
-    // First-response gaps: each guest message immediately followed (in time) by a host
-    // message — measure the gap to the next host reply after an unanswered guest message.
-    for (let i = 0; i < arr.length; i++) {
-      if (arr[i].sender !== 'guest') continue
-      // skip consecutive guest messages — only the first unanswered one counts
-      if (i > 0 && arr[i - 1].sender === 'guest') continue
-      // find next host message
-      for (let j = i + 1; j < arr.length; j++) {
-        if (arr[j].sender === 'host') {
-          const gap = new Date(arr[j].sent_at).getTime() - new Date(arr[i].sent_at).getTime()
-          if (gap >= 0) firstResponseGaps.push(gap)
-          break
-        }
-        if (arr[j].sender === 'guest') break // guest spoke again with no host reply → not a response
-      }
-    }
-  }
-
-  // Reply rate: of threads whose LAST message is from a guest = awaiting;
-  // reply rate = % of all threads (with a guest present) that are NOT awaiting.
-  // i.e. threads where the conversation is "caught up".
-  const totalThreads = convosWithThreads
-  const replyRatePct = totalThreads > 0
-    ? Math.round(((totalThreads - lastIsGuestConvos) / totalThreads) * 100)
-    : null
-
-  let avgFirstMs: number | null = null
-  let medianFirstMs: number | null = null
-  let withinHourPct: number | null = null
-  if (firstResponseGaps.length > 0) {
-    const sum = firstResponseGaps.reduce((a, b) => a + b, 0)
-    avgFirstMs = Math.round(sum / firstResponseGaps.length)
-    const sorted = firstResponseGaps.slice().sort((a, b) => a - b)
-    const mid = Math.floor(sorted.length / 2)
-    medianFirstMs = sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2)
-    const within = firstResponseGaps.filter(g => g <= HOUR_MS).length
-    withinHourPct = Math.round((within / firstResponseGaps.length) * 100)
-  }
-
-  // Response score (0–100): % within 1h (60) + avg response time (25) + reply rate (15).
-  let score: number | null = null
-  if (firstResponseGaps.length > 0) {
-    const withinComp = (withinHourPct! / 100) * 60
-    // avg time: full 25 at ≤1h, linear down to 0 at ~8h
-    const ratio = avgFirstMs! <= HOUR_MS ? 1 : Math.max(0, 1 - (avgFirstMs! - HOUR_MS) / (7 * HOUR_MS))
-    const timeComp = ratio * 25
-    const replyComp = ((replyRatePct ?? 0) / 100) * 15
-    score = Math.round(withinComp + timeComp + replyComp)
-  }
-
-  return {
-    avgFirstMs,
-    medianFirstMs,
-    withinHourPct,
-    replyRatePct,
-    awaitingReply: awaitingIds.size,
-    unread,
-    score,
-    sampleConvos: convosWithThreads,
-    sampleReplies: firstResponseGaps.length,
-    awaitingIds,
-    lastResponderById
-  }
+  return out
 }
 
 /* ---------- Formatting ---------- */
