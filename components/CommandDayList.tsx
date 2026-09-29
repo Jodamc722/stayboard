@@ -389,7 +389,8 @@ function EvePlanRow({ p, act, busy }: { p: EvePlan; act: (id: string, s: 'accept
 // ── EVE'S GUEST REPLY DRAFTS (2026-09-21) ──────────────────────────────────────────────────────
 // A guest_reply_draft (from the guest_unanswered_1h watch, the bad-review watch or Eve in chat)
 // waits here with Send / Discard. Send runs guest_reply_send as a human yes — the guest hears
-// nothing until a person presses it. A review draft has no Send: it is copied into /reviews.
+// nothing until a person presses it. A review draft sends too (2026-09-28 audit, D17): Send posts it
+// as the public reply on the channel — the Reviews page's own path — after a confirm.
 type EveDraft = { id: string; conversationId: string | null; reviewId: string | null; draft: string; guest: string | null; unit: string | null; channel: string | null; why: string; by: string; createdAt: string }
 const EVE_DRAFTS_URL = '/api/eve/guest-drafts'
 
@@ -398,41 +399,55 @@ function useEveDrafts() {
   const [gone, setGone] = useState<Record<string, true>>({})
   const [busy, setBusy] = useState('')
   const rows = error ? [] : ((data?.drafts || []) as EveDraft[]).filter(d => !gone[d.id])
-  const act = async (id: string, op: 'send' | 'discard', body?: string): Promise<string> => {
+  const drop = (id: string, later = false) => {
+    invalidateCache(EVE_DRAFTS_URL)
+    if (later) setTimeout(() => setGone(g => ({ ...g, [id]: true })), 1500)
+    else setGone(g => ({ ...g, [id]: true }))
+  }
+  const act = async (id: string, op: 'send' | 'discard', body?: string): Promise<DraftOutcome> => {
     setBusy(id)
     try {
       const r = await fetch(EVE_DRAFTS_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, id, body }) })
       const j = await r.json().catch(() => ({}))
-      if (!r.ok || !j?.ok) return j?.error || 'That did not work.'
-      setGone(g => ({ ...g, [id]: true }))
-      invalidateCache(EVE_DRAFTS_URL)
-      return ''
+      // 409: somebody already acted on it — sent from the thread, or from another screen. Nothing
+      // more to do here: say what happened, then the row goes.
+      if (r.status === 409) { drop(id, true); return { note: 'Already ' + (DRAFT_STATE[String(j?.error || '').replace(/^already\s+/i, '')] || 'handled') + ' — nothing more to do here.' } }
+      // A review the channel will no longer take a reply on is closed with its draft.
+      if (j?.closed) { drop(id, true); return { note: String(j.error || 'That review is closed — no reply can go on it.') } }
+      if (!r.ok || !j?.ok) return { err: j?.error || 'That did not work.' }
+      drop(id)
+      return {}
     } finally { setBusy('') }
   }
   return { rows, busy, act }
 }
+type DraftOutcome = { err?: string; note?: string }
+/** What a 409's "already <status>" means to the person who pressed. */
+const DRAFT_STATE: Record<string, string> = { executed: 'sent', approved: 'being sent', rejected: 'discarded', expired: 'replaced by a newer draft', failed: 'tried, and it failed — reply from the thread' }
 
-function EveDraftRow({ d, act, busy }: { d: EveDraft; act: (id: string, op: 'send' | 'discard', body?: string) => Promise<string>; busy: boolean }) {
+function EveDraftRow({ d, act, busy }: { d: EveDraft; act: (id: string, op: 'send' | 'discard', body?: string) => Promise<DraftOutcome>; busy: boolean }) {
   const [open, setOpen] = useState(false)
   const [text, setText] = useState(d.draft)
   const [err, setErr] = useState('')
+  const [note, setNote] = useState('')
   const isReview = !d.conversationId && !!d.reviewId
   const go = async (op: 'send' | 'discard') => {
-    if (op === 'send' && !confirm('Send this to ' + (d.guest || 'the guest') + ' now?')) return
-    setErr(''); const e = await act(d.id, op, text); if (e) setErr(e)
+    if (op === 'send' && !confirm(isReview ? `Post this public reply to ${d.guest || 'the guest'}'s review?` : 'Send this to ' + (d.guest || 'the guest') + ' now?')) return
+    setErr(''); setNote('')
+    const r = await act(d.id, op, text)
+    if (r.err) setErr(r.err)
+    if (r.note) setNote(r.note)
   }
   const who = (d.guest || 'Guest') + (d.unit ? ' · ' + d.unit : '')
   const meta = [d.channel || '', d.why].filter(Boolean).join(' · ')
   return (
-    <Row sev="today" title={(isReview ? 'Reply to review from ' : 'Reply to ') + who} tags={<Tag tone="violet" title={isReview ? 'Eve drafted a public review reply' : 'Eve drafted a reply'}>{isReview ? 'Eve · review' : 'Eve draft'}</Tag>} meta={meta} onTap={() => setOpen(o => !o)} expanded={open} err={err}
-      primary={isReview
-        ? <Link href="/reviews" className={PRIMARY}>Open reviews</Link>
-        : <button onClick={() => go('send')} disabled={busy || !text.trim()} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Send</button>}
-      secondary={<IconBtn title="Discard — do not send" onClick={() => go('discard')} disabled={busy}><X size={14} /></IconBtn>}>
+    <Row sev="today" title={(isReview ? 'Reply to review from ' : 'Reply to ') + who} tags={<Tag tone="violet" title={isReview ? 'Eve drafted a public review reply' : 'Eve drafted a reply'}>{isReview ? 'Eve · review' : 'Eve draft'}</Tag>} meta={meta} onTap={() => setOpen(o => !o)} expanded={open} err={err} note={note}
+      primary={<button onClick={() => go('send')} disabled={busy || !!note || !text.trim()} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Send</button>}
+      secondary={<IconBtn title="Discard — do not send" onClick={() => go('discard')} disabled={busy || !!note}><X size={14} /></IconBtn>}>
       {open && (
         <div className="mt-2 ml-3.5">
           <textarea value={text} onChange={e => setText(e.target.value)} rows={4} aria-label="Eve's draft" className="w-full rounded-xl border border-line bg-white px-3 py-2 text-[13px] text-ink leading-relaxed focus:outline-none focus:ring-2 focus:ring-brand-200" />
-          <div className="mt-1 text-[11px] text-muted">{isReview ? 'Copy this into the reply box on the Reviews page.' : d.conversationId ? <>Edit it here, then Send. <Link href={'/messages/' + d.conversationId} className="text-brand-700 hover:underline">Open the thread</Link>.</> : null}</div>
+          <div className="mt-1 text-[11px] text-muted">{isReview ? 'Edit it here, then Send — it posts publicly on the channel.' : d.conversationId ? <>Edit it here, then Send. <Link href={'/messages/' + d.conversationId} className="text-brand-700 hover:underline">Open the thread</Link>.</> : null}</div>
         </div>
       )}
     </Row>
