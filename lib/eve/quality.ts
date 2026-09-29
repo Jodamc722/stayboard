@@ -10,7 +10,7 @@ import { THEMES } from '@/lib/review-themes'
 import { listProjects } from '@/lib/projects'
 import type { EveTool, EveDomain } from './types'
 import { obj, S } from './types'
-import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveListing, normStar, DEAD_LISTING, scopeIds } from './ctx'
+import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveListing, normStar, DEAD_LISTING, scopeIds, pageRows } from './ctx'
 
 export const QUALITY_TOOLS: EveTool[] = [
   {
@@ -31,9 +31,14 @@ export const QUALITY_TOOLS: EveTool[] = [
       ])
       const revByListing: Record<string, any[]> = {}
       const parts = chunk(use, 40)
+      // Every review of each unit, paged newest first with id as tiebreaker (2026-09-29): forty
+      // long-running units can hold more than one 1,000-row page, and a cut left their oldest reviews
+      // out of the score. A read that stops short marks the result truncated.
+      let short = false
       for (const part of parts) {
-        const { data } = await ctx.db.from('guesty_reviews').select('listing_id,rating,content,created_at,has_reply,channel,excluded_from_score').in('listing_id', part).eq('excluded_from_score', false).order('created_at', { ascending: false }).limit(2000)
-        for (const r of (data || [])) { const k = String((r as any).listing_id); (revByListing[k] = revByListing[k] || []).push(r) }
+        const { rows, truncated } = await pageRows<any>((a, b) => ctx.db.from('guesty_reviews').select('listing_id,rating,content,created_at,has_reply,channel,excluded_from_score').in('listing_id', part).eq('excluded_from_score', false).order('created_at', { ascending: false }).order('id').range(a, b))
+        if (truncated) { short = true; console.error('property_health: review read incomplete — some scores use part of their reviews') }
+        for (const r of rows) { const k = String((r as any).listing_id); (revByListing[k] = revByListing[k] || []).push(r) }
       }
       const results = (listRes.data || []).map((l: any) => {
         const reviews = (revByListing[String(l.id)] || []).map((r: any) => ({ rating: r.rating, channel: r.channel, content: r.content, created_at: r.created_at, hasReply: !!r.has_reply }))
@@ -52,6 +57,7 @@ export const QUALITY_TOOLS: EveTool[] = [
         units_scored: results.length,
         building_rollup: roll ? { score: roll.score, band: roll.band, mean: roll.mean, weak_units: roll.weak, worst: roll.min } : null,
         units: results.slice(0, clampLimit(input?.limit, 25, 60)),
+        truncated: short || undefined,
       }
     },
   },

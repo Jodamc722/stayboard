@@ -21,7 +21,7 @@
 import 'server-only'
 import type { EveTool, EveDomain } from './types'
 import { obj, S } from './types'
-import { clampLimit, lc, safe } from './ctx'
+import { clampLimit, lc, safe, pageRows } from './ctx'
 
 const STOP = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'is', 'it', 'for', 'on', 'we', 'our', 'with', 'that', 'this', 'be', 'are', 'as', 'at', 'by', 'from', 'do', 'does', 'how', 'what', 'when', 'who', 'why', 'i', 'you'])
 
@@ -90,11 +90,12 @@ export const DOC_TOOLS: EveTool[] = [
       const byId: Record<string, any> = {}
       for (const d of docList) byId[String(d.id)] = d
 
-      const { data: chunks } = await safe(
-        ctx.db.from('eve_doc_chunks').select('doc_id,idx,heading,text').in('doc_id', docList.map(d => String(d.id))).order('doc_id').limit(4000),
-        { data: [] } as any,
-      )
-      const scored = ((chunks as any[]) || []).map(c => {
+      // Every passage of those documents, paged in document-then-position order up to the 4,000 this
+      // always asked for (2026-09-29) — it got 1,000. A search that could not read them all says so.
+      const { rows: chunks, truncated: short } = await pageRows<any>((a, b) =>
+        ctx.db.from('eve_doc_chunks').select('doc_id,idx,heading,text').in('doc_id', docList.map(d => String(d.id))).order('doc_id').order('idx').order('id').range(a, b), 4)
+      if (short) console.error('doc_search: passage read incomplete — not every passage was searched')
+      const scored = chunks.map(c => {
         const hay = lc(c.heading || '') + ' \n ' + lc(c.text || '')
         const head = lc(c.heading || '')
         let score = 0
@@ -113,6 +114,7 @@ export const DOC_TOOLS: EveTool[] = [
         return {
           found: 0,
           documents_searched: docList.map(d => d.title),
+          truncated: short || undefined,
           note: `Nothing in the written documents matches "${q}". Say that the documents do not cover it rather than answering from general knowledge about short-term rentals — and if it is something we clearly should have written down, that is worth flagging.`,
         }
       }
@@ -127,6 +129,7 @@ export const DOC_TOOLS: EveTool[] = [
           read_the_whole_document_with: `doc_read title="${byId[String(c.doc_id)]?.title}"`,
         })),
         documents_searched: docList.length,
+        truncated: short || undefined,
         how_to_use_this: 'Quote the document by name when you use it. This is house policy written by a person and it outranks anything you inferred from the records.',
       }
     },

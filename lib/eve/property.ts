@@ -129,10 +129,16 @@ export const PROPERTY_TOOLS: EveTool[] = [
         if (!l) return { error: 'listing not found' }
         listingId = String(l.id); unitName = l.nickname || l.title
       }
-      let q = ctx.db.from('listing_faq').select('id,listing_id,category,question,answer,status,source,created_at')
-      if (listingId) q = q.eq('listing_id', listingId)
-      const { data } = await q.order('created_at', { ascending: false }).limit(1500)
-      let rows = (data || [])
+      // The bank is searched after it is read, so the read pages newest first, id as tiebreaker
+      // (2026-09-29): it stopped at the newest 1,000 answers, and nothing older could be found. Up to
+      // 5,000 answers; a bank bigger than that comes back marked truncated.
+      const { rows: bank, truncated: short } = await pageRows<any>((a, b) => {
+        let q = ctx.db.from('listing_faq').select('id,listing_id,category,question,answer,status,source,created_at')
+        if (listingId) q = q.eq('listing_id', listingId)
+        return q.order('created_at', { ascending: false }).order('id').range(a, b)
+      }, 5)
+      if (short) console.error('faq_search: FAQ bank read incomplete — older answers were not searched')
+      let rows = bank
       if (input?.category) rows = rows.filter((r: any) => has(r.category, input.category))
       if (input?.query) rows = rows.filter((r: any) => has(r.question, input.query) || has(r.answer, input.query))
       const shaped = rows.map((r: any) => ({
@@ -143,7 +149,7 @@ export const PROPERTY_TOOLS: EveTool[] = [
       }))
       const c = cap(shaped, lim)
       return {
-        count: shaped.length, truncated: c.truncated, answers: c.rows,
+        count: shaped.length, truncated: c.truncated || short, answers: c.rows,
         note: shaped.length ? 'These are our own words. Prefer them over anything you would write fresh.' : 'Nothing in the FAQ bank matches. Say that rather than composing an answer that nobody has approved.',
       }
     },
