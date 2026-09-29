@@ -1,6 +1,6 @@
-# STAYBOARD v2
+# Lighthouse
 
-Vacation rental operations dashboard for Stay Hospitality. Clean rebuild — **Next.js 14 + Supabase + Vercel**.
+Stay Hospitality's operations app (formerly StayBoard) — **Next.js 14 + Supabase + Vercel**.
 
 ## Stack
 - **Next.js 14** (App Router, Server Components, Route Handlers)
@@ -75,7 +75,6 @@ stayboard-v2/
 │   ├── supabase-browser.ts       # Client-side Supabase
 │   └── supabase-server.ts        # Server-side Supabase (cookies)
 ├── middleware.ts                 # Refresh Supabase session per request
-├── types/guesty.ts               # TypeScript contracts
 ├── public/manifest.json          # PWA manifest
 ├── next.config.mjs
 ├── tailwind.config.ts
