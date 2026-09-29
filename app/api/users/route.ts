@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireAdmin as requireAdminGate, isSuperadmin } from '@/lib/access'
 import { normWorkspace, FEATURES, LEVELS, isExtraPerm, extraPermChoices } from '@/lib/features'
+import { logAdmin } from '@/lib/activity'
 
 export const dynamic = 'force-dynamic'
 
@@ -125,6 +126,9 @@ export async function POST(req: NextRequest) {
   if (upErr) return NextResponse.json({ error: `Could not save user: ${upErr.message}` }, { status: 500 })
   const unban = (priorRow as any)?.status === 'disabled' ? await setBan(sb, email, false) : null
   const unbanNote = unban?.warning ? { warning: unban.warning } : {}
+  // AUDIT (B-11): who added or re-invited whom, as what. Never the password — only whether one was set.
+  await logAdmin({ email: access.email, area: 'users', action: 'invite', target: email, req,
+    detail: { role, access_role: row.access_role || null, withPassword: !!password, reEnabled: (priorRow as any)?.status === 'disabled' } })
 
   // If an admin supplied a password, create (or update) the auth account directly with it - no email
   // round-trip needed. The admin shares the password with the teammate securely.
@@ -274,6 +278,20 @@ export async function PATCH(req: NextRequest) {
     const r = await setBan(sb, email, patch.status === 'disabled')
     session = { banned: patch.status === 'disabled', ...r }
   }
+  // AUDIT (B-11): which fields changed on whose account. Role, status and access levels are recorded
+  // as they now stand (they are permissions, not secrets); profile and prefs by name only; the
+  // password only as "password" in the list.
+  await logAdmin({ email: access.email, area: 'users',
+    action: patch.status === 'disabled' ? 'disable' : patch.status === 'active' ? 'enable' : 'update',
+    target: email, req,
+    fields: Object.keys(patch).concat(passwordSet ? ['password'] : []),
+    detail: {
+      ...(patch.role !== undefined ? { role: patch.role } : {}),
+      ...(patch.access_role !== undefined ? { access_role: patch.access_role } : {}),
+      ...(patch.workspace !== undefined ? { workspace: patch.workspace } : {}),
+      ...(patch.features !== undefined ? { features: patch.features } : {}),
+      ...(session ? { signedOut: session.banned && session.done, sessionWarning: session.warning || null } : {}),
+    } })
   return NextResponse.json({ ok: true, passwordSet, ...(session ? { session } : {}), ...(session?.warning ? { warning: session.warning } : {}) })
 }
 
@@ -297,5 +315,6 @@ export async function DELETE(req: NextRequest) {
     const id = await findUserId(sb, email)
     if (id) { const { error: aErr } = await (sb as any).auth.admin.deleteUser(id); authRemoved = !aErr }
   } catch { /* ignore */ }
+  await logAdmin({ email: access.email, area: 'users', action: 'delete', target: email, req, detail: { authRemoved } })
   return NextResponse.json({ ok: true, authRemoved })
 }

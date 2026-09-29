@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { credentialStates, saveCredential } from '@/lib/shareAuth'
 import { isSuperadmin, requireAdmin } from '@/lib/access'
 import { logAccess } from '@/lib/vault'
+import { logAdmin } from '@/lib/activity'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,6 +43,8 @@ export async function POST(req: NextRequest) {
       const r = await saveCredential('vault', vc)
       if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: 500 })
       await logAccess({ itemId: null, email: user.email, action: 'code-set', detail: 'vault code changed', ip: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null })
+      // AUDIT (B-11): WHICH credential changed and who changed it — never the value.
+      await logAdmin({ email: user.email, area: 'share-settings', action: 'vault_code', req })
       return NextResponse.json({ ok: true, vaultSet: true, vault: r.state })
     }
     // ADMIN password (row id=2) — gates destructive actions like Delete
@@ -56,6 +59,7 @@ export async function POST(req: NextRequest) {
       if (ap.length < 4) return NextResponse.json({ ok: false, error: 'Admin password must be at least 4 characters.' }, { status: 400 })
       const r = await saveCredential('admin', ap)
       if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: 500 })
+      await logAdmin({ email: user.email, area: 'share-settings', action: 'admin_password', req })
       return NextResponse.json({ ok: true, adminSet: true, admin: r.state })
     }
     // RULES password (row id=5) — lets share-link (non-signed-in) users edit the Salato rules
@@ -64,6 +68,7 @@ export async function POST(req: NextRequest) {
       if (rp.length < 4) return NextResponse.json({ ok: false, error: 'Rules password must be at least 4 characters.' }, { status: 400 })
       const r = await saveCredential('rules', rp)
       if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: 500 })
+      await logAdmin({ email: user.email, area: 'share-settings', action: 'rules_password', req })
       return NextResponse.json({ ok: true, rulesSet: true, rules: r.state })
     }
     if (body.password !== undefined || body.marketingPassword !== undefined || body.auditPassword !== undefined || body.botanicaPassword !== undefined) {

@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAccess, isSuperadmin, bustRolesCache } from '@/lib/access'
 import { FEATURES, LEVELS, normLevel } from '@/lib/features'
+import { logAdmin } from '@/lib/activity'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,7 +49,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { error } = await requireOwner()
+  const { error, access } = await requireOwner()
   if (error) return error
   const body = await req.json().catch(() => ({} as any))
   const label = String(body?.label || '').trim().slice(0, 60)
@@ -62,11 +63,12 @@ export async function POST(req: NextRequest) {
   const { error: e } = await sb.from('app_roles').insert({ key, label, blurb, landing, perms, is_system: false, sort: Number(body?.sort) || 100 })
   if (e) return NextResponse.json({ error: /duplicate/i.test(e.message || '') ? `A role with the key "${key}" already exists.` : e.message }, { status: 500 })
   bustRolesCache()
+  await logAdmin({ email: access.email, area: 'roles', action: 'create', target: key, req, detail: { label, landing, perms } })
   return NextResponse.json({ ok: true, key })
 }
 
 export async function PATCH(req: NextRequest) {
-  const { error } = await requireOwner()
+  const { error, access } = await requireOwner()
   if (error) return error
   const body = await req.json().catch(() => ({} as any))
   const key = slugify(String(body?.key || ''))
@@ -88,11 +90,13 @@ export async function PATCH(req: NextRequest) {
   const { error: e } = await sb.from('app_roles').update(patch).eq('key', key).eq('is_system', false)
   if (e) return NextResponse.json({ error: e.message }, { status: 500 })
   bustRolesCache()
+  await logAdmin({ email: access.email, area: 'roles', action: 'update', target: key, req,
+    fields: Object.keys(patch).filter(k => k !== 'updated_at'), detail: patch.perms ? { perms: patch.perms } : {} })
   return NextResponse.json({ ok: true })
 }
 
 export async function DELETE(req: NextRequest) {
-  const { error } = await requireOwner()
+  const { error, access } = await requireOwner()
   if (error) return error
   const body = await req.json().catch(() => ({} as any))
   const key = slugify(String(body?.key || ''))
@@ -105,5 +109,6 @@ export async function DELETE(req: NextRequest) {
   const { error: e } = await sb.from('app_roles').delete().eq('key', key).eq('is_system', false)
   if (e) return NextResponse.json({ error: e.message }, { status: 500 })
   bustRolesCache()
+  await logAdmin({ email: access.email, area: 'roles', action: 'delete', target: key, req })
   return NextResponse.json({ ok: true })
 }

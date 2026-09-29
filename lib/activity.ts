@@ -20,6 +20,39 @@ export type ActivityRow = {
   meta?: Record<string, any>
 }
 
+/**
+ * ADMIN CHANGES (2026-09-28 audit, B-11). Who changed which account, role, API key or in-app
+ * credential: one row per successful write in /api/users, /api/roles, /api/api-keys and
+ * /api/share-settings. Same table as every gated API call, kind 'api' (the table's check allows
+ * only 'page' | 'api'); `feature` reads "<area>:<action>" so the Activity tab shows it as one line,
+ * and `meta.admin` marks it. `meta` carries the target and WHICH fields changed — never a password,
+ * a key or a credential's value; callers pass names, not values, for anything secret.
+ *
+ * AWAITED, unlike logActivity: a privileged change is rare and its record matters more than the
+ * few milliseconds, and a fire-and-forget insert can be cut off when the function freezes after
+ * the response. Still never throws.
+ */
+export async function logAdmin(row: {
+  email: string | null | undefined; area: string; action: string; target?: string | null
+  fields?: string[]; detail?: Record<string, any>
+  req?: { headers: { get(n: string): string | null } }
+}): Promise<void> {
+  try {
+    const email = String(row.email || '').trim().toLowerCase()
+    if (!email) return
+    const ip = row.req ? (String(row.req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || null) : null
+    await supabaseAdmin().from('user_activity').insert({
+      email,
+      kind: 'api',
+      path: null,
+      feature: (row.area + ':' + row.action).slice(0, 60),
+      need: 'full',
+      allowed: true,
+      meta: { admin: true, action: row.action, target: row.target ? String(row.target).slice(0, 200) : null, ...(row.fields && row.fields.length ? { fields: row.fields } : {}), ...(row.detail || {}), ...(ip ? { ip } : {}) },
+    })
+  } catch { /* never let logging hurt the request */ }
+}
+
 export function logActivity(row: ActivityRow): void {
   try {
     const email = String(row.email || '').trim().toLowerCase()
