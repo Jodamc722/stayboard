@@ -374,7 +374,9 @@ export async function scoreDay(plan: ShadowPlan): Promise<ShadowScore | null> {
 export type Readiness = { scored: number; wins: number; ready: boolean; window: number; needed: number; lastPlan: ShadowPlan | null }
 export async function shadowReadiness(): Promise<Readiness> {
   const st = await state()
-  const scored = Object.values(st.days).filter(d => d.score).sort((a, b) => (a.plan.date < b.plan.date ? 1 : -1)).slice(0, READY_WINDOW)
+  // Only days scored on the fair terms count (a score carries `common` since 2026-09-28): the earlier
+  // score judged the plan by its own objective and must not be what makes her "ready".
+  const scored = Object.values(st.days).filter(d => d.score && d.score.common != null).sort((a, b) => (a.plan.date < b.plan.date ? 1 : -1)).slice(0, READY_WINDOW)
   const wins = scored.filter(d => d.score!.win).length
   const today = ymdET()
   const lastPlan = st.days[today]?.plan || null
@@ -419,7 +421,7 @@ export async function runSchedulerShadow(opts: { force?: boolean; preview?: bool
     const dow = new Date(today + 'T12:00:00Z').getUTCDay()
     if ((dow === 0 || opts.force) && st.lastReadout !== today && !opts.preview) {
       const r = await shadowReadiness()
-      const recent = Object.values(st.days).filter(d => d.score).sort((a, b) => (a.plan.date < b.plan.date ? 1 : -1)).slice(0, 7)
+      const recent = Object.values(st.days).filter(d => d.score && d.score.common != null).sort((a, b) => (a.plan.date < b.plan.date ? 1 : -1)).slice(0, 7)
       const text = `*Shadow scheduler — week's scorecard*\nMy plan beat the real schedule on ${recent.filter(d => d.score!.win).length} of ${recent.length} days this week (${r.wins} of the last ${r.scored} overall; ${r.needed} of ${r.window} makes me ready to propose).\n` +
         recent.map(d => `• ${d.plan.date}: ${d.score!.win ? '✓' : '✗'} ${d.score!.why}`).join('\n') +
         (r.ready ? `\n*Ready.* From tomorrow the 7am plan carries my suggested assignments for the unowned cleans; nothing is assigned without a ✅.` : `\nStill learning — no assignments proposed yet.`)
