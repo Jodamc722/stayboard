@@ -14,13 +14,13 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { buildReviewQueue } from '@/lib/review-queue'
 import { auditDuplicates, closeStrayInspections } from '@/lib/task-audit'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
 
   const market = String(req.nextUrl.searchParams.get('market') || 'all')

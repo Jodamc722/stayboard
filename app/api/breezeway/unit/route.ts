@@ -4,7 +4,7 @@
 // tasks are flagged. Logged-in users only. (No big portfolio sync — one unit, one call.)
 import { NextRequest, NextResponse } from 'next/server'
 import { breezewayConfigured, bzApi } from '@/lib/breezeway'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -21,7 +21,7 @@ function isCanceled(t: any) { const s = t?.type_task_status || {}; return /cance
 function isDone(t: any) { const st = stage(t); return !!t?.finished_at || st === 'finished' || st === 'done' || st.includes('clos') || st.includes('complet') || st.includes('approv') }
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
 

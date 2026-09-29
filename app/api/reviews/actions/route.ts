@@ -11,6 +11,7 @@
 // mention inside a review rated 3 or below.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildingOf } from '@/lib/segments'
 import { THEMES, THEME_BY_KEY, sentenceAbout, looksNegative } from '@/lib/review-themes'
@@ -39,6 +40,7 @@ function daysBetween(a: string, b: string) {
 export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const sp = req.nextUrl.searchParams
   const status = str(sp.get('status')) || 'live'      // live = open + doing
   const kind = str(sp.get('kind')) || 'all'
@@ -71,6 +73,7 @@ export async function GET(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   const id = str(body?.id)
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
@@ -94,6 +97,7 @@ export async function PATCH(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   if (str(body?.op) !== 'generate') return NextResponse.json({ error: 'unknown op' }, { status: 400 })
 

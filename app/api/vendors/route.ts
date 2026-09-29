@@ -5,7 +5,7 @@
 //   GET  /api/vendors[?all=1]   → active vendors (all: inactive too), regulars first
 //   POST /api/vendors { … }     → save one (create or update) and hand it back — the inline add
 import { NextRequest, NextResponse } from 'next/server'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { listVendors, saveVendor, coiState } from '@/lib/project-vendors'
 import { todayISO, CADENCE_DAYS } from '@/lib/projects-shared'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -14,7 +14,7 @@ import { pageRows } from '@/lib/db-page'
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const g = await requireUser()
+  const g = await requireVrUser()
   if (!g.ok) return g.res
   const all = req.nextUrl.searchParams.get('all') === '1'
   const today = todayISO()
@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const g = await requireUser()
+  const g = await requireVrUser()
   if (!g.ok) return g.res
   const b = await req.json().catch(() => ({}))
   const r = await saveVendor(b?.vendor || b, String(g.access.email || ''))

@@ -7,7 +7,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, createBreezewayTask, updateBreezewayTask, listBreezewayPeople } from '@/lib/breezeway'
-import { requireAnyLevel, requireUser } from '@/lib/access'
+import { requireAnyLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -47,7 +48,7 @@ function buildBrief(item: any, unit: string): string {
 }
 
 export async function GET() {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   if (!breezewayConfigured()) return NextResponse.json({ ok: true, people: [] })
   try { const people = await listBreezewayPeople(); return NextResponse.json({ ok: true, people: people || [] }) } catch { return NextResponse.json({ ok: true, people: [] }) }

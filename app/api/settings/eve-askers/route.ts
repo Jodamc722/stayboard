@@ -8,6 +8,7 @@
 // writes are owner-only while reads are open to admins.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { getEveAskers, saveEveAskers } from '@/lib/eve/slack-askers'
 import { getDirectory, botConnected } from '@/lib/slack'
 
@@ -19,6 +20,7 @@ export async function GET(req: NextRequest) {
   if (access.role !== 'admin' && !isSuperadmin(access.email)) {
     return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
   }
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const refresh = new URL(req.url).searchParams.get('refresh') === '1'
   const [askers, connected] = await Promise.all([getEveAskers(), botConnected()])
   const dir = connected ? await getDirectory(refresh) : { users: [], channels: [], fetchedAt: '' }

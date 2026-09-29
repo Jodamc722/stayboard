@@ -11,7 +11,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getAccess, requireUser } from '@/lib/access'
+import { getAccess } from '@/lib/access'
+import { requireVrUser, isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { DEFAULT_PAR, mergePar, parForRoom, parKey, unitShape, type ParTable, type UnitShape } from '@/lib/par-levels'
 import { pageRows } from '@/lib/db-page'
@@ -69,7 +70,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, table: t, shape })
   }
   // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   return NextResponse.json({ ok: true, table: t, defaults: DEFAULT_PAR })
 }
@@ -78,6 +79,7 @@ export async function PUT(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   const merged = mergePar(body && body.table ? { rooms: body.table } : null)
   const r = await setSetting(PAR_KEY, { rooms: merged }, access.email)

@@ -10,7 +10,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { canDelete } from '@/lib/trash'
 import { DEFAULT_CHANNEL_POLICY, type ChannelPolicy } from '@/lib/claims'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -50,7 +51,7 @@ function clean(input: any): Record<string, ChannelPolicy> {
 
 export async function GET() {
   // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const overrides = await getSetting<Record<string, ChannelPolicy>>(POLICY_KEY, {})
   const effective = { ...DEFAULT_CHANNEL_POLICY, ...(overrides || {}) }

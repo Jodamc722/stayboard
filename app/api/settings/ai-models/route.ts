@@ -3,6 +3,7 @@
 //   PUT  { overrides: { [taskKey]: tier | null } } -> saves; null (or the task's default) clears the override
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { AI_MODELS_KEY, AI_TASKS, MODEL_IDS, MODEL_LABEL, MODEL_PRICE, aiModelTable, bustAiModelsCache, isTier } from '@/lib/ai-models'
 
@@ -22,6 +23,7 @@ export async function GET() {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   return NextResponse.json(await payload())
 }
 

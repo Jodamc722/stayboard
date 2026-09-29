@@ -6,7 +6,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
@@ -20,7 +21,7 @@ function num(v: any): number | null { const n = parseFloat(String(v).replace(/[^
 
 export async function GET(req: NextRequest) {
   // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   try {
     const db = supabaseAdmin()

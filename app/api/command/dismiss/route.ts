@@ -17,7 +17,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { setSetting } from '@/lib/app-settings'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { DISMISS_KEY } from '@/lib/command-day'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,7 +26,7 @@ const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/N
 type Entry = { by: string; at: string; outcome?: 'done' | 'skipped'; title?: string; unit?: string }
 
 async function mutate(req: NextRequest, remove: boolean) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const user = gate.access.user
   const body = await req.json().catch(() => ({} as any))

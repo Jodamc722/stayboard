@@ -8,7 +8,7 @@
 //
 // GET ?ids=<listingId>,<listingId>…   →   { ok, times: { [listingId]: { minutes, n } } }
 import { NextRequest, NextResponse } from 'next/server'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { PERFORMED_FLOOR_MIN } from '@/lib/capacity'
@@ -21,7 +21,7 @@ const MIN_SAMPLE = 3
 const KEEP = 8
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const ids = Array.from(new Set(String(new URL(req.url).searchParams.get('ids') || '').split(',').map(s => s.trim()).filter(Boolean))).slice(0, 300)
   if (!ids.length) return NextResponse.json({ ok: true, times: {} })

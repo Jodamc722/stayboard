@@ -2,7 +2,7 @@
 // (e.g. "Rustic Exterior" = the Rustic building) instead of the guest's unit. Read-only.
 import { NextResponse } from 'next/server'
 import { bzApi, breezewayConfigured } from '@/lib/breezeway'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -10,7 +10,7 @@ export const maxDuration = 30
 let cache: { at: number; props: { id: number; name: string }[] } | null = null
 
 export async function GET() {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   if (!breezewayConfigured()) return NextResponse.json({ ok: false, error: 'Breezeway not configured.' }, { status: 503 })
   if (cache && Date.now() - cache.at < 10 * 60 * 1000) return NextResponse.json({ ok: true, properties: cache.props, count: cache.props.length, cached: true })

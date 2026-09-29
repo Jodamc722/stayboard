@@ -32,6 +32,7 @@
 // assume), and it is trained by the team (lib/refund-training) — house guidance plus saved cases.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, canSeeMoney } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { computeMultiple, REQUIRED_FIELDS, type RefundInput } from '@/lib/refund-policy'
 import { ladderFor, tierFor, tierReason, normAuthority, RULES } from '@/lib/refund-doctrine'
@@ -154,6 +155,7 @@ export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!access.allowed) return NextResponse.json({ error: 'no-access' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   if (!canSeeMoney(access)) return NextResponse.json({ error: 'Refund guidance is limited to people who can see money.' }, { status: 403 })
 
   const key = process.env.ANTHROPIC_API_KEY

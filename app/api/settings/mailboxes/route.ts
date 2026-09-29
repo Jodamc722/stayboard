@@ -5,6 +5,7 @@
 // themselves never leave the server.
 import { NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { getSetting } from '@/lib/app-settings'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
@@ -16,6 +17,7 @@ export async function GET() {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const wanted: { email: string; usedFor: string }[] = []
   const add = (email: any, usedFor: string) => {
     const e = String(email || '').trim().toLowerCase()

@@ -7,6 +7,7 @@
 // — the part that names environment variables — are owner-only.
 import { NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { pageAllowed } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getConnections, publicView, slackAppConfigured } from '@/lib/integrations'
@@ -34,6 +35,7 @@ export async function GET() {
   if (!owner && !pageAllowed(access.workspace, access.features, 'integrations')) {
     return NextResponse.json({ error: 'You do not have access to integrations.' }, { status: 403 })
   }
+  if (!isVrLogin(access)) return hotelOnlyRes()
 
   // Presence checks only — the values themselves never leave the server.
   // Slack may be connected EITHER by the click-to-connect OAuth flow (stored) or by the legacy

@@ -1,7 +1,8 @@
 // Property Audit API - audits + items. Mobile capture authenticates by share code (the link IS
 // the key); desktop management uses the app session. All DB access via service role (RLS on).
 import { NextRequest, NextResponse } from 'next/server'
-import { requireUser, requireAnyLevel } from '@/lib/access'
+import { requireAnyLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { routeFor } from '@/lib/approval'
 import { pageRows } from '@/lib/db-page'
@@ -24,7 +25,7 @@ async function carryForwardItems(db: any, listingId: string, newAuditId: string)
 
 // A Lighthouse user (on the allowlist, active) — not merely a Supabase session. Null otherwise.
 async function getUser() {
-  try { const g = await requireUser(); return g.ok ? g.access.user : null } catch { return null }
+  try { const g = await requireVrUser(); return g.ok ? g.access.user : null } catch { return null }
 }
 // Same, but the person must hold edit on Audits: every desk-side write goes through this.
 async function getEditor() {

@@ -2,13 +2,13 @@
 // Command Center can read the same day in-process). Optional ?date=YYYY-MM-DD.
 import { NextRequest, NextResponse } from 'next/server'
 import { buildOpsDay } from '@/lib/ops-day'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   try {
     const day = await buildOpsDay(req.nextUrl.searchParams.get('date'), { fresh: req.nextUrl.searchParams.get('refresh') === '1' })

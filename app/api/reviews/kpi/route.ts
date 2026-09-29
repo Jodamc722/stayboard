@@ -29,6 +29,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { unstable_cache } from 'next/cache'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, buildingOf } from '@/lib/segments'
 import { setSetting } from '@/lib/app-settings'
@@ -209,6 +210,7 @@ export async function GET(req: NextRequest) {
   try {
     const access = await getAccess()
     if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    if (!isVrLogin(access)) return hotelOnlyRes()
     // Cleanliness by cleaner is a coaching tool, not a leaderboard: owner + GM workspaces only.
     const canSeeCleaners = access.role === 'admin' || access.workspace === 'gm' || access.workspace === 'admin'
     const sp = req.nextUrl.searchParams

@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { unstable_cache } from 'next/cache'
 import { getAccess, canSeeMoney } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { buildKpiFor, kpiQuery } from '@/lib/kpi'
 
 export const dynamic = 'force-dynamic'
@@ -21,6 +22,7 @@ const cachedKpi = unstable_cache(
 export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   try {
     return NextResponse.json(await cachedKpi(kpiQuery(req.nextUrl.searchParams), canSeeMoney(access)))
   } catch (e: any) {

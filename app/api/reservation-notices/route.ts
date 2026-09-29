@@ -8,6 +8,7 @@
 // never from this table — a building changing its front-desk address is not a schema change.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin , requireLevel} from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { RESERVATION_EMAILS_KEY, mergeProperties } from '@/lib/reservation-emails'
@@ -66,6 +67,7 @@ function fieldsFrom(b: any) {
 export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
 
   const properties = mergeProperties(await getSetting<any>(RESERVATION_EMAILS_KEY, null))
   const byId: Record<string, any> = {}

@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getListingCalendar, dayIsAvailable, getToken } from '@/lib/guesty'
 import { unstable_cache } from 'next/cache'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -115,7 +115,7 @@ const cachedScan = unstable_cache(
 )
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
 
   const refresh = new URL(req.url).searchParams.get('refresh') === '1'

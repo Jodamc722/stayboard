@@ -3,7 +3,7 @@
 // amenity, not just ones already used in the portfolio. Cached in-memory ~6h. Logged-in only.
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -22,7 +22,7 @@ function pickGroup(x: any): string {
 }
 
 export async function GET() {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
 
   if (CACHE && Date.now() - CACHE.at < TTL) return NextResponse.json({ names: CACHE.names, groups: CACHE.groups, cached: true })

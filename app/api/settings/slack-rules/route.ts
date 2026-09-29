@@ -7,6 +7,7 @@
 // owner-only writes: these rules decide who gets pinged about what, which is not a shared toy.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { getSlackRules, saveSlackRules, DEFAULT_RULES, EVENT_LABELS } from '@/lib/slack-rules'
 import { getDirectory, whoAmI, botConnected } from '@/lib/slack'
 import { KNOWN_BUILDINGS } from '@/lib/segments'
@@ -19,6 +20,7 @@ export async function GET(req: NextRequest) {
   if (access.role !== 'admin' && !isSuperadmin(access.email)) {
     return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
   }
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const refresh = new URL(req.url).searchParams.get('refresh') === '1'
   const [rules, connected] = await Promise.all([getSlackRules(), botConnected()])
   const dir = connected ? await getDirectory(refresh) : { users: [], channels: [], fetchedAt: '' }
@@ -43,6 +45,7 @@ export async function PUT(req: NextRequest) {
   if (!isSuperadmin(access.email) && access.role !== 'admin') {
     return NextResponse.json({ error: 'Only an admin can change the alert rules.' }, { status: 403 })
   }
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   const res = await saveSlackRules(body && body.rules, access.email || 'admin')
   if (!res.ok) return NextResponse.json({ error: res.error || 'Could not save the rules.' }, { status: 500 })

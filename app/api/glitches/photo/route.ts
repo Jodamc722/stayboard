@@ -16,7 +16,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -55,7 +56,7 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const path = str(req.nextUrl.searchParams.get('path')).trim()
   // No traversal, no absolute paths, no reaching sideways into another bucket.

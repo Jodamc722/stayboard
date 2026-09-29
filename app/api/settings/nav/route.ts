@@ -8,6 +8,7 @@
 // owner. Any admin can do it, and getting it wrong is one click from undone.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { NAV_LAYOUT_KEY, normNavLayout, type NavLayout } from '@/lib/nav-layout'
 
@@ -17,6 +18,7 @@ export const maxDuration = 30
 export async function GET() {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const layout = await getSetting<any>(NAV_LAYOUT_KEY, null).catch(() => null)
   return NextResponse.json({ ok: true, layout: normNavLayout(layout) })
 }
@@ -24,6 +26,7 @@ export async function GET() {
 export async function PUT(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
   const body = await req.json().catch(() => ({} as any))
   const layout: NavLayout = normNavLayout(body?.layout)
@@ -39,6 +42,7 @@ export async function PUT(req: NextRequest) {
 export async function DELETE() {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
   const res = await setSetting(NAV_LAYOUT_KEY, {}, access.email)
   if (!res.ok) return NextResponse.json({ error: res.error || 'Could not reset.' }, { status: 500 })

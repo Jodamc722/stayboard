@@ -8,6 +8,7 @@
 // PUT: owner only. These settings decide what work gets created for named staff.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { CADENCE_KEY, CADENCE_DEFAULTS, DEFAULT_CADENCES, resolveCadences, patternOk } from '@/lib/cadences'
 
@@ -17,6 +18,7 @@ export async function GET() {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const stored = await getSetting<any>(CADENCE_KEY, null)
   return NextResponse.json({
     ok: true,

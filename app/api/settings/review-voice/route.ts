@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,6 +16,7 @@ async function requireAdmin() {
   const access = await getAccess()
   if (!access.user) return { error: NextResponse.json({ error: 'unauthorized' }, { status: 401 }), access }
   if (access.role !== 'admin') return { error: NextResponse.json({ error: 'Admins only.' }, { status: 403 }), access }
+  if (!isVrLogin(access)) return { error: hotelOnlyRes(), access }
   return { error: null, access }
 }
 

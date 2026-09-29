@@ -7,13 +7,13 @@
 // including Units, so simply looking at the board could cost a Fable-tier call (Jon, 2026-09-16).
 import { NextRequest, NextResponse } from 'next/server'
 import { buildOpsFocus } from '@/lib/ops-focus'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const market = String(req.nextUrl.searchParams.get('market') || 'all')
   const refresh = req.nextUrl.searchParams.get('refresh') === '1'

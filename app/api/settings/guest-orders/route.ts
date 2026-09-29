@@ -2,6 +2,7 @@
 // that writes to Guesty bookings and charges guests' cards.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getGuestOrdersCfg, saveGuestOrdersCfg, loadCatalog, sanitizeTiers, soldInOf, piecesOf, pieceNameOf } from '@/lib/guest-orders'
 import { getSlackRules } from '@/lib/slack-rules'
@@ -13,6 +14,7 @@ export async function GET() {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   // Listings come along so a hub can be built from individual units, not only whole properties
   // (Jon, 2026-08-25: "hub is a group of listings or properties").
   const [config, catalog, rules, units] = await Promise.all([

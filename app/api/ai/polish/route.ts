@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { anthropicMessages } from '@/lib/anthropic-call'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
@@ -79,6 +80,7 @@ export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!access.allowed) return NextResponse.json({ error: 'no-access' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
 
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ error: 'No Anthropic key configured.' }, { status: 503 })

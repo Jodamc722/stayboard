@@ -3,7 +3,7 @@
 // Read-only: this proposes nothing and creates nothing. Adding is the Add-task route, as ever.
 import { NextRequest, NextResponse } from 'next/server'
 import { buildDueCalendar } from '@/lib/pm-calendar'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -11,7 +11,7 @@ export const maxDuration = 60
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const market = String(req.nextUrl.searchParams.get('market') || 'all')
   const days = Number(req.nextUrl.searchParams.get('days') || 30)

@@ -3,6 +3,7 @@
 // Admin reads, owner-only writes: this decides how much money moves without a human looking.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { APPROVAL_LIMITS_KEY, DEFAULT_LIMITS, mergeLimits } from '@/lib/approval'
 
@@ -12,6 +13,7 @@ export async function GET() {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const limits = mergeLimits(await getSetting<any>(APPROVAL_LIMITS_KEY, null))
   return NextResponse.json({ ok: true, limits, defaults: DEFAULT_LIMITS })
 }

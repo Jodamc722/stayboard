@@ -4,7 +4,7 @@
 // explicit Add click, never automatically (Jon's rule). Skips units with an open review-audit.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -13,7 +13,7 @@ const LIVE = /confirm|checked/i
 const DEAD_LISTING = /inactive|disabled|archived|deleted/i
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const date = String(new URL(req.url).searchParams.get('date') || '').slice(0, 10)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return NextResponse.json({ error: 'Pass ?date=YYYY-MM-DD' }, { status: 400 })

@@ -14,6 +14,7 @@
 // value. That is deliberate and must stay that way: this endpoint is read by a browser.
 import { NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { botConnected } from '@/lib/slack'
 import { pageRows } from '@/lib/db-page'
@@ -36,6 +37,7 @@ export async function GET() {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
 
   // WHAT THE APP ACTUALLY USES, NOT WHAT THE CHECK GUESSED (2026-08-31). Three of these rows were
   // red while the features behind them worked every day, because the check tested an env var the

@@ -8,6 +8,7 @@
 //        it sits with workspaces and spend limits rather than with ordinary admin settings.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
@@ -78,6 +79,7 @@ export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
 
   const properties = mergeProperties(await getSetting<any>(RESERVATION_EMAILS_KEY, null))
   const listings = await loadListings()

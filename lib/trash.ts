@@ -9,6 +9,7 @@
 //      in as an admin does not prove who they are twice.
 import 'server-only'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, HOTEL_ONLY_MESSAGE } from '@/lib/vr-gate'
 import { pageRows } from '@/lib/db-page'
 
 export type Kind = 'glitch' | 'claim' | 'project'
@@ -47,6 +48,8 @@ export async function canDelete(): Promise<Who> {
   const email = String(a.email || '')
   if (!email) return { email: '', ok: false, reason: 'Sign in first.' }
   if (isSuperadmin(email)) return { email, ok: true, reason: '' }
+  // Glitches, claims and projects are the VR side's; a hotel-only row can still carry VR role 'admin'.
+  if (!isVrLogin(a)) return { email, ok: false, reason: HOTEL_ONLY_MESSAGE }
   if (a.role === 'admin') return { email, ok: true, reason: '' }
   return { email, ok: false, reason: 'Only an admin can delete. Ask Jon, or have your role changed on Users.' }
 }
@@ -64,6 +67,7 @@ export async function canDeleteProject(projectId: string): Promise<Who> {
   const email = String(a.email || '').toLowerCase()
   if (!email) return { email: '', ok: false, reason: 'Sign in first.' }
   if (isSuperadmin(email)) return { email, ok: true, reason: '' }
+  if (!isVrLogin(a)) return { email, ok: false, reason: HOTEL_ONLY_MESSAGE }
   if (a.role === 'admin') return { email, ok: true, reason: '' }
   try {
     const { supabaseAdmin } = await import('@/lib/supabase-admin')

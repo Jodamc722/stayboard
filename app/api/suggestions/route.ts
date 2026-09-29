@@ -11,6 +11,7 @@
 // the two can never drift apart.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { setSetting } from '@/lib/app-settings'
 import {
   buildSuggestions, getSuggestionLog, pruneLog, createFromSuggestion, logAccepted,
@@ -28,6 +29,7 @@ export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!access.allowed) return NextResponse.json({ error: 'no-access' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const q = String(req.nextUrl.searchParams.get('date') || '')
   const date = /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : ymd(new Date())
   try {
@@ -47,6 +49,7 @@ export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!access.allowed) return NextResponse.json({ error: 'no-access' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   const action = String(body?.action || '')
   const id = String(body?.id || '')

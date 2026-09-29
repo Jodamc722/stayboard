@@ -13,7 +13,7 @@
 // All three are generated from ffe_order_lines at request time, so the page, the spreadsheet and
 // the PDF cannot drift apart — there is no second copy of the numbers to forget to update.
 import { NextRequest, NextResponse } from 'next/server'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { makeXlsx, type XCell, type XSheet } from '@/lib/xlsx-lite'
 import { buildQuotePdf, type QuoteSection } from '@/lib/order-pdf'
@@ -30,7 +30,7 @@ const usd = (n: number | null) => n == null ? '—' : '$' + n.toLocaleString('en
 const safe = (s: string) => str(s).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'order'
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
 
   const db = supabaseAdmin()

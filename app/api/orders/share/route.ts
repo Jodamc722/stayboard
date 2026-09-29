@@ -2,12 +2,12 @@
 // for a building (property) or a single unit - the link is what the owner opens to approve.
 import { NextRequest, NextResponse } from 'next/server'
 import { ownerOrderSig } from '@/lib/ownerShare'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const scope = String(req.nextUrl.searchParams.get('scope') || '')
   if (!/^(b|u|m):.+/.test(scope)) return NextResponse.json({ error: 'scope must be b:building, u:listingId, or m:id,id (multi)' }, { status: 400 })

@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, getBreezewayToken, retrieveBreezewayTask, mapBreezewayTask } from '@/lib/breezeway'
-import { requireAdmin } from '@/lib/access'
+import { requireVrAdmin } from '@/lib/vr-gate'
 import { bustBoards } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
@@ -29,7 +29,7 @@ let lastBustAt = 0
 export async function GET(req: NextRequest) {
   const p = new URL(req.url).searchParams
   if (!p.get('subscribe') && !p.get('list')) return NextResponse.json({ ok: true }) // validation ping
-  const gate = await requireAdmin('admin')
+  const gate = await requireVrAdmin('admin')
   if (!gate.ok) return gate.res
   if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
   const token = await getBreezewayToken()

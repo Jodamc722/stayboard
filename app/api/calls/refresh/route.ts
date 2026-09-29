@@ -12,13 +12,13 @@
 import { NextResponse } from 'next/server'
 import { syncReservations } from '@/lib/guesty'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function POST() {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const started = Date.now()
   try {

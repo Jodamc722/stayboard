@@ -8,6 +8,7 @@
 // over twelve cells) and it guarantees the page can never show a band the engine has stopped using.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, canSeeMoney } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import {
   LADDERS, RULES, REMEDIES, MATRIX_SPEEDS, SEVERITY_TEST,
@@ -23,6 +24,7 @@ export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!access.allowed) return NextResponse.json({ error: 'no-access' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
 
   const url = new URL(req.url)
   const nightly = Math.min(5000, Math.max(50, Number(url.searchParams.get('nightly')) || 300))
@@ -56,6 +58,7 @@ export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'forbidden', message: 'Only an admin changes who can sign what.' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   if (String(body?.op) !== 'authority') return NextResponse.json({ error: 'unknown op' }, { status: 400 })
   const cfg = normAuthority(body)

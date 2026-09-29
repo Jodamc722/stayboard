@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, MARKETS } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -20,7 +20,7 @@ function sunOf(s: string) { return addDays(s, -dow(s)) }
 
 export async function GET(req: NextRequest) {
   try {
-    const gate = await requireUser()
+    const gate = await requireVrUser()
     if (!gate.ok) return gate.res
     const VENDOR = vendorRegex((await getOpsPresets()).vendorBuildings)
     const { searchParams } = new URL(req.url)

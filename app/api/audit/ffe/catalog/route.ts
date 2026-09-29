@@ -14,7 +14,8 @@
 // Signed-in and edit-gated. The catalog decides what everyone in the company can order, so it is
 // not a share-link capability like the walk form.
 import { NextRequest, NextResponse } from 'next/server'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   FFE_CATEGORIES, FFE_KINDS, FFE_TIERS, FFE_VENDORS, amazonSearch, bestSource,
@@ -77,7 +78,7 @@ const BASE_COLS = 'id,code,name_en,name_es,category,room_hint,item_keys,vendor,v
 
 export async function GET(req: NextRequest) {
   // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
 
   const db = supabaseAdmin()

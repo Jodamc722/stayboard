@@ -9,7 +9,8 @@
 // approve, sent to owner, owner approved, declined — is never overwritten.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getAccess, requireUser } from '@/lib/access'
+import { getAccess } from '@/lib/access'
+import { requireVrUser, isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { decide, getApprovalLimits, ownerByListing } from '@/lib/approval'
 
 export const dynamic = 'force-dynamic'
@@ -42,7 +43,7 @@ function planFor(rows: any[], limits: any, owners: any) {
 export async function GET() {
   // An active Lighthouse member, not just any Supabase session (2026-09-29, 07-B4b) — this carries
   // order dollar totals.
-  const g = await requireUser()
+  const g = await requireVrUser()
   if (!g.ok) return g.res
   const db = supabaseAdmin()
   const [limits, owners] = await Promise.all([getApprovalLimits(), ownerByListing()])
@@ -60,6 +61,7 @@ export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const db = supabaseAdmin()
   const [limits, owners] = await Promise.all([getApprovalLimits(), ownerByListing()])
   const plan = planFor(await candidates(db), limits, owners)

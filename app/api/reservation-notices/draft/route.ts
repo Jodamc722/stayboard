@@ -4,6 +4,7 @@
 // showing RIGHT NOW (to/cc/subject/body), so what you previewed is exactly what lands in Drafts.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { createGmailDraft, type GmailAttachment } from '@/lib/gmail-send'
 import { watchSupportDraft, checkSupportDrafts, sweepSentInGmail, sweepGuestyFlag, closePastArrivals } from '@/lib/support-drafts'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -17,6 +18,7 @@ export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const b = await req.json().catch(() => ({} as any))
   const to = String(b?.to || '').split(/[,;]+/).map((x: string) => x.trim()).filter(Boolean)
   const cc = String(b?.cc || '').split(/[,;]+/).map((x: string) => x.trim()).filter(Boolean)
@@ -82,6 +84,7 @@ export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const u = new URL(req.url)
   const back = Number(u.searchParams.get('backDays') || '') || undefined
   const o = back ? { backDays: back } : {}

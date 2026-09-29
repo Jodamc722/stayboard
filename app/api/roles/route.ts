@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAccess, isSuperadmin, bustRolesCache } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { FEATURES, LEVELS, normLevel } from '@/lib/features'
 import { logAdmin } from '@/lib/activity'
 
@@ -38,6 +39,7 @@ export async function GET() {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const sb = supabaseAdmin()
   const { data, error } = await sb.from('app_roles').select('*').order('sort', { ascending: true })
   if (error) return NextResponse.json({ error: `Could not load roles: ${error.message}. Has migration 023 run?`, needsMigration: true }, { status: 500 })

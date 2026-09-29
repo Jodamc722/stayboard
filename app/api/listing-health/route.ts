@@ -9,7 +9,8 @@ import { computeListingHealth, rollupBuildingHealth, channelKeyOfSource, channel
 import { openWorkByListing } from '@/lib/open-work'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { marketOf, isLux, isVendorManaged, MARKETS } from '@/lib/segments'
-import { requireUser, canSeeMoney } from '@/lib/access'
+import { canSeeMoney } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
@@ -281,7 +282,7 @@ const computeHealth = unstable_cache(async () => {
 }, ['listing-health-v1'], { tags: ['listing-health'], revalidate: 300 })
 
 export async function GET(req: Request) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   try {
     const full: any = await computeHealth()

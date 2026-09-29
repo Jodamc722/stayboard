@@ -2,13 +2,13 @@
 // serves byte-identical data.
 import { NextRequest, NextResponse } from 'next/server'
 import { buildDaySheet } from '@/lib/daysheet'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   try {
     const sp = req.nextUrl.searchParams

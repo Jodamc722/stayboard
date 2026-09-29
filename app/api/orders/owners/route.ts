@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getToken } from '@/lib/guesty'
-import { requireAdmin, requireUser } from '@/lib/access'
+import { requireVrUser, requireVrAdmin } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -33,7 +33,7 @@ async function readStored(db: any): Promise<{ owners: Owner[]; syncedAt: string 
 }
 
 export async function GET() {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const stored = await readStored(supabaseAdmin())
   return NextResponse.json({ ok: true, ...stored })
@@ -41,7 +41,7 @@ export async function GET() {
 
 // Re-sync from Guesty. Admin only (it hits the Guesty API and rewrites the store).
 export async function POST(req: NextRequest) {
-  const gate = await requireAdmin('owner')
+  const gate = await requireVrAdmin('owner')
   if (!gate.ok) return gate.res
   let token = ''
   try { token = await getToken() } catch (e: any) { return NextResponse.json({ error: 'guesty token: ' + String(e && e.message || e) }, { status: 502 }) }

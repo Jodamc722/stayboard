@@ -4,14 +4,15 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAllLaborSettings } from '@/lib/labor-settings'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 
 const NUM_FIELDS = ['pct_good', 'pct_bad', 'grace_min', 'over_sched_min', 'ot_weekly_hours', 'attribution_min'] as const
 
 export async function GET() {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   return NextResponse.json({ ok: true, settings: await getAllLaborSettings() })
 }

@@ -7,7 +7,8 @@
 // AFTER the cache so the cached copy is the same for everyone.
 import { NextResponse } from 'next/server'
 import { unstable_cache } from 'next/cache'
-import { requireUser, canSeeMoney } from '@/lib/access'
+import { canSeeMoney } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { buildScoreboard, type ScoreTile } from '@/lib/scoreboard'
 
 export type { ScoreDelta, ScoreRow, ScoreTile, Scoreboard } from '@/lib/scoreboard'
@@ -27,7 +28,7 @@ function redact(t: ScoreTile): ScoreTile {
 
 export async function GET() {
   // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const access = gate.access
   try {

@@ -2,7 +2,7 @@
 // GET ?listingId=...&from=YYYY-MM-DD&to=YYYY-MM-DD  ->  { days: [{date, occupied, checkIn, checkOut, guest}] }
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -13,7 +13,7 @@ function addDays(s: string, n: number) { const d = new Date(s + 'T12:00:00'); d.
 const isLive = (s: string) => /confirm|check/i.test(str(s))
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   try {
     const sp = req.nextUrl.searchParams

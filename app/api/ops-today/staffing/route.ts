@@ -9,7 +9,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getShifts, nameMatches, nameMatchesRoster } from '@/lib/homebase'
 import { getTimecards } from '@/lib/homebase-labor'
 import { isTaskGone } from '@/lib/task-categories'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -18,7 +18,7 @@ const TZ = 'America/New_York'
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d)
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   try {
     const qd = String(req.nextUrl.searchParams.get('date') || '')

@@ -8,7 +8,8 @@ import { signedInName } from '@/lib/caller-name'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getToken as refreshGuestyToken } from '@/lib/guesty'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { bustDay } from '@/lib/bust'
 import { writeCustomFields } from '@/lib/guesty-custom-fields'
 import { notesDefId } from '@/lib/guesty-res-notes'
@@ -76,7 +77,7 @@ async function welcomeDefId(token: string): Promise<{ id: string | null; tried: 
 
 export async function GET(req: NextRequest) {
   // An active Lighthouse member, not just any Supabase session (2026-09-29, 07-B4b).
-  const g = await requireUser()
+  const g = await requireVrUser()
   if (!g.ok) return g.res
   const params = new URL(req.url).searchParams
   if (params.get('find')) {

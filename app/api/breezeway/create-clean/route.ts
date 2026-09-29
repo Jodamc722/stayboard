@@ -8,7 +8,8 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, bzApi, createBreezewayTask, listPropertyHousekeeping, pickDepartureClean } from '@/lib/breezeway'
 import { adminPasswordOk } from '@/lib/shareAuth'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { bustBoards } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
@@ -30,7 +31,7 @@ function asArr(d: any): any[] {
 
 export async function GET(req: NextRequest) {
   // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
   const p = new URL(req.url).searchParams

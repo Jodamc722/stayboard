@@ -23,6 +23,7 @@
 // Read-only. Writes nothing, changes nothing.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guestyConfigured, listRecentReviews } from '@/lib/guesty'
 import { pageRows } from '@/lib/db-page'
@@ -54,6 +55,7 @@ export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
 
   const days = Math.max(30, Math.min(180, parseInt(str(req.nextUrl.searchParams.get('days')) || '120', 10) || 120))
   // ?deep=1 pulls Guesty's WHOLE review feed for the removed-review comparison below. Slow and

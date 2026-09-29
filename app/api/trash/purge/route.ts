@@ -23,7 +23,7 @@
 //      would be an oracle for testing passwords against other people's accounts.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createBareClient } from '@supabase/supabase-js'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { canDelete, canDeleteProject } from '@/lib/trash'
 
@@ -33,7 +33,7 @@ export const maxDuration = 30
 export async function POST(req: NextRequest) {
   // A Lighthouse user on the allowlist, not merely a Supabase session (the sudo re-check below
   // proves the password, and canDelete() decides who may purge what).
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const email = String(gate.access.email || '').toLowerCase()
   if (!email) return NextResponse.json({ ok: false, error: 'Sign in first.' }, { status: 401 })

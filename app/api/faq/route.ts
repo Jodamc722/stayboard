@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { otaLinksFrom } from '@/lib/ota-links'
 import { pageRows } from '@/lib/db-page'
 
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
   // NOT PUBLIC (2026-09-29). This answered with no check at all — the whole listing list, and per
   // listing the Wi-Fi password, the access notes and every Guesty custom field. Its only callers
   // are the FAQ desk on /faq and the listing page, both behind a login.
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const db = supabaseAdmin()
   const listingId = req.nextUrl.searchParams.get('listingId') || ''

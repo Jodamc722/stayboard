@@ -10,7 +10,7 @@
 // the one place Breezeway tasks are created (single standardized brief, no second code path).
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -18,7 +18,7 @@ export const maxDuration = 30
 type Row = { id: string; room: string | null; title: string | null; note: string | null; severity: string | null; status: string; photo_url: string | null; report_url: string | null; breezeway_task_id: string | null; created_at: string; taskStatus: string | null }
 
 export async function GET() {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const db = supabaseAdmin()
 

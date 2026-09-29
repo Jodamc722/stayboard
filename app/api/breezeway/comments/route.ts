@@ -6,13 +6,13 @@
 // column most people scroll past.
 import { NextRequest, NextResponse } from 'next/server'
 import { breezewayConfigured, listBreezewayComments } from '@/lib/breezeway'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   if (!breezewayConfigured()) return NextResponse.json({ ok: true, comments: [] })
   const ids = String(new URL(req.url).searchParams.get('taskIds') || '')

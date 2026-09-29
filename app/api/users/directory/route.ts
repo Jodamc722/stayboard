@@ -8,6 +8,7 @@
 // name and email, nothing else.
 import { NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -16,6 +17,7 @@ export async function GET() {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!access.allowed) return NextResponse.json({ error: 'no-access' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const { data, error } = await supabaseAdmin().from('app_users').select('email,status,profile').limit(500)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   const users = ((data as any[]) || [])

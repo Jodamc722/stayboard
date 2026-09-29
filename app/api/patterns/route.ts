@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { THEMES, looksNegative, sentenceAbout } from '@/lib/review-themes'
 import { marketOf, buildingOf } from '@/lib/segments'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
@@ -34,7 +34,7 @@ function addDays(s: string, n: number): string { const d = new Date(s + 'T12:00:
 // end of the data; the open fix-jobs were one capped read.
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   try {
     const sp = req.nextUrl.searchParams

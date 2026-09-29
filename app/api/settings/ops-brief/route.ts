@@ -3,6 +3,7 @@
 // email goes to, which is an owner-level control. Stored in app_settings key 'ops_brief'.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { getSetting, setSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
@@ -43,6 +44,7 @@ export async function GET() {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const stored = await getSetting<any>(KEY, null)
   const s = stored && typeof stored === 'object' ? stored : {}
   const [trueup, salato] = await Promise.all([digestGet('labor_weekly'), digestGet('salato_daily')])

@@ -13,7 +13,7 @@
 // FF&E IS A PURCHASING LIST. It writes to ffe_answers / ffe_unit_status and nothing else — no
 // Breezeway task, no work order, no maintenance cost. That separation is the point.
 import { NextRequest, NextResponse } from 'next/server'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { totalItems, mergeChecklist, FFE_ROOMS, FFE_ACTIONS, BUYS, type FfeOverride } from '@/lib/ffe-checklist'
 import { ffePortfolio, type FfeUnit } from '@/lib/ffe-portfolio'
@@ -164,7 +164,7 @@ export async function GET(req: NextRequest) {
 
     // ---- INDEX (signed in): the whole portfolio by owner, with every link already made ----
     if (sp.get('index')) {
-      const gate = await requireUser()
+      const gate = await requireVrUser()
       if (!gate.ok) return gate.res
       const ids = all.map(l => l.id)
       const [p, st, ov] = await Promise.all([progress(db, ids), todayStatus(db, ids), checklistOverrides(db)])
@@ -189,7 +189,7 @@ export async function GET(req: NextRequest) {
 
     // ---- CHECKLIST (signed in): the built-in list plus the overlay, for the editor tab ----
     if (sp.get('checklist')) {
-      const gate = await requireUser()
+      const gate = await requireVrUser()
       if (!gate.ok) return gate.res
       const ov = await checklistOverrides(db)
       return NextResponse.json({

@@ -13,7 +13,8 @@
 //
 // STILL NOT A WORK ORDER. Nothing here writes audit_items, property_audits, Breezeway or billing.
 import { NextRequest, NextResponse } from 'next/server'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ffePortfolio, type FfeUnit } from '@/lib/ffe-portfolio'
 import { mergeChecklist, type FfeOverride } from '@/lib/ffe-checklist'
@@ -120,7 +121,7 @@ function labelIndex(ov: FfeOverride[]) {
 
 export async function GET(req: NextRequest) {
   // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
 
   const db = supabaseAdmin()

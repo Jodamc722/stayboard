@@ -4,7 +4,7 @@
 // Admins only. The key itself is never returned.
 import { NextRequest, NextResponse } from 'next/server'
 import { randomBytes } from 'crypto'
-import { requireAdmin } from '@/lib/access'
+import { requireVrAdmin } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   getTalkrouteSettings, saveTalkrouteSettings, storeTalkrouteKey, clearTalkrouteKey, talkrouteConfigured,
@@ -124,13 +124,13 @@ async function status() {
 }
 
 export async function GET() {
-  const g = await requireAdmin('admin')
+  const g = await requireVrAdmin('admin')
   if (!g.ok) return g.res
   return NextResponse.json(await status())
 }
 
 export async function POST(req: NextRequest) {
-  const g = await requireAdmin('admin')
+  const g = await requireVrAdmin('admin')
   if (!g.ok) return g.res
   const actor = String(g.access.email || '')
   const body: any = await req.json().catch(() => ({}))

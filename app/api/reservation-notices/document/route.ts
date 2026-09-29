@@ -8,6 +8,7 @@
 // buckets are public, and copying that pattern here would put guest PII behind a guessable URL.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -48,6 +49,7 @@ function safeName(s: string): string {
 export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
 
   const b = await req.json().catch(() => ({} as any))
   const id = str(b.id).trim()
@@ -92,6 +94,7 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const id = str(req.nextUrl.searchParams.get('id')).trim()
   if (!id) return NextResponse.json({ ok: false, error: 'Which notice?' }, { status: 400 })
   try {

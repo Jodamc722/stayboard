@@ -7,7 +7,8 @@
 // editor always opens pre-filled with exactly what the routes are using.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getAccess, requireLevel, requireUser } from '@/lib/access'
+import { getAccess, requireLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { mergeListingAi, DEFAULT_LISTING_AI, SECTION_KEYS, clampPreset, type ListingAi } from '@/lib/listing-ai'
 import { LISTING_AI_KEY, parseSettingValue, loadListingAi } from '@/lib/listing-ai-server'
 
@@ -17,7 +18,7 @@ const MISSING_TABLE = 'This needs the workspaces migration — run supabase/migr
 
 export async function GET() {
   // An active Lighthouse member, not just any Supabase session (2026-09-29, 07-B4b).
-  const g = await requireUser()
+  const g = await requireVrUser()
   if (!g.ok) return g.res
   try {
     const { data, error } = await supabaseAdmin()

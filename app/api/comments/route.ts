@@ -9,7 +9,8 @@ import { importTaskComments } from '@/lib/breezeway-comment-sync'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { getToken } from '@/lib/guesty'
 import { writeCustomFields } from '@/lib/guesty-custom-fields'
-import { requireAnyLevel, requireUser } from '@/lib/access'
+import { requireAnyLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -90,7 +91,7 @@ async function teamEmails(db: any): Promise<string[]> {
 }
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const user = gate.access.user
   const type = str(req.nextUrl.searchParams.get('type'))
@@ -149,7 +150,7 @@ export async function GET(req: NextRequest) {
 // "That is me in Breezeway." Saved once per user and reused for every comment afterwards, so a
 // name mismatch between the two systems can never silently swallow comments again.
 export async function PATCH(req: NextRequest) {
-  const gate = await requireUser()   // saving your OWN Breezeway identity needs no tab level
+  const gate = await requireVrUser()   // saving your OWN Breezeway identity needs no tab level
   if (!gate.ok) return gate.res
   const user = gate.access.user
   const me = user.email.toLowerCase()

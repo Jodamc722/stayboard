@@ -13,6 +13,7 @@
 //   occupied someone is in the unit all day — do not send anyone without calling first
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isLiveStay } from '@/lib/stay-status'
 
@@ -25,6 +26,7 @@ function addDays(s: string, n: number) { const d = new Date(s + 'T12:00:00'); d.
 export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
 
   const listingId = str(req.nextUrl.searchParams.get('listingId')).trim()
   if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })

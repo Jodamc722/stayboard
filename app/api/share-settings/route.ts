@@ -9,7 +9,8 @@
 // to change one, type a new one.
 import { NextRequest, NextResponse } from 'next/server'
 import { credentialStates, saveCredential } from '@/lib/shareAuth'
-import { isSuperadmin, requireAdmin } from '@/lib/access'
+import { isSuperadmin } from '@/lib/access'
+import { requireVrAdmin } from '@/lib/vr-gate'
 import { logAccess } from '@/lib/vault'
 import { logAdmin } from '@/lib/activity'
 
@@ -17,7 +18,7 @@ export const dynamic = 'force-dynamic'
 
 // ADMINS ONLY (2026-09-02). Same bar as the rest of Settings.
 export async function GET() {
-  const gate = await requireAdmin('admin')
+  const gate = await requireVrAdmin('admin')
   if (!gate.ok) return gate.res
   const s = await credentialStates()
   return NextResponse.json({
@@ -30,7 +31,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireAdmin('admin')
+  const gate = await requireVrAdmin('admin')
   if (!gate.ok) return gate.res
   const user = gate.access.user
   try {

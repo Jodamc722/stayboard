@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pageRows } from '@/lib/db-page'
 import { buildingOf, marketOf } from '@/lib/segments'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
@@ -45,7 +45,7 @@ export async function GET(req: Request) {
   const daysParam = Number(new URL(req.url).searchParams.get('days') || DEFAULT_DAYS)
   const days = Math.min(Math.max(Number.isFinite(daysParam) ? daysParam : DEFAULT_DAYS, 1), MAX_DAYS)
   const sinceIso = new Date(Date.now() - days * 86400000).toISOString()
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
 
   const sb = supabaseAdmin()

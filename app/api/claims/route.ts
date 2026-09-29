@@ -8,7 +8,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { deadlineFor, dueDateFor, policyFor, todayET, daysUntil, itemsTotal, num, type ChannelPolicy, type ClaimItem } from '@/lib/claims'
 import { getSetting } from '@/lib/app-settings'
 import { nextCheckInMap } from '@/lib/claim-turnover'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { bustDay } from '@/lib/bust'
 
 const POLICY_KEY = 'claims_channel_policy'
@@ -32,7 +33,7 @@ export function channelName(source: any): string {
 
 export async function GET(req: NextRequest) {
   // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const db = supabaseAdmin()
   try {

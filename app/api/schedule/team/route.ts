@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createClient } from '@/lib/supabase-server'
-import { requireLevel, requireUser } from '@/lib/access'
+import { requireLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { weekRoster } from '@/lib/team-roster'
 
 export const dynamic = 'force-dynamic'
@@ -12,7 +13,7 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   // An active Lighthouse member, not just any Supabase session (2026-09-29, 07-B4b) — this returns the
   // week's share token.
-  const g = await requireUser()
+  const g = await requireVrUser()
   if (!g.ok) return g.res
   const { searchParams } = new URL(req.url)
   const weekStart = searchParams.get('weekStart') || ''

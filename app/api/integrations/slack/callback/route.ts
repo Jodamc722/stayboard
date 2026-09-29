@@ -5,6 +5,7 @@
 // and the exchange happens server-side, so the webhook URL never touches the browser.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin } from '@/lib/vr-gate'
 import { pageAllowed } from '@/lib/features'
 import { oauthStateValid, setSlackConnection, slackAppConfigured } from '@/lib/integrations'
 
@@ -16,7 +17,7 @@ const back = (req: NextRequest, status: string) =>
 export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.user || !access.email) return NextResponse.redirect(new URL('/login', req.url))
-  const allowed = isSuperadmin(access.email) || pageAllowed(access.workspace, access.features, 'integrations')
+  const allowed = isSuperadmin(access.email) || (isVrLogin(access) && pageAllowed(access.workspace, access.features, 'integrations'))
   if (!allowed) return back(req, 'forbidden')
   if (!slackAppConfigured()) return back(req, 'unconfigured')
 

@@ -4,6 +4,7 @@
 // GET: any admin. PUT: owner only — auto-creating assigned work for named staff is an owner call.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { setSetting } from '@/lib/app-settings'
 import { TASK_AUTOMATION_KEY, TASK_AUTOMATION_DEFAULTS, getTaskAutomation } from '@/lib/auto-inspections'
 
@@ -13,6 +14,7 @@ export async function GET() {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   return NextResponse.json({ ok: true, config: await getTaskAutomation() })
 }
 

@@ -6,7 +6,8 @@
 // The human approves in the UI before POST. Logged-in users only.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireAnyLevel, requireUser } from '@/lib/access'
+import { requireAnyLevel } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -23,7 +24,7 @@ async function token(sb: any): Promise<string | null> {
 
 // ---- GET: probe one listing's current policy fields (verification + prefill) ----
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const id = new URL(req.url).searchParams.get('listingId') || ''
   if (!id) return NextResponse.json({ error: 'listingId required' }, { status: 400 })

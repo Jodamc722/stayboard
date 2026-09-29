@@ -3,6 +3,7 @@
 // Each {...} is { calls, usd, input, output, cacheRead, cacheWrite, errors, avgMs }.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -22,6 +23,7 @@ export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const days = Math.min(90, Math.max(1, Number(req.nextUrl.searchParams.get('days')) || 30))
   const since = new Date(Date.now() - days * 86400_000).toISOString()
 

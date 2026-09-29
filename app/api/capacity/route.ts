@@ -15,6 +15,7 @@
 // nobody can overrule.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { buildDayPicture } from '@/lib/capacity-day'
 import { todayET } from '@/lib/eve/ctx'
 
@@ -25,6 +26,7 @@ export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!access.allowed) return NextResponse.json({ error: 'no-access' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
 
   const sp = new URL(req.url).searchParams
   const raw = String(sp.get('date') || '')

@@ -15,7 +15,8 @@
 //     dept, date, minutes, pay) for the drill-down
 
 import { NextResponse } from 'next/server'
-import { requireUser, canSeeMoney } from '@/lib/access'
+import { canSeeMoney } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 import { redactMoney, pctOf } from '@/lib/money'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getShifts, nameMatches, nameMatchesRoster, type Shift } from '@/lib/homebase'
@@ -99,7 +100,7 @@ async function shiftsForRange(start: string, end: string): Promise<(Shift & { da
 
 export async function GET(req: Request) {
   // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const access = gate.access
   // Amounts are the owner's, plus anyone he has switched on at /users → Dollar amounts; everyone

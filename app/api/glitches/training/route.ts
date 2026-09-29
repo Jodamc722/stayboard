@@ -11,6 +11,7 @@
 // the glitch board — the support leads who actually decide these.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, canSeeMoney } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadTraining, saveTraining, canTrain, type TrainingCase } from '@/lib/refund-training'
 
@@ -23,6 +24,7 @@ export async function GET() {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!access.allowed || !canSeeMoney(access)) return NextResponse.json({ error: 'no-access' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const t = await loadTraining()
   return NextResponse.json({ ok: true, ...t, canTrain: canTrain(access) })
 }
@@ -31,6 +33,7 @@ export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!canTrain(access)) return NextResponse.json({ error: 'forbidden', message: 'Only an admin or a glitch-board lead can train the advisor.' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const b = await req.json().catch(() => ({} as any))
   const op = str(b?.op, 30)
   const who = String(access.email || 'team')

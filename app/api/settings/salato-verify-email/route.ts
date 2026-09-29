@@ -2,6 +2,7 @@
 // signature images, and the PDF record). Editable in App settings. Stored in app_settings.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { sendGmail } from '@/lib/gmail-send'
 
@@ -33,6 +34,7 @@ export async function GET() {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const cfg = await getSetting<NotifyCfg>(SALATO_NOTIFY_KEY, DEFAULT_CFG)
   return NextResponse.json({ ok: true, emails: cfg.emails || '', cc: cfg.cc || '', enabled: cfg.enabled !== false, from: cfg.from || DEFAULT_FROM, valid: parseEmails(cfg.emails || ''), validCc: parseEmails(cfg.cc || '') })
 }
@@ -41,6 +43,7 @@ export async function PUT(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (access.role !== 'admin') return NextResponse.json({ error: 'Admins only.' }, { status: 403 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   try {
     const body: any = await req.json().catch(() => ({}))
 

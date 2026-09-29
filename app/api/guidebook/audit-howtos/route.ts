@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireUser } from '@/lib/access'
+import { requireVrUser } from '@/lib/vr-gate'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,7 +9,7 @@ const norm = (s: any) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' 
 export async function GET(req: NextRequest) {
   // Signed in AND an active Lighthouse member. The local helper this replaced only checked for a
   // Supabase session, so any login got the listing's how-tos (2026-09-29).
-  const gate = await requireUser()
+  const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const listingId = String(req.nextUrl.searchParams.get('listingId') || '')
   if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
