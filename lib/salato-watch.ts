@@ -30,6 +30,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { salatoListings } from '@/lib/salato-units'
 import { slackApi } from '@/lib/slack'
+import { getSetting } from '@/lib/app-settings'
 
 export const SALATO_MIN_NIGHTS = 2
 const CHANNEL = 'C07SBALUTU2' // #ccs-and-jon: the customer service team, CCS and Jon
@@ -117,7 +118,15 @@ const oneNightText = (r: any, unit: string, n: number, why = 'New booking', toda
     + ` Reply in this thread when it's handled.`
 }
 
-export type WatchResult = { ok: boolean; seeded?: boolean; checked: number; announced: number; oneNight: number; nudged: number; resolved: number; canceled: number; dryRun?: boolean; items?: string[]; error?: string }
+export type WatchResult = { ok: boolean; seeded?: boolean; checked: number; announced: number; oneNight: number; nudged: number; resolved: number; canceled: number; dryRun?: boolean; items?: string[]; error?: string; skipped?: string }
+
+/**
+ * THE OFF SWITCH (2026-09-28, 09 D14): app_settings `salato_watch` = { enabled: false } stops the
+ * automatic posts from the booking cron. DEFAULT ON — no row, or no `enabled` key, is today's
+ * behaviour. It gates the 5-minute hook only: a person running POST /api/salato/watch by hand
+ * still gets a run, so the watch can be checked while it is off.
+ */
+export const SALATO_WATCH_KEY = 'salato_watch'
 
 /**
  * `fromCron`: the 5-minute hook does nothing until the watch has been started once by hand (POST
@@ -126,6 +135,10 @@ export type WatchResult = { ok: boolean; seeded?: boolean; checked: number; anno
  */
 export async function runSalatoWatch(opts: { dryRun?: boolean; fromCron?: boolean } = {}): Promise<WatchResult> {
   const out: WatchResult = { ok: true, checked: 0, announced: 0, oneNight: 0, nudged: 0, resolved: 0, canceled: 0, dryRun: !!opts.dryRun, items: [] }
+  if (opts.fromCron) {
+    const cfg = await getSetting<{ enabled?: boolean }>(SALATO_WATCH_KEY, {})
+    if (cfg && cfg.enabled === false) return { ...out, skipped: 'switched off (app_settings salato_watch.enabled = false)' }
+  }
   const db = supabaseAdmin()
   const today = ymdET()
   const { match, ids } = await salatoListings(db)
