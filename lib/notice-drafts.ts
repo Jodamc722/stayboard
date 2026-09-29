@@ -34,27 +34,22 @@ const str = (v: any) => typeof v === 'string' ? v : (v == null ? '' : String(v))
 function ymdET(d: Date): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
-// ── jsPDF ON THE SERVER, TWO WAYS (Jon, 2026-08-19: "please be able to attach the form, it
-// should work"). First choice: the npm package, bundled with the function. If the serverless
-// bundle ever drops it, fall back to fetching the UMD build from the CDN and evaluating it —
-// Node cannot import an https URL, but it can run the fetched CommonJS body. Either way a
-// failure now carries a real message into the cron's errors[] instead of dying silently.
+// ── jsPDF ON THE SERVER (Jon, 2026-08-19: "please be able to attach the form, it should work").
+// The npm package, bundled with the function. A failure carries a real message into the cron's
+// errors[] instead of dying silently.
+//
+// The CDN fallback is gone (2026-09-28 audit): it fetched JavaScript from a third-party host at run
+// time and executed it with `new Function` inside a function holding the service-role key — a
+// supply-chain door for a problem (the bundle dropping jspdf) that never happened. If the import
+// ever fails, the error says so and the draft goes out with its "attach the form yourself" line.
 let _srvJsPdf: any = null
 async function loadServerJsPdf(): Promise<any> {
   if (_srvJsPdf) return _srvJsPdf
-  try {
-    const m: any = await import('jspdf')
-    const ctor = m.jsPDF || m.default?.jsPDF || m.default
-    if (ctor) { _srvJsPdf = ctor; return ctor }
-  } catch (e) { console.error('notice-drafts: npm jspdf import failed, trying CDN', e) }
-  const r = await fetch('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js', { cache: 'no-store' })
-  if (!r.ok) throw new Error('jsPDF unavailable: npm import failed and CDN answered ' + r.status)
-  const code = await r.text()
-  const mod: any = { exports: {} }
-  const fn = new Function('module', 'exports', 'window', 'self', code + '\nreturn module.exports;')
-  const out = fn(mod, mod.exports, undefined, undefined)
-  const ctor = (out && (out.jsPDF || out.default?.jsPDF)) || mod.exports?.jsPDF
-  if (!ctor) throw new Error('jsPDF UMD loaded but did not expose a constructor')
+  let m: any
+  try { m = await import('jspdf') }
+  catch (e: any) { throw new Error('jsPDF unavailable: the npm import failed (' + String(e?.message || e).slice(0, 160) + ')') }
+  const ctor = m && (m.jsPDF || m.default?.jsPDF || m.default)
+  if (!ctor) throw new Error('jsPDF unavailable: the npm module did not expose a constructor')
   _srvJsPdf = ctor
   return ctor
 }
@@ -354,8 +349,8 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
   for (const p of props) pById[p.id] = p
   const draftedList: { nid: string; unit: string; guest: string; property: string; form: boolean; safety: boolean; missing: string }[] = []
 
-  // jsPDF for the server, loaded lazily on first use (see loadServerJsPdf below — npm first,
-  // CDN UMD as the fallback, and a real error message if both fail).
+  // jsPDF for the server, loaded lazily on first use (see loadServerJsPdf above — the npm package,
+  // and a real error message if it fails).
   let jsPdfCtor: any = null
 
   for (const n0 of due) {
