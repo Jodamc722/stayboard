@@ -334,7 +334,9 @@ export async function POST(req: NextRequest) {
       await sendMessage(chat.id, `I hit an error: ${out.error}`, { replyTo: msg.message_id })
       return ok()
     }
-    await recordMessage(chat.id, null, 'assistant', out.reply, out.chatId)
+    // The transcript is replayed into her next prompts, so it keeps the reply WITHOUT any door code
+    // released in it (logReply); the person still gets the code in the message itself (B-6).
+    await recordMessage(chat.id, null, 'assistant', out.logReply, out.chatId)
     await sendMessage(chat.id, out.reply, { replyTo: isGroup ? msg.message_id : null })
     return ok()
   } catch (e: any) {

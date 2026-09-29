@@ -28,7 +28,7 @@ import { getOperatingModel, renderOperatingModel } from './operating-model'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 import { getAgentSettings, normalizeAgentSettings, renderAgentModeForPrompt, agentAllowed } from './agent-mode'
-import { maskMoneyText } from './redact'
+import { maskMoneyText, scrubReleasedCodes } from './redact'
 
 // MODEL is resolved per request via modelFor('eve') — see lib/ai-models (editable on Users & admin).
 
@@ -135,6 +135,12 @@ export type RunEveInput = {
 export type RunEveOk = {
   ok: true
   reply: string
+  /**
+   * The reply as it may be STORED (a transcript, a chat log): any door code released to a Direct
+   * person in this turn is replaced with a pointer to the audit trail. `reply` keeps the code — the
+   * person asked for it — but nothing that is kept or replayed into a later prompt does.
+   */
+  logReply: string
   chatId: string | null
   meta: {
     turns: number; ms: number; tools: string[]; domains: string[]; memories: number; moneyRedacted: boolean; webSearch: string
@@ -259,6 +265,8 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   const convo: any[] = messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content).slice(0, 8000) }))
   const toolsUsed: string[] = []
+  // Codes door_code_check released to a Direct person this turn — scrubbed from everything stored.
+  const released: string[] = []
   const limit = Math.min(Math.max(Number(input.maxTurns) || MAX_TURNS, 4), MAX_TURNS)
 
   try {
@@ -363,6 +371,9 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
           }
           const { output, opened } = await runTool(block.name, args, ctx, open)
           if (opened && open.indexOf(opened) < 0) open.push(opened)
+          if (block.name === 'door_code_check' && output && typeof output === 'object') {
+            for (const k of ['code', 'previous_code']) if (output[k] != null && String(output[k]).trim()) released.push(String(output[k]).trim())
+          }
           results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(output).slice(0, TOOL_RESULT_CHARS) })
         }
         convo.push({ role: 'user', content: results })
@@ -390,10 +401,13 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     // is just a feeling. Never let a logging failure break the answer. A probe (the learning
     // audit's self-test) is not a user chat and is not logged here — it lives in eve_probes.
     let chatId: string | null = null
+    // A RELEASED CODE IS NOT KEPT (2026-09-28 audit, B-6). It is in the reply the Direct person reads;
+    // the chat log gets a pointer to the audit trail (eve_actions holds the fingerprint) instead.
+    const logReply = released.length ? scrubReleasedCodes(finalText, released) : finalText
     const row: any = {
       user_email: ctx.email,
       question: lastUser.slice(0, 4000),
-      answer: finalText.slice(0, 8000),
+      answer: logReply.slice(0, 8000),
       tools_used: toolsUsed,
       domains_opened: open,
       turns,
@@ -495,6 +509,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     return {
       ok: true,
       reply: finalText,
+      logReply,
       chatId,
       meta: { turns, ms: Date.now() - startedAt, tools: toolsUsed, domains: open, memories: memories.length, moneyRedacted: !canMoney, webSearch: webOk ? 'available' : 'unavailable-on-this-model', usage, memoryHits },
     }

@@ -124,7 +124,11 @@ async function baseTierFor(access: Access | null, channelId: string): Promise<Ti
   const vendorRoom = !!group && !!group.vendor
 
   if (isAdmin && !vendorRoom) {
-    return { tier: 'admin', buildings: [], canMoney: true, canDirect: true, denyTools: [], memoryWeightCap: 10, group }
+    // NO CODE INTO A CHANNEL, EVEN FOR AN ADMIN (2026-09-28 audit, B-7). The superadmin is always
+    // 'direct', so "@Eve code for 402" in a staff room posted the code for the whole room to read.
+    // Telegram groups already deny it; a channel now does too. /doorcode answers ephemerally.
+    const dm = /^D/.test(String(channelId || ''))
+    return { tier: 'admin', buildings: [], canMoney: true, canDirect: true, denyTools: dm ? [] : ENTRY_TOOLS, memoryWeightCap: 10, group }
   }
   if (isAdmin && vendorRoom) {
     return { tier: 'admin', buildings: [], canMoney: false, canDirect: true, denyTools: ENTRY_TOOLS, memoryWeightCap: 10, group }
@@ -161,7 +165,8 @@ async function baseTierFor(access: Access | null, channelId: string): Promise<Ti
 export function tierNote(g: TierGrant): string {
   const where = g.group ? `This channel belongs to ${g.group.label}.` : ''
   if (g.tier === 'admin' && g.canMoney) {
-    return `${where} You are talking to an admin. Full answers.`.trim()
+    const codes = g.denyTools.indexOf('door_code_check') >= 0 ? ' Door codes are never posted in a channel: for one, point them at /doorcode <unit> (only they see the reply).' : ''
+    return `${where} You are talking to an admin. Full answers.${codes}`.trim()
   }
   if (g.tier === 'admin') {
     return `${where} You are talking to an admin, but this room is run by an OUTSIDE VENDOR and they can read everything posted here. Answer the operational question fully. Do not read out dollar amounts or door codes in this room — offer to send those directly instead.`.trim()

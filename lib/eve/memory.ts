@@ -19,6 +19,7 @@ import { isSuperadmin } from '@/lib/access'
 import { beliefStrength, beliefTag, currentConfidence, isHuman, RETIRE_BELOW, beliefOf, storedConfidence, withBelief } from './beliefs'
 import { aiFetch } from '@/lib/ai-usage'
 import { modelFor } from '@/lib/ai-models'
+import { looksLikeDoorCode } from './redact'
 
 export const MEMORY_KINDS = ['rule', 'preference', 'insight', 'decision', 'person', 'issue', 'correction'] as const
 export type MemoryKind = typeof MEMORY_KINDS[number]
@@ -463,6 +464,13 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean;
   const db = supabaseAdmin()
   const text = String(input.text || '').trim().slice(0, 1000)
   if (!text) return { ok: false, error: 'empty memory' }
+  // A DOOR CODE IS NEVER A MEMORY (2026-09-28 audit, B-7). `remember` took the model's text as it
+  // came, so a code she had just seen could be filed and then injected into prompts on every
+  // surface. Code-shaped text (the same patterns the tool-output redactor uses) is refused here, on
+  // every write path — remember, corrections, question answers, the sweep.
+  if (looksLikeDoorCode(text) || looksLikeDoorCode(input.why)) {
+    return { ok: false, error: 'That looks like a door or access code. Codes are never stored in memory — they are read fresh through the door-code flow every time.' }
+  }
 
   // BACKSTOP ON 'jon' (Jon, 2026-09-23 review). The routes decide with personSource(), but a few
   // library paths (Thinking → dismiss, Telegram replies) still pass source 'jon' with the person's

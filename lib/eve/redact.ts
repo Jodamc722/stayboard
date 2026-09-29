@@ -178,6 +178,22 @@ export function redactSensitive<T>(value: T, opts: { codeFieldIds?: string[] } =
   try { return walk(value, '', ids) as T } catch { return value }
 }
 
+// ── Released codes in stored text (2026-09-28, B-6) ─────────────────────────────────────────────
+
+export const RELEASED_CODE_MARK = '[door code released — see Eve actions]'
+
+/**
+ * A code handed to a Direct person belongs in the reply they read and nowhere else: not in the chat
+ * log (eve_chats.answer) and not in the Telegram transcript that is replayed into later prompts.
+ * Every occurrence of each released code is replaced with a pointer to the audit trail.
+ */
+export function scrubReleasedCodes(text: string, codes: string[]): string {
+  let out = String(text || '')
+  const list = codes.map(c => String(c || '').trim()).filter(c => c.length >= 3).sort((a, b) => b.length - a.length)
+  for (const c of list) out = out.split(c).join(RELEASED_CODE_MARK)
+  return out
+}
+
 // ── Money in free text (2026-09-28, F9) ─────────────────────────────────────────────────────────
 
 const MONEY_TEXT_RE = /(?:US)?\$\s?\d[\d,]*(?:\.\d+)?(?:\s?[kKmM]\b)?|\b\d[\d,]*(?:\.\d+)?\s?(?:dollars|usd|bucks)\b|\bUSD\s?\d[\d,]*(?:\.\d+)?/gi
