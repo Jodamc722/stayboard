@@ -35,12 +35,41 @@ export const REDACTED = '[redacted — ask for the code through the door-code fl
 // "Outdoor space", "Entry instructions", "Country" are not codes — so both must be followed by
 // code / pin / combo. `keypad` alone stays: that is what the Guesty field is called. Widened
 // 2026-09-28 with the lock brands and words the portfolio actually uses.
-const KEY_RE = /(door|entry|access|gate|lock|garage)[\W_]{0,3}(code|pin|combo)|keypad|^\s*door\s*$|salto|lock[\s_-]*box|smart[\s_-]*lock|pass[\s_-]*code|combination|\bpin\b|^\s*(?:code|c[oó]digo)\s*$|c[oó]digo\s+de/i
+const KEY_RE = /(door|entry|access|gate|lock|garage)[\W_]{0,3}(code|pin|combo)|keypad|^\s*door\s*$|salto|lock[\s_-]*box|smart[\s_-]*lock|pass[\s_-]*code|key[\s_-]*code|combination|\bpin\b|^\s*(?:code|c[oó]digo)\s*$|c[oó]digo\s+de/i
+// CODE FIELD OR DEVICE FIELD (2026-09-29 review, N12). Of the names above, only one that SAYS it holds
+// a code — code / pin / passcode / combination / combo / keycode (or a secret) — is a code field, and
+// every value in it is redacted. The rest name a DEVICE: "Keypad", "Lockbox", "Salto", "Smart lock",
+// "Door". There the value is redacted only when it is code-shaped (holdsCodeDigits), so "Salto locks
+// offline: 3", "Smart lock battery: 20%" and "Lockbox location: left rail" keep their values while
+// "Keypad: 5512" and "Lockbox: 2468" still lose theirs.
+const SAYS_CODE_RE = /(?:^|[^a-z0-9])(?:codes?|pins?|pass[\s_-]*codes?|combinations?|combos?|key[\s_-]*codes?|c[oó]digos?|secrets?)(?![a-z0-9])/i
+// A 4-8 digit run (or 3 digits closed by # or *) that is not a count, a percentage, money, a date, a
+// phone number, part of a model number, or a unit number ("unit 1102").
+const DEVICE_CODE_RE = /(?<![\p{L}\p{N}.$\/-])(?<!\b(?:unit|apt|apartment|suite|ste|room|rm)\.?\s*#?\s*)(?:\d{4,8}(?![\p{N}%]|[.\/-]\d)|\d{3}[#*])/iu
+// …and a value that is nothing BUT digits is a code whatever its length ("246", "246#").
+const WHOLE_CODE_RE = /^\s*[#*]?\d{3,8}[#*]?\s*$/
+function holdsCodeDigits(v: any): boolean {
+  if (typeof v !== 'string' && typeof v !== 'number') return false
+  const s = String(v)
+  return WHOLE_CODE_RE.test(s) || DEVICE_CODE_RE.test(s)
+}
+type CodeKind = 'code' | 'device' | null
+/** 'code' — a name that says it holds a code; 'device' — a lock or keypad named alone; null — neither. */
+export function codeFieldNameKind(name: any): CodeKind {
+  const n = String(name || '')
+  if (!KEY_RE.test(n)) return null
+  return SAYS_CODE_RE.test(n) ? 'code' : 'device'
+}
 // Keys that mention a code by NAME. `access` on its own is too broad (accessRole, access_role,
 // "accessible"), and `door` on its own catches doorman / outdoor / indoor, so every word here has to
 // be paired with code / pin / secret. `res_code` is the per-stay Guesty field, not a confirmation
 // code (confirmationCode does not match).
 const BARE_KEY_RE = /(door|keypad|lock|entry|access|gate|garage)[\s_-]?(code|pin)|^door$|^res(ervation)?[\s_-]?code$|access[\s_-]?secret|^pin([\s_-]?code)?$|pass[\s_-]?code|^lock[\s_-]?box([\s_-]?(code|pin|combo))?$|^salto([\s_-]?(code|pin|key))?$|smart[\s_-]?lock[\s_-]?(code|pin)|^combination$|^c[oó]digo$/i
+/** The same split for a KEY: `door_code` holds a code; `lockbox`, `salto` and `door` name a device. */
+function keyKind(k: string): CodeKind {
+  if (!k || !BARE_KEY_RE.test(k)) return null
+  return SAYS_CODE_RE.test(k) ? 'code' : 'device'
+}
 // Inside a code field, these keys say WHICH field it is and how often it is filled — never what it
 // holds. Every other scalar in a code field is redacted, whatever it is called ("example", "value",
 // "sample", "current"…).
@@ -83,22 +112,30 @@ function nameOf(c: any): string {
 // value and is not a field, so its other keys are left alone.
 const VALUE_KEY_RE = /^(?:value|val|values|text|example|sample|current|default|code|pin|data)$/i
 
-/** A Guesty custom-field entry whose id or name marks it as a code. */
-function isCodeField(c: any, extraIds: Record<string, true> | null): boolean {
-  if (!c || typeof c !== 'object') return false
+/** Custom-field ids learned from the definitions: names that hold a code, and names of a device. */
+type FieldIds = { code: Record<string, true> | null; device: Record<string, true> | null }
+
+/** A Guesty custom-field entry whose id or name marks it as a code field or a device field. */
+function codeFieldKind(c: any, ids: FieldIds): CodeKind {
+  if (!c || typeof c !== 'object') return null
   const id = idOf(c)
-  if (id === DOOR_CODE_FIELD_ID || id === RES_CODE_FIELD) return true
-  if (id && extraIds && extraIds[id]) return true
+  if (id === DOOR_CODE_FIELD_ID || id === RES_CODE_FIELD) return 'code'
+  if (id && ids.code && ids.code[id]) return 'code'
   const fieldish = 'fieldId' in c || 'field_id' in c || Object.keys(c).some(k => VALUE_KEY_RE.test(k))
-  return fieldish && KEY_RE.test(nameOf(c))
+  const byName = fieldish ? codeFieldNameKind(nameOf(c)) : null
+  if (byName) return byName
+  if (id && ids.device && ids.device[id]) return 'device'
+  return null
 }
 
-/** Is this the NAME of a field that holds a code? (Used to learn the ids of code fields.) */
+/** Is this the NAME of a code or device field? (Used to learn the ids; codeFieldNameKind says which.) */
 export function isCodeFieldName(name: any): boolean {
   return KEY_RE.test(String(name || ''))
 }
 
 const redactDigits = (x: string) => (/\d/.test(x) ? '[redacted]' : x)
+// "door code for unit 1102 is 4821": the unit keeps its number, the code does not (N12).
+const UNIT_BEFORE_RE = /\b(?:unit|apt|apartment|suite|ste|room|rm)\.?\s*#?\s*$/i
 
 function scrubWindow(s: string): string {
   WINDOW_RE.lastIndex = 0
@@ -111,7 +148,8 @@ function scrubWindow(s: string): string {
     let end = Math.min(s.length, start + 40)
     const stop = s.slice(start, end).search(/[.!?;](?:\s|$)|\n/)
     if (stop >= 0) end = start + stop
-    out += s.slice(last, start) + s.slice(start, end).replace(DIGITS, redactDigits)
+    const seg = s.slice(start, end)
+    out += s.slice(last, start) + seg.replace(DIGITS, (d: string, at: number) => (UNIT_BEFORE_RE.test(seg.slice(Math.max(0, at - 14), at)) ? d : redactDigits(d)))
     last = end
     if (WINDOW_RE.lastIndex < end) WINDOW_RE.lastIndex = end
   }
@@ -137,44 +175,52 @@ export function looksLikeDoorCode(text: any): boolean {
   return !!s && scrubText(s) !== s
 }
 
-function walk(v: any, keyHint: string, extraIds: Record<string, true> | null): any {
-  if (typeof v === 'string') return v && keyHint && BARE_KEY_RE.test(keyHint) ? REDACTED : scrubText(v)
-  if (typeof v === 'number') return keyHint && BARE_KEY_RE.test(keyHint) ? REDACTED : v
-  if (Array.isArray(v)) return v.map(x => walk(x, keyHint, extraIds))
+/** A scalar under a code or device name: a code field loses it; a device field only when code-shaped. */
+const hides = (kind: CodeKind, val: any) => kind === 'code' || (kind === 'device' && holdsCodeDigits(val))
+
+function walk(v: any, keyHint: string, ids: FieldIds): any {
+  if (typeof v === 'string') return v && hides(keyKind(keyHint), v) ? REDACTED : scrubText(v)
+  if (typeof v === 'number') return hides(keyKind(keyHint), v) ? REDACTED : v
+  if (Array.isArray(v)) return v.map(x => walk(x, keyHint, ids))
   if (v && typeof v === 'object') {
     if (v instanceof Date) return v
-    if (isCodeField(v, extraIds)) {
+    const kind = codeFieldKind(v, ids)
+    if (kind) {
       // Keep the entry (so the model knows a code EXISTS and how often it is filled) but nothing it
-      // says: every scalar except the field's name, id and counts is redacted.
+      // says: every scalar except the field's name, id and counts is redacted — in a device field,
+      // every code-shaped scalar.
       const out: Record<string, any> = {}
       for (const k of Object.keys(v)) {
         const val = v[k]
-        if (CODE_FIELD_KEEP.test(k)) out[k] = walk(val, k, extraIds)
-        else if ((typeof val === 'string' && val !== '') || typeof val === 'number') out[k] = REDACTED
-        else out[k] = walk(val, k, extraIds)
+        if (CODE_FIELD_KEEP.test(k)) out[k] = walk(val, k, ids)
+        else if (((typeof val === 'string' && val !== '') || typeof val === 'number') && hides(kind, val)) out[k] = REDACTED
+        else out[k] = walk(val, k, ids)
       }
       return out
     }
     const out: Record<string, any> = {}
     for (const k of Object.keys(v)) {
       const val = v[k]
-      if (BARE_KEY_RE.test(k) && (typeof val === 'string' || typeof val === 'number') && val !== '' && val != null) { out[k] = REDACTED; continue }
-      out[k] = walk(val, k, extraIds)
+      if ((typeof val === 'string' || typeof val === 'number') && val !== '' && val != null && hides(keyKind(k), val)) { out[k] = REDACTED; continue }
+      out[k] = walk(val, k, ids)
     }
     return out
   }
   return v
 }
 
+const idSet = (list?: string[]) => (list && list.length ? list.reduce((m, id) => { m[String(id)] = true; return m }, {} as Record<string, true>) : null)
+
 /**
  * Strip door / access codes from any tool result. Never throws; on anything unexpected the
  * original value comes back untouched (the failure mode of a redactor must not be a crash that
  * hides the whole answer). `codeFieldIds` are further Guesty custom-field ids known to hold a code
  * (read from the field definitions by the registry), so a raw `{fieldId, value}` entry with no name
- * beside it is still caught.
+ * beside it is still caught; `deviceFieldIds` are the ids of fields named for a lock or keypad, whose
+ * values are hidden only when code-shaped.
  */
-export function redactSensitive<T>(value: T, opts: { codeFieldIds?: string[] } = {}): T {
-  const ids = opts.codeFieldIds && opts.codeFieldIds.length ? opts.codeFieldIds.reduce((m, id) => { m[String(id)] = true; return m }, {} as Record<string, true>) : null
+export function redactSensitive<T>(value: T, opts: { codeFieldIds?: string[]; deviceFieldIds?: string[] } = {}): T {
+  const ids: FieldIds = { code: idSet(opts.codeFieldIds), device: idSet(opts.deviceFieldIds) }
   try { return walk(value, '', ids) as T } catch { return value }
 }
 

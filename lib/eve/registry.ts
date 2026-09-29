@@ -10,7 +10,7 @@
 // extra turn on the first deep question of a thread; benefit is she picks from twelve, then six.
 import 'server-only'
 import { redactMoney } from '@/lib/money'
-import { redactSensitive, isCodeFieldName, redactGuestPII, maskMoneyStrings } from './redact'
+import { redactSensitive, codeFieldNameKind, redactGuestPII, maskMoneyStrings } from './redact'
 import { fitResult } from './fit'
 import type { EveTool, EveDomain } from './types'
 import { wireShape, obj, S } from './types'
@@ -99,16 +99,24 @@ export type ToolRunResult = { output: any; opened?: string }
 // beside it, so a field called "Salto code" or "Lockbox" was invisible to the redactor unless its id
 // was one of the two it already knew. The ids of every field whose NAME marks it as a code are read
 // from the definitions mirror (a few dozen rows) once every ten minutes and handed to redactSensitive.
-let _codeIds: { at: number; ids: string[] } | null = null
-async function codeFieldIds(ctx: EveCtx): Promise<string[]> {
+// Since 2026-09-29 (N12) the ids come back in two lists: fields whose name says they hold a code
+// (every value hidden) and fields named for a lock or keypad (a value hidden only when code-shaped).
+type CodeIds = { codeFieldIds: string[]; deviceFieldIds: string[] }
+let _codeIds: { at: number; ids: CodeIds } | null = null
+async function codeFieldIds(ctx: EveCtx): Promise<CodeIds> {
   if (_codeIds && Date.now() - _codeIds.at < 10 * 60_000) return _codeIds.ids
   try {
     const { data, error } = await ctx.db.from('guesty_custom_fields').select('id,name,slug').order('id').limit(500)
     if (error) throw error
-    const ids = ((data as any[]) || []).filter(d => isCodeFieldName(d?.name) || isCodeFieldName(d?.slug)).map(d => String(d.id))
+    const ids: CodeIds = { codeFieldIds: [], deviceFieldIds: [] }
+    for (const d of ((data as any[]) || [])) {
+      const kinds = [codeFieldNameKind(d?.name), codeFieldNameKind(d?.slug)]
+      if (kinds.indexOf('code') >= 0) ids.codeFieldIds.push(String(d.id))
+      else if (kinds.indexOf('device') >= 0) ids.deviceFieldIds.push(String(d.id))
+    }
     _codeIds = { at: Date.now(), ids }
     return ids
-  } catch { return _codeIds ? _codeIds.ids : [] }
+  } catch { return _codeIds ? _codeIds.ids : { codeFieldIds: [], deviceFieldIds: [] } }
 }
 
 /**
@@ -142,7 +150,7 @@ export async function runTool(name: string, input: any, ctx: EveCtx, open: strin
     // of door / access codes except the door-code tool's own, which returns a code only when the
     // per-person policy in lib/eve/door-code.ts says it may.
     const raw = await tool.run(input || {}, ctx)
-    const coded = tool.name === 'door_code_check' ? raw : redactSensitive(raw, { codeFieldIds: await codeFieldIds(ctx) })
+    const coded = tool.name === 'door_code_check' ? raw : redactSensitive(raw, await codeFieldIds(ctx))
     // A VENDOR ROOM GETS THE JOB, NOT THE GUEST (2026-09-28 audit, F2 / B-10). ops_today, unit_status,
     // the sentiment and glitch boards all carry guest names or a guest's own words; in a room with an
     // outside company in it every result loses them here, whatever tool produced it — and since the
