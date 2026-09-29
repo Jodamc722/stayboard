@@ -5,7 +5,7 @@ import { requireLevel, doorCodePolicy } from '@/lib/access'
 import { requireVrUser } from '@/lib/vr-gate'
 import { otaLinksFrom } from '@/lib/ota-links'
 import { pageRows } from '@/lib/db-page'
-import { DOOR_CODE_FIELD_ID, RES_CODE_FIELD, isCodeValue, scrubStoredText } from '@/lib/eve/redact'
+import { DOOR_CODE_FIELD_ID, RES_CODE_FIELD, isCodeFact, scrubStoredText } from '@/lib/eve/redact'
 import { DOOR_CODE_ROOM_NAMES } from '@/lib/eve/door-code-rooms'
 
 export const dynamic = 'force-dynamic'
@@ -17,15 +17,20 @@ async function getUser() {
 
 // DOOR CODES ARE NOT READ OFF THE FAQ DESK (Jon, 2026-09-29: codes are requested by Customer Service in
 // #ccs-and-jon or #vr-customercareteam, "never in team channels with field team"; and every release is
-// approved, except his own). This desk showed the door-code field — and any code written into the other
-// fields or the access notes — to everyone who can open it, field team included. Now only someone set
-// to Direct (Jon, and whoever he sets) sees them; everyone else sees where a code comes from. The facts
-// are read-only (they come from Guesty; nothing here saves them back), so hiding them can't lose
-// anything. FAQ entries and how-tos are NOT touched: they are edited and saved from this desk, and a
-// redacted answer saved back would erase the real one.
+// approved, except his own). Everyone who can open this desk — field team included — would see a unit's
+// code fields ("Door code", "Building code", "Old code", "Program code", "17W Back Up code") and any code
+// written into its other fields, notes, entries or how-tos. Now only someone set to Direct (Jon, and
+// whoever he sets) sees them; everyone else sees where a code comes from.
+//   - Facts are read-only (they come from Guesty; nothing here saves them back): hidden outright.
+//   - Entries, drafts and how-tos are edited and saved from this desk, so they are masked on the way
+//     out, and a save that still carries a mask is refused (POST) — a masked answer saved back would
+//     erase the real one.
 const CODE_HIDDEN = `Hidden — Customer Service requests door codes in ${DOOR_CODE_ROOM_NAMES}`
+const MASKED = /\[redacted/i
 
-function facts(raw: any, cfMap?: Record<string, string>, codes: 'direct' | 'ask' | 'off' = 'off') {
+type CfDef = { label: string; slug: string }
+
+function facts(raw: any, cfMap?: Record<string, CfDef>, codes: 'direct' | 'ask' | 'off' = 'off') {
   const hide = codes !== 'direct'
   const text = (v: any) => (hide ? scrubStoredText(v) : String(v))
   const out: { label: string; value: string }[] = []
@@ -41,14 +46,15 @@ function facts(raw: any, cfMap?: Record<string, string>, codes: 'direct' | 'ask'
   for (const it of cfs) {
     if (!it) continue
     const fid = String((it as any).fieldId || (it as any).field_id || ((it as any).field && ((it as any).field._id || (it as any).field.id)) || (it as any)._id || '')
-    const label = cfMap && cfMap[fid]
+    const def = cfMap && cfMap[fid]
+    const label = def && def.label
     if (!label) continue
     let val: any = (it as any).value
     if (val == null || val === '') continue
     if (typeof val === 'object') { try { val = JSON.stringify(val) } catch { val = String(val) } }
-    // The two code fields by id, any field whose name says it holds a code, a lock or keypad field
-    // with a code-shaped value — and a code written into any other field's text.
-    if (hide && (fid === DOOR_CODE_FIELD_ID || fid === RES_CODE_FIELD || isCodeValue(label, val))) val = CODE_HIDDEN
+    // The two code fields by id; any field whose name or slug says code; a lock, keypad or other way in
+    // with a code-shaped value (lib/eve/redact.ts isCodeFact) — and a code written into any other text.
+    if (hide && (fid === DOOR_CODE_FIELD_ID || fid === RES_CODE_FIELD || isCodeFact([label, def!.slug], val))) val = CODE_HIDDEN
     else val = text(val)
     out.push({ label: String(label).slice(0, 60), value: String(val).slice(0, 800) })
   }
@@ -83,31 +89,38 @@ export async function GET(req: NextRequest) {
     db.from('listing_faq').select('*').eq('listing_id', listingId).order('created_at', { ascending: true }).limit(500),
     // Every audit item on the unit (re-walks add up), paged in capture order — not an unordered 1,000.
     pageRows((a, b) => db.from('audit_items').select('id,room,title,item_type,photo_url,details,kind,note').eq('listing_id', listingId).order('created_at').order('id').range(a, b)),
-    db.from('guesty_custom_fields').select('id,name,display_name'),
+    // name + slug. It asked for a `display_name` column this table never got (migration 003 was never
+    // applied), so the whole read failed and every Guesty custom field was silently missing from Facts.
+    db.from('guesty_custom_fields').select('id,name,slug'),
   ])
   if (ir.truncated) console.error('[faq] audit items read incomplete for listing', listingId)
+  if (cfr.error) console.error('[faq] custom field names unreadable', cfr.error.message)
   const lrow = lr.data && lr.data[0]
   const listing = lrow ? { id: String(lrow.id), name: lrow.nickname || lrow.title || 'Unit', building: lrow.building || '' } : { id: listingId, name: 'Unit', building: '' }
   const rawL: any = lrow ? lrow.raw : null
   // One implementation, shared with the listing page. The old version here built a Booking.com
   // URL from the channel id, which is never a valid Booking URL (theirs are slugs).
   const otaLinks = otaLinksFrom(rawL)
-  const cfMap: Record<string, string> = {}
-  for (const f of (cfr.data || [])) cfMap[String((f as any).id)] = String((f as any).display_name || (f as any).name || '')
-  const factList = lrow ? facts(lrow.raw, cfMap, doorCodePolicy(gate.access)) : []
-  const allFaq: any[] = fr.data || []
+  const cfMap: Record<string, CfDef> = {}
+  for (const f of (cfr.data || [])) cfMap[String((f as any).id)] = { label: String((f as any).name || ''), slug: String((f as any).slug || '') }
+  const codes = doorCodePolicy(gate.access)
+  const factList = lrow ? facts(lrow.raw, cfMap, codes) : []
+  // Entries, drafts and how-tos: masked for anyone not set to Direct (and a masked save is refused, POST).
+  const mask = (s: any) => (codes === 'direct' || s == null ? s : scrubStoredText(s))
+  const rawFaq: any[] = fr.data || []
+  const allFaq: any[] = rawFaq.map((e: any) => ({ ...e, question: mask(e.question), answer: mask(e.answer) }))
   const entries = allFaq.filter(e => e.status !== 'draft' && e.status !== 'dismissed')
   const drafts = allFaq.filter(e => e.status === 'draft')
   const promoted: Record<string, boolean> = {}
-  for (const e of allFaq) if (e.question) promoted[String(e.question).toLowerCase()] = true
+  for (const e of rawFaq) if (e.question) promoted[String(e.question).toLowerCase()] = true
   const howtos: any[] = []
   const highlights: any[] = []
   const keyDetails: any[] = []
   for (const it of ir.rows) {
     const d = (it as any).details || {}
     const q = it.title || it.item_type || 'How-to'
-    if (d.howTo && !promoted[String(q).toLowerCase()]) howtos.push({ id: it.id, room: it.room, title: q, howTo: d.howTo, photo_url: it.photo_url })
-    if ((it as any).kind === 'faq' && !promoted[String(q).toLowerCase()]) howtos.push({ id: it.id, room: it.room, title: q, howTo: (it as any).note || d.howTo || '', photo_url: it.photo_url })
+    if (d.howTo && !promoted[String(q).toLowerCase()]) howtos.push({ id: it.id, room: it.room, title: q, howTo: mask(d.howTo), photo_url: it.photo_url })
+    if ((it as any).kind === 'faq' && !promoted[String(q).toLowerCase()]) howtos.push({ id: it.id, room: it.room, title: q, howTo: mask((it as any).note || d.howTo || ''), photo_url: it.photo_url })
     if (d.highlight) highlights.push({ id: it.id, room: it.room, title: it.title || it.item_type || 'Item', brand: d.brand || '', tier: d.tier || '', features: Array.isArray(d.features) ? d.features : [] })
     if (d.size) keyDetails.push({ item: it.title || it.item_type || 'Item', size: d.size, room: it.room })
   }
@@ -124,6 +137,12 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({} as any))
   const action = String(body.action || '')
+  // A MASKED ANSWER IS NEVER SAVED BACK (2026-09-29). Anyone not set to Direct sees codes in entries,
+  // drafts and how-tos as "[redacted]" (GET); saving that text would overwrite the real answer with the
+  // mask. So it is refused, and the fix is the right one anyway: a door code does not belong in an FAQ.
+  if (['question', 'answer'].some(k => typeof body[k] === 'string' && MASKED.test(body[k]))) {
+    return NextResponse.json({ error: 'That text still has a hidden door code in it ([redacted]). Take the code out — door codes do not go in FAQ answers — and save again.' }, { status: 400 })
+  }
   if (action === 'addEntry' || action === 'approveHowto') {
     const listingId = String(body.listingId || '')
     if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })

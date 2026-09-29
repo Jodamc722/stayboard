@@ -292,7 +292,9 @@ export const CS_TOOLS: EveTool[] = [
     input_schema: obj({ name: S.str, reservation_id: S.str, unit: S.str, target: S.str }),
     run: async (input, ctx) => {
       const { data: defs } = await safe(
-        ctx.db.from('guesty_custom_fields').select('id,name,slug,type,target,tracked,display_name').order('target').limit(400),
+        // Only columns the table has (2026-09-29): `tracked` and `display_name` came from migration 003,
+        // which was never applied, so this read failed and she was told no custom field existed.
+        ctx.db.from('guesty_custom_fields').select('id,name,slug,type,target').order('target').limit(400),
         { data: [] } as any,
       )
       let list = ((defs as any[]) || [])

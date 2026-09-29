@@ -38,6 +38,7 @@ import { saveMemory } from './memory'
 import { askQuestion } from './questions'
 import { aiFetch } from '@/lib/ai-usage'
 import { agentAllowed, stepDown } from './agent-mode'
+import { scrubStoredText } from './redact'
 import { winsFor } from './wins'
 import { checkLoop, resolveUnitInText } from './loop-match'
 import { GUEST_ASK_SIG, askKindOf, getCcsDesk, shouldEscalate, escalationTags, escalate, askNudgeText, ageMinutes, bookedSince, runHandoff, type AskItem } from './ccs-desk'
@@ -497,9 +498,13 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
       const listing = (await resolveUnitInText(src?.text || summary, { unit })) || await resolveListing(unit)
       const weight = it?.weight === 'small' ? 'small' : 'big'
       const expires = it?.expires && !isNaN(Date.parse(it.expires)) ? new Date(it.expires).toISOString() : null
+      // NO CODE TRAVELS BETWEEN ROOMS (2026-09-29). An item's summary and quoted text are re-posted
+      // elsewhere — the urgent list and the morning roll-up in #vr-eve, nudges, escalations, the CCS
+      // handoff — and #ccs-and-jon is where door codes are asked for now. Anything that reads as a
+      // code is masked where the item is filed, so no later post can carry it into another room.
       const row = {
         channel: ch.id, channel_name: ch.label, msg_ts: ts, thread_ts: src?.threadTs || ts,
-        kind, summary, owner_name: owner, owner_slack: ownerSlack,
+        kind, summary: scrubStoredText(summary), owner_name: owner, owner_slack: ownerSlack,
         unit, building: listing?.building || null, listing_id: listing?.id || null,
         // A guest ask's clock is minutes, not a day (ccs-desk): due = first seen + the desk's nudge window.
         due_at: it?.due && !isNaN(Date.parse(it.due)) ? new Date(it.due).toISOString()
@@ -508,8 +513,8 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
         urgent: !!it?.urgent && kind === 'problem',
         first_seen: src?.at || new Date().toISOString(), last_seen: src?.at || new Date().toISOString(),
         evidence: kind === 'guest_ask'
-          ? { text: src?.text?.slice(0, 300) || null, who: src?.who || null, guest: clean(it?.guest).slice(0, 80) || null, ask: ['inquiry', 'discount', 'extension', 'callback', 'refund', 'change', 'other'].includes(String(it?.ask)) ? String(it.ask) : askKindOf(src?.text || summary), amount: Number.isFinite(Number(it?.amount)) && Number(it?.amount) > 0 ? Number(it.amount) : null, weight: 'big', expires }
-          : { text: src?.text?.slice(0, 300) || null, who: src?.who || null, weight, expires },
+          ? { text: src?.text ? scrubStoredText(src.text.slice(0, 300)) : null, who: src?.who || null, guest: clean(it?.guest).slice(0, 80) || null, ask: ['inquiry', 'discount', 'extension', 'callback', 'refund', 'change', 'other'].includes(String(it?.ask)) ? String(it.ask) : askKindOf(src?.text || summary), amount: Number.isFinite(Number(it?.amount)) && Number(it?.amount) > 0 ? Number(it.amount) : null, weight: 'big', expires }
+          : { text: src?.text ? scrubStoredText(src.text.slice(0, 300)) : null, who: src?.who || null, weight, expires },
       }
       const { data: ins, error } = await db.from('eve_slack_items').upsert(row, { onConflict: 'channel,msg_ts', ignoreDuplicates: true }).select('*').maybeSingle()
       if (error) { out.notes.push(`insert: ${error.message}`); continue }

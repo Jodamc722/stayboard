@@ -63,11 +63,27 @@ function holdsCodeDigits(v: any): boolean {
   return (s.match(/\d/g) || []).length >= 3
 }
 type CodeKind = 'code' | 'device' | null
+// A FIELD CALLED "… CODE" IS A CODE (2026-09-29). This account's Guesty fields include "Building
+// code", "Old code" (the previous door code), "Program code", "17W Back Up code" and "Guest Code" —
+// none of which KEY_RE knew, so their values went through every tool untouched (in Slack too). A NAME
+// with the word code / código in it is now a code field, unless the word before it says what harmless
+// kind of code it is (confirmation, booking, promo, zip, country, currency…). Names and keys only:
+// free text keeps the patterns below. ("reservation" stays off the list: the Salto / Botanica per-stay
+// door code is a reservation field.)
+const NOT_A_DOOR_NAME = /^(?:confirmation|confirm|conf|booking|promo|promotional|discount|coupon|voucher|zip|postal|post|area|country|dial|error|status|response|http|verification|verify|tracking|reference|ref|order|invoice|tax|flight|qr|bar|source|currency|language|lang|locale|rate|iata|airport|phone|channel|colou?r|dress|wifi|fi|wireless|network|internet)$/i
+function namesACode(name: any): boolean {
+  const words = String(name == null ? '' : name).replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
+    .split(/[^a-z0-9áéíóúñ]+/).filter(Boolean)
+  for (let i = 0; i < words.length; i++) {
+    if (/^(?:codes?|c[oó]digos?)$/.test(words[i]) && !(i > 0 && NOT_A_DOOR_NAME.test(words[i - 1]))) return true
+  }
+  return false
+}
 /** 'code' — a name that says it holds a code; 'device' — a lock or keypad named alone; null — neither. */
 export function codeFieldNameKind(name: any): CodeKind {
   const n = String(name || '')
-  if (!KEY_RE.test(n)) return null
-  return SAYS_CODE_RE.test(n) ? 'code' : 'device'
+  if (KEY_RE.test(n)) return SAYS_CODE_RE.test(n) ? 'code' : 'device'
+  return namesACode(n) ? 'code' : null
 }
 // Keys that mention a code by NAME. `access` on its own is too broad (accessRole, access_role,
 // "accessible"), and `door` on its own catches doorman / outdoor / indoor, so every word here has to
@@ -76,8 +92,11 @@ export function codeFieldNameKind(name: any): CodeKind {
 const BARE_KEY_RE = /(door|keypad|lock|entry|access|gate|garage)[\s_-]?(code|pin)|^door$|^res(ervation)?[\s_-]?code$|access[\s_-]?secret|^pin([\s_-]?code)?$|pass[\s_-]?code|^lock[\s_-]?box([\s_-]?(code|pin|combo))?$|^salto([\s_-]?(code|pin|key))?$|smart[\s_-]?lock[\s_-]?(code|pin)|^combination$|^c[oó]digo$/i
 /** The same split for a KEY: `door_code` holds a code; `lockbox`, `salto` and `door` name a device. */
 function keyKind(k: string): CodeKind {
-  if (!k || !BARE_KEY_RE.test(k)) return null
-  return SAYS_CODE_RE.test(k) ? 'code' : 'device'
+  if (!k) return null
+  if (BARE_KEY_RE.test(k)) return SAYS_CODE_RE.test(k) ? 'code' : 'device'
+  // A key named for some other code — "building_code", "Old code", "guestCode" (2026-09-29): hidden
+  // when its value is code-shaped, so a key like `code_fp` or a currency code costs nothing.
+  return namesACode(k) ? 'device' : null
 }
 // Inside a code field, these keys say WHICH field it is and how often it is filled — never what it
 // holds. Every other scalar in a code field is redacted, whatever it is called ("example", "value",
@@ -95,9 +114,13 @@ const CODE_FIELD_KEEP = /^(?:_?id|field_?id|fieldid|field|field_?name|fieldname|
 //            code it is not — a confirmation, reservation, booking, promo, zip, area, error or status
 //            code. A confirmation code like HMABC123 never matches: the digits must come first.
 //   BEFORE — "4821 is the door code".
+//   AFTER  — "use 4821# on the keypad", "4821 at the front door" (2026-09-29): the digits, then where
+//            they go. A unit number ("unit 1102 at the door") keeps its digits.
+// TIGHT takes digits written with single spaces or dashes too ("code is 4 8 2 1", "pin 12-34-56").
 const WINDOW_RE = /\b(?:(?:door|entry|access|lock|gate|garage|keypad)\s*(?:code|pin|combo)|c[oó]digo\s+de\s+(?:la\s+)?(?:puerta|entrada|acceso|cerradura|port[oó]n))/gi
-const TIGHT_RE = /(\b[a-z]+\s+)?\b(lock\s*box|salto|pass\s*code|combination|keypad|pin|c[oó]digo|code)(?:\s+(?:code|pin|number|num|no\.?|#))?\s*(?:is|es|was|:|#|-|=)?\s*(\d[\d#*]{2,})/gi
+const TIGHT_RE = /(\b[a-z]+\s+)?\b(lock\s*box|salto|pass\s*code|combination|keypad|pin|c[oó]digo|code)(?:\s+(?:code|pin|number|num|no\.?|#))?\s*(?:is|es|was|:|#|-|=|—|–)?\s*(\d(?:[ -]?[\d#*]){2,})/gi
 const BEFORE_RE = /(\d[\d#*]{2,})(\s+(?:is|es|=)\s+(?:the\s+|el\s+|la\s+)?(?:(?:door|entry|access|lock|gate|garage)\s*(?:code|pin|combo)|keypad|c[oó]digo|lock\s*box|passcode))/gi
+const AFTER_RE = /(?<![\d.\/-])\b(\d[\d#*]{2,7})(?![\d#*])(\s+(?:(?:on|at|into|in)\s+(?:the\s+|el\s+|la\s+)?(?:front\s+|main\s+|building\s+|lobby\s+|garage\s+|gate\s+)?(?:keypad|key\s*pad|lock\s*box|lock|door|gate|garage|entrance|entry|salto|smart\s*lock|teclado|puerta|cerradura)|to\s+(?:enter|open|unlock|get\s+in)|para\s+(?:entrar|abrir))\b)/gi
 // ("reservation" is not on this list: the Salto / Botanica per-stay DOOR code is a reservation field.)
 const NOT_A_DOOR = /^(?:confirmation|confirm|conf|booking|promo|promotional|discount|coupon|voucher|zip|postal|post|area|country|dial|error|status|response|http|verification|verify|tracking|reference|ref|order|invoice|tax|flight|qr|bar|source)$/i
 const DIGITS = /[0-9#*]{3,}/g
@@ -139,7 +162,7 @@ function codeFieldKind(c: any, ids: FieldIds): CodeKind {
 
 /** Is this the NAME of a code or device field? (Used to learn the ids; codeFieldNameKind says which.) */
 export function isCodeFieldName(name: any): boolean {
-  return KEY_RE.test(String(name || ''))
+  return codeFieldNameKind(name) !== null
 }
 
 const redactDigits = (x: string) => (/\d/.test(x) ? '[redacted]' : x)
@@ -166,15 +189,18 @@ function scrubWindow(s: string): string {
 }
 
 function scrubText(s: string): string {
-  if (!s || !/\d{3}/.test(s)) return s   // nothing can state a code without three digits in a row
+  // Nothing can state a code without three digits in a row (or three with single spaces / dashes).
+  if (!s || !/\d(?:[ -]?\d){2}/.test(s)) return s
   let out = scrubWindow(s)
   out = out.replace(TIGHT_RE, (m: string, pre: string | undefined, kw: string, digits: string) => {
     if (pre && /^(?:code|c[oó]digo)$/i.test(kw) && NOT_A_DOOR.test(pre.trim())) return m
     // Nine digits or more is a phone or a Booking.com / Expedia confirmation number, not a keypad.
-    if (digits.replace(/[#*]/g, '').length >= 9) return m
+    if (digits.replace(/[^0-9]/g, '').length >= 9) return m
     return m.slice(0, m.length - digits.length) + '[redacted]'
   })
   out = out.replace(BEFORE_RE, (_m: string, digits: string, rest: string) => redactDigits(digits) + rest)
+  out = out.replace(AFTER_RE, (m: string, digits: string, rest: string, at: number, whole: string) =>
+    (UNIT_BEFORE_RE.test(whole.slice(Math.max(0, at - 14), at)) ? m : redactDigits(digits) + rest))
   return out
 }
 
@@ -191,7 +217,8 @@ export function looksLikeDoorCode(text: any): boolean {
 // optional # or * after it). What is NOT a code run: a unit number ("unit 1102"), a year after
 // in / since ("since 2024"), a date, a phone number, money, a decimal, a percentage, or a run glued
 // to letters (a confirmation code). A zip / area / confirmation "code" is not a lock word.
-const MEM_CODE_WORD_RE = /\b(?:doors?|gates?|locks?|lockbox(?:es)?|keypads?|codes?|pins?|entry|entries|combos?|salto|access|passcodes?|keycodes?|c[oó]digos?)\b/gi
+// (Lock brands too, 2026-09-29: "punch in 4821, then the Schlage button".)
+const MEM_CODE_WORD_RE = /\b(?:doors?|gates?|locks?|lockbox(?:es)?|keypads?|codes?|pins?|entry|entries|combos?|salto|access|passcodes?|keycodes?|c[oó]digos?|schlage|kwikset|igloohome|lockly)\b/gi
 const MEM_RUN_RE = /(?<![A-Za-z\u00C0-\u024F0-9$.,\/-])\d{4,8}(?![0-9%]|[.,\/-]\d)[#*]?/g
 const MEM_PHONE_RE = /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g
 const MEM_UNIT_BEFORE_RE = /\b(?:unit|units|apt|apartment|suite|ste|room|rm|floor|level)\.?\s*#?\s*$/i
@@ -257,6 +284,24 @@ const hides = (kind: CodeKind, val: any) => kind === 'code' || (kind === 'device
  */
 export function isCodeValue(fieldName: any, value: any): boolean {
   return hides(codeFieldNameKind(fieldName), value)
+}
+
+// A name that is about a way in — used only for a whole-value decision on a screen, never for text.
+const WAY_IN_NAME_RE = /door|entry|entrance|access|gate|garage|lock|keypad|salto|alarm|mail\s*box|\bpin\b|combo|\bkey|c[oó]digo|puerta|port[oó]n/i
+
+/**
+ * A unit FACT (a custom field) on a screen for people who may not see codes — the FAQ desk. Hidden
+ * whole when any of its names (name, slug) is a code field, a lock or keypad field with a code-shaped
+ * value, or any other way in ("Gate", "Garage", "Alarm", "Mailbox", "Entry Instructions") whose value
+ * carries a code-shaped number. What is left is still run through the text redactor by the caller.
+ */
+export function isCodeFact(names: any[], value: any): boolean {
+  for (const n of names || []) {
+    if (!n) continue
+    if (isCodeValue(n, value)) return true
+    if (WAY_IN_NAME_RE.test(String(n)) && holdsCodeDigits(value)) return true
+  }
+  return false
 }
 
 function walk(v: any, keyHint: string, ids: FieldIds): any {
