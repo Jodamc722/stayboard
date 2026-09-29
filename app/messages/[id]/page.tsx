@@ -1,7 +1,8 @@
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getAccess, canSeeMoney } from '@/lib/access'
+import { atLeast } from '@/lib/features'
 import { Shell } from '@/components/Shell'
 import { StayPanel } from '@/components/StayPanel'
 import { MessageThread } from '@/components/MessageThread'
@@ -20,9 +21,15 @@ function unitOf(listingName: string): string {
 }
 
 export default async function MessageThreadPage({ params }: { params: { id: string } }) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  // MESSAGES ACCESS, NOT JUST A SESSION (2026-09-28 audit, D16). The whole thread — up to 500 guest
+  // messages — is read with the service role, so the page itself must check the Messages level.
+  const access = await getAccess()
+  if (!access.user) redirect('/login')
+  if (!access.allowed) redirect('/no-access')
+  if (!atLeast(access.levels['messages'], 'view')) redirect(access.landing || '/no-access')
+  // Dollar amounts follow the app-wide rule (lib/access canSeeMoney): the owner, and whoever he has
+  // switched on. Everyone else sees the reservation without its total and balance.
+  const money = canSeeMoney(access)
 
   const sb = supabaseAdmin()
   const [{ data: convo }, { data: msgs }] = await Promise.all([
@@ -66,6 +73,7 @@ export default async function MessageThreadPage({ params }: { params: { id: stri
       source: metaRes.source || null,
     }
   }
+  if (reservation && !money) reservation = { ...reservation, money_total: null, money_balance: null, money_currency: null }
 
   const channel = CHANNEL_LABELS[String(convo.channel || '').toLowerCase()] || convo.channel || ''
   const unit = unitOf(listingName || reservation?.listing_name || '')

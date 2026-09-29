@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, createBreezewayTask } from '@/lib/breezeway'
 import { buildIntel, intelKindFor, INTEL_STRIP_RE } from '@/lib/listingIntel'
-import { requireAnyLevel, requireUser } from '@/lib/access'
+import { requireAnyLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -17,9 +17,9 @@ const PRIOS = ['urgent', 'high', 'normal', 'low']
 function todayET(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) }
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  // Same boards as the POST below, at view: the rows carry guest names and task titles.
+  const gate = await requireAnyLevel(['messages', 'schedule', 'forecast', 'plan', 'reviews'], 'view')
   if (!gate.ok) return gate.res
-  const user = gate.access.user
   const ids = String(new URL(req.url).searchParams.get('conversationIds') || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 200)
   if (!ids.length) return NextResponse.json({ ok: true, tasks: [] })
   try {

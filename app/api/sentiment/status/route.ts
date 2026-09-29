@@ -1,4 +1,4 @@
-// Close out (or reopen) a guest conversation in the sentiment queue. Logged-in users only.
+// Close out (or reopen) a guest conversation in the sentiment queue. Edit access on Messages.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'

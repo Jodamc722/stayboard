@@ -2,10 +2,10 @@
 // guesty_conversation_sentiment. Backfills the last N days (default 30) then runs forward:
 // only (re)scans a conversation when it has new activity since the last scan. Rate-limit
 // aware: processes a small batch per call and returns `remaining` so it can be re-run /
-// scheduled to drain the backlog. Logged-in users only.
+// scheduled to drain the backlog. The cron (bearer), or a person with edit on Messages.
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { requireLevel } from '@/lib/access'
 import { markReservationSensitive } from '@/lib/sensitive'
 import { cronAllowed, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
@@ -41,16 +41,20 @@ export async function POST(req: NextRequest) {
   // needs a CRON_SECRET that was never set. So the 392 unscanned conversations that prompted that
   // note were joined by every conversation since. This scan calls Anthropic per thread, so with no
   // secret it runs for anyone but no more often than its own schedule. See lib/cron-auth.ts.
-  const authHeader = req.headers.get('authorization') || ''
-  const viaCron = !!process.env.CRON_SECRET && authHeader === ('Bearer ' + process.env.CRON_SECRET)
+  //
+  // A PERSON PRESSING SCAN (2026-09-28 audit, D16). The scheduler carries the bearer. The Scan
+  // button on the Sentiment tab carries a session — and with CRON_SECRET set (it is, in prod) the
+  // old order answered it 401 before the session was ever looked at, so the button had been dead
+  // since the secret went in, while any signed-in account could run it wherever the secret was not
+  // set. A person now needs edit on Messages, the tab the button lives on; interactive runs stay
+  // capped at 8 threads below. With no secret configured an anonymous caller still gets the
+  // scheduled cadence and no more (tooSoon), exactly as before.
   const allowed = cronAllowed(req)
-  if (!allowed.ok) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  let signedIn = false
-  if (!allowed.viaSecret) {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    signedIn = !!user
-    if (!signedIn) {
+  const viaCron = allowed.viaSecret
+  if (!viaCron) {
+    const person = await requireLevel('messages', 'edit')
+    if (!person.ok) {
+      if (!allowed.ok) return person.res
       const skip = await tooSoon('sentiment', 25)
       if (skip) return NextResponse.json({ ok: true, ...skip })
     }
@@ -65,7 +69,7 @@ export async function POST(req: NextRequest) {
   // for the cron only — an interactive scan should not wait on the day picture. vercel.json is at
   // its 40-entry cap, so this is a chain, not a cron. Best effort; a watch failure never stops the scan.
   let watched: any = null
-  if (viaCron || allowed.viaSecret) {
+  if (viaCron) {
     try {
       const { runWatches } = await import('@/lib/eve/watches')
       watched = await runWatches('cron:sentiment-scan')

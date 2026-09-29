@@ -3,8 +3,9 @@
 // the unified inbox (lib/phone-threads.ts); Guesty threads stay at /messages/[id].
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getAccess, canSeeMoney } from '@/lib/access'
+import { atLeast } from '@/lib/features'
 import { Shell } from '@/components/Shell'
 import { PhoneThread } from '@/components/PhoneThread'
 import { loadPhoneThread } from '@/lib/phone-threads'
@@ -19,9 +20,12 @@ function unitOf(listingName: string): string {
 }
 
 export default async function PhoneThreadPage({ params }: { params: { number: string } }) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  // Same bar as the Guesty thread (2026-09-28 audit, D16): texts, voicemails and call notes are read
+  // with the service role, so the page checks the Messages level, not just the session.
+  const access = await getAccess()
+  if (!access.user) redirect('/login')
+  if (!access.allowed) redirect('/no-access')
+  if (!atLeast(access.levels['messages'], 'view')) redirect(access.landing || '/no-access')
   const sb = supabaseAdmin()
   const [t, connected] = await Promise.all([loadPhoneThread(sb, params.number), talkrouteConfigured()])
 
@@ -30,7 +34,7 @@ export default async function PhoneThreadPage({ params }: { params: { number: st
     const { data: r } = await sb.from('guesty_reservations')
       .select('id, guest_name, guest_phone, listing_name, check_in, check_out, nights, status, money_total, money_balance, money_currency, source')
       .eq('id', t.reservationId).maybeSingle()
-    if (r) reservation = r
+    if (r) reservation = canSeeMoney(access) ? r : { ...r, money_total: null, money_balance: null, money_currency: null }
   }
   const guest = t.guestName || reservation?.guest_name || t.display
   const unit = unitOf(reservation?.listing_name || '')

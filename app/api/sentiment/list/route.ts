@@ -1,18 +1,18 @@
 // Guest-sentiment queue for the Messages dashboard. Returns one row per scanned
 // conversation (joined with listing name + rolled-up building + thread preview), plus
-// summary counts for the warning banner. Read-only; logged-in users only.
+// summary counts for the warning banner. Read-only; view access on Messages (it carries guest
+// quotes and complaints — a signed-in session alone is not enough, 2026-09-28 audit D16).
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rollupBuilding } from '@/lib/optimize-score'
-import { requireUser } from '@/lib/access'
+import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser()
+  const gate = await requireLevel('messages', 'view')
   if (!gate.ok) return gate.res
-  const user = gate.access.user
 
   const sb = supabaseAdmin()
   const status = new URL(req.url).searchParams.get('status') || 'open'

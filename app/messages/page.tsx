@@ -8,6 +8,8 @@ import { LeanHead, Pill, type Tone } from '@/components/lean'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { listPhoneThreads, type PhoneThreadSummary } from '@/lib/phone-threads'
 import { talkrouteConfigured } from '@/lib/talkroute'
+import { getAccess } from '@/lib/access'
+import { atLeast } from '@/lib/features'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,9 +32,14 @@ type Kpis = {
 const HOUR_MS = 60 * 60 * 1000
 
 export default async function MessagesPage() {
+  // MESSAGES ACCESS, NOT JUST A SESSION (2026-09-28 audit, D16). Guest words, phone numbers and
+  // complaints are read below with the service role, so a signed-in account is not enough: the
+  // person must hold at least view on Messages — the same bar /api/eve/guest-drafts already sets.
+  const access = await getAccess()
+  if (!access.user) redirect('/login')
+  if (!access.allowed) redirect('/no-access')
+  if (!atLeast(access.levels['messages'], 'view')) redirect(access.landing || '/no-access')
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
 
   const [{ data: convos }, { data: sync }, msgsPage] = await Promise.all([
     supabase
