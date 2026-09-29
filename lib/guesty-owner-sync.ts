@@ -12,7 +12,7 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { getToken } from './guesty'
-import { fetchWithTimeout, ACCOUNTING_TIMEOUT_MS } from './fetch-timeout'
+import { fetchWithTimeout, ACCOUNTING_TIMEOUT_MS, isTimeout } from './fetch-timeout'
 
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
@@ -36,9 +36,19 @@ async function gget(path: string, attempt = 1): Promise<Res> {
     await getToken(true)
     return gget(path, attempt + 1)
   }
-  const text = await r.text().catch(() => '')
+  // A PAGE THAT DID NOT ARRIVE IS NOT AN EMPTY PAGE (2026-09-29 review, R1-5). The body read used
+  // to fall back to '' and parse to nothing, so a 200 whose body timed out mid-read (the 30s signal
+  // covers the body too) or came back unreadable was a successful page with no rows — the month
+  // sweep took that for the end and marked a partial ledger month done. Either is now a failed
+  // page: the sweep throws and records it, the owner / statement lists stop where they are.
+  let text = ''
+  try { text = await r.text() } catch (e: any) {
+    return { status: r.status, ok: false, json: null, error: (isTimeout(e) ? 'timed out' : 'failed') + ' reading the reply: ' + String(e?.message || e).slice(0, 200) }
+  }
   let json: any = null
-  try { json = JSON.parse(text) } catch (_e) { /* non-JSON body */ }
+  try { json = JSON.parse(text) } catch (_e) {
+    if (r.ok) return { status: r.status, ok: false, json: null, error: 'unreadable reply (not JSON): ' + text.slice(0, 200) }
+  }
   return { status: r.status, ok: r.ok, json, error: r.ok ? undefined : text.slice(0, 300) }
 }
 

@@ -5,7 +5,7 @@
 // endpoint is rate-limited to ~1 request/min, so the access token is cached in the
 // warm lambda. Docs: https://developer.breezeway.io/
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { fetchWithTimeout, retryAfterMs } from '@/lib/fetch-timeout'
+import { fetchWithTimeout, retryAfterMs, isTimeout } from '@/lib/fetch-timeout'
 // lib/bust imports only next/cache, so this is not a cycle (ops-day → breezeway would otherwise be one).
 import { bustBoards } from '@/lib/bust'
 
@@ -56,7 +56,8 @@ try { await supabaseAdmin().from('breezeway_token_cache').upsert({ id: 1, token,
 const BZ_429_RETRIES = 3
 export async function bzApi(path: string, init?: RequestInit): Promise<{ ok: boolean; status: number; data: any; text: string }> {
   const token = await getBreezewayToken()
-  const label = `Breezeway ${String(init?.method || 'GET').toUpperCase()} ${path.split('?')[0]}`
+  const method = String(init?.method || 'GET').toUpperCase()
+  const label = `Breezeway ${method} ${path.split('?')[0]}`
   const send = () => fetchWithTimeout(`${BASE}${path}`, {
     ...init,
     headers: { ...(init?.headers || {}), Authorization: `JWT ${token}`, Accept: 'application/json' },
@@ -69,11 +70,28 @@ export async function bzApi(path: string, init?: RequestInit): Promise<{ ok: boo
     await new Promise(res => setTimeout(res, wait))
     r = await send()
   }
-  const text = await r.text().catch(() => '')
+  // A REPLY THAT DID NOT ARRIVE IS NOT AN EMPTY ONE (2026-09-29 review, R1-5). The body read used to
+  // fall back to '' and parse to null, so a 200 whose body timed out mid-read (the 20s signal covers
+  // the body too) was a successful EMPTY page — and a sync took "no tasks" for the truth. Now a body
+  // that could not be read is ok:false for every method, and a 2xx READ that is not JSON is too.
+  // A write may still answer with no body at all (a 204 on DELETE): that stays a success. A write
+  // whose status said yes but whose reply was lost keeps that 2xx status (see landed()) and says so.
+  let text = ''
+  try { text = await r.text() } catch (e: any) {
+    const why = (isTimeout(e) ? 'timed out' : 'failed') + ' reading the reply'
+    return { ok: false, status: r.status, data: null, text: method === 'GET'
+      ? `Breezeway ${r.status}, but ${why} — not treated as an empty page.`
+      : `Breezeway answered ${r.status}, but ${why} — check Breezeway before trying again; it may already be done.` }
+  }
   let data: any = null
-  try { data = JSON.parse(text) } catch { /* leave null */ }
+  try { data = JSON.parse(text) } catch {
+    if (r.ok && method === 'GET') return { ok: false, status: r.status, data: null, text: `Breezeway ${r.status} with an unreadable reply: ` + text.slice(0, 200) }
+  }
   return { ok: r.ok, status: r.status, data, text }
 }
+
+/** Did a write land? Its status said 2xx — even when the reply body was then lost (bzApi ok:false). */
+const landed = (r: { status: number }) => r.status >= 200 && r.status < 300
 
 // Normalize a Breezeway task into the columns we store. Defensive — falls back across
 // the documented field shapes so it survives minor API variation.
@@ -122,7 +140,7 @@ export function mapBreezewayTask(t: any) {
 // busts them reads back as "nothing happened" until the cache runs out. Best-effort, never throws.
 export async function createBreezewayTask(body: Record<string, any>): Promise<{ ok: boolean; status: number; data: any; text: string }> {
   const r = await bzApi('/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-  if (r.ok) bustBoards()
+  if (landed(r)) bustBoards()
   return r
 }
 
@@ -251,7 +269,7 @@ export async function updateBreezewayTask(taskId: string | number, body: Record<
   // PATCH is the documented update method. `assignments` is a full array of person IDs and REPLACES
   // the task's current assignees (override, not append) — so re-pushing a different cleaner swaps them.
   const r = await bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-  if (r.ok) bustBoards()
+  if (landed(r)) bustBoards()
   return r
 }
 
@@ -276,14 +294,15 @@ export async function cancelBreezewayTask(taskId: string | number): Promise<{ ok
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type_task_status: { code } }),
     })
-    if (r.ok) { bustBoards(); return r }
+    // Landed (even with its reply lost): stop — trying the next code would PATCH a cancelled task again.
+    if (landed(r)) { bustBoards(); return r }
   }
   return { ok: false, status: 422, data: null, text: 'Breezeway rejected every cancel status code' }
 }
 
 export async function completeBreezewayTask(taskId: string | number): Promise<{ ok: boolean; status: number; data: any; text: string }> {
   const r = await bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type_task_status: { code: 'complete' } }) })
-  if (r.ok) bustBoards()
+  if (landed(r)) bustBoards()
   return r
 }
 
