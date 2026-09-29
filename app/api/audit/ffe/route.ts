@@ -244,7 +244,7 @@ export async function GET(req: NextRequest) {
     const custom: Record<string, { key: string; en: string; es: string }[]> = {}
     try {
       const { data } = await db.from('ffe_answers')
-        .select('room,item_key,title,answer,qty,note,spec,photo_url,replacement_url,replacement_photo,est_cost').eq('listing_id', l.id).limit(1000)
+        .select('room,item_key,title,answer,qty,note,spec,photo_url,replacement_url,replacement_photo,est_cost').eq('listing_id', l.id).limit(1000) // deliberate cap: one answer per checklist item on ONE unit (unique listing+room+item) — a few hundred at most
       const known = new Set<string>()
       for (const r of merged) for (const i of r.items) known.add(r.key + '::' + i.key)
       for (const a of ((data || []) as any[])) {

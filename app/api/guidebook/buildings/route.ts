@@ -17,7 +17,7 @@ export async function GET() {
     .from('guesty_listings')
     .select('id, title, nickname, building')
     .not('building', 'is', null)
-    .limit(1000)
+    .limit(1000) // deliberate cap: one row per listing (~290 in the portfolio)
 
   const map: Record<string, { id: string; name: string }[]> = {}
   for (const l of (data || []) as any[]) {
