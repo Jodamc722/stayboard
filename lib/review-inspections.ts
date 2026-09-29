@@ -17,6 +17,7 @@
 // review, not merely recent: a walk done the week before the guest complained did not see what the
 // guest saw. Any inspection counts, whoever raised it — the automation, Eve, a person in Breezeway.
 import 'server-only'
+import { pageRows } from './db-page'
 
 export type FinishedInspection = { id: string; listingId: string; name: string; finishedAt: string; scheduledDate: string }
 
@@ -32,15 +33,19 @@ export async function finishedInspectionsSince(db: any, listingIds: string[], si
   if (!ids.length) return out
   const since = String(sinceIso || '').slice(0, 10) || '1970-01-01'
   try {
-    const { data } = await db.from('breezeway_tasks_sync')
+    // PAGED, still newest first (2026-09-29). The .limit(3000) returned 1,000: over a long window the
+    // oldest finished walks fell off, and a unit whose walks all fell past the cut read as never
+    // walked since its review — a KPI row still asking for a walk, a second bad-review inspection filed.
+    const read = await pageRows<any>((a, b) => db.from('breezeway_tasks_sync')
       .select('id,reference_property_id,name,finished_at,scheduled_date,type_department')
       .in('reference_property_id', ids.slice(0, 500))
       .not('finished_at', 'is', null)
       .gte('finished_at', since + 'T00:00:00Z')
       .or(INSPECTION_NAME)
-      .order('finished_at', { ascending: false })
-      .limit(3000)
-    for (const t of ((data as any[]) || [])) {
+      .order('finished_at', { ascending: false }).order('id')
+      .range(a, b), 5)
+    if (read.truncated) console.error('[review-inspections] the finished-inspection read stopped early — some reviews may not show as walked')
+    for (const t of read.rows) {
       // A departure clean with "inspect" in its checklist name is a clean, not a walk.
       if (/housekeep/i.test(String(t.type_department || '')) && !/quality inspection/i.test(String(t.name || ''))) continue
       const lid = String(t.reference_property_id || '')
