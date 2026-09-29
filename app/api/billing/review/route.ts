@@ -43,7 +43,6 @@ function slim(t: BillingTask) {
     routine: t.routine, aiVerdict: t.aiVerdict, aiReason: t.aiReason, aiAmount: t.aiAmount,
   }
 }
-export type ReviewTask = ReturnType<typeof slim>
 
 export async function GET(req: NextRequest) {
   const gate = await requireLevel('billing', 'view')
