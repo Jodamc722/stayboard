@@ -9,6 +9,7 @@ import { requireUser } from '@/lib/access'
 import { listVendors, saveVendor, coiState } from '@/lib/project-vendors'
 import { todayISO, CADENCE_DAYS } from '@/lib/projects-shared'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,10 +26,13 @@ export async function GET(req: NextRequest) {
   const regulars = vendors.filter(v => v.regular && v.cadence)
   if (regulars.length) {
     try {
-      const { data } = await supabaseAdmin().from('project_steps').select('vendor_key,visit_on,done_at')
-        .in('vendor_key', regulars.map(v => v.key)).or('done.eq.true,status.eq.done').limit(2000)
+      // Every finished visit, paged (was one unordered read capped at 1,000 — past that a regular's
+      // latest visit could be missing, and they would read as overdue).
+      const visits = await pageRows<any>((a, b) => supabaseAdmin().from('project_steps').select('vendor_key,visit_on,done_at')
+        .in('vendor_key', regulars.map(v => v.key)).or('done.eq.true,status.eq.done').order('id').range(a, b))
+      if (visits.truncated) console.error('vendors: finished-visit read stopped early — a regular may read overdue')
       const last: Record<string, string> = {}
-      for (const r of (data as any[]) || []) {
+      for (const r of visits.rows) {
         const d = String(r.visit_on || r.done_at || '').slice(0, 10)
         if (d && d <= today && (!last[r.vendor_key] || d > last[r.vendor_key])) last[r.vendor_key] = d
       }
