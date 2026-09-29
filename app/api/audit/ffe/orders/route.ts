@@ -20,6 +20,7 @@ import { mergeChecklist, type FfeOverride } from '@/lib/ffe-checklist'
 import { categoryForItem, LINE_STAGES, bestSource } from '@/lib/ffe-catalog'
 import { BUYS } from '@/lib/ffe-checklist'
 import { orderCode } from '@/lib/ffe-links'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
@@ -126,7 +127,9 @@ export async function GET(req: NextRequest) {
     if (id) {
       const [{ data: ords, error: oErr }, { data: lines, error: lErr }] = await Promise.all([
         db.from('ffe_orders').select('*').eq('id', id).limit(1),
-        db.from('ffe_order_lines').select('*').eq('order_id', id).limit(3000),
+        // Every line, in the order they were added — not the first 1,000 of an unordered read.
+        pageRows((a, b) => db.from('ffe_order_lines').select('*').eq('order_id', id).order('created_at').order('id').range(a, b), 3)
+          .then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'could not read every line on this order — try again' } : null })),
       ])
       if (oErr) return fail(oErr.message)
       if (lErr) return fail(lErr.message)
@@ -492,8 +495,12 @@ async function insertLines(db: any, orderId: string, raw: any, units: FfeUnit[],
   if (!list.length) return { count: 0, error: null as any }
   const unitById: Record<string, FfeUnit> = Object.fromEntries(units.map(u => [u.id, u]))
 
-  const { data: existing } = await db.from('ffe_order_lines')
-    .select('listing_id,room,item_key').eq('order_id', orderId).limit(5000)
+  // Every line already on the order, paged — a partial list lets a duplicate into the insert, and the
+  // unique key then fails the whole batch.
+  const existingRead = await pageRows((a, b) => db.from('ffe_order_lines')
+    .select('listing_id,room,item_key').eq('order_id', orderId).order('id').range(a, b), 5)
+  if (existingRead.truncated) return { count: 0, error: 'could not read the lines already on this order — nothing was added, try again' }
+  const existing = existingRead.rows
   const have = new Set(((existing || []) as any[]).map(l => str(l.listing_id) + '|' + str(l.room) + '|' + str(l.item_key)))
 
   const catIds = Array.from(new Set(list.map(l => str(l.catalogId)).filter(Boolean)))

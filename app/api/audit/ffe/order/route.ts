@@ -18,6 +18,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ffePortfolio } from '@/lib/ffe-portfolio'
 import { mergeChecklist, type FfeOverride } from '@/lib/ffe-checklist'
 import { orderCode } from '@/lib/ffe-links'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -35,8 +36,10 @@ const fail = (msg: any) => isMissingTable(msg)
 async function orderByCode(db: any, code: string) {
   const c = str(code).trim().toLowerCase()
   if (!/^[a-f0-9]{16}$/.test(c)) return null
-  const { data } = await db.from('ffe_orders').select('id').limit(5000)
-  const hit = ((data || []) as any[]).find(o => orderCode(str(o.id)) === c)
+  // Every order id, paged — a link to an order past the first 1,000 answered "link not found".
+  const ids = await pageRows((a, b) => db.from('ffe_orders').select('id').order('id').range(a, b), 5)
+  if (ids.truncated) console.error('[ffe/order] order-id read incomplete — a valid link may answer "link not found"')
+  const hit = ids.rows.find(o => orderCode(str(o.id)) === c)
   if (!hit) return null
   const { data: full } = await db.from('ffe_orders').select('*').eq('id', hit.id).limit(1)
   return (full || [])[0] || null
@@ -52,13 +55,16 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'This order has not been shared yet.' }, { status: 404 })
     }
 
-    const [{ data: lines }, units, ovRes] = await Promise.all([
-      db.from('ffe_order_lines').select('*').eq('order_id', order.id).limit(3000),
+    const [{ data: lines, error: lErr }, units, ovRes] = await Promise.all([
+      // Every line, in the order they were added — the owner's total must never come from part of it.
+      pageRows((a, b) => db.from('ffe_order_lines').select('*').eq('order_id', order.id).order('created_at').order('id').range(a, b), 3)
+        .then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'could not read every line on this order — try again' } : null })),
       ffePortfolio(db),
       // The overlay is a nicety on this page — labels fall back to the built-in list without it.
       Promise.resolve(db.from('ffe_checklist_items').select('room,item_key,en,es,ask,hidden,sort').limit(1000)) // deliberate cap: the checklist overlay is one row per (room, item), unique — a hand-edited list of a few hundred at most
         .catch(() => ({ data: [] as any[] })),
     ])
+    if (lErr) return fail(lErr.message)
     const ov = ((ovRes as any)?.data || []) as FfeOverride[]
 
     // Room and item labels, in both languages, from the same checklist the walker used.
@@ -146,8 +152,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'This order has not been shared yet.' }, { status: 404 })
     }
 
-    const { data: lines } = await db.from('ffe_order_lines')
-      .select('id,stage').eq('order_id', order.id).limit(3000)
+    // Every line, paged: a decision saved against part of the order would approve only part of it
+    // and still mark the whole order decided.
+    const { data: lines, error: lErr } = await pageRows((a, b) => db.from('ffe_order_lines')
+      .select('id,stage').eq('order_id', order.id).order('id').range(a, b), 3)
+      .then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'could not read every line on this order — nothing was saved, try again' } : null }))
+    if (lErr) return fail(lErr.message)
     const byId: Record<string, any> = Object.fromEntries(((lines || []) as any[]).map(l => [str(l.id), l]))
 
     // ---- ONE TAP, SAVED IMMEDIATELY (Jon, 2026-08-12: "make sure if you click something it saves

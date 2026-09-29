@@ -19,6 +19,7 @@ import { makeXlsx, type XCell, type XSheet } from '@/lib/xlsx-lite'
 import { buildQuotePdf, type QuoteSection } from '@/lib/order-pdf'
 import { mergeChecklist, type FfeOverride } from '@/lib/ffe-checklist'
 import { STAGE_LABEL } from '@/lib/ffe-catalog'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
@@ -39,13 +40,17 @@ export async function GET(req: NextRequest) {
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
   try {
-    const [{ data: ords }, { data: lines }, { data: ovRows }] = await Promise.all([
+    const [{ data: ords }, { data: lines, error: lErr }, { data: ovRows }] = await Promise.all([
       db.from('ffe_orders').select('*').eq('id', id).limit(1),
-      db.from('ffe_order_lines').select('*').eq('order_id', id).limit(5000),
+      // Every line, paged (sorted below) — a quote, buy list or work order must never be printed
+      // from part of the order.
+      pageRows((a, b) => db.from('ffe_order_lines').select('*').eq('order_id', id).order('id').range(a, b), 5)
+        .then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'could not read every line on this order — try again' } : null })),
       db.from('ffe_checklist_items').select('room,item_key,en,es,ask,hidden,sort').limit(1000), // deliberate cap: the checklist overlay is one row per (room, item), unique — a hand-edited list of a few hundred at most
     ])
     const order = (ords || [])[0]
     if (!order) return NextResponse.json({ error: 'order not found' }, { status: 404 })
+    if (lErr) return NextResponse.json({ ok: false, error: lErr.message }, { status: 500 })
     const ov = (ovRows || []) as FfeOverride[]
 
     const roomEn: Record<string, string> = {}, itemEn: Record<string, string> = {}

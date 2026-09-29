@@ -23,6 +23,7 @@ import { BEDROOM_NO } from '@/lib/ffe-checklist'
 import { categoryForItem } from '@/lib/ffe-catalog'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -74,12 +75,16 @@ export async function POST(req: NextRequest) {
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
   try {
-    const [{ data: ords }, { data: lines }] = await Promise.all([
+    const [{ data: ords }, { data: lines, error: lErr }] = await Promise.all([
       db.from('ffe_orders').select('*').eq('id', id).limit(1),
-      db.from('ffe_order_lines').select('*').eq('order_id', id).limit(3000),
+      // Every line, in the order they were added: the tiers and the brief's totals cover the whole
+      // order, and a short read would write a brief with the wrong money on it.
+      pageRows((a, b) => db.from('ffe_order_lines').select('*').eq('order_id', id).order('created_at').order('id').range(a, b), 3)
+        .then(p => ({ data: p.truncated ? null : p.rows, error: p.truncated ? { message: 'could not read every line on this order — nothing was changed, try again' } : null })),
     ])
     const order = (ords || [])[0]
     if (!order) return NextResponse.json({ error: 'order not found' }, { status: 404 })
+    if (lErr) return NextResponse.json({ error: lErr.message }, { status: 500 })
     const rows = (lines || []) as any[]
 
     // The walk's notes ride along for classification (same live join the detail view uses).
