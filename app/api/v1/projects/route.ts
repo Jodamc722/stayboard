@@ -16,6 +16,7 @@ export async function GET(req: NextRequest) {
   const rows = ((data as any[]) || [])
   const pids = rows.map(p => String(p.id))
   const open: Record<string, number> = {}
-  if (pids.length) { const { data: st } = await sb.from('project_steps').select('project_id').in('project_id', pids).eq('done', false).neq('status', 'done').limit(10000); for (const s of (st as any[]) || []) open[String(s.project_id)] = (open[String(s.project_id)] || 0) + 1 }
+  // Open-task counts paged (was one read capped at 1,000 across up to 500 projects), up to the 10,000 it always asked for.
+  if (pids.length) { const st = await pageRows((a, b) => sb.from('project_steps').select('project_id').in('project_id', pids).eq('done', false).neq('status', 'done').order('id').range(a, b), 10); if (st.truncated) console.error('api/v1/projects: open-task read stopped early — counts may be low'); for (const s of st.rows as any[]) open[String(s.project_id)] = (open[String(s.project_id)] || 0) + 1 }
   return json(rows.map(p => ({ id: p.id, title: p.title, kind: p.kind, stage: p.stage, building: p.building, market: p.market, openTasks: open[String(p.id)] || 0, updatedAt: p.updated_at })), { count: rows.length })
 }
