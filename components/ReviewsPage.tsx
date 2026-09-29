@@ -7,7 +7,7 @@
 // the "To reply" pill can flip the page to the feed.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Reputation, type RepFilter, type RepTab, type RepFeedCounts } from '@/components/Reputation'
-import { ReviewsPanel, type FeedCounts } from '@/app/command/ReviewsPanel'
+import { ReviewsPanel, type FeedCounts } from '@/components/ReviewsPanel'
 import { ReviewActionBoard } from '@/components/ReviewActionBoard'
 
 const TAB_KEYS: RepTab[] = ['reply', 'units', 'buildings', 'all', 'actions']
