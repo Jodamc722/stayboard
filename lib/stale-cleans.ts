@@ -27,6 +27,7 @@
 // nobody can audit after the fact, and this one changes records.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { pageRows } from './db-page'
 import { completeBreezewayTask, breezewayConfigured } from './breezeway'
 import { getOpsPresets } from './app-settings'
 import { untrackedRegex } from './ops-presets'
@@ -102,11 +103,17 @@ export async function closeStaleCleans(opts: { dryRun?: boolean } = {}): Promise
 
     // Unit names + who is in them right now.
     const ids = Array.from(new Set(open.map(t => String(t.reference_property_id))))
-    const [lRes, occRes] = await Promise.all([
+    // WHO IS IN THEM RIGHT NOW is this closer's safety check — a unit missing from it gets its clean
+    // closed as if empty. So it is paged (every stay spanning today, in id order), and when the read
+    // does not complete the run closes nothing and says why, exactly as a failed task read does.
+    const [lRes, occRead] = await Promise.all([
       db.from('guesty_listings').select('id,nickname,title,building').in('id', ids).limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
-      db.from('guesty_reservations').select('listing_id,check_in,check_out,status')
-        .lte('check_in', today).gt('check_out', today).limit(4000),
+      pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status')
+        .lte('check_in', today).gt('check_out', today).order('id').range(a, b), 5),
     ])
+    if (sc.skipOccupied && occRead.truncated) {
+      return { ...base, ok: false, error: 'Could not read who is in the units today, so nothing was closed.' }
+    }
     const nameOf: Record<string, string> = {}
     const buildingOf: Record<string, string> = {}
     for (const l of ((lRes.data || []) as any[])) {
@@ -114,7 +121,7 @@ export async function closeStaleCleans(opts: { dryRun?: boolean } = {}): Promise
       buildingOf[String(l.id)] = str(l.building)
     }
     const occupied = new Set<string>()
-    for (const r of ((occRes.data || []) as any[])) if (isLiveStay(r.status)) occupied.add(String(r.listing_id))
+    for (const r of occRead.rows) if (isLiveStay(r.status)) occupied.add(String(r.listing_id))
 
     const queue: { id: string; unit: string; date: string }[] = []
     for (const t of open) {
