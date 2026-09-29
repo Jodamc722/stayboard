@@ -126,7 +126,7 @@ async function pull(today: string): Promise<Pulled> {
     pageRows<any>((x, y) => db.from('guesty_reviews').select('id,listing_id,rating,content,created_at')
       .gte('created_at', from + 'T04:00:00Z').eq('excluded_from_score', false).order('created_at').order('id').range(x, y), 4),
     pageRows<any>((x, y) => db.from('guesty_reservations').select('id,listing_id,check_in,status')
-      .gte('check_in', today).lte('check_in', shiftDay(today, 7)).in('status', ['confirmed', 'checked_in']).order('check_in').order('id').range(x, y), 3),
+      .gte('check_in', today).lt('check_in', shiftDay(today, 7)).in('status', ['confirmed', 'checked_in']).order('check_in').order('id').range(x, y), 3),
   ])
   const cleans = t.rows.filter(x => isDepartureCleanName(x.name) && !/delete|cancel/i.test(String(x.status || '')))
   const openG = og.rows.filter(x => !/closed|resolved|done|complete/i.test(String(x.status || '')))
