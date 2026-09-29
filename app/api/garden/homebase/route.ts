@@ -33,6 +33,13 @@ export async function POST(req: NextRequest) {
     if (!gate.ok) return gate.res
     const patch: any = {}
     if (Array.isArray(b.locationUuids)) patch.locationUuids = b.locationUuids.map(String).slice(0, 20)
+    // On Stay's shared account, the hotel can never take EVERY location — that would empty the
+    // Stay Hospitality labor numbers. (Stay's key sees one location today, "Stay Hospitality":
+    // the hotel needs its own key, GARDEN_HOMEBASE_API_KEY, unless it is added as a location.)
+    if (patch.locationUuids?.length && hbMode().mode === 'shared') {
+      const all = await listHbLocations().catch(() => [])
+      if (all.length && all.every(l => patch.locationUuids.includes(l.uuid))) return NextResponse.json({ error: 'That would take every location away from Stay Hospitality. Give the hotel its own Homebase key (GARDEN_HOMEBASE_API_KEY), or add the hotel as its own location in Homebase first.' }, { status: 400 })
+    }
     if (b.lookbackDays != null) patch.lookbackDays = b.lookbackDays
     if (typeof b.enabled === 'boolean') patch.enabled = b.enabled
     return NextResponse.json({ ok: true, settings: await saveGardenHbSettings(patch, gate.access.email || 'garden') })

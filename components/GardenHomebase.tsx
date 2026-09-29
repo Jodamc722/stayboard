@@ -52,7 +52,8 @@ export function GardenHomebase({ owner, canEdit }: { owner: boolean; canEdit: bo
             </div>
           )}
           <p className="text-[11.5px] text-muted mt-1.5">{shared ? 'Tick the hotel\'s location(s). Ticked locations belong to the hotel only — they stop counting in the Stay Hospitality labor board, cost per clean and the briefs.' : 'Leave all unticked to use every location on the hotel\'s account, or tick the ones that are the hotel.'}</p>
-          {owner && dirty ? <button onClick={async () => { await post({ op: 'settings', locationUuids: pick }); setMsg('Saved — the next sync pulls these locations.'); load() }} className="mt-2 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[12px] font-semibold">Save locations</button> : null}
+          {shared && d.locations.length <= 1 ? <p className="text-[12px] text-amber-800 mt-1.5">Stay&apos;s Homebase key sees only {d.locations.map((l: any) => `“${l.name}”`).join(', ')} — the hotel is not a location in it. If the hotel has its own Homebase company, add its key as <code>GARDEN_HOMEBASE_API_KEY</code> in Vercel; if the hotel&apos;s people are inside Stay&apos;s location, add the hotel as a separate location in Homebase so the two businesses&apos; hours stay apart.</p> : null}
+          {owner && dirty ? <button onClick={async () => { const r = await post({ op: 'settings', locationUuids: pick }); setMsg(r?.error || 'Saved — the next sync pulls these locations.'); load() }} className="mt-2 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[12px] font-semibold">Save locations</button> : null}
         </LeanSection>
       ) : null}
 
