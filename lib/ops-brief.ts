@@ -887,7 +887,15 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
 
   // Arrivals carry their TIME (the thing that sets the deadline) and, when somebody left one, the
   // guest note — the difference between a unit being ready and a unit being ready correctly.
-  const arrivalsRows = arrivals.slice(0, 20).map((a: any) => {
+  //
+  // ON A FIELD SHEET, ONLY THE ARRIVALS THE RUN DOES NOT ALREADY NAME (audit 2026-09-28). A unit
+  // with a clean today is a numbered row that already says "← guest lands 4:00 PM" (and now carries
+  // the guest note too), so listing it again under Arrivals was the same door twice. What is left is
+  // the arrival into a unit nobody is cleaning today — the one that must simply be ready.
+  const cleanLids = new Set(d.cleans.map(c => String(c.lid)))
+  const arrivalsShown = isField ? arrivals.filter((a: any) => !cleanLids.has(String(a.listingId))) : arrivals
+  const arrNoteOf = (lid: any): string => (isField ? ((d.arrivalNotes || {})[String(lid)] || '') : '')
+  const arrivalsRows = arrivalsShown.slice(0, 20).map((a: any) => {
     const note = (d.arrivalNotes || {})[String(a.listingId)] || ''
     return `
     <tr><td style="${S.td}"><b>${esc(str(a.unit))}</b>${a.checkInTime ? ` <span style="${S.muted};font-size:12px">· ${esc(str(a.checkInTime))}</span>` : ''}${note ? `<div style="font-size:12px;color:#4338ca;margin-top:3px">📝 ${esc(note)}</div>` : ''}</td>
@@ -933,7 +941,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   }
   const cleanRow = (c: any, n: number | null, hot: boolean, me = '') => `
     <tr><td style="${S.td};width:30px;text-align:center">${n != null ? numBadge(n, hot) : ''}</td>
-    <td style="${S.td}"><b>${esc(c.unit)}</b>${coveringPill(c.assignee)}${me ? withOthers(c.assignee, me) : ''}${c.sameDayArrival ? ` <span style="${S.red}">← ${t('guest lands')} ${esc(arrTimeOf[String(c.lid)] || t('today'))}</span>` : ''}</td>
+    <td style="${S.td}"><b>${esc(c.unit)}</b>${coveringPill(c.assignee)}${me ? withOthers(c.assignee, me) : ''}${c.sameDayArrival ? ` <span style="${S.red}">← ${t('guest lands')} ${esc(arrTimeOf[String(c.lid)] || t('today'))}</span>` : ''}${c.sameDayArrival && arrNoteOf(c.lid) ? `<div style="font-size:12px;color:#4338ca;margin-top:3px">📝 ${esc(arrNoteOf(c.lid))}</div>` : ''}</td>
     <td style="${S.td};text-align:right;white-space:nowrap">${c.state === 'done' ? `<span style="${S.green}">${t('done')}</span>` : c.state === 'running' ? `<span style="${S.amber}">${t('in progress')}</span>` : `<span style="${S.muted}">${t('scheduled')}</span>`}</td></tr>`
   // ONE BLOCK PER PERSON, NOT PER COMBINATION OF NAMES (Jon, 2026-08-27).
   //
@@ -1150,7 +1158,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       : `<span style="${S.red}"><b>${t('NO ONE ASSIGNED')}</b></span>`
     return `
     <tr><td style="${S.td};width:30px;text-align:center">${n != null ? numBadge(n, c.sameDayArrival) : ''}</td>
-    <td style="${S.td}"><b>${esc(c.unit)}</b>${c.sameDayArrival ? ` <span style="${S.red}">← ${t('guest lands')} ${esc(arrTimeOf[String(c.lid)] || t('today'))}</span>` : ''}<br><span style="font-size:12px">${who}</span></td>
+    <td style="${S.td}"><b>${esc(c.unit)}</b>${c.sameDayArrival ? ` <span style="${S.red}">← ${t('guest lands')} ${esc(arrTimeOf[String(c.lid)] || t('today'))}</span>` : ''}${c.sameDayArrival && arrNoteOf(c.lid) ? `<div style="font-size:12px;color:#4338ca;margin-top:3px">📝 ${esc(arrNoteOf(c.lid))}</div>` : ''}<br><span style="font-size:12px">${who}</span></td>
     <td style="${S.td};text-align:right;white-space:nowrap">${c.state === 'done' ? `<span style="${S.green}">${t('done')}</span>` : c.state === 'running' ? `<span style="${S.amber}">${t('in progress')}</span>` : `<span style="${S.muted}">${t('scheduled')}</span>`}</td></tr>`
   }
   const tbl0 = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
@@ -1561,8 +1569,10 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     const recurringAll = ([] as { unit: string; n: number }[])
       .concat(maintMi ? maintMi.recurring : []).concat(maintBr ? maintBr.recurring : [])
       .sort((a, b) => b.n - a.n).slice(0, 6)
+    // The counts table ("Done yesterday · Carried over") is a manager's number — it stays on Ops
+    // Command. A field sheet keeps the worklist below it (audit 2026-09-28).
     maintCard = card(isField ? `${t('Maintenance')} — ${variant}` : 'Maintenance — Miami | Broward', null,
-      mTable +
+      (isField ? '' : mTable) +
       (!isField && wages30 != null ? `<p style="margin:8px 0 0;font-size:11.5px;color:#6b7280">Maintenance wages (portfolio-wide, 30d, Stay's share after 17WEST): <b>${money(wages30)}</b>. A finished task with no charge entered bills $0 until someone types the cost in Breezeway.</p>` : '') +
       // The carryover WORKLIST used to print here as well. It is the same set of tasks the Review
       // card above already lists, with the difference that Review also says the next day the unit
@@ -1762,8 +1772,8 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
       '#0891b2')
   })() : ''}
 
-  ${departures.length ? card(t('Departures'), departures.length, bare(depRows) + (departures.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${departures.length - 20} more on the board</p>` : ''), '#0891b2') : ''}
-  ${arrivals.length ? card(t('Arrivals'), arrivals.length, bare(arrivalsRows) + (arrivals.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${arrivals.length - 20} more on the board</p>` : '')) : ''}
+  ${!isField && departures.length ? card(t('Departures'), departures.length, bare(depRows) + (departures.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${departures.length - 20} more on the board</p>` : ''), '#0891b2') : ''}
+  ${arrivalsShown.length ? card(t('Arrivals'), arrivalsShown.length, bare(arrivalsRows) + (arrivalsShown.length > 20 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${arrivalsShown.length - 20} more on the board</p>` : ''), undefined, isField ? pick('units with no clean today', 'unidades sin limpieza hoy') : undefined) : ''}
   ${ownerStays.length ? card(t('Owner stays in-house'), ownerStays.length, bare(ownerRows), '#4338ca') : ''}
   ${!isField && glitches.length ? card('Open guest issues', glitches.length, bare(glitchRows), '#d97706') : ''}
 
