@@ -15,6 +15,7 @@ import { WeekSuggester } from '@/components/WeekSuggester'
 import { PlannerView, PlannerLegend, type PDay, type PBlock, type PGroup } from './PlannerView'
 import { ScheduleLaborStrip, type ScheduleLaborData } from './ScheduleLaborStrip'
 import { DayCleans } from './DayCleans'
+import { ForecastStrip } from './forecast/ForecastStrip'
 
 type Data = {
   from: string; to: string; days: PDay[]; markets: PBlock[]
@@ -73,12 +74,14 @@ export function TeamPlanner() {
     </LeanHead>
   )
 
+  // THE STAFFING FORECAST (lib/forecast) sits right under the title in every state. Same wrapper and
+  // position in all three returns, so it is not remounted (and refetched) when the planner loads.
   if (!data && busy) return (
-    <>{head}<div className="rounded-2xl bg-white ring-1 ring-line p-12 text-center text-sm text-muted">
+    <div className="space-y-3">{head}<ForecastStrip /><div className="rounded-2xl bg-white ring-1 ring-line p-12 text-center text-sm text-muted">
       <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Building the planner…
-    </div></>
+    </div></div>
   )
-  if (err && !data) return <>{head}<div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{err}</div></>
+  if (err && !data) return <div className="space-y-3">{head}<ForecastStrip /><div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{err}</div></div>
   if (!data) return null
 
   const chip = (on: boolean) =>
@@ -88,6 +91,7 @@ export function TeamPlanner() {
   return (
     <div className="space-y-3">
       {head}
+      <ForecastStrip />
       {/* which trade — the biggest decision on the screen, so it leads the control line */}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="inline-flex rounded-xl border border-line overflow-hidden bg-white">
