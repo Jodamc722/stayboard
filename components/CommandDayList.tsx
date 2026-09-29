@@ -229,7 +229,7 @@ function DayLine({ d, loading, tick, reload, roster, vendorsOnSite }: { d: Comma
         </Tip>
       </LeanHead>
       {d.degraded.length > 0 && (
-        <div className="-mt-1 mb-2 text-[11.5px] font-semibold text-rose-800 flex items-center gap-1.5"><AlertTriangle size={12} /> Incomplete — could not read: {d.degraded.join(', ')}.</div>
+        <div className="-mt-1 mb-2 text-[11.5px] font-semibold text-amber-800 flex items-center gap-1.5"><AlertTriangle size={12} /> Incomplete — could not read: {d.degraded.join(', ')}.</div>
       )}
       {how && (
         <div className="space-y-2">
