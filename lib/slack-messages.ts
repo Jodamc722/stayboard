@@ -410,11 +410,13 @@ export function codeProblemsMessage(opts: {
   audience: string[]
 }): { body: string; summary: string } {
   const { duplicates, audience } = opts
+  // THE UNITS, NEVER THE CODE (Jon, 2026-09-29: door codes are never in a team channel). Which units
+  // share one is the whole alert; the digits added nothing but a code posted into a room.
   const body = nl([
     '🔑 *Same door code on two units*',
     'Both have a guest arriving — worth changing one before check-in.',
     '',
-    duplicates.map(d => '• `' + d.code + '` — ' + d.units.join(' and ')).join('\n'),
+    duplicates.map(d => '• ' + d.units.join(' and ') + ' share one code').join('\n'),
     '',
     'Easy to change now, awkward to explain once the wrong guest opens the wrong door.',
     ccLine(audience),

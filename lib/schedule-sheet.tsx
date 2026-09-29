@@ -150,7 +150,9 @@ function notesFor(c: Clean): string {
   if (c.movedFrom) bits.push('moved from ' + shortDate(c.movedFrom))
   if (c.vendor) bits.push(c.vendor + ' staff')
   if (c.walkInRisk) bits.push('walk-in risk')
-  if (c.doorCode) bits.push('code ' + c.doorCode)
+  // NO DOOR CODE ON THE SHEET (Jon, 2026-09-29: door codes are "never in team channels with field
+  // team"). This picture is posted INTO the housekeeping channels, and every unit's code rode along in
+  // this column. Codes are requested by Customer Service and go to whoever asked, privately.
   if (!bits.length && c.nextArrival) bits.push('next guest ' + shortDate(c.nextArrival))
   return bits.slice(0, 2).join(' · ')
 }

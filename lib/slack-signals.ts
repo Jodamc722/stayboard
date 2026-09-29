@@ -471,7 +471,9 @@ export async function findWalkInRisks(): Promise<WalkInRisk[]> {
   for (const c of codes) {
     for (const unit of c.units) {
       if (arrivingToday[unit] === undefined) continue
-      add(unit, null, 'door code `' + c.code + '` is also on ' + c.units.filter(u => u !== unit).join(', '))
+      // The units, never the digits: this goes into the housekeeping channel (Jon, 2026-09-29 — door
+      // codes are never in a team channel with the field team).
+      add(unit, null, 'shares its door code with ' + c.units.filter(u => u !== unit).join(', '))
     }
   }
 
