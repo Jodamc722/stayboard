@@ -48,7 +48,7 @@ import {
 import { useSlackQueue, EVENT_LABEL, expiresIn, type Pending as SlackPending } from '@/components/SlackQueueCard'
 import { AvailabilityAlert } from '@/components/AvailabilityAlert'
 import { Scoreboard } from '@/components/command/Scoreboard'
-import { EveThinkingLine } from '@/components/EveThoughts'
+import { ThoughtCard, useThoughts } from '@/components/EveThoughts'
 
 type Sev = NextItem['severity']
 type Ranked = { key: string; sev: Sev; rank: number; node: ReactNode }
@@ -168,7 +168,7 @@ export function CommandDayList() {
       <Scoreboard />
       <DecideBand d={data} claims={claims} approvals={approvals} onCleared={hide} onChanged={reload} />
       {/* WHAT EVE IS THINKING (2026-09-21): a collapsed line, the same cards as Settings → Eve → Thinking. Admins only; hidden otherwise. */}
-      <EveThinkingLine />
+      <EveThinking />
       <FixBand rows={fixRows} roster={roster} onCleared={hide} onChanged={reload} />
       <ClearBand d={data} dups={dups} vendorNotes={vendorNotes} backlog={backlog} onCleared={hide} onChanged={reload} />
       <YoursBand />
@@ -567,6 +567,43 @@ function ApprovalRow({ row, onCleared, onChanged }: { row: GuestDeskRow; onClear
     <Row sev="today" title={row.who + (row.unit ? ' · ' + row.unit : '') + ' — ' + row.text} tags={<Tag tone="amber" title="Spend approval">Spend</Tag>} meta={row.meta} err={err}
       primary={<button onClick={() => decide(true)} disabled={busy} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <ClipboardCheck size={11} />} Approve</button>}
       secondary={<IconBtn title="Reject the spend" tone="bad" onClick={() => decide(false)} disabled={busy}><X size={14} /></IconBtn>} />
+  )
+}
+
+// ── WHAT EVE IS THINKING — one collapsed line under Decide ──────────────────────────────────────
+// The same cards as Settings → Eve → Thinking; admins only (the read 403s for everybody else, and
+// the line is not drawn). THE NUMBER IS THE API'S (2026-09-28 audit): the line printed rows.length
+// of a 40-row page, so sixty open thoughts read as "40". "New" is the API's own unseen count, and
+// the open count says "40+" whenever the page came back full.
+const EVE_THOUGHTS_PAGE = 40
+function EveThinking() {
+  const [open, setOpen] = useState(false)
+  const th = useThoughts({ limit: EVE_THOUGHTS_PAGE })
+  const [note, setNote] = useState('')
+  const [acted, setActed] = useState(0)
+  if (th.forbidden || (!th.loading && !th.rows.length && !th.err)) return null
+  const n = th.rows.length
+  // A full page may hold only the first 40, so the number is a floor, never a count.
+  const floor = n + acted >= EVE_THOUGHTS_PAGE
+  const onDone = (id: string, msg: string, ok: boolean) => { if (ok) { th.remove(id); setActed(a => a + 1) } setNote(msg) }
+  return (
+    <section>
+      <button onClick={() => setOpen(o => !o)} aria-expanded={open}
+        title={floor ? 'The first ' + EVE_THOUGHTS_PAGE + ' open thoughts are listed here — Settings → Eve → Thinking has every one' : undefined}
+        className="px-1 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-ink/70 hover:text-ink min-h-[28px]">
+        <Sparkles size={12} className="text-brand-600" /> Eve is thinking about {n}{floor ? '+' : ''} thing{n === 1 && !floor ? '' : 's'}{th.unseen > 0 ? ` (${th.unseen} new)` : ''} {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+      </button>
+      {open && (
+        <div className="mt-1 rounded-2xl border border-line bg-white shadow-soft divide-y divide-line">
+          {note && <div className="px-3 py-2 text-[12px] text-ink bg-app/60">{note}</div>}
+          {th.rows.map(t => <ThoughtCard key={t.id} t={t} compact onDone={onDone} />)}
+          <div className="px-3 py-2 flex items-center justify-between">
+            <a href="/users?tab=settings&panel=eve" className="text-[11.5px] font-semibold text-brand-700 hover:underline">All of it, in Settings → Eve → Thinking</a>
+            {th.unseen > 0 && <button onClick={th.markAllSeen} className="text-[11.5px] text-muted hover:text-ink">Mark all seen</button>}
+          </div>
+        </div>
+      )}
+    </section>
   )
 }
 
