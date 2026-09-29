@@ -60,7 +60,9 @@ const MONEY_EXACT = new Set(['benchmark', 'dueToOwner', 'due_to_owner'])
 // charges" next to rental/commission/net, but `other` in a task tally is a count.
 const MONEY_BY_SIBLING = new Set(['other', 'others', 'misc', 'extras'])
 // A key under one of these parents is a tally (`tasks: { clean, other, total }`), not a ledger.
-const COUNT_PARENTS = new Set(['tasks', 'counts', 'count', 'by_status', 'byStatus', 'cleans', 'volumes'])
+// `attribution` holds a match RATE (`attribution.rate` = share of fees tied to a person) — `rate`
+// joined MONEY_TOKENS on 2026-09-23 and nulled it; its amounts still carry `revenue` and still go.
+const COUNT_PARENTS = new Set(['tasks', 'counts', 'count', 'by_status', 'byStatus', 'cleans', 'volumes', 'attribution'])
 
 function tokensOf(key: string): string[] {
   return key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
@@ -159,4 +161,23 @@ export function pctOf(a: number | null | undefined, b: number | null | undefined
   const x = Number(a), y = Number(b)
   if (!Number.isFinite(x) || !Number.isFinite(y) || y === 0) return null
   return Math.round((x / y) * 1000) / 10
+}
+
+/** A rate with its sample: `pct` (null below the minimum), `n` (the denominator), `text` for a label. */
+export type PctOrCount = { pct: number | null; n: number; text: string }
+
+/**
+ * NO PERCENTAGE WITHOUT A SAMPLE (Jon, 2026-08-11). One arrival called is not "100% of welcome
+ * calls", and one glitch is not a completion rate. Below `minN` the rate is withheld — `pct` is null
+ * — and `text` says the count instead ("1 of 1"), so a small sample is still reported, just never
+ * as a percentage. `n` is the denominator either way; `dp` is the decimals on the percentage.
+ */
+export function pctOrCount(num: number | null | undefined, den: number | null | undefined, minN = 5, dp = 1): PctOrCount {
+  if (num == null || den == null || (num as any) === '' || (den as any) === '') return { pct: null, n: 0, text: '—' }
+  const x = Number(num), y = Number(den)
+  if (!Number.isFinite(x) || !Number.isFinite(y) || y <= 0) return { pct: null, n: 0, text: '—' }
+  if (y < minN) return { pct: null, n: y, text: Math.round(x) + ' of ' + Math.round(y) }
+  const f = Math.pow(10, Math.max(0, Math.round(dp)))
+  const pct = Math.round((x / y) * 100 * f) / f
+  return { pct, n: y, text: pct + '%' }
 }

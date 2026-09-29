@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 
 // The REAL module, imported directly — node ≥22.18 strips the types itself, so there is no
 // transcribed copy of the redactor to drift out of sync with the one that actually runs.
-const { isMoneyKey, redactMoney, pctOf } = await import('../lib/money.ts')
+const { isMoneyKey, redactMoney, pctOf, pctOrCount } = await import('../lib/money.ts')
 
 // canSeeMoney, transcribed from lib/access.ts (kept in sync by the assertion at the bottom).
 const SUPERADMIN = 'jon@stay-hospitality.com'
@@ -119,16 +119,18 @@ const hidden = redactMoney(payload)
 
 // THE REAL GUARD. Walk the redacted payload and fail on any surviving number under a key that reads
 // like money. This is what catches a field added to the route six months from now.
+// The walk carries the PARENT key exactly as lib/money's walk() does (2026-09-23): `tasks.total` is a
+// tally and `attribution.rate` a match rate, and judging a key without its parent flagged both.
 const leaks = []
-;(function audit(v, path, keysAreData) {
-  if (Array.isArray(v)) return v.forEach((x, i) => audit(x, `${path}[${i}]`, false))
+;(function audit(v, path, keysAreData, parentKey) {
+  if (Array.isArray(v)) return v.forEach((x, i) => audit(x, `${path}[${i}]`, false, parentKey))
   if (v && typeof v === 'object') {
     for (const k of Object.keys(v)) {
-      if (!keysAreData && isMoneyKey(k) && typeof v[k] === 'number') leaks.push(`${path}.${k} = ${v[k]}`)
-      audit(v[k], `${path}.${k}`, k === 'personTasks')
+      if (!keysAreData && isMoneyKey(k, parentKey) && typeof v[k] === 'number') leaks.push(`${path}.${k} = ${v[k]}`)
+      audit(v[k], `${path}.${k}`, k === 'personTasks', keysAreData ? parentKey : k)
     }
   }
-})(hidden, '$', false)
+})(hidden, '$', false, null)
 ok('no dollar amount survives redaction', leaks.length === 0, leaks.join(', '))
 
 // ...and the percentages Jon asked to keep are all still there.
@@ -226,7 +228,9 @@ const kpiSrc = readFileSync(new URL('../lib/kpi.ts', import.meta.url), 'utf8')
 ok('KPI board uses the shared canSeeMoney', /canSeeMoney\(access\)/.test(kpiSrc))
 ok('KPI board no longer defines its own money rule',
   !/access\.workspace === 'gm'/.test(kpiSrc) && !/canSeeMoney = access\.role/.test(kpiSrc))
-ok('KPI board redacts the payload when money is hidden', /redactMoney\(payload\)/.test(kpiSrc))
+// Since 2026-08-24 the redactor runs on `out` — the payload AFTER the Revenue App override — so a
+// figure his app supplied is stripped too.
+ok('KPI board redacts the payload when money is hidden', /redactMoney\((payload|out)\)/.test(kpiSrc))
 // KpiHome renders against payload.canSeeMoney. Emitting it as bare shorthand now resolves to the
 // IMPORTED FUNCTION, which JSON.stringify drops — the board would then hide money from everyone,
 // owner included. It has to be the boolean.
@@ -251,6 +255,24 @@ eq('null in, null out', pctOf(null, 100), null)
 eq('undefined in, null out', pctOf(undefined, 100), null)
 eq('zero numerator is a real answer', pctOf(0, 100), 0)
 eq('over 100 is allowed (billable vs wages)', pctOf(1565, 610.44), 256.4)
+
+// ---------------------------------------------------------------- pctOrCount
+// Jon, 2026-08-11: no percentage without a sample. Below the minimum the rate is withheld and the
+// count is said instead.
+console.log('\npctOrCount')
+eq('one of one is a count, not 100%', pctOrCount(1, 1), { pct: null, n: 1, text: '1 of 1' })
+eq('four is still too few (default minimum 5)', pctOrCount(3, 4), { pct: null, n: 4, text: '3 of 4' })
+eq('five is a rate', pctOrCount(4, 5), { pct: 80, n: 5, text: '80%' })
+eq('one decimal by default', pctOrCount(1, 6), { pct: 16.7, n: 6, text: '16.7%' })
+eq('whole percent when asked', pctOrCount(1, 6, 5, 0), { pct: 17, n: 6, text: '17%' })
+eq('a custom minimum', pctOrCount(9, 10, 15), { pct: null, n: 10, text: '9 of 10' })
+eq('zero numerator on a real sample is 0%', pctOrCount(0, 12), { pct: 0, n: 12, text: '0%' })
+eq('nothing to divide by', pctOrCount(0, 0), { pct: null, n: 0, text: '—' })
+eq('null in', pctOrCount(null, 10), { pct: null, n: 0, text: '—' })
+ok('the rate survives redaction (pct is a ratio)', redactMoney({ welcome: pctOrCount(8, 10) }).welcome.pct === 80)
+
+// The fixture's attribution.rate is a match RATE — kept — while its amounts still go.
+eq('attribution amounts are still stripped', hidden.attribution.totalCleaningRevenue, null)
 
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
