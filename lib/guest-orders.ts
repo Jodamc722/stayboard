@@ -637,8 +637,11 @@ export async function loadCatalog(opts?: { building?: string | null; market?: st
 // ── Inventory ─────────────────────────────────────────────────────────────────────────────────
 
 export async function listStock(): Promise<StockRow[]> {
-  const { data } = await supabaseAdmin().from('guest_order_stock').select('*').limit(5000)
-  return (data || []).map((r: any) => ({ ...r, on_hand: Number(r.on_hand) || 0, reserved: Number(r.reserved) || 0, low_at: Number(r.low_at) || 0 }))
+  // Paged on the table's key (item, scope), 2026-09-29: one row per tracked item per hub, and
+  // .limit(5000) returned 1,000 — past that, items silently read as having no stock row.
+  const read = await pageRows<any>((a, b) => supabaseAdmin().from('guest_order_stock').select('*').order('item_id').order('scope').range(a, b))
+  if (read.truncated) console.error('[guest-orders] listStock: the stock read stopped early — some items may show no stock')
+  return read.rows.map((r: any) => ({ ...r, on_hand: Number(r.on_hand) || 0, reserved: Number(r.reserved) || 0, low_at: Number(r.low_at) || 0 }))
 }
 
 async function stockLog(row: { item_id: string; scope: string; delta_on_hand: number; delta_reserved: number; reason: string; order_id?: string | null; actor?: string | null }) {
