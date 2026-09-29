@@ -12,6 +12,7 @@
 // wall — the day still comes first.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { pageRows } from './db-page'
 import { isDepartureCleanName } from './breezeway'
 import { buildingOf } from './segments'
 import { personKey } from './person-name'
@@ -45,9 +46,12 @@ export type Habits = {
 export async function learnHabits(days = 30): Promise<Habits> {
   const db = supabaseAdmin()
   const to = ymdET(new Date()), from = ymdET(new Date(Date.now() - days * 86400000))
-  const [{ data: ts }, { data: ls }] = await Promise.all([
-    db.from('breezeway_tasks_sync').select('id,name,scheduled_date,finished_at,status,assignees,reference_property_id,type_department')
-      .gte('scheduled_date', from).lte('scheduled_date', to).ilike('name', '%clean%').limit(6000),
+  // PAGED in date order (2026-09-29): 30 days of cleans passes 1,000 rows and .limit(6000) returned
+  // an unordered 1,000 — every habit (who works where, which weekdays, cleans per day) came from an
+  // arbitrary part of the window. A read that stops early is logged; the habits use what came back.
+  const [tsRead, { data: ls }] = await Promise.all([
+    pageRows<any>((a, b) => db.from('breezeway_tasks_sync').select('id,name,scheduled_date,finished_at,status,assignees,reference_property_id,type_department')
+      .gte('scheduled_date', from).lte('scheduled_date', to).ilike('name', '%clean%').order('scheduled_date').order('id').range(a, b), 8),
     db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
   ])
   const meta: Record<string, { hub: string; market: string }> = {}
@@ -62,7 +66,8 @@ export async function learnHabits(days = 30): Promise<Habits> {
   const hubPeople: Record<string, Record<string, number>> = {}
   const dayPersons: Record<string, Set<string>> = {}   // market → "name|date"
   let total = 0
-  for (const t of ((ts || []) as any[])) {
+  if (tsRead.truncated) console.error('[schedule-habits] the clean history read stopped early — habits come from part of the window')
+  for (const t of tsRead.rows) {
     if (!isDepartureCleanName(str(t.name))) continue
     if (/cancel|delet|void/i.test(str(t.status))) continue
     if (!t.finished_at && !/complet|finish|close|approv/i.test(str(t.status))) continue
