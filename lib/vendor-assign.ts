@@ -15,6 +15,7 @@
 // the mirror is fresh, so a new clean is with Opal within half an hour of existing.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
 import { breezewayConfigured, breezewayPeopleLite, updateBreezewayTask } from '@/lib/breezeway'
@@ -56,10 +57,17 @@ export async function assignVendorTasks(opts: { dryRun?: boolean } = {}): Promis
 
     const tasks: any[] = []
     for (let i = 0; i < ids.length; i += 200) {
-      const { data } = await db.from('breezeway_tasks_sync').select('id,name,status,scheduled_date,finished_at,assignees,assignee_name')
-        .in('reference_property_id', ids.slice(i, i + 200)).is('finished_at', null)
-        .gte('scheduled_date', from).lte('scheduled_date', to).limit(1000)
-      tasks.push(...(((data as any[]) || [])))
+      // Paged in id order: a vendor building's month of open work can pass 1,000 tasks (vendors
+      // never close theirs), and the ones past the first page would never reach the vendor.
+      const chunk = ids.slice(i, i + 200)
+      const read = await pageRows<any>((a, b) => db.from('breezeway_tasks_sync').select('id,name,status,scheduled_date,finished_at,assignees,assignee_name')
+        .in('reference_property_id', chunk).is('finished_at', null)
+        .gte('scheduled_date', from).lte('scheduled_date', to).order('id').range(a, b), 5)
+      if (read.truncated) {
+        console.error('vendor-assign: the open-task read stopped early for ' + v.label)
+        row.error = 'Could not read every open task — some were not checked this run.'
+      }
+      tasks.push(...read.rows)
     }
     for (const t of tasks) {
       if (/delete|cancel|complete|finish|close|approv/i.test(String(t.status || ''))) continue
