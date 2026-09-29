@@ -280,7 +280,7 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     const { data: listingRows } = await sb
       .from('guesty_listings')
       .select('id, title, nickname, building, unit, bedrooms, status, address_city')
-      .limit(5000)
+      .limit(1000) // deliberate cap: one row per listing (every status), ~290
     const listings = (listingRows || []) as any[]
 
     // Listing -> owner name, from the synced Guesty owners store (app_settings 'guesty_owners').
