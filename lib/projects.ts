@@ -6,6 +6,7 @@
 // which is what lets the board say "34 units, 21 done" without owning any of them.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { pageRows } from './db-page'
 export * from './projects-shared'
 import {
   type Project, type ProjectFull, type Member, type Person, type Task, type Viewer, type EventType,
@@ -171,9 +172,11 @@ export async function getInvoices(projectId: string): Promise<Invoice[]> {
 export async function recountInvoiced(projectId: string): Promise<void> {
   try {
     const sb = supabaseAdmin()
-    const { data, error } = await sb.from('project_invoices').select('amount_cents,status').eq('project_id', projectId).limit(1000)
-    if (error) return
-    const total = ((data || []) as any[])
+    // Paged in id order: a total must be over every invoice, never over the first 1,000. A short
+    // read writes nothing, exactly as a failed one did.
+    const { rows, truncated } = await pageRows<any>((a, b) => sb.from('project_invoices').select('id,amount_cents,status').eq('project_id', projectId).order('id').range(a, b), 5)
+    if (truncated) return
+    const total = rows
       .filter(r => INVOICE_COUNTS.includes(String(r.status) as any))
       .reduce((n, r) => n + (Number(r.amount_cents) || 0), 0)
     await sb.from('projects').update({ invoiced_cents: total }).eq('id', projectId)
@@ -218,11 +221,13 @@ export async function fileCompletedTask(
       const from = (t as any).section ?? null
       if (isDoneSection(from)) return { section: from, moved: false }
       // Every section the board currently knows about, so an existing "Done" column wins over
-      // creating a second one beside it.
-      const { data: rows } = await sb.from('project_steps').select('section').eq('project_id', projectId).limit(1000)
+      // creating a second one beside it. Paged: a long-running board passes 1,000 tasks, and a
+      // section that sat past the first page would be invisible here.
+      const read = await pageRows<any>((a, b) => sb.from('project_steps').select('id,section').eq('project_id', projectId).order('id').range(a, b), 10)
+      if (read.truncated) console.error('projects.fileCompletedTask: the section read stopped early — matching on the sections it saw')
       const known = Array.from(new Set([
         ...settings.sectionOrder,
-        ...((rows || []) as any[]).map(r => r.section).filter(Boolean),
+        ...read.rows.map(r => r.section).filter(Boolean),
       ].map(String)))
       const target = doneSectionName(known, settings)
       const { error } = await sb.from('project_steps').update({ section: target, section_before_done: from }).eq('id', taskId)
@@ -536,11 +541,13 @@ export async function gateProject(id: string, viewer: Viewer, need: 'view' | 'ed
 export async function addNote(projectId: string, body: string, author: string | null, kind: 'comment' | 'event' = 'comment', viaShare = false,
   extra: { taskId?: string | null; meta?: any } = {}) {
   try {
-    await supabaseAdmin().from('project_notes').insert({
+    const { error } = await supabaseAdmin().from('project_notes').insert({
       project_id: projectId, body: String(body).slice(0, 4000), author, kind, via_share: viaShare,
       task_id: extra.taskId || null, meta: extra.meta || null,
     })
-  } catch {}
+    // Best-effort, as it always was — but a note that did not land says so in the log.
+    if (error) console.error('projects.addNote: note insert failed', error.message)
+  } catch (e) { console.error('projects.addNote: note insert failed', e) }
 }
 
 /** An activity event: what somebody did, with enough structure for the feed to link the task. */
