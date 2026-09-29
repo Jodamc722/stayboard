@@ -10,8 +10,10 @@ const when = (iso: string | null) => iso ? new Date(iso).toLocaleString('en-US',
 const input = 'rounded-lg border border-line bg-white px-3 py-2 text-[13px] focus:outline-none focus:border-brand-500 disabled:opacity-60'
 const Label = ({ t }: { t: string }) => <span className="block text-[11px] uppercase tracking-wider text-muted font-semibold mb-1">{t}</span>
 
-export function GardenSettings({ owner, canEdit }: { owner: boolean; canEdit: boolean }) {
-  const [tab, setTab] = useState<'hotel' | 'voice' | 'phone' | 'triggers'>('hotel')
+// `only` renders one section inside the Users & admin → Settings directory (same console as the VR
+// side); without it the old tabbed page renders.
+export function GardenSettings({ owner, canEdit, only }: { owner: boolean; canEdit: boolean; only?: 'hotel' | 'voice' | 'phone' | 'triggers' }) {
+  const [tab, setTab] = useState<'hotel' | 'voice' | 'phone' | 'triggers'>(only || 'hotel')
   const [d, setD] = useState<any | null>(null)
   const [saved, setSaved] = useState('')
   const load = useCallback(async () => setD(await j('/api/garden/settings')), [])
@@ -19,6 +21,16 @@ export function GardenSettings({ owner, canEdit }: { owner: boolean; canEdit: bo
   const save = async (patch: any) => { const r = await post('/api/garden/settings', patch, 'PUT'); setSaved(r?.ok ? 'Saved' : (r?.error || 'Could not save')); setTimeout(() => setSaved(''), 2500); if (r?.newToken) setSaved(`Saved · webhook token: ${r.newToken} (copy it now; it is not shown again)`); setD((x: any) => ({ ...x, ...r })) }
   if (!d) return <p className="text-[13px] text-muted inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading…</p>
   if (!d.ok) return <LeanEmpty>{d.error}</LeanEmpty>
+  if (only) return (
+    <>
+      {saved ? <p className="text-[12px] text-emerald-700 mb-2">{saved}</p> : null}
+      {only === 'hotel' ? <HotelTab h={d.hotel} owner={owner} save={h => save({ hotel: h })} /> : null}
+      {only === 'voice' ? <VoiceTab v={d.voice} owner={owner} save={v => save({ voice: v })} /> : null}
+      {only === 'phone' ? <PhoneTab p={d.phone} status={d.phoneStatus} owner={owner} save={p => save({ phone: p })} /> : null}
+      {only === 'triggers' ? <TriggersTab canEdit={canEdit} /> : null}
+      {!owner && only !== 'triggers' ? <p className="text-[12px] text-muted mt-3 px-1">Someone with full access on hotel settings edits these.</p> : null}
+    </>
+  )
   return (
     <>
       <LeanHead title="Garden Hotel settings" icon={<Settings size={20} className="text-brand-600" />}>

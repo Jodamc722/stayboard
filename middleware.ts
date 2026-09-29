@@ -177,7 +177,9 @@ export async function middleware(request: NextRequest) {
         if (!def) return redirectTo(vrMember ? '/command' : '/no-access')
         const gl = gardenLevels(def.perms)
         const page = gardenPageForPath(path)
-        if (page && gl[page.key] === 'off') return redirectTo(gardenLanding(gl, def.landing))
+        // Users & admin opens for anyone who can see one of its panels, as it does on the VR side.
+        const consoleOk = page?.key === 'users' && ['settings', 'setup', 'staff', 'adam'].some(k => gl[k as keyof typeof gl] !== 'off')
+        if (page && gl[page.key] === 'off' && !consoleOk) return redirectTo(gardenLanding(gl, def.landing))
         return response
       }
       if (!vrMember) {

@@ -11,9 +11,11 @@ const j = async (url: string, init?: RequestInit) => { const r = await fetch(url
 const when = (iso: string) => new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 const TIER_LABEL: Record<string, string> = { fable: 'Fable 5.1', opus: 'Opus 4.8', sonnet: 'Sonnet 5', 'sonnet-prev': 'Sonnet 4.6', haiku: 'Haiku 4.5' }
 
-export function AdamAdmin({ owner, canEdit }: { owner: boolean; canEdit: boolean }) {
+// `only="voice"` renders just his name / direction / on-off inside Users & admin → Settings (the
+// same place Eve's live); without it this is his tab — what he knows, files, questions, chats.
+export function AdamAdmin({ owner, canEdit, only }: { owner: boolean; canEdit: boolean; only?: 'voice' }) {
   const [d, setD] = useState<any | null>(null)
-  const [tab, setTab] = useState<'memory' | 'files' | 'questions' | 'shared' | 'chats' | 'voice'>('memory')
+  const [tab, setTab] = useState<'memory' | 'files' | 'questions' | 'shared' | 'chats' | 'voice'>(only || 'memory')
   const [lib, setLib] = useState<any | null>(null)
   const [fd, setFd] = useState<any>({ title: '', category: 'sop', body: '', source: '', file_path: '' })
   const [fmsg, setFmsg] = useState('')
@@ -38,15 +40,17 @@ export function AdamAdmin({ owner, canEdit }: { owner: boolean; canEdit: boolean
   const s = d.settings
   return (
     <>
+      {!only ? <>
       <LeanHead title={s.name} icon={<Hotel size={20} className="text-emerald-700" />}>
         <Pill tone={s.enabled ? 'emerald' : 'slate'} title="On or off">{s.enabled ? 'on' : 'off'}</Pill>
-        <Pill tone="brand" title="Model — change it in Users & admin → Settings → AI models (task: Adam)">{TIER_LABEL[d.tier] || d.tier}</Pill>
+        <Pill tone="brand" title="Model and voice — Users & admin → Settings">{TIER_LABEL[d.tier] || d.tier}</Pill>
         <Pill title="What he has been taught">{d.memories.length} memories</Pill>
         <Pill title="Questions answered">{d.chats.length} recent chats</Pill>
         <button onClick={() => openAdam()} className="rounded-lg bg-emerald-700 text-white px-2.5 h-7 text-[12px] font-semibold">Ask {s.name}</button>
       </LeanHead>
       <p className="text-[12.5px] text-muted mb-3">The Garden Hotel&apos;s own agent — his own memory, his own chat log, his own model. He knows nothing about the vacation rentals and Eve knows nothing about the hotel; that is by design.</p>
-      <LeanTabs value={tab} onChange={setTab} tabs={[{ key: 'memory', label: 'What he knows', n: d.memories.length }, { key: 'files', label: 'Files', n: lib?.docs?.filter((x: any) => x.active).length }, { key: 'questions', label: 'His questions', n: (d.questions || []).filter((q: any) => q.status === 'open').length }, { key: 'shared', label: 'Shared from Stay', n: (d.shared || []).length }, { key: 'chats', label: 'Recent chats', n: d.chats.length }, { key: 'voice', label: 'Voice & model' }]} />
+      <LeanTabs value={tab} onChange={setTab} tabs={[{ key: 'memory', label: 'What he knows', n: d.memories.length }, { key: 'files', label: 'Files', n: lib?.docs?.filter((x: any) => x.active).length }, { key: 'questions', label: 'His questions', n: (d.questions || []).filter((q: any) => q.status === 'open').length }, { key: 'shared', label: 'Shared from Stay', n: (d.shared || []).length }, { key: 'chats', label: 'Recent chats', n: d.chats.length }]} />
+      </> : null}
       {tab === 'memory' ? (<>
         {canEdit ? (
           <div className="flex gap-2 mb-3">

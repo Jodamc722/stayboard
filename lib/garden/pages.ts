@@ -8,10 +8,16 @@
  */
 export type GardenPageKey = 'today' | 'rooms' | 'schedule' | 'staff' | 'calls' | 'messages' | 'reviews' | 'calendar' | 'payments' | 'reports' | 'owner-reports' | 'handbook' | 'adam' | 'settings' | 'setup' | 'users'
 export type GardenPageDef = { key: GardenPageKey; to: string; label: string; section: string; what: string }
+// Laid out like the VR sidebar (Jon, 2026-09-29: "same web app, same design"): the agent's tab up
+// top, the work in the middle, and Settings ending in Users & admin — where the hotel's people,
+// roles and settings live, in the same console as the VR side's. Pages in section 'Admin' are
+// permission keys for panels inside that console, not sidebar rows (their old URLs redirect there).
 export const GARDEN_PAGE_DEFS: GardenPageDef[] = [
   { key: 'today',         to: '/garden',               label: 'Today',                 section: 'Overview',   what: 'Arrivals, departures, in-house, what is due.' },
+  { key: 'adam',          to: '/garden/adam',          label: 'Adam',                  section: 'Overview',   what: 'The hotel\'s agent: what he knows, files, questions, chats.' },
   { key: 'rooms',         to: '/garden/rooms',         label: 'Rooms & cleans',        section: 'Operations', what: 'Room condition, cleans, inspections, maintenance.' },
   { key: 'schedule',      to: '/garden/schedule',      label: 'Scheduler',             section: 'Operations', what: 'Shifts by day against the day\'s load.' },
+  { key: 'handbook',      to: '/garden/handbook',      label: 'Handbook',              section: 'Operations', what: 'The hotel\'s own SOPs. Adam reads it.' },
   { key: 'calls',         to: '/garden/calls',         label: 'Calls & verifications', section: 'Guests',     what: 'Welcome calls, ID and card checks, the phone log.' },
   { key: 'messages',      to: '/garden/messages',      label: 'Messages',              section: 'Guests',     what: 'Cloudbeds guest messaging, one inbox.' },
   { key: 'reviews',       to: '/garden/reviews',       label: 'Reviews',               section: 'Guests',     what: 'Reviews, replies, themes.' },
@@ -19,15 +25,13 @@ export const GARDEN_PAGE_DEFS: GardenPageDef[] = [
   { key: 'payments',      to: '/garden/payments',      label: 'Payments',              section: 'Money',      what: 'Cloudbeds Payments: charges, deposits, refunds.' },
   { key: 'reports',       to: '/garden/reports',       label: 'Reports',               section: 'Money',      what: 'Occupancy, ADR, RevPAR, sources.' },
   { key: 'owner-reports', to: '/garden/owner-reports', label: 'Owner reports',         section: 'Money',      what: 'The owner deck, from templates.' },
-  { key: 'staff',         to: '/garden/team',          label: 'Team & access',         section: 'Team',       what: 'The hotel\'s staff, logins and roles.' },
-  { key: 'handbook',      to: '/garden/handbook',      label: 'Handbook',              section: 'Team',       what: 'The hotel\'s own SOPs. Adam reads it.' },
-  { key: 'adam',          to: '/garden/adam',          label: 'Adam',                  section: 'Settings',   what: 'The hotel\'s agent: memory, questions, voice.' },
-  { key: 'settings',      to: '/garden/settings',      label: 'Settings',              section: 'Settings',   what: 'Hotel profile, voice, phone, triggers.' },
-  { key: 'setup',         to: '/garden/setup',         label: 'Cloudbeds & feeds',     section: 'Settings',   what: 'Connection and sync status.' },
+  { key: 'users',         to: '/garden/users',         label: 'Users & admin',         section: 'Settings',   what: 'People, roles and the hotel\'s settings — the same console as the VR side.' },
+  { key: 'staff',         to: '/garden/team',          label: 'Staff roster',          section: 'Admin',      what: 'Users & admin → Settings → Staff roster.' },
+  { key: 'settings',      to: '/garden/settings',      label: 'Hotel settings',        section: 'Admin',      what: 'Users & admin → Settings: hotel profile, voice, phone, triggers, Adam.' },
+  { key: 'setup',         to: '/garden/setup',         label: 'Cloudbeds & feeds',     section: 'Admin',      what: 'Users & admin → Settings → Cloudbeds & feeds.' },
 ]
-// 'users' has no page of its own: it is the Logins and Roles tabs of Team & access.
-export const GARDEN_PAGE_KEYS: GardenPageKey[] = [...GARDEN_PAGE_DEFS.map(p => p.key), 'users']
-export const GARDEN_PAGE_LABEL: Record<string, string> = { ...Object.fromEntries(GARDEN_PAGE_DEFS.map(p => [p.key, p.label])), users: 'Logins & roles', staff: 'Staff roster' }
+export const GARDEN_PAGE_KEYS: GardenPageKey[] = GARDEN_PAGE_DEFS.map(p => p.key)
+export const GARDEN_PAGE_LABEL: Record<string, string> = { ...Object.fromEntries(GARDEN_PAGE_DEFS.map(p => [p.key, p.label])), users: 'Users & admin', staff: 'Staff roster' }
 
 /** Which hotel page a path is (longest prefix wins; /garden alone is Today). */
 export function gardenPageForPath(path: string): GardenPageDef | null {

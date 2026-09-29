@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireGarden } from '@/lib/garden/access'
+import { upsertMember, removeMember } from '@/lib/garden/people'
 import { isSuperadmin, bustGardenRolesCache } from '@/lib/access'
 import { GARDEN_PAGE_DEFS, GARDEN_PAGE_KEYS, GARDEN_PAGE_LABEL, gAtLeast } from '@/lib/garden/pages'
 
@@ -74,61 +75,13 @@ export async function POST(req: NextRequest) {
   const canVr = isSuperadmin(gate.access.email) || gate.access.role === 'admin'
 
   if (op === 'member') {
-    const email = clean(b?.email)
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return NextResponse.json({ error: 'A valid email is required.' }, { status: 400 })
-    if (isSuperadmin(email)) return NextResponse.json({ error: 'The owner is always the hotel GM.' }, { status: 400 })
-    const { data: role } = await db.from('garden_roles').select('key').eq('key', String(b?.garden_role || '')).maybeSingle()
-    if (!role) return NextResponse.json({ error: 'Pick a hotel role.' }, { status: 400 })
-    const { data: ex } = await db.from('app_users').select('email,businesses,role,profile').eq('email', email).maybeSingle()
-    let businesses: string[] = Array.isArray((ex as any)?.businesses) ? (ex as any).businesses : ex ? ['vr'] : []
-    businesses = businesses.filter(x => x !== 'garden').concat('garden')
-    let vrPatch: any = {}
-    if (b?.vr_role !== undefined) {
-      if (!canVr) return NextResponse.json({ error: 'Only the owner or a VR admin can change access to the vacation-rental side.' }, { status: 403 })
-      const want = String(b.vr_role || '')
-      if ((ex as any)?.role === 'admin' && !isSuperadmin(gate.access.email)) return NextResponse.json({ error: 'Only the owner can change a VR admin.' }, { status: 403 })
-      if (!want) { businesses = businesses.filter(x => x !== 'vr'); vrPatch = { role: 'member', access_role: null } }
-      else {
-        if (want === 'admin' && !isSuperadmin(gate.access.email)) return NextResponse.json({ error: 'Only the owner can make someone a VR admin.' }, { status: 403 })
-        const { data: vr } = await db.from('app_roles').select('key').eq('key', want).maybeSingle()
-        if (!vr) return NextResponse.json({ error: 'Unknown VR role.' }, { status: 400 })
-        businesses = Array.from(new Set([...businesses, 'vr']))
-        vrPatch = { access_role: want, role: want === 'admin' ? 'admin' : 'member' }
-      }
-    } else if (!ex) businesses = ['garden']   // a new login made here is hotel-only unless a VR role is given
-    const row: any = { email, garden_role: role.key, businesses, status: 'active', ...vrPatch }
-    if (!ex) Object.assign(row, { role: row.role || 'member', invited_by: by, last_invited_at: new Date().toISOString() })
-    if (b?.name) row.profile = { ...((ex as any)?.profile || {}), name: String(b.name).slice(0, 80) }
-    const { error } = await db.from('app_users').upsert(row, { onConflict: 'email' })
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    // A new login: set the password now, or send the invite email.
-    let login: any = null
-    const password = typeof b?.password === 'string' ? b.password : ''
-    if (password && password.length < 8) return NextResponse.json({ ok: true, note: 'Saved, but the password must be at least 8 characters — not set.' })
-    try {
-      if (password) {
-        const { error: cErr } = await (db as any).auth.admin.createUser({ email, password, email_confirm: true })
-        login = cErr ? { passwordSet: false, note: /registered|exists/i.test(cErr.message || '') ? 'They already have a Lighthouse login — same password as before.' : cErr.message } : { passwordSet: true }
-      } else if (!ex) {
-        const redirectTo = `${new URL(req.url).origin}/auth/callback`
-        const { error: iErr } = await (db as any).auth.admin.inviteUserByEmail(email, { redirectTo })
-        login = iErr ? { invited: false, note: /registered|exists/i.test(iErr.message || '') ? 'They already have a Lighthouse login.' : iErr.message } : { invited: true }
-      }
-    } catch (e: any) { login = { note: String(e?.message || e) } }
-    return NextResponse.json({ ok: true, email, login })
+    const r = await upsertMember(b, gate.access, new URL(req.url).origin)
+    return r.ok ? NextResponse.json(r) : NextResponse.json({ error: r.error }, { status: r.status })
   }
 
   if (op === 'remove_member') {
-    const email = clean(b?.email)
-    if (isSuperadmin(email)) return NextResponse.json({ error: 'The owner cannot be removed.' }, { status: 400 })
-    const { data: ex } = await db.from('app_users').select('businesses').eq('email', email).maybeSingle()
-    if (!ex) return NextResponse.json({ error: 'Not found.' }, { status: 404 })
-    const businesses = (Array.isArray((ex as any).businesses) ? (ex as any).businesses : ['vr']).filter((x: string) => x !== 'garden')
-    // Hotel-only people lose their login entirely; hybrid people keep the VR side.
-    const patch: any = { garden_role: null, businesses }
-    if (!businesses.length) patch.status = 'disabled'
-    const { error } = await db.from('app_users').update(patch).eq('email', email)
-    return error ? NextResponse.json({ error: error.message }, { status: 500 }) : NextResponse.json({ ok: true })
+    const r = await removeMember(b)
+    return r.ok ? NextResponse.json(r) : NextResponse.json({ error: r.error }, { status: r.status })
   }
 
   if (op === 'role') {

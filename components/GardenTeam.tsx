@@ -13,7 +13,8 @@ const DEPT_LABEL: Record<string, string> = { management: 'Management', front_des
 const LEVELS = ['off', 'view', 'edit', 'full']
 const input = 'rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] focus:outline-none focus:border-brand-500'
 
-export function GardenTeam({ canEdit }: { canEdit: boolean }) {
+// `rosterOnly` renders just the staff roster inside Users & admin → Settings.
+export function GardenTeam({ canEdit, rosterOnly }: { canEdit: boolean; rosterOnly?: boolean }) {
   const [d, setD] = useState<any | null>(null)
   const [tab, setTab] = useState<'roster' | 'logins' | 'roles'>('roster')
   const [msg, setMsg] = useState('')
@@ -23,6 +24,7 @@ export function GardenTeam({ canEdit }: { canEdit: boolean }) {
 
   if (!d) return <p className="text-[13px] text-muted inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading…</p>
   if (!d.ok) return <><LeanHead title="Team & access" icon={<Users size={20} className="text-emerald-700" />} /><LeanEmpty>{/does not exist|schema cache|column/i.test(d.error || '') ? 'Run migration 118_garden_unit.sql, then reload.' : (d.message || d.error)}</LeanEmpty></>
+  if (rosterOnly) return <>{msg ? <p className="text-[12px] text-emerald-700 mb-2">{msg}</p> : null}<Roster d={d} canEdit={canEdit} say={say} /></>
   const tabs: { key: 'roster' | 'logins' | 'roles'; label: string; n?: number }[] = [{ key: 'roster', label: 'Staff roster', n: d.staff.filter((s: any) => s.active).length }]
   if (d.me.canUsers) tabs.push({ key: 'logins', label: 'Logins', n: d.members?.length }, { key: 'roles', label: 'Roles', n: d.roles?.length })
   return (

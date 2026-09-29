@@ -19,25 +19,37 @@ const LEVEL_OPTS: { key: Level; label: string; hint: string }[] = [
 // Grid grouping is DERIVED from the FEATURES registry (lib/features.ts) — never hand-listed here.
 // That's what keeps this editor complete: register a tab once and it appears in the grid. Any
 // feature whose group isn't recognized still shows, in a "New tabs" bucket at the bottom.
-const GROUPS: { title: string; keys: string[] }[] = (() => {
-  const gs = GROUP_ORDER
-    .map(title => ({ title, keys: FEATURES.filter(f => f.group === title).map(f => f.key) }))
+type Feat = { key: string; label: string; path: string; group: string }
+function buildGroups(features: Feat[], order: string[]): { title: string; keys: string[] }[] {
+  const gs = order
+    .map(title => ({ title, keys: features.filter(f => f.group === title).map(f => f.key) }))
     .filter(g => g.keys.length > 0)
   const claimed: string[] = []
   for (const g of gs) for (const k of g.keys) claimed.push(k)
-  const extra = FEATURES.filter(f => claimed.indexOf(f.key) < 0).map(f => f.key)
+  const extra = features.filter(f => claimed.indexOf(f.key) < 0).map(f => f.key)
   if (extra.length > 0) gs.push({ title: 'New tabs', keys: extra })
   // The Garden Hotel is its own business with its own roles (migration 118) — not on VR roles.
   return gs.map(g => ({ ...g, keys: g.keys.filter(k => k !== 'garden') })).filter(g => g.keys.length > 0)
-})()
+}
 
-const label = (key: string) => FEATURES.find(f => f.key === key)?.label || key
+/**
+ * THE SAME ROLES EDITOR FOR EVERY BUSINESS (Jon, 2026-09-29: "It's the same web app, same design,
+ * just different API connections"). The VR side passes nothing and gets the FEATURES registry and
+ * /api/roles; the Garden Hotel passes its own page registry and /api/garden/roles.
+ */
+export type RolesRegistry = { features: Feat[]; groupOrder: string[]; api: string; defaultLanding: string; newPerms: Record<string, string>; noun?: string }
+
 const lvlOf = (perms: Record<string, string>, key: string): Level => {
   const v = perms[key] ?? perms['*']
   return (['off', 'view', 'edit', 'full'] as string[]).includes(String(v)) ? (v as Level) : 'off'
 }
 
-export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
+export function RolesAdmin({ isOwner, registry }: { isOwner: boolean; registry?: RolesRegistry }) {
+  const F: Feat[] = registry?.features || (FEATURES as any)
+  const GROUPS = useMemo(() => buildGroups(F, registry?.groupOrder || GROUP_ORDER), [F, registry])
+  const API = registry?.api || '/api/roles'
+  const DEF_LANDING = registry?.defaultLanding || '/plan'
+  const label = (key: string) => F.find(f => f.key === key)?.label || key
   const [roles, setRoles] = useState<RoleRow[]>([])
   const [counts, setCounts] = useState<Record<string, number>>({})
   const [sel, setSel] = useState<string | null>(null)
@@ -54,7 +66,7 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
   async function load(keep?: string) {
     setLoading(true); setError(null)
     try {
-      const r = await fetch('/api/roles'); const j = await r.json()
+      const r = await fetch(API); const j = await r.json()
       if (!r.ok) throw new Error(j?.error || 'Failed to load roles.')
       setRoles(j.roles || []); setCounts(j.counts || {})
       const pick = keep && (j.roles || []).some((x: RoleRow) => x.key === keep) ? keep : (j.roles?.[0]?.key ?? null)
@@ -67,13 +79,13 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
   useEffect(() => {
     if (!role) return
     const p: Record<string, string> = {}
-    for (const f of FEATURES) p[f.key] = lvlOf(role.perms || {}, f.key)
-    setDPerms(p); setDLanding(role.landing || '/plan'); setDLabel(role.label); setMsg(null)
+    for (const f of F) p[f.key] = lvlOf(role.perms || {}, f.key)
+    setDPerms(p); setDLanding(role.landing || DEF_LANDING); setDLabel(role.label); setMsg(null)
   }, [role?.key, roles])
 
   const dirty = role && !role.is_system && (
-    dLabel !== role.label || dLanding !== (role.landing || '/plan') ||
-    FEATURES.some(f => dPerms[f.key] !== lvlOf(role.perms || {}, f.key))
+    dLabel !== role.label || dLanding !== (role.landing || DEF_LANDING) ||
+    F.some(f => dPerms[f.key] !== lvlOf(role.perms || {}, f.key))
   )
 
   async function save() {
@@ -84,7 +96,7 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
       // that ship after this save (e.g. manager '*'=full → new tabs appear for managers at Full).
       // dPerms only carries the tabs that exist today, so without this the default would be lost.
       const star = role.perms && role.perms['*'] != null ? { '*': String(role.perms['*']) } : {}
-      const r = await fetch('/api/roles', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: role.key, label: dLabel, landing: dLanding, perms: { ...star, ...dPerms } }) })
+      const r = await fetch(API, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: role.key, label: dLabel, landing: dLanding, perms: { ...star, ...dPerms } }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to save.')
       setMsg(`Saved ${dLabel}.`); load(role.key)
     } catch (e: any) { setError(e.message || String(e)) } finally { setBusy(false) }
@@ -96,8 +108,8 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
     setBusy(true); setError(null)
     try {
       const src = fromKey ? roles.find(r => r.key === fromKey) : null
-      const perms = src ? { ...src.perms } : { '*': 'off', home: 'view' }
-      const r = await fetch('/api/roles', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: name.trim(), perms, landing: src?.landing || '/plan', blurb: src ? `Copy of ${src.label}` : '' }) })
+      const perms = src ? { ...src.perms } : (registry?.newPerms || { '*': 'off', home: 'view' })
+      const r = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: name.trim(), perms, landing: src?.landing || DEF_LANDING, blurb: src ? `Copy of ${src.label}` : '' }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to create role.')
       setMsg(`Role "${name.trim()}" created.`); await load(j.key)
     } catch (e: any) { setError(e.message || String(e)) } finally { setBusy(false) }
@@ -108,7 +120,7 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
     if (!window.confirm(`Delete the role "${r0.label}"? People must be moved off it first.`)) return
     setBusy(true); setError(null)
     try {
-      const r = await fetch('/api/roles', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) })
+      const r = await fetch(API, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to delete.')
       setMsg(`Deleted ${r0.label}.`); await load()
     } catch (e: any) { setError(e.message || String(e)) } finally { setBusy(false) }
@@ -168,7 +180,7 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
                 Lands on
                 <select value={dLanding} disabled={!isOwner || role.is_system} onChange={e => setDLanding(e.target.value)}
                   className="text-[12px] rounded-lg border border-line bg-app px-2 py-1 disabled:opacity-60">
-                  {FEATURES.filter(f => dPerms[f.key] !== 'off').map(f => <option key={f.key} value={f.path}>{f.label}</option>)}
+                  {F.filter(f => dPerms[f.key] !== 'off').map(f => <option key={f.key} value={f.path}>{f.label}</option>)}
                 </select>
               </div>
               {/* Preview / Duplicate / Delete / Save changes on one unbreakable line ran off the
@@ -265,7 +277,7 @@ export function RolesAdmin({ isOwner }: { isOwner: boolean }) {
               <Eye size={15} className="text-brand-600" />
               <div>
                 <p className="text-sm font-bold text-ink">What {dLabel || role.label} sees</p>
-                <p className="text-[11px] text-muted">Lands on {FEATURES.find(f => f.path === dLanding)?.label || dLanding}{dirty ? ' · previewing unsaved changes' : ''}</p>
+                <p className="text-[11px] text-muted">Lands on {F.find(f => f.path === dLanding)?.label || dLanding}{dirty ? ' · previewing unsaved changes' : ''}</p>
               </div>
               <button onClick={() => setPreview(false)} className="ml-auto p-1.5 rounded-lg text-muted hover:text-ink"><X size={16} /></button>
             </div>

@@ -19,6 +19,7 @@ type Row = {
   access_role?: string | null
   garden_role?: string | null
   businesses?: string[] | null
+  vr?: boolean; vr_role?: string | null
   profile?: Record<string, any> | null
   prefs?: Record<string, any> | null
   invited_by: string | null; created_at: string; last_invited_at: string | null
@@ -38,7 +39,13 @@ function ago(iso: string | null | undefined): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boolean }) {
+export function UsersAdmin({ myEmail, isOwner, business = 'vr', canVr = false }: { myEmail: string; isOwner: boolean; business?: 'vr' | 'garden'; canVr?: boolean }) {
+  // THE SAME PEOPLE CONSOLE FOR BOTH BUSINESSES (Jon, 2026-09-29: "same web app, same design, just
+  // different API connections"). business="garden" reads the hotel's people and roles; the other
+  // half of each person's dual role (the VR role there, the hotel role here) sits in its own block.
+  const G = business === 'garden'
+  const USERS_API = G ? '/api/garden/people' : '/api/users'
+  const ROLES_API = G ? '/api/garden/roles' : '/api/roles'
   const [rows, setRows] = useState<Row[]>([])
   const [roles, setRoles] = useState<RoleRow[]>([])
   const [rolesReady, setRolesReady] = useState(false)   // false = pre-migration-023 (legacy mode)
@@ -56,9 +63,15 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   // DUAL ROLES (Jon, 2026-09-29): the hotel role is set here too, beside the VR role — owner only.
+  // The other business's roles: hotel roles on the VR console (owner), VR roles on the hotel
+  // console (owner or a VR admin).
   const [gRoles, setGRoles] = useState<{ key: string; label: string }[]>([])
-  useEffect(() => { if (!isOwner) return; fetch('/api/garden/team', { cache: 'no-store' }).then(r => r.json()).then(j => { if (Array.isArray(j?.roles)) setGRoles(j.roles) }).catch(() => {}) }, [isOwner])
+  useEffect(() => {
+    if (G ? !canVr : !isOwner) return
+    fetch(G ? '/api/roles' : '/api/garden/roles', { cache: 'no-store' }).then(r => r.json()).then(j => { if (Array.isArray(j?.roles)) setGRoles(j.roles.filter((r: any) => !G || r.key !== 'admin' || myEmail === OWNER)) }).catch(() => {})
+  }, [G, canVr, isOwner, myEmail])
   async function setGarden(u: Row, key: string) {
+    if (G) { await patch(u.email, { vr_role: key }, key ? `Stay Hospitality: ${gRoles.find(g => g.key === key)?.label || key}.` : 'No longer on the Stay Hospitality side.'); return }
     const body = key ? { op: 'member', email: u.email, garden_role: key } : { op: 'remove_member', email: u.email }
     const r = await fetch('/api/garden/team', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     const j = await r.json().catch(() => ({}))
@@ -69,13 +82,13 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
   async function load() {
     setLoading(true); setError(null)
     try {
-      const [ur, rr] = await Promise.all([fetch('/api/users'), fetch('/api/roles')])
+      const [ur, rr] = await Promise.all([fetch(USERS_API), fetch(ROLES_API)])
       const uj = await ur.json()
       if (!ur.ok) throw new Error(uj?.error || 'Failed to load users.')
       setRows(uj.users || [])
       try {
         const rj = await rr.json()
-        if (rr.ok && Array.isArray(rj.roles) && rj.roles.length) { setRoles(rj.roles); setRolesReady(true) }
+        if (rr.ok && Array.isArray(rj.roles) && rj.roles.length) { setRoles(rj.roles); setRolesReady(true); if (!rj.roles.some((r: any) => r.key === addRole)) setAddRole((rj.roles.find((r: any) => !r.is_system) || rj.roles[0]).key) }
         else setRolesReady(false)
       } catch { setRolesReady(false) }
     } catch (e: any) { setError(e.message || String(e)) } finally { setLoading(false) }
@@ -88,7 +101,7 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
       const body: any = { email, password: password || undefined }
       if (rolesReady) { body.role = addRole === 'admin' ? 'admin' : 'member'; body.access_role = addRole }
       else body.role = 'member'
-      const r = await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const r = await fetch(USERS_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to add user.')
       if (j.password) setMsg(j.password.passwordSet ? `Login created for ${j.email}. Share the email + password with them securely — they can sign in right away.` : (j.password.note || `Access granted to ${j.email}.`))
       else setMsg(j.invite?.sent ? `Invite sent to ${j.email}. They'll set a password from the email.` : (j.invite?.note || `Access granted to ${j.email}.`))
@@ -100,7 +113,7 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
   async function patch(email: string, body: any, okMsg?: string) {
     setError(null); setMsg(null); setWarn(null)
     try {
-      const r = await fetch('/api/users', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, ...body }) })
+      const r = await fetch(USERS_API, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, ...body }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to update.')
       if (okMsg) setMsg(okMsg)
       if (j.warning) setWarn(String(j.warning))
@@ -116,17 +129,17 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
   }
 
   async function del(email: string) {
-    if (!window.confirm(`Remove ${email}? This deletes their access AND their login account. They will no longer be able to sign in. This cannot be undone.`)) return
+    if (!window.confirm(G ? `Take ${email} off the Garden Hotel? A hotel-only login is switched off; someone who also works on the Stay Hospitality side keeps that.` : `Remove ${email}? This deletes their access AND their login account. They will no longer be able to sign in. This cannot be undone.`)) return
     setError(null); setMsg(null); setWarn(null)
     try {
-      const r = await fetch('/api/users', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) })
+      const r = await fetch(USERS_API, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Failed to delete user.')
       setMsg(`Removed ${email}.`); load()
     } catch (e: any) { setError(e.message || String(e)) }
   }
 
   const roleOf = (u: Row): { key: string; label: string } => {
-    if (u.email === OWNER) return { key: 'admin', label: 'Owner' }
+    if (u.email === OWNER) return { key: 'admin', label: G ? 'General manager (owner)' : 'Owner' }
     if (rolesReady && u.access_role) {
       const r = roles.find(x => x.key === u.access_role)
       if (r) return { key: r.key, label: r.label }
@@ -195,7 +208,7 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
             {filtered.map(u => (
               <UserRow key={u.email} u={u} me={u.email === myEmail} isOwner={isOwner} roles={roles} rolesReady={rolesReady} roleInfo={roleOf(u)}
                 expanded={open === u.email} onToggle={() => setOpen(open === u.email ? null : u.email)}
-                onPatch={patch} onResetPw={() => resetPw(u.email)} onDelete={() => del(u.email)} gRoles={gRoles} onGarden={k => setGarden(u, k)} />
+                onPatch={patch} onResetPw={() => resetPw(u.email)} onDelete={() => del(u.email)} gRoles={gRoles} onGarden={k => setGarden(u, k)} business={business} canVr={canVr} />
             ))}
           </ul>
         )}
@@ -204,13 +217,15 @@ export function UsersAdmin({ myEmail, isOwner }: { myEmail: string; isOwner: boo
   )
 }
 
-function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onToggle, onPatch, onResetPw, onDelete, gRoles, onGarden }: {
+function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onToggle, onPatch, onResetPw, onDelete, gRoles, onGarden, business, canVr }: {
   u: Row; me: boolean; isOwner: boolean; roles: RoleRow[]; rolesReady: boolean; roleInfo: { key: string; label: string }
   expanded: boolean; onToggle: () => void
   onPatch: (email: string, body: any, okMsg?: string) => Promise<void>
   onResetPw: () => void; onDelete: () => void
   gRoles: { key: string; label: string }[]; onGarden: (key: string) => void
+  business: 'vr' | 'garden'; canVr: boolean
 }) {
+  const G = business === 'garden'
   const isOwnerRow = u.email === OWNER
   // A non-owner admin looking at the owner or at another admin.
   const lockedRow = !isOwner && (isOwnerRow || u.role === 'admin')
@@ -244,7 +259,9 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
               {name && <span className="text-[11px] text-muted font-normal">{u.email}</span>}
               {me && <span className="text-[11px] text-muted font-normal">(you)</span>}
               <span className="text-[10px] font-semibold px-1.5 py-px rounded bg-brand-50 text-brand-700">{roleInfo.label}</span>
-              {(u.garden_role || isOwnerRow) && <span className="text-[10px] font-semibold px-1.5 py-px rounded bg-emerald-100 text-emerald-700">Garden: {isOwnerRow ? 'General manager' : (gRoles.find(g => g.key === u.garden_role)?.label || u.garden_role)}</span>}
+              {!G && (u.garden_role || isOwnerRow) && <span className="text-[10px] font-semibold px-1.5 py-px rounded bg-emerald-100 text-emerald-700">Garden: {isOwnerRow ? 'General manager' : (gRoles.find(g => g.key === u.garden_role)?.label || u.garden_role)}</span>}
+              {G && (u.vr || isOwnerRow) && <span className="text-[10px] font-semibold px-1.5 py-px rounded bg-slate-100 text-slate-700">Stay Hospitality: {isOwnerRow ? 'Owner' : (gRoles.find(g => g.key === u.vr_role)?.label || (u.vr_role === 'admin' ? 'Admin' : u.vr_role || 'no role'))}</span>}
+              {G && !u.vr && !isOwnerRow && <span className="text-[10px] font-semibold px-1.5 py-px rounded bg-app text-muted">hotel only</span>}
               {u.status === 'disabled' && <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">Disabled</span>}
             </div>
             <div className="text-[11px] text-muted mt-0.5 inline-flex items-center gap-1">
@@ -303,25 +320,26 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
             )}
           </div>
 
-          {/* The Garden Hotel role — the other half of a dual role (migration 118). The hotel's own
-              Team & access sets the same thing; this is here so both roles are managed in one place. */}
-          {isOwner && !isOwnerRow && gRoles.length > 0 && (
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 lg:col-span-2">
-              <div className="text-[12px] font-bold text-ink mb-2">Garden Hotel role</div>
+          {/* THE OTHER HALF OF A DUAL ROLE (migration 118). On the VR console: the Garden Hotel role
+              (owner). On the hotel console: the Stay Hospitality role (owner or a VR admin). */}
+          {(G ? canVr : isOwner) && !isOwnerRow && gRoles.length > 0 && (
+            <div className="rounded-xl border border-line bg-app/40 p-3 lg:col-span-2">
+              <div className="text-[12px] font-bold text-ink mb-2 inline-flex items-center gap-1.5"><ShieldCheck size={13} className="text-brand-600" /> {G ? 'Stay Hospitality role' : 'Garden Hotel role'}</div>
               <div className="flex flex-wrap gap-1.5">
-                {[{ key: '', label: 'No hotel access' }].concat(gRoles).map(g => {
-                  const active = (u.garden_role || '') === g.key
+                {[{ key: '', label: G ? 'No Stay Hospitality access' : 'No hotel access' }].concat(gRoles).map(g => {
+                  const cur = G ? (u.vr ? (u.vr_role || '') : '') : (u.garden_role || '')
+                  const active = cur === g.key
                   return (
                     <button key={g.key || 'none'} disabled={me} onClick={() => { if (!active) onGarden(g.key) }}
-                      className={`text-[11px] px-2.5 py-1.5 rounded-lg border font-semibold ${active ? 'bg-emerald-700 border-emerald-700 text-white' : 'bg-white border-line text-muted hover:border-emerald-300'}`}>{g.label}</button>
+                      className={`text-[11px] px-2.5 py-1.5 rounded-lg border font-semibold transition-colors disabled:cursor-not-allowed ${active ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-line text-muted hover:border-brand-300 disabled:opacity-50'}`}>{g.label}</button>
                   )
                 })}
               </div>
-              <p className="text-[10px] text-muted mt-1.5">One login, two roles: the VR role above decides the Stay Hospitality side, this one decides the hotel. What each hotel role can do is set on Garden Hotel → Team &amp; access → Roles.</p>
+              <p className="text-[10px] text-muted mt-1.5">One login, two roles — the role above decides {G ? 'the hotel' : 'the Stay Hospitality side'}, this one decides {G ? 'the Stay Hospitality side' : 'the Garden Hotel'}. Switch business from the dropdown under the logo.</p>
             </div>
           )}
           {isOwnerRow && (
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 lg:col-span-2 text-[12px] text-muted"><b className="text-ink">Garden Hotel:</b> General manager — the owner always has both businesses in full.</div>
+            <div className="rounded-xl border border-line bg-app/40 p-3 lg:col-span-2 text-[12px] text-muted"><b className="text-ink">{G ? 'Stay Hospitality' : 'Garden Hotel'}:</b> {G ? 'Owner' : 'General manager'} — the owner always has both businesses in full.</div>
           )}
 
           {/* WHAT THEY MAY SEE, as opposed to which tabs they may open (Jon 2026-08-10: "only view
@@ -329,7 +347,7 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
               Deliberately NOT part of any role: promoting somebody to admin must not quietly hand
               them the payroll. Sits above the tab table because it is a different question, and
               outside the rolesReady guard because it does not depend on the roles table at all. */}
-          {!isOwnerRow && (
+          {!isOwnerRow && !G && (
             <div className="rounded-xl border border-line bg-app/40 p-3 lg:col-span-2">
               <div className="text-[12px] font-bold text-ink mb-2 inline-flex items-center gap-1.5">
                 <ShieldCheck size={13} className="text-brand-600" /> What {name || u.email} may see
@@ -405,7 +423,7 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
               row only stops following the role once you set it here, and "Use role" puts it back.
               Showing the role's own level beside the picker is what keeps this readable — you can
               always see what you are departing from. */}
-          {!isOwnerRow && rolesReady && (
+          {!isOwnerRow && rolesReady && !G && (
             <div className="rounded-xl border border-line bg-app/40 p-3 lg:col-span-2">
               <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
                 <div className="text-[12px] font-bold text-ink inline-flex items-center gap-1.5">

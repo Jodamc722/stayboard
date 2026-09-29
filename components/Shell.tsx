@@ -277,7 +277,8 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   const canSeeGarden = () => isOwner || !!gLevels || (!!units && units.includes('garden'))
   const canSeeVr = () => isOwner || !units || units.includes('vr')
   // The hotel's sidebar shows what the hotel role can see; before /api/access/me answers, nothing.
-  const gVisible = (key: string) => isOwner || (!!gLevels && !!gLevels[key] && gLevels[key] !== 'off')
+  const gOn = (key: string) => !!gLevels && !!gLevels[key] && gLevels[key] !== 'off'
+  const gVisible = (key: string) => isOwner || gOn(key) || (key === 'users' && ['settings', 'setup', 'staff', 'adam'].some(gOn))
   const gardenNav = GARDEN_NAV.filter(g => gVisible(g.key))
   const pinsLoaded = useRef(false)
   const dragFrom = useRef<number | null>(null)
@@ -454,7 +455,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   // them silently.
   function movePin(from: number, to: number) {
     if (from === to || from < 0 || to < 0) return
-    const visible = pinned.map(p => p.to)
+    const visible = (business === 'garden' ? (pins || []).filter(p => p.startsWith('/garden')) : pinned.map(p => p.to))
     if (from >= visible.length || to >= visible.length) return
     const next = visible.slice()
     const moved = next.splice(from, 1)[0]
@@ -552,32 +553,17 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     )
   }
 
-  const navBody = (onNavigate?: () => void) => business === 'garden' ? (
-    // THE HOTEL'S OWN SIDEBAR. Nothing of the VR portfolio here — no pins, no groups — just the
-    // hotel's pages and, for admins, the door back to Users & admin.
-    <>
-      {GARDEN_SECTIONS.map(section => {
-        // Users live in the hotel's own Team & access (migration 118), not in the VR admin.
-        const items = section.items.filter(it => gVisible(it.key))
-        if (!items.length) return null
-        return (
-          <div key={section.title}>
-            <div className="mt-3.5 first:mt-1 px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] font-bold text-muted/60">{section.title}</div>
-            {items.map(({ to, label, Icon }) => {
-              const active = path === to || (to !== '/garden' && !!path && path.startsWith(to + '/'))
-              return (
-                <Link key={to} href={to} prefetch={false} onClick={onNavigate}
-                  className={`flex items-center gap-3 px-2.5 py-[7px] rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
-                  <Icon size={16} strokeWidth={active ? 2.25 : 2} className={active ? 'text-brand-600' : ''} />
-                  <span className="truncate">{label}</span>
-                </Link>
-              )
-            })}
-          </div>
-        )
-      })}
-    </>
-  ) : (
+  // ONE SIDEBAR FOR BOTH BUSINESSES (Jon, 2026-09-29: "It's not a completely different web app.
+  // It's the same web app, same design"). The hotel gets the same Jump to, the same Your tabs and
+  // the same section list as the VR side — only the pages behind it differ.
+  const G = business === 'garden'
+  const gActive = (to: string) => path === to || (to !== '/garden' && !!path && path.startsWith(to + '/'))
+  const gardenSections: NavSection[] = GARDEN_SECTIONS.map(sc => ({ title: sc.title, items: sc.items.filter(it => gVisible(it.key)).map(it => ({ to: it.to, label: it.label, Icon: it.Icon })) })).filter(sc => sc.items.length > 0)
+  const gardenPinned: NavItem[] = (pins || []).map(p => gardenNav.find(g => g.to === p)).filter(Boolean).map((g: any) => ({ to: g.to, label: g.label, Icon: g.Icon }))
+  const navSections: NavSection[] = G ? gardenSections : sections
+  const navPinned: NavItem[] = G ? gardenPinned : pinned
+
+  const navBody = (onNavigate?: () => void) => (
     <>
       <button type="button" onClick={() => { setPaletteOpen(true); if (onNavigate) onNavigate() }}
         className="w-full flex items-center gap-2.5 mb-2 px-3 py-2 rounded-xl border border-line bg-app/60 text-sm text-muted hover:bg-white hover:border-brand-200 transition-all">
@@ -601,12 +587,12 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
             <Star size={11} className="fill-brand-200 text-brand-400" /> Your tabs
             <span className="ml-auto font-semibold normal-case tracking-normal text-[10px] text-muted/50">drag to reorder</span>
           </div>
-          {pinned.length === 0 && (
+          {navPinned.length === 0 && (
             <p className="px-2 pb-1.5 text-[11px] text-muted/70">Star any tab below and it moves up here — your own order, front and center.</p>
           )}
-          {pinned.map(({ to, label, Icon }, idx) => {
+          {navPinned.map(({ to, label, Icon }, idx) => {
             const pinSet = tabSetForPath(to)
-            const active = pinSet && sections.some(sc => sc.items.some(it => it.set === pinSet.set.key && it.to === to)) ? itemActive({ to, label, Icon, set: pinSet.set.key }) : isActive(to)
+            const active = G ? gActive(to) : pinSet && sections.some(sc => sc.items.some(it => it.set === pinSet.set.key && it.to === to)) ? itemActive({ to, label, Icon, set: pinSet.set.key }) : isActive(to)
             return (
               <div key={'pin-' + to} draggable
                 onDragStart={() => { dragFrom.current = idx }}
@@ -629,7 +615,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
         </div>
       )}
 
-      {sections.map(section => {
+      {navSections.map(section => {
         // Jon 2026-08-19: "if starred it should not show up again below, it should be MOVED." So a
         // pinned tab leaves its group entirely — Daily is its only home until it is unstarred, and
         // a group with nothing left drops out of the list rather than sitting there empty.
@@ -644,7 +630,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
             </div>
             {rest.map((item) => {
               const { to, label, Icon } = item
-              const active = itemActive(item)
+              const active = G ? gActive(item.to) : itemActive(item)
               const on = isPinned(to)
               return (
                 <div key={to} className={`group flex items-center gap-2.5 px-2.5 py-[7px] rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
@@ -812,7 +798,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
         </div>
       )}
 
-      {paletteOpen && <JumpPalette sections={sections.map(sc => ({ title: sc.title, items: sc.items.flatMap(it => it.set ? setTabs(it.set).filter(t => canSee(t.to)).map(t => ({ to: t.to, label: it.label + ' · ' + t.label, Icon: it.Icon })) : [it]) }))} onClose={() => setPaletteOpen(false)} />}
+      {paletteOpen && <JumpPalette sections={G ? gardenSections : sections.map(sc => ({ title: sc.title, items: sc.items.flatMap(it => it.set ? setTabs(it.set).filter(t => canSee(t.to)).map(t => ({ to: t.to, label: it.label + ' · ' + t.label, Icon: it.Icon })) : [it]) }))} onClose={() => setPaletteOpen(false)} />}
     </div>
     </ShellMenu.Provider>
   )

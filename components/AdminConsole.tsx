@@ -36,6 +36,15 @@ import {
 import { UsersAdmin } from '@/components/UsersAdmin'
 import { RolesAdmin } from '@/components/RolesAdmin'
 import { SystemCheck } from '@/components/SystemCheck'
+import { GARDEN_PAGE_DEFS } from '@/lib/garden/pages'
+import type { RolesRegistry } from '@/components/RolesAdmin'
+
+// The hotel's pages as the Roles editor's registry (same editor, the hotel's API).
+const GARDEN_REGISTRY: RolesRegistry = {
+  features: GARDEN_PAGE_DEFS.map(p => ({ key: p.key, label: p.label, path: p.to, group: p.section === 'Admin' ? 'Settings' : p.section })),
+  groupOrder: ['Overview', 'Operations', 'Guests', 'Money', 'Settings'],
+  api: '/api/garden/roles', defaultLanding: '/garden', newPerms: { today: 'view', handbook: 'view' },
+}
 
 // ── LAZY PANELS ─────────────────────────────────────────────────────────────────────────────────
 // One chunk each, fetched the moment you open that setting and never before. This is what takes
@@ -73,6 +82,11 @@ const L = {
   customFields: dynamic(() => import('@/components/CustomFieldsAdmin').then(m => m.CustomFieldsAdmin), { loading: spin, ssr: false }),
   talkroute: dynamic(() => import('@/components/TalkrouteAdmin').then(m => m.TalkrouteAdmin), { loading: spin, ssr: false }),
   aiModels: dynamic(() => import('@/components/AiModelsAdmin').then(m => m.AiModelsAdmin), { loading: spin, ssr: false }),
+  // The Garden Hotel's panels (business="garden").
+  gSettings: dynamic(() => import('@/components/GardenSettings').then(m => m.GardenSettings), { loading: spin, ssr: false }),
+  gDesk: dynamic(() => import('@/components/GardenDesk').then(m => m.GardenDesk), { loading: spin, ssr: false }),
+  gTeam: dynamic(() => import('@/components/GardenTeam').then(m => m.GardenTeam), { loading: spin, ssr: false }),
+  gAdam: dynamic(() => import('@/components/AdamAdmin').then(m => m.AdamAdmin), { loading: spin, ssr: false }),
 }
 
 // ── THE DIRECTORY ───────────────────────────────────────────────────────────────────────────────
@@ -87,7 +101,8 @@ type Entry = {
   group: string
   Icon: any
   ownerOnly?: boolean
-  render: (p: { isOwner: boolean }) => React.ReactNode
+  render: (p: { isOwner: boolean; canEdit?: boolean }) => React.ReactNode
+  need?: string        // garden: the hotel page key whose level gates this panel (full = edit it)
 }
 
 const ENTRIES: Entry[] = [
@@ -252,6 +267,45 @@ const ENTRIES: Entry[] = [
 
 const GROUP_ORDER = ['Start here', 'Operations', 'Communications', 'Team & money', 'AI', 'Access']
 
+// ── THE GARDEN HOTEL'S DIRECTORY ────────────────────────────────────────────────────────────────
+// Same console, same directory, same search — the hotel's own settings behind it (Jon, 2026-09-29:
+// "it should still be users and settings… same web app, same design, just different API
+// connections"). Each entry is gated by the hotel role's level on its page key.
+const GARDEN_ENTRIES: Entry[] = [
+  { key: 'feeds', title: 'Cloudbeds & feeds', group: 'Start here', Icon: Plug, need: 'setup',
+    blurb: 'Whether Cloudbeds is connected, when each feed last synced — rooms, reservations, housekeeping, calendar, payments — and a sync now.',
+    find: 'cloudbeds connect api key property sync status feeds integration health broken',
+    render: p => <L.gDesk view="setup" canEdit={!!p.canEdit} owner={p.isOwner} /> },
+  { key: 'hotel', title: 'Hotel profile', group: 'Start here', Icon: Building2, need: 'settings',
+    blurb: 'Name, desk phone, manager, check-in and check-out times, the Slack channel the hotel posts to.',
+    find: 'hotel name phone manager check in check out time slack channel address profile',
+    render: p => <L.gSettings only="hotel" owner={p.isOwner} canEdit={!!p.canEdit} /> },
+  { key: 'triggers', title: 'Triggers & automations', group: 'Operations', Icon: Bot, need: 'settings',
+    blurb: 'When something happens at the hotel (an arrival tomorrow, a dirty room, a missed call, a bad review), what the app does by itself.',
+    find: 'trigger triggers automation automatic event rule action queue call task slack review',
+    render: p => <L.gSettings only="triggers" owner={p.isOwner} canEdit={!!p.canEdit} /> },
+  { key: 'staff', title: 'Staff roster', group: 'Team & money', Icon: HardHat, need: 'staff',
+    blurb: 'The hotel\'s front desk, housekeeping, maintenance and managers — who reports to whom. The scheduler plans shifts from this list.',
+    find: 'staff roster team housekeeping front desk maintenance manager department reports to crew people',
+    render: p => <L.gTeam rosterOnly canEdit={!!p.canEdit} /> },
+  { key: 'voice', title: 'Guest voice', group: 'Communications', Icon: MessageSquare, need: 'settings',
+    blurb: 'How the hotel sounds in welcome calls, messages and review replies — guidelines, examples, sign-off, languages.',
+    find: 'voice tone guest message welcome call script review reply sign off language spanish example',
+    render: p => <L.gSettings only="voice" owner={p.isOwner} canEdit={!!p.canEdit} /> },
+  { key: 'phone', title: 'Phone system', group: 'Communications', Icon: PhoneCall, need: 'settings',
+    blurb: 'Which phone provider the desk uses and how its calls reach the call desk.',
+    find: 'phone talkroute twilio ringcentral webhook calls voicemail number provider',
+    render: p => <L.gSettings only="phone" owner={p.isOwner} canEdit={!!p.canEdit} /> },
+  { key: 'adam', title: 'Adam — name, voice & direction', group: 'AI', Icon: Sparkles, need: 'adam',
+    blurb: 'How Adam sounds, what he is told to push on, and whether he is switched on. What he knows lives on his tab.',
+    find: 'adam ai agent voice direction name switch off assistant',
+    render: p => <L.gAdam only="voice" owner={p.isOwner} canEdit={!!p.canEdit} /> },
+  { key: 'ai-models', title: 'AI models — which model runs which task', group: 'AI', Icon: Cpu, ownerOnly: true,
+    blurb: 'Every job the app hands to Claude — Adam\'s included — and which model does it.',
+    find: 'ai model models opus sonnet haiku cost adam',
+    render: p => <L.aiModels isOwner={p.isOwner} /> },
+]
+
 type Tab = 'people' | 'roles' | 'settings'
 const TABS: { key: Tab; label: string; Icon: any }[] = [
   { key: 'people', label: 'People', Icon: Users },
@@ -259,8 +313,15 @@ const TABS: { key: Tab; label: string; Icon: any }[] = [
   { key: 'settings', label: 'Settings', Icon: Sliders },
 ]
 
-export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: boolean }) {
-  const [tab, setTab] = useState<Tab>('people')
+export function AdminConsole({ myEmail, isOwner, business = 'vr', gLevels, canVr = false }: { myEmail: string; isOwner: boolean; business?: 'vr' | 'garden'; gLevels?: Record<string, string>; canVr?: boolean }) {
+  const G = business === 'garden'
+  const RANK: Record<string, number> = { off: 0, view: 1, edit: 2, full: 3 }
+  const lvl = (k?: string) => (k && gLevels ? RANK[gLevels[k] || 'off'] || 0 : 0)
+  const ALL: Entry[] = G ? GARDEN_ENTRIES.filter(e => !e.need || lvl(e.need) >= 1) : ENTRIES
+  const canPeople = !G || lvl('users') >= 1
+  const panelOwner = (e: Entry) => G ? (e.need ? lvl(e.need) >= 3 : isOwner) : isOwner
+  const panelEdit = (e: Entry) => G ? (e.need ? lvl(e.need) >= 2 : isOwner) : isOwner
+  const [tab, setTab] = useState<Tab>(business === 'garden' && !(gLevels && ['view', 'edit', 'full'].includes(gLevels.users || '')) ? 'settings' : 'people')
   const [panel, setPanel] = useState<string | null>(null)
   const [q, setQ] = useState('')
   // Unseen thoughts (what Eve would have done) — a badge on the Eve entry. Admins only; a 403 is a 0.
@@ -277,7 +338,7 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
     const t = sp.get('tab')
     if (t === 'roles' || t === 'settings' || t === 'people') setTab(t)
     const p = sp.get('panel')
-    if (p && ENTRIES.some(e => e.key === p)) { setTab('settings'); setPanel(p) }
+    if (p && ALL.some(e => e.key === p)) { setTab('settings'); setPanel(p) }
   }, [])
   const writeUrl = (t: Tab, p: string | null) => {
     const url = new URL(window.location.href)
@@ -291,17 +352,17 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
 
   const hits = useMemo(() => {
     const n = q.trim().toLowerCase()
-    if (!n) return ENTRIES
-    return ENTRIES.filter(e => (e.title + ' ' + e.blurb + ' ' + e.find + ' ' + e.group).toLowerCase().includes(n))
-  }, [q])
+    if (!n) return ALL
+    return ALL.filter(e => (e.title + ' ' + e.blurb + ' ' + e.find + ' ' + e.group).toLowerCase().includes(n))
+  }, [q, ALL])
 
-  const current = panel ? ENTRIES.find(e => e.key === panel) || null : null
+  const current = panel ? ALL.find(e => e.key === panel) || null : null
 
   return (
     <div>
       <div className="sticky top-0 z-20 -mx-3 px-3 py-1.5 bg-app/95 backdrop-blur sm:static sm:mx-0 sm:px-0 sm:py-0 sm:bg-transparent sm:backdrop-blur-none mb-3 sm:mb-5">
         <div className="inline-flex rounded-xl border border-line bg-white p-1">
-          {TABS.map(({ key, label, Icon }) => (
+          {TABS.filter(t => canPeople || t.key === 'settings').map(({ key, label, Icon }) => (
             <button key={key} onClick={() => pickTab(key)}
               className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${tab === key ? 'bg-brand-600 text-white' : 'text-muted hover:text-ink'}`}>
               <Icon size={14} /> {label}
@@ -310,8 +371,8 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
         </div>
       </div>
 
-      {tab === 'people' && <UsersAdmin myEmail={myEmail} isOwner={isOwner} />}
-      {tab === 'roles' && <RolesAdmin isOwner={isOwner} />}
+      {tab === 'people' && canPeople && <UsersAdmin myEmail={myEmail} isOwner={G ? lvl('users') >= 3 : isOwner} business={business} canVr={canVr} />}
+      {tab === 'roles' && canPeople && <RolesAdmin isOwner={G ? lvl('users') >= 3 : isOwner} registry={G ? GARDEN_REGISTRY : undefined} />}
 
       {tab === 'settings' && (current ? (
         // ── ONE SETTING, FULL WIDTH ──
@@ -325,7 +386,7 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
               <div className="flex items-center gap-2 flex-wrap">
                 <current.Icon size={15} className="text-muted shrink-0" />
                 <h2 className="text-[15px] font-bold text-ink">{current.title}</h2>
-                {current.ownerOnly && !isOwner && (
+                {(G ? !panelOwner(current) : current.ownerOnly && !isOwner) && (
                   <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded-md bg-app text-muted border border-line inline-flex items-center gap-1">
                     <Lock size={9} /> View only
                   </span>
@@ -333,7 +394,7 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
               </div>
               <p className="text-[12.5px] text-muted mt-1">{current.blurb}</p>
             </div>
-            <div className="p-4">{current.render({ isOwner })}</div>
+            <div className="p-4">{current.render({ isOwner: panelOwner(current), canEdit: panelEdit(current) })}</div>
           </div>
         </div>
       ) : (
@@ -342,7 +403,7 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
           <div className="relative mb-3">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
             <input value={q} onChange={e => setQ(e.target.value)} autoComplete="off"
-              placeholder="What do you want to change? Try “spanish”, “password”, “approve”…"
+              placeholder={G ? 'What do you want to change? Try “cloudbeds”, “voice”, “staff”…' : 'What do you want to change? Try “spanish”, “password”, “approve”…'}
               className="w-full rounded-xl border-2 border-line bg-white pl-9 pr-8 py-2.5 text-[13.5px] focus:outline-none focus:border-ink" />
             {q && <button onClick={() => setQ('')} title="Clear search" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={13} /></button>}
           </div>
@@ -371,7 +432,7 @@ export function AdminConsole({ myEmail, isOwner }: { myEmail: string; isOwner: b
                           {e.key === 'eve' && eveThoughts > 0 && (
                             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-brand-600 text-white" title="What she would have done, not yet seen">{eveThoughts} thought{eveThoughts === 1 ? '' : 's'}</span>
                           )}
-                          {e.ownerOnly && !isOwner && (
+                          {(G ? !panelOwner(e) : e.ownerOnly && !isOwner) && (
                             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-app text-muted border border-line inline-flex items-center gap-1">
                               <Lock size={8} /> view only
                             </span>
