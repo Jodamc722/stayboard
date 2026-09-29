@@ -9,6 +9,7 @@
 //      in as an admin does not prove who they are twice.
 import 'server-only'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { pageRows } from '@/lib/db-page'
 
 export type Kind = 'glitch' | 'claim' | 'project'
 
@@ -108,8 +109,19 @@ export async function trashRecord(db: any, kind: Kind, id: string, by: string): 
     // Shaped as {table, rows} so restore knows where each pile goes without guessing from columns.
     for (const c of PROJECT_CHILDREN) {
       try {
-        const { data } = await db.from(c.table).select('*').eq(c.col, id).limit(5000)
-        if (Array.isArray(data) && data.length) children.push({ table: c.table, rows: data })
+        // PAGED ON id (2026-09-29). This photograph is the only copy once the delete cascades, and
+        // .limit(5000) returned 1,000 — a board with more notes or steps than that lost the rest for
+        // good. View prefs (one row per person, no id column) keep a single read.
+        if (c.table === 'project_view_prefs') {
+          const { data } = await db.from(c.table).select('*').eq(c.col, id).limit(1000) // deliberate cap: one row per person on the board
+          if (Array.isArray(data) && data.length) children.push({ table: c.table, rows: data })
+          continue
+        }
+        const read = await pageRows<any>((a, b) => db.from(c.table).select('*').eq(c.col, id).order('id').range(a, b), 20)
+        // Rows came back and then the read stopped: the copy would be short, so nothing is deleted.
+        // (No rows at all is what a table that does not exist yet returns — it contributes nothing.)
+        if (read.truncated && read.rows.length) return { ok: false, error: 'Could not copy all of ' + c.table + ', so nothing was deleted.' }
+        if (read.rows.length) children.push({ table: c.table, rows: read.rows })
       } catch { /* a table that does not exist yet simply contributes nothing */ }
     }
   }
