@@ -101,16 +101,26 @@ export async function POST(req: NextRequest) {
   const all = convos ?? []
 
   // 2) Which already have an up-to-date sentiment row?
-  const { data: existing } = await sb
-    .from('guesty_conversation_sentiment')
-    .select('conversation_id, last_message_at, status, marked_sensitive_at, triggers')
-  if (existing === null) {
-    return NextResponse.json({ error: 'Sentiment table not found - run guest_sentiment_migration.sql in Supabase first.' }, { status: 503 })
+  // ONLY THE CANDIDATES' ROWS (2026-09-28 audit, D7). This read the whole state table with no
+  // filter; rows are never deleted, and past PostgREST's 1,000-row cap an arbitrary subset came
+  // back — a conversation whose row was cut looked "never scanned" and was re-scored on Sonnet
+  // every run. The candidate set is at most 400 ids, read 200 at a time.
+  const existing: any[] = []
+  for (let i = 0; i < all.length; i += 200) {
+    const { data: part, error: eErr } = await sb
+      .from('guesty_conversation_sentiment')
+      .select('conversation_id, last_message_at, status, marked_sensitive_at, triggers')
+      .in('conversation_id', all.slice(i, i + 200).map(c => c.id))
+    if (eErr) {
+      const missing = eErr.code === '42P01' || /does not exist|schema cache/i.test(eErr.message)
+      return NextResponse.json({ error: missing ? 'Sentiment table not found - run guest_sentiment_migration.sql in Supabase first.' : `sentiment state: ${eErr.message}` }, { status: 503 })
+    }
+    for (const r of (part ?? [])) existing.push(r)
   }
   const seen = new Map<string, string>()
   const markedSet = new Set<string>()
   const prevTriggers = new Map<string, string[]>()
-  ;(existing ?? []).forEach((r: any) => {
+  existing.forEach((r: any) => {
     seen.set(r.conversation_id, str(r.last_message_at))
     if (r.marked_sensitive_at) markedSet.add(r.conversation_id)
     prevTriggers.set(r.conversation_id, Array.isArray(r.triggers) ? r.triggers.map(String) : [])
@@ -245,7 +255,12 @@ Return STRICT minified JSON only, no markdown:
       const staleHrs = lastGuestAt ? (Date.now() - new Date(lastGuestAt).getTime())/ 3600000 : 0
       if (band === 'negative' && awaiting && staleHrs >= 2) triggers.push('unanswered_negative')
 
-      const dissatisfied= aiDissatisfied || kw || score <= 2
+      // A KEYWORD IS A TAG, NEVER A VERDICT (2026-09-28 audit, D6). The list holds 'review', 'a/c',
+      // 'cancel', 'manager', 'smell' — so "we'll leave you a great review" or "how do I set the
+      // a/c?" was filed as an unhappy guest, surfaced on the Command Center as "within the hour",
+      // and written into Guesty as sensitive. The keyword stays in `triggers`; only the model's
+      // reading or a low score makes a guest dissatisfied.
+      const dissatisfied = aiDissatisfied || score <= 2
 
       await sb.from('guesty_conversation_sentiment').upsert({
         conversation_id: c.id,
@@ -269,8 +284,9 @@ Return STRICT minified JSON only, no markdown:
       scanned++
       if (triggers.length) flagged++
 
-      // AUTO-FLAG SENSITIVE: only on clear complaints (low score or risk keyword), idempotent, written to Guesty.
-      const strong = score <= 2 || kw
+      // AUTO-FLAG SENSITIVE: only on clear complaints — a low score the model (or a risk keyword)
+      // backs up; a keyword alone never writes to Guesty. Idempotent.
+      const strong = score <= 2 && (aiDissatisfied || kw)
       if (strong && c.reservation_id && !markedSet.has(c.id)) {
         try {
           const why = str(parsed.topIssue).trim() ? `${str(parsed.topIssue).trim()}: "${str(parsed.excerpt).trim().slice(0, 120)}"` : str(parsed.reason).trim().slice(0, 200)
