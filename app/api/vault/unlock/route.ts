@@ -9,6 +9,7 @@
 // never sees it; it just watches a countdown and asks again when that hits zero.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import {
   logAccess, checkVaultCode, codeFrom, mintUnlock, unlockValid,
   UNLOCK_COOKIE, UNLOCK_SECONDS, vaultKeyReady,
@@ -23,6 +24,7 @@ const ipOf = (req: NextRequest) => req.headers.get('x-forwarded-for')?.split(','
 export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const open = unlockValid(req.cookies.get(UNLOCK_COOKIE)?.value, String(access.email || ''))
   return NextResponse.json({ ok: true, open, seconds: UNLOCK_SECONDS })
 }
@@ -31,6 +33,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const me = String(access.email || '')
   const b = await req.json().catch(() => ({} as any))
 
@@ -59,6 +62,7 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   await logAccess({ itemId: null, email: String(access.email || ''), action: 'lock', detail: 'locked early', ip: ipOf(req) })
   const res = NextResponse.json({ ok: true })
   res.cookies.set(UNLOCK_COOKIE, '', { httpOnly: true, secure: true, sameSite: 'lax', path: '/', maxAge: 0 })

@@ -5,6 +5,7 @@
 // back into a group chat.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ITEMS, GRANTS, LOG, accessFor, logAccess } from '@/lib/vault'
 import { snapshotVault } from '@/lib/vault-backup'
@@ -21,6 +22,7 @@ const looksLikeEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)
 export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const me = String(access.email || '')
   const id = str(req.nextUrl.searchParams.get('id'), 60).trim()
   if (!id) return NextResponse.json({ ok: false, error: 'Which item?' }, { status: 400 })
@@ -47,6 +49,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const me = String(access.email || '')
 
   const b = await req.json().catch(() => ({} as any))
@@ -87,6 +90,7 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const me = String(access.email || '')
   const id = str(req.nextUrl.searchParams.get('id'), 60).trim()
   const who = email(req.nextUrl.searchParams.get('email'))

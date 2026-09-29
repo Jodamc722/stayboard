@@ -9,6 +9,7 @@
 // why it is owner-only, code-gated, logged, and never cached.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ITEMS, logAccess, checkVaultCode, codeFrom, codeEntered, vaultKeyReady } from '@/lib/vault'
 import { listSnapshots, readSnapshot, itemsToCsv, snapshotVault } from '@/lib/vault-backup'
@@ -22,6 +23,7 @@ const ipOf = (req: NextRequest) => req.headers.get('x-forwarded-for')?.split(','
 export async function GET() {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   if (access.role !== 'admin') return NextResponse.json({ ok: false, error: 'Admins only.' }, { status: 403 })
   try {
     const snapshots = await listSnapshots()
@@ -34,6 +36,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const me = String(access.email || '')
   const b = await req.json().catch(() => ({} as any))
 

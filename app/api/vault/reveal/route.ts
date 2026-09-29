@@ -7,6 +7,7 @@
 //   - no-store, so the plaintext is not sitting in a disk cache afterwards.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   ITEMS, accessFor, decryptSecret, logAccess, vaultKeyReady, checkVaultCode, codeFrom, codeEntered,
@@ -21,6 +22,7 @@ const ipOf = (req: NextRequest) => req.headers.get('x-forwarded-for')?.split(','
 export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const me = String(access.email || '')
 
   const b = await req.json().catch(() => ({} as any))

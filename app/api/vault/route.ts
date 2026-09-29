@@ -4,6 +4,7 @@
 // request (see ./reveal). The list is safe to render, cache in a component, and screenshot.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   ITEMS, GRANTS, COLLECTIONS, accessFor, grantedItemIds, collectionsFor, logAccess, publicItem,
@@ -22,6 +23,7 @@ const ipOf = (req: NextRequest) => req.headers.get('x-forwarded-for')?.split(','
 export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const me = String(access.email || '')
   const owner = isSuperadmin(access.email)
 
@@ -111,6 +113,7 @@ function daysUntil(d: string): number | null {
 export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const me = String(access.email || '')
 
   const b = await req.json().catch(() => ({} as any))
@@ -161,6 +164,7 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const me = String(access.email || '')
 
   const b = await req.json().catch(() => ({} as any))
@@ -204,6 +208,7 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const me = String(access.email || '')
   const id = trimmed(req.nextUrl.searchParams.get('id'), 60)
   if (!id) return NextResponse.json({ ok: false, error: 'Which item?' }, { status: 400 })

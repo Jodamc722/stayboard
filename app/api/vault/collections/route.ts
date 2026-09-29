@@ -8,6 +8,7 @@
 // open to any signed-in user, because you have to see the vaults you are in to use them.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   ITEMS, COLLECTIONS, COLLECTION_MEMBERS, collectionsFor, logAccess, isMissingTable,
@@ -29,6 +30,7 @@ const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').repla
 export async function GET() {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const me = String(access.email || '')
   const owner = isSuperadmin(access.email)
   const isAdmin = access.role === 'admin'
@@ -75,6 +77,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   const me = String(access.email || '')
   const b = await req.json().catch(() => ({} as any))
   const action = trimmed(b.action, 20)
@@ -181,6 +184,7 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   if (access.role !== 'admin') return NextResponse.json({ ok: false, error: 'Only an admin can delete a vault.' }, { status: 403 })
   const me = String(access.email || '')
   const id = trimmed(req.nextUrl.searchParams.get('id'), 60)

@@ -9,6 +9,7 @@
 // never doubles the shelf. One 'import' audit row + one sealed snapshot per run.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ITEMS, CATEGORY_IDS, encryptSecret, maskHint, vaultKeyReady, logAccess, isMissingTable } from '@/lib/vault'
 import { csvToImportRows, snapshotVault } from '@/lib/vault-backup'
@@ -23,6 +24,7 @@ const lower = (s: any) => String(s || '').trim().toLowerCase()
 export async function POST(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   if (access.role !== 'admin') return NextResponse.json({ ok: false, error: 'Only an admin can import into the vault.' }, { status: 403 })
   const me = String(access.email || '')
 

@@ -4,6 +4,7 @@
 // question.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
+import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { vaultWideLog, isMissingTable } from '@/lib/vault'
 
 export const dynamic = 'force-dynamic'
@@ -12,6 +13,7 @@ export const maxDuration = 20
 export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isVrLogin(access)) return hotelOnlyRes()
   if (access.role !== 'admin') return NextResponse.json({ ok: false, error: 'Admins only.' }, { status: 403 })
   const days = Math.max(1, Math.min(365, Number(req.nextUrl.searchParams.get('days') || 30) || 30))
   try {
