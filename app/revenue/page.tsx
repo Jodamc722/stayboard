@@ -8,6 +8,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 import { unstable_cache } from 'next/cache'
 import { Shell } from '@/components/Shell'
 import { RevenueCenter } from '@/components/RevenueCenter'
@@ -572,11 +573,17 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     // Closes the loop guest-issue → money: what the portfolio gave back, by building and by cause.
     const buildingByListing: Record<string, string> = {}
     for (const l of listings) buildingByListing[String(l.id)] = rollupBuilding(l.building)
-    const { data: glitchRows } = await sb.from('glitches')
+    // Leakage is a SUM and a COUNT over the whole range, so every card in it is read, paged by id
+    // (2026-09-29) — `.limit(5000)` returned an unordered first 1,000, so a long range summed a
+    // random subset of its refunds. A short read is logged; leakage stays annotation, never a throw.
+    const glitchPage = await pageRows<any>((a, b) => sb.from('glitches')
       .select('id, listing_id, unit, category, created_at, refund_approved, status')
       .gte('created_at', from + 'T00:00:00Z').lte('created_at', to + 'T23:59:59Z')
       .neq('status', 'deleted')
-      .limit(5000)
+      .order('id')
+      .range(a, b))
+    if (glitchPage.truncated) console.error('[revenue] guest-issue refund read stopped early — leakage may be low')
+    const glitchRows = glitchPage.rows
     let leakTotal = 0, leakCount = 0
     const leakByBuilding: Record<string, { amount: number; count: number }> = {}
     const leakByCause: Record<string, { amount: number; count: number }> = {}
