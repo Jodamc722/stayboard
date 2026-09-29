@@ -241,10 +241,12 @@ async function memoryHitRate(days = 7): Promise<{ rate: number | null; injected:
   const db = supabaseAdmin()
   try {
     const since = new Date(Date.now() - days * 864e5).toISOString()
-    const { data, error } = await db.from('eve_chats').select('memory_hits').gte('created_at', since).not('memory_hits', 'is', null).limit(2000)
-    if (error) return { rate: null, injected: 0, used: 0, chats: 0 }
+    // Paged in id order (2026-09-29): a rate should not depend on a page size. A read that stops short
+    // gives no rate, the same as a failed one.
+    const { rows, truncated } = await pageRows((a, b) => db.from('eve_chats').select('id,memory_hits').gte('created_at', since).not('memory_hits', 'is', null).order('id').range(a, b))
+    if (truncated) { console.error('memoryHitRate: chat read incomplete — no rate this run'); return { rate: null, injected: 0, used: 0, chats: 0 } }
     let injected = 0, used = 0, chats = 0
-    for (const r of ((data as any[]) || [])) {
+    for (const r of (rows as any[])) {
       const h = r.memory_hits
       if (!h || typeof h !== 'object') continue
       chats++
