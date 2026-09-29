@@ -23,6 +23,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { supabaseAdmin } from './supabase-admin'
 import { requireAdmin, type Access } from './access'
+import { safeEqual } from './signing'
 
 /** A deployed build. Local `next dev` is the only place a missing secret may mean "open". */
 function isProductionBuild(): boolean {
@@ -37,7 +38,9 @@ export function cronAllowed(req: NextRequest | Request): { ok: boolean; viaSecre
   const secret = process.env.CRON_SECRET
   if (!secret) return { ok: !isProductionBuild(), viaSecret: false }
   const auth = req.headers.get('authorization') || ''
-  const ok = auth === 'Bearer ' + secret
+  // CONSTANT TIME (2026-09-29 review): timingSafeEqual on equal-length buffers (lib/signing
+  // safeEqual), so how long a wrong bearer takes to refuse says nothing about how much of it matched.
+  const ok = safeEqual(auth, 'Bearer ' + secret)
   return { ok, viaSecret: ok }
 }
 
