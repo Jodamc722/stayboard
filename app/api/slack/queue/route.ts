@@ -4,14 +4,16 @@
 // POST — approve or skip one item. The decider is stamped SERVER-side from the session, never
 //        taken from the request body, same rule as the field-request approvals.
 import { NextRequest, NextResponse } from 'next/server'
-import { getAccess, isSuperadmin, requireLevel } from '@/lib/access'
+import { isSuperadmin, requireLevel, requireUser } from '@/lib/access'
 import { decide, pendingItems, recentItems, expireStale, splitThread } from '@/lib/slack-queue'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const access = await getAccess()
-  if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // An active Lighthouse member, not just any Supabase session (2026-09-29, 07-B4b) — the queue
+  // carries message bodies.
+  const g = await requireUser()
+  if (!g.ok) return g.res
   // Clearing stale drafts on read keeps the card honest without needing the cron to have run.
   try { await expireStale() } catch { /* best effort */ }
   const [pending, recent] = await Promise.all([pendingItems(20), recentItems(15)])

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createClient } from '@/lib/supabase-server'
-import { requireLevel } from '@/lib/access'
+import { requireLevel, requireUser } from '@/lib/access'
 import { weekRoster } from '@/lib/team-roster'
 
 export const dynamic = 'force-dynamic'
@@ -10,9 +10,10 @@ export const dynamic = 'force-dynamic'
 // Shifts live in Homebase; this stores who is Working / On Call / OFF / REQ OFF for the week.
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // An active Lighthouse member, not just any Supabase session (2026-09-29, 07-B4b) — this returns the
+  // week's share token.
+  const g = await requireUser()
+  if (!g.ok) return g.res
   const { searchParams } = new URL(req.url)
   const weekStart = searchParams.get('weekStart') || ''
   const market = searchParams.get('market') || ''
