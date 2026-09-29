@@ -37,6 +37,7 @@ import {
 } from './talkroute'
 import { getToken as guestyToken } from './guesty'
 import { fetchWithTimeout } from './fetch-timeout'
+import { getSetting, setSetting } from './app-settings'
 import { writeCustomFields } from './guesty-custom-fields'
 import { appendReservationNote } from './guesty-res-notes'
 import { WELCOME_AHEAD_DAYS, WELCOME_GRACE_DAYS, POST_GRACE_DAYS, addDays, isCompleted } from './call-desk'
@@ -146,24 +147,49 @@ export function classifyCall(callYmd: string, direction: string, candidates: Res
 // Reservations synced before the guest's phone landed on the guest object have guest_phone NULL,
 // and the desk backfills them from Guesty on every page load without saving. The matcher needs
 // them saved. Arrivals in the welcome runway plus the last week of departures — a small set.
+//
+// A 24-HOUR MISS LIST (2026-09-28 audit #12). When Guesty simply has no phone for the guest (owner
+// stays, some channels) nothing was saved, so the same reservations came back on every sync — up
+// to 25 Guesty calls a run, every 15 minutes, forever. A reservation Guesty answered with no phone
+// (or a 404) is now skipped for 24 hours: app_settings `talkroute_phone_misses`, reservation id →
+// when it was checked, pruned as entries expire. A 429 or 5xx is not a miss — it is tried again.
+const PHONE_MISS_KEY = 'talkroute_phone_misses'
+const PHONE_MISS_TTL_MS = 24 * 3600_000
+
 async function backfillPhones(sb: any, today: string, errors: string[]): Promise<number> {
   const lo = addDays(today, -7), hi = addDays(today, 14)
   const { data } = await sb.from('guesty_reservations').select('id,status,guestId:raw->guest->>_id')
-    .is('guest_phone', null).gte('check_out', lo).lte('check_in', hi).limit(60)
-  const rows = (data || []).filter((r: any) => r.guestId && isLiveStay(r.status))
-  if (!rows.length) return 0
+    .is('guest_phone', null).gte('check_out', lo).lte('check_in', hi)
+    .order('check_in', { ascending: true }).order('id').limit(200)
+  const now = Date.now()
+  const misses = await getSetting<Record<string, string>>(PHONE_MISS_KEY, {}).catch(() => ({} as Record<string, string>))
+  const recent = (id: string) => { const t = Date.parse(String(misses[id] || '')); return Number.isFinite(t) && now - t < PHONE_MISS_TTL_MS }
+  // Keep only live entries, so the map cannot grow without bound.
+  const nextMisses: Record<string, string> = {}
+  for (const k of Object.keys(misses)) if (recent(k)) nextMisses[k] = misses[k]
+  let changed = Object.keys(nextMisses).length !== Object.keys(misses).length
+  const save = async () => { if (changed) await setSetting(PHONE_MISS_KEY, nextMisses, 'talkroute-sync').catch(() => null) }
+
+  const rows = (data || []).filter((r: any) => r.guestId && isLiveStay(r.status) && !recent(String(r.id)))
+  if (!rows.length) { await save(); return 0 }
   let tok = ''
-  try { tok = await guestyToken() } catch (e: any) { errors.push('guesty token: ' + String(e?.message || e).slice(0, 120)); return 0 }
+  try { tok = await guestyToken() } catch (e: any) { errors.push('guesty token: ' + String(e?.message || e).slice(0, 120)); await save(); return 0 }
   const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
   let n = 0
   for (const r of rows.slice(0, 25)) {
     try {
-      const g: any = await fetchWithTimeout(`${BASE}/guests/${r.guestId}`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' }, cache: 'no-store' }, { label: 'Guesty /guests' }).then(x => x.ok ? x.json() : null)
+      const res = await fetchWithTimeout(`${BASE}/guests/${r.guestId}`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' }, cache: 'no-store' }, { label: 'Guesty /guests' })
+      if (res.status === 429) break                         // rate limited: stop, the next run carries on
+      if (res.status === 404) { nextMisses[String(r.id)] = new Date().toISOString(); changed = true; continue }
+      if (!res.ok) continue                                  // 5xx and friends: try again next run
+      const g: any = await res.json().catch(() => null)
       const ph = g?.phone || (Array.isArray(g?.phones) && g.phones.length ? (typeof g.phones[0] === 'string' ? g.phones[0] : (g.phones[0]?.number || g.phones[0]?.phone)) : '')
       if (ph) { await sb.from('guesty_reservations').update({ guest_phone: String(ph) }).eq('id', r.id); n++ }
-      await new Promise(res => setTimeout(res, 120))
+      else if (g) { nextMisses[String(r.id)] = new Date().toISOString(); changed = true }
+      await new Promise(res2 => setTimeout(res2, 120))
     } catch { /* one guest at a time; the next cron retries */ }
   }
+  await save()
   return n
 }
 
