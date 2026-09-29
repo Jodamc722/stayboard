@@ -82,10 +82,12 @@ async function status() {
         db.from('talkroute_calls').select('id', { count: 'exact', head: true }).eq('transcript_status', 'done'),
         db.from('talkroute_calls').select('id', { count: 'exact', head: true }).in('transcript_status', ['failed', 'expired']),
         db.from('talkroute_calls').select('id', { count: 'exact', head: true }).not('note_pushed_at', 'is', null),
-        db.from('talkroute_calls').select('cost_usd').gte('transcript_at', dayAgo).limit(2000),
+        // Paged (was one read capped at 1,000): a spend total needs every transcribed call.
+        pageRows((a, b) => db.from('talkroute_calls').select('cost_usd').gte('transcript_at', dayAgo).order('id').range(a, b)),
       ])
+      if (spendRows.truncated) console.error('talkroute/admin: transcription spend read stopped early — the day total may read low')
       let usd = 0
-      for (const r of ((spendRows.data as any[]) || [])) usd += Number(r.cost_usd) || 0
+      for (const r of (spendRows.rows as any[])) usd += Number(r.cost_usd) || 0
       queue = { pending: pend.count || 0, transcribed: done.count || 0, failed: failed.count || 0, notesPushed: notes.count || 0, usdToday: Math.round(usd * 100) / 100 }
     } catch { queue = null }
     out.transcribe = {
