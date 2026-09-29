@@ -14,6 +14,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAccess, requireUser } from '@/lib/access'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { DEFAULT_PAR, mergePar, parForRoom, parKey, unitShape, type ParTable, type UnitShape } from '@/lib/par-levels'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -104,8 +105,10 @@ export async function POST(req: NextRequest) {
 
   // Everything already on this audit: inventory rows give the true count, open add rows tell us a
   // restock is already pending so we never double-order the same gap.
-  const { data: existing } = await db.from('audit_items').select('id,room,kind,title,qty,status,details').eq('audit_id', audit.id).limit(1500)
-  const rows = existing || []
+  // Paged: a gap counted from part of the audit would re-order what is already on it.
+  const read = await pageRows((a, b) => db.from('audit_items').select('id,room,kind,title,qty,status,details').eq('audit_id', audit.id).order('id').range(a, b))
+  if (read.truncated) return NextResponse.json({ error: 'Could not read every item on this audit — nothing was ordered. Try again.' }, { status: 500 })
+  const rows = read.rows
   const haveOf = (room: string, item: string): number => {
     let n = 0
     for (const x of rows) {
