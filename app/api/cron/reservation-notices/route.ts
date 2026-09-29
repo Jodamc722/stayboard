@@ -48,6 +48,11 @@ async function run(req: NextRequest) {
     // failure — carried as `note` so the run receipt stays honest in both directions.
     const body: any = { ranAt: new Date().toISOString(), elapsed_ms: Date.now() - started, ...res, ...(drafts !== undefined ? { drafts } : {}) }
     if (body.ok !== false && body.error) { body.note = body.error; delete body.error }
+    // A drafting pass that failed (only possible when notice drafts are switched on) fails the run.
+    if (drafts && drafts.ok === false) {
+      body.ok = false
+      body.error = 'notice drafts: ' + String((Array.isArray(drafts.errors) && drafts.errors[0]) || drafts.error || 'failed').slice(0, 200)
+    }
     return NextResponse.json(body)
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
