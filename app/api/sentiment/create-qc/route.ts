@@ -18,7 +18,7 @@ function todayET(): string { return new Intl.DateTimeFormat('en-CA', { timeZone:
 
 export async function GET(req: NextRequest) {
   // Same boards as the POST below, at view: the rows carry guest names and task titles.
-  const gate = await requireAnyLevel(['messages', 'schedule', 'forecast', 'plan', 'reviews'], 'view')
+  const gate = await requireAnyLevel(['messages', 'schedule', 'plan', 'reviews'], 'view')
   if (!gate.ok) return gate.res
   const ids = String(new URL(req.url).searchParams.get('conversationIds') || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 200)
   if (!ids.length) return NextResponse.json({ ok: true, tasks: [] })
@@ -30,8 +30,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   // Called from the Sentiment board (messages), the Turnover/Weekly schedule boards and the
-  // listing ops panel (schedule / forecast / plan) — edit on any of those tabs is the bar.
-  const gate = await requireAnyLevel(['messages', 'schedule', 'forecast', 'plan', 'reviews'], 'edit')
+  // listing ops panel (schedule / plan) — edit on any of those tabs is the bar. ('forecast' was the
+  // retired /schedule/forecast page's key; that page and its row in lib/features are gone.)
+  const gate = await requireAnyLevel(['messages', 'schedule', 'plan', 'reviews'], 'edit')
   if (!gate.ok) return gate.res
   const user = gate.access.user
   if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
