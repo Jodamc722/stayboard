@@ -18,6 +18,7 @@ import { WATCH_KEY } from '@/lib/eve/slack-watch'
 import { getGoogleReadGrant } from '@/lib/google-read'
 import { getSetting } from '@/lib/app-settings'
 import { probeForMemory, runLearningAudit, learningSnapshot, setProbeActive, pruneMemory } from '@/lib/eve/learning-audit'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -126,8 +127,10 @@ export async function GET() {
   const memByWeight: Record<string, number> = {}
   let memTotal = 0
   try {
-    const { data } = await db.from('eve_memory').select('source,weight').is('superseded_by', null).limit(5000)
-    for (const r of ((data as any[]) || [])) {
+    // Paged in id order — these are counts, and her live memory can pass 1,000.
+    const mem = await pageRows((a, b) => db.from('eve_memory').select('source,weight').is('superseded_by', null).order('id').range(a, b), 5)
+    if (mem.truncated) console.error('[eve/learning] memory read incomplete — the memory counts are short')
+    for (const r of mem.rows) {
       memTotal++
       const src = String(r.source || 'eve'); memBySource[src] = (memBySource[src] || 0) + 1
       const w = String(Number(r.weight) || 0); memByWeight[w] = (memByWeight[w] || 0) + 1
