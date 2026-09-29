@@ -63,6 +63,8 @@ export async function GET(req: Request) {
       .order('created_at', { ascending: false })
       .order('id')
       .range(a, b), 20)
+    // The flag was read and dropped: a page that failed part-way served a shorter feed as if whole.
+    if (revTruncated) console.error('reviews: review read stopped early — the feed and its counts may be short')
 
     if (rows && rows.length) {
       // Join guesty_listings for status/building filtering + listing_name.
