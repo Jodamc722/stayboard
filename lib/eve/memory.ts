@@ -135,9 +135,9 @@ export async function recordMemoryHits(ids: string[]): Promise<void> {
   const db = supabaseAdmin()
   try {
     const { data } = await db.from('eve_memory').select('id,hit_count').in('id', ids)
-    for (const r of ((data as any[]) || [])) {
-      await db.from('eve_memory').update({ hit_count: Number(r.hit_count || 0) + 1, last_hit_at: new Date().toISOString() }).eq('id', r.id)
-    }
+    // All at once, not one round trip per memory after the reply (2026-09-29, 04-F17).
+    const at = new Date().toISOString()
+    await Promise.all(((data as any[]) || []).map(r => db.from('eve_memory').update({ hit_count: Number(r.hit_count || 0) + 1, last_hit_at: at }).eq('id', r.id)))
   } catch { /* column not there yet — the audit shows "no telemetry" rather than breaking a turn */ }
 }
 
