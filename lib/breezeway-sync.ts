@@ -1,5 +1,6 @@
 import { bzApi, mapBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { pageRows } from '@/lib/db-page'
 import { getSetting, setSetting } from '@/lib/app-settings'
 
 // Mirror refresh for breezeway_tasks_sync. Pulls each relevant property's Breezeway
@@ -49,16 +50,22 @@ export async function syncBreezewayTasks(
   const today = etToday()
   const from = addDays(today, -1)
   const to = addDays(today, 21)
-  const { data: deps } = await db
+  // PAGED (2026-09-29). Three weeks of checkouts of every status runs past 1,000 rows, and
+  // .limit(5000) returned 1,000 — the window silently ended about two weeks out, so a unit whose next
+  // checkout was later than that waited for the round-robin sweep. A read that stops early is logged
+  // and the run goes on with what it has (the sweep still covers the rest).
+  const depRead = await pageRows<any>((a, b) => db
     .from('guesty_reservations')
     .select('listing_id, check_out')
     .gte('check_out', from)
     .lte('check_out', to)
-    .order('check_out', { ascending: true })
-    .limit(5000)
+    .order('check_out', { ascending: true }).order('id')
+    .range(a, b), 5)
+  if (depRead.truncated) console.error('[breezeway-sync] the checkout-window read stopped early — some units wait for the sweep')
+  const deps = depRead.rows
 
   // Sort deps so TODAY and forward come first (ascending), then recent past last.
-  const depsSorted = ((deps || []) as any[]).slice().sort((a, b) => {
+  const depsSorted = deps.slice().sort((a, b) => {
     const ax = String(a.check_out || ''), bx = String(b.check_out || '')
     const aPast = ax < today ? 1 : 0, bPast = bx < today ? 1 : 0
     if (aPast !== bPast) return aPast - bPast
