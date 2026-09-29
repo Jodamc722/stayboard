@@ -16,12 +16,11 @@ import { getTaskAutomation } from '@/lib/auto-inspections'
 import { requireCron } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
 
-// GMAIL DRAFTS RIDE THIS CRON (2026-09-18). vercel.json sits at the 40-cron Pro cap and Eve's
-// weekly review needed a line, so /api/cron/notice-drafts lost its own schedule. It used to fire at
-// 03:06, 11:06, 15:06, 19:06 and 23:06 UTC; this hourly job now runs it in those same five hours,
-// right after the queue it drafts from has been refilled. Off by default (Settings → Task
-// automation), exactly-once per notice via reservation_notices.draft_created_at, and a failure
-// here never fails the queue fill.
+// GMAIL DRAFTS RIDE THIS CRON (2026-09-18). /api/cron/notice-drafts lost its own schedule then
+// (and was deleted 2026-09-28). It used to fire at 03:06, 11:06, 15:06, 19:06 and 23:06 UTC; this
+// hourly job now runs it in those same five hours, right after the queue it drafts from has been
+// refilled. Off by default (Settings → Task automation), exactly-once per notice via
+// reservation_notices.draft_created_at, and a failure here never fails the queue fill.
 const DRAFT_HOURS_UTC = [3, 11, 15, 19, 23]
 
 export const dynamic = 'force-dynamic'
