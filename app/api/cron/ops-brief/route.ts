@@ -19,6 +19,7 @@ import { asLang, type BriefLang } from '@/lib/brief-lang'
 import { sendGmail } from '@/lib/gmail-send'
 import { withRouteReceipt } from '@/lib/automation-runs'
 import { hashLegacyPasscodes } from '@/lib/share-links-server'
+import { atEasternHour } from '@/lib/et-clock'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -57,10 +58,19 @@ async function currentUser(): Promise<string | null> {
   return g && g.ok && g.access.email ? String(g.access.email).toLowerCase() : null
 }
 
-export const GET = withRouteReceipt<NextRequest>('ops-brief', send, {
+const receipted = withRouteReceipt<NextRequest>('ops-brief', send, {
   skipWhen: (req) => { const sp = new URL(req.url).searchParams; return !!sp.get('preview') || !!sp.get('test') },
   count: (b) => Array.isArray(b?.results) ? b.results.filter((o: any) => o && o.sent).length : undefined,
 })
+
+// 7:01AM EASTERN ALL YEAR (2026-09-29). Vercel cron is UTC, so vercel.json fires this at 11:01 AND
+// 12:01 UTC; on the scheduler's own call, the one that is not 7am in New York stops here — before
+// the receipt, the passcode sweep or any send (lib/et-clock). A person's preview, test or re-send
+// carries no bearer and is never skipped.
+export async function GET(req: NextRequest) {
+  if (cronAllowed(req).viaSecret && !atEasternHour(7)) return NextResponse.json({ ok: true, skipped: 'daylight-saving twin — this job runs at 7am Eastern' })
+  return receipted(req)
+}
 
 async function send(req: NextRequest) {
   // ANONYMOUS CALLERS ARE NOT CRON (2026-09-02). This read `|| auth === ''`, and an anonymous
