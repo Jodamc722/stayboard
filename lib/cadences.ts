@@ -159,7 +159,13 @@ export const DEFAULT_CADENCES: CadenceDef[] = [
     // clean; its coils are the 6-month job (A/C deep clean, below, every kind). The central list
     // now comes from the equipment inference (lib/unit-equipment), so this is no longer inert;
     // buildings or units can still be picked to narrow it.
-    match: 'filter',
+    //
+    // ANY FILTER EXCEPT THE ONES THAT ARE NOT THE A/C (audit 2026-09-28). This was bare 'filter',
+    // so a water, shower or fridge filter change reset the A/C filter clock. A plain "Filter change
+    // 3B" still counts — that is how the team names the A/C job — but a filter NAMED for something
+    // else ("water filter", "fridge filter", "range hood filter") does not. Only the word right in
+    // front of "filter" decides, so "A/C filter + check for water leak" still counts.
+    match: '^(?!.*\\b(water|shower|shower ?head|fridge|refrigerator|ice ?maker|faucet|sink|pool|vacuum|dryer|lint|hood|coffee|brita|pitcher|dishwasher)\\s+filter).*filter',
     equipment: 'central', scopeBuildings: [], scopeUnits: [],
     // A filter is fifteen minutes and a step stool. It does not need an empty unit, but it is far
     // less awkward in one, so it is ranked below the jobs that genuinely need the window.
@@ -187,8 +193,13 @@ export const DEFAULT_CADENCES: CadenceDef[] = [
     // Every unit walked on a clock. Any completed inspection resets it — a quality inspection after
     // a bad review, a pre-arrival walk, a plain unit check — so the clock measures "when did a
     // supervisor last stand in this unit", which is the question. 50 sits inside "45–60".
+    //
+    // NOT THE STRIP (audit 2026-09-28). Broward's "Strip & Walkthrough: Linens, Trash, & Report"
+    // rides every checkout and says "walkthrough", so an open strip read as an inspection already
+    // booked for the unit and the suggestion for a real one was held back. A strip is linen and
+    // trash, not a supervisor standing in the unit.
     key: 'unit_inspection', label: 'Unit inspection (every 45–60 days)', everyDays: 50, dept: 'inspection',
-    match: 'inspect|unit check|walk.?through|walkthrough',
+    match: '^(?!.*strip).*(inspect|unit check|walk.?through)',
     needsVacant: false, needsDays: 0, minutes: 45, mode: 'suggest', seedIfNever: true,
   },
   {
@@ -264,6 +275,15 @@ const strList = (v: any, fb: string[] | undefined): string[] | undefined => {
 const txt = (v: any, fb: string, max: number) =>
   typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : fb
 
+// SHIPPED PATTERNS THAT WERE LATER TIGHTENED. The settings screen saves the WHOLE resolved config,
+// so a stored override carries every cadence's `match` exactly as it shipped on the day somebody
+// pressed Save — nobody chose it, it simply came along. A stored pattern equal to one of these is
+// read as "not overridden" and takes today's default; a pattern somebody actually typed is kept.
+const SUPERSEDED_MATCH: Record<string, string[]> = {
+  unit_inspection: ['inspect|unit check|walk.?through|walkthrough'],
+  ac_filter: ['filter'],
+}
+
 /** A pattern that does not compile is worse than no pattern — it would read every task as a match. */
 export function cadenceRe(src: string): RegExp | null {
   try { return new RegExp(src, 'i') } catch { return null }
@@ -297,7 +317,8 @@ export function resolveCadences(raw: any): CadenceCfg {
   }
 
   const one = (base: CadenceDef, o: any): CadenceDef => {
-    const match = txt(o?.match, base.match, 200)
+    const typed = txt(o?.match, base.match, 200)
+    const match = (SUPERSEDED_MATCH[base.key] || []).indexOf(typed) >= 0 ? base.match : typed
     return {
       key: base.key,
       label: txt(o?.label, base.label, 60),
@@ -341,7 +362,10 @@ export function resolveCadences(raw: any): CadenceCfg {
   }
 
   return {
-    enabled: raw.enabled === true,
+    // A stored object WITHOUT the switch keeps the shipped default (on). `raw.enabled === true` read
+    // a missing key as off, and runPmRecurrence then said "cadences are switched off" and booked
+    // no successor — for a switch nobody had touched. An explicit false still turns it off.
+    enabled: raw.enabled == null ? d.enabled : raw.enabled === true,
     dailyCap: num(raw.dailyCap, d.dailyCap, 1, 40),
     perUnitCap: num(raw.perUnitCap, d.perUnitCap, 1, 6),
     perPersonMinutes: num(raw.perPersonMinutes, d.perPersonMinutes, 15, 480),
