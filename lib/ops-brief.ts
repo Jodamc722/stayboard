@@ -86,10 +86,10 @@ async function gather(variant: BriefVariant) {
   const sheetMarket = (variant === 'full' || variant === 'GM') ? 'all' : variant
   const [sheet, lRes, tRes, arrRes, actRes, revRes] = await Promise.all([
     buildDaySheet(today, sheetMarket),
-    db.from('guesty_listings').select('id,nickname,title,building,address_city,status').limit(2000),
+    db.from('guesty_listings').select('id,nickname,title,building,address_city,status').limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
     db.from('breezeway_tasks_sync')
       .select('reference_property_id,name,type_department,status,assignees,started_at,finished_at')
-      .eq('scheduled_date', today).limit(2000),
+      .eq('scheduled_date', today).limit(1000), // deliberate cap: one day of tasks (~90–300)
     // custom_fields carries the two-way reservation note the welcome-call and front-desk boards
     // write into. A supervisor briefing their crew needs it: "guest arriving 11pm, leave the bag
     // in the closet" changes how the day is run and is invisible everywhere else.
@@ -359,7 +359,7 @@ async function gather(variant: BriefVariant) {
   try {
     const { data: yRows } = await db.from('breezeway_tasks_sync')
       .select('reference_property_id,name,type_department,status,finished_at,total_minutes')
-      .eq('scheduled_date', yest).limit(3000)
+      .eq('scheduled_date', yest).limit(1000) // deliberate cap: one day of tasks (~90–300)
     for (const t of ((yRows || []) as any[])) {
       if (!inVariant(String(t.reference_property_id))) continue
       const done = !!t.finished_at || /complete|finish|close|approv/i.test(str(t.status))
@@ -1429,10 +1429,10 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
     // Yesterday's IN-HOUSE cleaning fees for this variant's market.
     const db2 = supabaseAdmin()
     const [lr2, rr2] = await Promise.all([
-      db2.from('guesty_listings').select('id,nickname,title,building,address_city').limit(2000),
+      db2.from('guesty_listings').select('id,nickname,title,building,address_city').limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
       db2.from('guesty_reservations').select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning,grossFare:raw->money->>fareAccommodationAdjusted,channelFee:raw->money->>hostServiceFee')
         .gte('check_out', yd).lte('check_out', yd)
-        .not('status', 'in', '("canceled","cancelled","declined")').limit(2000),
+        .not('status', 'in', '("canceled","cancelled","declined")').limit(1000), // deliberate cap: one day's checkouts, about one per unit (~290)
     ])
     const presets2 = await getOpsPresets()
     const VEN2 = vendorRegex(presets2.vendorBuildings)
@@ -1826,7 +1826,7 @@ async function weekCompliance(): Promise<{
     // the week were complete, so a short read printed a low "cleans closed" rate that looked real.
     // Now a short read blanks that one line (it shows "—"); billable and timecards still compute.
     const [lr3, rr3Read, cl3Read] = await Promise.all([
-      db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(2000),
+      db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
       pageRows<any>((a, b) => db.from('guesty_reservations').select('listing_id,check_out,status,cleaning:raw->money->>fareCleaning')
         .gte('check_out', winFrom).lte('check_out', winTo)
         .not('status', 'in', '("canceled","cancelled","declined")')
@@ -2239,7 +2239,7 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
   const db = supabaseAdmin()
   const { data: tomRes } = await db.from('guesty_reservations')
     .select('listing_id,check_in,status,nights').eq('check_in', tomorrow).limit(500)
-  const { data: lRes2 } = await db.from('guesty_listings').select('id,nickname,title').limit(2000)
+  const { data: lRes2 } = await db.from('guesty_listings').select('id,nickname,title').limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
   const nameOf: Record<string, string> = {}
   for (const l of ((lRes2 || []) as any[])) nameOf[String(l.id)] = l.nickname || l.title || 'Unit'
   const tomorrowArrivals = ((tomRes || []) as any[])

@@ -78,7 +78,7 @@ export async function maintData(market: MaintMarket): Promise<MaintData> {
   const presets = await getOpsPresets()
   const VENDOR = vendorRegex(presets.vendorBuildings)
 
-  const { data: lRows } = await db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(5000)
+  const { data: lRows } = await db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
   const meta: Record<string, { name: string; ours: boolean; building: string }> = {}
   for (const l of (lRows || []) as any[]) {
     const name = l.nickname || l.title || 'Unit'
@@ -218,7 +218,7 @@ export async function maintData(market: MaintMarket): Promise<MaintData> {
     const { data: rRows } = await db.from('guesty_reservations')
       .select('listing_id,check_in,check_out,status')
       .lte('check_in', today).gte('check_out', today)
-      .not('status', 'in', '("canceled","cancelled","declined")').limit(3000)
+      .not('status', 'in', '("canceled","cancelled","declined")').limit(1000) // deliberate cap: stays spanning one day, about one per unit (~290)
     for (const r of (rRows || []) as any[]) {
       const lid = String(r.listing_id)
       const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)

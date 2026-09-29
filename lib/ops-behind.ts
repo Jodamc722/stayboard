@@ -134,7 +134,7 @@ export async function loadBehind(): Promise<Behind & { date: string; nowMin: num
   const UNTRACKED_RE = untrackedRegex(presets.vendorBuildings)
   const [lRes, tRes, rRes] = await Promise.all([
     db.from('guesty_listings').select('id,nickname,title,checkIn:raw->>defaultCheckInTime,checkOut:raw->>defaultCheckOutTime'),
-    db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,assignees,started_at,finished_at').eq('scheduled_date', today).limit(2000),
+    db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,assignees,started_at,finished_at').eq('scheduled_date', today).limit(1000), // deliberate cap: one day of tasks (~90–300)
     db.from('guesty_reservations').select('listing_id,check_in,status').eq('check_in', today).limit(1000), // deliberate cap: one day's check-ins across ~290 listings
   ])
   const lmap: Record<string, { name: string; checkIn: string | null; checkOut: string | null }> = {}

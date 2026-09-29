@@ -75,7 +75,7 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
 
   const db = supabaseAdmin()
   const { data: rows } = await db.from('guesty_listings')
-    .select('id,nickname,title,building,address_city,status').limit(2000)
+    .select('id,nickname,title,building,address_city,status').limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
   const listings = ((rows || []) as any[]).filter(l => !DEAD.includes(str(l.status).toLowerCase()))
   const meta: Record<string, { unit: string; building: string; market: string }> = {}
   for (const l of listings) {

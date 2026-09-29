@@ -109,7 +109,7 @@ async function buildOpsFocusNow(market: string, opts: { refresh?: boolean; date?
   }
 
   // ── the same scope the Review tab reads ──
-  const { data: lRes } = await db.from('guesty_listings').select('id,nickname,title,building,address_city,status').limit(2000)
+  const { data: lRes } = await db.from('guesty_listings').select('id,nickname,title,building,address_city,status').limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
   const nameOf: Record<string, string> = {}
   const ids: string[] = []
   for (const l of ((lRes || []) as any[])) {

@@ -216,7 +216,7 @@ export async function ownerMap(): Promise<OwnerMap> {
   const db = supabaseAdmin()
   const byListing: Record<string, { ownerId: string; ownerName: string }> = {}
   try {
-    const { data } = await db.from('guesty_owners').select('id, full_name, listing_ids').limit(2000)
+    const { data } = await db.from('guesty_owners').select('id, full_name, listing_ids').limit(1000) // deliberate cap: one row per owner, far fewer than 1,000
     for (const o of (data || []) as any[]) {
       const ids = Array.isArray(o.listing_ids) ? o.listing_ids : []
       for (const lid of ids) {

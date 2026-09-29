@@ -39,7 +39,7 @@ export async function assignVendorTasks(opts: { dryRun?: boolean } = {}): Promis
 
   const db = supabaseAdmin()
   const people = await breezewayPeopleLite()
-  const { data: ls } = await db.from('guesty_listings').select('id,nickname,title,building').limit(2000)
+  const { data: ls } = await db.from('guesty_listings').select('id,nickname,title,building').limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
   const listings = (ls as any[]) || []
   const from = ymd(new Date(Date.now() - 2 * 86400_000)), to = ymd(new Date(Date.now() + 30 * 86400_000))
   const out: VendorAssignRun = { ok: true, vendors: [] }

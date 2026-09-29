@@ -147,10 +147,10 @@ async function _buildDaySheet(dateIn?: string, marketIn?: string): Promise<any> 
 
     const [lRes, tRes, rRes, oRes, gRes, sRes, fRes, gsRes, iRes] = await Promise.all([
       db.from('guesty_listings').select('id,nickname,title,building,address_city,address_full,status,bedrooms:raw->>bedrooms,checkIn:raw->>defaultCheckInTime,checkOut:raw->>defaultCheckOutTime,cf:raw->customFields,lat:raw->address->>lat,lng:raw->address->>lng'),
-      db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,type_department,report_url').eq('scheduled_date', date).order('reference_property_id', { ascending: true }).limit(3000),
+      db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,type_department,report_url').eq('scheduled_date', date).order('reference_property_id', { ascending: true }).limit(1000), // deliberate cap: one day of tasks (~90–300)
       db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_id,guest_name,guest_phone,nights,source,notes,money_total,created_at')
         .lte('check_in', addDays(date, 1)).gte('check_out', date).order('check_in', { ascending: true }).limit(3000),
-      db.from('guesty_owners').select('id,full_name,listing_ids').limit(2000),
+      db.from('guesty_owners').select('id,full_name,listing_ids').limit(1000), // deliberate cap: one row per owner, far fewer than 1,000
       db.from('glitches').select('id,unit,listing_id,overview,status,created_at,breezeway_task_id').not('status', 'in', '("done","resolved","closed")').order('created_at', { ascending: false }).limit(300),
       db.from('breezeway_tasks_sync').select('synced_at').order('synced_at', { ascending: false }).limit(1),
       // NEXT ARRIVAL — a separate forward look. The day window above stops at tomorrow, so the

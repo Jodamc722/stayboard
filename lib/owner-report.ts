@@ -162,7 +162,7 @@ export async function resolveScope(listingIds: string[], buildings: string[]): P
   const { data } = await db
     .from('guesty_listings')
     .select('id, title, nickname, building, unit, bedrooms, status')
-    .limit(2000)
+    .limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
   const all = (data || []) as any[]
   const wantIds = new Set(listingIds.map(String))
   const wantBuildings = buildings.map(b => b.toLowerCase())

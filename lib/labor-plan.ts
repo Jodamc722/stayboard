@@ -136,7 +136,7 @@ export async function forwardCheckoutUnits(from: string, to: string): Promise<Ch
   const db = supabaseAdmin()
   const VENDOR = vendorRegex((await getOpsPresets()).vendorBuildings)
   const { data: listings } = await db.from('guesty_listings')
-    .select('id,nickname,title,building,address_city,bedrooms,lat:raw->address->>lat,lng:raw->address->>lng').order('id').limit(5000)
+    .select('id,nickname,title,building,address_city,bedrooms,lat:raw->address->>lat,lng:raw->address->>lng').order('id').limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
   const meta: Record<string, { market: string; vendor: boolean; name: string; building: string | null; bedrooms: number | null; lat: number | null; lng: number | null }> = {}
   const numOr = (v: any) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v))
   for (const l of (listings || []) as any[]) {

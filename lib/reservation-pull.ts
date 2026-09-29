@@ -113,7 +113,7 @@ export async function pullNotices(days = 30): Promise<PullResult> {
 
   // Which listings belong to which property.
   const { data: listingRows, error: lErr } = await db
-    .from('guesty_listings').select('id,building,nickname,title,unit').limit(2000)
+    .from('guesty_listings').select('id,building,nickname,title,unit').limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
   if (lErr) return { ...empty, error: lErr.message }
 
   const propOf = new Map<string, PropertyEmail>()
@@ -156,7 +156,7 @@ export async function pullNotices(days = 30): Promise<PullResult> {
   // What is already on file, so a re-run is a no-op. Deleted rows are excluded, which is what lets
   // a notice deleted by mistake be picked up again on the next pull.
   const { data: haveRows, error: hErr } = await db
-    .from(TABLE).select('reservation_id,dupe_key').is('deleted_at', null).limit(5000)
+    .from(TABLE).select('reservation_id,dupe_key').is('deleted_at', null).limit(1000) // deliberate cap: a shortcut only — the unique indexes on reservation_id and dupe_key (migration 015) turn a notice missed here into a duplicate-key insert, counted as existing
   if (hErr) {
     const missing = /relation .* does not exist|does not exist|schema cache|find the table/i.test(hErr.message)
     return { ...empty, error: hErr.message, needsMigration: missing }

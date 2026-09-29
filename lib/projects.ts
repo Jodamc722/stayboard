@@ -37,7 +37,7 @@ export async function listProjects(opts: { archived?: boolean; category?: string
     // get nothing, and cannot tell the project exists.
     if (opts.viewer) {
       const e = String(opts.viewer.email || '').trim().toLowerCase()
-      const { data: mine } = e ? await sb.from('project_members').select('project_id').eq('email', e).limit(2000) : { data: [] as any[] }
+      const { data: mine } = e ? await sb.from('project_members').select('project_id').eq('email', e).limit(1000) : { data: [] as any[] } // deliberate cap: one person's project memberships
       const ok = new Set(((mine || []) as any[]).map(m => String(m.project_id)))
       // A personal board is its owner's alone — the superadmin's all-access stops at the kind.
       rows = rows.filter(r => canSee(ok.has(String(r.id)) ? [{ email: e }] : [], opts.viewer!, (r as any).kind))
@@ -380,7 +380,7 @@ export async function ensureMyBoard(email: string, displayName?: string | null):
   const sb = supabaseAdmin()
   const e = String(email || '').trim().toLowerCase()
   if (!e) throw new Error('no email')
-  const { data: mine } = await sb.from('project_members').select('project_id').eq('email', e).limit(2000)
+  const { data: mine } = await sb.from('project_members').select('project_id').eq('email', e).limit(1000) // deliberate cap: one person's project memberships
   const ids = ((mine || []) as any[]).map(m => String(m.project_id))
   if (ids.length) {
     const { data: found } = await sb.from('projects').select('id,title').in('id', ids).eq('kind', 'personal').eq('template_key', MY_BOARD_KEY).eq('archived', false).limit(1)

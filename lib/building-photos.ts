@@ -31,7 +31,7 @@ export async function buildingListingPhotos(perListing = 12): Promise<Record<str
   try {
     const { data } = await supabaseAdmin().from('guesty_listings')
       .select('id,nickname,title,building,pictures,status')
-      .not('pictures', 'is', null).limit(2000)
+      .not('pictures', 'is', null).limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
     const rows = ((data as any[]) || [])
       .filter(l => !/inactive|archived|deleted/i.test(String(l.status || '')))
       .sort((a, b) => String(a.nickname || a.title || '').localeCompare(String(b.nickname || b.title || '')))
@@ -49,7 +49,7 @@ export async function buildingPhotoPools(perBuilding = 24): Promise<Record<strin
   try {
     const { data } = await supabaseAdmin().from('guesty_listings')
       .select('nickname,title,building,pictures,status')
-      .not('pictures', 'is', null).limit(2000)
+      .not('pictures', 'is', null).limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
     const rows = ((data as any[]) || [])
       .filter(l => !/inactive|archived|deleted/i.test(String(l.status || '')))
       .sort((a, b) => String(a.nickname || a.title || '').localeCompare(String(b.nickname || b.title || '')))

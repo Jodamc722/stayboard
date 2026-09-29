@@ -224,7 +224,7 @@ export async function buildTeamSchedule(opts: {
   const BIG = num(rules.bigBookingUsd) || 3000
 
   // ── units → name + market ───────────────────────────────────────────────────────────────────
-  const { data: lRows } = await db.from('guesty_listings').select('id,nickname,title,building,address_city,status').limit(2000)
+  const { data: lRows } = await db.from('guesty_listings').select('id,nickname,title,building,address_city,status').limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
   const want = opts.listingIds && opts.listingIds.length ? new Set(opts.listingIds.map(str)) : null
   const unit: Record<string, { name: string; market: string; vendor: string | null }> = {}
   const ids: string[] = []
@@ -328,7 +328,7 @@ export async function buildTeamSchedule(opts: {
   // VIP is our own layer on top of Guesty, keyed on normalised email (see lib/auto-inspections).
   const vipEmails = new Set<string>()
   try {
-    const { data: vips } = await db.from('guest_profiles').select('email').eq('vip', true).limit(2000)
+    const { data: vips } = await db.from('guest_profiles').select('email').eq('vip', true).limit(1000) // deliberate cap: VIP-flagged guest profiles, set by hand on the Guests tab
     for (const v of (vips || []) as any[]) { const e = str(v.email).trim().toLowerCase(); if (e) vipEmails.add(e) }
   } catch { /* the profile layer is optional */ }
 

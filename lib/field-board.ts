@@ -64,7 +64,7 @@ export async function getBoardLink(code: string): Promise<BoardLink | null> {
 async function scopeIds(link: BoardLink): Promise<{ ids: Set<string> | null; label: string }> {
   const db = supabaseAdmin()
   if (link.scope_type === 'portfolio') return { ids: null, label: 'Whole portfolio' }
-  const { data: lRows } = await db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(3000)
+  const { data: lRows } = await db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
   const rows = (lRows || []) as any[]
   const ids = new Set<string>()
   if (link.scope_type === 'listing') {
@@ -98,8 +98,8 @@ async function crewFor(ids: Set<string> | null, scopeWords: string[]) {
   const [{ data: tRows }, { data: lRows }] = await Promise.all([
     db.from('breezeway_tasks_sync')
       .select('id,name,status,assignees,reference_property_id,started_at,finished_at')
-      .eq('scheduled_date', today).limit(3000),
-    db.from('guesty_listings').select('id,nickname,title').limit(3000),
+      .eq('scheduled_date', today).limit(1000), // deliberate cap: one day of tasks (~90–300)
+    db.from('guesty_listings').select('id,nickname,title').limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
   ])
   const unitOf: Record<string, string> = {}
   for (const l of ((lRows || []) as any[])) unitOf[str(l.id)] = l.nickname || l.title || 'Unit'
@@ -446,7 +446,7 @@ export async function buildFieldBoard(link: BoardLink) {
   const buildingOfUnit: Record<string, string> = {}
   try {
     const dbU = supabaseAdmin()
-    const { data } = await dbU.from('guesty_listings').select('id,nickname,title,building').limit(3000)
+    const { data } = await dbU.from('guesty_listings').select('id,nickname,title,building').limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
     for (const l of ((data || []) as any[])) {
       const nm = l.nickname || l.title || 'Unit'
       nameOfUnit[str(l.id)] = nm
@@ -472,7 +472,7 @@ export async function buildFieldBoard(link: BoardLink) {
   let units: { id: string; name: string }[] = []
   {
     const db = supabaseAdmin()
-    const { data } = await db.from('guesty_listings').select('id,nickname,title').limit(3000)
+    const { data } = await db.from('guesty_listings').select('id,nickname,title').limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
     units = ((data || []) as any[])
       .filter(l => !ids || ids.has(str(l.id)))
       .map(l => ({ id: str(l.id), name: l.nickname || l.title || 'Unit' }))

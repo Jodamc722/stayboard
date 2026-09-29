@@ -146,7 +146,7 @@ async function buildOpsDayFresh(dateParam: string | null) {
   }
   const [lRes, tRes, qRes, rRes] = await Promise.all([
     db.from('guesty_listings').select('id,nickname,title,building,address_city,address_full,bedrooms,status,lat:raw->address->>lat,lng:raw->address->>lng,city2:raw->address->>city,checkIn:raw->>defaultCheckInTime,checkOut:raw->>defaultCheckOutTime'),
-    db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,total_minutes,report_url,type_department,synced_at').eq('scheduled_date', today).limit(2000),
+    db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,assignees,started_at,finished_at,total_minutes,report_url,type_department,synced_at').eq('scheduled_date', today).limit(1000), // deliberate cap: one day of tasks (~90–300)
     db.from('qc_tasks').select('listing_id,status,issue_type,report_url').neq('status', 'closed').limit(300),
     db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_name,nights').or('check_out.eq.' + today + ',check_in.eq.' + today).limit(1000), // deliberate cap: one day's arrivals and departures across ~290 listings
   ])

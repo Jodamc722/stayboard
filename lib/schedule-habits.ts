@@ -48,7 +48,7 @@ export async function learnHabits(days = 30): Promise<Habits> {
   const [{ data: ts }, { data: ls }] = await Promise.all([
     db.from('breezeway_tasks_sync').select('id,name,scheduled_date,finished_at,status,assignees,reference_property_id,type_department')
       .gte('scheduled_date', from).lte('scheduled_date', to).ilike('name', '%clean%').limit(6000),
-    db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(3000),
+    db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
   ])
   const meta: Record<string, { hub: string; market: string }> = {}
   for (const l of ((ls || []) as any[])) {

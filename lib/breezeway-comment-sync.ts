@@ -75,7 +75,7 @@ export async function syncBreezewayComments(maxThreads = 120, opts: { deadline?:
     .select('entity_id, created_at, author_email')
     .eq('entity_type', 'task')
     .order('created_at', { ascending: false })
-    .limit(1500)
+    .limit(1000) // deliberate cap: newest-first — the sweep only takes the 120 most recently active threads from these rows
   const seen: string[] = []
   for (const r of ((rows || []) as any[])) {
     const id = String(r.entity_id || '')

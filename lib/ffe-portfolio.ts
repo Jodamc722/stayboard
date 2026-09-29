@@ -30,7 +30,7 @@ const bedroomsOf = (l: any): number | null => {
 /** Every active unit with its building and owner, sorted the way a person reads a list of units. */
 export async function ffePortfolio(db: any): Promise<FfeUnit[]> {
   const [{ data: ls }, owners] = await Promise.all([
-    db.from('guesty_listings').select('id,nickname,title,building,status,bedrooms:raw->>bedrooms').limit(2000),
+    db.from('guesty_listings').select('id,nickname,title,building,status,bedrooms:raw->>bedrooms').limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
     ownerMap().catch(() => ({ byListing: {} as any })),
   ])
   return ((ls || []) as any[])

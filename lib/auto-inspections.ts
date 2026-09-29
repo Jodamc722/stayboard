@@ -227,13 +227,13 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
     db.from('guesty_reservations')
       .select('id, listing_id, listing_name, guest_name, guest_email, check_in, check_out, nights, status, source, money_total, custom_fields, raw')
       .gte('check_in', today).lte('check_in', in3).eq('status', 'confirmed').limit(500),
-    db.from('guesty_owners').select('full_name, listing_ids').limit(2000),
-    db.from('guesty_listings').select('id, nickname, title, building, address_city').limit(2000),
+    db.from('guesty_owners').select('full_name, listing_ids').limit(1000), // deliberate cap: one row per owner, far fewer than 1,000
+    db.from('guesty_listings').select('id, nickname, title, building, address_city').limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
     db.from('auto_inspections').select('reservation_id, task_id'),
-    db.from('breezeway_properties').select('reference_property_id, home_id').limit(3000),
+    db.from('breezeway_properties').select('reference_property_id, home_id').limit(1000), // deliberate cap: one row per Breezeway property (~200)
     // VIP from the Guests tab (guest_profiles.vip) — a profile VIP is a VIP arrival, whatever
     // Guesty's fields say. Table may not exist pre-migration-043; treat that as "no profiles".
-    db.from('guest_profiles').select('email, name').eq('vip', true).limit(2000).then(r => r, () => ({ data: [] as any[] })),
+    db.from('guest_profiles').select('email, name').eq('vip', true).limit(1000).then(r => r, () => ({ data: [] as any[] })), // deliberate cap: VIP-flagged guest profiles, set by hand on the Guests tab
   ])
   const vipEmails = new Set((vipProfiles || []).map((p: any) => str(p.email).toLowerCase()).filter(e => e && /@/.test(e)))
   const vipNames = (vipProfiles || []).map((p: any) => str(p.name)).filter(Boolean)
@@ -529,9 +529,9 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
       .select('id, listing_id, rating, content, guest_name, channel, created_at')
       .gte('created_at', since + 'T00:00:00Z').is('removed_at', null)
       .order('created_at', { ascending: false }).limit(500),
-    db.from('guesty_listings').select('id, nickname, title, building, address_city').limit(2000),
+    db.from('guesty_listings').select('id, nickname, title, building, address_city').limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
     db.from('auto_inspections').select('reservation_id, listing_id, task_id, check_in').like('reservation_id', 'rev:%'),
-    db.from('breezeway_properties').select('reference_property_id, home_id').limit(3000),
+    db.from('breezeway_properties').select('reference_property_id, home_id').limit(1000), // deliberate cap: one row per Breezeway property (~200)
   ])
   const lmeta: Record<string, any> = {}
   for (const l of listings || []) lmeta[str((l as any).id)] = l

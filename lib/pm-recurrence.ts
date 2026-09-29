@@ -244,7 +244,7 @@ export async function pmLedger(): Promise<any[]> {
   const cfg = resolveCadences(await getSetting<any>(CADENCE_KEY, null).catch(() => null))
   const label: Record<string, string> = {}
   for (const c of cfg.cadences) label[c.key] = c.label
-  const { data } = await supabaseAdmin().from('pm_schedule').select('*').order('next_due', { ascending: true }).limit(2000)
+  const { data } = await supabaseAdmin().from('pm_schedule').select('*').order('next_due', { ascending: true }).limit(1000) // deliberate cap: soonest-due first — the Cadences screen lists only the first 400
   const today = ymdET(new Date())
   return ((data || []) as any[]).map(r => ({ ...r, label: label[r.cadence_key] || r.cadence_key, daysOver: Math.round((Date.parse(today) - Date.parse(str(r.next_due))) / 86400000), market: marketOf(r.building, null, r.unit_name) }))
 }

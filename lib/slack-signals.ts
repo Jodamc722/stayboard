@@ -132,7 +132,7 @@ export async function findCodeProblems(lookaheadDays = 2): Promise<CodeProblem[]
 
   const [lRes, rRes] = await Promise.all([
     db.from('guesty_listings').select('id,nickname,title,cf:raw->customFields'),
-    db.from('guesty_reservations').select('listing_id,check_in,status').gte('check_in', today).lte('check_in', until).limit(2000),
+    db.from('guesty_reservations').select('listing_id,check_in,status').gte('check_in', today).lte('check_in', until).limit(1000), // deliberate cap: at most three days of check-ins (callers look 0–2 days ahead, ~60 a day)
   ])
 
   const listings: Record<string, { unit: string; code: string | null }> = {}
@@ -200,7 +200,7 @@ export async function findBlockedArrivals(lookaheadDays = 5): Promise<BlockedArr
   const db = supabaseAdmin()
   const { data } = await db.from('guesty_reservations')
     .select('listing_id,check_in,status')
-    .gte('check_in', today).lte('check_in', until).limit(2000)
+    .gte('check_in', today).lte('check_in', until).limit(1000) // deliberate cap: under a week of check-ins (callers look 1 or 5 days ahead, ~60 a day)
 
   const byListing: Record<string, string[]> = {}
   for (const r of ((data || []) as any[])) {

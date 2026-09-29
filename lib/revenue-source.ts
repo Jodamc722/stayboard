@@ -61,7 +61,7 @@ export async function revenueAppUnitMonth(month: string): Promise<{ rows: Record
   let syncedAt: string | null = null
   let kind: 'eom' | 'live' | null = null
   for (const k of ['eom', 'live'] as const) {
-    const { data, error } = await db.from('rev_unit_month').select('*').eq('month', month).eq('kind', k).limit(2000)
+    const { data, error } = await db.from('rev_unit_month').select('*').eq('month', month).eq('kind', k).limit(1000) // deliberate cap: one row per unit for one month and kind (~290)
     if (error || !data?.length) continue
     for (const r of data as RevUnitMonthRow[]) { out[r.guesty_listing_id] = r; if (!syncedAt || r.synced_at > syncedAt) syncedAt = r.synced_at }
     kind = k
