@@ -332,7 +332,14 @@ export async function POST(req: NextRequest) {
     })
 
     if (!out.ok) {
-      await sendMessage(chat.id, `I hit an error: ${out.error}`, { replyTo: msg.message_id })
+      // NEVER THE RAW ERROR IN A GROUP (2026-09-29, 04-F8b) — the same rule as Slack rooms: the group
+      // gets one plain line and the detail goes to the function log. A private chat keeps the detail.
+      if (isGroup) {
+        console.error('[telegram] Eve could not answer', out.status, String(out.error || '').slice(0, 500))
+        await sendMessage(chat.id, 'I couldn\'t answer that just now — try again in a minute.', { replyTo: msg.message_id })
+      } else {
+        await sendMessage(chat.id, `I hit an error: ${out.error}`, { replyTo: msg.message_id })
+      }
       return ok()
     }
     // The transcript is replayed into her next prompts, so it keeps the reply WITHOUT any door code
@@ -341,7 +348,12 @@ export async function POST(req: NextRequest) {
     await sendMessage(chat.id, out.reply, { replyTo: isGroup ? msg.message_id : null })
     return ok()
   } catch (e: any) {
-    await sendMessage(chat.id, `I hit an error before I could answer. ${String(e?.message || e).slice(0, 200)}`)
+    if (isGroup) {
+      console.error('[telegram] Eve threw before answering', String(e?.message || e).slice(0, 500))
+      await sendMessage(chat.id, 'I couldn\'t answer that just now — try again in a minute.')
+    } else {
+      await sendMessage(chat.id, `I hit an error before I could answer. ${String(e?.message || e).slice(0, 200)}`)
+    }
     return ok()
   } finally {
     clearInterval(keepTyping)
