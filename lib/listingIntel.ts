@@ -173,11 +173,11 @@ export async function loadIntel(listingIdsIn: string[], dateIn?: string): Promis
         .in('listing_id', ids).gte('created_at', addDays(date, -365))
         .order('created_at', { ascending: false }).limit(800),
       db.from('unit_inspections').select('id,unit,cleaner,rating,notes,follow_up,inspector,inspected_on')
-        .gte('inspected_on', inspFrom).order('inspected_on', { ascending: false }).limit(1000),
+        .gte('inspected_on', inspFrom).order('inspected_on', { ascending: false }).limit(1000), // deliberate cap: newest first; 120 days of a table nothing writes since /inspections was retired
       db.from('audit_items').select('id,listing_id,title,kind,status,qty,room')
         .in('listing_id', ids).in('kind', ['replace', 'add']).in('status', ['open', 'approved', 'ordered', 'arriving'])
         .order('created_at', { ascending: false }).limit(500),
-      db.from('property_audits').select('listing_id,status,created_at').in('listing_id', ids).limit(1000),
+      db.from('property_audits').select('listing_id,status,created_at').in('listing_id', ids).limit(1000), // deliberate cap: at most 150 units, a handful of audits each (one open at a time)
       getSetting<Record<string, number>>('review_category_benchmark', {}),
     ])
 

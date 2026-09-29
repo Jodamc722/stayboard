@@ -136,7 +136,7 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
   // The day's board. One date, so this is small and needs no paging.
   const { data: tRows, error: tErr } = await db.from('breezeway_tasks_sync')
     .select('id,reference_property_id,name,status,scheduled_date,assignees,assignee_name,started_at,finished_at,total_minutes,type_department')
-    .eq('scheduled_date', date).order('id').limit(1000)
+    .eq('scheduled_date', date).order('id').limit(1000) // deliberate cap: one day's tasks, ~100 across the portfolio
   if (tErr) throw new Error('could not read the day\'s tasks — ' + String(tErr.message || tErr).slice(0, 120))
 
   const stopsByPerson: Record<string, Stop[]> = {}

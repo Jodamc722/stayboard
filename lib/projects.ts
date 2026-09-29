@@ -103,7 +103,7 @@ export async function getProject(id: string): Promise<ProjectFull | null> {
     sb.from('project_links').select('*').eq('project_id', id).order('created_at'),
     sb.from('project_steps').select('*').eq('project_id', id).order('sort', { nullsFirst: false }).order('created_at'),
     sb.from('project_photos').select('*').eq('project_id', id).order('created_at', { ascending: false }).limit(500),
-    sb.from('project_notes').select('*').eq('project_id', id).order('created_at', { ascending: false }).limit(1000),
+    sb.from('project_notes').select('*').eq('project_id', id).order('created_at', { ascending: false }).limit(1000), // deliberate cap: one project's feed, the newest 1,000 notes
     sb.from('project_members').select('*').eq('project_id', id).order('created_at'),
     // `role` arrives with migration 087. Selecting it before the migration runs would make the
     // whole project 500 on a column that does not exist yet, so it is read separately and a

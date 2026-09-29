@@ -329,7 +329,7 @@ async function buildingOwnerTokens(owners: OwnerMap): Promise<TokenOwner> {
   const db = supabaseAdmin()
   const tally: Record<string, Record<string, number>> = {}
   try {
-    const { data } = await db.from('guesty_listings').select('id, building, nickname').limit(1000)
+    const { data } = await db.from('guesty_listings').select('id, building, nickname').limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
     for (const l of (data || []) as any[]) {
       const own = owners.byListing[String(l.id)]
       if (!own) continue

@@ -386,13 +386,13 @@ export async function awaitingSet(opts: { db?: any; now?: number; horizonHours?:
   let res: any = await db.from('conversation_response').select(cols + ',awaiting_since,sla_due_at')
     .eq('awaiting', true).gte('last_guest_at', from)
     .order('last_guest_at', { ascending: false }).order('conversation_id', { ascending: true })
-    .limit(1000)
+    .limit(1000) // deliberate cap: guests waiting on us right now (dozens); `truncated` below says so if it is ever hit
   if (res.error && missingSlaColumns(res.error)) {
     slaKnown = false
     res = await db.from('conversation_response').select(cols)
       .eq('awaiting', true).gte('last_guest_at', from)
       .order('last_guest_at', { ascending: false }).order('conversation_id', { ascending: true })
-      .limit(1000)
+      .limit(1000) // deliberate cap: guests waiting on us right now (dozens); `truncated` below says so if it is ever hit
   }
   if (res.error) return { rows: [], ids: [], overdue: 0, slaKnown: false, truncated: false, error: String(res.error.message || res.error).slice(0, 200) }
   const data: any[] = res.data || []

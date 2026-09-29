@@ -102,7 +102,7 @@ export async function closeStaleCleans(opts: { dryRun?: boolean } = {}): Promise
     // Unit names + who is in them right now.
     const ids = Array.from(new Set(open.map(t => String(t.reference_property_id))))
     const [lRes, occRes] = await Promise.all([
-      db.from('guesty_listings').select('id,nickname,title,building').in('id', ids).limit(1000),
+      db.from('guesty_listings').select('id,nickname,title,building').in('id', ids).limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
       db.from('guesty_reservations').select('listing_id,check_in,check_out,status')
         .lte('check_in', today).gt('check_out', today).limit(4000),
     ])

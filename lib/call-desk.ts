@@ -554,14 +554,15 @@ export type CallNote = { id: string; summary: string; promised: string[]; issues
  *
  * Talkroute names nobody on an outbound call — it attaches no events at all — so the caller has to
  * come from the person closing the card. This is the list the picker offers: everyone who has
- * closed a call in the last ninety days, plus anyone named on the Talkroute device map. Free text
- * is still allowed, so a new starter is never blocked by not being on a list.
+ * closed one of the newest 1,000 calls of the last ninety days, plus anyone named on the Talkroute
+ * device map. Free text is still allowed, so a new starter is never blocked by not being on a list.
  */
 async function knownCallers(sb: any): Promise<string[]> {
   const set = new Set<string>()
   try {
     const since = new Date(Date.now() - 90 * 86400_000).toISOString()
-    const { data } = await sb.from('guest_calls').select('called_by').gte('called_at', since).limit(1000)
+    const { data } = await sb.from('guest_calls').select('called_by').gte('called_at', since)
+      .order('called_at', { ascending: false }).limit(1000) // deliberate cap: names for a picker — the newest 1,000 calls say who is calling now
     for (const r of ((data as any[]) || [])) {
       const n = String(r.called_by || '').trim()
       // 'Talkroute' is the system, not a colleague, and an email is not how anyone refers to a person.

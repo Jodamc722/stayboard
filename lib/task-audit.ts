@@ -135,7 +135,7 @@ export async function auditDuplicates(opts: {
     try {
       const lids = Array.from(new Set(rows.map(r => str(r.reference_property_id)).filter(Boolean)))
       if (lids.length) {
-        const { data: ls } = await db.from('guesty_listings').select('id,nickname,title').in('id', lids.slice(0, 400)).limit(1000)
+        const { data: ls } = await db.from('guesty_listings').select('id,nickname,title').in('id', lids.slice(0, 400)).limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
         for (const l of ((ls || []) as any[])) unitOf[str(l.id)] = str(l.nickname || l.title) || str(l.id)
       }
     } catch { /* ids are a workable fallback name */ }
@@ -266,7 +266,7 @@ export async function closeStrayInspections(opts: { dryRun?: boolean; olderThanD
     try {
       const lids = Array.from(new Set(((data || []) as any[]).map(r => str(r.reference_property_id)).filter(Boolean)))
       if (lids.length) {
-        const { data: ls } = await db.from('guesty_listings').select('id,nickname,title').in('id', lids.slice(0, 400)).limit(1000)
+        const { data: ls } = await db.from('guesty_listings').select('id,nickname,title').in('id', lids.slice(0, 400)).limit(1000) // deliberate cap: one row per listing, ~290 in the portfolio
         for (const l of ((ls || []) as any[])) nameOf[str(l.id)] = str(l.nickname || l.title) || str(l.id)
       }
     } catch { /* ids are a workable fallback name */ }

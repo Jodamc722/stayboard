@@ -91,7 +91,7 @@ export async function vacantWork(vacants: VacantUnit[], today: string): Promise<
       .not('status', 'in', '("done","resolved","closed")').limit(2000),
     // Photo strength — a wide-open window is the moment to reshoot a thin set. photo_score is what
     // the listing photo AI wrote; a null means it has never even been looked at.
-    db.from('guesty_listings').select('id,pictures,photo_score').in('id', ids).limit(1000),
+    db.from('guesty_listings').select('id,pictures,photo_score').in('id', ids).limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
   ])
 
   const lastAudit: Record<string, string> = {}

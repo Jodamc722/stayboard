@@ -51,7 +51,7 @@ const shape = (r: any): VendorRecord => ({
 /** FAIL-OPEN: no vendors table, or no 087 yet, means an empty picker — never a broken page. */
 export async function listVendors(includeInactive = false): Promise<VendorRecord[]> {
   try {
-    const { data, error } = await supabaseAdmin().from('vendors').select('*').order('sort').order('label').limit(1000)
+    const { data, error } = await supabaseAdmin().from('vendors').select('*').order('sort').order('label').limit(1000) // deliberate cap: the vendor directory, a few dozen rows
     if (error) return []
     const rows = ((data || []) as any[]).map(shape)
     return includeInactive ? rows : rows.filter(v => v.active)

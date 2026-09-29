@@ -418,7 +418,7 @@ export async function findWalkInRisks(): Promise<WalkInRisk[]> {
     loadBehind().catch(() => null),
     findBlockedArrivals(1).catch(() => [] as BlockedArrival[]),
     findCodeProblems(0).catch(() => [] as CodeProblem[]),
-    db.from('guesty_reservations').select('listing_id,check_in,status').eq('check_in', today).limit(1000),
+    db.from('guesty_reservations').select('listing_id,check_in,status').eq('check_in', today).limit(1000), // deliberate cap: one day's check-ins across ~290 listings
     db.from('guesty_listings').select('id,nickname,title,checkIn:raw->>defaultCheckInTime'),
   ])
 
