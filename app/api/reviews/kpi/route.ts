@@ -35,6 +35,7 @@ import { setSetting } from '@/lib/app-settings'
 import { ratingToStars } from '@/lib/optimize-score'
 import { isBookingChannel, isFiveStarReview, isLowReview, clearsRecovery } from '@/lib/review-scale'
 import { isDepartureCleanName } from '@/lib/breezeway'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -848,11 +849,13 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
   if (canSeeCleaners) {
     try {
       const AFTER = 45, BEFORE = 45
-      const { data: inspRows, error: inspErr } = await db.from('unit_inspections')
+      // Paged (was one read capped at 1,000): every inspection in the window is counted and scored.
+      const insp = await pageRows<any>((a, b) => db.from('unit_inspections')
         .select('id,unit,listing_id,inspector,rating,inspected_on,follow_up')
         .gte('inspected_on', addDays(from, -BEFORE)).lte('inspected_on', to)
-        .order('inspected_on', { ascending: false }).limit(2000)
-      if (inspErr) throw new Error(inspErr.message)
+        .order('inspected_on', { ascending: false }).order('id').range(a, b))
+      if (insp.truncated) throw new Error('could not read every inspection in the window')
+      const inspRows = insp.rows
 
       // THE JOIN WAS THROWING AWAY THE KEY IT HAD. unit_inspections stores listing_id at write time
       // (api/inspections) AND the unit name the coordinator typed. This matched on the typed name
