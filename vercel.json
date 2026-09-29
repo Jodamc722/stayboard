@@ -102,7 +102,7 @@
     },
     {
       "path": "/api/cron/weekly-planner",
-      "schedule": "29 22 * * 0"
+      "schedule": "29 22,23 * * 0"
     },
     {
       "path": "/api/cron/revenue-sync",

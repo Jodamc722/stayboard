@@ -8,7 +8,8 @@ import { buildPlannerPosts } from '@/lib/slack-planner'
 import { getSlackRules } from '@/lib/slack-rules'
 import { draft } from '@/lib/slack-queue'
 import { withRouteReceipt } from '@/lib/automation-runs'
-import { requireCron } from '@/lib/cron-auth'
+import { requireCron, cronAllowed } from '@/lib/cron-auth'
+import { atEasternHour } from '@/lib/et-clock'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -48,5 +49,13 @@ async function run(req: NextRequest) {
 }
 
 const withReceipt = withRouteReceipt<NextRequest>('weekly-planner', run)
-export async function GET(req: NextRequest) { return withReceipt(req) }
-export async function POST(req: NextRequest) { return withReceipt(req) }
+
+// SUNDAY 6:29PM EASTERN ALL YEAR (2026-09-29). vercel.json fires this Sundays at 22:29 AND 23:29
+// UTC; on the scheduler's own call, the one that is not 6pm Sunday in New York stops here — before
+// the receipt or a single draft (lib/et-clock). An admin's "Run now" is never skipped.
+async function scheduled(req: NextRequest) {
+  if (cronAllowed(req).viaSecret && !atEasternHour(18, 0)) return NextResponse.json({ ok: true, skipped: 'daylight-saving twin — this job runs Sundays at 6pm Eastern' })
+  return withReceipt(req)
+}
+export async function GET(req: NextRequest) { return scheduled(req) }
+export async function POST(req: NextRequest) { return scheduled(req) }
