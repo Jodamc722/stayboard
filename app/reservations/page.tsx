@@ -152,7 +152,9 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
 
   if (near.truncated) console.error('[reservations] read of stays arriving before ' + in7Str + ' stopped early — the pills and tabs may be short')
   const cfMap = await customFieldNameMap()
-  const up = near.rows.concat(later ?? [])
+  // A short near read must not let next week's arrivals stand in for this week's: without them the
+  // page shows what it could read, and says so (the pill below), instead of a plausible wrong week.
+  const up = near.truncated ? near.rows : near.rows.concat(later ?? [])
   const pastRows = past ?? []
   const pastTotal = pastCount ?? pastRows.length
   const upTotal = upCount ?? up.length
@@ -204,6 +206,7 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
         <Pill title="Arrivals in the next 7 days">{arrivals7Count} next 7d</Pill>
         <Pill title="Booked revenue on arrivals in the next 7 days">{fmtMoney(revenue7, currency)} 7d</Pill>
         {sync?.last_error && <Pill tone="amber" title="The last Guesty sync reported an issue — figures may be stale">Sync issue</Pill>}
+        {near.truncated && <Pill tone="amber" title="Could not read every stay for this week — counts and tabs may be short. Refresh to try again.">Partial read</Pill>}
       </LeanHead>
 
       {up.length === 0 && pastRows.length === 0 ? (
