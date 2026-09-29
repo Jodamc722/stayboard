@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getTalkrouteSettings } from '@/lib/talkroute'
 import { syncTalkrouteCalls, syncTalkrouteTexts, syncTalkrouteVoicemails } from '@/lib/talkroute-sync'
+import { safeEqual } from '@/lib/signing'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -19,7 +20,9 @@ export const maxDuration = 60
 export async function POST(req: NextRequest) {
   const s = await getTalkrouteSettings()
   const t = req.nextUrl.searchParams.get('t') || ''
-  if (!s.webhookToken || t !== s.webhookToken) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Constant-time (2026-09-28 audit): `!==` stops at the first differing character, which leaks how
+  // much of a guess was right. safeEqual is false for an empty or unset token.
+  if (!s.webhookToken || !safeEqual(t, String(s.webhookToken))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body: any = await req.json().catch(() => ({}))
   const type = String(req.nextUrl.searchParams.get('type') || body?.type || body?.event || '').toLowerCase()
   const sb = supabaseAdmin()
