@@ -27,6 +27,7 @@ import 'server-only'
 import { lengthFactors, expectedForLength, lengthNote, type LengthFactors } from './owner-audit-rate'
 import { cleaningGaps, cleaningNote, BUNDLED_FEE_RE, type CleanStay, type CleanVerdict } from './owner-audit-cleaning'
 import { supabaseAdmin } from './supabase-admin'
+import { pageRows } from './db-page'
 import { getSetting, setSetting } from './app-settings'
 import { MONTH_LABEL, money } from './owner-statements'
 
@@ -432,14 +433,18 @@ function nightsWithin(checkIn: string, checkOut: string, start: string, endExcl:
  */
 export async function auditMonths(limit = 24): Promise<AuditMonthPick[]> {
   const sb = supabaseAdmin()
-  const { data, error } = await sb.from('guesty_owner_statements')
+  // Paged, newest first, on an id tiebreaker: one row per owner statement, every month, so the old
+  // single read stopped after the newest 1,000 statements — older months fell off the picker and the
+  // oldest month shown carried a short count. A read that stops early fails loudly, as an error did.
+  const read = await pageRows<any>((a, b) => sb.from('guesty_owner_statements')
     .select('period_month')
     .not('period_month', 'is', null)
-    .order('period_month', { ascending: false })
-    .limit(5000)
-  if (error) throw new Error('statement months read: ' + error.message)
+    .order('period_month', { ascending: false }).order('id')
+    .range(a, b), 20)
+  if (read.truncated) throw new Error('statement months read: stopped before the last page')
+  const data = read.rows
   const counts: Record<string, number> = {}
-  for (const r of (data || []) as any[]) {
+  for (const r of data as any[]) {
     const m = String(r.period_month || '')
     if (m) counts[m] = (counts[m] || 0) + 1
   }
