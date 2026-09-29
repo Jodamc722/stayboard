@@ -33,7 +33,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf, buildingOf } from '@/lib/segments'
 import { setSetting } from '@/lib/app-settings'
 import { ratingToStars } from '@/lib/optimize-score'
-import { isBookingChannel, isFiveStarReview, isLowReview, clearsRecovery } from '@/lib/review-scale'
+import { isFiveStarReview, isLowReview, clearsRecovery } from '@/lib/review-scale'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { pageRows } from '@/lib/db-page'
 

@@ -21,7 +21,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel, getAccess } from '@/lib/access'
-import { roomsFor, itemsFor, roomQuestions, fullAnswers, applyAnswers, unitNeeds, unitCheck, newCode, mergeStandard, STANDARD_KEY, DEFAULT_STANDARD, APPLIANCES, BED_SIZES, TIERS, ROOM_TYPES, type UnitDetails, type RoomDef, type InventoryStandard } from '@/lib/onboarding'
+import { roomsFor, itemsFor, fullAnswers, applyAnswers, unitNeeds, unitCheck, newCode, mergeStandard, STANDARD_KEY, DEFAULT_STANDARD, APPLIANCES, BED_SIZES, TIERS, ROOM_TYPES, type UnitDetails, type RoomDef, type InventoryStandard } from '@/lib/onboarding'
 import { getSetting, setSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
@@ -166,7 +166,7 @@ async function generate(db: ReturnType<typeof supabaseAdmin>, unitId: string, de
   const have = new Set((existing || []).map((r: any) => String(r.key)))
   const defs: RoomDef[] = roomsFor(details).filter(r => !have.has(r.key))
   if (!defs.length) return 0
-  const { data: rows, error } = await db.from('onboarding_rooms')
+  const { error } = await db.from('onboarding_rooms')
     .insert(defs.map(r => ({ unit_id: unitId, key: r.key, name: r.name, kind: r.kind, sort: r.sort })))
     .select('id,key,kind,name,sort')
   if (error) throw new Error(error.message)

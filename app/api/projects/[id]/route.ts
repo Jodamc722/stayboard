@@ -12,10 +12,10 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   getProject, logEvent, gateProject, ownerApprovalEmail, toCents, LINK_KINDS, canSee, canEdit, toPerson,
   TASK_STATUSES, TASK_STATUS_LABEL, MEMBER_ROLES, FILES_BUCKET, prefsOf, settingsOf, describeRecurrence, type Viewer, type Member,
-  recountInvoiced, INVOICE_STATUSES, INVOICE_STATUS_LABEL, approvalCeiling, money, rollRecurringVendorJob, fileCompletedTask,
+  recountInvoiced, INVOICE_STATUSES, INVOICE_STATUS_LABEL, approvalCeiling, rollRecurringVendorJob, fileCompletedTask,
   nextOccurrence, todayISO, estLabel, shortDate, vendorApprovalEmail,
 } from '@/lib/projects'
-import { saveVendor, slugVendor } from '@/lib/project-vendors'
+import { saveVendor } from '@/lib/project-vendors'
 import { onAssigned, onAdded, onComment } from '@/lib/project-notify'
 import { bustBoards } from '@/lib/bust'
 

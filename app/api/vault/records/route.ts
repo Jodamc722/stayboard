@@ -8,7 +8,7 @@
 // demand — nothing is duplicated, so the vault can never drift out of date.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { checkVaultCode, codeFrom, codeEntered, logAccess, unlockValid, UNLOCK_COOKIE } from '@/lib/vault'
+import { checkVaultCode, codeFrom, logAccess, unlockValid, UNLOCK_COOKIE } from '@/lib/vault'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'

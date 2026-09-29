@@ -4,7 +4,7 @@
 // GET: any admin. PUT: owner only — auto-creating assigned work for named staff is an owner call.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
-import { getSetting, setSetting } from '@/lib/app-settings'
+import { setSetting } from '@/lib/app-settings'
 import { TASK_AUTOMATION_KEY, TASK_AUTOMATION_DEFAULTS, getTaskAutomation } from '@/lib/auto-inspections'
 
 export const dynamic = 'force-dynamic'

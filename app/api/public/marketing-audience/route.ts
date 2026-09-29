@@ -14,7 +14,6 @@ import { getAccess } from '@/lib/access'
 import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { linkGate } from '@/lib/passcode-gate'
-import type { LinkScope } from '@/lib/share-links'
 import { pageRows } from '@/lib/db-page'
 import { getRestrictedChannels } from '@/lib/contacts-load'
 import { buildContacts, audienceSummary } from '@/lib/guest-contacts'
@@ -37,11 +36,9 @@ export async function GET(_req: NextRequest) {
   } catch { internal = false }
   // share_links row 'marketing' (2026-09-18): its own passcode, and a scope that can pin the date
   // range and switch dollars off for this link alone.
-  let linkScope: LinkScope = {}
   if (!internal) {
     const gate = await linkGate('marketing', { kinds: ['marketing'], cookieOnly: signedIn })
     if (!gate.ok) return gate.res
-    linkScope = gate.link.scope || {}
   }
 
   try {
