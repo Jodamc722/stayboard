@@ -63,7 +63,11 @@ export async function GET(req: NextRequest) {
   for (const k of Object.keys(byTask)) finish(byTask[k])
   for (const k of Object.keys(byModel)) finish(byModel[k])
   // Projection: the last 7 days' daily average × 30. Honest only once a week of rows exists.
-  const daysWithData = Math.min(7, Object.keys(dayMap).filter(d => new Date(d).getTime() >= sevenAgo - 86400_000).length)
+  // The divisor is how far back the ledger reaches, capped at 7 (2026-09-29, 05-P3-2) — it used to
+  // count only the days that HAD spend, so one $0 day inflated the month by 7/6.
+  let oldest = Date.now()
+  for (const r of rows) { const t = new Date(r.at).getTime(); if (t < oldest) oldest = t }
+  const daysWithData = rows.length ? Math.min(7, Math.max(1, Math.ceil((Date.now() - Math.max(oldest, sevenAgo)) / 86400_000))) : 0
   const projectedMonthUsd = daysWithData ? Number(((last7Usd / daysWithData) * 30).toFixed(2)) : 0
 
   return NextResponse.json({ ok: true, days, total: finish(total), byTask, byDay, byModel, last7Usd: Number(last7Usd.toFixed(4)), projectedMonthUsd, daysWithData })
