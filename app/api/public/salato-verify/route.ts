@@ -52,8 +52,17 @@ const RES_NOTES_FIELD = '695f16830cb54c001400b3ff' // Guesty reservation "reserv
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function keyFor(rid: string) { return 'sv:' + rid }
 
+// THE LINK DIES WITH THE STAY (2026-09-28 audit, B-16). The signed token never expired, so a link
+// kept answering with the guest's name, dates and confirmation code — and kept accepting uploads —
+// long after checkout. Two days of grace covers a late check-out and the desk's follow-up; after
+// that the link answers 410. The team's own view of a finished verification is on the board, not here.
+const VERIFY_GRACE_DAYS = 2
+function ymdET(d: Date): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
+function daysAgoET(n: number): string { const d = new Date(ymdET(new Date()) + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10) }
+const EXPIRED = () => NextResponse.json({ ok: false, expired: true, error: 'This verification link has expired — the stay has ended.' }, { status: 410 })
+
 // Confirm the reservation id belongs to a Salato listing; return light guest/unit detail.
-async function loadSalatoRes(db: any, rid: string): Promise<{ ok: boolean; unit?: string; guestName?: string; guestFirst?: string; checkIn?: string; checkOut?: string; nights?: number; guests?: number | null; confirmationCode?: string }> {
+async function loadSalatoRes(db: any, rid: string): Promise<{ ok: boolean; expired?: boolean; unit?: string; guestName?: string; guestFirst?: string; checkIn?: string; checkOut?: string; nights?: number; guests?: number | null; confirmationCode?: string }> {
   if (!rid || !/^[a-z0-9]{6,40}$/i.test(rid)) return { ok: false }
   const { data: r } = await db.from('guesty_reservations').select('id,listing_id,guest_name,check_in,check_out,nights,raw').eq('id', rid).maybeSingle()
   if (!r) return { ok: false }
@@ -62,6 +71,8 @@ async function loadSalatoRes(db: any, rid: string): Promise<{ ok: boolean; unit?
   // The gate reads the SAME editable set as the board — a unit added at /salato → Units can be
   // verified immediately; before this it was refused because its name did not say "Salato".
   if (!(await isSalatoListing(db, String(r.listing_id), l))) return { ok: false }
+  const co = str(r.check_out).slice(0, 10)
+  if (co && co < daysAgoET(VERIFY_GRACE_DAYS)) return { ok: false, expired: true }
   const raw = r.raw || {}
   const guest = raw.guest || {}
   const full = r.guest_name || raw.guestName || guest.fullName || [guest.firstName, guest.lastName].filter(Boolean).join(' ') || ''
@@ -84,6 +95,7 @@ export async function GET(req: NextRequest) {
     if (!rid) return NextResponse.json({ ok: false, error: 'This verification link is not valid.' }, { status: 404 })
     const db = supabaseAdmin()
     const info = await loadSalatoRes(db, rid)
+    if (info.expired) return EXPIRED()
     if (!info.ok) return NextResponse.json({ ok: false, error: 'This verification link is not valid.' }, { status: 404 })
     const rec = await readRecord(db, rid)
     const { rules, version } = await loadSalatoRules(db)
@@ -116,20 +128,23 @@ export async function POST(req: NextRequest) {
     if (!rid) return NextResponse.json({ ok: false, error: 'This verification link is not valid.' }, { status: 404 })
     const db = supabaseAdmin()
     const info = await loadSalatoRes(db, rid)
+    if (info.expired) return EXPIRED()
     if (!info.ok) return NextResponse.json({ ok: false, error: 'This verification link is not valid.' }, { status: 404 })
 
     // REOPEN: a verification was done incorrectly — reset it to pending so the guest can redo it.
-    // Gated: a signed-in Stayboard user, or the admin password (the same credential that gates other
-    // destructive actions). Front-desk share-only users must supply that password.
+    // Gated: a signed-in Lighthouse team member (allowlisted and active — not merely a Supabase
+    // session), or the admin password (the same credential that gates other destructive actions,
+    // with its lockout). Front-desk share-only users must supply that password.
     if (str(body?.action) === 'reopen') {
       const access = await getAccess()
-      if (!access.user) {
+      const member = !!access.user && !!access.allowed
+      if (!member) {
         const gate = await adminPasswordOk(body?.password)
-        if (!gate.ok) return NextResponse.json({ ok: false, needsAdminPassword: true, error: gate.reason }, { status: 403 })
+        if (!gate.ok) return NextResponse.json({ ok: false, needsAdminPassword: true, error: gate.reason }, { status: gate.locked ? 429 : 403 })
       }
       const rec = await readRecord(db, rid)
       if (!rec || rec.status !== 'verified') return NextResponse.json({ ok: true, reopened: true, note: 'Nothing to reopen — this stay is not verified.' })
-      const reopened = Object.assign({}, rec, { status: 'pending', reopenedAt: new Date().toISOString(), reopenedBy: access.user ? (access.email || 'admin') : 'front-desk', priorSignedAt: rec.signedAt || null })
+      const reopened = Object.assign({}, rec, { status: 'pending', reopenedAt: new Date().toISOString(), reopenedBy: member ? (access.email || 'admin') : 'front-desk', priorSignedAt: rec.signedAt || null })
       const { error: rErr } = await db.from('app_settings').upsert({ key: keyFor(rid), value: JSON.stringify(reopened), updated_at: new Date().toISOString() })
       if (rErr) return NextResponse.json({ ok: false, error: String(rErr.message || rErr).slice(0, 160) }, { status: 500 })
       return NextResponse.json({ ok: true, reopened: true })
