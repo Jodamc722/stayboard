@@ -19,6 +19,7 @@
 // it ever leaks, rotating FFE_LINK_SECRET invalidates every outstanding link at once.
 import 'server-only'
 import { createHmac } from 'crypto'
+import { serverSecret } from './signing'
 
 // SECRET RESOLUTION (Jon, 2026-08-18: "can we fix it"). The old fallback was a constant in this
 // file, which meant anyone who could read the repo could derive every share link. Now:
@@ -26,17 +27,26 @@ import { createHmac } from 'crypto'
 //   2. Else a secret DERIVED from the service-role key (already server-side, never shipped to the
 //      client, unknown to anyone without production env access). Deriving rather than using it raw
 //      means the service key itself never doubles as an HMAC key anywhere.
-//   3. The old constant only remains as a last resort for local dev with no env at all.
-// Switching secrets rotates every outstanding link once — fresh ones come straight from the app.
-const SECRET = process.env.FFE_LINK_SECRET
-  || (process.env.SUPABASE_SERVICE_ROLE_KEY
-    ? createHmac('sha256', process.env.SUPABASE_SERVICE_ROLE_KEY).update('stayboard-ffe-links').digest('hex')
-    : 'stayboard-ffe-v1-2026')
+//   3. Else the same derivation from lib/signing's serverSecret(), which THROWS when no server
+//      secret is configured. The repo constant is gone (2026-09-28 audit, B-14): this repo is
+//      public, so a constant here was a key anyone could read.
+// 1 and 2 are unchanged, so every link already sent still opens. Resolved on first use rather than
+// at import, so a box with no secret fails the one request that needs a link, not every route that
+// imports this file. Switching secrets rotates every outstanding link once — fresh ones come
+// straight from the app.
+let SECRET: string | null = null
+function secret(): string {
+  if (!SECRET) {
+    SECRET = process.env.FFE_LINK_SECRET
+      || createHmac('sha256', process.env.SUPABASE_SERVICE_ROLE_KEY || serverSecret()).update('stayboard-ffe-links').digest('hex')
+  }
+  return SECRET
+}
 
 export type FfeScopeKind = 'unit' | 'building' | 'owner' | 'order'
 
 function sign(kind: FfeScopeKind, id: string): string {
-  return createHmac('sha256', SECRET).update(kind + ':' + String(id || '')).digest('hex').slice(0, 16)
+  return createHmac('sha256', secret()).update(kind + ':' + String(id || '')).digest('hex').slice(0, 16)
 }
 
 export const unitCode = (listingId: string) => sign('unit', listingId)
