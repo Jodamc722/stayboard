@@ -12,7 +12,7 @@ export const BREEZEWAY_AUTHOR = 'breezeway'
 /**
  * Import one task's Breezeway comments into the app thread, right now.
  *
- * The cron below runs every 15 minutes, which is fine for notifications but far too slow when
+ * The cron below runs every 30 minutes, which is fine for notifications but far too slow when
  * somebody has the thread OPEN and is waiting on the crew. /api/comments calls this on every read,
  * so opening a task shows the crew's reply the moment it exists. Pass `comments` when the caller
  * has already fetched the thread so this costs no extra Breezeway call.

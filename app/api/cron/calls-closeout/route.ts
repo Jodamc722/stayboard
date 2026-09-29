@@ -11,7 +11,7 @@
 // It runs lib/call-desk's loadCallsDesk — the SAME engine the page renders from — and closes exactly
 // the rows the page would have shown as Missed. No second definition of "due".
 //
-// Schedule: 05:30 UTC = 01:30 EDT / 00:30 EST, safely after midnight Eastern all year. Idempotent:
+// Schedule: 05:31 UTC = 01:31 EDT / 00:31 EST, safely after midnight Eastern all year. Idempotent:
 // rows already completed or already incomplete are never touched, so re-running is harmless.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'

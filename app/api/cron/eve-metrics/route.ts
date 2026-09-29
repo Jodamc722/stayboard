@@ -40,7 +40,7 @@ async function run(req: NextRequest) {
   const sp = new URL(req.url).searchParams
 
   // THREE JOBS ON ONE CRON LINE (2026-09-23). vercel.json is at its cron cap, so this line fires at
-  // 07:43, 08:43 and 09:43 UTC and the hour picks the job: baselines first, then the living mind
+  // 07:50, 08:50 and 09:50 UTC (was :43 until 2026-09-28) and the hour picks the job: baselines first, then the living mind
   // (lib/eve/brain.ts: grade yesterday's calls, tidy beliefs, reflect, make today's calls), then the
   // dossiers (lib/eve/dossiers.ts). An admin can run any of them by hand with ?phase=.
   const hourUtc = new Date().getUTCHours()
