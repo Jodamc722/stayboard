@@ -1264,7 +1264,8 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   const behindUnits = behindHere.slice(0, 8).map(u => u.unit + (u.arrivingAt ? ' (in ' + u.arrivingAt + ')' : '')).join(' · ') + (behindHere.length > 8 ? ' · +' + (behindHere.length - 8) + ' more' : '')
   // HOW FRESH, BOTH HALVES (2026-09-28 audit, 06 F-21): the tasks are the Breezeway mirror and the
   // stays are Guesty, and only Guesty's age used to show.
-  const fresh = [data?.bzSync ? 'BZ ' + fmtAgo(data.bzSync) : '', data?.lastSync ? 'res ' + fmtAgo(data.lastSync) : ''].filter(Boolean).join(' · ')
+  const age = (iso: string) => fmtAgo(iso).replace(/ ago$/, '')
+  const fresh = [data?.bzSync ? 'BZ ' + age(data.bzSync) : '', data?.lastSync ? 'res ' + age(data.lastSync) : ''].filter(Boolean).join(' · ')
   const freshTitle = [data?.bzSync ? 'Breezeway tasks last refreshed ' + fmtAgo(data.bzSync) : '', data?.lastSync ? 'Guesty reservations last synced ' + fmtAgo(data.lastSync) : ''].filter(Boolean).join(' · ')
 
   return (
