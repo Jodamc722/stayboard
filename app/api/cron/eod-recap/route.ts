@@ -9,14 +9,16 @@
 // have a general idea of our effectiveness and efficiency in revenue and labor management."
 //
 // So the recap reads like an owner-operator's evening: no blended company profit at the top —
-// the headline is the housekeeping line, because that is the line the staffing decisions live on.
-//   1. HOUSEKEEPING        cleans · revenue · HK hours → revenue per hour, cost per clean, HK profit
-//   2. SUPERVISION         its own line: what it cost, what it covered, HK profit after supervision
-//   3. MAINTENANCE         separate: billed vs its own payroll, jobs billed / left blank
-//   4. CLEANS COMPLETED    the breakdown: by market and building, by type, by person (cleans per hour)
-//   5. PRIORITIES          the things the 7am brief said mattered, and whether they got done
-//   6. LAST 7 DAYS         the same three lines over the week, with today against the week's average
-//   7. TOMORROW            who is scheduled, what is booked, what is still unassigned
+// the housekeeping line leads the money, because that is the line the staffing decisions live on.
+//   1. PRIORITIES          the things the 7am brief said mattered, and whether they got done
+//   2. TOMORROW            who is scheduled, what is booked, what is still unassigned, and the
+//                          staffing forecast's line per market (needs vs rostered)
+//   3. ONE MONEY LINE      the day's P&L in a sentence
+//   4. HOUSEKEEPING        cleans · revenue · HK hours → revenue per hour, cost per clean, HK profit
+//   5. SUPERVISION         its own line: what it cost, what it covered, HK profit after supervision
+//   6. MAINTENANCE         separate: billed vs its own payroll, jobs billed / left blank
+//   7. CLEANS COMPLETED    the breakdown: by building and by type (per person lives on /labor)
+//   8. LAST 7 DAYS         the same three lines over the week, with today against the week's average
 //
 // SAME ENGINE AS EVERYTHING ELSE. Every dollar and hour here is lib/labor-econ over today (and the
 // trailing week); cleans are Breezeway completions on their ET finish day; tomorrow is the day
@@ -26,6 +28,14 @@
 //   GET  (cron ~8:15pm ET)    → send to the Ops Command list (app_settings ops_brief.full)
 //   GET ?preview=1            → signed-in: return the HTML, send nothing
 //   GET ?test=1               → signed-in: send to the tester only
+//
+// ORDER (audit 2026-09-28): what the evening is FOR comes first — did the day's priorities get
+// done, and what does tomorrow look like (with the staffing forecast's line per market) — then ONE
+// money line, then the P&L detail. The per-person wages table left this email; it lives on /labor.
+//
+// THE FORECAST LEDGER rides this cron (no new vercel.json line): after the email, tonight's 14-day
+// staffing forecast is recorded and every forecast day that has passed is graded (lib/forecast).
+// Each step is wrapped — a ledger failure never touches the email, and the email never blocks it.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -35,7 +45,9 @@ import { buildDaySheet } from '@/lib/daysheet'
 import { getShifts } from '@/lib/homebase'
 import { etDay } from '@/lib/clean-day'
 import { sendGmail } from '@/lib/gmail-send'
-import { withRouteReceipt } from '@/lib/automation-runs'
+import { withRouteReceipt, recordRun } from '@/lib/automation-runs'
+import { cronAllowed } from '@/lib/cron-auth'
+import { buildStaffingForecast, snapshotForecasts, gradeForecasts, type StaffingForecast } from '@/lib/forecast/staffing'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -69,11 +81,28 @@ async function signedIn(): Promise<string | null> {
 
 export const GET = withRouteReceipt<NextRequest>('eod-recap', send, { skipWhen: (req) => { const sp = new URL(req.url).searchParams; return !!sp.get('preview') || !!sp.get('test') } })
 
+/** Record tonight's forecast and grade what has passed — never throws, always leaves a receipt. */
+async function nightlyLedger(fc: StaffingForecast | null): Promise<Record<string, any>> {
+  const t0 = Date.now()
+  const out: Record<string, any> = {}
+  try { out.snapshot = await snapshotForecasts({ forecast: fc || undefined }) } catch (e: any) { out.snapshot = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+  try { out.grade = await gradeForecasts() } catch (e: any) { out.grade = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+  const ok = out.snapshot?.ok !== false && out.grade?.ok !== false
+  await recordRun({
+    name: 'forecast-ledger', ok, ms: Date.now() - t0,
+    itemCount: (Number(out.snapshot?.written) || 0) + (Number(out.grade?.graded) || 0),
+    detail: { recorded: out.snapshot?.written ?? null, graded: out.grade?.graded ?? null, held: out.grade?.held ?? null },
+    error: ok ? null : String(out.snapshot?.error || out.grade?.error || 'ledger step failed'),
+  })
+  return out
+}
+
 async function send(req: NextRequest) {
   const sp = new URL(req.url).searchParams
-  const secret = process.env.CRON_SECRET
-  const auth = req.headers.get('authorization') || ''
-  const isCron = secret ? auth === 'Bearer ' + secret : (!!req.headers.get('x-vercel-cron') || auth === '')
+  // THE SHARED CRON GATE (audit 2026-09-28). This read `x-vercel-cron || auth === ''` when no secret
+  // was set — and an anonymous request sends no Authorization header, so `auth` IS ''. Same rule
+  // as every other cron now: the bearer when CRON_SECRET is set (it is, in production).
+  const isCron = cronAllowed(req).ok
   const me = await signedIn()
   const preview = !!sp.get('preview'), test = !!sp.get('test')
   if ((preview || test) && !me) return NextResponse.json({ error: 'sign in' }, { status: 401 })
@@ -82,6 +111,8 @@ async function send(req: NextRequest) {
   const today = dISO(new Date())
   const tomorrow = addDays(today, 1)
   const d7 = addDays(today, -6)
+  // Tomorrow and the thirteen days after it — the Tomorrow card's line, and tonight's ledger entry.
+  let fc: StaffingForecast | null = null
 
   try {
     // ── the engine, today and the week ─────────────────────────────────────────────────────────
@@ -93,10 +124,12 @@ async function send(req: NextRequest) {
     const punchesOk = ecT.payrollAudit?.complete !== false
 
     // ── today's sheet (what was promised) and tomorrow's (what is coming) ──────────────────────
-    const [sheetT, sheetTm] = await Promise.all([
+    const [sheetT, sheetTm, fcBuilt] = await Promise.all([
       buildDaySheet(today, 'all').catch(() => null) as Promise<any>,
       buildDaySheet(tomorrow, 'all').catch(() => null) as Promise<any>,
+      buildStaffingForecast({ from: tomorrow, days: 14, fresh: true }).catch(() => null),
     ])
+    fc = fcBuilt
     let shiftsTm: any[] = []; let shiftsLoaded = true
     try { shiftsTm = (await getShifts(tomorrow, TZ)).filter((s: any) => !s.open && s.startAt) } catch { shiftsLoaded = false }
     let openShiftsTm = 0
@@ -272,22 +305,13 @@ async function send(req: NextRequest) {
       if (d.sameDayTurn) row.sameDay++
     }
     const bRows = Object.keys(byBuilding).sort((x, y) => (byBuilding[y].done + byBuilding[y].open + byBuilding[y].none) - (byBuilding[x].done + byBuilding[x].open + byBuilding[x].none))
-    // By person — the staffing view: cleans, hours on the clock, cleans per hour, wages per clean.
+    // By person — only the exception survives here: housekeepers on the clock with no clean. The
+    // per-person table (cleans, hours, wages per clean) left this email for /labor, where the same
+    // engine shows it with the week around it (audit 2026-09-28) — a wages line per person is not
+    // an all-hands evening email.
     const people: any[] = ((ecT.people || []) as any[]).filter(p => (p.hours || 0) > 0 || (p.depCleans || 0) > 0 || (p.cleans || 0) > 0)
     const hkPeople = people.filter(p => p.dept === 'housekeeping').sort((x, y) => (y.depCleans || 0) - (x.depCleans || 0) || (y.hours || 0) - (x.hours || 0))
-    const coverPeople = people.filter(p => p.dept !== 'housekeeping' && (p.depCleans || 0) > 0)
     const idle = hkPeople.filter(p => (p.hours || 0) >= 2 && !(p.depCleans || 0) && !(p.cleans || 0))
-    const pRow = (p: any) => {
-      const cleans = Number(p.depCleans) || 0, hrs = Number(p.hours) || 0, wages = Number(p.payroll) || 0
-      const cph = hrs > 0 && cleans > 0 ? cleans / hrs : null
-      const wpc = cleans > 0 ? wages / cleans : null
-      const extra = (Number(p.cleans) || 0) - cleans
-      return `<tr><td style="${td}">${esc(p.name)}${p.dept !== 'housekeeping' ? ` <span style="${MUTED};font-size:11px">${esc(p.dept)}</span>` : ''}${p.market ? ` <span style="${MUTED};font-size:11px">${esc(p.market)}</span>` : ''}</td>` +
-        `<td style="${td};text-align:right"><b>${cleans || '<span style="' + MUTED + '">&mdash;</span>'}</b>${extra > 0 ? ` <span style="${MUTED}">+${extra} other</span>` : ''}</td>` +
-        `<td style="${td};text-align:right">${hrs ? r1(hrs) + 'h' : '<span style="' + MUTED + '">&mdash;</span>'}</td>` +
-        `<td style="${td};text-align:right">${cph != null ? r1(cph * 8) : '<span style="' + MUTED + '">&mdash;</span>'}</td>` +
-        `<td style="${td};text-align:right">${wpc != null ? `<span style="${costPerClean != null && wpc > costPerClean * 1.25 ? AMBER : ''}">${rate(wpc)}</span>` : (hrs > 0 ? `<span style="${AMBER}">${money(wages)} for 0 cleans</span>` : '<span style="' + MUTED + '">&mdash;</span>')}</td></tr>`
-    }
     const cleansCard = card(
       secTitle('Cleans completed', `${hkTasks.length} housekeeping task${hkTasks.length === 1 ? '' : 's'} closed today`) +
       (typeLine ? `<p style="margin:0 0 8px;font-size:13px;line-height:1.8">${typeLine}` + (cleanTimed ? ` <span style="${MUTED}">&middot; ${Math.round(cleanMinutes / cleanTimed)} min average on the clock per departure clean (${cleanTimed} timed)</span>` : '') + `</p>` : '') +
@@ -295,11 +319,8 @@ async function send(req: NextRequest) {
       (bRows.length ? `<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${th}">Building</th><th style="${th};text-align:right">Checkouts</th><th style="${th};text-align:right">Cleaned</th><th style="${th};text-align:right">Open</th><th style="${th};text-align:right">Same-day</th></tr>` +
         bRows.slice(0, 14).map(b => { const r = byBuilding[b]; const all = r.done + r.open + r.none; return `<tr><td style="${td}">${esc(b)}${r.market ? ` <span style="${MUTED};font-size:11px">${esc(r.market)}</span>` : ''}</td><td style="${td};text-align:right">${all}</td><td style="${td};text-align:right"><span style="${r.done === all ? GREEN : ''}">${r.done}</span></td><td style="${td};text-align:right">${r.open + r.none ? `<span style="${r.none ? AMBER : RED}">${r.open + r.none}${r.none ? ' <span style="font-weight:400;font-size:11px">(' + r.none + ' no task)</span>' : ''}</span>` : '<span style="' + MUTED + '">&mdash;</span>'}</td><td style="${td};text-align:right">${r.sameDay || '<span style="' + MUTED + '">&mdash;</span>'}</td></tr>` }).join('') +
         (bRows.length > 14 ? `<tr><td colspan="5" style="${td};color:#6b7280">+${bRows.length - 14} more buildings</td></tr>` : '') + '</table>' : '') +
-      (hkPeople.length || coverPeople.length ? `<p style="margin:12px 0 4px;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;font-weight:600">By person &middot; the staffing view</p>` +
-        `<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${th}">Person</th><th style="${th};text-align:right">Cleans</th><th style="${th};text-align:right">On the clock</th><th style="${th};text-align:right">Cleans / 8h</th><th style="${th};text-align:right">Wages / clean</th></tr>` +
-        hkPeople.slice(0, 14).map(pRow).join('') + coverPeople.map(pRow).join('') + '</table>' : '') +
       (idle.length ? `<p style="margin:8px 0 0;font-size:12.5px"><span style="${AMBER}">On the clock with no cleans:</span> ${esc(idle.map(p => `${p.name} (${r1(p.hours)}h)`).join(', '))} <span style="${MUTED}">&mdash; strips, inspections or projects; worth knowing which.</span></p>` : '') +
-      `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Cleans per 8h is the person's departure cleans over their hours on the clock, scaled to a full shift. Wages per clean is amber when it runs 25% above today's crew average. Other kinds of housekeeping (strips, refreshes) show as "+N other".</p>`
+      `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Each person's cleans, hours and cost per clean are on the <a href="${APP_URL}/labor" style="color:#4338ca">Labor board</a>.</p>`
     )
 
     // ── 6. LAST 7 DAYS — the same three lines over the week ────────────────────────────────
@@ -346,10 +367,17 @@ async function send(req: NextRequest) {
     let LONG_N = 14, BIG_USD = 3000
     try { const { getSlackRules } = await import('@/lib/slack-rules'); const R: any = await getSlackRules(); LONG_N = R.longStayNights || 14; BIG_USD = R.bigBookingUsd || 3000 } catch { /* defaults */ }
     const notable = arrsTm.filter(a => (Number(a.nights) || 0) >= LONG_N || (Number(a.moneyTotal ?? a.money_total) || 0) >= BIG_USD || a.ownerFlag)
+    // THE STAFFING FORECAST FOR TOMORROW — one line per market: checkouts, people needed, rostered.
+    const fcTm = fc ? fc.days.filter(x => x.date === tomorrow) : []
+    const fcLine = fc
+      ? `<p style="margin:0 0 6px;font-size:13px;line-height:1.7"><span style="${MUTED}">Staffing forecast:</span> ` +
+        (fcTm.length ? fcTm.map(x => `<span style="${x.verdict === 'short' ? RED : x.callIn ? AMBER : ''}">${esc(x.line.replace(x.label + ' · ', ''))}</span>`).join(' &middot; ') : 'nothing to forecast') + `</p>`
+      : `<p style="margin:0 0 6px;font-size:13px"><span style="${AMBER}">Staffing forecast unavailable tonight</span> <span style="${MUTED}">&mdash; the Weekly Planner has it live.</span></p>`
     const tomorrowCard = card(
       secTitle('Tomorrow', niceDay(tomorrow)) +
       `<p style="margin:0 0 6px;font-size:14px;line-height:1.7"><b>${depsTm.length}</b> checkouts &middot; <b>${arrsTm.length}</b> arrivals` +
       (sameDayTm.length ? ` &middot; <span style="${RED}">${sameDayTm.length} same-day turn${sameDayTm.length === 1 ? '' : 's'}</span>` : '') + `</p>` +
+      fcLine +
       `<p style="margin:0 0 6px;font-size:13px;line-height:1.7">` +
       (shiftsLoaded
         ? `<b>${shiftsTm.length}</b> on the Homebase schedule${crewLine ? ` &mdash; ${crewLine}` : ''}` + (openShiftsTm ? ` &middot; <span style="${RED}">${openShiftsTm} open shift${openShiftsTm === 1 ? '' : 's'} unfilled</span>` : '')
@@ -363,19 +391,21 @@ async function send(req: NextRequest) {
     )
 
     // ── assemble ───────────────────────────────────────────────────────────────────────────────
-    const verdict = `<b>${revCleans}</b> departure clean${revCleans === 1 ? '' : 's'} &middot; <b>${money(revenue)}</b> cleaning revenue &middot; <b>${r1(hkHours)}h</b> housekeeping` +
-      (revPerHour != null ? ` &rarr; <b>${rate(revPerHour)}</b> per HK hour` : '') + (costPerClean != null ? `, <b>${rate(costPerClean)}</b> labor per clean` : '') +
-      `. HK profit <b style="${hkProfit < 0 ? RED : GREEN}">${money(hkProfit)}</b>${hkMarginPct != null ? ` (${hkMarginPct}%)` : ''}; after supervision <b style="${hkAfterSup < 0 ? RED : GREEN}">${money(hkAfterSup)}</b>. ` +
-      `Maintenance billed <b>${money(mtRev)}</b> on ${r1(mtHours)}h &rarr; <b style="${mtProfit < 0 ? RED : GREEN}">${money(mtProfit)}</b>. ` +
-      `${allDepDone.length} of ${allDep.length} checkouts cleaned` + (sameDay.length ? `, ${sameDayDone.length} of ${sameDay.length} same-day turns` : '') + `.`
+    // Priorities, then tomorrow, then ONE money line, then the detail (audit 2026-09-28). The line
+    // is the day's P&L in a breath; the cards below it carry the working.
+    const moneyLine = `<b>Money</b> &middot; <b>${money(revenue)}</b> cleaning revenue on <b>${revCleans}</b> clean${revCleans === 1 ? '' : 's'} &middot; ${r1(hkHours)}h housekeeping` +
+      (costPerClean != null ? ` (${rate(costPerClean)}/clean)` : '') +
+      ` &rarr; HK profit <b style="${hkProfit < 0 ? RED : GREEN}">${money(hkProfit)}</b>${hkMarginPct != null ? ` (${hkMarginPct}%)` : ''}, after supervision <b style="${hkAfterSup < 0 ? RED : GREEN}">${money(hkAfterSup)}</b>` +
+      ` &middot; maintenance <b style="${mtProfit < 0 ? RED : GREEN}">${mtProfit < 0 ? '-' : '+'}${money(Math.abs(mtProfit))}</b>`
     const html = `<!doctype html><html><body style="margin:0;background:#f5f5f4;${FONT};color:#0b1220">` +
       `<div style="max-width:720px;margin:0 auto;padding:18px">` +
       `<div style="background:#111827;border-radius:12px;padding:16px 18px">` +
       `<p style="margin:0;color:#9ca3af;font-size:11px;letter-spacing:.16em">S T A Y &nbsp; H O S P I T A L I T Y</p>` +
       `<p style="margin:4px 0 0;color:#fff;font-size:17px;font-weight:800">End of day</p>` +
       `<p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">${niceDay(today)}</p></div>` +
-      `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:13px 18px;margin:12px 0 0"><p style="margin:0;font-size:14px;line-height:1.6">${verdict}</p></div>` +
-      hkCard + supCard + mtCard + cleansCard + prioCard + weekCard + tomorrowCard +
+      prioCard + tomorrowCard +
+      `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:13px 18px;margin:12px 0 0"><p style="margin:0;font-size:13.5px;line-height:1.6">${moneyLine}</p></div>` +
+      hkCard + supCard + mtCard + cleansCard + weekCard +
       `<table width="100%" cellspacing="0" cellpadding="0" style="margin:12px 0"><tr><td>` +
       `<a href="${APP_URL}/labor" style="display:block;background:#111827;color:#fff;text-decoration:none;border-radius:10px;padding:12px 16px;text-align:center;font-size:13.5px;font-weight:700">Open the Labor board &rarr;</a></td></tr></table>` +
       `<p style="margin:0;font-size:11px;color:#9ca3af;text-align:center">Sent automatically every evening. Same engine as the Labor board and the morning briefs.</p>` +
@@ -389,10 +419,14 @@ async function send(req: NextRequest) {
     const to: string[] = test ? [me as string] : Array.from(new Set([...(cfg.full || []), OWNER].filter(Boolean)))
     const cc = test ? [] : STANDING_CC.filter(c => !to.includes(c))
     const r = await sendGmail({ fromEmail, to, cc, subject: (test ? '[TEST] ' : '') + subject, html })
-    return NextResponse.json({ ok: r.ok, to: to.length, subject, error: r.error, counts: { revCleans, revenue, hkHours, hkPayroll, hkProfit, supPayroll, mtRev, mtPayroll, done: doneToday.length } })
+    // After the email, never before it: tonight's forecast into the ledger, and the grades.
+    const ledger = test ? null : await nightlyLedger(fc)
+    return NextResponse.json({ ok: r.ok, to: to.length, subject, error: r.error, counts: { revCleans, revenue, hkHours, hkPayroll, hkProfit, supPayroll, mtRev, mtPayroll, done: doneToday.length }, ledger })
   } catch (e: any) {
     // A recap that did not send looks like a quiet night — say so, to the owner.
     await sendGmail({ fromEmail: OWNER, to: [OWNER], subject: '⚠️ End-of-day recap did not send', html: `<p style="${FONT};font-size:14px">The EOD recap for ${today} failed to build: ${esc(String(e?.message || e)).slice(0, 300)}</p>` }).catch(() => null)
-    return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })
+    // The forecast ledger does not depend on the email — a failed recap still records and grades.
+    const ledger = (preview || test) ? null : await nightlyLedger(fc)
+    return NextResponse.json({ ok: false, error: String(e?.message || e), ledger }, { status: 500 })
   }
 }
