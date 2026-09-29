@@ -275,8 +275,12 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
           <Big label="Arrivals" value={count(t.arrivals)} Icon={LogIn} href="/plan" sub={t.arrivals7 != null ? t.arrivals7 + ' next 7 days' : undefined} />
           <Big label="Departures" value={count(t.departures)} Icon={LogOut} href="/plan" sub={t.sameDayTurns ? t.sameDayTurns + ' same-day turns' : 'no same-day turns'} />
           <Big label="In house" value={count(t.inHouse)} Icon={Users} href="/reservations" sub={t.occupancy != null ? pct(t.occupancy, 0) + ' of units' : undefined} />
-          <Big label="Cleans today" value={t.cleansScheduled != null ? t.cleansDone + '/' + t.cleansScheduled : '—'} Icon={Brush} href="/schedule"
-            sub={t.cleansScheduled ? Math.round((t.cleansDone / t.cleansScheduled) * 100) + '% done' : 'none scheduled'} />
+          {/* Departure cleans only (the turnover), and a % only from five cleans up — "1/1 · 100%"
+              said nothing the fraction did not. */}
+          <Big label="Departure cleans" value={t.cleansScheduled != null ? t.cleansDone + '/' + t.cleansScheduled : '—'} Icon={Brush} href="/schedule"
+            sub={t.cleansScheduled == null ? (k ? 'could not read' : undefined)
+              : t.cleansScheduled === 0 ? 'none today'
+              : t.cleansDonePct != null ? t.cleansDonePct + '% done today' : 'done today'} />
           <Big label="Welcome calls due" value={t.welcomeDueNow == null ? '—' : count(t.welcomeDueNow)} Icon={PhoneCall} href="/welcome-calls"
             sub={k && t.welcomeDueNow == null ? 'could not read' : 'next 72 hours'}
             tone={t.welcomeDueNow > 0 ? 'alert' : undefined} />
@@ -435,7 +439,7 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
                 sub={w.cleansPrev != null ? 'was ' + count(w.cleansPrev) : undefined} />
               <Big label="Maintenance" value={count(w.maintenance)} Icon={Wrench} href="/glitches"
                 sub={w.maintenancePrev != null ? 'was ' + count(w.maintenancePrev) : undefined} />
-              <Big label="Inspections" value={count(w.inspections)} Icon={ClipboardCheck} href="/inspections"
+              <Big label="Inspections" value={count(w.inspections)} Icon={ClipboardCheck}
                 sub={w.inspectionsPrev != null ? 'was ' + count(w.inspectionsPrev) : undefined} />
             </div>
 

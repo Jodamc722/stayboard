@@ -23,8 +23,9 @@ import { getOpsPresets } from '@/lib/app-settings'
 import { noBreezewayRegex, vendorRegex } from '@/lib/ops-presets'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { canSeeMoney, type Access } from '@/lib/access'
-import { redactMoney } from '@/lib/money'
+import { redactMoney, pctOrCount } from '@/lib/money'
 import { pageRows } from '@/lib/db-page'
+import { isTaskDone, isTaskGone } from '@/lib/task-categories'
 import { isLowReview } from '@/lib/review-scale'
 import { welcomeRate, welcomeCallsDue } from '@/lib/call-desk'
 import { wholeMonth } from '@/lib/money-source'
@@ -50,8 +51,9 @@ function deptOf(v: any): string {
   if (/inspect/.test(s)) return 'inspection'
   return s || 'other'
 }
-function isDone(t: any): boolean { return /complete|finish|close|approv|done/i.test(str(t && t.status)) || !!(t && t.finished_at) }
-function isDead(t: any): boolean { return /delete|cancel/i.test(str(t && t.status)) }
+// The app's one task-state rule (lib/task-categories) — this file had its own looser copies.
+function isDone(t: any): boolean { return isTaskDone(t && t.status, t && t.finished_at) }
+function isDead(t: any): boolean { return isTaskGone(t && t.status) }
 // The same test the board and the labor engine use. `^clean` used to be in here, which counted
 // "Clean common areas" as a turnover.
 function isTurn(name: any): boolean { return isDepartureCleanName(name) }
@@ -319,7 +321,10 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
     const booked7 = arrivals7.reduce((s, r) => s + num(r.money_total), 0)
 
     const scopedTasks = tasks.filter(t => !isDead(t) && inScope(t.reference_property_id))
-    const cleansToday = scopedTasks.filter(t => dOf(t.scheduled_date) === today && deptOf(t.type_department) === 'housekeeping')
+    // DEPARTURE CLEANS (2026-09-28 audit, P1-11) — the turnover the 4pm deadline is about, by the
+    // shared name rule. It counted every housekeeping-department task, so common-area cleans,
+    // restocks and linen drops padded "X/Y cleans".
+    const cleansToday = scopedTasks.filter(t => dOf(t.scheduled_date) === today && isTurn(t.name))
     const cleansTodayDone = cleansToday.filter(isDone).length
 
     // ---------------------------------------------------------------- window helpers
@@ -462,9 +467,10 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         }
       }
       const dept = (k: string) => byDept[k] || { scheduled: 0, done: 0, minutes: 0, cost: 0 }
+      // No percentage without a sample (lib/money pctOrCount): under 5 the rate is null, not "100%".
       return {
         scheduled: rows.length, completed: done.length,
-        completionRate: rows.length ? round((done.length / rows.length) * 100, 1) : null,
+        completionRate: pctOrCount(done.length, rows.length).pct,
         minutes, hours: round(minutes / 60, 1), cost: Math.round(cost),
         cleans: dept('housekeeping').done, maintenance: dept('maintenance').done, inspections: dept('inspection').done,
         cleaningCost: Math.round(dept('housekeeping').cost),
@@ -477,7 +483,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         // column of zeros, while the tile that showed it was unlocked by a Homebase check. One
         // number, one place: lib/labor-econ owns it and /api/labor/headline serves it.
         costPerTurn: null,
-        onTimeRate: onTimeBase ? round((onTime / onTimeBase) * 100, 1) : null,
+        onTimeRate: pctOrCount(onTime, onTimeBase).pct,
         byDept, byMarket, byBuilding, byDay,
       }
     }
@@ -499,8 +505,8 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       }
       return {
         scanned: rows.length, unhappy: bad,
-        unhappyPct: rows.length ? round((bad / rows.length) * 100, 1) : null,
-        happyPct: rows.length ? round(((rows.length - bad) / rows.length) * 100, 1) : null,
+        unhappyPct: pctOrCount(bad, rows.length).pct,
+        happyPct: pctOrCount(rows.length - bad, rows.length).pct,
         topIssues: Object.keys(issues).map(k => ({ issue: k, n: issues[k] })).sort((x, y) => y.n - x.n).slice(0, 6),
       }
     }
@@ -681,6 +687,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         sameDayTurns,
         cleansScheduled: cleansToday.length,
         cleansDone: cleansTodayDone,
+        cleansDonePct: pctOrCount(cleansTodayDone, cleansToday.length).pct,
         arrivals7: arrivals7.length,
         booked7: money(Math.round(booked7)),
         welcomeDueNow,
@@ -730,7 +737,8 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
         margin: cleaningCostKnown ? money(cleaningMargin) : null,
         marginPrev: cleaningCostKnown ? money(cleaningMarginPrev) : null,
         marginChange: cleaningCostKnown ? money(pctChange(cleaningMargin, cleaningMarginPrev)) : null,
-        marginPct: cleaningCostKnown && stays.cleaningNetInHouse ? money(round((cleaningMargin / stays.cleaningNetInHouse) * 100, 1)) : null,
+        // A margin % off a handful of turns is noise — the sample here is turns, not dollars.
+        marginPct: cleaningCostKnown && stays.cleaningNetInHouse && stays.turnsInHouse >= 5 ? money(round((cleaningMargin / stays.cleaningNetInHouse) * 100, 1)) : null,
         minutesPerTurn: work.minutesPerTurn,
         costNote: cleaningCostKnown
           ? 'cost = what Breezeway records as paid on completed housekeeping tasks'
@@ -813,7 +821,7 @@ export async function buildKpi(sp: URLSearchParams, access: Access): Promise<any
       ;(payload.work as any).byDay = []
       for (const m of payload.work.byMarket as any[]) { m.done = null; m.cost = null; m.hours = null }
       ;(payload.work as any).partial = true
-      blank(payload.today, ['cleansScheduled', 'cleansDone'])
+      blank(payload.today, ['cleansScheduled', 'cleansDone', 'cleansDonePct'])
       blank(payload.cleaning, ['minutesPerTurn', 'cost', 'costPerTurn', 'margin', 'marginPct'])
       blank(payload.labor, ['minutesPerTurn', 'breezewayCost'])
       if (!homebase.hasData) blank(payload.labor, ['hours', 'cost', 'costChange', 'costRatio'])
