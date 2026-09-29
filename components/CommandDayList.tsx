@@ -194,7 +194,7 @@ function DayLine({ d, loading, tick, reload, roster, vendorsOnSite }: { d: Comma
     { key: 'glitches', label: 'Glitches', value: String(t.glitches.open), sub: t.glitches.overdue ? t.glitches.overdue + ' overdue' : t.glitches.noTask ? t.glitches.noTask + ' no task' : '', tone: t.glitches.overdue ? 'hot' : t.glitches.noTask ? 'warn' : t.glitches.open ? 'quiet' : 'ok' },
     { key: 'claims', label: 'Claims', value: String(t.claims.open), sub: t.claims.review ? t.claims.review + ' to review' : t.claims.dueSoon ? t.claims.dueSoon + ' due' : '', tone: t.claims.dueSoon ? 'hot' : t.claims.review ? 'warn' : 'quiet' },
     { key: 'overdue', label: 'Overdue', value: String(t.overdue.total), sub: '', tone: t.overdue.total > 40 ? 'hot' : t.overdue.total ? 'warn' : 'ok' },
-    { key: 'guestDesk', label: 'Guest desk', value: String(t.guestDesk.total), sub: [t.guestDesk.messages ? t.guestDesk.messages + ' msgs' : '', t.guestDesk.welcome ? t.guestDesk.welcome + ' calls' : '', t.guestDesk.reviews ? t.guestDesk.reviews + ' reviews' : ''].filter(Boolean).slice(0, 2).join(' · '), tone: t.guestDesk.messages || t.guestDesk.approvals ? 'warn' : 'quiet' },
+    { key: 'guestDesk', label: 'Guest desk', value: String(t.guestDesk.total), sub: [t.guestDesk.messages ? t.guestDesk.messages + ' waiting' : '', t.guestDesk.welcome ? t.guestDesk.welcome + ' calls' : '', t.guestDesk.reviews ? t.guestDesk.reviews + ' reviews' : ''].filter(Boolean).slice(0, 2).join(' · '), tone: t.guestDesk.messages || t.guestDesk.approvals ? 'warn' : 'quiet' },
   ]
   const vTone: LeanTone = v.state === 'behind' ? 'rose' : v.state === 'at_risk' ? 'amber' : v.state === 'closing' ? 'slate' : 'emerald'
   const sTone = (x: Tone): LeanTone => x === 'hot' ? 'rose' : x === 'warn' ? 'amber' : x === 'ok' ? 'emerald' : 'slate'
@@ -631,7 +631,9 @@ function FixRow({ item: i, roster, onCleared, onChanged }: { item: NextItem; ros
   }
   const markDone = () => wrap(() => finish('Done'))
   const label = fixLabel(i)
-  const meta = i.due + ' · ' + i.why
+  // A guest row's reply-by state ("Late 25m") is one of its tags — not said twice.
+  const tags = i.tags && i.tags.length ? <>{i.tags.map(t => <Tag key={t.label} tone={t.tone} title={t.title}>{t.label}</Tag>)}</> : undefined
+  const meta = (i.tags && i.tags.some(t => t.label === i.due) ? '' : i.due + ' · ') + i.why
   const primary = !a ? null
     : a.type === 'open'
       ? (a.external
@@ -641,7 +643,7 @@ function FixRow({ item: i, roster, onCleared, onChanged }: { item: NextItem; ros
           {busy ? <Loader2 size={11} className="animate-spin" /> : a.type === 'assign' ? <UserPlus size={11} /> : null} {label}
         </button>
   return (
-    <Row sev={i.severity} title={i.unit + ' — ' + i.title} meta={meta} note={note} err={err}
+    <Row sev={i.severity} title={i.unit + ' — ' + i.title} tags={tags} meta={meta} note={note} err={err}
       onTap={i.evidence ? () => setQuote(q => !q) : undefined} expanded={quote}
       primary={primary}
       secondary={<IconBtn title="Mark done — counts as cleared here" tone="ok" onClick={markDone} disabled={busy}><Check size={15} /></IconBtn>}>

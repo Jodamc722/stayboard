@@ -34,7 +34,8 @@
 //               cancel stays behind the admin password (Jon: close/delete pw-gated)
 //   glitch      an open guest issue that is overdue, an incident, or in the ops lane with no task
 //   claim       a claim in Jon's review, or with its filing deadline inside 5 days / passed
-//   guest       an in-house guest the sentiment scan marked unhappy or awaiting a reply
+//   guest       a guest waiting on a reply (the one rule, lib/response-times) or one the sentiment
+//               scan marked unhappy — one row per thread, both tags when it is both
 //   unassigned  open non-clean work on today's board with nobody attached (cleans are covered by
 //               turn/late rows — never the same task twice)
 //
@@ -61,6 +62,7 @@ import { ratingDisplay } from './review-scale'
 import { COMPLETED, guestyCalled } from './call-desk'
 import { readSnapshot, problemsFromSnapshot } from './channel-health'
 import { CHANNEL_LABEL, VERDICT_LABEL } from './channel-types'
+import { awaitingSet, slaDueAt, SLA_RULE_TEXT, type AwaitingRow, type AwaitingSet } from './response-times'
 
 const str = (v: any) => String(v ?? '').trim()
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
@@ -90,6 +92,8 @@ const daysBetween = (fromIso: string, toYmd: string) => Math.round((Date.parse(t
 export const DISMISS_KEY = 'command_dismissed'
 
 export type NextKind = 'turn' | 'late' | 'inspection' | 'feedback' | 'pending' | 'duplicate' | 'glitch' | 'claim' | 'guest' | 'unassigned' | 'channel'
+/** A short label on a row ("Unhappy", "Late 25m"), with the hover that explains it. */
+export type RowTag = { label: string; tone: 'rose' | 'amber' | 'violet' | 'sky' | 'slate'; title?: string }
 /** Who owns clearing it. The lane a supervisor filters to. Lives in lib/command-types (client-safe). */
 export type { Owner } from './command-types'
 export { OWNER_LABEL } from './command-types'
@@ -116,6 +120,8 @@ export type NextItem = {
   title: string
   why: string
   evidence?: { quote: string; stars: number | null; date: string; channel: string } | null
+  /** Guest rows: "Unhappy" and the reply-by state ("Reply by 3:05pm" / "Late 25m"). */
+  tags?: RowTag[]
   action: NextAction | null
   /** A Breezeway task this row is about — enables Note-to-assignee and the open link. */
   bzTaskId?: string | null
@@ -279,7 +285,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     .not('status', 'ilike', '%delete%').not('status', 'ilike', '%cancel%')
 
   // ── WAVE 1: everything that does not depend on anything else ──────────────────────────────────
-  const [day, automation, presets, arrivalsRes, glitchesRes, claimsRes, sentimentRes, reviewsToReplyRes, convosRes, approvalsRes, fieldOverdueRes, openTasksP, bzOverdueCountRes, callsDoneRes] = await Promise.all([
+  const [day, automation, presets, arrivalsRes, glitchesRes, claimsRes, sentimentRes, reviewsToReplyRes, waiting, approvalsRes, fieldOverdueRes, openTasksP, bzOverdueCountRes, callsDoneRes] = await Promise.all([
     // .catch, because buildOpsDay now THROWS on a failed read (2026-09-09) — right for the board's
     // own route, wrong here: a listings blip must not take claims, reviews, messages and the calls
     // desk down with it. A null day degrades; every `day.*` read below is guarded.
@@ -295,14 +301,18 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     db.from('claims')
       .select('id,stage,waiting_on,property,unit_no,guest_name,deadline_on,amount_sought,listing_id,deleted_at')
       .neq('stage', 'closed').is('deleted_at', null).limit(200),
+    // Unhappy guests only: who is WAITING comes from the one rule below, not from the scan.
     db.from('guesty_conversation_sentiment')
       .select('conversation_id,guest_name,listing_id,reservation_id,channel,band,dissatisfied,awaiting_reply,top_issue,guest_excerpt,last_message_at,last_guest_at,status')
-      .eq('status', 'open').order('last_message_at', { ascending: false }).limit(60),
+      .eq('status', 'open').eq('dissatisfied', true).order('last_message_at', { ascending: false }).limit(60),
     db.from('guesty_reviews').select('id,listing_id,rating,channel,guest_name,created_at,content', { count: 'exact' })
       .eq('has_reply', false).eq('excluded_from_score', false).gte('created_at', back60 + 'T00:00:00Z')
       .order('created_at', { ascending: false }).limit(80),
-    db.from('guesty_conversations').select('id,listing_id,guest_name,channel,last_message_preview,last_message_at,unread_count', { count: 'exact' })
-      .gt('unread_count', 0).order('last_message_at', { ascending: false }).limit(40),
+    // WHO IS WAITING ON US — THE ONE RULE (lib/response-times awaitingSet, 2026-09-28 audit D3–D5):
+    // the set the /messages "N waiting" pill, its Needs-reply tab and Eve read. This counted Guesty's
+    // unread flag, which says whether somebody opened the thread, not whether anybody answered it.
+    // A failed read degrades (no rows, named below); it never takes the day down.
+    awaitingSet({ db }).catch((e: any): AwaitingSet => ({ rows: [], ids: [], overdue: 0, slaKnown: false, truncated: false, error: String(e?.message || e) })),
     db.from('field_requests').select('id,title,type,building,unit,vendor,amount_usd,priority,approval_status,due_at,status')
       .eq('approval_required', true).order('created_at', { ascending: false }).limit(60),
     db.from('field_requests').select('id,title,type,building,unit,vendor,amount_usd,priority,approval_status,due_at,status')
@@ -359,12 +369,14 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   const arrivalIds = Array.from(new Set(arrivalsAll.map(r => str(r.listing_id)).filter(Boolean)))
   const arrivalResIds = arrivalsAll.map(r => str(r.id)).filter(Boolean)
   const glitchTaskIds = guard<any[]>('glitches', glitchesRes as any, []).map(g => str(g.breezeway_task_id)).filter(Boolean)
-  // The stays behind the guest rows that could make the list (section 6). Read raw here — the
-  // sentiment read's own guard stays where it was, so a failure is named in the same place.
-  const sentResIds = Array.from(new Set((((sentimentRes as any)?.data || []) as any[]).filter(s => s && (s.dissatisfied || s.awaiting_reply)).map(s => str(s.reservation_id)).filter(Boolean)))
+  // The stays behind the unhappy-guest rows that could make the list (section 6). Read raw here —
+  // the sentiment read's own guard stays where it was, so a failure is named in the same place.
+  const sentResIds = Array.from(new Set((((sentimentRes as any)?.data || []) as any[]).filter(s => s && s.dissatisfied).map(s => str(s.reservation_id)).filter(Boolean)))
+  if (waiting.error) degraded.push('guests waiting on a reply — ' + String(waiting.error).slice(0, 80))
+  else if (waiting.truncated) degraded.push('guests waiting on a reply (the first 1,000)')
 
   // ── WAVE 2: keyed on the arriving units, all in parallel ─────────────────────────────────────
-  const [arrivalReviews, autoInsp, doneInspRows, glitchTaskRows, guestStayRows, welcomeCallRows] = await Promise.all([
+  const [arrivalReviews, autoInsp, doneInspRows, glitchTaskRows, guestStayRows, welcomeCallRows, waitThreads] = await Promise.all([
     // Recent reviews only (180d) — bounded by date, not by an arbitrary row cap that starves quiet units.
     arrivalIds.length
       ? db.from('guesty_reviews').select('id,listing_id,rating,content,guest_name,channel,created_at')
@@ -398,6 +410,11 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     arrivalResIds.length
       ? db.from('guest_calls').select('reservation_id').eq('kind', 'welcome').in('outcome', COMPLETED as any)
           .in('reservation_id', arrivalResIds.slice(0, 300)).then(r => guard<any[]>('welcome calls', r as any, []))
+      : Promise.resolve([] as any[]),
+    // The waiting threads' guest and last line — conversation_response holds neither.
+    waiting.ids.length
+      ? db.from('guesty_conversations').select('id,listing_id,guest_name,channel,last_message_preview')
+          .in('id', waiting.ids.slice(0, 200)).then(r => guard<any[]>('waiting threads', r as any, []))
       : Promise.resolve([] as any[]),
   ])
   const welcomeCalled = new Set<string>(welcomeCallRows.map((c: any) => str(c.reservation_id)))
@@ -702,27 +719,49 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     }
   } catch (e: any) { degraded.push('channel connections — ' + String(e?.message || e).slice(0, 80)) }
 
-  // ── 6. GUESTS: sentiment scan ───────────────────────────────────────────────────────────────
-  // A CURRENT GUEST ONLY (2026-09-28 audit, D8): the guest wrote in the last 72 hours, or the stay
-  // is in house or lands inside 48 hours. The sentiment rows never age out, so a complaint from a
-  // stay that ended weeks ago read "Unhappy guest … within the hour" every morning. And the row
-  // opens THAT thread — "Reply" used to land on the inbox list, to hunt for it.
+  // ── 6. GUESTS: waiting on a reply, and unhappy ─────────────────────────────────────────────
+  // WAITING is the one rule (lib/response-times): the guest wrote since the last reply a person
+  // could have sent, inside the last 72 hours. The row says when the reply is due ("Reply by
+  // 3:05pm") or how late it is ("Late 25m"), and becomes a now-row once it is late.
+  // UNHAPPY is the sentiment scan, for a CURRENT guest only (2026-09-28 audit, D8): the guest wrote
+  // in the last 72 hours, or the stay is in house or lands inside 48 hours — the rows never age
+  // out, so a complaint from a stay that ended weeks ago read "Unhappy guest … within the hour"
+  // every morning. ONE ROW PER THREAD: a guest who is both carries both tags. Every row opens
+  // THAT thread — "Reply" used to land on the inbox list, to hunt for it.
   const in48 = ymd(new Date(now.getTime() + 48 * 3600000))
+  const unhappyBy: Record<string, any> = {}
   for (const s of guard<any[]>('sentiment', sentimentRes as any, [])) {
-    if (!s.dissatisfied && !s.awaiting_reply) continue
+    if (!s.dissatisfied || !str(s.conversation_id)) continue
     const lastAt = Date.parse(str(s.last_guest_at || s.last_message_at))
     const wroteLately = Number.isFinite(lastAt) && now.getTime() - lastAt <= 72 * 3600000
     const stay = stayById[str(s.reservation_id)]
     const stayCurrent = !!stay && isLiveStay(stay.status) && str(stay.check_in).slice(0, 10) <= in48 && str(stay.check_out).slice(0, 10) >= today
     if (!wroteLately && !stayCurrent) continue
-    const unit = nameOf(s.listing_id) || 'Unit'
-    const href = s.conversation_id ? '/messages/' + encodeURIComponent(str(s.conversation_id)) : '/messages'
+    unhappyBy[str(s.conversation_id)] = s
+  }
+  const threadBy: Record<string, any> = {}
+  for (const c of waitThreads) threadBy[str(c.id)] = c
+  const waitBy: Record<string, AwaitingRow> = {}
+  const replyOf: Record<string, Reply> = {}
+  for (const w of waiting.rows) { waitBy[w.conversation_id] = w; replyOf[w.conversation_id] = replyBy(w, now.getTime(), today) }
+  for (const cid of waiting.ids.concat(Object.keys(unhappyBy).filter(id => !waitBy[id]))) {
+    const w = waitBy[cid] || null, s = unhappyBy[cid] || null, c = threadBy[cid] || {}
+    const reply = w ? replyOf[cid] : null
+    const lid = str((s && s.listing_id) || (w && w.listing_id) || c.listing_id)
+    const channel = str((s && s.channel) || (w && w.channel) || c.channel)
+    const quote = str((s && s.guest_excerpt) || c.last_message_preview).replace(/\s+/g, ' ').slice(0, 140)
+    const tags: RowTag[] = []
+    if (s) tags.push({ label: 'Unhappy', tone: 'rose', title: 'The sentiment scan read this guest as unhappy' })
+    if (reply) tags.push({ label: reply.label, tone: reply.late ? 'rose' : 'amber', title: 'Waiting on our reply — ' + SLA_RULE_TEXT })
+    const hot = !!s || (!!reply && reply.late)
+    const href = '/messages/' + encodeURIComponent(cid)
     push({
-      key: 'guest:' + str(s.conversation_id), kind: 'guest', severity: s.dissatisfied ? 'now' : 'today', rank: s.dissatisfied ? 2 : 5, owner: 'desk',
-      due: s.dissatisfied ? 'within the hour' : 'today',
-      unit, listingId: str(s.listing_id) || null, market: marketOfId(s.listing_id),
-      title: (s.dissatisfied ? 'Unhappy guest' : 'Guest waiting on a reply') + (s.top_issue ? ': ' + str(s.top_issue).slice(0, 80) : ''),
-      why: str(s.guest_name || 'Guest') + ' · ' + str(s.channel).toUpperCase() + (s.guest_excerpt ? ' · “' + str(s.guest_excerpt).replace(/\s+/g, ' ').slice(0, 140) + '”' : ''),
+      key: 'guest:' + cid, kind: 'guest', severity: hot ? 'now' : 'today', rank: hot ? 2 : 5, owner: 'desk',
+      due: reply ? reply.label : 'within the hour',
+      unit: nameOf(lid) || 'Unit', listingId: lid || null, market: marketOfId(lid),
+      title: s ? 'Unhappy guest' + (s.top_issue ? ': ' + str(s.top_issue).slice(0, 80) : '') : 'Guest waiting on a reply',
+      why: (str((s && s.guest_name) || c.guest_name) || 'Guest') + (channel ? ' · ' + channel.toUpperCase() : '') + (quote ? ' · “' + quote + '”' : ''),
+      tags,
       action: { type: 'open', href, label: 'Open thread' }, href,
     })
   }
@@ -731,16 +770,21 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   const reviewsAll = guard<any[]>('reviews to reply', reviewsToReplyRes as any, [])
   const reviews = reviewsAll.filter(r => meta[str(r.listing_id)] && meta[str(r.listing_id)].active)
   const reviewsTotal = Math.max(reviews.length, Number((reviewsToReplyRes as any)?.count) || 0)
-  const convos = guard<any[]>('unread messages', convosRes as any, [])
-  const convosTotal = Math.max(convos.length, Number((convosRes as any)?.count) || 0)
+  // Messages = guests waiting on a reply (the one rule), the ones due soonest — or latest — first.
+  const dueMs = (id: string) => { const r = replyOf[id]; const t = r && r.at ? Date.parse(r.at) : NaN; return Number.isFinite(t) ? t : Number.MAX_SAFE_INTEGER }
+  const waitingFirst = waiting.rows.slice().sort((a, b) => dueMs(a.conversation_id) - dueMs(b.conversation_id))
   const welcomeDue = arrivalRows.filter(a => a.today && !a.welcomeDone)
   const approvals = guard<any[]>('approvals', approvalsRes as any, []).filter(r => !/^(approved|rejected)$/i.test(str(r.approval_status)))
   const deskRows: GuestDeskRow[] = []
   for (const r of reviews.slice(0, 8)) deskRows.push({ key: 'rv:' + str(r.id), kind: 'review', who: str(r.guest_name) || 'Guest', unit: nameOf(r.listing_id), text: str(r.content).replace(/\s+/g, ' ').slice(0, 140), meta: (Number.isFinite(norm5(r.rating)) ? starsText(r.rating, r.channel) + ' · ' : '') + str(r.channel), href: '/reviews' })
-  for (const c of convos.slice(0, 8)) deskRows.push({ key: 'msg:' + str(c.id), kind: 'message', who: str(c.guest_name) || 'Guest', unit: nameOf(c.listing_id), text: str(c.last_message_preview).slice(0, 140), meta: (Number(c.unread_count) || 0) + ' unread · ' + str(c.channel), href: '/messages/' + encodeURIComponent(str(c.id)) })
+  for (const w of waitingFirst.slice(0, 8)) {
+    const c = threadBy[w.conversation_id] || {}
+    const channel = str(w.channel || c.channel)
+    deskRows.push({ key: 'msg:' + w.conversation_id, kind: 'message', who: str(c.guest_name) || 'Guest', unit: nameOf(w.listing_id || c.listing_id), text: str(c.last_message_preview).slice(0, 140), meta: replyOf[w.conversation_id].label + (channel ? ' · ' + channel : ''), href: '/messages/' + encodeURIComponent(w.conversation_id) })
+  }
   for (const a of welcomeDue.slice(0, 8)) deskRows.push({ key: 'wc:' + a.reservationId, kind: 'welcome', who: a.guest, unit: a.unit, text: 'Welcome call due today', meta: a.nights + ' nt · ' + money(a.value), href: '/welcome-calls' })
   for (const a of approvals.slice(0, 6)) deskRows.push({ key: 'ap:' + str(a.id), kind: 'approval', who: str(a.vendor) || str(a.type), unit: [str(a.building), str(a.unit)].filter(Boolean).join(' '), text: str(a.title), meta: a.amount_usd != null ? money(Number(a.amount_usd)) : str(a.priority), href: '/requests' })
-  const deskTotal = reviewsTotal + convosTotal + welcomeDue.length + approvals.length
+  const deskTotal = reviewsTotal + waiting.rows.length + welcomeDue.length + approvals.length
 
   // ── OVERDUE: the backlog nobody sees on a "today" board ─────────────────────────────────────
   const fieldOverdue = guard<any[]>('overdue field requests', fieldOverdueRes as any, []).filter(r => r.due_at && Date.parse(String(r.due_at)) < now.getTime())
@@ -788,7 +832,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
       glitches: { open: glitchRows.length, overdue: glOverdue, noTask: glNoTask, byLane, rows: glitchRows.sort((a, b) => (b.overdue ? 1 : 0) - (a.overdue ? 1 : 0) || b.ageDays - a.ageDays) },
       claims: { open: claimRows.length, review: clReview, dueSoon: clDueSoon, rows: claimRows.sort((a, b) => (a.daysLeft ?? 999) - (b.daysLeft ?? 999)) },
       overdue: { total: overdueTotal, breezeway: bzOverdue, field: fieldOverdue.length, glitches: glOverdue, urgent: urgentOpen.length, rows: overdueRows },
-      guestDesk: { reviews: reviewsTotal, messages: convosTotal, welcome: welcomeDue.length, approvals: approvals.length, total: deskTotal, shown: deskRows.length, rows: deskRows },
+      guestDesk: { reviews: reviewsTotal, messages: waiting.rows.length, welcome: welcomeDue.length, approvals: approvals.length, total: deskTotal, shown: deskRows.length, rows: deskRows },
     },
     rows: next,
     clock: dl,
@@ -900,6 +944,30 @@ function withDismissals(core: CommandCore, dismissRow: any): CommandDay {
 function cleanOrder(r: CleanRow) { return r.status === 'late' ? 0 : r.status === 'atRisk' ? 1 : r.sameDay && r.status !== 'done' ? 2 : r.status === 'open' ? 3 : r.status === 'running' ? 4 : r.status === 'vendor' ? 5 : r.status === 'extended' ? 7 : 6 }
 function taskOrder(t: TaskRow) { return t.state === 'done' ? 9 : t.late ? 0 : t.prio === 'urgent' ? 1 : t.prio === 'high' ? 2 : !t.who ? 3 : t.state === 'running' ? 5 : 4 }
 function deptOf(v: any): string { const s = str(v).toLowerCase(); if (/housekeep|clean/.test(s)) return 'housekeeping'; if (/maint/.test(s)) return 'maintenance'; if (/inspect/.test(s)) return 'inspection'; return 'maintenance' }
+
+/** A waiting guest's reply-by state, as the row says it. */
+type Reply = { at: string | null; late: boolean; label: string }
+/** "25m", "1h 5m", "2d 3h". */
+const span = (ms: number) => {
+  const m = Math.max(1, Math.round(ms / 60000))
+  if (m < 60) return m + 'm'
+  const h = Math.floor(m / 60)
+  if (h < 24) return h + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '')
+  return Math.floor(h / 24) + 'd' + (h % 24 ? ' ' + (h % 24) + 'h' : '')
+}
+/** "Reply by 3:05pm" (ET; "tomorrow" or the date when it is not today) before the reply-by time, "Late 25m" after it. */
+function replyBy(w: AwaitingRow, nowMs: number, today: string): Reply {
+  // Before migration 134 — or before the thread moved again — a row has no reply-by time. The same
+  // rule applied to the guest's last message stands in: never earlier than the true one.
+  const at = w.sla_due_at || slaDueAt(w.awaiting_since || w.last_guest_at)
+  const t = at ? Date.parse(at) : NaN
+  if (!Number.isFinite(t)) return { at: null, late: false, label: 'Waiting' }
+  if (t <= nowMs) return { at, late: true, label: 'Late ' + span(nowMs - t) }
+  const clock = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })
+    .format(new Date(t)).replace(/\s*([AP])M$/i, (_m, p: string) => p.toLowerCase() + 'm')
+  const day = ymd(new Date(t))
+  return { at, late: false, label: 'Reply by ' + clock + (day === today ? '' : day === shift(today, 1) ? ' tomorrow' : ' ' + day.slice(5)) }
+}
 
 /** The defect words in a review, so the proposed inspection says what to look at. */
 export function keywordsOf(text: string): string[] {
