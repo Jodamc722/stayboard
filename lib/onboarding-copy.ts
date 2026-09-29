@@ -245,13 +245,6 @@ export function houseRows<T>(stored: unknown, mark: string | string[], current: 
   return hit ? current : (stored as T[])
 }
 
-/** The departure-cleans headline on the statement slide, which stated the rule without its one
- *  exception. Repaired in place because the other two highlights are built from live numbers. */
-export const CLEANS_HIGHLIGHT: CopyPair = {
-  retired: ['Never billed to you, and never a line on your statement. The guest\u2019s cleaning fee pays for the turnover.'],
-  current: 'Never billed to you after a guest stay \u2014 the guest\u2019s cleaning fee pays for the turnover. The clean after your own stay is the one exception, at cost.',
-}
-
 export const MONEY_RULES: { k: string; v: string }[] = [
     // THE OWNER STAY IS THE ONE EXCEPTION AND IT HAS TO BE STATED HERE (Jon, 2026-09-18:
     // "owners will be charged a cleaning fee post stay").

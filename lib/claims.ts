@@ -215,33 +215,6 @@ export function dueDateFor(checkOut?: string | null, channel?: any, overrides?: 
 }
 
 /**
- * WHEN THE EVIDENCE DISAPPEARS.
- *
- * The channel's window is not the only clock. Once the unit is turned and the next guest walks in,
- * the damage cannot be photographed, re-inspected or attributed — "the last guest did it" stops
- * being a fact and becomes a claim. So if somebody is arriving before the channel target, the file
- * has to be built before they do.
- *
- * This deliberately moves OUR due date and never `deadline_on`: Airbnb's published rule is 14 days
- * from checkout, and inventing a shorter platform cutoff would be misstating someone else's policy.
- * Returns the date and why it is that date.
- */
-export function dueWithTurnover(
-  checkOut?: string | null,
-  channel?: any,
-  nextCheckIn?: string | null,
-  overrides?: Record<string, ChannelPolicy> | null,
-): { due: string | null; reason: 'policy' | 'turnover' } {
-  const policyDue = dueDateFor(checkOut, channel, overrides)
-  const arrival = ymdOf(nextCheckIn)
-  if (!policyDue || !arrival) return { due: policyDue, reason: 'policy' }
-  // File the day BEFORE they arrive — on the arrival day itself the room is already being turned.
-  const beforeArrival = addDays(arrival, -1)
-  if (beforeArrival && beforeArrival < policyDue) return { due: beforeArrival, reason: 'turnover' }
-  return { due: policyDue, reason: 'policy' }
-}
-
-/**
  * The date this claim is ACTUALLY due, and why.
  *
  * `due_on` in the database is the channel target (or a date somebody typed). The turnover is not

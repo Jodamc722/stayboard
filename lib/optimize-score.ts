@@ -417,11 +417,6 @@ export function lastOptimizedOf(listing: any): { at: string | null; date: Date |
   return Number.isNaN(d.getTime()) ? { at: null, date: null } : { at: iso, date: d }
 }
 
-// Separate claim, separate words: the copy is filled in. It does NOT mean anyone ran the optimizer.
-export function contentLooksComplete(res: ScoreResult, name: string): boolean {
-  return !!(name && name !== 'Untitled unit' && res.description.sections.length >= 5)
-}
-
 /* ------------------------------- fix-next ---------------------------------- */
 // The Optimize Score already knows everything that is wrong with a unit — every factor carries a
 // `got` and a `max`. A worklist is just those gaps, converted into the points they actually cost
