@@ -409,7 +409,13 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
       ].filter(Boolean).join('\n\n'),
     })
     if (!out.ok) {
-      await say(channel, threadTs, `I hit an error: ${out.error}`)
+      // NEVER THE RAW ERROR IN A ROOM (2026-09-28 audit, F8). This posted "I hit an error: Anthropic
+      // 429: {…json…}" into channels — vendor rooms included. The room gets one plain line; the
+      // detail goes to the function log.
+      console.error('[slack-events] Eve could not answer', out.status, String(out.error || '').slice(0, 500))
+      await say(channel, threadTs, /\b429\b|rate limit/i.test(String(out.error || ''))
+        ? 'Too many questions at once — ask me again in a minute.'
+        : 'I couldn\'t answer that just now — try again in a minute.')
       return ok()
     }
     await say(channel, threadTs, out.reply)
@@ -420,7 +426,8 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
     // where it can be had instead, and that is the end of it.
     return ok()
   } catch (e: any) {
-    await say(channel, threadTs, `I hit an error before I could answer. ${String(e?.message || e).slice(0, 200)}`)
+    console.error('[slack-events] Eve threw before answering', String(e?.message || e).slice(0, 500))
+    await say(channel, threadTs, 'I couldn\'t answer that just now — try again in a minute.')
     return ok()
   }
 }
