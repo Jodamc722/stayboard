@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getAccess } from '@/lib/access'
+import { getAccess, requireUser } from '@/lib/access'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { DEFAULT_PAR, mergePar, parForRoom, parKey, unitShape, type ParTable, type UnitShape } from '@/lib/par-levels'
 
@@ -67,9 +67,9 @@ export async function GET(req: NextRequest) {
     const shape = await shapeFor(db, audit)
     return NextResponse.json({ ok: true, table: t, shape })
   }
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
   return NextResponse.json({ ok: true, table: t, defaults: DEFAULT_PAR })
 }
 

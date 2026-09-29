@@ -12,7 +12,7 @@ import { canDelete, trashRecord } from '@/lib/trash'
 import { claimNoteLine, claimTitle, deadlineFor, dueDateFor, policyFor, gatesFor, itemsTotal, num, todayET, type ChannelPolicy, type Claim, type ClaimItem } from '@/lib/claims'
 import { getSetting } from '@/lib/app-settings'
 import { nextCheckInFor } from '@/lib/claim-turnover'
-import { requireLevel } from '@/lib/access'
+import { requireLevel, requireUser } from '@/lib/access'
 import { bustDay } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
@@ -39,9 +39,9 @@ async function load(db: any, id: string): Promise<{ claim: any; items: ClaimItem
 }
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
   const db = supabaseAdmin()
   const found = await load(db, params.id)
   if (!found) return NextResponse.json({ ok: false, error: 'Claim not found.' }, { status: 404 })

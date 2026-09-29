@@ -13,8 +13,7 @@
 //
 // STILL NOT A WORK ORDER. Nothing here writes audit_items, property_audits, Breezeway or billing.
 import { NextRequest, NextResponse } from 'next/server'
-import { requireLevel } from '@/lib/access'
-import { createClient } from '@/lib/supabase-server'
+import { requireLevel, requireUser } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ffePortfolio, type FfeUnit } from '@/lib/ffe-portfolio'
 import { mergeChecklist, type FfeOverride } from '@/lib/ffe-checklist'
@@ -115,9 +114,9 @@ function labelIndex(ov: FfeOverride[]) {
 }
 
 export async function GET(req: NextRequest) {
-  const s = createClient()
-  const { data: u } = await s.auth.getUser()
-  if (!u.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
 
   const db = supabaseAdmin()
   const sp = req.nextUrl.searchParams

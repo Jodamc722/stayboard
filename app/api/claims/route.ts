@@ -8,7 +8,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { deadlineFor, dueDateFor, dueWithTurnover, policyFor, todayET, daysUntil, itemsTotal, num, type ChannelPolicy, type ClaimItem } from '@/lib/claims'
 import { getSetting } from '@/lib/app-settings'
 import { nextCheckInFor, nextCheckInMap } from '@/lib/claim-turnover'
-import { requireLevel } from '@/lib/access'
+import { requireLevel, requireUser } from '@/lib/access'
 import { bustDay } from '@/lib/bust'
 
 const POLICY_KEY = 'claims_channel_policy'
@@ -31,9 +31,9 @@ export function channelName(source: any): string {
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
   const db = supabaseAdmin()
   try {
     const search = str(req.nextUrl.searchParams.get('search')).trim()

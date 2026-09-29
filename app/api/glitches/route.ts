@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
-import { requireLevel } from '@/lib/access'
+import { requireLevel, requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -18,9 +18,9 @@ function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '
 function num(v: any): number | null { const n = parseFloat(String(v).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : null }
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
   try {
     const db = supabaseAdmin()
     // ?fields=stage -> just {breezeway_task_id, status} for badge maps. Today-in-Ops was pulling

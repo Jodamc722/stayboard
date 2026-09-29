@@ -12,8 +12,7 @@
 // an owner. Nothing under the threshold can reach them by accident, because nothing under the
 // threshold is allowed onto an order.
 import { NextRequest, NextResponse } from 'next/server'
-import { requireLevel } from '@/lib/access'
-import { createClient } from '@/lib/supabase-server'
+import { requireLevel, requireUser } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ffePortfolio } from '@/lib/ffe-portfolio'
 import { unitCode, resolveCode, orderCode } from '@/lib/ffe-links'
@@ -66,9 +65,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, fixes: (data || []).map((f: any) => decorate(f)), threshold: FIX_OWNER_THRESHOLD })
     }
 
-    const s = createClient()
-    const { data: u } = await s.auth.getUser()
-    if (!u.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
+    const gate = await requireUser()
+    if (!gate.ok) return gate.res
 
     // ---- who can own a fix ----
     if (sp.get('people')) {

@@ -8,7 +8,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, bzApi, createBreezewayTask, listPropertyHousekeeping, pickDepartureClean } from '@/lib/breezeway'
 import { adminPasswordOk } from '@/lib/shareAuth'
-import { requireLevel } from '@/lib/access'
+import { requireLevel, requireUser } from '@/lib/access'
 import { bustBoards } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
@@ -29,9 +29,9 @@ function asArr(d: any): any[] {
 }
 
 export async function GET(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
+  const gate = await requireUser()
+  if (!gate.ok) return gate.res
   if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
   const p = new URL(req.url).searchParams
   const listingId = String(p.get('listingId') || '').trim()
