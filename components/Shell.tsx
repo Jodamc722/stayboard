@@ -46,9 +46,6 @@ const PHONE_BAR: { to: string; label: string; Icon: any }[] = [
   { to: '/messages', label: 'Inbox', Icon: MessageSquare },
   { to: '/eve', label: 'Eve', Icon: Sparkles },
 ]
-// Sidebar sections start open for these desks; the rest start folded (the one you are on always opens).
-const OPEN_BY_DEFAULT = ['operations', 'guests']
-const NAV_FOLD_KEY = 'lh:navFolded'
 
 // PER-TAB CACHE FOR THE SHELL'S OWN READS (2026-09-18). The Shell is rendered inside every page,
 // so it remounts on every navigation and asked /api/access/me and /api/access/prefs again each
@@ -123,8 +120,6 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   // Pins: null until we know (device copy or server), so the band never flashes the role default
   // over someone's real choices.
   const [pins, setPins] = useState<string[] | null>(null)
-  const [folded, setFolded] = useState<Record<string, boolean>>({})
-  useEffect(() => { const f = readLocal(NAV_FOLD_KEY); if (f && typeof f === 'object' && !Array.isArray(f)) setFolded(f) }, [])
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   // WHICH BUSINESS (Jon, 2026-09-28: "a drop down… a completely different page"). Decided by the
@@ -370,8 +365,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
 
   // THE SIDEBAR LISTS EVERY PAGE (Jon, 2026-09-30: "pages are buried… the most important things
   // [should be] readily available"). Today and Eve are rows of their own at the top; every other
-  // desk is a heading with its pages under it, folding open or shut (remembered per browser). The
-  // desk you are on is always open. No strip across the top of the page any more.
+  // desk is a heading with its pages always listed under it. No strip across the top of the page.
   const deskRow = (x: { desk: typeof DESKS[number]; views: DeskView[] }, onNavigate?: () => void) => {
     const Icon = DESK_ICONS[x.desk.key] || Gauge
     const active = !!deskHere && deskHere.desk.key === x.desk.key
@@ -384,31 +378,23 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
       </Link>
     )
   }
-  const isOpen = (key: string) => (!!deskHere && deskHere.desk.key === key) || (key in folded ? !folded[key] : OPEN_BY_DEFAULT.indexOf(key) >= 0)
-  const toggleFold = (key: string) => setFolded(f => { const n = { ...f, [key]: isOpen(key) }; writeLocal(NAV_FOLD_KEY, n); return n })
+  // No folding (Jon, 2026-09-30: "hate the drop downs"): every heading shows its pages, always.
   const deskSection = (x: { desk: typeof DESKS[number]; views: DeskView[] }, onNavigate?: () => void) => {
     if (x.views.length < 2) return deskRow(x, onNavigate)
     const Icon = DESK_ICONS[x.desk.key] || Gauge
-    const open = isOpen(x.desk.key)
     const here = !!deskHere && deskHere.desk.key === x.desk.key
     return (
-      <div key={x.desk.key}>
-        <button type="button" onClick={() => toggleFold(x.desk.key)} aria-expanded={open}
-          title={x.desk.blurb + (open ? ' — click to fold' : ' — click to show its pages')}
-          className={'w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm font-semibold transition-all ' + (here ? 'text-brand-700' : 'text-ink/80 hover:bg-app hover:text-ink')}>
-          <Icon size={17} strokeWidth={here ? 2.25 : 2} className={here ? 'text-brand-600' : ''} />
+      <div key={x.desk.key} className="mb-1.5">
+        <div title={x.desk.blurb}
+          className={'flex items-center gap-2 px-2.5 pt-2 pb-1 text-[10.5px] uppercase tracking-[0.12em] font-bold ' + (here ? 'text-brand-700' : 'text-muted/70')}>
+          <Icon size={13} className={here ? 'text-brand-600' : ''} />
           <span className="truncate">{x.desk.label}</span>
-          <ChevronDown size={14} className={'ml-auto text-muted/60 transition ' + (open ? '' : '-rotate-90')} />
-        </button>
-        {open && (
-          <div className="ml-[21px] mb-1 border-l border-line pl-2">
-            {x.views.map(v => {
-              const on = !!viewHere && viewHere.to === v.to
-              return <Link key={v.to} href={v.to} prefetch={false} onClick={onNavigate} title={v.hint} aria-current={on ? 'page' : undefined}
-                className={'block px-2 py-[5px] rounded-md text-[13px] truncate ' + (on ? 'text-brand-700 font-semibold bg-brand-50' : 'text-muted hover:text-ink hover:bg-app')}>{v.label}</Link>
-            })}
-          </div>
-        )}
+        </div>
+        {x.views.map(v => {
+          const on = !!viewHere && viewHere.to === v.to
+          return <Link key={v.to} href={v.to} prefetch={false} onClick={onNavigate} title={v.hint} aria-current={on ? 'page' : undefined}
+            className={'block pl-[31px] pr-2 py-[5px] rounded-md text-[13px] truncate ' + (on ? 'text-brand-700 font-semibold bg-brand-50' : 'text-ink/75 hover:text-ink hover:bg-app')}>{v.label}</Link>
+        })}
       </div>
     )
   }
