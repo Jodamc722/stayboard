@@ -152,6 +152,11 @@ export const AI_TASKS: AiTask[] = [
   { key: 'eve-investigate', title: 'Eve — tying a Slack report to its task and glitch', group: 'Eve', def: 'sonnet', background: true,
     what: 'For an open Slack report with no link in it: reads the thread, the tasks and glitches on every unit the report could mean, and the lessons the team has taught her about matching, and returns the matching task / glitch / unit with a confidence and the reasoning. At most six a sweep, and never twice on the same candidate set.',
     matters: 'This is how a report closes itself when the fix is done, and what her nudges say about where things stand. A weak model links the wrong task; below 0.7 confidence it is only a suggestion.' },
+  // PLAN WITH EVE (2026-09-30, app/api/projects/plan). Jon: "help us just communicate what we want,
+  // and then you organize it, structure it, and then plan it." One call per brief, a person watching.
+  { key: 'project-plan', title: 'Eve — turning a brief into a project plan', group: 'Eve', def: 'sonnet',
+    what: 'Reads a few lines from Jon ("exterior walkthrough at Pelican: inspect every unit, quotes for…") with the buildings, roster and categories that exist, and returns phases, one-action tasks with an owner and a week, the quotes to chase, and the questions it would ask first.',
+    matters: 'This is the project the team then works from, week by week. A weak model writes vague tasks or invents people; the plan is reviewed by hand before it is created, so a miss costs a minute, not a week.' },
   { key: 'eve-correction', title: 'Eve — catching corrections in chat', group: 'Background', def: 'haiku', background: true,
     what: 'When someone replies "no, that\'s wrong…" to one of her answers, works out what was wrong and what is right, so the right thing is kept and the beliefs behind the wrong answer are weakened.',
     matters: 'A few hundred tokens, only when a reply pushes back. A miss loses one lesson; nothing reaches anyone.' },

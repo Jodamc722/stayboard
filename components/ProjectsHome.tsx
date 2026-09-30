@@ -179,6 +179,7 @@ export function ProjectsHome({ me, canEdit }: { me: string; canEdit: boolean }) 
             {newMenu && (<>
               <div className="fixed inset-0 z-30" onClick={() => setNewMenu(false)} />
               <div className="absolute right-0 top-full mt-1 z-40 w-56 rounded-xl border border-line bg-white shadow-lifted py-1">
+                <Link href="/projects/plan" className="flex items-center gap-1.5 px-2.5 py-1.5 text-[12.5px] font-semibold text-brand-700 hover:bg-app" title="Say what you want done; Eve turns it into phases, tasks, owners and weeks for you to correct, then creates it">✨ Plan with Eve</Link>
                 <Link href="/projects/board?new=1" className="block px-2.5 py-1.5 text-[12.5px] font-semibold text-ink hover:bg-app">Project</Link>
                 <Link href="/projects/board?new=personal" className="block px-2.5 py-1.5 text-[12.5px] text-ink hover:bg-app">Private board</Link>
                 {templates.filter(t => t.kind !== 'personal').length > 0 && <p className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-muted">From a template</p>}
