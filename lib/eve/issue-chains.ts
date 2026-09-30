@@ -59,7 +59,11 @@ export async function loadIssueChains(): Promise<{ issues: IssueChain[]; partial
   try {
     const { data } = await db.from('eve_slack_items').select('id,kind,summary,unit,owner_name,urgent,first_seen,channel,channel_name,msg_ts,thread_ts,evidence,tracked_in')
       .eq('status', 'open').in('kind', ['problem', 'guest_ask']).limit(400)
-    loops = ((data as any[]) || []).filter(l => !l?.evidence?.glitchId && l?.evidence?.weight !== 'small' && (l.kind === 'problem' || ['refund', 'change', 'callback'].indexOf(str(l?.evidence?.ask)) < 0))
+    // A GUEST issue: tied to a unit or a named guest, or saying "guest". "Two housekeepers resigned"
+    // is a real problem, but not one this chain is about — it stays on Watching.
+    loops = ((data as any[]) || []).filter(l => !l?.evidence?.glitchId && l?.evidence?.weight !== 'small'
+      && (l.kind === 'problem' || ['refund', 'change', 'callback'].indexOf(str(l?.evidence?.ask)) < 0)
+      && (!!l.unit || !!l?.evidence?.guest || /\bguest/i.test(str(l.summary))))
   } catch { partial = true }
 
   let unhappy: any[] = []
@@ -139,6 +143,7 @@ export async function loadIssueChains(): Promise<{ issues: IssueChain[]; partial
   const nextOf = (steps: Step[]) => {
     const m = steps.find(s => s.state === 'missing')
     if (m) return m.key === 'glitch' ? 'File a glitch' : m.key === 'task' ? 'Create the Breezeway task' : m.key === 'assigned' ? 'Assign someone' : m.key === 'told' ? 'Tell the guest' : m.label
+    if (steps.some(s => s.key === 'fixed' && s.state === 'done')) return null
     const w = steps.find(s => s.state === 'waiting')
     return w ? (w.key === 'started' ? 'Waiting for work to start' : w.key === 'fixed' ? 'Waiting for the fix' : w.label) : null
   }
