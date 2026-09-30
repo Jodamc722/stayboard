@@ -121,11 +121,13 @@ export async function computeScorecard(days = 7): Promise<Scorecard> {
   const reliability = clamp(50 * okRate + 50 * Math.max(0, 1 - fallbackPer100 / 10))
 
   // ── cost ──
-  const { rows: usage } = await pageRows((a, b) => db.from('ai_usage').select('cost_usd').gte('at', sinceIso).order('at', { ascending: true }).order('id', { ascending: true }).range(a, b), 20).catch(() => ({ rows: [] as any[] }))
+  // Eve's own tasks only (the same list her daily budget meters) — the sentiment scan, listing copy
+  // and the rest of the app's AI are not her spend.
+  let budgetPerDay = 5, eveTasks: string[] = []
+  try { const am = await import('./agent-mode'); budgetPerDay = Number((await am.getAgentSettings()).budgets?.aiUsdPerDay) || 5; eveTasks = Array.isArray(am.EVE_AI_TASKS) ? am.EVE_AI_TASKS : [] } catch { /* default */ }
+  const { rows: usage } = await pageRows((a, b) => { let q = db.from('ai_usage').select('cost_usd').gte('at', sinceIso); if (eveTasks.length) q = q.in('task', eveTasks); return q.order('at', { ascending: true }).order('id', { ascending: true }).range(a, b) }, 20).catch(() => ({ rows: [] as any[] }))
   const aiUsd = usage.reduce((s: number, r: any) => s + (Number(r.cost_usd) || 0), 0)
   const aiUsdPerDay = aiUsd / Math.max(1, days)
-  let budgetPerDay = 5
-  try { const { getAgentSettings } = await import('./agent-mode'); budgetPerDay = Number((await getAgentSettings()).budgets?.aiUsdPerDay) || 5 } catch { /* default */ }
   const cost = clamp(aiUsdPerDay <= 0.8 * budgetPerDay ? 100 : 100 - ((aiUsdPerDay / budgetPerDay) - 0.8) * 250)
 
   // ── the sample: accuracy, usefulness, tone, adoption, incidents ──
