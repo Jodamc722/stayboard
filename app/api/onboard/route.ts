@@ -232,7 +232,7 @@ export async function GET(req: NextRequest) {
         ids.length ? db.from('onboarding_items').select('unit_id,room_id,id,name,brand,condition,qty,expected').in('unit_id', ids) : Promise.resolve({ data: [] as any[] }),
         // deliberate cap: one row per listing, ~290. Bedrooms/baths/occupancy and the rooms sub-field
         // feed the linen one-liner's fallbacks (the same resolver as the deck and the Quote view).
-        db.from('guesty_listings').select('id,nickname,title,building,status,bedrooms,bathrooms,max_occupancy,rooms:raw->listingRooms').limit(1000),
+        db.from('guesty_listings').select('id,nickname,title,building,status,bedrooms,bathrooms,max_occupancy,rooms:raw->listingRooms').limit(1000), // deliberate cap: one row per listing, ~290
       ])
       const lname: Record<string, string> = {}
       const lrow: Record<string, any> = {}
