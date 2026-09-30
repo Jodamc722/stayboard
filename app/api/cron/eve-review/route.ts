@@ -46,6 +46,13 @@ async function run(req: NextRequest) {
     try { const r = await runLearningAudit({ kind: 'weekly', limit: 15, by: human || 'cron' }); learning = r.ok ? { score: r.run?.score, probes: r.run?.probes, failed: r.run?.failed } : { error: r.error } }
     catch (e: any) { learning = { error: String(e?.message || e).slice(0, 160) } }
   }
+  // THE TEAM-MEMBER SCORE rides the same Monday (Jon, 2026-09-30 audit): the week's ETS from her own
+  // records and the last graded sample, filed as a receipt so the trend is the story. Own try.
+  let scorecard: any = null
+  if (!focus) {
+    try { const { runScorecard } = await import('@/lib/eve/scorecard'); const sc = await runScorecard(7, human || 'cron'); scorecard = { ets: sc.ets, band: sc.band, sampleStale: sc.inputs.sampleStale } }
+    catch (e: any) { scorecard = { error: String(e?.message || e).slice(0, 160) } }
+  }
   // THE QUALITY AUDITOR rides the Monday review (Jon, 2026-09-28): three real weaknesses with
   // evidence, each filed as a graded plan and said in #leadership. ?quality=0 skips it; own try.
   let quality: any = null
@@ -67,5 +74,5 @@ async function run(req: NextRequest) {
     error: res.ok ? undefined : res.error,
     detail: res.ok ? { id: res.id, headline: res.review.headline, plans: res.persisted.plans, questions: res.persisted.questions, retired: res.persisted.retired, packTokens: res.pack.tokens, learning } : { pack: res.pack, learning },
   })
-  return NextResponse.json({ ...res, learning, quality, expectations }, { status: res.ok ? 200 : 500 })
+  return NextResponse.json({ ...res, learning, quality, expectations, scorecard }, { status: res.ok ? 200 : 500 })
 }
