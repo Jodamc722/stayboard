@@ -10,7 +10,9 @@
 // keeping. Both are generated from the same order rows, so they cannot disagree.
 import 'server-only'
 
-export type QuoteColumn = { header: string; width: number; align?: 'l' | 'r' }
+/** `wrap`: long text runs onto up to three lines in this column instead of being cut short. Optional —
+ *  a column without it prints exactly as before. */
+export type QuoteColumn = { header: string; width: number; align?: 'l' | 'r'; wrap?: boolean }
 export type QuoteSection = {
   heading: string
   sub?: string
@@ -19,6 +21,9 @@ export type QuoteSection = {
   /** Start this section on a fresh page. A work order is handed out per unit, so each unit gets
    *  its own sheet — one that can be torn off and given to the person doing that apartment. */
   newPage?: boolean
+  /** Grey lines under the heading, wrapped — a vendor's contact, how to order, lead time, a
+   *  below-minimum warning. Optional; a section without them prints exactly as before. */
+  lines?: string[]
 }
 export type QuoteDoc = {
   title: string
@@ -133,22 +138,35 @@ export function buildQuotePdf(doc: QuoteDoc): Buffer {
   for (const sec of doc.sections) {
     // Never orphan a heading at the foot of a page — a unit name with no rows under it reads as an
     // empty unit, which on a furniture quote is a real misunderstanding.
+    const secLines = (sec.lines || []).flatMap(l => wrap(l, CONTENT_W, 8.5))
     if (sec.newPage && page.ops.length > 2) { newPage(); headerDrawn = false }
-    else if (y < MARGIN + 90) { newPage(); headerDrawn = false }
+    else if (y < MARGIN + 90 + secLines.length * 11) { newPage(); headerDrawn = false }
     y -= 4
     text(MARGIN, y - 11, 11.5, sec.heading, true)
     if (sec.sub) text(MARGIN + widthOf(sec.heading, 11.5, true) + 10, y - 11, 9, sec.sub, false, true)
     y -= 18
+    if (secLines.length) {
+      for (const ln of secLines) { text(MARGIN, y - 8, 8.5, ln, false, true); y -= 11 }
+      y -= 4
+    }
     headerRow(); headerDrawn = true
 
     for (const row of sec.rows) {
-      if (y < MARGIN + 40) { newPage(); headerRow() }
-      for (let i = 0; i < doc.columns.length; i++) {
+      // A wrapping column may take up to three lines (a "\n" in the cell forces a break); every other
+      // cell stays on the first.
+      const cells = doc.columns.map((c, i) => {
         const v = row[i] == null ? '' : String(row[i])
-        if (!v) continue
-        text(cellX(i, v, 9, false), y - 8, 9, fit(v, colW[i] - 8, 9), false)
+        return c.wrap && v ? v.split('\n').flatMap(part => wrap(part, colW[i] - 8, 9)).slice(0, 3) : [v]
+      })
+      const extra = (Math.max(1, ...cells.map(c => c.length)) - 1) * 10.5
+      if (y - extra < MARGIN + 40) { newPage(); headerRow() }
+      for (let i = 0; i < doc.columns.length; i++) {
+        cells[i].forEach((v, k) => {
+          if (!v) return
+          text(cellX(i, v, 9, false), y - 8 - k * 10.5, 9, fit(v, colW[i] - 8, 9), false)
+        })
       }
-      y -= 14
+      y -= 14 + extra
       rule(y + 3, 0.4, 0.88)
     }
     if (sec.subtotal) {
