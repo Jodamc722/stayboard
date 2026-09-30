@@ -256,15 +256,23 @@ export async function POST(req: NextRequest) {
       attachmentPack(attachments),
     ].join('\n')
     const { model, fallback } = await modelPairFor('project-plan')
-    const r = await anthropicMessages(key, {
-      model, max_tokens: 6000, system: SYSTEM,
+    // Two tries: the second asks for a tighter plan if the first ran out of room (a long unit list
+    // and a per-task "done" line make the answer bigger than the first version of this page's).
+    const ask = async (extra: string) => anthropicMessages(key, {
+      model, max_tokens: 16000, system: SYSTEM,
       tools: [{ name: 'plan', description: 'The project plan.', input_schema: SCHEMA }], tool_choice: { type: 'tool', name: 'plan' },
-      messages: [{ role: 'user', content: pack }],
+      messages: [{ role: 'user', content: pack + extra }],
     }, fallback, 'project-plan')
-    const out = (r.data?.content || []).find((c: any) => c.type === 'tool_use')?.input
+    let r = await ask('')
+    let out = (r.data?.content || []).find((c: any) => c.type === 'tool_use')?.input
+    let plan = out ? normalise(out, ctx) : null
+    if (r.ok && (!plan || !plan.phases.length || r.data?.stop_reason === 'max_tokens')) {
+      r = await ask('\n\nKEEP IT TIGHT: at most 24 tasks in total, each detail under 30 words, checklists only where they truly help. One task per building walk with the units listed, never one task per unit.')
+      out = (r.data?.content || []).find((c: any) => c.type === 'tool_use')?.input
+      plan = out ? normalise(out, ctx) : null
+    }
     if (!r.ok || !out) return NextResponse.json({ ok: false, error: 'Eve could not draft that just now' + (r.data?.error?.message ? ' — ' + String(r.data.error.message).slice(0, 120) : '.') }, { status: 502 })
-    const plan = normalise(out, ctx)
-    if (!plan.phases.length) return NextResponse.json({ ok: false, error: 'Eve came back without any tasks. Try a fuller brief.' }, { status: 502 })
+    if (!plan || !plan.phases.length) return NextResponse.json({ ok: false, error: 'Eve came back without any tasks' + (r.data?.stop_reason === 'max_tokens' ? ' — the plan ran too long even after a second try; narrow the brief' : '') + '.', debug: { stop: r.data?.stop_reason || null, keys: out && typeof out === 'object' ? Object.keys(out) : typeof out } }, { status: 502 })
     return NextResponse.json({
       ok: true, plan, model: r.model,
       roster: ctx.roster.map(x => ({ name: x.name, field: x.field })), categories: ctx.categories, buildings: ctx.buildings.map(x => x.label),
