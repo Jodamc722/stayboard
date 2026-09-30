@@ -12,7 +12,7 @@ import { BUSINESSES, businessForPath, businessDef, GARDEN_NAV, GARDEN_SECTIONS, 
 import { AdamFloat } from '@/components/AdamFloat'
 import {
   Building2, MessageSquare, ListChecks, LogOut, RefreshCw, Gauge, Star, TrendingUp, Users, FileText, Bell,
-  Search, Menu, X, Plus, ChevronDown, Check, Settings as SettingsIcon } from 'lucide-react'
+  Search, Menu, X, Plus, ChevronDown, Check, Sparkles, CalendarDays, Settings as SettingsIcon } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
 // NAV, 2026-09-29 (Jon): "get rid of useless or noisy tabs… break it down into simple tabs", then
@@ -35,13 +35,20 @@ type NavSection = { title: string; items: NavItem[] }
 
 // One icon per desk (lib/desks.ts stays free of JSX). Admin is the gear.
 const DESK_ICONS: Record<string, any> = {
-  today: Gauge, operations: ListChecks, guests: MessageSquare, reviews: Star, listings: Building2,
+  today: Gauge, eve: Sparkles, operations: ListChecks, guests: MessageSquare, reviews: Star, listings: Building2,
   owners: FileText, team: Users, kpis: TrendingUp, admin: SettingsIcon,
 }
-// The phone's bottom bar has room for about ten characters a tab.
-const DESK_SHORT: Record<string, string> = { guests: 'Guests' }
-// Pages that size themselves to the window and draw no desk strip above them.
-const NO_STRIP = ['/revenue-app']
+// The phone's bottom bar: the four pages used most, then More (Jon, 2026-09-30: Today, the
+// scheduler and the day's work should be readily available).
+const PHONE_BAR: { to: string; label: string; Icon: any }[] = [
+  { to: '/command', label: 'Today', Icon: Gauge },
+  { to: '/schedule', label: 'Schedule', Icon: CalendarDays },
+  { to: '/messages', label: 'Inbox', Icon: MessageSquare },
+  { to: '/eve', label: 'Eve', Icon: Sparkles },
+]
+// Sidebar sections start open for these desks; the rest start folded (the one you are on always opens).
+const OPEN_BY_DEFAULT = ['operations', 'guests']
+const NAV_FOLD_KEY = 'lh:navFolded'
 
 // PER-TAB CACHE FOR THE SHELL'S OWN READS (2026-09-18). The Shell is rendered inside every page,
 // so it remounts on every navigation and asked /api/access/me and /api/access/prefs again each
@@ -116,7 +123,8 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   // Pins: null until we know (device copy or server), so the band never flashes the role default
   // over someone's real choices.
   const [pins, setPins] = useState<string[] | null>(null)
-  const [moreOpen, setMoreOpen] = useState(false)
+  const [folded, setFolded] = useState<Record<string, boolean>>({})
+  useEffect(() => { const f = readLocal(NAV_FOLD_KEY); if (f && typeof f === 'object' && !Array.isArray(f)) setFolded(f) }, [])
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   // WHICH BUSINESS (Jon, 2026-09-28: "a drop down… a completely different page"). Decided by the
@@ -187,12 +195,12 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
 
   // Close the drawer whenever the route changes — otherwise tapping a link on a phone leaves the
   // panel sitting over the page you just navigated to.
-  useEffect(() => { setDrawerOpen(false); setPaletteOpen(false); setMoreOpen(false) }, [path])
+  useEffect(() => { setDrawerOpen(false); setPaletteOpen(false) }, [path])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === 'k') { e.preventDefault(); setPaletteOpen(v => !v) }
-      if (e.key === 'Escape') { setPaletteOpen(false); setDrawerOpen(false); setMoreOpen(false) }
+      if (e.key === 'Escape') { setPaletteOpen(false); setDrawerOpen(false) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -360,39 +368,60 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     </button>
   )
 
-  // THE DESKS, one row each. The hover says what the desk is for; the row opens the first page in it
-  // the person can see. Admin sits apart at the bottom, behind its gear.
+  // THE SIDEBAR LISTS EVERY PAGE (Jon, 2026-09-30: "pages are buried… the most important things
+  // [should be] readily available"). Today and Eve are rows of their own at the top; every other
+  // desk is a heading with its pages under it, folding open or shut (remembered per browser). The
+  // desk you are on is always open. No strip across the top of the page any more.
   const deskRow = (x: { desk: typeof DESKS[number]; views: DeskView[] }, onNavigate?: () => void) => {
     const Icon = DESK_ICONS[x.desk.key] || Gauge
     const active = !!deskHere && deskHere.desk.key === x.desk.key
     return (
       <Link key={x.desk.key} href={x.views[0].to} prefetch={false} onClick={onNavigate} title={x.desk.blurb}
         aria-current={active ? 'page' : undefined}
-        className={`flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
+        className={`flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm font-semibold transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-ink/80 hover:bg-app hover:text-ink'}`}>
         <Icon size={17} strokeWidth={active ? 2.25 : 2} className={active ? 'text-brand-600' : ''} />
         <span className="truncate">{x.desk.label}</span>
       </Link>
     )
   }
-  // In the phone drawer each desk also lists its pages, because the strip is hidden on a phone —
-  // the drawer is the whole map there.
-  const deskPages = (x: { desk: typeof DESKS[number]; views: DeskView[] }, onNavigate?: () => void) => x.views.length < 2 ? null : (
-    <div className="ml-9 mb-1 border-l border-line pl-2">
-      {x.views.map(v => {
-        const on = !!viewHere && viewHere.to === v.to
-        return <Link key={v.to} href={v.to} prefetch={false} onClick={onNavigate} title={v.hint}
-          className={'block px-2 py-1.5 rounded-md text-[13px] ' + (on ? 'text-brand-700 font-semibold bg-brand-50' : 'text-muted hover:text-ink hover:bg-app')}>{v.label}</Link>
-      })}
-    </div>
-  )
-  const vrNav = (onNavigate?: () => void, withPages?: boolean) => {
-    const main = desks.filter(x => x.desk.key !== 'admin')
+  const isOpen = (key: string) => (!!deskHere && deskHere.desk.key === key) || (key in folded ? !folded[key] : OPEN_BY_DEFAULT.indexOf(key) >= 0)
+  const toggleFold = (key: string) => setFolded(f => { const n = { ...f, [key]: isOpen(key) }; writeLocal(NAV_FOLD_KEY, n); return n })
+  const deskSection = (x: { desk: typeof DESKS[number]; views: DeskView[] }, onNavigate?: () => void) => {
+    if (x.views.length < 2) return deskRow(x, onNavigate)
+    const Icon = DESK_ICONS[x.desk.key] || Gauge
+    const open = isOpen(x.desk.key)
+    const here = !!deskHere && deskHere.desk.key === x.desk.key
+    return (
+      <div key={x.desk.key}>
+        <button type="button" onClick={() => toggleFold(x.desk.key)} aria-expanded={open}
+          title={x.desk.blurb + (open ? ' — click to fold' : ' — click to show its pages')}
+          className={'w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm font-semibold transition-all ' + (here ? 'text-brand-700' : 'text-ink/80 hover:bg-app hover:text-ink')}>
+          <Icon size={17} strokeWidth={here ? 2.25 : 2} className={here ? 'text-brand-600' : ''} />
+          <span className="truncate">{x.desk.label}</span>
+          <ChevronDown size={14} className={'ml-auto text-muted/60 transition ' + (open ? '' : '-rotate-90')} />
+        </button>
+        {open && (
+          <div className="ml-[21px] mb-1 border-l border-line pl-2">
+            {x.views.map(v => {
+              const on = !!viewHere && viewHere.to === v.to
+              return <Link key={v.to} href={v.to} prefetch={false} onClick={onNavigate} title={v.hint} aria-current={on ? 'page' : undefined}
+                className={'block px-2 py-[5px] rounded-md text-[13px] truncate ' + (on ? 'text-brand-700 font-semibold bg-brand-50' : 'text-muted hover:text-ink hover:bg-app')}>{v.label}</Link>
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+  const vrNav = (onNavigate?: () => void) => {
+    const top = desks.filter(x => x.desk.key === 'today' || x.desk.key === 'eve')
+    const main = desks.filter(x => x.desk.key !== 'admin' && x.desk.key !== 'today' && x.desk.key !== 'eve')
     const admin = desks.find(x => x.desk.key === 'admin')
     return (
       <>
         {jumpBox(onNavigate)}
-        <div className="space-y-0.5">{main.map(x => <div key={x.desk.key}>{deskRow(x, onNavigate)}{withPages ? deskPages(x, onNavigate) : null}</div>)}</div>
-        {admin ? <div className="mt-3 pt-3 border-t border-line">{deskRow(admin, onNavigate)}{withPages ? deskPages(admin, onNavigate) : null}</div> : null}
+        <div className="space-y-0.5 mb-2">{top.map(x => <div key={x.desk.key}>{deskRow(x, onNavigate)}</div>)}</div>
+        <div className="space-y-0.5 pt-2 border-t border-line">{main.map(x => <div key={x.desk.key}>{deskSection(x, onNavigate)}</div>)}</div>
+        {admin ? <div className="mt-3 pt-3 border-t border-line">{deskSection(admin, onNavigate)}</div> : null}
       </>
     )
   }
@@ -469,58 +498,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     </>
   )
 
-  const navBody = (onNavigate?: () => void, withPages?: boolean) => G ? gardenNavBody(onNavigate) : vrNav(onNavigate, withPages)
-
-  // THE DESK STRIP — the pages of the desk you are on, across the top. Secondary pages sit under
-  // "More" (unless you are on one, then it shows inline so you can see where you are). A desk with
-  // a single page draws no strip.
-  const deskStrip = () => {
-    if (!deskHere || deskHere.views.length < 2) return null
-    // Full-height pages draw no strip: the Revenue App frame sizes itself to the window.
-    if (viewHere && NO_STRIP.indexOf(viewHere.to) >= 0) return null
-    const Icon = DESK_ICONS[deskHere.desk.key] || Gauge
-    const inline = deskHere.views.filter(v => !v.more || (viewHere && viewHere.to === v.to))
-    const extra = deskHere.views.filter(v => v.more && !(viewHere && viewHere.to === v.to))
-    return (
-      // Desktop and tablet only: on a phone the bottom bar and the drawer carry the desks and their
-      // pages, and a wrapped strip would cost a hundred pixels of every screen.
-      <div className="mb-4 -mt-1 hidden sm:flex items-center gap-2 flex-wrap">
-        <div className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] font-bold text-muted/70 mr-1" title={deskHere.desk.blurb}>
-          <Icon size={13} />{deskHere.desk.label}
-        </div>
-        <div className="inline-flex items-center rounded-xl border border-line bg-white p-0.5 overflow-x-auto max-w-full">
-          {inline.map(v => {
-            const on = !!viewHere && viewHere.to === v.to
-            return <Link key={v.to} href={v.to} prefetch={false} title={v.hint} aria-current={on ? 'page' : undefined}
-              className={'px-3 py-1.5 rounded-lg text-[13px] font-semibold whitespace-nowrap transition ' + (on ? 'bg-ink text-white' : 'text-muted hover:text-ink hover:bg-app')}>{v.label}</Link>
-          })}
-        </div>
-        {extra.length > 0 && (
-          <div className="relative">
-            <button type="button" onClick={() => setMoreOpen(o => !o)} aria-haspopup="menu" aria-expanded={moreOpen}
-              title={'More in ' + deskHere.desk.label + ': ' + extra.map(v => v.label).join(', ')}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-line bg-white text-[13px] font-semibold text-muted hover:text-ink">
-              More <ChevronDown size={13} className={'transition ' + (moreOpen ? 'rotate-180' : '')} />
-            </button>
-            {moreOpen && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)} />
-                <div role="menu" className="absolute right-0 mt-1 z-50 w-[240px] max-w-[80vw] rounded-xl border border-line bg-white shadow-lifted p-1">
-                  {extra.map(v => (
-                    <Link key={v.to} href={v.to} prefetch={false} role="menuitem" title={v.hint} onClick={() => setMoreOpen(false)}
-                      className="block px-3 py-2 rounded-lg text-[13px] text-ink hover:bg-app">
-                      <span className="font-semibold">{v.label}</span>
-                      <span className="block text-[11px] text-muted leading-snug">{v.hint}</span>
-                    </Link>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    )
-  }
+  const navBody = (onNavigate?: () => void, _withPages?: boolean) => G ? gardenNavBody(onNavigate) : vrNav(onNavigate)
 
   return (
     // APP SHELL, NOT A LONG PAGE. This was min-h-screen, so the wrapper grew to the height of the
@@ -585,7 +563,6 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
           {/* pb-24 on a phone: Eve's bubble floats above the bottom bar, and without room to scroll
               past it the last row of every board sits permanently under a 56px circle. */}
           <div className={full ? 'h-full min-h-full' : 'max-w-[1600px] mx-auto px-3 pt-4 pb-24 sm:p-6 lg:p-8 animate-fade-in'}>
-            {!G && !full ? deskStrip() : null}
             {children}
           </div>
         </main>
@@ -604,8 +581,8 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
             navigation. pb-safe keeps the labels off the iPhone home indicator, which viewport-fit
             cover otherwise draws straight through. */}
         <nav className={(full ? 'hidden' : 'lg:hidden flex') + ' flex-shrink-0 border-t border-line bg-white items-stretch pb-safe px-safe'}>
-          {(business === 'garden' ? gardenNav.slice(0, 4) : desks.filter(x => x.desk.key !== 'admin').slice(0, 4).map(x => ({ to: x.views[0].to, label: DESK_SHORT[x.desk.key] || x.desk.label, Icon: DESK_ICONS[x.desk.key] || Gauge, key: x.desk.key }))).map(({ to, label, Icon, key }: any) => {
-            const active = business === 'garden' ? (path === to || (to !== '/garden' && !!path && path.startsWith(to + '/'))) : !!deskHere && deskHere.desk.key === key
+          {(business === 'garden' ? gardenNav.slice(0, 4) : PHONE_BAR.filter(b => canSee(b.to))).map(({ to, label, Icon }: any) => {
+            const active = business === 'garden' ? (path === to || (to !== '/garden' && !!path && path.startsWith(to + '/'))) : !!viewHere && viewHere.to === to
             return (
               <Link key={'bb-' + to} href={to} prefetch={false}
                 className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-semibold ${active ? 'text-brand-600' : 'text-muted'}`}>

@@ -63,7 +63,7 @@ const PAGE_NOTES: Record<string, string> = {
   labor: 'labor from Homebase punches against departure cleans — cost per clean, people, days and data health',
   'labor-dashboard': 'the day/week/month labor dashboard behind the daily labor email (the Dashboard switch on Labor)',
   cleaners: 'each cleaner\'s last 90 days of departure cleans — pace, same-day rate and quality tier',
-  // KPIS
+  // FINANCIALS
   revenue: 'Revenue — revenue, occupancy, ADR and RevPAR by building and unit, pacing and the $-ranked checks',
   marketing: 'direct bookings tracked by the date they were made',
   'revenue-app': 'the boss\'s Revenue App inside Lighthouse — where budgets and forecasting live',
@@ -92,9 +92,9 @@ export function appAtlas(): string {
   const order = GROUP_ORDER.filter(g => byGroup[g]).concat(Object.keys(byGroup).filter(g => GROUP_ORDER.indexOf(g) < 0))
   const pages = order.map(g => g.toUpperCase() + '\n' + byGroup[g].join('\n')).join('\n')
   const tools = DOMAINS.map(d => `- ${d.label} (${d.tools.length} tools): ${d.blurb}`).join('\n')
-  _cache = 'THE APP (Lighthouse) — you know every page. Lighthouse is organized as Today plus seven '
-    + 'desks — Operations, Guest Experience, Reviews, Listings, Owners, Team, KPIs — and Admin behind '
-    + 'a gear; a desk\'s pages run across the top of each page. When someone asks where to do '
+  _cache = 'THE APP (Lighthouse) — you know every page. Lighthouse is organized as Today, Eve (your '
+    + 'own tab), and seven desks — Operations, Guest Experience, Reviews, Listings, Owners, Team, '
+    + 'Financials — plus Admin behind a gear; the sidebar lists every page under its desk. When someone asks where to do '
     + 'something, name the desk and the page (and the Settings panel if it is a setting). Admin → '
     + 'Users & admin (/users) holds Settings: task automation, front-desk notices, Slack rules, approval limits, review '
     + 'voice, share links, staffing, PAR levels, Guesty custom fields, Salato front-desk units — and '

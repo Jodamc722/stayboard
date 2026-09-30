@@ -5,9 +5,9 @@
 // reporting and onboarding, review management, team management and operational KPI management",
 // built so the team sees the work and Eve can learn it and, in time, run it.
 //
-// So the app is Today plus seven desks, one per job, and an Admin desk behind a gear. Each desk owns
-// its pages ("views"): the sidebar lists the desks, the strip across the top of a page lists its
-// desk's views, the roles grid groups permissions by desk, the Jump box searches views, and Eve's
+// So the app is Today, Eve, and seven desks, one per job, plus an Admin desk behind a gear. Each desk
+// owns its pages ("views"). The sidebar lists every page under its desk's heading (2026-09-30: no
+// strip across the top — "pages are buried"), the roles grid groups permissions by desk, the Jump box searches views, and Eve's
 // map of the app reads the same list. Nothing else keeps its own copy of the nav.
 //
 // Rules that keep this honest (lib/__tests__/desks.test.mjs enforces them on every test run):
@@ -47,9 +47,16 @@ export type Desk = {
 export const DESKS: Desk[] = [
   {
     key: 'today', label: 'Today',
-    blurb: 'Your day ranked across every desk, the approvals waiting on you, and what Eve needs from a person.',
+    blurb: 'The day on one page: what to decide, fix and clear across every desk, and what is yours.',
     views: [
-      { to: '/command', label: 'Command', hint: 'Your ranked day: decide, fix, clear, and what is yours' },
+      { to: '/command', label: 'Today', hint: 'The day on one page: decide, fix, clear, and what is yours' },
+    ],
+  },
+  {
+    // Eve is her own tab (Jon, 2026-09-30: "I think Eve should be its own individual tab").
+    key: 'eve', label: 'Eve',
+    blurb: 'What Eve needs from a person, the loops she is keeping tabs on, her questions and expectation notes.',
+    views: [
       { to: '/eve', label: 'Eve', hint: 'What Eve needs from a person, her open loops, questions and expectation notes', match: ['/loops'] },
     ],
   },
@@ -59,6 +66,8 @@ export const DESKS: Desk[] = [
     views: [
       { to: '/plan', label: 'Today board', hint: 'Every unit’s work today against the 4pm deadline; assign and add tasks' },
       { to: '/schedule', label: 'Schedule', hint: 'Turnovers by day: stage, assign and push to Breezeway' },
+      // Scheduling sits together (Jon, 2026-09-30: "Scheduler — all the scheduling features").
+      { to: '/team', label: 'Week plan', hint: 'Who works which day, by trade and market, with the 14-day forecast' },
       { to: '/checklist', label: 'Checklist', hint: 'The standing daily list, ticked by whoever does it' },
       { to: '/maintenance', label: 'Maintenance', hint: 'Work orders, open Breezeway maintenance and glitches in one aged list', match: ['/requests'] },
       { to: '/projects', label: 'Projects', hint: 'Work that is bigger than a task: renovations, rollouts, building onboarding' },
@@ -100,32 +109,33 @@ export const DESKS: Desk[] = [
   },
   {
     key: 'owners', label: 'Owners',
-    blurb: 'Owner onboarding and inventory, owner reports, billable hours and statements.',
+    blurb: 'Owner onboarding and inventory, linens, quality walks, purchasing and owner reports.',
     views: [
       { to: '/onboarding', label: 'Onboarding', hint: 'New-unit inventory links: rooms, counts, photos and the buy list' },
       { to: '/onboarding/linens', label: 'Linens', hint: 'Your linen standard, and the linen order for any set of units' },
       { to: '/audits', label: 'Quality', hint: 'Unit walks and what they found, dispatched to Breezeway' },
       { to: '/orders', label: 'Purchasing', hint: 'Buying desk: approve, buy, receive and install' },
       { to: '/reports', label: 'Owner reports', hint: 'Owner reviews, projections and onboarding decks' },
-      { to: '/billing', label: 'Billable hours', hint: 'Owner billables: ops review, then final review, then export' },
-      { to: '/owner-audit', label: 'Statements', hint: 'Owner statements checked against reservations' },
       { to: '/projections', label: 'Projections', hint: 'Next season’s owner revenue model behind the projection decks', more: true },
     ],
     also: ['/ffe'],
   },
   {
     key: 'team', label: 'Team',
-    blurb: 'Team management: who works when, hours and labor, and each cleaner’s record.',
+    blurb: 'Team management: hours and labor, and each cleaner’s record.',
     views: [
-      { to: '/team', label: 'Week plan', hint: 'Who works which day, by trade and market, with the 14-day forecast' },
       { to: '/labor', label: 'Labor', hint: 'Payroll against cleans: cost per clean, people, days and the dashboard' },
       { to: '/cleaners', label: 'Cleaners', hint: 'Each cleaner’s last 90 days: pace, same-day rate and quality' },
     ],
   },
   {
-    key: 'kpis', label: 'KPIs',
-    blurb: 'Operational and revenue numbers: revenue, direct bookings and the Revenue App.',
+    // THE MONEY PAGES TOGETHER (Jon, 2026-09-30: "owner statement audits are kind of like financials
+    // or billables, so making sure that it's just clear and visible").
+    key: 'kpis', label: 'Financials',
+    blurb: 'The money pages: owner statements, billable hours, revenue, direct bookings and the Revenue App.',
     views: [
+      { to: '/owner-audit', label: 'Statements', hint: 'Owner statements checked against reservations' },
+      { to: '/billing', label: 'Billable hours', hint: 'Owner billables: ops review, then final review, then export' },
       { to: '/revenue', label: 'Revenue', hint: 'Revenue, occupancy, ADR and RevPAR by building and unit, with the checks behind them' },
       { to: '/marketing', label: 'Direct bookings', hint: 'Direct bookings by the date they were made' },
       { to: '/revenue-app', label: 'Revenue App', hint: 'The Revenue App, where budgets and forecasting live' },

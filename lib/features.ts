@@ -14,22 +14,22 @@ export type Feature = { key: string; label: string; path: string; group: string 
 // feature's group is the label of the desk that owns its path (lib/__tests__/desks.test.mjs checks
 // it), and every feature MUST name one of these groups — anything else lands in an auto-generated "New tabs" bucket in the grid, so a tab
 // can never silently miss the permission editor again.
-export const GROUP_ORDER = ['Today', 'Operations', 'Guest Experience', 'Reviews', 'Listings', 'Owners', 'Team', 'KPIs', 'Admin', 'Garden Hotel']
+export const GROUP_ORDER = ['Today', 'Eve', 'Operations', 'Guest Experience', 'Reviews', 'Listings', 'Owners', 'Team', 'Financials', 'Admin', 'Garden Hotel']
 
 export const FEATURES: Feature[] = [
   { key: 'command',       label: 'Command Center',    path: '/command', group: 'Today' },
   // Open loops (Jon, 2026-09-28): the page behind Eve's 'Keeping tabs' — guest asks, problems,
   // promises, unanswered questions, decisions — with Done / Not a loop. Replaces the long roll-up.
-  { key: 'loops',         label: 'Open loops (Eve tab)', path: '/loops', group: 'Today' },
+  { key: 'loops',         label: 'Open loops (Eve tab)', path: '/loops', group: 'Eve' },
   // Moved off '/' 2026-08-24 (Jon: "home page is a bust"). The KEY stays `home` on purpose — it is
   // what per-role permissions are stored against, so renaming it would silently reset everyone's
   // access to this page. Only the path, label and group moved.
-  { key: 'home',          label: 'KPI board',         path: '/kpi', group: 'KPIs' },
+  { key: 'home',          label: 'KPI board',         path: '/kpi', group: 'Financials' },
   // Eve (2026-08-19, Jon): "Eve should only be for Admin and up users." Registering her as a real
   // feature key replaces the hardcoded jon@-only check that used to live in /api/agent, so she is
   // owner + admin out of the box AND can be switched on for one more role from the Roles grid
   // without a deploy. Migration 045 seeds admin=full and every other role=off.
-  { key: 'eve',           label: 'Eve',               path: '/eve', group: 'Today' },
+  { key: 'eve',           label: 'Eve',               path: '/eve', group: 'Eve' },
   { key: 'reservations',  label: 'Reservations',      path: '/reservations', group: 'Guest Experience' },
   { key: 'reservation-emails', label: 'Front-Desk Notices', path: '/reservation-emails', group: 'Guest Experience' },
   { key: 'messages',      label: 'Messages',          path: '/messages', group: 'Guest Experience' },
@@ -107,22 +107,22 @@ export const FEATURES: Feature[] = [
   // Personal read-only API keys (Jon, 2026-09-25). Every role can make their own; a key reads
   // exactly what its owner can see, through /api/v1 only.
   { key: 'api-keys',      label: 'API keys',           path: '/api-keys', group: 'Admin' },
-  { key: 'revenue',       label: 'Revenue Center',    path: '/revenue', group: 'KPIs' },
-  { key: 'marketing',     label: 'Direct bookings',   path: '/marketing', group: 'KPIs' },
+  { key: 'revenue',       label: 'Revenue Center',    path: '/revenue', group: 'Financials' },
+  { key: 'marketing',     label: 'Direct bookings',   path: '/marketing', group: 'Financials' },
   // Billable hours (2026-08-06, Jon): Breezeway task billing by owner + labor vs actual.
   // Money page -> owner/admin-only by default (migration 027 records manager off, like Owner Audit).
-  { key: 'billing',       label: 'Billable Hours',    path: '/billing', group: 'Owners' },
+  { key: 'billing',       label: 'Billable Hours',    path: '/billing', group: 'Financials' },
   // Owner projections (2026-08-21, Jon): next season's net owner revenue, editable per month.
   { key: 'projections',   label: 'Projections',       path: '/projections', group: 'Owners' },
   // The boss's Revenue App (stay-hospitalitydrr.netlify.app) inside Lighthouse (Jon, 2026-09-25:
   // "embed this app into my Lighthouse so I can go from this back to my app"). One frame, our nav
   // around it. Its numbers already flow in through lib/revenue-app.ts; this is the screen itself.
-  { key: 'revenue-app',   label: 'Revenue App',       path: '/revenue-app', group: 'KPIs' },
+  { key: 'revenue-app',   label: 'Revenue App',       path: '/revenue-app', group: 'Financials' },
   { key: 'reports',       label: 'Owner Reports',     path: '/reports', group: 'Owners' },
   // Owner-money page: owner/admin-only by Jon's rule (migration 025 sets manager to off, same as
   // Revenue). Reviewers without a login use /report/owner-audit instead.
-  { key: 'owner-audit',   label: 'Owner Statement Audit', path: '/owner-audit', group: 'Owners' },
-  { key: 'team-schedule', label: 'Weekly Planner',    path: '/team', group: 'Team' },
+  { key: 'owner-audit',   label: 'Owner Statement Audit', path: '/owner-audit', group: 'Financials' },
+  { key: 'team-schedule', label: 'Weekly Planner',    path: '/team', group: 'Operations' },
   { key: 'cleaners',      label: 'Cleaners',          path: '/cleaners', group: 'Team' },
   { key: 'labor',         label: 'Labor',             path: '/labor', group: 'Team' },
   // Labor Dashboard (2026-08-10, Jon): the live click-into view behind the daily labor email —
