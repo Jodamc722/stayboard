@@ -58,7 +58,7 @@ type Payload = { ok: true; month: string; from: string; to: string; me: { email:
 type Stage = 'ops' | 'gm' | 'done' | 'all'
 
 const FLAG_LABEL: Record<Flag, string> = {
-  over_150: 'over $150', no_price: 'no price', override_far: 'override far from computed',
+  over_150: 'over $150', no_price: 'Maybe billable — finished at $0, needs a look', override_far: 'override far from computed',
   no_detail: 'detail not pulled', duplicate: 'possible duplicate', long_hours: 'long hours', no_owner: 'no owner',
   not_done: 'not finished in Breezeway',
   should_bill: 'The billable model says this should bill the owner — finished and still $0',
@@ -67,15 +67,14 @@ const FLAG_LABEL: Record<Flag, string> = {
 }
 // LEAN PASS (2026-09-22): the row shows the short word, the hover says the full reason.
 const FLAG_SHORT: Record<Flag, string> = {
-  over_150: 'Over $150', no_price: 'No price', override_far: 'Override off', no_detail: 'No detail',
+  over_150: 'Over $150', no_price: 'Maybe bill', override_far: 'Override off', no_detail: 'No detail',
   duplicate: 'Duplicate?', long_hours: 'Long hours', no_owner: 'No owner', not_done: 'Not finished',
   should_bill: 'Should bill', billed_routine: 'Billed routine?',
   ai_bill: 'AI: bill it', ai_pending: 'AI pending',
 }
-const FLAG_TONE = (f: Flag): Tone => f === 'over_150' ? 'amber' : f === 'ai_bill' || f === 'should_bill' ? 'brand' : f === 'ai_pending' ? 'slate' : f === 'billed_routine' ? 'amber' : 'rose'
+const FLAG_TONE = (f: Flag): Tone => f === 'over_150' ? 'amber' : f === 'ai_bill' || f === 'should_bill' ? 'brand' : f === 'ai_pending' || f === 'no_price' ? 'sky' : f === 'billed_routine' ? 'amber' : 'rose'
 // The billable model's read, as one small chip per row.
 const CAT_LABEL: Record<string, string> = { repair: 'Repair', pm: 'PM', pest: 'Pest', extra_clean: 'Extra clean', owner_item: 'Owner item', guest_fix: 'Guest fix', departure_clean: 'Departure', routine: 'Routine', inspection: 'Inspection', building: 'Common area', our_fault: 'Re-clean', other: 'Other' }
-const VERDICT_TONE: Record<BVerdict, Tone> = { bill: 'emerald', likely: 'sky', maybe: 'slate', no: 'slate' }
 const VERDICT_WORD: Record<BVerdict, string> = { bill: 'billable', likely: 'likely billable', maybe: 'maybe', no: 'not billable' }
 const STAGE_OF: Record<Stage, (t: Task) => boolean> = {
   ops: t => t.reviewState === 'open',
@@ -184,10 +183,9 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, o
               {t.doer || 'no one assigned'} · {short(t.scheduledDate || t.finishedAt)}
               {t.actualMinutes ? ' · ' + (t.actualMinutes / 60).toFixed(1) + 'h' : ''}
             </span>
-            {t.billable ? <Tag tone={VERDICT_TONE[t.billable.verdict]} title={VERDICT_WORD[t.billable.verdict] + ' (' + Math.round(t.billable.confidence * 100) + '%) — ' + t.billable.reasons.join(' · ')}>{CAT_LABEL[t.billable.category] || t.billable.category}{t.billable.verdict === 'bill' ? ' · bill' : t.billable.verdict === 'likely' ? ' · likely' : t.billable.verdict === 'no' ? ' · no' : ' · ?'}</Tag> : null}
             {t.flags.map(f => (
               <Tag key={f} tone={FLAG_TONE(f)}
-                title={f === 'ai_bill' && t.aiReason ? t.aiReason + (t.aiAmount != null ? ' — suggests ' + money(t.aiAmount) : '') : FLAG_LABEL[f]}>{FLAG_SHORT[f]}</Tag>
+                title={f === 'ai_bill' && t.aiReason ? t.aiReason + (t.aiAmount != null ? ' — suggests ' + money(t.aiAmount) : '') : (f === 'should_bill' || f === 'no_price' || f === 'billed_routine') && t.billable ? FLAG_LABEL[f] + ' — ' + (CAT_LABEL[t.billable.category] || t.billable.category) + ': ' + t.billable.reasons.join(' · ') : FLAG_LABEL[f]}>{FLAG_SHORT[f]}{f === 'should_bill' && t.billable ? ' · ' + (CAT_LABEL[t.billable.category] || '') : ''}</Tag>
             ))}
           </span>
         </button>

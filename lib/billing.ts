@@ -107,7 +107,7 @@ export const isBareRoutine = (name: string, description: string | null) =>
  */
 export type BillingFlag =
   | 'over_150'        // billed amount above $150 — Jon's line
-  | 'no_price'        // finished, billable, and $0 with no override: somebody forgot to price it
+  | 'no_price'        // MAYBE BILL: the billable model is unsure, the task is finished and still $0
   | 'override_far'    // hand-set amount more than 50% or $50 away from what the task computes to
   | 'no_detail'       // billing detail never pulled, so cost lines may be missing
   | 'duplicate'       // same unit, same day, same task name as another task in the window
@@ -120,7 +120,7 @@ export type BillingFlag =
   | 'billed_routine'  // carries money, but the billable model says it is routine (departure clean, check, common area)
 
 export const FLAG_LABEL: Record<BillingFlag, string> = {
-  over_150: 'over $150', no_price: 'no price', override_far: 'override far from computed',
+  over_150: 'over $150', no_price: 'maybe billable', override_far: 'override far from computed',
   no_detail: 'detail not pulled', duplicate: 'possible duplicate', long_hours: 'long hours', no_owner: 'no owner',
   ai_bill: 'AI: real work — price it', ai_pending: 'AI check pending',
   not_done: 'not finished in Breezeway',
