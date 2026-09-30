@@ -30,7 +30,7 @@ import { pageRows } from '@/lib/db-page'
 import { rollupBuilding } from '@/lib/optimize-score'
 import {
   LINEN_STANDARD_KEY, LINEN_UNIT_BEDS_KEY, LINEN_QUOTES_KEY, ONBOARD_CODE, normLinenStandard, normBeds, normLinenQuotes, isLinenTier,
-  bedsFromGuestyRooms, bedsFromOnboarding, assumedBeds,
+  bedsFromGuestyRooms, assumedBeds, resolveLinenUnit,
   type LinenDeskUnit, type BedsSource,
 } from '@/lib/linens'
 
@@ -67,22 +67,20 @@ function savedBedsMap(raw: any): Record<string, Record<string, number>> {
   return out
 }
 
-/** An onboarding unit as the desk sees it: beds saved here, else its walk's pre-form, else assumed. */
-function onboardUnit(u: any, saved: Record<string, Record<string, number>>): LinenDeskUnit | null {
+/**
+ * An onboarding unit as the desk sees it — through resolveLinenUnit, the same resolver the onboarding
+ * desk's one-liner and the owner deck use, so all three show one set of numbers. `autoBeds` is what
+ * the unit would carry with nothing saved on this page.
+ */
+function onboardUnit(u: any, saved: Record<string, Record<string, number>>, listing: any = null): LinenDeskUnit | null {
   const code = str(u.code).toLowerCase()
   const name = str(u.name)
   if (!code || !name) return null
   const id = 'onboard:' + code
   if (!UNIT_ID.test(id)) return null
-  const d = u.details && typeof u.details === 'object' ? u.details : {}
-  const bedrooms = Math.round(num(d.bedrooms))
-  const walked = bedsFromOnboarding(d)
-  const auto: [Record<string, number>, BedsSource] = Object.keys(walked).length ? [walked, 'onboarding'] : [assumedBeds(bedrooms), 'assumed']
-  const mine = saved[id]
-  return {
-    id, name, building: rollupBuilding(u.building, name), bedrooms, bathrooms: num(d.bathrooms), guests: Math.round(num(d.occupancy)),
-    beds: mine || auto[0], bedsSource: mine ? 'saved' : auto[1], autoBeds: auto[0], autoSource: auto[1], live: false,
-  }
+  const x = resolveLinenUnit(u, listing, saved)
+  const auto = resolveLinenUnit(u, listing, {})
+  return { ...x, id, name, building: rollupBuilding(u.building, name), autoBeds: auto.beds, autoSource: auto.bedsSource, live: false }
 }
 
 export async function GET(req: NextRequest) {
@@ -132,10 +130,10 @@ export async function GET(req: NextRequest) {
     // (so not in the list above). One row, read only when asked for.
     let focus: LinenDeskUnit | null = null
     if (wantCode && !units.some(u => u.id === 'onboard:' + wantCode)) {
-      const r: any = await Promise.resolve(db.from('onboarding_units').select('id,code,name,building,details,status')
+      const r: any = await Promise.resolve(db.from('onboarding_units').select('id,code,name,building,details,status,listing_id')
         .eq('code', wantCode).neq('status', 'archived').limit(1)).catch(() => null)
       const row = r && !r.error && Array.isArray(r.data) ? r.data[0] : null
-      if (row) focus = onboardUnit(row, saved)
+      if (row) focus = onboardUnit(row, saved, row.listing_id ? listingRead.rows.find((l: any) => String(l.id) === String(row.listing_id)) || null : null)
     }
 
     units.sort((a, b) => String(a.building || '').localeCompare(String(b.building || '')) || a.name.localeCompare(b.name, undefined, { numeric: true }))
@@ -166,7 +164,26 @@ export async function PUT(req: NextRequest) {
       // The whole standard, or nothing: a body without an item list is a mistake, not "empty it".
       if (!s || typeof s !== 'object' || Array.isArray(s) || !Array.isArray(s.items)) return fail('Send the whole standard (par, bed sizes and items).', 400)
       const who = g.access.email || ''
-      const standard = normLinenStandard({ ...s, updatedAt: new Date().toISOString(), updatedBy: who })
+      // STALE-TAB GUARD. Read the stored standard from the table (not the 60-second cache): a tab
+      // opened before someone else saved must not overwrite their work, and a tab still running the
+      // pre-tier page (items with no `tiers`) must not wipe the Low / Luxury columns.
+      const cur = await supabaseAdmin().from('app_settings').select('value').eq('key', LINEN_STANDARD_KEY).limit(1)
+      if (cur.error) return fail('Could not read the saved standard — try again.', 502)
+      let storedRaw: any = Array.isArray(cur.data) && cur.data[0] ? (cur.data[0] as any).value : null
+      if (typeof storedRaw === 'string') { try { storedRaw = JSON.parse(storedRaw) } catch { storedRaw = null } }
+      const stored = storedRaw && typeof storedRaw === 'object' ? normLinenStandard(storedRaw) : null
+      const base = typeof s.updatedAt === 'string' ? Date.parse(s.updatedAt) : NaN
+      const storedAt = stored && stored.updatedAt ? Date.parse(stored.updatedAt) : NaN
+      if (Number.isFinite(base) && Number.isFinite(storedAt) && base < storedAt) {
+        return NextResponse.json({ ok: false, stale: true, error: 'Someone saved the standard since you opened it — reload to see their changes.' }, { status: 409 })
+      }
+      let posted: any = s
+      if (stored && s.items.every((i: any) => !i || typeof i !== 'object' || !i.tiers)) {
+        const byId = new Map(stored.items.map(i => [i.id, i] as const))
+        posted = { ...s, tierLabels: s.tierLabels || stored.tierLabels, vendors: s.vendors || stored.vendors, markupPct: s.markupPct ?? stored.markupPct, taxPct: s.taxPct ?? stored.taxPct,
+          items: s.items.map((i: any) => { const was = i && byId.get(String(i.id)); return was ? { ...i, tiers: was.tiers } : i }) }
+      }
+      const standard = normLinenStandard({ ...posted, updatedAt: new Date().toISOString(), updatedBy: who })
       const r = await setSetting(LINEN_STANDARD_KEY, standard, who || null)
       if (!r.ok) return fail(r.error || 'Could not save the standard.', 500)
       return NextResponse.json({ ok: true, standard, edited: true })

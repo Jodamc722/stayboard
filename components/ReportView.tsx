@@ -2209,7 +2209,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const presentCount = isOnboarding
     ? 1 + onboardingSectionKeys.filter(k => !isHidden(k)).length + onboardingListingSlides + customSecs.length
       // The linen package is optional: counted only when the deck was generated with one.
-      + (c.linens && !isHidden('linens') ? 1 : 0)
+      + (c.linens && Array.isArray(c.linens.tiers) && c.linens.tiers.length && !isHidden('linens') ? 1 : 0)
     : isReviewDeck
     // COUNT WHAT RENDERS, NOT WHAT MIGHT. The first version counted one slide per section key and
     // reported 11 where 12 were on the page: the listing table paginates at nine rows a slide, and

@@ -9,7 +9,7 @@
 //   VENDOR ORDER    what we buy: pieces pooled across every unit, whole cases per vendor, a page per
 //                   vendor with how to order, the minimum and the lead time; the overage goes to stock.
 import type { QuoteDoc, QuoteSection } from './order-pdf'
-import { LINEN_GROUPS, linenQuote, vendorOrder, fmtUsd, type LinenStandard, type LinenUnit, type LinenTier, type VendorGroup } from './linens'
+import { LINEN_GROUPS, linenQuote, vendorOrder, fmtUsd, parSentence, type LinenStandard, type LinenUnit, type LinenTier, type VendorGroup } from './linens'
 
 export type LinenDocContext = {
   labels: string[]        // one per typed-in unit, "Salato 302 ×3"
@@ -57,23 +57,34 @@ const r2 = (x: number) => Math.round(x * 100) / 100
 export function linenInvoiceDoc(standard: LinenStandard, units: LinenUnit[], tier: LinenTier, ctx: LinenDocContext): QuoteDoc {
   const q = linenQuote(standard, units, tier)
   const where = linenUnitsLabel(ctx.labels, units.length)
+  // OWNERS NEVER SEE A MARKUP LINE (Jon's call, 2026-09-30): the markup is folded into each unit
+  // price, so the lines add up to the subtotal and only tax sits on top. Cost vs owner price lives
+  // on the internal Quote view only.
+  const m = 1 + (q.markupPct || 0) / 100
+  const ownerPrice = (p: number | null) => (p === null ? null : Math.round(p * m * 100) / 100)
   const sections: QuoteSection[] = []
+  let subtotal = 0
   for (const grp of LINEN_GROUPS) {
     const rows = q.rows.filter(r => r.group === grp)
     if (!rows.length) continue
-    const sub = rows.reduce((a, r) => a + (r.cost || 0), 0)
-    sections.push({
-      heading: grp,
-      rows: rows.map(r => [itemText(r.name, r.product), r.size || '', String(r.qty), r.price !== null ? fmtUsd(r.price) : 'TBC', r.cost !== null ? fmtUsd(r.cost) : 'TBC']),
-      subtotal: sub > 0 ? 'Subtotal ' + fmtUsd(r2(sub)) : undefined,
+    let sub = 0
+    const out = rows.map(r => {
+      const p = ownerPrice(r.price)
+      const amt = p === null ? null : r2(p * r.qty)
+      if (amt !== null) sub += amt
+      return [itemText(r.name, r.product), r.size || '', String(r.qty), p !== null ? fmtUsd(p) : 'TBC', amt !== null ? fmtUsd(amt) : 'TBC']
     })
+    subtotal += sub
+    sections.push({ heading: grp, rows: out, subtotal: sub > 0 ? 'Subtotal ' + fmtUsd(r2(sub)) : undefined })
   }
+  subtotal = r2(subtotal)
+  const tax = r2(subtotal * (q.taxPct || 0) / 100)
+  const partial = q.unpriced > 0
   const totals: QuoteDoc['totals'] = []
-  if (q.unpriced) totals.push({ label: `${q.unpriced} line(s) still to be priced`, value: 'TBC' })
-  totals.push({ label: 'Subtotal', value: fmtUsd(q.subtotal) })
-  if (q.markup > 0) totals.push({ label: `Markup (${q.markupPct}%)`, value: fmtUsd(q.markup) })
-  if (q.tax > 0) totals.push({ label: `Tax (${q.taxPct}%)`, value: fmtUsd(q.tax) })
-  totals.push({ label: 'Total', value: fmtUsd(q.total), strong: true })
+  if (partial) totals.push({ label: `${q.unpriced} line(s) still to be priced`, value: 'TBC' })
+  totals.push({ label: partial ? 'Subtotal (priced lines)' : 'Subtotal', value: fmtUsd(subtotal) })
+  if (tax > 0) totals.push({ label: `Tax (${q.taxPct}%)`, value: fmtUsd(tax) })
+  totals.push({ label: partial ? 'Total (priced lines)' : 'Total', value: fmtUsd(r2(subtotal + tax)), strong: true })
   const billTo = String(ctx.billTo || '').trim()
   return {
     title: 'Linen package — invoice (draft)',   // the PDF font has no em dash; order-pdf folds it to '-'
@@ -94,7 +105,7 @@ export function linenInvoiceDoc(standard: LinenStandard, units: LinenUnit[], tie
     ],
     sections,
     totals,
-    note: `Billed for the ${q.pieces.toLocaleString('en-US')} pieces the ${units.length === 1 ? 'unit receives' : units.length + ' units receive'}, at ${standard.par} set(s) of every rotating item.` +
+    note: `Billed for the ${q.pieces.toLocaleString('en-US')} pieces the ${units.length === 1 ? 'unit receives' : units.length + ' units receive'}${parSentence(standard) ? ': ' + parSentence(standard) : ''}.` +
       (q.off.length ? ` Not part of the ${q.label} package: ${q.off.map(o => o.name).join(', ')}.` : ''),
     footer: 'Draft — review before sending.',
   }
@@ -140,7 +151,7 @@ export function linenOrderDoc(standard: LinenStandard, units: LinenUnit[], tier:
       l.casePrice !== null ? fmtUsd(l.casePrice) : 'TBC',
       l.cost !== null ? fmtUsd(l.cost) : 'TBC',
     ]),
-    subtotal: 'Subtotal ' + fmtUsd(gr.subtotal),
+    subtotal: gr.priced ? 'Subtotal ' + fmtUsd(gr.subtotal) + (gr.unpriced ? ' (priced lines)' : '') : 'Unpriced',
   }))
   return {
     title: 'Linen order — quantity sheet',

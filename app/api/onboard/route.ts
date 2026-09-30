@@ -230,17 +230,21 @@ export async function GET(req: NextRequest) {
       const [{ data: rooms }, { data: items }, { data: listings }] = await Promise.all([
         ids.length ? db.from('onboarding_rooms').select('unit_id,key,name,kind,sort,photos,checked_at').in('unit_id', ids) : Promise.resolve({ data: [] as any[] }),
         ids.length ? db.from('onboarding_items').select('unit_id,room_id,id,name,brand,condition,qty,expected').in('unit_id', ids) : Promise.resolve({ data: [] as any[] }),
-        db.from('guesty_listings').select('id,nickname,title,building,status').limit(1000), // deliberate cap: one row per listing, ~290
+        // deliberate cap: one row per listing, ~290. Bedrooms/baths/occupancy and the rooms sub-field
+        // feed the linen one-liner's fallbacks (the same resolver as the deck and the Quote view).
+        db.from('guesty_listings').select('id,nickname,title,building,status,bedrooms,bathrooms,max_occupancy,rooms:raw->listingRooms').limit(1000),
       ])
       const lname: Record<string, string> = {}
-      for (const l of (listings || []) as any[]) lname[String(l.id)] = String(l.nickname || l.title || l.id)
+      const lrow: Record<string, any> = {}
+      for (const l of (listings || []) as any[]) { lname[String(l.id)] = String(l.nickname || l.title || l.id); lrow[String(l.id)] = l }
       const standard = await loadStandard()
       // THE LINEN PACKAGE ON EVERY UNIT (Jon, 2026-09-30: "This should also populate into the
       // onboarding conversation"). Low / Mid / Luxury totals and the tier picked, from the settings
       // the linen page keeps — three reads for the whole list, arithmetic in lib/linens.ts. A failure
       // here costs the one-liner, never the desk.
       let linen: { std: ReturnType<typeof normLinenStandard>; beds: any; quotes: ReturnType<typeof normLinenQuotes> } | null = null
-      try {
+      // Vacation-rental logins only — the linen API itself refuses hotel-only logins.
+      if (isVrLogin(gate.access)) try {
         const [ls, lb, lq] = await Promise.all([getSetting<any>(LINEN_STANDARD_KEY, null), getSetting<any>(LINEN_UNIT_BEDS_KEY, null), getSetting<any>(LINEN_QUOTES_KEY, null)])
         linen = { std: normLinenStandard(ls), beds: lb, quotes: normLinenQuotes(lq) }
       } catch { linen = null }
@@ -248,7 +252,7 @@ export async function GET(req: NextRequest) {
         const rs = (rooms || []).filter((r: any) => r.unit_id === u.id); const its = (items || []).filter((i: any) => i.unit_id === u.id)
         const needs = unitNeeds(u.details || {}, standard, rs.map((r: any) => ({ key: r.key, name: r.name, kind: r.kind, sort: r.sort })))
         let linens = null
-        if (linen) { try { linens = linenSummary(linen.std, onboardingLinenUnit(u, linen.beds), linen.quotes[String(u.code || '').toLowerCase()]?.tier || null) } catch { linens = null } }
+        if (linen) { try { linens = linenSummary(linen.std, onboardingLinenUnit(u, linen.beds, u.listing_id ? lrow[String(u.listing_id)] || null : null), linen.quotes[String(u.code || '').toLowerCase()]?.tier || null) } catch { linens = null } }
         return { ...u, listing_name: u.listing_id ? (lname[u.listing_id] || u.listing_id) : null, progress: progressOf(rs, its), buy: buyList(its, needs).length, linens }
       })
       const pick = (listings || []).filter((l: any) => !['inactive', 'disabled', 'archived', 'deleted'].includes(String(l.status || '').toLowerCase()))

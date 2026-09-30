@@ -126,6 +126,8 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
   }, [dirty])
 
   const pick = (ids: string[]) => { setPicked(ids); store.set(PICK_KEY, JSON.stringify(ids)) }
+  const [quoteOpened, setQuoteOpened] = useState(false)
+  useEffect(() => { if (view === 'quote') setQuoteOpened(true) }, [view])
   const go = (v: View) => { setView(v); store.set(VIEW_KEY, v) }
   const setTier = (t: LinenTier) => { setTierState(t); store.set(TIER_KEY, t) }
   const activeCount = draft.items.filter(i => i.active !== false).length
@@ -168,13 +170,16 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
       {err && <p className="text-[12.5px] text-rose-600 font-semibold mb-2">{err}</p>}
       {loading ? <LeanEmpty><Loader2 className="animate-spin inline mr-1.5 -mt-0.5" size={14} />Loading…</LeanEmpty>
         : !ready ? <LeanEmpty>The linen standard did not load — reload the page to try again.</LeanEmpty>
-        : view === 'standard'
-          ? <StandardView draft={draft} setDraft={setDraft} saved={saved} edited={edited} canEdit={canStd}
-              onSaved={(s) => { setSaved(s); setDraft(s); setEdited(true) }} />
-          : view === 'calculator'
-            ? <CalculatorView standard={draft} dirty={dirty} units={units} setUnits={setUnits} partial={partial} picked={picked} pick={pick} canBeds={canBeds} tier={tier} setTier={setTier} />
-            : <QuoteView standard={draft} dirty={dirty} tier={tier} setTier={setTier} prefill={prefill} missing={!!initialUnit && !prefill}
+        : <>
+          {view === 'standard' && <StandardView draft={draft} setDraft={setDraft} saved={saved} edited={edited} canEdit={canStd}
+              onSaved={(s) => { setSaved(s); setDraft(s); setEdited(true) }} />}
+          {view === 'calculator' && <CalculatorView standard={draft} dirty={dirty} units={units} setUnits={setUnits} partial={partial} picked={picked} pick={pick} canBeds={canBeds} tier={tier} setTier={setTier} />}
+          {/* The Quote view stays mounted once opened, so what was typed (and Bill to) survives a tab switch. */}
+          <div hidden={view !== 'quote'}>
+            {(view === 'quote' || quoteOpened) && <QuoteView standard={draft} dirty={dirty} tier={tier} setTier={setTier} prefill={prefill} missing={!!initialUnit && !prefill}
                 quotes={quotes} canChoose={canBeds} onChosen={(code, q) => setQuotes(m => { const n = { ...m }; if (q) n[code] = q; else delete n[code]; return n })} />}
+          </div>
+        </>}
     </div>
   )
 }
@@ -318,7 +323,7 @@ function VendorOrderCard({ order }: { order: VendorOrder }) {
                 <tbody className="divide-y divide-line/70">
                   {g.lines.map(l => (
                     <tr key={l.key}>
-                      <td className="px-3 py-1.5 text-ink">{l.name}{l.sku ? <span className="text-muted text-[11px]"> · {l.sku}</span> : null}</td>
+                      <td className="px-3 py-1.5 text-ink">{l.name}{l.sku ? <span className="text-muted text-[11px]"> · {l.sku}</span> : null}{l.conflict ? <> <Tag tone="amber" title="Another line uses this SKU with a different price, pack size or minimum — check the Standard">{l.conflict}</Tag></> : null}</td>
                       <td className="px-2 py-1.5 text-muted">{l.size || ''}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums">{l.piecesNeeded}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums text-muted" title={l.packSize > 1 ? `${l.cases} case${l.cases === 1 ? '' : 's'} of ${l.packSize}${l.minCases ? ` (minimum ${l.minCases})` : ''}` : 'Sold singly'}>{l.packSize > 1 ? `${l.cases} × ${l.packSize}` : 'singly'}</td>
@@ -337,7 +342,7 @@ function VendorOrderCard({ order }: { order: VendorOrder }) {
 }
 
 /** The documents: owner invoice (PDF), vendor order (PDF / CSV), and the copy-as-text. */
-function DocActions({ tier, units, dirty, onCopy, copyLabel }: { tier: LinenTier; units: ManualUnitInput[]; dirty: boolean; onCopy: () => Promise<boolean>; copyLabel: string }) {
+function DocActions({ tier, units, dirty, onCopy, copyLabel, priced = 1 }: { tier: LinenTier; units: ManualUnitInput[]; dirty: boolean; onCopy: () => Promise<boolean>; copyLabel: string; priced?: number }) {
   const [busy, setBusy] = useState<string>('')
   const [msg, setMsg] = useState('')
   const [billTo, setBillTo] = useState('')
@@ -362,7 +367,7 @@ function DocActions({ tier, units, dirty, onCopy, copyLabel }: { tier: LinenTier
       <div className="flex items-center gap-2 flex-wrap">
         <input value={billTo} onChange={e => setBillTo(e.target.value)} maxLength={120} placeholder="Bill to (owner, optional)" title="Printed on the invoice as Bill to"
           className={INPUT + ' py-1.5 w-full sm:w-56'} />
-        <button onClick={() => run('invoice')} disabled={!!busy || !!why} title={why || "The owner's invoice for this tier, as a draft PDF — pieces the unit gets, markup and tax"} className={GHOST}>
+        <button onClick={() => run('invoice')} disabled={!!busy || !!why || !priced} title={why || (!priced ? 'Nothing in this tier is priced yet — add prices on the Standard' : "The owner's invoice for this tier, as a draft PDF — the pieces the unit gets at owner prices, plus tax")} className={GHOST}>
           {busy === 'invoice' ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />} Owner invoice
         </button>
         <button onClick={() => run('order')} disabled={!!busy || !!why} title={why || 'The vendor order as a PDF — a page per vendor, whole cases, contact, minimum and lead time'} className={GHOST}>
@@ -438,6 +443,7 @@ function StandardView({ draft, setDraft, saved, edited, canEdit, onSaved }: {
     try {
       const r = await fetch('/api/onboard/linens', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ standard }) })
       const j = await r.json().catch(() => ({}))
+      if (r.status === 409 && j.stale) { setMsg({ text: j.error + ' Reload the page (your unsaved edits will be lost).', bad: true }); setBusy(false); return }
       if (!r.ok || !j.ok) throw new Error(j.message || j.error || 'Could not save')
       onSaved(normLinenStandard(j.standard)); setMsg({ text: done })
     } catch (e: any) { setMsg({ text: String(e?.message || e), bad: true }) }
@@ -837,7 +843,7 @@ function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pic
           <TierCards quotes={allTiers} value={tier} onChange={setTier} />
           <TotalsCard totals={totals} label={standard.tierLabels[tier]} onCsv={download} onCopy={copy} copied={copied} />
           <VendorOrderCard order={order} />
-          <DocActions tier={tier} units={shapes} dirty={dirty} copyLabel="Copy the owner quote for this tier as text"
+          <DocActions tier={tier} units={shapes} dirty={dirty} priced={allTiers[tier].priced} copyLabel="Copy the owner quote for this tier as text"
             onCopy={async () => { try { await navigator.clipboard.writeText(quoteText(allTiers[tier], title)); return true } catch { return false } }} />
         </>
       )}
@@ -1079,7 +1085,7 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
         {dirty && <Tag tone="amber" title="The standard has edits that are not saved — these numbers already use them">unsaved standard</Tag>}
         {code && canChoose && (chosen === tier
           ? <button onClick={() => choose(null)} disabled={busy} title={`Clear the tier picked for ${linked?.name}`} className="ml-auto text-[12px] font-semibold text-muted hover:text-ink">Clear the pick</button>
-          : <button onClick={() => choose(tier)} disabled={busy} title={`Save ${standard.tierLabels[tier]} as ${linked?.name}'s linen tier — it shows on the onboarding desk and the onboarding deck`}
+          : <button onClick={() => choose(tier)} disabled={busy} title={`Save ${standard.tierLabels[tier]} as ${linked?.name}'s linen tier — it shows on the onboarding desk now, and on the onboarding deck the next time it is generated`}
               className="ml-auto inline-flex items-center gap-1 text-[12px] font-bold text-brand-700 hover:underline">
               {busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Use {standard.tierLabels[tier]} for this unit
             </button>)}
@@ -1088,7 +1094,7 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
       <TierCards quotes={all} value={tier} onChange={setTier} chosen={chosen} />
       <QuoteCard q={all[tier]} />
       <VendorOrderCard order={order} />
-      <DocActions tier={tier} units={[input]} dirty={dirty} copyLabel="Copy this tier's quote as text — for an email or a message to the owner"
+      <DocActions tier={tier} units={[input]} dirty={dirty} priced={all[tier].priced} copyLabel="Copy this tier's quote as text — for an email or a message to the owner"
         onCopy={async () => { try { await navigator.clipboard.writeText(quoteText(all[tier], label + (d.copies > 1 ? ' ×' + d.copies : ''))); return true } catch { return false } }} />
     </div>
   )

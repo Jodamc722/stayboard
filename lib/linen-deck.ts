@@ -19,7 +19,7 @@
 import 'server-only'
 import { getSetting } from './app-settings'
 import {
-  LINEN_STANDARD_KEY, LINEN_UNIT_BEDS_KEY, LINEN_QUOTES_KEY, normLinenStandard, normLinenQuotes, normBeds, bedsFromOnboarding, bedsFromGuestyRooms,
+  LINEN_STANDARD_KEY, LINEN_UNIT_BEDS_KEY, LINEN_QUOTES_KEY, normLinenStandard, normLinenQuotes, resolveLinenUnit,
   assumedBeds, linenDeckSection, type LinenDeckSection, type LinenTier, type LinenUnit, type BedsSource,
 } from './linens'
 
@@ -49,20 +49,8 @@ export async function linenDeckFor(db: any, listings: any[]): Promise<LinenDeckS
     const code = walk ? String(walk.code || '').toLowerCase() : ''
     const d = walk && walk.details && typeof walk.details === 'object' ? walk.details : {}
     if (!chosen && code && quotes[code]) chosen = quotes[code].tier
-    const bedrooms = Math.round(pos(d.bedrooms) || pos(l.bedrooms))
-    const options: [Record<string, number>, BedsSource][] = [
-      [normBeds(saved[id]), 'saved'],
-      [code ? normBeds(saved['onboard:' + code]) : {}, 'saved'],
-      [bedsFromOnboarding(d), 'onboarding'],
-      [bedsFromGuestyRooms(l.raw && l.raw.listingRooms), 'guesty'],
-    ]
-    const hit = options.find(([b]) => Object.keys(b).length)
-    const [beds, bedsSource] = hit || [assumedBeds(bedrooms), 'assumed' as BedsSource]
-    return {
-      id, name: String(l.nickname || l.title || id), building: l.building ? String(l.building) : null,
-      bedrooms, bathrooms: pos(d.bathrooms) || pos(l.bathrooms), guests: Math.round(pos(d.occupancy) || pos(l.max_occupancy)),
-      beds, bedsSource,
-    }
+    const u = resolveLinenUnit(walk, l, saved)
+    return { ...u, id }
   })
   return linenDeckSection(standard, units, chosen)
 }

@@ -21,7 +21,7 @@ import { requireLevel, type Gate } from '@/lib/access'
 import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { getSetting } from '@/lib/app-settings'
 import { buildQuotePdf } from '@/lib/order-pdf'
-import { LINEN_STANDARD_KEY, MANUAL_LIMITS, normLinenStandard, isLinenTier, manualUnits, vendorOrder, vendorOrderCsv, type LinenTier } from '@/lib/linens'
+import { LINEN_STANDARD_KEY, MANUAL_LIMITS, normLinenStandard, isLinenTier, manualUnits, linenQuote, vendorOrder, vendorOrderCsv, type LinenTier } from '@/lib/linens'
 import { linenInvoiceDoc, linenOrderDoc, linenDraftNo } from '@/lib/linen-docs'
 
 export const dynamic = 'force-dynamic'
@@ -72,6 +72,8 @@ export async function POST(req: NextRequest) {
     const pdfHeaders = (name: string) => ({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'no-store' })
 
     if (doc === 'invoice') {
+      // Never a $0.00 invoice: a tier with nothing priced has nothing to bill yet.
+      if (linenQuote(standard, units, tier).priced === 0) return fail('Nothing in this tier is priced yet — add prices on the Standard view first.', 400)
       const pdf = buildQuotePdf(linenInvoiceDoc(standard, units, tier, { labels, dateLabel, invoiceNo: linenDraftNo(ymd), billTo: str(body.billTo, 120) }))
       return new NextResponse(pdf as any, { headers: pdfHeaders(`linen-invoice-${tier}-${ymd}.pdf`) })
     }

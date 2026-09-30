@@ -166,25 +166,28 @@ export function defaultLinenStandard(): LinenStandard {
 const isObj = (v: any): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v)
 const text = (v: any, max: number): string => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '').replace(/\s+/g, ' ').trim().slice(0, max)
 /** A finite number clamped to 0..max, rounded to cents; null when it is not a number at all. */
-function num(v: any, max: number): number | null {
+function num(v: any, max: number, places = 2): number | null {
   if (v === null || v === undefined || v === '' || typeof v === 'boolean') return null
   const x = typeof v === 'number' ? v : Number(String(v).replace(/[$,%\s]/g, ''))
   if (!Number.isFinite(x)) return null
-  return Math.round(Math.max(0, Math.min(max, x)) * 100) / 100
+  const f = Math.pow(10, places)
+  return Math.round(Math.max(0, Math.min(max, x)) * f) / f
 }
+/** A price per piece: kept to 4 decimals so a $41.99 case of 12 prints back as $41.99, not $42.00. */
+const price4 = (v: any, max: number) => num(v, max, 4)
 /** A whole number clamped to 0..max; null when it is not a number at all. */
 const whole = (v: any, max: number): number | null => { const n = num(v, max); return n === null ? null : Math.round(n) }
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)
 const r2 = (x: number) => Math.round(x * 100) / 100
 
 /** A size → number map: known-shape keys only, clamped values, at most LIMITS.sizes entries. */
-function sizeMap(v: any, max: number): Record<string, number> | undefined {
+function sizeMap(v: any, max: number, places = 2): Record<string, number> | undefined {
   if (!isObj(v)) return undefined
   const out: Record<string, number> = {}
   let n = 0
   for (const [k, raw] of Object.entries(v)) {
     const key = text(k, LIMITS.size)
-    const val = num(raw, max)
+    const val = num(raw, max, places)
     if (!key || val === null || key in out) continue
     out[key] = val
     if (++n >= LIMITS.sizes) break
@@ -210,8 +213,8 @@ function normTier(v: any, perBed: boolean): TierOption | null {
   const product = text(v.product, LIMITS.product); if (product) o.product = product
   const vendor = text(v.vendor, LIMITS.vendor); if (vendor) o.vendor = vendor
   const sku = text(v.sku, LIMITS.sku); if (sku) o.sku = sku
-  const price = num(v.price, LIMITS.price); if (price !== null) o.price = price
-  if (perBed) { const p = sizeMap(v.priceBySize, LIMITS.price); if (p) o.priceBySize = p }
+  const price = price4(v.price, LIMITS.price); if (price !== null) o.price = price
+  if (perBed) { const p = sizeMap(v.priceBySize, LIMITS.price, 4); if (p) o.priceBySize = p }
   const pack = whole(v.packSize, LIMITS.num); if (pack !== null && pack >= 1) o.packSize = pack
   const minC = whole(v.minCases, LIMITS.num); if (minC !== null && minC >= 1) o.minCases = minC
   if (v.off === true) o.off = true
@@ -664,27 +667,47 @@ export function linenSummary(standard: LinenStandard, unit: LinenUnit, chosen: L
 }
 
 /**
- * An onboarding unit (a row of onboarding_units) as a linen unit. Beds, first hit wins: saved on
- * the linen page for the onboarding link, saved for the listing it was assigned to, the walk's
- * pre-form, one Queen per bedroom. Bathrooms and guests come from the pre-form.
+ * ONE UNIT, ONE SET OF NUMBERS. The onboarding desk, the Quote view and the owner deck all resolve a
+ * unit through here, so the total Jon picks a tier on is the total the owner sees.
+ *   Beds, first hit wins: saved on the linen page for the onboarding link → saved for the listing it
+ *   was assigned to → the walk's pre-form → Guesty's listing rooms → one Queen per bedroom.
+ *   Bedrooms, bathrooms and guests: the walk's pre-form, else the listing.
+ * `walk` is an onboarding_units row (code, name, building, details, listing_id) or null; `listing` a
+ * guesty_listings row (id, nickname/title, building, bedrooms, bathrooms, max_occupancy, and its
+ * rooms as `rooms` or raw.listingRooms) or null. One of the two must be given.
  */
-export function onboardingLinenUnit(row: any, savedBeds: any): LinenUnit {
-  const r = isObj(row) ? row : {}
-  const d = isObj(r.details) ? r.details : {}
+export function resolveLinenUnit(walk: any, listing: any, savedBeds: any): LinenUnit {
+  const w = isObj(walk) ? walk : null
+  const l = isObj(listing) ? listing : null
+  const d = w && isObj(w.details) ? w.details : {}
   const saved = isObj(savedBeds) ? savedBeds : {}
   const pos = (v: any) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : 0 }
-  const bedrooms = Math.round(pos(d.bedrooms))
-  const code = String(r.code || '').toLowerCase()
-  const mine = normBeds(saved['onboard:' + code])
-  const listed = r.listing_id ? normBeds(saved[String(r.listing_id)]) : {}
-  const walked = bedsFromOnboarding(d)
-  const [beds, bedsSource]: [Record<string, number>, BedsSource] = Object.keys(mine).length ? [mine, 'saved']
-    : Object.keys(listed).length ? [listed, 'saved']
-      : Object.keys(walked).length ? [walked, 'onboarding'] : [assumedBeds(bedrooms), 'assumed']
+  const code = w ? String(w.code || '').toLowerCase() : ''
+  const listingId = l ? String(l.id) : w && w.listing_id ? String(w.listing_id) : ''
+  const bedrooms = Math.round(pos(d.bedrooms) || (l ? pos(l.bedrooms) : 0))
+  const rooms = l ? (l.rooms !== undefined ? l.rooms : l.raw && l.raw.listingRooms) : null
+  const options: [Record<string, number>, BedsSource][] = [
+    [code ? normBeds(saved['onboard:' + code]) : {}, 'saved'],
+    [listingId ? normBeds(saved[listingId]) : {}, 'saved'],
+    [bedsFromOnboarding(d), 'onboarding'],
+    [bedsFromGuestyRooms(rooms), 'guesty'],
+  ]
+  const hit = options.find(([bd]) => Object.keys(bd).length)
+  const [beds, bedsSource] = hit || [assumedBeds(bedrooms), 'assumed' as BedsSource]
+  const name = text((w && w.name) || (l && (l.nickname || l.title)) || listingId, LIMITS.name) || 'Unit'
+  const building = (w && w.building) || (l && l.building) || null
   return {
-    id: 'onboard:' + code, name: text(r.name, LIMITS.name) || 'Unit', building: r.building ? String(r.building) : null,
-    bedrooms, bathrooms: pos(d.bathrooms), guests: Math.round(pos(d.occupancy)), beds, bedsSource,
+    id: code ? 'onboard:' + code : listingId, name, building: building ? String(building) : null,
+    bedrooms,
+    bathrooms: pos(d.bathrooms) || (l ? pos(l.bathrooms) : 0),
+    guests: Math.round(pos(d.occupancy) || (l ? pos(l.max_occupancy) : 0)),
+    beds, bedsSource,
   }
+}
+
+/** An onboarding unit (a row of onboarding_units) as a linen unit — resolveLinenUnit without a listing row. */
+export function onboardingLinenUnit(row: any, savedBeds: any, listing: any = null): LinenUnit {
+  return resolveLinenUnit(row, listing, savedBeds)
 }
 
 // ── the vendor order: whole cases ─────────────────────────────────────────────────────────────────
@@ -705,6 +728,7 @@ export type VendorLine = {
   price: number | null    // per piece
   casePrice: number | null
   cost: number | null
+  conflict?: string       // shares a SKU with another line on different terms
 }
 export type VendorGroup = {
   vendor: string | null           // null = no vendor set on these lines yet
@@ -757,7 +781,11 @@ export function vendorOrder(standard: LinenStandard, units: LinenUnit[], tier: L
       g = { vendor: vName ? (info ? info.name : vName) : null, info, lines: new Map() }
       groups.set(vKey, g)
     }
-    const lineKey = (opt.sku ? 'sku:' + opt.sku.toLowerCase() : 'item:' + r.itemId) + '|' + (r.size || '')
+    // A shared SKU pools only when the lines really are the same buy: same price, pack and minimum.
+    // Two items that share a SKU but not those stay separate lines (and say so), never priced at
+    // the first one's terms.
+    const terms = 'p' + (r.price ?? '-') + 'k' + Math.max(1, Math.round(opt.packSize || 1)) + 'm' + Math.max(0, Math.round(opt.minCases || 0))
+    const lineKey = (opt.sku ? 'sku:' + opt.sku.toLowerCase() + '|' + terms : 'item:' + r.itemId) + '|' + (r.size || '')
     const cur = g.lines.get(lineKey)
     if (cur) {
       cur.piecesNeeded += r.qty
@@ -777,6 +805,9 @@ export function vendorOrder(standard: LinenStandard, units: LinenUnit[], tier: L
   const out: VendorGroup[] = []
   for (const g of Array.from(groups.values())) {
     const lines = Array.from(g.lines.values())
+    const skuSeen: Record<string, number> = {}
+    for (const l of lines) if (l.sku) skuSeen[l.sku.toLowerCase() + '|' + (l.size || '')] = (skuSeen[l.sku.toLowerCase() + '|' + (l.size || '')] || 0) + 1
+    for (const l of lines) if (l.sku && skuSeen[l.sku.toLowerCase() + '|' + (l.size || '')] > 1) l.conflict = 'same SKU, different pack/price'
     let subtotal = 0, priced = 0, unpriced = 0
     for (const l of lines) {
       l.cases = l.piecesNeeded > 0 ? Math.max(Math.ceil(l.piecesNeeded / l.packSize), l.minCases) : 0
@@ -790,7 +821,7 @@ export function vendorOrder(standard: LinenStandard, units: LinenUnit[], tier: L
     }
     subtotal = r2(subtotal)
     const minOrder = g.info && typeof g.info.minOrder === 'number' && g.info.minOrder > 0 ? g.info.minOrder : null
-    const belowMinimum = minOrder !== null && subtotal < minOrder
+    const belowMinimum = minOrder !== null && priced > 0 && subtotal < minOrder
     out.push({
       vendor: g.vendor, info: g.info, lines, subtotal, priced, unpriced,
       piecesNeeded: lines.reduce((a, l) => a + l.piecesNeeded, 0),
@@ -813,6 +844,18 @@ export function vendorOrder(standard: LinenStandard, units: LinenUnit[], tier: L
     unpriced: out.reduce((a, g) => a + g.unpriced, 0),
     units: units.length,
   }
+}
+
+/**
+ * The rotation sentence an owner reads, true to the standard: "3 sets of most items in rotation
+ * (mattress protectors 2)". Only active, rotating items count; per-item pars that differ are named.
+ */
+export function parSentence(standard: LinenStandard): string {
+  const rot = standard.items.filter(i => i.active !== false && i.rotates)
+  if (!rot.length) return ''
+  const odd = rot.filter(i => typeof i.par === 'number' && i.par !== standard.par)
+  const base = `${standard.par} set${standard.par === 1 ? '' : 's'} of ${odd.length ? 'most items' : 'every rotating item'} in rotation`
+  return odd.length ? base + ' (' + odd.map(i => i.name.toLowerCase() + ' ' + i.par).join(', ') + ')' : base
 }
 
 // ── the deck slide ────────────────────────────────────────────────────────────────────────────────
@@ -862,8 +905,7 @@ export function linenDeckSection(standard: LinenStandard, units: LinenUnit[], ch
       lines, chosen: chosen === tier,
     }
   })
-  // The same word the invoice uses for the same charge.
-  const extras = [standard.markupPct ? 'markup' : '', standard.taxPct ? 'tax' : ''].filter(Boolean).join(' and ')
+  // Owners never see a markup line or the word: it is folded into the prices (see ownerPrice).
   const sized = sortSizes(Object.keys(beds).filter(k => beds[k] > 0), standard.bedSizes).map(k => beds[k] + ' ' + k + (beds[k] > 1 ? 's' : ''))
   const bedWords = sized.length > 1 ? sized.slice(0, -1).join(', ') + ' and ' + sized[sized.length - 1] : (sized[0] || 'your beds')
   return {
@@ -871,7 +913,7 @@ export function linenDeckSection(standard: LinenStandard, units: LinenUnit[], ch
     subtitle: `Everything the beds and baths need, at three levels of finish — sized to ${bedWords}.`,
     tiers,
     chosen,
-    note: `Priced for the pieces your unit receives: ${standard.par} set${standard.par === 1 ? '' : 's'} of every rotating item${standard.par === 3 ? ' — one on the bed, one in the wash, one on the shelf' : ''}${extras ? '; ' + extras + ' included' : ''}.`,
+    note: `Priced for the pieces your unit receives${parSentence(standard) ? ': ' + parSentence(standard) : ''}${standard.taxPct ? '; tax included' : ''}.`,
   }
 }
 
@@ -908,22 +950,33 @@ export function linenText(t: LinenTotals, title?: string): string {
   return out.join('\n').replace(/^\n/, '') + '\n'
 }
 
-/** A tier's quote as plain text: grouped lines with product and amount, then the totals. */
+/**
+ * A tier's quote as plain text, for a message to the owner: grouped lines with product and amount,
+ * then the totals. Owner-facing, so the markup is folded into each amount (no markup line).
+ */
 export function quoteText(q: LinenQuote, title?: string): string {
+  const m = 1 + (q.markupPct || 0) / 100
   const out: string[] = []
   out.push((title ? title + ' — ' : '') + q.label + ' linen package')
+  let sub = 0
   for (const g of LINEN_GROUPS) {
     const rows = q.rows.filter(r => r.group === g)
     if (!rows.length) continue
     out.push('', g)
-    for (const r of rows) out.push(`${r.qty} × ${r.name}${r.size ? ' (' + r.size + ')' : ''}${r.product ? ' — ' + r.product : ''} — ${r.cost !== null ? fmtUsd(r.cost) : 'to be priced'}`)
+    for (const r of rows) {
+      const amt = r.price === null ? null : r2(r2(r.price * m) * r.qty)
+      if (amt !== null) sub += amt
+      out.push(`${r.qty} × ${r.name}${r.size ? ' (' + r.size + ')' : ''}${r.product ? ' — ' + r.product : ''} — ${amt !== null ? fmtUsd(amt) : 'to be priced'}`)
+    }
   }
   out.push('')
   if (q.priced) {
-    out.push('Subtotal ' + fmtUsd(q.subtotal))
-    if (q.markup) out.push(`Markup (${q.markupPct}%) ${fmtUsd(q.markup)}`)
-    if (q.tax) out.push(`Tax (${q.taxPct}%) ${fmtUsd(q.tax)}`)
-    out.push('Total ' + fmtUsd(q.total))
+    sub = r2(sub)
+    const tax = r2(sub * (q.taxPct || 0) / 100)
+    const part = q.unpriced ? ' (priced lines)' : ''
+    out.push('Subtotal' + part + ' ' + fmtUsd(sub))
+    if (tax) out.push(`Tax (${q.taxPct}%) ${fmtUsd(tax)}`)
+    out.push('Total' + part + ' ' + fmtUsd(r2(sub + tax)))
   }
   if (q.unpriced) out.push(`${q.unpriced} line${q.unpriced === 1 ? '' : 's'} still to be priced`)
   return out.join('\n') + '\n'

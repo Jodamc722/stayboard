@@ -194,6 +194,13 @@ function UnitCard({ u, listings, onChanged }: { u: Unit; listings: Listing[]; on
  * opens the unit's linen quote — three tiers, the owner invoice and the vendor order.
  */
 function LinenLine({ s, code }: { s: LinenSummary; code: string }) {
+  // Nothing priced at any tier yet: one quiet tag, not three.
+  if (!LINEN_TIERS.some(t => s.tiers[t].priced)) return (
+    <a href={'/onboarding/linens?unit=onboard:' + encodeURIComponent(code)} title="No linen prices on the standard yet — open this unit's linen quote"
+      className="inline-flex items-center gap-1.5 text-[12px] text-muted hover:text-ink">
+      <BedDouble size={12} /> <Tag tone="slate" title="Add prices on Linens → Standard to see this unit's Low / Mid / Luxury totals">linens unpriced</Tag>
+    </a>
+  )
   return (
     <a href={'/onboarding/linens?unit=onboard:' + encodeURIComponent(code)}
       title={`Open this unit's linen quote${s.beds ? ' (' + s.beds + ')' : ''} — three tiers, the owner invoice and the vendor order`}
@@ -208,7 +215,7 @@ function LinenLine({ s, code }: { s: LinenSummary; code: string }) {
             {x.priced
               ? <b className={s.chosen === t ? 'text-ink' : 'text-ink/80 font-semibold'} title={x.unpriced ? `${x.unpriced} line${x.unpriced === 1 ? ' has' : 's have'} no price and are not in this total` : undefined}>{fmtUsd(x.total)}{x.unpriced ? '+' : ''}</b>
               : <Tag tone="amber" title={`No ${x.label} prices on the linen standard yet`}>unpriced</Tag>}
-            {s.chosen === t && <Tag tone="emerald" title="The tier picked for this unit — it shows on the onboarding deck">chosen</Tag>}
+            {s.chosen === t && <Tag tone="emerald" title="The tier picked for this unit — the onboarding deck shows it the next time it is generated">chosen</Tag>}
           </span>
         )
       })}
