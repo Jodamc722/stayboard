@@ -50,6 +50,7 @@ import { useSlackQueue, EVENT_LABEL, expiresIn, type Pending as SlackPending } f
 import { AvailabilityAlert } from '@/components/AvailabilityAlert'
 import { Scoreboard } from '@/components/command/Scoreboard'
 import { ThoughtCard, useThoughts } from '@/components/EveThoughts'
+import { HubPulse, CleansBand, InspectionsBand, CallsBand, ReviewsBand, GlitchesBand, ChecklistBand, InboxBand, AdminBand } from '@/components/command/Hub'
 
 type Sev = NextItem['severity']
 type Ranked = { key: string; sev: Sev; rank: number; node: ReactNode }
@@ -101,11 +102,12 @@ function troubledCleanIds(d: CommandDay): Record<string, true> {
   return out
 }
 function isFixRow(i: NextItem, troubled: Record<string, true>): boolean {
-  if (i.kind === 'late' || i.kind === 'unassigned' || i.kind === 'guest' || i.kind === 'inspection') return true
-  // A listing off a major channel (Jon, 2026-09-18): unbookable there until somebody reconnects it.
-  if (i.kind === 'channel') return true
-  if (i.kind === 'turn') return !isOnTrackTurn(i) || !!(i.bzTaskId && troubled[i.bzTaskId])
-  if (i.kind === 'glitch') return isGlitchException(i)
+  // THE HUB BANDS OWN THESE NOW (2026-09-30): cleans (late / turn), inspections, guests waiting,
+  // glitches and channel breaks each have their own band — Fix keeps what none of them shows:
+  // other tasks nobody is on, and targeted looks after guest feedback.
+  void troubled
+  if (i.kind === 'unassigned') return !(i.bzTaskId && troubled[i.bzTaskId])
+  if (i.kind === 'late' || i.kind === 'turn' || i.kind === 'guest' || i.kind === 'inspection' || i.kind === 'channel' || i.kind === 'glitch') return false
   if (i.kind === 'feedback') return !isCoveredFeedback(i) && !isVendorFeedback(i) && i.action?.type === 'create_task'
   return false
 }
@@ -176,15 +178,26 @@ export function CommandDayList() {
   return (
     <div className="max-w-[760px] mx-auto space-y-5">
       <DayLine d={data} loading={loading} tick={tick} reload={reload} roster={roster} vendorsOnSite={vendorsOnSite} />
-      {/* THE WEEK — the KPI strip (Jon, 2026-09-18). The day's numbers stay behind "How's the day". */}
-      <Scoreboard />
+      {/* THE OPERATIONAL HUB (Jon, 2026-09-30): the day in one line, then every band you work from —
+          each row actionable in place, buttons not menus, a link to the full page on each band. */}
+      <HubPulse d={data} />
       <DecideBand d={data} claims={claims} links={links} approvals={approvals} onCleared={hide} onChanged={reload} />
+      <CleansBand d={data} roster={roster} onChanged={reload} />
+      <InspectionsBand d={data} items={live} onChanged={reload} />
+      <CallsBand d={data} onChanged={reload} />
+      <InboxBand items={live} />
+      <ReviewsBand />
+      <GlitchesBand d={data} onChanged={reload} />
+      <FixBand rows={fixRows} roster={roster} onCleared={hide} onChanged={reload} />
+      <ChecklistBand />
+      <YoursBand />
+      <AdminBand items={live} />
+      <ClearBand d={data} dups={dups} vendorNotes={vendorNotes} backlog={backlog} onCleared={hide} onChanged={reload} />
       {/* WHAT EVE IS THINKING (2026-09-21): a collapsed line, the same cards as Settings → Eve → Thinking. Admins only; hidden otherwise. */}
       <EveThinking />
-      <FixBand rows={fixRows} roster={roster} onCleared={hide} onChanged={reload} />
-      <ClearBand d={data} dups={dups} vendorNotes={vendorNotes} backlog={backlog} onCleared={hide} onChanged={reload} />
-      <YoursBand />
       <CompletedLine d={data} onChanged={reload} tick={tick} />
+      {/* THE WEEK — the KPI strip (Jon, 2026-09-18), below the day's work. */}
+      <Scoreboard />
       <AvailabilityAlert />
     </div>
   )
@@ -219,9 +232,6 @@ function DayLine({ d, loading, tick, reload, roster, vendorsOnSite }: { d: Comma
         <Pill tone={vTone} title={v.detail}>{v.headline}</Pill>
         {p.cleansTotal > 0 && <Pill tone={t.cleans.late ? 'rose' : t.cleans.atRisk ? 'amber' : 'slate'} title={'Cleans done today' + (left ? ' · ' + left : '')}>{p.cleansDone}/{p.cleansTotal} cleans</Pill>}
         {vendorsOnSite > 0 && <Pill title="Vendor visits booked for today">{plural(vendorsOnSite, 'vendor')} on site</Pill>}
-        <Pill tone={how ? 'brand' : 'slate'} onClick={toggleHow} title="The day's numbers and drill-downs">
-          <span className="inline-flex items-center gap-0.5">How&rsquo;s the day <ChevronDown size={12} className={how ? 'rotate-180' : ''} /></span>
-        </Pill>
         <Tip label={'Refresh the day · read ' + ago(d.generatedAt, tick)}>
           <button onClick={reload} aria-label="Refresh the day" className="inline-flex items-center gap-1 text-[11.5px] text-muted hover:text-ink min-h-[28px] px-1">
             <RefreshCw size={11} className={loading ? 'animate-spin' : ''} /> {ago(d.generatedAt, tick)}
@@ -230,37 +240,6 @@ function DayLine({ d, loading, tick, reload, roster, vendorsOnSite }: { d: Comma
       </LeanHead>
       {d.degraded.length > 0 && (
         <div className="-mt-1 mb-2 text-[11.5px] font-semibold text-amber-800 flex items-center gap-1.5"><AlertTriangle size={12} /> Incomplete — could not read: {d.degraded.join(', ')}.</div>
-      )}
-      {how && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[12.5px] text-muted px-1">
-            <span className="font-semibold text-ink/80">{v.detail}</span>
-            {occ != null && <span><b className="text-ink">{occ}%</b> tonight</span>}
-            <span><b className="text-ink">{p.arrivals}</b> in</span>
-            <span><b className="text-ink">{p.departures}</b> out</span>
-            <span className={p.sameDayTurns > 0 ? 'font-bold text-ink' : ''}>{p.sameDayTurns} same-day</span>
-            <span><b className="text-ink">{p.cleansDone}/{p.cleansTotal}</b> cleans{left ? ' · ' + left : ''}</span>
-            <span>{p.vacant} vacant</span>
-            <span>· {v.tomorrow}</span>
-          </div>
-          <div className="flex gap-1.5 flex-wrap">
-            {stats.map(s => (
-              <Pill key={s.key} tone={tile === s.key ? 'brand' : sTone(s.tone)} onClick={() => setTile(tile === s.key ? null : s.key)} title={'Open ' + s.label.toLowerCase()}>
-                {s.label} {s.value}{s.sub ? <span className="font-medium opacity-75"> · {s.sub}</span> : null}
-              </Pill>
-            ))}
-          </div>
-          {tile && (
-            <div className={CARD}>
-              <div className="px-4 py-2 border-b border-line bg-app/60 flex items-center gap-2">
-                <span className="text-[12.5px] font-bold text-ink">{stats.find(x => x.key === tile)?.label}</span>
-                <span className="text-[11.5px] text-muted">{stats.find(x => x.key === tile)?.sub}</span>
-                <span className="ml-auto"><IconBtn title="Close" onClick={() => setTile(null)}><X size={15} /></IconBtn></span>
-              </div>
-              <TilePanel key={tile} k={tile} d={d} roster={roster} onChanged={reload} />
-            </div>
-          )}
-        </div>
       )}
     </section>
   )
@@ -656,7 +635,7 @@ function EveThinking() {
 // ── 2. FIX ──────────────────────────────────────────────────────────────────────────────────────
 function FixBand({ rows, roster, onCleared, onChanged }: { rows: NextItem[]; roster: Roster[]; onCleared: (k: string) => void; onChanged: () => void }) {
   return (
-    <Band name="Fix" count={rows.length} empty="Nothing to fix.">
+    <Band name="Other tasks to fix" count={rows.length} empty="Nothing else to fix.">
       {rows.map(i => <FixRow key={i.key} item={i} roster={roster} onCleared={onCleared} onChanged={onChanged} />)}
     </Band>
   )
