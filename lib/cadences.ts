@@ -26,7 +26,7 @@
 // the wrong history, which is why `match` is editable and testable in settings rather than buried.
 //
 // ── OVERRIDE OVER DEFAULTS ──────────────────────────────────────────────────────────────────────
-// Same contract as lib/nav-layout.ts and lib/task-categories.ts: the CODE owns the defaults, the
+// Same contract as lib/task-categories.ts: the CODE owns the defaults, the
 // stored value is an override, and they are merged on read. A cadence added in code appears without
 // anyone editing settings; clearing the override restores exactly what shipped.
 export const CADENCE_KEY = 'preventative_cadences'

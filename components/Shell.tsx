@@ -5,181 +5,41 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
 import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
 import { defaultPinsFor, cleanPins, MAX_PINS, PINS_LS_KEY, GROUPS_LS_KEY } from '@/lib/nav'
-import { TAB_SETS, tabSetForPath, type TabSet } from '@/lib/tabsets'
-import { applyNavLayout, type NavLayout } from '@/lib/nav-layout'
+import { DESKS, deskForPath, type DeskView } from '@/lib/desks'
 import { EveFloat } from '@/components/EveFloat'
 import { AddTaskHost, openAddTask } from '@/components/AddTaskSheet'
 import { BUSINESSES, businessForPath, businessDef, GARDEN_NAV, GARDEN_SECTIONS, GARDEN_ICON, LAST_VR_PATH_KEY, type BusinessKey } from '@/lib/business'
 import { AdamFloat } from '@/components/AdamFloat'
 import {
-  CalendarDays, Building2, MessageSquare, ClipboardList, KanbanSquare,
-  ListChecks, Wrench, LogOut, RefreshCw, Gauge, Star, CalendarRange, AlertTriangle, Timer,
-  Sparkles, TrendingUp, BarChart3, KeyRound, Radar, UserCog, PhoneCall, Users, BookOpen, ShoppingCart, FileText, Bell, Mail, Lock, ShieldAlert, ClipboardCheck, Receipt, CalendarOff, Sofa,
-  ChevronRight, Search, Menu, X, Contact, Share2, ShoppingBag, HelpCircle, Boxes, Plus, AtSign, Activity, Plug, Brain, ChevronDown, Check } from 'lucide-react'
+  Building2, MessageSquare, ListChecks, LogOut, RefreshCw, Gauge, Star, TrendingUp, Users, FileText, Bell,
+  Search, Menu, X, Plus, ChevronDown, Check, Settings as SettingsIcon } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
-// NAV, 2026-08-19 (Jon): the sidebar had 33 tabs in 7 groups, every one of them expanded, every
-// minute of the day — 40 rows on screen, and Today in Ops sat below eight guest tabs. Two changes:
+// NAV, 2026-09-29 (Jon): "get rid of useless or noisy tabs… break it down into simple tabs", then
+// "I want this app to be primary ops, guest experience, listing optimization, owner reporting and
+// onboarding, review management, team management and operational KPI management."
 //
-//   1. A pinned DAILY band on top. Hover any tab, click its star. Saved per person (not per
-//      device) in app_users.prefs.nav_pins; someone who has never pinned anything inherits the
-//      default for their role from lib/nav.ts.
-//   2. The category groups stay — they are how you find the tab you touch twice a month — but they
-//      FOLD. The group holding the page you are on opens itself; the rest stay shut until clicked,
-//      and what you leave open is remembered on that device.
+// The sidebar is Today plus seven desks and an Admin desk behind a gear, read from lib/desks.ts —
+// the one map of the app. Each desk links to the first page in it the person can open; the pages
+// of the desk you are on run across the top as a strip, secondary ones under "More". The pinned
+// band is gone on the VR side (nine rows fit on one screen) and the Jump box (Cmd/Ctrl-K) finds any
+// page. The Garden Hotel keeps its own sections and pinned band unchanged (its session owns them).
 //
-// Plus a jump box (Cmd/Ctrl-K) and, below lg, a real mobile header + drawer + a bottom bar carrying
-// the first four pins, because until now the 240px desktop sidebar just squeezed onto a phone.
-//
-// Groups are ordered by how often a day touches them: Overview, Operations, Guests, Portfolio,
-// Money, Team, Settings.
+// History, briefly: 38 rows in 7 folding groups with a pinned band (2026-08-19), hubs (08-24),
+// tab sets (09-03). Each round moved the same pages around; this one puts them under the job they
+// serve, and the permission grid, Eve's map and the Jump box read the same list.
 // ------------------------------------------------------------------------------------------------
 
-// `set` marks a row that stands in for several pages (lib/tabsets.ts): it links to the first tab the
-// person can see, lights up when any tab is active, and its pages get a tab strip from Shell.
-type NavItem = { to: string; label: string; Icon: any; set?: string }
+type NavItem = { to: string; label: string; Icon: any }
 type NavSection = { title: string; items: NavItem[] }
 
-// Exported so the sidebar editor (components/NavLayoutAdmin) can list exactly these rows — the
-// editor must never keep its own copy of the nav, or the two drift and it starts offering to move
-// pages that no longer exist.
-export const SECTIONS: NavSection[] = [
-  {
-    title: 'Overview',
-    items: [
-      { to: '/command', label: 'Command Center', Icon: Gauge },
-      // Eve is back on the sidebar (Jon, 2026-09-28: "we need to have an Eve tab where open loops
-      // are, training questions, Eve command center overview"). She left it on 2026-08-19 ("Eve
-      // does not need her own page — a floating icon") and the bubble stays for talking to her;
-      // /eve is where her work is read. Open loops keeps its own row too — it is a tab on /eve and
-      // a page people already bookmarked.
-      { to: '/eve', label: 'Eve', Icon: Brain },
-      // Open loops left the sidebar on 2026-09-28 (Jon: "remove open loops and combine it with eve").
-      // It is a tab on /eve; /loops redirects there so old pins and Slack links still land.
-      //
-      // Home left it on 2026-08-24 (Jon: "home page is a bust"). '/' is now a redirect to Today in
-      // Ops, and the KPI board it used to render moved to /kpi under Money, where a page about
-      // occupancy, ADR and RevPAR belongs.
-    ],
-  },
-  {
-    title: 'Operations',
-    items: [
-      // Ordered by use (Jon, 2026-08-19: "all other tabs can be reorganized to make sense"):
-      // the everyday verbs first, then field work, then the periodic audit/purchasing layer.
-      { to: '/plan',     label: 'Today in Ops', Icon: ListChecks },
-      // The standing daily list (Jon, 2026-09-15). Directly under Today in Ops because the two are
-      // the same moment: what the day holds, and what has to happen in it regardless.
-      { to: '/checklist', label: 'Daily Checklist', Icon: ClipboardCheck },
-      { to: '/schedule', label: 'Scheduler', Icon: CalendarRange },  // Jon 2026-08-19: his word for it
-      { to: '/maintenance', label: 'Maintenance', Icon: Wrench },  // Jon 2026-08-20: "maintenance is
-      // a big one, we don't always have a good grip" — the command view over W.O.s, tasks, glitches
-      { to: '/glitches', label: 'Glitches', Icon: AlertTriangle },   // Jon 2026-08-19: back to Glitches
-      // TAB SETS (Jon, 2026-08-24: "audits, orders and different tabs all over the place"): the
-      // audit-ish pages and the order-ish pages become ONE row each; the pages keep their URLs
-      // and roles and get a tab strip at the top. Registry in lib/tabsets.ts.
-      // RETIRED FROM THE SIDEBAR 2026-09-03 (the September audit): Inspections (0 rows in 30 days,
-      // no migration creates its table), FF&E (empty catalog, a second audit stack), Work Orders
-      // (a third way to file "fix X", every row "Low") and Projects (0 projects ever). None had a
-      // visitor in the usage window. The pages and routes still exist behind their URLs; only the
-      // doors are gone, so the two sets collapsed into the one page each that people use.
-      { to: '/audits',   label: 'Quality',    Icon: ClipboardCheck },
-      { to: '/orders',   label: 'Purchasing', Icon: ShoppingCart },
-      // PROJECTS IS BACK (Jon, 2026-09-09: "I dont see the projects tab"). The "0 projects ever"
-      // that retired it on 09-03 was true because migration 031 had never been applied — the table
-      // did not exist, so nothing could be created. It exists now, four waves of work sit behind
-      // it (tasks, comments, files, notifications, templates, personal boards), and the row opens
-      // an Asana-style rail + project view rather than the old kanban.
-      { to: '/projects', label: 'Projects',   Icon: KanbanSquare },
-    ],
-  },
-  {
-    title: 'Guests',
-    items: [
-      // Daily comms first; reference material (guidebooks, FAQ) after.
-      { to: '/reservations', label: 'Reservations', Icon: CalendarDays },
-      { to: '/messages',     label: 'Messages',     Icon: MessageSquare },
-      { to: '/reviews',      label: 'Reviews',      Icon: Star },
-      // Welcome calls became the Calls desk 2026-09-08 (pre-arrival + recovery + post-checkout).
-      { to: '/welcome-calls', label: 'Calls desk', Icon: PhoneCall },
-      { to: '/claims',       label: 'Claims',       Icon: ShieldAlert }, // Jon 2026-08-04: claims are guest-driven — lives with Guests
-      // The Guest Comms row is gone (Jon, 2026-08-25): it named none of the pages behind it.
-      // Front-Desk Notices, Guidebooks and Property FAQ each stand on their own now.
-      { to: '/reservation-emails', label: 'Front-Desk Notices', Icon: Mail },
-      { to: '/guidebooks',   label: 'Guidebooks',   Icon: BookOpen },
-      { to: '/faq',          label: 'Property FAQ', Icon: HelpCircle },
-      // Guest Orders stands alone (Jon, 2026-08-25). It was filed under Orders with our own
-      // purchasing; it is the guest buying something for their stay, which is a Guests job.
-      { to: '/guest-orders', label: 'Guest Orders', Icon: ShoppingBag },
-      // Guests directory (2026-08-18, Jon, parallel session): guest profiles aggregated from
-      // reservations; VIP on a profile feeds auto-inspections.
-      { to: '/guests',       label: 'Guests',       Icon: Contact },
-      // Contacts (2026-09-14, Jon): the same people as a mailing list, with the Mailchimp push.
-      { to: '/contacts',     label: 'Contacts',     Icon: AtSign },
-    ],
-  },
-  {
-    title: 'Portfolio',
-    items: [
-      { to: '/buildings', label: 'Properties', Icon: Building2 },
-      // Onboarding (Jon, 2026-09-02: "can we add the onboarding tab"). Inventory + photos for a
-      // unit BEFORE it is live in Guesty; assigned to a property later from the desk.
-      { to: '/onboarding', label: 'Onboarding', Icon: Boxes },
-      { to: '/vault',     label: 'Vault', Icon: Lock },
-      // Share Links (2026-08-18, Jon, parallel session): build + customise owner/property links.
-      { to: '/links',     label: 'Share Links', Icon: Share2 },
-      // Health Score is the fourth Properties view since the September audit (/buildings?v=health).
-      // Nav diet 2026-08-11 (Jon): Patterns folded into Guest Issues (/glitches → Patterns tab).
-      { to: '/blocked',   label: 'Blocked Units', Icon: CalendarOff }, // 2026-08-10 - inventory off the calendar
-      // Channel connections (Jon, 2026-09-18): which listings are actually live on which channel.
-      { to: '/channels',  label: 'Channels', Icon: Plug },
-    ],
-  },
-  {
-    title: 'Money',
-    items: [
-      // One row for KPI board + Revenue Center + Direct bookings (September audit, pass 2). The
-      // three pages keep their URLs and their own permission keys; lib/tabsets.ts draws the strip.
-      // `to` is the row's identity for pins and the sidebar editor, not a route: the set resolves it
-      // to the first tab the person can open. Deliberately not '/kpi', so an older "hide KPI board"
-      // override cannot make the whole Money row vanish.
-      { to: '/money',    label: 'Money',        Icon: TrendingUp, set: 'money' },
-      // The boss's Revenue App, framed (Jon, 2026-09-25). Its own row so it is one click from anywhere.
-      { to: '/revenue-app', label: 'Revenue App', Icon: BarChart3 },
-      { to: '/billing',  label: 'Billable Hours', Icon: Receipt }, // 2026-08-06 - Breezeway task billing by owner
-      // Projections left the sidebar on 2026-08-25 (Jon): the projection builder lives inside
-      // Owner Reports now, so this is a plain row again and /projections is reached from there.
-      { to: '/reports',  label: 'Owner Reports', Icon: FileText },
-      // Owner Statement Audit stands alone (Jon, 2026-08-25). It is an hour-long working session
-      // against Guesty, not a tab you pass through on the way to a report.
-      { to: '/owner-audit', label: 'Owner Statement Audit', Icon: ClipboardList },
-    ],
-  },
-  {
-    title: 'Team',
-    items: [
-      // Flat again (Jon, 2026-08-25: "just make it easier"). A section titled Team holding one row
-      // titled Team was a level of chrome that named nothing. Labor keeps its own
-      // Board|Dashboard switcher inside.
-      { to: '/team',     label: 'Weekly Planner', Icon: CalendarRange },
-      { to: '/cleaners', label: 'Cleaners', Icon: Sparkles },
-      { to: '/labor',    label: 'Labor',    Icon: Timer },
-    ],
-  },
-  {
-    // Integrations and Custom Fields moved inside Users & admin → App settings (September audit,
-    // pass 2). The section keeps its title because Shell appends the Users & admin row to it.
-    title: 'Settings',
-    items: [
-      // Where the standing audit reports now that it posts nothing to Slack and emails nobody
-      // (Jon, 2026-09-15). It has to be a real sidebar row: a page you can only reach by typing
-      // the URL is a page nobody checks, and the whole trade was "stop pushing this at me, I will
-      // come and look" — which only holds if there is somewhere obvious to look.
-      { to: '/system-health', label: 'System health', Icon: Activity },
-      { to: '/api-keys', label: 'API keys', Icon: KeyRound },
-    ],
-  },
-]
+// One icon per desk (lib/desks.ts stays free of JSX). Admin is the gear.
+const DESK_ICONS: Record<string, any> = {
+  today: Gauge, operations: ListChecks, guests: MessageSquare, reviews: Star, listings: Building2,
+  owners: FileText, team: Users, kpis: TrendingUp, admin: SettingsIcon,
+}
+// The phone's bottom bar has room for about ten characters a tab.
+const DESK_SHORT: Record<string, string> = { guests: 'Guests' }
 
 // PER-TAB CACHE FOR THE SHELL'S OWN READS (2026-09-18). The Shell is rendered inside every page,
 // so it remounts on every navigation and asked /api/access/me and /api/access/prefs again each
@@ -248,16 +108,13 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   // Business units (migration 118): the businesses this login may enter + the hotel role's page levels.
   const [units, setUnits] = useState<string[] | null>(null)
   const [gLevels, setGLevels] = useState<Record<string, string> | null>(null)
-  // The saved sidebar arrangement (lib/nav-layout.ts). Null until /api/access/me answers; the code
-  // defaults render meanwhile, so the nav is never empty and never flickers into existence.
-  const [navLayout, setNavLayout] = useState<NavLayout | null>(null)
   const [roleLabel, setRoleLabel] = useState<string | null>(null)
   const [displayName, setDisplayName] = useState<string | null>(null)
 
   // Pins: null until we know (device copy or server), so the band never flashes the role default
   // over someone's real choices.
   const [pins, setPins] = useState<string[] | null>(null)
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean> | null>(null)
+  const [moreOpen, setMoreOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   // WHICH BUSINESS (Jon, 2026-09-28: "a drop down… a completely different page"). Decided by the
@@ -293,8 +150,6 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     // Paint the device copy immediately; the fetch below corrects it a moment later.
     const local = readLocal(PINS_LS_KEY)
     if (Array.isArray(local) && local.length) setPins(cleanPins(local))
-    const groups = readLocal(GROUPS_LS_KEY)
-    setOpenGroups(groups && typeof groups === 'object' && !Array.isArray(groups) ? groups : {})
 
     who.then(() => cachedJson('/api/access/me')).then(j => {
       setIsAdmin(!!j?.isAdmin); setIsOwner(!!j?.isOwner)
@@ -303,7 +158,6 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
       if (j?.levels && typeof j.levels === 'object') setLevels(j.levels)
       if (Array.isArray(j?.businesses)) setUnits(j.businesses)
       setGLevels(j?.garden?.levels && typeof j.garden.levels === 'object' ? j.garden.levels : null)
-      if (j?.nav && typeof j.nav === 'object') setNavLayout(j.nav)
       if (typeof j?.accessRole === 'string' && j.accessRole) setRoleLabel(j.accessRole)
       if (j?.profile?.name) setDisplayName(String(j.profile.name))
       const roleKey = typeof j?.accessRole === 'string' && j.accessRole ? j.accessRole : (j?.isOwner ? 'admin' : null)
@@ -331,7 +185,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
 
   // Close the drawer whenever the route changes — otherwise tapping a link on a phone leaves the
   // panel sitting over the page you just navigated to.
-  useEffect(() => { setDrawerOpen(false); setPaletteOpen(false) }, [path])
+  useEffect(() => { setDrawerOpen(false); setPaletteOpen(false); setMoreOpen(false) }, [path])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -351,9 +205,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
 
   const initials = (email || 'U').split('@')[0].split('.').map(s => s[0]?.toUpperCase()).slice(0, 2).join('') || 'U'
 
-  const isActive = (to: string) => path === to || (to !== '/' && !!path && path.startsWith(to))
-  const setTabs = (key: string) => (TAB_SETS.find(s => s.key === key) || { tabs: [] as { to: string; label: string }[] }).tabs
-  const itemActive = (it: NavItem) => it.set ? setTabs(it.set).some(t => isActive(t.to)) : isActive(it.to)
+  const isActive = (to: string) => path === to || (to !== '/' && !!path && path.startsWith(to + '/'))
 
   // Hide pages outside the user's workspace bundle or toggled off for them (owner always sees all).
   // While /api/access/me is still loading (workspace === null) show everything — no nav flicker,
@@ -368,77 +220,14 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     return pageAllowed(workspace, features, feat.key)
   }
 
-  // A tab-set row is visible when ANY of its tabs is, and it links to the FIRST visible tab.
-  const resolveSet = (it: NavItem): NavItem | null => {
-    if (!it.set) return canSee(it.to) ? it : null
-    const first = setTabs(it.set).find(t => canSee(t.to))
-    return first ? { ...it, to: first.to } : null
-  }
-  // ORDER OF OPERATIONS MATTERS. The layout override is applied FIRST — it decides names, sections
-  // and order — and the permission filter runs after it, on the result. That keeps the two concerns
-  // from ever being mistaken for each other: rearranging the sidebar cannot grant anyone anything,
-  // and a role's access cannot be worked around by moving a row.
-  const arranged: NavSection[] = applyNavLayout(SECTIONS, navLayout)
-  // Users & admin is appended to Settings rather than declared there, so the sidebar editor can
-  // never hide, rename or move it. Settings has no rows of its own any more (September audit,
-  // pass 2), and applyNavLayout drops empty sections, so the section is re-created here if needed.
-  const withSettings: NavSection[] = isAdmin && !arranged.some(sec => sec.title === 'Settings')
-    ? arranged.concat([{ title: 'Settings', items: [] }])
-    : arranged
-  const sections: NavSection[] = withSettings
-    .map(sec => sec.title === 'Settings' && isAdmin
-      ? { title: sec.title, items: sec.items.concat([{ to: '/users', label: 'Users & admin', Icon: UserCog }]) }
-      : sec)
-    .map(sec => ({ title: sec.title, items: sec.items.map(it => it.to === '/users' ? it : resolveSet(it)).filter(Boolean) as NavItem[] }))
-    .filter(sec => sec.items.length > 0)
-
-  // Flat lookup so a pin (a path) renders with the same icon and label as its group row. Tab-set
-  // members are registered too, so a pin made before the sets existed (e.g. /inspections) still
-  // renders — with the set's icon and the tab's own label.
-  const byPath: Record<string, NavItem> = {}
-  for (let i = 0; i < sections.length; i++) {
-    const items = sections[i].items
-    for (let j = 0; j < items.length; j++) {
-      byPath[items[j].to] = items[j]
-      if (items[j].set) for (const t of setTabs(items[j].set as string)) if (canSee(t.to)) byPath[t.to] = { to: t.to, label: t.label, Icon: items[j].Icon }
-    }
-  }
-  // The tab strip for the page we are on (rendered above the page content).
-  const setHere = tabSetForPath(path)
-  const setHereIcon = setHere ? (SECTIONS.flatMap(sc => sc.items).find(it => it.set === setHere.set.key) || { Icon: null }).Icon : null
-
-  const pinned: NavItem[] = []
-  if (pins) {
-    for (let i = 0; i < pins.length; i++) {
-      const hit = byPath[pins[i]]
-      if (hit) pinned.push(hit)
-    }
-  }
-
-  // Which group holds the page we are on — that one opens itself, whatever the saved state says.
-  let activeGroup: string | null = null
-  for (let i = 0; i < sections.length && !activeGroup; i++) {
-    const items = sections[i].items
-    for (let j = 0; j < items.length; j++) if (itemActive(items[j])) { activeGroup = sections[i].title; break }
-  }
-
-  // Jon, 2026-08-20: "can everything stay open" — groups now default OPEN. Collapsing is still
-  // there for anyone who wants it (the choice sticks per device), but nobody has to click a
-  // header just to see their tabs.
-  const isGroupOpen = (title: string) => {
-    if (!openGroups) return true
-    if (openGroups[title] != null) return !!openGroups[title]
-    return true
-  }
-  const toggleGroup = (title: string) => {
-    const next: Record<string, boolean> = {}
-    const cur = openGroups || {}
-    const keys = Object.keys(cur)
-    for (let i = 0; i < keys.length; i++) next[keys[i]] = cur[keys[i]]
-    next[title] = !isGroupOpen(title)
-    setOpenGroups(next)
-    writeLocal(GROUPS_LS_KEY, next)
-  }
+  // THE DESKS (lib/desks.ts). A view is drawn only if the person can open it; a desk shows only if
+  // one of its views does, and links to the first of them. People & settings (/users) is the admin
+  // console, which gates itself, so it shows for admins only.
+  const viewVisible = (v: DeskView) => v.to === '/users' ? isAdmin : canSee(v.to)
+  const desks = DESKS.map(d => ({ desk: d, views: d.views.filter(viewVisible) })).filter(x => x.views.length > 0)
+  const deskHit = deskForPath(path)
+  const deskHere = deskHit ? desks.find(x => x.desk.key === deskHit.desk.key) || null : null
+  const viewHere: DeskView | null = deskHit && deskHit.view && viewVisible(deskHit.view) ? deskHit.view : null
 
   function savePins(next: string[]) {
     setPins(next)
@@ -455,7 +244,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   // them silently.
   function movePin(from: number, to: number) {
     if (from === to || from < 0 || to < 0) return
-    const visible = (business === 'garden' ? (pins || []).filter(p => p.startsWith('/garden')) : pinned.map(p => p.to))
+    const visible = (pins || []).filter(p => p.startsWith('/garden'))
     if (from >= visible.length || to >= visible.length) return
     const next = visible.slice()
     const moved = next.splice(from, 1)[0]
@@ -475,8 +264,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     ? roleLabel.split('_').map(w => w === 'cs' ? 'CS' : w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
     : (workspace ? workspaceDef(workspace).label : null)
 
-  const here = byPath[path || '']
-  const currentLabel = business === 'garden' ? ((GARDEN_NAV.slice().sort((a, b) => b.to.length - a.to.length).find(g => path === g.to || (g.to !== '/garden' && !!path && path.startsWith(g.to + '/'))) || GARDEN_NAV[0]).label) : here ? here.label : (activeGroup || 'Lighthouse')
+  const currentLabel = business === 'garden' ? ((GARDEN_NAV.slice().sort((a, b) => b.to.length - a.to.length).find(g => path === g.to || (g.to !== '/garden' && !!path && path.startsWith(g.to + '/'))) || GARDEN_NAV[0]).label) : viewHere ? viewHere.label : (deskHit ? deskHit.desk.label : 'Lighthouse')
 
   // DUPLICATE PAGE TITLE (Jon, 2026-08-26: "how do we make it visible and concise"). On a phone the
   // app bar two inches above the content already says "Today in Ops", and then the page says it
@@ -554,45 +342,67 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   }
 
   // ONE SIDEBAR FOR BOTH BUSINESSES (Jon, 2026-09-29: "It's not a completely different web app.
-  // It's the same web app, same design"). The hotel gets the same Jump to, the same Your tabs and
-  // the same section list as the VR side — only the pages behind it differ.
+  // It's the same web app, same design"). The VR side lists its desks; the hotel keeps its own
+  // sections and pinned band — only the pages behind them differ.
   const G = business === 'garden'
   const gActive = (to: string) => path === to || (to !== '/garden' && !!path && path.startsWith(to + '/'))
   const gardenSections: NavSection[] = GARDEN_SECTIONS.map(sc => ({ title: sc.title, items: sc.items.filter(it => gVisible(it.key)).map(it => ({ to: it.to, label: it.label, Icon: it.Icon })) })).filter(sc => sc.items.length > 0)
   const gardenPinned: NavItem[] = (pins || []).map(p => gardenNav.find(g => g.to === p)).filter(Boolean).map((g: any) => ({ to: g.to, label: g.label, Icon: g.Icon }))
-  const navSections: NavSection[] = G ? gardenSections : sections
-  const navPinned: NavItem[] = G ? gardenPinned : pinned
+  // The Jump box and the phone bar read the same list the sidebar does.
+  const deskSections: NavSection[] = desks.map(x => ({ title: x.desk.label, items: x.views.map(v => ({ to: v.to, label: v.label, Icon: DESK_ICONS[x.desk.key] || Gauge })) }))
 
-  const navBody = (onNavigate?: () => void) => (
+  const jumpBox = (onNavigate?: () => void) => (
+    <button type="button" onClick={() => { setPaletteOpen(true); if (onNavigate) onNavigate() }} title="Jump to any page (Cmd/Ctrl-K)"
+      className="w-full flex items-center gap-2.5 mb-2 px-3 py-2 rounded-xl border border-line bg-app/60 text-sm text-muted hover:bg-white hover:border-brand-200 transition-all">
+      <Search size={15} />
+      <span>Jump to…</span>
+      <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded border border-line bg-white text-muted">⌘K</span>
+    </button>
+  )
+
+  // THE DESKS, one row each. The hover says what the desk is for; the row opens the first page in it
+  // the person can see. Admin sits apart at the bottom, behind its gear.
+  const deskRow = (x: { desk: typeof DESKS[number]; views: DeskView[] }, onNavigate?: () => void) => {
+    const Icon = DESK_ICONS[x.desk.key] || Gauge
+    const active = !!deskHere && deskHere.desk.key === x.desk.key
+    return (
+      <Link key={x.desk.key} href={x.views[0].to} prefetch={false} onClick={onNavigate} title={x.desk.blurb}
+        aria-current={active ? 'page' : undefined}
+        className={`flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
+        <Icon size={17} strokeWidth={active ? 2.25 : 2} className={active ? 'text-brand-600' : ''} />
+        <span className="truncate">{x.desk.label}</span>
+      </Link>
+    )
+  }
+  const vrNav = (onNavigate?: () => void) => {
+    const main = desks.filter(x => x.desk.key !== 'admin')
+    const admin = desks.find(x => x.desk.key === 'admin')
+    return (
+      <>
+        {jumpBox(onNavigate)}
+        <div className="space-y-0.5">{main.map(x => deskRow(x, onNavigate))}</div>
+        {admin ? <div className="mt-3 pt-3 border-t border-line">{deskRow(admin, onNavigate)}</div> : null}
+      </>
+    )
+  }
+
+  const gardenNavBody = (onNavigate?: () => void) => (
     <>
-      <button type="button" onClick={() => { setPaletteOpen(true); if (onNavigate) onNavigate() }}
-        className="w-full flex items-center gap-2.5 mb-2 px-3 py-2 rounded-xl border border-line bg-app/60 text-sm text-muted hover:bg-white hover:border-brand-200 transition-all">
-        <Search size={15} />
-        <span>Jump to…</span>
-        <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded border border-line bg-white text-muted">⌘K</span>
-      </button>
-
-      {/* The "Add a task" button that used to sit here is gone (Jon, 2026-09-14). It was the
-          loudest thing in the sidebar — a solid black block directly under the search and above the
-          user's own tabs — for an action the sidebar is not for. The sheet itself is unchanged and
-          still reachable: openAddTask() works from anywhere, and the + in the mobile header still
-          raises it. */}
+      {jumpBox(onNavigate)}
 
       {(
         // YOUR TABS (Jon, 2026-08-19: "revamp the tabs on the side… a star section, called
-        // something, maybe Your tabs"). The personal band gets its own softly-tinted card so it
-        // reads as YOURS at a glance, a plain-English name, and the same star/drag mechanics.
+        // something, maybe Your tabs"). Kept on the hotel side; the VR side has desks instead.
         <div className="rounded-xl bg-app/70 border border-line p-1.5 mb-2">
           <div className="px-2 pt-1 pb-1.5 text-[10px] uppercase tracking-wider font-bold text-ink/50 flex items-center gap-1.5">
             <Star size={11} className="fill-brand-200 text-brand-400" /> Your tabs
             <span className="ml-auto font-semibold normal-case tracking-normal text-[10px] text-muted/50">drag to reorder</span>
           </div>
-          {navPinned.length === 0 && (
+          {gardenPinned.length === 0 && (
             <p className="px-2 pb-1.5 text-[11px] text-muted/70">Star any tab below and it moves up here — your own order, front and center.</p>
           )}
-          {navPinned.map(({ to, label, Icon }, idx) => {
-            const pinSet = tabSetForPath(to)
-            const active = G ? gActive(to) : pinSet && sections.some(sc => sc.items.some(it => it.set === pinSet.set.key && it.to === to)) ? itemActive({ to, label, Icon, set: pinSet.set.key }) : isActive(to)
+          {gardenPinned.map(({ to, label, Icon }, idx) => {
+            const active = gActive(to)
             return (
               <div key={'pin-' + to} draggable
                 onDragStart={() => { dragFrom.current = idx }}
@@ -615,14 +425,10 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
         </div>
       )}
 
-      {navSections.map(section => {
-        // Jon 2026-08-19: "if starred it should not show up again below, it should be MOVED." So a
-        // pinned tab leaves its group entirely — Daily is its only home until it is unstarred, and
-        // a group with nothing left drops out of the list rather than sitting there empty.
+      {gardenSections.map(section => {
+        // A pinned tab leaves its group; a group with nothing left drops out of the list.
         const rest = section.items.filter(it => !isPinned(it.to))
         if (rest.length === 0) return null
-        // Jon, 2026-08-20: "keep all tabs open, preferable" — groups no longer fold at all. The
-        // header is just a label; every tab is always visible.
         return (
           <div key={section.title}>
             <div className="mt-3.5 px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] font-bold text-muted/60">
@@ -630,7 +436,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
             </div>
             {rest.map((item) => {
               const { to, label, Icon } = item
-              const active = G ? gActive(item.to) : itemActive(item)
+              const active = gActive(item.to)
               const on = isPinned(to)
               return (
                 <div key={to} className={`group flex items-center gap-2.5 px-2.5 py-[7px] rounded-lg text-sm font-medium transition-all ${active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-app hover:text-ink'}`}>
@@ -651,6 +457,55 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
       })}
     </>
   )
+
+  const navBody = (onNavigate?: () => void) => G ? gardenNavBody(onNavigate) : vrNav(onNavigate)
+
+  // THE DESK STRIP — the pages of the desk you are on, across the top. Secondary pages sit under
+  // "More" (unless you are on one, then it shows inline so you can see where you are). A desk with
+  // a single page draws no strip.
+  const deskStrip = () => {
+    if (!deskHere || deskHere.views.length < 2) return null
+    const Icon = DESK_ICONS[deskHere.desk.key] || Gauge
+    const inline = deskHere.views.filter(v => !v.more || (viewHere && viewHere.to === v.to))
+    const extra = deskHere.views.filter(v => v.more && !(viewHere && viewHere.to === v.to))
+    return (
+      <div className="mb-4 -mt-1 flex items-center gap-2 flex-wrap">
+        <div className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] font-bold text-muted/70 mr-1" title={deskHere.desk.blurb}>
+          <Icon size={13} />{deskHere.desk.label}
+        </div>
+        <div className="inline-flex items-center rounded-xl border border-line bg-white p-0.5 overflow-x-auto max-w-full">
+          {inline.map(v => {
+            const on = !!viewHere && viewHere.to === v.to
+            return <Link key={v.to} href={v.to} prefetch={false} title={v.hint} aria-current={on ? 'page' : undefined}
+              className={'px-3 py-1.5 rounded-lg text-[13px] font-semibold whitespace-nowrap transition ' + (on ? 'bg-ink text-white' : 'text-muted hover:text-ink hover:bg-app')}>{v.label}</Link>
+          })}
+        </div>
+        {extra.length > 0 && (
+          <div className="relative">
+            <button type="button" onClick={() => setMoreOpen(o => !o)} aria-haspopup="menu" aria-expanded={moreOpen}
+              title={'More in ' + deskHere.desk.label + ': ' + extra.map(v => v.label).join(', ')}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-line bg-white text-[13px] font-semibold text-muted hover:text-ink">
+              More <ChevronDown size={13} className={'transition ' + (moreOpen ? 'rotate-180' : '')} />
+            </button>
+            {moreOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)} />
+                <div role="menu" className="absolute left-0 mt-1 z-50 min-w-[220px] rounded-xl border border-line bg-white shadow-lifted p-1">
+                  {extra.map(v => (
+                    <Link key={v.to} href={v.to} prefetch={false} role="menuitem" title={v.hint} onClick={() => setMoreOpen(false)}
+                      className="block px-3 py-2 rounded-lg text-[13px] text-ink hover:bg-app">
+                      <span className="font-semibold">{v.label}</span>
+                      <span className="block text-[11px] text-muted leading-snug">{v.hint}</span>
+                    </Link>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     // APP SHELL, NOT A LONG PAGE. This was min-h-screen, so the wrapper grew to the height of the
@@ -715,21 +570,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
           {/* pb-24 on a phone: Eve's bubble floats above the bottom bar, and without room to scroll
               past it the last row of every board sits permanently under a 56px circle. */}
           <div className={full ? 'h-full min-h-full' : 'max-w-[1600px] mx-auto px-3 pt-4 pb-24 sm:p-6 lg:p-8 animate-fade-in'}>
-            {setHere && !full ? (
-              // THE TAB STRIP — every member page gets it for free, so the audit pages and
-              // the four order pages read as one thing with tabs instead of eight scattered entries.
-              <div className="mb-4 -mt-1 flex items-center gap-2 flex-wrap">
-                <div className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] font-bold text-muted/70 mr-1">
-                  {setHereIcon ? (() => { const I = setHereIcon; return <I size={13} /> })() : null}{setHere.set.label}
-                </div>
-                <div className="inline-flex rounded-xl border border-line bg-white p-0.5 overflow-x-auto max-w-full">
-                  {setHere.set.tabs.filter(t => canSee(t.to)).map(t => {
-                    const on = t.to === setHere.tab.to
-                    return <Link key={t.to} href={t.to} prefetch={false} className={'px-3 py-1.5 rounded-lg text-[13px] font-semibold whitespace-nowrap transition ' + (on ? 'bg-ink text-white' : 'text-muted hover:text-ink hover:bg-app')}>{t.label}</Link>
-                  })}
-                </div>
-              </div>
-            ) : null}
+            {!G && !full ? deskStrip() : null}
             {children}
           </div>
         </main>
@@ -741,15 +582,15 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
         {/* One mount for the whole app; openAddTask() from anywhere raises it. */}
         {canSee('/plan') && <AddTaskHost />}
 
-        {/* Mobile bottom bar — the first four pins. One thumb, no scrolling.
+        {/* Mobile bottom bar — the first four desks (the hotel: its first four pages). One thumb.
             It renders unconditionally: it used to be gated on `pinned.length > 0`, which meant a
             person whose pins had not loaded yet (or whose role could see none of the daily six)
             got a phone with no navigation at all except the hamburger. "More" alone is still
             navigation. pb-safe keeps the labels off the iPhone home indicator, which viewport-fit
             cover otherwise draws straight through. */}
         <nav className={(full ? 'hidden' : 'lg:hidden flex') + ' flex-shrink-0 border-t border-line bg-white items-stretch pb-safe px-safe'}>
-          {(business === 'garden' ? gardenNav.slice(0, 4) : pinned.slice(0, 4)).map(({ to, label, Icon }) => {
-            const active = business === 'garden' ? (path === to || (to !== '/garden' && !!path && path.startsWith(to + '/'))) : isActive(to)
+          {(business === 'garden' ? gardenNav.slice(0, 4) : desks.filter(x => x.desk.key !== 'admin').slice(0, 4).map(x => ({ to: x.views[0].to, label: DESK_SHORT[x.desk.key] || x.desk.label, Icon: DESK_ICONS[x.desk.key] || Gauge, key: x.desk.key }))).map(({ to, label, Icon, key }: any) => {
+            const active = business === 'garden' ? (path === to || (to !== '/garden' && !!path && path.startsWith(to + '/'))) : !!deskHere && deskHere.desk.key === key
             return (
               <Link key={'bb-' + to} href={to} prefetch={false}
                 className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-semibold ${active ? 'text-brand-600' : 'text-muted'}`}>
@@ -798,7 +639,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
         </div>
       )}
 
-      {paletteOpen && <JumpPalette sections={G ? gardenSections : sections.map(sc => ({ title: sc.title, items: sc.items.flatMap(it => it.set ? setTabs(it.set).filter(t => canSee(t.to)).map(t => ({ to: t.to, label: it.label + ' · ' + t.label, Icon: it.Icon })) : [it]) }))} onClose={() => setPaletteOpen(false)} />}
+      {paletteOpen && <JumpPalette sections={G ? gardenSections : deskSections} onClose={() => setPaletteOpen(false)} />}
     </div>
     </ShellMenu.Provider>
   )

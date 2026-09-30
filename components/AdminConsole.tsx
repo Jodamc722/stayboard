@@ -71,7 +71,6 @@ const L = {
   // Moved here from the retired bare /salato page (2026-09-28 audit) — its only editor.
   salatoUnits: dynamic(() => import('@/components/SalatoUnitsPicker').then(m => m.SalatoUnitsPicker), { loading: spin, ssr: false }),
   share: dynamic(() => import('@/components/ShareLinksCard').then(m => m.ShareLinksCard), { loading: spin, ssr: false }),
-  nav: dynamic(() => import('@/components/NavLayoutAdmin').then(m => m.NavLayoutAdmin), { loading: spin, ssr: false }),
   taskCats: dynamic(() => import('@/components/TaskCategoriesAdmin').then(m => m.TaskCategoriesAdmin), { loading: spin, ssr: false }),
   revAudit: dynamic(() => import('@/components/ReviewAuditPanel').then(m => m.ReviewAuditPanel), { loading: spin, ssr: false }),
   cadences: dynamic(() => import('@/components/CadencesAdmin').then(m => m.CadencesAdmin), { loading: spin, ssr: false }),
@@ -112,13 +111,6 @@ const ENTRIES: Entry[] = [
     blurb: 'Whether the integrations and keys these settings depend on are actually working — and what to do when one is not.',
     find: 'health status broken error vault key homebase slack email api down not working missing env',
     render: () => <SystemCheck />,
-  },
-
-  {
-    key: 'nav', title: 'Sidebar & tabs', group: 'Start here', Icon: Sliders,
-    blurb: 'Rename any tab, move it to another section, reorder it or take it off the sidebar — no deploy, and one click back to standard.',
-    find: 'sidebar nav navigation tab menu rename reorder move hide section order layout left',
-    render: p => <L.nav isAdmin />,
   },
 
   {
