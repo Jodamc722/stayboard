@@ -3,18 +3,17 @@
 // Eve's draft when a watch wrote one, and — for people with edit on Messages — a reply box
 // (2026-09-28 audit, D1). The reply goes out through Guesty on the thread's own channel; "Draft with
 // Eve" fills the box, and nothing reaches the guest until a person presses Send.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { CalendarDays, X, ExternalLink, User, Phone, DollarSign, Home, BedDouble, Sparkles, Send, Loader2 } from 'lucide-react'
 
-type Msg = { id: string; sender: string; sender_name?: string | null; body: string | null; sent_at: string | null }
+type Msg = { id: string; sender: string; sender_name?: string | null; body: string | null; sent_at: string | null; module?: string | null; is_automated?: boolean | null }
 type Reservation = {
   id: string; guest_name?: string | null; guest_phone?: string | null; listing_name?: string | null
   check_in?: string | null; check_out?: string | null; nights?: number | null; status?: string | null
   money_total?: number | null; money_balance?: number | null; money_currency?: string | null; source?: string | null
 } | null
 
-const fmt = (s?: string | null) => { if (!s) return ''; const d = new Date(s); return isNaN(d.getTime()) ? '' : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) }
 const fmtDay = (s?: string | null) => { if (!s) return '—'; const d = new Date(s); return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) }
 
 export function MessageThread({ conversationId, channel, guest, unit, initialMessages, reservation, guestyUrl, canReply }: {
@@ -22,7 +21,14 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
 }) {
   const [showRes, setShowRes] = useState(false)
   const [sent, setSent] = useState<Msg[]>([])
+  const [replyOpen, setReplyOpen] = useState(false)
+  const [hideAuto, setHideAuto] = useState(false)
   const messages = initialMessages.concat(sent)
+  // Open at the newest message, like any inbox.
+  const scroller = useRef<HTMLDivElement | null>(null)
+  useEffect(() => { const el = scroller.current; if (el) el.scrollTop = el.scrollHeight }, [messages.length])
+  const counts = { guest: messages.filter(m => m.sender === 'guest').length, team: messages.filter(m => m.sender !== 'guest' && m.sender !== 'system' && m.is_automated !== true).length, auto: messages.filter(m => m.sender !== 'guest' && m.sender !== 'system' && m.is_automated === true).length }
+  const stay = reservation && reservation.check_in ? `${fmtShort(reservation.check_in)} → ${fmtShort(reservation.check_out)}${reservation.nights != null ? ' · ' + reservation.nights + ' nights' : ''}` : ''
 
   return (
     /* The transcript only scrolls INSIDE its own box if the box has a height. A min-height alone
@@ -38,6 +44,7 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
           <span className="font-semibold text-ink truncate">{guest || 'Guest'}</span>
           {unit && <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">Unit {unit}</span>}
           {channel && <span className="text-[10px] uppercase tracking-wide text-muted bg-app px-1.5 py-0.5 rounded">{channel}</span>}
+          {stay && <span className="text-[11px] text-ink/70" title={reservation?.status || ''}>{stay}{reservation?.status ? ' · ' + reservation.status : ''}</span>}
         </div>
         <div className="flex items-center gap-2 flex-wrap gap-y-2">
           {reservation && (
@@ -51,24 +58,25 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
         </div>
       </div>
 
+      {/* WHO SAID WHAT (2026-09-30). A legend with the counts, and a switch to hide the templates. */}
+      <div className="px-3 sm:px-5 py-1.5 border-b border-line bg-app/30 flex items-center gap-3 flex-wrap text-[11px]">
+        <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-sky-500" /> {guest.split(' ')[0] || 'Guest'} (guest) · {counts.guest}</span>
+        <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-brand-600" /> Our team · {counts.team}</span>
+        <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-300" /> Automated (Guesty templates) · {counts.auto}</span>
+        {counts.auto ? <label className="ml-auto inline-flex items-center gap-1 text-muted cursor-pointer"><input type="checkbox" checked={hideAuto} onChange={e => setHideAuto(e.target.checked)} /> hide automated</label> : null}
+      </div>
+
       {/* Messages (read-only) */}
-      <div className="flex-1 overflow-y-auto px-3 sm:px-5 py-4 space-y-3">
+      <div ref={scroller} className="flex-1 overflow-y-auto px-3 sm:px-5 py-4 space-y-3">
         {messages.length === 0 ? (
           <p className="text-center text-muted py-8 text-sm">No messages cached for this thread yet. Sync to pull the latest.</p>
-        ) : messages.map(m => {
-          const guestMsg = m.sender === 'guest'
-          const system = m.sender === 'system'
-          if (system) return <div key={m.id} className="text-center text-[11px] text-muted italic">{m.body}</div>
+        ) : messages.filter(m => !(hideAuto && m.sender !== 'guest' && m.sender !== 'system' && m.is_automated === true)).map((m, i, arr) => {
+          const day = dayOf(m.sent_at)
+          const newDay = day && day !== dayOf(arr[i - 1]?.sent_at)
           return (
-            <div key={m.id} className={`flex ${guestMsg ? 'justify-start' : 'justify-end'}`}>
-              <div className={`max-w-[78%] rounded-2xl px-3.5 py-2 text-sm ${guestMsg ? 'bg-app text-ink border border-line' : 'bg-brand-600 text-white'}`}>
-                <div className={`text-[10px] mb-0.5 ${guestMsg ? 'text-muted' : 'text-white/70'}`}>{m.sender_name || (guestMsg ? guest : 'Team')}</div>
-                {/* pre-wrap keeps the guest's line breaks but will NOT break a long unbroken run
-                    of characters — one pasted booking URL or a long guest email address pushed
-                    the bubble past the card and widened the whole page. */}
-                <div className="whitespace-pre-wrap leading-relaxed break-words sm:break-normal">{m.body}</div>
-                <div className={`text-[10px] mt-0.5 ${guestMsg ? 'text-muted' : 'text-white/70'}`}>{fmt(m.sent_at)}</div>
-              </div>
+            <div key={m.id}>
+              {newDay ? <div className="flex items-center gap-2 my-2"><div className="flex-1 h-px bg-line" /><span className="text-[10.5px] font-semibold text-muted uppercase tracking-wider">{day}</span><div className="flex-1 h-px bg-line" /></div> : null}
+              <Bubble m={m} guest={guest} />
             </div>
           )
         })}
@@ -81,7 +89,12 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
 
       {/* THE REPLY BOX (D1). The footer "Reply in Guesty" link it replaces pointed at the same place
           as the header's "Open in Guesty", which stays for anything the box cannot do. */}
-      {canReply ? (
+      {canReply && !replyOpen ? (
+        <div className="border-t border-line px-3 sm:px-5 py-2.5 bg-app/30 flex items-center gap-2">
+          <button onClick={() => setReplyOpen(true)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-700 border border-brand-200 bg-white hover:bg-brand-50 px-2.5 py-1.5 rounded-lg"><Send size={13} /> Write a reply</button>
+          <span className="text-[11px] text-muted">Sends through Guesty on the thread&apos;s own channel. Or answer in Guesty.</span>
+        </div>
+      ) : canReply ? (
         <ReplyBox conversationId={conversationId} guest={guest} channel={channel}
           onSent={(body, by) => setSent(prev => prev.concat([{ id: 'sent-' + Date.now(), sender: 'host', sender_name: by, body, sent_at: new Date().toISOString() }]))} />
       ) : (
@@ -120,6 +133,64 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+const ET = 'America/New_York'
+const fmtShort = (s?: string | null) => { if (!s) return '?'; const d = new Date(String(s).slice(0, 10) + 'T12:00:00Z'); return isNaN(d.getTime()) ? '?' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) }
+function dayOf(s?: string | null): string {
+  if (!s) return ''
+  const d = new Date(s); if (isNaN(d.getTime())) return ''
+  const k = (x: Date) => x.toLocaleDateString('en-CA', { timeZone: ET })
+  if (k(d) === k(new Date())) return 'Today'
+  if (k(d) === k(new Date(Date.now() - 864e5))) return 'Yesterday'
+  return d.toLocaleDateString('en-US', { timeZone: ET, weekday: 'long', month: 'short', day: 'numeric' })
+}
+const timeOf = (s?: string | null) => { if (!s) return ''; const d = new Date(s); return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { timeZone: ET, hour: 'numeric', minute: '2-digit' }) }
+function via(mod?: string | null): string {
+  const m = String(mod || '').toLowerCase()
+  if (!m) return ''
+  if (/airbnb/.test(m)) return 'Airbnb'
+  if (/booking/.test(m)) return 'Booking.com'
+  if (/homeaway|vrbo/.test(m)) return 'Vrbo'
+  if (m === 'sms') return 'SMS'
+  if (m === 'email') return 'Email'
+  if (m === 'whatsapp') return 'WhatsApp'
+  if (m === 'note') return 'Internal note'
+  return ''
+}
+
+/**
+ * ONE MESSAGE, WITH WHO AND WHEN SPELLED OUT (2026-09-30). Guest on the left in grey-blue; our team
+ * on the right in brand colour with the teammate's name; Guesty templates on the right, muted and
+ * folded to a few lines, labelled Automated; notes and system lines centred. Every bubble says the
+ * time and the channel it went through.
+ */
+function Bubble({ m, guest }: { m: Msg; guest: string }) {
+  const [open, setOpen] = useState(false)
+  const g = m.sender === 'guest'
+  if (m.sender === 'system') return <div className="text-center text-[11px] text-muted italic px-6">{m.sender_name && m.sender_name !== 'System' ? m.sender_name + ': ' : ''}{m.body} · {timeOf(m.sent_at)}</div>
+  const auto = !g && m.is_automated === true
+  const name = g ? (m.sender_name || guest || 'Guest') : auto ? 'Automated message' : (m.sender_name || 'Our team')
+  const role = g ? 'Guest' : auto ? 'Guesty template' : 'Team'
+  const ch = via(m.module)
+  const long = auto && String(m.body || '').length > 260
+  const body = long && !open ? String(m.body || '').slice(0, 260).trimEnd() + '…' : m.body
+  const box = g ? 'bg-sky-50 text-ink border border-sky-100' : auto ? 'bg-slate-50 text-ink/75 border border-dashed border-slate-300' : 'bg-brand-600 text-white'
+  const meta = g ? 'text-sky-800/70' : auto ? 'text-slate-500' : 'text-white/75'
+  return (
+    <div className={`flex ${g ? 'justify-start' : 'justify-end'}`}>
+      <div className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-sm ${box}`}>
+        <div className={`text-[11px] mb-0.5 flex items-center gap-1.5 flex-wrap ${meta}`}>
+          <span className="font-bold">{name}</span>
+          <span className="opacity-80">· {role}</span>
+          {ch ? <span className="opacity-80">· via {ch}</span> : null}
+          <span className="opacity-80">· {timeOf(m.sent_at)}</span>
+        </div>
+        <div className="whitespace-pre-wrap leading-relaxed break-words">{body}</div>
+        {long ? <button onClick={() => setOpen(o => !o)} className={`mt-0.5 text-[11px] font-semibold ${meta} hover:underline`}>{open ? 'Show less' : 'Show all'}</button> : null}
+      </div>
     </div>
   )
 }

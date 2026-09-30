@@ -34,7 +34,7 @@ export default async function MessageThreadPage({ params }: { params: { id: stri
   const sb = supabaseAdmin()
   const [{ data: convo }, { data: msgs }] = await Promise.all([
     sb.from('guesty_conversations').select('id, reservation_id, listing_id, guest_name, channel, raw').eq('id', params.id).maybeSingle(),
-    sb.from('guesty_messages').select('id, sender, sender_name, body, sent_at').eq('conversation_id', params.id).order('sent_at', { ascending: true }).limit(500),
+    sb.from('guesty_messages').select('id, sender, sender_name, body, sent_at, module, is_automated').eq('conversation_id', params.id).order('sent_at', { ascending: true }).limit(500),
   ])
   if (!convo) notFound()
 

@@ -21,9 +21,14 @@ import type { PhoneThreadSummary } from '@/lib/phone-threads'
 import { LeanTabs, LeanEmpty, Pill, Tag } from '@/components/lean'
 import { SentimentBoard, type SentimentRow, type SentimentSummary } from '@/components/SentimentBoard'
 
+/** Who wrote the newest message in a thread: the guest, a named teammate, a Guesty template, or an internal note. */
+export type LastInfo = { who: 'guest' | 'team' | 'auto' | 'note'; name: string | null; module: string | null }
+/** The booking behind a thread. */
+export type StayInfo = { checkIn: string | null; checkOut: string | null; status: string | null }
 export type InboxConvo = {
   id: string; guest_name: string | null; channel: string; listing_id: string | null
   last_message_at: string | null; last_message_preview: string | null; unread_count: number | null
+  last?: LastInfo | null; stay?: StayInfo | null
 }
 export type InboxItem = { kind: 'guesty'; at: string; c: InboxConvo } | { kind: 'phone'; at: string; t: PhoneThreadSummary }
 /** A thread waiting on us: since when, and when a reply is due (null before migration 134). */
@@ -41,6 +46,10 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
   items: InboxItem[]; unitById: Record<string, string>; waiting: Record<string, WaitInfo>; lastResponderById: Record<string, string>; now: number
 }) {
   const [tab, setTab] = useState<TabKey>('inbox')
+  // WHAT TO SHOW (Jon, 2026-09-30: the inbox was a wall of "Outbound call · no answer"). Guest
+  // messages by default; texts & voicemails, and calls, are one click away; Everything is all of it.
+  const [src, setSrc] = useState<'messages' | 'texts' | 'calls' | 'all'>('messages')
+  const [q, setQ] = useState('')
   const [sent, setSent] = useState<{ rows: SentimentRow[]; summary: SentimentSummary | null }>({ rows: [], summary: null })
   // The clock the reply-by tags read. It starts at the server's render time, so the first client
   // render matches the server's HTML exactly, then ticks each minute so a tab left open turns from
@@ -70,7 +79,14 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
   })
   const flagged = sent.rows.filter(r => r.dissatisfied || r.band === 'negative' || r.triggers.length > 0).length
   const s = sent.summary
-  const shown = tab === 'reply' ? replyItems : items
+  const inSrc = (it: InboxItem) => src === 'all' ? true : src === 'messages' ? it.kind === 'guesty' : src === 'texts' ? (it.kind === 'phone' && it.t.lastKind !== 'call') : (it.kind === 'phone' && it.t.lastKind === 'call')
+  const needle = q.trim().toLowerCase()
+  const matches = (it: InboxItem) => !needle || (it.kind === 'guesty'
+    ? [it.c.guest_name, it.c.last_message_preview, it.c.listing_id ? unitById[it.c.listing_id] : '', it.c.channel, it.c.last?.name].join(' ').toLowerCase().includes(needle)
+    : [it.t.guestName, it.t.display, it.t.number, it.t.preview, unitById[it.t.listingId]].join(' ').toLowerCase().includes(needle))
+  const counts = { messages: items.filter(i => i.kind === 'guesty').length, texts: items.filter(i => i.kind === 'phone' && i.t.lastKind !== 'call').length, calls: items.filter(i => i.kind === 'phone' && i.t.lastKind === 'call').length }
+  // Needs reply keeps every source: a missed call from a guest is as much "waiting on us" as a message.
+  const shown = (tab === 'reply' ? replyItems : items.filter(inSrc)).filter(matches)
 
   return (
     <div>
@@ -94,8 +110,17 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
       </div>
 
       {tab !== 'sentiment' && (
+        <div className="flex items-center gap-1.5 flex-wrap mb-2">
+          {tab === 'inbox' ? ([['messages', 'Guest messages', counts.messages], ['texts', 'Texts & voicemails', counts.texts], ['calls', 'Calls', counts.calls], ['all', 'Everything', items.length]] as const).map(([k, label, n]) => (
+            <button key={k} onClick={() => setSrc(k)} className={'h-8 px-2.5 rounded-lg border text-[12px] font-semibold ' + (src === k ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>{label} <span className="opacity-60 tabular-nums">{n}</span></button>
+          )) : null}
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search guest, unit, words…" className="ml-auto h-8 w-full sm:w-64 rounded-lg border border-line bg-white px-2.5 text-[12.5px] focus:outline-none focus:ring-2 focus:ring-brand-200" />
+        </div>
+      )}
+
+      {tab !== 'sentiment' && (
         shown.length === 0 ? (
-          <LeanEmpty>{items.length === 0 ? <>No conversations cached yet — hit <strong>Sync now</strong>.</> : 'Nobody is waiting on a reply.'}</LeanEmpty>
+          <LeanEmpty>{items.length === 0 ? <>No conversations cached yet — hit <strong>Sync now</strong>.</> : needle ? 'Nothing matches that search.' : tab === 'reply' ? 'Nobody is waiting on a reply.' : 'Nothing here.'}</LeanEmpty>
         ) : (
           <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 overflow-hidden">
             {shown.map(it => it.kind === 'phone'
@@ -109,37 +134,65 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
   )
 }
 
-/** The shared one-line shape: name · unit · tags · last message (one line) · when. */
-function Line({ href, name, unit, tags, preview, bold, when, whenTitle }: {
-  href: string; name: string; unit: string; tags: ReactNode; preview: string; bold: boolean; when: string; whenTitle?: string
+/**
+ * ONE THREAD, TWO LINES (2026-09-30). Line one: who the guest is and where — name, unit, channel,
+ * the stay, what needs doing, and the clock time. Line two: the newest message, led by WHO wrote it
+ * ("Guest", a teammate's name, "Auto" for a Guesty template, "Note"), so the list reads as a
+ * conversation instead of a column of unattributed text.
+ */
+function Line({ href, name, unit, tags, who, whoTone, preview, bold, at }: {
+  href: string; name: string; unit: string; tags: ReactNode; who: string; whoTone: 'guest' | 'team' | 'auto' | 'note'; preview: string; bold: boolean; at: string | null
 }) {
+  const whoCls = whoTone === 'guest' ? 'text-sky-700' : whoTone === 'team' ? 'text-emerald-700' : 'text-slate-500'
   return (
     <li>
-      <Link href={href} className="flex items-center gap-2.5 px-3 sm:px-4 py-2 hover:bg-app/50 transition-colors">
-        <div className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap sm:flex-nowrap">
-          <span className="text-[13.5px] font-semibold text-ink truncate max-w-[12rem] sm:shrink-0">{name}</span>
-          {unit && <span className="text-[12px] text-muted shrink-0" title="Unit">{unit}</span>}
+      <Link href={href} className="block px-3 sm:px-4 py-2 hover:bg-app/50 transition-colors">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className={'text-[13.5px] text-ink truncate max-w-[16rem] ' + (bold ? 'font-bold' : 'font-semibold')}>{name}</span>
+          {unit && <span className="text-[12px] text-ink/70 shrink-0" title="Unit">{unit}</span>}
           {tags}
-          <span className={`min-w-0 basis-full sm:basis-auto sm:flex-1 truncate text-[12.5px] ${bold ? 'text-ink font-medium' : 'text-muted'}`}>
-            {preview || <span className="italic opacity-60">(no preview)</span>}
-          </span>
+          <span className="ml-auto text-[11.5px] text-muted shrink-0 tabular-nums" title={at ? etFull(at) : ''} suppressHydrationWarning>{at ? clock(at) : ''}</span>
         </div>
-        <span className="text-[11px] text-muted shrink-0 tabular-nums" title={whenTitle} suppressHydrationWarning>{when}</span>
+        <div className="mt-0.5 flex items-baseline gap-1.5 min-w-0">
+          <span className={'shrink-0 text-[11.5px] font-bold ' + whoCls}>{who}:</span>
+          <span className={'min-w-0 truncate text-[12.5px] ' + (bold ? 'text-ink' : 'text-ink/70')}>{preview || <span className="italic opacity-60">(no text)</span>}</span>
+        </div>
       </Link>
     </li>
   )
 }
 
+/** The stay as a tag: arriving, in-house, checked out, with the dates on hover. */
+function StayTag({ stay, now }: { stay?: StayInfo | null; now: number }) {
+  if (!stay || !stay.checkIn) return null
+  const today = new Date(now).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  const d = (s: string) => new Date(s + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+  const range = `${d(stay.checkIn)} → ${stay.checkOut ? d(stay.checkOut) : '?'}`
+  const st = String(stay.status || '').toLowerCase()
+  if (/cancel/.test(st)) return <Tag title={range}>Canceled</Tag>
+  if (/inquir/.test(st)) return <Tag title={range}>Inquiry · {range}</Tag>
+  if (stay.checkIn === today) return <Tag tone="amber" title={range}>Arriving today</Tag>
+  if (stay.checkOut === today) return <Tag tone="amber" title={range}>Checking out today</Tag>
+  if (stay.checkIn < today && (!stay.checkOut || stay.checkOut > today)) return <Tag tone="emerald" title={range}>In-house · out {stay.checkOut ? d(stay.checkOut) : '?'}</Tag>
+  if (stay.checkIn > today) return <Tag tone="sky" title={range}>Arrives {d(stay.checkIn)}</Tag>
+  return <Tag title={range}>Stayed {range}</Tag>
+}
+
 function ConvoLine({ c, unit, wait, now, lastBy, sentiment }: { c: InboxConvo; unit: string; wait?: WaitInfo; now: number; lastBy: string; sentiment?: SentimentRow }) {
   const unread = c.unread_count || 0
   const bad = sentiment && (sentiment.dissatisfied || sentiment.band === 'negative')
+  const guest = c.guest_name || 'Guest'
+  const l = c.last
+  const who = !l ? (wait ? guest.split(' ')[0] : (lastBy || 'Last')) : l.who === 'guest' ? guest.split(' ')[0] : l.who === 'auto' ? 'Auto' : l.who === 'note' ? 'Note' : (l.name ? l.name.split(' ')[0] : 'Team')
+  const tone: 'guest' | 'team' | 'auto' | 'note' = !l ? (wait ? 'guest' : 'team') : l.who
   return (
-    <Line href={`/messages/${c.id}`} name={c.guest_name || 'Guest'} unit={unit}
-      preview={c.last_message_preview || ''} bold={unread > 0}
-      when={c.last_message_at ? rel(c.last_message_at) : ''}
-      whenTitle={!wait && lastBy ? `Last replied by ${lastBy}` : undefined}
+    <Line href={`/messages/${c.id}`} name={guest} unit={unit}
+      who={who} whoTone={tone}
+      preview={c.last_message_preview || ''} bold={unread > 0 || !!wait}
+      at={c.last_message_at}
       tags={<>
         <Tag>{CHANNEL_LABELS[c.channel] || c.channel}</Tag>
+        <StayTag stay={c.stay} now={now} />
         {wait && <WaitTag wait={wait} now={now} />}
         {unread > 0 && <Tag tone="brand" title={`${unread} unread message${unread === 1 ? '' : 's'}`}>{unread} unread</Tag>}
         {bad && <Tag tone="rose" title={sentiment!.topIssue || sentiment!.reason || `AI sentiment score ${sentiment!.score ?? '—'}/5`}>{sentiment!.dissatisfied ? 'Unhappy' : 'Negative'}</Tag>}
@@ -158,8 +211,9 @@ function PhoneLine({ t, unit }: { t: PhoneThreadSummary; unit: string }) {
   ].filter(Boolean).join(' · ')
   return (
     <Line href={`/messages/phone/${t.number}`} name={t.guestName || t.display} unit={unit}
-      preview={t.preview || ''} bold={t.unread}
-      when={t.lastAt ? rel(t.lastAt) : ''}
+      who={t.lastKind === 'call' ? 'Call' : t.lastKind === 'voicemail' ? 'Voicemail' : (t.awaiting ? (t.guestName ? t.guestName.split(' ')[0] : 'Guest') : 'Text')} whoTone={t.awaiting ? 'guest' : 'note'}
+      preview={t.preview || ''} bold={t.unread || t.awaiting}
+      at={t.lastAt || null}
       tags={<>
         <Tag title={`Talkroute · ${t.display}${counts ? ' · ' + counts : ''}`}><Icon size={10} className="inline -mt-px mr-0.5" />{label}</Tag>
         {!t.reservationId && <Tag title="No booking has this phone number">Unmatched</Tag>}
@@ -199,13 +253,19 @@ function ageOf(ms: number): string {
   return h < 48 ? `${h}h` : `${Math.floor(h / 24)}d`
 }
 
-function rel(iso: string) {
-  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000)
-  if (m < 1)  return 'now'
-  if (m < 60) return `${m}m`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h`
-  const d = Math.floor(h / 24)
-  if (d < 7)  return `${d}d`
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+/** The time a person reads: "2:14pm" today, "Yesterday 9:02am", "Mon 9:02am" this week, then "Sep 21". */
+function clock(iso: string): string {
+  const t = Date.parse(iso)
+  if (!Number.isFinite(t)) return ''
+  const day = (ms: number) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  const now = Date.now()
+  const hm = etTime(iso, false)
+  if (day(t) === day(now)) return hm
+  if (day(t) === day(now - 864e5)) return 'Yesterday ' + hm
+  if (now - t < 6 * 864e5) return etTime(iso, true)
+  return new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' })
+}
+function etFull(iso: string): string {
+  const t = Date.parse(iso)
+  return Number.isFinite(t) ? new Date(t).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ET' : ''
 }

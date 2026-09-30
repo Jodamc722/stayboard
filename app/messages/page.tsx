@@ -3,7 +3,7 @@ import { pageRows } from '@/lib/db-page'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { SyncNowButton } from '@/components/SyncNowButton'
-import { MessagesInbox, type InboxItem, type WaitInfo } from '@/components/MessagesInbox'
+import { MessagesInbox, type InboxItem, type WaitInfo, type LastInfo, type StayInfo } from '@/components/MessagesInbox'
 import { LeanHead, Pill } from '@/components/lean'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { listPhoneThreads, type PhoneThreadSummary } from '@/lib/phone-threads'
@@ -65,8 +65,31 @@ export default async function MessagesPage() {
   ])
   for (const c of more) list.push(c)
 
+  // WHO SAID THE LAST THING, AND WHOSE STAY IS IT (Jon, 2026-09-30: "it's hard to know who's sending
+  // what message… who's saying what, when"). Guesty's preview is only the text. The newest message
+  // of every listed thread comes from our copy of the messages — guest, a named teammate, a Guesty
+  // template or an internal note — and the booking behind each thread gives the stay dates.
+  const convIds = list.map(c => String(c.id))
+  const oldest = list.reduce((m, c) => { const t = String(c.last_message_at || ''); return t && (!m || t < m) ? t : m }, '')
+  const resIds = Array.from(new Set(list.map(c => String(c.reservation_id || '')).filter(Boolean)))
+  const [lastMsgs, stays] = await Promise.all([
+    inChunks(convIds, ids => sb.from('guesty_messages').select('conversation_id,sender,sender_name,is_automated,module,sent_at')
+      .in('conversation_id', ids).gte('sent_at', oldest ? new Date(Date.parse(oldest) - 60_000).toISOString() : '2000-01-01').order('sent_at', { ascending: false }).limit(4000)),
+    inChunks(resIds, ids => sb.from('guesty_reservations').select('id,check_in,check_out,status').in('id', ids)),
+  ])
+  const lastById: Record<string, LastInfo> = {}
+  for (const m of lastMsgs.slice().sort((a, b) => String(b.sent_at || '').localeCompare(String(a.sent_at || '')))) {
+    const k = String(m.conversation_id)
+    if (lastById[k]) continue
+    const who: LastInfo['who'] = m.sender === 'guest' ? 'guest' : m.sender === 'system' ? 'note' : m.is_automated === true ? 'auto' : 'team'
+    lastById[k] = { who, name: m.sender_name ? String(m.sender_name) : null, module: m.module ? String(m.module) : null }
+  }
+  const stayById: Record<string, StayInfo> = {}
+  for (const r of stays) stayById[String(r.id)] = { checkIn: r.check_in ? String(r.check_in).slice(0, 10) : null, checkOut: r.check_out ? String(r.check_out).slice(0, 10) : null, status: r.status ? String(r.status) : null }
+
   const unitById: Record<string, string> = {}
-  for (const l of ls) { const n = String(l.nickname || l.title || ''); const m = n.match(/#?\s*([0-9]{2,5}[A-Za-z]?)\s*$/); unitById[l.id] = m ? m[1] : '' }
+  // The listing's own nickname ("Arya 1002", "17WEST 1203") — a bare number said nothing about which building.
+  for (const l of ls) { const n = String(l.nickname || l.title || '').trim(); unitById[l.id] = n.length > 28 ? n.slice(0, 28) + '…' : n }
   const lastResponderById: Record<string, string> = {}
   for (const r of cr) if (r.last_responder) lastResponderById[String(r.conversation_id)] = String(r.last_responder)
   const waitById: Record<string, WaitInfo> = {}
@@ -75,7 +98,8 @@ export default async function MessagesPage() {
   // One list, two sources, newest first. Only the fields the inbox shows cross to the client.
   const items: InboxItem[] = (list.map((c: any) => ({
     kind: 'guesty' as const, at: String(c.last_message_at || ''),
-    c: { id: c.id, guest_name: c.guest_name, channel: c.channel, listing_id: c.listing_id, last_message_at: c.last_message_at, last_message_preview: c.last_message_preview, unread_count: c.unread_count },
+    c: { id: c.id, guest_name: c.guest_name, channel: c.channel, listing_id: c.listing_id, last_message_at: c.last_message_at, last_message_preview: c.last_message_preview, unread_count: c.unread_count,
+      last: lastById[String(c.id)] || null, stay: c.reservation_id ? stayById[String(c.reservation_id)] || null : null },
   })) as InboxItem[])
     .concat(phone.list.map(t => ({ kind: 'phone' as const, at: t.lastAt, t })))
     .sort((a, b) => b.at.localeCompare(a.at))
