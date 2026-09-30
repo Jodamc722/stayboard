@@ -19,7 +19,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import Link from 'next/link'
 import {
   ArrowLeft, Plus, Check, Circle, CircleDot, Ban, ChevronRight, ChevronDown, X, Users, Building2,
-  Home, CalendarDays, UserRound, Loader2, Lock, Unlock, Search, Trash2, CornerDownRight,
+  Home, CalendarDays, UserRound, Loader2, Lock, Unlock, Search, Trash2, CornerDownRight, Archive,
   MessageSquare, Paperclip, FileText, Send, Pencil, Download, Activity, Repeat, SlidersHorizontal, LayoutTemplate, LayoutList, Columns3, ArrowUp, ArrowDown, MoreHorizontal, Save,
   CalendarRange, ChevronLeft, GripVertical, ShieldAlert, Bug, Wrench, ExternalLink, ArrowRightCircle,
   Truck, Megaphone, Clock, BadgeCheck, Copy, EyeOff, PanelRightClose, PanelRightOpen, FolderInput,
@@ -1124,6 +1124,19 @@ function MoreMenu({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolean;
     if (j?.ok) setOpen(false)
   }
   const addFrom = async (key: string) => { await act({ action: 'applyTemplate', template: key }); setOpen(false) }
+  // ARCHIVE and DELETE from the project itself (Jon, 2026-09-30: "allow me to delete projects" — the
+  // only place to do it was the tile menu on the Projects home). Same API, same rules: archive hides
+  // and keeps; delete goes to the trash for 60 days (owner or admin), tasks, files and comments with it.
+  const remove = async (mode: 'archive' | 'delete') => {
+    const ok = mode === 'delete'
+      ? window.confirm(`Delete "${p.title}"?\n\nIt goes to the trash with its tasks, people, comments and files, and can be restored from the Projects page for 60 days.`)
+      : window.confirm(`Archive "${p.title}"? It leaves the board, keeps everything, and comes back with one click.`)
+    if (!ok) return
+    const r = await fetch('/api/projects', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: p.id, mode }) })
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok || j?.error) { window.alert(j?.error || 'That did not work.'); return }
+    window.location.href = '/projects'
+  }
   return (
     <div ref={box} className="relative">
       <button onClick={() => setOpen(o => !o)} title="More" className="inline-flex items-center justify-center rounded-xl border border-line bg-white w-8 h-8 text-muted hover:text-ink"><MoreHorizontal size={14} /></button>
@@ -1137,6 +1150,10 @@ function MoreMenu({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolean;
             <button key={t.key} onClick={() => addFrom(t.key)} disabled={busy} className="w-full text-left px-3 py-1.5 hover:bg-app flex items-center gap-2"><LayoutTemplate size={12} className="text-muted" /> {t.label}</button>
           ))}
           {!tpls.length && <p className="px-3 py-2 text-muted">Loading…</p>}
+          <div className="border-t border-line">
+            <button onClick={() => remove('archive')} disabled={busy} className="w-full text-left px-3 py-2 hover:bg-app flex items-center gap-2"><Archive size={13} className="text-muted" /> Archive project</button>
+            <button onClick={() => remove('delete')} disabled={busy} className="w-full text-left px-3 py-2 hover:bg-rose-50 text-rose-700 flex items-center gap-2"><Trash2 size={13} /> Delete project…</button>
+          </div>
         </div>
       )}
     </div>
