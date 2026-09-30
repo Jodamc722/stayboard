@@ -12,7 +12,7 @@
 //                                 POST { action:'archive', id }
 //                                 GET  ?standard=1 / POST { action:'saveStandard', standard } → the inventory
 //                                   standard (items + per-occupancy rules) that generate() reads (lib/onboarding.ts)
-//   EITHER DOOR               POST { code, action:'order' }  → the buy list (counted < expected, worn, missing)
+//   SIGNED IN, EITHER DOOR    POST { code, action:'order' }  → the buy list (counted < expected, worn, missing)
 //                                   becomes lines on an ffe_orders draft, so it lands on the FF&E Orders board (/ffe → Orders, detail at /ffe/order/<id>)
 //
 // Photos go through /api/onboard/photo (multipart). Nothing here touches Breezeway or Guesty; the
@@ -245,10 +245,20 @@ export async function GET(req: NextRequest) {
     const found = await loadByCode(db, code)
     if (!found) return NextResponse.json({ ok: false, error: 'link not found' }, { status: 404 })
     const needs = await needsFor(found.unit, found.rooms)
-    return NextResponse.json({ ok: true, ...found, progress: progressOf(found.rooms, found.items), needs, check: unitCheck(found.items, needs), buy: buyList(found.items, needs) })
+    // THE LINK IS FOR COUNTING (2026-09-29). Whoever holds it walks the unit; the owner's phone or
+    // email is not theirs to read, so it only comes back to a signed-in member. `member` also tells
+    // the form whether to offer the purchase order, which is a desk decision.
+    const member = await isMember('view')
+    const unit = member ? found.unit : { ...found.unit, owner_contact: null }
+    return NextResponse.json({ ok: true, ...found, unit, member, progress: progressOf(found.rooms, found.items), needs, check: unitCheck(found.items, needs), buy: buyList(found.items, needs) })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
+}
+
+// A signed-in Lighthouse member with the onboarding page at this level. Never throws.
+async function isMember(need: 'view' | 'edit'): Promise<boolean> {
+  try { const g = await requireLevel('onboarding', need); return !!g.ok } catch { return false }
 }
 
 export async function POST(req: NextRequest) {
@@ -329,6 +339,9 @@ export async function POST(req: NextRequest) {
       for (const [k, col, max] of [['name', 'name', 120], ['building', 'building', 120], ['unitNo', 'unit_no', 40], ['address', 'address', 300], ['ownerName', 'owner_name', 120], ['ownerContact', 'owner_contact', 200], ['notes', 'notes', 2000]] as const) {
         if (b[k] !== undefined) patch[col] = str(b[k]).slice(0, max) || null
       }
+      // The link never sees the owner's contact (GET blanks it), so an empty one from the link means
+      // "not shown", not "clear it". Only a member can clear it.
+      if (patch.owner_contact === null && !(await isMember('edit'))) delete patch.owner_contact
       if (patch.name === null) delete patch.name
       await touch(patch)
       const added = await generate(db, unit.id, details)
@@ -449,6 +462,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, updated: u, added: a })
     }
     if (action === 'order') {
+      // Turning the buy list into a purchase order is a desk decision (2026-09-29): a signed-in
+      // member with edit on Onboarding, whichever door they came through.
+      if (!(await isMember('edit'))) return NextResponse.json({ ok: false, error: 'The desk turns this list into a purchase order. Sign in to Lighthouse to do it here.' }, { status: 403 })
       const r = await pushOrder(db, unit, found.rooms, found.items, who)
       if (!r.ok) return NextResponse.json({ ok: false, error: r.error }, { status: 400 })
       await touch()

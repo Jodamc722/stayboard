@@ -49,7 +49,13 @@ export async function GET(req: NextRequest) {
   const db = supabaseAdmin()
   const code = req.nextUrl.searchParams.get('code') || ''
   const roomsFor = req.nextUrl.searchParams.get('roomsFor') || ''
-  if (roomsFor) { const rr = await db.from('listing_rooms').select('*').eq('listing_id', roomsFor).order('sort', { ascending: true }); return NextResponse.json({ ok: true, rooms: rr.data || [] }) }
+  // Room names and cover photos for a listing. Signed-in members only (2026-09-29): it answered
+  // anyone who asked, and no page calls it without a session.
+  if (roomsFor) {
+    if (!(await getUser())) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    const rr = await db.from('listing_rooms').select('*').eq('listing_id', roomsFor).order('sort', { ascending: true })
+    return NextResponse.json({ ok: true, rooms: rr.data || [] })
+  }
   if (code) {
     const audit = await auditByCode(db, code)
     if (!audit) return NextResponse.json({ error: 'Audit link not found.' }, { status: 404 })
@@ -382,7 +388,12 @@ export async function POST(req: NextRequest) {
       if (del.error) return NextResponse.json({ error: del.error.message }, { status: 500 })
       return NextResponse.json({ ok: true })
     }
-    const f = body.fields && typeof body.fields === 'object' ? body.fields : {}
+    const f: any = body.fields && typeof body.fields === 'object' ? { ...body.fields } : {}
+    // MONEY IS NOT THE WALKER'S (2026-09-29). A share code is handed to whoever walks the unit; it
+    // records what is there, what is wrong and what it needs. Pricing a line and deciding who
+    // approves the spend are desk decisions for a signed-in editor (owners decide on their own link,
+    // /api/audit/approve). No walk form sends either, so this only closes the door.
+    if (audit) { delete f.est; delete f.approval; delete f.approvedBy }
     const upd: Record<string, any> = { updated_at: new Date().toISOString() }
     if (KINDS.includes(String(f.kind))) upd.kind = String(f.kind)
     if (f.qty !== undefined && Number.isFinite(Number(f.qty))) upd.qty = Math.max(1, Math.min(99, Number(f.qty)))
