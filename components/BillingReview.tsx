@@ -34,7 +34,9 @@ import { Check, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, Undo2, Exte
 import { isTaskDone } from '@/lib/task-done'
 import { LeanHead, Pill, Tag, LeanTabs, LeanEmpty, IconBtn, Tip, type Tone } from '@/components/lean'
 
-type Flag = 'over_150' | 'no_price' | 'override_far' | 'no_detail' | 'duplicate' | 'long_hours' | 'no_owner' | 'ai_bill' | 'ai_pending' | 'not_done'
+type Flag = 'over_150' | 'no_price' | 'override_far' | 'no_detail' | 'duplicate' | 'long_hours' | 'no_owner' | 'ai_bill' | 'ai_pending' | 'not_done' | 'should_bill' | 'billed_routine'
+type BVerdict = 'bill' | 'likely' | 'maybe' | 'no'
+type Billable = { verdict: BVerdict; category: string; confidence: number; reasons: string[]; history?: { billed: number; total: number } | null; ai?: 'bill' | 'no' | null }
 type State = 'open' | 'ops_approved' | 'gm_approved'
 type Item = { key: string; description: string; amount: number; originalAmount: number | null; bill_to: string | null; kind: string }
 type Task = {
@@ -49,24 +51,32 @@ type Task = {
   flags: Flag[]
   routine: 'unit_check' | 'strip' | null
   aiVerdict: 'no_charge' | 'bill' | null; aiReason: string | null; aiAmount: number | null
+  billable?: Billable
 }
 type Owner = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; open: number; opsApproved: number; gmApproved: number; flagged: number }
-type Payload = { ok: true; month: string; from: string; to: string; me: { email: string; isGm: boolean }; tasks: Task[]; owners: Owner[]; missingDetail: number; aiPending?: number }
+type Payload = { ok: true; month: string; from: string; to: string; me: { email: string; isGm: boolean }; tasks: Task[]; owners: Owner[]; missingDetail: number; aiPending?: number; billableModel?: { stale: boolean; trainedAt: number | null; maybes: number } }
 type Stage = 'ops' | 'gm' | 'done' | 'all'
 
 const FLAG_LABEL: Record<Flag, string> = {
   over_150: 'over $150', no_price: 'no price', override_far: 'override far from computed',
   no_detail: 'detail not pulled', duplicate: 'possible duplicate', long_hours: 'long hours', no_owner: 'no owner',
   not_done: 'not finished in Breezeway',
+  should_bill: 'The billable model says this should bill the owner — finished and still $0',
+  billed_routine: 'Carries money, but the billable model says it is routine (departure clean, check, common area)',
   ai_bill: 'AI: real work — price it', ai_pending: 'AI check pending',
 }
 // LEAN PASS (2026-09-22): the row shows the short word, the hover says the full reason.
 const FLAG_SHORT: Record<Flag, string> = {
   over_150: 'Over $150', no_price: 'No price', override_far: 'Override off', no_detail: 'No detail',
   duplicate: 'Duplicate?', long_hours: 'Long hours', no_owner: 'No owner', not_done: 'Not finished',
+  should_bill: 'Should bill', billed_routine: 'Billed routine?',
   ai_bill: 'AI: bill it', ai_pending: 'AI pending',
 }
-const FLAG_TONE = (f: Flag): Tone => f === 'over_150' ? 'amber' : f === 'ai_bill' ? 'brand' : f === 'ai_pending' ? 'slate' : 'rose'
+const FLAG_TONE = (f: Flag): Tone => f === 'over_150' ? 'amber' : f === 'ai_bill' || f === 'should_bill' ? 'brand' : f === 'ai_pending' ? 'slate' : f === 'billed_routine' ? 'amber' : 'rose'
+// The billable model's read, as one small chip per row.
+const CAT_LABEL: Record<string, string> = { repair: 'Repair', pm: 'PM', pest: 'Pest', extra_clean: 'Extra clean', owner_item: 'Owner item', guest_fix: 'Guest fix', departure_clean: 'Departure', routine: 'Routine', inspection: 'Inspection', building: 'Common area', our_fault: 'Re-clean', other: 'Other' }
+const VERDICT_TONE: Record<BVerdict, Tone> = { bill: 'emerald', likely: 'sky', maybe: 'slate', no: 'slate' }
+const VERDICT_WORD: Record<BVerdict, string> = { bill: 'billable', likely: 'likely billable', maybe: 'maybe', no: 'not billable' }
 const STAGE_OF: Record<Stage, (t: Task) => boolean> = {
   ops: t => t.reviewState === 'open',
   gm: t => t.reviewState === 'ops_approved',
@@ -86,14 +96,18 @@ function recompute(t: Task): Task {
   const itemsTotal = t.items.reduce((s, x) => s + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0)
   const computed = Math.round((t.laborAmount + itemsTotal) * 100) / 100
   const billed = t.excluded ? 0 : (t.overrideAmount != null ? t.overrideAmount : computed)
-  const flags: Flag[] = t.flags.filter(f => f !== 'over_150' && f !== 'override_far' && f !== 'no_price' && !((f === 'ai_bill' || f === 'ai_pending') && (t.overrideAmount != null || t.excluded)))
+  const flags: Flag[] = t.flags.filter(f => f !== 'over_150' && f !== 'override_far' && f !== 'no_price' && f !== 'should_bill' && f !== 'billed_routine' && !((f === 'ai_bill' || f === 'ai_pending') && (t.overrideAmount != null || t.excluded)))
   if (billed > 150) flags.push('over_150')
   if (t.overrideAmount != null) {
     const gap = Math.abs(t.overrideAmount - computed)
     if (computed > 0 ? (gap / computed > 0.5 || gap > 50) : t.overrideAmount > 50) flags.push('override_far')
   }
   const finished = isTaskDone(t.status, t.finishedAt)
-  if (finished && !t.excluded && billed === 0 && t.overrideAmount == null && !/(departur|turnover|check-?out)[\s\-_/]*clean/i.test(t.name)) flags.push('no_price')
+  const bv = t.billable?.verdict
+  const unpriced = finished && !t.excluded && billed === 0 && t.overrideAmount == null && t.reviewState !== 'gm_approved'
+  if (unpriced && (bv === 'bill' || bv === 'likely')) flags.push('should_bill')
+  else if (unpriced && (!bv || bv === 'maybe') && !t.routine && !/(departur|turnover|check-?out)[\s\-_/]*clean/i.test(t.name)) flags.push('no_price')
+  if (billed > 0 && bv === 'no' && t.overrideAmount == null) flags.push('billed_routine')
   return { ...t, billedAmount: billed, flags }
 }
 
@@ -124,6 +138,7 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, o
               {t.doer || 'no one assigned'} · {short(t.scheduledDate || t.finishedAt)}
               {t.actualMinutes ? ' · ' + (t.actualMinutes / 60).toFixed(1) + 'h' : ''}
             </span>
+            {t.billable ? <Tag tone={VERDICT_TONE[t.billable.verdict]} title={VERDICT_WORD[t.billable.verdict] + ' (' + Math.round(t.billable.confidence * 100) + '%) — ' + t.billable.reasons.join(' · ')}>{CAT_LABEL[t.billable.category] || t.billable.category}{t.billable.verdict === 'bill' ? ' · bill' : t.billable.verdict === 'likely' ? ' · likely' : t.billable.verdict === 'no' ? ' · no' : ' · ?'}</Tag> : null}
             {t.flags.map(f => (
               <Tag key={f} tone={FLAG_TONE(f)}
                 title={f === 'ai_bill' && t.aiReason ? t.aiReason + (t.aiAmount != null ? ' — suggests ' + money(t.aiAmount) : '') : FLAG_LABEL[f]}>{FLAG_SHORT[f]}</Tag>
@@ -187,6 +202,7 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, o
               ))}
               {!t.hasDetail ? <li className="text-amber-800 text-[11.5px] flex items-center gap-1"><AlertTriangle size={11} /> Detail not pulled yet — cost lines may be missing.</li> : null}
             </ul>
+            {t.billable ? <p className="text-[11.5px] text-ink/80 mt-2"><b>Billable model:</b> {VERDICT_WORD[t.billable.verdict]} · {CAT_LABEL[t.billable.category] || t.billable.category} · {Math.round(t.billable.confidence * 100)}% — {t.billable.reasons.join(' · ')}</p> : null}
             {t.aiVerdict === 'bill' && t.aiReason ? <p className="text-[11.5px] text-brand-800 mt-2">AI: {t.aiReason}{t.aiAmount != null ? ' — suggests ' + money(t.aiAmount) : ''}</p> : null}
             {t.description ? <p className="text-[11.5px] text-muted mt-2 whitespace-pre-wrap">{t.description}</p> : null}
             {t.reportUrl ? <a href={t.reportUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand-700 mt-2"><ExternalLink size={11} /> Open in Breezeway</a> : null}
@@ -241,6 +257,9 @@ export function BillingReview() {
   const [building, setBuilding] = useState('')
   const [person, setPerson] = useState('')
   const [minAmt, setMinAmt] = useState('')
+  const [bFilter, setBFilter] = useState<'' | 'should' | 'bill' | 'maybe' | 'no'>('')
+  const trained = useRef(false)
+  const judged = useRef<Set<string>>(new Set())
   const urlRead = useRef(false)
   useEffect(() => {
     if (urlRead.current) return
@@ -254,6 +273,7 @@ export function BillingReview() {
     if (sp.get('building')) setBuilding(sp.get('building')!)
     if (sp.get('person')) setPerson(sp.get('person')!)
     if (sp.get('min')) setMinAmt(sp.get('min')!)
+    const bf = sp.get('bill'); if (bf === 'should' || bf === 'bill' || bf === 'maybe' || bf === 'no') setBFilter(bf)
   }, [])
   const [openId, setOpenId] = useState<string>('')
   const [busy, setBusy] = useState<Set<string>>(new Set())
@@ -283,6 +303,11 @@ export function BillingReview() {
           .then(r => r.json()).catch(() => null)
           .then(res => { setAiBusy(0); if (res && res.ok && res.judged > 0 && my === seq.current) loadRef.current(m, rg) })
       }
+      // The billable model: retrain once a day, then let the AI read the MAYBEs with a description.
+      const bm = j.billableModel
+      const post = (b: any) => fetch('/api/billing/billable', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(r => r.json()).catch(() => null)
+      if (bm?.stale && !trained.current) { trained.current = true; post({ op: 'train' }).then(res => { if (res?.ok && my === seq.current) loadRef.current(m, rg) }) }
+      else if (bm && bm.maybes > 0 && !judged.current.has(j.from + j.to)) { judged.current.add(j.from + j.to); post({ op: 'judge', from: j.from, to: j.to }).then(res => { if (res?.ok && res.judged > 0 && my === seq.current) loadRef.current(m, rg) }) }
     } catch (e: any) { if (my === seq.current) setErr(String(e?.message || e)) }
     if (my === seq.current) setLoading(false)
   }, [])
@@ -295,9 +320,9 @@ export function BillingReview() {
     const set = (k: string, v: string | null) => { if (v) url.searchParams.set(k, v); else url.searchParams.delete(k) }
     set('month', range ? null : month); set('from', range?.from || null); set('to', range?.to || null)
     set('billable', billOnly ? '1' : null); set('dept', depts.length ? depts.join(',') : null)
-    set('building', building || null); set('person', person || null); set('min', minAmt || null)
+    set('building', building || null); set('person', person || null); set('min', minAmt || null); set('bill', bFilter || null)
     window.history.replaceState(null, '', url.toString())
-  }, [month, range, billOnly, depts, building, person, minAmt])
+  }, [month, range, billOnly, depts, building, person, minAmt, bFilter])
 
   const tasks = data?.tasks || []
   const byId = useMemo(() => { const m = new Map<string, Task>(); for (const t of tasks) m.set(t.id, t); return m }, [tasks])
@@ -318,20 +343,21 @@ export function BillingReview() {
     return tasks.filter(t => viewIds.has(t.id))
       .filter(t => !flaggedOnly || t.flags.length)
       .filter(t => !billOnly || t.billedAmount > 0)
+      .filter(t => !bFilter || (bFilter === 'should' ? t.flags.includes('should_bill') : bFilter === 'bill' ? (t.billable?.verdict === 'bill' || t.billable?.verdict === 'likely') : t.billable?.verdict === bFilter))
       .filter(t => min == null || !Number.isFinite(min) || t.billedAmount >= min)
       .filter(t => !depts.length || depts.includes(t.department))
       .filter(t => !building || (t.building || '—') === building)
       .filter(t => !person || (t.doer || '—') === person)
       .filter(t => !needle || (t.unit + ' ' + t.name + ' ' + (t.doer || '') + ' ' + t.ownerName).toLowerCase().includes(needle))
-  }, [tasks, viewIds, q, flaggedOnly, billOnly, minAmt, depts, building, person])
+  }, [tasks, viewIds, q, flaggedOnly, billOnly, minAmt, depts, building, person, bFilter])
   // The choices each filter offers — what this window actually holds, with counts.
   const facets = useMemo(() => {
     const count = (f: (t: Task) => string) => { const m = new Map<string, number>(); for (const t of tasks) { const k = f(t); m.set(k, (m.get(k) || 0) + 1) } return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0])) }
     return { depts: count(t => t.department), buildings: count(t => t.building || '—'), people: count(t => t.doer || '—') }
   }, [tasks])
-  const filtersOn = billOnly || !!depts.length || !!building || !!person || minAmt.trim() !== '' || flaggedOnly || !!q.trim()
+  const filtersOn = !!bFilter || billOnly || !!depts.length || !!building || !!person || minAmt.trim() !== '' || flaggedOnly || !!q.trim()
   const shownTotal = useMemo(() => visible.reduce((a, t) => a + t.billedAmount, 0), [visible])
-  const clearFilters = () => { setBillOnly(false); setDepts([]); setBuilding(''); setPerson(''); setMinAmt(''); setFlaggedOnly(false); setQ('') }
+  const clearFilters = () => { setBFilter(''); setBillOnly(false); setDepts([]); setBuilding(''); setPerson(''); setMinAmt(''); setFlaggedOnly(false); setQ('') }
 
   // Owners in server order (name), rows inside sorted: flagged first, then biggest.
   const groups = useMemo(() => {
@@ -344,7 +370,7 @@ export function BillingReview() {
   // Whole-window numbers for the strip — never the filtered view's.
   const kpi = useMemo(() => {
     const sum = (f: (t: Task) => boolean) => tasks.filter(f).reduce((a, t) => ({ n: a.n + 1, $: a.$ + t.billedAmount }), { n: 0, $: 0 })
-    return { open: sum(t => t.reviewState === 'open'), gm: sum(t => t.reviewState === 'ops_approved'), done: sum(t => t.reviewState === 'gm_approved'), flagged: sum(t => t.flags.length > 0 && t.reviewState !== 'gm_approved') }
+    return { should: sum(t => t.flags.includes('should_bill')), open: sum(t => t.reviewState === 'open'), gm: sum(t => t.reviewState === 'ops_approved'), done: sum(t => t.reviewState === 'gm_approved'), flagged: sum(t => t.flags.length > 0 && t.reviewState !== 'gm_approved') }
   }, [tasks])
 
   // ── actions: merge, never reload ────────────────────────────────────────────────────────────
@@ -421,6 +447,7 @@ export function BillingReview() {
         <Pill title={'Open — ops to review · ' + kpi.open.n + ' task' + (kpi.open.n === 1 ? '' : 's')}>{money(kpi.open.$)} open</Pill>
         <Pill tone="brand" title={'Ops approved — waiting on final (GM) review · ' + kpi.gm.n + ' task' + (kpi.gm.n === 1 ? '' : 's')}>{money(kpi.gm.$)} final</Pill>
         <Pill tone="emerald" title={'Final approved — statement-ready · ' + kpi.done.n + ' task' + (kpi.done.n === 1 ? '' : 's')}>{money(kpi.done.$)} approved</Pill>
+        {kpi.should.n ? <Pill tone="brand" onClick={() => { setBFilter('should'); setStage('all'); resnapshot() }} title="The billable model says these should bill the owner and they are still $0 — click to see them">{kpi.should.n} should bill</Pill> : null}
         {kpi.flagged.n ? <Pill tone="amber" title={'Flagged and not final-approved: ' + money(kpi.flagged.$) + '. Amber edge on a row = over $150. A flag never blocks approval.'}>{kpi.flagged.n} flagged</Pill> : null}
         {data.missingDetail ? <Pill tone="amber" title="Tasks in this month that never had billing detail pulled — their cost lines may be missing. The nightly pull catches up on its own.">{data.missingDetail} no detail</Pill> : null}
       </LeanHead>
@@ -467,6 +494,13 @@ export function BillingReview() {
       <div className="flex items-center gap-1.5 flex-wrap">
         <button onClick={() => setBillOnly(v => !v)} title="Only rows that bill the owner something" className={'h-8 px-2.5 rounded-lg border text-[12px] font-semibold ' + (billOnly ? 'bg-brand-600 text-white border-brand-600' : 'bg-white border-line text-muted hover:text-ink')}>Billable &gt; $0</button>
         <label className="h-8 inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 text-[12px] text-muted" title="Only rows billing at least this much">min $<input value={minAmt} onChange={e => setMinAmt(e.target.value)} inputMode="decimal" placeholder="0" className="w-14 bg-transparent outline-none text-ink tabular-nums" /></label>
+        <select value={bFilter} onChange={e => setBFilter(e.target.value as any)} className={sel} title="The billable model's read">
+          <option value="">Billable? — all</option>
+          <option value="should">Should bill (still $0)</option>
+          <option value="bill">Billable / likely</option>
+          <option value="maybe">Maybe — needs a look</option>
+          <option value="no">Not billable</option>
+        </select>
         <select value={building} onChange={e => setBuilding(e.target.value)} className={sel} title="Building">
           <option value="">All buildings</option>
           {facets.buildings.map(([b, n]) => <option key={b} value={b}>{b} ({n})</option>)}

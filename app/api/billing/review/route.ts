@@ -16,6 +16,7 @@
 // signature — admin role only — because it is what lands on an owner's statement.
 import { NextRequest, NextResponse } from 'next/server'
 import { pendingRoutine } from '@/lib/billing-ai'
+import { loadModel, modelStale } from '@/lib/billable-model'
 import { requireLevel } from '@/lib/access'
 import { atLeast } from '@/lib/features'
 import { billingRange, monthRange, type BillingTask, type ReviewState } from '@/lib/billing'
@@ -41,6 +42,7 @@ function slim(t: BillingTask) {
     reviewState: t.reviewState, opsBy: t.opsBy, opsAt: t.opsAt, gmBy: t.gmBy, gmAt: t.gmAt,
     flags: t.flags,
     routine: t.routine, aiVerdict: t.aiVerdict, aiReason: t.aiReason, aiAmount: t.aiAmount,
+    billable: t.billable,
   }
 }
 
@@ -72,6 +74,9 @@ export async function GET(req: NextRequest) {
       // Routine tasks (unit check / strip) with a real description the model has not judged yet.
       // The desk kicks off POST /api/billing/ai-check when this is > 0.
       aiPending: pendingRoutine(data.tasks).length,
+      // The billable model (lib/billable-model): stale → the desk asks it to retrain; MAYBEs with a
+      // real description the model has not read → the desk asks it to judge them.
+      billableModel: await (async () => { const m = await loadModel(); return { stale: modelStale(m), trainedAt: m.at || null, maybes: data.tasks.filter(t => t.billable.verdict === 'maybe' && !t.billable.ai && String(t.description || '').trim().length > 15 && t.reviewState !== 'gm_approved').length } })(),
     })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })

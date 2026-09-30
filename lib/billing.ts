@@ -17,6 +17,7 @@ import { supabaseAdmin } from './supabase-admin'
 import { isDepartureCleanName } from './breezeway'
 import { getEmployeeNames, nameMatchesRoster } from './homebase'
 import { getSetting, setSetting, getOpsPresets } from './app-settings'
+import { classify, loadModel, type Billable } from './billable-model'
 
 // key identifies a line item across pulls ('cost:<breezewayId>' / 'supply:<id>' / 'extra:<idx>').
 // originalAmount is set when OUR override replaced the Breezeway amount (the override wins in
@@ -68,6 +69,8 @@ export type BillingTask = {
   reportUrl: string | null
   /** What looks off about this task. Empty means nothing tripped. */
   flags: BillingFlag[]
+  /** The billable model's read (lib/billable-model): should this bill the owner, and why. */
+  billable: Billable
 }
 
 export type ReviewState = 'open' | 'ops_approved' | 'gm_approved'
@@ -113,12 +116,15 @@ export type BillingFlag =
   | 'ai_bill'         // unit check the model says involved real work — reason + suggested amount attached
   | 'ai_pending'      // unit check with a real description that the model has not judged yet
   | 'not_done'        // hours or a rate on a task Breezeway does not call finished — held at $0
+  | 'should_bill'     // the billable model says bill / likely, it is finished, and it is still $0
+  | 'billed_routine'  // carries money, but the billable model says it is routine (departure clean, check, common area)
 
 export const FLAG_LABEL: Record<BillingFlag, string> = {
   over_150: 'over $150', no_price: 'no price', override_far: 'override far from computed',
   no_detail: 'detail not pulled', duplicate: 'possible duplicate', long_hours: 'long hours', no_owner: 'no owner',
   ai_bill: 'AI: real work — price it', ai_pending: 'AI check pending',
   not_done: 'not finished in Breezeway',
+  should_bill: 'should bill — still $0', billed_routine: 'billed, but looks routine',
 }
 export const OVER_LINE_USD = 150
 
@@ -565,6 +571,7 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
       billedAmount: billed,
       reportUrl: t.report_url ? String(t.report_url) : null,
       flags: [],
+      billable: null as any,
     }
   })
 
@@ -575,11 +582,24 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
     const k = (t.listingId || t.unit) + '|' + (t.scheduledDate || (t.finishedAt || '').slice(0, 10)) + '|' + t.name.trim().toLowerCase()
     seenKey[k] = (seenKey[k] || 0) + 1
   }
+  // THE BILLABLE MODEL (lib/billable-model): Jon's rule, what we billed before, and the model's read.
+  let bModel: any = null
+  try { bModel = await loadModel() } catch { /* rules alone */ }
+  for (const t of tasks) {
+    t.billable = classify({
+      id: t.id, department: t.department, name: t.name, description: t.description, actualMinutes: t.actualMinutes,
+      laborAmount: t.laborAmount, itemsOwner: t.items.reduce((s2, x) => s2 + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0),
+      routine: t.routine, isDeparture: isDepartureCleanName(t.name), aiVerdict: t.aiVerdict,
+    }, bModel)
+  }
   for (const t of tasks) {
     const f: BillingFlag[] = []
     const finished = isTaskDone(t.status, t.finishedAt)
     if (t.billedAmount > OVER_LINE_USD) f.push('over_150')
-    if (finished && !t.excluded && t.billedAmount === 0 && t.overrideAmount == null && !isDepartureCleanName(t.name) && !t.routine) f.push('no_price')
+    const unpriced = finished && !t.excluded && t.billedAmount === 0 && t.overrideAmount == null && t.reviewState !== 'gm_approved'
+    if (unpriced && (t.billable.verdict === 'bill' || t.billable.verdict === 'likely')) f.push('should_bill')
+    else if (unpriced && t.billable.verdict === 'maybe' && !isDepartureCleanName(t.name) && !t.routine) f.push('no_price')
+    if (t.billedAmount > 0 && t.billable.verdict === 'no' && t.overrideAmount == null) f.push('billed_routine')
     if (t.routine && t.reviewState === 'open' && t.overrideAmount == null && !t.excluded) {
       if (t.aiVerdict === 'bill') f.push('ai_bill')
       else if (!t.aiVerdict && t.billedAmount === 0 && !isBareRoutine(t.name, t.description)) f.push('ai_pending')
