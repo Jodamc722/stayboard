@@ -732,6 +732,22 @@ export async function flushDeferred(by = 'cron:flush'): Promise<{ ran: number; f
 export type StepResult = { mode: Mode; ok: boolean; ref?: string | null; error?: string; done?: string; logId?: string | null; undo?: any }
 
 export async function stepDown(verdict: AgentVerdict, p: Proposal, act?: () => Promise<{ ok: boolean; ref?: string | null; error?: string }>): Promise<StepResult> {
+  // SAID ONCE, WHOEVER NOTICED (2026-09-30 audit). Every Slack post from every desk — loop nudges,
+  // on-watch flags, digests, no-show alerts, the handoff — passes the one registry (lib/eve/said.ts)
+  // before it goes out, is proposed, or is held for quiet hours. The same words in the same thread
+  // within a week, or the same subject in the same room within six hours, is not posted again; the
+  // decision is logged as observe with the reason so the Thinking tab shows what was held back.
+  if (p.action === 'slack_post' && verdict.mode !== 'observe' && p.exec && (p.exec.channel || p.exec.channel_id)) {
+    try {
+      const { alreadySaid } = await import('./said')
+      const ch = String(p.exec.channel || p.exec.channel_id || '')
+      const dup = await alreadySaid({ channel: ch, threadTs: p.exec.thread_ts || null, text: String(p.exec.text || p.summary || ''), subject: p.subject || null })
+      if (dup.dup) {
+        const logId = await recordAgentAction(p.action, { rung: verdict.rung, allowed: false, mode: 'observe', reason: `already said — ${dup.why}`, summary: p.summary, by: p.by, actor: p.actor, usd: p.usd, countAs: 'none' })
+        return { mode: 'observe', ok: true, ref: null, logId, error: undefined }
+      }
+    } catch { /* the registry never blocks a post */ }
+  }
   if (verdict.mode === 'act') {
     let r: ExecResult
     if (act) {
@@ -741,6 +757,9 @@ export async function stepDown(verdict: AgentVerdict, p: Proposal, act?: () => P
     }
     const logId = await recordAgentAction(p.action, { rung: verdict.rung, allowed: r.ok, mode: 'act', reason: r.ok ? verdict.reason : `act failed: ${r.error || 'unknown'}`, summary: r.ok && r.done ? r.done : p.summary, ref: r.ref || null, by: p.by, actor: p.actor, usd: p.usd, countAs: r.ok ? 'action' : 'none', undo: r.undo || undefined })
     if (r.ok) await afterAct(p.action, r, { by: p.by, actor: p.actor, watchKey: p.watchKey, subject: p.subject, summary: p.summary, metric: p.metric })
+    if (r.ok && act && p.action === 'slack_post' && p.exec && (p.exec.channel || p.exec.channel_id)) {   // runExec's own executor records itself
+      try { const { markSaid } = await import('./said'); await markSaid({ channel: String(p.exec.channel || p.exec.channel_id), threadTs: p.exec.thread_ts || null, text: String(p.exec.text || p.summary || ''), subject: p.subject || null, by: p.by, ts: r.ref || null }) } catch { /* best effort */ }
+    }
     return { mode: 'act', ok: r.ok, ref: r.ref, error: r.error, done: r.done, logId, undo: r.undo || null }
   }
   if (verdict.mode === 'deferred') {

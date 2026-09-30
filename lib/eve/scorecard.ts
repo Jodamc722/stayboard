@@ -31,6 +31,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { recordRun } from '@/lib/automation-runs'
 import { pageRows } from '@/lib/db-page'
+import { DESKS, deskForSource, deskForReceipt, deskForAiTask, type DeskKey } from './desks'
 
 export const MANUAL_KEY = 'eve_scorecard_manual'
 export type Manual = {
@@ -56,6 +57,8 @@ export type Scorecard = {
   ok: true; at: string; days: number; from: string; to: string
   ets: number; band: string
   dims: Record<DimKey, { score: number; weight: number; evidence: string; source: 'computed' | 'sample' | 'mixed' }>
+  /** One lane per desk (lib/eve/desks.ts): what each worker did, spent and how reliably it ran. */
+  desks: Record<DeskKey, { label: string; lane: string; decisions: number; acts: number; heldBack: number; runs: number; runsOk: number; aiUsd: number }>
   inputs: {
     decisions: number; acts: number; substantiveActs: number; proposed: number
     nudges: number; nudgesClosed24h: number
@@ -88,7 +91,7 @@ export async function computeScorecard(days = 7): Promise<Scorecard> {
   const sinceIso = since.toISOString()
 
   // ── autonomy: the agent log ──
-  const { rows: log } = await pageRows((a, b) => db.from('eve_agent_log').select('action,mode').gte('at', sinceIso).order('at', { ascending: true }).order('id', { ascending: true }).range(a, b), 20).catch(() => ({ rows: [] as any[] }))
+  const { rows: log } = await pageRows((a, b) => db.from('eve_agent_log').select('action,mode,by,reason').gte('at', sinceIso).order('at', { ascending: true }).order('id', { ascending: true }).range(a, b), 20).catch(() => ({ rows: [] as any[] }))
   const decisions = log.length
   const acts = log.filter((r: any) => r.mode === 'act').length
   const substantiveActs = log.filter((r: any) => r.mode === 'act' && r.action !== 'slack_post').length
@@ -110,7 +113,8 @@ export async function computeScorecard(days = 7): Promise<Scorecard> {
   const learning = clamp(0.7 * (learningScore ?? 50) + 0.3 * Math.min(100, (corrections / 3) * 100))
 
   // ── reliability: receipts ──
-  const { rows: runs } = await pageRows((a, b) => db.from('automation_runs').select('name,ok,ms,error').in('name', ['slack-eve', 'slack-translate']).gte('ran_at', sinceIso).order('ran_at', { ascending: true }).order('id', { ascending: true }).range(a, b), 20).catch(() => ({ rows: [] as any[] }))
+  const { rows: allRuns } = await pageRows((a, b) => db.from('automation_runs').select('name,ok,ms,error').gte('ran_at', sinceIso).order('ran_at', { ascending: true }).order('id', { ascending: true }).range(a, b), 40).catch(() => ({ rows: [] as any[] }))
+  const runs = allRuns.filter((r: any) => r.name === 'slack-eve' || r.name === 'slack-translate')
   const ans = runs.filter((r: any) => r.name === 'slack-eve'), tr = runs.filter((r: any) => r.name === 'slack-translate')
   const answers = ans.length, answersOk = ans.filter((r: any) => r.ok).length
   const translates = tr.length, translateFallbacks = tr.filter((r: any) => !r.ok || /fallback|failed twice/i.test(String(r.error || ''))).length
@@ -125,8 +129,15 @@ export async function computeScorecard(days = 7): Promise<Scorecard> {
   // and the rest of the app's AI are not her spend.
   let budgetPerDay = 5, eveTasks: string[] = []
   try { const am = await import('./agent-mode'); budgetPerDay = Number((await am.getAgentSettings()).budgets?.aiUsdPerDay) || 5; eveTasks = Array.isArray(am.EVE_AI_TASKS) ? am.EVE_AI_TASKS : [] } catch { /* default */ }
-  const { rows: usage } = await pageRows((a, b) => { let q = db.from('ai_usage').select('cost_usd').gte('at', sinceIso); if (eveTasks.length) q = q.in('task', eveTasks); return q.order('at', { ascending: true }).order('id', { ascending: true }).range(a, b) }, 20).catch(() => ({ rows: [] as any[] }))
+  const { rows: usage } = await pageRows((a, b) => { let q = db.from('ai_usage').select('cost_usd,task').gte('at', sinceIso); if (eveTasks.length) q = q.in('task', eveTasks); return q.order('at', { ascending: true }).order('id', { ascending: true }).range(a, b) }, 20).catch(() => ({ rows: [] as any[] }))
   const aiUsd = usage.reduce((s: number, r: any) => s + (Number(r.cost_usd) || 0), 0)
+
+  // ── the desks: one lane each ──
+  const desks = Object.fromEntries(DESKS.map(d => [d.key, { label: d.label, lane: d.lane, decisions: 0, acts: 0, heldBack: 0, runs: 0, runsOk: 0, aiUsd: 0 }])) as Scorecard['desks']
+  for (const r of log as any[]) { const k = deskForSource(r.by); const d = desks[k]; d.decisions++; if (r.mode === 'act') d.acts++; if (/^already said/i.test(String(r.reason || ''))) d.heldBack++ }
+  for (const r of allRuns as any[]) { const k = deskForReceipt(r.name); if (!k) continue; desks[k].runs++; if (r.ok) desks[k].runsOk++ }
+  for (const r of usage as any[]) { const k = deskForAiTask(r.task); if (k) desks[k].aiUsd += Number(r.cost_usd) || 0 }
+  for (const k of Object.keys(desks) as DeskKey[]) desks[k].aiUsd = Math.round(desks[k].aiUsd * 100) / 100
   const aiUsdPerDay = aiUsd / Math.max(1, days)
   const cost = clamp(aiUsdPerDay <= 0.8 * budgetPerDay ? 100 : 100 - ((aiUsdPerDay / budgetPerDay) - 0.8) * 250)
 
@@ -151,7 +162,7 @@ export async function computeScorecard(days = 7): Promise<Scorecard> {
   }
   const ets = clamp(Object.values(dims).reduce((s, d) => s + d.score * d.weight, 0) / 100)
   return {
-    ok: true, at: now.toISOString(), days, from: ymd(since), to: ymd(now), ets, band: band(ets), dims,
+    ok: true, at: now.toISOString(), days, from: ymd(since), to: ymd(now), ets, band: band(ets), dims, desks,
     inputs: { decisions, acts, substantiveActs, proposed, nudges, nudgesClosed24h, corrections, learningScore, learningAt, answers, answersOk, translates, translateFallbacks, p95Ms, aiUsd: Math.round(aiUsd * 100) / 100, aiUsdPerDay: Math.round(aiUsdPerDay * 100) / 100, budgetPerDay, sample, sampleStale },
   }
 }
@@ -160,7 +171,7 @@ export async function computeScorecard(days = 7): Promise<Scorecard> {
 export async function runScorecard(days = 7, by = 'cron'): Promise<Scorecard> {
   const t0 = Date.now()
   const sc = await computeScorecard(days)
-  await recordRun({ name: 'eve-scorecard', ok: true, itemCount: sc.ets, ms: Date.now() - t0, detail: { by, days, ets: sc.ets, band: sc.band, dims: Object.fromEntries(Object.entries(sc.dims).map(([k, v]) => [k, v.score])), inputs: sc.inputs } })
+  await recordRun({ name: 'eve-scorecard', ok: true, itemCount: sc.ets, ms: Date.now() - t0, detail: { by, days, ets: sc.ets, band: sc.band, dims: Object.fromEntries(Object.entries(sc.dims).map(([k, v]) => [k, v.score])), desks: sc.desks, inputs: sc.inputs } })
   return sc
 }
 

@@ -198,6 +198,28 @@ async function say(channel: string, threadTs: string, text: string, opts?: { raw
   // person's own words repeated in the room they chose, so it goes as written (`raw`).
   let out = text
   if (!opts || !opts.raw) { try { const { scrubStoredText } = await import('@/lib/eve/redact'); out = scrubStoredText(text, [], undefined, { room: true }) } catch { out = text } }
+  // SAID ONCE (2026-09-30 audit): the same answer or translation in the same thread twice (a Slack retry
+  // that outlived the claim, two instances answering one tag) is dropped here — the registry that every
+  // desk shares (lib/eve/said.ts). The check is by the post's own words within the thread; a genuine
+  // second question gets a different answer and passes.
+  try {
+    const { alreadySaid, markSaid } = await import('@/lib/eve/said')
+    const dup = await alreadySaid({ channel, threadTs, text: out })
+    if (dup.dup) { console.warn('[slack-events] not posting twice:', dup.why); return { ok: true, ts: undefined } }
+    const body = { channel, thread_ts: threadTs, text: out, unfurl_links: false, unfurl_media: false }
+    let r = await slackApi('chat.postMessage', body)
+    if (r && r.ok === false && r.error === 'ratelimited') {
+      await new Promise(res => setTimeout(res, Math.min(10_000, 1000 * (Number(r.retry_after) || 3))))
+      r = await slackApi('chat.postMessage', body)
+    }
+    if (r && r.ok) { markSaid({ channel, threadTs, text: out, by: opts && opts.raw ? 'translate' : 'slack', ts: r.ts ? String(r.ts) : null }).catch(() => {}); return { ok: true, ts: r.ts ? String(r.ts) : undefined } }
+    const error = String((r && r.error) || 'unknown')
+    console.error('[slack-events] post failed', error, channel)
+    return { ok: false, error }
+  } catch (e: any) {
+    // The registry or Slack threw before a post: fall through to the plain post below.
+    console.error('[slack-events] post path threw, posting plainly', String(e?.message || e).slice(0, 200))
+  }
   const body = { channel, thread_ts: threadTs, text: out, unfurl_links: false, unfurl_media: false }
   try {
     let r = await slackApi('chat.postMessage', body)

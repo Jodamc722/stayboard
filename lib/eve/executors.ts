@@ -402,6 +402,9 @@ const slack_post: Executor = async (p) => {
   const { postToChannel, postThreadReply } = await import('@/lib/slack')
   const r = p.thread_ts ? await postThreadReply(str(p.channel), str(p.thread_ts), str(p.text)) : await postToChannel(str(p.channel), str(p.text))
   if (!r.ok) return { ok: false, summary: 'Slack refused it', error: str(r.error || 'Slack refused it') }
+  // The registry of what has been said (lib/eve/said.ts) — a proposal approved later or a deferred post
+  // flushed after quiet hours lands here, not through stepDown's act branch, so it is recorded here too.
+  try { const { markSaid } = await import('./said'); await markSaid({ channel: str(p.channel), threadTs: p.thread_ts ? str(p.thread_ts) : null, text: str(p.text), subject: p.subject ? str(p.subject) : null, by: 'executor', ts: r.ts || null }) } catch { /* best effort */ }
   return { ok: true, ref: r.ts || null, summary: `posted in ${p.channel_name || p.channel}`, done: `posted in ${p.channel_name || p.channel}`, undo: r.ts ? { kind: 'slack_delete', channel: str(r.channel || p.channel), ts: str(r.ts) } : null }
 }
 
