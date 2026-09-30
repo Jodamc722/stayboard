@@ -10,61 +10,62 @@
 //      the workspace. The owner (jon@stay-hospitality.com) always has every page.
 export type Feature = { key: string; label: string; path: string; group: string }
 
-// Group titles for the /users → Roles grid (mirrors the sidebar). Every feature MUST name one of
-// these groups — anything else lands in an auto-generated "New tabs" bucket in the grid, so a tab
+// Group titles for the /users → Roles grid: the DESKS (lib/desks.ts), in sidebar order. Every
+// feature's group is the label of the desk that owns its path (lib/__tests__/desks.test.mjs checks
+// it), and every feature MUST name one of these groups — anything else lands in an auto-generated "New tabs" bucket in the grid, so a tab
 // can never silently miss the permission editor again.
-export const GROUP_ORDER = ['Overview', 'Guests', 'Operations', 'Portfolio', 'Money', 'Team', 'Settings', 'Admin', 'Garden Hotel']
+export const GROUP_ORDER = ['Today', 'Operations', 'Guest Experience', 'Reviews', 'Listings', 'Owners', 'Team', 'KPIs', 'Admin', 'Garden Hotel']
 
 export const FEATURES: Feature[] = [
-  { key: 'command',       label: 'Command Center',    path: '/command', group: 'Overview' },
+  { key: 'command',       label: 'Command Center',    path: '/command', group: 'Today' },
   // Open loops (Jon, 2026-09-28): the page behind Eve's 'Keeping tabs' — guest asks, problems,
   // promises, unanswered questions, decisions — with Done / Not a loop. Replaces the long roll-up.
-  { key: 'loops',         label: 'Open loops (Eve tab)', path: '/loops', group: 'Overview' },
+  { key: 'loops',         label: 'Open loops (Eve tab)', path: '/loops', group: 'Today' },
   // Moved off '/' 2026-08-24 (Jon: "home page is a bust"). The KEY stays `home` on purpose — it is
   // what per-role permissions are stored against, so renaming it would silently reset everyone's
   // access to this page. Only the path, label and group moved.
-  { key: 'home',          label: 'KPI board',         path: '/kpi', group: 'Money' },
+  { key: 'home',          label: 'KPI board',         path: '/kpi', group: 'KPIs' },
   // Eve (2026-08-19, Jon): "Eve should only be for Admin and up users." Registering her as a real
   // feature key replaces the hardcoded jon@-only check that used to live in /api/agent, so she is
   // owner + admin out of the box AND can be switched on for one more role from the Roles grid
   // without a deploy. Migration 045 seeds admin=full and every other role=off.
-  { key: 'eve',           label: 'Eve',               path: '/eve', group: 'Overview' },
-  { key: 'reservations',  label: 'Reservations',      path: '/reservations', group: 'Guests' },
-  { key: 'reservation-emails', label: 'Front-Desk Notices', path: '/reservation-emails', group: 'Guests' },
-  { key: 'messages',      label: 'Messages',          path: '/messages', group: 'Guests' },
-  { key: 'reviews',       label: 'Reviews',           path: '/reviews', group: 'Guests' },
+  { key: 'eve',           label: 'Eve',               path: '/eve', group: 'Today' },
+  { key: 'reservations',  label: 'Reservations',      path: '/reservations', group: 'Guest Experience' },
+  { key: 'reservation-emails', label: 'Front-Desk Notices', path: '/reservation-emails', group: 'Guest Experience' },
+  { key: 'messages',      label: 'Messages',          path: '/messages', group: 'Guest Experience' },
+  { key: 'reviews',       label: 'Reviews',           path: '/reviews', group: 'Reviews' },
   // The Calls desk since 2026-09-08 — pre-arrival, bad-review recovery and post-checkout calls on
   // one page. The KEY is unchanged, so every role's existing permission still applies.
-  { key: 'welcome-calls', label: 'Calls desk',       path: '/welcome-calls', group: 'Guests' },
-  { key: 'guidebooks',    label: 'Guidebooks',        path: '/guidebooks', group: 'Guests' },
-  { key: 'claims',        label: 'Claims',            path: '/claims', group: 'Guests' },
+  { key: 'welcome-calls', label: 'Calls desk',       path: '/welcome-calls', group: 'Guest Experience' },
+  { key: 'guidebooks',    label: 'Guidebooks',        path: '/guidebooks', group: 'Guest Experience' },
+  { key: 'claims',        label: 'Claims',            path: '/claims', group: 'Guest Experience' },
   // Guest orders (2026-08-24, Jon): the pre-arrival "vending machine" — approve, charge, push.
   // The guest form (/order/) and the team's live list (/orders-live) are public by design.
-  { key: 'guest-orders',  label: 'Guest Orders',      path: '/guest-orders', group: 'Guests' },
-  { key: 'faq',           label: 'Property FAQ',       path: '/faq', group: 'Guests' },
+  { key: 'guest-orders',  label: 'Guest Orders',      path: '/guest-orders', group: 'Guest Experience' },
+  { key: 'faq',           label: 'Property FAQ',       path: '/faq', group: 'Guest Experience' },
   // Guests directory + profiles (2026-08-18, Jon): "a tab where we have all guest info, create a
   // guest profile as well." Aggregated from reservations; VIP on a profile feeds auto-inspections.
-  { key: 'guests',        label: 'Guests',            path: '/guests', group: 'Guests' },
+  { key: 'guests',        label: 'Guests',            path: '/guests', group: 'Guest Experience' },
   // Contacts (2026-09-14, Jon): the guest list as a MAILING list — and the door to Mailchimp.
   // Separate key from `guests` on purpose: looking a guest up at the front desk and exporting six
   // thousand email addresses are not the same privilege, and should not be granted by one switch.
-  { key: 'contacts',      label: 'Contacts',          path: '/contacts', group: 'Guests' },
+  { key: 'contacts',      label: 'Contacts',          path: '/contacts', group: 'Guest Experience' },
   // Gated 2026-08-06 (Jon, second pass): guest PII on an auth-only page deserves a role setting.
   // Since 2026-09-28 the bare /salato page is a redirect and this key gates what outlived it: the
   // Salato unit list (/api/salato/units, edited in Users & admin → Settings) and the booking-watch
   // door (/api/salato/watch). The public share/verify links (/salato/share, /salato/verify) stay
   // open — OPEN_PREFIXES wins before the role gate in middleware.
-  { key: 'salato',        label: 'Salato settings',   path: '/salato', group: 'Guests' },
+  { key: 'salato',        label: 'Salato settings',   path: '/salato', group: 'Guest Experience' },
   { key: 'plan',          label: 'Today in Ops',      path: '/plan', group: 'Operations' },
   { key: 'maintenance',   label: 'Maintenance',       path: '/maintenance', group: 'Operations' },
   { key: 'schedule',      label: 'Scheduler',         path: '/schedule', group: 'Operations' },
-  { key: 'glitches',      label: 'Glitches',          path: '/glitches', group: 'Operations' },
+  { key: 'glitches',      label: 'Glitches',          path: '/glitches', group: 'Guest Experience' },
   // The refund playbook (2026-09-22, Jon): the ladder, the matrix, the clocks and the training
   // scenarios. Read-only for anyone who handles a guest issue; the money columns still obey the
   // money permission inside the page, so a role without it sees the doctrine and not the dollars.
-  { key: 'refunds',       label: 'Making it right',   path: '/refunds', group: 'Operations' },
-  { key: 'audits',        label: 'Quality',           path: '/audits', group: 'Operations' },
-  { key: 'orders',        label: 'Purchasing',        path: '/orders', group: 'Operations' },
+  { key: 'refunds',       label: 'Making it right',   path: '/refunds', group: 'Guest Experience' },
+  { key: 'audits',        label: 'Quality',           path: '/audits', group: 'Owners' },
+  { key: 'orders',        label: 'Purchasing',        path: '/orders', group: 'Owners' },
   { key: 'requests',      label: 'Work Orders',       path: '/requests', group: 'Operations' },
   // Blocked Units (2026-08-10, Jon): every unit off the calendar, read live from Guesty's
   // multi-calendar, with the note whoever created the block typed in. An operations page, not a
@@ -79,48 +80,48 @@ export const FEATURES: Feature[] = [
   { key: 'projects',      label: 'Projects',          path: '/projects', group: 'Operations' },
   // FF&E Audit (2026-08-10, Jon): one phone link per unit, room by room, EN/ES. A furniture
   // PURCHASING list — deliberately not wired to Breezeway, maintenance or billing.
-  { key: 'ffe',           label: 'FF&E Audit',        path: '/ffe', group: 'Operations' },
+  { key: 'ffe',           label: 'FF&E Audit',        path: '/ffe', group: 'Owners' },
   // Onboarding (2026-09-02, Jon): one public link per NEW unit — details → generated rooms →
   // inventory + room photos — before the unit exists in Guesty; assigned to the listing when it
   // goes live. /onboard/<code> is the phone side and stays public (OPEN_PREFIXES).
-  { key: 'onboarding',    label: 'Onboarding',        path: '/onboarding', group: 'Operations' },
-  { key: 'vault',         label: 'Vault',             path: '/vault', group: 'Portfolio' },
+  { key: 'onboarding',    label: 'Onboarding',        path: '/onboarding', group: 'Owners' },
+  { key: 'vault',         label: 'Vault',             path: '/vault', group: 'Admin' },
   // Share Links hub (2026-08-18, Jon): "a place where I can create those links based on
   // properties, units, owners and customize them to show different information." Carries live
   // money data, so like Integrations it is deliberately left out of the ops/cs/data bundles.
-  { key: 'share-links',   label: 'Share Links',       path: '/links', group: 'Portfolio' },
-  { key: 'buildings',     label: 'Properties',        path: '/buildings', group: 'Portfolio' },
-  { key: 'listings',      label: 'Listings',          path: '/listings', group: 'Portfolio' },
-  { key: 'optimize',      label: 'Listing Optimizer', path: '/optimize', group: 'Portfolio' },   // -> /buildings?v=fix; the optimizer itself is per-listing
+  { key: 'share-links',   label: 'Share Links',       path: '/links', group: 'Admin' },
+  { key: 'buildings',     label: 'Properties',        path: '/buildings', group: 'Listings' },
+  { key: 'listings',      label: 'Listings',          path: '/listings', group: 'Listings' },
+  { key: 'optimize',      label: 'Listing Optimizer', path: '/optimize', group: 'Listings' },   // -> /buildings?v=fix; the optimizer itself is per-listing
   // Health Score is a view on /buildings since 2026-09-03 (/buildings?v=health); /health redirects
   // there. The KEY stays so every role's setting still decides who sees the tab.
-  { key: 'health',        label: 'Health Score',      path: '/health', group: 'Portfolio' },
+  { key: 'health',        label: 'Health Score',      path: '/health', group: 'Listings' },
   // Channel connections (Jon, 2026-09-18): every listing × every channel — live, failed,
   // disconnected, suspended or simply not connected — and the daily trigger behind it. View reads
   // the matrix; full runs the check by hand (Refresh). Admin/manager inherit full through '*'.
-  { key: 'channels',      label: 'Channels',          path: '/channels', group: 'Portfolio' },
+  { key: 'channels',      label: 'Channels',          path: '/channels', group: 'Listings' },
   // Lighthouse checking itself. Under Settings rather than Portfolio: it is about the app, not the
   // buildings, and the whole point of moving it off Slack and out of email was to stop app-health
   // noise landing where operational information lives.
-  { key: 'system-health', label: 'System health',      path: '/system-health', group: 'Settings' },
+  { key: 'system-health', label: 'System health',      path: '/system-health', group: 'Admin' },
   // Personal read-only API keys (Jon, 2026-09-25). Every role can make their own; a key reads
   // exactly what its owner can see, through /api/v1 only.
-  { key: 'api-keys',      label: 'API keys',           path: '/api-keys', group: 'Settings' },
-  { key: 'revenue',       label: 'Revenue Center',    path: '/revenue', group: 'Money' },
-  { key: 'marketing',     label: 'Direct bookings',   path: '/marketing', group: 'Money' },
+  { key: 'api-keys',      label: 'API keys',           path: '/api-keys', group: 'Admin' },
+  { key: 'revenue',       label: 'Revenue Center',    path: '/revenue', group: 'KPIs' },
+  { key: 'marketing',     label: 'Direct bookings',   path: '/marketing', group: 'KPIs' },
   // Billable hours (2026-08-06, Jon): Breezeway task billing by owner + labor vs actual.
   // Money page -> owner/admin-only by default (migration 027 records manager off, like Owner Audit).
-  { key: 'billing',       label: 'Billable Hours',    path: '/billing', group: 'Money' },
+  { key: 'billing',       label: 'Billable Hours',    path: '/billing', group: 'Owners' },
   // Owner projections (2026-08-21, Jon): next season's net owner revenue, editable per month.
-  { key: 'projections',   label: 'Projections',       path: '/projections', group: 'Money' },
+  { key: 'projections',   label: 'Projections',       path: '/projections', group: 'Owners' },
   // The boss's Revenue App (stay-hospitalitydrr.netlify.app) inside Lighthouse (Jon, 2026-09-25:
   // "embed this app into my Lighthouse so I can go from this back to my app"). One frame, our nav
   // around it. Its numbers already flow in through lib/revenue-app.ts; this is the screen itself.
-  { key: 'revenue-app',   label: 'Revenue App',       path: '/revenue-app', group: 'Money' },
-  { key: 'reports',       label: 'Owner Reports',     path: '/reports', group: 'Money' },
+  { key: 'revenue-app',   label: 'Revenue App',       path: '/revenue-app', group: 'KPIs' },
+  { key: 'reports',       label: 'Owner Reports',     path: '/reports', group: 'Owners' },
   // Owner-money page: owner/admin-only by Jon's rule (migration 025 sets manager to off, same as
   // Revenue). Reviewers without a login use /report/owner-audit instead.
-  { key: 'owner-audit',   label: 'Owner Statement Audit', path: '/owner-audit', group: 'Money' },
+  { key: 'owner-audit',   label: 'Owner Statement Audit', path: '/owner-audit', group: 'Owners' },
   { key: 'team-schedule', label: 'Weekly Planner',    path: '/team', group: 'Team' },
   { key: 'cleaners',      label: 'Cleaners',          path: '/cleaners', group: 'Team' },
   { key: 'labor',         label: 'Labor',             path: '/labor', group: 'Team' },

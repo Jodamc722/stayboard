@@ -64,14 +64,15 @@ export function checkTabs() {
     )
   }
 
-  // Softer signal: a gated tab that isn't in the sidebar is reachable only by URL (the old
-  // Listings oddity). Warn, don't fail — some tabs are deliberately parked pending nav sign-off.
+  // Every gated page must belong to a desk (lib/desks.ts, the one map of the app). The full rule —
+  // one desk per path, groups equal desk labels — is lib/__tests__/desks.test.mjs; this is the
+  // build-time echo of it, so a page added without a desk is at least shouted about on every build.
   try {
-    const shell = readFileSync(join(ROOT, 'components', 'Shell.tsx'), 'utf8')
-    const navPaths = Array.from(shell.matchAll(/to:\s*'([^']+)'/g)).map(x => x[1])
-    const offNav = featurePaths.filter(p => navPaths.indexOf(p) < 0)
-    if (offNav.length > 0) console.warn(`[check-tabs] gated but not in the sidebar (URL-only): ${offNav.join(', ')}`)
-  } catch { /* nav drift warning is best-effort */ }
+    const desks = readFileSync(join(ROOT, 'lib', 'desks.ts'), 'utf8')
+    const deskPaths = Array.from(desks.matchAll(/'(\/[^']*)'/g)).map(x => x[1])
+    const loose = featurePaths.filter(p => p.startsWith('/') && !p.startsWith('/garden') && !deskPaths.some(d => p === d || p.startsWith(d + '/')))
+    if (loose.length > 0) console.warn(`[check-tabs] gated but in no desk (lib/desks.ts): ${loose.join(', ')}`)
+  } catch { /* desk drift warning is best-effort; the test is the hard gate */ }
 
   console.log(`[check-tabs] ok — ${routes.length} pages, all accounted for in user settings`)
 }
