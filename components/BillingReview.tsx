@@ -178,7 +178,7 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, o
         <button onClick={() => onToggle(t.id)} className="text-left min-w-0">
           <span className="flex items-center gap-1.5 flex-wrap">
             <span className={'text-[13.5px] font-bold truncate ' + (t.excluded ? 'text-muted line-through' : 'text-ink')}>{t.unit}</span>
-            <span className="text-[12.5px] text-ink/80 truncate max-w-[18rem]">{t.name}</span>
+            <span className="text-[12.5px] text-ink/80 break-words min-w-0" title={t.name}>{t.name}</span>
             {looksSpanish(t) ? <Tag tone="sky" title="Written in Spanish — translate it from the row, or in bulk from the toolbar">ES</Tag> : null}
             <span className="text-[11.5px] text-muted truncate">
               {t.doer || 'no one assigned'} · {short(t.scheduledDate || t.finishedAt)}
