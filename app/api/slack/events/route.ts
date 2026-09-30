@@ -47,7 +47,6 @@ import { waitUntil } from '@vercel/functions'
 import { botToken, getDirectory, slackApi, slackGet } from '@/lib/slack'
 import { resolveLighthouseEmail, identityHint } from '@/lib/slack-identity'
 import { accessForEmail } from '@/lib/access'
-import { runEve } from '@/lib/eve/run'
 import { tierFor, tierNote, isEveRoom } from '@/lib/eve/slack-tier'
 import { postProvenance } from '@/lib/eve/provenance'
 import { tagPosition, translateChecked } from '@/lib/eve/slack-triage'
@@ -475,6 +474,11 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
       } catch { /* the answer goes ahead without it */ }
     }
 
+    // LOADED ONLY HERE (2026-09-30). Eve's runtime — every tool, the atlas, the prompts — is the bulk
+    // of this route's cold start, and a translation never needs it. Importing it at the top made a
+    // back-tag on a cold instance wait for all of it before a single Haiku call; Jon's test sat 50
+    // seconds before the model was even asked. The answer path still pays for it, once per instance.
+    const { runEve } = await import('@/lib/eve/run')
     const out = await runEve({
       access: asAccess,
       messages: [{ role: 'user', content: question }],

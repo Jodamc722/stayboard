@@ -39,6 +39,7 @@
 import { anthropicMessages, textOf } from '@/lib/anthropic-call'
 import { modelPairFor } from '@/lib/ai-models'
 import { tagPosition, type TagPosition } from './tag-position'
+import { stripBoltedOn, hasBoltedOn } from './translate-check'
 
 export type Lang = 'es' | 'en'
 
@@ -155,19 +156,16 @@ export async function translateChecked(text: string): Promise<{ text: string; fa
   if (!worthTranslating(text)) return null
   const src = detectLang(text)
   const want: Lang | undefined = src === 'en' ? 'es' : src === 'es' ? 'en' : undefined
-  const asksMore = (out: string) => (out.match(/[?¿]/g) || []).length > (String(text).match(/[?¿]/g) || []).length
+  // NOT A QUESTION-MARK COUNT (2026-09-30). That rejected every English question translated into
+  // Spanish ("¿…?" has twice the marks) and every English question written without a "?" — Jon's own
+  // test came back as the apology line. What is checked now is the TAIL: a sentence the author did
+  // not write (an offer, a follow-up, a sign-off), cut off rather than the whole translation thrown
+  // away. lib/eve/translate-check.ts, tested against the real cases.
   const sameLang = (out: string) => !!src && detectLang(out) === src && (out.split(/\s+/).length >= 3)
   let out = await translate(text, src)
-  if (out && (sameLang(out) || asksMore(out))) out = await translate(text, src, want || (detectLang(out) === 'es' ? 'en' : 'es'))
+  if (out && (sameLang(out) || hasBoltedOn(text, out))) out = await translate(text, src, want || (detectLang(out) === 'es' ? 'en' : 'es'))
   if (!out) out = await translate(text, src, want)
-  if (out && asksMore(out)) {
-    // Strip a trailing question the model bolted on, keeping everything up to the last line that
-    // is part of the translation. If that leaves nothing, drop it rather than post an answer.
-    const lines = out.split('\n').filter(l => l.trim())
-    while (lines.length > 1 && /[?¿]/.test(lines[lines.length - 1]) && !/[?¿]/.test(text)) lines.pop()
-    out = lines.join('\n')
-    if (asksMore(out)) out = null
-  }
+  if (out) out = stripBoltedOn(text, out) || null
   if (out) return { text: out, fallback: false }
   return { text: src === 'es' ? 'No pude traducir este mensaje ahora mismo. Etiquétame otra vez en un momento.' : 'I could not translate this one just now. Tag me again in a moment.', fallback: true }
 }
