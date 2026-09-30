@@ -78,6 +78,7 @@ const short = (iso: string | null) => { if (!iso) return ''; try { return new Da
 const who = (e: string | null) => e ? (e === 'auto' ? 'auto' : e.split('@')[0]) : ''
 const monthLabel = (m: string) => { try { return new Date(m + '-15T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) } catch { return m } }
 const shiftMonth = (m: string, n: number) => { const [y, mo] = m.split('-').map(Number); const d = new Date(Date.UTC(y, mo - 1 + n, 15)); return d.toISOString().slice(0, 7) }
+const monthRangeEnd = (m: string) => { const [y, mo] = m.split('-').map(Number); return new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10) }
 const todayMonth = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()).slice(0, 7)
 
 /** Recompute the money on a task after a local edit, the same way lib/billing does on the server. */
@@ -230,6 +231,30 @@ export function BillingReview() {
   const [stage, setStage] = useState<Stage | null>(null)     // null until we know the role
   const [flaggedOnly, setFlaggedOnly] = useState(false)
   const [q, setQ] = useState('')
+  // FILTERS (Jon, 2026-09-30: "filter by billable amount greater than zero, by date window, by
+  // department etc."). The window is a month (arrows) or any from–to range; the rest narrow the
+  // rows shown. None of them changes the whole-window numbers in the header strip. All of them ride
+  // in the URL so a filtered view can be bookmarked or sent to someone.
+  const [range, setRange] = useState<{ from: string; to: string } | null>(null)
+  const [billOnly, setBillOnly] = useState(false)
+  const [depts, setDepts] = useState<string[]>([])
+  const [building, setBuilding] = useState('')
+  const [person, setPerson] = useState('')
+  const [minAmt, setMinAmt] = useState('')
+  const urlRead = useRef(false)
+  useEffect(() => {
+    if (urlRead.current) return
+    urlRead.current = true
+    const sp = new URLSearchParams(window.location.search)
+    const f = sp.get('from'), t = sp.get('to'), m = sp.get('month')
+    if (f && t && /^\d{4}-\d{2}-\d{2}$/.test(f) && /^\d{4}-\d{2}-\d{2}$/.test(t)) setRange({ from: f, to: t })
+    else if (m && /^\d{4}-\d{2}$/.test(m)) setMonth(m)
+    if (sp.get('billable') === '1') setBillOnly(true)
+    if (sp.get('dept')) setDepts(sp.get('dept')!.split(',').filter(Boolean))
+    if (sp.get('building')) setBuilding(sp.get('building')!)
+    if (sp.get('person')) setPerson(sp.get('person')!)
+    if (sp.get('min')) setMinAmt(sp.get('min')!)
+  }, [])
   const [openId, setOpenId] = useState<string>('')
   const [busy, setBusy] = useState<Set<string>>(new Set())
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -239,12 +264,12 @@ export function BillingReview() {
   const aiRan = useRef<Set<string>>(new Set())
   const [aiBusy, setAiBusy] = useState(0)
 
-  const loadRef = useRef<(m: string) => Promise<void>>(async () => {})
-  const load = useCallback(async (m: string) => {
+  const loadRef = useRef<(m: string, rg?: { from: string; to: string } | null) => Promise<void>>(async () => {})
+  const load = useCallback(async (m: string, rg?: { from: string; to: string } | null) => {
     const my = ++seq.current
     setLoading(true); setErr('')
     try {
-      const r = await fetch('/api/billing/review?month=' + m, { cache: 'no-store' })
+      const r = await fetch('/api/billing/review?' + (rg ? 'from=' + rg.from + '&to=' + rg.to : 'month=' + m), { cache: 'no-store' })
       const j = await r.json()
       if (my !== seq.current) return                      // a newer request has superseded this one
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Could not load the month.')
@@ -256,13 +281,23 @@ export function BillingReview() {
         aiRan.current.add(m); setAiBusy(Number(j.aiPending))
         fetch('/api/billing/ai-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month: m }) })
           .then(r => r.json()).catch(() => null)
-          .then(res => { setAiBusy(0); if (res && res.ok && res.judged > 0 && my === seq.current) loadRef.current(m) })
+          .then(res => { setAiBusy(0); if (res && res.ok && res.judged > 0 && my === seq.current) loadRef.current(m, rg) })
       }
     } catch (e: any) { if (my === seq.current) setErr(String(e?.message || e)) }
     if (my === seq.current) setLoading(false)
   }, [])
   loadRef.current = load
-  useEffect(() => { load(month) }, [month, load])
+  useEffect(() => { load(month, range) }, [month, range, load])
+  // Keep the URL in step with the window and the filters.
+  useEffect(() => {
+    if (!urlRead.current) return
+    const url = new URL(window.location.href)
+    const set = (k: string, v: string | null) => { if (v) url.searchParams.set(k, v); else url.searchParams.delete(k) }
+    set('month', range ? null : month); set('from', range?.from || null); set('to', range?.to || null)
+    set('billable', billOnly ? '1' : null); set('dept', depts.length ? depts.join(',') : null)
+    set('building', building || null); set('person', person || null); set('min', minAmt || null)
+    window.history.replaceState(null, '', url.toString())
+  }, [month, range, billOnly, depts, building, person, minAmt])
 
   const tasks = data?.tasks || []
   const byId = useMemo(() => { const m = new Map<string, Task>(); for (const t of tasks) m.set(t.id, t); return m }, [tasks])
@@ -279,10 +314,24 @@ export function BillingReview() {
   const visible = useMemo(() => {
     if (!viewIds) return [] as Task[]
     const needle = q.trim().toLowerCase()
+    const min = minAmt.trim() === '' ? null : Number(minAmt.replace(/[$,]/g, ''))
     return tasks.filter(t => viewIds.has(t.id))
       .filter(t => !flaggedOnly || t.flags.length)
+      .filter(t => !billOnly || t.billedAmount > 0)
+      .filter(t => min == null || !Number.isFinite(min) || t.billedAmount >= min)
+      .filter(t => !depts.length || depts.includes(t.department))
+      .filter(t => !building || (t.building || '—') === building)
+      .filter(t => !person || (t.doer || '—') === person)
       .filter(t => !needle || (t.unit + ' ' + t.name + ' ' + (t.doer || '') + ' ' + t.ownerName).toLowerCase().includes(needle))
-  }, [tasks, viewIds, q, flaggedOnly])
+  }, [tasks, viewIds, q, flaggedOnly, billOnly, minAmt, depts, building, person])
+  // The choices each filter offers — what this window actually holds, with counts.
+  const facets = useMemo(() => {
+    const count = (f: (t: Task) => string) => { const m = new Map<string, number>(); for (const t of tasks) { const k = f(t); m.set(k, (m.get(k) || 0) + 1) } return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0])) }
+    return { depts: count(t => t.department), buildings: count(t => t.building || '—'), people: count(t => t.doer || '—') }
+  }, [tasks])
+  const filtersOn = billOnly || !!depts.length || !!building || !!person || minAmt.trim() !== '' || flaggedOnly || !!q.trim()
+  const shownTotal = useMemo(() => visible.reduce((a, t) => a + t.billedAmount, 0), [visible])
+  const clearFilters = () => { setBillOnly(false); setDepts([]); setBuilding(''); setPerson(''); setMinAmt(''); setFlaggedOnly(false); setQ('') }
 
   // Owners in server order (name), rows inside sorted: flagged first, then biggest.
   const groups = useMemo(() => {
@@ -348,13 +397,22 @@ export function BillingReview() {
   }, [byId])
   const onToggle = useCallback((id: string) => setOpenId(cur => (cur === id ? '' : id)), [])
 
-  if (!data && loading) return <><LeanHead title="Billable Hours" /><LeanEmpty><Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading {monthLabel(month)}…</LeanEmpty></>
+  if (!data && loading) return <><LeanHead title="Billable Hours" /><LeanEmpty><Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading {range ? short(range.from) + ' – ' + short(range.to) : monthLabel(month)}…</LeanEmpty></>
   if (!data) return <><LeanHead title="Billable Hours" /><div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{err || 'Nothing loaded.'}</div></>
   const isGm = !!data.me?.isGm
   const st: Stage = stage || (isGm ? 'gm' : 'ops')
   const approveAllLabel = st === 'gm' ? 'Final approve all shown' : 'Approve all shown'
   const approveAllTo: State = st === 'gm' ? 'gm_approved' : 'ops_approved'
   const canApproveAll = st === 'ops' || (st === 'gm' && isGm)
+  const winQS = range ? 'from=' + range.from + '&to=' + range.to : 'month=' + month
+  const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
+  const presets: { label: string; get: () => { from: string; to: string } | null }[] = [
+    { label: 'Month', get: () => null },
+    { label: 'Last 7 days', get: () => ({ from: ymd(new Date(Date.now() - 6 * 864e5)), to: ymd(new Date()) }) },
+    { label: 'Last 30 days', get: () => ({ from: ymd(new Date(Date.now() - 29 * 864e5)), to: ymd(new Date()) }) },
+    { label: 'Last 90 days', get: () => ({ from: ymd(new Date(Date.now() - 89 * 864e5)), to: ymd(new Date()) }) },
+  ]
+  const sel = 'h-8 rounded-lg border border-line bg-white px-2 text-[12px] text-ink max-w-[12rem]'
 
   return (
     <div className="space-y-3">
@@ -369,11 +427,23 @@ export function BillingReview() {
 
       {/* ── month, then which queue and what to show in it — one line */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        <IconBtn title="Previous month" onClick={() => setMonth(shiftMonth(month, -1))}><ChevronLeft size={15} /></IconBtn>
-        <span className="text-[13.5px] font-bold text-ink tracking-tight min-w-[120px] text-center">{monthLabel(month)}</span>
-        <IconBtn title="Next month" onClick={() => setMonth(shiftMonth(month, 1))}><ChevronRight size={15} /></IconBtn>
-        <IconBtn title="Reload the month" onClick={() => load(month)} disabled={loading}><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></IconBtn>
-        <IconBtn title="Download final-approved statements (ZIP)" href={'/api/billing/export?month=' + month + '&format=zip&reviewed=1'}><Download size={14} /></IconBtn>
+        {range ? (
+          <span className="inline-flex items-center gap-1.5 text-[12px]">
+            <input type="date" value={range.from} max={range.to} onChange={e => e.target.value && setRange({ from: e.target.value, to: range.to })} className={sel} />
+            <span className="text-muted">to</span>
+            <input type="date" value={range.to} min={range.from} onChange={e => e.target.value && setRange({ from: range.from, to: e.target.value })} className={sel} />
+          </span>
+        ) : (<>
+          <IconBtn title="Previous month" onClick={() => setMonth(shiftMonth(month, -1))}><ChevronLeft size={15} /></IconBtn>
+          <span className="text-[13.5px] font-bold text-ink tracking-tight min-w-[120px] text-center">{monthLabel(month)}</span>
+          <IconBtn title="Next month" onClick={() => setMonth(shiftMonth(month, 1))}><ChevronRight size={15} /></IconBtn>
+        </>)}
+        <select value={range ? 'custom' : 'Month'} onChange={e => { const v = e.target.value; if (v === 'custom') setRange(range || { from: month + '-01', to: monthRangeEnd(month) }); else { const p = presets.find(x => x.label === v); setRange(p ? p.get() : null) } }} className={sel} title="Date window">
+          {presets.map(p => <option key={p.label} value={p.label}>{p.label === 'Month' ? 'By month' : p.label}</option>)}
+          <option value="custom">Custom dates…</option>
+        </select>
+        <IconBtn title="Reload" onClick={() => load(month, range)} disabled={loading}><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></IconBtn>
+        <IconBtn title="Download final-approved statements (ZIP)" href={'/api/billing/export?' + winQS + '&format=zip&reviewed=1'}><Download size={14} /></IconBtn>
         <a href="/billing?view=labor" title="The older board: labor vs payroll, rates, bulk edits" className="text-[12px] font-semibold text-muted hover:text-ink px-1">Labor &amp; rates</a>
       </div>
       <LeanTabs
@@ -393,13 +463,38 @@ export function BillingReview() {
           ) : null}
         </>} />
 
+      {/* ── filters: billable only, minimum, department, building, person ─────────────────────── */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <button onClick={() => setBillOnly(v => !v)} title="Only rows that bill the owner something" className={'h-8 px-2.5 rounded-lg border text-[12px] font-semibold ' + (billOnly ? 'bg-brand-600 text-white border-brand-600' : 'bg-white border-line text-muted hover:text-ink')}>Billable &gt; $0</button>
+        <label className="h-8 inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 text-[12px] text-muted" title="Only rows billing at least this much">min $<input value={minAmt} onChange={e => setMinAmt(e.target.value)} inputMode="decimal" placeholder="0" className="w-14 bg-transparent outline-none text-ink tabular-nums" /></label>
+        <select value={building} onChange={e => setBuilding(e.target.value)} className={sel} title="Building">
+          <option value="">All buildings</option>
+          {facets.buildings.map(([b, n]) => <option key={b} value={b}>{b} ({n})</option>)}
+        </select>
+        <select value={person} onChange={e => setPerson(e.target.value)} className={sel} title="Who did it">
+          <option value="">Everyone</option>
+          {facets.people.map(([p, n]) => <option key={p} value={p}>{p === '—' ? 'No one assigned' : p} ({n})</option>)}
+        </select>
+        <span className="inline-flex items-center gap-1 flex-wrap">
+          {facets.depts.map(([d, n]) => {
+            const on = depts.includes(d)
+            return <button key={d} onClick={() => setDepts(x => on ? x.filter(y => y !== d) : [...x, d])} title={'Department: ' + d}
+              className={'h-8 px-2.5 rounded-lg border text-[12px] font-semibold capitalize ' + (on ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>{d} <span className="opacity-60 tabular-nums">{n}</span></button>
+          })}
+        </span>
+        {filtersOn ? <>
+          <Pill tone="brand" title="What the filters show — the header strip stays the whole window">{visible.length} shown · {money(shownTotal)}</Pill>
+          <button onClick={clearFilters} className="text-[12px] font-semibold text-muted hover:text-ink px-1">Clear</button>
+        </> : null}
+      </div>
+
       {err ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {err}</div> : null}
 
       {/* ── by owner, in an order that never changes ───────────────────────────────────────── */}
       {!visible.length ? (
         <LeanEmpty>
-          {st === 'ops' ? 'Nothing open for ops to review.' : st === 'gm' ? 'Nothing waiting on final review.' : st === 'done' ? 'Nothing final-approved yet this month.' : 'No tasks in this month.'}
-          {flaggedOnly || q ? ' (with the current filter)' : ''}
+          {st === 'ops' ? 'Nothing open for ops to review.' : st === 'gm' ? 'Nothing waiting on final review.' : st === 'done' ? 'Nothing final-approved yet in this window.' : 'No tasks in this window.'}
+          {filtersOn ? ' (with the current filters)' : ''}
         </LeanEmpty>
       ) : groups.filter(g => g.rows.length).map(({ owner: o, rows }) => {
         const k = o.ownerId || '—'
@@ -415,6 +510,7 @@ export function BillingReview() {
               <span className="text-[12px] text-muted tabular-nums" title={o.tasks + ' task' + (o.tasks === 1 ? '' : 's') + ' · ' + o.units + ' unit' + (o.units === 1 ? '' : 's') + ' this month'}>
                 {money(o.billed)} · {o.tasks}t · {o.units}u
               </span>
+              {filtersOn ? <Tag tone="brand" title="What the filters show for this owner">{rows.length} shown · {money(rows.reduce((a, t) => a + t.billedAmount, 0))}</Tag> : null}
               {/* Progress over the WHOLE month for this owner, whatever the filter shows. */}
               <span className="inline-flex items-center gap-1 flex-wrap">
                 <Tag title="Open — ops to review">{o.open} open</Tag>
@@ -426,7 +522,7 @@ export function BillingReview() {
               {canApproveAll && actionable.length ? (
                 <button onClick={() => setState(actionable.map(t => t.id), approveAllTo)} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1"><Check size={12} /> {st === 'gm' ? 'Final approve' : 'Approve'} {actionable.length}</button>
               ) : null}
-              {o.ownerId ? <IconBtn title={'Download ' + o.ownerName + '’s sheet (Excel)'} href={'/api/billing/export?month=' + month + '&format=xls&done=1&owner=' + encodeURIComponent(o.ownerId)}><Download size={13} /></IconBtn> : null}
+              {o.ownerId ? <IconBtn title={'Download ' + o.ownerName + '’s sheet (Excel)'} href={'/api/billing/export?' + winQS + '&format=xls&done=1&owner=' + encodeURIComponent(o.ownerId)}><Download size={13} /></IconBtn> : null}
             </header>
             {isOpen ? (
               <ul>
