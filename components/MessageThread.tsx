@@ -4,6 +4,7 @@
 // (2026-09-28 audit, D1). The reply goes out through Guesty on the thread's own channel; "Draft with
 // Eve" fills the box, and nothing reaches the guest until a person presses Send.
 import { useEffect, useRef, useState } from 'react'
+import { plainText, isMachineName } from '@/lib/message-text'
 import Link from 'next/link'
 import { CalendarDays, X, ExternalLink, User, Phone, DollarSign, Home, BedDouble, Sparkles, Send, Loader2 } from 'lucide-react'
 
@@ -27,7 +28,7 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
   // Open at the newest message, like any inbox.
   const scroller = useRef<HTMLDivElement | null>(null)
   useEffect(() => { const el = scroller.current; if (el) el.scrollTop = el.scrollHeight }, [messages.length])
-  const counts = { guest: messages.filter(m => m.sender === 'guest').length, team: messages.filter(m => m.sender !== 'guest' && m.sender !== 'system' && m.is_automated !== true).length, auto: messages.filter(m => m.sender !== 'guest' && m.sender !== 'system' && m.is_automated === true).length }
+  const counts = { guest: messages.filter(m => m.sender === 'guest').length, team: messages.filter(m => m.sender !== 'guest' && m.sender !== 'system' && !isAuto(m)).length, auto: messages.filter(m => m.sender !== 'guest' && m.sender !== 'system' && isAuto(m)).length }
   const stay = reservation && reservation.check_in ? `${fmtShort(reservation.check_in)} → ${fmtShort(reservation.check_out)}${reservation.nights != null ? ' · ' + reservation.nights + ' nights' : ''}` : ''
 
   return (
@@ -70,7 +71,7 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
       <div ref={scroller} className="flex-1 overflow-y-auto px-3 sm:px-5 py-4 space-y-3">
         {messages.length === 0 ? (
           <p className="text-center text-muted py-8 text-sm">No messages cached for this thread yet. Sync to pull the latest.</p>
-        ) : messages.filter(m => !(hideAuto && m.sender !== 'guest' && m.sender !== 'system' && m.is_automated === true)).map((m, i, arr) => {
+        ) : messages.filter(m => !(hideAuto && m.sender !== 'guest' && m.sender !== 'system' && isAuto(m))).map((m, i, arr) => {
           const day = dayOf(m.sent_at)
           const newDay = day && day !== dayOf(arr[i - 1]?.sent_at)
           return (
@@ -167,16 +168,19 @@ function via(mod?: string | null): string {
  * folded to a few lines, labelled Automated; notes and system lines centred. Every bubble says the
  * time and the channel it went through.
  */
+const isAuto = (m: Msg) => m.is_automated === true || isMachineName(m.sender_name)
+
 function Bubble({ m, guest }: { m: Msg; guest: string }) {
   const [open, setOpen] = useState(false)
   const g = m.sender === 'guest'
-  if (m.sender === 'system') return <div className="text-center text-[11px] text-muted italic px-6">{m.sender_name && m.sender_name !== 'System' ? m.sender_name + ': ' : ''}{m.body} · {timeOf(m.sent_at)}</div>
-  const auto = !g && m.is_automated === true
+  if (m.sender === 'system') return <div className="text-center text-[11px] text-muted italic px-6">{m.sender_name && m.sender_name !== 'System' ? m.sender_name + ': ' : ''}{plainText(m.body)} · {timeOf(m.sent_at)}</div>
+  const auto = !g && isAuto(m)
   const name = g ? (m.sender_name || guest || 'Guest') : auto ? 'Automated message' : (m.sender_name || 'Our team')
   const role = g ? 'Guest' : auto ? 'Guesty template' : 'Team'
   const ch = via(m.module)
-  const long = auto && String(m.body || '').length > 260
-  const body = long && !open ? String(m.body || '').slice(0, 260).trimEnd() + '…' : m.body
+  const text = plainText(m.body)
+  const long = auto && text.length > 260
+  const body = long && !open ? text.slice(0, 260).trimEnd() + '…' : text
   const box = g ? 'bg-sky-50 text-ink border border-sky-100' : auto ? 'bg-slate-50 text-ink/75 border border-dashed border-slate-300' : 'bg-brand-600 text-white'
   const meta = g ? 'text-sky-800/70' : auto ? 'text-slate-500' : 'text-white/75'
   return (

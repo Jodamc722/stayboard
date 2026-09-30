@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import { plainText, isMachineName } from '@/lib/message-text'
 import { pageRows } from '@/lib/db-page'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
@@ -81,7 +82,7 @@ export default async function MessagesPage() {
   for (const m of lastMsgs.slice().sort((a, b) => String(b.sent_at || '').localeCompare(String(a.sent_at || '')))) {
     const k = String(m.conversation_id)
     if (lastById[k]) continue
-    const who: LastInfo['who'] = m.sender === 'guest' ? 'guest' : m.sender === 'system' ? 'note' : m.is_automated === true ? 'auto' : 'team'
+    const who: LastInfo['who'] = m.sender === 'guest' ? 'guest' : m.sender === 'system' ? 'note' : (m.is_automated === true || isMachineName(m.sender_name as string | null)) ? 'auto' : 'team'
     lastById[k] = { who, name: m.sender_name ? String(m.sender_name) : null, module: m.module ? String(m.module) : null }
   }
   const stayById: Record<string, StayInfo> = {}
@@ -98,7 +99,7 @@ export default async function MessagesPage() {
   // One list, two sources, newest first. Only the fields the inbox shows cross to the client.
   const items: InboxItem[] = (list.map((c: any) => ({
     kind: 'guesty' as const, at: String(c.last_message_at || ''),
-    c: { id: c.id, guest_name: c.guest_name, channel: c.channel, listing_id: c.listing_id, last_message_at: c.last_message_at, last_message_preview: c.last_message_preview, unread_count: c.unread_count,
+    c: { id: c.id, guest_name: c.guest_name, channel: c.channel, listing_id: c.listing_id, last_message_at: c.last_message_at, last_message_preview: c.last_message_preview ? plainText(c.last_message_preview).replace(/\s+/g, ' ').slice(0, 300) : c.last_message_preview, unread_count: c.unread_count,
       last: lastById[String(c.id)] || null, stay: c.reservation_id ? stayById[String(c.reservation_id)] || null : null },
   })) as InboxItem[])
     .concat(phone.list.map(t => ({ kind: 'phone' as const, at: t.lastAt, t })))
