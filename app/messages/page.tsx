@@ -74,17 +74,23 @@ export default async function MessagesPage() {
   const oldest = list.reduce((m, c) => { const t = String(c.last_message_at || ''); return t && (!m || t < m) ? t : m }, '')
   const resIds = Array.from(new Set(list.map(c => String(c.reservation_id || '')).filter(Boolean)))
   const [lastMsgs, stays] = await Promise.all([
-    inChunks(convIds, ids => sb.from('guesty_messages').select('conversation_id,sender,sender_name,is_automated,module,sent_at')
+    inChunks(convIds, ids => sb.from('guesty_messages').select('id,conversation_id,sender,sender_name,is_automated,module,sent_at')
       .in('conversation_id', ids).gte('sent_at', oldest ? new Date(Date.parse(oldest) - 60_000).toISOString() : '2000-01-01').order('sent_at', { ascending: false }).limit(4000)),
     inChunks(resIds, ids => sb.from('guesty_reservations').select('id,check_in,check_out,status').in('id', ids)),
   ])
   const lastById: Record<string, LastInfo> = {}
+  const newestId: Record<string, string> = {}
   for (const m of lastMsgs.slice().sort((a, b) => String(b.sent_at || '').localeCompare(String(a.sent_at || '')))) {
     const k = String(m.conversation_id)
     if (lastById[k]) continue
     const who: LastInfo['who'] = m.sender === 'guest' ? 'guest' : m.sender === 'system' ? 'note' : (m.is_automated === true || isMachineName(m.sender_name as string | null)) ? 'auto' : 'team'
-    lastById[k] = { who, name: m.sender_name ? String(m.sender_name) : null, module: m.module ? String(m.module) : null }
+    lastById[k] = { who, name: m.sender_name ? String(m.sender_name) : null, module: m.module ? String(m.module) : null, text: null }
+    newestId[String(m.id)] = k
   }
+  // The words of that newest message. Guesty's own preview is empty on most older threads, so the
+  // list read "(no text)"; only the ~100 newest bodies are fetched, never the whole history.
+  const bodies = await inChunks(Object.keys(newestId), ids => sb.from('guesty_messages').select('id,body').in('id', ids))
+  for (const b of bodies) { const k = newestId[String(b.id)]; if (k && lastById[k] && b.body) lastById[k].text = plainText(String(b.body)).replace(/\s+/g, ' ').slice(0, 300) }
   const stayById: Record<string, StayInfo> = {}
   for (const r of stays) stayById[String(r.id)] = { checkIn: r.check_in ? String(r.check_in).slice(0, 10) : null, checkOut: r.check_out ? String(r.check_out).slice(0, 10) : null, status: r.status ? String(r.status) : null }
 

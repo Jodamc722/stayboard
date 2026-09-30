@@ -22,7 +22,7 @@ import { LeanTabs, LeanEmpty, Pill, Tag } from '@/components/lean'
 import { SentimentBoard, type SentimentRow, type SentimentSummary } from '@/components/SentimentBoard'
 
 /** Who wrote the newest message in a thread: the guest, a named teammate, a Guesty template, or an internal note. */
-export type LastInfo = { who: 'guest' | 'team' | 'auto' | 'note'; name: string | null; module: string | null }
+export type LastInfo = { who: 'guest' | 'team' | 'auto' | 'note'; name: string | null; module: string | null; text?: string | null }
 /** The booking behind a thread. */
 export type StayInfo = { checkIn: string | null; checkOut: string | null; status: string | null }
 export type InboxConvo = {
@@ -82,7 +82,7 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
   const inSrc = (it: InboxItem) => src === 'all' ? true : src === 'messages' ? it.kind === 'guesty' : src === 'texts' ? (it.kind === 'phone' && it.t.lastKind !== 'call') : (it.kind === 'phone' && it.t.lastKind === 'call')
   const needle = q.trim().toLowerCase()
   const matches = (it: InboxItem) => !needle || (it.kind === 'guesty'
-    ? [it.c.guest_name, it.c.last_message_preview, it.c.listing_id ? unitById[it.c.listing_id] : '', it.c.channel, it.c.last?.name].join(' ').toLowerCase().includes(needle)
+    ? [it.c.guest_name, it.c.last?.text, it.c.last_message_preview, it.c.listing_id ? unitById[it.c.listing_id] : '', it.c.channel, it.c.last?.name].join(' ').toLowerCase().includes(needle)
     : [it.t.guestName, it.t.display, it.t.number, it.t.preview, unitById[it.t.listingId]].join(' ').toLowerCase().includes(needle))
   const counts = { messages: items.filter(i => i.kind === 'guesty').length, texts: items.filter(i => i.kind === 'phone' && i.t.lastKind !== 'call').length, calls: items.filter(i => i.kind === 'phone' && i.t.lastKind === 'call').length }
   // Needs reply keeps every source: a missed call from a guest is as much "waiting on us" as a message.
@@ -188,7 +188,7 @@ function ConvoLine({ c, unit, wait, now, lastBy, sentiment }: { c: InboxConvo; u
   return (
     <Line href={`/messages/${c.id}`} name={guest} unit={unit}
       who={who} whoTone={tone}
-      preview={c.last_message_preview || ''} bold={unread > 0 || !!wait}
+      preview={l?.text || c.last_message_preview || ''} bold={unread > 0 || !!wait}
       at={c.last_message_at}
       tags={<>
         <Tag>{CHANNEL_LABELS[c.channel] || c.channel}</Tag>
