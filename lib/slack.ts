@@ -55,13 +55,22 @@ const DIRECTORY_TTL_MS = 6 * 60 * 60 * 1000   // 6h — people and channels move
  * by hand without clicking through Slack. Empty string means "not connected" — every caller treats
  * that as a soft no-op rather than an error.
  */
+let _lastGoodToken = ''
 export async function botToken(): Promise<string> {
-  try {
-    const c = await getConnections()
-    const t = (c.slack && (c.slack as any).botToken) || ''
-    if (t) return String(t)
-  } catch { /* fall through to env */ }
-  return process.env.SLACK_BOT_TOKEN || ''
+  // THREE TRIES, THEN THE LAST TOKEN THAT WORKED (2026-09-30). The token lives in app_settings, and
+  // a cold instance has to read it before it can post anything. One database blip used to turn
+  // into an empty string, which every caller treats as "Slack is not connected" — so a tagged
+  // message got nothing back and left no trace. The read is retried, and a warm instance that
+  // has posted before keeps posting through a blip with the token it already has.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const c = await getConnections()
+      const t = (c.slack && (c.slack as any).botToken) || ''
+      if (t) { _lastGoodToken = String(t); return _lastGoodToken }
+      break   // read fine, nothing stored: not connected, no point retrying
+    } catch { await new Promise(r => setTimeout(r, 250 * (attempt + 1))) }
+  }
+  return _lastGoodToken || process.env.SLACK_BOT_TOKEN || ''
 }
 
 export async function botConnected(): Promise<boolean> {

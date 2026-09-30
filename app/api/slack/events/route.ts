@@ -20,10 +20,15 @@
 //
 // THREE THINGS THAT WOULD OTHERWISE BITE:
 //
-//  1. SLACK WANTS AN ANSWER IN 3 SECONDS. Eve takes 15-40. Slack's fix for a slow endpoint is to
-//     RETRY, up to three times — which without a guard is one question answered three times in the
-//     channel. So a retry is acknowledged and dropped on sight (`x-slack-retry-num`): the original
-//     request is still running and will post the answer itself when it is done.
+//  1. SLACK WANTS AN ANSWER IN 3 SECONDS. Eve takes 15-40; even a translation is a cold start plus
+//     a model call. So the event is ACKNOWLEDGED AT ONCE and the work runs after the response
+//     (Vercel's waitUntil keeps the function alive for it) — Slack never times out, so it never
+//     retries a healthy delivery. When Slack does retry (a real 5xx, a dropped connection), the
+//     retry is not thrown away: the dedupe row says whether the first attempt FINISHED. Finished →
+//     dropped; still running → dropped; started but never finished (the function died) → the retry
+//     takes over. Before 2026-09-30 every retry was dropped on sight, so a first attempt that died
+//     — a database blip while reading the bot token was enough — meant a tagged message and nothing
+//     back, with no trace of why.
 //
 //  2. SIGNATURE VERIFICATION IS MANDATORY. This URL can be found. Without the v0 HMAC anyone who
 //     learns it can put words in Eve's mouth in front of the whole company, and make her spend the
@@ -38,6 +43,7 @@
 // costs the room nothing.
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'crypto'
+import { waitUntil } from '@vercel/functions'
 import { botToken, getDirectory, slackApi, slackGet } from '@/lib/slack'
 import { resolveLighthouseEmail, identityHint } from '@/lib/slack-identity'
 import { accessForEmail } from '@/lib/access'
@@ -47,6 +53,8 @@ import { postProvenance } from '@/lib/eve/provenance'
 import { tagPosition, translateChecked } from '@/lib/eve/slack-triage'
 import { getEveAskers, canAskEve } from '@/lib/eve/slack-askers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { protectMentions } from '@/lib/eve/slack-mentions'
+import { recordRun } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -63,21 +71,41 @@ function verify(raw: string, ts: string, sig: string): boolean {
 }
 
 /**
- * One event, one answer.
+ * One event, one answer — and never zero.
  *
- * Slack's retries are the obvious duplicate, and they are handled by the header check below. This
- * guards the less obvious one: the same event id arriving twice because a deploy rolled while an
- * event was in flight. The primary key is the lock — exactly one caller inserts, everyone else
- * loses and exits. Reuses the Telegram replay table rather than adding one; the ids do not collide
- * and both answer the same question, "have I already handled this?".
+ * The primary key is the lock: exactly one caller inserts, everyone else loses. The row also says
+ * whether that caller FINISHED (chat_id flips to `slack-done:` when the post lands), so a Slack
+ * retry can tell a duplicate from a rescue:
+ *   'new'     — nobody has this event; go.
+ *   'done'    — answered already; drop.
+ *   'running' — the first attempt started under a minute ago and has not finished; drop (it will post).
+ *   'stale'   — started over a minute ago and never finished: the function died. Take it over.
+ * Reuses the Telegram replay table rather than adding one; the ids do not collide.
  */
-async function claim(eventId: string): Promise<boolean> {
-  if (!eventId) return true
+type Claim = 'new' | 'done' | 'running' | 'stale'
+const STALE_AFTER_MS = 60_000
+async function claim(eventId: string): Promise<Claim> {
+  if (!eventId) return 'new'
+  const id = hash32(eventId)
   try {
-    const { error } = await supabaseAdmin().from('telegram_updates')
-      .insert({ update_id: hash32(eventId), chat_id: 'slack:' + eventId.slice(0, 40) })
-    return !error
-  } catch { return true }   // a guard that cannot run must not silence her
+    const db = supabaseAdmin()
+    const { error } = await db.from('telegram_updates').insert({ update_id: id, chat_id: 'slack:' + eventId.slice(0, 40) })
+    if (!error) return 'new'
+    const { data } = await db.from('telegram_updates').select('chat_id,received_at').eq('update_id', id).limit(1)
+    const row: any = Array.isArray(data) ? data[0] : null
+    if (!row) return 'new'
+    if (String(row.chat_id || '').startsWith('slack-done:')) return 'done'
+    const age = Date.now() - Date.parse(String(row.received_at || ''))
+    if (Number.isFinite(age) && age < STALE_AFTER_MS) return 'running'
+    // Take it over: re-stamp the row so a third attempt sees this one as running.
+    await db.from('telegram_updates').update({ received_at: new Date().toISOString() }).eq('update_id', id)
+    return 'stale'
+  } catch { return 'new' }   // a guard that cannot run must not silence her
+}
+/** The post landed: mark the event finished so a late retry is a duplicate, not a rescue. */
+async function finish(eventId: string): Promise<void> {
+  if (!eventId) return
+  try { await supabaseAdmin().from('telegram_updates').update({ chat_id: 'slack-done:' + eventId.slice(0, 40) }).eq('update_id', hash32(eventId)) } catch { /* best effort */ }
 }
 function hash32(s: string): number {
   let h = 5381
@@ -124,13 +152,27 @@ async function personName(id: string): Promise<string | null> {
   } catch { return null }
 }
 
-async function say(channel: string, threadTs: string, text: string): Promise<void> {
+async function say(channel: string, threadTs: string, text: string): Promise<{ ok: boolean; error?: string }> {
   // ALWAYS in a thread, even for a one-liner. Consistency is the point: the team learns that Eve
   // never takes more than one line of channel, so nobody has a reason to stop @-ing her.
-  await slackApi('chat.postMessage', {
-    channel, thread_ts: threadTs, text,
-    unfurl_links: false, unfurl_media: false,
-  }).catch(() => {})
+  const body = { channel, thread_ts: threadTs, text, unfurl_links: false, unfurl_media: false }
+  try {
+    let r = await slackApi('chat.postMessage', body)
+    // One rate-limited post is retried after Slack's own pause (capped) — a translation that lands
+    // ten seconds late still lands; one that never posts looks exactly like the feature being off.
+    if (r && r.ok === false && r.error === 'ratelimited') {
+      await new Promise(res => setTimeout(res, Math.min(10_000, 1000 * (Number(r.retry_after) || 3))))
+      r = await slackApi('chat.postMessage', body)
+    }
+    if (r && r.ok) return { ok: true }
+    const error = String((r && r.error) || 'unknown')
+    console.error('[slack-events] post failed', error, channel)
+    return { ok: false, error }
+  } catch (e: any) {
+    const error = String(e?.message || e).slice(0, 200)
+    console.error('[slack-events] post threw', error, channel)
+    return { ok: false, error }
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -163,12 +205,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ challenge: String(body.challenge || '') })
   }
 
-  // A retry means our first attempt was still thinking. It is not a second question.
-  if (req.headers.get('x-slack-retry-num')) return ok()
-
   const ev = body?.event
   if (!ev || (ev.type !== 'app_mention' && ev.type !== 'message')) return ok()
   if (ev.bot_id || ev.subtype === 'bot_message') return ok()
+
+  // ACK NOW, WORK AFTER. Slack gets its 200 inside the 3-second window whatever the day's cold
+  // start or the model's mood; the work carries on in the background and posts when it is done.
+  const retry = req.headers.get('x-slack-retry-num')
+  waitUntil(handle(body, ev, !!retry).catch(e => console.error('[slack-events] unhandled', String(e?.message || e).slice(0, 300))))
+  return ok()
+}
+
+/** The event, after the ack. Every early return here is deliberate and, where it matters, receipted. */
+async function handle(body: any, ev: any, isRetry: boolean): Promise<NextResponse> {
 
   // ANSWERING HER WITHOUT TAGGING HER, IN HER OWN ROOM (Jon, 2026-09-23: "the team that's in the Eve
   // channel can respond to Eve"). In #vr-eve she posts what is slipping; the natural reply is in the
@@ -281,8 +330,18 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
   const threadTs = String(ev.thread_ts || ev.ts || '')
   if (!channel || !user || !threadTs) return ok()
 
-  if (!(await claim(String(body.event_id || ev.ts)))) return ok()
-  if (!(await botToken())) return ok()
+  const eventId = String(body.event_id || ev.ts)
+  const state = await claim(eventId)
+  // A retry only rescues an attempt that died; a first delivery only goes when the event is new.
+  if (state === 'done' || state === 'running') return ok()
+  if (state === 'stale' && !isRetry) return ok()
+  if (state === 'stale') console.warn('[slack-events] retry taking over a stale attempt', eventId)
+  if (!(await botToken())) {
+    // The one silent path left, and now it is not silent: no token means the Slack connection could
+    // not be read (a database blip on a cold instance is the usual reason). The receipt says so.
+    await recordRun({ name: tagPosition(String(ev.text || ''), me) === 'end' ? 'slack-translate' : 'slack-eve', ok: false, error: 'no bot token — the Slack connection could not be read', detail: { channel, ts: String(ev.ts || '') } })
+    return ok()
+  }
 
   const question = cleanText(ev.text, me)
   if (!question) {
@@ -314,8 +373,24 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
   // translation is checked for direction and for stray questions, retried once, and a failure
   // posts one plain line instead of nothing — see translateChecked.
   if (!viaReply && tagPosition(String(ev.text || ''), me) === 'end') {
-    const out = await translateChecked(question)
-    if (out) await say(channel, threadTs, out.text)
+    const t0 = Date.now()
+    // People's tags ride through the translation as placeholders and come back as real tags
+    // (lib/eve/slack-mentions): the person named in the original is named — and pinged — in the
+    // translation, instead of appearing as a raw user id.
+    const kept = protectMentions(String(ev.text || ''), me)
+    const out = await translateChecked(kept.text)
+    let posted: { ok: boolean; error?: string } = { ok: true }
+    if (out) posted = await say(channel, threadTs, kept.restore(out.text))
+    if (posted.ok) await finish(eventId)
+    // THE RECEIPT. Every back-tag writes one (automation_runs, 'slack-translate'), so "is the
+    // translation working?" is answered by the Health page and by Eve herself, not by guessing:
+    // when it ran, whether it posted, whether it fell back to the apology line, and the Slack error
+    // if the post failed. Never the message text.
+    await recordRun({
+      name: 'slack-translate', ok: posted.ok && !(out && out.fallback), itemCount: out && posted.ok ? 1 : 0, ms: Date.now() - t0,
+      detail: { channel, ts: String(ev.ts || ''), chars: kept.text.length, outcome: !out ? 'nothing to translate' : out.fallback ? 'fallback line' : 'translated', retry: isRetry },
+      error: !posted.ok ? 'Slack post failed: ' + posted.error : out && out.fallback ? 'translation failed twice — posted the fallback line' : null,
+    })
     return ok()
   }
 
@@ -327,6 +402,7 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
   // now… give free access. Slack eve is not approval or doing, it's more information based. Only
   // admin users can direct eve." So an unrecognised asker is not turned away; they are answered at
   // the floor their room allows. See lib/eve/slack-tier.ts for what each tier may contain.
+  const t0 = Date.now()
   const who = await resolveLighthouseEmail(user)
   const email = who.email
   const access = email ? await accessForEmail(email) : null
@@ -433,9 +509,12 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
       await say(channel, threadTs, /\b429\b|rate limit/i.test(String(out.error || ''))
         ? 'Too many questions at once — ask me again in a minute.'
         : 'I couldn\'t answer that just now — try again in a minute.')
+      await recordRun({ name: 'slack-eve', ok: false, ms: Date.now() - t0, error: 'could not answer: ' + String(out.error || out.status).slice(0, 200), detail: { channel, ts: String(ev.ts || ''), retry: isRetry } })
       return ok()
     }
-    await say(channel, threadTs, out.reply)
+    const posted = await say(channel, threadTs, out.reply)
+    if (posted.ok) await finish(eventId)
+    await recordRun({ name: 'slack-eve', ok: posted.ok, itemCount: posted.ok ? 1 : 0, ms: Date.now() - t0, error: posted.ok ? null : 'Slack post failed: ' + posted.error, detail: { channel, ts: String(ev.ts || ''), retry: isRetry } })
     // There used to be a step here that watched her reply for a refusal and posted the question
     // into #leadership for someone to approve. It lasted one afternoon. Jon: "Going to leadership
     // sucks." It did — it turned one person's small question into a chore for six senior people,
