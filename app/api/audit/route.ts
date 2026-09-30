@@ -253,7 +253,8 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === 'deleteRoom') {
-    const listingId = String(body.listingId || (audit && audit.listing_id) || '')
+    // A share code acts on ITS audit's listing only; a body listingId is for the signed-in desk.
+    const listingId = audit ? String(audit.listing_id || '') : String(body.listingId || '')
     const room = String(body.room || '').slice(0, 120)
     if (!room) return NextResponse.json({ error: 'room required' }, { status: 400 })
     if (audit) await db.from('audit_items').delete().eq('audit_id', audit.id).eq('room', room).eq('status', 'open')
@@ -262,7 +263,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === 'upsertRoom') {
-    const listingId = String(body.listingId || (audit && audit.listing_id) || '')
+    const listingId = audit ? String(audit.listing_id || '') : String(body.listingId || '')
     const room = String(body.room || '').slice(0, 120)
     if (!listingId || !room) return NextResponse.json({ error: 'listingId and room required' }, { status: 400 })
     const key = slugRoom(room)

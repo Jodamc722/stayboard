@@ -138,7 +138,7 @@ export const DESKS: Desk[] = [
     key: 'admin', label: 'Admin',
     blurb: 'People and roles, settings, system health, share links, the vault and API keys.',
     views: [
-      { to: '/users', label: 'People & settings', hint: 'People, roles and every setting' },
+      { to: '/users', label: 'Users & admin', hint: 'People, roles and every setting' },
       { to: '/system-health', label: 'Health', hint: 'Is everything working: syncs, feeds and the daily self-audit' },
       { to: '/links', label: 'Share links', hint: 'Every share link and passcode in one list' },
       { to: '/vault', label: 'Vault', hint: 'Credentials and paperwork, revealed after unlock' },

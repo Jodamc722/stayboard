@@ -25,7 +25,7 @@ type Progress = { rooms: number; roomsChecked: number; roomsPhotographed: number
 type Buy = { id: string; room_id: string | null; name: string; category: string; need: number; have: number; expected: number | null; why: 'short' | 'worn' | 'missing' }
 type Need = { name: string; category: Category; qty: number; brand?: string }
 type CheckRow = Need & { have: number; worn: number; status: 'ok' | 'short' | 'none'; short: number }
-type Data = { ok: true; unit: Unit & { order_id?: string | null }; rooms: Room[]; items: Item[]; progress: Progress; buy: Buy[]; needs: Need[]; check: CheckRow[]; member?: boolean }
+type Data = { ok: true; unit: Unit & { order_id?: string | null }; rooms: Room[]; items: Item[]; progress: Progress; buy: Buy[]; needs: Need[]; check: CheckRow[]; member?: boolean; canOrder?: boolean }
 
 const BTN = 'inline-flex items-center justify-center gap-1.5 rounded-xl font-bold text-[14px] min-h-[44px] px-4 disabled:opacity-50'
 const CHIP = 'inline-flex items-center justify-center rounded-full border text-[13px] font-semibold min-h-[38px] px-3.5'
@@ -104,7 +104,7 @@ export function OnboardForm({ code }: { code: string }) {
           <span className="text-[12px] text-muted ml-1 truncate">{rooms.length ? describeUnit(unit.details || {}) : 'start here'}</span>
           <ChevronDown size={16} className={'ml-auto text-muted transition-transform ' + (detailsOpen ? 'rotate-180' : '')} />
         </button>
-        {detailsOpen && <DetailsForm unit={unit} hasRooms={rooms.length > 0} onSaved={async () => { setDetailsOpen(false); const fresh = rooms.length === 0; await load(); if (fresh) setStartWalk(true) }} act={act} />}
+        {detailsOpen && <DetailsForm unit={unit} member={!!data?.member} hasRooms={rooms.length > 0} onSaved={async () => { setDetailsOpen(false); const fresh = rooms.length === 0; await load(); if (fresh) setStartWalk(true) }} act={act} />}
       </section>
 
       {/* ── 2. rooms ── */}
@@ -149,7 +149,7 @@ export function OnboardForm({ code }: { code: string }) {
             <span className={'w-7 h-7 rounded-full grid place-items-center text-[12px] font-bold ' + (done ? 'bg-emerald-600 text-white' : 'bg-app text-muted')}>3</span>
             <span className="font-bold text-ink text-[15px]">Finish</span>
           </div>
-          <Summary unit={unit} rooms={rooms} items={items} progress={progress} buy={buy} check={check} act={act} reload={load} member={!!data?.member} />
+          <Summary unit={unit} rooms={rooms} items={items} progress={progress} buy={buy} check={check} act={act} reload={load} canOrder={!!data?.canOrder} />
           <div className="flex gap-2 mt-3 flex-wrap">
             {!done
               ? <button onClick={async () => { try { await act({ action: 'complete' }); await load() } catch (e: any) { alert(String(e?.message || e)) } }} className={BTN + ' bg-ink text-white flex-1'} disabled={progress.items > 0 && progress.confirmed === 0}><Check size={16} /> Finish inventory</button>
@@ -175,7 +175,7 @@ function Frame({ children }: { children: React.ReactNode }) {
 }
 
 // ── 1. DETAILS ──────────────────────────────────────────────────────────────────────────────────
-function DetailsForm({ unit, hasRooms, onSaved, act }: { unit: Unit; hasRooms: boolean; onSaved: () => Promise<void>; act: (b: any) => Promise<any> }) {
+function DetailsForm({ unit, member, hasRooms, onSaved, act }: { unit: Unit; member: boolean; hasRooms: boolean; onSaved: () => Promise<void>; act: (b: any) => Promise<any> }) {
   const d0 = unit.details || {}
   const [name, setName] = useState(unit.name || '')
   const [building, setBuilding] = useState(unit.building || '')
@@ -224,7 +224,7 @@ function DetailsForm({ unit, hasRooms, onSaved, act }: { unit: Unit; hasRooms: b
             <div><label className={LABEL}>Unit #</label><input value={unitNo} onChange={e => setUnitNo(e.target.value)} className={INPUT} placeholder="3707" /></div>
             <div className="col-span-2"><label className={LABEL}>Address</label><input value={address} onChange={e => setAddress(e.target.value)} className={INPUT} placeholder="Street, city" /></div>
             <div><label className={LABEL}>Owner</label><input value={ownerName} onChange={e => setOwnerName(e.target.value)} className={INPUT} placeholder="Name" /></div>
-            <div><label className={LABEL}>Owner contact</label><input value={ownerContact} onChange={e => setOwnerContact(e.target.value)} className={INPUT} placeholder="Phone or email" /></div>
+            {member ? <div><label className={LABEL}>Owner contact</label><input value={ownerContact} onChange={e => setOwnerContact(e.target.value)} className={INPUT} placeholder="Phone or email" /></div> : null}
           </div>
         )}
       </div>
@@ -665,7 +665,7 @@ function summarize(unit: Unit, rooms: Room[], items: Item[]) {
   const flagged = byRoom.flatMap(x => x.flagged.map(i => ({ room: x.r.name, i })))
   return { byRoom, flagged, totalQty: items.reduce((a, i) => a + (i.qty || 0), 0) }
 }
-function Summary({ unit, rooms, items, progress, buy, check, act, reload, member }: { unit: Unit & { order_id?: string | null }; rooms: Room[]; items: Item[]; progress: Progress; buy: Buy[]; check: CheckRow[]; act: (b: any) => Promise<any>; reload: () => Promise<void>; member: boolean }) {
+function Summary({ unit, rooms, items, progress, buy, check, act, reload, canOrder }: { unit: Unit & { order_id?: string | null }; rooms: Room[]; items: Item[]; progress: Progress; buy: Buy[]; check: CheckRow[]; act: (b: any) => Promise<any>; reload: () => Promise<void>; canOrder: boolean }) {
   const s = useMemo(() => summarize(unit, rooms, items), [unit, rooms, items])
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
@@ -728,7 +728,7 @@ function Summary({ unit, rooms, items, progress, buy, check, act, reload, member
             {buy.slice(0, 14).map(b => <li key={b.id} className="text-amber-950"><b>{b.need}×</b> {b.name} <span className="text-amber-800/80">· {roomName(b.room_id)} · {b.why === 'short' ? 'have ' + b.have + ', need ' + b.expected : b.why}</span></li>)}
             {buy.length > 14 && <li className="text-amber-800/70">+{buy.length - 14} more</li>}
           </ul>
-          {member ? (
+          {canOrder ? (
             <button onClick={send} disabled={busy} className={BTN + ' mt-2 w-full bg-amber-700 text-white min-h-[42px]'}>{busy ? <Loader2 size={15} className="animate-spin" /> : <ShoppingCart size={15} />} {unit.order_id ? 'Update the purchase order' : 'Create purchase order'}</button>
           ) : <p className="text-[12px] mt-1.5 text-amber-900">The office turns this list into a purchase order.</p>}
           {msg && <p className="text-[12px] mt-1.5 text-amber-950">{msg}</p>}

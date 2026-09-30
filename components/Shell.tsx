@@ -4,7 +4,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
 import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
-import { defaultPinsFor, cleanPins, MAX_PINS, PINS_LS_KEY, GROUPS_LS_KEY } from '@/lib/nav'
+import { defaultPinsFor, cleanPins, MAX_PINS, PINS_LS_KEY } from '@/lib/nav'
 import { DESKS, deskForPath, type DeskView } from '@/lib/desks'
 import { EveFloat } from '@/components/EveFloat'
 import { AddTaskHost, openAddTask } from '@/components/AddTaskSheet'
@@ -40,6 +40,8 @@ const DESK_ICONS: Record<string, any> = {
 }
 // The phone's bottom bar has room for about ten characters a tab.
 const DESK_SHORT: Record<string, string> = { guests: 'Guests' }
+// Pages that size themselves to the window and draw no desk strip above them.
+const NO_STRIP = ['/revenue-app']
 
 // PER-TAB CACHE FOR THE SHELL'S OWN READS (2026-09-18). The Shell is rendered inside every page,
 // so it remounts on every navigation and asked /api/access/me and /api/access/prefs again each
@@ -190,7 +192,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === 'k') { e.preventDefault(); setPaletteOpen(v => !v) }
-      if (e.key === 'Escape') { setPaletteOpen(false); setDrawerOpen(false) }
+      if (e.key === 'Escape') { setPaletteOpen(false); setDrawerOpen(false); setMoreOpen(false) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -204,8 +206,6 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   }
 
   const initials = (email || 'U').split('@')[0].split('.').map(s => s[0]?.toUpperCase()).slice(0, 2).join('') || 'U'
-
-  const isActive = (to: string) => path === to || (to !== '/' && !!path && path.startsWith(to + '/'))
 
   // Hide pages outside the user's workspace bundle or toggled off for them (owner always sees all).
   // While /api/access/me is still loading (workspace === null) show everything — no nav flicker,
@@ -221,7 +221,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   }
 
   // THE DESKS (lib/desks.ts). A view is drawn only if the person can open it; a desk shows only if
-  // one of its views does, and links to the first of them. People & settings (/users) is the admin
+  // one of its views does, and links to the first of them. Users & admin (/users) is the admin
   // console, which gates itself, so it shows for admins only.
   const viewVisible = (v: DeskView) => v.to === '/users' ? isAdmin : canSee(v.to)
   const desks = DESKS.map(d => ({ desk: d, views: d.views.filter(viewVisible) })).filter(x => x.views.length > 0)
@@ -374,14 +374,25 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
       </Link>
     )
   }
-  const vrNav = (onNavigate?: () => void) => {
+  // In the phone drawer each desk also lists its pages, because the strip is hidden on a phone —
+  // the drawer is the whole map there.
+  const deskPages = (x: { desk: typeof DESKS[number]; views: DeskView[] }, onNavigate?: () => void) => x.views.length < 2 ? null : (
+    <div className="ml-9 mb-1 border-l border-line pl-2">
+      {x.views.map(v => {
+        const on = !!viewHere && viewHere.to === v.to
+        return <Link key={v.to} href={v.to} prefetch={false} onClick={onNavigate} title={v.hint}
+          className={'block px-2 py-1.5 rounded-md text-[13px] ' + (on ? 'text-brand-700 font-semibold bg-brand-50' : 'text-muted hover:text-ink hover:bg-app')}>{v.label}</Link>
+      })}
+    </div>
+  )
+  const vrNav = (onNavigate?: () => void, withPages?: boolean) => {
     const main = desks.filter(x => x.desk.key !== 'admin')
     const admin = desks.find(x => x.desk.key === 'admin')
     return (
       <>
         {jumpBox(onNavigate)}
-        <div className="space-y-0.5">{main.map(x => deskRow(x, onNavigate))}</div>
-        {admin ? <div className="mt-3 pt-3 border-t border-line">{deskRow(admin, onNavigate)}</div> : null}
+        <div className="space-y-0.5">{main.map(x => <div key={x.desk.key}>{deskRow(x, onNavigate)}{withPages ? deskPages(x, onNavigate) : null}</div>)}</div>
+        {admin ? <div className="mt-3 pt-3 border-t border-line">{deskRow(admin, onNavigate)}{withPages ? deskPages(admin, onNavigate) : null}</div> : null}
       </>
     )
   }
@@ -458,18 +469,22 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     </>
   )
 
-  const navBody = (onNavigate?: () => void) => G ? gardenNavBody(onNavigate) : vrNav(onNavigate)
+  const navBody = (onNavigate?: () => void, withPages?: boolean) => G ? gardenNavBody(onNavigate) : vrNav(onNavigate, withPages)
 
   // THE DESK STRIP — the pages of the desk you are on, across the top. Secondary pages sit under
   // "More" (unless you are on one, then it shows inline so you can see where you are). A desk with
   // a single page draws no strip.
   const deskStrip = () => {
     if (!deskHere || deskHere.views.length < 2) return null
+    // Full-height pages draw no strip: the Revenue App frame sizes itself to the window.
+    if (viewHere && NO_STRIP.indexOf(viewHere.to) >= 0) return null
     const Icon = DESK_ICONS[deskHere.desk.key] || Gauge
     const inline = deskHere.views.filter(v => !v.more || (viewHere && viewHere.to === v.to))
     const extra = deskHere.views.filter(v => v.more && !(viewHere && viewHere.to === v.to))
     return (
-      <div className="mb-4 -mt-1 flex items-center gap-2 flex-wrap">
+      // Desktop and tablet only: on a phone the bottom bar and the drawer carry the desks and their
+      // pages, and a wrapped strip would cost a hundred pixels of every screen.
+      <div className="mb-4 -mt-1 hidden sm:flex items-center gap-2 flex-wrap">
         <div className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] font-bold text-muted/70 mr-1" title={deskHere.desk.blurb}>
           <Icon size={13} />{deskHere.desk.label}
         </div>
@@ -490,7 +505,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
             {moreOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)} />
-                <div role="menu" className="absolute left-0 mt-1 z-50 min-w-[220px] rounded-xl border border-line bg-white shadow-lifted p-1">
+                <div role="menu" className="absolute right-0 mt-1 z-50 w-[240px] max-w-[80vw] rounded-xl border border-line bg-white shadow-lifted p-1">
                   {extra.map(v => (
                     <Link key={v.to} href={v.to} prefetch={false} role="menuitem" title={v.hint} onClick={() => setMoreOpen(false)}
                       className="block px-3 py-2 rounded-lg text-[13px] text-ink hover:bg-app">
@@ -622,7 +637,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
             </div>
             <div className="pt-2">{bizSwitcher(true)}</div>
             <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
-              {navBody(() => setDrawerOpen(false))}
+              {navBody(() => setDrawerOpen(false), true)}
             </nav>
             <div className="border-t border-line p-3 flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-white text-xs font-semibold flex items-center justify-center flex-shrink-0">

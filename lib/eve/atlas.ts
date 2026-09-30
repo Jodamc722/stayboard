@@ -17,7 +17,7 @@ import { DOMAINS } from './registry'
 const PAGE_NOTES: Record<string, string> = {
   // TODAY
   command: 'Command — the ranked day: Decide, Fix, Clear and Yours rows, one tap each, plus the week scoreboard strip',
-  eve: 'Eve\'s tab — what needs a person, what she did today, the open loops she is keeping tabs on, the questions only a person can answer, and her expectation notes for CS; people talk to her in the floating bubble on every page; her memory, voice and agent mode live in Admin → People & settings → Settings → Eve',
+  eve: 'Eve\'s tab — what needs a person, what she did today, the open loops she is keeping tabs on, the questions only a person can answer, and her expectation notes for CS; people talk to her in the floating bubble on every page; her memory, voice and agent mode live in Admin → Users & admin → Settings → Eve',
   loops: 'not a page of its own — the Open loops tab on Eve (/loops redirects there)',
   // OPERATIONS
   plan: 'Today board — every unit\'s work today against the 4pm deadline: assign, add tasks, staffing, vacant units, PM due; the printable day sheet is its day-sheet icon',
@@ -36,11 +36,11 @@ const PAGE_NOTES: Record<string, string> = {
   reservations: 'arriving, departing, in-house and upcoming bookings mirrored from Guesty; a row opens the booking page',
   'guest-orders': 'pre-arrival guest orders — approve, charge, push; order links, catalog, stock per hub and coupons',
   guidebooks: 'guest guidebooks by building — build, bulk fix, emergency info and push to Guesty',
-  'reservation-emails': 'front-desk notices to buildings — auto-drafted daily into support@ Drafts with the registration form attached; config lives in Admin → People & settings → Settings → Front-desk notices',
+  'reservation-emails': 'front-desk notices to buildings — auto-drafted daily into support@ Drafts with the registration form attached; config lives in Admin → Users & admin → Settings → Front-desk notices',
   faq: 'per-unit knowledge — facts, FAQs, how-tos and key details; door codes stay masked unless the viewer is set to Direct',
   guests: 'the guest directory — profiles, history, VIP flags, tags and notes',
   contacts: 'the guest list as a mailing list — filters, export and the Mailchimp push',
-  salato: 'not a page any more — which units the Salato board, verification and daily email cover is set in Admin → People & settings → Settings → Salato front-desk units; the front desk works from the Salato share board (/salato/share)',
+  salato: 'not a page any more — which units the Salato board, verification and daily email cover is set in Admin → Users & admin → Settings → Salato front-desk units; the front desk works from the Salato share board (/salato/share)',
   // REVIEWS
   reviews: 'review management — the reply queue (drafts on demand), failing units and buildings, all reviews, and the jobs made from complaints (Actions tab)',
   // LISTINGS
@@ -73,8 +73,8 @@ const PAGE_NOTES: Record<string, string> = {
   'share-links': 'every share link and passcode in one list — reservations, ADR, cleaning, verification boards',
   vault: 'credentials and paperwork, revealed after unlock (owner-gated)',
   'api-keys': 'personal read-only API keys for /api/v1',
-  'labor-settings': 'labor rules and pay settings (a panel in Admin → People & settings)',
-  integrations: 'connected systems — Guesty, Breezeway, Slack, email, Homebase (a panel in Admin → People & settings)',
+  'labor-settings': 'labor rules and pay settings (a panel in Admin → Users & admin)',
+  integrations: 'connected systems — Guesty, Breezeway, Slack, email, Homebase (a panel in Admin → Users & admin)',
 }
 
 let _cache: string | null = null
@@ -96,7 +96,7 @@ export function appAtlas(): string {
     + 'desks — Operations, Guest Experience, Reviews, Listings, Owners, Team, KPIs — and Admin behind '
     + 'a gear; a desk\'s pages run across the top of each page. When someone asks where to do '
     + 'something, name the desk and the page (and the Settings panel if it is a setting). Admin → '
-    + 'People & settings (/users) holds Settings: task automation, front-desk notices, Slack rules, approval limits, review '
+    + 'Users & admin (/users) holds Settings: task automation, front-desk notices, Slack rules, approval limits, review '
     + 'voice, share links, staffing, PAR levels, Guesty custom fields, Salato front-desk units — and '
     + 'your own memory/voice/direction under "Eve".\n'
     + pages
