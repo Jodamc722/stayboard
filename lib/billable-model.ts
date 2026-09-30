@@ -121,7 +121,7 @@ export function classify(t: Input, model?: Model | null): Billable {
 const KEY = 'billable_model'
 let _m: { at: number; val: Model } | null = null
 export async function loadModel(): Promise<Model> {
-  if (_m && Date.now() - _m.at < 5 * 60 * 1000) return _m.val
+  if (_m && Date.now() - _m.at < 30 * 1000) return _m.val   // short: a judge or retrain on another instance shows within 30s
   const v = await getSetting<any>(KEY, null).catch(() => null)
   const val: Model = { at: Number(v?.at) || 0, keys: v?.keys || {}, ai: v?.ai || {} }
   _m = { at: Date.now(), val }
