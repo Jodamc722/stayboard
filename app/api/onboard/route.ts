@@ -7,6 +7,7 @@
 //                                                                       updateItem · removeItem · removePhoto ·
 //                                                                       complete · reopen
 //   SIGNED IN (feature `onboarding`) GET  ?list=1                    → every onboarding unit with progress
+//                                                                       and its linen tier totals (lib/linens.ts linenSummary)
 //                                 POST { action:'create', … }         → mints a code
 //                                 POST { action:'assign', id, listingId } → links to the live Guesty listing
 //                                 POST { action:'archive', id }
@@ -25,6 +26,7 @@ import { atLeast } from '@/lib/features'
 import { isVrLogin } from '@/lib/vr-gate'
 import { roomsFor, itemsFor, fullAnswers, applyAnswers, unitNeeds, unitCheck, newCode, mergeStandard, STANDARD_KEY, DEFAULT_STANDARD, APPLIANCES, BED_SIZES, TIERS, ROOM_TYPES, type UnitDetails, type RoomDef, type InventoryStandard } from '@/lib/onboarding'
 import { getSetting, setSetting } from '@/lib/app-settings'
+import { LINEN_STANDARD_KEY, LINEN_UNIT_BEDS_KEY, LINEN_QUOTES_KEY, normLinenStandard, normLinenQuotes, linenSummary, onboardingLinenUnit } from '@/lib/linens'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -233,10 +235,21 @@ export async function GET(req: NextRequest) {
       const lname: Record<string, string> = {}
       for (const l of (listings || []) as any[]) lname[String(l.id)] = String(l.nickname || l.title || l.id)
       const standard = await loadStandard()
+      // THE LINEN PACKAGE ON EVERY UNIT (Jon, 2026-09-30: "This should also populate into the
+      // onboarding conversation"). Low / Mid / Luxury totals and the tier picked, from the settings
+      // the linen page keeps — three reads for the whole list, arithmetic in lib/linens.ts. A failure
+      // here costs the one-liner, never the desk.
+      let linen: { std: ReturnType<typeof normLinenStandard>; beds: any; quotes: ReturnType<typeof normLinenQuotes> } | null = null
+      try {
+        const [ls, lb, lq] = await Promise.all([getSetting<any>(LINEN_STANDARD_KEY, null), getSetting<any>(LINEN_UNIT_BEDS_KEY, null), getSetting<any>(LINEN_QUOTES_KEY, null)])
+        linen = { std: normLinenStandard(ls), beds: lb, quotes: normLinenQuotes(lq) }
+      } catch { linen = null }
       const out = (units || []).map((u: any) => {
         const rs = (rooms || []).filter((r: any) => r.unit_id === u.id); const its = (items || []).filter((i: any) => i.unit_id === u.id)
         const needs = unitNeeds(u.details || {}, standard, rs.map((r: any) => ({ key: r.key, name: r.name, kind: r.kind, sort: r.sort })))
-        return { ...u, listing_name: u.listing_id ? (lname[u.listing_id] || u.listing_id) : null, progress: progressOf(rs, its), buy: buyList(its, needs).length }
+        let linens = null
+        if (linen) { try { linens = linenSummary(linen.std, onboardingLinenUnit(u, linen.beds), linen.quotes[String(u.code || '').toLowerCase()]?.tier || null) } catch { linens = null } }
+        return { ...u, listing_name: u.listing_id ? (lname[u.listing_id] || u.listing_id) : null, progress: progressOf(rs, its), buy: buyList(its, needs).length, linens }
       })
       const pick = (listings || []).filter((l: any) => !['inactive', 'disabled', 'archived', 'deleted'].includes(String(l.status || '').toLowerCase()))
         .map((l: any) => ({ id: String(l.id), name: String(l.nickname || l.title || l.id), building: String(l.building || '') }))

@@ -44,6 +44,7 @@ import { getSetting } from './app-settings'
 import { otaLinksFrom, type OtaLink } from './ota-links'
 import { MARKET_DEFAULTS } from './projections'
 import { marketLabel } from './segments'
+import type { LinenDeckSection } from './linens'
 
 /** A question we ask on the call. `a` is the answer, typed live into the report. */
 export type Ask = { id: string; q: string; hint?: string; a?: string }
@@ -211,6 +212,13 @@ export type OnboardingContent = {
   nextup: Sec<{ headline: string; subtitle: string; rows: KV[] }>
   /** 8 — other notes. Free text typed on the call, plus anything still unanswered above. */
   notes: Sec<{ headline: string; subtitle: string; body: string }>
+  /**
+   * THE LINEN PACKAGE (Jon, 2026-09-30: "This should also populate into the onboarding conversation
+   * as well as a potential slide"). Low / Mid / Luxury for these units' beds, the tier picked on the
+   * linen page highlighted. Absent — so no slide — until the linen standard carries prices; built by
+   * lib/linen-deck.ts at generate time and editable in place like every other section.
+   */
+  linens?: Sec<LinenDeckSection>
   /** Every photo on the owner's listings, so any section can pick one without another fetch. */
   photoPool: string[]
   custom?: { id: string; eyebrow: string; title: string; body: string }[]
@@ -684,6 +692,8 @@ export type BuildInput = {
   heroImage: string | null
   /** Every amenity string in use across the portfolio - the owner's full pick list. */
   amenityCatalog?: string[]
+  /** The linen package slide, when the linen standard has prices (lib/linen-deck.ts). */
+  linens?: LinenDeckSection | null
 }
 
 /**
@@ -1002,6 +1012,7 @@ export function buildOnboardingContent(t: OnboardingTemplate, i: BuildInput): On
       ...H('notes', 'Other notes', NOTES_SUBTITLE.current),
       body: '',
     },
+    ...(i.linens ? { linens: i.linens } : {}),
     photoPool: pool,
     custom: [],
     // JON'S EIGHT (2026-09-16: "I actually prefer that it doesn't have any intake. It should be:

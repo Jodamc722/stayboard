@@ -2208,6 +2208,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     : 0
   const presentCount = isOnboarding
     ? 1 + onboardingSectionKeys.filter(k => !isHidden(k)).length + onboardingListingSlides + customSecs.length
+      // The linen package is optional: counted only when the deck was generated with one.
+      + (c.linens && !isHidden('linens') ? 1 : 0)
     : isReviewDeck
     // COUNT WHAT RENDERS, NOT WHAT MIGHT. The first version counted one slide per section key and
     // reported 11 where 12 were on the page: the listing table paginates at nine rows a slide, and
@@ -3275,6 +3277,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             { k: 'rampsteps', label: 'How we shorten it' },
             { k: 'guesty', label: 'Owner portal' },
             { k: 'statement', label: 'Owner statements' },
+            { k: 'linens', label: 'Linen package' },
             { k: 'notes', label: 'Other notes' },
           ]
           const EXTRA: { k: string; label: string }[] = [
@@ -5153,6 +5156,66 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             ) })
           }
 
+          // ── THE LINEN PACKAGE — three tiers for their beds (Jon, 2026-09-30: "This should also
+          // populate into the onboarding conversation as well as a potential slide"). The generator
+          // writes `linens` only when the linen standard carries prices (lib/linen-deck.ts), so a deck
+          // without it has no key and no slide. The tier picked on the linen page carries the accent.
+          if (!hid('linens')) {
+            const LN = sec('linens')
+            const lnTiers: Any[] = Array.isArray(LN.tiers) ? LN.tiers.slice(0, 3) : []
+            if (lnTiers.length) slides.push({ key: 'linens', node: (
+              <Slide nav="Linen package" warn={edit} ground={GROUND.tint}>
+                <div className="flex flex-col h-full">
+                  <Title k="linens" />
+                  <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 18 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + lnTiers.length + ',1fr)', gap: 20 }}>
+                      {lnTiers.map((tr: Any, i: number) => {
+                        const on = !!tr.chosen
+                        return (
+                          <div key={i} style={{ borderRadius: 14, padding: '13px 18px', background: t.card, border: on ? '2px solid ' + t.accent : '1px solid ' + t.cardBorder }}>
+                            <div className="flex items-center justify-between" style={{ gap: 8 }}>
+                              <p style={{ fontSize: 12.5, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: on ? t.accent : t.sub }}>
+                                <Ed v={tr.label || ''} set={v => patch('linens.tiers.' + i + '.label', v)} edit={edit} />
+                              </p>
+                              {on ? (
+                                <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', padding: '3px 8px', borderRadius: 999, background: hexA(t.accent, 0.13), color: t.accent }}>
+                                  <Lab id="linensChosen" d="Recommended" />
+                                </span>
+                              ) : null}
+                            </div>
+                            <p style={{ fontSize: 28, fontWeight: 600, color: t.ink, marginTop: 6, lineHeight: 1.1 }}>
+                              <Ed v={tr.total || ''} set={v => patch('linens.tiers.' + i + '.total', v)} edit={edit} />
+                            </p>
+                            <p style={{ fontSize: 12, color: t.muted, marginTop: 3 }}>
+                              <Ed v={tr.sub || ''} set={v => patch('linens.tiers.' + i + '.sub', v)} edit={edit} />
+                            </p>
+                            <div style={{ marginTop: 9 }}>
+                              {(Array.isArray(tr.lines) ? tr.lines : []).slice(0, 4).map((ln: Any, j: number) => (
+                                // One line per key item — what it is, then what is bought at this tier.
+                                <p key={j} style={{ padding: '5px 0', borderTop: '1px solid ' + t.rule, fontSize: 12.5, lineHeight: 1.4, color: t.body }}>
+                                  <span style={{ fontWeight: 600, color: t.sub, marginRight: 6 }}>
+                                    <Ed v={ln.k || ''} set={v => patch('linens.tiers.' + i + '.lines.' + j + '.k', v)} edit={edit} />
+                                  </span>
+                                  <Ed v={ln.v || ''} set={v => patch('linens.tiers.' + i + '.lines.' + j + '.v', v)} edit={edit} />
+                                </p>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    {(LN.note || edit) ? (
+                      <p style={{ fontSize: 13, lineHeight: 1.55, color: t.body, marginTop: 14, paddingLeft: 14, borderLeft: '2px solid ' + t.accent, maxWidth: '96ch' }}>
+                        <Ed v={LN.note || ''} set={v => patch('linens.note', v)} edit={edit} multiline />
+                      </p>
+                    ) : null}
+                  </div>
+                  <Foot label="Linen package" />
+                </div>
+              </Slide>
+            ) })
+          }
+
           // ── WHAT IS STILL OPEN. Its own slide, because it is fourteen short rows and the
           // generic RowSlide is a single scrolling column: on screen it would need scrolling and
           // in the PDF it would simply be cut. Two columns, the owner/Stay tag beside each item,
@@ -5510,7 +5573,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           </button>
                         )
                       })}
-                      {CORE.filter(x => hid(x.k)).map(x => (
+                      {/* The linen slide exists only on a deck generated with linen prices — no chip to bring back what was never there. */}
+                      {CORE.filter(x => hid(x.k) && (x.k !== 'linens' || !!c.linens)).map(x => (
                         <button key={x.k} onClick={() => toggleSection(x.k)}
                           style={{ borderRadius: 999, padding: '6px 14px', fontSize: 12, fontWeight: 500, background: t.card, border: '1px solid ' + t.cardBorder, color: t.sub }}>
                           + {x.label}

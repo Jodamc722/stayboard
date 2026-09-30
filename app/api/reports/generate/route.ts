@@ -23,6 +23,7 @@ import { reconcilePacing, type OurTruth } from '@/lib/pacing-check'
 import { ownerMonths, rollup, coverageFor, MONTH_LABEL, statementDetail } from '@/lib/owner-statements'
 import { projectionSectionFor } from '@/lib/projections'
 import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type ListingCard, type KV } from '@/lib/onboarding-report'
+import { linenDeckFor } from '@/lib/linen-deck'
 import { buildingPhotos, fillPropertyPics } from '@/lib/building-photos'
 import { withoutCollages } from '@/lib/photo-filter'
 import { computeScore } from '@/lib/optimize-score'
@@ -368,6 +369,12 @@ export async function POST(req: NextRequest) {
       if (hit) { ownerEmail = str(hit.email); ownerPhone = str(hit.phone); ownerFullName = str(hit.full_name) }
     } catch { /* the section renders empty and gets filled in on the call */ }
 
+    // THE LINEN PACKAGE (Jon, 2026-09-30): three tiers for these units' beds, the picked one
+    // highlighted. Null — so no slide — until the linen standard has prices. A failure here costs
+    // the slide, never the deck.
+    let linens: Awaited<ReturnType<typeof linenDeckFor>> = null
+    try { linens = await linenDeckFor(db0, rows) } catch { linens = null }
+
     const tpl = await getOnboardingTemplate()
     // No team saved in settings yet: fall back to the live roster so the section is never empty
     // on the first run. Once Jon writes the cards once, the saved ones win.
@@ -397,6 +404,7 @@ export async function POST(req: NextRequest) {
       bedrooms: first.bedrooms != null ? Number(first.bedrooms) : null,
       heroImage: heroImageUrl || (cards[0] && cards[0].photos[0] ? cards[0].photos[0] : null),
       amenityCatalog,
+      linens,
     })
 
     // OUR PROPERTIES (boss, 2026-09-24): a picture next to each building, from its own Guesty

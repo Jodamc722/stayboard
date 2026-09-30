@@ -4,9 +4,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { Plus, Copy, Check, Link2, ExternalLink, Loader2, Archive, Unlink, Search, Camera, Settings2, ShoppingCart, Trash2, RotateCcw, X, BedDouble } from 'lucide-react'
 import { LeanHead, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, Clamp, type Tone } from '@/components/lean'
 import { describeUnit, CATEGORIES, ROOM_KIND_LABEL, ONLY_LABEL, TIERS, TIER_LABEL, qtyFor, type UnitDetails, type InventoryStandard, type StandardItem, type RoomKind, type Category, type Tier } from '@/lib/onboarding'
+import { LINEN_TIERS, fmtUsd, type LinenSummary } from '@/lib/linens'
 
 type Progress = { rooms: number; roomsChecked: number; roomsPhotographed: number; items: number; confirmed: number; photos: number; pct: number }
-type Unit = { id: string; code: string; name: string; building: string | null; unit_no: string | null; owner_name: string | null; details: UnitDetails; status: string; listing_id: string | null; listing_name: string | null; created_at: string; updated_at: string; completed_at: string | null; progress: Progress; buy: number; order_id?: string | null }
+type Unit = { id: string; code: string; name: string; building: string | null; unit_no: string | null; owner_name: string | null; details: UnitDetails; status: string; listing_id: string | null; listing_name: string | null; created_at: string; updated_at: string; completed_at: string | null; progress: Progress; buy: number; order_id?: string | null; linens?: LinenSummary | null }
 type Listing = { id: string; name: string; building: string }
 
 const BTN = 'inline-flex items-center gap-1.5 rounded-xl font-bold text-[13px] min-h-[38px] px-3.5 disabled:opacity-50'
@@ -153,6 +154,7 @@ function UnitCard({ u, listings, onChanged }: { u: Unit; listings: Listing[]; on
         {p.rooms > 0 && <Tag tone={p.pct === 100 ? 'emerald' : 'brand'} title={`${p.confirmed}/${p.items} items confirmed · ${p.roomsChecked}/${p.rooms} rooms done · ${p.photos} photos`}>{p.pct}%</Tag>}
         {u.buy > 0 && <Tag tone="amber" title="Items the walk found missing">{u.buy} to buy</Tag>}
         {u.listing_name && <Tag title="Assigned Guesty listing">{u.listing_name}</Tag>}
+        {u.linens?.chosen && <Tag tone="violet" title={`Linen package: ${u.linens.tiers[u.linens.chosen].label} picked` + (u.linens.tiers[u.linens.chosen].priced ? ' — ' + fmtUsd(u.linens.tiers[u.linens.chosen].total) : '')}>linens · {u.linens.tiers[u.linens.chosen].label}</Tag>}
       </>}
       actions={<>
         <IconBtn title={copied ? 'Copied' : 'Copy the walker link'} onClick={async () => { try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch {} }}>{copied ? <Check size={14} /> : <Copy size={14} />}</IconBtn>
@@ -173,6 +175,7 @@ function UnitCard({ u, listings, onChanged }: { u: Unit; listings: Listing[]; on
           <span className="ml-auto">updated {new Date(u.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
         </div>
       ) : <p className="text-[12px] text-muted">Not walked yet · updated {new Date(u.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>}
+      {u.linens && <LinenLine s={u.linens} code={u.code} />}
       {assigning && (
         // Assigning changes nothing in the inventory — it just becomes readable by listing.
         <div className="flex gap-2 flex-wrap items-center pt-1">
@@ -182,6 +185,34 @@ function UnitCard({ u, listings, onChanged }: { u: Unit; listings: Listing[]; on
         </div>
       )}
     </LeanRow>
+  )
+}
+
+/**
+ * THE LINEN PACKAGE, ONE LINE (Jon, 2026-09-30: "This should also populate into the onboarding
+ * conversation"). Low / Mid / Luxury for this unit's beds, the picked tier tagged, and the whole line
+ * opens the unit's linen quote — three tiers, the owner invoice and the vendor order.
+ */
+function LinenLine({ s, code }: { s: LinenSummary; code: string }) {
+  return (
+    <a href={'/onboarding/linens?unit=onboard:' + encodeURIComponent(code)}
+      title={`Open this unit's linen quote${s.beds ? ' (' + s.beds + ')' : ''} — three tiers, the owner invoice and the vendor order`}
+      className="flex items-center gap-x-2 gap-y-1 flex-wrap text-[12px] text-muted hover:text-ink">
+      <span className="inline-flex items-center gap-1 font-semibold text-ink"><BedDouble size={12} /> Linens</span>
+      {LINEN_TIERS.map((t, i) => {
+        const x = s.tiers[t]
+        return (
+          <span key={t} className="inline-flex items-center gap-1 tabular-nums">
+            {i > 0 && <span aria-hidden className="text-line">·</span>}
+            <span>{x.label}</span>
+            {x.priced
+              ? <b className={s.chosen === t ? 'text-ink' : 'text-ink/80 font-semibold'} title={x.unpriced ? `${x.unpriced} line${x.unpriced === 1 ? ' has' : 's have'} no price and are not in this total` : undefined}>{fmtUsd(x.total)}{x.unpriced ? '+' : ''}</b>
+              : <Tag tone="amber" title={`No ${x.label} prices on the linen standard yet`}>unpriced</Tag>}
+            {s.chosen === t && <Tag tone="emerald" title="The tier picked for this unit — it shows on the onboarding deck">chosen</Tag>}
+          </span>
+        )
+      })}
+    </a>
   )
 }
 
