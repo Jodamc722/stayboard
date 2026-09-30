@@ -1,7 +1,7 @@
 'use client'
 // ONBOARDING DESK — mint links, watch progress, assign to the live listing (Jon, 2026-09-02).
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Copy, Check, Link2, ExternalLink, Loader2, Archive, Unlink, Search, Camera, Settings2, ShoppingCart, Trash2, RotateCcw, X } from 'lucide-react'
+import { Plus, Copy, Check, Link2, ExternalLink, Loader2, Archive, Unlink, Search, Camera, Settings2, ShoppingCart, Trash2, RotateCcw, X, BedDouble } from 'lucide-react'
 import { LeanHead, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, Clamp, type Tone } from '@/components/lean'
 import { describeUnit, CATEGORIES, ROOM_KIND_LABEL, ONLY_LABEL, TIERS, TIER_LABEL, qtyFor, type UnitDetails, type InventoryStandard, type StandardItem, type RoomKind, type Category, type Tier } from '@/lib/onboarding'
 
@@ -43,6 +43,8 @@ export function OnboardingDesk() {
         <Pill tone="amber" title="Links not finished yet (not started or being walked)">{stats.open} in progress</Pill>
         <Pill tone="emerald" title="Walk finished — ready to assign to a live Guesty listing">{stats.complete} ready</Pill>
         <Pill title="Assigned to a live listing">{stats.linked} assigned</Pill>
+        <a href="/onboarding/linens" title="Linens — the linen standard (par, per bed / bath / guest) and the order calculator for any set of units"
+          className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app"><BedDouble size={13} /> Linens</a>
       </LeanHead>
 
       <div className="flex items-center gap-2 flex-wrap mb-3">
