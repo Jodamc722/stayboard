@@ -32,6 +32,8 @@ import { useAccess } from '@/lib/useAccess'
 import type { CommandDay, NextItem, GuestDeskRow, CleanRow as CleanRowT, ArrivalRow, TaskRow, TeamRow as TeamRowT, GlitchRow as GlitchRowT } from '@/lib/command-day'
 import { InlineAssign, BTN, MINE_URL, type Roster, type Mine, type MineItem } from '@/components/CommandCockpit'
 import { SCOREBOARD_URL } from '@/components/command/Scoreboard'
+import { NudgeBtn } from '@/components/command/Nudge'
+import { DayKpis } from '@/components/command/DayKpis'
 
 // ── shared bits ─────────────────────────────────────────────────────────────────────────────────
 export type Area = 'ops' | 'guests' | 'reviews' | 'admin'
@@ -46,15 +48,15 @@ const SUB_ORDER = ['Cleans', 'Inspections', 'Tasks', 'Team', 'Calls', 'Inbox', '
 const NOW_MIN = 65     // a row needs this score to make the Now list
 const NOW_MAX = 6
 const LANE_ROWS = 5
-const LIST = 'rounded-2xl border border-line bg-white divide-y divide-line'
-const GHOST = BTN + ' border border-line bg-white text-ink hover:border-ink/40'
-const DARK = BTN + ' bg-ink text-white'
-const bz = (id: string) => 'https://app.breezeway.io/task/' + id
-const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
-const hm = (min: number) => { const a = Math.abs(min), h = Math.floor(a / 60), m = a % 60; return (min < 0 ? '-' : '') + (h ? h + 'h' + (m ? ' ' + m + 'm' : '') : m + 'm') }
+export const LIST = 'rounded-2xl border border-line bg-white divide-y divide-line'
+export const GHOST = BTN + ' border border-line bg-white text-ink hover:border-ink/40'
+export const DARK = BTN + ' bg-ink text-white'
+export const bz = (id: string) => 'https://app.breezeway.io/task/' + id
+export const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
+export const hm = (min: number) => { const a = Math.abs(min), h = Math.floor(a / 60), m = a % 60; return (min < 0 ? '-' : '') + (h ? h + 'h' + (m ? ' ' + m + 'm' : '') : m + 'm') }
 /** High-ticket weighting: up to +10 on a $5,000 booking. */
 const valueBonus = (v: number) => Math.min(10, Math.max(0, v) / 500)
-const INSPECT = /inspect|unit check|quality/i
+export const INSPECT = /inspect|unit check|quality/i
 
 async function post(url: string, body: any, method = 'POST') {
   const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -66,7 +68,7 @@ const clearRow = (i: { key: string; title?: string; unit?: string }, outcome: 'd
   post('/api/command/dismiss', { key: i.key, outcome, title: i.title, unit: i.unit })
 
 /** One row: dot · title · tags · meta, then the buttons. Detail (an assign strip, a reply box) opens under it. */
-function Row({ dot, title, meta, tags, actions, children, err, lane }: {
+export function Row({ dot, title, meta, tags, actions, children, err, lane }: {
   dot?: 'rose' | 'amber' | null; title: ReactNode; meta?: ReactNode; tags?: ReactNode; actions?: ReactNode; children?: ReactNode; err?: string; lane?: string
 }) {
   return (
@@ -88,13 +90,13 @@ function Row({ dot, title, meta, tags, actions, children, err, lane }: {
 }
 
 // ── rows, one per kind ──────────────────────────────────────────────────────────────────────────
-const CLEAN_ST: Record<string, { label: string; tone: Tone; title: string }> = {
+export const CLEAN_ST: Record<string, { label: string; tone: Tone; title: string }> = {
   late: { label: 'late', tone: 'rose', title: 'Will not land by the deadline at the current pace' },
   atRisk: { label: 'at risk', tone: 'amber', title: 'Tight against the next arrival or 4pm' },
   open: { label: 'not started', tone: 'slate', title: 'Nobody has started this clean' },
   running: { label: 'in progress', tone: 'sky', title: 'Started, not finished' },
 }
-function CleanRow({ c, value, roster, canAssign, onChanged, lane }: { c: CleanRowT; value: number; roster: Roster[]; canAssign: boolean; onChanged: () => void; lane?: string }) {
+export function CleanRow({ c, value, roster, canAssign, onChanged, lane }: { c: CleanRowT; value: number; roster: Roster[]; canAssign: boolean; onChanged: () => void; lane?: string }) {
   const [open, setOpen] = useState(false)
   const s = CLEAN_ST[c.status] || CLEAN_ST.open
   const nobody = !c.who
@@ -109,6 +111,7 @@ function CleanRow({ c, value, roster, canAssign, onChanged, lane }: { c: CleanRo
       meta={[c.who, c.arrivingAt ? 'guest in ' + c.arrivingAt : '', c.market].filter(Boolean).join(' · ')}
       actions={<>
         {canAssign && <button onClick={() => setOpen(o => !o)} className={nobody ? DARK : GHOST} title={nobody ? 'Pick who cleans it' : 'Hand it to someone else'}><UserPlus size={12} /> {nobody ? 'Assign' : 'Reassign'}</button>}
+        {canAssign && !nobody && c.status !== 'done' && <NudgeBtn taskIds={[c.taskId]} compact title={'Message ' + c.who + ' on Slack about this clean'} />}
         <a href={bz(c.taskId)} target="_blank" rel="noreferrer" className={GHOST} title="Open the clean in Breezeway"><ExternalLink size={12} /></a>
       </>}>
       {open && <InlineAssign taskId={c.taskId} dept="housekeeping" roster={roster} onDone={() => { setOpen(false); onChanged() }} />}
@@ -116,7 +119,7 @@ function CleanRow({ c, value, roster, canAssign, onChanged, lane }: { c: CleanRo
   )
 }
 
-function InspectionTaskRow({ t, big, roster, canAssign, onChanged, lane }: { t: TaskRow; big: boolean; roster: Roster[]; canAssign: boolean; onChanged: () => void; lane?: string }) {
+export function InspectionTaskRow({ t, big, roster, canAssign, onChanged, lane }: { t: TaskRow; big: boolean; roster: Roster[]; canAssign: boolean; onChanged: () => void; lane?: string }) {
   const [open, setOpen] = useState(false)
   const nobody = !t.who
   const st = t.state === 'done' ? { label: 'done', tone: 'emerald' as Tone, title: 'Walked and closed' } : t.state === 'running' ? { label: 'in progress', tone: 'sky' as Tone, title: 'Somebody is in the unit' } : nobody ? { label: 'unconfirmed', tone: 'amber' as Tone, title: 'On the board with nobody assigned — confirm who walks it' } : { label: 'scheduled', tone: 'slate' as Tone, title: 'Assigned, not started' }
@@ -130,6 +133,7 @@ function InspectionTaskRow({ t, big, roster, canAssign, onChanged, lane }: { t: 
       meta={[t.name, t.who, t.market].filter(Boolean).join(' · ')}
       actions={<>
         {canAssign && t.state !== 'done' && <button onClick={() => setOpen(o => !o)} className={nobody ? DARK : GHOST} title={nobody ? 'Confirm who walks it' : 'Hand it to someone else'}><UserPlus size={12} /> {nobody ? 'Assign' : 'Reassign'}</button>}
+        {canAssign && !nobody && t.state !== 'done' && <NudgeBtn taskIds={[t.taskId]} compact title={'Message ' + t.who + ' on Slack about this inspection'} />}
         <a href={bz(t.taskId)} target="_blank" rel="noreferrer" className={GHOST} title="Open the inspection in Breezeway"><ExternalLink size={12} /></a>
       </>}>
       {open && <InlineAssign taskId={t.taskId} dept="inspection" roster={roster} onDone={() => { setOpen(false); onChanged() }} />}
@@ -143,7 +147,7 @@ const ARR_ST: Record<string, { label: string; tone: Tone; title: string }> = {
   auto: { label: 'auto', tone: 'violet', title: 'Task automation files this inspection on its next run — nobody needs to' },
   none: { label: 'no inspection', tone: 'amber', title: 'Nothing walks this unit before the guest lands — create one, or turn Task automation on' },
 }
-function ArrivalInspectionRow({ a, create, canCreate, onChanged, lane }: { a: ArrivalRow; create: NextItem | null; canCreate: boolean; onChanged: () => void; lane?: string }) {
+export function ArrivalInspectionRow({ a, create, canCreate, onChanged, lane }: { a: ArrivalRow; create: NextItem | null; canCreate: boolean; onChanged: () => void; lane?: string }) {
   const [busy, setBusy] = useState(false)
   const [made, setMade] = useState(false)
   const [err, setErr] = useState('')
@@ -169,7 +173,7 @@ function ArrivalInspectionRow({ a, create, canCreate, onChanged, lane }: { a: Ar
   )
 }
 
-function CallRow({ a, canLog, onChanged, lane }: { a: ArrivalRow; canLog: boolean; onChanged: () => void; lane?: string }) {
+export function CallRow({ a, canLog, onChanged, lane }: { a: ArrivalRow; canLog: boolean; onChanged: () => void; lane?: string }) {
   const [busy, setBusy] = useState('')
   const [done, setDone] = useState('')
   const [err, setErr] = useState('')
@@ -204,7 +208,7 @@ function InboxRow({ i, lane }: { i: NextItem; lane?: string }) {
   )
 }
 
-function GlitchRow({ g, canEdit, onChanged, lane }: { g: GlitchRowT; canEdit: boolean; onChanged: () => void; lane?: string }) {
+export function GlitchRow({ g, canEdit, onChanged, lane }: { g: GlitchRowT; canEdit: boolean; onChanged: () => void; lane?: string }) {
   const [busy, setBusy] = useState(false)
   const [gone, setGone] = useState(false)
   const [err, setErr] = useState('')
@@ -271,7 +275,7 @@ function ReviewRow({ r, canReply, onGone, lane }: { r: Review; canReply: boolean
   )
 }
 
-function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
+export function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
   const over = p.utilisationPct > 100
   const idle = p.cleans + p.otherTasks === 0
   return (
@@ -386,7 +390,7 @@ type Kpi = { key: string; area: Area; label: string; short?: string; value: stri
 function KpiTiles({ kpis, focus, onFocus }: { kpis: Kpi[]; focus: Area | null; onFocus: (a: Area | null) => void }) {
   const VAL: Record<string, string> = { rose: 'text-rose-700', amber: 'text-amber-700', emerald: 'text-emerald-700', slate: 'text-ink', sky: 'text-sky-700', violet: 'text-violet-700', brand: 'text-brand-700', roseSolid: 'text-rose-700' }
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
       {kpis.map(k => {
         const on = focus === k.area
         return (
@@ -468,7 +472,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   const reloadMine = () => { invalidateCache(MINE_URL); mineQ.refresh() }
   const week = (key: string) => (weekQ.data?.tiles || []).find(t => t.key === key) || null
 
-  const t = d.tiles, p = d.pulse
+  const t = d.tiles
   // The arriving booking's value per unit today, so a clean or an inspection can be ranked by the money on it.
   const valueByUnit: Record<string, number> = {}
   for (const a of t.arrivals.rows) if (a.today) valueByUnit[a.unit] = Math.max(valueByUnit[a.unit] || 0, a.value)
@@ -559,18 +563,12 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   const now = items.filter(i => i.score >= NOW_MIN).sort((a, b) => b.score - a.score).slice(0, NOW_MAX)
 
   // ── the KPIs ──
-  const pending = cleans.length
   const free = t.team.rows.reduce((a, r) => a + Math.max(0, (r.capacityMinutes || 0) - (r.loadMinutes || 0)), 0)
   const over = t.team.rows.filter(r => r.utilisationPct > 100).length
-  const inspToday = inspTasks.length, inspDone = inspTasks.filter(x => x.state === 'done').length, inspNobody = inspTasks.filter(x => x.state !== 'done' && !x.who).length
-  const bigToday = t.arrivals.rows.filter(a => a.big && a.today), bigCovered = bigToday.filter(a => a.inspection !== 'none').length
-  const wkCalls = week('welcome'), wkGl = week('glitches')
-  const left = p.cleansTotal > p.cleansDone ? (p.minsLeft < 0 ? hm(p.minsLeft) + ' past 4pm' : hm(p.minsLeft) + ' to 4pm') : ''
+  // Cleans, inspections and welcome calls read needed-vs-completed in the DayKpis strip above (2026-09-30).
+  const wkGl = week('glitches')
   const kpis: Kpi[] = [
-    { key: 'cleans', area: 'ops', label: 'Cleans', value: p.cleansDone + '/' + p.cleansTotal, sub: [pending ? pending + ' pending' : 'all done', left].filter(Boolean).join(' · '), tone: t.cleans.late ? 'rose' : t.cleans.atRisk ? 'amber' : pending ? 'slate' : 'emerald', title: 'Departure cleans done today, and the units still pending against the 4pm deadline' },
-    { key: 'insp', area: 'ops', label: 'Inspections', value: inspToday ? inspDone + '/' + inspToday : (bigToday.length ? bigCovered + '/' + bigToday.length : '—'), sub: [inspNobody ? inspNobody + ' unconfirmed' : '', bigToday.length ? bigCovered + '/' + bigToday.length + ' big arrivals covered' : 'no big arrivals today'].filter(Boolean).join(' · '), tone: inspNobody || bigCovered < bigToday.length ? 'amber' : inspToday || bigToday.length ? 'emerald' : 'slate', title: 'Today’s inspections done, the ones with nobody assigned, and whether every big arrival is covered' },
     { key: 'hours', area: 'ops', label: 'Free hours', short: 'Hours', value: t.team.onShift ? hm(free) : '—', sub: t.team.onShift ? t.team.onShift + ' on shift' + (over ? ' · ' + over + ' over' : '') : 'nobody on shift', tone: !t.team.onShift ? 'rose' : over ? 'amber' : free < 60 ? 'amber' : 'emerald', title: 'Hours the people on shift can still take today: their capacity minus the work already on them' },
-    { key: 'calls', area: 'guests', label: 'Welcome calls', short: 'Calls', value: String(calls.length), sub: [calls.length ? 'owed today' : 'all called', wkCalls ? 'wk ' + wkCalls.sub.replace(/\s*\(.*$/, '') : ''].filter(Boolean).join(' · '), tone: calls.some(a => a.big) ? 'rose' : calls.length ? 'amber' : 'emerald', title: 'Welcome calls still owed for today’s arrivals, and the week’s completion rate' },
     { key: 'waiting', area: 'guests', label: 'Guests waiting', short: 'Waiting', value: String(inbox.length), sub: [lateReplies.length ? lateReplies.length + ' past the hour' : '', unhappy.length ? unhappy.length + ' unhappy' : 'sentiment clear'].filter(Boolean).join(' · '), tone: unhappy.length || lateReplies.length ? 'rose' : inbox.length ? 'amber' : 'emerald', title: 'Guests waiting on a reply (1-hour rule), and current guests the sentiment scan reads as unhappy' },
     { key: 'glitches', area: 'guests', label: 'Glitches', value: String(glitches.length), sub: [t.glitches.overdue ? t.glitches.overdue + ' overdue' : 'none overdue', wkGl && /to close/.test(wkGl.sub) ? 'wk ' + wkGl.sub.split(' · ').filter(s => /to close/.test(s))[0] : ''].filter(Boolean).join(' · '), tone: t.glitches.overdue ? 'rose' : glitches.length ? 'amber' : 'emerald', title: 'Open guest issues, how many are past due, and the month’s median time to close' },
     { key: 'reviews', area: 'reviews', label: 'Reviews', value: String(reviews.length), sub: [lowReviews.length ? lowReviews.length + ' at 3★ or under' : reviews.length ? 'to answer' : 'all answered', avg30 ? avg30.avg + '★ last 30d' : ''].filter(Boolean).join(' · '), tone: lowReviews.length ? 'rose' : reviews.length ? 'amber' : 'emerald', title: 'Reviews waiting on a public reply, and the average score of the last 30 days' },
@@ -588,6 +586,8 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
 
   return (
     <div className="space-y-5">
+      {/* THE WORK TODAY — needed vs completed, with the granular list under the strip (Jon, 2026-09-30). */}
+      <DayKpis d={d} live={live} roster={roster} can={{ assign: can.assign, plan: can.plan, calls: can.calls }} onChanged={onChanged} />
       <KpiTiles kpis={kpis} focus={focus} onFocus={setFocus} />
 
       {!focus && (
@@ -619,6 +619,6 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
 function withLane(i: HubItem): ReactNode {
   return isValidElement(i.node) ? cloneElement(i.node as any, { lane: AREA[i.area].short }) : i.node
 }
-function tomorrowOf(ymd: string): string {
+export function tomorrowOf(ymd: string): string {
   const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10)
 }
