@@ -69,6 +69,6 @@ export async function dmReleasedCode(p: ReleasedCodeDm): Promise<{ ok: boolean; 
       { type: 'button', text: { type: 'plain_text', text: 'Neither' }, url: `${confirmUrl}?ok=neither` },
     ] })
   }
-  const r = await postToChannel(dm.channel, `Door code for ${p.unit} released by ${p.releasedBy}.`, blocks)
+  const r = await postToChannel(dm.channel, `Door code for ${p.unit} released by ${p.releasedBy}.`, blocks, { raw: true })
   return r.ok ? { ok: true } : { ok: false, error: r.error || 'the direct message did not go through' }
 }

@@ -496,6 +496,30 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     out.read += msgs.length
     cursors[ch.id] = msgs[msgs.length - 1].ts
 
+    // ---- 3a. THE CHANNEL CLOSES LOOPS TOO (Sulaman, 2026-09-19 and again 2026-09-25: "please check
+    // the whole channel instead of just the message thread. This issue was resolved by George
+    // yesterday"). A loop used to close only from its own thread; the crew answers in the room. A
+    // newer message in this room, outside the loop's thread, that says done AND names the loop's unit
+    // (or, with no unit, shares two real words with its summary) closes it, with the message quoted.
+    for (const it of open) {
+      if (it.status !== 'open' || it.channel !== ch.id || it.kind === 'decision') continue
+      const root = it.thread_ts || it.msg_ts
+      const since = Number(it.msg_ts)
+      const unitTok = String(it.unit || '').trim().toLowerCase()
+      const sumWords = new Set(String(it.summary || '').toLowerCase().split(/[^a-z0-9áéíóúñ]+/).filter(w => w.length >= 5))
+      const hit = msgs.find(m => {
+        if (Number(m.ts) <= since || (m.threadTs && m.threadTs === root) || m.ts === root || !ACK.test(m.text)) return false
+        const t = m.text.toLowerCase()
+        if (unitTok) return t.includes(unitTok) || t.includes(unitTok.replace(/\s+/g, ''))
+        let n = 0; sumWords.forEach(w => { if (t.includes(w)) n++ })
+        return sumWords.size > 0 && n >= 2
+      })
+      if (hit) {
+        await db.from('eve_slack_items').update({ status: 'closed', closed_reason: `${hit.who} in the channel: "${hit.text.slice(0, 80)}"`, closed_at: hit.at, last_seen: hit.at }).eq('id', it.id)
+        it.status = 'closed'; out.closed++
+      }
+    }
+
     // Candidates: a message with a signal, plus the thread it lives in, so the model sees replies.
     const cands = msgs.filter(m => signals(m.text).length)
     if (!cands.length) continue

@@ -179,9 +179,24 @@ export async function slackGet(method: string, params: Record<string, string>): 
  * Post to a channel id. `text` is always sent even when blocks are present — it is what shows in
  * the notification and in accessibility contexts, and Slack warns when it is missing.
  */
-export async function postToChannel(channel: string, text: string, blocks?: any[]): Promise<SlackResult> {
+/**
+ * SCRUBBED ON THE WAY OUT (2026-09-30 audit). Every redaction Eve had was inbound — tool results, memory
+ * writes — and nothing looked at the text she actually posted. Two door codes reached #vr-eve that way,
+ * re-posted from hub channels by On-watch. Jon's rule (2026-09-29): door codes are never in a team
+ * channel. So every channel post and thread reply from the app passes lib/eve/redact scrubStoredText in
+ * room mode before it leaves: a code-shaped run of digits next to a lock word is masked, everything else
+ * is untouched. The one caller that legitimately carries a code — the door-code DM to a single person —
+ * passes `raw: true`. Never throws: a scrub that fails posts the text as it was.
+ */
+export type PostOpts = { raw?: boolean }
+async function outbound(text: string, opts?: PostOpts): Promise<string> {
+  if (opts && opts.raw) return text
+  try { const { scrubStoredText } = await import('./eve/redact'); return scrubStoredText(text, [], undefined, { room: true }) } catch { return text }
+}
+
+export async function postToChannel(channel: string, text: string, blocks?: any[], opts?: PostOpts): Promise<SlackResult> {
   if (!channel) return { ok: false, error: 'no_channel' }
-  const payload: Record<string, any> = { channel, text, unfurl_links: false, unfurl_media: false }
+  const payload: Record<string, any> = { channel, text: await outbound(text, opts), unfurl_links: false, unfurl_media: false }
   if (blocks && blocks.length) payload.blocks = blocks
   const j = await slackApi('chat.postMessage', payload)
   return { ok: !!j.ok, error: j.ok ? undefined : String(j.error || 'failed'), ts: j.ts, channel: j.channel }
@@ -193,10 +208,10 @@ export async function postToChannel(channel: string, text: string, blocks?: any[
  * Jon, 2026-08-19: "Should be in English for now and in the comments for the post it should be in
  * spanish too." The channel stays readable in one language; the translation lives one click down.
  */
-export async function postThreadReply(channel: string, threadTs: string, text: string): Promise<SlackResult> {
+export async function postThreadReply(channel: string, threadTs: string, text: string, opts?: PostOpts): Promise<SlackResult> {
   if (!channel || !threadTs) return { ok: false, error: 'no_thread' }
   const j = await slackApi('chat.postMessage', {
-    channel, thread_ts: threadTs, text, unfurl_links: false, unfurl_media: false,
+    channel, thread_ts: threadTs, text: await outbound(text, opts), unfurl_links: false, unfurl_media: false,
   })
   return { ok: !!j.ok, error: j.ok ? undefined : String(j.error || 'failed'), ts: j.ts, channel: j.channel }
 }
@@ -207,7 +222,8 @@ export async function dmUser(userId: string, text: string, blocks?: any[]): Prom
   const open = await slackApi('conversations.open', { users: userId })
   const ch = open && open.channel && open.channel.id ? String(open.channel.id) : ''
   if (!ch) return { ok: false, error: String((open && open.error) || 'cannot_open_dm') }
-  return postToChannel(ch, text, blocks)
+  // A DM is one person, not a room: what was released to them is theirs to read (door codes go this way).
+  return postToChannel(ch, text, blocks, { raw: true })
 }
 
 /** `<@U123>` — the only form Slack turns into a real, notifying mention. */

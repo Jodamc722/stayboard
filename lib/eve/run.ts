@@ -499,7 +499,13 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       const prevIdx = messages.length - 2
       const prev = prevIdx >= 0 && messages[prevIdx].role === 'assistant' ? String(messages[prevIdx].content || '') : ''
       const prevQ = prevIdx >= 1 ? String(messages[prevIdx - 1].content || '') : ''
-      if (!isProbe && source !== 'slack' && prev) {
+      // FROM SLACK TOO (2026-09-30 audit): the team's corrections happen in Slack — "no, that unit is
+      // offboarded", "read the whole channel" — and were discarded here, so the same lesson had to be
+      // taught twice. A Slack reply now teaches her when the room's tier may hold a rule (memory weight
+      // cap ≥ 6: staff and admin rooms, never a vendor room) and the thread carried her previous answer
+      // (app/api/slack/events passes it). personSource still caps a colleague's weight at 6.
+      const slackMayTeach = source === 'slack' && Number.isFinite(input.memoryWeightCap) && Number(input.memoryWeightCap) >= 6
+      if (!isProbe && (source !== 'slack' || slackMayTeach) && prev) {
         const { looksLikeCorrection, captureCorrection } = await import('./brain')
         if (looksLikeCorrection(lastUser, !!prev)) {
           const scopeFor = (text: string) => {

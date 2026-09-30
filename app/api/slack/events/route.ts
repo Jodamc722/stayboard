@@ -106,6 +106,44 @@ async function finish(eventId: string): Promise<void> {
   if (!eventId) return
   try { await supabaseAdmin().from('telegram_updates').update({ chat_id: 'slack-done:' + eventId.slice(0, 40) }).eq('update_id', hash32(eventId)) } catch { /* best effort */ }
 }
+/**
+ * WHICH OF HER POSTS WERE ANSWERS (2026-09-30 audit). A translation and an answer look the same in a
+ * thread — her message under a person's — but a reply to an ANSWER is addressed to her ("no, that unit
+ * is offboarded"), while a reply under a translation is the room talking. So every answer she posts is
+ * marked (same replay table, its own key), and a later tag-at-the-end in that thread is routed to the
+ * answer path with her previous answer in hand, instead of being translated back at the person.
+ */
+async function markAnswer(channel: string, ts: string | undefined): Promise<void> {
+  if (!channel || !ts) return
+  try { await supabaseAdmin().from('telegram_updates').insert({ update_id: hash32('eve-answer:' + channel + ':' + ts), chat_id: 'slack-answer:' + ts.slice(0, 30) }) } catch { /* best effort */ }
+}
+async function wasAnswer(channel: string, ts: string): Promise<boolean> {
+  try {
+    const { data } = await supabaseAdmin().from('telegram_updates').select('chat_id').eq('update_id', hash32('eve-answer:' + channel + ':' + ts)).limit(1)
+    return !!(Array.isArray(data) && data[0] && String((data[0] as any).chat_id || '').startsWith('slack-answer:'))
+  } catch { return false }
+}
+type LastExchange = { eveText: string; eveTs: string; humanText: string; humanUser: string; eveWasAnswer: boolean } | null
+/** Her last message in this thread before `ev`, and the person's message just before that. */
+async function lastExchange(channel: string, ev: any, me: string): Promise<LastExchange> {
+  if (!me || !ev.thread_ts || String(ev.thread_ts) === String(ev.ts)) return null
+  try {
+    const t = await slackGet('conversations.replies', { channel, ts: String(ev.thread_ts), limit: '50' })
+    const msgs: any[] = (t && t.ok && t.messages) || []
+    const before = msgs.filter(m => m && m.type === 'message' && !m.subtype && Number(m.ts) < Number(ev.ts))
+    let ei = -1
+    for (let i = before.length - 1; i >= 0; i--) if (String(before[i].user) === me) { ei = i; break }
+    if (ei < 0) return null
+    const eve = before[ei]
+    let human: any = null
+    for (let i = ei - 1; i >= 0; i--) if (String(before[i].user) !== me) { human = before[i]; break }
+    return {
+      eveText: String(eve.text || ''), eveTs: String(eve.ts),
+      humanText: String((human && human.text) || ''), humanUser: String((human && human.user) || ''),
+      eveWasAnswer: await wasAnswer(channel, String(eve.ts)),
+    }
+  } catch { return null }
+}
 function hash32(s: string): number {
   let h = 5381
   for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0
@@ -151,10 +189,16 @@ async function personName(id: string): Promise<string | null> {
   } catch { return null }
 }
 
-async function say(channel: string, threadTs: string, text: string): Promise<{ ok: boolean; error?: string }> {
+async function say(channel: string, threadTs: string, text: string, opts?: { raw?: boolean }): Promise<{ ok: boolean; error?: string; ts?: string }> {
   // ALWAYS in a thread, even for a one-liner. Consistency is the point: the team learns that Eve
   // never takes more than one line of channel, so nobody has a reason to stop @-ing her.
-  const body = { channel, thread_ts: threadTs, text, unfurl_links: false, unfurl_media: false }
+  //
+  // SCRUBBED ON THE WAY OUT (2026-09-30 audit): an ANSWER she composed passes the room-mode code scrub
+  // before it posts (lib/eve/redact) — every redaction used to be inbound only. A TRANSLATION is a
+  // person's own words repeated in the room they chose, so it goes as written (`raw`).
+  let out = text
+  if (!opts || !opts.raw) { try { const { scrubStoredText } = await import('@/lib/eve/redact'); out = scrubStoredText(text, [], undefined, { room: true }) } catch { out = text } }
+  const body = { channel, thread_ts: threadTs, text: out, unfurl_links: false, unfurl_media: false }
   try {
     let r = await slackApi('chat.postMessage', body)
     // One rate-limited post is retried after Slack's own pause (capped) — a translation that lands
@@ -163,7 +207,7 @@ async function say(channel: string, threadTs: string, text: string): Promise<{ o
       await new Promise(res => setTimeout(res, Math.min(10_000, 1000 * (Number(r.retry_after) || 3))))
       r = await slackApi('chat.postMessage', body)
     }
-    if (r && r.ok) return { ok: true }
+    if (r && r.ok) return { ok: true, ts: r.ts ? String(r.ts) : undefined }
     const error = String((r && r.error) || 'unknown')
     console.error('[slack-events] post failed', error, channel)
     return { ok: false, error }
@@ -371,7 +415,13 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
   // a sentence is a sentence addressed to her and answers too (it used to translate). The
   // translation is checked for direction and for stray questions, retried once, and a failure
   // posts one plain line instead of nothing — see translateChecked.
-  if (!viaReply && tagPosition(String(ev.text || ''), me) === 'end') {
+  // A REPLY TO HER ANSWER IS ADDRESSED TO HER (2026-09-30 audit). "rustic 23 is an extension @Eve"
+  // under her answer about Rustic 23 was translated into Spanish; the correction was lost and Jon had
+  // to repeat it. In a thread where her previous message was an answer, a tag at the end is a reply to
+  // that answer and goes to the answer path — with the previous exchange, so a correction is captured.
+  const last = await lastExchange(channel, ev, me)
+  const replyToAnswer = !!(last && last.eveWasAnswer)
+  if (!viaReply && !replyToAnswer && tagPosition(String(ev.text || ''), me) === 'end') {
     const t0 = Date.now()
     // People's tags ride through the translation as placeholders and come back as real tags
     // (lib/eve/slack-mentions): the person named in the original is named — and pinged — in the
@@ -379,7 +429,7 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
     const kept = protectMentions(String(ev.text || ''), me)
     const out = await translateChecked(kept.text)
     let posted: { ok: boolean; error?: string } = { ok: true }
-    if (out) posted = await say(channel, threadTs, kept.restore(out.text))
+    if (out) posted = await say(channel, threadTs, kept.restore(out.text), { raw: true })
     if (posted.ok) await finish(eventId)
     // THE RECEIPT. Every back-tag writes one (automation_runs, 'slack-translate'), so "is the
     // translation working?" is answered by the Health page and by Eve herself, not by guessing:
@@ -479,9 +529,18 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
     // back-tag on a cold instance wait for all of it before a single Haiku call; Jon's test sat 50
     // seconds before the model was even asked. The answer path still pays for it, once per instance.
     const { runEve } = await import('@/lib/eve/run')
+    // THE PREVIOUS EXCHANGE AS TURNS. Only her own answer and the message it answered (from the same
+    // person, or a colleague in a staff room) — never the rest of the room, which stays a quoted
+    // transcript below. This is what lets "no, that's wrong" become a lesson (lib/eve/run.ts).
+    const turns: { role: 'user' | 'assistant'; content: string }[] = []
+    if (last && last.eveWasAnswer && last.eveText) {
+      turns.push({ role: 'user', content: cleanText(last.humanText, me) || '(the earlier message in this thread)' })
+      turns.push({ role: 'assistant', content: last.eveText.slice(0, 4000) })
+    }
+    turns.push({ role: 'user', content: question })
     const out = await runEve({
       access: asAccess,
-      messages: [{ role: 'user', content: question }],
+      messages: turns,
       source: 'slack',
       denyTools: grant.denyTools,
       forceNoMoney: !grant.canMoney,
@@ -517,7 +576,7 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
       return ok()
     }
     const posted = await say(channel, threadTs, out.reply)
-    if (posted.ok) await finish(eventId)
+    if (posted.ok) { await finish(eventId); await markAnswer(channel, posted.ts) }
     await recordRun({ name: 'slack-eve', ok: posted.ok, itemCount: posted.ok ? 1 : 0, ms: Date.now() - t0, error: posted.ok ? null : 'Slack post failed: ' + posted.error, detail: { channel, ts: String(ev.ts || ''), retry: isRetry } })
     // There used to be a step here that watched her reply for a refusal and posted the question
     // into #leadership for someone to approve. It lasted one afternoon. Jon: "Going to leadership
