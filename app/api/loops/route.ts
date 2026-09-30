@@ -69,5 +69,50 @@ export async function PATCH(req: NextRequest) {
     if (r.ok && r.mode !== 'observe') await db.from('eve_slack_items').update({ nudged_at: now, nudge_count: (Number(it.nudge_count) || 0) + 1 }).eq('id', id)
     return NextResponse.json({ ok: r.ok, mode: r.mode, error: r.error })
   }
+  // TEACHING HER THE MATCH (Jon, 2026-09-30: "constantly improving and learning and making permanent
+  // improvements"). A person pins the right Breezeway task ('link_task', a task id or URL), or says
+  // the one she picked is wrong ('unlink_task', with why). Either way the correction is written into
+  // her match-lesson book and her memory (lib/eve/match-lessons), and she reads it on every future
+  // investigation. 'investigate' re-runs her investigation now.
+  if (action === 'link_task' || action === 'unlink_task' || action === 'investigate') {
+    const { recordMatchLesson } = await import('@/lib/eve/match-lessons')
+    const { investigateLoop, refsIn } = await import('@/lib/eve/investigate')
+    const ev: any = { ...(it.evidence || {}) }
+    const pickedName = ev.taskId ? `Breezeway task ${ev.taskId}${ev.taskName ? ' "' + String(ev.taskName).slice(0, 60) + '"' : ''}` : null
+    const why = String(b?.why || b?.reason || '').slice(0, 300)
+    if (action === 'unlink_task') {
+      delete ev.taskId; delete ev.taskName; delete ev.matchedBy; ev.manualTask = null
+      if (ev.investigation) ev.investigation = { ...ev.investigation, taskId: null, confidence: 0, reasoning: 'Unlinked by ' + by + (why ? ': ' + why : '') }
+      const { error } = await db.from('eve_slack_items').update({ evidence: ev, tracked_in: null }).eq('id', id)
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      await recordMatchLesson({ by, report: String(it.summary || ''), unit: it.unit || null, picked: pickedName, right: null, why: why || 'that task was not the fix for this report' })
+      return NextResponse.json({ ok: true })
+    }
+    if (action === 'link_task') {
+      const raw = String(b?.task || '').trim()
+      const tid = (refsIn(raw).tasks[0] || (/^\d{5,}$/.test(raw) ? raw : ''))
+      if (!tid) return NextResponse.json({ error: 'Paste a Breezeway task link or number.' }, { status: 400 })
+      const inv = await investigateLoop({ ...(it as any), evidence: { ...ev, text: String(ev.text || '') + ' breezeway.io/task/' + tid } }, { force: true })
+      const next: any = { ...ev, taskId: tid, taskName: inv?.task?.name || null, matchedBy: 'linked by ' + by, manualTask: tid, investigation: inv || ev.investigation || null }
+      const patch: any = { evidence: next, tracked_in: 'breezeway:' + tid }
+      if (inv?.listingId && inv.listingId !== it.listing_id) { patch.listing_id = inv.listingId; if (inv.unit) { patch.unit = inv.unit; patch.building = inv.unit } }
+      const { error } = await db.from('eve_slack_items').update(patch).eq('id', id)
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      await recordMatchLesson({ by, report: String(it.summary || ''), unit: inv?.unit || it.unit || null, picked: pickedName, right: `Breezeway task ${tid}${inv?.task?.name ? ' "' + inv.task.name.slice(0, 60) + '"' : ''}`, why: why || (pickedName ? 'the one I had picked was wrong' : 'I had not found it') })
+      return NextResponse.json({ ok: true, investigation: inv })
+    }
+    const inv = await investigateLoop(it as any, { force: true })
+    if (inv) {
+      const sure = inv.method === 'linked' || inv.confidence >= 0.7
+      const next: any = { ...ev, investigation: inv }
+      if (sure && inv.taskId) { next.taskId = inv.taskId; next.taskName = inv.task?.name || null; next.matchedBy = inv.method === 'linked' ? 'linked in the Slack message' : 'Eve investigated: ' + inv.reasoning.slice(0, 200) }
+      if (sure && inv.glitchId) next.glitchId = inv.glitchId
+      const patch: any = { evidence: next }
+      if (sure && inv.taskId) patch.tracked_in = 'breezeway:' + inv.taskId
+      if (sure && inv.listingId && inv.listingId !== it.listing_id) { patch.listing_id = inv.listingId; if (inv.unit) { patch.unit = inv.unit; patch.building = inv.unit } }
+      await db.from('eve_slack_items').update(patch).eq('id', id)
+    }
+    return NextResponse.json({ ok: true, investigation: inv })
+  }
   return NextResponse.json({ error: 'unknown action' }, { status: 400 })
 }

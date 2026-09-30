@@ -48,6 +48,8 @@ export type Need = {
   owner?: string | null
   /** Older copies of the same proposal — declined along with this one when it is decided. */
   dupes?: string[]
+  /** loops only: Eve's investigation (lib/eve/investigate) — how she tied it to a task, how sure. */
+  investigation?: { method: string; confidence: number; reasoning: string; taskId: string | null; glitchId: string | null; stillOpen: string | null; nextStep: string | null; unit: string | null; pinned: boolean } | null
 }
 
 const ACTION_VERB: Record<string, string> = {
@@ -111,6 +113,7 @@ export async function loadNeeds(): Promise<{ needs: Need[]; partial: boolean }> 
   for (const l of loops) {
     const ev = l.evidence || {}
     if (ev.taskId) taskIds.add(str(ev.taskId))
+    if (ev.investigation?.taskId) taskIds.add(str(ev.investigation.taskId))
     if (ev.glitchId) glitchIds.add(str(ev.glitchId))
     if (ev.conversationId) convIds.add(str(ev.conversationId))
     if (ev.reservationId) resIds.add(str(ev.reservationId))
@@ -253,11 +256,17 @@ export async function loadNeeds(): Promise<{ needs: Need[]; partial: boolean }> 
     if (ev.guest) what.push({ label: 'Guest', text: str(ev.guest) + (ev.ask ? ' · asks for ' + str(ev.ask) : '') + (ev.amount ? ' · $' + str(ev.amount) : '') })
     let reservationId: string | null = ev.reservationId ? str(ev.reservationId) : null
     let listingId: string | null = null
+    const inv = ev.investigation || null
+    if (inv) {
+      const sure = inv.method === 'linked' || Number(inv.confidence) >= 0.7
+      what.push({ label: sure ? 'What Eve found' : 'Eve\'s best guess (not sure — confirm or correct it)', text: [str(inv.reasoning), inv.stillOpen ? 'Still open: ' + str(inv.stillOpen) : '', inv.nextStep ? 'Next: ' + str(inv.nextStep) : ''].filter(Boolean).join('\n') })
+      if (!ev.taskId && inv.taskId) links.push({ label: 'Possible task', href: 'https://app.breezeway.io/task/' + str(inv.taskId), kind: 'task' })
+    }
     if (ev.taskId) {
       const t = taskInfo[str(ev.taskId)]
       links.push({ label: 'Breezeway task', href: 'https://app.breezeway.io/task/' + str(ev.taskId), kind: 'task' })
       if (t) { what.push({ label: 'Matched task', text: `${t.name} — ${t.status || 'open'}${t.assignees.length ? ' · ' + t.assignees.join(', ') : ' · nobody assigned'}` }); listingId = t.listingId || null }
-    } else what.push({ label: 'Task', text: 'No Breezeway task matched to this yet.' })
+    } else if (!inv) what.push({ label: 'Task', text: 'No Breezeway task matched to this yet.' })
     if (ev.glitchId) {
       const g = glitchInfo[str(ev.glitchId)]
       links.push({ label: 'Glitch', href: '/glitches?q=' + encodeURIComponent(l.unit || (g ? g.overview : '')), kind: 'glitch' })
@@ -275,6 +284,7 @@ export async function loadNeeds(): Promise<{ needs: Need[]; partial: boolean }> 
       evidence: [], links, reservationId, listingId, unit: l.unit || null,
       urgency, urgencyWhy: l.urgent ? 'marked urgent' : late ? 'past its limit' : '', filedAt: str(l.first_seen), group: null, by: 'slack', status: 'open',
       loopKind: str(l.kind), owner: l.owner_name || null,
+      investigation: inv ? { method: str(inv.method), confidence: Number(inv.confidence) || 0, reasoning: str(inv.reasoning), taskId: inv.taskId || null, glitchId: inv.glitchId || null, stillOpen: inv.stillOpen || null, nextStep: inv.nextStep || null, unit: inv.unit || null, pinned: !!ev.taskId } : null,
     })
   }
 

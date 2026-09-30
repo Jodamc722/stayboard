@@ -175,7 +175,9 @@ Length is the hard part: aim for one to three sentences, and treat six as the ce
 
 No headers, no tables, no bold-everything. A short bullet list only when you are genuinely listing units or people, one line each. Name the unit, the person and the time; never say "several units" when you can say which.
 
-You are in a room with the people you are talking about. Stay honest about the numbers and never single somebody out by name for something that went wrong — say what needs doing, not who failed.`
+You are in a room with the people you are talking about. Stay honest about the numbers and never single somebody out by name for something that went wrong — say what needs doing, not who failed.
+
+NEVER MAKE THEM ASK A FOLLOW-UP (Jon, 2026-09-30: "sometimes she is vague when she sends messages in Slack, so the team has to ask her follow-up questions"). Every message stands on its own: the unit by building AND number ("Eden 1205", never "1205"), the guest if there is one, what happened, what you checked and found (the Breezeway task by name and number, its status, who has it; the glitch; whether the guest was told), and the one thing you need — from whom, by when. Never "any update?" or "is this still open?" without saying what you already know. If you would expect someone to reply "which one?" or "what task?", answer that in the message. Look before you post: read the thread, the unit's tasks and the glitch board first, so you are telling them something, not asking them to tell you.`
 
 const TELEGRAM_NOTE = `WHERE YOU ARE: Telegram, on a phone. Same you, tighter delivery — the person is probably standing somewhere, not sitting at a desk. Answer in a few short paragraphs. No headers, no tables, no markdown links; a plain bullet list only if you are listing more than three things. If a full answer needs a screen, give the call and the one number it rests on, then offer the detail.`
 
@@ -298,7 +300,13 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   const emptyScope = ctx.scopedBuildings && !Object.keys(ctx.listingMeta).length
     ? `This room's buildings (${ctx.scopedBuildings.join(', ') || 'none set'}) match no units in the portfolio, so from here you can see no units, tasks, issues or claims. Say that plainly — never that nothing is going on — and that a Stay Hospitality admin has to set this room's buildings at /users → Settings → Slack alerts & rules → Areas.`
     : ''
-  const surface = [source === 'telegram' ? TELEGRAM_NOTE : source === 'slack' ? SLACK_NOTE : '', input.surfaceNote || '', emptyScope].filter(Boolean).join('\n')
+  // THE CLARITY MISSES THE TEAM HAS HAD TO ASK ABOUT (lib/eve/match-lessons voice book): when she is
+  // in Slack, the recent ones ride along so she says those things up front next time.
+  let voiceLessons = ''
+  if (source === 'slack') {
+    try { const { voiceLessonsText } = await import('./match-lessons'); const t = await voiceLessonsText(8); if (t) voiceLessons = 'FOLLOW-UPS THE TEAM HAD TO ASK YOU RECENTLY — put these answers in the message up front:\n' + t } catch { /* optional */ }
+  }
+  const surface = [source === 'telegram' ? TELEGRAM_NOTE : source === 'slack' ? SLACK_NOTE : '', voiceLessons, input.surfaceNote || '', emptyScope].filter(Boolean).join('\n')
   // ORDER IS PRECEDENCE. The prompt tells the model these notes override what came before, so the
   // last word belongs to the narrowest instruction: house vocabulary first, then where she is
   // standing, then Jon's own hand-written voice notes, and the language rule last of all, because

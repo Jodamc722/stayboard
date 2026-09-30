@@ -41,6 +41,8 @@ import { agentAllowed, stepDown } from './agent-mode'
 import { scrubStoredText } from './redact'
 import { winsFor } from './wins'
 import { checkLoop, resolveUnitInText } from './loop-match'
+import { investigateLoop, MAX_PER_RUN as MAX_INVESTIGATIONS, type Investigation } from './investigate'
+import { recordVoiceLesson } from './match-lessons'
 import { GUEST_ASK_SIG, askKindOf, getCcsDesk, shouldEscalate, escalationTags, escalate, askNudgeText, ageMinutes, bookedSince, runHandoff, type AskItem } from './ccs-desk'
 
 export const WATCH_KEY = 'eve_slack_watch'
@@ -279,6 +281,23 @@ export function nudgeText(it: Pick<Item, 'kind' | 'summary' | 'unit' | 'evidence
     return `${lead}¿esto sigue abierto? ${quote}. Responde "listo" y lo cierro, o dime dónde se está manejando. Si hace falta algo, avísame.`
   }
   const what = `${it.summary.slice(0, 140)}${it.unit ? ` (${it.unit})` : ''}`
+  // SAY WHAT SHE ALREADY KNOWS (Jon, 2026-09-30: vague nudges made the team ask follow-ups). When the
+  // investigation found the task, the nudge says which task, its state and who has it, the guest in
+  // the unit, and the one thing it needs — so nobody has to ask "which one?".
+  const inv = it.evidence?.investigation
+  if (it.kind === 'problem' && inv) {
+    const unit = inv.unit || it.unit || ''
+    const reported = it.evidence?.who ? ` (reported by ${it.evidence.who})` : ''
+    const guest = inv.guest?.name ? ` Guest ${inv.guest.name} is in the unit until ${String(inv.guest.checkOut || '').slice(5)}.` : ''
+    const t = inv.task
+    if (t && inv.taskId) {
+      const state = t.finishedAt ? 'finished' : t.startedAt ? 'in progress' : 'not started'
+      const people = t.assignees?.length ? t.assignees.join(', ') : 'nobody assigned'
+      const need = !t.assignees?.length ? 'Who can take it?' : t.startedAt ? 'When will it be fixed?' : `${t.assignees[0]}, when can you get there?`
+      return `${lead}${unit ? unit + ' — ' : ''}${it.summary.slice(0, 120)}${reported}. Breezeway task ${inv.taskId} "${String(t.name).slice(0, 60)}" is ${state}, ${people}.${guest} ${need} Reply "done" when it's fixed and I'll close this and check the guest was told.`
+    }
+    return `${lead}${unit ? unit + ' — ' : ''}${it.summary.slice(0, 120)}${reported}. I can't find a Breezeway task or glitch for it on ${unit || 'the unit'} since it was reported.${guest} Can someone create the task (or paste its link here) so I can track it? Reply "done" if it's already fixed.`
+  }
   if (it.kind === 'question') return `${lead}this one never got an answer. Still needed? If you're not sure who'd know, say so and I'll help find them.`
   if (it.kind === 'commitment') return `${lead}checking in on this one: ${what}. Still on your list, or already handled? Reply "done" and I'll close it. If something's in the way, tell me and I'll help move it.`
   return `${lead}is this still open? ${what}. Reply "done" here and I'll close it, or tell me where it's being handled. If it's stuck, tell me what it needs.`
@@ -400,6 +419,12 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   // ---- 1. Close what the threads themselves close (free). ----------------------------------------
   for (const it of open) {
     const rs = await replies(it.channel, it.thread_ts || it.msg_ts, it.last_seen ? String(Math.floor(new Date(it.last_seen).getTime() / 1000)) : null)
+    // A CLARITY MISS (Jon, 2026-09-30): someone had to ask her a follow-up after her nudge — "which
+    // unit?", "what task?". That question becomes a voice lesson she reads before every Slack post.
+    if (it.nudged_at && it.evidence?.lastNudge) {
+      const q = rs.find(m => m.at > String(it.nudged_at) && (/\?\s*$/.test(m.text) || /^(which|what|who|where|when|for who|que|cuál|cual|quién|quien|dónde|donde)\b/i.test(m.text.trim())) && !ACK.test(m.text))
+      if (q) { try { await recordVoiceLesson({ channel: String(it.channel_name || ''), herPost: String(it.evidence.lastNudge).slice(0, 300), question: q.text.slice(0, 300), asker: q.who }) } catch { /* optional */ } }
+    }
     const ack = rs.find(m => ACK.test(m.text))
     if (ack) {
       await db.from('eve_slack_items').update({ status: 'closed', closed_reason: `${ack.who}: "${ack.text.slice(0, 80)}"`, closed_at: ack.at, last_seen: ack.at }).eq('id', it.id)
@@ -410,6 +435,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   }
 
   // ---- 2. Close or mark what the other systems say (free). --------------------------------------
+  let investigated = 0, modelInvestigations = 0
   for (const it of open) {
     if (it.status !== 'open' || it.kind === 'decision') continue
     // A guest ask is not closed by a clean finishing on the unit — it is closed by the BOOKING
@@ -425,6 +451,26 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     // THE ASSOCIATION (Jon, 2026-09-28): the Breezeway task that came out of this report, matched
     // by unit AND topic and then pinned; the glitch; or a reply to the guest in their Guesty
     // thread. lib/eve/loop-match. A guest ask closes on the reply; a problem records it.
+    // INVESTIGATE FIRST (Jon, 2026-09-30: "more human-like thinking"). lib/eve/investigate reads the
+    // links in the message and its thread (a pasted Breezeway task is the answer, and it says which
+    // unit), and otherwise judges the thread + every task and glitch on every unit the report could
+    // mean. A confident match is PINNED (evidence.taskId / glitchId) and corrects a mis-read unit;
+    // checkLoop then follows that one task to done. A weak one is kept as "possible" for a person.
+    if (it.kind === 'problem' && !it.evidence?.taskId && !it.evidence?.manualTask && investigated < MAX_INVESTIGATIONS) {
+      const inv: Investigation | null = await investigateLoop(it as any, { allowModel: modelInvestigations < MAX_INVESTIGATIONS }).catch(() => null)
+      if (inv && inv.at !== it.evidence?.investigation?.at) {
+        investigated++; if (inv.method === 'judged') modelInvestigations++
+        const sure = inv.method === 'linked' || inv.confidence >= 0.7
+        const ev2: any = { ...(it.evidence || {}), investigation: inv }
+        if (sure && inv.taskId) { ev2.taskId = inv.taskId; ev2.taskName = inv.task?.name || ev2.taskName; ev2.matchedBy = inv.method === 'linked' ? 'linked in the Slack message' : 'Eve investigated: ' + inv.reasoning.slice(0, 200) }
+        if (sure && inv.glitchId) ev2.glitchId = inv.glitchId
+        if (inv.links?.reservationId) ev2.reservationId = inv.links.reservationId
+        const patch: any = { evidence: ev2 }
+        if (sure && inv.listingId && inv.listingId !== it.listing_id) { patch.listing_id = inv.listingId; if (inv.unit) { patch.unit = inv.unit; patch.building = inv.unit } }
+        await db.from('eve_slack_items').update(patch).eq('id', it.id)
+        it.evidence = ev2; if (patch.listing_id) { it.listing_id = patch.listing_id; it.unit = patch.unit || it.unit }
+      }
+    }
     const e = await checkLoop(it).catch(() => null)
     if (!e) continue
     const evidence = e.evidence ? { ...(it.evidence || {}), ...e.evidence } : it.evidence
@@ -580,7 +626,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
       // A proposed or drafted nudge still claims the slot: the proposal carries the text, and a
       // yes posts it. Re-proposing the same nudge every twenty minutes is the flood this prevents.
       // A deferred nudge (quiet hours) posts on its own at the end of quiet hours; it claims the slot too.
-      if (r.ok && r.mode !== 'observe') { await db.from('eve_slack_items').update({ nudged_at: new Date().toISOString(), nudge_count: it.nudge_count + 1 }).eq('id', it.id); if (r.mode === 'act') out.nudged++ }
+      if (r.ok && r.mode !== 'observe') { await db.from('eve_slack_items').update({ nudged_at: new Date().toISOString(), nudge_count: it.nudge_count + 1, evidence: { ...(it.evidence || {}), lastNudge: text.slice(0, 500) } }).eq('id', it.id); if (r.mode === 'act') out.nudged++ }
       if (r.mode !== 'act') out.notes.push(`nudge ${r.mode}: ${gate.reason}`)
     }
   }

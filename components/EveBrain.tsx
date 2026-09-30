@@ -23,6 +23,7 @@ type Need = {
   reservationId: string | null; listingId: string | null; unit: string | null
   urgency: 'now' | 'today' | 'week' | 'later'; urgencyWhy: string; filedAt: string
   group: { key: string; label: string } | null; by: string; status: string; loopKind?: string; owner?: string | null; dupes?: string[]
+  investigation?: { method: string; confidence: number; reasoning: string; taskId: string | null; glitchId: string | null; stillOpen: string | null; nextStep: string | null; unit: string | null; pinned: boolean } | null
 }
 type Step = { key: string; label: string; state: 'done' | 'missing' | 'waiting' | 'na'; detail: string }
 type Issue = {
@@ -30,6 +31,7 @@ type Issue = {
   reportedAt: string; inHouse: boolean; arriving: boolean; severe: boolean
   urgency: 'now' | 'today' | 'week' | 'done'; urgencyWhy: string; next: string | null
   steps: Step[]; links: Link[]; reservationId: string | null; assignees: string[]
+  investigation?: Need['investigation']
 }
 
 export const URG: Record<string, { label: string; tone: 'roseSolid' | 'amber' | 'brand' | 'slate' | 'emerald'; blurb: string }> = {
@@ -83,8 +85,52 @@ function Context({ n }: { n: Need }) {
       {n.why && <p className="text-[12.5px] text-ink/85"><b>Why:</b> {n.why}</p>}
       {n.evidence.length > 0 && <ul className="text-[12px] text-muted list-disc pl-5">{n.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>}
       <LinkChips links={n.links} />
+      {n.source === 'loop' && <TeachMatch n={n} />}
       {n.reservationId && <StayPanel reservationId={n.reservationId} compact />}
       <p className="text-[11px] text-muted">{n.source === 'loop' ? 'Seen in Slack' : 'Filed by ' + (n.by || 'Eve')} · {ago(n.filedAt)}</p>
+    </div>
+  )
+}
+
+/**
+ * TEACH HER THE MATCH (Jon, 2026-09-30). On a Slack report: re-run her investigation, tell her the
+ * task she linked is wrong (and why), or paste the right Breezeway task. Every correction goes into
+ * her match-lesson book and her memory, and she reads it on every future match.
+ */
+function TeachMatch({ n }: { n: Need }) {
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [task, setTask] = useState('')
+  const [why, setWhy] = useState('')
+  const inv = n.investigation
+  const call = async (body: any, ok: string) => {
+    setBusy(true); setMsg('')
+    try { const r = await fetch('/api/loops', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: n.id, ...body }) }).then(x => x.json()); setMsg(r?.ok ? (r.investigation ? ok + ' — ' + String(r.investigation.reasoning || '').slice(0, 220) : ok) : (r?.error || 'Could not do that.')) }
+    catch (e: any) { setMsg(String(e?.message || e)) }
+    setBusy(false)
+  }
+  return (
+    <div className="rounded-lg border border-violet-200 bg-violet-50/40 px-3 py-2 space-y-1.5">
+      <div className="flex items-center gap-1.5 flex-wrap text-[12px]">
+        <b className="text-violet-900">Her match:</b>
+        {inv ? <>
+          <Tag tone={inv.method === 'linked' ? 'emerald' : inv.confidence >= 0.7 ? 'emerald' : inv.confidence >= 0.4 ? 'amber' : 'slate'}>{inv.method === 'linked' ? 'linked in the message' : inv.method === 'none' ? 'nothing found' : Math.round(inv.confidence * 100) + '% sure'}</Tag>
+          {inv.taskId ? <span className="text-ink">task {inv.taskId}{inv.pinned ? '' : ' (not pinned)'}</span> : <span className="text-muted">no task</span>}
+          {inv.unit ? <span className="text-muted">· {inv.unit}</span> : null}
+        </> : <span className="text-muted">not investigated yet</span>}
+        <span className="ml-auto flex items-center gap-1.5">
+          <button disabled={busy} onClick={() => call({ action: 'investigate' }, 'Looked again')} className="rounded-md border border-violet-300 bg-white px-2 py-0.5 font-semibold text-violet-800 hover:bg-violet-100 disabled:opacity-50">{busy ? <Loader2 size={11} className="animate-spin inline" /> : 'Look again'}</button>
+          {inv?.pinned ? <button disabled={busy} onClick={() => call({ action: 'unlink_task', why }, 'Unlinked — she will remember why')} className="rounded-md border border-rose-200 bg-white px-2 py-0.5 font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50">Not this task</button> : null}
+        </span>
+      </div>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <input value={task} onChange={e => setTask(e.target.value)} placeholder="Paste the right Breezeway task link or number"
+          className="flex-1 min-w-[200px] rounded-md border border-line bg-white px-2 py-1 text-[12px]" />
+        <input value={why} onChange={e => setWhy(e.target.value)} placeholder="Why (she learns from this)"
+          className="flex-1 min-w-[160px] rounded-md border border-line bg-white px-2 py-1 text-[12px]" />
+        <button disabled={busy || !task.trim()} onClick={() => call({ action: 'link_task', task, why }, 'Linked — she will remember this')} className="rounded-md bg-violet-700 text-white px-2.5 py-1 text-[12px] font-semibold disabled:opacity-40">Link task</button>
+      </div>
+      {msg ? <p className="text-[12px] text-violet-900">{msg}</p> : null}
     </div>
   )
 }
@@ -253,7 +299,9 @@ export function IssuesTab({ onCount }: { onCount?: (n: number) => void }) {
                 ))}
               </ol>
               <p className="text-[12px] text-muted">{i.urgencyWhy}</p>
+              {i.investigation?.reasoning ? <p className="text-[12.5px] text-ink/85"><b>What Eve found:</b> {i.investigation.reasoning}</p> : null}
               <LinkChips links={i.links} />
+              {i.source === 'slack' ? <TeachMatch n={{ id: i.id.slice(2), investigation: i.investigation || null } as any} /> : null}
               {i.reservationId && <StayPanel reservationId={i.reservationId} compact hide={['issues']} />}
             </LeanRow>
           ))}
@@ -305,6 +353,27 @@ export function DayTab({ ov }: { ov: any }) {
 
 // ── HOW SHE RUNS ─────────────────────────────────────────────────────────────────────────────
 export function DesksTab({ ov }: { ov: any }) {
+  return <div><Lessons /><DesksList ov={ov} /></div>
+}
+
+/** What the team has taught her — every match correction and every follow-up people had to ask. */
+function Lessons() {
+  const [l, setL] = useState<{ match: any[]; voice: any[] } | null>(null)
+  useEffect(() => { fetch('/api/eve/lessons', { cache: 'no-store' }).then(x => x.json()).then(r => { if (r?.ok) setL({ match: r.match || [], voice: r.voice || [] }) }).catch(() => {}) }, [])
+  if (!l) return null
+  return (
+    <LeanSection title="What the team has taught her" n={l.match.length + l.voice.length} right={<span className="text-muted">read on every match and every Slack post; also kept in her memory</span>}>
+      {!(l.match.length + l.voice.length) ? <LeanEmpty>Nothing yet. Correct a match on a Slack report (Not this task / Link task), and when someone has to ask her a follow-up in Slack she files it here herself.</LeanEmpty> : (
+        <LeanList>
+          {l.match.map((m, i) => <LeanRow key={'m' + i} name={m.right ? 'Right match: ' + m.right : 'Not a match: ' + (m.picked || 'the task she linked')} meta={`"${String(m.report).slice(0, 90)}"${m.unit ? ' · ' + m.unit : ''} · ${m.by} · ${ago(m.at)}`} tags={<Tag tone="violet">matching</Tag>}><p className="text-[12.5px]">{m.why}</p></LeanRow>)}
+          {l.voice.map((v, i) => <LeanRow key={'v' + i} name={'Asked: "' + String(v.question).slice(0, 100) + '"'} meta={`after her post in #${v.channel} · ${v.asker} · ${ago(v.at)}`} tags={<Tag tone="amber">clarity</Tag>}><p className="text-[12.5px] text-muted">Her post: {v.herPost}</p></LeanRow>)}
+        </LeanList>
+      )}
+    </LeanSection>
+  )
+}
+
+function DesksList({ ov }: { ov: any }) {
   if (!ov) return <LeanEmpty><Loader2 size={14} className="animate-spin inline mr-1" /> Loading…</LeanEmpty>
   const desks: any[] = ov.desks || []
   return desks.length ? (

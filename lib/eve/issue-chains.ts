@@ -40,6 +40,8 @@ export type IssueChain = {
   links: NeedLink[]
   reservationId: string | null
   assignees: string[]
+  /** slack issues: Eve's investigation of which task/glitch belongs to the report */
+  investigation?: { method: string; confidence: number; reasoning: string; taskId: string | null; glitchId: string | null; stillOpen: string | null; nextStep: string | null; unit: string | null; pinned: boolean } | null
 }
 
 export async function loadIssueChains(): Promise<{ issues: IssueChain[]; partial: boolean }> {
@@ -197,7 +199,10 @@ export async function loadIssueChains(): Promise<{ issues: IssueChain[]; partial
     if (rid) links.push({ label: 'Booking', href: '/reservations/' + rid, kind: 'booking' })
     if (tid) links.push({ label: 'Breezeway task', href: 'https://app.breezeway.io/task/' + tid, kind: 'task' })
     if (conv) links.push({ label: 'Guest thread', href: '/messages/' + conv, kind: 'thread' })
-    const base = { id: 's:' + str(l.id), source: 'slack' as const, title: str(l.summary), unit: l.unit || null, guest: str(ev.guest) || st.guest || null, reportedAt: str(l.first_seen), inHouse: st.inHouse || !!l.urgent, arriving: st.arriving, severe: !!l.urgent || SEVERE.test(str(l.summary)), steps, links, reservationId: rid, assignees: ts.assignees }
+    const iv = ev.investigation || null
+    if (iv && !tid && iv.taskId) steps[2] = { ...steps[2], detail: 'possible: task ' + str(iv.taskId) + ' (' + Math.round((Number(iv.confidence) || 0) * 100) + '% sure — confirm)' }
+    const investigation = iv ? { method: str(iv.method), confidence: Number(iv.confidence) || 0, reasoning: str(iv.reasoning), taskId: iv.taskId || null, glitchId: iv.glitchId || null, stillOpen: iv.stillOpen || null, nextStep: iv.nextStep || null, unit: iv.unit || null, pinned: !!ev.taskId } : null
+    const base = { investigation, id: 's:' + str(l.id), source: 'slack' as const, title: str(l.summary), unit: l.unit || null, guest: str(ev.guest) || st.guest || null, reportedAt: str(l.first_seen), inHouse: st.inHouse || !!l.urgent, arriving: st.arriving, severe: !!l.urgent || SEVERE.test(str(l.summary)), steps, links, reservationId: rid, assignees: ts.assignees }
     out.push({ ...base, ...judge(base, (now - Date.parse(str(l.first_seen))) / 3600000, false) })
   }
   for (const s of unhappy) {

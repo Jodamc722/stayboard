@@ -145,6 +145,13 @@ export const AI_TASKS: AiTask[] = [
   { key: 'adam-study', title: 'Adam — learning from an uploaded file', group: 'Garden Hotel', def: 'sonnet', background: true,
     what: 'Reads one uploaded hotel document and lists the rules and facts it states, which become Adam\'s memories.',
     matters: 'These become what Adam believes about the hotel. One call per upload.' },
+  // INVESTIGATION (2026-09-30, lib/eve/investigate.ts). Jon: "Eve needs more human-like thinking than
+  // this triggers, this triggers". Reads a Slack report with its thread, every Breezeway task and glitch
+  // on every unit it could mean, and the guest in the unit, and says which task / glitch / unit belong
+  // to it and why. A linked task in the message never reaches the model.
+  { key: 'eve-investigate', title: 'Eve — tying a Slack report to its task and glitch', group: 'Eve', def: 'sonnet', background: true,
+    what: 'For an open Slack report with no link in it: reads the thread, the tasks and glitches on every unit the report could mean, and the lessons the team has taught her about matching, and returns the matching task / glitch / unit with a confidence and the reasoning. At most six a sweep, and never twice on the same candidate set.',
+    matters: 'This is how a report closes itself when the fix is done, and what her nudges say about where things stand. A weak model links the wrong task; below 0.7 confidence it is only a suggestion.' },
   { key: 'eve-correction', title: 'Eve — catching corrections in chat', group: 'Background', def: 'haiku', background: true,
     what: 'When someone replies "no, that\'s wrong…" to one of her answers, works out what was wrong and what is right, so the right thing is kept and the beliefs behind the wrong answer are weakened.',
     matters: 'A few hundred tokens, only when a reply pushes back. A miss loses one lesson; nothing reaches anyone.' },
