@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { refreshFromBreezeway } from '@/lib/breezeway-refresh'
 import { updateBreezewayTask, retrieveBreezewayTask, mapBreezewayTask, breezewayConfigured, createBreezewayComment } from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
@@ -20,27 +21,6 @@ const num = (v: any): number | null => {
   if (v == null || v === '') return null
   const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[^0-9.\-]/g, ''))
   return Number.isFinite(n) ? n : null
-}
-
-async function refreshFromBreezeway(db: any, taskId: string) {
-  const r = await retrieveBreezewayTask(taskId)
-  if (!r.ok || !r.data) return
-  const t = r.data
-  await db.from('breezeway_billing_details').upsert({
-    task_id: taskId,
-    bill_to: t?.bill_to ? String(t.bill_to) : null,
-    rate_type: t?.rate_type ? String(t.rate_type) : null,
-    costs: Array.isArray(t?.costs) ? t.costs : [],
-    supplies: Array.isArray(t?.supplies) ? t.supplies : [],
-    synced_at: new Date().toISOString(),
-  }, { onConflict: 'task_id' })
-  const m: any = mapBreezewayTask(t)
-  if (m?.id) {
-    const rp = Number(m.rate_paid)
-    m.rate_paid = Number.isFinite(rp) ? rp : null
-    m.synced_at = new Date().toISOString()
-    await db.from('breezeway_tasks_sync').upsert(m, { onConflict: 'id' })
-  }
 }
 
 export async function POST(req: NextRequest) {

@@ -112,8 +112,53 @@ function recompute(t: Task): Task {
 }
 
 // ── ONE TASK ──────────────────────────────────────────────────────────────────────────────────
-const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, onEdit }: {
+// Spanish-looking text (same test the bulk translate uses on the server).
+const SPANISHY = /[áéíóúñü¿¡]|\b(limpieza|limpiar|lista|baño|bano|cocina|basura|revisar|revision|reparar|arreglo|arreglar|cambiar|fuga|puerta|ventana|luz|agua|caliente|colchon|colchón|sabanas|sábanas|toallas|cerradura|pintura|urgente|huesped|huésped|dañado|danado|pendiente|falta|faltan|no funciona|piso|pared|techo|llaves|nevera|estufa|espejo|silla|mesa|cortina|salida|necesita|entregar|escurrir)\b/i
+const looksSpanish = (t: { name: string; description: string | null }) => SPANISHY.test(t.name) || SPANISHY.test(t.description || '')
+
+/** Title & description: Improve (owner-facing rewrite), Fix spelling, → English / → Español — review, then save to Breezeway. */
+function TextTools({ t, onSave }: { t: Task; onSave: (id: string, name: string, description: string) => Promise<string | null> }) {
+  const [title, setTitle] = useState(t.name)
+  const [desc, setDesc] = useState(t.description || '')
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
+  useEffect(() => { setTitle(t.name); setDesc(t.description || '') }, [t.name, t.description])
+  const dirty = title !== t.name || desc !== (t.description || '')
+  const ai = async (mode: string, to?: string) => {
+    setBusy(mode + (to || '')); setMsg('')
+    try {
+      const r = await fetch('/api/billing/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: title, description: desc, department: t.department, unit: t.unit, mode, to }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j.ok) throw new Error(j.error || 'AI failed')
+      setTitle(j.title); if (j.description != null) setDesc(j.description)
+      setMsg('Review it, then save.')
+    } catch (e: any) { setMsg(String(e?.message || e)) }
+    setBusy('')
+  }
+  const b = 'h-7 px-2 rounded-md border border-line bg-white text-[11.5px] font-semibold text-ink hover:bg-app disabled:opacity-40'
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted">Title &amp; description</p>
+      <input value={title} onChange={e => setTitle(e.target.value)} className="w-full h-8 rounded-lg border border-line bg-white px-2 text-[12.5px] font-semibold text-ink" />
+      <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2} placeholder="What was done" className="w-full rounded-lg border border-line bg-white px-2 py-1 text-[12px] text-ink" />
+      <div className="flex items-center gap-1 flex-wrap">
+        <button className={b} disabled={!!busy} onClick={() => ai('polish')} title="Rewrite into a clean, owner-facing service line">{busy === 'polish' ? '…' : 'Improve'}</button>
+        <button className={b} disabled={!!busy} onClick={() => ai('spelling')} title="Fix spelling and capitals only — same words">{busy === 'spelling' ? '…' : 'Fix spelling'}</button>
+        <button className={b} disabled={!!busy} onClick={() => ai('translate', 'en')} title="Translate to English">{busy === 'translateen' ? '…' : '→ English'}</button>
+        <button className={b} disabled={!!busy} onClick={() => ai('translate', 'es')} title="Traducir al español">{busy === 'translatees' ? '…' : '→ Español'}</button>
+        {dirty ? <>
+          <button className="h-7 px-2.5 rounded-md bg-ink text-white text-[11.5px] font-semibold disabled:opacity-40" disabled={!!busy || !title.trim()} onClick={async () => { setBusy('save'); const e = await onSave(t.id, title.trim(), desc); setMsg(e || 'Saved to Breezeway.'); setBusy('') }}>{busy === 'save' ? 'Saving…' : 'Save to Breezeway'}</button>
+          <button className="text-[11.5px] text-muted hover:text-ink" onClick={() => { setTitle(t.name); setDesc(t.description || ''); setMsg('') }}>Undo</button>
+        </> : null}
+        {msg ? <span className="text-[11px] text-muted">{msg}</span> : null}
+      </div>
+    </div>
+  )
+}
+
+const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, onEdit, onText }: {
   t: Task; stage: Stage; isGm: boolean; busy: boolean; open: boolean
+  onText: (id: string, name: string, description: string) => Promise<string | null>
   onToggle: (id: string) => void
   onState: (id: string, to: State) => void
   onEdit: (id: string, patch: { override_amount?: number | null; note?: string; excluded?: boolean }) => Promise<void>
@@ -134,6 +179,7 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, o
           <span className="flex items-center gap-1.5 flex-wrap">
             <span className={'text-[13.5px] font-bold truncate ' + (t.excluded ? 'text-muted line-through' : 'text-ink')}>{t.unit}</span>
             <span className="text-[12.5px] text-ink/80 truncate max-w-[18rem]">{t.name}</span>
+            {looksSpanish(t) ? <Tag tone="sky" title="Written in Spanish — translate it from the row, or in bulk from the toolbar">ES</Tag> : null}
             <span className="text-[11.5px] text-muted truncate">
               {t.doer || 'no one assigned'} · {short(t.scheduledDate || t.finishedAt)}
               {t.actualMinutes ? ' · ' + (t.actualMinutes / 60).toFixed(1) + 'h' : ''}
@@ -190,6 +236,9 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, o
 
       {open ? (
         <div className="px-3 pb-3 pt-1 border-t border-line bg-app/40 grid gap-3 md:grid-cols-2">
+          <div className="min-w-0 md:col-span-2">
+            <TextTools t={t} onSave={onText} />
+          </div>
           <div className="min-w-0">
             <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted mb-1">What Breezeway has</p>
             <ul className="text-[12px] space-y-0.5">
@@ -422,6 +471,48 @@ export function BillingReview() {
     }
   }, [byId])
   const onToggle = useCallback((id: string) => setOpenId(cur => (cur === id ? '' : id)), [])
+  const onText = useCallback(async (id: string, name: string, description: string): Promise<string | null> => {
+    try {
+      const r = await fetch('/api/billing/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', taskId: id, name, description }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j.ok) return j?.error || 'Could not save to Breezeway.'
+      setData(d => d ? { ...d, tasks: d.tasks.map(t => t.id === id ? { ...t, name, description } : t) } : d)
+      return null
+    } catch (e: any) { return String(e?.message || e) }
+  }, [])
+
+  // SPANISH → ENGLISH, in bulk (Jon, 2026-09-30). The button translates every Spanish title and
+  // description in the window and writes them back to Breezeway; the Auto switch does it on load.
+  const [autoTr, setAutoTr] = useState(false)
+  const [trBusy, setTrBusy] = useState('')
+  const trDone = useRef<Set<string>>(new Set())
+  useEffect(() => { fetch('/api/billing/translate', { cache: 'no-store' }).then(r => r.json()).then(j => setAutoTr(!!j?.autoTranslate)).catch(() => {}) }, [])
+  const translateAll = useCallback(async () => {
+    if (!data) return
+    setTrBusy('Translating…')
+    let total = 0, guard = 0
+    try {
+      for (;;) {
+        const r = await fetch('/api/billing/translate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: data.from, to: data.to }) })
+        const j = await r.json().catch(() => ({}))
+        if (!r.ok || !j.ok) throw new Error(j.error || 'Translate failed')
+        total += Number(j.translated || 0)
+        for (const c of (j.changed || [])) setData(d => d ? { ...d, tasks: d.tasks.map(t => t.id === c.id ? { ...t, name: c.name, description: c.description } : t) } : d)
+        setTrBusy(`Translated ${total}…`)
+        if (!j.remaining || ++guard > 8) break
+      }
+      setTrBusy(total ? `Translated ${total} to English` : 'Nothing in Spanish')
+    } catch (e: any) { setTrBusy(String(e?.message || e)) }
+    setTimeout(() => setTrBusy(''), 5000)
+  }, [data])
+  const spanishCount = useMemo(() => tasks.filter(looksSpanish).length, [tasks])
+  useEffect(() => {
+    if (!autoTr || !data || !spanishCount) return
+    const k = data.from + data.to
+    if (trDone.current.has(k)) return
+    trDone.current.add(k)
+    translateAll()
+  }, [autoTr, data, spanishCount, translateAll])
 
   if (!data && loading) return <><LeanHead title="Billable Hours" /><LeanEmpty><Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading {range ? short(range.from) + ' – ' + short(range.to) : monthLabel(month)}…</LeanEmpty></>
   if (!data) return <><LeanHead title="Billable Hours" /><div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{err || 'Nothing loaded.'}</div></>
@@ -472,6 +563,12 @@ export function BillingReview() {
         <IconBtn title="Reload" onClick={() => load(month, range)} disabled={loading}><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></IconBtn>
         <IconBtn title="Download final-approved statements (ZIP)" href={'/api/billing/export?' + winQS + '&format=zip&reviewed=1'}><Download size={14} /></IconBtn>
         <a href="/billing?view=labor" title="The older board: labor vs payroll, rates, bulk edits" className="text-[12px] font-semibold text-muted hover:text-ink px-1">Labor &amp; rates</a>
+        <span className="inline-flex items-center gap-1 rounded-lg border border-line bg-white pl-2 pr-1 h-8 text-[12px]">
+          <button onClick={translateAll} disabled={!!trBusy && trBusy.endsWith('…')} title="Translate every Spanish title and description in this window to English, and write them back to Breezeway" className="font-semibold text-ink disabled:opacity-50">{trBusy || ('ES → EN' + (spanishCount ? ' (' + spanishCount + ')' : ''))}</button>
+          <label className="inline-flex items-center gap-1 text-muted pl-1.5 border-l border-line" title="Translate Spanish to English automatically whenever this desk opens a window">
+            <input type="checkbox" checked={autoTr} onChange={async e => { const v = e.target.checked; setAutoTr(v); await fetch('/api/billing/translate', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ autoTranslate: v }) }).catch(() => {}) }} /> auto
+          </label>
+        </span>
       </div>
       <LeanTabs
         tabs={[
@@ -560,7 +657,7 @@ export function BillingReview() {
             </header>
             {isOpen ? (
               <ul>
-                {rows.map(t => <Row key={t.id} t={t} stage={st} isGm={isGm} busy={busy.has(t.id)} open={openId === t.id} onToggle={onToggle} onState={onState} onEdit={onEdit} />)}
+                {rows.map(t => <Row key={t.id} t={t} stage={st} isGm={isGm} busy={busy.has(t.id)} open={openId === t.id} onToggle={onToggle} onState={onState} onEdit={onEdit} onText={onText} />)}
               </ul>
             ) : null}
           </section>

@@ -8,7 +8,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { updateBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
-import { monthTasks } from '@/lib/billing'
+import { monthTasks, rangeTasks } from '@/lib/billing'
+import { getSetting, setSetting } from '@/lib/app-settings'
+import { refreshFromBreezeway } from '@/lib/breezeway-refresh'
 import { modelPairFor } from '@/lib/ai-models'
 import { anthropicMessages, textOf } from '@/lib/anthropic-call'
 import { bustBoards } from '@/lib/bust'
@@ -18,11 +20,30 @@ export const maxDuration = 300
 
 const SPANISHY = /[áéíóúñü¿¡]|\b(limpieza|limpiar|lista|baño|bano|cocina|basura|revisar|revision|reparar|arreglo|arreglar|cambiar|fuga|puerta|ventana|luz|agua|caliente|colchon|colchón|sabanas|sábanas|toallas|cerradura|pintura|urgente|huesped|huésped|dañado|danado|pendiente|falta|faltan|no funciona|piso|pared|techo|llaves|nevera|estufa|espejo|silla|mesa|cortina|salida)\b/i
 
-const SYS = `You translate property-maintenance task titles from Spanish (or mixed Spanish/English) into clean English.
-Rules: keep unit numbers, names and technical details exactly; produce a natural, professional task title; if a title is ALREADY fully English, return it unchanged, character for character. Never invent information.
-Input is a JSON array of {"id","title"}. Answer with ONLY a JSON array of {"id","title"} with the English titles.`
+// 2026-09-30: descriptions too (Jon: "auto-translate all the Spanish ones to English"), over any
+// window, and a standing switch (app_settings billing_prefs.autoTranslate) the desk honours on load.
+const SYS = `You translate property-maintenance task titles and descriptions from Spanish (or mixed Spanish/English) into clean English.
+Rules: keep unit numbers, names, amounts and technical details exactly; produce a natural, professional result; anything ALREADY fully English is returned unchanged, character for character. Never add, drop or invent information.
+Input is a JSON array of {"id","title","description"}. Answer with ONLY a JSON array of {"id","title","description"} in English.`
+const PREFS = 'billing_prefs'
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+export async function GET() {
+  const gate = await requireLevel('billing', 'view')
+  if (!gate.ok) return gate.res
+  const p = await getSetting<any>(PREFS, null).catch(() => null)
+  return NextResponse.json({ ok: true, autoTranslate: !!p?.autoTranslate })
+}
+
+export async function PUT(req: NextRequest) {
+  const gate = await requireLevel('billing', 'edit')
+  if (!gate.ok) return gate.res
+  const b = await req.json().catch(() => ({} as any))
+  const cur = await getSetting<any>(PREFS, null).catch(() => null) || {}
+  await setSetting(PREFS, { ...cur, autoTranslate: !!b?.autoTranslate }, gate.access.email || 'billing')
+  return NextResponse.json({ ok: true, autoTranslate: !!b?.autoTranslate })
+}
 
 export async function POST(req: NextRequest) {
   const gate = await requireLevel('billing', 'edit')
@@ -33,44 +54,53 @@ export async function POST(req: NextRequest) {
   const db = supabaseAdmin()
   const body = await req.json().catch(() => ({} as any))
   const month = String(body?.month || '').slice(0, 7)
-  if (!/^\d{4}-\d{2}$/.test(month)) return NextResponse.json({ ok: false, error: 'month required' }, { status: 400 })
+  const isYmd = (v: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''))
+  let tasks: any[]
+  if (isYmd(body?.from) && isYmd(body?.to)) tasks = await rangeTasks(body.from, body.to)
+  else if (/^\d{4}-\d{2}$/.test(month)) tasks = await monthTasks(month)
+  else return NextResponse.json({ ok: false, error: 'month or from/to required' }, { status: 400 })
+  const only: string[] | null = Array.isArray(body?.ids) ? body.ids.map(String) : null
 
-  const tasks = await monthTasks(month)
   const candidates = tasks
-    .map(t => ({ id: String(t.id), title: String(t.name || '') }))
-    .filter(t => t.title && SPANISHY.test(t.title))
+    .map(t => ({ id: String(t.id), title: String(t.name || ''), description: String(t.descr || '') }))
+    .filter(t => (!only || only.includes(t.id)) && t.title && (SPANISHY.test(t.title) || SPANISHY.test(t.description)))
   if (!candidates.length) return NextResponse.json({ ok: true, scanned: tasks.length, candidates: 0, translated: 0, remaining: 0 })
 
   const started = Date.now()
   let translated = 0
   let failed = 0
   let processed = 0
-  for (let i = 0; i < candidates.length; i += 25) {
+  const changed: { id: string; name: string; description: string }[] = []
+  for (let i = 0; i < candidates.length; i += 20) {
     if (Date.now() - started > 240_000) break
-    const batch = candidates.slice(i, i + 25)
-    let out: { id: string; title: string }[] = []
+    const batch = candidates.slice(i, i + 20).map(c => ({ ...c, description: c.description.slice(0, 1200) }))
+    let out: { id: string; title: string; description?: string }[] = []
     try {
-      // anthropicMessages + textOf, not a raw fetch reading content[0]: a model that answers with a
-      // thinking block first made this read an empty string from an HTTP 200, so the whole batch was
-      // silently "already English" and nothing got translated.
       const { model, fallback } = await modelPairFor('billing')
-      // 25 titles of ~25 tokens each is ~700 tokens out; 1500 is twice that (was 3000).
-      const r = await anthropicMessages(key, { model, max_tokens: 2500, system: SYS, messages: [{ role: 'user', content: JSON.stringify(batch) }] }, fallback, 'billing')
+      const r = await anthropicMessages(key, { model, max_tokens: 6000, system: SYS, messages: [{ role: 'user', content: JSON.stringify(batch) }] }, fallback, 'billing')
       const text = textOf(r.data)
       const m = text.match(/\[[\s\S]*\]/)
       if (r.ok && m) out = JSON.parse(m[0])
     } catch { /* batch failed — skip, counted below */ }
-    const byId: Record<string, string> = {}
-    for (const o of Array.isArray(out) ? out : []) if (o && o.id && typeof o.title === 'string') byId[String(o.id)] = o.title.trim().slice(0, 200)
-    for (const c of batch) {
+    const byId: Record<string, { title: string; description: string | null }> = {}
+    for (const o of Array.isArray(out) ? out : []) if (o && o.id && typeof o.title === 'string') byId[String(o.id)] = { title: o.title.trim().slice(0, 200), description: typeof o.description === 'string' ? o.description.trim().slice(0, 4000) : null }
+    for (const c of candidates.slice(i, i + 20)) {
       processed++
       const nt = byId[c.id]
-      if (!nt || nt === c.title) continue   // unchanged (already English) or AI skipped it
+      if (!nt) continue
+      const newName = nt.title || c.title
+      // A description longer than what we sent keeps its tail: only replace it when we sent it whole.
+      const newDesc = nt.description != null && c.description.length <= 1200 ? nt.description : c.description
+      if (newName === c.title && newDesc === c.description) continue   // already English
       try {
-        const pr = await updateBreezewayTask(c.id, { name: nt })
+        const patch: Record<string, any> = { name: newName }
+        if (newDesc !== c.description) patch.description = newDesc
+        const pr = await updateBreezewayTask(c.id, patch)
         if (pr.ok) {
           translated++
-          try { await db.from('breezeway_tasks_sync').update({ name: nt }).eq('id', c.id) } catch { /* mirror catches up */ }
+          changed.push({ id: c.id, name: newName, description: newDesc })
+          try { await db.from('breezeway_tasks_sync').update({ name: newName }).eq('id', c.id) } catch { /* mirror catches up */ }
+          if (patch.description != null) { try { await refreshFromBreezeway(db, c.id) } catch { /* next sync */ } }
         } else failed++
       } catch { failed++ }
       await sleep(100)
@@ -78,5 +108,5 @@ export async function POST(req: NextRequest) {
   }
   // Renamed tasks show on the Scheduler and the day through cached reads of the mirror.
   if (translated > 0) bustBoards()
-  return NextResponse.json({ ok: true, scanned: tasks.length, candidates: candidates.length, translated, failed, remaining: candidates.length - processed })
+  return NextResponse.json({ ok: true, scanned: tasks.length, candidates: candidates.length, translated, failed, remaining: candidates.length - processed, changed })
 }

@@ -34,6 +34,10 @@ This is a PROOFREAD, not a rewrite. Rules:
 - If nothing is misspelled, return the input unchanged, character for character.
 Answer with ONLY a JSON object: {"title": "...", "description": "..."}`
 
+const SYS_TRANSLATE = (to: 'en' | 'es') => `You translate a property-maintenance task title and notes into ${to === 'es' ? 'Spanish (natural, as a Latin American field team writes it)' : 'clear, professional English'}.
+Keep every unit number, name, amount, brand and technical detail exactly. Do not add, drop or embellish anything. If a part is already in ${to === 'es' ? 'Spanish' : 'English'}, keep it as written.
+Answer with ONLY a JSON object: {"title": "...", "description": "..."}`
+
 const SYS = `You clean up property-maintenance task write-ups for a vacation-rental owner statement.
 Rewrite the given task title and notes into:
 - "title": a short professional service line (max 70 chars), e.g. "Toilet base re-caulked" or "Wall repair and paint touch-up". No slashes-of-thought, no "ask permission", no internal jargon, no unit numbers.
@@ -48,7 +52,9 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   const name = String(body?.name || '').slice(0, 300)
   if (!name.trim()) return NextResponse.json({ ok: false, error: 'name required' }, { status: 400 })
-  const spelling = String(body?.mode || 'polish') === 'spelling'
+  const mode = String(body?.mode || 'polish')
+  const spelling = mode === 'spelling'
+  const translateTo: 'en' | 'es' | null = mode === 'translate' ? (body?.to === 'es' ? 'es' : 'en') : null
   const payload = {
     title: name,
     notes: String(body?.description || '').slice(0, 1500),
@@ -58,7 +64,7 @@ export async function POST(req: NextRequest) {
     // modelPairFor, not modelFor: the helper's default fallback is a guess, and a Polish button
     // that fails because the account cannot see one alias is worse than one that costs more.
     const { model, fallback } = await modelPairFor('billing')
-    const r = await anthropicMessages(key, { model, max_tokens: 600, system: spelling ? SYS_SPELLING : SYS, messages: [{ role: 'user', content: JSON.stringify(payload) }] }, fallback, 'billing')
+    const r = await anthropicMessages(key, { model, max_tokens: 1500, system: translateTo ? SYS_TRANSLATE(translateTo) : spelling ? SYS_SPELLING : SYS, messages: [{ role: 'user', content: JSON.stringify(payload) }] }, fallback, 'billing')
     const j: any = r.data
     const text = textOf(j)
     // SAY WHAT WENT WRONG. "AI request failed." sent whoever hit it to the server logs, or more
@@ -79,11 +85,11 @@ export async function POST(req: NextRequest) {
     // not: if the model came back with nothing, or with markedly less than it was given, keep what
     // the team actually wrote rather than quietly handing the reviewer a shorter description to
     // approve. The title is already length-capped by the prompt, so only notes need this.
-    if (spelling) {
+    if (spelling || translateTo) {
       const had = payload.notes.trim()
       if (had && description.length < had.length * 0.6) description = had
     }
-    return NextResponse.json({ ok: true, title, description, mode: spelling ? 'spelling' : 'polish' })
+    return NextResponse.json({ ok: true, title, description, mode: translateTo ? 'translate-' + translateTo : spelling ? 'spelling' : 'polish' })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })
   }
