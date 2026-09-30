@@ -93,7 +93,7 @@ const SCHEMA = {
           where: { type: 'string', enum: ['board', 'breezeway'], description: 'breezeway = somebody goes to a unit or building and does physical work (inspect, clean, repair, install, meet a vendor on site). board = office work (quotes, approvals, ordering, scheduling, documents, owner calls).' },
           dept: { type: 'string', enum: DEPTS as any, description: 'For Breezeway tasks: inspection for walks and checks, housekeeping for cleaning, maintenance for repairs, installs and vendor visits.' },
           units: { type: 'array', items: { type: 'string' }, description: 'The units this task touches, EXACTLY as named in the unit list given. Every unit for "every unit". Empty for building-wide or office work.' },
-          owner: { type: 'string', description: 'A name from the roster given, exactly as written — or empty when nobody clearly fits. Never invent a person.' },
+          owner: { type: 'string', description: 'The person’s NAME from the roster given (the part before the dash — never the role), exactly as written — or empty when nobody clearly fits. Never invent a person.' },
           week: { type: 'integer', description: 'The week this is due, 1-based.' },
           priority: { type: 'string', enum: ['low', 'normal', 'high', 'urgent'] },
           checklist: { type: 'array', items: { type: 'string' }, description: 'Sub-steps or the items to cover (rooms, line items, the questions to ask a vendor). For a multi-unit task leave this empty — the units become the checklist.' },
@@ -124,7 +124,7 @@ How to plan:
 type Unit = { id: string; name: string; building: string | null }
 type Ctx = {
   categories: { key: string; label: string }[]
-  roster: { name: string; role: string | null; field: boolean }[]
+  roster: { name: string; email: string | null; role: string | null; field: boolean }[]
   buildings: { label: string; market: string; vendor: boolean }[]
   units: Unit[]
   today: string
@@ -139,24 +139,37 @@ async function context(): Promise<Ctx> {
   ])
   const roster: Ctx['roster'] = []
   const seen = new Set<string>()
+  // App users first. Most logins have no profile name yet, so the display starts as the email and
+  // is replaced by the Breezeway name when the same person is on the field roster — Eve and the
+  // picker then say "Roberto Chiriboga", while the assignee row still carries the email for notices.
   for (const u of (users || []) as any[]) {
-    const name = String((u.profile && (u.profile.name || u.profile.full_name)) || u.email)
-    const k = personKey(name) || String(u.email).toLowerCase()
-    if (seen.has(k)) continue
-    seen.add(k)
-    roster.push({ name, role: str((u.profile && u.profile.title) || u.role) || null, field: false })
+    const email = String(u.email || '').toLowerCase()
+    const name = String((u.profile && (u.profile.name || u.profile.full_name)) || email)
+    const k = personKey(name) || email
+    if (!k || seen.has(k)) continue
+    seen.add(k); if (email) seen.add(email)
+    roster.push({ name, email: email || null, role: str((u.profile && u.profile.title) || u.role) || null, field: false })
   }
   try {
     const { listBreezewayPeople } = await import('@/lib/breezeway')
+    const local = (e: string | null) => String(e || '').split('@')[0].toLowerCase().replace(/[._-]+/g, ' ')
     for (const bp of await listBreezewayPeople()) {
       const k = personKey(bp.name)
       if (!k) continue
-      const twin = roster.find(r => nameMatches(r.name, bp.name))
-      if (twin) { twin.field = true; if (!twin.role && bp.departments?.length) twin.role = bp.departments.join('/'); continue }
+      const first = bp.name.split(/\s+/)[0].toLowerCase()
+      const twin = roster.find(r => !r.name.includes('@') && nameMatches(r.name, bp.name))
+        || roster.find(r => r.name.includes('@') && (local(r.email) === bp.name.toLowerCase() || local(r.email) === first || local(r.email).startsWith(first + ' ')))
+      if (twin) {
+        twin.field = true
+        if (twin.name.includes('@')) twin.name = bp.name
+        if (!twin.role && bp.departments?.length) twin.role = bp.departments.join('/')
+        continue
+      }
       if (seen.has(k)) continue
-      seen.add(k); roster.push({ name: bp.name, role: (bp.departments || []).join('/') || bp.role || 'field', field: true })
+      seen.add(k); roster.push({ name: bp.name, email: null, role: (bp.departments || []).join('/') || bp.role || 'field', field: true })
     }
   } catch { /* the app users alone are a usable roster */ }
+  roster.sort((a, b) => Number(a.name.includes('@')) - Number(b.name.includes('@')) || a.name.localeCompare(b.name))
   const units: Unit[] = ((listings || []) as any[])
     .filter(l => String(l.status || 'active').toLowerCase() !== 'inactive')
     .map(l => { const name = String(l.nickname || l.title || 'Unit'); return { id: String(l.id), name, building: buildingOf(l.building, name) } })
@@ -172,8 +185,13 @@ function briefBuildings(brief: string, ctx: Ctx): string[] {
 
 /** Trim the model's plan to the shapes we store; owners must be real roster names, units real units. */
 function normalise(raw: any, ctx: Ctx): Plan {
-  const rosterNames = ctx.roster.map(r => r.name)
-  const owner = (v: any): string | null => { const s = str(v); if (!s) return null; return rosterNames.find(n => n === s) || rosterNames.find(n => nameMatches(n, s)) || null }
+  // The roster is shown to Eve as "Name — role · field"; she sometimes hands the whole line back.
+  const owner = (v: any): string | null => {
+    const s = str(v).split(/\s+[—·-]\s+|\s*\(/)[0].trim(); if (!s) return null
+    const hit = ctx.roster.find(r => r.name === s) || ctx.roster.find(r => r.name.toLowerCase() === s.toLowerCase() || (r.email && r.email === s.toLowerCase()))
+      || ctx.roster.find(r => nameMatches(r.name, s)) || ctx.roster.find(r => r.email && r.email.split('@')[0].toLowerCase() === s.toLowerCase().replace(/\s+/g, '.'))
+    return hit ? hit.name : null
+  }
   const unitName = (v: any): string | null => { const s = str(v); if (!s) return null; const hit = ctx.units.find(u => u.name === s) || ctx.units.find(u => u.name.toLowerCase() === s.toLowerCase()); return hit ? hit.name : null }
   const weeks = int(raw?.weeks, 1, 12, 4)
   const phases: PlanPhase[] = (Array.isArray(raw?.phases) ? raw.phases : []).slice(0, 12).map((p: any) => ({
@@ -336,7 +354,8 @@ export async function POST(req: NextRequest) {
   for (const ph of plan.phases) for (const t of ph.tasks) {
     if (!t.owner) continue
     const parent = parentOf(ph, t); if (!parent) continue
-    const who = toPerson(t.owner)
+    const r = ctx.roster.find(x => x.name === t.owner)
+    const who = r && r.email ? { person_key: r.email, display: r.name, email: r.email } : toPerson(t.owner)
     asg.push({ task_id: parent.id, project_id: p.id, ...who, role: 'assignee' })
     for (const k of steps.filter(x => x.parent_id === parent.id)) asg.push({ task_id: k.id, project_id: p.id, ...who, role: 'assignee' })
   }
