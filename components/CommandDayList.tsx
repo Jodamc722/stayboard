@@ -50,7 +50,7 @@ import { useSlackQueue, EVENT_LABEL, expiresIn, type Pending as SlackPending } f
 import { AvailabilityAlert } from '@/components/AvailabilityAlert'
 import { Scoreboard } from '@/components/command/Scoreboard'
 import { ThoughtCard, useThoughts } from '@/components/EveThoughts'
-import { HubPulse, CleansBand, InspectionsBand, CallsBand, ReviewsBand, GlitchesBand, ChecklistBand, InboxBand, AdminBand } from '@/components/command/Hub'
+import { CommandHub, ApprovalRow } from '@/components/command/Hub'
 
 type Sev = NextItem['severity']
 type Ranked = { key: string; sev: Sev; rank: number; node: ReactNode }
@@ -176,22 +176,13 @@ export function CommandDayList() {
   const approvals = data.tiles.guestDesk.rows.filter(r => r.kind === 'approval' && !gone[r.key] && !handledKeys[r.key])
 
   return (
-    <div className="max-w-[760px] mx-auto space-y-5">
+    <div className="max-w-[1120px] mx-auto space-y-5">
       <DayLine d={data} loading={loading} tick={tick} reload={reload} roster={roster} vendorsOnSite={vendorsOnSite} />
-      {/* THE OPERATIONAL HUB (Jon, 2026-09-30): the day in one line, then every band you work from —
-          each row actionable in place, buttons not menus, a link to the full page on each band. */}
-      <HubPulse d={data} />
-      <DecideBand d={data} claims={claims} links={links} approvals={approvals} onCleared={hide} onChanged={reload} />
-      <CleansBand d={data} roster={roster} onChanged={reload} />
-      <InspectionsBand d={data} items={live} onChanged={reload} />
-      <CallsBand d={data} onChanged={reload} />
-      <InboxBand items={live} />
-      <ReviewsBand />
-      <GlitchesBand d={data} onChanged={reload} />
-      <FixBand rows={fixRows} roster={roster} onCleared={hide} onChanged={reload} />
-      <ChecklistBand />
-      <YoursBand />
-      <AdminBand items={live} />
+      {/* THE OPERATIONAL HUB (Jon, 2026-09-30): KPIs by area, the Now list, four lanes side by side —
+          every row actionable in place, no drop-downs. components/command/Hub.tsx. */}
+      <CommandHub d={data} live={live} roster={roster} fixRows={fixRows} claims={claims} links={links} approvals={approvals} onCleared={hide} onChanged={reload} />
+      {/* Eve's questions, plans and drafts, and Slack posts waiting to send — the calls only a person makes. */}
+      <DecideBand d={data} claims={[]} links={[]} approvals={[]} onCleared={hide} onChanged={reload} />
       <ClearBand d={data} dups={dups} vendorNotes={vendorNotes} backlog={backlog} onCleared={hide} onChanged={reload} />
       {/* WHAT EVE IS THINKING (2026-09-21): a collapsed line, the same cards as Settings → Eve → Thinking. Admins only; hidden otherwise. */}
       <EveThinking />
@@ -321,7 +312,7 @@ function DecideBand({ d, claims, links, approvals, onCleared, onChanged }: { d: 
   rows.sort((a, b) => SEV_RANK[a.sev] - SEV_RANK[b.sev] || a.rank - b.rank)
 
   return (
-    <Band name="Decide" count={count} empty="Nothing to decide.">
+    <Band name="Eve & Slack — your call" count={count} empty="Nothing waiting on you.">
       {slack.err && <p className="px-3 py-2 text-[12px] text-rose-700">{slack.err}</p>}
       {rows.map(r => <div key={r.key}>{r.node}</div>)}
     </Band>
@@ -569,29 +560,6 @@ function DecideLinkRow({ item: i, onCleared }: { item: NextItem; onCleared: (k: 
     <Row sev={i.severity} title={i.title} tags={<Tag tone={m.tone} title={m.hover}>{m.tag}</Tag>} meta={i.why}
       primary={<Link href={i.href || '/'} className={PRIMARY}>{i.action && i.action.type === 'open' ? i.action.label : 'Open'}</Link>}
       secondary={<IconBtn title={m.clearTitle} tone={m.clear === 'done' ? 'ok' : undefined} onClick={clear} disabled={busy}>{m.clear === 'done' ? <Check size={15} /> : <X size={14} />}</IconBtn>} />
-  )
-}
-
-/** field_requests spend approvals — the same decide call /requests uses (approver stamped server-side). */
-function ApprovalRow({ row, onCleared, onChanged }: { row: GuestDeskRow; onCleared: (k: string) => void; onChanged: () => void }) {
-  const id = row.key.replace(/^ap:/, '')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-  const decide = async (approved: boolean) => {
-    setBusy(true); setErr('')
-    try {
-      await post('/api/requests/update', { action: 'decide', id, approved })
-      // Also recorded as handled, so it cannot flash back as pending before the shared day rebuilds.
-      await clearRow({ key: row.key, title: (approved ? 'Approved: ' : 'Rejected: ') + row.text, unit: row.unit }, 'done').catch(() => {})
-      onCleared(row.key); onChanged()
-    }
-    catch (e: any) { setErr(String(e?.message || e)) }
-    setBusy(false)
-  }
-  return (
-    <Row sev="today" title={row.who + (row.unit ? ' · ' + row.unit : '') + ' — ' + row.text} tags={<Tag tone="amber" title="Spend approval">Spend</Tag>} meta={row.meta} err={err}
-      primary={<button onClick={() => decide(true)} disabled={busy} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <ClipboardCheck size={11} />} Approve</button>}
-      secondary={<IconBtn title="Reject the spend" tone="bad" onClick={() => decide(false)} disabled={busy}><X size={14} /></IconBtn>} />
   )
 }
 

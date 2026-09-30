@@ -1,34 +1,60 @@
 'use client'
 // COMMAND CENTER — THE OPERATIONAL HUB (Jon, 2026-09-30).
 //
-//   "Command Center should be the interface where most people can get their work done from. It can
-//    show the reviews that need to be responded to. It can help keep tabs on important operational
-//    things like inspections, available hours for the day, welcome calls, departure cleans, pending
-//    units that are still pending… If there are pending glitches that need to be actioned… and then
-//    it can have 'Here are the recommended admin activities for today: optimizing these listings'."
-//   And: "clean, actionable, manageable" — and no drop-downs ("hate the drop downs").
+//   "Command Center should be the interface where most people can get their work done from…
+//    inspections, available hours for the day, welcome calls, departure cleans, pending units…
+//    guest sentiment, prioritizing operations like high-ticket items, review management,
+//    administrative work… It should be clean, actionable, and manageable." And, on the first cut:
+//   "it's just a long, long list instead of it being more optimized… track some high-level KPIs at
+//    the top that are important to the organization based on these key areas."
 //
-// Each band is a few rows you can act on in place (buttons, never menus), with a count and a link to
-// the full page. A band with nothing in it is one quiet line. Actions a person's role cannot take are
-// not drawn (useAccess); the server checks again.
+// THE SHAPE OF THE DAY, top to bottom:
+//   1. KPIs — eight numbers in four areas (Operations, Guests, Reviews, Admin): the state of the
+//      business right now, each with the week beside it where the week means something. A tile is
+//      also a switch: click it and the page focuses on that area's lane.
+//   2. NOW — the six things that matter most in the next two hours, ranked across every area by
+//      guest impact, lateness and the money on the booking (high-ticket first). Each with its buttons.
+//   3. FOUR LANES side by side (two by two on a desktop, stacked on a phone): Operations · Guests ·
+//      Reviews · Admin. A lane shows its top rows and a count chip per sub-area (Cleans · Inspections ·
+//      Team…) — chips filter in place, "+N more" opens the rest in place. No drop-downs anywhere.
+//   Under the lanes: Eve and Slack decisions, the batch clears, the week's scoreboard.
 //
-// Reads: the day (/api/command/day, shared with the rest of the page), the reply queue (/api/reviews),
-// the daily checklist (/api/daily-checklist) and the listing fixes (/api/listing-health?slim=1).
-import { useMemo, useState, type ReactNode } from 'react'
+// Every row is ONE line with its action buttons, never a menu. Actions a role cannot take are not
+// drawn (useAccess); the server checks again. Reads: the day (/api/command/day, shared with the rest
+// of the page), the reply queue (/api/reviews), the checklist (/api/daily-checklist), your tasks
+// (/api/projects/mine), the listing fixes (/api/listing-health?slim=1) and the week (/api/command/scoreboard).
+import { cloneElement, isValidElement, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { Loader2, Check, ExternalLink, UserPlus, Star, Phone, X, Sparkles } from 'lucide-react'
+import { Loader2, Check, ExternalLink, UserPlus, Star, Phone, X, Sparkles, ClipboardCheck, ListChecks, MessageSquare, FileText, ChevronDown, ChevronUp } from 'lucide-react'
 import { Tag, type Tone } from '@/components/lean'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { useAccess } from '@/lib/useAccess'
-import type { CommandDay, NextItem } from '@/lib/command-day'
-import { InlineAssign, BTN, type Roster } from '@/components/CommandCockpit'
+import type { CommandDay, NextItem, GuestDeskRow, CleanRow as CleanRowT, ArrivalRow, TaskRow, TeamRow as TeamRowT, GlitchRow as GlitchRowT } from '@/lib/command-day'
+import { InlineAssign, BTN, MINE_URL, type Roster, type Mine, type MineItem } from '@/components/CommandCockpit'
+import { SCOREBOARD_URL } from '@/components/command/Scoreboard'
 
+// ── shared bits ─────────────────────────────────────────────────────────────────────────────────
+export type Area = 'ops' | 'guests' | 'reviews' | 'admin'
+export type HubItem = { key: string; area: Area; sub: string; score: number; node: ReactNode }
+const AREA: Record<Area, { label: string; short: string; Icon: any; href: string; hrefLabel: string; blurb: string }> = {
+  ops: { label: 'Operations', short: 'Ops', Icon: ListChecks, href: '/plan', hrefLabel: 'Today board', blurb: 'Departure cleans and pending units, today’s inspections, and the team’s hours' },
+  guests: { label: 'Guests', short: 'Guests', Icon: MessageSquare, href: '/messages', hrefLabel: 'Inbox', blurb: 'Welcome calls, guests waiting or unhappy, and open guest issues' },
+  reviews: { label: 'Reviews', short: 'Reviews', Icon: Star, href: '/reviews', hrefLabel: 'Reviews', blurb: 'Reviews waiting on a public reply — low scores first' },
+  admin: { label: 'Admin', short: 'Admin', Icon: FileText, href: '/buildings', hrefLabel: 'Properties', blurb: 'What needs your decision, the checklist, your tasks and today’s recommended listing work' },
+}
+const SUB_ORDER = ['Cleans', 'Inspections', 'Tasks', 'Team', 'Calls', 'Inbox', 'Glitches', 'Queue', 'Needs you', 'Checklist', 'Yours', 'Fixes']
+const NOW_MIN = 65     // a row needs this score to make the Now list
+const NOW_MAX = 6
+const LANE_ROWS = 5
 const LIST = 'rounded-2xl border border-line bg-white divide-y divide-line'
 const GHOST = BTN + ' border border-line bg-white text-ink hover:border-ink/40'
 const DARK = BTN + ' bg-ink text-white'
 const bz = (id: string) => 'https://app.breezeway.io/task/' + id
 const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
-const hm = (min: number) => { const h = Math.floor(Math.abs(min) / 60), m = Math.abs(min) % 60; return (min < 0 ? '-' : '') + (h ? h + 'h' + (m ? ' ' + m + 'm' : '') : m + 'm') }
+const hm = (min: number) => { const a = Math.abs(min), h = Math.floor(a / 60), m = a % 60; return (min < 0 ? '-' : '') + (h ? h + 'h' + (m ? ' ' + m + 'm' : '') : m + 'm') }
+/** High-ticket weighting: up to +10 on a $5,000 booking. */
+const valueBonus = (v: number) => Math.min(10, Math.max(0, v) / 500)
+const INSPECT = /inspect|unit check|quality/i
 
 async function post(url: string, body: any, method = 'POST') {
   const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -36,26 +62,12 @@ async function post(url: string, body: any, method = 'POST') {
   if (!r.ok || j.ok === false || j.error) throw new Error(j.error || j.message || 'Request failed')
   return j
 }
+const clearRow = (i: { key: string; title?: string; unit?: string }, outcome: 'done' | 'skipped') =>
+  post('/api/command/dismiss', { key: i.key, outcome, title: i.title, unit: i.unit })
 
-// ── primitives ───────────────────────────────────────────────────────────────────────────────────
-export function HubBand({ id, name, count, empty, href, hrefLabel, right, children }: {
-  id?: string; name: string; count: number; empty: string; href?: string; hrefLabel?: string; right?: ReactNode; children?: ReactNode
-}) {
-  return (
-    <section id={id} className="scroll-mt-4">
-      <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted flex items-center gap-2">
-        <span>{name}</span>
-        {count ? <span className="tabular-nums text-ink">{count}</span> : <span className="normal-case tracking-normal font-medium">— {empty}</span>}
-        {right}
-        {href && <Link href={href} prefetch={false} title={hrefLabel || 'Open the full page'} className="ml-auto normal-case tracking-normal font-semibold text-brand-700 hover:underline">{hrefLabel || 'All'} →</Link>}
-      </h2>
-      {count > 0 && <div className={LIST}>{children}</div>}
-    </section>
-  )
-}
-
-function HubRow({ dot, title, meta, tags, actions, children, err }: {
-  dot?: 'rose' | 'amber' | null; title: ReactNode; meta?: ReactNode; tags?: ReactNode; actions?: ReactNode; children?: ReactNode; err?: string
+/** One row: dot · title · tags · meta, then the buttons. Detail (an assign strip, a reply box) opens under it. */
+function Row({ dot, title, meta, tags, actions, children, err, lane }: {
+  dot?: 'rose' | 'amber' | null; title: ReactNode; meta?: ReactNode; tags?: ReactNode; actions?: ReactNode; children?: ReactNode; err?: string; lane?: string
 }) {
   return (
     <div className="px-3 py-1.5 min-h-[44px] flex flex-col justify-center">
@@ -65,6 +77,7 @@ function HubRow({ dot, title, meta, tags, actions, children, err }: {
           <span className="text-[13px] font-semibold text-ink truncate max-w-full">{title}</span>
           {tags}
           {meta ? <span className="text-[11.5px] text-muted truncate max-w-full">{meta}</span> : null}
+          {lane ? <span className="hidden sm:inline text-[10px] uppercase tracking-wider font-bold text-muted/60 ml-auto pl-2" title={'From the ' + lane + ' lane'}>{lane}</span> : null}
         </span>
         {actions ? <span className="flex items-center gap-1.5 shrink-0 ml-3.5 sm:ml-0">{actions}</span> : null}
       </div>
@@ -74,366 +87,538 @@ function HubRow({ dot, title, meta, tags, actions, children, err }: {
   )
 }
 
-function More({ n, href, label }: { n: number; href: string; label: string }) {
-  if (n <= 0) return null
-  return <Link href={href} prefetch={false} className="block px-3 py-2 text-[12px] font-semibold text-brand-700 hover:bg-app">{n} more {label} →</Link>
+// ── rows, one per kind ──────────────────────────────────────────────────────────────────────────
+const CLEAN_ST: Record<string, { label: string; tone: Tone; title: string }> = {
+  late: { label: 'late', tone: 'rose', title: 'Will not land by the deadline at the current pace' },
+  atRisk: { label: 'at risk', tone: 'amber', title: 'Tight against the next arrival or 4pm' },
+  open: { label: 'not started', tone: 'slate', title: 'Nobody has started this clean' },
+  running: { label: 'in progress', tone: 'sky', title: 'Started, not finished' },
+}
+function CleanRow({ c, value, roster, canAssign, onChanged, lane }: { c: CleanRowT; value: number; roster: Roster[]; canAssign: boolean; onChanged: () => void; lane?: string }) {
+  const [open, setOpen] = useState(false)
+  const s = CLEAN_ST[c.status] || CLEAN_ST.open
+  const nobody = !c.who
+  return (
+    <Row lane={lane} dot={c.status === 'late' ? 'rose' : c.status === 'atRisk' || nobody ? 'amber' : null} title={c.unit}
+      tags={<>
+        <Tag tone={s.tone} title={s.title}>{s.label}</Tag>
+        {c.sameDay && <Tag tone="violet" title="A guest arrives into this unit today">same-day</Tag>}
+        {nobody && <Tag tone="amber" title="Nobody is assigned in Breezeway">nobody on it</Tag>}
+        {value >= 1000 && <Tag tone="slate" title={'The arriving booking is worth ' + money(value) + ' — high-ticket, first in line'}>{money(value)}</Tag>}
+      </>}
+      meta={[c.who, c.arrivingAt ? 'guest in ' + c.arrivingAt : '', c.market].filter(Boolean).join(' · ')}
+      actions={<>
+        {canAssign && <button onClick={() => setOpen(o => !o)} className={nobody ? DARK : GHOST} title={nobody ? 'Pick who cleans it' : 'Hand it to someone else'}><UserPlus size={12} /> {nobody ? 'Assign' : 'Reassign'}</button>}
+        <a href={bz(c.taskId)} target="_blank" rel="noreferrer" className={GHOST} title="Open the clean in Breezeway"><ExternalLink size={12} /></a>
+      </>}>
+      {open && <InlineAssign taskId={c.taskId} dept="housekeeping" roster={roster} onDone={() => { setOpen(false); onChanged() }} />}
+    </Row>
+  )
 }
 
-// ── the pulse: the day in one line, every number a jump to its band ─────────────────────────────
-export function HubPulse({ d }: { d: CommandDay }) {
-  const t = d.tiles, p = d.pulse
-  const pending = t.cleans.rows.filter(c => c.status !== 'done' && c.status !== 'vendor' && c.status !== 'extended').length
-  // AVAILABLE HOURS: what the people on shift can still take today — capacity minus the work already
-  // on them, summed (lib/capacity-day, the same numbers as the Team panel).
-  const free = t.team.rows.reduce((a, r) => a + Math.max(0, (r.capacityMinutes || 0) - (r.loadMinutes || 0)), 0)
-  const over = t.team.rows.reduce((a, r) => a + Math.max(0, (r.loadMinutes || 0) - (r.capacityMinutes || 0)), 0)
-  const calls = t.arrivals.rows.filter(a => a.today && !a.welcomeDone).length
-  const items: { href: string; label: string; value: string; tone: Tone; title: string }[] = [
-    { href: '#cleans', label: 'cleans', value: p.cleansDone + '/' + p.cleansTotal, tone: t.cleans.late ? 'rose' : t.cleans.atRisk ? 'amber' : 'slate', title: pending + ' units still pending' + (p.minsLeft > 0 ? ' · ' + hm(p.minsLeft) + ' to 4pm' : '') },
-    { href: '#cleans', label: 'pending', value: String(pending), tone: pending && p.minsLeft < 90 ? 'rose' : pending ? 'amber' : 'emerald', title: 'Departure cleans not finished yet' },
-    { href: '#team', label: 'free', value: t.team.onShift ? hm(free) : '—', tone: over > 0 ? 'rose' : free < 60 ? 'amber' : 'emerald', title: t.team.onShift ? `${t.team.onShift} on shift · ${hm(free)} of open capacity left${over ? ' · ' + hm(over) + ' over on some people' : ''}` : 'Nobody on shift in the roster' },
-    { href: '#inspections', label: 'arrivals', value: String(t.arrivals.today), tone: t.arrivals.missingInspection ? 'amber' : 'slate', title: t.arrivals.bigToday + ' big arrivals today' },
-    { href: '#calls', label: 'calls', value: String(calls), tone: calls ? 'amber' : 'emerald', title: 'Welcome calls still owed for today\'s arrivals' },
-    { href: '#reviews', label: 'reviews', value: String(t.guestDesk.reviews), tone: t.guestDesk.reviews ? 'amber' : 'emerald', title: 'Reviews waiting on a reply' },
-    { href: '#glitches', label: 'glitches', value: String(t.glitches.open), tone: t.glitches.overdue ? 'rose' : t.glitches.open ? 'amber' : 'emerald', title: t.glitches.overdue + ' overdue' },
-  ]
-  const TONE: Record<string, string> = { rose: 'text-rose-700', amber: 'text-amber-700', emerald: 'text-emerald-700', slate: 'text-ink' }
+function InspectionTaskRow({ t, big, roster, canAssign, onChanged, lane }: { t: TaskRow; big: boolean; roster: Roster[]; canAssign: boolean; onChanged: () => void; lane?: string }) {
+  const [open, setOpen] = useState(false)
+  const nobody = !t.who
+  const st = t.state === 'done' ? { label: 'done', tone: 'emerald' as Tone, title: 'Walked and closed' } : t.state === 'running' ? { label: 'in progress', tone: 'sky' as Tone, title: 'Somebody is in the unit' } : nobody ? { label: 'unconfirmed', tone: 'amber' as Tone, title: 'On the board with nobody assigned — confirm who walks it' } : { label: 'scheduled', tone: 'slate' as Tone, title: 'Assigned, not started' }
   return (
-    <div className="rounded-2xl border border-line bg-white px-3 py-2 flex items-center gap-x-4 gap-y-1 flex-wrap">
-      {items.map(i => (
-        <a key={i.label} href={i.href} title={i.title} className="inline-flex items-baseline gap-1 text-[12px] text-muted hover:text-ink">
-          <b className={'text-[15px] tabular-nums ' + (TONE[i.tone] || 'text-ink')}>{i.value}</b>{i.label}
-        </a>
-      ))}
+    <Row lane={lane} dot={t.state !== 'done' && (nobody || t.late) ? (t.late ? 'rose' : 'amber') : null} title={t.unit}
+      tags={<>
+        <Tag tone={st.tone} title={st.title}>{st.label}</Tag>
+        {big && <Tag tone="violet" title="A big arrival lands in this unit — walk it first">big arrival</Tag>}
+        {t.late && t.state !== 'done' && <Tag tone="rose" title="Past its scheduled time">late</Tag>}
+      </>}
+      meta={[t.name, t.who, t.market].filter(Boolean).join(' · ')}
+      actions={<>
+        {canAssign && t.state !== 'done' && <button onClick={() => setOpen(o => !o)} className={nobody ? DARK : GHOST} title={nobody ? 'Confirm who walks it' : 'Hand it to someone else'}><UserPlus size={12} /> {nobody ? 'Assign' : 'Reassign'}</button>}
+        <a href={bz(t.taskId)} target="_blank" rel="noreferrer" className={GHOST} title="Open the inspection in Breezeway"><ExternalLink size={12} /></a>
+      </>}>
+      {open && <InlineAssign taskId={t.taskId} dept="inspection" roster={roster} onDone={() => { setOpen(false); onChanged() }} />}
+    </Row>
+  )
+}
+
+const ARR_ST: Record<string, { label: string; tone: Tone; title: string }> = {
+  open: { label: 'inspection open', tone: 'sky', title: 'An inspection is scheduled on this unit' },
+  done: { label: 'inspected', tone: 'emerald', title: 'Walked recently — covered' },
+  auto: { label: 'auto', tone: 'violet', title: 'Task automation files this inspection on its next run — nobody needs to' },
+  none: { label: 'no inspection', tone: 'amber', title: 'Nothing walks this unit before the guest lands — create one, or turn Task automation on' },
+}
+function ArrivalInspectionRow({ a, create, canCreate, onChanged, lane }: { a: ArrivalRow; create: NextItem | null; canCreate: boolean; onChanged: () => void; lane?: string }) {
+  const [busy, setBusy] = useState(false)
+  const [made, setMade] = useState(false)
+  const [err, setErr] = useState('')
+  const s = made ? ARR_ST.open : ARR_ST[a.inspection] || ARR_ST.none
+  const go = async () => {
+    if (!create || create.action?.type !== 'create_task') return
+    setBusy(true); setErr('')
+    try { await post('/api/ops-today/add-task', create.action.payload); setMade(true); onChanged() } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  return (
+    <Row lane={lane} dot={a.inspection === 'none' && !made ? (a.today ? 'rose' : 'amber') : null} title={a.unit}
+      tags={<>
+        <Tag tone={a.today ? 'slate' : 'sky'} title={'Checks in ' + a.checkIn}>{a.today ? 'arrives today' : 'arrives tomorrow'}</Tag>
+        <Tag tone={s.tone} title={s.title}>{s.label}</Tag>
+        {a.value >= 1000 && <Tag tone="slate" title={'A ' + money(a.value) + ' booking — high-ticket'}>{money(a.value)}</Tag>}
+      </>}
+      meta={[a.guest, a.nights + ' nights'].join(' · ')} err={err}
+      actions={<>
+        {a.inspection === 'none' && !made && canCreate && create && <button onClick={go} disabled={busy} className={DARK} title="Create the pre-arrival inspection in Breezeway">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Create</button>}
+        {a.inspectionTaskId && <a href={bz(a.inspectionTaskId)} target="_blank" rel="noreferrer" className={GHOST} title="Open the inspection in Breezeway"><ExternalLink size={12} /></a>}
+      </>} />
+  )
+}
+
+function CallRow({ a, canLog, onChanged, lane }: { a: ArrivalRow; canLog: boolean; onChanged: () => void; lane?: string }) {
+  const [busy, setBusy] = useState('')
+  const [done, setDone] = useState('')
+  const [err, setErr] = useState('')
+  const log = async (outcome: 'reached' | 'voicemail' | 'no_answer') => {
+    setBusy(outcome); setErr('')
+    try { await post('/api/welcome-call', { reservationId: a.reservationId, outcome }); setDone(outcome); onChanged() } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy('')
+  }
+  if (done) return <Row lane={lane} title={a.guest} tags={<Tag tone="emerald" title="Logged on the booking and in Guesty">{done === 'no_answer' ? 'no answer — try again later' : 'called'}</Tag>} meta={a.unit} />
+  const B = (o: 'reached' | 'voicemail' | 'no_answer', label: string, title: string) => (
+    <button onClick={() => log(o)} disabled={!!busy} className={o === 'reached' ? DARK : GHOST} title={title}>{busy === o ? <Loader2 size={12} className="animate-spin" /> : null}{label}</button>
+  )
+  return (
+    <Row lane={lane} dot={a.big ? 'amber' : null} title={a.guest}
+      tags={<>{a.big && <Tag tone="violet" title="Big arrival — a mandatory call">must call</Tag>}{a.value >= 1000 && <Tag tone="slate" title={money(a.value) + ' booking'}>{money(a.value)}</Tag>}</>}
+      meta={[a.unit, a.nights + ' nights'].join(' · ')} err={err}
+      actions={canLog ? <>
+        {B('reached', 'Reached', 'Spoke to the guest — logs the call on the booking and in Guesty')}
+        {B('voicemail', 'Voicemail', 'Left a voicemail — counts as called')}
+        {B('no_answer', 'No answer', 'No answer — stays on the list for another try')}
+      </> : <Link href="/welcome-calls" className={GHOST}><Phone size={12} /> Open</Link>} />
+  )
+}
+
+function InboxRow({ i, lane }: { i: NextItem; lane?: string }) {
+  const unhappy = (i.tags || []).some(t => t.label === 'Unhappy')
+  return (
+    <Row lane={lane} dot={i.severity === 'now' ? 'rose' : 'amber'} title={i.unit || i.title}
+      tags={<>{(i.tags || []).map(t => <Tag key={t.label} tone={t.tone} title={t.title}>{t.label}</Tag>)}</>}
+      meta={i.why}
+      actions={<Link href={i.href || '/messages'} prefetch={false} className={DARK} title={unhappy ? 'Open the thread — read what upset them and reply' : 'Open the thread — reply, or send Eve’s draft'}>Reply</Link>} />
+  )
+}
+
+function GlitchRow({ g, canEdit, onChanged, lane }: { g: GlitchRowT; canEdit: boolean; onChanged: () => void; lane?: string }) {
+  const [busy, setBusy] = useState(false)
+  const [gone, setGone] = useState(false)
+  const [err, setErr] = useState('')
+  const close = async () => {
+    setBusy(true); setErr('')
+    try { await post('/api/glitches/action', { id: g.id, action: 'move', status: 'closed' }); setGone(true); onChanged() } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  if (gone) return null
+  return (
+    <Row lane={lane} dot={g.overdue ? 'rose' : !g.hasTask ? 'amber' : null} title={g.unit}
+      tags={<>
+        {g.overdue && <Tag tone="rose" title={'Due ' + (g.due || '')}>overdue</Tag>}
+        {!g.hasTask && <Tag tone="amber" title="No Breezeway task yet — open the card to push one">no task</Tag>}
+        <Tag tone="slate" title="Where the card sits on the Glitches board">{g.status.replace(/_/g, ' ')}</Tag>
+      </>}
+      meta={[g.issue, g.assignee, g.ageDays + 'd old'].filter(Boolean).join(' · ')} err={err}
+      actions={<>
+        <Link href={g.href} prefetch={false} className={GHOST} title="Open the card: refund advice, vendor, push a task">Open</Link>
+        {canEdit && <button onClick={close} disabled={busy} className={GHOST} title="Resolved — close the card">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Close</button>}
+      </>} />
+  )
+}
+
+type Review = { id: string; rating: number | null; content: string; channel: string; listingId: string; guest: string; created_at: string; hasReply: boolean; listing_name: string; dismissed?: boolean; removed?: boolean }
+const REVIEWS_URL = '/api/reviews?days=60'
+const five = (r: number | null, ch: string) => r == null ? null : /booking/i.test(ch) && r > 5 ? Math.round((r / 2) * 10) / 10 : r
+function ReviewRow({ r, canReply, onGone, lane }: { r: Review; canReply: boolean; onGone: () => void; lane?: string }) {
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
+  const s = five(r.rating, r.channel)
+  const low = s != null && s <= 3
+  const run = async (what: 'draft' | 'post' | 'skip') => {
+    setBusy(what); setErr('')
+    try {
+      if (what === 'draft') { const j = await post('/api/reviews/draft', { content: r.content, rating: r.rating, guest: r.guest, channel: r.channel, listing_name: r.listing_name, listingId: r.listingId }); setText(String(j.draft || '')) }
+      else if (what === 'post') { await post('/api/reviews/reply', { reviewId: r.id, reviewReply: text.trim() }); onGone() }
+      else { await post('/api/reviews/dismiss', { reviewId: r.id }); onGone() }
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy('')
+  }
+  return (
+    <Row lane={lane} dot={low ? 'rose' : null} title={r.listing_name || 'Unit'}
+      tags={s != null ? <Tag tone={low ? 'rose' : s >= 4.5 ? 'emerald' : 'slate'} title={r.channel + ' · ' + r.created_at.slice(0, 10) + (low ? ' · a low score is answered within 24h' : '')}><Star size={10} className="inline -mt-0.5" /> {s}</Tag> : null}
+      meta={r.guest + ' · ' + (r.content || '(no text)').replace(/\s+/g, ' ').slice(0, 90)} err={err}
+      actions={canReply ? <>
+        <button onClick={() => setOpen(o => !o)} className={open ? DARK : GHOST} title="Read it and write the public reply here">{open ? 'Close' : 'Reply'}</button>
+        <button onClick={() => run('skip')} disabled={!!busy} className={GHOST} title="No reply needed — take it off the queue"><X size={12} /></button>
+      </> : <Link href="/reviews" className={GHOST}>Open</Link>}>
+      {open && (
+        <div className="mt-2 pl-3.5 space-y-2">
+          <p className="text-[12.5px] text-ink/80 whitespace-pre-wrap">{r.content || '(no text)'}</p>
+          <textarea value={text} onChange={e => setText(e.target.value)} rows={4} placeholder="Write the public reply, or let Eve draft one"
+            className="w-full rounded-lg border border-line px-3 py-2 text-[13px] focus:outline-none focus:border-ink/40" />
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button onClick={() => run('draft')} disabled={!!busy} className={GHOST} title="Eve writes a draft in the house voice — edit it before posting">{busy === 'draft' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Draft with Eve</button>
+            <button onClick={() => run('post')} disabled={!!busy || !text.trim()} className={DARK} title="Post this reply publicly on the channel">{busy === 'post' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Post reply</button>
+          </div>
+        </div>
+      )}
+    </Row>
+  )
+}
+
+function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
+  const over = p.utilisationPct > 100
+  const idle = p.cleans + p.otherTasks === 0
+  return (
+    <Row lane={lane} dot={over ? 'amber' : null} title={p.person}
+      tags={over ? <Tag tone="amber" title={hm(p.loadMinutes - p.capacityMinutes) + ' more work than hours'}>{p.utilisationPct}% loaded</Tag> : <Tag tone="sky" title={hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free today'}>{idle ? 'nothing assigned' : hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free'}</Tag>}
+      meta={[p.role, p.cleans ? p.cleans + ' cleans' : '', p.otherTasks ? p.otherTasks + ' tasks' : ''].filter(Boolean).join(' · ')}
+      actions={<Link href="/plan" prefetch={false} className={GHOST} title="Open the Today board to move work">Balance</Link>} />
+  )
+}
+
+export function ApprovalRow({ row, onCleared, onChanged, lane }: { row: GuestDeskRow; onCleared: (k: string) => void; onChanged: () => void; lane?: string }) {
+  const id = row.key.replace(/^ap:/, '')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const decide = async (approved: boolean) => {
+    setBusy(true); setErr('')
+    try {
+      await post('/api/requests/update', { action: 'decide', id, approved })
+      await clearRow({ key: row.key, title: (approved ? 'Approved: ' : 'Rejected: ') + row.text, unit: row.unit }, 'done').catch(() => {})
+      onCleared(row.key); onChanged()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  return (
+    <Row lane={lane} dot="amber" title={row.who + (row.unit ? ' · ' + row.unit : '')} tags={<Tag tone="amber" title="A spend waiting on your approval">spend</Tag>} meta={row.text + (row.meta ? ' · ' + row.meta : '')} err={err}
+      actions={<>
+        <button onClick={() => decide(true)} disabled={busy} className={DARK} title="Approve the spend">{busy ? <Loader2 size={12} className="animate-spin" /> : <ClipboardCheck size={12} />} Approve</button>
+        <button onClick={() => decide(false)} disabled={busy} className={GHOST} title="Reject the spend"><X size={12} /></button>
+      </>} />
+  )
+}
+
+/** A decision made one tap away — a claim to review, a refund over the cap, a short-staffed day. */
+function NeedsRow({ i, tag, tone, hover, clear, clearTitle, onCleared, lane }: { i: NextItem; tag: string; tone: Tone; hover: string; clear: 'done' | 'skipped'; clearTitle: string; onCleared: (k: string) => void; lane?: string }) {
+  const [busy, setBusy] = useState(false)
+  const go = async () => { setBusy(true); try { await clearRow(i, clear); onCleared(i.key) } catch { /* shown on reload */ } setBusy(false) }
+  return (
+    <Row lane={lane} dot={i.severity === 'now' ? 'rose' : 'amber'} title={i.unit && i.unit !== 'Unit' ? i.unit + ' — ' + i.title : i.title}
+      tags={<Tag tone={tone} title={hover}>{tag}</Tag>} meta={i.why + (i.due ? ' · ' + i.due : '')}
+      actions={<>
+        <Link href={i.href || (i.action?.type === 'open' ? i.action.href : '/')} prefetch={false} className={DARK}>{i.action?.type === 'open' ? i.action.label : 'Open'}</Link>
+        <button onClick={go} disabled={busy} className={GHOST} title={clearTitle}>{clear === 'done' ? <Check size={12} /> : <X size={12} />}</button>
+      </>} />
+  )
+}
+
+/** A task nobody is on, a targeted look after guest feedback, backlog in a unit — the engine's own rows. */
+function NextRow({ i, roster, canAssign, canCreate, onCleared, onChanged, lane }: { i: NextItem; roster: Roster[]; canAssign: boolean; canCreate: boolean; onCleared: (k: string) => void; onChanged: () => void; lane?: string }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
+  const a = i.action
+  const create = async () => {
+    if (!a || a.type !== 'create_task') return
+    setBusy('create'); setErr('')
+    try { await post('/api/ops-today/add-task', a.payload); await clearRow(i, 'done').catch(() => {}); onCleared(i.key); onChanged() } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy('')
+  }
+  const done = async () => { setBusy('done'); try { await clearRow(i, 'done'); onCleared(i.key) } catch { /* reload shows it */ } setBusy('') }
+  return (
+    <Row lane={lane} dot={i.severity === 'now' ? 'rose' : i.severity === 'today' ? 'amber' : null} title={i.unit + ' — ' + i.title} meta={i.why} err={err}
+      tags={<>{(i.tags || []).map(t => <Tag key={t.label} tone={t.tone} title={t.title}>{t.label}</Tag>)}</>}
+      actions={<>
+        {a?.type === 'assign' && canAssign && <button onClick={() => setOpen(o => !o)} className={DARK} title="Pick who does it"><UserPlus size={12} /> Assign</button>}
+        {a?.type === 'create_task' && canCreate && <button onClick={create} disabled={!!busy} className={DARK} title={a.payload.title}>{busy === 'create' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {a.label}</button>}
+        {a?.type === 'open' && <a href={a.href} target={a.external ? '_blank' : undefined} rel="noreferrer" className={GHOST}>{a.label}</a>}
+        {i.bzTaskId && a?.type !== 'open' && <a href={bz(i.bzTaskId)} target="_blank" rel="noreferrer" className={GHOST} title="Open the task in Breezeway"><ExternalLink size={12} /></a>}
+        <button onClick={done} disabled={!!busy} className={GHOST} title="Handled — take it off the list for today">{busy === 'done' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}</button>
+      </>}>
+      {open && a?.type === 'assign' && <InlineAssign taskId={a.taskId} dept={a.dept} roster={roster} onDone={() => { setOpen(false); onChanged() }} />}
+    </Row>
+  )
+}
+
+type CkRow = { id: string; title: string; band: string; by_time: string | null; done: boolean; late: boolean; link: string | null }
+type Ck = { ok: boolean; rows: CkRow[]; progress: { total: number; done: number; late: number; pct: number }; canTick: boolean }
+const CK_URL = '/api/daily-checklist'
+function ChecklistRow({ r, canTick, onTicked, lane }: { r: CkRow; canTick: boolean; onTicked: () => void; lane?: string }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const tick = async () => { setBusy(true); setErr(''); try { await post(CK_URL, { action: 'tick', itemId: r.id }); onTicked() } catch (e: any) { setErr(String(e?.message || e)) } setBusy(false) }
+  return (
+    <Row lane={lane} dot={r.late ? 'rose' : null} title={r.title} tags={r.late ? <Tag tone="rose" title="Past its time">late</Tag> : null} meta={r.by_time ? 'by ' + r.by_time : r.band} err={err}
+      actions={canTick ? <button onClick={tick} disabled={busy} className={GHOST} title="Done — ticks it with your name">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button> : null} />
+  )
+}
+
+function MineRow({ it, late, onChanged, lane }: { it: MineItem; late: boolean; onChanged: () => void; lane?: string }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const done = async () => { setBusy(true); setErr(''); try { await post('/api/projects/' + it.projectId, { action: 'taskSet', taskId: it.id, status: 'done' }); onChanged() } catch (e: any) { setErr(String(e?.message || e)) } setBusy(false) }
+  return (
+    <Row lane={lane} dot={late ? 'rose' : null} title={it.title} tags={late ? <Tag tone="rose" title={'Was due ' + (it.due || '')}>overdue</Tag> : it.due ? <Tag tone="slate" title="Due date">{String(it.due).slice(5)}</Tag> : null} meta={it.project} err={err}
+      actions={<>
+        <button onClick={done} disabled={busy} className={GHOST} title="Mark done">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button>
+        <Link href={'/projects/' + it.projectId} prefetch={false} className={GHOST} title="Open the project">Open</Link>
+      </>} />
+  )
+}
+
+type FixAction = { listingId: string; listing: string; building: string; severity: string; title: string; action: string; gain: number; key: string }
+function FixRow({ a, lane }: { a: FixAction; lane?: string }) {
+  return (
+    <Row lane={lane} dot={a.severity === 'critical' ? 'rose' : a.severity === 'high' ? 'amber' : null} title={a.listing}
+      tags={<Tag tone={a.severity === 'critical' ? 'rose' : a.severity === 'high' ? 'amber' : 'slate'} title={a.action}>{a.title}</Tag>} meta={a.action}
+      actions={<Link href={'/listings/' + encodeURIComponent(a.listingId)} prefetch={false} className={GHOST} title="Open the unit page: fixes, optimizer, photos and copy">Optimize</Link>} />
+  )
+}
+
+// ── KPI tiles ───────────────────────────────────────────────────────────────────────────────────
+type Kpi = { key: string; area: Area; label: string; short?: string; value: string; sub: string; tone: Tone; title: string }
+function KpiTiles({ kpis, focus, onFocus }: { kpis: Kpi[]; focus: Area | null; onFocus: (a: Area | null) => void }) {
+  const VAL: Record<string, string> = { rose: 'text-rose-700', amber: 'text-amber-700', emerald: 'text-emerald-700', slate: 'text-ink', sky: 'text-sky-700', violet: 'text-violet-700', brand: 'text-brand-700', roseSolid: 'text-rose-700' }
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      {kpis.map(k => {
+        const on = focus === k.area
+        return (
+          <button key={k.key} onClick={() => onFocus(on ? null : k.area)} title={k.title + (on ? ' — click to show every lane again' : ' — click to focus on ' + AREA[k.area].label)} aria-pressed={on}
+            className={'text-left rounded-xl border bg-white px-3 py-2 min-h-[64px] transition ' + (on ? 'border-brand-400 ring-2 ring-brand-100' : 'border-line hover:border-ink/30')}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10.5px] uppercase tracking-wider font-bold text-muted truncate"><span className="sm:hidden">{k.short || k.label}</span><span className="hidden sm:inline">{k.label}</span></span>
+              <span className="hidden sm:inline text-[9.5px] uppercase tracking-wider font-bold text-muted/50">{AREA[k.area].short}</span>
+            </div>
+            <div className={'text-[20px] leading-tight font-bold tabular-nums ' + (VAL[k.tone] || 'text-ink')}>{k.value}</div>
+            <div className="text-[11px] text-muted truncate" title={k.sub}>{k.sub || ' '}</div>
+          </button>
+        )
+      })}
     </div>
   )
 }
 
-// ── departure cleans & pending units ─────────────────────────────────────────────────────────────
-const CLEAN_ORDER: Record<string, number> = { late: 0, atRisk: 1, open: 2, running: 3 }
-export function CleansBand({ d, roster, onChanged }: { d: CommandDay; roster: Roster[]; onChanged: () => void }) {
+// ── a lane ──────────────────────────────────────────────────────────────────────────────────────
+function Lane({ area, items, focused, empty, right }: { area: Area; items: HubItem[]; focused: boolean; empty: string; right?: ReactNode }) {
+  const A = AREA[area]
+  const [sub, setSub] = useState<string | null>(null)
+  const [all, setAll] = useState(false)
+  useEffect(() => { if (focused) setAll(true) }, [focused])
+  const subs = useMemo(() => {
+    const n: Record<string, number> = {}
+    for (const it of items) n[it.sub] = (n[it.sub] || 0) + 1
+    return Object.keys(n).sort((a, b) => SUB_ORDER.indexOf(a) - SUB_ORDER.indexOf(b)).map(k => ({ key: k, n: n[k] }))
+  }, [items])
+  const pick = sub && subs.some(s => s.key === sub) ? sub : null
+  const list = (pick ? items.filter(i => i.sub === pick) : items).slice().sort((a, b) => b.score - a.score)
+  const shown = all ? list : list.slice(0, LANE_ROWS)
+  const hidden = list.length - shown.length
+  return (
+    <section id={'lane-' + area} className="scroll-mt-4 min-w-0">
+      <div className="px-1 mb-1.5 flex items-center gap-2 flex-wrap">
+        <h2 className="text-[11px] font-bold uppercase tracking-wider text-ink inline-flex items-center gap-1.5" title={A.blurb}><A.Icon size={13} className="text-brand-600" /> {A.label}</h2>
+        {items.length ? <span className="text-[11px] font-bold tabular-nums text-muted">{items.length}</span> : <span className="text-[11px] text-muted">— {empty}</span>}
+        {right}
+        <Link href={A.href} prefetch={false} className="ml-auto text-[11px] font-semibold text-brand-700 hover:underline" title={'Open ' + A.hrefLabel}>{A.hrefLabel} →</Link>
+      </div>
+      {subs.length > 1 && (
+        <div className="px-1 mb-1.5 flex items-center gap-1 flex-wrap" role="group" aria-label={A.label + ' filters'}>
+          <button onClick={() => setSub(null)} aria-pressed={!pick} className={'text-[11px] font-semibold px-2 py-0.5 rounded-full border ' + (!pick ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')} title="Every row in this lane">All</button>
+          {subs.map(s => <button key={s.key} onClick={() => setSub(pick === s.key ? null : s.key)} aria-pressed={pick === s.key} title={'Only ' + s.key.toLowerCase()}
+            className={'text-[11px] font-semibold px-2 py-0.5 rounded-full border tabular-nums ' + (pick === s.key ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>{s.key} {s.n}</button>)}
+        </div>
+      )}
+      {list.length > 0 && (
+        <div className={LIST}>
+          {shown.map(i => <div key={i.key}>{i.node}</div>)}
+          {hidden > 0 && <button onClick={() => setAll(true)} className="w-full text-left px-3 py-2 text-[12px] font-semibold text-brand-700 hover:bg-app inline-flex items-center gap-1"><ChevronDown size={13} /> {hidden} more</button>}
+          {all && list.length > LANE_ROWS && !focused && <button onClick={() => setAll(false)} className="w-full text-left px-3 py-2 text-[12px] font-semibold text-muted hover:bg-app inline-flex items-center gap-1"><ChevronUp size={13} /> Show fewer</button>}
+        </div>
+      )}
+    </section>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+export function CommandHub({ d, live, roster, fixRows, claims, links, approvals, onCleared, onChanged }: {
+  d: CommandDay; live: NextItem[]; roster: Roster[]; fixRows: NextItem[]; claims: NextItem[]; links: NextItem[]; approvals: GuestDeskRow[]
+  onCleared: (key: string) => void; onChanged: () => void
+}) {
   const acc = useAccess()
-  const canAssign = acc.atLeast('schedule', 'edit')
-  const [open, setOpen] = useState<string | null>(null)
-  const rows = d.tiles.cleans.rows.filter(c => c.status in CLEAN_ORDER)
-    .sort((a, b) => CLEAN_ORDER[a.status] - CLEAN_ORDER[b.status] || (a.who ? 1 : 0) - (b.who ? 1 : 0) || String(a.arrivingAt || '99').localeCompare(String(b.arrivingAt || '99')))
-  const shown = rows.slice(0, 8)
-  const STATUS: Record<string, { label: string; tone: Tone; title: string }> = {
-    late: { label: 'late', tone: 'rose', title: 'Will not land by the deadline at the current pace' },
-    atRisk: { label: 'at risk', tone: 'amber', title: 'Tight against the next arrival or 4pm' },
-    open: { label: 'not started', tone: 'slate', title: 'Nobody has started this clean' },
-    running: { label: 'in progress', tone: 'sky', title: 'Started, not finished' },
+  const can = { assign: acc.atLeast('schedule', 'edit'), plan: acc.atLeast('plan', 'edit'), calls: acc.atLeast('welcome-calls', 'edit'), glitches: acc.atLeast('glitches', 'edit'), reviews: acc.atLeast('reviews', 'edit') }
+  const [focus, setFocus] = useState<Area | null>(null)
+  useEffect(() => { if (focus) document.getElementById('lane-' + focus)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }, [focus])
+
+  // The other reads. Each fails soft: a 403 hides its rows, an error leaves the lane to the rest.
+  const reviewsQ = useCachedFetch<{ reviews: Review[] }>(REVIEWS_URL, { ttl: 120_000 })
+  const ckQ = useCachedFetch<Ck>(CK_URL, { ttl: 60_000 })
+  const mineQ = useCachedFetch<Mine>(MINE_URL, { ttl: 60_000 })
+  const fixQ = useCachedFetch<{ actions?: FixAction[] }>('/api/listing-health?slim=1', { ttl: 10 * 60_000 })
+  const weekQ = useCachedFetch<{ tiles?: { key: string; value: string; sub: string }[] }>(SCOREBOARD_URL, { ttl: 5 * 60_000 })
+  const [goneReviews, setGoneReviews] = useState<Record<string, true>>({})
+  const reloadReviews = () => { invalidateCache(REVIEWS_URL); reviewsQ.refresh() }
+  const reloadCk = () => { invalidateCache(CK_URL); ckQ.refresh() }
+  const reloadMine = () => { invalidateCache(MINE_URL); mineQ.refresh() }
+  const week = (key: string) => (weekQ.data?.tiles || []).find(t => t.key === key) || null
+
+  const t = d.tiles, p = d.pulse
+  // The arriving booking's value per unit today, so a clean or an inspection can be ranked by the money on it.
+  const valueByUnit: Record<string, number> = {}
+  for (const a of t.arrivals.rows) if (a.today) valueByUnit[a.unit] = Math.max(valueByUnit[a.unit] || 0, a.value)
+  const bigUnitsSoon = new Set(t.arrivals.rows.filter(a => a.big && (a.today || a.checkIn <= tomorrowOf(d.today))).map(a => a.unit))
+
+  // ── OPERATIONS ──
+  const cleans = t.cleans.rows.filter(c => c.status in CLEAN_ST)
+  const inspTasks = t.tasks.rows.filter(x => x.dept === 'inspection' || INSPECT.test(x.name))
+  const arrivalsInsp = t.arrivals.rows.filter(a => a.inspection !== 'n/a' && a.big && (a.today || a.checkIn <= tomorrowOf(d.today)))
+  const teamRows = t.team.rows.filter(r => r.utilisationPct > 100 || (r.cleans + r.otherTasks === 0 && r.capacityMinutes > 0))
+  const otherFix = fixRows.filter(i => i.kind !== 'inspection' && i.kind !== 'channel')
+  const createFor = (resId: string) => live.find(i => i.key === 'insp:' + resId && i.action?.type === 'create_task') || null
+
+  // ── GUESTS ──
+  const calls = t.arrivals.rows.filter(a => a.today && !a.welcomeDone)
+  const inbox = live.filter(i => i.kind === 'guest')
+  const unhappy = inbox.filter(i => (i.tags || []).some(x => x.label === 'Unhappy'))
+  const lateReplies = inbox.filter(i => (i.tags || []).some(x => /^Late/.test(x.label)))
+  const glitches = t.glitches.rows
+
+  // ── REVIEWS ──
+  const reviews = (reviewsQ.data?.reviews || []).filter(r => !r.hasReply && !r.dismissed && !r.removed && !goneReviews[r.id])
+  const lowReviews = reviews.filter(r => { const s = five(r.rating, r.channel); return s != null && s <= 3 })
+  const avg30 = (() => {
+    const since = new Date(Date.now() - 30 * 86400000).toISOString()
+    const xs = (reviewsQ.data?.reviews || []).filter(r => !r.removed && r.created_at >= since).map(r => five(r.rating, r.channel)).filter((x): x is number => x != null)
+    return xs.length ? { avg: Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10) / 10, n: xs.length } : null
+  })()
+
+  // ── ADMIN ──
+  const ck = ckQ.data
+  const ckRows = (ck?.rows || []).filter(r => !r.done)
+  const mine = mineQ.data?.groups
+  const mineRows: { it: MineItem; late: boolean; score: number }[] = mine ? [...mine.overdue.map(x => ({ it: x, late: true, score: 48 })), ...mine.today.map(x => ({ it: x, late: false, score: 35 }))] : []
+  const channel = live.filter(i => i.kind === 'channel')
+  const seenFix: Record<string, true> = {}
+  const fixes = (fixQ.data?.actions || []).filter(a => (seenFix[a.listingId] ? false : (seenFix[a.listingId] = true))).slice(0, 6)
+  const NEEDS: Record<string, { tag: string; tone: Tone; hover: string; clear: 'done' | 'skipped'; clearTitle: string; score: number }> = {
+    claim: { tag: 'claim', tone: 'amber', hover: 'A damage claim in your review or near its filing deadline', clear: 'done', clearTitle: 'Handled', score: 68 },
+    refund: { tag: 'refund', tone: 'violet', hover: 'A refund over the cap — Approve or Reject it on the glitch card', clear: 'skipped', clearTitle: 'Not today — hide it until tomorrow', score: 74 },
+    staffing: { tag: 'staffing', tone: 'amber', hover: 'The 14-day staffing forecast says a day 1–3 days out is short', clear: 'done', clearTitle: 'Handled — somebody is covering it', score: 62 },
   }
+
+  // ── the items, scored (high-ticket first: the money on the booking adds up to 10) ──
+  const items: HubItem[] = []
+  for (const c of cleans) {
+    const v = valueByUnit[c.unit] || 0
+    const base = c.status === 'late' ? 90 : c.status === 'atRisk' ? 75 : !c.who ? 70 : c.status === 'open' ? 40 : 20
+    items.push({ key: 'clean:' + c.taskId, area: 'ops', sub: 'Cleans', score: base + valueBonus(v) + (c.sameDay ? 3 : 0), node: <CleanRow c={c} value={v} roster={roster} canAssign={can.assign} onChanged={onChanged} /> })
+  }
+  for (const x of inspTasks) {
+    const big = bigUnitsSoon.has(x.unit)
+    const base = x.state === 'done' ? 8 : !x.who ? 72 : x.late ? 68 : x.state === 'running' ? 30 : 45
+    items.push({ key: 'insp:' + x.taskId, area: 'ops', sub: 'Inspections', score: base + (big ? 8 : 0) + valueBonus(valueByUnit[x.unit] || 0), node: <InspectionTaskRow t={x} big={big} roster={roster} canAssign={can.plan} onChanged={onChanged} /> })
+  }
+  for (const a of arrivalsInsp) {
+    if (inspTasks.some(x => x.taskId === a.inspectionTaskId)) continue   // the task row already covers it
+    const base = a.inspection === 'none' ? (a.today ? 80 : 60) : a.inspection === 'auto' ? 30 : a.inspection === 'open' ? 28 : 8
+    items.push({ key: 'arr:' + a.reservationId, area: 'ops', sub: 'Inspections', score: base + valueBonus(a.value), node: <ArrivalInspectionRow a={a} create={createFor(a.reservationId)} canCreate={can.plan} onChanged={onChanged} /> })
+  }
+  for (const i of otherFix) items.push({ key: i.key, area: 'ops', sub: 'Tasks', score: i.severity === 'now' ? 66 : i.severity === 'today' ? 52 : 30, node: <NextRow i={i} roster={roster} canAssign={can.assign} canCreate={can.plan} onCleared={onCleared} onChanged={onChanged} /> })
+  for (const r of teamRows) items.push({ key: 'team:' + r.person, area: 'ops', sub: 'Team', score: r.utilisationPct > 100 ? 46 : 34, node: <TeamRow p={r} /> })
+
+  for (const a of calls) items.push({ key: 'call:' + a.reservationId, area: 'guests', sub: 'Calls', score: (a.big ? 78 : 50) + valueBonus(a.value), node: <CallRow a={a} canLog={can.calls} onChanged={onChanged} /> })
+  for (const i of inbox) {
+    const isUnhappy = (i.tags || []).some(x => x.label === 'Unhappy'), late = (i.tags || []).some(x => /^Late/.test(x.label))
+    items.push({ key: i.key, area: 'guests', sub: 'Inbox', score: isUnhappy ? 88 : late ? 85 : 60, node: <InboxRow i={i} /> })
+  }
+  for (const g of glitches) items.push({ key: 'gl:' + g.id, area: 'guests', sub: 'Glitches', score: g.overdue ? 82 : !g.hasTask ? 55 : 40, node: <GlitchRow g={g} canEdit={can.glitches} onChanged={onChanged} /> })
+
+  for (const r of reviews) {
+    const s = five(r.rating, r.channel), low = s != null && s <= 3
+    const ageH = (Date.now() - Date.parse(r.created_at)) / 3600000
+    items.push({ key: 'rv:' + r.id, area: 'reviews', sub: 'Queue', score: (low ? 76 : 45) + Math.min(6, ageH / 24), node: <ReviewRow r={r} canReply={can.reviews} onGone={() => { setGoneReviews(g => ({ ...g, [r.id]: true })); reloadReviews() }} /> })
+  }
+
+  for (const row of approvals) items.push({ key: row.key, area: 'admin', sub: 'Needs you', score: 70, node: <ApprovalRow row={row} onCleared={onCleared} onChanged={onChanged} /> })
+  for (const i of claims.concat(links)) {
+    const m = NEEDS[i.kind]; if (!m) continue
+    items.push({ key: i.key, area: 'admin', sub: 'Needs you', score: m.score, node: <NeedsRow i={i} tag={m.tag} tone={m.tone} hover={m.hover} clear={m.clear} clearTitle={m.clearTitle} onCleared={onCleared} /> })
+  }
+  for (const r of ckRows) items.push({ key: 'ck:' + r.id, area: 'admin', sub: 'Checklist', score: r.late ? 50 : 25, node: <ChecklistRow r={r} canTick={!!ck?.canTick} onTicked={reloadCk} /> })
+  for (const m of mineRows) items.push({ key: 'mine:' + m.it.id, area: 'admin', sub: 'Yours', score: m.score, node: <MineRow it={m.it} late={m.late} onChanged={reloadMine} /> })
+  for (const i of channel) items.push({ key: i.key, area: 'admin', sub: 'Fixes', score: 66, node: <NeedsRow i={i} tag="channel" tone="rose" hover="Unbookable on that channel until someone reconnects it" clear="done" clearTitle="Reconnected" onCleared={onCleared} /> })
+  for (const a of fixes) items.push({ key: 'fix:' + a.listingId + a.key, area: 'admin', sub: 'Fixes', score: a.severity === 'critical' ? 40 : a.severity === 'high' ? 30 : 20, node: <FixRow a={a} /> })
+
+  // NOW: the top of everything, across areas — but only rows that clear the bar.
+  const now = items.filter(i => i.score >= NOW_MIN).sort((a, b) => b.score - a.score).slice(0, NOW_MAX)
+
+  // ── the KPIs ──
+  const pending = cleans.length
+  const free = t.team.rows.reduce((a, r) => a + Math.max(0, (r.capacityMinutes || 0) - (r.loadMinutes || 0)), 0)
+  const over = t.team.rows.filter(r => r.utilisationPct > 100).length
+  const inspToday = inspTasks.length, inspDone = inspTasks.filter(x => x.state === 'done').length, inspNobody = inspTasks.filter(x => x.state !== 'done' && !x.who).length
+  const bigToday = t.arrivals.rows.filter(a => a.big && a.today), bigCovered = bigToday.filter(a => a.inspection !== 'none').length
+  const wkCalls = week('welcome'), wkGl = week('glitches')
+  const left = p.cleansTotal > p.cleansDone ? (p.minsLeft < 0 ? hm(p.minsLeft) + ' past 4pm' : hm(p.minsLeft) + ' to 4pm') : ''
+  const kpis: Kpi[] = [
+    { key: 'cleans', area: 'ops', label: 'Cleans', value: p.cleansDone + '/' + p.cleansTotal, sub: [pending ? pending + ' pending' : 'all done', left].filter(Boolean).join(' · '), tone: t.cleans.late ? 'rose' : t.cleans.atRisk ? 'amber' : pending ? 'slate' : 'emerald', title: 'Departure cleans done today, and the units still pending against the 4pm deadline' },
+    { key: 'insp', area: 'ops', label: 'Inspections', value: inspToday ? inspDone + '/' + inspToday : (bigToday.length ? bigCovered + '/' + bigToday.length : '—'), sub: [inspNobody ? inspNobody + ' unconfirmed' : '', bigToday.length ? bigCovered + '/' + bigToday.length + ' big arrivals covered' : 'no big arrivals today'].filter(Boolean).join(' · '), tone: inspNobody || bigCovered < bigToday.length ? 'amber' : inspToday || bigToday.length ? 'emerald' : 'slate', title: 'Today’s inspections done, the ones with nobody assigned, and whether every big arrival is covered' },
+    { key: 'hours', area: 'ops', label: 'Free hours', short: 'Hours', value: t.team.onShift ? hm(free) : '—', sub: t.team.onShift ? t.team.onShift + ' on shift' + (over ? ' · ' + over + ' over' : '') : 'nobody on shift', tone: !t.team.onShift ? 'rose' : over ? 'amber' : free < 60 ? 'amber' : 'emerald', title: 'Hours the people on shift can still take today: their capacity minus the work already on them' },
+    { key: 'calls', area: 'guests', label: 'Welcome calls', short: 'Calls', value: String(calls.length), sub: [calls.length ? 'owed today' : 'all called', wkCalls ? 'wk ' + wkCalls.sub.replace(/\s*\(.*$/, '') : ''].filter(Boolean).join(' · '), tone: calls.some(a => a.big) ? 'rose' : calls.length ? 'amber' : 'emerald', title: 'Welcome calls still owed for today’s arrivals, and the week’s completion rate' },
+    { key: 'waiting', area: 'guests', label: 'Guests waiting', short: 'Waiting', value: String(inbox.length), sub: [lateReplies.length ? lateReplies.length + ' past the hour' : '', unhappy.length ? unhappy.length + ' unhappy' : 'sentiment clear'].filter(Boolean).join(' · '), tone: unhappy.length || lateReplies.length ? 'rose' : inbox.length ? 'amber' : 'emerald', title: 'Guests waiting on a reply (1-hour rule), and current guests the sentiment scan reads as unhappy' },
+    { key: 'glitches', area: 'guests', label: 'Glitches', value: String(glitches.length), sub: [t.glitches.overdue ? t.glitches.overdue + ' overdue' : 'none overdue', wkGl && /to close/.test(wkGl.sub) ? 'wk ' + wkGl.sub.split(' · ').filter(s => /to close/.test(s))[0] : ''].filter(Boolean).join(' · '), tone: t.glitches.overdue ? 'rose' : glitches.length ? 'amber' : 'emerald', title: 'Open guest issues, how many are past due, and the month’s median time to close' },
+    { key: 'reviews', area: 'reviews', label: 'Reviews', value: String(reviews.length), sub: [lowReviews.length ? lowReviews.length + ' at 3★ or under' : reviews.length ? 'to answer' : 'all answered', avg30 ? avg30.avg + '★ last 30d' : ''].filter(Boolean).join(' · '), tone: lowReviews.length ? 'rose' : reviews.length ? 'amber' : 'emerald', title: 'Reviews waiting on a public reply, and the average score of the last 30 days' },
+    { key: 'admin', area: 'admin', label: 'Admin', value: String(approvals.length + claims.length + links.length), sub: [approvals.length + claims.length + links.length ? 'need your decision' : 'nothing to decide', ck?.progress?.total ? 'checklist ' + ck.progress.pct + '%' : '', fixes.length ? fixes.length + ' fixes' : ''].filter(Boolean).join(' · '), tone: approvals.length || links.length ? 'amber' : ck?.progress?.late ? 'amber' : 'emerald', title: 'Decisions waiting on you, today’s checklist, and the listing fixes recommended for today' },
+  ]
+
+  const lanes: Area[] = ['ops', 'guests', 'reviews', 'admin']
+  const EMPTY: Record<Area, string> = { ops: 'every clean and inspection is covered', guests: 'nobody is waiting', reviews: 'nothing waiting on a reply', admin: 'nothing on your desk' }
+  const ckBar = ck?.progress?.total ? (
+    <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold" title={`Checklist: ${ck.progress.done} of ${ck.progress.total} done${ck.progress.late ? ' · ' + ck.progress.late + ' late' : ''}`}>
+      <span className="w-16 h-1.5 rounded-full bg-line overflow-hidden"><span className={'block h-full ' + (ck.progress.late ? 'bg-amber-500' : 'bg-emerald-500')} style={{ width: ck.progress.pct + '%' }} /></span>
+      <span className={ck.progress.late ? 'text-amber-700' : 'text-emerald-700'}>{ck.progress.pct}%</span>
+    </span>
+  ) : null
+
   return (
-    <HubBand id="cleans" name="Departure cleans · pending units" count={rows.length} empty="every clean is done" href="/plan" hrefLabel="Today board">
-      {shown.map(c => {
-        const s = STATUS[c.status]
-        const nobody = !c.who
-        return (
-          <HubRow key={c.taskId} dot={c.status === 'late' ? 'rose' : c.status === 'atRisk' || nobody ? 'amber' : null}
-            title={c.unit}
-            tags={<>
-              <Tag tone={s.tone} title={s.title}>{s.label}</Tag>
-              {c.sameDay && <Tag tone="violet" title="A guest arrives into this unit today">same-day</Tag>}
-              {nobody && <Tag tone="amber" title="Nobody is assigned in Breezeway">nobody on it</Tag>}
-            </>}
-            meta={[c.who, c.arrivingAt ? 'guest in ' + c.arrivingAt : '', c.market].filter(Boolean).join(' · ')}
-            actions={<>
-              {canAssign && <button onClick={() => setOpen(open === c.taskId ? null : c.taskId)} className={nobody ? DARK : GHOST} title={nobody ? 'Pick who cleans it' : 'Hand it to someone else'}>
-                <UserPlus size={12} /> {nobody ? 'Assign' : 'Reassign'}</button>}
-              <a href={bz(c.taskId)} target="_blank" rel="noreferrer" className={GHOST} title="Open the clean in Breezeway"><ExternalLink size={12} /></a>
-            </>}>
-            {open === c.taskId && <InlineAssign taskId={c.taskId} dept="housekeeping" roster={roster} onDone={() => { setOpen(null); onChanged() }} />}
-          </HubRow>
-        )
-      })}
-      <More n={rows.length - shown.length} href="/plan" label="pending units on the Today board" />
-    </HubBand>
+    <div className="space-y-5">
+      <KpiTiles kpis={kpis} focus={focus} onFocus={setFocus} />
+
+      {!focus && (
+        <section>
+          <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-2">
+            Now {now.length ? <span className="tabular-nums text-muted">{now.length}</span> : null}
+            <span className="normal-case tracking-normal font-medium text-muted">— {now.length ? 'what matters most in the next two hours, high-ticket first' : 'nothing urgent — the lanes below have the rest'}</span>
+          </h2>
+          {now.length > 0 && <div className={LIST}>{now.map(i => <div key={'now:' + i.key}>{withLane(i)}</div>)}</div>}
+        </section>
+      )}
+
+      {focus && (
+        <div className="px-1 flex items-center gap-2 text-[12px] text-muted">
+          <span>Focused on <b className="text-ink">{AREA[focus].label}</b>.</span>
+          <button onClick={() => setFocus(null)} className="font-semibold text-brand-700 hover:underline">Show every lane</button>
+        </div>
+      )}
+      <div className={'grid gap-5 ' + (focus ? 'grid-cols-1' : 'lg:grid-cols-2')}>
+        {lanes.filter(a => !focus || a === focus).map(a => (
+          <Lane key={a} area={a} items={items.filter(i => i.area === a)} focused={focus === a} empty={EMPTY[a]} right={a === 'admin' ? ckBar : undefined} />
+        ))}
+      </div>
+    </div>
   )
 }
 
-// ── inspections: big arrivals, VIPs, owner stays, and the automation's status on each ────────────
-export function InspectionsBand({ d, items, onChanged }: { d: CommandDay; items: NextItem[]; onChanged: () => void }) {
-  const acc = useAccess()
-  const canCreate = acc.atLeast('plan', 'edit')
-  const [busy, setBusy] = useState<string | null>(null)
-  const [err, setErr] = useState<Record<string, string>>({})
-  const [made, setMade] = useState<Record<string, true>>({})
-  // Arrivals today and tomorrow that carry an inspection question: big ones, or any with one open.
-  const rows = d.tiles.arrivals.rows.filter(a => a.inspection !== 'n/a' && (a.big || a.inspection === 'open'))
-    .sort((a, b) => (a.today === b.today ? 0 : a.today ? -1 : 1) || (a.inspection === 'none' ? -1 : 0) - (b.inspection === 'none' ? -1 : 0) || b.value - a.value)
-  const createFor = (resId: string) => items.find(i => i.key === 'insp:' + resId && i.action?.type === 'create_task')
-  const create = async (resId: string) => {
-    const it = createFor(resId); if (!it || it.action?.type !== 'create_task') return
-    setBusy(resId); setErr(e => ({ ...e, [resId]: '' }))
-    try { await post('/api/ops-today/add-task', it.action.payload); setMade(m => ({ ...m, [resId]: true })); onChanged() }
-    catch (e: any) { setErr(x => ({ ...x, [resId]: String(e?.message || e) })) }
-    setBusy(null)
-  }
-  const shown = rows.slice(0, 8)
-  const ST: Record<string, { label: string; tone: Tone; title: string }> = {
-    open: { label: 'inspection open', tone: 'sky', title: 'An inspection is scheduled on this unit' },
-    done: { label: 'inspected', tone: 'emerald', title: 'Walked recently — covered' },
-    auto: { label: 'auto', tone: 'violet', title: 'Task automation files this inspection on its next run — nobody needs to' },
-    none: { label: 'no inspection', tone: 'amber', title: 'Inspections are not automated for this — create one or turn Task automation on' },
-  }
-  return (
-    <HubBand id="inspections" name="Inspections · big arrivals" count={rows.length} empty="no big arrivals today or tomorrow" href="/reservations" hrefLabel="Reservations">
-      {shown.map(a => {
-        const s = made[a.reservationId] ? ST.open : ST[a.inspection] || ST.none
-        return (
-          <HubRow key={a.reservationId} dot={a.inspection === 'none' && !made[a.reservationId] ? (a.today ? 'rose' : 'amber') : null}
-            title={a.unit}
-            tags={<>
-              <Tag tone={a.today ? 'slate' : 'sky'} title={'Checks in ' + a.checkIn}>{a.today ? 'today' : 'tomorrow'}</Tag>
-              <Tag tone={s.tone} title={s.title}>{s.label}</Tag>
-            </>}
-            meta={[a.guest, a.nights + ' nights', a.value ? money(a.value) : ''].filter(Boolean).join(' · ')}
-            err={err[a.reservationId]}
-            actions={<>
-              {a.inspection === 'none' && !made[a.reservationId] && canCreate && createFor(a.reservationId) &&
-                <button onClick={() => create(a.reservationId)} disabled={busy === a.reservationId} className={DARK} title="Create the pre-arrival inspection in Breezeway">
-                  {busy === a.reservationId ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Create</button>}
-              {a.inspectionTaskId && <a href={bz(a.inspectionTaskId)} target="_blank" rel="noreferrer" className={GHOST} title="Open the inspection in Breezeway"><ExternalLink size={12} /></a>}
-            </>} />
-        )
-      })}
-      <More n={rows.length - shown.length} href="/reservations" label="arrivals" />
-    </HubBand>
-  )
+/** The same row, stamped with its lane, for the Now list. */
+function withLane(i: HubItem): ReactNode {
+  return isValidElement(i.node) ? cloneElement(i.node as any, { lane: AREA[i.area].short }) : i.node
 }
-
-// ── welcome calls ────────────────────────────────────────────────────────────────────────────────
-export function CallsBand({ d, onChanged }: { d: CommandDay; onChanged: () => void }) {
-  const acc = useAccess()
-  const canLog = acc.atLeast('welcome-calls', 'edit')
-  const [busy, setBusy] = useState<string | null>(null)
-  const [done, setDone] = useState<Record<string, string>>({})
-  const [err, setErr] = useState<Record<string, string>>({})
-  const rows = d.tiles.arrivals.rows.filter(a => a.today && !a.welcomeDone && !done[a.reservationId])
-    .sort((a, b) => Number(b.big) - Number(a.big) || b.value - a.value)
-  const log = async (id: string, outcome: 'reached' | 'voicemail' | 'no_answer') => {
-    setBusy(id + outcome); setErr(e => ({ ...e, [id]: '' }))
-    try { await post('/api/welcome-call', { reservationId: id, outcome }); setDone(x => ({ ...x, [id]: outcome })); onChanged() }
-    catch (e: any) { setErr(x => ({ ...x, [id]: String(e?.message || e) })) }
-    setBusy(null)
-  }
-  const shown = rows.slice(0, 8)
-  const B = (id: string, o: 'reached' | 'voicemail' | 'no_answer', label: string, title: string) => (
-    <button onClick={() => log(id, o)} disabled={!!busy} className={o === 'reached' ? DARK : GHOST} title={title}>
-      {busy === id + o ? <Loader2 size={12} className="animate-spin" /> : null}{label}</button>
-  )
-  return (
-    <HubBand id="calls" name="Welcome calls" count={rows.length} empty="every arrival today has been called" href="/welcome-calls" hrefLabel="Calls desk">
-      {shown.map(a => (
-        <HubRow key={a.reservationId} dot={a.big ? 'amber' : null}
-          title={a.guest}
-          tags={a.big ? <Tag tone="violet" title="Big arrival — a mandatory call">must call</Tag> : null}
-          meta={[a.unit, a.nights + ' nights'].join(' · ')}
-          err={err[a.reservationId]}
-          actions={canLog ? <>
-            {B(a.reservationId, 'reached', 'Reached', 'Spoke to the guest — logs the call on the booking and in Guesty')}
-            {B(a.reservationId, 'voicemail', 'Voicemail', 'Left a voicemail — counts as called')}
-            {B(a.reservationId, 'no_answer', 'No answer', 'No answer — stays on the list for another try')}
-          </> : <Link href="/welcome-calls" className={GHOST}><Phone size={12} /> Open</Link>} />
-      ))}
-      <More n={rows.length - shown.length} href="/welcome-calls" label="calls" />
-    </HubBand>
-  )
-}
-
-// ── reviews waiting on a reply: draft, edit, post or skip — right here ──────────────────────────
-type Review = { id: string; rating: number | null; content: string; channel: string; listingId: string; guest: string; created_at: string; hasReply: boolean; listing_name: string; dismissed?: boolean; removed?: boolean }
-const REVIEWS_URL = '/api/reviews?days=60'
-const five = (r: number | null, ch: string) => r == null ? null : /booking/i.test(ch) && r > 5 ? r / 2 : r
-export function ReviewsBand() {
-  const acc = useAccess()
-  const canReply = acc.atLeast('reviews', 'edit')
-  const { data, refresh } = useCachedFetch<{ reviews: Review[] }>(REVIEWS_URL, { ttl: 120_000 })
-  const [open, setOpen] = useState<string | null>(null)
-  const [text, setText] = useState<Record<string, string>>({})
-  const [busy, setBusy] = useState<string | null>(null)
-  const [err, setErr] = useState<Record<string, string>>({})
-  const [gone, setGone] = useState<Record<string, true>>({})
-  const queue = useMemo(() => (Array.isArray(data?.reviews) ? data!.reviews : [])
-    .filter(r => !r.hasReply && !r.dismissed && !r.removed && !gone[r.id])
-    // Low scores first (24h to answer), then oldest first.
-    .sort((a, b) => ((five(a.rating, a.channel) ?? 5) <= 3 ? 0 : 1) - ((five(b.rating, b.channel) ?? 5) <= 3 ? 0 : 1) || a.created_at.localeCompare(b.created_at)), [data, gone])
-  const run = async (r: Review, what: 'draft' | 'post' | 'skip') => {
-    setBusy(r.id + what); setErr(e => ({ ...e, [r.id]: '' }))
-    try {
-      if (what === 'draft') {
-        const j = await post('/api/reviews/draft', { content: r.content, rating: r.rating, guest: r.guest, channel: r.channel, listing_name: r.listing_name, listingId: r.listingId })
-        setText(t => ({ ...t, [r.id]: String(j.draft || '') }))
-      } else if (what === 'post') {
-        await post('/api/reviews/reply', { reviewId: r.id, reviewReply: (text[r.id] || '').trim() })
-        setGone(g => ({ ...g, [r.id]: true })); setOpen(null); invalidateCache(REVIEWS_URL); refresh()
-      } else {
-        await post('/api/reviews/dismiss', { reviewId: r.id })
-        setGone(g => ({ ...g, [r.id]: true })); setOpen(null)
-      }
-    } catch (e: any) { setErr(x => ({ ...x, [r.id]: String(e?.message || e) })) }
-    setBusy(null)
-  }
-  const shown = queue.slice(0, 6)
-  return (
-    <HubBand id="reviews" name="Reviews to answer" count={queue.length} empty="nothing waiting on a reply" href="/reviews" hrefLabel="Reviews">
-      {shown.map(r => {
-        const s = five(r.rating, r.channel)
-        const low = s != null && s <= 3
-        const isOpen = open === r.id
-        return (
-          <HubRow key={r.id} dot={low ? 'rose' : null}
-            title={r.listing_name || 'Unit'}
-            tags={<>
-              {s != null && <Tag tone={low ? 'rose' : s >= 4.5 ? 'emerald' : 'slate'} title={r.channel + ' · ' + r.created_at.slice(0, 10)}><Star size={10} className="inline -mt-0.5" /> {s}</Tag>}
-            </>}
-            meta={r.guest + ' · ' + (r.content || '(no text)').replace(/\s+/g, ' ').slice(0, 90)}
-            err={err[r.id]}
-            actions={canReply ? <>
-              <button onClick={() => setOpen(isOpen ? null : r.id)} className={isOpen ? DARK : GHOST} title="Read it and write the reply here">{isOpen ? 'Close' : 'Reply'}</button>
-              <button onClick={() => run(r, 'skip')} disabled={!!busy} className={GHOST} title="No reply needed — take it off the queue"><X size={12} /></button>
-            </> : <Link href="/reviews" className={GHOST}>Open</Link>}>
-            {isOpen && (
-              <div className="mt-2 pl-3.5 space-y-2">
-                <p className="text-[12.5px] text-ink/80 whitespace-pre-wrap">{r.content || '(no text)'}</p>
-                <textarea value={text[r.id] || ''} onChange={e => setText(t => ({ ...t, [r.id]: e.target.value }))} rows={4}
-                  placeholder="Write the public reply, or let Eve draft one" className="w-full rounded-lg border border-line px-3 py-2 text-[13px] focus:outline-none focus:border-ink/40" />
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <button onClick={() => run(r, 'draft')} disabled={!!busy} className={GHOST} title="Eve writes a draft in the house voice — edit it before posting">
-                    {busy === r.id + 'draft' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Draft with Eve</button>
-                  <button onClick={() => run(r, 'post')} disabled={!!busy || !(text[r.id] || '').trim()} className={DARK} title="Post this reply publicly on the channel">
-                    {busy === r.id + 'post' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Post reply</button>
-                </div>
-              </div>
-            )}
-          </HubRow>
-        )
-      })}
-      <More n={queue.length - shown.length} href="/reviews" label="reviews" />
-    </HubBand>
-  )
-}
-
-// ── glitches to action ──────────────────────────────────────────────────────────────────────────
-export function GlitchesBand({ d, onChanged }: { d: CommandDay; onChanged: () => void }) {
-  const acc = useAccess()
-  const canEdit = acc.atLeast('glitches', 'edit')
-  const [busy, setBusy] = useState<string | null>(null)
-  const [err, setErr] = useState<Record<string, string>>({})
-  const [gone, setGone] = useState<Record<string, true>>({})
-  const rows = d.tiles.glitches.rows.filter(g => !gone[g.id])
-    .sort((a, b) => Number(b.overdue) - Number(a.overdue) || Number(a.hasTask) - Number(b.hasTask) || b.ageDays - a.ageDays)
-  const close = async (id: string) => {
-    setBusy(id); setErr(e => ({ ...e, [id]: '' }))
-    try { await post('/api/glitches/action', { id, action: 'move', status: 'closed' }); setGone(g => ({ ...g, [id]: true })); onChanged() }
-    catch (e: any) { setErr(x => ({ ...x, [id]: String(e?.message || e) })) }
-    setBusy(null)
-  }
-  const shown = rows.slice(0, 6)
-  return (
-    <HubBand id="glitches" name="Glitches to action" count={rows.length} empty="no open guest issues" href="/glitches" hrefLabel="Glitches">
-      {shown.map(g => (
-        <HubRow key={g.id} dot={g.overdue ? 'rose' : !g.hasTask ? 'amber' : null}
-          title={g.unit}
-          tags={<>
-            {g.overdue && <Tag tone="rose" title={'Due ' + (g.due || '')}>overdue</Tag>}
-            {!g.hasTask && <Tag tone="amber" title="No Breezeway task yet — open the card to push one">no task</Tag>}
-            <Tag tone="slate" title="Where the card sits on the Glitches board">{g.status.replace(/_/g, ' ')}</Tag>
-          </>}
-          meta={[g.issue, g.assignee, g.ageDays + 'd old'].filter(Boolean).join(' · ')}
-          err={err[g.id]}
-          actions={<>
-            <Link href={g.href} prefetch={false} className={GHOST} title="Open the card: refund advice, vendor, push a task">Open</Link>
-            {canEdit && <button onClick={() => close(g.id)} disabled={busy === g.id} className={GHOST} title="Resolved — close the card">
-              {busy === g.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Close</button>}
-          </>} />
-      ))}
-      <More n={rows.length - shown.length} href="/glitches" label="glitches" />
-    </HubBand>
-  )
-}
-
-// ── the daily checklist, ticked here ─────────────────────────────────────────────────────────────
-type CkRow = { id: string; title: string; band: string; by_time: string | null; done: boolean; late: boolean; link: string | null }
-type Ck = { ok: boolean; rows: CkRow[]; progress: { total: number; done: number; late: number; pct: number }; canTick: boolean }
-const CK_URL = '/api/daily-checklist'
-export function ChecklistBand() {
-  const { data, error, refresh } = useCachedFetch<Ck>(CK_URL, { ttl: 60_000 })
-  const [busy, setBusy] = useState<string | null>(null)
-  const [err, setErr] = useState('')
-  if (error && /403|forbidden|not allowed/i.test(error)) return null
-  const rows = (data?.rows || []).filter(r => !r.done).sort((a, b) => Number(b.late) - Number(a.late) || String(a.by_time || '99').localeCompare(String(b.by_time || '99')))
-  const pr = data?.progress
-  const tick = async (id: string) => {
-    setBusy(id); setErr('')
-    try { await post(CK_URL, { action: 'tick', itemId: id }); invalidateCache(CK_URL); refresh() } catch (e: any) { setErr(String(e?.message || e)) }
-    setBusy(null)
-  }
-  const shown = rows.slice(0, 6)
-  return (
-    <HubBand id="checklist" name="Checklist" count={rows.length} empty={pr && pr.total ? 'all done today' : 'nothing on it'} href="/checklist" hrefLabel="Checklist"
-      right={pr && pr.total ? (
-        <span className="inline-flex items-center gap-1.5 normal-case tracking-normal font-semibold" title={`${pr.done} of ${pr.total} done${pr.late ? ' · ' + pr.late + ' late' : ''}`}>
-          <span className="w-20 h-1.5 rounded-full bg-line overflow-hidden"><span className={'block h-full ' + (pr.late ? 'bg-amber-500' : 'bg-emerald-500')} style={{ width: pr.pct + '%' }} /></span>
-          <span className={pr.late ? 'text-amber-700' : 'text-emerald-700'}>{pr.pct}%</span>
-        </span>
-      ) : null}>
-      {shown.map(r => (
-        <HubRow key={r.id} dot={r.late ? 'rose' : null}
-          title={r.title}
-          tags={r.late ? <Tag tone="rose" title="Past its time">late</Tag> : null}
-          meta={r.by_time ? 'by ' + r.by_time : r.band}
-          actions={data?.canTick ? <button onClick={() => tick(r.id)} disabled={busy === r.id} className={GHOST} title="Done — ticks it with your name">
-            {busy === r.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button> : null} />
-      ))}
-      {err && <p className="px-3 py-1.5 text-[11.5px] font-semibold text-rose-600">{err}</p>}
-      <More n={rows.length - shown.length} href="/checklist" label="items" />
-    </HubBand>
-  )
-}
-
-// ── guests waiting on a reply ────────────────────────────────────────────────────────────────────
-export function InboxBand({ items }: { items: NextItem[] }) {
-  const rows = items.filter(i => i.kind === 'guest')
-  const shown = rows.slice(0, 6)
-  return (
-    <HubBand id="inbox" name="Guests waiting on a reply" count={rows.length} empty="nobody is waiting" href="/messages" hrefLabel="Inbox">
-      {shown.map(i => (
-        <HubRow key={i.key} dot={i.severity === 'now' ? 'rose' : 'amber'}
-          title={i.unit || i.title}
-          tags={<>{(i.tags || []).map(t => <Tag key={t.label} tone={t.tone} title={t.title}>{t.label}</Tag>)}</>}
-          meta={i.why}
-          actions={<Link href={i.href || (i.action?.type === 'open' ? i.action.href : '/messages')} prefetch={false} className={DARK} title="Open the thread — reply, or send Eve's draft">Reply</Link>} />
-      ))}
-      <More n={rows.length - shown.length} href="/messages" label="threads" />
-    </HubBand>
-  )
-}
-
-// ── recommended admin for today: listing fixes, channel breaks ──────────────────────────────────
-type FixAction = { listingId: string; listing: string; building: string; severity: string; title: string; action: string; gain: number; key: string }
-export function AdminBand({ items }: { items: NextItem[] }) {
-  const { data } = useCachedFetch<{ actions?: FixAction[] }>('/api/listing-health?slim=1', { ttl: 10 * 60_000 })
-  const channel = items.filter(i => i.kind === 'channel')
-  // One fix per listing, the highest-value ones.
-  const seen: Record<string, true> = {}
-  const fixes = (data?.actions || []).filter(a => (seen[a.listingId] ? false : (seen[a.listingId] = true))).slice(0, 5)
-  const n = channel.length + fixes.length
-  return (
-    <HubBand id="admin" name="Recommended admin for today" count={n} empty="nothing recommended" href="/buildings" hrefLabel="Properties · Fix next">
-      {channel.map(i => (
-        <HubRow key={i.key} dot="rose" title={i.title} meta={i.why}
-          tags={<Tag tone="rose" title="Unbookable on that channel until someone reconnects it">channel</Tag>}
-          actions={<Link href={i.href || '/channels'} prefetch={false} className={DARK}>Fix</Link>} />
-      ))}
-      {fixes.map(a => (
-        <HubRow key={a.listingId + a.key} dot={a.severity === 'critical' ? 'rose' : a.severity === 'high' ? 'amber' : null}
-          title={a.listing}
-          tags={<Tag tone={a.severity === 'critical' ? 'rose' : a.severity === 'high' ? 'amber' : 'slate'} title={a.action}>{a.title}</Tag>}
-          meta={a.action}
-          actions={<Link href={'/listings/' + encodeURIComponent(a.listingId)} prefetch={false} className={GHOST} title="Open the unit page: fixes, optimizer, photos and copy">Optimize</Link>} />
-      ))}
-    </HubBand>
-  )
+function tomorrowOf(ymd: string): string {
+  const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10)
 }
