@@ -11,6 +11,7 @@ import { adminPasswordOk } from '@/lib/shareAuth'
 import { requireLevel } from '@/lib/access'
 import { requireVrUser } from '@/lib/vr-gate'
 import { bustBoards } from '@/lib/bust'
+import { neverAssignRefusal } from '@/lib/never-assign'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -94,6 +95,9 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   const items = Array.isArray(body?.items) ? body.items.slice(0, 40) : []
   if (!items.length) return NextResponse.json({ error: 'No items. Body: { items: [{ listingId, date, guest?, description?, assigneeIds? }] }' }, { status: 400 })
+  // NEVER ASSIGN (lib/never-assign): refused before any clean is created.
+  const refusal = await neverAssignRefusal({ ids: items.flatMap((it: any) => (Array.isArray(it?.assigneeIds) ? it.assigneeIds : [])) })
+  if (refusal) return NextResponse.json({ error: refusal }, { status: 400 })
 
   const results: any[] = []
   for (const it of items) {

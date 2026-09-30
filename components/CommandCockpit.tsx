@@ -182,6 +182,7 @@ export function TilePanel({ k, d, roster, onChanged }: { k: TileKey; d: CommandD
           {r.big && (r.inspection === 'none' ? <Pill cls="bg-amber-100 text-amber-800">No inspection</Pill>
             : r.inspection === 'open' && r.inspectionTaskId ? <a href={bz(r.inspectionTaskId)} target="_blank" rel="noreferrer"><Pill cls="bg-sky-100 text-sky-700">Inspection open</Pill></a>
             : r.inspection === 'done' ? <Pill cls="bg-emerald-100 text-emerald-700">Inspected</Pill>
+            : r.inspection === 'auto' ? <span title="Task automation creates and assigns this inspection on its next run — nobody needs to"><Pill cls="bg-sky-50 text-sky-700">Auto</Pill></span>
             : <Pill cls="bg-app text-muted">Vendor</Pill>)}
           {r.today && !r.welcomeDone && <Link href="/welcome-calls" className="text-[11.5px] font-semibold text-brand-700 inline-flex items-center gap-1 min-h-[32px]"><Phone size={11} /> call</Link>}
         </div>

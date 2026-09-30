@@ -10,13 +10,14 @@
 // shows exactly what WOULD fire, without creating anything — the same contract as the ops
 // brief's preview. Nothing is created until Enabled is on.
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { Zap, Loader2, Save, Eye, AlertTriangle, Check, ClipboardCheck } from 'lucide-react'
+import { Zap, Loader2, Save, Eye, AlertTriangle, Check, ClipboardCheck, UserX, X, Plus } from 'lucide-react'
 
 type Cfg = {
   enabled: boolean
   bigArrivals: boolean; bigValue: number; bigNights: number
   vip: boolean; ownerStays: boolean; daysAhead: number
   lowReviews: boolean; lowReviewMax: number
+  arrivalFeedback: boolean
   assignAlways: string
   supervisors: { Miami: string; Broward: string; North: string }
   noticeDrafts: { enabled: boolean; fromEmail: string; slackChannel: string }
@@ -135,15 +136,16 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
       const r = await fetch('/api/cron/auto-inspections?preview=1', { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Preview failed.')
-      setPreview(j.candidates || [])
+      // Pre-arrival (big / VIP / owner) and bad-review-before-arrival, one list.
+      setPreview([...(j.candidates || []), ...((j.arrivalFeedback && j.arrivalFeedback.candidates) || [])])
     } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
   }
 
   if (!cfg) return <p className="text-[12.5px] text-muted py-2"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Loading…</p>
 
   const box = 'rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] w-full'
-  const check = (key: keyof Cfg, label: string, sub: string) => (
-    <label className="flex items-start gap-2 cursor-pointer">
+  const check = (key: keyof Cfg, label: string, sub: string, hover?: string) => (
+    <label className="flex items-start gap-2 cursor-pointer" title={hover}>
       <input type="checkbox" checked={!!cfg[key]} onChange={e => set({ [key]: e.target.checked } as any)} className="mt-0.5" disabled={!isOwner} />
       <span className="text-[12.5px]"><span className="font-semibold text-ink">{label}</span> <span className="text-muted">— {sub}</span></span>
     </label>
@@ -155,7 +157,7 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
         <Zap size={14} className={cfg.enabled ? 'text-amber-500' : 'text-muted'} />
         <label className="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" checked={cfg.enabled} onChange={e => set({ enabled: e.target.checked })} disabled={!isOwner} />
-          <span className="text-[13px] font-bold text-ink">Auto-create pre-arrival inspections</span>
+          <span className="text-[13px] font-bold text-ink">Auto-create inspections</span>
         </label>
         <span className={'text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' + (cfg.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-neutral-100 text-neutral-500')}>
           {cfg.enabled ? 'On' : 'Off'}
@@ -163,8 +165,8 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
       </div>
       <p className="text-[12px] text-muted -mt-1">
         For qualifying arrivals in the next {cfg.daysAhead} day{cfg.daysAhead === 1 ? '' : 's'}, Lighthouse creates an inspection in
-        Breezeway (scheduled the day before the guest lands), assigns it, and lists it in the morning brief's priorities.
-        Each reservation fires exactly once, ever.
+        Breezeway (scheduled on the arrival day, after the turn), assigns it, and lists it in the morning brief's priorities.
+        Each reservation fires exactly once, ever. While this is on, Today never asks anyone to create these.
       </p>
 
       <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2">
@@ -186,6 +188,8 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
           </p>
           {check('vip', 'VIP guests', 'a Guesty VIP field or tag')}
           {check('ownerStays', 'Owner stays', 'owner bookings and owner-name matches')}
+          {check('arrivalFeedback', 'Arrivals into a bad-review unit', 'a quality inspection before the guest lands',
+            'An arrival into a unit whose recent review is 2\u2605 or less, or 3\u2605 naming a defect, and not walked since \u2014 the same rule Today used to ask about. One per review; unwalked, it moves to the next checkout.')}
           {check('lowReviews', 'Bad reviews', 'a NEW low review fires a quality inspection on the unit\u2019s next checkout')}
           <div className="flex items-center gap-2 pl-6">
             <span className="text-[11.5px] text-muted">rating</span>
@@ -210,9 +214,12 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
               <input value={cfg.supervisors[m]} onChange={e => setSup(m, e.target.value)} className={box} disabled={!isOwner} placeholder="supervisor" />
             </div>
           ))}
-          <p className="text-[11px] text-muted">Names are matched against Breezeway's people list when each task is created.</p>
+          <p className="text-[11px] text-muted">Names are matched against Breezeway's people list when each task is created. Anyone on the never-assign list below is skipped.</p>
         </div>
       </div>
+
+      {/* ── NEVER ASSIGN IN BREEZEWAY (Jon, 2026-09-30) ───────────────────────────────────── */}
+      <NeverAssign isOwner={isOwner} />
 
       {/* ── AUTOMATION: TRIP CONSOLIDATION ────────────────────────────────────────────────── */}
       <div className="border-t border-line pt-3 mt-1">
@@ -492,12 +499,12 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
           ) : (
             <div className="space-y-1">
               {preview.map((c: any) => (
-                <p key={c.reservation_id} className="text-[12.5px] text-ink flex items-center gap-2 flex-wrap">
+                <p key={c.reservation_id + (c.reviewId || '')} className="text-[12.5px] text-ink flex items-center gap-2 flex-wrap">
                   <Check className="w-3 h-3 text-emerald-600 shrink-0" />
                   <span className="font-bold">{c.unit_name || 'Unit'}</span>
                   <span className="text-muted">{c.guest_name}</span>
                   <span className={'text-[9.5px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ' +
-                    (c.reason === 'owner stay' ? 'bg-indigo-100 text-indigo-700' : c.reason === 'VIP' ? 'bg-violet-100 text-violet-700' : 'bg-amber-100 text-amber-800')}>{c.reason}</span>
+                    (c.reason === 'owner stay' ? 'bg-indigo-100 text-indigo-700' : c.reason === 'VIP' ? 'bg-violet-100 text-violet-700' : c.reason === 'bad review' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800')}>{c.reason}{c.stars ? ' ' + c.stars : ''}</span>
                   <span className="text-muted">arrives {c.check_in} · {c.market}{c.hasBreezeway ? '' : ' · no Breezeway property — would be skipped'}</span>
                 </p>
               ))}
@@ -505,6 +512,91 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
           )}
         </div>
       ) : null}
+    </div>
+  )
+}
+
+// ── NEVER ASSIGN IN BREEZEWAY ──────────────────────────────────────────────────────────────────
+// Jon, 2026-09-30: an owner of the company was being handed Breezeway tasks. People on this list
+// are left out of every assign picker and every suggestion (Scheduler, capacity moves, Eve, the
+// automations above), and any assign that names them is refused. Past work is untouched. Saved on
+// its own (app_settings 'breezeway_never_assign'), so it never waits on the Save button above.
+type NeverRow = { name: string; personId?: number | null }
+type NeverMatch = { name: string; personId: number | null; matches: { id: number; name: string }[] }
+
+function NeverAssign({ isOwner }: { isOwner: boolean }) {
+  const [rows, setRows] = useState<NeverRow[] | null>(null)
+  const [resolved, setResolved] = useState<NeverMatch[]>([])
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    fetch('/api/settings/never-assign', { cache: 'no-store' }).then(r => r.json()).then(j => {
+      if (j && j.ok) { setRows(j.people || []); setResolved(j.resolved || []) } else setRows([])
+    }).catch(() => setRows([]))
+  }, [])
+
+  const save = async (next: NeverRow[]) => {
+    setBusy(true); setErr('')
+    try {
+      const r = await fetch('/api/settings/never-assign', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ people: next }) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j?.error || 'Could not save.')
+      setRows(j.people || []); setResolved(j.resolved || [])
+    } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy(false) }
+  }
+  const add = () => {
+    const name = draft.replace(/\s+/g, ' ').trim()
+    if (!name || !rows) return
+    setDraft('')
+    save([...rows, { name }])
+  }
+
+  const matchTag = (i: number) => {
+    const m = resolved[i]
+    if (!m) return null
+    if (m.matches.length === 1) return <span title={'Breezeway person #' + m.matches[0].id + ' — ' + m.matches[0].name} className="text-[10.5px] font-semibold px-1.5 py-[3px] rounded-md bg-emerald-100 text-emerald-700">on Breezeway</span>
+    if (m.matches.length > 1) return <span title={'More than one Breezeway person matches: ' + m.matches.map(x => x.name).join(', ') + ' — all of them are kept out'} className="text-[10.5px] font-semibold px-1.5 py-[3px] rounded-md bg-amber-100 text-amber-800">{m.matches.length} matches</span>
+    return <span title="No Breezeway person matches this name right now — it still blocks the name wherever it is typed" className="text-[10.5px] font-semibold px-1.5 py-[3px] rounded-md bg-neutral-100 text-neutral-500">not on Breezeway</span>
+  }
+
+  return (
+    <div className="border-t border-line pt-3 mt-1">
+      <div className="flex items-center gap-2.5 flex-wrap">
+        <UserX size={14} className={rows && rows.length ? 'text-rose-600' : 'text-muted'} aria-label="Never assign" />
+        <span className="text-[13px] font-bold text-ink">Never assign in Breezeway</span>
+        <span title="People on the list" className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-500">{rows ? rows.length : '…'}</span>
+      </div>
+      <p className="text-[12px] text-muted mt-1 max-w-[74ch]">
+        Owners and office staff who must never be handed a task. Left out of every assign picker and suggestion; an assign naming them is refused. Past work is untouched.
+      </p>
+      {rows === null ? <p className="text-[12px] text-muted mt-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Loading…</p> : (
+        <div className="mt-2 flex flex-wrap gap-2 items-center">
+          {rows.map((r, i) => (
+            <span key={r.name + i} className="inline-flex items-center gap-1.5 border border-line rounded-lg pl-2.5 pr-1 py-1 bg-white text-[12px] text-ink">
+              {r.name}
+              {matchTag(i)}
+              {isOwner && (
+                <button onClick={() => save(rows.filter((_, j) => j !== i))} disabled={busy} title="Remove from the list" aria-label="Remove from the list"
+                  className="text-muted hover:text-rose-700 disabled:opacity-40 p-0.5"><X size={12} /></button>
+              )}
+            </span>
+          ))}
+          {rows.length === 0 && <span className="text-[12px] text-muted">Nobody yet.</span>}
+          {isOwner && (
+            <span className="inline-flex items-center gap-1.5">
+              <input value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add() }}
+                placeholder="Full name, as in Breezeway" className="rounded-lg border border-line px-2.5 py-1 text-[12.5px] w-[210px]" disabled={busy} />
+              <button onClick={add} disabled={busy || !draft.trim()} title="Add to the never-assign list"
+                className="rounded-lg border border-line px-2.5 py-1 text-[12px] font-semibold inline-flex items-center gap-1 disabled:opacity-40">
+                {busy ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Add
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+      {err && <p className="text-[11.5px] text-rose-600 font-semibold mt-1">{err}</p>}
     </div>
   )
 }

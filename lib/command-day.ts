@@ -26,9 +26,11 @@
 //   turn        same-day turn with the clean not started / nobody on it
 //   late        departure clean late or at risk against the 4pm clock
 //   inspection  a BIG arrival (value ≥ task-automation bigValue) with no pre-arrival inspection on
-//               record — dedupes against open/done inspection tasks AND auto_inspections
+//               record — dedupes against open/done inspection tasks AND auto_inspections. Only while
+//               Task automation is NOT filing big-arrival inspections (2026-09-30); on, it reads 'auto'
 //   feedback    a guest arrives into a unit whose recent reviews (≤3★ in the last five, 180 days,
-//               naming a defect) — the quote rides with the row, and the proposed inspection carries it
+//               naming a defect) — the quote rides with the row, and the proposed inspection carries it.
+//               The Create button only while Task automation's arrival-feedback rule is off
 //   pending     backlog (scheduled BEFORE the arrival day) still open in a unit a guest lands in
 //   duplicate   the same job open twice on one unit on ONE DAY — proposes cancelling the extra one;
 //               cancel stays behind the admin password (Jon: close/delete pw-gated)
@@ -56,6 +58,8 @@ import { pageRows } from './db-page'
 import { buildOpsDay } from './ops-day'
 import { buildDayPicture, type DayPicture } from './capacity-day'
 import { getTaskAutomation } from './auto-inspections'
+// The feedback rule is shared with the automation that files these inspections (lib/review-feedback).
+import { keywordsOf, worstFeedbackReview } from './review-feedback'
 import { getOpsPresets } from './app-settings'
 import { noBreezewayRegex } from './ops-presets'
 import { auditKey } from './task-audit'
@@ -154,7 +158,8 @@ export type Verdict = {
 }
 
 export type CleanRow = { taskId: string; unit: string; market: string; who: string; status: 'done' | 'running' | 'late' | 'atRisk' | 'open' | 'vendor' | 'extended'; arrivingAt: string | null; sameDay: boolean; outAt: string | null }
-export type ArrivalRow = { reservationId: string; guest: string; unit: string; listingId: string | null; checkIn: string; nights: number; value: number; big: boolean; today: boolean; inspection: 'none' | 'open' | 'done' | 'n/a'; inspectionTaskId: string | null; welcomeDone: boolean }
+/** inspection 'auto' = a big arrival with none yet that Task automation files on its next run — nobody is asked. */
+export type ArrivalRow = { reservationId: string; guest: string; unit: string; listingId: string | null; checkIn: string; nights: number; value: number; big: boolean; today: boolean; inspection: 'none' | 'open' | 'done' | 'n/a' | 'auto'; inspectionTaskId: string | null; welcomeDone: boolean }
 export type TaskRow = { taskId: string; unit: string; market: string; name: string; dept: string; type: string; who: string; state: 'done' | 'running' | 'open'; prio: string; late: boolean }
 export type TeamRow = { person: string; role: string | null; cleans: number; otherTasks: number; loadMinutes: number; capacityMinutes: number; utilisationPct: number; verdict: string; headroomCleans: number; triggers: string[] }
 export type GlitchRow = { id: string; unit: string; issue: string; status: string; due: string | null; overdue: boolean; ageDays: number; assignee: string; hasTask: boolean; taskStatus: string | null; href: string }
@@ -527,6 +532,15 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
 
   // ── 2. ARRIVALS: big arrivals → inspection cover; feedback; backlog in the unit ──────────────
   const bigValue = automation.bigValue || 1000
+  // THE AUTOMATION OWNS THESE, NOBODY IS ASKED (Jon, 2026-09-30: "quality inspection should be
+  // auto-generated. It shouldn't be required or asked for"). With Task automation on, a big arrival
+  // and an arrival into a unit with a bad review get their inspection from the cron
+  // (lib/auto-inspections) — so no "Create inspection" row here; until the cron's next run the
+  // arrival just reads 'auto'. With it off, the row stays, and says so and where to switch it on.
+  const autoBig = automation.enabled && automation.bigArrivals
+  const autoFeedback = automation.enabled && automation.arrivalFeedback
+  const NOT_AUTO: RowTag = { label: 'Not automated', tone: 'slate', title: 'Inspections are not automated — switch them on in Admin → Users & admin → Settings → Task automation' }
+  const AUTOMATION_HREF = '/users?tab=settings&panel=automation'
   const inspByRes = new Set(autoInsp.filter((a: any) => a.task_id).map((a: any) => str(a.reservation_id)))
   // Two reads of the same rows: the arrival's own "inspection done" (recent, 45 days) and, per
   // listing, when the LAST inspection finished — so a feedback row can tell whether the walk came
@@ -555,7 +569,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     const big = value >= bigValue
     const isToday = checkIn === today, isTomorrow = checkIn === tomorrow
     const openInsp = (openByListing[lid] || []).find((t: any) => INSPECT.test(str(t.name)))
-    const inspection: ArrivalRow['inspection'] = !canFile(lid) && !openInsp && !doneInsp[lid] ? 'n/a' : openInsp ? 'open' : (doneInsp[lid] || inspByRes.has(str(r.id))) ? 'done' : 'none'
+    const inspection: ArrivalRow['inspection'] = !canFile(lid) && !openInsp && !doneInsp[lid] ? 'n/a' : openInsp ? 'open' : (doneInsp[lid] || inspByRes.has(str(r.id))) ? 'done' : (big && autoBig) ? 'auto' : 'none'
     const welcomeDone = guestyCalled(r.custom_fields) || welcomeCalled.has(str(r.id))
     arrivalRows.push({ reservationId: str(r.id), guest: str(r.guest_name) || 'Guest', unit, listingId: lid || null, checkIn, nights, value, big, today: isToday, inspection, inspectionTaskId: openInsp ? str(openInsp.id) : (doneInsp[lid] || null), welcomeDone })
 
@@ -567,8 +581,10 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
         key: 'insp:' + str(r.id), kind: 'inspection', severity: isToday ? 'today' : 'soon', rank: isToday ? 2 : 6, owner: 'maintenance',
         due: dueArrival(isToday),
         unit, listingId: lid, market: marketOfId(lid),
-        title: 'Big arrival ' + when + ' with no pre-arrival inspection',
+        // Only reached when the automation does NOT own big arrivals ('auto' above otherwise).
+        title: 'Big arrival ' + when + ' with no pre-arrival inspection — inspections are not automated',
         why: str(r.guest_name || 'Guest') + ' · ' + nights + ' nights · ' + money(value) + '. No inspection open or completed on this unit in 45 days.',
+        tags: [NOT_AUTO], href: AUTOMATION_HREF,
         action: { type: 'create_task', label: 'Create inspection', payload: {
           listingId: lid, title: 'Pre-arrival inspection — ' + unit + ' (big arrival)', department: 'inspection', priority: 'high', date: today,
           description: 'Pre-arrival inspection for a big arrival: ' + str(r.guest_name || 'Guest') + ', ' + nights + ' nights, ' + money(value) + ', checking in ' + checkIn + '. Walk the unit against the listing photos, test every appliance and the A/C, confirm consumables and linens, and photograph anything below standard.\n\nProposed by Lighthouse Command Center (big arrival).',
@@ -579,13 +595,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     // ≤2★, or ≤3★ AND names a defect we can send someone to look at. Without that bar every arrival
     // day was a wall of feedback rows (100 of 287 units carry some ≤3★).
     if (!seenFeedbackUnit.has(lid)) {
-      let worst: any = null
-      for (const rv of (reviewsByListing[lid] || []).slice(0, 5)) {
-        const n = norm5(rv.rating)
-        if (!Number.isFinite(n) || n > 3) continue
-        if (n > 2 && keywordsOf(str(rv.content)).length === 0) continue
-        if (!worst || n < norm5(worst.rating)) worst = rv
-      }
+      let worst: any = worstFeedbackReview(reviewsByListing[lid] || [])
       // WALKED SINCE = DONE (Jon, 2026-09-28: "if a bad review or quality inspection is done, it
       // should not populate"). A quality inspection that finished on or after the review's day
       // answers it; the row does not come back on every arrival after that. Only a review NEWER
@@ -598,11 +608,14 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
         // A finished walk from BEFORE the review is not cover (it did not see what the guest saw),
         // so only an inspection still open counts here; finished-after was handled above.
         const covered = !!openInsp
-        push({
+        // The automation files this one (lib/auto-inspections, arrival feedback) — nothing to ask.
+        const owned = !covered && canFile(lid) && autoFeedback
+        if (!owned) push({
           key: 'fb:' + lid + ':' + str(worst.id), kind: 'feedback', severity: isToday ? 'today' : 'soon', rank: isToday ? 3 : 7, owner: 'maintenance',
           due: dueArrival(isToday),
           unit, listingId: lid, market: marketOfId(lid),
-          title: 'Guest arrives ' + when + ' into a unit with a ' + starsText(worst.rating, worst.channel) + ' review' + (kw.length ? ' about ' + kw.join(', ') : ''),
+          title: 'Guest arrives ' + when + ' into a unit with a ' + starsText(worst.rating, worst.channel) + ' review' + (kw.length ? ' about ' + kw.join(', ') : '') + (!covered && canFile(lid) ? ' — inspections are not automated' : ''),
+          ...(!covered && canFile(lid) ? { tags: [NOT_AUTO], href: AUTOMATION_HREF } : {}),
           why: covered ? 'An inspection is already open on this unit — make sure it covers the complaint.' : canFile(lid) ? 'Nothing open on this unit addresses it. A targeted look before the guest lands is the cheapest fix.' : 'Vendor-run building — flag it to the vendor before the guest lands.',
           evidence: { quote, stars: norm5(worst.rating), date: str(worst.created_at).slice(0, 10), channel: str(worst.channel) },
           action: covered && openInsp
@@ -1108,23 +1121,5 @@ function replyBy(w: AwaitingRow, nowMs: number, today: string): Reply {
   return { at, late: false, label: 'Reply by ' + clock + (day === today ? '' : day === shift(today, 1) ? ' tomorrow' : ' ' + day.slice(5)) }
 }
 
-/** The defect words in a review, so the proposed inspection says what to look at. */
-export function keywordsOf(text: string): string[] {
-  const t = text.toLowerCase()
-  const out: string[] = []
-  const KW: [RegExp, string][] = [
-    [/dirty|unclean|filthy|hair|stain|dust|smell|odor|mold|mould|damp|grime|crumbs|sticky/, 'cleanliness'],
-    [/\ba\/?c\b|air ?con|ac unit|hot inside|cooling|thermostat/, 'A/C'],
-    [/wifi|wi-fi|internet|tv\b|remote|netflix/, 'Wi-Fi / TV'],
-    [/lock|code|key|door|check[- ]?in|access|elevator|gate/, 'access'],
-    [/noise|loud|construction|party|neighbo/, 'noise'],
-    [/water|shower|leak|plumb|toilet|drain|hot water|pressure/, 'plumbing'],
-    [/bed|mattress|pillow|linen|sheet|towel|blanket/, 'bedding / linens'],
-    [/bug|roach|ant\b|ants\b|pest|mosquito/, 'pests'],
-    [/broken|not work|didn.t work|doesn.t work|fix|repair|maintenance/, 'repairs'],
-    [/kitchen|stove|oven|fridge|refrigerator|microwave|coffee|dishwasher|utensil|pan\b|pots/, 'kitchen'],
-    [/parking|garage|valet/, 'parking'],
-  ]
-  for (const [re, label] of KW) if (re.test(t) && !out.includes(label)) out.push(label)
-  return out.slice(0, 3)
-}
+/** The defect words in a review — lives in lib/review-feedback now, re-exported for old importers. */
+export { keywordsOf }

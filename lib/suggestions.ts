@@ -556,6 +556,10 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   const day = readDay({
     date, openCleans, cleaners: cleanersOpen.size, cleanersEver: cleanersEver.size, cap: cfg.dailyCap,
   })
+  // NEVER ASSIGN (lib/never-assign, Jon 2026-09-30): the people on site stay counted as capacity,
+  // but nobody on the list is ever offered as the one to take the job.
+  let neverAssign: (name: string) => boolean = () => false
+  try { const { neverAssignGuard } = await import('./never-assign'); const g = await neverAssignGuard(); if (g.active) neverAssign = (n: string) => g.blocks(n) } catch { /* the create path and lib/breezeway still refuse */ }
 
   // ── LAST DONE, PER UNIT PER CADENCE ───────────────────────────────────────────────────────────
   const lastDone: Record<string, Record<string, string>> = {}   // listingId -> cadenceKey -> date
@@ -676,8 +680,8 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
 
       const bKey = `${meta.bucket}|${c.dept}`
       const mKey = `${meta.market}|${c.dept}`
-      const here = Array.from(onSite[bKey] || [])
-      const near = Array.from(inMarket[mKey] || [])
+      const here = Array.from(onSite[bKey] || []).filter(n => !neverAssign(n))
+      const near = Array.from(inMarket[mKey] || []).filter(n => !neverAssign(n))
       // THE ESCAPE VALVE NEEDS REAL HISTORY BEHIND IT.
       //
       // First live run, 2026-08-27: 503 jobs cleared every filter, because a unit with no record of
@@ -887,6 +891,16 @@ export async function createFromSuggestion(s: Suggestion, by: string | null, opt
     : (String(opts.assignee).trim() || null)
   let assigneeId: number | null = null
   if (who) { try { assigneeId = await matchBreezewayPerson(who) } catch { assigneeId = null } }
+  // NEVER ASSIGN (lib/never-assign): a person picked by hand is refused with the reason; the engine's
+  // own default (a stale suggestion from before they joined the list) just leaves it unassigned.
+  if (who) {
+    const { neverAssignRefusal } = await import('./never-assign')
+    const refusal = await neverAssignRefusal({ names: [who], ids: assigneeId != null ? [assigneeId] : [] })
+    if (refusal) {
+      if (opts.assignee !== undefined && opts.assignee !== null) return { ok: false, error: refusal }
+      assigneeId = null
+    }
+  }
 
   const scheduled = /^\d{4}-\d{2}-\d{2}$/.test(String(opts.scheduleDate || ''))
     ? String(opts.scheduleDate) : s.id.split('|')[0]

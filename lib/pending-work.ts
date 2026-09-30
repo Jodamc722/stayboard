@@ -200,8 +200,16 @@ export async function pushTasks(
 
   const db = supabaseAdmin()
   let assigneeId: number | null = null
-  const who = opts.assignee ? String(opts.assignee).trim() : ''
+  let who = opts.assignee ? String(opts.assignee).trim() : ''
   if (who) { try { assigneeId = await matchBreezewayPerson(who) } catch { assigneeId = null } }
+  // NEVER ASSIGN (lib/never-assign, Jon 2026-09-30): the trip sweep still moves the work onto the
+  // visit's day, but never onto a person on the list — the tasks keep whoever they had.
+  if (who) {
+    try {
+      const { neverAssignRefusal } = await import('./never-assign')
+      if (await neverAssignRefusal({ names: [who], ids: assigneeId != null ? [assigneeId] : [] })) { assigneeId = null; who = '' }
+    } catch { /* lib/breezeway strips them at write time regardless */ }
+  }
 
   // One read for the descriptions we are about to stamp — PATCH replaces the field, so a stamp
   // written without the current text would wipe whatever the technician had put there.

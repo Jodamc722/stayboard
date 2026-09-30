@@ -492,5 +492,16 @@ catch (e: any) { if (e && e.uncachedSchedule) payload = e.uncachedSchedule; else
       }
     }
   } catch (e) { console.error('schedule: staged overlay failed', e) }
+  // NEVER ASSIGN (lib/never-assign, Jon 2026-09-30): `housekeepers` is the Scheduler's assign picker,
+  // the suggester's crew, the week planner's team and Eve's shadow scheduler — anyone on the list is
+  // taken out here, after the cache, so a change to the list applies on the next load. The cleans
+  // themselves keep whoever Breezeway says is on them (assignedNames): history is not rewritten.
+  try {
+    if (payload && Array.isArray((payload as any).housekeepers)) {
+      const { neverAssignGuard } = await import('@/lib/never-assign')
+      const g = await neverAssignGuard()
+      if (g.active) (payload as any).housekeepers = g.keepPeople((payload as any).housekeepers)
+    }
+  } catch (e) { console.error('schedule: never-assign filter failed', e) }
   return payload
 }

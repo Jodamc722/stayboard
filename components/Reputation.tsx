@@ -129,6 +129,14 @@ function WalkIt({ unit }: { unit: any }) {
   // Walked since the review = done (Jon, 2026-09-28). The receipt replaces the button so the same
   // bad review does not raise the same inspection twice.
   if (unit.walked && state !== 'done') return <span className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-emerald-700" title={String(unit.walked.name || 'Quality inspection')}><Check size={12} /> Walked {unit.walked.at}</span>
+  // Task automation already filed this unit's inspection and it is still open — say so, no second one.
+  if (unit.queued && state !== 'done') return (
+    <a href={'https://app.breezeway.io/task/' + unit.queued.taskId} target="_blank" rel="noreferrer"
+      title={'Automatic inspection already open (' + (unit.queued.reason || 'Task automation') + ') — no second walk needed. Opens it in Breezeway.'}
+      className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-sky-700 hover:underline">
+      <ClipboardCheck size={12} /> Auto-queued {unit.queued.date ? String(unit.queued.date).slice(5) : ''}
+    </a>
+  )
   const go = async () => {
     setState('busy'); setMsg('')
     try {

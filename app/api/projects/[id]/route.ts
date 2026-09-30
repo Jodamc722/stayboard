@@ -856,6 +856,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         const priority = ['urgent', 'high', 'normal', 'low'].includes(str(b.priority)) ? str(b.priority) : 'normal'
         const date = /^\d{4}-\d{2}-\d{2}$/.test(str(b.date)) ? str(b.date) : (t.due_on || new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }))
         const { createBreezewayTask, updateBreezewayTask, matchBreezewayPerson } = await import('@/lib/breezeway')
+        // NEVER ASSIGN (lib/never-assign): a person picked for the Breezeway task who is on the list is
+        // refused before anything is created; one who is only on the PROJECT task is simply left off.
+        const { neverAssignRefusal, neverAssignGuard } = await import('@/lib/never-assign')
+        const refusal = await neverAssignRefusal({ ids: Array.isArray(b.assigneeIds) ? b.assigneeIds : [] })
+        if (refusal) return NextResponse.json({ error: refusal }, { status: 400 })
         const { data: props } = await sb.from('breezeway_properties').select('home_id').eq('reference_property_id', listingId).limit(1)
         const homeId = Number(((props || [])[0] || {}).home_id)
         const payload: Record<string, any> = {
@@ -875,6 +880,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         if (!ids.length) {
           const { data: asg } = await sb.from('project_task_assignees').select('display,email').eq('task_id', t.id)
           for (const a of (asg || []) as any[]) { const pid = await matchBreezewayPerson(a.email || a.display).catch(() => null); if (pid) ids.push(pid) }
+          ids = (await neverAssignGuard()).keepIds(ids)
         }
         let assigned = false
         if (ids.length) { try { assigned = !!(await updateBreezewayTask(bzId, { assignments: ids })).ok } catch { assigned = false } }

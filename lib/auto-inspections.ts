@@ -23,7 +23,12 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { createBreezewayTask, updateBreezewayTask, cancelBreezewayTask, matchBreezewayPerson, breezewayConfigured } from './breezeway'
 import { marketOf } from './segments'
-import { getSetting, setSetting } from './app-settings'
+import { getSetting, setSetting, getOpsPresets } from './app-settings'
+import { noBreezewayRegex } from './ops-presets'
+import { worstFeedbackReview, keywordsOf } from './review-feedback'
+import { ratingDisplay } from './review-scale'
+import { pageRows } from './db-page'
+import { neverAssignGuard } from './never-assign'
 
 const str = (v: any) => typeof v === 'string' ? v : (v == null ? '' : String(v))
 function ymdET(d: Date): string {
@@ -51,6 +56,12 @@ export type TaskAutomationCfg = {
   // Low-review inspections (Jon, 2026-08-25: "auto assign bad review 3 and below task as
   // inspection in breezeway for checkouts, also move forward to checkout if not completed").
   lowReviews: boolean; lowReviewMax: number
+  // ── ARRIVAL INTO A UNIT WITH A BAD REVIEW (Jon, 2026-09-30) ─────────────────────────────────────
+  // "Quality inspection should be auto-generated. It shouldn't be required or asked for." The
+  // Command Center used to ASK — a "Create inspection" button on every arrival into a unit whose
+  // recent review named a defect. With this on (and the master switch), the cron files it instead:
+  // same rule as that row (lib/review-feedback), same assignees, and nobody is asked.
+  arrivalFeedback: boolean
   // ── TRIP CONSOLIDATION (Jon, 2026-08-27) ──────────────────────────────────────────────────────
   // "If maintenance is going into a unit, automatically push all of the pending maintenance tasks
   // in that unit to that date." Built and running; these are the knobs it was hardcoding.
@@ -97,6 +108,7 @@ export const TASK_AUTOMATION_DEFAULTS: TaskAutomationCfg = {
   // to the channel for the post to land — private channels need membership.
   noticeDrafts: { enabled: false, fromEmail: 'support@stay-hospitality.com', slackChannel: 'G01TT278P2L' },
   lowReviews: true, lowReviewMax: 3,
+  arrivalFeedback: true,
   tripSweep: { enabled: true, lookBackDays: 30, maxFutureDays: 21, sameDeptOnly: true },
   // OFF until somebody turns it on. This one CLOSES records, and an automation that closes things
   // has to be switched on deliberately by a person who understands what it will do.
@@ -139,6 +151,7 @@ export async function getTaskAutomation(): Promise<TaskAutomationCfg> {
     lowReviews: s.lowReviews !== false,
     lowReviewMax: Number.isFinite(Number(s.lowReviewMax)) && Number(s.lowReviewMax) >= 1 && Number(s.lowReviewMax) <= 4
       ? Number(s.lowReviewMax) : d.lowReviewMax,
+    arrivalFeedback: s.arrivalFeedback !== false,
     tripSweep: {
       enabled: s.tripSweep?.enabled !== false,
       lookBackDays: numIn(s.tripSweep?.lookBackDays, d.tripSweep.lookBackDays, 1, 365),
@@ -162,6 +175,25 @@ export async function getTaskAutomation(): Promise<TaskAutomationCfg> {
 function numIn(v: any, fb: number, lo: number, hi: number): number {
   const n = Number(v)
   return Number.isFinite(n) && n >= lo && n <= hi ? Math.round(n) : fb
+}
+
+/**
+ * The configured assignees (ops lead + every market supervisor) → Breezeway person ids, once per run.
+ * NEVER-ASSIGN (lib/never-assign, Jon 2026-09-30): a name on that list — or one that resolves to a
+ * person on it — comes back null, so the inspection goes to whoever else is configured, or nobody.
+ */
+async function resolveAssignees(cfg: TaskAutomationCfg): Promise<Record<string, number | null>> {
+  const names = Array.from(new Set([cfg.assignAlways, ...Object.values(cfg.supervisors)].filter(Boolean)))
+  const idOf: Record<string, number | null> = {}
+  let guard: Awaited<ReturnType<typeof neverAssignGuard>> | null = null
+  try { guard = await neverAssignGuard() } catch { guard = null }
+  for (const n of names) {
+    if (guard && guard.blocks(n)) { idOf[n] = null; continue }
+    let id: number | null = null
+    try { id = await matchBreezewayPerson(n) } catch { id = null }
+    idOf[n] = id != null && guard && guard.ids.has(Number(id)) ? null : id
+  }
+  return idOf
 }
 
 function normName(s: string): string { return str(s).toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim() }
@@ -284,10 +316,8 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
     return { ok: true, scanned: (resRows || []).length, candidates, created: 0, failed: 0, skippedNoBreezeway: candidates.filter(c => !c.hasBreezeway).length }
   }
 
-  // Resolve assignees once per run, not per task.
-  const names = Array.from(new Set([cfg.assignAlways, ...Object.values(cfg.supervisors)].filter(Boolean)))
-  const idOf: Record<string, number | null> = {}
-  for (const n of names) { try { idOf[n] = await matchBreezewayPerson(n) } catch { idOf[n] = null } }
+  // Resolve assignees once per run, not per task (never-assign people come back null).
+  const idOf = await resolveAssignees(cfg)
 
   let created = 0, failed = 0, skippedNoBreezeway = 0
   for (const c of candidates) {
@@ -379,6 +409,20 @@ async function lowReviewSince(dryRun?: boolean): Promise<string> {
   // A preview must not silently set the line the real run will use.
   if (!dryRun) { try { await setSetting(LOW_REVIEW_SINCE_KEY, { since: today }, 'auto-inspections') } catch { /* next run stamps it */ } }
   return today
+}
+
+/**
+ * Will the low-review rule file this review's inspection by itself? Read-only (never stamps the
+ * watermark) — Eve's bad-review watch asks it so she does not ask for what the cron will do.
+ */
+export async function lowReviewRuleCovers(cfg: TaskAutomationCfg, rating: number, createdAt: string): Promise<boolean> {
+  if (!cfg.enabled || !cfg.lowReviews) return false
+  if (!(Number.isFinite(rating) && rating > 0 && rating <= cfg.lowReviewMax)) return false
+  const cur = await getSetting<any>(LOW_REVIEW_SINCE_KEY, null).catch(() => null)
+  const since = typeof cur === 'string' ? cur : (cur && typeof cur.since === 'string' ? cur.since : '')
+  // Before the rule's first run there is no line yet; that run stamps TODAY, so today's reviews count.
+  const line = /^\d{4}-\d{2}-\d{2}$/.test(since) ? since : ymdET(new Date())
+  return String(createdAt || '').slice(0, 10) >= line
 }
 
 // WHAT THE REVIEW ACTUALLY SAID (Jon, 2026-08-25: "It should also add any other notes as well,
@@ -511,6 +555,44 @@ async function nextCheckouts(db: any, listingIds: string[], today: string): Prom
   return out
 }
 
+/**
+ * Every unfinished review inspection (auto_inspections 'rev:<reviewId>' rows — the low-review rule's
+ * and the arrival-feedback rule's alike) whose day has passed rides to the unit's next checkout.
+ * Jon, 2026-09-28: "A bad review inspection is not time-sensitive — it can just move to the next
+ * checkout." Returns how many moved.
+ */
+async function moveReviewInspectionsForward(db: any, existing: any[], today: string): Promise<number> {
+  let movedForward = 0
+  const open = (existing || []).filter((e: any) => e.task_id)
+  const ids = open.map((e: any) => str(e.task_id))
+  if (!ids.length) return 0
+  const { data: ts } = await db.from('breezeway_tasks_sync')
+    .select('id, name, status, finished_at, scheduled_date').in('id', ids)
+  const tmap: Record<string, any> = {}
+  for (const t of ts || []) tmap[str((t as any).id)] = t
+  const needMove = open.filter((e: any) => {
+    const t = tmap[str(e.task_id)]
+    if (!t || t.finished_at) return false
+    if (/complet|finish|close|approv|delete|cancel/i.test(str(t.status))) return false
+    return str(t.scheduled_date).slice(0, 10) < today
+  })
+  const moveLids = Array.from(new Set(needMove.map((e: any) => str(e.listing_id)).filter(Boolean)))
+  const moveNext = await nextCheckouts(db, moveLids, today)
+  for (const e of needMove) {
+    const nxt = moveNext[str(e.listing_id)]
+    if (!nxt) continue  // nothing on the calendar yet — it moves when a booking lands
+    const t = tmap[str(e.task_id)]
+    try {
+      const r = await updateBreezewayTask(str(e.task_id), { name: str(t.name) || 'Quality inspection', scheduled_date: nxt })
+      if (!r.ok) throw new Error('Breezeway ' + r.status)
+      await db.from('breezeway_tasks_sync').update({ scheduled_date: nxt, synced_at: new Date().toISOString() }).eq('id', str(e.task_id))
+      await db.from('auto_inspections').update({ check_in: nxt }).eq('reservation_id', str(e.reservation_id))
+      movedForward++
+    } catch (err) { console.error('review inspections: move failed for', e.reservation_id, err) }
+  }
+  return movedForward
+}
+
 export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): Promise<{
   ok: boolean; enabled?: boolean; scanned: number; candidates: any[]
   created: number; failed: number; movedForward: number; alreadyCovered: number; waitingForCheckout: number
@@ -595,45 +677,13 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
 
   // ── MOVE FORWARD: an unfinished low-review inspection whose day has passed rides to the next
   // checkout. The description promised this; the cron keeps the promise. ──
-  let movedForward = 0
-  if (!opts.dryRun && breezewayConfigured()) {
-    const open = (existing || []).filter((e: any) => e.task_id)
-    const ids = open.map((e: any) => str(e.task_id))
-    if (ids.length) {
-      const { data: ts } = await db.from('breezeway_tasks_sync')
-        .select('id, name, status, finished_at, scheduled_date').in('id', ids)
-      const tmap: Record<string, any> = {}
-      for (const t of ts || []) tmap[str((t as any).id)] = t
-      const needMove = open.filter((e: any) => {
-        const t = tmap[str(e.task_id)]
-        if (!t || t.finished_at) return false
-        if (/complet|finish|close|approv|delete|cancel/i.test(str(t.status))) return false
-        return str(t.scheduled_date).slice(0, 10) < today
-      })
-      const moveLids = Array.from(new Set(needMove.map((e: any) => str(e.listing_id)).filter(Boolean)))
-      const moveNext = await nextCheckouts(db, moveLids, today)
-      for (const e of needMove) {
-        const nxt = moveNext[str(e.listing_id)]
-        if (!nxt) continue  // nothing on the calendar yet — it moves when a booking lands
-        const t = tmap[str(e.task_id)]
-        try {
-          const r = await updateBreezewayTask(str(e.task_id), { name: str(t.name) || 'Quality inspection', scheduled_date: nxt })
-          if (!r.ok) throw new Error('Breezeway ' + r.status)
-          await db.from('breezeway_tasks_sync').update({ scheduled_date: nxt, synced_at: new Date().toISOString() }).eq('id', str(e.task_id))
-          await db.from('auto_inspections').update({ check_in: nxt }).eq('reservation_id', str(e.reservation_id))
-          movedForward++
-        } catch (err) { console.error('low-review inspections: move failed for', e.reservation_id, err) }
-      }
-    }
-  }
+  const movedForward = (!opts.dryRun && breezewayConfigured()) ? await moveReviewInspectionsForward(db, existing || [], today) : 0
 
   if (opts.dryRun || !breezewayConfigured()) {
     return { ok: true, scanned: (revRows || []).length, candidates, created: 0, failed: 0, movedForward, alreadyCovered, waitingForCheckout: candidates.filter(c => !c.nextCheckout).length }
   }
 
-  const names = Array.from(new Set([cfg.assignAlways, ...Object.values(cfg.supervisors)].filter(Boolean)))
-  const idOf: Record<string, number | null> = {}
-  for (const n of names) { try { idOf[n] = await matchBreezewayPerson(n) } catch { idOf[n] = null } }
+  const idOf = await resolveAssignees(cfg)
 
   // Pull the unit's own history once for the whole batch, so each description can carry it.
   let ctx: Record<string, UnitCtx> = {}
@@ -714,6 +764,193 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
     }
   }
   return { ok: true, scanned: (revRows || []).length, candidates, created, failed, movedForward, alreadyCovered, waitingForCheckout }
+}
+
+// ── ARRIVAL INTO A UNIT WITH A BAD REVIEW (Jon, 2026-09-30) ─────────────────────────────────────
+//
+//   "Quality inspection should be auto-generated. It shouldn't be required or asked for."
+//
+// The Command Center showed a "Create inspection" button on every arrival (today, tomorrow) into a
+// unit whose recent review named a defect, and waited for a person to press it. This files it.
+//
+// WHICH ARRIVALS. Confirmed, arriving today .. +daysAhead (the same window as the other arrival
+// inspections), into a unit whose worst recent review qualifies by lib/review-feedback — the exact
+// rule the Command Center row used: the worst of the last five reviews in 180 days, ≤2★, or ≤3★
+// naming a defect. Skipped when:
+//   • a quality inspection FINISHED on or after that review's day (lib/review-inspections) — walked;
+//   • an inspection is already OPEN on the unit — the one walk covers it (the Command Center said
+//     "an inspection is already open — make sure it covers the complaint" in that case too);
+//   • the review already has its receipt (the low-review rule, Eve, or an earlier run filed it);
+//   • the building has no Breezeway (a vendor runs it).
+//
+// ONE RECEIPT PER REVIEW, which makes it at most one per reservation. The receipt is keyed
+// 'rev:<reviewId>' in auto_inspections — the SAME key the low-review rule and Eve's bad-review watch
+// use — with reason 'bad review …'. Keying it by the reservation instead would let the low-review
+// rule file a second inspection for the same review (Jon, 2026-09-28: "the same bad review should
+// not populate the same bad review inspection"), and would make the morning-after retire step cancel
+// it. A bad-review inspection is not time-sensitive: unfinished, it rides to the next checkout
+// (moveReviewInspectionsForward), and it is never recreated once walked.
+//
+// Same assignees as the other arrival inspections (ops lead + market supervisor, minus anyone on
+// the never-assign list), same naming convention ("Quality inspection — <unit> (<defect>)", which
+// lib/task-audit recognises), scheduled on the arrival day — after the turn, before the guest.
+export async function runArrivalFeedbackInspections(opts: { dryRun?: boolean } = {}): Promise<{
+  ok: boolean; enabled?: boolean; scanned: number; candidates: any[]; created: number; failed: number
+  covered: number; skippedNoBreezeway: number; movedForward: number
+}> {
+  const cfg = await getTaskAutomation()
+  const none0 = { ok: true, scanned: 0, candidates: [] as any[], created: 0, failed: 0, covered: 0, skippedNoBreezeway: 0, movedForward: 0 }
+  if ((!cfg.enabled || !cfg.arrivalFeedback) && !opts.dryRun) return { ...none0, enabled: false }
+  const db = supabaseAdmin()
+  const today = ymdET(new Date())
+  const until = ymdET(new Date(Date.now() + cfg.daysAhead * 86400000))
+  const back180 = ymdET(new Date(Date.now() - 180 * 86400000))
+  const back45 = ymdET(new Date(Date.now() - 45 * 86400000))
+
+  // Unfinished review inspections ride forward even when the low-review rule itself is off — this
+  // rule files 'rev:' rows too, and they must not sit on a day that has passed. (With that rule on,
+  // it does the moving, once per run.)
+  let movedForward = 0
+  if (!opts.dryRun && breezewayConfigured() && !cfg.lowReviews) {
+    try {
+      const { data: existing } = await db.from('auto_inspections').select('reservation_id, listing_id, task_id, check_in')
+        .like('reservation_id', 'rev:%').not('task_id', 'is', null).order('check_in', { ascending: false }).limit(500)
+      movedForward = await moveReviewInspectionsForward(db, (existing || []) as any[], today)
+    } catch (e) { console.error('arrival-feedback inspections: move-forward failed', e) }
+  }
+  const none = { ...none0, movedForward }
+
+  const [{ data: resRows }, { data: listings }, { data: bzProps }, presets] = await Promise.all([
+    db.from('guesty_reservations')
+      .select('id, listing_id, listing_name, guest_name, check_in, status')
+      .gte('check_in', today).lte('check_in', until).eq('status', 'confirmed')
+      .order('check_in').order('id').limit(500),
+    db.from('guesty_listings').select('id, nickname, title, building, address_city').limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
+    db.from('breezeway_properties').select('reference_property_id, home_id').limit(1000), // deliberate cap: one row per Breezeway property (~200)
+    getOpsPresets().catch(() => null as any),
+  ])
+  const arrivals = ((resRows || []) as any[]).filter(r => str(r.listing_id))
+  if (!arrivals.length) return { ...none, enabled: cfg.enabled && cfg.arrivalFeedback }
+  const lmeta: Record<string, any> = {}
+  for (const l of listings || []) lmeta[str((l as any).id)] = l
+  const homeOf: Record<string, number> = {}
+  for (const p of bzProps || []) homeOf[str((p as any).reference_property_id)] = Number((p as any).home_id)
+  const noBzRe = noBreezewayRegex((presets && presets.vendorBuildings) || [])
+  const lids = Array.from(new Set(arrivals.map(r => str(r.listing_id))))
+
+  // The units' reviews (newest first, the Command Center's own read) and their open inspections.
+  const [revRead, openRows] = await Promise.all([
+    pageRows<any>((a, b) => db.from('guesty_reviews').select('id,listing_id,rating,content,guest_name,channel,created_at')
+      .in('listing_id', lids.slice(0, 300)).eq('excluded_from_score', false).gte('created_at', back180 + 'T00:00:00Z')
+      .order('created_at', { ascending: false }).order('id').range(a, b), 4),
+    db.from('breezeway_tasks_sync').select('id, reference_property_id, name, status, scheduled_date')
+      .in('reference_property_id', lids.slice(0, 300)).is('finished_at', null)
+      .gte('scheduled_date', back45).lte('scheduled_date', ymdET(new Date(Date.now() + 14 * 86400000)))
+      .or('name.ilike.%inspect%,name.ilike.%unit%check%,name.ilike.%quality%')
+      .order('scheduled_date').limit(500),
+  ])
+  if (revRead.truncated) console.error('arrival-feedback inspections: the review read stopped early — some units were not checked')
+  const reviewsOf: Record<string, any[]> = {}
+  for (const r of revRead.rows) (reviewsOf[str(r.listing_id)] = reviewsOf[str(r.listing_id)] || []).push(r)
+  const openOn = new Set<string>()
+  for (const t of ((openRows as any)?.data || []) as any[]) {
+    if (/complet|finish|close|approv|cancel|delet|void/i.test(str(t.status))) continue
+    openOn.add(str(t.reference_property_id))
+  }
+
+  // The qualifying review per unit, then the two "already handled" answers in one read each.
+  const worstOf: Record<string, any> = {}
+  for (const lid of lids) { const w = worstFeedbackReview(reviewsOf[lid] || []); if (w) worstOf[lid] = w }
+  const worsts = Object.values(worstOf)
+  if (!worsts.length) return { ...none, enabled: cfg.enabled && cfg.arrivalFeedback, scanned: arrivals.length }
+  const { data: receipts } = await db.from('auto_inspections').select('reservation_id, task_id')
+    .in('reservation_id', worsts.map((w: any) => REV_KEY(str(w.id))))
+  const filed = new Set(((receipts || []) as any[]).filter(r => r.task_id).map(r => str(r.reservation_id)))
+  let walked = new Map<string, any>()
+  try {
+    const { coveredReviewIds } = await import('./review-inspections')
+    walked = await coveredReviewIds(db, worsts as any[])
+  } catch { /* the mirror is unavailable: the receipts and the open check still hold */ }
+
+  const candidates: any[] = []
+  let covered = 0
+  const seenUnit = new Set<string>()
+  for (const r of arrivals) {                  // soonest arrival first — it gets the walk
+    const lid = str(r.listing_id)
+    if (seenUnit.has(lid)) continue
+    const w = worstOf[lid]
+    if (!w) continue
+    seenUnit.add(lid)
+    const meta = lmeta[lid] || {}
+    const unit = str(meta.nickname || meta.title || r.listing_name) || 'Unit'
+    if (noBzRe.test(str(meta.building) + ' ' + unit)) continue
+    if (walked.has(str(w.id)) || filed.has(REV_KEY(str(w.id))) || openOn.has(lid)) { covered++; continue }
+    const quote = str(w.content).replace(/\s+/g, ' ').trim().slice(0, 220)
+    const rating = Number(w.rating)
+    candidates.push({
+      // The shape the Task automation preview lists (reservation_id / unit_name / guest_name / reason).
+      reservation_id: str(r.id), reviewId: str(w.id), listing_id: lid, unit_name: unit,
+      guest_name: str(r.guest_name) || 'Guest', check_in: str(r.check_in).slice(0, 10),
+      reason: 'bad review', rating, stars: ratingDisplay(rating, w.channel) + (/booking/i.test(str(w.channel)) ? '' : '★'),
+      channel: str(w.channel), reviewAt: str(w.created_at).slice(0, 10), quote, keywords: keywordsOf(quote),
+      market: marketOf(meta.building, meta.address_city, meta.nickname || meta.title),
+      hasBreezeway: Number.isFinite(homeOf[lid]),
+    })
+  }
+
+  const skippedNoBreezeway = candidates.filter(c => !c.hasBreezeway).length
+  if (opts.dryRun || !breezewayConfigured()) {
+    return { ok: true, scanned: arrivals.length, candidates, created: 0, failed: 0, covered, skippedNoBreezeway, movedForward }
+  }
+
+  const idOf = await resolveAssignees(cfg)
+  let created = 0, failed = 0
+  for (const c of candidates) {
+    if (!c.hasBreezeway) continue
+    const sup = cfg.supervisors[c.market] || cfg.supervisors.Miami
+    const wanted = Array.from(new Set([cfg.assignAlways, sup].filter(Boolean)))
+    const assigneeIds = wanted.map(n => idOf[n]).filter((n): n is number => Number.isFinite(n as any))
+    const assignedNames = wanted.filter(n => Number.isFinite(idOf[n] as any))
+    const kw: string[] = c.keywords
+    const name = `Quality inspection — ${c.unit_name}${kw.length ? ` (${kw[0]})` : ''}`
+    const description =
+      `AUTO-CREATED: quality inspection before ${c.guest_name} arrives ${c.check_in}.\n\n` +
+      `Look specifically at${kw.length ? ': ' + kw.join(', ') : ' the areas the guest named'}.\n` +
+      `Recent guest feedback (${c.stars}, ${c.channel || 'the channel'}, ${c.reviewAt}): “${c.quote}”\n\n` +
+      `Walk the unit AFTER the turn and BEFORE the guest lands. Photograph what you find, good and bad, and ` +
+      `anything that needs a trade becomes a work order today. Not walked by the arrival → Lighthouse moves ` +
+      `it to the unit's next checkout.\n\n` +
+      `Created automatically by Lighthouse (bad review before an arrival — Users & admin → Task automation).`
+    const scheduled = c.check_in >= today ? c.check_in : today
+    try {
+      const r = await createBreezewayTask({
+        name, type_department: 'inspection', type_priority: 'high',
+        scheduled_date: scheduled, description, home_id: homeOf[c.listing_id],
+      })
+      if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
+      const taskId = str(r.data.id)
+      if (assigneeIds.length) { try { await updateBreezewayTask(taskId, { assignments: assigneeIds }) } catch { /* shows unassigned; humans see it in the brief */ } }
+      try {
+        await db.from('breezeway_tasks_sync').upsert({
+          id: taskId, reference_property_id: c.listing_id, name, status: 'created',
+          scheduled_date: scheduled, type_department: 'inspection', assignees: assignedNames,
+          raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString(),
+        }, { onConflict: 'id' })
+      } catch { /* sync catches up */ }
+      await db.from('auto_inspections').upsert({
+        reservation_id: REV_KEY(c.reviewId), listing_id: c.listing_id, unit_name: c.unit_name,
+        guest_name: c.guest_name, check_in: scheduled,
+        reason: 'bad review ' + (Math.round(c.rating * 10) / 10) + '★ — before arrival ' + c.check_in,
+        market: c.market, task_id: taskId, assignees: assignedNames,
+      }, { onConflict: 'reservation_id' })
+      created++
+    } catch (e) {
+      // No receipt on failure: the next run finds the same review and tries again.
+      failed++
+      console.error('arrival-feedback inspections: create failed for', c.reservation_id, e)
+    }
+  }
+  return { ok: true, scanned: arrivals.length, candidates, created, failed, covered, skippedNoBreezeway, movedForward }
 }
 
 // ── ARRIVAL INSPECTIONS ARE TIME-SENSITIVE: MISSED = GONE ───────────────────────────────────────

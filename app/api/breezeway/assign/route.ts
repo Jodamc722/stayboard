@@ -6,6 +6,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, updateBreezewayTask, retrieveBreezewayTask } from '@/lib/breezeway'
 import { requireLevel } from '@/lib/access'
 import { bustBoards } from '@/lib/bust'
+import { neverAssignRefusal } from '@/lib/never-assign'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -38,6 +39,9 @@ export async function POST(req: NextRequest) {
     bustBoards()
     return NextResponse.json({ ok: true, taskId, wroteName: nextName })
   }
+  // NEVER ASSIGN (lib/never-assign): a person on the list is refused here, with the reason.
+  const refusal = await neverAssignRefusal({ ids: assigneeIds })
+  if (refusal) return NextResponse.json({ error: refusal }, { status: 400 })
   const r = await updateBreezewayTask(taskId, { assignments: assigneeIds })
   if (!r.ok) return NextResponse.json({ error: `Breezeway ${r.status}: ${r.text.slice(0, 200)}` }, { status: 502 })
   // VERIFY + WRITE THROUGH. The board reads our mirror, which refreshes every 30 minutes — without

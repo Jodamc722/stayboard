@@ -651,6 +651,33 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
       }
     }
   } catch { /* no mirror: every unit still offers the walk */ }
+  // ALREADY QUEUED (Jon, 2026-09-30: quality inspections are auto-generated, never asked for). A unit
+  // not yet walked whose automatic inspection is still open says so instead of offering a second
+  // walk. One read of the automation's receipts, one of their tasks' state.
+  try {
+    const all = (units as any[]).concat(recoveryOnly as any[]).filter(u => u.worst && u.worst.at && !u.walked && u.listingId)
+    const lids = Array.from(new Set(all.map(u => String(u.listingId))))
+    if (lids.length) {
+      const { data: rec } = await db.from('auto_inspections').select('listing_id, task_id, reason')
+        .in('listing_id', lids.slice(0, 500)).not('task_id', 'is', null).gte('check_in', addDays(today, -60)).limit(500)
+      const recs = ((rec || []) as any[])
+      if (recs.length) {
+        const { data: ts } = await db.from('breezeway_tasks_sync').select('id, status, finished_at, scheduled_date')
+          .in('id', recs.map(r => String(r.task_id)).slice(0, 500))
+        const openTask: Record<string, any> = {}
+        for (const t of ((ts || []) as any[])) {
+          if (t.finished_at || /complet|finish|close|approv|cancel|delet|void/i.test(String(t.status || ''))) continue
+          openTask[String(t.id)] = t
+        }
+        const byListing: Record<string, { taskId: string; date: string; reason: string }> = {}
+        for (const r of recs) {
+          const t = openTask[String(r.task_id)]
+          if (t && !byListing[String(r.listing_id)]) byListing[String(r.listing_id)] = { taskId: String(t.id), date: String(t.scheduled_date || '').slice(0, 10), reason: String(r.reason || '') }
+        }
+        for (const u of all) { const q = byListing[String(u.listingId)]; if (q) u.queued = q }
+      }
+    }
+  } catch { /* unreadable: the walk button is offered as before, and add-task still refuses a duplicate */ }
   // Units per building comes from the LISTING MAP, not the review set: a building with 25 units of
   // which 6 got reviewed should read "6 of 25 reviewed", not "6 units". Silence is data too.
   const unitsTotalByBuilding: Record<string, number> = {}

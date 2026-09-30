@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { unstable_cache } from 'next/cache'
 import { breezewayConfigured, listBreezewayPeople } from '@/lib/breezeway'
 import { requireUser } from '@/lib/access'
+import { neverAssignGuard } from '@/lib/never-assign'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -26,6 +27,11 @@ export async function GET(req: NextRequest) {
   let people: Awaited<ReturnType<typeof listBreezewayPeople>> = []
   try { people = await cachedPeople() } catch { people = [] }   // the same empty answer as before
   if (dept) people = people.filter(p => p.departments.length === 0 || p.departments.includes(dept))
+  // NEVER ASSIGN (Jon, 2026-09-30): this roster is what every assign picker offers — Today, Today in
+  // Ops, the Scheduler's suggester, glitches, Add task, reviews. People on the never-assign list
+  // (Admin → Users & admin → Settings → Task automation) are not offered. Filtered after the cache,
+  // so a change to the list shows within a minute.
+  try { people = (await neverAssignGuard()).keepPeople(people) } catch { /* the list is unreadable: the endpoints still refuse */ }
   people.sort((a, b) => a.name.localeCompare(b.name))
   return NextResponse.json({ ok: true, count: people.length, people })
 }

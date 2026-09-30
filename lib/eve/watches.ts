@@ -34,6 +34,13 @@ const shift = (ymd: string, n: number) => ymdET(new Date(Date.parse(ymd + 'T12:0
 const MAX_PER_WATCH = 5
 /** The watches that still run outside 07:00–22:00 ET (F43): a guest waiting, a silent arrival. */
 const NIGHT_WATCHES = ['guest_unanswered_1h', 'no_show_risk']
+/**
+ * The never-assign list (lib/never-assign, Jon 2026-09-30): a watch never proposes one of those people.
+ * Fails open to "nobody blocked" — the executors and lib/breezeway still refuse them at write time.
+ */
+async function neverAssign(): Promise<{ blocks: (p: any) => boolean }> {
+  try { const { neverAssignGuard } = await import('@/lib/never-assign'); return await neverAssignGuard() } catch { return { blocks: () => false } }
+}
 /** Guesty activity logs and internal notes (the `module` on guesty_messages) — never sent to a guest. */
 const INTERNAL_MODULES = new Set(['log', 'note', 'notes', 'internal', 'internal_note', 'activity', 'system'])
 
@@ -202,10 +209,12 @@ async function cleanLate(env: WatchEnv): Promise<Prepared[]> {
     const market = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || null
     return { name: p.person, market, headroom: Number(p.headroomCleans) || 0, verdict: p.verdict }
   }).filter(p => p.headroom > 0 && p.verdict !== 'implausible')
+  const never = await neverAssign()
+  const pool = people.filter(p => !never.blocks(p.name))
   const out: Prepared[] = []
   const taken: Record<string, number> = {}
   for (const c of late) {
-    const fit = people
+    const fit = pool
       .filter(p => !c.market || !p.market || p.market === c.market)
       .sort((a, b) => (b.market === c.market ? 1 : 0) - (a.market === c.market ? 1 : 0) || (b.headroom - (taken[b.name] || 0)) - (a.headroom - (taken[a.name] || 0)))
       .find(p => p.headroom - (taken[p.name] || 0) > 0)
@@ -225,14 +234,19 @@ async function bigArrivalUninspected(env: WatchEnv): Promise<Prepared[]> {
   const cd = await env.commandDay()
   if (!cd) return []
   const limit = shift(env.today, 2)
+  // 'auto' rows are Task automation's to file — only 'none' (automation off) is hers to raise.
   const rows = cd.tiles.arrivals.rows.filter(a => a.big && a.inspection === 'none' && a.listingId && a.checkIn >= env.today && a.checkIn <= limit)
   if (!rows.length) return []
   const cfg = await env.automation()
+  // NOT ASKED WHEN AUTOMATED (Jon, 2026-09-30: inspections "shouldn't be required or asked for"):
+  // with the master switch and big arrivals on, the cron creates and assigns it — nothing to ask.
+  if (cfg && cfg.enabled && cfg.bigArrivals) return []
+  const never = await neverAssign()
   const out: Prepared[] = []
   for (const a of rows) {
     const market = cd.tiles.cleans.rows.find(c => c.unit === a.unit)?.market || null
     const sup = cfg ? (cfg.supervisors[market || 'Miami'] || cfg.supervisors.Miami) : ''
-    const assignees = Array.from(new Set([cfg?.assignAlways, sup].filter(Boolean)))
+    const assignees = Array.from(new Set([cfg?.assignAlways, sup].filter(Boolean))).filter(n => !never.blocks(n))
     out.push({
       subject: `res:${a.reservationId}`, action: 'task_create', metric: 'low_reviews',
       ask: `create a pre-arrival inspection on ${a.unit} for ${a.checkIn} (${a.guest}, $${Math.round(a.value).toLocaleString('en-US')}) and give it to ${assignees.join(' + ') || 'the supervisor'}?`,
@@ -293,14 +307,25 @@ async function badReviewIn(env: WatchEnv): Promise<Prepared[]> {
   const nextOut: Record<string, string> = {}
   for (const r of ((nx as any[]) || [])) { const lid = str(r.listing_id); if (!nextOut[lid]) nextOut[lid] = str(r.check_out).slice(0, 10) }
   const cfg = await env.automation()
+  // THE INSPECTION IS NOT HERS TO ASK FOR WHEN IT IS AUTOMATED (Jon, 2026-09-30: "quality inspection
+  // should be auto-generated. It shouldn't be required or asked for"). With the master switch and
+  // the low-review rule on, the cron files it on the unit's next checkout by itself; she keeps
+  // preparing the public reply, which nobody automates.
+  let covers: (rating: number, at: string) => Promise<boolean> = async () => false
+  if (cfg && cfg.enabled && cfg.lowReviews) {
+    try { const { lowReviewRuleCovers } = await import('@/lib/auto-inspections'); covers = (rating, at) => lowReviewRuleCovers(cfg, rating, at) } catch { /* ask as before */ }
+  }
+  const never = await neverAssign()
   const out: Prepared[] = []
   for (const r of low) {
     const lid = str(r.listing_id), unit = nameOf[lid] || 'the unit', rating = Math.round(norm(r.rating) * 10) / 10
     const quote = str(r.content).replace(/\s+/g, ' ').trim().slice(0, 300)
     const date = nextOut[lid] || env.today
     const sup = cfg ? (cfg.supervisors?.[marketOfLid[lid]] || cfg.supervisors?.Miami) : ''
-    const assignees = Array.from(new Set([cfg?.assignAlways, sup].filter(Boolean)))
-    if (!r._inspected) out.push({
+    const assignees = Array.from(new Set([cfg?.assignAlways, sup].filter(Boolean))).filter(n => !never.blocks(n))
+    // Only the reviews the rule itself files (its threshold, since its start line) are skipped.
+    const automated = await covers(norm(r.rating), str(r.created_at))
+    if (!r._inspected && !automated) out.push({
       subject: `rev:${r.id}:inspect`, action: 'task_create', metric: 'low_reviews',
       ask: `create a quality inspection on ${unit} for ${date} after ${str(r.guest_name) || 'a guest'}'s ${rating}★ ${str(r.channel)} review?`,
       why: quote ? `"${quote.slice(0, 160)}"` : `A ${rating}★ review with no written comment.`,
@@ -491,8 +516,8 @@ async function noShowRisk(env: WatchEnv): Promise<Prepared[]> {
 export const WATCHES: WatchDef[] = [
   { key: 'guest_unanswered_1h', title: 'Guest past the reply-by time', what: 'A guest waiting on a reply past the inbox\'s reply-by time: an hour for a message sent 8am–10pm ET or on their arrival day, 8am for one sent overnight. She drafts the reply and asks "send this?".', action: 'guest_reply_draft', cooldownHours: 24, trigger: guestUnanswered },
   { key: 'clean_late', title: 'Late clean with nobody on it', what: 'A late or at-risk clean on Today in Ops with no assignee. She picks the on-shift housekeeper in that market with headroom and asks to assign.', action: 'task_assign', cooldownHours: 24, trigger: cleanLate },
-  { key: 'big_arrival_uninspected', title: 'Big arrival with no inspection', what: 'A big-value arrival within 48h with no inspection task. She prepares the pre-arrival inspection (same payload as the automation) and asks.', action: 'task_create', cooldownHours: 48, trigger: bigArrivalUninspected },
-  { key: 'bad_review_in', title: 'Bad review just landed', what: 'A review at 3★ or below in the last 48h. She prepares a quality inspection on the next checkout and a public reply draft, and asks about each.', action: 'task_create', cooldownHours: 168, trigger: badReviewIn },
+  { key: 'big_arrival_uninspected', title: 'Big arrival with no inspection', what: 'A big-value arrival within 48h with no inspection task, while Task automation is NOT filing big-arrival inspections. She prepares the pre-arrival inspection (same payload as the automation) and asks. With the automation on she stays quiet — it creates them.', action: 'task_create', cooldownHours: 48, trigger: bigArrivalUninspected },
+  { key: 'bad_review_in', title: 'Bad review just landed', what: 'A review at 3★ or below in the last 48h. She prepares a public reply draft and asks. She also prepares the quality inspection on the next checkout — but only while Task automation\'s bad-review rule is off; with it on, the automation files the inspection and she never asks.', action: 'task_create', cooldownHours: 168, trigger: badReviewIn },
   { key: 'channel_broken', title: 'Listing off a major channel', what: 'The channel snapshot shows an active listing failed or disconnected on Airbnb, Booking.com, Vrbo or Expedia. She drafts the list to the approver and asks you to open Guesty channel settings. Always a proposal.', action: 'email_draft', cooldownHours: 48, maxMode: 'propose', trigger: channelBroken },
   { key: 'glitch_overdue', title: 'Glitch past due with no task', what: 'A glitch past its due date with no Breezeway task. She prepares the maintenance task and asks.', action: 'task_create', cooldownHours: 48, trigger: glitchOverdue },
   { key: 'stock_low', title: 'Guest-order stock below par', what: 'A tracked guest-order item at or below its low mark. She drafts the purchase list (one email per hub) and asks.', action: 'email_draft', cooldownHours: 72, trigger: stockLow },

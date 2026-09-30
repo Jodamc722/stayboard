@@ -152,8 +152,8 @@ const ENTRIES: Entry[] = [
   },
   {
     key: 'automation', title: 'Task automation', group: 'Operations', Icon: Bot, ownerOnly: true,
-    blurb: 'Inspections the app creates by itself: pre-arrival for big or VIP stays, and a quality walk after a bad review.',
-    find: 'auto inspection arrival vip owner stay bad review rating threshold breezeway automatic notice draft long stay',
+    blurb: 'Inspections the app creates by itself: pre-arrival for big or VIP stays, and a quality walk after a bad review. Plus who is never assigned in Breezeway.',
+    find: 'auto inspection arrival vip owner stay bad review rating threshold breezeway automatic notice draft long stay never assign exclude block owner office person people',
     render: p => <L.automation isOwner={p.isOwner} />,
   },
   {

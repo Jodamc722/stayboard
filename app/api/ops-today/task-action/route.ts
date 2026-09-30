@@ -89,6 +89,10 @@ async function handlePost(req: NextRequest) {
         } catch {
           return NextResponse.json({ ok: false, error: 'Could not look that person up in Breezeway.' }, { status: 502 })
         }
+        // NEVER ASSIGN (lib/never-assign): refused before the task is moved, so nothing half-happens.
+        const { neverAssignRefusal } = await import('@/lib/never-assign')
+        const refusal = await neverAssignRefusal({ names: [who], ids: assignments || [] })
+        if (refusal) return NextResponse.json({ ok: false, error: refusal }, { status: 400 })
       }
       const { movedTitle, stampDescription } = await import('@/lib/pending-work')
       let desc = ''

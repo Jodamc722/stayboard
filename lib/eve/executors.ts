@@ -108,16 +108,22 @@ async function liveTaskName(taskId: string): Promise<string> {
   } catch { return '' }
 }
 
-async function personIds(names: string[]): Promise<{ ids: number[]; matched: string[]; missed: string[] }> {
+async function personIds(names: string[]): Promise<{ ids: number[]; matched: string[]; missed: string[]; blocked: string[] }> {
   const { matchBreezewayPerson } = await import('@/lib/breezeway')
-  const ids: number[] = [], matched: string[] = [], missed: string[] = []
+  // NEVER ASSIGN (lib/never-assign, Jon 2026-09-30): a person on the list never resolves to an id
+  // here — whether Eve picked them, a watch did, or somebody asked her to in chat.
+  const { neverAssignGuard } = await import('@/lib/never-assign')
+  const guard = await neverAssignGuard()
+  const ids: number[] = [], matched: string[] = [], missed: string[] = [], blocked: string[] = []
   for (const n of names) {
     const nm = str(n).trim(); if (!nm) continue
+    if (guard.blocks(nm)) { blocked.push(nm); continue }
     let id: number | null = null
     try { id = await matchBreezewayPerson(nm) } catch { id = null }
+    if (id != null && guard.ids.has(Number(id))) { blocked.push(nm); continue }
     if (Number.isFinite(id as any)) { ids.push(Number(id)); matched.push(nm) } else missed.push(nm)
   }
-  return { ids, matched, missed }
+  return { ids, matched, missed, blocked }
 }
 
 // ---- The executors -------------------------------------------------------------------------------
@@ -140,8 +146,10 @@ const task_create: Executor = async (p) => {
   const taskId = str(r.data.id)
   const wanted = Array.isArray(p?.assignees) ? p.assignees.map(str) : (p?.assignee ? [str(p.assignee)] : [])
   let assignedNames: string[] = []
+  let leftOff: string[] = []
   if (wanted.length) {
     const ppl = await personIds(wanted)
+    leftOff = ppl.blocked
     if (ppl.ids.length) { try { const a = await updateBreezewayTask(taskId, { assignments: ppl.ids }); if (a.ok) assignedNames = ppl.matched } catch { /* visible unassigned */ } }
   }
   try {
@@ -168,7 +176,7 @@ const task_create: Executor = async (p) => {
   bustBoards()
   return {
     ok: true, ref: taskId,
-    summary: `created ${department} task #${taskId} "${title}" on ${home.unit} for ${date}${assignedNames.length ? ` → ${assignedNames.join(', ')}` : ''}`,
+    summary: `created ${department} task #${taskId} "${title}" on ${home.unit} for ${date}${assignedNames.length ? ` → ${assignedNames.join(', ')}` : ''}${leftOff.length ? ` (not assigned to ${leftOff.join(', ')} — on the never-assign list)` : ''}`,
     // The undo also carries the links this task made (glitch, exactly-once inspection row), so
     // undoing it puts those back too (2026-09-28 audit, F25).
     undo: { kind: 'task_cancel', taskId, title, glitchId: p?.glitchId ? str(p.glitchId) : undefined, autoInspectionKey: p?.autoInspectionKey ? str(p.autoInspectionKey) : undefined },
@@ -200,9 +208,20 @@ const assignOne: Executor = async (p) => {
   if (!taskId) return { ok: false, summary: 'no task id', error: 'taskId required' }
   let ids: number[] = Array.isArray(p?.personIds) ? p.personIds.map(Number).filter((n: number) => Number.isFinite(n)) : []
   let names: string[] = []
+  if (ids.length) {
+    // NEVER ASSIGN (lib/never-assign): ids given outright are checked too.
+    const { neverAssignRefusal } = await import('@/lib/never-assign')
+    const refusal = await neverAssignRefusal({ ids })
+    if (refusal) return { ok: false, summary: refusal, error: refusal }
+  }
   if (!ids.length) {
     const wanted = Array.isArray(p?.people) ? p.people.map(str) : [str(p?.person || p?.assignee)]
     const ppl = await personIds(wanted.filter(Boolean))
+    if (ppl.blocked.length && !ppl.ids.length) {
+      const { neverAssignMessage } = await import('@/lib/never-assign')
+      const msg = neverAssignMessage(ppl.blocked)
+      return { ok: false, summary: msg, error: msg }
+    }
     if (!ppl.ids.length) return { ok: false, summary: `no Breezeway person matches "${wanted.join(', ')}"`, error: 'person not found' }
     ids = ppl.ids; names = ppl.matched
   }

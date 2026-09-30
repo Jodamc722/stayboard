@@ -226,7 +226,11 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
     notes.push(`${closedOutToday} clean${closedOutToday === 1 ? '' : 's'} today recorded under ${PERFORMED_FLOOR_MIN} minutes — closed out rather than performed, so the timings behind them are not real.`)
   }
 
-  const suggestions = buildSuggestions(people, unassignedStops)
+  // NEVER ASSIGN (lib/never-assign, Jon 2026-09-30): nobody on the list is ever the receiving end of
+  // a move or an assign suggestion. They stay in `people` — their day is still priced as it is.
+  let blocked: (name: string) => boolean = () => false
+  try { const { neverAssignGuard } = await import('./never-assign'); const g = await neverAssignGuard(); if (g.active) blocked = (n: string) => g.blocks(n) } catch { /* suggestions as before; the assign endpoints still refuse */ }
+  const suggestions = buildSuggestions(people, unassignedStops, blocked)
 
   // Everything the day is judged on excludes credited-not-worked days.
   const real = people.filter(p => p.verdict !== 'implausible')
@@ -276,9 +280,10 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
  * it says what the trade does to BOTH people rather than asserting an improvement. Nothing here
  * writes anything: a supervisor reads the trade and decides.
  */
-export function buildSuggestions(people: DayLoad[], unassigned: Stop[]): Suggestion[] {
+export function buildSuggestions(people: DayLoad[], unassigned: Stop[], blocked: (name: string) => boolean = () => false): Suggestion[] {
   const out: Suggestion[] = []
-  const eligible = (p: DayLoad) => p.capacityMinutes > 0
+  // A person on the never-assign list is never a candidate to RECEIVE work (moving work off them is fine).
+  const eligible = (p: DayLoad) => p.capacityMinutes > 0 && !blocked(p.person)
 
   // 1. Unassigned work → whoever it costs least, among those with room.
   for (const stop of unassigned) {
@@ -308,7 +313,7 @@ export function buildSuggestions(people: DayLoad[], unassigned: Stop[]): Suggest
   // 2. Overloaded → underloaded. Move the unit that helps most and still fits.
   // Never move work off an implausible day — we do not know which of those tasks the person
   // actually holds, so "relieving" them could hand away work somebody else already did.
-  const over = people.filter(p => p.verdict === 'overloaded' && eligible(p))
+  const over = people.filter(p => p.verdict === 'overloaded' && p.capacityMinutes > 0)
   const under = people.filter(p => p.verdict === 'underloaded' && eligible(p))
   for (const from of over) {
     for (let i = from.units.length - 1; i >= 0; i--) {
