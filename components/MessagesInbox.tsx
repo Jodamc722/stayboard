@@ -19,7 +19,7 @@ import Link from 'next/link'
 import { MessageSquare, PhoneCall, PhoneMissed, Voicemail } from 'lucide-react'
 import type { PhoneThreadSummary } from '@/lib/phone-threads'
 import { LeanTabs, LeanEmpty, Pill, Tag } from '@/components/lean'
-import { SentimentBoard, type SentimentRow, type SentimentSummary } from '@/components/SentimentBoard'
+import { SentimentBoard, moodUi, type SentimentRow, type SentimentSummary } from '@/components/SentimentBoard'
 
 /** Who wrote the newest message in a thread: the guest, a named teammate, a Guesty template, or an internal note. */
 export type LastInfo = { who: 'guest' | 'team' | 'auto' | 'note'; name: string | null; module: string | null; text?: string | null }
@@ -77,7 +77,7 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
     if (da !== db) return da < db ? -1 : 1
     return b.at.localeCompare(a.at)
   })
-  const flagged = sent.rows.filter(r => r.dissatisfied || r.band === 'negative' || r.triggers.length > 0).length
+  const flagged = sent.rows.filter(r => r.mood ? (r.mood === 'sensitive' || r.mood === 'frustrated') : (r.dissatisfied || r.band === 'negative')).length
   const s = sent.summary
   const inSrc = (it: InboxItem) => src === 'all' ? true : src === 'messages' ? it.kind === 'guesty' : src === 'texts' ? (it.kind === 'phone' && it.t.lastKind !== 'call') : (it.kind === 'phone' && it.t.lastKind === 'call')
   const needle = q.trim().toLowerCase()
@@ -97,10 +97,10 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
           { key: 'sentiment', label: 'Sentiment', n: flagged },
         ]}
         value={tab} onChange={setTab}
-        right={s && (s.dissatisfied > 0 || s.awaitingNegative > 0) ? (
+        right={s && ((s.sensitive || 0) + (s.frustrated || 0) > 0 || s.awaitingNegative > 0) ? (
           <Pill tone="rose" onClick={() => setTab('sentiment')}
-            title={`${s.dissatisfied} guest${s.dissatisfied === 1 ? '' : 's'} showing dissatisfaction${s.awaitingNegative ? ` · ${s.awaitingNegative} negative and awaiting your reply` : ''}${s.unansweredNegative ? ` · ${s.unansweredNegative} unanswered over 2h` : ''}`}>
-            {s.dissatisfied} unhappy{s.awaitingNegative ? ` · ${s.awaitingNegative} waiting` : ''}
+            title={`Guests who complained (Sensitive in Guesty) and guests hitting friction (Frustrated)${s.awaitingNegative ? ` · ${s.awaitingNegative} negative and awaiting your reply` : ''}`}>
+            {[s.sensitive ? `${s.sensitive} sensitive` : '', s.frustrated ? `${s.frustrated} frustrated` : '', s.awaitingNegative ? `${s.awaitingNegative} waiting` : ''].filter(Boolean).join(' · ')}
           </Pill>
         ) : null}
       />
@@ -180,7 +180,8 @@ function StayTag({ stay, now }: { stay?: StayInfo | null; now: number }) {
 
 function ConvoLine({ c, unit, wait, now, lastBy, sentiment }: { c: InboxConvo; unit: string; wait?: WaitInfo; now: number; lastBy: string; sentiment?: SentimentRow }) {
   const unread = c.unread_count || 0
-  const bad = sentiment && (sentiment.dissatisfied || sentiment.band === 'negative')
+  const bad = sentiment && (sentiment.mood ? (sentiment.mood === 'sensitive' || sentiment.mood === 'frustrated' || sentiment.mood === 'happy') : (sentiment.dissatisfied || sentiment.band === 'negative'))
+  const mu = sentiment ? moodUi(sentiment) : null
   const guest = c.guest_name || 'Guest'
   const l = c.last
   const who = !l ? (wait ? guest.split(' ')[0] : (lastBy || 'Last')) : l.who === 'guest' ? guest.split(' ')[0] : l.who === 'auto' ? 'Auto' : l.who === 'note' ? 'Note' : (l.name ? l.name.split(' ')[0] : 'Team')
@@ -195,7 +196,7 @@ function ConvoLine({ c, unit, wait, now, lastBy, sentiment }: { c: InboxConvo; u
         <StayTag stay={c.stay} now={now} />
         {wait && <WaitTag wait={wait} now={now} />}
         {unread > 0 && <Tag tone="brand" title={`${unread} unread message${unread === 1 ? '' : 's'}`}>{unread} unread</Tag>}
-        {bad && <Tag tone="rose" title={sentiment!.topIssue || sentiment!.reason || `AI sentiment score ${sentiment!.score ?? '—'}/5`}>{sentiment!.dissatisfied ? 'Unhappy' : 'Negative'}</Tag>}
+        {bad && mu && <Tag tone={mu.tone} title={sentiment!.topIssue || sentiment!.reason || `AI sentiment score ${sentiment!.score ?? '—'}/5`}>{sentiment!.mood ? mu.label : (sentiment!.dissatisfied ? 'Unhappy' : 'Negative')}</Tag>}
       </>}
     />
   )

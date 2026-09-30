@@ -16,9 +16,10 @@ export type SentimentRow = {
   score: number | null; band: string; dissatisfied: boolean; triggers: string[]
   topIssue: string | null; reason: string | null; excerpt: string | null
   lastMessageAt: string | null; awaitingReply: boolean; status: string; preview: string; unread: number
+  mood?: string | null; moodNoted?: string | null; moodNotedAt?: string | null; markedSensitive?: boolean; guestyError?: string | null; reservationId?: string | null
 }
 type Row = SentimentRow
-export type SentimentSummary = { total: number; open: number; dissatisfied: number; negative: number; awaitingNegative: number; unansweredNegative: number }
+export type SentimentSummary = { total: number; open: number; dissatisfied: number; negative: number; awaitingNegative: number; unansweredNegative: number; sensitive?: number; frustrated?: number; happy?: number; neutral?: number; unlabeled?: number }
 type Summary = SentimentSummary
 
 const CH: Record<string, string> = { airbnb: 'Airbnb', airbnb2: 'Airbnb', vrbo: 'VRBO', booking: 'Booking', 'booking.com': 'Booking', sms: 'SMS', email: 'Email', whatsapp: 'WhatsApp' }
@@ -28,6 +29,14 @@ function bandUi(band: string): { tone: Tone; Icon: any; label: string } {
   if (band === 'negative') return { tone: 'rose', Icon: Frown, label: 'Negative' }
   if (band === 'positive') return { tone: 'emerald', Icon: Smile, label: 'Positive' }
   return { tone: 'slate', Icon: Meh, label: 'Neutral' }
+}
+/** The four labels Jon uses (2026-09-30). Rows scored before them fall back to the score band. */
+export function moodUi(r: { mood?: string | null; band: string }): { tone: Tone; Icon: any; label: string } {
+  if (r.mood === 'sensitive') return { tone: 'rose', Icon: AlertTriangle, label: 'Sensitive' }
+  if (r.mood === 'frustrated') return { tone: 'amber', Icon: Frown, label: 'Frustrated' }
+  if (r.mood === 'happy') return { tone: 'emerald', Icon: Smile, label: 'Happy' }
+  if (r.mood === 'neutral') return { tone: 'slate', Icon: Meh, label: 'Neutral' }
+  return bandUi(r.band)
 }
 function ago(s: string | null) {
   if (!s) return ''
@@ -52,7 +61,7 @@ export function SentimentBoard({ onLoad }: { onLoad?: (rows: SentimentRow[], sum
   const [summary, setSummary] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
-  const [filter, setFilter] = useState<'attention' | 'all'>('attention')
+  const [filter, setFilter] = useState<'attention' | 'sensitive' | 'frustrated' | 'happy' | 'all'>('attention')
   const [scanning, setScanning] = useState(false)
   const [scanMsg, setScanMsg] = useState<string | null>(null)
 const [qc, setQc] = useState<Record<string, { taskId: string; reportUrl: string | null }>>({})
@@ -120,14 +129,16 @@ async function scan() {
     finally { setScanning(false); setTimeout(() => setScanMsg(null), 6000) }
   }
 
-  const shown = filter === 'attention' ? rows.filter(r => r.dissatisfied || r.band === 'negative' || r.triggers.length > 0) : rows
+  const shown = filter === 'attention' ? rows.filter(r => r.mood ? (r.mood === 'sensitive' || r.mood === 'frustrated' || r.awaitingReply && r.dissatisfied) : (r.dissatisfied || r.band === 'negative'))
+    : filter === 'all' ? rows : rows.filter(r => r.mood === filter)
 
   return (
     <section>
       <div className="flex items-center gap-2 flex-wrap mb-2">
-        <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px]">
-          <button onClick={() => setFilter('attention')} className={`px-2.5 py-1 font-semibold ${filter === 'attention' ? 'bg-brand-600 text-white' : 'bg-white text-muted'}`}>Needs attention</button>
-          <button onClick={() => setFilter('all')} className={`px-2.5 py-1 font-semibold border-l border-line ${filter === 'all' ? 'bg-brand-600 text-white' : 'bg-white text-muted'}`}>All scored</button>
+        <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px] flex-wrap">
+          {([['attention', 'Needs attention', null], ['sensitive', 'Sensitive', summary?.sensitive], ['frustrated', 'Frustrated', summary?.frustrated], ['happy', 'Happy', summary?.happy], ['all', 'All scored', null]] as const).map(([k, label, n], i) => (
+            <button key={k} onClick={() => setFilter(k)} className={`px-2.5 py-1 font-semibold ${i ? 'border-l border-line' : ''} ${filter === k ? 'bg-brand-600 text-white' : 'bg-white text-muted'}`}>{label}{n ? ` ${n}` : ''}</button>
+          ))}
         </div>
         <button onClick={scan} disabled={scanning} title="Score the last 30 days of guest threads with AI"
           className="inline-flex items-center gap-1.5 text-[12px] font-semibold rounded-lg border border-brand-200 text-brand-700 bg-brand-50 px-2.5 py-1 hover:bg-brand-100 disabled:opacity-50">
@@ -144,7 +155,7 @@ async function scan() {
       ) : (
         <LeanList>
           {shown.map(r => {
-            const ui = bandUi(r.band); const Icon = ui.Icon
+            const ui = moodUi(r); const Icon = ui.Icon
             const q = qc[r.id]
             return (
               <LeanRow key={r.id}
@@ -152,7 +163,10 @@ async function scan() {
                 name={r.guest}
                 meta={[r.topIssue || r.building || r.listingName, ago(r.lastMessageAt)].filter(Boolean).join(' · ')}
                 tags={<>
-                  <Tag tone={ui.tone} title={`AI sentiment score ${r.score ?? '—'}/5`}><Icon size={10} className="inline -mt-px mr-0.5" />{r.dissatisfied ? 'Unhappy' : ui.label} {r.score ?? ''}</Tag>
+                  <Tag tone={ui.tone} title={`AI sentiment score ${r.score ?? '—'}/5`}><Icon size={10} className="inline -mt-px mr-0.5" />{r.mood ? ui.label : (r.dissatisfied ? 'Unhappy' : ui.label)}</Tag>
+                  {r.moodNoted && r.moodNoted === r.mood ? <Tag tone="violet" title={`Written to the reservation notes in Guesty${r.moodNotedAt ? ' · ' + new Date(r.moodNotedAt).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''}${r.markedSensitive ? ' · Sensitive ticked' : ''}`}>In Guesty</Tag>
+                    : r.guestyError ? <Tag tone="amber" title={r.guestyError}>Not in Guesty</Tag>
+                    : r.mood && r.mood !== 'neutral' && r.reservationId ? <Tag title="Goes to the reservation notes on the next scan">Guesty next scan</Tag> : null}
                   <Tag>{CH[r.channel] || r.channel}</Tag>
                   {r.awaitingReply && <Tag tone="rose" title="Latest message is from the guest">Needs reply</Tag>}
                   {q && <Tag tone="violet" title={`Breezeway task ${q.taskId}`}>QC task</Tag>}

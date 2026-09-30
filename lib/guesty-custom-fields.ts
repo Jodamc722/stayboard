@@ -23,7 +23,9 @@ export function fieldIdOf(c: any): string | null {
   return (c?.fieldId?._id) || (typeof c?.fieldId === 'string' ? c.fieldId : null) || c?._id || null
 }
 
-export type CustomFieldWrite = { fieldId: string; value: any }
+/** `append` adds a line under the field's LIVE value (read in the same call) instead of replacing it;
+ *  a line already present is not stacked twice. */
+export type CustomFieldWrite = { fieldId: string; value?: any; append?: string }
 
 export type WriteResult = {
   ok: boolean
@@ -76,8 +78,13 @@ export async function writeCustomFields(
   const merged: any[] = existing.map((c) => ({ ...c }))
   for (const u of updates) {
     const i = merged.findIndex((c) => String(fieldIdOf(c) || '') === u.fieldId)
-    if (i >= 0) merged[i] = { ...merged[i], value: u.value }
-    else merged.push({ fieldId: u.fieldId, value: u.value })
+    let value = u.value
+    if (typeof u.append === 'string' && u.append) {
+      const prior = i >= 0 && typeof merged[i].value === 'string' ? merged[i].value : ''
+      value = prior.includes(u.append) ? prior : (prior ? prior + '\n' + u.append : u.append)
+    }
+    if (i >= 0) merged[i] = { ...merged[i], value }
+    else merged.push({ fieldId: u.fieldId, value })
   }
 
   // 3. Send the COMPLETE array, flattened to the {fieldId, value} shape the API accepts. A

@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   const status = new URL(req.url).searchParams.get('status') || 'open'
 
   let q = sb.from('guesty_conversation_sentiment')
-    .select('conversation_id, guest_name, channel, reservation_id, listing_id, score, band, dissatisfied, triggers, top_issue, reason, guest_excerpt, last_message_at, last_guest_at, awaiting_reply, scanned_at, status, closed_at')
+    .select('conversation_id, guest_name, channel, reservation_id, listing_id, score, band, dissatisfied, triggers, top_issue, reason, guest_excerpt, last_message_at, last_guest_at, awaiting_reply, scanned_at, status, closed_at, mood, mood_noted, mood_noted_at, marked_sensitive_at, guesty_error')
     .order('last_message_at', { ascending: false })
     .limit(500)
   if (status !== 'all') q = q.eq('status', status)
@@ -61,6 +61,12 @@ export async function GET(req: NextRequest) {
     lastGuestAt: r.last_guest_at,
     awaitingReply: !!r.awaiting_reply,
     status: r.status || 'open',
+    mood: r.mood || null,
+    moodNoted: r.mood_noted || null,
+    moodNotedAt: r.mood_noted_at || null,
+    markedSensitive: !!r.marked_sensitive_at,
+    guestyError: r.guesty_error || null,
+    reservationId: r.reservation_id || null,
     preview: conv[r.conversation_id]?.preview || '',
     unread: conv[r.conversation_id]?.unread || 0,
   }))
@@ -73,6 +79,11 @@ export async function GET(req: NextRequest) {
     negative: open.filter(r => r.band === 'negative').length,
     awaitingNegative: open.filter(r => r.band === 'negative' && r.awaitingReply).length,
     unansweredNegative: open.filter(r => r.triggers.includes('unanswered_negative')).length,
+    sensitive: open.filter(r => r.mood === 'sensitive').length,
+    frustrated: open.filter(r => r.mood === 'frustrated').length,
+    happy: open.filter(r => r.mood === 'happy').length,
+    neutral: open.filter(r => r.mood === 'neutral').length,
+    unlabeled: open.filter(r => !r.mood).length,
   }
   return NextResponse.json({ summary, rows: out })
 }

@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
-import { markReservationSensitive } from '@/lib/sensitive'
+import { moodOf, flushMoodNotes } from '@/lib/guest-mood'
 import { cronAllowed, tooSoon } from '@/lib/cron-auth'
 import { recordRun } from '@/lib/automation-runs'
 import { modelPairFor } from '@/lib/ai-models'
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
   for (let i = 0; i < all.length; i += 200) {
     const { data: part, error: eErr } = await sb
       .from('guesty_conversation_sentiment')
-      .select('conversation_id, last_message_at, status, marked_sensitive_at, triggers')
+      .select('conversation_id, last_message_at, status, marked_sensitive_at, triggers, mood')
       .in('conversation_id', all.slice(i, i + 200).map(c => c.id))
     if (eErr) {
       const missing = eErr.code === '42P01' || /does not exist|schema cache/i.test(eErr.message)
@@ -121,7 +121,10 @@ export async function POST(req: NextRequest) {
   const seen = new Map<string, string>()
   const markedSet = new Set<string>()
   const prevTriggers = new Map<string, string[]>()
+  // Rows scored before the four labels existed (2026-09-30) are rescanned once to get one.
+  const unlabeled = new Set<string>()
   existing.forEach((r: any) => {
+    if (!r.mood) unlabeled.add(r.conversation_id)
     seen.set(r.conversation_id, str(r.last_message_at))
     if (r.marked_sensitive_at) markedSet.add(r.conversation_id)
     prevTriggers.set(r.conversation_id, Array.isArray(r.triggers) ? r.triggers.map(String) : [])
@@ -130,7 +133,7 @@ export async function POST(req: NextRequest) {
   // Need a (re)scan when there's no row, or the conversation has newer activity.
   const candidates = all.filter(c => {
     const prev = seen.get(c.id)
-    return prev === undefined || (c.last_message_at && new Date(c.last_message_at).getTime() > new Date(prev).getTime())
+    return prev === undefined || unlabeled.has(c.id) || (c.last_message_at && new Date(c.last_message_at).getTime() > new Date(prev).getTime())
   })
   // ONLY IF THE GUEST SAID SOMETHING NEW (2026-09-09). Sentiment is the GUEST's; a host reply moves
   // last_message_at and used to trigger a full rescan of the whole transcript, so every answer the
@@ -176,7 +179,7 @@ export async function POST(req: NextRequest) {
   }
   const hostOnly: { conversation_id: string; last_message_at: string }[] = []
   for (const c of candidates) {
-    if (seen.get(c.id) === undefined) { todo.push(c); continue }
+    if (seen.get(c.id) === undefined || unlabeled.has(c.id)) { todo.push(c); continue }
     const e = newerBy.get(c.id)
     if (!e) continue                       // sync has not landed the message yet — look again next run
     if (e.guest) todo.push(c)
@@ -221,7 +224,13 @@ export async function POST(req: NextRequest) {
 
       const SYSTEM = `You are a guest-experience analyst for a short-term-rental manager. Read a guest conversation transcript and rate the GUEST's sentiment toward their stay/host. Be calibrated: most routine logistics are neutral (3). Reserve 1-2 for genuine frustration, complaints, or dissatisfaction, and 4-5 for clear happiness/praise.
 Return STRICT minified JSON only, no markdown:
-{"score":1-5,"band":"positive|neutral|negative","dissatisfied":true|false,"topIssue":"short label or null","reason":"1-2 sentences","excerpt":"the single most telling guest sentence, verbatim, <=160 chars"}
+{"score":1-5,"band":"positive|neutral|negative","mood":"happy|neutral|frustrated|sensitive","complaint":true|false,"dissatisfied":true|false,"topIssue":"short label or null","reason":"1-2 sentences","excerpt":"the single most telling guest sentence, verbatim, <=160 chars"}
+"mood" — pick exactly one, from the GUEST's words only (ignore the host's and automated messages):
+- happy: warm, excited, thankful or praising.
+- neutral: routine logistics and questions. A calm request to cancel, to change dates, or a plain question about a fee is neutral.
+- frustrated: friction WITHOUT a complaint — confused, stuck (e.g. can't pay the deposit or sign the agreement), impatient, repeating themselves.
+- sensitive: the guest COMPLAINS — about the unit, cleanliness, something broken or missing, noise, access or the door code, a fee or charge they object to, our service or response time — or asks for a refund/compensation because of a problem, or threatens a bad review or a dispute.
+"complaint" = true exactly when mood is sensitive.
 "dissatisfied" = true only if the guest expresses real frustration, a complaint, or an unresolved problem.`
       const USER = `Conversation (most recent last):\n"""${transcript.slice(0, 5000)}"""`
 
@@ -233,7 +242,7 @@ Return STRICT minified JSON only, no markdown:
         // (Jon: "make sure we do not lose performance where it matters"). Sonnet 5 is the newer
         // generation of the model that ran here yesterday and a third cheaper; the real saving is
         // above, in not rescanning a thread every time the front desk replies.
-        body: JSON.stringify({ model, max_tokens: 400, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
+        body: JSON.stringify({ model, max_tokens: 500, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
       })
       if (r.status === 429) { rateLimited = true; break } // hit the rate limit - stop; the rest stays in `remaining` for the next run
       let d: any = await r.json().catch(() => ({}))
@@ -243,7 +252,7 @@ Return STRICT minified JSON only, no markdown:
         const r2 = await aiFetch('sentiment', {
           method: 'POST',
           headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-          body: JSON.stringify({ model: fallback, max_tokens: 400, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
+          body: JSON.stringify({ model: fallback, max_tokens: 500, system: SYSTEM, messages: [{ role: 'user', content: USER }] }),
         })
         d = await r2.json().catch(() => ({}))
         if (!r2.ok) { failed++; lastFail = `model ${r2.status}: ${str(d?.error?.message).slice(0, 120)}`; continue }
@@ -269,7 +278,9 @@ Return STRICT minified JSON only, no markdown:
       // a/c?" was filed as an unhappy guest, surfaced on the Command Center as "within the hour",
       // and written into Guesty as sensitive. The keyword stays in `triggers`; only the model's
       // reading or a low score makes a guest dissatisfied.
-      const dissatisfied = aiDissatisfied || score <= 2
+      const complaint = parsed.complaint === true || String(parsed.mood || '').toLowerCase() === 'sensitive'
+      const mood = moodOf(parsed.mood, score, complaint)
+      const dissatisfied = aiDissatisfied || score <= 2 || mood === 'sensitive'
 
       await sb.from('guesty_conversation_sentiment').upsert({
         conversation_id: c.id,
@@ -287,36 +298,32 @@ Return STRICT minified JSON only, no markdown:
         last_message_at: c.last_message_at || null,
         last_guest_at: lastGuestAt,
         awaiting_reply: awaiting,
+        mood,
+        complaint,
         scanned_at: new Date().toISOString(),
       }, { onConflict: 'conversation_id' })
 
       scanned++
       if (triggers.length) flagged++
 
-      // AUTO-FLAG SENSITIVE: only on clear complaints — a low score the model (or a risk keyword)
-      // backs up; a keyword alone never writes to Guesty. Idempotent.
-      const strong = score <= 2 && (aiDissatisfied || kw)
-      if (strong && c.reservation_id && !markedSet.has(c.id)) {
-        try {
-          const why = str(parsed.topIssue).trim() ? `${str(parsed.topIssue).trim()}: "${str(parsed.excerpt).trim().slice(0, 120)}"` : str(parsed.reason).trim().slice(0, 200)
-          const mres = await markReservationSensitive(c.reservation_id, why)
-          if (mres.ok) {
-            await sb.from('guesty_conversation_sentiment').update({ marked_sensitive_at: new Date().toISOString() }).eq('conversation_id', c.id)
-            markedSet.add(c.id)
-          }
-        } catch { /* best-effort */ }
-      }
+      // THE GUESTY WRITE (the label in Reservation Notes; Sensitive ticked on a complaint) happens
+      // after the batch, in flushMoodNotes — capped, retried, and read-merge-write.
     } catch { /* skip this conversation, continue the batch */ }
   }
+
+  // THE LABELS INTO GUESTY (2026-09-30). Every thread whose label is not in the reservation's notes
+  // yet — this run's and the backlog — capped per run because Guesty 429s readily. Complaints first.
+  let guesty: any = null
+  try { guesty = await flushMoodNotes(viaCron ? 15 : 6) } catch (e: any) { guesty = { error: String(e?.message || e).slice(0, 200) } }
 
   // AN HONEST RECEIPT (2026-09-28 audit, 03 #23). A run where every model call failed used to be
   // recorded as ok with "scanned 0", so the watchdog saw a healthy job while nothing was being read.
   const remaining = Math.max(0, todo.length - scanned)
   const allFailed = batch.length > 0 && scanned === 0 && failed > 0
   const error = allFailed ? `every model call failed (${failed}) — ${lastFail}` : null
-  recordRun({ name: 'sentiment', ok: !allFailed, itemCount: scanned, detail: { scanned, flagged, failed, rateLimited, remaining, windowDays: days }, error })
+  recordRun({ name: 'sentiment', ok: !allFailed, itemCount: scanned, detail: { scanned, flagged, failed, rateLimited, remaining, windowDays: days, guesty }, error })
 
-  return NextResponse.json({ ok: !allFailed, scanned, flagged, failed, rateLimited, remaining, windowDays: days, flushed, watched, ...(error ? { error } : {}) })
+  return NextResponse.json({ ok: !allFailed, scanned, flagged, failed, rateLimited, remaining, windowDays: days, guesty, flushed, watched, ...(error ? { error } : {}) })
 }
 
 export const GET = POST
