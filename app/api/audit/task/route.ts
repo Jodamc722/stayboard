@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, createBreezewayTask, updateBreezewayTask, listBreezewayPeople } from '@/lib/breezeway'
+import { neverAssignGuard } from '@/lib/never-assign'
 import { requireAnyLevel } from '@/lib/access'
 import { requireVrUser } from '@/lib/vr-gate'
 
@@ -51,7 +52,8 @@ export async function GET() {
   const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   if (!breezewayConfigured()) return NextResponse.json({ ok: true, people: [] })
-  try { const people = await listBreezewayPeople(); return NextResponse.json({ ok: true, people: people || [] }) } catch { return NextResponse.json({ ok: true, people: [] }) }
+  // NEVER ASSIGN (lib/never-assign): the dispatch picker never offers them; lib/breezeway strips them if sent anyway.
+  try { const people = (await neverAssignGuard()).keepPeople(await listBreezewayPeople()); return NextResponse.json({ ok: true, people: people || [] }) } catch { return NextResponse.json({ ok: true, people: [] }) }
 }
 
 // Resolve unit name + Breezeway home_id / reference for a listing, cached across a batch.

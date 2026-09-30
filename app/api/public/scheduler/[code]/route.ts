@@ -146,6 +146,12 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
       const inScope = week.days.some((d: any) => d.date === date && d.cleans.some((c: any) => String(c.listingId) === listingId))
       if (!inScope) return NextResponse.json({ ok: false, error: 'That clean is not on this team\'s board.' }, { status: 403 })
       const cleanerId = b.cleanerId != null && b.cleanerId !== '' ? Number(b.cleanerId) : null
+      // NEVER ASSIGN (lib/never-assign): a staged pick is an assignment waiting for Push.
+      if (cleanerId != null && Number.isFinite(cleanerId)) {
+        const { neverAssignRefusal } = await import('@/lib/never-assign')
+        const refusal = await neverAssignRefusal({ ids: [cleanerId] })
+        if (refusal) return NextResponse.json({ ok: false, error: refusal }, { status: 400 })
+      }
       if (cleanerId == null || !Number.isFinite(cleanerId)) {
         await db.from('schedule_staged').delete().eq('listing_id', listingId).eq('date', date)
       } else {
@@ -159,7 +165,9 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
       if (!picks.length) return NextResponse.json({ ok: false, error: 'no picks' }, { status: 400 })
       const week = await marketWeek(link.market, str(picks[0].date).slice(0, 10))
       const ok = new Set(week.days.flatMap((d: any) => d.cleans.map((c: any) => d.date + '|' + c.listingId)))
-      const rows = picks.filter(p => ok.has(str(p.date).slice(0, 10) + '|' + str(p.listingId)) && Number.isFinite(Number(p.cleanerId)))
+      const { neverAssignGuard } = await import('@/lib/never-assign')
+      const never = await neverAssignGuard()
+      const rows = picks.filter(p => ok.has(str(p.date).slice(0, 10) + '|' + str(p.listingId)) && Number.isFinite(Number(p.cleanerId)) && !never.ids.has(Number(p.cleanerId)))
         .map(p => ({ listing_id: str(p.listingId), date: str(p.date).slice(0, 10), cleaner_id: Number(p.cleanerId), cleaner_name: str(p.cleanerName).slice(0, 120) || null, updated_at: now, updated_by: 'link:' + link.market + (who ? ':' + who : '') + ':plan' }))
       if (rows.length) { const { error } = await db.from('schedule_staged').upsert(rows, { onConflict: 'listing_id,date' }); if (error) throw new Error(error.message) }
       try { revalidateTag('schedule') } catch {}

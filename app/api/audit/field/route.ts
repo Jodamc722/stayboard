@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, completeBreezewayTask, updateBreezewayTask, listBreezewayPeople } from '@/lib/breezeway'
+import { neverAssignGuard, neverAssignRefusal } from '@/lib/never-assign'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
     return { id: x.id, room: x.room, kind: x.kind, title: x.title, note: x.note, photo_url: x.photo_url, status: x.status, reportUrl: x.report_url || null, proofPhoto: d.proofPhoto || null, scheduledDate: d.scheduledDate || today, assigneeName: d.assigneeName || null, assigneeIds: Array.isArray(d.assigneeIds) ? d.assigneeIds : [] }
   })
   let people: any[] = []
-  if (breezewayConfigured()) { try { people = (await listBreezewayPeople()).map((p: any) => ({ id: p.id, name: p.name, departments: p.departments || [] })) } catch { people = [] } }
+  if (breezewayConfigured()) { try { people = (await neverAssignGuard()).keepPeople((await listBreezewayPeople()).map((p: any) => ({ id: p.id, name: p.name, departments: p.departments || [] }))) } catch { people = [] } }
   return NextResponse.json({ ok: true, audit: { id: audit.id, status: audit.status }, listing, items, people })
 }
 
@@ -61,6 +62,9 @@ export async function POST(req: NextRequest) {
   if (action === 'assign') {
     const ids = Array.isArray(body.assigneeIds) ? body.assigneeIds.map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n)).slice(0, 5) : []
     const name = String(body.assigneeName || '').slice(0, 120)
+    // NEVER ASSIGN (lib/never-assign): refused with the reason, nothing saved.
+    const refusal = await neverAssignRefusal({ ids })
+    if (refusal) return NextResponse.json({ error: refusal }, { status: 400 })
     let breezeway = false
     if (taskId && breezewayConfigured()) { try { const r = await updateBreezewayTask(taskId, { assignments: ids }); breezeway = !!r.ok } catch { breezeway = false } }
     details.assigneeIds = ids; details.assigneeName = name || null

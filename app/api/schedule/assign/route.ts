@@ -10,6 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadIntel, renderIntel, INTEL_STRIP_RE, type IntelCtx } from '@/lib/listingIntel'
 import { requireLevel } from '@/lib/access'
 import { bustOpsDay } from '@/lib/ops-day'
+import { neverAssignRefusal } from '@/lib/never-assign'
 
 // STAY INTEL now lives in lib/listingIntel.ts and is written FOR THE CLEANER: the deadline, how
 // long the stay that just ended was, what guests keep saying about this unit, and what the last
@@ -33,6 +34,10 @@ async function handlePost(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   const items = Array.isArray(body?.items) ? body.items.slice(0, 80) : []
   if (!items.length) return NextResponse.json({ error: 'No assignments to push.' }, { status: 400 })
+  // NEVER ASSIGN (lib/never-assign): the whole push is refused before anything is written, so a
+  // board with one bad pick is fixed and re-pushed rather than half-applied.
+  const refusal = await neverAssignRefusal({ ids: items.flatMap((it: any) => (Array.isArray(it?.assigneeIds) ? it.assigneeIds : [])) })
+  if (refusal) return NextResponse.json({ error: refusal }, { status: 400 })
 
   const results: { listingId: string; date: string; ok: boolean; taskId?: string; error?: string }[] = []
   // ONE context load for the whole push. Best-effort: if it fails, the push still happens, just

@@ -262,8 +262,11 @@ async function worthKnowing(ids: Set<string> | null, today: string, unitName: (l
 async function assignablePeople(scopeWords: string[]) {
   try {
     const { listBreezewayPeople } = await import('./breezeway')
-    const people = await listBreezewayPeople()
+    let people = await listBreezewayPeople()
     if (!people.length) return []
+    // NEVER ASSIGN (lib/never-assign): the board's picker never offers them, and the add route only
+    // assigns ids that are on this list — so they cannot be assigned from a field board at all.
+    try { const { neverAssignGuard } = await import('./never-assign'); people = (await neverAssignGuard()).keepPeople(people) } catch { /* lib/breezeway strips them at write time */ }
     // Who is on shift right now — those names float to the top of the picker.
     let onShift: string[] = []
     try {

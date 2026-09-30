@@ -43,6 +43,8 @@ export async function PUT(req: NextRequest) {
     // "the box unticks itself the moment you press Save."
     lowReviews: c.lowReviews !== false,
     lowReviewMax: num(c.lowReviewMax, d.lowReviewMax, 1, 4),
+    // Named for the same reason as the two above: forget it here and the box unticks itself on Save.
+    arrivalFeedback: c.arrivalFeedback !== false,
     assignAlways: nm(c.assignAlways, d.assignAlways),
     supervisors: {
       Miami: nm(c.supervisors?.Miami, d.supervisors.Miami),

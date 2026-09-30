@@ -8,6 +8,7 @@ import { createBreezewayTask, updateBreezewayTask, retrieveBreezewayTask } from 
 import { buildIntel, intelKindFor, INTEL_STRIP_RE } from '@/lib/listingIntel'
 import { requireLevel } from '@/lib/access'
 import { bustBoards } from '@/lib/bust'
+import { neverAssignRefusal } from '@/lib/never-assign'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -15,6 +16,25 @@ export const maxDuration = 30
 const DEPTS = ['housekeeping', 'inspection', 'maintenance', 'safety']
 const PRIOS = ['urgent', 'high', 'normal', 'low']
 function todayET(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) }
+
+// THE AUTOMATION ALREADY HAS THIS ONE (Jon, 2026-09-30: quality inspections are auto-generated).
+// The manual buttons (reviews dashboard, a review row, the review action board, Today with the
+// automation off) stay as optional tools — but a unit whose automatic inspection is still open does
+// not get a second one: the answer says which task already covers it. `force: true` overrides.
+const INSPECTION_TITLE = /quality inspection|pre-arrival inspection/i
+async function openAutoInspection(db: any, listingId: string): Promise<{ taskId: string; date: string; reason: string } | null> {
+  const { data: rows } = await db.from('auto_inspections').select('task_id, reason, check_in')
+    .eq('listing_id', listingId).not('task_id', 'is', null).order('check_in', { ascending: false }).limit(20)
+  const ids = ((rows || []) as any[]).map(r => String(r.task_id))
+  if (!ids.length) return null
+  const { data: ts } = await db.from('breezeway_tasks_sync').select('id, status, finished_at, scheduled_date').in('id', ids)
+  for (const t of ((ts || []) as any[])) {
+    if (t.finished_at || /complet|finish|close|approv|cancel|delet|void/i.test(String(t.status || ''))) continue
+    const row = ((rows || []) as any[]).find(r => String(r.task_id) === String(t.id)) || {}
+    return { taskId: String(t.id), date: String(t.scheduled_date || row.check_in || '').slice(0, 10), reason: String(row.reason || 'automatic') }
+  }
+  return null
+}
 
 // THE ANNUAL AUDIT CARRIES ITS LINK — and only that one.
 //
@@ -64,6 +84,19 @@ async function handlePost(req: NextRequest) {
     const priority = PRIOS.indexOf(String(body?.priority)) >= 0 ? String(body.priority) : 'normal'
     const date = /^\d{4}-\d{2}-\d{2}$/.test(String(body?.date || '')) ? String(body.date) : todayET()
     const db = supabaseAdmin()
+    // NEVER-ASSIGN (lib/never-assign): refused before anything is created, so a refusal leaves no
+    // half-made task behind.
+    const wantIds = (Array.isArray(body?.assigneeIds) ? body.assigneeIds : []).map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
+    const refusal = await neverAssignRefusal({ ids: wantIds })
+    if (refusal) return NextResponse.json({ ok: false, error: refusal }, { status: 400 })
+    if (department === 'inspection' && INSPECTION_TITLE.test(title) && body?.force !== true) {
+      let open: Awaited<ReturnType<typeof openAutoInspection>> = null
+      try { open = await openAutoInspection(db, listingId) } catch { open = null }   // unreadable: the button works as before
+      if (open) return NextResponse.json({
+        ok: false, duplicateOf: open.taskId,
+        error: 'Already covered — the automatic inspection #' + open.taskId + ' (' + open.reason + ') is open on this unit for ' + open.date + '. No second one was created.',
+      }, { status: 409 })
+    }
     // ONLY the annual quality audit. Callers can force it with auditLink:true; otherwise the title
     // has to actually name the annual audit — "Unit Check" and "Guest-feedback inspection" must not
     // mint an audit link.
@@ -102,7 +135,7 @@ async function handlePost(req: NextRequest) {
     // The names Breezeway confirms, in the shape the board reads ({id,name}) — see the write-through
     // below and /api/breezeway/assign, which has done it this way since it was written.
     let people: { id: any; name: string | null }[] = []
-    const ids = (Array.isArray(body?.assigneeIds) ? body.assigneeIds : []).map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
+    const ids = wantIds
     if (ids.length) {
       assigned = false
       try {

@@ -116,11 +116,14 @@ export function planText(day: Day): string {
 }
 
 // ── hourly: the chase ───────────────────────────────────────────────────────────────────────────
-/** For an unassigned task: the person from the same department already working in that building today. */
-export function candidateFor(t: Task, day: Day): string | null {
+/**
+ * For an unassigned task: the person from the same department already working in that building today.
+ * `blocked` is the never-assign list (lib/never-assign) — such a person is never the one proposed.
+ */
+export function candidateFor(t: Task, day: Day, blocked: (name: string) => boolean = () => false): string | null {
   const same = day.tasks.filter(x => x.id !== t.id && x.people.length && x.building && x.building === t.building && (x.dept === t.dept || (t.dept === 'other')))
   const load: Record<string, number> = {}
-  for (const x of same) for (const p of x.people) load[p] = (load[p] || 0) + 1
+  for (const x of same) for (const p of x.people) if (!blocked(p)) load[p] = (load[p] || 0) + 1
   const ranked = Object.keys(load).sort((a, b) => load[a] - load[b])   // the least loaded person already there
   return ranked[0] || null
 }
@@ -181,7 +184,10 @@ export async function runOpsDesk(opts: { force?: 'plan' | 'recap' | 'chase'; pre
       const plan = r.lastPlan
       if (r.ready && plan && plan.date === today) {
         const unowned = day.tasks.filter(t => t.clean && !t.done && !t.people.length)
-        const lines = unowned.map(t => { const who = plan.assign[`${t.listing}__${today}`]; return who ? `  – ${shortUnit(t.unit)} → ${who}` : null }).filter(Boolean) as string[]
+        // A plan stored before someone joined the never-assign list must not propose them either.
+        let never: (name: string) => boolean = () => false
+        try { const { neverAssignGuard } = await import('@/lib/never-assign'); const g = await neverAssignGuard(); if (g.active) never = (n: string) => g.blocks(n) } catch { /* the executor still refuses them */ }
+        const lines = unowned.map(t => { const who = plan.assign[`${t.listing}__${today}`]; return who && !never(who) ? `  – ${shortUnit(t.unit)} → ${who}` : null }).filter(Boolean) as string[]
         if (lines.length) text += `\n*My suggested assignments for the unowned cleans* (shadow scorecard ${r.wins}/${r.scored} — nothing is assigned without a ✅)\n${lines.slice(0, 10).join('\n')}`
       }
     } catch { /* the plan stands on its own */ }
@@ -195,7 +201,9 @@ export async function runOpsDesk(opts: { force?: 'plan' | 'recap' | 'chase'; pre
     // are now ONE proposal (one line each; one yes carries them all out, one undo puts them all back),
     // and it counts as one ask.
     const picks: { t: Task; who: string }[] = []
-    for (const t of targets) { const who = candidateFor(t, day); if (who) picks.push({ t, who }) }
+    let blocked: (name: string) => boolean = () => false
+    try { const { neverAssignGuard } = await import('@/lib/never-assign'); const g = await neverAssignGuard(); if (g.active) blocked = (n: string) => g.blocks(n) } catch { /* the executor still refuses them */ }
+    for (const t of targets) { const who = candidateFor(t, day, blocked); if (who) picks.push({ t, who }) }
     if (picks.length) {
       const one = picks.length === 1
       const lines = picks.map(p => `"${p.t.name.replace(/^\[[^\]]*\]\s*/, '').slice(0, 60)}" on ${shortUnit(p.t.unit)} to ${p.who}`)

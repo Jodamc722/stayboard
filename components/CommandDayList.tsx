@@ -36,7 +36,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import {
   RefreshCw, ExternalLink, UserPlus, Loader2, Check, X, AlertTriangle, ChevronDown, ChevronRight,
-  Send, Copy, Circle, Plus, MapPin, CalendarDays, ClipboardCheck, Star, Sparkles,
+  Send, Copy, Circle, Plus, MapPin, CalendarDays, ClipboardCheck, Star, Sparkles, Settings2,
 } from 'lucide-react'
 import { LeanHead, Pill, Tag, IconBtn, Tip, type Tone as LeanTone } from '@/components/lean'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
@@ -692,7 +692,12 @@ function FixRow({ item: i, roster, onCleared, onChanged }: { item: NextItem; ros
     <Row sev={i.severity} title={i.unit + ' — ' + i.title} tags={tags} meta={meta} note={note} err={err}
       onTap={i.evidence ? () => setQuote(q => !q) : undefined} expanded={quote}
       primary={primary}
-      secondary={<IconBtn title="Mark done — counts as cleared here" tone="ok" onClick={markDone} disabled={busy}><Check size={15} /></IconBtn>}>
+      secondary={<>
+        {/* An inspection row only exists when Task automation is off — this is where to switch it on. */}
+        {(i.kind === 'inspection' || i.kind === 'feedback') && i.href && a?.type !== 'open'
+          ? <IconBtn title="Automate inspections — Admin → Users & admin → Settings → Task automation" href={i.href}><Settings2 size={14} /></IconBtn> : null}
+        <IconBtn title="Mark done — counts as cleared here" tone="ok" onClick={markDone} disabled={busy}><Check size={15} /></IconBtn>
+      </>}>
       {quote && i.evidence && (
         <p className="text-[12px] text-ink/70 italic mt-1 ml-3.5 leading-snug border-l-2 border-line pl-2">
           <Star size={10} className="inline -mt-0.5 mr-0.5 not-italic" />&ldquo;{i.evidence.quote}&rdquo; <span className="not-italic text-muted">— {i.evidence.channel}{i.evidence.date ? ' · ' + i.evidence.date : ''}</span>

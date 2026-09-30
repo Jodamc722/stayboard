@@ -1300,8 +1300,15 @@ async function pickAssignee(order: OrderRow, date: string): Promise<Assignee> {
   if (!names.length && sup) { names = [sup]; note = 'no clean on the unit that day — market supervisor' }
   // the supervisor rides along on every order, whoever delivers it
   if (sup && names.indexOf(sup) < 0) names.push(sup)
+  // NEVER ASSIGN (lib/never-assign, Jon 2026-09-30): nobody on the list delivers an order.
+  let blockedId: (id: number) => boolean = () => false
+  try {
+    const { neverAssignGuard } = await import('./never-assign')
+    const g = await neverAssignGuard()
+    if (g.active) { names = g.keepNames(names); blockedId = (id: number) => g.ids.has(id) }
+  } catch { /* lib/breezeway strips them at write time */ }
   const ids: number[] = []
-  for (const n of names) { try { const id = await matchBreezewayPerson(n); if (id && ids.indexOf(id) < 0) ids.push(id) } catch { /* unmatched name stays a name */ } }
+  for (const n of names) { try { const id = await matchBreezewayPerson(n); if (id && ids.indexOf(id) < 0 && !blockedId(id)) ids.push(id) } catch { /* unmatched name stays a name */ } }
   return { names, ids, note: note || 'no one found — unassigned' }
 }
 

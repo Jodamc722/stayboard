@@ -53,6 +53,11 @@ export async function assignVendorTasks(opts: { dryRun?: boolean } = {}): Promis
     const ids = listings.filter(l => re.test([l.building, l.nickname, l.title].filter(Boolean).join(' '))).map(l => String(l.id))
     const row = { label: v.label, assignTo: String(v.assignTo), personId: person ? person.id : null, units: ids.length, open: 0, assigned: 0, alreadyStaffed: 0, failed: 0, staffedBy: {} } as VendorAssignRun['vendors'][number]
     if (!person) { row.error = `No Breezeway person matches "${v.assignTo}".`; out.vendors.push(row); continue }
+    // NEVER ASSIGN (lib/never-assign): a vendor account put on the list is not handed anything.
+    try {
+      const { neverAssignGuard } = await import('@/lib/never-assign')
+      if ((await neverAssignGuard()).blocks(person)) { row.error = `"${v.assignTo}" is on the never-assign list — nothing assigned.`; out.vendors.push(row); continue }
+    } catch { /* lib/breezeway strips them at write time */ }
     if (!ids.length) { out.vendors.push(row); continue }
 
     const tasks: any[] = []

@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, createBreezewayTask, normalizeTaskStatus } from '@/lib/breezeway'
+import { neverAssignRefusal } from '@/lib/never-assign'
 import { requireLevel } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
@@ -53,6 +54,9 @@ export async function POST(req: NextRequest) {
   const severity = String(body?.severity || 'medium').toLowerCase()
   const owner = String(body?.owner || '').trim()
   const assigneeIds = (Array.isArray(body?.assigneeIds) ? body.assigneeIds : []).map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
+  // NEVER ASSIGN (lib/never-assign): refused before the preview or the push.
+  const refusal = await neverAssignRefusal({ ids: assigneeIds })
+  if (refusal) return NextResponse.json({ error: refusal }, { status: 400 })
   if (!listingId || !issueTitle) return NextResponse.json({ error: 'listingId and issueTitle required' }, { status: 400 })
 
   const explicitDept = String(body?.department || '').toLowerCase().trim()

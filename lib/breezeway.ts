@@ -8,6 +8,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { fetchWithTimeout, retryAfterMs, isTimeout } from '@/lib/fetch-timeout'
 // lib/bust imports only next/cache, so this is not a cycle (ops-day → breezeway would otherwise be one).
 import { bustBoards } from '@/lib/bust'
+// Pure (no imports) — the matcher and the refusal sentence; the list itself is read lazily below.
+import { neverAssignMessage } from '@/lib/never-assign-match'
 
 const AUTH = process.env.BREEZEWAY_AUTH_URL || 'https://api.breezeway.io/public/auth/v1'
 const BASE = process.env.BREEZEWAY_BASE_URL || 'https://api.breezeway.io/public/inventory/v1'
@@ -142,9 +144,31 @@ export function mapBreezewayTask(t: any) {
 // Ops, the Command Center and the Scheduler cache under 'day' / 'schedule', and a write that never
 // busts them reads back as "nothing happened" until the cache runs out. Best-effort, never throws.
 export async function createBreezewayTask(body: Record<string, any>): Promise<{ ok: boolean; status: number; data: any; text: string }> {
+  // THE LAST LINE OF THE NEVER-ASSIGN LIST (lib/never-assign): whatever path built this body, a
+  // person on the list is taken out of `assignments`. Nobody left = the task is created unassigned.
+  if (Array.isArray(body?.assignments) && body.assignments.length) {
+    const kept = await withoutNeverAssign(body.assignments)
+    if (kept.dropped) { body = { ...body }; if (kept.ids.length) body.assignments = kept.ids; else delete body.assignments }
+  }
   const r = await bzApi('/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   if (landed(r)) bustBoards()
   return r
+}
+
+/**
+ * `assignments` without anyone on the never-assign list. Ids or {id|assignee_id} objects in, the
+ * same shape out. Loaded lazily (lib/never-assign imports this file); fails open to the input,
+ * because a settings blip must not stop the day's work being assigned.
+ */
+async function withoutNeverAssign(assignments: any[]): Promise<{ ids: any[]; dropped: number }> {
+  try {
+    const { neverAssignGuard } = await import('@/lib/never-assign')
+    const g = await neverAssignGuard()
+    if (!g.active) return { ids: assignments, dropped: 0 }
+    const idOf = (a: any) => Number(a && typeof a === 'object' ? (a.assignee_id ?? a.id) : a)
+    const ids = assignments.filter(a => !g.ids.has(idOf(a)))
+    return { ids, dropped: assignments.length - ids.length }
+  } catch { return { ids: assignments, dropped: 0 } }
 }
 
 // TASK TEMPLATES — the formats our team actually works to (preventative maintenance, field
@@ -271,6 +295,20 @@ export async function listBreezewayPeople(): Promise<{ id: number; name: string;
 export async function updateBreezewayTask(taskId: string | number, body: Record<string, any>): Promise<{ ok: boolean; status: number; data: any; text: string }> {
   // PATCH is the documented update method. `assignments` is a full array of person IDs and REPLACES
   // the task's current assignees (override, not append) — so re-pushing a different cleaner swaps them.
+  // NEVER-ASSIGN (lib/never-assign): a person on the list is taken out. If that leaves nobody when
+  // somebody was asked for, the assignment is refused rather than sent as [] — an empty array would
+  // UNASSIGN whoever is on the task now. Any other field in the same call still goes through.
+  if (Array.isArray(body?.assignments) && body.assignments.length) {
+    const kept = await withoutNeverAssign(body.assignments)
+    if (kept.dropped) {
+      body = { ...body }
+      if (kept.ids.length) body.assignments = kept.ids
+      else {
+        delete body.assignments
+        if (!Object.keys(body).length) return { ok: false, status: 400, data: null, text: neverAssignMessage([]) }
+      }
+    }
+  }
   const r = await bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   if (landed(r)) bustBoards()
   return r

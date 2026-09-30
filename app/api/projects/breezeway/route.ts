@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { listBreezewayPeople, listBreezewayTemplates } from '@/lib/breezeway'
+import { neverAssignGuard } from '@/lib/never-assign'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,9 +15,11 @@ export async function GET() {
     listBreezewayPeople().catch(() => []),
     listBreezewayTemplates().catch(() => []),
   ])
+  // NEVER ASSIGN (lib/never-assign): the board's Breezeway picker never offers them.
+  const guard = await neverAssignGuard().catch(() => null)
   return NextResponse.json({
     ok: true,
-    people: people.map(p => ({ id: p.id, name: p.name, departments: p.departments, region: p.region })).sort((a, b) => a.name.localeCompare(b.name)),
+    people: (guard ? guard.keepPeople(people) : people).map(p => ({ id: p.id, name: p.name, departments: p.departments, region: p.region })).sort((a, b) => a.name.localeCompare(b.name)),
     templates: templates.map(t => ({ id: t.id, name: t.name, department: t.department })),
   })
 }
