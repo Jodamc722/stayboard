@@ -22,7 +22,7 @@ type Need = {
   what: { label: string; text: string }[]; why: string; evidence: string[]; links: Link[]
   reservationId: string | null; listingId: string | null; unit: string | null
   urgency: 'now' | 'today' | 'week' | 'later'; urgencyWhy: string; filedAt: string
-  group: { key: string; label: string } | null; by: string; status: string; loopKind?: string; owner?: string | null
+  group: { key: string; label: string } | null; by: string; status: string; loopKind?: string; owner?: string | null; dupes?: string[]
 }
 type Step = { key: string; label: string; state: 'done' | 'missing' | 'waiting' | 'na'; detail: string }
 type Issue = {
@@ -108,6 +108,10 @@ export function NeedsTab({ isAdmin, canEdit, extras, onCount }: { isAdmin: boole
       const r = n.source === 'loop'
         ? await fetch('/api/loops', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: n.id, action: op }) }).then(x => x.json())
         : await fetch('/api/eve/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, id: n.id }) }).then(x => x.json())
+      // The older copies of the same proposal are superseded either way — decline them quietly.
+      if (r?.ok && n.source === 'proposal' && n.dupes?.length) {
+        for (const d of n.dupes) { try { await fetch('/api/eve/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'reject', id: d }) }) } catch { /* fine */ } }
+      }
       if (r?.ok) { setGone(g => ({ ...g, [n.id]: true })); setNote(op === 'approve' ? 'Done — ' + n.title : op === 'reject' ? 'Declined.' : op === 'close' ? 'Closed.' : 'Dismissed.') }
       else setNote(r?.error || r?.message || 'Could not do that.')
     } catch (e: any) { setNote(String(e?.message || e)) }
@@ -169,6 +173,7 @@ function NeedRow({ n, isAdmin, canEdit, busy, act }: { n: Need; isAdmin: boolean
         {n.urgencyWhy ? <Tag tone={n.urgency === 'now' ? 'rose' : 'slate'}>{n.urgencyWhy}</Tag> : null}
         {n.reservationId ? <Tag tone="brand">booking linked</Tag> : null}
         {n.status === 'undeliverable' ? <Tag tone="rose">approver never told</Tag> : null}
+        {n.dupes?.length ? <Tag tone="slate" title="She filed this same thing more than once; deciding this one clears the copies">filed {n.dupes.length + 1}×</Tag> : null}
       </>}
       actions={<>
         {primary ? <IconBtn title={'Open ' + primary.label} href={primary.href}><ExternalLink size={14} /></IconBtn> : null}

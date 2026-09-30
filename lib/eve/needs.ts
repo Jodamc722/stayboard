@@ -46,6 +46,8 @@ export type Need = {
   /** loops only */
   loopKind?: string
   owner?: string | null
+  /** Older copies of the same proposal — declined along with this one when it is decided. */
+  dupes?: string[]
 }
 
 const ACTION_VERB: Record<string, string> = {
@@ -125,6 +127,20 @@ export async function loadNeeds(): Promise<{ needs: Need[]; partial: boolean }> 
     glitchIds.size ? db.from('glitches').select('id,status,listing_id,reservation_id,overview').in('id', Array.from(glitchIds).slice(0, 200))
       .then(({ data }: any) => { for (const g of data || []) glitchInfo[str(g.id)] = { status: str(g.status), listingId: str(g.listing_id), reservationId: g.reservation_id ? str(g.reservation_id) : null, overview: str(g.overview) } }, () => { partial = true }) : null,
   ])
+  // The last real host message per thread — a draft reply is out of date once someone answered.
+  const lastHost: Record<string, string> = {}
+  if (convIds.size) {
+    try {
+      const { data } = await db.from('guesty_messages').select('conversation_id,sent_at,module,is_automated').in('conversation_id', Array.from(convIds).slice(0, 200))
+        .eq('sender', 'host').gte('sent_at', new Date(now - 14 * 86400000).toISOString()).limit(3000)
+      for (const m of (data as any[]) || []) {
+        if (['log', 'note', 'notes', 'internal', 'internal_note', 'activity', 'system'].indexOf(str(m.module).toLowerCase()) >= 0 || m.is_automated === true) continue
+        const c = str(m.conversation_id); if (!lastHost[c] || str(m.sent_at) > lastHost[c]) lastHost[c] = str(m.sent_at)
+      }
+    } catch { partial = true }
+  }
+  const etDay = (iso: string) => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(iso)) } catch { return iso.slice(0, 10) } }
+  const todayEt = etDay(new Date(now).toISOString())
   if (listingIds.size) {
     try {
       const { data } = await db.from('guesty_listings').select('id,nickname,title').in('id', Array.from(listingIds).slice(0, 300))
@@ -202,6 +218,19 @@ export async function loadNeeds(): Promise<{ needs: Need[]; partial: boolean }> 
     }
     if (!urgencyWhy && /arrives (today|tomorrow)/i.test(summary)) { urgency = /today/i.test(summary) ? 'now' : 'today'; urgencyWhy = 'guest arrives ' + (/today/i.test(summary) ? 'today' : 'tomorrow') }
 
+    // THE NO-CALL FLAGS come in dozens (a note and a Slack post per arriving guest): one batch each.
+    if (!group && /no welcome call/i.test(summary) && (action === 'task_note' || action === 'slack_post')) {
+      group = { key: 'nocall:' + action, label: action === 'task_note' ? 'Task notes — guests arriving with no welcome call' : 'Slack flags — guests arriving with no welcome call' }
+    }
+    // OUT OF DATE (2026-09-30): a proposal whose moment has passed is not urgent, it is clutter —
+    // "arrives today" filed on an earlier day, or a draft reply to a guest someone has since answered.
+    const filedDay = etDay(str(r.created_at))
+    let stale = ''
+    if (/arrives today/i.test(summary) && filedDay < todayEt) stale = 'filed ' + filedDay.slice(5) + ' — that arrival has passed'
+    else if (/arrives tomorrow/i.test(summary) && filedDay < todayEt && etDay(new Date(Date.parse(str(r.created_at)) + 86400000).toISOString()) < todayEt) stale = 'filed ' + filedDay.slice(5) + ' — that arrival has passed'
+    else if ((action === 'guest_reply_draft') && conv && lastHost[conv] && lastHost[conv] > str(r.created_at)) stale = 'someone already replied to the guest ' + lastHost[conv].slice(5, 16).replace('T', ' ')
+    if (stale) { urgency = 'later'; urgencyWhy = stale; group = { key: 'stale', label: 'Out of date — the moment has passed' } }
+
     if (reservationId) links.unshift({ label: 'Booking', href: '/reservations/' + reservationId, kind: 'booking' }, { label: 'Guesty', href: 'https://app.guesty.com/reservations/' + reservationId + '/summary', kind: 'guesty' })
     if (taskId) links.push({ label: 'Breezeway task', href: 'https://app.breezeway.io/task/' + taskId, kind: 'task' })
     if (listingId) links.push({ label: unit || 'Unit', href: '/listings/' + listingId, kind: 'unit' })
@@ -249,6 +278,20 @@ export async function loadNeeds(): Promise<{ needs: Need[]; partial: boolean }> 
     })
   }
 
+  // ONE PER THING: the watches re-file the same proposal each time they run (three drafts to one
+  // guest). Keep the newest per action + thread / task / unit + title; the older ones are dropped.
+  const seen = new Map<string, Need>()
+  const deduped: Need[] = []
+  for (const n of needs.slice().sort((a, b) => String(b.filedAt).localeCompare(String(a.filedAt)))) {
+    if (n.source !== 'proposal') { deduped.push(n); continue }
+    const thread = n.links.find(l => l.kind === 'thread')?.href || ''
+    const task = n.links.find(l => l.kind === 'task')?.href || ''
+    const key = n.action + '|' + (thread || task || (n.listingId || '') + '|' + n.title.toLowerCase())
+    const kept = seen.get(key)
+    if (kept) { (kept.dupes = kept.dupes || []).push(n.id); continue }
+    seen.set(key, n); deduped.push(n)
+  }
+  needs.length = 0; needs.push(...deduped)
   needs.sort((a, b) => RANK[a.urgency] - RANK[b.urgency] || (a.source === 'loop' ? -1 : 0) - (b.source === 'loop' ? -1 : 0) || String(b.filedAt).localeCompare(String(a.filedAt)))
   return { needs, partial }
 }
