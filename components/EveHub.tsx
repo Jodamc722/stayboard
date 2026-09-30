@@ -21,8 +21,21 @@ import { Sparkles, Check, X, HelpCircle, RefreshCw, ExternalLink, Loader2, Radar
 import { LeanHead, LeanTabs, LeanList, LeanRow, LeanSection, LeanEmpty, Tag, Pill, IconBtn } from '@/components/lean'
 import { OpenLoops } from '@/components/OpenLoops'
 import { openEve } from '@/components/EveFloat'
+import { NeedsTab, IssuesTab, DayTab, DesksTab } from '@/components/EveBrain'
 
-type TabKey = 'overview' | 'loops' | 'questions' | 'expectations'
+// WHAT EACH TAB IS, IN ONE LINE (Jon, 2026-09-30: "We need to better understand what each of those
+// things means in the tabs"). Shown under the tabs so nobody has to guess.
+const TAB_BLURB: Record<string, string> = {
+  overview: 'Decisions only a person can make. Open any row to see exactly what she will do, why, and links to the booking, guest thread, Breezeway task, glitch or Slack thread.',
+  issues: 'Every problem a guest raised, followed until it is fixed and the guest has heard back: reported → glitch → task → someone on it → started → fixed → guest told. Red is the missing step.',
+  loops: 'Things said in Slack she is keeping tabs on. She closes them herself when the matching task finishes or the guest is answered.',
+  questions: 'What she does not know yet. Your answer becomes her memory, with your name on it — this is how the team trains her.',
+  day: 'Everything she did, asked for, drafted or only noticed today — repeats folded together.',
+  expectations: 'What guests keep being surprised by (parking, fees, check-in…) and the listing or message copy that would fix it.',
+  desks: 'Her desks and night shift — whether each is on, and when it last actually ran.',
+}
+
+type TabKey = 'overview' | 'issues' | 'loops' | 'questions' | 'day' | 'expectations' | 'desks'
 type HotLoop = { id: string; kind: string; summary: string; unit: string | null; building: string | null; owner: string | null; urgent: boolean; late: boolean; hours: number; link: string; channel: string | null }
 
 type Overview = {
@@ -56,6 +69,8 @@ export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: 
   const [err, setErr] = useState('')
   const [qCount, setQCount] = useState<number | null>(null)
   const [xCount, setXCount] = useState<number | null>(null)
+  const [nCount, setNCount] = useState<number | null>(null)
+  const [iCount, setICount] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -65,13 +80,15 @@ export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: 
     } catch (e: any) { setErr(String(e?.message || e)) }
   }, [])
   useEffect(() => { load() }, [load])
+  // The Guest issues count shows on its tab before anyone opens it.
+  useEffect(() => { fetch('/api/eve/issues', { cache: 'no-store' }).then(x => x.json()).then(r => { if (r?.ok) setICount((r.issues || []).filter((i: any) => i.urgency !== 'done').length) }).catch(() => {}) }, [])
 
   // Deep links: /eve?tab=loops. Written back so a refresh lands on the same tab.
   useEffect(() => {
     try {
       const sp = new URLSearchParams(window.location.search)
       const t = sp.get('tab')
-      if (t === 'loops' || t === 'questions' || t === 'overview' || t === 'expectations') setTab(t)
+      if (t === 'loops' || t === 'questions' || t === 'overview' || t === 'expectations' || t === 'issues' || t === 'day' || t === 'desks') setTab(t)
     } catch { /* server */ }
   }, [])
   const pick = (t: TabKey) => {
@@ -81,20 +98,23 @@ export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: 
 
   const waiting = ov?.today.waiting.length || 0
   const hot = ov?.loops.top?.length || 0
-  const needsYou = waiting + hot + (qCount || 0) + (xCount || 0)
+  const needsYou = nCount != null ? nCount : waiting + hot
   const tabs = useMemo(() => ([
     { key: 'overview' as TabKey, label: 'Needs you', n: needsYou || null },
-    { key: 'loops' as TabKey, label: 'Open loops', n: ov?.loops.open || null },
+    { key: 'issues' as TabKey, label: 'Guest issues', n: iCount || null },
+    { key: 'loops' as TabKey, label: 'Watching', n: ov?.loops.open || null },
     { key: 'questions' as TabKey, label: 'Questions', n: qCount || null },
+    { key: 'day' as TabKey, label: 'Her day', n: null as number | null },
     { key: 'expectations' as TabKey, label: 'Expectations', n: xCount || null },
-  ]), [waiting, ov, qCount, xCount])
+    { key: 'desks' as TabKey, label: 'How she runs', n: null as number | null },
+  ]), [needsYou, iCount, ov, qCount, xCount])
 
   return (
     <div>
       <LeanHead title="Eve" icon={<Sparkles size={20} className="text-brand-600" />}>
         {ov ? (
           <>
-            <Pill tone={needsYou ? 'rose' : 'emerald'} title="Proposals waiting for a yes, loops that are urgent or late, questions and expectation notes — everything that needs a person" onClick={() => pick('overview')}>{needsYou ? `${needsYou} need you` : 'nothing needs you'}</Pill>
+            <Pill tone={needsYou ? 'rose' : 'emerald'} title="Proposals waiting for a yes, and Slack loops that are urgent or late" onClick={() => pick('overview')}>{needsYou ? `${needsYou} need you` : 'nothing needs you'}</Pill>
             <Pill tone={ov.thoughts.unseen ? 'sky' : 'slate'} title="What she would have done, and did not — Settings → Eve → Thinking"
               onClick={() => { window.location.href = '/users?tab=settings&panel=eve' }}>{ov.thoughts.unseen} unseen thoughts</Pill>
             <Pill tone={ov.agent.enabled ? 'emerald' : 'slate'} title={ov.agent.enabled ? 'Agent mode is on — she acts inside the fence set in Settings → Eve' : 'Agent mode is off — she observes and answers only'}>{ov.agent.enabled ? 'Agent on' : 'Agent off'}</Pill>
@@ -106,8 +126,18 @@ export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: 
       </LeanHead>
 
       <LeanTabs tabs={tabs} value={tab} onChange={pick} />
+      <p className="text-[12.5px] text-muted -mt-1.5 mb-3 px-1">{TAB_BLURB[tab]}</p>
 
-      {tab === 'overview' && <OverviewTab ov={ov} err={err} pick={pick} isAdmin={!!isAdmin} canEdit={canEdit} reload={load} />}
+      {tab === 'overview' && <NeedsTab isAdmin={!!isAdmin} canEdit={canEdit} onCount={setNCount} extras={
+        <div className="flex items-center gap-2 flex-wrap mt-1">
+          {qCount ? <button onClick={() => pick('questions')} className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[12.5px] font-semibold text-violet-800 hover:bg-violet-100"><HelpCircle size={13} /> {qCount} question{qCount === 1 ? '' : 's'} she needs answered</button> : null}
+          {xCount ? <button onClick={() => pick('expectations')} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[12.5px] font-semibold text-amber-800 hover:bg-amber-100"><MessageSquareWarning size={13} /> {xCount} expectation note{xCount === 1 ? '' : 's'}</button> : null}
+          {iCount ? <button onClick={() => pick('issues')} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[12.5px] font-semibold text-rose-800 hover:bg-rose-100">{iCount} open guest issue{iCount === 1 ? '' : 's'}</button> : null}
+        </div>
+      } />}
+      {tab === 'issues' && <IssuesTab onCount={setICount} />}
+      {tab === 'day' && <DayTab ov={ov} />}
+      {tab === 'desks' && <DesksTab ov={ov} />}
       {tab === 'loops' && (loopsLevel === 'off'
         ? <LeanEmpty>Open loops are switched off for your role. Ask Jon to turn them on in Users → Roles.</LeanEmpty>
         : <OpenLoops canEdit={loopsLevel === 'edit' || loopsLevel === 'full'} embedded />)}
