@@ -126,8 +126,9 @@ function fixLabel(i: NextItem): string {
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 export function CommandDayList() {
   const { data, loading, error, refresh } = useCachedFetch<CommandDay & { error?: string }>(DAY_URL, { ttl: 60_000, persist: true })
-  const { data: rosterRes } = useCachedFetch<{ people: Roster[] }>('/api/breezeway/people', { ttl: 10 * 60_000 })
-  const { data: vendorRes } = useCachedFetch<{ visits: VendorVisit[] }>('/api/projects/vendor-visits', { ttl: 120_000 })
+  // The day first, everything else behind it (2026-10-01, load time): these two used to race the day read.
+  const { data: rosterRes } = useCachedFetch<{ people: Roster[] }>(data ? '/api/breezeway/people' : null, { ttl: 10 * 60_000 })
+  const { data: vendorRes } = useCachedFetch<{ visits: VendorVisit[] }>(data ? '/api/projects/vendor-visits' : null, { ttl: 120_000 })
   const roster = useMemo(() => Array.isArray(rosterRes?.people) ? rosterRes!.people : [], [rosterRes])
   const vendorsOnSite = useMemo(() => (Array.isArray(vendorRes?.visits) ? vendorRes!.visits : []).filter(v => v.tone === 'today').length, [vendorRes])
   const [tick, setTick] = useState(0)

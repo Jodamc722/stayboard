@@ -541,7 +541,7 @@ function Lane({ area, items, focused, empty, right }: { area: Area; items: HubIt
   const shown = all ? list : list.slice(0, LANE_ROWS)
   const hidden = list.length - shown.length
   return (
-    <section id={'lane-' + area} className="scroll-mt-4 min-w-0 break-inside-avoid mb-5">
+    <section id={'lane-' + area} className="scroll-mt-4 min-w-0">
       <div className="px-1 mb-1.5 flex items-center gap-2 flex-wrap">
         <h2 className="text-[11px] font-bold uppercase tracking-wider text-ink inline-flex items-center gap-1.5" title={A.blurb}><A.Icon size={13} className="text-brand-600" /> {A.label}</h2>
         {items.length ? <span className="text-[11px] font-bold tabular-nums text-muted">{items.length}</span> : <span className="text-[11px] text-muted">— {empty}</span>}
@@ -698,7 +698,6 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
     { key: 'unpaid', area: 'admin', label: 'Unpaid', value: unpaid.length ? money(unpaidOwed) : '0', sub: unpaid.length ? unpaid.length + (unpaid.length === 1 ? ' stay' : ' stays') + (unpaidHot.length ? ' · ' + unpaidHot.length + ' to collect today' : ' · next 7 days') : 'direct / VRBO / Google all paid', tone: unpaidHot.length ? 'rose' : unpaid.length ? 'amber' : 'emerald', title: 'Money still owed by direct, VRBO and Google guests in house, arriving today or in the next 7 days — every other channel pays us itself' },
   ]
 
-  const lanes: Area[] = ['ops', 'guests', 'reviews', 'admin']
   const EMPTY: Record<Area, string> = { ops: 'every clean and inspection is covered', guests: 'nobody is waiting', reviews: 'nothing waiting on a reply', admin: 'nothing on your desk' }
   // One line of numbers per lane, from the same KPIs the tiles used to show.
   const laneStat = (a: Area): ReactNode => {
@@ -737,13 +736,20 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
           <button onClick={() => setFocus(null)} className="font-semibold text-brand-700 hover:underline">Show every lane</button>
         </div>
       )}
-      {/* Two columns that FLOW (2026-10-01, visual pass): a lane with nothing in it is one line, and the
-          lane under it moves up — the grid used to leave a hole beside an empty Reviews lane. */}
-      <div className={focus ? '' : 'lg:columns-2 lg:gap-5'}>
-        {lanes.filter(a => !focus || a === focus).map(a => (
-          <Lane key={a} area={a} items={items.filter(i => i.area === a)} focused={focus === a} empty={EMPTY[a]} right={laneStat(a)} />
-        ))}
-      </div>
+      {/* TWO FIXED COLUMNS that stack (2026-10-01, visual pass): Operations over Reviews on the left,
+          Guests over Admin on the right. Each lane holds its spot; an empty one is a single line and
+          the lane under it moves up — the old grid left a hole beside an empty Reviews lane. */}
+      {focus ? (
+        <Lane area={focus} items={items.filter(i => i.area === focus)} focused empty={EMPTY[focus]} right={laneStat(focus)} />
+      ) : (
+        <div className="grid gap-5 lg:grid-cols-2 items-start">
+          {[['ops', 'reviews'], ['guests', 'admin']].map((col, ci) => (
+            <div key={ci} className="space-y-5 min-w-0">
+              {(col as Area[]).map(a => <Lane key={a} area={a} items={items.filter(i => i.area === a)} focused={false} empty={EMPTY[a]} right={laneStat(a)} />)}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
