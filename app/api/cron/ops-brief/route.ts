@@ -15,6 +15,9 @@ import { setSetting } from '@/lib/app-settings'
 import { requireUser } from '@/lib/access'
 import { getSetting } from '@/lib/app-settings'
 import { buildOpsBrief, buildGmBrief, buildVendorBrief, VENDOR_GROUPS, type BriefVariant, type VendorGroup } from '@/lib/ops-brief'
+import { buildFieldRun } from '@/lib/briefs/field-run'
+import { buildOpsDesk } from '@/lib/briefs/ops-desk'
+import { buildMaintenanceRun, maintenanceTechs } from '@/lib/briefs/maintenance-run'
 import { asLang, type BriefLang } from '@/lib/brief-lang'
 import { sendGmail } from '@/lib/gmail-send'
 import { withRouteReceipt } from '@/lib/automation-runs'
@@ -31,10 +34,17 @@ type BriefCfg = {
   // THE CREW'S LANGUAGE, PER BRIEF (Jon, 2026-08-25). Only the field day sheets take one — Ops
   // Command and the GM brief are management documents and stay English.
   lang?: { miami?: string; broward?: string }
+  // ONE ROLE, ONE EMAIL (Jon, 2026-10-01). miami/broward now feed the Field Runs, full the Ops
+  // Desk (keys kept so no list was lost). `techs` is the Maintenance Run — one email per
+  // technician, in that person's language; `maint` gets the combined run (Roberto).
+  techs?: Record<string, { to: string[]; lang?: string }>
+  maint?: string[]
 }
 
 // One builder for every variant, so preview / test / cron can never drift apart.
-const build = (v: BriefVariant, lang: BriefLang = 'en') => v === 'GM' ? buildGmBrief() : buildOpsBrief(v, lang)
+// The new briefs behind the old variant names: Miami/Broward → Field Run, full → Ops Desk. The
+// classic renderers stay reachable as ?preview=classic-Miami etc. for a side-by-side.
+const build = (v: BriefVariant, lang: BriefLang = 'en') => v === 'GM' ? buildGmBrief() : v === 'full' ? buildOpsDesk() : buildFieldRun(v, lang)
 const langFor = (cfg: BriefCfg, v: BriefVariant): BriefLang =>
   v === 'Miami' ? asLang(cfg.lang?.miami) : v === 'Broward' ? asLang(cfg.lang?.broward) : 'en'
 const ALL_VARIANTS: BriefVariant[] = ['Miami', 'Broward', 'full', 'GM']
@@ -96,7 +106,23 @@ async function send(req: NextRequest) {
       const vb = await buildVendorBrief(vg.key)
       return new NextResponse(vb.html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
     }
-    const v = ALL_VARIANTS.find(x => x.toLowerCase() === preview.toLowerCase()) || 'full'
+    const pv = preview.toLowerCase()
+    const lang = asLang(sp.get('lang') || '')
+    if (pv.startsWith('classic-')) {
+      const cv = ALL_VARIANTS.find(x => x.toLowerCase() === pv.slice(8)) || 'full'
+      const cb = cv === 'GM' ? await buildGmBrief() : await buildOpsBrief(cv, sp.get('lang') ? lang : langFor(cfg, cv))
+      return new NextResponse(cb.html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+    }
+    if (pv === 'maint' || pv === 'maintenance') {
+      const mb = await buildMaintenanceRun('all', lang)
+      return new NextResponse(mb.html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+    }
+    if (pv.startsWith('maint:')) {
+      const mb = await buildMaintenanceRun(preview.slice(6), lang)
+      return new NextResponse(mb.html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+    }
+    if (pv === 'techs') return NextResponse.json({ techs: await maintenanceTechs(), configured: Object.keys(cfg.techs || {}) })
+    const v = pv === 'ops' || pv === 'desk' ? 'full' : pv === 'field-miami' ? 'Miami' : pv === 'field-broward' ? 'Broward' : ALL_VARIANTS.find(x => x.toLowerCase() === pv) || 'full'
     // ?lang=es previews the Spanish copy without saving the setting.
     const b = await build(v, asLang(sp.get('lang') || langFor(cfg, v)))
     return new NextResponse(b.html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
@@ -162,6 +188,29 @@ async function send(req: NextRequest) {
       out.push({ variant: v, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
     } catch (e: any) {
       out.push({ variant: v, to: to.length, sent: false, error: 'build failed: ' + String(e?.message || e) })
+    }
+  }
+  // Maintenance Run — one email per technician, in that person's language; the combined run to `maint`.
+  const techCfg = cfg.techs || {}
+  for (const name of Object.keys(techCfg)) {
+    const to = (techCfg[name]?.to || []).filter(Boolean)
+    const key = 'maint:' + name
+    if (onlyList.length && !wanted(key) && !wanted('maint')) { out.push({ variant: key, skipped: 'not in ?only' }); continue }
+    if (!to.length) { out.push({ variant: key, skipped: 'no recipients' }); continue }
+    try {
+      const b = await buildMaintenanceRun(name, asLang(techCfg[name]?.lang))
+      const r = await sendGmail({ fromEmail, to, cc: ccFor(to), subject: b.subject, html: b.html })
+      out.push({ variant: key, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
+    } catch (e: any) { out.push({ variant: key, to: to.length, sent: false, error: 'build failed: ' + String(e?.message || e) }) }
+  }
+  if (!onlyList.length || wanted('maint')) {
+    const to = (cfg.maint || []).filter(Boolean)
+    if (to.length) {
+      try {
+        const b = await buildMaintenanceRun('all', 'en')
+        const r = await sendGmail({ fromEmail, to, cc: ccFor(to), subject: b.subject, html: b.html })
+        out.push({ variant: 'maint', to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
+      } catch (e: any) { out.push({ variant: 'maint', to: to.length, sent: false, error: 'build failed: ' + String(e?.message || e) }) }
     }
   }
   // Vendor briefs — external companies, so each group only ever sees its own buildings.

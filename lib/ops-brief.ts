@@ -59,7 +59,15 @@ export type OpsBrief = {
 }
 
 // ---------------------------------------------------------------- data
-async function gather(variant: BriefVariant) {
+/** The lines of a reservation note worth a field crew's attention — never Lighthouse's own labels. */
+export function fieldNoteForCrew(note: string): string {
+  return String(note || '').split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(l => l && !/^\[\d{4}-\d{2}-\d{2}\]\s*(Guest sentiment:|Auto-flagged Sensitive)/i.test(l))
+    .slice(-2).join(' · ')
+}
+
+export async function gather(variant: BriefVariant) {
   const db = supabaseAdmin()
   const today = ymdET(new Date())
   const presets = await getOpsPresets()
@@ -346,7 +354,10 @@ async function gather(variant: BriefVariant) {
     if (str(r.check_in).slice(0, 10) !== today) continue
     // Live stays only — a cancelled booking's note must not attach to the real guest's row.
     if (!isLiveStay(r.status)) continue
-    const note = cfVal(r.custom_fields, RES_NOTES_FIELD)
+    // ONLY THE LINES A CREW ACTS ON (2026-10-01). The notes field also carries Lighthouse's own
+    // sentiment labels and auto-flags; they are for the office, and printing "Guest sentiment:
+    // Neutral" on a cleaner's row was noise. Keep the newest human/call lines, drop the labels.
+    const note = fieldNoteForCrew(cfVal(r.custom_fields, RES_NOTES_FIELD))
     if (note) arrivalNotes[String(r.listing_id)] = note.replace(/\s+/g, ' ').slice(0, 180)
   }
 
@@ -538,7 +549,7 @@ type ReviewInspection = {
   unit_name: string; guest_name: string; reason: string; market: string
   check_in: string; task_id: string | null; assignees: string[]; status: string | null
 }
-async function lowReviewInspections(): Promise<ReviewInspection[]> {
+export async function lowReviewInspections(): Promise<ReviewInspection[]> {
   const db = supabaseAdmin()
   const { data } = await db.from('auto_inspections').select('*')
     .like('reservation_id', 'rev:%').order('check_in', { ascending: true }).limit(60)
@@ -559,7 +570,7 @@ async function lowReviewInspections(): Promise<ReviewInspection[]> {
 }
 
 /** "Thu, Aug 14" — the human form of a YYYY-MM-DD, for card datelines. */
-function niceDay(ymd: string): string {
+export function niceDay(ymd: string): string {
   try {
     return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' })
       .format(new Date(ymd + 'T12:00:00Z'))
@@ -1811,7 +1822,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
 // Counts the last 7 closed days: checkouts vs departure cleans actually closed (paperwork
 // compliance, non-vendor, kindOfTask decides), owner-billable charges entered (billingMonth, the
 // invoice engine), and cleaners on cleans with no Homebase timecard (audited weeks only).
-async function weekCompliance(): Promise<{
+export async function weekCompliance(): Promise<{
   winFrom: string; winTo: string
   winCheckouts: number; winBzClosed: number
   totalBillable: number; billableKnown: boolean
