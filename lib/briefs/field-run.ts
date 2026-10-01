@@ -54,7 +54,12 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   const arrivals: any[] = (sheet.arrivals || []).slice().sort((a: any, b: any) => str(a.checkInTime).localeCompare(str(b.checkInTime)) || str(a.unit).localeCompare(str(b.unit)))
   const departures: any[] = sheet.departures || []
   const ownerStays: any[] = sheet.ownerStays || []
-  const glitches: any[] = (sheet.glitches || []).filter((g: any) => !/done|resolved|closed/i.test(str(g.status)))
+  // Glitches are not market-scoped by the day sheet; keep the ones on a unit this market's sheet knows.
+  const marketLids = new Set<string>()
+  for (const rows of [sheet.work, sheet.arrivals, sheet.departures, sheet.vacants, sheet.ownerStays]) for (const r of (Array.isArray(rows) ? rows : [])) if (r?.listingId) marketLids.add(str(r.listingId))
+  for (const c of d.cleans as any[]) marketLids.add(str(c.lid))
+  for (const o of d.hkOther as any[]) marketLids.add(str(o.lid))
+  const glitches: any[] = (sheet.glitches || []).filter((g: any) => !/done|resolved|closed/i.test(str(g.status)) && (!g.listing_id || marketLids.has(str(g.listing_id))))
   const exceptions: any[] = (sheet.exceptions || []).filter((e: any) => e.severity === 'high')
   const unassigned = cleans.filter(c => /UNASSIGNED/.test(c.assignee))
   const sameDay = cleans.filter(c => c.sameDayArrival && c.state !== 'done')
@@ -122,19 +127,26 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
     if (/in house|occupied|in the unit|guest is in/.test(k)) return pick('GUEST IN UNIT', 'HUÉSPED DENTRO')
     return pick('CHECK', 'REVISAR')
   }
+  // Work booked while a guest is inside is ONE line naming the units — the instruction is the same
+  // for all of them (message the guest first) and seven copies of it buried the rest of the list.
+  const inHouse: string[] = []
   for (const e of exceptions) {
     if (ALREADY.test(str(e.kind) + ' ' + str(e.detail))) continue
     if (seenExc.has(str(e.unit))) continue
     seenExc.add(str(e.unit))
+    if (excLabel(e) === pick('GUEST IN UNIT', 'HUÉSPED DENTRO')) { inHouse.push(unitShort(str(e.unit))); continue }
     P(excLabel(e), 'amber', `<b>${esc(unitShort(str(e.unit)))}</b> — ${esc(str(e.detail))}`, esc(str(e.action)), 'amber')
   }
+  if (inHouse.length) P(pick('GUEST IN UNIT', 'HUÉSPED DENTRO'), 'amber', `<b>${inHouse.length}</b> ${pick('units have work booked while a guest is inside', 'unidades tienen trabajo con el huésped dentro')} — ${inHouse.map(esc).join(', ')}`, t('Call or message the guest before anyone enters.'), 'amber')
   for (const g of glitches.slice(0, 3)) P(pick('OPEN ISSUE', 'PROBLEMA ABIERTO'), 'amber', `<b>${esc(unitShort(str(g.unit)))}</b> — ${t('open guest issue')}${str(g.created_at) ? ` ${pick('since', 'desde')} ${esc(str(g.created_at).slice(5, 10))}` : ''}`, esc(str(g.overview).replace(/\s+/g, ' ').slice(0, 120)), 'amber')
   for (const a of arrivals.filter(a => isVip(str(a.listingId)))) {
     const lid = str(a.listingId)
     const insp = autoInsp.find(i => str(i.listing_id) === lid)
     P(pick('VIP ARRIVAL', 'LLEGADA VIP'), 'amber', `<b>${esc(unitShort(str(a.unit)))}</b> ${vipWhy(lid)} · ${esc(first(a.guest))} ${t('lands')} ${esc(str(a.checkInTime || '4:00 PM'))}`, insp ? `${pick('Pre-arrival inspection', 'Inspección previa')}: ${insp.assignees?.length ? esc(insp.assignees.map(first).join(', ')) : `<span style="${T.red}">${pick('not assigned', 'sin asignar')}</span>`} · ${/progress|start/i.test(str(insp.status)) ? t('in progress') : pick('open', 'pendiente')}` : pick('Walk it before 3pm — no inspection is on the board.', 'Revísala antes de las 3pm — no hay inspección en el tablero.'), 'amber')
   }
-  for (const i of reviewInsp.filter(i => i.check_in <= today)) P(pick('BAD REVIEW', 'MALA RESEÑA'), 'red', `<b>${esc(unitShort(i.unit_name))}</b> — ${esc(i.reason)} · ${pick('unit is empty today, walk it before the next guest does', 'la unidad está vacía hoy, revísala antes que el próximo huésped')}`, i.assignees?.length ? `${t('With')} ${i.assignees.map(first).map(esc).join(', ')}.` : t('Not assigned — pick it up.'), 'amber')
+  const walkToday = reviewInsp.filter(i => i.check_in <= today)
+  for (const i of walkToday.slice(0, 3)) P(pick('BAD REVIEW', 'MALA RESEÑA'), 'red', `<b>${esc(unitShort(i.unit_name))}</b> — ${esc(i.reason)} · ${pick('unit is empty today, walk it before the next guest does', 'la unidad está vacía hoy, revísala antes que el próximo huésped')}`, i.assignees?.length ? `${t('With')} ${i.assignees.map(first).map(esc).join(', ')}.` : t('Not assigned — pick it up.'), 'amber')
+  if (walkToday.length > 3) P(pick('BAD REVIEW', 'MALA RESEÑA'), 'red', `<b>${walkToday.length - 3}</b> ${pick('more units with a bad-review walk due and empty today', 'unidades más con revisión por mala reseña, vacías hoy')} — ${walkToday.slice(3).map(i => esc(unitShort(i.unit_name))).join(', ')}`, pick('Listed under Inspections below.', 'Listadas en Inspecciones abajo.'), 'amber')
   for (const i of autoInsp.filter(i => str(i.check_in) <= today && !isVip(str(i.listing_id)))) P(pick('ARRIVAL INSPECTION', 'INSPECCIÓN'), 'blue', `<b>${esc(unitShort(str(i.unit_name)))}</b> — ${esc(str(i.reason))} · ${esc(first(i.guest_name))} ${t('lands')} ${esc(timeOf(str(i.listing_id)))}`, i.assignees?.length ? `${t('With')} ${i.assignees.map(first).map(esc).join(', ')}.` : t('Not assigned — pick it up.'))
   for (const o of ownerStays.slice(0, 2)) P(pick('OWNER IN-HOUSE', 'PROPIETARIO'), 'blue', `<b>${esc(unitShort(str(o.unit)))}</b> — ${esc(str(o.owner || o.guest))} · ${pick('until', 'hasta')} ${esc(str(o.checkOut).slice(5))}`, pick('White-glove — no shortcuts, no surprises.', 'Servicio impecable — sin atajos.'))
   const prioNumbered: Line[] = prio.map((l, i) => ({ ...l, html: `<span style="display:inline-block;min-width:18px;font-weight:700;color:${A.ink}">${i + 1}</span> ${l.html}` }))
