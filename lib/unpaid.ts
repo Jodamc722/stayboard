@@ -3,10 +3,11 @@
 // arrivals, then the next seven days, then the rest of the range. Paid / not paid is Guesty's
 // folio (money.isFullyPaid, balanceDue); what we did about it is ours (unpaid_tracking).
 //
-// WHAT COUNTS AS UNPAID. balanceDue > $1 on a confirmed / reserved / checked-in stay. Owner and
-// friends-&-family stays are skipped (nothing to collect). A channel that collects for us (Airbnb,
-// Expedia collect, Booking.com with payment by Booking) often shows a balance Guesty will settle at
-// check-in — those stay on the list but are tagged CHANNEL PAYS so the desk chases the right ones.
+// WHAT COUNTS AS UNPAID (Jon, 2026-10-01: "unpaid is only for reservations for direct, VRBO and
+// Google — any other channels are and will be paid"). balanceDue > $1 on a confirmed / reserved /
+// checked-in stay booked DIRECT (website, manual, booking engine), on VRBO or on Google. Airbnb,
+// Booking.com, Expedia and the rest collect the guest's money themselves and are never listed.
+// Owner and friends-&-family stays are skipped (nothing to collect).
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { isOwnerOrFriendsFamily } from './owner-audit'
@@ -38,18 +39,10 @@ export type UnpaidReport = {
   summary: { count: number; balance: number; inHouse: number; today: number; week: number; later: number; channelPays: number; chased: number }
 }
 
-// Channels that collect the guest's money themselves. The balance Guesty shows is what the channel
-// still owes US, not what the guest owes — a different phone call.
-const CHANNEL_PAYS = /airbnb|expedia|booking\.?com|vrbo|homeaway|marriott|hotels\.com/i
-const channelPaysFor = (source: string, raw: any): boolean => {
-  if (!CHANNEL_PAYS.test(source)) return false
-  // Booking.com "payment by hotel" and Vrbo "pay at property" put the guest on the hook — Guesty
-  // marks those with a payment provider / paymentMethod on the money object. Best effort.
-  const m = raw?.money || {}
-  const pm = str(m.paymentMethod || m.payment_method || raw?.paymentMethod)
-  if (/property|hotel|at_check_in|cash/i.test(pm)) return false
-  return true
-}
+// The channels WE collect for. Everything else is paid by the channel and never listed.
+export const WE_COLLECT = /^(manual|direct|website|be-?api|booking[_ -]?engine|guesty|vrbo|homeaway|google)/i
+export const weCollect = (source: string) => WE_COLLECT.test(str(source).trim()) || /vrbo|homeaway|google/i.test(source)
+const channelPaysFor = (source: string, _raw: any): boolean => !weCollect(source)
 
 export async function loadUnpaid(opts: { from?: string; to?: string } = {}): Promise<UnpaidReport> {
   const db = supabaseAdmin()
@@ -80,6 +73,7 @@ export async function loadUnpaid(opts: { from?: string; to?: string } = {}): Pro
     if (!isLiveStay(r.status)) continue
     const raw: any = r.raw && typeof r.raw === 'object' ? r.raw : {}
     const m: any = raw.money && typeof raw.money === 'object' ? raw.money : {}
+    if (!weCollect(str(r.source))) continue
     const tagBlob = JSON.stringify(raw.tags || '') + ' ' + JSON.stringify(r.custom_fields || '')
     if (isOwnerOrFriendsFamily(str(r.source), tagBlob, str(r.guest_name))) continue
     const balance = typeof m.balanceDue === 'number' ? m.balanceDue : num(r.money_balance)
@@ -119,7 +113,7 @@ export async function loadUnpaid(opts: { from?: string; to?: string } = {}): Pro
 
 /** The checklist number: unpaid stays in house, arriving today or in the next 7 days, that the guest (not a channel) owes. */
 export async function countUnpaidDue(): Promise<number | null> {
-  try { const rep = await loadUnpaid(); return rep.rows.filter(r => r.bucket !== 'later' && !r.channelPays && r.tracking.status !== 'waived').length } catch { return null }
+  try { const rep = await loadUnpaid(); return rep.rows.filter(r => r.bucket !== 'later' && r.tracking.status !== 'waived').length } catch { return null }
 }
 
 export async function updateTracking(reservationId: string, by: string, patch: { status?: UnpaidStatus; note?: string }): Promise<{ ok: boolean; error?: string; tracking?: any }> {

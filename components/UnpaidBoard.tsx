@@ -60,7 +60,6 @@ export function UnpaidBoard() {
   const [data, setData] = useState<Data | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [hideChannel, setHideChannel] = useState(false)
   const [hideWaived, setHideWaived] = useState(true)
 
   const load = useCallback(async (f: string, t: string) => {
@@ -81,15 +80,14 @@ export function UnpaidBoard() {
   }
   const patch = (id: string, tracking: Row['tracking']) => setData(d => d ? { ...d, rows: d.rows.map(r => r.id === id ? { ...r, tracking } : r) } : d)
 
-  const rows = (data?.rows || []).filter(r => !(hideChannel && r.channelPays) && !(hideWaived && r.tracking.status === 'waived'))
+  const rows = (data?.rows || []).filter(r => !(hideWaived && r.tracking.status === 'waived'))
   const owed = rows.reduce((a, r) => a + r.balance, 0)
-  const guestOwed = rows.filter(r => !r.channelPays).reduce((a, r) => a + r.balance, 0)
 
   return (
     <div>
       <LeanHead title="Unpaid balances">
-        <Pill tone="rose" title="Balances the guest owes in this window (channel-collected stays excluded)">{money(guestOwed)} to collect</Pill>
-        <Pill title="Every open balance in the window, channel-collected included">{rows.length} stays · {money(owed)}</Pill>
+        <Pill tone="rose" title="Balances still owed on direct, VRBO and Google stays in this window">{money(owed)} to collect</Pill>
+        <Pill title="Stays with a balance in the window">{rows.length} {rows.length === 1 ? 'stay' : 'stays'}</Pill>
         {data && <Pill tone="emerald" title="Stays someone has already contacted, or that have a note">{data.summary.chased} being chased</Pill>}
         <Link href="/reservations" className="text-[11.5px] font-semibold text-brand-700 hover:underline ml-1">All reservations →</Link>
       </LeanHead>
@@ -109,14 +107,13 @@ export function UnpaidBoard() {
           </span>
         )}
         <span className="ml-auto inline-flex items-center gap-3 text-[11.5px] text-muted">
-          <label className="inline-flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={hideChannel} onChange={e => setHideChannel(e.target.checked)} /> hide channel-collected</label>
           <label className="inline-flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={hideWaived} onChange={e => setHideWaived(e.target.checked)} /> hide waived</label>
           <button onClick={() => load(from, to)} title="Refresh" className="text-muted hover:text-ink"><RefreshCw size={13} className={loading ? 'animate-spin' : ''} /></button>
         </span>
       </div>
       {err && <p className="mb-2 text-[12.5px] text-rose-700 inline-flex items-center gap-1"><AlertTriangle size={13} /> {err}</p>}
       {loading && !data && <LeanEmpty><Loader2 size={14} className="animate-spin inline mr-1.5" />Reading the folios…</LeanEmpty>}
-      {data && rows.length === 0 && <LeanEmpty><Check size={14} className="inline mr-1 text-emerald-600" />Nothing owed in this window{hideChannel || hideWaived ? ' (with the filters on)' : ''}.</LeanEmpty>}
+      {data && rows.length === 0 && <LeanEmpty><Check size={14} className="inline mr-1 text-emerald-600" />Nothing owed in this window{hideWaived ? ' (waived hidden)' : ''}.</LeanEmpty>}
 
       {BUCKETS.map(b => {
         const list = rows.filter(r => r.bucket === b.key)
@@ -131,7 +128,7 @@ export function UnpaidBoard() {
           </LeanSection>
         )
       })}
-      <p className="mt-3 text-[11px] text-muted">Paid / unpaid is Guesty&apos;s folio — a stay leaves this list on the next sync after the money lands. CHANNEL PAYS means the channel collects the guest&apos;s money and settles with us; the balance there is theirs to send, not the guest&apos;s to pay. Owner and friends-&-family stays are not listed.</p>
+      <p className="mt-3 text-[11px] text-muted">Direct, VRBO and Google stays only — Airbnb, Booking.com, Expedia and the other channels collect the guest&apos;s money themselves and are never listed. Paid / unpaid is Guesty&apos;s folio — a stay leaves this list on the next sync after the money lands. Owner and friends-&-family stays are not listed.</p>
     </div>
   )
 }
@@ -155,12 +152,11 @@ function UnpaidRow({ r, today, canEdit, onPatch }: { r: Row; today: string; canE
   return (
     <LeanRow
       tint={r.bucket === 'in_house' || r.bucket === 'today' ? 'rose' : undefined}
-      lead={<span className={'shrink-0 inline-flex items-center justify-center rounded-lg px-2 h-8 text-[13px] font-bold tabular-nums ' + (r.channelPays ? 'bg-slate-100 text-slate-700' : 'bg-rose-600 text-white')}>{money(r.balance, r.currency)}</span>}
+      lead={<span className="shrink-0 inline-flex items-center justify-center rounded-lg px-2 h-8 text-[13px] font-bold tabular-nums bg-rose-600 text-white">{money(r.balance, r.currency)}</span>}
       name={r.guest}
       meta={<>{r.unit} · {whenTxt} · {r.nights}n</>}
       tags={<>
         <Tag>{channel(r.source)}</Tag>
-        {r.channelPays && <Tag tone="slate" title="The channel collects this guest's money and settles with us">CHANNEL PAYS</Tag>}
         <Tag tone={st.tone}>{st.label}</Tag>
         {r.tracking.notes.length > 0 && <Tag tone="sky" title={lastNote ? `${first(lastNote.by)} · ${when(lastNote.at)}` : ''}><MessageSquare size={10} className="inline -mt-px mr-0.5" />{r.tracking.notes.length}</Tag>}
       </>}
