@@ -81,8 +81,10 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   // Inspections pending: Lighthouse's arrival inspections (window: today + tomorrow), bad-review
   // walks, and any inspection/unit-check task on today's board — only the ones NOT done.
   const autoInsp = (autoRes as any[]).filter(i => str(i.market) === market && !isDone(i.status))
+  // A bad-review walk already carried by an arrival inspection (same unit, review reason) is one item, not two.
   const reviewInsp = (reviewRes as any[]).filter(i => i.market === market && !isDone(i.status))
-  const boardInsp = other.filter(o => /inspect|unit check|walk-?through|quality|inspecci/i.test(o.task) && o.state !== 'done')
+    .filter(i => !autoInsp.some(a => str(a.unit_name) === i.unit_name && /review|★/i.test(str(a.reason))))
+  const boardInsp = other.filter(o => o.dept !== 'maintenance' && /^(inspec|unit check|quality|walk-?through)|inspecci[oó]n de llegada|arrival inspection|post clean inspection/i.test(o.task.trim()) && o.state !== 'done')
   const inspLines: Line[] = []
   const seenInsp = new Set<string>()
   for (const i of autoInsp) {
@@ -110,8 +112,23 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   }
   for (const a of walkIns) P(pick('WALK-IN', 'ÚLTIMO MINUTO'), 'red', `<b>${esc(unitShort(str(a.unit)))}</b> — ${pick('booked last minute', 'reservado de último momento')} · ${esc(first(a.guest))} ${t('lands')} ${esc(str(a.checkInTime || '4:00 PM'))}`, t('Booked last minute — confirm the unit is guest-ready.'), 'red')
   const ALREADY = /nobody assigned|booked today|walk-?in|same-?day turn|clean not started/i
-  for (const e of exceptions) { if (ALREADY.test(str(e.kind) + ' ' + str(e.detail))) continue; P(pick('GUEST IN UNIT', 'HUÉSPED DENTRO'), 'amber', `<b>${esc(unitShort(str(e.unit)))}</b> — ${esc(str(e.detail))}`, esc(str(e.action)), 'amber') }
-  for (const g of glitches.slice(0, 3)) P(pick('OPEN ISSUE', 'PROBLEMA ABIERTO'), 'amber', `<b>${esc(unitShort(str(g.unit)))}</b> — ${t('open guest issue')} ${pick('since', 'desde')} ${esc(str(g.created_at).slice(5, 10))}`, esc(str(g.overview).replace(/\s+/g, ' ').slice(0, 120)), 'amber')
+  // One exception per unit, labeled by what it is — a checkout with no clean booked is not a guest
+  // in the unit, and a unit already named above (walk-in) is not named again.
+  const seenExc = new Set<string>(walkIns.map(a => str(a.unit)))
+  const excLabel = (e: any): string => {
+    const k = (str(e.kind) + ' ' + str(e.detail)).toLowerCase()
+    if (/nothing .*clean|no clean|book a clean/.test(k)) return pick('NO CLEAN BOOKED', 'SIN LIMPIEZA')
+    if (/straight back|books back|rebook|staying on|extend/.test(k)) return pick('STAYING ON', 'SE QUEDA')
+    if (/in house|occupied|in the unit|guest is in/.test(k)) return pick('GUEST IN UNIT', 'HUÉSPED DENTRO')
+    return pick('CHECK', 'REVISAR')
+  }
+  for (const e of exceptions) {
+    if (ALREADY.test(str(e.kind) + ' ' + str(e.detail))) continue
+    if (seenExc.has(str(e.unit))) continue
+    seenExc.add(str(e.unit))
+    P(excLabel(e), 'amber', `<b>${esc(unitShort(str(e.unit)))}</b> — ${esc(str(e.detail))}`, esc(str(e.action)), 'amber')
+  }
+  for (const g of glitches.slice(0, 3)) P(pick('OPEN ISSUE', 'PROBLEMA ABIERTO'), 'amber', `<b>${esc(unitShort(str(g.unit)))}</b> — ${t('open guest issue')}${str(g.created_at) ? ` ${pick('since', 'desde')} ${esc(str(g.created_at).slice(5, 10))}` : ''}`, esc(str(g.overview).replace(/\s+/g, ' ').slice(0, 120)), 'amber')
   for (const a of arrivals.filter(a => isVip(str(a.listingId)))) {
     const lid = str(a.listingId)
     const insp = autoInsp.find(i => str(i.listing_id) === lid)
