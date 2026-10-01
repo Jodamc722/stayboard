@@ -17,7 +17,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 
-export type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number }
+export type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number; /** The part of cacheWrite written with a 1-hour TTL (priced 2x, not 1.25x). */ cacheWrite1h?: number }
 
 const ID_TO_TIER: Record<string, ModelTier> = Object.fromEntries(
   (Object.keys(MODEL_IDS) as ModelTier[]).map(t => [MODEL_IDS[t], t]),
@@ -38,7 +38,8 @@ export function tierOfModel(model: string): ModelTier {
 export function costUsd(model: string, u: Usage): number {
   const p = MODEL_PRICE[tierOfModel(model)]
   const perM = (n: number, rate: number) => (n / 1_000_000) * rate
-  return perM(u.input, p.in) + perM(u.output, p.out) + perM(u.cacheRead, p.in * 0.1) + perM(u.cacheWrite, p.in * 1.25)
+  const w1h = Math.min(Number(u.cacheWrite1h) || 0, u.cacheWrite)
+  return perM(u.input, p.in) + perM(u.output, p.out) + perM(u.cacheRead, p.in * 0.1) + perM(u.cacheWrite - w1h, p.in * 1.25) + perM(w1h, p.in * 2)
 }
 
 export function usageOf(d: any): Usage {
@@ -48,6 +49,8 @@ export function usageOf(d: any): Usage {
     output: Number(u.output_tokens) || 0,
     cacheRead: Number(u.cache_read_input_tokens) || 0,
     cacheWrite: Number(u.cache_creation_input_tokens) || 0,
+    // The API breaks cache writes down by TTL when a 1h breakpoint is in play (cache_creation.*).
+    cacheWrite1h: Number(u.cache_creation?.ephemeral_1h_input_tokens) || 0,
   }
 }
 

@@ -20,6 +20,7 @@ import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildCtx, todayET, daysAgoISO, safe, count as cnt, lc } from './ctx'
 import { wireTools, runTool, DOMAIN_KEYS } from './registry'
+import { guessDomains } from './domain-guess'
 import { loadMemories, renderMemories, touchMemories, scopesForText, saveMemory, memoryHitsFor, recordMemoryHits } from './memory'
 import { appAtlas } from './atlas'
 import { buildSystemBlocks, getVoiceProfile } from './prompt'
@@ -294,6 +295,13 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   const open: string[] = []
   const preOpen = Array.isArray(input.domains) ? input.domains : []
   for (const d of preOpen) { const k = lc(d); if (DOMAIN_KEYS.indexOf(k) >= 0 && open.indexOf(k) < 0) open.push(k) }
+  // THE FIRST TURN SHOULD NOT BE SPENT OPENING A DRAWER (2026-10-01 cost pass). Progressive
+  // disclosure keeps the tool list short, and it costs one whole API call — a full prefix — on the
+  // first deep question of every thread, and again on every Slack follow-up because a new message is
+  // a new run. A question that says "clean", "payout" or "review" has already said which domain it
+  // needs. guessDomains (lib/eve/domain-guess, tested) opens at most two before the first call; the
+  // model can still open_domain anything else.
+  if (!noTools) for (const k of guessDomains(lastUser)) if (DOMAIN_KEYS.indexOf(k) >= 0 && open.indexOf(k) < 0 && open.length < 3) open.push(k)
 
   // A SCOPE THAT MATCHED NOTHING (2026-09-29 review, N14): the room sees no units at all (buildCtx
   // fails closed), and she says why instead of reporting a quiet day.
@@ -328,6 +336,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     let pauses = 0
     // Flipped off permanently for this request if the API rejects the server-side search tool.
     let webOk = true
+    let longCache = true
     for (let turn = 0; turn < limit; turn++) {
       turns = turn + 1
       // The atlas rides with the memories: what every page of the app is for, and a live census of
@@ -358,8 +367,14 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       // conversation and different in the next, so it earns its own entry rather than riding free
       // on the first or being re-sent whole. Three of the four allowed breakpoints are now in use —
       // these two plus the rolling one on the newest message.
+      // ONE HOUR, NOT FIVE MINUTES, ON THE STABLE HALF (2026-10-01 cost pass). The ledger showed every
+      // Eve call writing ~15k tokens of cache and reading ~23k: her questions arrive minutes apart, the
+      // default 5-minute cache had expired between them, and the 11.5k-token stable block plus the
+      // tool schemas were being re-written at 1.25x list price on most calls. A 1h write costs 2x
+      // once; the fifty-odd calls that follow in the hour read it at 0.1x. If the account cannot use
+      // the long TTL the API says so once and the loop falls back to the 5-minute kind for the request.
       const system: any[] = [
-        { type: 'text', text: blocks.stable, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: blocks.stable, cache_control: longCache ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' } },
         { type: 'text', text: blocks.dynamic, cache_control: { type: 'ephemeral' } },
       ]
       // Keep the SAME tools array across the whole conversation. If a resume request drops a server
@@ -370,19 +385,27 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       if (webOk && !noTools) toolset.push(WEB_SEARCH_TOOL as any)
       const messages = withCacheBreakpoint(convo)
 
+      const HEADERS = { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json', 'anthropic-beta': 'extended-cache-ttl-2025-04-11' }
       let r = await aiFetch('eve', {
         method: 'POST',
-        headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        headers: HEADERS,
         body: JSON.stringify({ model: await modelFor('eve'), max_tokens: noTools ? 600 : 4096, system, ...(toolset.length ? { tools: toolset } : {}), messages }),
       })
       let d: any = await r.json()
+      // The long TTL refused (an account or model without it): same request, 5-minute cache.
+      if (!r.ok && longCache && /ttl|cache_control|extended-cache/i.test(JSON.stringify(d?.error || ''))) {
+        longCache = false
+        system[0] = { ...system[0], cache_control: { type: 'ephemeral' } }
+        r = await aiFetch('eve', { method: 'POST', headers: HEADERS, body: JSON.stringify({ model: await modelFor('eve'), max_tokens: noTools ? 600 : 4096, system, ...(toolset.length ? { tools: toolset } : {}), messages }) })
+        d = await r.json()
+      }
 
       // If this model/account cannot use the server-side search tool, lose the search — not the answer.
       if (!r.ok && webOk && /web_search/i.test(JSON.stringify(d?.error || ''))) {
         webOk = false
         r = await aiFetch('eve', {
           method: 'POST',
-          headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+          headers: HEADERS,
           body: JSON.stringify({ model: await modelFor('eve'), max_tokens: noTools ? 600 : 4096, system, ...(noTools ? {} : { tools: allowed(wireTools(open)) }), messages }),
         })
         d = await r.json()
