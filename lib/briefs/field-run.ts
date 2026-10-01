@@ -1,26 +1,30 @@
-// FIELD RUN — the field coordinator's morning (Jon, 2026-10-01). One market, one screen:
-//   the day in numbers → Do first (≤5, in order) → the run, per cleaner → arrivals that need a
-//   check → the shape of the day. Nothing the coordinator cannot act on before 4pm: no labor, no
-//   30-day billing, no root-cause lists, no vacant-unit planning — those belong to the Ops Desk.
+// FIELD RUN — the field coordinator's morning (Jon, 2026-10-01, second pass: "should show cleans,
+// who's assigned, same-day turns, inspections — VIP and big arrivals, bad-review inspections —
+// pending not completed; top priorities clearly labeled and prioritized; it should be direction
+// for the day").
 //
-// Same engine as the old day sheet (lib/ops-brief gather + the daysheet), rendered a quarter the
-// size. Every item appears ONCE: a same-day turn is a flag on its numbered row, not also a priority,
-// an inspection row and an arrival row.
+// One market, in this order:
+//   the day in numbers → TOP PRIORITIES (numbered, each with a label) → DEPARTURE CLEANS (every
+//   one: unit · cleaner · guest lands · status) → INSPECTIONS PENDING (arrival, VIP / big arrival,
+//   owner, bad review, quality — only the ones not done, with who holds them) → ARRIVALS (every one,
+//   tagged VIP / BIG $ / OWNER / WALK-IN / EARLY, with the crew note) → OTHER WORK by person →
+//   RUNNING THE DAY (the clock). Nothing the coordinator cannot act on before 4pm.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { gather, lowReviewInspections, niceDay } from '@/lib/ops-brief'
 import { upcomingAutoInspections } from '@/lib/auto-inspections'
 import { getShifts, nameMatches } from '@/lib/homebase'
 import { translator, type BriefLang } from '@/lib/brief-lang'
-import { ACCENTS, APP_URL, T, esc, masthead, headline, section, person, block, dayShape, footer, fit, pill, cleanTitle, crewOf, unitShort, personName, crewNote, isOfficeLike, type Line } from './ui'
+import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, dayShape, footer, fit, pill, cleanTitle, crewOf, unitShort, personName, crewNote, isOfficeLike, type Line } from './ui'
 
 export type FieldMarket = 'Miami' | 'Broward'
 export type Built = { subject: string; html: string; words: number; counts: Record<string, number> }
 
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const first = (n: string) => str(n).trim().split(/\s+/)[0] || ''
-const isDone = (s: any) => /complet|finish|close|approv/i.test(str(s))
+const isDone = (s: any) => /complet|finish|close|approv|done/i.test(str(s))
 const words = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ').trim().split(/\s+/).length
+const money0 = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
 
 export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en'): Promise<Built> {
   const { t, pick } = translator(lang)
@@ -29,10 +33,9 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   const sheet: any = d.sheet || {}
   const today = d.today
 
-  // ---- the extras the run needs, each best-effort ------------------------------------------
   const [shiftsRes, autoRes, reviewRes, linkRes] = await Promise.all([
     getShifts(today, 'America/New_York').catch(() => [] as any[]),
-    upcomingAutoInspections(1).catch(() => [] as any[]),
+    upcomingAutoInspections(2).catch(() => [] as any[]),
     lowReviewInspections().catch(() => [] as any[]),
     Promise.resolve(supabaseAdmin().from('share_links').select('code,passcode_hint,scope,created_at').eq('kind', 'scheduler').is('revoked_at', null).order('created_at', { ascending: false }).limit(50)).then(r => (r.data || []) as any[]).catch(() => [] as any[]),
   ])
@@ -44,15 +47,19 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   const schedHint = sched?.passcode_hint ? '…' + str(sched.passcode_hint).replace(/•/g, '') : null
 
   // ---- the facts -----------------------------------------------------------------------------
-  const cleans = d.cleans as { unit: string; lid: string; assignee: string; lead: string; state: string; sameDayArrival: boolean }[]
-  const other = d.hkOther as { unit: string; lid: string; assignee: string; lead: string; task: string; dept: string; state: string }[]
-  const arrivals: any[] = sheet.arrivals || []
+  type Clean = { unit: string; lid: string; assignee: string; lead: string; state: string; sameDayArrival: boolean }
+  type Other = { unit: string; lid: string; assignee: string; lead: string; task: string; dept: string; state: string }
+  const cleans = d.cleans as Clean[]
+  const other = d.hkOther as Other[]
+  const arrivals: any[] = (sheet.arrivals || []).slice().sort((a: any, b: any) => str(a.checkInTime).localeCompare(str(b.checkInTime)) || str(a.unit).localeCompare(str(b.unit)))
   const departures: any[] = sheet.departures || []
+  const ownerStays: any[] = sheet.ownerStays || []
   const glitches: any[] = (sheet.glitches || []).filter((g: any) => !/done|resolved|closed/i.test(str(g.status)))
   const exceptions: any[] = (sheet.exceptions || []).filter((e: any) => e.severity === 'high')
   const unassigned = cleans.filter(c => /UNASSIGNED/.test(c.assignee))
   const sameDay = cleans.filter(c => c.sameDayArrival && c.state !== 'done')
   const walkIns = arrivals.filter(a => a.bookedToday || a.bookedAfterSync)
+  const flags: Record<string, { long: boolean; big: boolean; owner: boolean; total: number; nights: number }> = (d as any).todayFlags || {}
   const office = new Set((d.officeNames || []) as string[])
   const isOffice = (n: string) => isOfficeLike(n) || Array.from(office).some(o => nameMatches(o, n))
   const deptMap: Record<string, string> = d.deptOfPerson || {}
@@ -62,120 +69,148 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   for (const a of arrivals) arrivalByLid[str(a.listingId)] = a
   const noteOf = (lid: string) => crewNote(str((d.arrivalNotes || {})[lid]))
   const timeOf = (lid: string) => str(arrivalByLid[lid]?.checkInTime || '4:00 PM')
+  const isVip = (lid: string) => !!(flags[lid]?.long || flags[lid]?.big || flags[lid]?.owner || str(arrivalByLid[lid]?.ownerFlag) === 'owner booking')
+  const vipWhy = (lid: string) => {
+    const f = flags[lid]; const bits: string[] = []
+    if (f?.owner || str(arrivalByLid[lid]?.ownerFlag) === 'owner booking') bits.push(pill('OWNER', 'blue'))
+    if (f?.big) bits.push(pill(`BIG $ · ${money0(f.total)}`, 'amber'))
+    if (f?.long) bits.push(pill(`${pick('LONG STAY', 'ESTANCIA LARGA')} · ${f.nights}n`, 'amber'))
+    return bits.join(' ')
+  }
 
-  const autoInsp = (autoRes as any[]).filter(i => str(i.market) === market && !isDone(i.status) && str(i.check_in) <= today)
-  const reviewToday = (reviewRes as any[]).filter(i => i.market === market && !isDone(i.status) && str(i.check_in) <= today)
+  // Inspections pending: Lighthouse's arrival inspections (window: today + tomorrow), bad-review
+  // walks, and any inspection/unit-check task on today's board — only the ones NOT done.
+  const autoInsp = (autoRes as any[]).filter(i => str(i.market) === market && !isDone(i.status))
+  const reviewInsp = (reviewRes as any[]).filter(i => i.market === market && !isDone(i.status))
+  const boardInsp = other.filter(o => /inspect|unit check|walk-?through|quality|inspecci/i.test(o.task) && o.state !== 'done')
+  const inspLines: Line[] = []
+  const seenInsp = new Set<string>()
+  for (const i of autoInsp) {
+    const lid = str(i.listing_id); seenInsp.add(lid + '|arrival')
+    const reason = str(i.reason)
+    const kind = /owner/i.test(reason) ? pill('OWNER', 'blue') : /big|vip|long/i.test(reason) ? pill(pick('VIP ARRIVAL', 'LLEGADA VIP'), 'amber') : /review|★/i.test(reason) ? pill(pick('BAD REVIEW', 'MALA RESEÑA'), 'red') : pill(pick('ARRIVAL', 'LLEGADA'), 'blue')
+    inspLines.push({ tone: str(i.check_in) <= today ? 'red' : 'amber', html: `${kind} <b>${esc(unitShort(str(i.unit_name)))}</b> · ${esc(reason)} · ${esc(first(i.guest_name))} ${t('lands')} ${str(i.check_in) <= today ? esc(timeOf(lid)) : esc(niceDay(str(i.check_in)))}`, sub: (i.assignees?.length ? `${t('With')} ${i.assignees.map(first).map(esc).join(', ')}` : `<span style="${T.red}">${t('Not assigned — pick it up.')}</span>`) + (/progress|start/i.test(str(i.status)) ? ` · ${t('in progress')}` : ` · ${pick('open', 'pendiente')}`) })
+  }
+  for (const i of reviewInsp) {
+    inspLines.push({ tone: i.check_in <= today ? 'red' : 'amber', html: `${pill(pick('BAD REVIEW', 'MALA RESEÑA'), 'red')} <b>${esc(unitShort(i.unit_name))}</b> · ${esc(i.reason)} · ${i.check_in <= today ? pick('unit is empty — walk it today', 'la unidad está vacía — revísala hoy') : pick('on the checkout', 'en la salida') + ' ' + esc(niceDay(i.check_in))}`, sub: (i.assignees?.length ? `${t('With')} ${i.assignees.map(first).map(esc).join(', ')}` : `<span style="${T.red}">${t('Not assigned — pick it up.')}</span>`) + ` · ${pick('open', 'pendiente')}` })
+  }
+  for (const o of boardInsp) {
+    if (seenInsp.has(o.lid + '|arrival') && /llegada|arrival/i.test(o.task)) continue
+    inspLines.push({ tone: 'none', html: `${pill(pick('INSPECTION', 'INSPECCIÓN'), 'grey')} <b>${esc(unitShort(o.unit))}</b> · ${esc(cleanTitle(o.task, lang))}`, sub: `${/UNASSIGNED/.test(o.assignee) ? `<span style="${T.red}">${t('Not assigned — pick it up.')}</span>` : t('With') + ' ' + esc(personName(first(o.lead || o.assignee)))}${o.state === 'running' ? ' · ' + t('in progress') : ''}` })
+  }
 
-  // ---- DO FIRST: ≤5, in the order the day breaks ----------------------------------------------
-  const doFirst: Line[] = []
-  for (const c of unassigned) doFirst.push({ tone: 'red', html: `<b>${esc(unitShort(c.unit))}</b> — ${t('clean has no one assigned')}${c.sameDayArrival ? ` · ${pick('guest lands', 'el huésped llega')} ${esc(timeOf(c.lid))}` : ''}`, sub: pick('Assign it before the crew leaves the lot.', 'Asígnala antes de que el equipo salga.') })
+  // ---- TOP PRIORITIES — numbered, labeled, in the order the day breaks -------------------------
+  const prio: Line[] = []
+  const P = (label: string, tone: 'red' | 'amber' | 'blue' | 'grey', html: string, sub?: string, lineTone: Line['tone'] = 'none') => prio.push({ tone: lineTone, html: `${pill(label, tone)} ${html}`, sub })
+  for (const c of unassigned) P(pick('UNASSIGNED', 'SIN ASIGNAR'), 'red', `<b>${esc(unitShort(c.unit))}</b> — ${t('clean has no one assigned')}${c.sameDayArrival ? ` · ${pick('guest lands', 'el huésped llega')} ${esc(timeOf(c.lid))}` : ''}`, pick('Assign it before the crew leaves the lot.', 'Asígnala antes de que el equipo salga.'), 'red')
+  if (sameDay.length) {
+    const byCleaner: Record<string, string[]> = {}
+    for (const c of sameDay) (byCleaner[personName(first(c.lead || c.assignee)) || '—'] = byCleaner[personName(first(c.lead || c.assignee)) || '—'] || []).push(unitShort(c.unit))
+    P(pick('SAME-DAY TURNS', 'MISMO DÍA'), 'red', `<b>${sameDay.length}</b> ${pick('guests land in units being cleaned today — these doors first, done by', 'huéspedes llegan a unidades que se limpian hoy — estas puertas primero, listas antes de')} ${esc(timeOf(sameDay[0].lid))}`, Object.keys(byCleaner).map(n => `<b>${esc(n)}</b>: ${byCleaner[n].map(esc).join(', ')}`).join(' · '), 'red')
+  }
+  for (const a of walkIns) P(pick('WALK-IN', 'ÚLTIMO MINUTO'), 'red', `<b>${esc(unitShort(str(a.unit)))}</b> — ${pick('booked last minute', 'reservado de último momento')} · ${esc(first(a.guest))} ${t('lands')} ${esc(str(a.checkInTime || '4:00 PM'))}`, t('Booked last minute — confirm the unit is guest-ready.'), 'red')
   const ALREADY = /nobody assigned|booked today|walk-?in|same-?day turn|clean not started/i
-  for (const e of exceptions) {
-    if (ALREADY.test(str(e.kind) + ' ' + str(e.detail))) continue
-    if (doFirst.length >= 5) break
-    doFirst.push({ tone: 'amber', html: `<b>${esc(unitShort(str(e.unit)))}</b> — ${esc(str(e.detail))}`, sub: esc(str(e.action)) })
+  for (const e of exceptions) { if (ALREADY.test(str(e.kind) + ' ' + str(e.detail))) continue; P(pick('GUEST IN UNIT', 'HUÉSPED DENTRO'), 'amber', `<b>${esc(unitShort(str(e.unit)))}</b> — ${esc(str(e.detail))}`, esc(str(e.action)), 'amber') }
+  for (const g of glitches.slice(0, 3)) P(pick('OPEN ISSUE', 'PROBLEMA ABIERTO'), 'amber', `<b>${esc(unitShort(str(g.unit)))}</b> — ${t('open guest issue')} ${pick('since', 'desde')} ${esc(str(g.created_at).slice(5, 10))}`, esc(str(g.overview).replace(/\s+/g, ' ').slice(0, 120)), 'amber')
+  for (const a of arrivals.filter(a => isVip(str(a.listingId)))) {
+    const lid = str(a.listingId)
+    const insp = autoInsp.find(i => str(i.listing_id) === lid)
+    P(pick('VIP ARRIVAL', 'LLEGADA VIP'), 'amber', `<b>${esc(unitShort(str(a.unit)))}</b> ${vipWhy(lid)} · ${esc(first(a.guest))} ${t('lands')} ${esc(str(a.checkInTime || '4:00 PM'))}`, insp ? `${pick('Pre-arrival inspection', 'Inspección previa')}: ${insp.assignees?.length ? esc(insp.assignees.map(first).join(', ')) : `<span style="${T.red}">${pick('not assigned', 'sin asignar')}</span>`} · ${/progress|start/i.test(str(insp.status)) ? t('in progress') : pick('open', 'pendiente')}` : pick('Walk it before 3pm — no inspection is on the board.', 'Revísala antes de las 3pm — no hay inspección en el tablero.'), 'amber')
   }
-  for (const a of walkIns) { if (doFirst.length >= 5) break; doFirst.push({ tone: 'amber', html: `<b>${esc(unitShort(str(a.unit)))}</b> — ${t('walk-in arriving today')} (${esc(first(a.guest))}, ${esc(str(a.checkInTime || '4:00 PM'))})`, sub: t('Booked last minute — confirm the unit is guest-ready.') }) }
-  for (const g of glitches.slice(0, 2)) { if (doFirst.length >= 5) break; doFirst.push({ tone: 'amber', html: `<b>${esc(unitShort(str(g.unit)))}</b> — ${t('open guest issue')}`, sub: esc(str(g.overview).replace(/\s+/g, ' ').slice(0, 110)) }) }
-  for (const i of autoInsp.slice(0, 2)) { if (doFirst.length >= 5) break; doFirst.push({ tone: 'amber', html: `<b>${esc(unitShort(str(i.unit_name)))}</b> — ${t('pre-arrival inspection')} · ${esc(str(i.reason))} · ${esc(first(i.guest_name))} ${t('lands')} ${esc(timeOf(str(i.listing_id)))}`, sub: i.assignees?.length ? `${t('With')} ${i.assignees.map(first).join(', ')}.` : t('Not assigned — pick it up.') }) }
-  for (const i of reviewToday.slice(0, 1)) { if (doFirst.length >= 5) break; doFirst.push({ tone: 'amber', html: `<b>${esc(unitShort(i.unit_name))}</b> — ${pick('walk it today', 'revísala hoy')} · ${esc(i.reason)} · ${pick('unit is empty', 'la unidad está vacía')}`, sub: i.assignees?.length ? `${t('With')} ${i.assignees.map(first).join(' & ')}.` : '' }) }
+  for (const i of reviewInsp.filter(i => i.check_in <= today)) P(pick('BAD REVIEW', 'MALA RESEÑA'), 'red', `<b>${esc(unitShort(i.unit_name))}</b> — ${esc(i.reason)} · ${pick('unit is empty today, walk it before the next guest does', 'la unidad está vacía hoy, revísala antes que el próximo huésped')}`, i.assignees?.length ? `${t('With')} ${i.assignees.map(first).map(esc).join(', ')}.` : t('Not assigned — pick it up.'), 'amber')
+  for (const i of autoInsp.filter(i => str(i.check_in) <= today && !isVip(str(i.listing_id)))) P(pick('ARRIVAL INSPECTION', 'INSPECCIÓN'), 'blue', `<b>${esc(unitShort(str(i.unit_name)))}</b> — ${esc(str(i.reason))} · ${esc(first(i.guest_name))} ${t('lands')} ${esc(timeOf(str(i.listing_id)))}`, i.assignees?.length ? `${t('With')} ${i.assignees.map(first).map(esc).join(', ')}.` : t('Not assigned — pick it up.'))
+  for (const o of ownerStays.slice(0, 2)) P(pick('OWNER IN-HOUSE', 'PROPIETARIO'), 'blue', `<b>${esc(unitShort(str(o.unit)))}</b> — ${esc(str(o.owner || o.guest))} · ${pick('until', 'hasta')} ${esc(str(o.checkOut).slice(5))}`, pick('White-glove — no shortcuts, no surprises.', 'Servicio impecable — sin atajos.'))
+  const prioNumbered: Line[] = prio.map((l, i) => ({ ...l, html: `<span style="display:inline-block;min-width:18px;font-weight:700;color:${A.ink}">${i + 1}</span> ${l.html}` }))
 
-  // ---- THE RUN: every field person with work, cleaners first, same-day turns first ------------
-  const byPerson: Record<string, { cleans: typeof cleans; other: typeof other }> = {}
-  const bucket = (n: string) => (byPerson[n] = byPerson[n] || { cleans: [], other: [] })
-  for (const c of cleans) if (!/UNASSIGNED/.test(c.assignee)) bucket(personName(c.lead || c.assignee)).cleans.push(c)
-  for (const o of other) {
-    if (/UNASSIGNED/.test(o.assignee)) continue
-    const n = o.lead || o.assignee
-    if (isOffice(n) || isTech(n)) continue          // office runs the desk; techs have their own run
-    if (o.state === 'done') continue
-    bucket(personName(n)).other.push(o)
-  }
-  const names = Object.keys(byPerson).sort((a, b) => {
-    const ta = isTech(a) ? 1 : 0, tb = isTech(b) ? 1 : 0
-    if (ta !== tb) return ta - tb
-    const sa = byPerson[a].cleans.filter(c => c.sameDayArrival).length, sb = byPerson[b].cleans.filter(c => c.sameDayArrival).length
-    if (sa !== sb) return sb - sa
-    return byPerson[b].cleans.length - byPerson[a].cleans.length || a.localeCompare(b)
-  })
-  const cleanRow = (c: typeof cleans[number]) => {
+  // ---- DEPARTURE CLEANS — every one: unit · cleaner · guest lands · status --------------------
+  const stateOf = (c: Clean) => c.state === 'done' ? pill(t('done'), 'green') : c.state === 'running' ? pill(t('in progress'), 'amber') : `<span style="${T.faint}">${pick('scheduled', 'programada')}</span>`
+  const cleanRows = cleans.slice().sort((a, b) => (b.sameDayArrival ? 1 : 0) - (a.sameDayArrival ? 1 : 0) || (/UNASSIGNED/.test(a.assignee) ? -1 : 0) - (/UNASSIGNED/.test(b.assignee) ? -1 : 0) || a.unit.localeCompare(b.unit)).map(c => {
     const ppl = c.assignee.split(',').map(x => x.trim()).filter(Boolean)
+    const who = /UNASSIGNED/.test(c.assignee) ? `<b style="${T.red}">${t('NO ONE ASSIGNED')}</b>` : `<b>${esc(personName(first(c.lead || ppl[0])))}</b>${crewOf(ppl, c.lead)}`
     const note = noteOf(c.lid)
-    return `<b>${esc(unitShort(c.unit))}</b>${c.sameDayArrival ? ` ${pill(`${pick('by', 'antes de')} ${timeOf(c.lid)}`, 'red')}` : ''}${c.state === 'done' ? ` ${pill(t('done'), 'green')}` : c.state === 'running' ? ` ${pill(t('in progress'), 'amber')}` : ''}${crewOf(ppl, c.lead)}${note ? `<div style="font-size:11.5px;color:#4338ca">📝 ${esc(note)}</div>` : ''}`
-  }
-  const runBlocks = names.map(n => {
-    const b = byPerson[n]
-    const run = b.cleans.slice().sort((x, y) => (y.sameDayArrival ? 1 : 0) - (x.sameDayArrival ? 1 : 0) || x.unit.localeCompare(y.unit))
-    const sd = run.filter(c => c.sameDayArrival).length
-    const metaBits = [
-      isTech(n) ? pick('maintenance, covering', 'mantenimiento, cubriendo') : /superv/.test(dept(n)) ? t('supervision') : /inspect/.test(dept(n)) ? t('inspection') : t('housekeeping'),
-      run.length ? `${run.length} ${run.length === 1 ? t('clean') : t('cleans')}${sd ? ` · <b style="${T.red}">${sd} ${pick('by 4pm', 'antes de las 4')}</b>` : ''}` : '',
-      b.other.length ? `${b.other.length} ${pick('other', 'otras')}` : '',
-      onShift.size && !shiftOf(n) && !isTech(n) && !/superv|inspect/.test(dept(n)) ? `<span style="${T.amber}">${pick('not on the schedule — confirm', 'no está en el horario — confirmar')}</span>` : '',
-    ].filter(Boolean).join(' · ')
-    return person(n, metaBits, run.map(cleanRow), b.other.map(o => `${esc(unitShort(o.unit))} · ${esc(cleanTitle(o.task, lang))}${o.state === 'running' ? ' ' + pill(t('in progress'), 'amber') : ''}`), { bulletCap: 2 })
+    return `<tr>
+      <td style="padding:5px 6px 5px 0;font-size:13px;border-top:1px solid #f3f4f6;vertical-align:top"><b>${esc(unitShort(c.unit))}</b>${note ? `<div style="font-size:11.5px;color:#4338ca">📝 ${esc(note)}</div>` : ''}</td>
+      <td style="padding:5px 6px;font-size:13px;border-top:1px solid #f3f4f6;vertical-align:top">${who}</td>
+      <td style="padding:5px 6px;font-size:12px;border-top:1px solid #f3f4f6;vertical-align:top;white-space:nowrap">${c.sameDayArrival ? pill(`${pick('lands', 'llega')} ${timeOf(c.lid)}`, 'red') + (isVip(c.lid) ? ' ' + vipWhy(c.lid) : '') : `<span style="${T.faint}">—</span>`}</td>
+      <td style="padding:5px 0 5px 6px;font-size:12px;border-top:1px solid #f3f4f6;vertical-align:top;text-align:right;white-space:nowrap">${stateOf(c)}</td>
+    </tr>`
   })
-  const unassignedBlock = unassigned.length
-    ? person(t('NO ONE ASSIGNED'), `${unassigned.length} ${unassigned.length === 1 ? t('clean') : t('cleans')}`, unassigned.map(cleanRow), [], { tone: 'red' })
-    : ''
+  const th = (x: string, right = false) => `<th style="padding:4px 6px 4px 0;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;text-align:${right ? 'right' : 'left'}">${x}</th>`
+  const cleansTable = cleans.length
+    ? `<table width="100%" cellspacing="0" cellpadding="0"><tr>${th(pick('Unit', 'Unidad'))}${th(pick('Cleaner', 'Limpieza'))}${th(pick('Guest lands', 'Llega'))}${th(pick('Status', 'Estado'), true)}</tr>${cleanRows.join('')}</table>`
+    : `<p style="margin:6px 0 0;font-size:13px;color:#6b7280">${t('Nothing on the board today.')}</p>`
 
-  // ---- ARRIVALS THAT NEED A CHECK (no clean today, and something about them) ------------------
+  // ---- ARRIVALS — every one, tagged ---------------------------------------------------------------
   const cleanLids = new Set(cleans.map(c => c.lid))
-  const flagged: Line[] = []
-  let quiet = 0
-  for (const a of arrivals) {
-    if (cleanLids.has(str(a.listingId))) continue
-    const note = noteOf(str(a.listingId))
-    const owner = str(a.ownerFlag) === 'owner booking'
-    const vip = d.bigTodayIds?.has?.(str(a.listingId))
-    const early = /early|temprano|antes de|8\s*am|9\s*am|10\s*am|11\s*am|12\s*pm/i.test(note)
-    const why = owner ? pill('OWNER', 'blue') : (a.bookedToday || a.bookedAfterSync) ? pill(t('WALK-IN'), 'red') : vip ? pill(t('VIP'), 'amber') : early ? pill(pick('EARLY', 'TEMPRANO'), 'amber') : ''
-    if (!why && !note) { quiet++; continue }
-    flagged.push({ tone: owner || vip ? 'amber' : 'none', html: `<b>${esc(unitShort(str(a.unit)))}</b> · ${esc(str(a.checkInTime || '4:00 PM'))} · ${esc(first(a.guest))}${a.nights ? ` · ${a.nights}n` : ''} ${why}`, sub: note ? esc(note) : undefined })
-  }
-  const ownerStays: any[] = sheet.ownerStays || []
-  for (const o of ownerStays.slice(0, 2)) flagged.push({ tone: 'amber', html: `<b>${esc(unitShort(str(o.unit)))}</b> ${pill('OWNER IN-HOUSE', 'blue')} · ${esc(str(o.owner || o.guest))} · ${pick('until', 'hasta')} ${esc(str(o.checkOut).slice(5))}`, sub: pick('White-glove — no shortcuts.', 'Servicio impecable — sin atajos.') })
+  const arrRows = arrivals.map(a => {
+    const lid = str(a.listingId)
+    const note = noteOf(lid)
+    const early = /early|temprano|\b(8|9|10|11)\s*am\b|\b12\s*pm\b/i.test(note)
+    const tags = [vipWhy(lid), (a.bookedToday || a.bookedAfterSync) ? pill(t('WALK-IN'), 'red') : '', early ? pill(pick('EARLY', 'TEMPRANO'), 'amber') : '', cleanLids.has(lid) ? pill(pick('CLEAN TODAY', 'LIMPIEZA HOY'), 'grey') : ''].filter(Boolean).join(' ')
+    return `<tr>
+      <td style="padding:4px 6px 4px 0;font-size:13px;border-top:1px solid #f3f4f6;vertical-align:top"><b>${esc(unitShort(str(a.unit)))}</b> ${tags}${note ? `<div style="font-size:11.5px;color:#4338ca">📝 ${esc(note)}</div>` : ''}</td>
+      <td style="padding:4px 0 4px 6px;font-size:12.5px;border-top:1px solid #f3f4f6;vertical-align:top;text-align:right;white-space:nowrap">${esc(str(a.checkInTime || '4:00 PM'))} · ${esc(first(a.guest))}${a.nights ? ` · ${a.nights}n` : ''}</td>
+    </tr>`
+  })
+  const arrivalsTable = arrivals.length ? `<table width="100%" cellspacing="0" cellpadding="0">${arrRows.join('')}</table>` : `<p style="margin:6px 0 0;font-size:13px;color:#6b7280">${pick('No arrivals today.', 'Sin llegadas hoy.')}</p>`
 
-  // ---- SHAPE OF THE DAY — built from the facts, in clock order ---------------------------------
-  const outTimes = departures.map((x: any) => str(x.checkOutTime)).filter(Boolean)
-  const firstOut = outTimes.sort()[0] || '10:00 AM'
-  const supervisor = names.find(n => /superv/.test(dept(n))) || ''
-  const sdList = sameDay.slice().sort((a, b) => a.unit.localeCompare(b.unit)).map(c => `${esc(unitShort(c.unit))} (${esc(first(c.lead || c.assignee))})`)
-  const notOnSched = names.filter(n => onShift.size && !shiftOf(n) && !isTech(n) && !/superv|inspect/.test(dept(n)) && !isOffice(n))
-  const steps: { at: string; do: string }[] = []
-  steps.push({ at: '8:00', do: [
-    unassigned.length ? `<b>${pick('Assign', 'Asignar')} ${unassigned.map(c => esc(unitShort(c.unit))).join(', ')}</b>.` : '',
-    notOnSched.length ? `${pick('Confirm', 'Confirmar')} ${notOnSched.map(first).map(esc).join(', ')} ${pick('are coming — not on the Homebase schedule.', 'vienen — no están en el horario.')}` : '',
-    pick('Crew briefed on the same-day turns below.', 'Equipo informado de los cambios del mismo día.'),
-  ].filter(Boolean).join(' ') })
-  steps.push({ at: firstOut.replace(/\s*[AP]M/i, m => m.trim().toLowerCase()), do: `${departures.length} ${pick('checkouts', 'salidas')} · ${pick('strips and linen first in the same-day units', 'primero sábanas y ropa en las unidades del mismo día')}.` })
-  if (sameDay.length) steps.push({ at: pick('by 2:00', 'antes 2:00'), do: `${pick('Same-day turns finished, in this order', 'Cambios del mismo día terminados, en este orden')}: ${sdList.slice(0, 8).join(', ')}${sdList.length > 8 ? ` +${sdList.length - 8}` : ''}.` })
-  steps.push({ at: '2:00', do: `${supervisor ? esc(first(supervisor)) + ' ' : ''}${pick('inspects every same-day turn', 'inspecciona cada cambio del mismo día')}${autoInsp.length ? ` + ${autoInsp.map(i => esc(unitShort(str(i.unit_name)))).join(', ')}` : ''}.` })
-  steps.push({ at: '3:30', do: `${pick('Arrival check', 'Revisión de llegadas')}: ${arrivals.length} ${pick('arriving', 'llegan')}${walkIns.length ? ` · ${walkIns.length} ${pick('walk-in', 'de último minuto')}` : ''}${flagged.length ? ` · ${pick('flagged ones below first', 'primero las marcadas abajo')}` : ''}.` })
-  steps.push({ at: '4:00', do: pick('Doors open. Anything not ready → call Roberto before the guest calls us.', 'Abren las puertas. Lo que no esté listo → llamar a Roberto antes de que el huésped nos llame.') })
+  // ---- OTHER WORK by person (strips, restocks, vendor visits) — not cleans, not inspections ------
+  const byPerson: Record<string, Other[]> = {}
+  for (const o of other) {
+    if (/UNASSIGNED/.test(o.assignee) || o.state === 'done') continue
+    if (boardInsp.includes(o)) continue
+    const n = personName(o.lead || o.assignee)
+    if (isOffice(n) || isTech(n)) continue
+    ;(byPerson[n] = byPerson[n] || []).push(o)
+  }
+  const otherBlocks = Object.keys(byPerson).sort().map(n => `<p style="margin:8px 0 2px;font-size:13px"><b>${esc(n)}</b> <span style="${T.muted};font-size:12px">· ${byPerson[n].length} ${byPerson[n].length === 1 ? pick('job', 'trabajo') : pick('jobs', 'trabajos')}${onShift.size && !shiftOf(n) && !/superv|inspect/.test(dept(n)) ? ` · <span style="${T.amber}">${pick('not on the schedule — confirm', 'no está en el horario — confirmar')}</span>` : ''}</span></p>` +
+    `<table cellspacing="0" cellpadding="0" style="margin-left:4px">${byPerson[n].slice(0, 5).map(o => `<tr><td style="width:14px;padding:1px 0;font-size:12px;color:#cbd5e1;vertical-align:top">•</td><td style="padding:1px 0;font-size:12.5px;line-height:1.45;color:#374151">${esc(unitShort(o.unit))} · ${esc(cleanTitle(o.task, lang))}${o.state === 'running' ? ' ' + pill(t('in progress'), 'amber') : ''}</td></tr>`).join('')}${byPerson[n].length > 5 ? `<tr><td></td><td style="font-size:11.5px;color:#9ca3af">+${byPerson[n].length - 5} ${t('more on the board')}</td></tr>` : ''}</table>`)
+
+  // ---- RUNNING THE DAY — the clock, from the facts ----------------------------------------------
+  const outTimes = departures.map((x: any) => str(x.checkOutTime)).filter(Boolean).sort()
+  const firstOut = outTimes[0] || '10:00 AM'
+  const supervisor = Object.keys(deptMap).find(n => /superv/.test(deptMap[n]) && (cleans.some(c => nameMatches(c.lead, n)) || other.some(o => nameMatches(o.lead, n)))) || ''
+  const cleanerNames = Array.from(new Set(cleans.filter(c => !/UNASSIGNED/.test(c.assignee)).map(c => personName(first(c.lead || c.assignee)))))
+  const notOnSched = cleanerNames.filter(n => onShift.size && !shiftOf(n) && !isTech(n) && !/superv|inspect/.test(dept(n)) && !isOffice(n))
+  const vipArr = arrivals.filter(a => isVip(str(a.listingId)))
+  const steps: { at: string; do: string }[] = [
+    { at: '8:00', do: [
+      unassigned.length ? `<b>${pick('Assign', 'Asignar')} ${unassigned.map(c => esc(unitShort(c.unit))).join(', ')}</b>.` : `${pick('Every clean has a name', 'Cada limpieza tiene nombre')}.`,
+      notOnSched.length ? ` ${pick('Confirm', 'Confirmar')} ${notOnSched.map(esc).join(', ')} ${pick('are coming — not on the Homebase schedule.', 'vienen — no están en el horario.')}` : '',
+      ` ${pick('Brief the crew: same-day turns first, in the order above.', 'Informar al equipo: primero los del mismo día, en el orden de arriba.')}`,
+    ].join('') },
+    { at: firstOut.replace(/\s*([AP])M/i, (_m, p) => p.toLowerCase() + 'm'), do: `${departures.length} ${pick('checkouts', 'salidas')} — ${pick('strips and linen into the same-day units first; call any guest still inside at', 'sábanas y ropa primero a las unidades del mismo día; llamar a cualquier huésped que siga dentro a las')} ${esc(firstOut)}.` },
+    ...(sameDay.length ? [{ at: pick('by 1:30', 'antes 1:30'), do: `${pick('Same-day turns finished', 'Cambios del mismo día terminados')} (${sameDay.length}) ${pick('so there is time to inspect before the guest lands', 'para poder inspeccionar antes de que llegue el huésped')}.` }] : []),
+    { at: '2:00', do: `${supervisor ? esc(first(supervisor)) + ' ' : ''}${pick('inspects every same-day turn', 'inspecciona cada cambio del mismo día')}${inspLines.length ? ` · ${pick('clears the pending inspections', 'cierra las inspecciones pendientes')} (${inspLines.length})` : ''}${vipArr.length ? ` · ${pick('VIP units walked personally', 'las unidades VIP revisadas en persona')}: ${vipArr.map(a => esc(unitShort(str(a.unit)))).join(', ')}` : ''}.` },
+    { at: '3:30', do: `${pick('Arrival check', 'Revisión de llegadas')}: ${arrivals.length} ${pick('arriving', 'llegan')}${walkIns.length ? ` · ${walkIns.length} ${pick('walk-in', 'de último minuto')}` : ''} — ${pick('doors, codes, AC on, welcome note', 'puertas, códigos, AC encendido, nota de bienvenida')}.` },
+    { at: '4:00', do: pick('Doors open. Anything not ready → call Roberto before the guest calls us. Close every clean in Breezeway before you leave.', 'Abren las puertas. Lo que no esté listo → llamar a Roberto antes de que el huésped nos llame. Cerrar cada limpieza en Breezeway antes de irse.') },
+  ]
 
   // ---- assemble ------------------------------------------------------------------------------
-  const mk = pick(market, market)
   const head = [
     `<b>${cleans.length}</b> ${cleans.length === 1 ? t('clean') : t('cleans')}`,
-    sameDay.length ? `<b style="${T.red}">${sameDay.length} ${pick('by 4pm', 'antes de las 4')}</b>` : '',
+    sameDay.length ? `<b style="${T.red}">${sameDay.length} ${pick('same-day', 'mismo día')}</b>` : '',
+    unassigned.length ? `<b style="${T.red}">${unassigned.length} ${pick('unassigned', 'sin asignar')}</b>` : `<span style="${T.green}">${pick('all assigned', 'todas asignadas')}</span>`,
     `<b>${arrivals.length}</b> ${pick('in', 'entran')} · <b>${departures.length}</b> ${pick('out', 'salen')}`,
-    unassigned.length ? `<b style="${T.red}">${unassigned.length} ${pick('unassigned', 'sin asignar')}</b>` : `<span style="${T.green}">${pick('everyone has a name', 'todas asignadas')}</span>`,
-    glitches.length ? `${glitches.length} ${pick('open guest issue', 'problema abierto')}${glitches.length === 1 ? '' : 's'}` : '',
+    vipArr.length ? `<b style="${T.amber}">${vipArr.length} VIP</b>` : '',
+    inspLines.length ? `<b>${inspLines.length}</b> ${pick('inspections pending', 'inspecciones pendientes')}` : '',
+    glitches.length ? `${glitches.length} ${pick('open issue', 'problema abierto')}${glitches.length === 1 ? '' : 's'}` : '',
   ].filter(Boolean).join(' · ')
   const links = [{ label: pick('Live board', 'Tablero en vivo'), href: `${APP_URL}/day?market=${encodeURIComponent(market)}` }]
   if (schedUrl) links.push({ label: pick('Team schedule', 'Horario del equipo') + (schedHint ? ` (${pick('passcode ends', 'clave termina')} ${schedHint})` : ''), href: schedUrl })
 
   const parts = [
-    { html: masthead(A, pick('Field Run', 'Ruta del día') + ' — ' + mk, pick('Field coordinator', 'Coordinador de campo'), niceDay(today)) },
+    { html: masthead(A, pick('Field Run', 'Ruta del día') + ' — ' + market, pick('Field coordinator', 'Coordinador de campo'), niceDay(today)) },
     { html: headline(A, head + `<br><span style="font-size:12px;color:#6b7280">${pick('7am snapshot — the board is live. Confirm access before entering any unit.', 'Foto de las 7am — el tablero está en vivo. Confirme acceso antes de entrar a una unidad.')}</span>`, links) },
-    { html: doFirst.length ? section(pick('Do first', 'Primero'), doFirst, { cap: 5, accent: A }) : block(pick('Do first', 'Primero'), `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">${t('Nothing on fire.')}</span> <span style="${T.muted}">${pick('Run the list, keep 4pm in sight.', 'Siga la lista, con las 4pm en mente.')}</span></p>`, A) },
-    { html: block(pick('The run — same-day turns first', 'La ruta — primero los del mismo día'), (unassignedBlock + runBlocks.join('')) || `<p style="margin:6px 0 0;font-size:13px;color:#6b7280">${t('Nothing on the board today.')}</p>`, A, cleans.length) },
-    { html: dayShape(A, steps, pick('Shape of the day', 'Forma del día')) },
-    { html: flagged.length ? section(pick('Arrivals to check', 'Llegadas a revisar'), flagged, { cap: 6, accent: A, note: quiet ? `${quiet} ${pick('other arrivals are routine — on the board.', 'otras llegadas son rutina — en el tablero.')}` : undefined }) : '', optional: true },
+    { html: prioNumbered.length ? section(pick('Top priorities — in order', 'Prioridades — en orden'), prioNumbered, { cap: 12, accent: A }) : block(pick('Top priorities', 'Prioridades'), `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">${t('Nothing on fire.')}</span> <span style="${T.muted}">${pick('Run the list, keep 4pm in sight.', 'Siga la lista, con las 4pm en mente.')}</span></p>`, A) },
+    { html: block(pick('Departure cleans — same-day turns first', 'Limpiezas de salida — primero los del mismo día'), cleansTable, A, cleans.length) },
+    { html: inspLines.length ? section(pick('Inspections — pending', 'Inspecciones — pendientes'), inspLines, { cap: 10, accent: A, note: pick('Only open ones are listed. A completed inspection leaves this list the next morning.', 'Solo las pendientes. Una inspección completada desaparece a la mañana siguiente.') }) : block(pick('Inspections — pending', 'Inspecciones — pendientes'), `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">${pick('None pending.', 'Ninguna pendiente.')}</span></p>`, A) },
+    { html: dayShape(A, steps, pick('Running the day', 'El día, hora por hora')) },
+    { html: block(pick('Arrivals today', 'Llegadas hoy'), arrivalsTable, A, arrivals.length) },
+    { html: otherBlocks.length ? block(pick('Other work on the board — by person', 'Otro trabajo — por persona'), otherBlocks.join(''), A) : '', optional: true },
     { html: footer(pick('Field Run · sent every morning at 7 · the board has the live picture.', 'Ruta del día · cada mañana a las 7 · el tablero tiene la foto en vivo.')) },
   ]
-  const { html } = fit(parts, 60_000)
-  const subject = `${pick('Field Run', 'Ruta')} ${mk} · ${cleans.length} ${cleans.length === 1 ? t('clean') : t('cleans')}${sameDay.length ? ` · ${sameDay.length} ${pick('by 4pm', 'antes de las 4')}` : ''}${unassigned.length ? ` · ${unassigned.length} ${pick('UNASSIGNED', 'SIN ASIGNAR')}` : ''} · ${niceDay(today)}`
-  return { subject, html, words: words(html), counts: { cleans: cleans.length, sameDay: sameDay.length, unassigned: unassigned.length, arrivals: arrivals.length, departures: departures.length, doFirst: doFirst.length } }
+  const { html } = fit(parts, 80_000)
+  const subject = `${pick('Field Run', 'Ruta')} ${market} · ${cleans.length} ${cleans.length === 1 ? t('clean') : t('cleans')}${sameDay.length ? ` · ${sameDay.length} ${pick('same-day', 'mismo día')}` : ''}${unassigned.length ? ` · ${unassigned.length} ${pick('UNASSIGNED', 'SIN ASIGNAR')}` : ''}${vipArr.length ? ` · ${vipArr.length} VIP` : ''} · ${niceDay(today)}`
+  return { subject, html, words: words(html), counts: { cleans: cleans.length, sameDay: sameDay.length, unassigned: unassigned.length, arrivals: arrivals.length, departures: departures.length, priorities: prio.length, inspections: inspLines.length, vip: vipArr.length } }
 }

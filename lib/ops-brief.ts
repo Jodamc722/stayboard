@@ -300,6 +300,14 @@ export async function gather(variant: BriefVariant) {
     .filter(r => isLiveStay(r.status))
     .filter(r => str(r.check_in).slice(0, 10) === today && Number(r.nights) >= LONG_N)
     .map(r => String(r.listing_id)))
+  // TODAY'S ARRIVALS, FLAGGED (2026-10-01, for the Field Run): long stay, big dollar, owner — the
+  // ones that change how the unit is prepped, with the figure the flag came from.
+  const todayFlags: Record<string, { long: boolean; big: boolean; owner: boolean; total: number; nights: number }> = {}
+  for (const r of ((arrRes.data || []) as any[])) {
+    if (!isLiveStay(r.status) || str(r.check_in).slice(0, 10) !== today) continue
+    const nights = Number(r.nights) || 0, total = Math.round(Number(r.money_total) || 0)
+    todayFlags[String(r.listing_id)] = { long: nights >= LONG_N, big: total >= BIG_USD, owner: /^owner/i.test(str(r.source)), total, nights }
+  }
 
   // ── THE WEEK AHEAD (Jon, 2026-08-24: "a section per market, and ops, that shows big
   // reservations, owner stays, forward looking, maybe 7 days out"). Everything landing inside
@@ -450,7 +458,7 @@ export async function gather(variant: BriefVariant) {
   return {
     // THE BOARD, IN THE BRIEF (Jon, 2026-08-25). Computed here because this is where today's
     // Breezeway rows and the variant's market scope already are — no second query.
-    today, sheet, cleans, hkOther, deptOfPerson, officeNames, newReviews, newSinceYesterday, freshLow, reviewsSince: sinceMark, inspect, bigArrivals, bigTodayIds,
+    today, sheet, cleans, hkOther, deptOfPerson, officeNames, newReviews, newSinceYesterday, freshLow, reviewsSince: sinceMark, inspect, bigArrivals, bigTodayIds, todayFlags,
     forward, lookaheadDays: LOOK_D,
     rep: { n: allRevs.length, avg, five, owed }, watch30,
     repByMarket, arrivalNotes, yesterday, yesterdayDate: yest,
