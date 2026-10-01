@@ -94,6 +94,11 @@ export const SIGNAL_META: Record<string, SignalMeta> = {
   },
   // 2026-10-01 (Jon: "the checklist is built with actionable steps"): the counts the day actually
   // turns on, so an item says how much of it there is before anybody opens a tab.
+  // 2026-10-01 (Jon): unpaid balances the guest owes — in house, today, next 7 days.
+  unpaid_due: {
+    link: '/reservations/unpaid', title: 'Unpaid balances — in house, today and the next 7 days',
+    label: n => (n > 0 ? `${n} unpaid` : 'all paid'),
+  },
   arrivals_today: {
     link: '/command', title: 'Arrivals today',
     label: n => (n > 0 ? `${n} arriving` : 'no arrivals'),

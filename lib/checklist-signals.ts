@@ -33,6 +33,7 @@ const COUNTERS: Record<string, () => Promise<number | null>> = {
   open_glitches: () => headCount(sb => sb.from('glitches')
     .select('id', { count: 'exact', head: true })
     .not('status', 'in', '("done","resolved","closed")')),
+  unpaid_due: async () => { try { const { countUnpaidDue } = await import('./unpaid'); return await countUnpaidDue() } catch { return null } },
   arrivals_today: () => arrivals(0),
   tomorrow_arrivals: () => arrivals(1),
   cleans_open_today: async () => (await cleans(0)).filter(c => !c.done).length,
