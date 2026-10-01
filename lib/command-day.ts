@@ -312,6 +312,8 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   const staffingP = shortDaysAhead()
 
   // ── WAVE 1: everything that does not depend on anything else ──────────────────────────────────
+  // The channel snapshot read starts with everything else (2026-10-01 audit) — it used to run alone, after.
+  const snapshotP = readSnapshot().catch(() => null as any)
   const [day, automation, presets, arrivalsRes, glitchesRes, claimsRes, sentimentRes, reviewsToReplyRes, waiting, approvalsRes, fieldOverdueRes, openTasksP, bzOverdueCountRes, callsDoneRes, refundsRes] = await Promise.all([
     // .catch, because buildOpsDay now THROWS on a failed read (2026-09-09) — right for the board's
     // own route, wrong here: a listings blip must not take claims, reviews, messages and the calls
@@ -330,7 +332,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
       .neq('stage', 'closed').is('deleted_at', null).limit(200),
     // Unhappy guests only: who is WAITING comes from the one rule below, not from the scan.
     db.from('guesty_conversation_sentiment')
-      .select('conversation_id,guest_name,listing_id,reservation_id,channel,band,dissatisfied,awaiting_reply,top_issue,guest_excerpt,last_message_at,last_guest_at,status')
+      .select('conversation_id,guest_name,listing_id,reservation_id,channel,dissatisfied,top_issue,guest_excerpt,last_message_at,last_guest_at,status')
       .eq('status', 'open').eq('dissatisfied', true).order('last_message_at', { ascending: false }).limit(60),
     db.from('guesty_reviews').select('id,listing_id,rating,channel,guest_name,created_at,content', { count: 'exact' })
       .eq('has_reply', false).eq('excluded_from_score', false).gte('created_at', back60 + 'T00:00:00Z')
@@ -340,14 +342,16 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     // unread flag, which says whether somebody opened the thread, not whether anybody answered it.
     // A failed read degrades (no rows, named below); it never takes the day down.
     awaitingSet({ db }).catch((e: any): AwaitingSet => ({ rows: [], ids: [], overdue: 0, slaKnown: false, truncated: false, error: String(e?.message || e) })),
+    // PENDING ONLY, in SQL (2026-10-01 audit): the newest 60 of every approval ever asked, filtered
+    // in JS, let decided ones crowd older pending ones off the desk.
     db.from('field_requests').select('id,title,type,building,unit,vendor,amount_usd,priority,approval_status,due_at,status')
-      .eq('approval_required', true).order('created_at', { ascending: false }).limit(60),
+      .eq('approval_required', true).or('approval_status.is.null,approval_status.eq.pending').order('created_at', { ascending: false }).limit(60),
     db.from('field_requests').select('id,title,type,building,unit,vendor,amount_usd,priority,approval_status,due_at,status')
       .in('status', ['open', 'in_progress']).lt('due_at', nowIso).order('due_at').limit(60),
     // ONE task read for the duplicate scan, the pending-in-unit signal and the inspection lookup:
     // open work from 45 days back through +14. Paged.
     pageAll((a, b) => OPEN(db.from('breezeway_tasks_sync')
-      .select('id,reference_property_id,name,status,scheduled_date,assignees,type_department,description:raw->>description,prio:raw->>type_priority'))
+      .select('id,reference_property_id,name,status,scheduled_date,assignees,type_department,prio:raw->>type_priority'))
       .gte('scheduled_date', back45).lte('scheduled_date', ahead14)
       .order('scheduled_date').order('id').range(a, b)).then(rows => ({ data: rows, error: null })).catch(e => ({ data: null, error: e })),
     // The overdue backlog is a NUMBER — ask for a count, not 8,000 rows.
@@ -771,7 +775,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   // row that opens the Channels page filtered to it; the rest are one row per listing, its worst
   // channel first. GM-owned: reconnecting is a Guesty job, not a field one.
   try {
-    const snap = await readSnapshot()
+    const snap = await snapshotP
     const broken = problemsFromSnapshot(snap).filter(p => p.verdict !== 'missing')
     const EFFECT: Record<string, [string, string]> = {
       suspended: ['Airbnb is not selling it until the approval clears', 'Airbnb is not selling them until the approval clears'],

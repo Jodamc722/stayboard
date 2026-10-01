@@ -32,7 +32,7 @@
 //   · EveLine, VendorVisitsCard (→ "· N vendors on site" on the day line), the owner-lane filter.
 //
 // Data: the same one read (/api/command/day, lib/command-day unchanged). Everything is derived here.
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import {
   RefreshCw, ExternalLink, UserPlus, Loader2, Check, X, AlertTriangle, ChevronDown, ChevronRight,
@@ -62,6 +62,8 @@ const HOW_KEY = 'cc5.how'
 const SEV_RANK: Record<Sev, number> = { now: 0, today: 1, soon: 2 }
 const bz = (id: string) => 'https://app.breezeway.io/task/' + id
 const fmtLeft = (m: number) => { const a = Math.abs(m); const h = Math.floor(a / 60); return (h ? h + 'h ' : '') + (a % 60) + 'm' }
+/** A 30-second tick owned by the component that shows a relative time, so the page does not re-render for it (2026-10-01 audit). */
+function useTick(ms = 30_000): number { const [t, setT] = useState(0); useEffect(() => { const i = setInterval(() => setT(x => x + 1), ms); return () => clearInterval(i) }, [ms]); return t }
 const ago = (iso: string, tick: number) => { void tick; const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000)); return s < 60 ? 'just now' : s < 3600 ? Math.round(s / 60) + 'm ago' : Math.round(s / 3600) + 'h ago' }
 const plural = (n: number, one: string, many?: string) => n + ' ' + (n === 1 ? one : (many || one + 's'))
 const PRIMARY = BTN + ' bg-ink text-white whitespace-nowrap'
@@ -131,7 +133,6 @@ export function CommandDayList() {
   const { data: vendorRes } = useCachedFetch<{ visits: VendorVisit[] }>(data ? '/api/projects/vendor-visits' : null, { ttl: 120_000 })
   const roster = useMemo(() => Array.isArray(rosterRes?.people) ? rosterRes!.people : [], [rosterRes])
   const vendorsOnSite = useMemo(() => (Array.isArray(vendorRes?.visits) ? vendorRes!.visits : []).filter(v => v.tone === 'today').length, [vendorRes])
-  const [tick, setTick] = useState(0)
   // When the day was last read. A tab switch re-reads it only when that is over a minute ago
   // (2026-09-28 audit): every glance back at the tab used to rebuild the whole day.
   const readAt = useRef(0)
@@ -139,19 +140,38 @@ export function CommandDayList() {
   useEffect(() => {
     const onShow = () => { if (document.visibilityState === 'visible' && Date.now() - readAt.current > 60_000) refresh() }
     const t = setInterval(onShow, 5 * 60 * 1000)
-    const t2 = setInterval(() => setTick(x => x + 1), 30_000)
     document.addEventListener('visibilitychange', onShow)
-    return () => { clearInterval(t); clearInterval(t2); document.removeEventListener('visibilitychange', onShow) }
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onShow) }
   }, [refresh])
-  const reload = () => { invalidateCache(DAY_URL); refresh() }
+  const reload = useCallback(() => { invalidateCache(DAY_URL); refresh() }, [refresh])
   /** Rows cleared from this screen since the last read — so a cleared row leaves at once. */
   const [gone, setGone] = useState<Record<string, boolean>>({})
-  const hide = (key: string) => setGone(g => ({ ...g, [key]: true }))
+  const hide = useCallback((key: string) => setGone(g => ({ ...g, [key]: true })), [])
   // Every new read carries the server's own cleared rows, so the local ones reset on each response.
   // Keyed on the response, not on generatedAt: the day core is shared and cached now, so two reads a
   // few seconds apart carry the same generatedAt — and a row brought back ("Bring it back") must
   // reappear on the very next read.
   useEffect(() => { setGone({}) }, [data])
+  // ONE PASS over the day per read (2026-10-01 audit): these buckets were rebuilt on every render.
+  const derived = useMemo(() => {
+    if (!data || !data.ok) return null
+    const live = data.next.filter(i => !i.dismissed && !gone[i.key])
+    const troubled = troubledCleanIds(data)
+    const handledKeys: Record<string, true> = {}
+    for (const h of data.handled || []) handledKeys[h.key] = true
+    return {
+      live,
+      fixRows: live.filter(i => isFixRow(i, troubled)).sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || a.rank - b.rank),
+      claims: live.filter(i => i.kind === 'claim'),
+      links: live.filter(isDecideLink),
+      dups: live.filter(i => i.kind === 'duplicate'),
+      vendorNotes: live.filter(isVendorFeedback),
+      backlog: live.filter(i => i.kind === 'pending'),
+      // A spend decided here is recorded as handled (ApprovalRow), so it stays gone while the shared
+      // day core still lists it as pending.
+      approvals: data.tiles.guestDesk.rows.filter(r => r.kind === 'approval' && !gone[r.key] && !handledKeys[r.key]),
+    }
+  }, [data, gone])
 
   if (!data && loading) return <Skeleton />
   if (!data || !data.ok) {
@@ -162,23 +182,11 @@ export function CommandDayList() {
       </div>
     )
   }
-  const live = data.next.filter(i => !i.dismissed && !gone[i.key])
-  const troubled = troubledCleanIds(data)
-  const fixRows = live.filter(i => isFixRow(i, troubled)).sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || a.rank - b.rank)
-  const claims = live.filter(i => i.kind === 'claim')
-  const links = live.filter(isDecideLink)
-  const dups = live.filter(i => i.kind === 'duplicate')
-  const vendorNotes = live.filter(isVendorFeedback)
-  const backlog = live.filter(i => i.kind === 'pending')
-  // A spend decided here is recorded as handled (ApprovalRow), so it stays gone while the shared
-  // day core still lists it as pending.
-  const handledKeys: Record<string, true> = {}
-  for (const h of data.handled || []) handledKeys[h.key] = true
-  const approvals = data.tiles.guestDesk.rows.filter(r => r.kind === 'approval' && !gone[r.key] && !handledKeys[r.key])
+  const { live, fixRows, claims, links, dups, vendorNotes, backlog, approvals } = derived!
 
   return (
     <div className="max-w-[1120px] mx-auto space-y-5">
-      <DayLine d={data} loading={loading} tick={tick} reload={reload} roster={roster} vendorsOnSite={vendorsOnSite} />
+      <DayLine d={data} loading={loading} reload={reload} roster={roster} vendorsOnSite={vendorsOnSite} />
       {/* THE OPERATIONAL HUB (Jon, 2026-09-30): KPIs by area, the Now list, four lanes side by side —
           every row actionable in place, no drop-downs. components/command/Hub.tsx. */}
       <CommandHub d={data} live={live} roster={roster} fixRows={fixRows} claims={claims} links={links} approvals={approvals} onCleared={hide} onChanged={reload} />
@@ -187,7 +195,7 @@ export function CommandDayList() {
       <ClearBand d={data} dups={dups} vendorNotes={vendorNotes} backlog={backlog} onCleared={hide} onChanged={reload} />
       {/* WHAT EVE IS THINKING (2026-09-21): a collapsed line, the same cards as Settings → Eve → Thinking. Admins only; hidden otherwise. */}
       <EveThinking />
-      <CompletedLine d={data} onChanged={reload} tick={tick} />
+      <CompletedLine d={data} onChanged={reload} />
       {/* THE WEEK — the KPI strip (Jon, 2026-09-18), below the day's work. */}
       <Scoreboard />
       <AvailabilityAlert />
@@ -196,8 +204,9 @@ export function CommandDayList() {
 }
 
 // ── THE DAY — one line, and "How's the day" behind it ──────────────────────────────────────────
-function DayLine({ d, loading, tick, reload, roster, vendorsOnSite }: { d: CommandDay; loading: boolean; tick: number; reload: () => void; roster: Roster[]; vendorsOnSite: number }) {
+function DayLine({ d, loading, reload, roster, vendorsOnSite }: { d: CommandDay; loading: boolean; reload: () => void; roster: Roster[]; vendorsOnSite: number }) {
   const v = d.verdict, p = d.pulse, t = d.tiles
+  const tick = useTick()
   const [how, setHow] = useState(false)
   const [tile, setTile] = useState<TileKey | null>(null)
   useEffect(() => { try { setHow(localStorage.getItem(HOW_KEY) === '1') } catch { /* private mode */ } }, [])
@@ -222,7 +231,8 @@ function DayLine({ d, loading, tick, reload, roster, vendorsOnSite }: { d: Comma
     <section aria-live="polite">
       <LeanHead title={<span>Today <span className="text-muted font-medium text-[14px]">· {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'America/New_York' })}</span></span>} icon={<Sparkles size={18} className="text-brand-600" />}>
         <Pill tone={vTone} title={v.detail}>{v.headline}</Pill>
-        {p.cleansTotal > 0 && <Pill tone={t.cleans.late ? 'rose' : t.cleans.atRisk ? 'amber' : 'slate'} title={'Cleans done today' + (left ? ' · ' + left : '')}>{p.cleansDone}/{p.cleansTotal} cleans</Pill>}
+        {/* The cleans pill that sat here repeated the Departure cleans tile directly under it (2026-10-01 audit); the time left rides on the verdict instead. */}
+        {left && p.cleansTotal > p.cleansDone && <Pill tone={t.cleans.late ? 'rose' : 'slate'} title="Time left on today's cleans">{left}</Pill>}
         {vendorsOnSite > 0 && <Pill title="Vendor visits booked for today">{plural(vendorsOnSite, 'vendor')} on site</Pill>}
         <Tip label={'Refresh the day · read ' + ago(d.generatedAt, tick)}>
           <button onClick={reload} aria-label="Refresh the day" className="inline-flex items-center gap-1 text-[11.5px] text-muted hover:text-ink min-h-[28px] px-1">
@@ -866,7 +876,8 @@ function YoursBand() {
 }
 
 // ── COMPLETED — one line, the card behind it ───────────────────────────────────────────────────
-function CompletedLine({ d, onChanged, tick }: { d: CommandDay; onChanged: () => void; tick: number }) {
+function CompletedLine({ d, onChanged }: { d: CommandDay; onChanged: () => void }) {
+  const tick = useTick()
   const [open, setOpen] = useState(false)
   const c = d.completed
   return (
@@ -882,7 +893,7 @@ function CompletedLine({ d, onChanged, tick }: { d: CommandDay; onChanged: () =>
 
 function Skeleton() {
   return (
-    <div className="max-w-[760px] mx-auto space-y-5 animate-pulse">
+    <div className="max-w-[1120px] mx-auto space-y-5 animate-pulse">
       <div className="h-12 rounded-xl bg-white border border-line" />
       {[0, 1, 2, 3].map(i => (
         <div key={i}>

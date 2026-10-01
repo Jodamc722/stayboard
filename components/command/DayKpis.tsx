@@ -128,7 +128,7 @@ function Tile({ label, done, needed, segs, sub, on, onClick, title, loading, big
   const tone = big ? big.tone : !needed ? 'text-muted' : done === needed ? 'text-emerald-700' : segs.some(s => s.n && /late|urgent|unassigned/.test(s.filter)) ? 'text-rose-700' : 'text-ink'
   return (
     <button onClick={onClick} aria-pressed={on} title={title + (on ? ' — click to close the list' : ' — click to open the list')}
-      className={'text-left rounded-xl border bg-white px-3 py-2 min-h-[84px] transition flex flex-col gap-1 ' + (on ? 'border-brand-400 ring-2 ring-brand-100' : 'border-line hover:border-ink/30')}>
+      className={'text-left rounded-xl border bg-white px-2.5 sm:px-3 py-2 min-h-[72px] sm:min-h-[84px] transition flex flex-col gap-1 min-w-0 ' + (on ? 'border-brand-400 ring-2 ring-brand-100' : 'border-line hover:border-ink/30')}>
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10.5px] uppercase tracking-wider font-bold text-muted truncate">{label}</span>
         {loading ? <Loader2 size={11} className="animate-spin text-muted" /> : <span className={'text-[10.5px] font-bold tabular-nums ' + (needed ? 'text-muted' : 'text-muted/50')}>{needed ? pct + '%' : ''}</span>}
@@ -221,7 +221,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
       segs: [{ label: 'done', n: w?.done || 0, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'owed today', n: wOwedToday, cls: 'bg-rose-500', tone: 'rose', filter: 'today' }, { label: 'due', n: Math.max(0, (w?.needed || 0) - (w?.done || 0) - wOwedToday), cls: 'bg-slate-300', tone: 'slate', filter: 'open' }],
       sub: callsQ.error || (calls && !calls.ok) ? 'could not read the Calls desk' : w ? [wOwedToday ? wOwedToday + ' arriving today still owed' : (w.todayNeeded ? 'today’s arrivals all called' : 'no arrivals today'), (w.needed - w.done - wOwedToday) > 0 ? (w.needed - w.done - wOwedToday) + ' due in the next 3 days' : ''].filter(Boolean).join(' · ') : '' },
     { key: 'recovery', label: 'Recovery calls', done: rc?.done || 0, needed: rc?.needed || 0, loading: !calls && callsQ.loading, title: 'Calls that exist because the unit is in review recovery (a 3★-or-under review with nothing good since): the pre-arrival call into it and the post-checkout call out of it',
-      segs: [{ label: 'done', n: rc?.done || 0, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'open', n: Math.max(0, (rc?.needed || 0) - (rc?.done || 0)), cls: 'bg-rose-400', tone: 'rose', filter: 'open' }],
+      segs: [{ label: 'done', n: rc?.done || 0, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'open', n: Math.max(0, (rc?.needed || 0) - (rc?.done || 0)), cls: 'bg-amber-400', tone: 'amber', filter: 'open' }],
       sub: calls?.recoveryFailed ? 'recovery scan failed — see the Calls desk' : rc ? [rc.pre ? rc.pre + ' pre-arrival' : '', rc.post ? rc.post + ' after checkout' : ''].filter(Boolean).join(' · ') || 'no units in recovery with a guest moving' : '' },
     { key: 'maint', label: 'Maintenance', done: mDone, needed: maint.length, title: 'Today’s maintenance work in Breezeway: urgent and high first, then what nobody is on, open, in progress, done',
       segs: [{ label: 'done', n: mDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'in progress', n: mRun, cls: 'bg-sky-400', tone: 'sky', filter: 'running' }, { label: 'open', n: Math.max(0, mOpen), cls: 'bg-slate-300', tone: 'slate', filter: 'open' }, { label: 'unassigned', n: mNobody, cls: 'bg-amber-400', tone: 'amber', filter: 'unassigned' }],
@@ -268,7 +268,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
 
   return (
     <section>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+      <div className="grid grid-cols-3 lg:grid-cols-6 gap-2">
         {tiles.map(x => <Tile key={x.key} label={x.label} done={x.done} needed={x.needed} segs={x.segs} sub={x.sub} on={open === x.key} onClick={() => toggle(x.key)} title={x.title} loading={x.loading} big={x.big} />)}
       </div>
       {open && tile && (

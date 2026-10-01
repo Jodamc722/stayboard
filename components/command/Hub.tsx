@@ -46,7 +46,7 @@ const AREA: Record<Area, { label: string; short: string; Icon: any; href: string
   reviews: { label: 'Reviews', short: 'Reviews', Icon: Star, href: '/reviews', hrefLabel: 'Reviews', blurb: 'Reviews waiting on a public reply — low scores first' },
   admin: { label: 'Admin', short: 'Admin', Icon: FileText, href: '/buildings', hrefLabel: 'Properties', blurb: 'What needs your decision, unpaid balances to collect, the checklist, your tasks and today’s recommended listing work' },
 }
-const SUB_ORDER = ['Cleans', 'Inspections', 'Tasks', 'Team', 'Calls', 'Inbox', 'Glitches', 'Queue', 'Needs you', 'Unpaid', 'Checklist', 'Yours', 'Fixes']
+const SUB_ORDER = ['Cleans', 'Inspections', 'Tasks', 'Team', 'Calls', 'Inbox', 'Glitches', 'Queue', 'Needs you', 'Yours', 'Optimize', 'Fixes']
 const UNPAID_URL = '/api/unpaid'   // today → +7: in house, arriving today, next seven days (direct / VRBO / Google only)
 const NOW_MIN = 65     // a row needs this score to make the Now list
 const NOW_MAX = 6
@@ -505,12 +505,27 @@ function ChecklistStrip({ ck, onTicked }: { ck: Ck | undefined; onTicked: () => 
   )
 }
 
-function MineRow({ it, late, onChanged, lane }: { it: MineItem; late: boolean; onChanged: () => void; lane?: string }) {
+type OptimizeDue = { id: string; name: string; building: string; lastOptimized: string | null; days: number | null }
+const OPTIMIZE_URL = '/api/command/optimize-due'
+/** A listing past its optimization cadence (six months) or never optimized. Opens the listing engine. */
+function OptimizeRow({ o, lane }: { o: OptimizeDue; lane?: string }) {
+  const months = o.days == null ? null : Math.floor(o.days / 30)
+  return (
+    <Row lane={lane} noteKey={'opt:' + o.id} dot={o.days == null ? 'amber' : null} title={o.name}
+      tags={o.days == null ? <Tag tone="amber" title="No optimization on record">never optimized</Tag> : <Tag tone="slate" title={'Last optimized ' + o.lastOptimized}>{months} months ago</Tag>}
+      meta={(o.building ? o.building + ' · ' : '') + 'optimize every 6 months — copy, photos, hero'}
+      actions={<Link href={'/listings/' + encodeURIComponent(o.id)} prefetch={false} className={DARK} title="Open the listing — Recreate, photo order, hero"><Sparkles size={12} /> Optimize</Link>} />
+  )
+}
+
+function MineRow({ it, late, pending, onChanged, lane }: { it: MineItem; late: boolean; pending?: boolean; onChanged: () => void; lane?: string }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const done = async () => { setBusy(true); setErr(''); try { await post('/api/projects/' + it.projectId, { action: 'taskSet', taskId: it.id, status: 'done' }); onChanged() } catch (e: any) { setErr(String(e?.message || e)) } setBusy(false) }
   return (
-    <Row lane={lane} noteKey={'mine:' + it.id} dot={late ? 'rose' : null} title={it.title} tags={late ? <Tag tone="rose" title={'Was due ' + (it.due || '')}>overdue</Tag> : it.due ? <Tag tone="slate" title="Due date">{String(it.due).slice(5)}</Tag> : null} meta={it.project} err={err}
+    <Row lane={lane} noteKey={'mine:' + it.id} dot={late ? 'rose' : null} title={it.title}
+      tags={<>{late ? <Tag tone="rose" title={'Was due ' + (it.due || '')}>overdue</Tag> : it.due ? <Tag tone={pending ? 'slate' : 'amber'} title="Due date">{pending ? 'due ' : ''}{String(it.due).slice(5)}</Tag> : pending ? <Tag tone="slate" title="No date on it">pending</Tag> : null}{it.status === 'doing' && <Tag tone="sky" title="In progress">doing</Tag>}{it.status === 'blocked' && <Tag tone="rose" title="Blocked">blocked</Tag>}</>}
+      meta={it.project} err={err}
       actions={<>
         <button onClick={done} disabled={busy} className={GHOST} title="Mark done">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button>
         <Link href={'/projects/' + it.projectId} prefetch={false} className={GHOST} title="Open the project">Open</Link>
@@ -645,9 +660,10 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   const ckQ = useCachedFetch<Ck>(CK_URL, { ttl: 60_000 })
   const mineQ = useCachedFetch<Mine>(MINE_URL, { ttl: 60_000 })
   const fixQ = useCachedFetch<{ actions?: FixAction[] }>('/api/listing-health?slim=1', { ttl: 10 * 60_000 })
+  const optQ = useCachedFetch<{ rows?: OptimizeDue[]; due?: number }>(OPTIMIZE_URL, { ttl: 30 * 60_000 })
+  const optimizeRows = (optQ.data?.rows || []).slice(0, 6)
+  const optimizeDue = Number(optQ.data?.due) || 0
   const weekQ = useCachedFetch<{ tiles?: { key: string; value: string; sub: string }[] }>(SCOREBOARD_URL, { ttl: 5 * 60_000 })
-  const unpaidQ = useCachedFetch<{ rows?: UnpaidHubRow[] }>(UNPAID_URL, { ttl: 5 * 60_000 })
-  const reloadUnpaid = () => { invalidateCache(UNPAID_URL); unpaidQ.refresh() }
   // Notes on every row — one read, added to in place (Jon, 2026-10-01).
   const notesQ = useCachedFetch<{ byKey?: Record<string, DayNote[]> }>(NOTES_URL, { ttl: 60_000 })
   const [addedNotes, setAddedNotes] = useState<Record<string, DayNote[]>>({})
@@ -703,13 +719,16 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
 
   // ── ADMIN ──
   const ck = ckQ.data
-  const ckRows = (ck?.rows || []).filter(r => !r.done)
   const mine = mineQ.data?.groups
-  const mineRows: { it: MineItem; late: boolean; score: number }[] = mine ? [...mine.overdue.map(x => ({ it: x, late: true, score: 48 })), ...mine.today.map(x => ({ it: x, late: false, score: 35 }))] : []
+  // YOURS = everything with your name on it, not only today (Jon, 2026-10-01: "pending projects …
+  // user-assigned tasks"): overdue, today, this week, then the rest of the open ones (capped at 8).
+  const mineRows: { it: MineItem; late: boolean; score: number; pending?: boolean }[] = mine ? [
+    ...mine.overdue.map(x => ({ it: x, late: true, score: 48 })),
+    ...mine.today.map(x => ({ it: x, late: false, score: 35 })),
+    ...(mine.week || []).map(x => ({ it: x, late: false, score: 28, pending: true })),
+    ...[...(mine.later || []), ...(mine.someday || [])].slice(0, 8).map(x => ({ it: x, late: false, score: 18, pending: true })),
+  ] : []
   const channel = live.filter(i => i.kind === 'channel')
-  const unpaid = (unpaidQ.data?.rows || []).filter(r => r.tracking.status !== 'waived' && r.bucket !== 'later')
-  const unpaidOwed = unpaid.reduce((a, r) => a + r.balance, 0)
-  const unpaidHot = unpaid.filter(r => r.bucket !== 'week')
   const seenFix: Record<string, true> = {}
   const fixes = (fixQ.data?.actions || []).filter(a => (seenFix[a.listingId] ? false : (seenFix[a.listingId] = true))).slice(0, 6)
   const NEEDS: Record<string, { tag: string; tone: Tone; hover: string; clear: 'done' | 'skipped'; clearTitle: string; score: number }> = {
@@ -758,7 +777,10 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   }
   // Unpaid stays are their own section under the checklist (the board's rows, embedded) — not lane rows.
   // Checklist rows live in the strip above (the smart checklist), not in the lane (2026-10-01).
-  for (const m of mineRows) items.push({ key: 'mine:' + m.it.id, area: 'admin', sub: 'Yours', score: m.score, node: <MineRow it={m.it} late={m.late} onChanged={reloadMine} /> })
+  for (const m of mineRows) items.push({ key: 'mine:' + m.it.id, area: 'admin', sub: 'Yours', score: m.score, node: <MineRow it={m.it} late={m.late} pending={m.pending} onChanged={reloadMine} /> })
+  // OPTIMIZE (Jon, 2026-10-01: "every listing should be optimized once every 6 months"): the listings
+  // past the cadence or never optimized — never first, then oldest. Low score: standing work, not a fire.
+  for (const o of optimizeRows) items.push({ key: 'opt:' + o.id, area: 'admin', sub: 'Optimize', score: o.days == null ? 26 : 22, node: <OptimizeRow o={o} /> })
   if (channel.length) items.push({ key: 'channel-group', area: 'admin', sub: 'Fixes', score: channel.length > 1 ? 58 : 66, node: <ChannelGroupRow items={channel} onCleared={onCleared} /> })
   for (const a of fixes) items.push({ key: 'fix:' + a.listingId + a.key, area: 'admin', sub: 'Fixes', score: a.severity === 'critical' ? 40 : a.severity === 'high' ? 30 : 20, node: <FixRow a={a} /> })
 
@@ -775,8 +797,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
     { key: 'waiting', area: 'guests', label: 'Guests waiting', short: 'Waiting', value: String(inbox.length), sub: [lateReplies.length ? lateReplies.length + ' past the hour' : '', unhappy.length ? unhappy.length + ' unhappy' : 'sentiment clear'].filter(Boolean).join(' · '), tone: unhappy.length || lateReplies.length ? 'rose' : inbox.length ? 'amber' : 'emerald', title: 'Guests waiting on a reply (1-hour rule), and current guests the sentiment scan reads as unhappy' },
     { key: 'glitches', area: 'guests', label: 'Glitches', value: String(glitches.length), sub: [t.glitches.overdue ? t.glitches.overdue + ' overdue' : 'none overdue', wkGl && /to close/.test(wkGl.sub) ? 'wk ' + wkGl.sub.split(' · ').filter(s => /to close/.test(s))[0] : ''].filter(Boolean).join(' · '), tone: t.glitches.overdue ? 'rose' : glitches.length ? 'amber' : 'emerald', title: 'Open guest issues, how many are past due, and the month’s median time to close' },
     { key: 'reviews', area: 'reviews', label: 'Reviews', value: String(reviews.length), sub: [lowReviews.length ? lowReviews.length + ' at 3★ or under' : reviews.length ? 'to answer' : 'all answered', avg30 ? avg30.avg + '★ last 30d' : ''].filter(Boolean).join(' · '), tone: lowReviews.length ? 'rose' : reviews.length ? 'amber' : 'emerald', title: 'Reviews waiting on a public reply, and the average score of the last 30 days' },
-    { key: 'admin', area: 'admin', label: 'Admin', value: String(approvals.length + claims.length + links.length), sub: [approvals.length + claims.length + links.length ? 'need your decision' : 'nothing to decide', ck?.progress?.total ? 'checklist ' + ck.progress.pct + '%' : '', fixes.length ? fixes.length + ' fixes' : ''].filter(Boolean).join(' · '), tone: approvals.length || links.length ? 'amber' : ck?.progress?.late ? 'amber' : 'emerald', title: 'Decisions waiting on you, today’s checklist, and the listing fixes recommended for today' },
-    { key: 'unpaid', area: 'admin', label: 'Unpaid', value: unpaid.length ? money(unpaidOwed) : '0', sub: unpaid.length ? unpaid.length + (unpaid.length === 1 ? ' stay' : ' stays') + (unpaidHot.length ? ' · ' + unpaidHot.length + ' to collect today' : ' · next 7 days') : 'direct / VRBO / Google all paid', tone: unpaidHot.length ? 'rose' : unpaid.length ? 'amber' : 'emerald', title: 'Money still owed by direct, VRBO and Google guests in house, arriving today or in the next 7 days — every other channel pays us itself' },
+    { key: 'admin', area: 'admin', label: 'Admin', value: String(approvals.length + claims.length + links.length), sub: [approvals.length + claims.length + links.length ? 'need your decision' : 'nothing to decide', mineRows.length ? mineRows.length + ' of yours' : '', optimizeDue ? optimizeDue + ' to optimize' : '', fixes.length ? fixes.length + ' fixes' : ''].filter(Boolean).join(' · '), tone: approvals.length || links.length ? 'amber' : ck?.progress?.late ? 'amber' : 'emerald', title: 'Decisions waiting on you, your own tasks, listings past their six-month optimization, and the listing fixes recommended for today' },
   ]
 
   const EMPTY: Record<Area, string> = { ops: 'every clean and inspection is covered', guests: 'nobody is waiting', reviews: 'nothing waiting on a reply', admin: 'nothing on your desk' }
