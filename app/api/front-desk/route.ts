@@ -16,6 +16,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ymdET } from '@/lib/team-schedule'
 import { loadCallsDesk } from '@/lib/call-desk'
 import { billingRange, type BillingTask } from '@/lib/billing'
+import { rollupBuilding } from '@/lib/optimize-score'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -35,6 +36,8 @@ export type FdData = {
   arrivals: FdArrival[]
   summary: { arrivals: number; ready: number; noticesNeeded: number; noticesSent: number; callsNeeded: number; callsDone: number; mustCallOpen: number }
   team: FdPerson[]
+  /** Calls today whose outcome came from the phone system (Talkroute) rather than a person's tick. */
+  phoneProven: number
   billable: { from: string; to: string; techs: FdTech[]; totals: { tasks: number; withHours: number; minutes: number; billedHours: number; billable: number; missing: number }; missingDetail: number }
   canCall: boolean; canSend: boolean
 }
@@ -73,7 +76,7 @@ export async function GET(req: NextRequest) {
       const notice = n ? { id: str(n.id), sent: !!n.sent_at, sentBy: first(n.sent_by), sentAt: n.sent_at || null, form: !!n.doc_path || /elser/i.test(str(n.property_id)), propertyId: str(n.property_id) } : null
       const call = { due: !!r.due, done: !!r.done, outcome: str(r.outcome), attempts: Number(r.attempts) || 0, by: first(r.calledBy), at: str(r.calledAt), claimedBy: first(r.claimedBy) }
       return {
-        reservationId: r.id, guest: r.guest, unit: r.listing, building: r.building, listingId: r.listingId,
+        reservationId: r.id, guest: r.guest, unit: r.listing, building: rollupBuilding(r.building, r.listing) || r.building || 'Other', listingId: r.listingId,
         checkIn: r.check_in, checkOut: str((r as any).check_out || r.status?.checkOut || ''), nights: Number(r.status?.nights) || 0, channel: str(r.source), value: Number(r.value) || 0, phone: str(r.phone),
         tier: str(r.tier), mandatory: !!r.mandatory, notice, call,
         ready: (!notice || notice.sent) && call.done,
@@ -89,10 +92,12 @@ export async function GET(req: NextRequest) {
 
     // ── the team today: calls made today (any arrival day) and notices sent today ──
     const people: Record<string, FdPerson> = {}
+    let phoneProven = 0
     const P = (name: string) => (people[name] ||= { name, calls: 0, reached: 0, voicemail: 0, notices: 0 })
     for (const r of [...desk.rows, ...desk.outRows]) {
       if (!r.calledAt || dayET(r.calledAt) !== today) continue
       const who = first(r.calledBy) || 'someone'
+      if (/talkroute|phone/i.test(who)) { phoneProven++; continue }   // the phone system confirming a call is not a person on the board
       const p = P(who); p.calls++; if (/voicemail/i.test(str(r.outcome))) p.voicemail++; else if (r.done) p.reached++
     }
     try {
@@ -123,7 +128,7 @@ export async function GET(req: NextRequest) {
     const totals = techList.reduce((a, x) => ({ tasks: a.tasks + x.tasks, withHours: a.withHours + x.withHours, minutes: a.minutes + x.minutes, billedHours: a.billedHours + x.billedHours, billable: a.billable + x.billable, missing: a.missing + (x.tasks - x.withHours) }), { tasks: 0, withHours: 0, minutes: 0, billedHours: 0, billable: 0, missing: 0 })
 
     const out: FdData = {
-      ok: true, date, today, arrivals, summary, team,
+      ok: true, date, today, arrivals, summary, team, phoneProven,
       billable: { from: sundayOf(today), to: today, techs: techList, totals, missingDetail: weekBilling.missingDetail || 0 },
       canCall: at('welcome-calls', 'edit'), canSend: at('reservation-emails', 'edit'),
     }

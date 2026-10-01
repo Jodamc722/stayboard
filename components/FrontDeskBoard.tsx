@@ -222,7 +222,9 @@ function TeamToday({ data }: { data: FdData | undefined }) {
   return (
     <section className="rounded-2xl border border-line bg-white p-4">
       <h2 className="text-[11px] font-bold uppercase tracking-wider text-ink inline-flex items-center gap-1.5"><Trophy size={13} className="text-amber-500" /> The team today</h2>
-      {!team.length ? <p className="text-[12.5px] text-muted mt-2">Nothing logged yet today — the first call goes on the board.</p> : (
+      {!team.length ? <p className="text-[12.5px] text-muted mt-2">Nothing logged yet today — the first call goes on the board.</p> : null}
+      {!!data?.phoneProven && <p className="text-[11.5px] text-muted mt-1">{data.phoneProven} call{data.phoneProven === 1 ? '' : 's'} today confirmed by the phone system.</p>}
+      {team.length > 0 && (
         <ol className="mt-2 space-y-2">
           {team.slice(0, 8).map((p, i) => (
             <li key={p.name} className="flex items-center gap-2">
