@@ -13,13 +13,14 @@ import { Loader2, ExternalLink, Phone, Mail, MessageSquare, Check, AlertTriangle
 import { LeanHead, Pill, Tag, IconBtn, LeanList, LeanRow, LeanSection, LeanEmpty } from '@/components/lean'
 
 type Note = { at: string; by: string; text: string }
-type Row = {
+export type UnpaidRowT = {
   id: string; unit: string; building: string; guest: string; phone: string | null; email: string | null
   checkIn: string; checkOut: string; nights: number; status: string; source: string; channelPays: boolean
   total: number; paid: number; balance: number; currency: string; daysUntil: number
   bucket: 'in_house' | 'today' | 'week' | 'later'; guestyUrl: string
   tracking: { status: string; notes: Note[]; updatedAt: string | null; updatedBy: string | null }
 }
+type Row = UnpaidRowT
 type Data = { from: string; to: string; today: string; rows: Row[]; canEdit: boolean; summary: { count: number; balance: number; inHouse: number; today: number; week: number; later: number; channelPays: number; chased: number } }
 
 const TZ = 'America/New_York'
@@ -104,18 +105,7 @@ export function UnpaidBoard({ embed = false }: { embed?: boolean } = {}) {
           <Link href="/reservations/unpaid" prefetch={false} className="ml-auto normal-case tracking-normal font-semibold text-brand-700 hover:underline">Board →</Link>
         </h2>
         {err && <p className="mb-2 text-[12.5px] text-rose-700 inline-flex items-center gap-1"><AlertTriangle size={13} /> {err}</p>}
-        <div className="space-y-3">
-          {BUCKETS.map(b => {
-            const list = rows.filter(r => r.bucket === b.key)
-            if (!list.length) return null
-            return (
-              <div key={b.key}>
-                <div className={'px-1 mb-1 text-[10.5px] font-bold uppercase tracking-wider ' + (b.tone === 'rose' ? 'text-rose-700' : 'text-muted')} title={b.hint}>{b.title} <span className="tabular-nums font-semibold normal-case tracking-normal text-muted">· {money(list.reduce((a, r) => a + r.balance, 0))}</span></div>
-                <LeanList>{list.map(r => <UnpaidRow key={r.id} r={r} today={data!.today} canEdit={!!data?.canEdit} onPatch={patch} />)}</LeanList>
-              </div>
-            )
-          })}
-        </div>
+        <LeanList>{rows.map(r => <UnpaidRow key={r.id} r={r} today={data!.today} canEdit={!!data?.canEdit} onPatch={patch} simple />)}</LeanList>
       </section>
     )
   }
@@ -170,7 +160,9 @@ export function UnpaidBoard({ embed = false }: { embed?: boolean } = {}) {
   )
 }
 
-function UnpaidRow({ r, today, canEdit, onPatch }: { r: Row; today: string; canEdit: boolean; onPatch: (id: string, t: Row['tracking']) => void }) {
+// simple (the Today page): one flat list, no groups — the row carries its DUE DATE instead: the
+// arrival for a guest still to come, today for a guest already inside (Jon, 2026-10-01).
+export function UnpaidRow({ r, today, canEdit, onPatch, simple = false }: { r: Row; today: string; canEdit: boolean; onPatch: (id: string, t: Row['tracking']) => void; simple?: boolean }) {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [err, setErr] = useState<string | null>(null)
@@ -186,13 +178,16 @@ function UnpaidRow({ r, today, canEdit, onPatch }: { r: Row; today: string; canE
   }
   const whenTxt = r.bucket === 'in_house' ? `in house · out ${day(r.checkOut)}` : r.daysUntil === 0 ? 'arrives today' : r.daysUntil === 1 ? 'arrives tomorrow' : `arrives ${day(r.checkIn)} · in ${r.daysUntil}d`
   const lastNote = r.tracking.notes[r.tracking.notes.length - 1]
+  const dueYmd = r.bucket === 'in_house' || r.checkIn <= today ? today : r.checkIn
+  const dueTxt = dueYmd === today ? 'due today' : r.daysUntil === 1 ? 'due tomorrow' : `due ${day(dueYmd)}`
   return (
     <LeanRow
       tint={r.bucket === 'in_house' || r.bucket === 'today' ? 'rose' : undefined}
       lead={<span className="shrink-0 inline-flex items-center justify-center rounded-lg px-2 h-8 text-[13px] font-bold tabular-nums bg-rose-600 text-white">{money(r.balance, r.currency)}</span>}
       name={r.guest}
-      meta={<>{r.unit} · {whenTxt} · {r.nights}n</>}
+      meta={simple ? <>{r.unit} · {day(r.checkIn)} → {day(r.checkOut)}</> : <>{r.unit} · {whenTxt} · {r.nights}n</>}
       tags={<>
+        {simple && <Tag tone={dueYmd === today ? 'rose' : 'amber'} title={r.bucket === 'in_house' ? 'The guest is inside — collect before checkout' : 'Collect before the door code goes out'}>{dueTxt}</Tag>}
         <Tag>{channel(r.source)}</Tag>
         <Tag tone={st.tone}>{st.label}</Tag>
         {r.tracking.notes.length > 0 && <Tag tone="sky" title={lastNote ? `${first(lastNote.by)} · ${when(lastNote.at)}` : ''}><MessageSquare size={10} className="inline -mt-px mr-0.5" />{r.tracking.notes.length}</Tag>}

@@ -684,9 +684,9 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
           header below — same numbers, one less band to scan (Jon, 2026-10-01: "cleaner … better organized"). */}
       <ChecklistStrip ck={ck} onTicked={reloadCk} />
 
-      {/* UNPAID — the actual reservations, as the board shows them: in the unit, arriving today, this week.
-          Each opens to the folio, contact, status and notes (Jon, 2026-10-01). Hidden when nothing is owed. */}
-      {!focus && <UnpaidBoard embed />}
+      {/* UNPAID — the actual reservations, one flat list with a due date each (Jon, 2026-10-01). The
+          Unpaid tile above scrolls here. Hidden when nothing is owed this week. */}
+      {!focus && <div id="unpaid-today" className="scroll-mt-4"><UnpaidBoard embed /></div>}
 
       {!focus && (
         <section>

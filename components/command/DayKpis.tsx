@@ -32,9 +32,11 @@ import { InlineAssign, type Roster } from '@/components/CommandCockpit'
 import { Row, CleanRow, InspectionTaskRow, ArrivalInspectionRow, LIST, GHOST, DARK, bz, money, INSPECT, tomorrowOf } from '@/components/command/Hub'
 import { NudgeBtn } from '@/components/command/Nudge'
 import type { DayCalls, DayCallRow } from '@/app/api/command/calls/route'
+import { UnpaidRow, type UnpaidRowT } from '@/components/UnpaidBoard'
 
 export const CALLS_URL = '/api/command/calls'
-type Key = 'cleans' | 'insp' | 'welcome' | 'recovery' | 'maint'
+type Key = 'cleans' | 'insp' | 'welcome' | 'recovery' | 'maint' | 'unpaid'
+const UNPAID_URL = '/api/unpaid'   // today → +7 days, direct / VRBO / Google only
 type Seg = { label: string; n: number; cls: string; tone: Tone; filter: string }
 type Item = { key: string; state: string; taskId?: string; who?: string; node: ReactNode; sort: number }
 
@@ -121,9 +123,9 @@ function DayCallRowView({ r, canLog, onChanged }: { r: DayCallRow; canLog: boole
 }
 
 // ── the tile ────────────────────────────────────────────────────────────────────────────────────
-function Tile({ label, done, needed, segs, sub, on, onClick, title, loading }: { label: string; done: number; needed: number; segs: Seg[]; sub: string; on: boolean; onClick: () => void; title: string; loading?: boolean }) {
+function Tile({ label, done, needed, segs, sub, on, onClick, title, loading, big }: { label: string; done: number; needed: number; segs: Seg[]; sub: string; on: boolean; onClick: () => void; title: string; loading?: boolean; big?: { value: string; unit: string; tone: string } }) {
   const pct = needed ? Math.round((done / needed) * 100) : 100
-  const tone = !needed ? 'text-muted' : done === needed ? 'text-emerald-700' : segs.some(s => s.n && /late|urgent|unassigned/.test(s.filter)) ? 'text-rose-700' : 'text-ink'
+  const tone = big ? big.tone : !needed ? 'text-muted' : done === needed ? 'text-emerald-700' : segs.some(s => s.n && /late|urgent|unassigned/.test(s.filter)) ? 'text-rose-700' : 'text-ink'
   return (
     <button onClick={onClick} aria-pressed={on} title={title + (on ? ' — click to close the list' : ' — click to open the list')}
       className={'text-left rounded-xl border bg-white px-3 py-2 min-h-[84px] transition flex flex-col gap-1 ' + (on ? 'border-brand-400 ring-2 ring-brand-100' : 'border-line hover:border-ink/30')}>
@@ -132,9 +134,14 @@ function Tile({ label, done, needed, segs, sub, on, onClick, title, loading }: {
         {loading ? <Loader2 size={11} className="animate-spin text-muted" /> : <span className={'text-[10.5px] font-bold tabular-nums ' + (needed ? 'text-muted' : 'text-muted/50')}>{needed ? pct + '%' : ''}</span>}
       </div>
       <div className="flex items-baseline gap-1">
-        <span className={'text-[22px] leading-none font-bold tabular-nums ' + tone}>{done}</span>
-        <span className="text-[13px] font-semibold text-muted tabular-nums">/ {needed}</span>
-        <span className="text-[11px] text-muted ml-1">{needed ? 'done' : 'none today'}</span>
+        {big ? <>
+          <span className={'text-[22px] leading-none font-bold tabular-nums ' + tone}>{big.value}</span>
+          <span className="text-[11px] text-muted ml-1 truncate">{big.unit}</span>
+        </> : <>
+          <span className={'text-[22px] leading-none font-bold tabular-nums ' + tone}>{done}</span>
+          <span className="text-[13px] font-semibold text-muted tabular-nums">/ {needed}</span>
+          <span className="text-[11px] text-muted ml-1">{needed ? 'done' : 'none today'}</span>
+        </>}
       </div>
       <div className="w-full h-1.5 rounded-full bg-line overflow-hidden flex" aria-hidden>
         {needed > 0 && segs.filter(s => s.n > 0).map(s => <span key={s.filter} className={'block h-full ' + s.cls} style={{ width: (s.n / needed) * 100 + '%' }} title={s.n + ' ' + s.label} />)}
@@ -155,6 +162,18 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const reloadCalls = () => { invalidateCache(CALLS_URL); callsQ.refresh() }
   const changed = () => { onChanged(); reloadCalls() }
   const t = d.tiles
+
+  // ── unpaid (Jon, 2026-10-01: "make a tile up top to show unpaid") ──
+  const unpaidQ = useCachedFetch<{ ok?: boolean; today?: string; rows?: UnpaidRowT[]; canEdit?: boolean }>(UNPAID_URL, { ttl: 5 * 60_000 })
+  const [unpaidPatch, setUnpaidPatch] = useState<Record<string, UnpaidRowT['tracking']>>({})
+  const unpaidRows = (unpaidQ.data?.rows || []).map(r => unpaidPatch[r.id] ? { ...r, tracking: unpaidPatch[r.id] } : r).filter(r => r.tracking.status !== 'waived')
+  const uOwed = unpaidRows.reduce((a, r) => a + r.balance, 0)
+  const uToday = unpaidRows.filter(r => r.bucket === 'in_house' || r.bucket === 'today').length
+  const uOpen = unpaidRows.filter(r => r.tracking.status === 'open').length
+  const uContacted = unpaidRows.filter(r => r.tracking.status === 'contacted').length
+  const uPromised = unpaidRows.filter(r => r.tracking.status === 'promised').length
+  const uDisputed = unpaidRows.filter(r => r.tracking.status === 'disputed').length
+  const onUnpaidPatch = (id: string, tr: UnpaidRowT['tracking']) => { setUnpaidPatch(p => ({ ...p, [id]: tr })); invalidateCache(UNPAID_URL) }
 
   // ── cleans ──
   const cleans = t.cleans.rows.filter(c => c.status !== 'vendor' && c.status !== 'extended')
@@ -191,7 +210,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const w = calls?.welcome, rc = calls?.recovery
   const wOwedToday = w ? w.todayNeeded - w.todayDone : 0
 
-  const tiles: { key: Key; label: string; done: number; needed: number; segs: Seg[]; sub: string; title: string; loading?: boolean }[] = [
+  const tiles: { key: Key; label: string; done: number; needed: number; segs: Seg[]; sub: string; title: string; loading?: boolean; big?: { value: string; unit: string; tone: string } }[] = [
     { key: 'cleans', label: 'Departure cleans', done: cDone, needed: cleans.length, title: 'Departure cleans on today’s board: done, in progress, not started, and the ones the clock says are late or at risk',
       segs: [{ label: 'done', n: cDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'in progress', n: cRun, cls: 'bg-sky-400', tone: 'sky', filter: 'running' }, { label: 'not started', n: cOpen, cls: 'bg-slate-300', tone: 'slate', filter: 'open' }, { label: 'late / at risk', n: cTrouble, cls: 'bg-rose-500', tone: 'rose', filter: 'late' }],
       sub: [cRun ? cRun + ' in progress' : '', cOpen ? cOpen + ' not started' : '', cTrouble ? cTrouble + ' late/at risk' : '', cNobody ? cNobody + ' nobody on it' : ''].filter(Boolean).join(' · ') || (cleans.length ? 'all done' : '') },
@@ -207,6 +226,11 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     { key: 'maint', label: 'Maintenance', done: mDone, needed: maint.length, title: 'Today’s maintenance work in Breezeway: urgent and high first, then what nobody is on, open, in progress, done',
       segs: [{ label: 'done', n: mDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'in progress', n: mRun, cls: 'bg-sky-400', tone: 'sky', filter: 'running' }, { label: 'open', n: Math.max(0, mOpen), cls: 'bg-slate-300', tone: 'slate', filter: 'open' }, { label: 'unassigned', n: mNobody, cls: 'bg-amber-400', tone: 'amber', filter: 'unassigned' }],
       sub: [mUrgent ? mUrgent + ' urgent/high' : '', mNobody ? mNobody + ' unassigned' : '', mRun ? mRun + ' in progress' : ''].filter(Boolean).join(' · ') || (maint.length ? 'all closed' : 'nothing on the board') },
+    { key: 'unpaid', label: 'Unpaid', done: unpaidRows.length - uOpen, needed: unpaidRows.length, loading: !unpaidQ.data && unpaidQ.loading,
+      big: { value: unpaidQ.data ? money(uOwed) : '—', unit: unpaidRows.length ? 'owed · ' + unpaidRows.length + (unpaidRows.length === 1 ? ' stay' : ' stays') : 'nothing owed', tone: uToday ? 'text-rose-700' : unpaidRows.length ? 'text-ink' : 'text-emerald-700' },
+      title: 'Money still owed by direct, VRBO and Google guests in house, arriving today or in the next 7 days — every other channel pays us itself. The bar is how far the chase has got',
+      segs: [{ label: 'promised', n: uPromised, cls: 'bg-emerald-500', tone: 'emerald', filter: 'promised' }, { label: 'contacted', n: uContacted, cls: 'bg-sky-400', tone: 'sky', filter: 'contacted' }, { label: 'disputed', n: uDisputed, cls: 'bg-rose-500', tone: 'rose', filter: 'disputed' }, { label: 'not contacted', n: uOpen, cls: 'bg-slate-300', tone: 'slate', filter: 'open' }],
+      sub: unpaidQ.error ? 'could not read the folios' : unpaidRows.length ? [uToday ? uToday + ' to collect today' : '', uOpen ? uOpen + ' not contacted' : 'everyone contacted'].filter(Boolean).join(' · ') : 'direct, VRBO and Google all paid' },
   ]
 
   // ── the open list ──
@@ -223,10 +247,11 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     }
     if (open === 'maint') for (const x of maint) out.push({ key: x.taskId, state: x.state === 'done' ? 'done' : x.state === 'running' ? 'running' : !x.who ? 'unassigned' : 'open', taskId: x.taskId, who: x.who, sort: x.state === 'done' ? 9 : (x.prio === 'urgent' ? 0 : x.prio === 'high' ? 1 : 3) + (!x.who ? 0 : 0.5) + (x.late ? -0.25 : 0) + (x.state === 'running' ? 2 : 0), node: <MaintRow t={x} roster={roster} canAssign={can.assign} onChanged={onChanged} /> })
     if (open === 'welcome' && w) for (const r of w.rows) out.push({ key: r.id, state: r.done ? 'done' : r.today ? 'today' : 'open', sort: r.done ? 9 : r.today ? (r.mandatory ? 0 : 1) : 3, node: <DayCallRowView r={r} canLog={can.calls} onChanged={changed} /> })
+    if (open === 'unpaid') for (const r of unpaidRows) out.push({ key: 'unpaid:' + r.id, state: r.tracking.status, sort: (r.bucket === 'in_house' ? 0 : r.bucket === 'today' ? 1 : 2) + (r.tracking.status === 'open' ? 0 : 0.5), node: <UnpaidRow r={r} today={unpaidQ.data?.today || d.today} canEdit={!!unpaidQ.data?.canEdit} onPatch={onUnpaidPatch} simple /> })
     if (open === 'recovery' && rc) for (const r of rc.rows) out.push({ key: r.kind + r.id, state: r.done ? 'done' : 'open', sort: r.done ? 9 : r.today ? 0 : 2, node: <DayCallRowView r={r} canLog={can.calls} onChanged={changed} /> })
     return out.sort((a, b) => a.sort - b.sort)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, d, calls, roster, can.assign, can.plan, can.calls])
+  }, [open, d, calls, roster, can.assign, can.plan, can.calls, unpaidQ.data, unpaidPatch])
 
   const tile = tiles.find(x => x.key === open) || null
   const chips = tile ? tile.segs.filter(s => s.n > 0) : []
@@ -234,13 +259,17 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const shown = pick === 'all' ? items : items.filter(i => i.state === pick)
   const nudgeIds = shown.filter(i => i.taskId && i.who && i.state !== 'done').map(i => i.taskId as string)
   const nudgePeople = new Set(shown.filter(i => i.taskId && i.who && i.state !== 'done').map(i => i.who)).size
-  const toggle = (k: Key) => { setOpen(o => (o === k ? null : k)); setFilter('all') }
-  const headline = tile ? tile.done + ' of ' + tile.needed + ' done' : ''
+  const toggle = (k: Key) => {
+    // The Unpaid tile points at the list already on the page (under the checklist) rather than opening a second copy.
+    if (k === 'unpaid') { const el = document.getElementById('unpaid-today'); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); return } }
+    setOpen(o => (o === k ? null : k)); setFilter('all')
+  }
+  const headline = tile ? (tile.key === 'unpaid' ? money(uOwed) + ' owed · ' + tile.done + ' of ' + tile.needed + ' contacted' : tile.done + ' of ' + tile.needed + ' done') : ''
 
   return (
     <section>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-        {tiles.map(x => <Tile key={x.key} label={x.label} done={x.done} needed={x.needed} segs={x.segs} sub={x.sub} on={open === x.key} onClick={() => toggle(x.key)} title={x.title} loading={x.loading} />)}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        {tiles.map(x => <Tile key={x.key} label={x.label} done={x.done} needed={x.needed} segs={x.segs} sub={x.sub} on={open === x.key} onClick={() => toggle(x.key)} title={x.title} loading={x.loading} big={x.big} />)}
       </div>
       {open && tile && (
         <div className="mt-2 rounded-2xl border border-brand-200 bg-brand-50/30 p-2 sm:p-3">
@@ -255,7 +284,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
               {(can.assign || can.plan) && (open === 'cleans' || open === 'insp' || open === 'maint') && nudgeIds.length > 0 && (
                 <NudgeBtn taskIds={nudgeIds} label={'Message the team · ' + nudgePeople} className={DARK} title={'One Slack message per person, listing their open ' + (open === 'cleans' ? 'cleans' : open === 'insp' ? 'inspections' : 'jobs') + ' in view — posted in the building’s channel tagging them, or a DM when the building has no channel'} />
               )}
-              {open === 'welcome' || open === 'recovery' ? <Link href="/welcome-calls" className="text-[11px] font-semibold text-brand-700 hover:underline">Calls desk →</Link> : open === 'maint' ? <Link href="/maintenance" className="text-[11px] font-semibold text-brand-700 hover:underline">Maintenance →</Link> : <Link href="/plan" className="text-[11px] font-semibold text-brand-700 hover:underline">Today board →</Link>}
+              {open === 'unpaid' ? <Link href="/reservations/unpaid" className="text-[11px] font-semibold text-brand-700 hover:underline">Unpaid board →</Link> : open === 'welcome' || open === 'recovery' ? <Link href="/welcome-calls" className="text-[11px] font-semibold text-brand-700 hover:underline">Calls desk →</Link> : open === 'maint' ? <Link href="/maintenance" className="text-[11px] font-semibold text-brand-700 hover:underline">Maintenance →</Link> : <Link href="/plan" className="text-[11px] font-semibold text-brand-700 hover:underline">Today board →</Link>}
               <button onClick={() => setOpen(null)} className="text-muted hover:text-ink" aria-label="Close the list" title="Close"><ChevronUp size={15} /></button>
             </span>
           </div>
