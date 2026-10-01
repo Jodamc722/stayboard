@@ -77,10 +77,17 @@ function etHour(ts: string): number {
   return h === 24 ? 0 : h
 }
 export function assigneeNames(t: any): string[] {
-  const a = Array.isArray(t?.assignees) ? t.assignees.map((x: any) => String(x?.name || (typeof x === 'string' ? x : '') || '').trim()).filter(Boolean) : []
-  if (a.length) return a
-  const n = String(t?.assignee_name || '').trim()
+  const a = Array.isArray(t?.assignees) ? t.assignees.map((x: any) => tidyName(String(x?.name || (typeof x === 'string' ? x : '') || ''))).filter(Boolean) : []
+  if (a.length) return Array.from(new Set(a))
+  const n = tidyName(String(t?.assignee_name || ''))
   return n ? [n] : []
+}
+/** Breezeway vendor accounts carry the company as both first and last name ("Opal Works Opal Works"); say it once. */
+export function tidyName(raw: string): string {
+  const n = raw.replace(/\s+/g, ' ').trim()
+  const w = n.split(' ')
+  if (w.length >= 2 && w.length % 2 === 0) { const h = w.length / 2; if (w.slice(0, h).join(' ').toLowerCase() === w.slice(h).join(' ').toLowerCase()) return w.slice(0, h).join(' ') }
+  return n
 }
 /** Done before 4pm ET on the day it was scheduled. Unfinished, or finished later, is not. */
 export function doneBeforeCheckin(t: any): boolean {

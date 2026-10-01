@@ -54,8 +54,10 @@ export type MarketCheck = {
   unassigned: Clean[]; offButAssigned: { person: string; cleans: Clean[] }[]; overloaded: { person: string; cleans: number; minutes: number; usualMax: number | null }[]
   lateTurns: { person: string; clean: Clean; position: number }[]
   demandMin: number; supplyMin: number; shortMin: number
+  /** False when the Turnover Schedule roster has no cells for this market on this day — then supply and OFF checks mean nothing. */
+  rosterKnown: boolean
   suggestions: { clean: Clean; names: string[] }[]
-  lookahead: { date: string; cleans: number; people: number; shortBy: number }[]
+  lookahead: { date: string; cleans: number; people: number; shortBy: number; rosterKnown: boolean }[]
 }
 export type ScheduleCheckRun = { ok: boolean; date: string; skipped?: string; preview?: boolean; markets: MarketCheck[]; posted: number; notes: string[]; texts?: Record<string, string> }
 
@@ -93,10 +95,12 @@ export async function runScheduleCheck(opts: { force?: boolean; preview?: boolea
   // The roster: Working / OFF per person for the next days (Homebase through the team schedule).
   const roster: Record<string, Record<string, 'Working' | 'OFF'>> = {}   // day → personKeyLower → status
   const peopleWorking: Record<string, Record<string, number>> = {}        // day → market → count
+  const rosterSeen: Record<string, Record<string, number>> = {}           // day → market → cells filled (any status)
   try {
     const { buildTeamSchedule } = await import('@/lib/team-schedule')
     const ts = await buildTeamSchedule({ from: date, to: addDays(date, 3), dept: 'cleaning' })
     for (const mb of ts.markets) for (const p of mb.people) for (const [day, s] of Object.entries(p.roster)) {
+      if (s) (rosterSeen[day] ||= {})[mb.market] = (rosterSeen[day][mb.market] || 0) + 1
       if (s === 'Working') { (roster[day] ||= {})[p.name.toLowerCase()] = 'Working'; (peopleWorking[day] ||= {})[mb.market] = (peopleWorking[day][mb.market] || 0) + 1 }
       else if (s === 'OFF' || s === 'REQ OFF') (roster[day] ||= {})[p.name.toLowerCase()] = 'OFF'
     }
@@ -135,6 +139,7 @@ export async function runScheduleCheck(opts: { force?: boolean; preview?: boolea
     }
     const people = Object.values(byPerson).sort((a, b) => b.minutes - a.minutes)
     const unassigned = cleans.filter(c => !c.who.length).sort((a, b) => Number(b.sameDay) - Number(a.sameDay) || a.unit.localeCompare(b.unit))
+    const rosterKnown = ((rosterSeen[date] || {})[market] || 0) > 0
     const offButAssigned = people.filter(p => p.rostered === 'OFF').map(p => ({ person: p.name, cleans: p.cleans }))
     const overloaded = people.filter(p => (p.usualMax != null && p.cleans.length > p.usualMax) || p.minutes > SHIFT_MIN).map(p => ({ person: p.name, cleans: p.cleans.length, minutes: p.minutes, usualMax: p.usualMax }))
     // A same-day turn third or later in somebody's day, when they have earlier non-urgent cleans.
@@ -143,7 +148,8 @@ export async function runScheduleCheck(opts: { force?: boolean; preview?: boolea
     const demandMin = cleans.reduce((s, c) => s + c.minutes, 0)
     const working = (peopleWorking[date] || {})[market] || 0
     const supplyMin = working * SHIFT_MIN
-    const shortMin = Math.max(0, demandMin - supplyMin)
+    // No roster filled in → nothing to be short against; the post says the roster is missing instead.
+    const shortMin = rosterKnown ? Math.max(0, demandMin - supplyMin) : 0
     // Who could take the unowned ones: usual people for that building, Working, under load.
     const suggestions: MarketCheck['suggestions'] = []
     for (const c of unassigned.slice(0, 8)) {
@@ -157,13 +163,14 @@ export async function runScheduleCheck(opts: { force?: boolean; preview?: boolea
       const d = addDays(date, i)
       const n = (cleansByDay[d] || []).filter(c => c.market === market).length
       const ppl = (peopleWorking[d] || {})[market] || 0
+      const known = ((rosterSeen[d] || {})[market] || 0) > 0
       const capacity = ppl * medianPerDay(market)
-      lookahead.push({ date: d, cleans: n, people: ppl, shortBy: Math.max(0, n - capacity) })
+      lookahead.push({ date: d, cleans: n, people: ppl, shortBy: known ? Math.max(0, n - capacity) : 0, rosterKnown: known })
     }
     const firstBuilding = cleans[0]?.building || null
     const group = groupForBuilding(rules, firstBuilding)
     const channel = channelFor(rules, group, 'housekeeping')
-    out.push({ market, channel, date, cleans: cleans.length, people, unassigned, offButAssigned, overloaded, lateTurns, demandMin, supplyMin, shortMin, suggestions, lookahead })
+    out.push({ market, channel, date, cleans: cleans.length, people, unassigned, offButAssigned, overloaded, lateTurns, demandMin, supplyMin, shortMin, rosterKnown, suggestions, lookahead })
   }
 
   // ── say it ──
@@ -185,10 +192,11 @@ export async function runScheduleCheck(opts: { force?: boolean; preview?: boolea
     else notes.push(`${m.market}: ${r.mode}${r.error ? ' — ' + r.error : ''}`)
   }
   // Leadership: one line, only when a day is short.
-  const short = out.filter(m => m.shortMin > 60 || m.lookahead.some(l => l.shortBy >= 1))
+  const short = out.filter(m => m.shortMin > 60 || m.lookahead.some(l => l.shortBy >= 1) || (!m.rosterKnown && m.cleans >= 3))
   if (short.length) {
     const line = `*Staffing — ${dowName(date)} ${date}* · ` + short.map(m => {
       const parts: string[] = []
+      if (!m.rosterKnown && m.cleans >= 3) parts.push(`${m.market}: no roster filled in for tomorrow on the Turnover Schedule — ${m.cleans} cleans, ${m.unassigned.length} with nobody on them`)
       if (m.shortMin > 60) parts.push(`${m.market}: tomorrow's ${m.cleans} cleans need ~${hm(m.demandMin)} with ${m.people.length || 0} people assigned and ${Math.round(m.supplyMin / SHIFT_MIN)} rostered — short ~${hm(m.shortMin)}`)
       for (const l of m.lookahead.filter(x => x.shortBy >= 1)) parts.push(`${m.market} ${dowName(l.date).slice(0, 3)} ${l.date.slice(5)}: ${l.cleans} cleans vs ${l.people} rostered — ~${Math.ceil(l.shortBy)} clean${l.shortBy >= 2 ? 's' : ''} over`)
       return parts.join(' · ')
@@ -211,7 +219,11 @@ function composeMarket(m: MarketCheck, tag: (n: string) => string, bilingual: bo
   const when = (c: Clean) => c.arrivesAt ? ` (llegada ${c.arrivesAt})` : ''
   const whenEn = (c: Clean) => c.arrivesAt ? ` (guest in at ${c.arrivesAt})` : ''
   es.push(`:calendar: *${m.market} — mañana ${dowNameEs(d)} ${d.slice(5)}*: ${m.cleans} salida${m.cleans === 1 ? '' : 's'}, ${m.people.length} persona${m.people.length === 1 ? '' : 's'} asignada${m.people.length === 1 ? '' : 's'}.`)
-  en.push(`:calendar: *${m.market} — tomorrow ${dowName(d)} ${d.slice(5)}*: ${m.cleans} departure clean${m.cleans === 1 ? '' : 's'}, ${m.people.length} people assigned.`)
+  en.push(`:calendar: *${m.market} — tomorrow ${dowName(d)} ${d.slice(5)}*: ${m.cleans} departure clean${m.cleans === 1 ? '' : 's'}, ${m.people.length} ${m.people.length === 1 ? 'person' : 'people'} assigned.`)
+  if (!m.rosterKnown && m.cleans >= 3) {
+    es.push(`:clipboard: El horario de mañana no está cargado en el Turnover Schedule, así que no sé quién está de turno. ¿Quién trabaja mañana?`)
+    en.push(`:clipboard: Tomorrow's roster is not filled in on the Turnover Schedule, so I do not know who is on. Who is working tomorrow?`)
+  }
   if (m.unassigned.length) {
     es.push(`*Sin asignar (${m.unassigned.length}):* ` + m.unassigned.slice(0, 8).map(c => `${c.unit}${c.sameDay ? ' · mismo día' + when(c) : ''}`).join(' · ') + (m.unassigned.length > 8 ? ` · +${m.unassigned.length - 8}` : ''))
     en.push(`*Nobody on it (${m.unassigned.length}):* ` + m.unassigned.slice(0, 8).map(c => `${c.unit}${c.sameDay ? ' · same-day' + whenEn(c) : ''}`).join(' · ') + (m.unassigned.length > 8 ? ` · +${m.unassigned.length - 8}` : ''))
@@ -241,6 +253,11 @@ function composeMarket(m: MarketCheck, tag: (n: string) => string, bilingual: bo
   if (ahead.length) {
     es.push('_Próximos días cortos:_ ' + ahead.map(l => `${dowNameEs(l.date)} ${l.date.slice(5)} — ${l.cleans} limpiezas, ${l.people} de turno`).join(' · '))
     en.push('_Short days coming:_ ' + ahead.map(l => `${dowName(l.date)} ${l.date.slice(5)} — ${l.cleans} cleans, ${l.people} rostered`).join(' · '))
+  }
+  const blank = m.lookahead.filter(l => !l.rosterKnown && l.cleans >= 3)
+  if (blank.length) {
+    es.push('_Sin horario cargado todavía:_ ' + blank.map(l => `${dowNameEs(l.date)} ${l.date.slice(5)} (${l.cleans} limpiezas)`).join(' · '))
+    en.push('_No roster filled in yet:_ ' + blank.map(l => `${dowName(l.date)} ${l.date.slice(5)} (${l.cleans} cleans)`).join(' · '))
   }
   es.push('Si algo no cuadra, díganlo aquí y lo arreglamos. ¡Gracias! :pray:')
   en.push('If anything here is wrong, say so and we will fix it. Thanks :pray:')
