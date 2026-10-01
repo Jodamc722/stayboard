@@ -219,7 +219,7 @@ function DayLine({ d, loading, tick, reload, roster, vendorsOnSite }: { d: Comma
   // first line of "How's the day". The eyebrow the page used to print is this title now.
   return (
     <section aria-live="polite">
-      <LeanHead title="Command Center" icon={<Sparkles size={18} className="text-brand-600" />}>
+      <LeanHead title={<span>Today <span className="text-muted font-medium text-[14px]">· {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'America/New_York' })}</span></span>} icon={<Sparkles size={18} className="text-brand-600" />}>
         <Pill tone={vTone} title={v.detail}>{v.headline}</Pill>
         {p.cleansTotal > 0 && <Pill tone={t.cleans.late ? 'rose' : t.cleans.atRisk ? 'amber' : 'slate'} title={'Cleans done today' + (left ? ' · ' + left : '')}>{p.cleansDone}/{p.cleansTotal} cleans</Pill>}
         {vendorsOnSite > 0 && <Pill title="Vendor visits booked for today">{plural(vendorsOnSite, 'vendor')} on site</Pill>}

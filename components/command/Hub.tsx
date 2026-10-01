@@ -350,16 +350,52 @@ function NextRow({ i, roster, canAssign, canCreate, onCleared, onChanged, lane }
   )
 }
 
-type CkRow = { id: string; title: string; band: string; by_time: string | null; done: boolean; late: boolean; link: string | null }
-type Ck = { ok: boolean; rows: CkRow[]; progress: { total: number; done: number; late: number; pct: number }; canTick: boolean }
+type CkRow = { id: string; title: string; band: string; by_time: string | null; done: boolean; late: boolean; link: string | null; in_minutes?: number | null; owner_role?: string | null; signal?: string | null }
+type Ck = { ok: boolean; rows: CkRow[]; progress: { total: number; done: number; late: number; pct: number }; canTick: boolean; signals?: Record<string, number | null> }
 const CK_URL = '/api/daily-checklist'
+const hm12 = (t: string) => { const m = /^(\d{1,2}):(\d{2})/.exec(t); if (!m) return t; const h = Number(m[1]); return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}` }
 function ChecklistRow({ r, canTick, onTicked, lane }: { r: CkRow; canTick: boolean; onTicked: () => void; lane?: string }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const tick = async () => { setBusy(true); setErr(''); try { await post(CK_URL, { action: 'tick', itemId: r.id }); onTicked() } catch (e: any) { setErr(String(e?.message || e)) } setBusy(false) }
   return (
-    <Row lane={lane} dot={r.late ? 'rose' : null} title={r.title} tags={r.late ? <Tag tone="rose" title="Past its time">late</Tag> : null} meta={r.by_time ? 'by ' + r.by_time : r.band} err={err}
-      actions={canTick ? <button onClick={tick} disabled={busy} className={GHOST} title="Done — ticks it with your name">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button> : null} />
+    <Row lane={lane} dot={r.late ? 'rose' : null} title={r.title}
+      tags={<>{r.late ? <Tag tone="rose" title="Past its time">late{r.in_minutes != null ? ' ' + Math.abs(r.in_minutes) + 'm' : ''}</Tag> : r.in_minutes != null && r.in_minutes <= 45 ? <Tag tone="amber" title="Due soon">in {r.in_minutes}m</Tag> : null}{r.owner_role ? <Tag title="Who does it">{r.owner_role}</Tag> : null}</>}
+      meta={r.by_time ? 'by ' + hm12(r.by_time) : 'anytime ' + r.band} err={err}
+      actions={<>
+        {r.link && <Link href={r.link} prefetch={false} className={GHOST} title="Open where this gets done">Open</Link>}
+        {canTick ? <button onClick={tick} disabled={busy} className={DARK} title="Done — ticks it with your name">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button> : null}
+      </>} />
+  )
+}
+
+// THE CHECKLIST, FORWARD-FACING ON TODAY (Jon, 2026-10-01: "make the checklist more forward facing").
+// Not the whole list — the next two things somebody should be doing, late first, with the live count
+// and the Open button; the full procedure lives on /checklist. One line of progress on the right.
+function ChecklistStrip({ ck, onTicked }: { ck: Ck | undefined; onTicked: () => void }) {
+  if (!ck || !ck.ok || !ck.progress?.total) return null
+  const open = ck.rows.filter(r => !r.done)
+  const late = open.filter(r => r.late).sort((a, b) => (a.in_minutes ?? 0) - (b.in_minutes ?? 0))
+  const soon = open.filter(r => !r.late).sort((a, b) => (a.in_minutes ?? 9e9) - (b.in_minutes ?? 9e9))
+  const next = [...late, ...soon].slice(0, 2)
+  const p = ck.progress
+  return (
+    <section>
+      <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-2">
+        <ListChecks size={13} className="text-brand-600" /> Checklist
+        <span className="normal-case tracking-normal font-medium text-muted">— {open.length ? (late.length ? `${late.length} late · ` : '') + `${open.length} to do` : 'everything done'}</span>
+        <span className="ml-auto inline-flex items-center gap-2">
+          <span className="w-16 h-1.5 rounded-full bg-line overflow-hidden"><span className={'block h-full ' + (p.late ? 'bg-amber-500' : 'bg-emerald-500')} style={{ width: p.pct + '%' }} /></span>
+          <span className={'text-[11px] font-semibold tabular-nums ' + (p.late ? 'text-amber-700' : 'text-emerald-700')}>{p.done}/{p.total}</span>
+          <Link href="/checklist" prefetch={false} className="text-[11px] font-semibold text-brand-700 hover:underline">Checklist →</Link>
+        </span>
+      </h2>
+      {next.length > 0 && (
+        <div className={LIST}>
+          {next.map(r => <div key={'cks:' + r.id}><ChecklistRow r={r} canTick={!!ck.canTick} onTicked={onTicked} /></div>)}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -577,18 +613,22 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
 
   const lanes: Area[] = ['ops', 'guests', 'reviews', 'admin']
   const EMPTY: Record<Area, string> = { ops: 'every clean and inspection is covered', guests: 'nobody is waiting', reviews: 'nothing waiting on a reply', admin: 'nothing on your desk' }
-  const ckBar = ck?.progress?.total ? (
-    <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold" title={`Checklist: ${ck.progress.done} of ${ck.progress.total} done${ck.progress.late ? ' · ' + ck.progress.late + ' late' : ''}`}>
-      <span className="w-16 h-1.5 rounded-full bg-line overflow-hidden"><span className={'block h-full ' + (ck.progress.late ? 'bg-amber-500' : 'bg-emerald-500')} style={{ width: ck.progress.pct + '%' }} /></span>
-      <span className={ck.progress.late ? 'text-amber-700' : 'text-emerald-700'}>{ck.progress.pct}%</span>
-    </span>
-  ) : null
+  // One line of numbers per lane, from the same KPIs the tiles used to show.
+  const laneStat = (a: Area): ReactNode => {
+    const ks = kpis.filter(k => k.area === a)
+    if (!ks.length) return null
+    return <span className="text-[11px] text-muted inline-flex items-center gap-1.5 flex-wrap">{ks.map(k => <span key={k.key} title={k.title} className="inline-flex items-center gap-1"><span className={'font-bold tabular-nums ' + (k.tone === 'rose' ? 'text-rose-700' : k.tone === 'amber' ? 'text-amber-800' : 'text-ink')}>{k.value}</span>{k.label.toLowerCase()}{k.sub ? <span className="hidden xl:inline"> · {k.sub}</span> : null}</span>)}</span>
+  }
 
   return (
     <div className="space-y-5">
       {/* THE WORK TODAY — needed vs completed, with the granular list under the strip (Jon, 2026-09-30). */}
       <DayKpis d={d} live={live} roster={roster} can={{ assign: can.assign, plan: can.plan, calls: can.calls }} onChanged={onChanged} />
-      <KpiTiles kpis={kpis} focus={focus} onFocus={setFocus} />
+
+      {/* THE CHECKLIST, next two things, then NOW. The second row of tiles that used to sit here
+          (free hours, guests waiting, glitches, reviews, admin) now reads as one line in each lane's
+          header below — same numbers, one less band to scan (Jon, 2026-10-01: "cleaner … better organized"). */}
+      <ChecklistStrip ck={ck} onTicked={reloadCk} />
 
       {!focus && (
         <section>
@@ -608,7 +648,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
       )}
       <div className={'grid gap-5 ' + (focus ? 'grid-cols-1' : 'lg:grid-cols-2')}>
         {lanes.filter(a => !focus || a === focus).map(a => (
-          <Lane key={a} area={a} items={items.filter(i => i.area === a)} focused={focus === a} empty={EMPTY[a]} right={a === 'admin' ? ckBar : undefined} />
+          <Lane key={a} area={a} items={items.filter(i => i.area === a)} focused={focus === a} empty={EMPTY[a]} right={laneStat(a)} />
         ))}
       </div>
     </div>

@@ -33,6 +33,64 @@ const COUNTERS: Record<string, () => Promise<number | null>> = {
   open_glitches: () => headCount(sb => sb.from('glitches')
     .select('id', { count: 'exact', head: true })
     .not('status', 'in', '("done","resolved","closed")')),
+  arrivals_today: () => arrivals(0),
+  tomorrow_arrivals: () => arrivals(1),
+  cleans_open_today: async () => (await cleans(0)).filter(c => !c.done).length,
+  cleans_not_started_today: async () => (await cleans(0)).filter(c => !c.done && !c.started).length,
+  cleans_unassigned_today: async () => (await cleans(0)).filter(c => !c.done && !c.who).length,
+  same_day_turns_open: async () => { const [cs, arr] = await Promise.all([cleans(0), arrivalSet(0)]); return cs.filter(c => !c.done && arr.has(c.listingId)).length },
+  inspections_open_today: async () => (await tasksOn(0)).filter(t => /inspect|unit check|quality/i.test(t.name) && !t.done).length,
+  tomorrow_cleans_unassigned: async () => (await cleans(1)).filter(c => !c.done && !c.who).length,
+  overdue_tasks: async () => { const d = dayET(0); try { const { count } = await db().from('breezeway_tasks_sync').select('id', { count: 'exact', head: true }).lt('scheduled_date', d).is('finished_at', null).not('status', 'in', '("completed","Completed","closed","Closed","cancelled","Cancelled","finished","Finished")'); return Number(count || 0) } catch { return null } },
+  welcome_calls_owed: async () => {
+    try {
+      const { loadCallsDesk } = await import('./call-desk')
+      const today = dayET(0)
+      const d = await loadCallsDesk(db(), today)
+      return d.rows.filter(r => r.due && !r.closed && !r.done && r.check_in === today).length
+    } catch { return null }
+  },
+}
+
+// ── the small reads behind the counters ─────────────────────────────────────────────────────────
+const dayET = (offset: number) => { const d = new Date(Date.now() + offset * 86400_000); return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) }
+const DONE = /complet|finish|close|approv|done/i
+type T = { name: string; listingId: string; done: boolean; started: boolean; who: boolean }
+const tasksMemo: Record<string, { at: number; p: Promise<T[]> }> = {}
+async function tasksOn(offset: number): Promise<T[]> {
+  const day = dayET(offset)
+  const hit = tasksMemo[day]
+  if (hit && Date.now() - hit.at < 20_000) return hit.p     // one read per request burst, not one per signal
+  const p = (async () => {
+    try {
+      const { data } = await db().from('breezeway_tasks_sync').select('name,status,finished_at,started_at,assignees,reference_property_id').eq('scheduled_date', day).limit(2000)
+      return ((data || []) as any[]).filter(t => !/cancel|delet|void/i.test(String(t.status || ''))).map(t => ({
+        name: String(t.name || ''), listingId: String(t.reference_property_id || ''),
+        done: !!t.finished_at || DONE.test(String(t.status || '')), started: !!t.started_at || /progress|started/i.test(String(t.status || '')),
+        who: Array.isArray(t.assignees) ? t.assignees.length > 0 : false,
+      }))
+    } catch { return [] }
+  })()
+  tasksMemo[day] = { at: Date.now(), p }
+  return p
+}
+async function cleans(offset: number): Promise<T[]> {
+  const { isDepartureCleanName } = await import('./breezeway')
+  return (await tasksOn(offset)).filter(t => isDepartureCleanName(t.name))
+}
+async function arrivalSet(offset: number): Promise<Set<string>> {
+  const day = dayET(offset)
+  try {
+    const { data } = await db().from('guesty_reservations').select('listing_id,status').gte('check_in', day).lt('check_in', dayET(offset + 1)).limit(500)
+    return new Set(((data || []) as any[]).filter(r => !/cancel|declin|inquir|expire/i.test(String(r.status || ''))).map(r => String(r.listing_id)))
+  } catch { return new Set() }
+}
+async function arrivals(offset: number): Promise<number | null> {
+  const day = dayET(offset)
+  try {
+    const { data } = await db().from('guesty_reservations').select('id,status').gte('check_in', day).lt('check_in', dayET(offset + 1)).limit(500)
+    return ((data || []) as any[]).filter(r => !/cancel|declin|inquir|expire/i.test(String(r.status || ''))).length
+  } catch { return null }
 }
 
 const db = () => supabaseAdmin()
