@@ -456,7 +456,7 @@ export function scrubStoredText(text: any, released: string[] = [], mark?: strin
  * answer is read by a room — a field-team room included — so tool results there get the stored-text
  * treatment on top of redactSensitive: a lock word next to a 4-8 digit number is masked too ("Front door
  * 4821", "Gate 9911, then door 4821", "combo 2468"), the way a check-in message quoted from a guest
- * thread or a line read from #ccs-and-jon would carry one. Stricter than a private answer on purpose; a
+ * thread or a line read from #vr-customercareteam would carry one. Stricter than a private answer on purpose; a
  * unit number in a sentence about a door is a fair price in a shared room. Never throws.
  */
 export function scrubStoredStrings<T>(value: T, opts: CodeRunOpts = { room: true }): T {

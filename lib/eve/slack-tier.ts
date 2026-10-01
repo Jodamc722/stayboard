@@ -21,7 +21,7 @@
 //             answers about THEIR OWN buildings; nothing about guests or money; no teaching.
 //
 // DOOR CODES are not a tier question (Jon, 2026-09-29): they may be asked for only in the two
-// Customer Service rooms, by anyone in them, and never in any other channel — see enforceDoorCodes.
+// Customer Service rooms, by anyone in it, and never in any other channel — see enforceDoorCodes.
 //
 // THE TIER IS THE FLOOR, NEVER THE CEILING. A staff member who is cleared for money in Lighthouse
 // still does not get money in a Slack channel, because the channel has other people in it. The
@@ -61,7 +61,7 @@ export type TierGrant = {
    * an admin's one-to-one DM; 'never' — every other channel, whoever asks.
    */
   doorCodes: 'room' | 'dm' | 'never'
-  /** '#ccs-and-jon' / '#vr-customercareteam' when doorCodes is 'room'. */
+  /** '#vr-customercareteam' when doorCodes is 'room'. */
   doorCodeRoom?: string | null
 }
 
@@ -79,7 +79,7 @@ export type TierGrant = {
 // DOOR CODES GO BY ROOM, NOT BY TIER (Jon, 2026-09-29): "Door codes can be requested by any Customer
 // Service team member in CCS and Jon Channel, VR Customer Care channel. Never in team channels with
 // field team." So the door-code tool is handed out by `enforceDoorCodes` below, after the tier is
-// decided: in #ccs-and-jon and #vr-customercareteam everyone in the room has it (the code still goes to
+// decided: in #vr-customercareteam everyone in the room has it (the code still goes to
 // them privately, never into the room — lib/eve/core.ts door_code_check); in an admin's one-to-one DM
 // the admin has it, as before; in every other channel nobody does. See lib/eve/door-code-rooms.ts.
 const ENTRY_TOOLS = ['door_code', 'door_code_check']
@@ -92,7 +92,7 @@ const ADMIN_ONLY = ['ask_ralph', 'slack_queue']
 const GUEST_TOOLS = ['guest_profile', 'guest_thread', 'guest_history',
   'reservation_detail', 'awaiting_reply', 'unread_conversations', 'welcome_calls', 'search_reservations', 'guesty_live']
 // 2026-09-28 audit (F2): what else a vendor room could still read. The Slack readers reach every
-// channel the bot is in (#ccs-and-jon included); the dossiers and her mind quote the latest low
+// channel the bot is in (#vr-customercareteam included); the dossiers and her mind quote the latest low
 // review; review search is the guest's own words; the custom-field tools are the building's setup
 // (and were a door-code side door, F1). Every other result loses guest names in runTool.
 // 2026-09-29 review (N2): the other two Slack readers (one channel's history; which channels she can
@@ -171,7 +171,7 @@ async function baseTierFor(access: Access | null, channelId: string): Promise<Ti
   if (isAdmin && !vendorRoom) {
     // NO CODE INTO A CHANNEL, EVEN FOR AN ADMIN (2026-09-28 audit, B-7). The superadmin is always
     // 'direct', so "@Eve code for 402" in a staff room posted the code for the whole room to read.
-    // Since 2026-09-29 an admin asks in one of the two Customer Service rooms like everyone else, and
+    // Since 2026-09-29 an admin asks in the Customer Service room like everyone else, and
     // a Direct release there goes to them by DM (lib/eve/core.ts door_code_check), never into the room.
     return { tier: 'admin', buildings: [], canMoney: true, canDirect: true, denyTools: [], memoryWeightCap: 10, group, vendorRoom: false, doorCodes: 'never' }
   }
@@ -188,7 +188,7 @@ async function baseTierFor(access: Access | null, channelId: string): Promise<Ti
     // room a recognised colleague may direct her. Nothing else loosens: every action still goes
     // through the Agent-mode rungs, and a guest message, a Guesty write or a calendar block still
     // waits for an approver's yes; money stays out as everywhere in Slack, and door codes go by room
-    // (enforceDoorCodes) — the approvals room may itself be #ccs-and-jon.
+    // (enforceDoorCodes) — the approvals room may itself be #vr-customercareteam.
     const eveRoom = await isEveRoom(channelId)
     return { tier: 'staff', buildings: [], canMoney: false, canDirect: eveRoom, denyTools: ADMIN_ONLY.concat(LINK_TOOLS), memoryWeightCap: 5, group, eveRoom, vendorRoom: false, doorCodes: 'never' }
   }
@@ -253,7 +253,7 @@ Not in this room: dollar amounts, guest contact details, and anything portfolio-
 function doorCodeNote(g: TierGrant): string {
   if (g.doorCodes === 'dm') return ''
   if (g.doorCodes === 'room') {
-    return `DOOR CODES: this is ${g.doorCodeRoom || 'one of the two Customer Service rooms'} — one of the two rooms where a door code may be asked for (Jon's rule). If someone here asks for one, run door_code_check with the unit (and why, if they said). The code is NEVER posted in this room, not even for Jon: if the checks clear it goes to an approver and then to the person who asked by direct message, and someone set to Direct gets it by DM straight away. Say what the tool's "release" says in one line; never repeat, hint at or guess a code.`
+    return `DOOR CODES: this is ${g.doorCodeRoom || 'the Customer Service room'} — the one room where a door code may be asked for (Jon's rule). If someone here asks for one, run door_code_check with the unit (and why, if they said). The code is NEVER posted in this room, not even for Jon: if the checks clear it goes to an approver and then to the person who asked by direct message, and someone set to Direct gets it by DM straight away. Say what the tool's "release" says in one line; never repeat, hint at or guess a code.`
   }
   return `DOOR CODES are never asked for or given in this channel (Jon's rule), whoever asks — nor entry to an occupied unit. Customer Service requests codes in ${DOOR_CODE_ROOM_NAMES}, and the code goes to whoever asked, privately. If it comes up, say that in one line and answer the rest.`
 }

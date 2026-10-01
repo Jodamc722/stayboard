@@ -11,7 +11,7 @@
 // finds goes to the people whose job is to make sure it gets done:
 //
 //   ops         things slipping between Slack, the glitch board and Breezeway      → #vr-eve
-//   guest       a fix is done and the guest has not heard                           → #vr-ccs-and-jon
+//   guest       a fix is done and the guest has not heard                           → #vr-customercareteam
 //   leadership  a glitch or guest-reported gap (B, C, E) nobody touched for 3 hours  → #leadership
 //
 // Every room is a setting (app_settings `eve_on_watch`), so moving one is not a deploy.
@@ -136,7 +136,7 @@ const first = (s: any) => { const t = String(s || '').trim(); return t ? t.split
 // DID WE ALREADY TELL THE GUEST? (Jon, 2026-09-24: "when you are telling team to follow up with a
 // task or reach out to guest, you scan messages to guest to see if we did.")
 //
-// Before 'fixed, guest not told yet' goes to #vr-ccs-and-jon, look at the guest's own Guesty thread:
+// Before 'fixed, guest not told yet' goes to #vr-customercareteam, look at the guest's own Guesty thread:
 // a host message sent after the fix finished means somebody already told them, and the line is
 // noise. The same check closes an earlier nudge with ✅ "guest told 2:10pm by Maria" instead of
 // letting it age out. The thread is found by reservation id when Breezeway carries one, otherwise

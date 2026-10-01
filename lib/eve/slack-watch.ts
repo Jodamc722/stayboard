@@ -177,7 +177,7 @@ async function channels(): Promise<{ id: string; label: string; vendor: boolean 
   }
   for (const g of rules.groups) { add(g.housekeeping, g.label + ' HK', g.vendor); add(g.maintenance, g.label + ' maint', g.vendor) }
   add(rules.opsChannel, 'ops'); add(rules.leadershipChannel, 'leadership')
-  add(EVE_CHANNELS.ccsJon, 'CCS + Jon'); add(EVE_CHANNELS.ccsBoard, 'CCS board')
+  add(EVE_CHANNELS.ccsJon, 'Customer care'); add(EVE_CHANNELS.ccsBoard, 'CCS board')
   return out.slice(0, MAX_CHANNELS_PER_RUN)
 }
 
@@ -570,7 +570,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
       const expires = it?.expires && !isNaN(Date.parse(it.expires)) ? new Date(it.expires).toISOString() : null
       // NO CODE TRAVELS BETWEEN ROOMS (2026-09-29). An item's summary and quoted text are re-posted
       // elsewhere — the urgent list and the morning roll-up in #vr-eve, nudges, escalations, the CCS
-      // handoff — and #ccs-and-jon is where door codes are asked for now. Anything that reads as a
+      // handoff — and #vr-customercareteam is where door codes are asked for now. Anything that reads as a
       // code is masked where the item is filed, so no later post can carry it into another room.
       const row = {
         channel: ch.id, channel_name: ch.label, msg_ts: ts, thread_ts: src?.threadTs || ts,

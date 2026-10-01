@@ -5,7 +5,7 @@
 // service team, CCS, and Jon. And tag channel.")
 //
 // Runs right after every booking sync (app/api/cron/reservations, every 5 minutes), so a new Salato
-// booking is in #ccs-and-jon within minutes of landing in Guesty. What it says, all with @channel:
+// booking is in #vr-customercareteam within minutes of landing in Guesty. What it says, all with @channel:
 //   - A NEW SALATO BOOKING: unit, dates, nights, guest, channel, confirmation code.
 //   - A ONE-NIGHT BOOKING: the same, marked NOT PERMITTED: Salato has a two-night minimum and the
 //     reservation must be canceled (or extended). That is the thing to manage, so it keeps managing it:
@@ -34,7 +34,7 @@ import { slackApi } from '@/lib/slack'
 import { getSetting } from '@/lib/app-settings'
 
 export const SALATO_MIN_NIGHTS = 2
-const CHANNEL = 'C07SBALUTU2' // #ccs-and-jon: the customer service team, CCS and Jon
+const CHANNEL = 'G01TT278P2L' // #vr-customercareteam: the customer service team, CCS and Jon
 const STATE_KEY = 'salato_watch_state'
 const NUDGE_HOURS = 3
 const LIVE = /confirm|checked.?in|reserved/i

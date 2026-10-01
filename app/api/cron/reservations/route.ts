@@ -46,7 +46,7 @@ async function run(req: NextRequest) {
   }
   try {
     const n = await syncReservations(mode === 'incremental' ? 20 : 80, since, { stamp: mode !== 'full-window' })
-    // SALATO BOOKING WATCH (Jon, 2026-09-24): every new Salato booking into #ccs-and-jon with
+    // SALATO BOOKING WATCH (Jon, 2026-09-24): every new Salato booking into #vr-customercareteam with
     // @channel, and a one-night booking flagged as not permitted and chased until it is canceled.
     // Right after the sync, so the post is minutes behind Guesty. See lib/salato-watch.ts.
     let salato: any = null

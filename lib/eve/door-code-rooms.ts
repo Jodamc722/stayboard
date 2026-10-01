@@ -3,7 +3,7 @@
 // channels with field team."
 //
 // So Slack has exactly two rooms where a code can be asked for, and both are Customer Service's own
-// private rooms: #ccs-and-jon and #vr-customercareteam. In either one, anyone in the room may ask —
+// private rooms: #vr-customercareteam. In either one, anyone in the room may ask —
 // through Eve or /doorcode — including the CCS agents who have no Lighthouse login, because the room
 // IS the team. What asking gets them is unchanged: the three checks still run (lib/eve/door-code.ts),
 // and a release still needs an approver ("all codes released must be approved, except for me, Jon
@@ -16,23 +16,23 @@
 // where to go. A one-to-one DM keeps the person's own setting, as before.
 //
 // NO IMPORTS, ON PURPOSE: lib/eve/__tests__/door-code-rooms.test.mjs loads this with plain node. The
-// #ccs-and-jon id is the one lib/slack-rules.ts keeps as CH.ccsJon; the test fails if the two drift.
+// #vr-customercareteam id is the one lib/slack-rules.ts keeps as CH.ccsJon; the test fails if the two drift.
 
 export type DoorCodeSetting = 'off' | 'ask' | 'direct'
-/** room = one of the two Customer Service rooms; dm = a one-to-one DM; elsewhere = any other conversation. */
+/** room = the Customer Service room; dm = a one-to-one DM; elsewhere = any other conversation. */
 export type DoorCodeSurface = 'room' | 'dm' | 'elsewhere'
 
 export const DOOR_CODE_ROOMS: ReadonlyArray<{ id: string; name: string }> = [
-  { id: 'C07SBALUTU2', name: '#ccs-and-jon' },
+  // Jon, 2026-10-01: "move Eve from ccs-and-jon to VR-Customercareteam" — one room now.
   { id: 'G01TT278P2L', name: '#vr-customercareteam' },
 ]
 
-/** "#ccs-and-jon or #vr-customercareteam" — for the one-line pointer wherever a code is refused. */
+/** "#vr-customercareteam" — for the one-line pointer wherever a code is refused. */
 export const DOOR_CODE_ROOM_NAMES = DOOR_CODE_ROOMS.map(r => r.name).join(' or ')
 
 const idOf = (channelId: unknown): string => String(channelId == null ? '' : channelId).trim().toUpperCase()
 
-/** The room's name when this is one of the two Customer Service rooms, else null. */
+/** The room's name when this is the Customer Service room, else null. */
 export function doorCodeRoomName(channelId: unknown): string | null {
   const id = idOf(channelId)
   if (!id) return null
@@ -77,7 +77,7 @@ export function isSlackUserId(id: unknown): boolean {
 
 /**
  * Who in Slack may be handed the door-code tool (lib/eve/slack-tier.ts enforceDoorCodes): anyone in
- * one of the two Customer Service rooms, an admin in a one-to-one DM, nobody anywhere else — and never
+ * the Customer Service room, an admin in a one-to-one DM, nobody anywhere else — and never
  * in a vendor-run room, whatever it is configured as.
  */
 export function doorCodeAccessFor(input: { channelId: unknown; tier: 'admin' | 'staff' | 'vendor'; vendorRoom?: boolean }): 'room' | 'dm' | 'never' {

@@ -15,7 +15,7 @@
 //
 // WHERE IT WORKS (Jon, 2026-09-29: "Door codes can be requested by any Customer Service team member in
 // CCS and Jon Channel, VR Customer Care channel. Never in team channels with field team"). In
-// #ccs-and-jon and #vr-customercareteam anyone in the room may ask — a CCS agent with no Lighthouse
+// #vr-customercareteam anyone in the room may ask — a CCS agent with no Lighthouse
 // login included, by their Slack identity — and it is parked for an approver unless they are set to
 // Direct. In a one-to-one DM the person's own setting stands, as before. Anywhere else it refuses
 // before a single check runs. See lib/eve/door-code-rooms.ts.

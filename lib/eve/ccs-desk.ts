@@ -4,7 +4,7 @@
 // piece is the one that costs money when it slips: a GUEST ASK. A potential guest wants a discount
 // and will book right now; a guest in house wants two more nights; somebody asked for a call back;
 // a refund is on the table. Each one is revenue or a review, each one has a short shelf life, and
-// each one arrives in #ccs-and-jon as a line of chat that scrolls away. The 2026-09-26 Salato scan
+// each one arrives in #vr-customercareteam as a line of chat that scrolls away. The 2026-09-26 Salato scan
 // found exactly that: an extension request ("she'd like to add more days") with "on it" and no
 // closed loop, and a $2,131 booking that only happened because someone happened to hold the price.
 //
@@ -230,7 +230,7 @@ export async function runHandoff(open: AskItem[], cfg: CcsDeskCfg, now = new Dat
   // was held and posted at 7am next to the fresh 7am handoff — stale on arrival. A handoff runs at
   // the hours in this desk's settings, which are a person's schedule, not Eve's initiative: urgent.
   const gate = await agentAllowed('slack_post', { ask: true, urgent: true })
-  const r = await stepDown(gate, { action: 'slack_post', summary: `CCS handoff in #ccs-and-jon (${open.length} open asks)`, exec: { channel: EVE_CHANNELS.ccsJon, channel_name: 'ccs-and-jon', text }, by: 'cron:slack-watch' },
+  const r = await stepDown(gate, { action: 'slack_post', summary: `CCS handoff in #vr-customercareteam (${open.length} open asks)`, exec: { channel: EVE_CHANNELS.ccsJon, channel_name: 'vr-customercareteam', text }, by: 'cron:slack-watch' },
     async () => { const p = await postToChannel(EVE_CHANNELS.ccsJon, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
   if (r.ok && r.mode !== 'observe') await setSetting(HANDOFF_STATE_KEY, { ...st, lastHandoff: slot }, 'ccs-desk')
   return { posted: r.mode === 'act', mode: r.mode, note: r.mode !== 'act' ? gate.reason : undefined }

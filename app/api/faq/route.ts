@@ -16,7 +16,7 @@ async function getUser() {
 }
 
 // DOOR CODES ARE NOT READ OFF THE FAQ DESK (Jon, 2026-09-29: codes are requested by Customer Service in
-// #ccs-and-jon or #vr-customercareteam, "never in team channels with field team"; and every release is
+// #vr-customercareteam, "never in team channels with field team"; and every release is
 // approved, except his own). Everyone who can open this desk — field team included — would see a unit's
 // code fields ("Door code", "Building code", "Old code", "Program code", "17W Back Up code") and any code
 // written into its other fields, notes, entries or how-tos. Now only someone set to Direct (Jon, and

@@ -171,7 +171,7 @@ export async function runTool(name: string, input: any, ctx: EveCtx, open: strin
     // IN A ROOM, NO CODE IN ANY FORM (Jon, 2026-09-29: door codes are "never in team channels with field
     // team"). In Slack or a Telegram group every string also gets the stored-text treatment — a lock word
     // next to a 4-8 digit number is masked — because a guest thread's check-in message or a line read
-    // from #ccs-and-jon can carry a code the patterns above miss. Not the door-code tool: its quoted
+    // from #vr-customercareteam can carry a code the patterns above miss. Not the door-code tool: its quoted
     // lines are scrubbed at the source, and in an admin's own DM its `code` is the answer.
     const coded = ctx.sharedRoom && tool.name !== 'door_code_check' ? scrubStoredStrings(coded0, { room: true, keep: unitNamesRe(ctx) }) : coded0
     // A VENDOR ROOM GETS THE JOB, NOT THE GUEST (2026-09-28 audit, F2 / B-10). ops_today, unit_status,

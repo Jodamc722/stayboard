@@ -170,7 +170,7 @@ const CH = {
   parktower: 'C0AFLUUE8BH',    // #vr-parktower (private — bot must be invited)
   // Not routing groups — the two rooms Eve talks TO rather than about. Both private.
   leadership: 'C0BQ4EZR3DM', // #leadership (private — bot must be invited)
-  ccsJon: 'C07SBALUTU2',     // #ccs-and-jon (private — bot must be invited)
+  ccsJon: 'G01TT278P2L',     // #vr-customercareteam (private — bot must be invited). Was #ccs-and-jon C07SBALUTU2 until Jon moved Eve, 2026-10-01
   ccsBoard: 'C09DTAL4ZEW',   // #vr-ccs-messageboard — where guest-thread trouble gets flagged
   eveApprovals: 'C0C13B7LPJ5', // #vr-eve — Jon made this 2026-09-10 for approvals (was #vr-eveapprovals)
 }
@@ -185,7 +185,7 @@ export const EVE_CHANNELS = {
   approvals: CH.eveApprovals,
   /** Escalations and the nightly handover. Anyone in the room can clear an escalation. */
   leadership: CH.leadership,
-  /** Jon + customer care. Usable for approvals too — his call, 2026-09-10. */
+  /** The customer care team's room (#vr-customercareteam). Usable for approvals too — Jon's call, 2026-09-10. */
   ccsJon: CH.ccsJon,
   /** Where a guest thread going wrong gets flagged with the team tagged. */
   ccsBoard: CH.ccsBoard,
