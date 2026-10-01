@@ -49,6 +49,11 @@ export async function POST(req: NextRequest) {
       }).select('id').single()
       if (error) throw error
       bustDay()
+      // A spend that needs a yes goes to the Slack approvals room, where a yes in the thread approves it
+      // (Jon, 2026-10-01). Best effort — the request is filed either way.
+      if (d.approval_required) {
+        try { const { postSpendToSlack } = await import('@/lib/eve/slack-approvals'); await postSpendToSlack({ id: data!.id, title: d.title, amount_usd: d.amount_usd, unit: d.unit, building: d.building, vendor: d.vendor, created_by_email: email, description: d.description, type: d.type }) } catch { /* Lighthouse still has the buttons */ }
+      }
       return NextResponse.json({ ok: true, id: data!.id })
     }
 

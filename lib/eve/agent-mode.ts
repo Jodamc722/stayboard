@@ -622,17 +622,14 @@ export async function notifyProposal(id: string, settings?: AgentSettings): Prom
     } catch (e: any) { errors.push(`Telegram: ${String(e?.message || e).slice(0, 80)}`) }
   } else errors.push('Telegram is switched off')
 
-  if (!notified.length && s.channels.slack) {
+  // SLACK, ALWAYS when it is on (Jon, 2026-10-01: "approve any Eve ask via Slack") — not only when
+  // Telegram failed. The post's thread is the answer slot (lib/eve/slack-approvals.ts).
+  if (s.channels.slack) {
     try {
-      const { getApprovalsChannel } = await import('./approvals')
-      const { postToChannel } = await import('@/lib/slack')
-      const ch = await getApprovalsChannel()
-      if (!ch) errors.push('no Slack approvals channel')
-      else {
-        const r = await postToChannel(ch.id, `🤖 *Eve wants to:* ${summary}${why ? `\n_Why:_ ${why.slice(0, 200)}` : ''}\nApprove or reject in Lighthouse → Users & admin → Eve → Agent mode.`)
-        if (r.ok) { notified.push('slack'); await supabaseAdmin().from('eve_actions').update({ result: { delivery: 'slack' } }).eq('id', id) }
-        else errors.push(`Slack: ${String(r.error || 'refused').slice(0, 80)}`)
-      }
+      const { postProposalToSlack } = await import('./slack-approvals')
+      const r = await postProposalToSlack(id, { summary, why, usd })
+      if (r.ok) { notified.push('slack'); if (notified.length === 1) await supabaseAdmin().from('eve_actions').update({ result: { delivery: 'slack' } }).eq('id', id) }
+      else errors.push(`Slack: ${String(r.error || 'refused').slice(0, 80)}`)
     } catch (e: any) { errors.push(`Slack: ${String(e?.message || e).slice(0, 80)}`) }
   } else if (!notified.length) errors.push('Slack is switched off')
 
