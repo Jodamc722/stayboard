@@ -168,7 +168,9 @@ export async function runScheduleCheck(opts: { force?: boolean; preview?: boolea
     const suggestions: MarketCheck['suggestions'] = []
     for (const c of unassigned.slice(0, 8)) {
       const kb = k.buildings[c.building]
-      const names = (kb ? kb.usual.map(u => u.name) : []).filter(n => rostered(date, n) === 'Working').filter(n => { const pd = byPerson[n]; return !pd || (pd.minutes + c.minutes <= SHIFT_MIN && (pd.usualMax == null || pd.cleans.length < pd.usualMax)) }).slice(0, 2)
+      // A blank roster must not blank the suggestions: when nobody is marked for the day, the people
+      // who usually clean the building are still the right first call (the card says "usually").
+      const names = (kb ? kb.usual.map(u => u.name) : []).filter(n => { const r = rostered(date, n); return r === 'Working' || (!rosterKnown && r === 'unknown') }).filter(n => { const pd = byPerson[n]; return !pd || (pd.minutes + c.minutes <= SHIFT_MIN && (pd.usualMax == null || pd.cleans.length < pd.usualMax)) }).slice(0, 2)
       suggestions.push({ clean: c, names })
     }
     // The three days after.
