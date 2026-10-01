@@ -27,7 +27,7 @@ import { buildingOf } from '@/lib/segments'
 import { isTaskDone } from '@/lib/task-categories'
 import { standardMinutes } from '@/lib/schedule-suggest'
 import { getOpsPresets } from '@/lib/app-settings'
-import { vendorNameOf } from '@/lib/ops-presets'
+import { vendorCompanyOf } from '@/lib/ops-presets'
 import { getSlackRules, groupForBuilding, channelFor, EVE_CHANNELS, resolveSlackId } from '@/lib/slack-rules'
 import { getDirectory, postToChannel, mention } from '@/lib/slack'
 import { getSetting, setSetting } from '@/lib/app-settings'
@@ -91,7 +91,7 @@ export async function runScheduleCheck(opts: { force?: boolean; preview?: boolea
   for (const l of (listings || []) as any[]) {
     const unit = str(l.nickname) || str(l.title) || 'Unit'
     const building = buildingOf(l.building, unit) || str(l.building) || unit
-    if (vendorNameOf(vendorList, building) || vendorNameOf(vendorList, unit)) { vendorSkipped++; continue }
+    if (vendorCompanyOf(vendorList, building) || vendorCompanyOf(vendorList, unit)) { vendorSkipped++; continue }
     const kb = k.buildings[building]
     const market = kb ? kb.market : (/miami|arya|elser|17 ?west|district|eden|nomad/i.test(building + ' ' + str(l.address_city)) ? 'Miami' : /palm|lake worth|capri|lucerne|amrit|pelican|riviera/i.test(building + ' ' + str(l.address_city)) ? 'North' : 'Broward')
     meta[str(l.id)] = { unit, building, market, bedrooms: l.bedrooms == null ? null : Number(l.bedrooms), checkIn: l.checkIn ? str(l.checkIn) : null }

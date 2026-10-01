@@ -29,7 +29,7 @@ import { buildingOf } from '@/lib/segments'
 import { personKey } from '@/lib/person-name'
 import { standardMinutes } from '@/lib/schedule-suggest'
 import { getOpsPresets } from '@/lib/app-settings'
-import { vendorNameOf } from '@/lib/ops-presets'
+import { vendorCompanyOf } from '@/lib/ops-presets'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { assigneeNames } from './dossiers'
 
@@ -110,7 +110,7 @@ export async function learnSchedule(days = 90): Promise<ScheduleKnowledge> {
   for (const l of (listings || []) as any[]) {
     const unit = str(l.nickname) || str(l.title) || 'Unit'
     const building = buildingOf(l.building, unit) || str(l.building) || unit
-    meta[str(l.id)] = { unit, building, market: marketOf(building, str(l.address_city)), bedrooms: l.bedrooms == null ? null : Number(l.bedrooms), vendor: vendorNameOf(vendorList, building) || vendorNameOf(vendorList, unit) }
+    meta[str(l.id)] = { unit, building, market: marketOf(building, str(l.address_city)), bedrooms: l.bedrooms == null ? null : Number(l.bedrooms), vendor: vendorCompanyOf(vendorList, building) || vendorCompanyOf(vendorList, unit) }
   }
 
   type Done = { listingId: string; day: string; who: string[]; minutes: number | null; startH: number | null; endH: number | null }

@@ -24,6 +24,9 @@ export type VendorBuilding = {
   /** The Breezeway account every UNASSIGNED task in this building goes to (lib/vendor-assign). The
    *  vendor then picks its own person; a task that already has anybody on it is never touched. */
   assignTo?: string
+  /** The company that cleans it, when that is not the Breezeway account above (Jon, 2026-10-01:
+   *  "PT … is always done by Anthony's team, which is Probol"). vendorCompanyOf() reads it. */
+  company?: string
 }
 
 export const DEFAULT_VENDOR_BUILDINGS: VendorBuilding[] = [
@@ -36,7 +39,7 @@ export const DEFAULT_VENDOR_BUILDINGS: VendorBuilding[] = [
   // is still Botanica; only the crew that cleans it has a name now, and every board that used to
   // read "Botanica staff" reads "Garden staff".
   { id: 'botanica',    label: 'Garden',      terms: ['botanica'],            enabled: true, untracked: true, noBreezeway: true },
-  { id: 'park-towers', label: 'Park Towers', terms: ['park tower'],          wordTerms: ['pt'], enabled: true },
+  { id: 'park-towers', label: 'Park Towers', terms: ['park tower'],          wordTerms: ['pt'], enabled: true, company: 'Probol' },
   // OPAL'S THREE (Jon, 2026-09-23): "Lucerne and Capri are managed by Opal staff, and Opal is in
   // Breezeway. Can we make sure that they're always assigned to Opal? They have different cleaners
   // that they use, but that's up to them to assign." Then: "Same for Amrit, that's Opal's team as
@@ -83,6 +86,18 @@ export function vendorNameOf(list: VendorBuilding[], s: string): string | null {
     if (!v || !v.enabled) continue
     const pats = patternsFor(v)
     if (pats.length && new RegExp(pats.join('|'), 'i').test(hay)) return v.label
+  }
+  return null
+}
+
+/** The COMPANY that cleans a vendor building — Opal Works for Capri/Lucerne/Amrit, Probol for Park
+ *  Towers — or null when it is ours. vendorNameOf returns the building's label; this returns who. */
+export function vendorCompanyOf(list: VendorBuilding[], s: string): string | null {
+  const hay = String(s || '')
+  for (const v of (list || [])) {
+    if (!v || !v.enabled) continue
+    const pats = patternsFor(v)
+    if (pats.length && new RegExp(pats.join('|'), 'i').test(hay)) return v.company || v.assignTo || v.label
   }
   return null
 }
@@ -216,6 +231,8 @@ export function mergePresets(stored: any): OpsPresets {
         // A settings row saved before assignTo existed keeps the code default for its building.
         assignTo: typeof v.assignTo === 'string' ? (v.assignTo.trim() || undefined)
           : DEFAULT_VENDOR_BUILDINGS.find(d => d.id === String(v.id))?.assignTo,
+        company: typeof v.company === 'string' ? (v.company.trim() || undefined)
+          : DEFAULT_VENDOR_BUILDINGS.find(d => d.id === String(v.id))?.company,
       })),
     roster: {
       teams: obj(r.teams, DEFAULT_ROSTER.teams),
