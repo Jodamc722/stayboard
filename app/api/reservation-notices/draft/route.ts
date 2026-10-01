@@ -81,9 +81,11 @@ export async function POST(req: NextRequest) {
 //      Sent, however it got there, including ones typed and sent by hand.
 // Neither can un-send anything, and an inconclusive Gmail answer changes nothing.
 export async function GET(req: NextRequest) {
+  // Anyone who can see the desk may trigger the reconcile (2026-10-01): it reads support@'s own
+  // Gmail and Guesty with the app's credentials and can only ever mark things SENT — before, the
+  // front desk (not admins) opened the page all day and the loop never closed for them.
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
   if (!isVrLogin(access)) return hotelOnlyRes()
   const u = new URL(req.url)
   const back = Number(u.searchParams.get('backDays') || '') || undefined

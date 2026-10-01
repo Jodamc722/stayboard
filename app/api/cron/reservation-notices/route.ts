@@ -15,6 +15,7 @@ import { runNoticeDrafts } from '@/lib/notice-drafts'
 import { getTaskAutomation } from '@/lib/auto-inspections'
 import { requireCron } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
+import { checkSupportDrafts, sweepSentInGmail, sweepGuestyFlag, closePastArrivals } from '@/lib/support-drafts'
 
 // GMAIL DRAFTS RIDE THIS CRON (2026-09-18). /api/cron/notice-drafts lost its own schedule then
 // (and was deleted 2026-09-28). It used to fire at 03:06, 11:06, 15:06, 19:06 and 23:06 UTC; this
@@ -37,6 +38,18 @@ async function run(req: NextRequest) {
     // 30 days ahead: far enough that a long-lead booking is on the desk well before its lead-time
     // window opens, short enough that the list stays about today rather than about next quarter.
     const res = await pullNotices(30)
+    // SENT IS TRACKED EVERY HOUR (Jon, 2026-10-01: "make sure if sent it's tracked"): the same
+    // reconcile the desk runs on open — watched drafts that left Drafts, support@'s Sent folder,
+    // Guesty's sent flag, then past arrivals nobody can account for — so a notice sent by hand from
+    // the inbox is marked sent whether or not anyone opens the page. Best-effort, never fails the fill.
+    let sent: any = undefined
+    try {
+      const a = await checkSupportDrafts().catch(() => null)
+      const g = await sweepGuestyFlag({}).catch(() => null)
+      const m = await sweepSentInGmail({}).catch(() => null)
+      const past = await closePastArrivals().catch(() => null)
+      sent = { drafts: a, guesty: g, gmail: m, pastArrivals: past }
+    } catch (e: any) { sent = { error: String(e?.message || e).slice(0, 160) } }
     let drafts: any = undefined
     if (isCron && DRAFT_HOURS_UTC.indexOf(new Date().getUTCHours()) >= 0) {
       try {
@@ -46,7 +59,7 @@ async function run(req: NextRequest) {
     }
     // An `error` beside ok:true is a configuration note ("no properties are switched on"), not a
     // failure — carried as `note` so the run receipt stays honest in both directions.
-    const body: any = { ranAt: new Date().toISOString(), elapsed_ms: Date.now() - started, ...res, ...(drafts !== undefined ? { drafts } : {}) }
+    const body: any = { ranAt: new Date().toISOString(), elapsed_ms: Date.now() - started, ...res, sentTracking: sent, ...(drafts !== undefined ? { drafts } : {}) }
     if (body.ok !== false && body.error) { body.note = body.error; delete body.error }
     // A drafting pass that failed (only possible when notice drafts are switched on) fails the run.
     if (drafts && drafts.ok === false) {

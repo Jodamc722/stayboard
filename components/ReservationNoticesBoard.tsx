@@ -153,11 +153,20 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
     return () => window.removeEventListener('keydown', onKey)
   }, [openDraft])
 
-  const load = useCallback(async () => {
-    // Reconcile Gmail first: any support@ draft that was SENT since the last visit marks its
-    // notice sent before the list below renders (Jon, 2026-08-17). Best-effort and quick — a
-    // failure here never blocks the board.
-    try { await fetch('/api/reservation-notices/draft?check=1', { cache: 'no-store' }) } catch { /* board loads regardless */ }
+  const checking = useRef(false)
+  const load = useCallback(async (opts: { check?: boolean } = {}) => {
+    // THE LIST FIRST, THE RECONCILE BESIDE IT (Jon, 2026-10-01: "this page needs to load faster").
+    // The Gmail + Guesty reconcile used to run BEFORE the first read — four round trips to two
+    // outside services before a single row appeared. It now runs in parallel; if it marks anything
+    // sent, the list is read again and the rows update in place. Best-effort — a failure never
+    // touches the board.
+    if (opts.check !== false && !checking.current) {
+      checking.current = true
+      fetch('/api/reservation-notices/draft?check=1', { cache: 'no-store' }).then(r => r.json()).then(j => {
+        const n = (Number(j?.markedSent) || 0) + (Number(j?.sentSweep?.marked ?? j?.sentSweep?.markedSent) || 0) + (Number(j?.guestySweep?.marked ?? j?.guestySweep?.markedSent) || 0) + (Number(j?.pastArrivals?.closed ?? j?.pastArrivals?.marked) || 0)
+        if (n) { setMsg(`${n} notice${n === 1 ? '' : 's'} found sent in the inbox / Guesty — marked sent.`); load({ check: false }) }
+      }).catch(() => null).finally(() => { checking.current = false })
+    }
     setLoading(true); setErr(null)
     try {
       const r = await fetch('/api/reservation-notices', { cache: 'no-store' })
