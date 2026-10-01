@@ -112,7 +112,7 @@ const SYSTEM = [
  * NOT a summary, NOT an answer. Whatever the message asks, this returns the message in the other
  * language and nothing more.
  */
-export async function translate(text: string, hint: Lang | null, to?: Lang): Promise<string | null> {
+export async function translate(text: string, hint: Lang | null, to?: Lang, opts?: { useFallbackModel?: boolean }): Promise<string | null> {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return null
   try {
@@ -120,21 +120,31 @@ export async function translate(text: string, hint: Lang | null, to?: Lang): Pro
     // back 404, and calling the API raw would turn that into `null` -- which here means Eve posts
     // NOTHING and looks broken, with no way to tell it apart from the rule not firing. The shared
     // helper retries once on the tier's fallback, which is exactly the failure this must survive.
-    const { model, fallback } = await modelPairFor('translate')
-    const lead = to === 'es' ? 'Translate the following into Latin-American Spanish. Output only the Spanish.\n\n'
-      : to === 'en' ? 'Translate the following into English. Output only the English.\n\n'
+    const pair = await modelPairFor('translate')
+    const model = opts?.useFallbackModel ? pair.fallback : pair.model
+    const lead = to === 'es' ? 'Translate the following into Latin-American Spanish. Output only the Spanish. Do not return SKIP: this message is in English and must come back in Spanish.\n\n'
+      : to === 'en' ? 'Translate the following into English. Output only the English. Do not return SKIP: this message is in Spanish and must come back in English.\n\n'
       : hint === 'es' ? 'This looks like Spanish.\n\n'
       : hint === 'en' ? 'This looks like English.\n\n'
       : ''
-    const r = await anthropicMessages(key, {
-      model, max_tokens: 700,
-      system: SYSTEM,
-      messages: [{ role: 'user', content: lead + String(text).slice(0, 4000) }],
-    }, fallback, 'translate')
-    if (!r.ok) return null
-    const out = String(textOf(r.data) || '').trim()
-    if (!out || /^SKIP\.?$/i.test(out)) return null
-    return out
+    // 100% OF THE TIME (Jon, 2026-10-01): a rate limit, an overloaded model or a dropped socket is
+    // retried here, with a pause, before anything is given up on — three tries, 20 s each.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await new Promise(r => setTimeout(r, attempt === 1 ? 800 : 2500))
+      let r: Awaited<ReturnType<typeof anthropicMessages>>
+      try {
+        r = await anthropicMessages(key, {
+          model, max_tokens: 700,
+          system: SYSTEM,
+          messages: [{ role: 'user', content: lead + String(text).slice(0, 4000) }],
+        }, pair.fallback, 'translate')
+      } catch { continue }                                   // network: try again
+      if (!r.ok) { if (r.status === 429 || r.status >= 500) continue; return null }
+      const out = String(textOf(r.data) || '').trim()
+      if (!out || /^SKIP\.?$/i.test(out)) return null
+      return out
+    }
+    return null
   } catch { return null }
 }
 
@@ -162,9 +172,14 @@ export async function translateChecked(text: string): Promise<{ text: string; fa
   // not write (an offer, a follow-up, a sign-off), cut off rather than the whole translation thrown
   // away. lib/eve/translate-check.ts, tested against the real cases.
   const sameLang = (out: string) => !!src && detectLang(out) === src && (out.split(/\s+/).length >= 3)
+  // When the heuristic cannot tell, the Spanish alphabet and the Spanish function words decide the
+  // direction for the forced retries: a short "ya terminé 401" is Spanish, "401 done" is English.
+  const guess: Lang = want || (ES_CHARS.test(text) || (text.match(ES_WORDS) || []).length > (text.match(EN_WORDS) || []).length ? 'en' : 'es')
+  ES_CHARS.lastIndex = 0
   let out = await translate(text, src)
   if (out && (sameLang(out) || hasBoltedOn(text, out))) out = await translate(text, src, want || (detectLang(out) === 'es' ? 'en' : 'es'))
-  if (!out) out = await translate(text, src, want)
+  if (!out) out = await translate(text, src, guess)
+  if (!out) out = await translate(text, src, guess, { useFallbackModel: true })   // last resort: the bigger model
   if (out) out = stripBoltedOn(text, out) || null
   if (out) return { text: out, fallback: false }
   return { text: src === 'es' ? 'No pude traducir este mensaje ahora mismo. Etiquétame otra vez en un momento.' : 'I could not translate this one just now. Tag me again in a moment.', fallback: true }

@@ -441,9 +441,13 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
   // under her answer about Rustic 23 was translated into Spanish; the correction was lost and Jon had
   // to repeat it. In a thread where her previous message was an answer, a tag at the end is a reply to
   // that answer and goes to the answer path — with the previous exchange, so a correction is captured.
-  const last = await lastExchange(channel, ev, me)
-  const replyToAnswer = !!(last && last.eveWasAnswer)
-  if (!viaReply && !replyToAnswer && tagPosition(String(ev.text || ''), me) === 'end') {
+  // A TAG AT THE END ALWAYS TRANSLATES — NO EXCEPTIONS (Jon, 2026-10-01: "Make sure it works 100% of
+  // the time. Very important."). The 2026-09-30 exception that sent an end-tag under her answer to the
+  // answer path made the rule unpredictable in exactly the threads people use most; it is gone. To
+  // correct her or ask a follow-up, tag her at the FRONT. The previous exchange is still read below for
+  // the answer path.
+  const last = await lastExchange(channel, ev, me).catch(() => null)
+  if (!viaReply && tagPosition(String(ev.text || ''), me) === 'end') {
     const t0 = Date.now()
     // People's tags ride through the translation as placeholders and come back as real tags
     // (lib/eve/slack-mentions): the person named in the original is named — and pinged — in the
