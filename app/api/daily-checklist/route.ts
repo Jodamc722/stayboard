@@ -11,7 +11,7 @@ import { requireLevel, isSuperadmin } from '@/lib/access'
 import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { todayList, setTick, pruneOldTicks, progressOf, BANDS } from '@/lib/daily-checklist'
-import { countSignals, signalLink } from '@/lib/checklist-signals'
+import { countSignals, signalLink, smartRows } from '@/lib/checklist-signals'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,10 +33,11 @@ function cleanLink(v: any): string | null {
 export async function GET() {
   const g = await requireLevel('checklist', 'view')
   if (!g.ok) return g.res
-  const { day, clock, rows } = await todayList()
+  const { day, clock, rows: rows0 } = await todayList()
   // Only the signals this list actually names, and a failure of any one of them costs a number,
-  // never the list.
-  const signals = await countSignals(rows.map(r => r.signal || '')).catch(() => ({}))
+  // never the list. Then the SMART pass: a signalled item with nothing left to count is done.
+  const signals = await countSignals(rows0.map(r => r.signal || '')).catch(() => ({}))
+  const rows = smartRows(rows0, signals)
   return NextResponse.json({
     ok: true, day, clock, rows, signals, progress: progressOf(rows),
     // What this person may do, so the page does not offer buttons that will be refused.
@@ -123,8 +124,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Unknown action.' }, { status: 400 })
     }
 
-    const { day, clock, rows } = await todayList()
-    const signals = await countSignals(rows.map(r => r.signal || '')).catch(() => ({}))
+    const { day, clock, rows: rows0 } = await todayList()
+    const signals = await countSignals(rows0.map(r => r.signal || '')).catch(() => ({}))
+    const rows = smartRows(rows0, signals)
     return NextResponse.json({ ok: true, day, clock, rows, signals, progress: progressOf(rows) })
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message || e).slice(0, 300) }, { status: 500 })

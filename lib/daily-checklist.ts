@@ -28,6 +28,9 @@ export type ChecklistRow = ChecklistItem & {
   late: boolean
   /** Minutes until it is due; negative once it is late. Null when the item has no time. */
   in_minutes: number | null
+  /** Smart items (lib/checklist-signals smartRows): done because the live count is zero, and the count itself. */
+  auto?: boolean
+  count?: number | null
 }
 
 /**

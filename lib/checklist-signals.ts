@@ -43,6 +43,25 @@ const COUNTERS: Record<string, () => Promise<number | null>> = {
   inspections_open_today: async () => (await tasksOn(0)).filter(t => /inspect|unit check|quality/i.test(t.name) && !t.done).length,
   tomorrow_cleans_unassigned: async () => (await cleans(1)).filter(c => !c.done && !c.who).length,
   overdue_tasks: async () => { const d = dayET(0); try { const { count } = await db().from('breezeway_tasks_sync').select('id', { count: 'exact', head: true }).lt('scheduled_date', d).is('finished_at', null).not('status', 'in', '("completed","Completed","closed","Closed","cancelled","Cancelled","finished","Finished")'); return Number(count || 0) } catch { return null } },
+  reviews_to_reply: () => headCount(sb => sb.from('guesty_reviews')
+    .select('id', { count: 'exact', head: true })
+    .eq('has_reply', false).neq('dismissed', true).neq('removed', true)
+    .gte('created_at', new Date(Date.now() - 60 * 86400_000).toISOString())),
+  claims_due: async () => {
+    try {
+      const { data } = await db().from('claims').select('stage,deadline_on').limit(500)
+      const today = dayET(0)
+      let n = 0
+      for (const c of (data || []) as any[]) {
+        const stage = String(c.stage || '')
+        if (/closed|dropped|decided|settle|submitted/.test(stage)) continue
+        const dl = c.deadline_on ? String(c.deadline_on).slice(0, 10) : null
+        const left = dl ? Math.round((Date.parse(dl + 'T12:00:00Z') - Date.parse(today + 'T12:00:00Z')) / 86400000) : null
+        if (stage === 'review' || (left != null && left <= 5)) n++
+      }
+      return n
+    } catch { return null }
+  },
   welcome_calls_owed: async () => {
     try {
       const { loadCallsDesk } = await import('./call-desk')
@@ -116,4 +135,25 @@ export async function countSignals(keys: string[]): Promise<Record<string, numbe
   const out: Record<string, number | null> = {}
   wanted.forEach((k, i) => { out[k] = counts[i] })
   return out
+}
+
+/**
+ * THE SMART CHECKLIST (Jon, 2026-10-01: "if they're already completed, they should be auto-marked
+ * complete … a reminder to complete certain tasks … dynamic, not static").
+ *
+ * An item that names a signal is about something the app can count. When that count is ZERO there
+ * is nothing left to do, so the item is done — marked `auto`, with no tick written, and it un-does
+ * itself the moment the count comes back (a new unpaid stay, a new review). When the count is above
+ * zero the item is open even if someone ticked it earlier today: the tick is kept (done_by shows who
+ * looked) but the row reads "ticked · 3 still open" so a tick never hides live work. Items with no
+ * signal are the plain reminders they always were.
+ */
+export function smartRows<R extends { signal?: string | null; done: boolean; late: boolean; in_minutes?: number | null }>(rows: R[], signals: Record<string, number | null>): (R & { auto?: boolean; count?: number | null })[] {
+  return rows.map(r => {
+    const k = r.signal || ''
+    if (!k || !(k in signals) || signals[k] == null) return r
+    const n = Number(signals[k])
+    if (n <= 0) return { ...r, count: 0, auto: true, done: true, late: false }
+    return { ...r, count: n }
+  })
 }

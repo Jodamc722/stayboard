@@ -32,6 +32,7 @@ type Row = {
   band: Band; by_time: string | null; owner_role: string | null; sort: number | null; active: boolean
   link: string | null; signal: string | null
   done: boolean; done_at: string | null; done_by: string | null; note: string | null
+  auto?: boolean; count?: number | null
   late: boolean; in_minutes: number | null
 }
 type Data = {
@@ -326,7 +327,8 @@ function ItemRow({ r, busy, act, canTick, manage, count, day }: {
         {chip && !r.done && <Tag tone={(count || 0) > 0 ? 'amber' : 'slate'} title="Live count from the app">{chip}</Tag>}
         {r.owner_role && <Tag title="Who does it">{r.owner_role}</Tag>}
         {steps.length > 0 && !r.done && <Tag title="Steps inside">{steps.length} steps</Tag>}
-        {r.done && <Tag tone={cant ? 'amber' : 'emerald'} title={(cant ? 'Marked not doable by ' : 'Ticked by ') + (r.done_by || 'someone') + ' at ' + shortTime(r.done_at)}>{cant ? 'not done' : 'done'} · {firstName(r.done_by) || 'someone'} · {shortTime(r.done_at)}</Tag>}
+        {r.done && (r as any).auto && <Tag tone="emerald" title="Ticked itself — nothing left to count (smart checklist)">done by itself · {chip || 'nothing left'}</Tag>}
+        {r.done && !(r as any).auto && <Tag tone={cant ? 'amber' : 'emerald'} title={(cant ? 'Marked not doable by ' : 'Ticked by ') + (r.done_by || 'someone') + ' at ' + shortTime(r.done_at)}>{cant ? 'not done' : 'done'} · {firstName(r.done_by) || 'someone'} · {shortTime(r.done_at)}</Tag>}
       </>}
       actions={<>
         {link && !r.done && <Link href={link} prefetch={false} aria-label="Open where this gets done"><Tip label="Open where this gets done"><span className="shrink-0 inline-flex items-center justify-center rounded-lg border border-line bg-white w-8 h-8 text-muted hover:text-ink hover:bg-app"><ArrowUpRight size={14} /></span></Tip></Link>}

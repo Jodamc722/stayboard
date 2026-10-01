@@ -123,6 +123,16 @@ export const SIGNAL_META: Record<string, SignalMeta> = {
     link: '/plan', title: 'Inspections not closed today',
     label: n => (n > 0 ? `${n} to walk` : 'all walked'),
   },
+  // 2026-10-01 (Jon: "a smart checklist … if you need to respond to reviews, check unpaid
+  // reservations, manage glitches or claims that are due"): the two the list did not yet count.
+  reviews_to_reply: {
+    link: '/reviews', title: 'Reviews waiting on a public reply',
+    label: n => (n > 0 ? `${n} to answer` : 'all answered'),
+  },
+  claims_due: {
+    link: '/claims', title: 'Damage claims in review or within 5 days of their filing deadline',
+    label: n => (n > 0 ? `${n} to file` : 'no claims due'),
+  },
   welcome_calls_owed: {
     link: '/welcome-calls', title: 'Welcome calls still owed for today',
     label: n => (n > 0 ? `${n} to call` : 'all called'),

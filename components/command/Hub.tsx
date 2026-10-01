@@ -23,10 +23,11 @@
 // drawn (useAccess); the server checks again. Reads: the day (/api/command/day, shared with the rest
 // of the page), the reply queue (/api/reviews), the checklist (/api/daily-checklist), your tasks
 // (/api/projects/mine), the listing fixes (/api/listing-health?slim=1) and the week (/api/command/scoreboard).
-import { cloneElement, isValidElement, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { cloneElement, createContext, isValidElement, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { Loader2, Check, ExternalLink, UserPlus, Star, Phone, X, Sparkles, ClipboardCheck, ListChecks, MessageSquare, FileText, ChevronDown, ChevronUp } from 'lucide-react'
+import { Loader2, Check, ExternalLink, UserPlus, Star, Phone, X, Sparkles, ClipboardCheck, ListChecks, MessageSquare, FileText, ChevronDown, ChevronUp, StickyNote, Circle, CheckCircle2 } from 'lucide-react'
 import { Tag, type Tone } from '@/components/lean'
+import { signalLabel } from '@/lib/checklist-shared'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { useAccess } from '@/lib/useAccess'
 import type { CommandDay, NextItem, GuestDeskRow, CleanRow as CleanRowT, ArrivalRow, TaskRow, TeamRow as TeamRowT, GlitchRow as GlitchRowT } from '@/lib/command-day'
@@ -69,10 +70,53 @@ async function post(url: string, body: any, method = 'POST') {
 const clearRow = (i: { key: string; title?: string; unit?: string }, outcome: 'done' | 'skipped') =>
   post('/api/command/dismiss', { key: i.key, outcome, title: i.title, unit: i.unit })
 
+// ── NOTES ON EVERY ROW (Jon, 2026-10-01: "everything on that page should be able to add notes …
+// Today's Ecosystem"). One read for the page (/api/command/notes, last 14 days by row key); a row
+// with a `noteKey` shows a note button with its count and opens a small thread under itself.
+export type DayNote = { id: string; key: string; text: string; by: string; at: string }
+export const NOTES_URL = '/api/command/notes'
+export const NotesCtx = createContext<{ byKey: Record<string, DayNote[]>; add: (key: string, text: string) => Promise<void>; ready: boolean } | null>(null)
+export function NoteBtn({ noteKey, open, onToggle }: { noteKey: string; open: boolean; onToggle: () => void }) {
+  const ctx = useContext(NotesCtx)
+  const n = ctx?.byKey[noteKey]?.length || 0
+  return (
+    <button onClick={onToggle} aria-pressed={open} className={GHOST + (n ? ' !border-amber-300 !bg-amber-50 !text-amber-900' : '')} title={n ? n + ' note' + (n === 1 ? '' : 's') + ' — click to read or add' : 'Add a note'}>
+      <StickyNote size={12} />{n ? <span className="tabular-nums">{n}</span> : null}
+    </button>
+  )
+}
+export function NoteThread({ noteKey }: { noteKey: string }) {
+  const ctx = useContext(NotesCtx)
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const notes = ctx?.byKey[noteKey] || []
+  const save = async () => {
+    const t = text.trim(); if (!t || !ctx) return
+    setBusy(true); setErr('')
+    try { await ctx.add(noteKey, t); setText('') } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  const when = (iso: string) => new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  return (
+    <div className="mt-1.5 pl-3.5 space-y-1.5">
+      {notes.length > 0 && <ul className="space-y-1">{notes.slice(0, 8).map(n => <li key={n.id} className="text-[12px] text-ink"><span className="text-muted">{String(n.by).split(/[\s@]/)[0]} · {when(n.at)} — </span>{n.text}</li>)}</ul>}
+      <div className="flex items-start gap-1.5">
+        <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') save() }} placeholder="Add a note — what was done, who you spoke to, what is next" className="flex-1 text-[12px] bg-app border border-line rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+        <button onClick={save} disabled={busy || !text.trim()} className={DARK} title="Saves with your name and the time">{busy ? <Loader2 size={12} className="animate-spin" /> : 'Save'}</button>
+      </div>
+      {err && <p className="text-[11.5px] text-rose-700">{err}</p>}
+    </div>
+  )
+}
+
 /** One row: dot · title · tags · meta, then the buttons. Detail (an assign strip, a reply box) opens under it. */
-export function Row({ dot, title, meta, tags, actions, children, err, lane }: {
-  dot?: 'rose' | 'amber' | null; title: ReactNode; meta?: ReactNode; tags?: ReactNode; actions?: ReactNode; children?: ReactNode; err?: string; lane?: string
+export function Row({ dot, title, meta, tags, actions, children, err, lane, noteKey }: {
+  dot?: 'rose' | 'amber' | null; title: ReactNode; meta?: ReactNode; tags?: ReactNode; actions?: ReactNode; children?: ReactNode; err?: string; lane?: string; noteKey?: string
 }) {
+  const [notesOpen, setNotesOpen] = useState(false)
+  const notesCtx = useContext(NotesCtx)
+  const noteBtn = noteKey && notesCtx ? <NoteBtn noteKey={noteKey} open={notesOpen} onToggle={() => setNotesOpen(o => !o)} /> : null
   return (
     <div className="px-3 py-1.5 min-h-[44px] flex flex-col justify-center">
       <div className="flex items-center gap-2 min-w-0 flex-wrap sm:flex-nowrap">
@@ -83,9 +127,10 @@ export function Row({ dot, title, meta, tags, actions, children, err, lane }: {
           {meta ? <span className="text-[11.5px] text-muted truncate max-w-full">{meta}</span> : null}
           {lane ? <span className="hidden sm:inline text-[10px] uppercase tracking-wider font-bold text-muted/60 ml-auto pl-2" title={'From the ' + lane + ' lane'}>{lane}</span> : null}
         </span>
-        {actions ? <span className="flex items-center gap-1.5 shrink-0 ml-3.5 sm:ml-0">{actions}</span> : null}
+        {actions || noteBtn ? <span className="flex items-center gap-1.5 shrink-0 ml-3.5 sm:ml-0">{noteBtn}{actions}</span> : null}
       </div>
       {err && <p className="text-[11.5px] font-semibold mt-1 pl-3.5 text-rose-600">{err}</p>}
+      {notesOpen && noteKey && <NoteThread noteKey={noteKey} />}
       {children}
     </div>
   )
@@ -103,7 +148,7 @@ export function CleanRow({ c, value, roster, canAssign, onChanged, lane }: { c: 
   const s = CLEAN_ST[c.status] || CLEAN_ST.open
   const nobody = !c.who
   return (
-    <Row lane={lane} dot={c.status === 'late' ? 'rose' : c.status === 'atRisk' || nobody ? 'amber' : null} title={c.unit}
+    <Row lane={lane} noteKey={'clean:' + c.taskId} dot={c.status === 'late' ? 'rose' : c.status === 'atRisk' || nobody ? 'amber' : null} title={c.unit}
       tags={<>
         <Tag tone={s.tone} title={s.title}>{s.label}</Tag>
         {c.sameDay && <Tag tone="violet" title="A guest arrives into this unit today">same-day</Tag>}
@@ -126,7 +171,7 @@ export function InspectionTaskRow({ t, big, roster, canAssign, onChanged, lane }
   const nobody = !t.who
   const st = t.state === 'done' ? { label: 'done', tone: 'emerald' as Tone, title: 'Walked and closed' } : t.state === 'running' ? { label: 'in progress', tone: 'sky' as Tone, title: 'Somebody is in the unit' } : nobody ? { label: 'unconfirmed', tone: 'amber' as Tone, title: 'On the board with nobody assigned — confirm who walks it' } : { label: 'scheduled', tone: 'slate' as Tone, title: 'Assigned, not started' }
   return (
-    <Row lane={lane} dot={t.state !== 'done' && (nobody || t.late) ? (t.late ? 'rose' : 'amber') : null} title={t.unit}
+    <Row lane={lane} noteKey={'insp:' + t.taskId} dot={t.state !== 'done' && (nobody || t.late) ? (t.late ? 'rose' : 'amber') : null} title={t.unit}
       tags={<>
         <Tag tone={st.tone} title={st.title}>{st.label}</Tag>
         {big && <Tag tone="violet" title="A big arrival lands in this unit — walk it first">big arrival</Tag>}
@@ -161,7 +206,7 @@ export function ArrivalInspectionRow({ a, create, canCreate, onChanged, lane }: 
     setBusy(false)
   }
   return (
-    <Row lane={lane} dot={a.inspection === 'none' && !made ? (a.today ? 'rose' : 'amber') : null} title={a.unit}
+    <Row lane={lane} noteKey={'arr:' + a.reservationId} dot={a.inspection === 'none' && !made ? (a.today ? 'rose' : 'amber') : null} title={a.unit}
       tags={<>
         <Tag tone={a.today ? 'slate' : 'sky'} title={'Checks in ' + a.checkIn}>{a.today ? 'arrives today' : 'arrives tomorrow'}</Tag>
         <Tag tone={s.tone} title={s.title}>{s.label}</Tag>
@@ -184,12 +229,12 @@ export function CallRow({ a, canLog, onChanged, lane }: { a: ArrivalRow; canLog:
     try { await post('/api/welcome-call', { reservationId: a.reservationId, outcome }); setDone(outcome); onChanged() } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy('')
   }
-  if (done) return <Row lane={lane} title={a.guest} tags={<Tag tone="emerald" title="Logged on the booking and in Guesty">{done === 'no_answer' ? 'no answer — try again later' : 'called'}</Tag>} meta={a.unit} />
+  if (done) return <Row lane={lane} noteKey={'call:' + a.reservationId} title={a.guest} tags={<Tag tone="emerald" title="Logged on the booking and in Guesty">{done === 'no_answer' ? 'no answer — try again later' : 'called'}</Tag>} meta={a.unit} />
   const B = (o: 'reached' | 'voicemail' | 'no_answer', label: string, title: string) => (
     <button onClick={() => log(o)} disabled={!!busy} className={o === 'reached' ? DARK : GHOST} title={title}>{busy === o ? <Loader2 size={12} className="animate-spin" /> : null}{label}</button>
   )
   return (
-    <Row lane={lane} dot={a.big ? 'amber' : null} title={a.guest}
+    <Row lane={lane} noteKey={'call:' + a.reservationId} dot={a.big ? 'amber' : null} title={a.guest}
       tags={<>{a.big && <Tag tone="violet" title="Big arrival — a mandatory call">must call</Tag>}{a.value >= 1000 && <Tag tone="slate" title={money(a.value) + ' booking'}>{money(a.value)}</Tag>}</>}
       meta={[a.unit, a.nights + ' nights'].join(' · ')} err={err}
       actions={canLog ? <>
@@ -207,7 +252,7 @@ function InboxRow({ i, onCleared, lane }: { i: NextItem; onCleared: (k: string) 
   // for the day on every device; it comes back tomorrow if the guest is still waiting or unhappy.
   const close = async () => { setBusy(true); try { await clearRow(i, 'skipped'); onCleared(i.key) } catch { /* shown on reload */ } setBusy(false) }
   return (
-    <Row lane={lane} dot={i.severity === 'now' ? 'rose' : 'amber'} title={i.unit || i.title}
+    <Row lane={lane} noteKey={i.key} dot={i.severity === 'now' ? 'rose' : 'amber'} title={i.unit || i.title}
       tags={<>{(i.tags || []).map(t => <Tag key={t.label} tone={t.tone} title={t.title}>{t.label}</Tag>)}</>}
       meta={i.why}
       actions={<>
@@ -228,7 +273,7 @@ export function GlitchRow({ g, canEdit, onChanged, lane }: { g: GlitchRowT; canE
   }
   if (gone) return null
   return (
-    <Row lane={lane} dot={g.overdue ? 'rose' : !g.hasTask ? 'amber' : null} title={g.unit}
+    <Row lane={lane} noteKey={'gl:' + g.id} dot={g.overdue ? 'rose' : !g.hasTask ? 'amber' : null} title={g.unit}
       tags={<>
         {g.overdue && <Tag tone="rose" title={'Due ' + (g.due || '')}>overdue</Tag>}
         {!g.hasTask && <Tag tone="amber" title="No Breezeway task yet — open the card to push one">no task</Tag>}
@@ -262,7 +307,7 @@ function ReviewRow({ r, canReply, onGone, lane }: { r: Review; canReply: boolean
     setBusy('')
   }
   return (
-    <Row lane={lane} dot={low ? 'rose' : null} title={r.listing_name || 'Unit'}
+    <Row lane={lane} noteKey={'rv:' + r.id} dot={low ? 'rose' : null} title={r.listing_name || 'Unit'}
       tags={s != null ? <Tag tone={low ? 'rose' : s >= 4.5 ? 'emerald' : 'slate'} title={r.channel + ' · ' + r.created_at.slice(0, 10) + (low ? ' · a low score is answered within 24h' : '')}><Star size={10} className="inline -mt-0.5" /> {s}</Tag> : null}
       meta={r.guest + ' · ' + (r.content || '(no text)').replace(/\s+/g, ' ').slice(0, 90)} err={err}
       actions={canReply ? <>
@@ -288,7 +333,7 @@ export function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
   const over = p.utilisationPct > 100
   const idle = p.cleans + p.otherTasks === 0
   return (
-    <Row lane={lane} dot={over ? 'amber' : null} title={p.person}
+    <Row lane={lane} noteKey={'team:' + p.person} dot={over ? 'amber' : null} title={p.person}
       tags={over ? <Tag tone="amber" title={hm(p.loadMinutes - p.capacityMinutes) + ' more work than hours'}>{p.utilisationPct}% loaded</Tag> : <Tag tone="sky" title={hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free today'}>{idle ? 'nothing assigned' : hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free'}</Tag>}
       meta={[p.role, p.cleans ? p.cleans + ' cleans' : '', p.otherTasks ? p.otherTasks + ' tasks' : ''].filter(Boolean).join(' · ')}
       actions={<Link href="/plan" prefetch={false} className={GHOST} title="Open the Today board to move work">Balance</Link>} />
@@ -309,7 +354,7 @@ export function ApprovalRow({ row, onCleared, onChanged, lane }: { row: GuestDes
     setBusy(false)
   }
   return (
-    <Row lane={lane} dot="amber" title={row.who + (row.unit ? ' · ' + row.unit : '')} tags={<Tag tone="amber" title="A spend waiting on your approval">spend</Tag>} meta={row.text + (row.meta ? ' · ' + row.meta : '')} err={err}
+    <Row lane={lane} noteKey={row.key} dot="amber" title={row.who + (row.unit ? ' · ' + row.unit : '')} tags={<Tag tone="amber" title="A spend waiting on your approval">spend</Tag>} meta={row.text + (row.meta ? ' · ' + row.meta : '')} err={err}
       actions={<>
         <button onClick={() => decide(true)} disabled={busy} className={DARK} title="Approve the spend">{busy ? <Loader2 size={12} className="animate-spin" /> : <ClipboardCheck size={12} />} Approve</button>
         <button onClick={() => decide(false)} disabled={busy} className={GHOST} title="Reject the spend"><X size={12} /></button>
@@ -322,7 +367,7 @@ function NeedsRow({ i, tag, tone, hover, clear, clearTitle, onCleared, lane }: {
   const [busy, setBusy] = useState(false)
   const go = async () => { setBusy(true); try { await clearRow(i, clear); onCleared(i.key) } catch { /* shown on reload */ } setBusy(false) }
   return (
-    <Row lane={lane} dot={i.severity === 'now' ? 'rose' : 'amber'} title={i.unit && i.unit !== 'Unit' ? i.unit + ' — ' + i.title : i.title}
+    <Row lane={lane} noteKey={i.key} dot={i.severity === 'now' ? 'rose' : 'amber'} title={i.unit && i.unit !== 'Unit' ? i.unit + ' — ' + i.title : i.title}
       tags={<Tag tone={tone} title={hover}>{tag}</Tag>} meta={i.why + (i.due ? ' · ' + i.due : '')}
       actions={<>
         <Link href={i.href || (i.action?.type === 'open' ? i.action.href : '/')} prefetch={false} className={DARK}>{i.action?.type === 'open' ? i.action.label : 'Open'}</Link>
@@ -341,7 +386,7 @@ function ChannelGroupRow({ items, onCleared, lane }: { items: NextItem[]; onClea
   const units = items.map(i => i.unit).filter(Boolean)
   return (
     <div>
-      <Row lane={lane} dot="amber" title={items.length + ' listings failed on a channel'}
+      <Row lane={lane} noteKey={'channel-group'} dot="amber" title={items.length + ' listings failed on a channel'}
         tags={<>{Object.keys(byChan).map(c => <Tag key={c} tone="rose" title={'Listings Guesty reports failed on ' + c}>{c} ×{byChan[c]}</Tag>)}</>}
         meta={units.slice(0, 4).join(', ') + (units.length > 4 ? ' +' + (units.length - 4) : '') + ' · unbookable there until reconnected'}
         actions={<>
@@ -369,7 +414,7 @@ function NextRow({ i, roster, canAssign, canCreate, onCleared, onChanged, lane }
   }
   const done = async () => { setBusy('done'); try { await clearRow(i, 'done'); onCleared(i.key) } catch { /* reload shows it */ } setBusy('') }
   return (
-    <Row lane={lane} dot={i.severity === 'now' ? 'rose' : i.severity === 'today' ? 'amber' : null} title={i.unit + ' — ' + i.title} meta={i.why} err={err}
+    <Row lane={lane} noteKey={i.key} dot={i.severity === 'now' ? 'rose' : i.severity === 'today' ? 'amber' : null} title={i.unit + ' — ' + i.title} meta={i.why} err={err}
       tags={<>{(i.tags || []).map(t => <Tag key={t.label} tone={t.tone} title={t.title}>{t.label}</Tag>)}</>}
       actions={<>
         {a?.type === 'assign' && canAssign && <button onClick={() => setOpen(o => !o)} className={DARK} title="Pick who does it"><UserPlus size={12} /> Assign</button>}
@@ -383,60 +428,79 @@ function NextRow({ i, roster, canAssign, canCreate, onCleared, onChanged, lane }
   )
 }
 
-type CkRow = { id: string; title: string; band: string; by_time: string | null; done: boolean; late: boolean; link: string | null; in_minutes?: number | null; owner_role?: string | null; signal?: string | null }
+type CkRow = { id: string; title: string; band: string; by_time: string | null; done: boolean; late: boolean; link: string | null; in_minutes?: number | null; owner_role?: string | null; signal?: string | null; auto?: boolean; count?: number | null; done_by?: string | null }
 type Ck = { ok: boolean; rows: CkRow[]; progress: { total: number; done: number; late: number; pct: number }; canTick: boolean; signals?: Record<string, number | null> }
 const CK_URL = '/api/daily-checklist'
 const hm12 = (t: string) => { const m = /^(\d{1,2}):(\d{2})/.exec(t); if (!m) return t; const h = Number(m[1]); return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}` }
+const ckFirst = (s: string) => String(s || '').split(/[\s@]/)[0]
+
+/**
+ * ONE CHECKLIST ROW ON TODAY. The smart kind (Jon, 2026-10-01): a row tied to a live count carries
+ * the count ("2 unpaid", "4 to answer") and ticks ITSELF when the count reaches zero — "auto". A row
+ * someone ticked while the count is still above zero stays ticked (their name on it) but keeps the
+ * count in view, so a tick never hides live work. Plain reminders are a title, a time, Open and Done.
+ */
 function ChecklistRow({ r, canTick, onTicked, lane }: { r: CkRow; canTick: boolean; onTicked: () => void; lane?: string }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  const tick = async () => { setBusy(true); setErr(''); try { await post(CK_URL, { action: 'tick', itemId: r.id }); onTicked() } catch (e: any) { setErr(String(e?.message || e)) } setBusy(false) }
+  const tick = async (done: boolean) => { setBusy(true); setErr(''); try { await post(CK_URL, { action: 'tick', itemId: r.id, done }); onTicked() } catch (e: any) { setErr(String(e?.message || e)) } setBusy(false) }
+  const countTxt = r.signal && r.count != null ? signalLabel(r.signal, r.count) : ''
+  const due = r.by_time ? 'by ' + hm12(r.by_time) : r.band
   return (
-    <Row lane={lane} dot={r.late ? 'rose' : null} title={r.title}
-      tags={<>{r.late ? <Tag tone="rose" title="Past its time">late{r.in_minutes != null ? ' ' + Math.abs(r.in_minutes) + 'm' : ''}</Tag> : r.in_minutes != null && r.in_minutes <= 45 ? <Tag tone="amber" title="Due soon">in {r.in_minutes}m</Tag> : null}{r.owner_role ? <Tag title="Who does it">{r.owner_role}</Tag> : null}</>}
-      meta={r.by_time ? 'by ' + hm12(r.by_time) : 'anytime ' + r.band} err={err}
+    <Row lane={lane} noteKey={'ck:' + r.id} dot={r.done ? null : r.late ? 'rose' : null}
+      title={<span className={'inline-flex items-center gap-1.5 ' + (r.done ? 'text-muted line-through decoration-muted/50' : '')}>{r.done ? <CheckCircle2 size={14} className="text-emerald-600 shrink-0" /> : <Circle size={14} className={'shrink-0 ' + (r.late ? 'text-rose-500' : 'text-muted/50')} />}{r.title}</span>}
+      tags={<>
+        {countTxt && <Tag tone={r.count ? (r.late ? 'rose' : 'amber') : 'emerald'} title="Live count from the app — this is what is left to do">{countTxt}</Tag>}
+        {r.done && r.auto && <Tag tone="emerald" title="Ticked itself: nothing left to count">auto</Tag>}
+        {r.done && !r.auto && r.done_by && <Tag tone="slate" title="Ticked by hand">{ckFirst(r.done_by)}</Tag>}
+        {!r.done && r.late && <Tag tone="rose" title="Past its time">late</Tag>}
+        {r.owner_role && !r.done && <Tag title="Who does it">{r.owner_role}</Tag>}
+      </>}
+      meta={r.done ? undefined : due} err={err}
       actions={<>
-        {r.link && <Link href={r.link} prefetch={false} className={GHOST} title="Open where this gets done">Open</Link>}
-        {canTick ? <button onClick={tick} disabled={busy} className={DARK} title="Done — ticks it with your name">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button> : null}
+        {r.link && !r.done && <Link href={r.link} prefetch={false} className={GHOST} title="Open where this gets done">Open</Link>}
+        {canTick && !r.done ? <button onClick={() => tick(true)} disabled={busy} className={DARK} title="Done — ticks it with your name">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button> : null}
+        {canTick && r.done && !r.auto ? <button onClick={() => tick(false)} disabled={busy} className={GHOST} title="Put it back on the list">{busy ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}</button> : null}
       </>} />
   )
 }
 
-// THE CHECKLIST, FORWARD-FACING ON TODAY (Jon, 2026-10-01: "make the checklist more forward facing").
-// Not the whole list — the next two things somebody should be doing, late first, with the live count
-// and the Open button; the full procedure lives on /checklist. One line of progress on the right.
+// THE SMART CHECKLIST ON TODAY (Jon, 2026-10-01: "a reminder to complete certain tasks … if they're
+// already completed, they should be auto-marked complete … dynamic, not static"). Every open item,
+// late first then by time, each with its live count; the done ones (auto or by hand) fold under one
+// line. Holds its spot before the read lands and when nothing is scheduled.
 function ChecklistStrip({ ck, onTicked }: { ck: Ck | undefined; onTicked: () => void }) {
-  // Holds its spot even before the read lands or when nothing is scheduled (Jon, 2026-10-01).
-  if (!ck || !ck.ok || !ck.progress?.total) return (
-    <section>
-      <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-2">
-        <ListChecks size={13} className="text-brand-600" /> Checklist
-        <span className="normal-case tracking-normal font-medium text-muted">— {!ck ? 'reading…' : ck.ok ? 'nothing scheduled today' : 'could not read the checklist'}</span>
-        <Link href="/checklist" prefetch={false} className="ml-auto text-[11px] font-semibold text-brand-700 hover:underline">Checklist →</Link>
-      </h2>
-    </section>
+  const [showDone, setShowDone] = useState(false)
+  const head = (txt: ReactNode, right?: ReactNode) => (
+    <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-2 flex-wrap">
+      <ListChecks size={13} className="text-brand-600" /> Checklist
+      <span className="normal-case tracking-normal font-medium text-muted">— {txt}</span>
+      <span className="ml-auto inline-flex items-center gap-2">{right}<Link href="/checklist" prefetch={false} className="text-[11px] font-semibold text-brand-700 hover:underline">Checklist →</Link></span>
+    </h2>
   )
+  if (!ck || !ck.ok || !ck.progress?.total) return <section>{head(!ck ? 'reading…' : ck.ok ? 'nothing scheduled today' : 'could not read the checklist')}</section>
   const open = ck.rows.filter(r => !r.done)
   const late = open.filter(r => r.late).sort((a, b) => (a.in_minutes ?? 0) - (b.in_minutes ?? 0))
   const soon = open.filter(r => !r.late).sort((a, b) => (a.in_minutes ?? 9e9) - (b.in_minutes ?? 9e9))
-  const next = [...late, ...soon].slice(0, 2)
+  const done = ck.rows.filter(r => r.done)
+  const auto = done.filter(r => r.auto).length
   const p = ck.progress
+  const txt = open.length ? (late.length ? `${late.length} late · ` : '') + `${open.length} to do` + (done.length ? ` · ${done.length} done${auto ? ` (${auto} by itself)` : ''}` : '') : `everything done${auto ? ` · ${auto} ticked by itself` : ''}`
   return (
     <section>
-      <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-2">
-        <ListChecks size={13} className="text-brand-600" /> Checklist
-        <span className="normal-case tracking-normal font-medium text-muted">— {open.length ? (late.length ? `${late.length} late · ` : '') + `${open.length} to do` : 'everything done'}</span>
-        <span className="ml-auto inline-flex items-center gap-2">
-          <span className="w-16 h-1.5 rounded-full bg-line overflow-hidden"><span className={'block h-full ' + (p.late ? 'bg-amber-500' : 'bg-emerald-500')} style={{ width: p.pct + '%' }} /></span>
-          <span className={'text-[11px] font-semibold tabular-nums ' + (p.late ? 'text-amber-700' : 'text-emerald-700')}>{p.done}/{p.total}</span>
-          <Link href="/checklist" prefetch={false} className="text-[11px] font-semibold text-brand-700 hover:underline">Checklist →</Link>
-        </span>
-      </h2>
-      {next.length > 0 && (
-        <div className={LIST}>
-          {next.map(r => <div key={'cks:' + r.id}><ChecklistRow r={r} canTick={!!ck.canTick} onTicked={onTicked} /></div>)}
-        </div>
-      )}
+      {head(txt, <>
+        <span className="w-16 h-1.5 rounded-full bg-line overflow-hidden"><span className={'block h-full ' + (p.late ? 'bg-amber-500' : 'bg-emerald-500')} style={{ width: p.pct + '%' }} /></span>
+        <span className={'text-[11px] font-semibold tabular-nums ' + (p.late ? 'text-amber-700' : 'text-emerald-700')}>{p.done}/{p.total}</span>
+      </>)}
+      <div className={LIST}>
+        {[...late, ...soon].map(r => <div key={'cks:' + r.id}><ChecklistRow r={r} canTick={!!ck.canTick} onTicked={onTicked} /></div>)}
+        {done.length > 0 && (
+          <button onClick={() => setShowDone(v => !v)} className="w-full text-left px-3 py-2 text-[12px] font-semibold text-muted hover:bg-app inline-flex items-center gap-1" title={showDone ? 'Hide what is done' : 'Show what is done'}>
+            {showDone ? <ChevronUp size={13} /> : <ChevronDown size={13} />} {done.length} done{auto ? ` · ${auto} by itself` : ''}
+          </button>
+        )}
+        {showDone && done.map(r => <div key={'ckd:' + r.id}><ChecklistRow r={r} canTick={!!ck.canTick} onTicked={onTicked} /></div>)}
+      </div>
     </section>
   )
 }
@@ -446,7 +510,7 @@ function MineRow({ it, late, onChanged, lane }: { it: MineItem; late: boolean; o
   const [err, setErr] = useState('')
   const done = async () => { setBusy(true); setErr(''); try { await post('/api/projects/' + it.projectId, { action: 'taskSet', taskId: it.id, status: 'done' }); onChanged() } catch (e: any) { setErr(String(e?.message || e)) } setBusy(false) }
   return (
-    <Row lane={lane} dot={late ? 'rose' : null} title={it.title} tags={late ? <Tag tone="rose" title={'Was due ' + (it.due || '')}>overdue</Tag> : it.due ? <Tag tone="slate" title="Due date">{String(it.due).slice(5)}</Tag> : null} meta={it.project} err={err}
+    <Row lane={lane} noteKey={'mine:' + it.id} dot={late ? 'rose' : null} title={it.title} tags={late ? <Tag tone="rose" title={'Was due ' + (it.due || '')}>overdue</Tag> : it.due ? <Tag tone="slate" title="Due date">{String(it.due).slice(5)}</Tag> : null} meta={it.project} err={err}
       actions={<>
         <button onClick={done} disabled={busy} className={GHOST} title="Mark done">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button>
         <Link href={'/projects/' + it.projectId} prefetch={false} className={GHOST} title="Open the project">Open</Link>
@@ -457,7 +521,7 @@ function MineRow({ it, late, onChanged, lane }: { it: MineItem; late: boolean; o
 type FixAction = { listingId: string; listing: string; building: string; severity: string; title: string; action: string; gain: number; key: string }
 function FixRow({ a, lane }: { a: FixAction; lane?: string }) {
   return (
-    <Row lane={lane} dot={a.severity === 'critical' ? 'rose' : a.severity === 'high' ? 'amber' : null} title={a.listing}
+    <Row lane={lane} noteKey={'fix:' + a.listingId} dot={a.severity === 'critical' ? 'rose' : a.severity === 'high' ? 'amber' : null} title={a.listing}
       tags={<Tag tone={a.severity === 'critical' ? 'rose' : a.severity === 'high' ? 'amber' : 'slate'} title={a.action}>{a.title}</Tag>} meta={a.action}
       actions={<Link href={'/listings/' + encodeURIComponent(a.listingId)} prefetch={false} className={GHOST} title="Open the unit page: fixes, optimizer, photos and copy">Optimize</Link>} />
   )
@@ -510,7 +574,7 @@ export function UnpaidRow({ r, canEdit, onChanged, lane }: { r: UnpaidHubRow; ca
   const when = r.bucket === 'in_house' ? 'in the unit · out ' + r.checkOut.slice(5).replace('-', '/') : r.bucket === 'today' ? 'arrives today' : 'arrives in ' + r.daysUntil + 'd · ' + r.checkIn.slice(5).replace('-', '/')
   const s = UNPAID_ST[st]
   return (
-    <Row lane={lane} dot={r.bucket === 'in_house' || r.bucket === 'today' ? 'rose' : 'amber'} title={r.unit + ' — ' + r.guest}
+    <Row lane={lane} noteKey={'unpaid:' + r.id} dot={r.bucket === 'in_house' || r.bucket === 'today' ? 'rose' : 'amber'} title={r.unit + ' — ' + r.guest}
       tags={<>
         <Tag tone="rose" title={'Owed · paid ' + money(r.paid) + ' of ' + money(r.total)}>{money(r.balance)} owed</Tag>
         <Tag tone="slate" title={'Booked on ' + (r.source || '—') + ' — we collect'}>{UNPAID_CH[String(r.source || '').toLowerCase()] || r.source || '—'}</Tag>
@@ -584,6 +648,23 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   const weekQ = useCachedFetch<{ tiles?: { key: string; value: string; sub: string }[] }>(SCOREBOARD_URL, { ttl: 5 * 60_000 })
   const unpaidQ = useCachedFetch<{ rows?: UnpaidHubRow[] }>(UNPAID_URL, { ttl: 5 * 60_000 })
   const reloadUnpaid = () => { invalidateCache(UNPAID_URL); unpaidQ.refresh() }
+  // Notes on every row — one read, added to in place (Jon, 2026-10-01).
+  const notesQ = useCachedFetch<{ byKey?: Record<string, DayNote[]> }>(NOTES_URL, { ttl: 60_000 })
+  const [addedNotes, setAddedNotes] = useState<Record<string, DayNote[]>>({})
+  const notesCtx = useMemo(() => {
+    const byKey: Record<string, DayNote[]> = {}
+    const base = notesQ.data?.byKey || {}
+    for (const k of Object.keys(base)) byKey[k] = base[k]
+    for (const k of Object.keys(addedNotes)) byKey[k] = [...addedNotes[k], ...(byKey[k] || [])]
+    return {
+      byKey, ready: !!notesQ.data,
+      add: async (key: string, text: string) => {
+        const j = await post(NOTES_URL, { key, text })
+        setAddedNotes(a => ({ ...a, [key]: [j.note as DayNote, ...(a[key] || [])] }))
+        invalidateCache(NOTES_URL)
+      },
+    }
+  }, [notesQ.data, addedNotes])
   const [goneReviews, setGoneReviews] = useState<Record<string, true>>({})
   const reloadReviews = () => { invalidateCache(REVIEWS_URL); reviewsQ.refresh() }
   const reloadCk = () => { invalidateCache(CK_URL); ckQ.refresh() }
@@ -676,7 +757,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
     items.push({ key: i.key, area: 'admin', sub: 'Needs you', score: m.score, node: <NeedsRow i={i} tag={m.tag} tone={m.tone} hover={m.hover} clear={m.clear} clearTitle={m.clearTitle} onCleared={onCleared} /> })
   }
   // Unpaid stays are their own section under the checklist (the board's rows, embedded) — not lane rows.
-  for (const r of ckRows) items.push({ key: 'ck:' + r.id, area: 'admin', sub: 'Checklist', score: r.late ? 50 : 25, node: <ChecklistRow r={r} canTick={!!ck?.canTick} onTicked={reloadCk} /> })
+  // Checklist rows live in the strip above (the smart checklist), not in the lane (2026-10-01).
   for (const m of mineRows) items.push({ key: 'mine:' + m.it.id, area: 'admin', sub: 'Yours', score: m.score, node: <MineRow it={m.it} late={m.late} onChanged={reloadMine} /> })
   if (channel.length) items.push({ key: 'channel-group', area: 'admin', sub: 'Fixes', score: channel.length > 1 ? 58 : 66, node: <ChannelGroupRow items={channel} onCleared={onCleared} /> })
   for (const a of fixes) items.push({ key: 'fix:' + a.listingId + a.key, area: 'admin', sub: 'Fixes', score: a.severity === 'critical' ? 40 : a.severity === 'high' ? 30 : 20, node: <FixRow a={a} /> })
@@ -707,6 +788,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   }
 
   return (
+    <NotesCtx.Provider value={notesCtx}>
     <div className="space-y-5">
       {/* THE WORK TODAY — needed vs completed, with the granular list under the strip (Jon, 2026-09-30). */}
       <DayKpis d={d} live={live} roster={roster} can={{ assign: can.assign, plan: can.plan, calls: can.calls }} onChanged={onChanged} />
@@ -751,6 +833,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
         </div>
       )}
     </div>
+    </NotesCtx.Provider>
   )
 }
 
