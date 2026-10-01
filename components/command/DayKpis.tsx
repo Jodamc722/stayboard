@@ -140,7 +140,7 @@ function Tile({ label, done, needed, segs, sub, on, onClick, title, loading, big
         </> : <>
           <span className={'text-[22px] leading-none font-bold tabular-nums ' + tone}>{done}</span>
           <span className="text-[13px] font-semibold text-muted tabular-nums">/ {needed}</span>
-          <span className="text-[11px] text-muted ml-1">{needed ? 'done' : 'none today'}</span>
+          <span className="text-[11px] text-muted ml-1">{needed ? 'done' : loading ? 'reading…' : 'none today'}</span>
         </>}
       </div>
       <div className="w-full h-1.5 rounded-full bg-line overflow-hidden flex" aria-hidden>

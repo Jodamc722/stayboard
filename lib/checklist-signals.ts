@@ -45,7 +45,7 @@ const COUNTERS: Record<string, () => Promise<number | null>> = {
   overdue_tasks: async () => { const d = dayET(0); try { const { count } = await db().from('breezeway_tasks_sync').select('id', { count: 'exact', head: true }).lt('scheduled_date', d).is('finished_at', null).not('status', 'in', '("completed","Completed","closed","Closed","cancelled","Cancelled","finished","Finished")'); return Number(count || 0) } catch { return null } },
   reviews_to_reply: () => headCount(sb => sb.from('guesty_reviews')
     .select('id', { count: 'exact', head: true })
-    .eq('has_reply', false).neq('dismissed', true).neq('removed', true)
+    .eq('has_reply', false).or('dismissed.is.null,dismissed.eq.false').is('removed_at', null).or('excluded_from_score.is.null,excluded_from_score.eq.false')
     .gte('created_at', new Date(Date.now() - 60 * 86400_000).toISOString())),
   claims_due: async () => {
     try {
