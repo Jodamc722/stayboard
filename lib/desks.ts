@@ -79,6 +79,7 @@ export const DESKS: Desk[] = [
     blurb: 'Every guest touch: the inbox, calls, glitches, claims, reservations, guest orders and guidebooks.',
     views: [
       { to: '/messages', label: 'Inbox', hint: 'Guesty and Talkroute threads, who is waiting on a reply, and sentiment' },
+      { to: '/front-desk', label: 'Front desk', hint: 'Every arrival as a card: notice sent → welcome call → ready; the team’s day; billable hours recorded' },
       { to: '/welcome-calls', label: 'Calls', hint: 'Calls owed today: welcome, recovery and post-checkout' },
       { to: '/glitches', label: 'Glitches', hint: 'Guest-reported problems: fix, refund advice, vendor, history and patterns', match: ['/refunds'] },
       { to: '/claims', label: 'Claims', hint: 'Damage claims with the filing countdown per channel' },

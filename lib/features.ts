@@ -252,7 +252,9 @@ export function isOpenPath(path: string): boolean {
 // answer, it enforces its own owner/admin check inside the page, and the token is one-time. It gets
 // no role setting because it should never appear in anyone's nav — you arrive at it or you don't.
 // NOT in OPEN_PREFIXES on purpose: releasing a door code must require a login, unlike /approve/.
-export const UNGATED_PAGES = ['/', '/users', '/stay-window', '/welcome/password', '/doorcode']
+// /front-desk is a view over two gated desks (welcome-calls + reservation-emails); its API requires
+// 'view' on either, so it needs no level of its own — whoever can see calls or notices sees it.
+export const UNGATED_PAGES = ['/', '/users', '/stay-window', '/welcome/password', '/doorcode', '/front-desk']
 
 // ---- Permission LEVELS (2026-08-04). Each DB role (app_roles) assigns one level per feature. ----
 // off  = hidden + middleware-blocked (like the old toggle-off)

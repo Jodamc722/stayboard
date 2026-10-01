@@ -1,0 +1,132 @@
+// THE FRONT DESK BOARD (Jon, 2026-10-01: "the best dashboard ever built helping the team manage all
+// the Elser emails and front desk notices, managing welcome calls in a beautiful and fun way, they
+// can see the work … also track billable hours recorded").
+//
+// One read for one page. For a day: every arrival as a card with its three steps — the front-desk
+// notice (Elser's registration form and the other buildings' arrival emails, lib/reservation-emails),
+// the welcome call (lib/call-desk, the same engine the Calls desk and the nightly close-out use), and
+// READY when both are done. Then the team's day — who sent what, who called whom — and the week's
+// billable hours: per technician, maintenance tasks finished, minutes actually logged, hours billed,
+// the dollars on the tasks, and the finished tasks with no time on them (the hours nobody recorded).
+//
+//   GET ?date=YYYY-MM-DD   (default today, ET)
+import { NextRequest, NextResponse } from 'next/server'
+import { requireAnyLevel } from '@/lib/access'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { ymdET } from '@/lib/team-schedule'
+import { loadCallsDesk } from '@/lib/call-desk'
+import { billingRange, type BillingTask } from '@/lib/billing'
+
+export const dynamic = 'force-dynamic'
+export const maxDuration = 60
+
+export type FdArrival = {
+  reservationId: string; guest: string; unit: string; building: string; listingId: string
+  checkIn: string; checkOut: string; nights: number; channel: string; value: number; phone: string
+  tier: string; mandatory: boolean
+  notice: null | { id: string; sent: boolean; sentBy: string; sentAt: string | null; form: boolean; propertyId: string }
+  call: { due: boolean; done: boolean; outcome: string; attempts: number; by: string; at: string; claimedBy: string }
+  ready: boolean
+}
+export type FdPerson = { name: string; calls: number; reached: number; voicemail: number; notices: number }
+export type FdTech = { name: string; tasks: number; withHours: number; minutes: number; billedHours: number; billable: number; missing: { id: string; unit: string; name: string; finishedAt: string | null }[] }
+export type FdData = {
+  ok: true; date: string; today: string
+  arrivals: FdArrival[]
+  summary: { arrivals: number; ready: number; noticesNeeded: number; noticesSent: number; callsNeeded: number; callsDone: number; mustCallOpen: number }
+  team: FdPerson[]
+  billable: { from: string; to: string; techs: FdTech[]; totals: { tasks: number; withHours: number; minutes: number; billedHours: number; billable: number; missing: number }; missingDetail: number }
+  canCall: boolean; canSend: boolean
+}
+
+const str = (v: any) => (v == null ? '' : String(v))
+const addDays = (ymd: string, n: number) => { const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
+const sundayOf = (ymd: string) => { const d = new Date(ymd + 'T12:00:00Z'); return addDays(ymd, -d.getUTCDay()) }
+const dayET = (iso: string | null | undefined) => iso ? new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) : ''
+const first = (s: string) => str(s).split(/[\s@]/)[0]
+const MAINT_RE = /maintenance|repair|handyman|technician|fix/i
+
+export async function GET(req: NextRequest) {
+  const gate = await requireAnyLevel(['welcome-calls', 'reservation-emails'], 'view')
+  if (!gate.ok) return gate.res
+  const lv = gate.access.levels || {}
+  const at = (k: string, need: 'view' | 'edit') => { const v = String(lv[k] || 'none'); return need === 'view' ? v !== 'none' : v === 'edit' || v === 'full' }
+  const today = ymdET(new Date())
+  const q = req.nextUrl.searchParams.get('date') || ''
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : today
+  const db = supabaseAdmin()
+  try {
+    const [desk, noticesRead, weekBilling] = await Promise.all([
+      loadCallsDesk(db, today, date),
+      db.from('reservation_notices').select('id,property_id,listing_id,unit_no,guest_name,arrival_date,reservation_id,sent_at,sent_by,doc_path,deleted_at').eq('arrival_date', date).is('deleted_at', null).limit(500),
+      billingRange(sundayOf(today), today).catch(() => ({ tasks: [] as BillingTask[], owners: [], missingDetail: 0 })),
+    ])
+
+    // ── notices by reservation, then by listing, so a hand-made notice still lands on its card ──
+    const notices = (noticesRead.data || []) as any[]
+    const byRes: Record<string, any> = {}, byListing: Record<string, any> = {}
+    for (const n of notices) { if (n.reservation_id) byRes[str(n.reservation_id)] = n; if (n.listing_id) byListing[str(n.listing_id)] = n }
+
+    // ── the arrivals: the calls engine already knows every arrival on this day ──
+    const arrivals: FdArrival[] = desk.rows.filter(r => r.check_in === date).map(r => {
+      const n = byRes[r.id] || byListing[r.listingId] || null
+      const notice = n ? { id: str(n.id), sent: !!n.sent_at, sentBy: first(n.sent_by), sentAt: n.sent_at || null, form: !!n.doc_path || /elser/i.test(str(n.property_id)), propertyId: str(n.property_id) } : null
+      const call = { due: !!r.due, done: !!r.done, outcome: str(r.outcome), attempts: Number(r.attempts) || 0, by: first(r.calledBy), at: str(r.calledAt), claimedBy: first(r.claimedBy) }
+      return {
+        reservationId: r.id, guest: r.guest, unit: r.listing, building: r.building, listingId: r.listingId,
+        checkIn: r.check_in, checkOut: str((r as any).check_out || r.status?.checkOut || ''), nights: Number(r.status?.nights) || 0, channel: str(r.source), value: Number(r.value) || 0, phone: str(r.phone),
+        tier: str(r.tier), mandatory: !!r.mandatory, notice, call,
+        ready: (!notice || notice.sent) && call.done,
+      }
+    }).sort((a, b) => Number(b.mandatory) - Number(a.mandatory) || a.building.localeCompare(b.building) || a.unit.localeCompare(b.unit))
+
+    const summary = {
+      arrivals: arrivals.length, ready: arrivals.filter(a => a.ready).length,
+      noticesNeeded: arrivals.filter(a => a.notice).length, noticesSent: arrivals.filter(a => a.notice && a.notice.sent).length,
+      callsNeeded: arrivals.length, callsDone: arrivals.filter(a => a.call.done).length,
+      mustCallOpen: arrivals.filter(a => a.mandatory && !a.call.done).length,
+    }
+
+    // ── the team today: calls made today (any arrival day) and notices sent today ──
+    const people: Record<string, FdPerson> = {}
+    const P = (name: string) => (people[name] ||= { name, calls: 0, reached: 0, voicemail: 0, notices: 0 })
+    for (const r of [...desk.rows, ...desk.outRows]) {
+      if (!r.calledAt || dayET(r.calledAt) !== today) continue
+      const who = first(r.calledBy) || 'someone'
+      const p = P(who); p.calls++; if (/voicemail/i.test(str(r.outcome))) p.voicemail++; else if (r.done) p.reached++
+    }
+    try {
+      const { data: sentToday } = await db.from('reservation_notices').select('sent_by,sent_at').gte('sent_at', new Date(Date.now() - 36 * 3600_000).toISOString()).is('deleted_at', null).limit(500)
+      for (const n of (sentToday || []) as any[]) if (dayET(n.sent_at) === today) P(first(n.sent_by) || 'someone').notices++
+    } catch { /* optional */ }
+    const team = Object.values(people).sort((a, b) => (b.calls + b.notices) - (a.calls + a.notices))
+
+    // ── billable hours this week: maintenance tasks, per technician ──
+    const maint = weekBilling.tasks.filter(t => MAINT_RE.test(str(t.department)) || MAINT_RE.test(str(t.name)))
+    const techs: Record<string, FdTech> = {}
+    const T = (name: string) => (techs[name] ||= { name, tasks: 0, withHours: 0, minutes: 0, billedHours: 0, billable: 0, missing: [] })
+    const finished = (t: BillingTask) => !!t.finishedAt || /complet|finish|close|approv|done/i.test(str(t.status))
+    for (const t of maint) {
+      if (!finished(t) || t.excluded) continue
+      const names = (t.assignees || []).map(a => str(a?.name).trim()).filter(Boolean)
+      const who = names.length ? names : [str(t.finishedBy) || '(unassigned)']
+      const dollars = t.overrideAmount != null ? Number(t.overrideAmount) : (t.items || []).filter(i => i.kind !== 'supply' || (i as any).billable !== false).reduce((a, i) => a + (Number(i.amount) || 0), 0)
+      for (const name of who) {
+        const x = T(name); x.tasks++
+        const mins = Number(t.actualMinutes) || 0
+        if (mins > 0) { x.withHours++; x.minutes += mins } else x.missing.push({ id: t.id, unit: t.unit, name: t.name, finishedAt: t.finishedAt })
+        x.billedHours += Number(t.billedHours) || 0
+        x.billable += dollars / who.length
+      }
+    }
+    const techList = Object.values(techs).sort((a, b) => b.minutes - a.minutes).map(x => ({ ...x, billable: Math.round(x.billable), billedHours: Math.round(x.billedHours * 10) / 10, missing: x.missing.slice(0, 8) }))
+    const totals = techList.reduce((a, x) => ({ tasks: a.tasks + x.tasks, withHours: a.withHours + x.withHours, minutes: a.minutes + x.minutes, billedHours: a.billedHours + x.billedHours, billable: a.billable + x.billable, missing: a.missing + (x.tasks - x.withHours) }), { tasks: 0, withHours: 0, minutes: 0, billedHours: 0, billable: 0, missing: 0 })
+
+    const out: FdData = {
+      ok: true, date, today, arrivals, summary, team,
+      billable: { from: sundayOf(today), to: today, techs: techList, totals, missingDetail: weekBilling.missingDetail || 0 },
+      canCall: at('welcome-calls', 'edit'), canSend: at('reservation-emails', 'edit'),
+    }
+    return NextResponse.json(out)
+  } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 }) }
+}
