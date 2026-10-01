@@ -42,6 +42,10 @@ const DEFAULT_DAYS = 90
 const MAX_DAYS = 365
 
 export async function GET(req: Request) {
+  // ?hub=1 — the Command Center's read (2026-10-01, load time): it needs only the reviews waiting on
+  // a reply (full text) and the score of the rest; replied reviews come back without their text or
+  // the reply, which was 700KB of prose the page never showed.
+  const hub = new URL(req.url).searchParams.get('hub') === '1'
   const daysParam = Number(new URL(req.url).searchParams.get('days') || DEFAULT_DAYS)
   const days = Math.min(Math.max(Number.isFinite(daysParam) ? daysParam : DEFAULT_DAYS, 1), MAX_DAYS)
   const sinceIso = new Date(Date.now() - days * 86400000).toISOString()
@@ -163,6 +167,10 @@ export async function GET(req: Request) {
         else reviews.push({ ...shape(r, m), dismissed: dismissedIds.has(r.id), removed, removedReason })
       }
 
+      if (hub) {
+        const slim = (r: any) => (r.hasReply || r.dismissed || r.removed) ? { ...r, content: '', reply: null } : { ...r, reply: null }
+        return NextResponse.json({ reviews: reviews.map(slim), unmapped: [], segments: true })
+      }
       return NextResponse.json({ reviews, unmapped, segments: true })
     }
   } catch {

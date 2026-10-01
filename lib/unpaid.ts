@@ -51,8 +51,11 @@ export async function loadUnpaid(opts: { from?: string; to?: string } = {}): Pro
   const to = /^\d{4}-\d{2}-\d{2}$/.test(str(opts.to)) ? str(opts.to) : shiftDay(today, 7)
   // Stays touching the window: arriving inside it, or already in house during it.
   const { data: res } = await db.from('guesty_reservations')
-    .select('id, listing_id, listing_name, guest_name, guest_email, guest_phone, check_in, check_out, nights, status, source, confirmation_code, money_total, money_paid, money_balance, money_currency, custom_fields, raw')
+    // Sub-fields only (2026-10-01, load time): the full raw blob for 3,000 stays was ~1.5s of the read.
+    .select('id, listing_id, listing_name, guest_name, guest_email, guest_phone, check_in, check_out, nights, status, source, confirmation_code, money_total, money_paid, money_balance, money_currency, custom_fields, money:raw->money, tags:raw->tags')
     .lte('check_in', to).gte('check_out', from)
+    // Only the channels we collect for (WE_COLLECT, as a database filter): a few dozen rows, not every stay.
+    .or('source.ilike.manual%,source.ilike.direct%,source.ilike.website%,source.ilike.be-api%,source.ilike.beapi%,source.ilike.booking_engine%,source.ilike.booking-engine%,source.ilike.booking engine%,source.ilike.guesty%,source.ilike.%vrbo%,source.ilike.%homeaway%,source.ilike.%google%')
     .limit(3000)
   const rows0 = (res || []) as any[]
   const lids = Array.from(new Set(rows0.map(r => str(r.listing_id)).filter(Boolean)))
@@ -71,10 +74,10 @@ export async function loadUnpaid(opts: { from?: string; to?: string } = {}): Pro
   const out: UnpaidRow[] = []
   for (const r of rows0) {
     if (!isLiveStay(r.status)) continue
-    const raw: any = r.raw && typeof r.raw === 'object' ? r.raw : {}
-    const m: any = raw.money && typeof raw.money === 'object' ? raw.money : {}
     if (!weCollect(str(r.source))) continue
-    const tagBlob = JSON.stringify(raw.tags || '') + ' ' + JSON.stringify(r.custom_fields || '')
+    const m: any = r.money && typeof r.money === 'object' ? r.money : {}
+    const raw: any = { money: m, tags: r.tags }
+    const tagBlob = JSON.stringify(r.tags || '') + ' ' + JSON.stringify(r.custom_fields || '')
     if (isOwnerOrFriendsFamily(str(r.source), tagBlob, str(r.guest_name))) continue
     const balance = typeof m.balanceDue === 'number' ? m.balanceDue : num(r.money_balance)
     const fullyPaid = m.isFullyPaid === true

@@ -125,7 +125,7 @@ function fixLabel(i: NextItem): string {
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 export function CommandDayList() {
-  const { data, loading, error, refresh } = useCachedFetch<CommandDay & { error?: string }>(DAY_URL, { ttl: 60_000 })
+  const { data, loading, error, refresh } = useCachedFetch<CommandDay & { error?: string }>(DAY_URL, { ttl: 60_000, persist: true })
   const { data: rosterRes } = useCachedFetch<{ people: Roster[] }>('/api/breezeway/people', { ttl: 10 * 60_000 })
   const { data: vendorRes } = useCachedFetch<{ visits: VendorVisit[] }>('/api/projects/vendor-visits', { ttl: 120_000 })
   const roster = useMemo(() => Array.isArray(rosterRes?.people) ? rosterRes!.people : [], [rosterRes])

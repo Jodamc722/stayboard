@@ -243,7 +243,7 @@ export function GlitchRow({ g, canEdit, onChanged, lane }: { g: GlitchRowT; canE
 }
 
 type Review = { id: string; rating: number | null; content: string; channel: string; listingId: string; guest: string; created_at: string; hasReply: boolean; listing_name: string; dismissed?: boolean; removed?: boolean }
-const REVIEWS_URL = '/api/reviews?days=60'
+const REVIEWS_URL = '/api/reviews?days=60&hub=1'
 const five = (r: number | null, ch: string) => r == null ? null : /booking/i.test(ch) && r > 5 ? Math.round((r / 2) * 10) / 10 : r
 function ReviewRow({ r, canReply, onGone, lane }: { r: Review; canReply: boolean; onGone: () => void; lane?: string }) {
   const [open, setOpen] = useState(false)
@@ -328,6 +328,30 @@ function NeedsRow({ i, tag, tone, hover, clear, clearTitle, onCleared, lane }: {
         <Link href={i.href || (i.action?.type === 'open' ? i.action.href : '/')} prefetch={false} className={DARK}>{i.action?.type === 'open' ? i.action.label : 'Open'}</Link>
         <button onClick={go} disabled={busy} className={GHOST} title={clearTitle}>{clear === 'done' ? <Check size={12} /> : <X size={12} />}</button>
       </>} />
+  )
+}
+
+/** CHANNEL FAILURES AS ONE ROW (2026-10-01, visual pass): five "Failed on Vrbo" rows were the whole
+ *  Admin lane and half of Now. One row carries the count and the units; it opens to the rows. */
+function ChannelGroupRow({ items, onCleared, lane }: { items: NextItem[]; onCleared: (k: string) => void; lane?: string }) {
+  const [open, setOpen] = useState(false)
+  if (items.length === 1) return <NeedsRow i={items[0]} tag="channel" tone="rose" hover="Unbookable on that channel until someone reconnects it" clear="done" clearTitle="Reconnected" onCleared={onCleared} lane={lane} />
+  const byChan: Record<string, number> = {}
+  for (const i of items) { const m = /on (.+)$/.exec(i.title); const c = (m ? m[1] : 'a channel').split(' +')[0]; byChan[c] = (byChan[c] || 0) + 1 }
+  const units = items.map(i => i.unit).filter(Boolean)
+  return (
+    <div>
+      <Row lane={lane} dot="amber" title={items.length + ' listings failed on a channel'}
+        tags={<>{Object.keys(byChan).map(c => <Tag key={c} tone="rose" title={'Listings Guesty reports failed on ' + c}>{c} ×{byChan[c]}</Tag>)}</>}
+        meta={units.slice(0, 4).join(', ') + (units.length > 4 ? ' +' + (units.length - 4) : '') + ' · unbookable there until reconnected'}
+        actions={<>
+          <Link href="/channels?problems=1" prefetch={false} className={DARK}>Open channels</Link>
+          <button onClick={() => setOpen(o => !o)} className={GHOST} title={open ? 'Hide the listings' : 'Show each listing'}>{open ? <ChevronUp size={12} /> : <ChevronDown size={12} />} {items.length}</button>
+        </>} />
+      {open && <div className="pl-5 border-t border-line divide-y divide-line bg-app/40">
+        {items.map(i => <div key={i.key}><NeedsRow i={i} tag="channel" tone="rose" hover="Unbookable on that channel until someone reconnects it" clear="done" clearTitle="Reconnected" onCleared={onCleared} /></div>)}
+      </div>}
+    </div>
   )
 }
 
@@ -517,7 +541,7 @@ function Lane({ area, items, focused, empty, right }: { area: Area; items: HubIt
   const shown = all ? list : list.slice(0, LANE_ROWS)
   const hidden = list.length - shown.length
   return (
-    <section id={'lane-' + area} className="scroll-mt-4 min-w-0">
+    <section id={'lane-' + area} className="scroll-mt-4 min-w-0 break-inside-avoid mb-5">
       <div className="px-1 mb-1.5 flex items-center gap-2 flex-wrap">
         <h2 className="text-[11px] font-bold uppercase tracking-wider text-ink inline-flex items-center gap-1.5" title={A.blurb}><A.Icon size={13} className="text-brand-600" /> {A.label}</h2>
         {items.length ? <span className="text-[11px] font-bold tabular-nums text-muted">{items.length}</span> : <span className="text-[11px] text-muted">— {empty}</span>}
@@ -654,7 +678,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   // Unpaid stays are their own section under the checklist (the board's rows, embedded) — not lane rows.
   for (const r of ckRows) items.push({ key: 'ck:' + r.id, area: 'admin', sub: 'Checklist', score: r.late ? 50 : 25, node: <ChecklistRow r={r} canTick={!!ck?.canTick} onTicked={reloadCk} /> })
   for (const m of mineRows) items.push({ key: 'mine:' + m.it.id, area: 'admin', sub: 'Yours', score: m.score, node: <MineRow it={m.it} late={m.late} onChanged={reloadMine} /> })
-  for (const i of channel) items.push({ key: i.key, area: 'admin', sub: 'Fixes', score: 66, node: <NeedsRow i={i} tag="channel" tone="rose" hover="Unbookable on that channel until someone reconnects it" clear="done" clearTitle="Reconnected" onCleared={onCleared} /> })
+  if (channel.length) items.push({ key: 'channel-group', area: 'admin', sub: 'Fixes', score: channel.length > 1 ? 58 : 66, node: <ChannelGroupRow items={channel} onCleared={onCleared} /> })
   for (const a of fixes) items.push({ key: 'fix:' + a.listingId + a.key, area: 'admin', sub: 'Fixes', score: a.severity === 'critical' ? 40 : a.severity === 'high' ? 30 : 20, node: <FixRow a={a} /> })
 
   // NOW: the top of everything, across areas — but only rows that clear the bar.
@@ -713,7 +737,9 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
           <button onClick={() => setFocus(null)} className="font-semibold text-brand-700 hover:underline">Show every lane</button>
         </div>
       )}
-      <div className={'grid gap-5 ' + (focus ? 'grid-cols-1' : 'lg:grid-cols-2')}>
+      {/* Two columns that FLOW (2026-10-01, visual pass): a lane with nothing in it is one line, and the
+          lane under it moves up — the grid used to leave a hole beside an empty Reviews lane. */}
+      <div className={focus ? '' : 'lg:columns-2 lg:gap-5'}>
         {lanes.filter(a => !focus || a === focus).map(a => (
           <Lane key={a} area={a} items={items.filter(i => i.area === a)} focused={focus === a} empty={EMPTY[a]} right={laneStat(a)} />
         ))}

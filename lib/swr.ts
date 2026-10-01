@@ -44,9 +44,20 @@ function fetchShared(url: string, k: string): { gen: number; p: Promise<Result> 
   return entry
 }
 
-export function useCachedFetch<T = any>(key: string | null, opts?: { ttl?: number }) {
+// PERSIST (2026-10-01, Command Center load time): with `persist`, the last good answer is also kept
+// in sessionStorage, so a reload or a fresh tab paints the previous read at once and refreshes
+// behind it, instead of a spinner while the day is rebuilt. Same-tab only; cleared with the tab.
+const PERSIST_PREFIX = 'swr:'
+function readPersisted(k: string): Entry | undefined {
+  try { const raw = sessionStorage.getItem(PERSIST_PREFIX + k); if (!raw) return undefined; const o = JSON.parse(raw); return o && typeof o === 'object' && 'data' in o ? { data: o.data, at: Number(o.at) || 0 } : undefined } catch { return undefined }
+}
+function writePersisted(k: string, e: Entry) { try { sessionStorage.setItem(PERSIST_PREFIX + k, JSON.stringify(e)) } catch { /* quota or private mode */ } }
+
+export function useCachedFetch<T = any>(key: string | null, opts?: { ttl?: number; persist?: boolean }) {
   const ttl = opts?.ttl ?? 30_000
-  const initial = key ? CACHE.get(cacheKey(key)) : undefined
+  const persist = !!opts?.persist
+  let initial = key ? CACHE.get(cacheKey(key)) : undefined
+  if (!initial && persist && key && typeof window !== 'undefined') { const p = readPersisted(cacheKey(key)); if (p) { initial = p; CACHE.set(cacheKey(key), p) } }
   const [data, setData] = useState<T | undefined>(initial?.data as T | undefined)
   const [loading, setLoading] = useState<boolean>(!initial?.data)
   const [error, setError] = useState<string | null>(null)
@@ -67,19 +78,22 @@ export function useCachedFetch<T = any>(key: string | null, opts?: { ttl?: numbe
       // A newer read of this key started after this one (a re-read after a mutation): it has the
       // last word, so this older answer is neither cached nor shown.
       if (gen !== GEN.get(k)) return
-      CACHE.set(k, { data: json, at: Date.now() })
+      const ent = { data: json, at: Date.now() }
+      CACHE.set(k, ent)
+      if (persist) writePersisted(k, ent)
       if (mounted.current) { setData(json); setError(null) }
     } catch (e: any) {
       if (mounted.current) setError(e?.message || String(e))
     } finally {
       if (mounted.current) setLoading(false)
     }
-  }, [key])
+  }, [key, persist])
 
   useEffect(() => {
     mounted.current = true
     if (!key) return () => { mounted.current = false }
-    const ent = CACHE.get(cacheKey(key))
+    let ent = CACHE.get(cacheKey(key))
+    if (!ent && persist) { const p = readPersisted(cacheKey(key)); if (p) { ent = p; CACHE.set(cacheKey(key), p) } }
     // A NEW KEY MUST NOT SHOW THE OLD KEY'S DATA (2026-09-09 audit). Pressing › on the date pager
     // left yesterday's rows on screen, with loading:false, under a banner reading "You are looking
     // at Thursday" — the board asserting a day it had not read yet.
