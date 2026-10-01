@@ -34,6 +34,7 @@ import { InlineAssign, BTN, MINE_URL, type Roster, type Mine, type MineItem } fr
 import { SCOREBOARD_URL } from '@/components/command/Scoreboard'
 import { NudgeBtn } from '@/components/command/Nudge'
 import { DayKpis } from '@/components/command/DayKpis'
+import { UnpaidBoard } from '@/components/UnpaidBoard'
 
 // ── shared bits ─────────────────────────────────────────────────────────────────────────────────
 export type Area = 'ops' | 'guests' | 'reviews' | 'admin'
@@ -641,10 +642,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
     const m = NEEDS[i.kind]; if (!m) continue
     items.push({ key: i.key, area: 'admin', sub: 'Needs you', score: m.score, node: <NeedsRow i={i} tag={m.tag} tone={m.tone} hover={m.hover} clear={m.clear} clearTitle={m.clearTitle} onCleared={onCleared} /> })
   }
-  for (const r of unpaid) {
-    const base = r.bucket === 'in_house' ? 84 : r.bucket === 'today' ? 82 : 58
-    items.push({ key: 'unpaid:' + r.id, area: 'admin', sub: 'Unpaid', score: base + valueBonus(r.balance) - (r.tracking.status === 'open' ? 0 : 12), node: <UnpaidRow r={r} canEdit={can.unpaid} onChanged={reloadUnpaid} /> })
-  }
+  // Unpaid stays are their own section under the checklist (the board's rows, embedded) — not lane rows.
   for (const r of ckRows) items.push({ key: 'ck:' + r.id, area: 'admin', sub: 'Checklist', score: r.late ? 50 : 25, node: <ChecklistRow r={r} canTick={!!ck?.canTick} onTicked={reloadCk} /> })
   for (const m of mineRows) items.push({ key: 'mine:' + m.it.id, area: 'admin', sub: 'Yours', score: m.score, node: <MineRow it={m.it} late={m.late} onChanged={reloadMine} /> })
   for (const i of channel) items.push({ key: i.key, area: 'admin', sub: 'Fixes', score: 66, node: <NeedsRow i={i} tag="channel" tone="rose" hover="Unbookable on that channel until someone reconnects it" clear="done" clearTitle="Reconnected" onCleared={onCleared} /> })
@@ -685,6 +683,10 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
           (free hours, guests waiting, glitches, reviews, admin) now reads as one line in each lane's
           header below — same numbers, one less band to scan (Jon, 2026-10-01: "cleaner … better organized"). */}
       <ChecklistStrip ck={ck} onTicked={reloadCk} />
+
+      {/* UNPAID — the actual reservations, as the board shows them: in the unit, arriving today, this week.
+          Each opens to the folio, contact, status and notes (Jon, 2026-10-01). Hidden when nothing is owed. */}
+      {!focus && <UnpaidBoard embed />}
 
       {!focus && (
         <section>

@@ -52,7 +52,9 @@ const PRESETS: { key: string; label: string; days: number | null }[] = [
   { key: 'today', label: 'Today', days: 0 }, { key: '7', label: 'Next 7 days', days: 7 }, { key: '14', label: 'Next 14', days: 14 }, { key: '30', label: 'Next 30', days: 30 }, { key: 'custom', label: 'Custom', days: null },
 ]
 
-export function UnpaidBoard() {
+/** embed: the same rows on the Command Center's Today page (Jon, 2026-10-01: "I want to see the actual
+ *  unpaid reservations on the today page") — fixed 7-day window, a one-line header, no pickers. */
+export function UnpaidBoard({ embed = false }: { embed?: boolean } = {}) {
   const today = useMemo(() => ymd(new Date()), [])
   // ?range=today|7|14|30 opens the board on that window (the Reservations strip links in by bucket).
   const [preset, setPreset] = useState('7')
@@ -90,6 +92,33 @@ export function UnpaidBoard() {
 
   const rows = (data?.rows || []).filter(r => !(hideWaived && r.tracking.status === 'waived'))
   const owed = rows.reduce((a, r) => a + r.balance, 0)
+
+  if (embed) {
+    if (!err && (!data || rows.length === 0)) return null   // nothing owed this week: the page says nothing
+    const hot = rows.filter(r => r.bucket === 'in_house' || r.bucket === 'today').length
+    return (
+      <section aria-label="Unpaid balances">
+        <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-2 flex-wrap">
+          Unpaid balances <span className="tabular-nums text-rose-700">{money(owed)}</span>
+          <span className="normal-case tracking-normal font-medium text-muted">— {rows.length} {rows.length === 1 ? 'stay' : 'stays'} in house, arriving today or this week{hot ? ` · ${hot} to collect today` : ''} · direct, VRBO and Google only</span>
+          <Link href="/reservations/unpaid" prefetch={false} className="ml-auto normal-case tracking-normal font-semibold text-brand-700 hover:underline">Board →</Link>
+        </h2>
+        {err && <p className="mb-2 text-[12.5px] text-rose-700 inline-flex items-center gap-1"><AlertTriangle size={13} /> {err}</p>}
+        <div className="space-y-3">
+          {BUCKETS.map(b => {
+            const list = rows.filter(r => r.bucket === b.key)
+            if (!list.length) return null
+            return (
+              <div key={b.key}>
+                <div className={'px-1 mb-1 text-[10.5px] font-bold uppercase tracking-wider ' + (b.tone === 'rose' ? 'text-rose-700' : 'text-muted')} title={b.hint}>{b.title} <span className="tabular-nums font-semibold normal-case tracking-normal text-muted">· {money(list.reduce((a, r) => a + r.balance, 0))}</span></div>
+                <LeanList>{list.map(r => <UnpaidRow key={r.id} r={r} today={data!.today} canEdit={!!data?.canEdit} onPatch={patch} />)}</LeanList>
+              </div>
+            )
+          })}
+        </div>
+      </section>
+    )
+  }
 
   return (
     <div>

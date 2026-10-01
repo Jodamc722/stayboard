@@ -83,7 +83,8 @@ export async function loadUnpaid(opts: { from?: string; to?: string } = {}): Pro
     const paid = typeof m.totalPaid === 'number' ? m.totalPaid : num(r.money_paid)
     const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
     const daysUntil = Math.round((Date.parse(ci + 'T12:00:00') - Date.parse(today + 'T12:00:00')) / 86400000)
-    const inHouse = ci <= today && co > today
+    // Arrived before today = in the unit, including a guest checking out today (collect before they go).
+    const inHouse = ci < today && co >= today
     const bucket: UnpaidRow['bucket'] = inHouse ? 'in_house' : daysUntil <= 0 ? 'today' : daysUntil <= 7 ? 'week' : 'later'
     const t = tracking[str(r.id)]
     const li = names[str(r.listing_id)]
