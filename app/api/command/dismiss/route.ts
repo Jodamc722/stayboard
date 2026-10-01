@@ -8,7 +8,8 @@
 //        title/unit are stored so a row the engine stops generating (you created the inspection,
 //        so "no inspection" is gone) can still be listed under Completed with its words.
 // DELETE { key }  → bring it back (omit key to bring back everything cleared today)
-// Days older than yesterday are pruned on every write so the setting never grows.
+// Days older than 14 days are pruned on every write so the setting never grows — a closed row stays
+// closed for two weeks (Jon, 2026-10-01: "if I close something it should not repopulate").
 //
 // No cache bust here (2026-09-28): the Command Center applies these rows AFTER its cached day, read
 // straight from the table on every request, so a clear shows on the next read by itself — busting
@@ -33,7 +34,7 @@ async function mutate(req: NextRequest, remove: boolean) {
   const key = String(body?.key || '').slice(0, 200)
   if (!remove && !key) return NextResponse.json({ ok: false, error: 'key required' }, { status: 400 })
   const today = ymd(new Date())
-  const yesterday = ymd(new Date(Date.now() - 86400000))
+  const keepFrom = ymd(new Date(Date.now() - 14 * 86400000))
   // READ STRAIGHT FROM THE TABLE, like the Command Center does (2026-09-28). Through the 60-second
   // settings cache, two people clearing rows on two instances inside a minute overwrote each
   // other's entries — and a failed read (the cache fails open to empty) wrote an empty day over
@@ -42,9 +43,9 @@ async function mutate(req: NextRequest, remove: boolean) {
   if (readErr) return NextResponse.json({ ok: false, error: 'could not read the rows cleared today — try again' }, { status: 500 })
   const cur: Record<string, any> = (() => { try { const v = (row as any)?.value; const o = typeof v === 'string' ? JSON.parse(v) : v; return o && typeof o === 'object' ? o : {} } catch { return {} } })()
   const next: Record<string, Record<string, Entry>> = {}
-  for (const d of Object.keys(cur)) if (d === today || d === yesterday) next[d] = cur[d]
+  for (const d of Object.keys(cur)) if (d >= keepFrom) next[d] = cur[d]
   next[today] = next[today] || {}
-  if (remove) { if (key) delete next[today][key]; else next[today] = {} }
+  if (remove) { if (key) { for (const d of Object.keys(next)) delete next[d][key] } else next[today] = {} }
   else {
     const e: Entry = { by: user.email || 'someone', at: new Date().toISOString(), outcome: body?.outcome === 'done' ? 'done' : 'skipped' }
     if (body?.title) e.title = String(body.title).slice(0, 160)

@@ -382,7 +382,16 @@ function ChecklistRow({ r, canTick, onTicked, lane }: { r: CkRow; canTick: boole
 // Not the whole list — the next two things somebody should be doing, late first, with the live count
 // and the Open button; the full procedure lives on /checklist. One line of progress on the right.
 function ChecklistStrip({ ck, onTicked }: { ck: Ck | undefined; onTicked: () => void }) {
-  if (!ck || !ck.ok || !ck.progress?.total) return null
+  // Holds its spot even before the read lands or when nothing is scheduled (Jon, 2026-10-01).
+  if (!ck || !ck.ok || !ck.progress?.total) return (
+    <section>
+      <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-2">
+        <ListChecks size={13} className="text-brand-600" /> Checklist
+        <span className="normal-case tracking-normal font-medium text-muted">— {!ck ? 'reading…' : ck.ok ? 'nothing scheduled today' : 'could not read the checklist'}</span>
+        <Link href="/checklist" prefetch={false} className="ml-auto text-[11px] font-semibold text-brand-700 hover:underline">Checklist →</Link>
+      </h2>
+    </section>
+  )
   const open = ck.rows.filter(r => !r.done)
   const late = open.filter(r => r.late).sort((a, b) => (a.in_minutes ?? 0) - (b.in_minutes ?? 0))
   const soon = open.filter(r => !r.late).sort((a, b) => (a.in_minutes ?? 9e9) - (b.in_minutes ?? 9e9))

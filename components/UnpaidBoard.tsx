@@ -95,17 +95,19 @@ export function UnpaidBoard({ embed = false }: { embed?: boolean } = {}) {
   const owed = rows.reduce((a, r) => a + r.balance, 0)
 
   if (embed) {
-    if (!err && (!data || rows.length === 0)) return null   // nothing owed this week: the page says nothing
+    // The section always holds its spot (Jon, 2026-10-01: "set in stone sections … if nothing is there it should hold its spot").
     const hot = rows.filter(r => r.bucket === 'in_house' || r.bucket === 'today').length
     return (
       <section aria-label="Unpaid balances">
         <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-2 flex-wrap">
-          Unpaid balances <span className="tabular-nums text-rose-700">{money(owed)}</span>
-          <span className="normal-case tracking-normal font-medium text-muted">— {rows.length} {rows.length === 1 ? 'stay' : 'stays'} in house, arriving today or this week{hot ? ` · ${hot} to collect today` : ''} · direct, VRBO and Google only</span>
+          Unpaid balances {rows.length ? <span className="tabular-nums text-rose-700">{money(owed)}</span> : null}
+          <span className="normal-case tracking-normal font-medium text-muted">— {!data && loading ? 'reading the folios…' : rows.length ? `${rows.length} ${rows.length === 1 ? 'stay' : 'stays'} in house, arriving today or this week${hot ? ` · ${hot} to collect today` : ''}` : 'nothing owed this week'} · direct, VRBO and Google only</span>
           <Link href="/reservations/unpaid" prefetch={false} className="ml-auto normal-case tracking-normal font-semibold text-brand-700 hover:underline">Board →</Link>
         </h2>
         {err && <p className="mb-2 text-[12.5px] text-rose-700 inline-flex items-center gap-1"><AlertTriangle size={13} /> {err}</p>}
-        <LeanList>{rows.map(r => <UnpaidRow key={r.id} r={r} today={data!.today} canEdit={!!data?.canEdit} onPatch={patch} simple />)}</LeanList>
+        {rows.length > 0
+          ? <LeanList>{rows.map(r => <UnpaidRow key={r.id} r={r} today={data!.today} canEdit={!!data?.canEdit} onPatch={patch} simple />)}</LeanList>
+          : <div className="rounded-2xl border border-dashed border-line bg-white/60 px-3 py-2.5 text-[12px] text-muted">{!data && loading ? 'Reading the folios…' : 'Every direct, VRBO and Google guest in house, arriving today or this week has paid.'}</div>}
       </section>
     )
   }

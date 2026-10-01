@@ -138,6 +138,9 @@ export type NextItem = {
   /** A Breezeway task this row is about — enables Note-to-assignee and the open link. */
   bzTaskId?: string | null
   href?: string | null
+  /** When the thing this row is about last moved (a guest's latest message). A row closed before
+   *  that moment comes back; a row closed after it stays closed (Jon, 2026-10-01). */
+  since?: string | null
   dismissed?: Handled | null
 }
 
@@ -862,6 +865,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
       why: (str((s && s.guest_name) || c.guest_name) || 'Guest') + (channel ? ' · ' + channel.toUpperCase() : '') + (quote ? ' · “' + quote + '”' : ''),
       tags,
       action: { type: 'open', href, label: 'Open thread' }, href,
+      since: str((s && (s.last_guest_at || s.last_message_at)) || (w && (w.last_guest_at || w.awaiting_since)) || c.last_message_at) || null,
     })
   }
 
@@ -970,15 +974,27 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
 function withDismissals(core: CommandCore, dismissRow: any): CommandDay {
   const today = core.today
   const dismissedAll = (() => { try { const v = (dismissRow as any)?.data?.value; const o = typeof v === 'string' ? JSON.parse(v) : v; return o && typeof o === 'object' ? o : {} } catch { return {} } })()
-  const dismissedRaw: Record<string, any> = (dismissedAll[today] && typeof dismissedAll[today] === 'object') ? dismissedAll[today] : {}
-  // Entries written before outcomes existed carry only by/at — they were plain dismissals.
+  // A CLOSED ROW STAYS CLOSED (Jon, 2026-10-01: "if I close something it should not repopulate").
+  // Every entry from the last 14 days applies, newest wins — not just today's. A guest row comes back
+  // only when the guest wrote AFTER it was closed (its `since` is newer than the close).
   const dismissed: Record<string, Handled> = {}
-  for (const k of Object.keys(dismissedRaw)) {
-    const v = dismissedRaw[k] || {}
-    dismissed[k] = { key: k, by: str(v.by) || 'someone', at: str(v.at), outcome: v.outcome === 'done' ? 'done' : 'skipped', title: v.title ? str(v.title).slice(0, 160) : undefined, unit: v.unit ? str(v.unit).slice(0, 80) : undefined }
+  const todays: Record<string, true> = {}
+  for (const dayKey of Object.keys(dismissedAll).sort()) {
+    const entries = dismissedAll[dayKey]
+    if (!entries || typeof entries !== 'object') continue
+    for (const k of Object.keys(entries)) {
+      const v = entries[k] || {}
+      dismissed[k] = { key: k, by: str(v.by) || 'someone', at: str(v.at), outcome: v.outcome === 'done' ? 'done' : 'skipped', title: v.title ? str(v.title).slice(0, 160) : undefined, unit: v.unit ? str(v.unit).slice(0, 80) : undefined }
+      if (dayKey === today) todays[k] = true; else delete todays[k]
+    }
+  }
+  const stillClosed = (i: { key: string; since?: string | null }): Handled | null => {
+    const h = dismissed[i.key]; if (!h) return null
+    if (i.since && h.at && Date.parse(i.since) > Date.parse(h.at)) return null   // it moved since the close
+    return h
   }
   // The core's rows arrive ranked; this only marks the ones cleared today.
-  const next: NextItem[] = core.rows.map(i => ({ ...i, dismissed: dismissed[i.key] || null }))
+  const next: NextItem[] = core.rows.map(i => ({ ...i, dismissed: stillClosed(i) }))
 
   // ── cap, count ──────────────────────────────────────────────────────────────────────────────
   // The 48-hour band is a heads-up, not a worklist: cap each kind so tomorrow never buries today —
@@ -1002,7 +1018,7 @@ function withDismissals(core: CommandCore, dismissRow: any): CommandDay {
   // still generates it and the stored words when it no longer does (the recommendation was acted on).
   const liveByKey: Record<string, NextItem> = {}
   for (const n of next) liveByKey[n.key] = n
-  const handled: Handled[] = Object.values(dismissed)
+  const handled: Handled[] = Object.values(dismissed).filter(h => todays[h.key])
     .map(h => { const n = liveByKey[h.key]; return n ? { ...h, title: n.title, unit: n.unit } : h })
     .sort((a, b) => b.at.localeCompare(a.at))
 
