@@ -7,7 +7,8 @@ import { DateFilter } from '@/components/DateFilter'
 import { customFieldNameMap, filledCustomFields } from '@/lib/custom-fields'
 import { ExternalLink } from 'lucide-react'
 import { LeanHead, Pill, Tag, LeanList, LeanRow, LeanEmpty, IconBtn } from '@/components/lean'
-import { UnpaidStrip } from '@/components/UnpaidStrip'
+import { UnpaidStrip, loadUnpaidAll } from '@/components/UnpaidStrip'
+import type { UnpaidRow as UnpaidRowT } from '@/lib/unpaid'
 
 export const dynamic = 'force-dynamic'
 
@@ -153,6 +154,10 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
 
   if (near.truncated) console.error('[reservations] read of stays arriving before ' + in7Str + ' stopped early — the pills and tabs may be short')
   const cfMap = await customFieldNameMap()
+  // UNPAID (Jon, 2026-10-01): direct / VRBO / Google stays still owing — the tab shows ALL of them, the 7-day ones first as 'take care now' (Jon: '7 days have to be taken care but we should see all').
+  const unpaidRep = await loadUnpaidAll()
+  const unpaidAll = (unpaidRep?.rows || []).filter(r => r.tracking.status !== 'waived')
+  const unpaid7 = unpaidAll.filter(r => r.bucket !== 'later')
   // A short near read must not let next week's arrivals stand in for this week's: without them the
   // page shows what it could read, and says so (the pill below), instead of a plausible wrong week.
   const up = near.truncated ? near.rows : near.rows.concat(later ?? [])
@@ -184,7 +189,9 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
 
   // LEAN PASS (2026-09-22): the five stacked sections are tabs, driven by ?tab= so this stays a
   // server page. Default is the first tab with anything in it, arrivals first.
-  const TABS: { key: string; label: string; rows: any[]; n: number }[] = [
+  const TABS: { key: string; label: string; rows: any[]; n: number; hot?: boolean }[] = [
+    // Unpaid sits first so it is seen (Jon, 2026-10-01: "a tab on top, so we can see it"); the default tab is still the day's arrivals.
+    { key: 'unpaid', label: unpaid7.length ? `Unpaid · ${unpaid7.length} now` : 'Unpaid', rows: unpaidAll, n: unpaidAll.length, hot: unpaid7.length > 0 },
     { key: 'arr', label: `Arriving ${dl}`, rows: arrivingToday, n: arrivingToday.length },
     { key: 'dep', label: `Departing ${dl}`, rows: departingToday, n: departingToday.length },
     { key: 'stay', label: 'In-house', rows: staying, n: staying.length },
@@ -192,7 +199,7 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
     { key: 'past', label: 'Past', rows: pastShown, n: pastTotal },
   ]
   const tabParam = (searchParams?.tab || '').trim()
-  const active = TABS.find(t => t.key === tabParam) || TABS.find(t => t.rows.length > 0) || TABS[0]
+  const active = TABS.find(t => t.key === tabParam) || TABS.find(t => t.key !== 'unpaid' && t.rows.length > 0) || TABS[1]
   const tabHref = (k: string) => `/reservations?tab=${k}${viewingToday ? '' : `&date=${todayStr}`}`
 
   const totalSynced = sync?.items_synced ?? 0
@@ -215,12 +222,12 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
       ) : (
         <>
           {/* UNPAID — the money still owed on direct / VRBO / Google stays, by how soon it bites (Jon, 2026-10-01). */}
-          <UnpaidStrip />
+          {unpaidRep && <UnpaidStrip rep={unpaidRep} tabHref={tabHref('unpaid')} />}
           <div className="flex items-center gap-2 flex-wrap mb-3">
             <div className="inline-flex rounded-xl border border-line overflow-hidden text-[12.5px] max-w-full overflow-x-auto">
               {TABS.map(t => (
                 <Link key={t.key} href={tabHref(t.key)} scroll={false}
-                  className={`px-2.5 sm:px-3 py-1.5 font-semibold border-l border-line first:border-l-0 whitespace-nowrap ${active.key === t.key ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>
+                  className={`px-2.5 sm:px-3 py-1.5 font-semibold border-l border-line first:border-l-0 whitespace-nowrap ${active.key === t.key ? (t.hot ? 'bg-rose-600 text-white' : 'bg-brand-600 text-white') : t.hot ? 'bg-rose-50 text-rose-700 hover:text-rose-900' : 'bg-white text-muted hover:text-ink'}`}>
                   {t.label}{t.n ? <span className="ml-1 opacity-70 tabular-nums">{t.n}</span> : null}
                 </Link>
               ))}
@@ -232,7 +239,8 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
           </div>
 
           {active.rows.length === 0
-            ? <LeanEmpty>{active.key === 'past' ? 'No past stays.' : 'Nothing here.'}</LeanEmpty>
+            ? <LeanEmpty>{active.key === 'past' ? 'No past stays.' : active.key === 'unpaid' ? 'Nothing owed — every direct, VRBO and Google stay on the books is paid.' : 'Nothing here.'}</LeanEmpty>
+            : active.key === 'unpaid' ? <UnpaidRows rows={active.rows as UnpaidRowT[]} />
             : <ResRows rows={active.rows} cfMap={cfMap} />}
           {active.key === 'past' && pastTotal > pastShown.length && (
             <p className="text-[11px] text-muted mt-2 px-1">Latest {pastShown.length} of {pastTotal} past stays.</p>
@@ -292,5 +300,69 @@ function ResRows({ rows, cfMap }: { rows: any[]; cfMap: Record<string, string> }
         )
       })}
     </LeanList>
+  )
+}
+
+// ── THE UNPAID TAB — the next 7 days, by how soon it bites ────────────────────────────────────
+// (Jon, 2026-10-01: "Unpaid should have a section and populate 7 days of unpaid reservations").
+const STATUS_ROW: Record<string, { label: string; tone: 'slate' | 'sky' | 'amber' | 'rose' | 'violet' }> = {
+  open: { label: 'not contacted', tone: 'slate' }, contacted: { label: 'contacted', tone: 'sky' }, promised: { label: 'promised to pay', tone: 'amber' }, disputed: { label: 'disputed', tone: 'rose' }, waived: { label: 'waived', tone: 'violet' },
+}
+const CHAN: Record<string, string> = { vrbo: 'VRBO', homeaway: 'VRBO', manual: 'Direct', direct: 'Direct', 'be-api': 'Website', website: 'Website', google: 'Google' }
+const GROUPS: { key: string; title: string; hint: string; tone?: 'rose' }[] = [
+  { key: 'in_house', title: 'In the unit, still owing', hint: 'Collect before checkout', tone: 'rose' },
+  { key: 'today', title: 'Arriving today', hint: 'Collect before the door code goes out', tone: 'rose' },
+  { key: 'week', title: 'Next 7 days', hint: 'Chase now so the week is clean' },
+  { key: 'later', title: 'Later', hint: 'On the radar — everything else on the books' },
+]
+function UnpaidRows({ rows }: { rows: UnpaidRowT[] }) {
+  const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
+  const total = rows.reduce((a, r) => a + r.balance, 0)
+  const now = rows.filter(r => r.bucket !== 'later')
+  return (
+    <div className="space-y-4">
+      <p className="px-1 text-[12px] text-muted"><b className="text-ink tabular-nums">{money(total)}</b> owed on {rows.length} {rows.length === 1 ? 'stay' : 'stays'} on the books{now.length ? <> · <b className="text-rose-700">{now.length} to take care of this week ({money(now.reduce((a, r) => a + r.balance, 0))})</b></> : null} · direct, VRBO and Google only · <Link href="/reservations/unpaid" className="font-semibold text-brand-700 hover:underline">statuses and notes on the board →</Link></p>
+      {GROUPS.map(g => {
+        const xs = rows.filter(r => r.bucket === g.key)
+        if (!xs.length) return null
+        return (
+          <section key={g.key}>
+            <h3 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider flex items-center gap-2">
+              {g.key !== 'later' && <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-rose-600 text-white">take care now</span>}
+              <span className={g.tone === 'rose' ? 'text-rose-700' : 'text-ink'}>{g.title}</span>
+              <span className="tabular-nums text-muted">{xs.length}</span>
+              <span className="normal-case tracking-normal font-medium text-muted">— {g.hint}</span>
+              <span className="ml-auto normal-case tracking-normal font-semibold tabular-nums text-rose-700">{money(xs.reduce((a, r) => a + r.balance, 0))}</span>
+            </h3>
+            <LeanList>
+              {xs.map(r => {
+                const st = STATUS_ROW[r.tracking.status] || STATUS_ROW.open
+                const last = r.tracking.notes[r.tracking.notes.length - 1]
+                return (
+                  <LeanRow key={r.id}
+                    name={<Link href={'/reservations/' + r.id} className="hover:underline">{r.guest}</Link>}
+                    meta={`${r.unit} · ${fmtWeekday(r.checkIn)} ${fmtDay(r.checkIn)} – ${fmtWeekday(r.checkOut)} ${fmtDay(r.checkOut)}${r.nights ? ` · ${r.nights} night${r.nights === 1 ? '' : 's'}` : ''}`}
+                    tags={<>
+                      <span title="Booking channel — we collect" className={`${TAG_CLS} ${sourceStyle(r.source)}`}>{CHAN[String(r.source || '').toLowerCase()] || r.source}</span>
+                      <Tag tone="rose" title={`Paid ${money(r.paid)} of ${money(r.total)}`}>{money(r.balance)} owed</Tag>
+                      {r.paid > 0 ? <Tag title="What has been paid so far">{money(r.paid)} paid</Tag> : <Tag tone="amber" title="No payment has landed on this folio">nothing paid</Tag>}
+                      <Tag tone={st.tone} title={'Follow-up status' + (r.tracking.updatedBy ? ' · ' + r.tracking.updatedBy : '')}>{st.label}</Tag>
+                    </>}
+                    actions={<IconBtn title="Open in Guesty" href={r.guestyUrl}><ExternalLink size={14} /></IconBtn>}
+                  >
+                    <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[12px] text-muted">
+                      <span className="tabular-nums">{money(r.total)} total · {money(r.paid)} paid · <b className="text-rose-700">{money(r.balance)} owed</b></span>
+                      {r.phone && <a href={'tel:' + r.phone} className="hover:underline">{r.phone}</a>}
+                      {r.email && <span className="truncate max-w-[16rem]">{r.email}</span>}
+                      {last && <span className="truncate max-w-[24rem]" title={last.by + ' · ' + last.at}>“{last.text}” — {last.by}</span>}
+                    </div>
+                  </LeanRow>
+                )
+              })}
+            </LeanList>
+          </section>
+        )
+      })}
+    </div>
   )
 }

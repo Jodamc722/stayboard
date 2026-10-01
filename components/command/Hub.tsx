@@ -199,13 +199,20 @@ export function CallRow({ a, canLog, onChanged, lane }: { a: ArrivalRow; canLog:
   )
 }
 
-function InboxRow({ i, lane }: { i: NextItem; lane?: string }) {
+function InboxRow({ i, onCleared, lane }: { i: NextItem; onCleared: (k: string) => void; lane?: string }) {
   const unhappy = (i.tags || []).some(t => t.label === 'Unhappy')
+  const [busy, setBusy] = useState(false)
+  // "Should be able to close these if no action needed" (Jon, 2026-10-01): one tap clears the row
+  // for the day on every device; it comes back tomorrow if the guest is still waiting or unhappy.
+  const close = async () => { setBusy(true); try { await clearRow(i, 'skipped'); onCleared(i.key) } catch { /* shown on reload */ } setBusy(false) }
   return (
     <Row lane={lane} dot={i.severity === 'now' ? 'rose' : 'amber'} title={i.unit || i.title}
       tags={<>{(i.tags || []).map(t => <Tag key={t.label} tone={t.tone} title={t.title}>{t.label}</Tag>)}</>}
       meta={i.why}
-      actions={<Link href={i.href || '/messages'} prefetch={false} className={DARK} title={unhappy ? 'Open the thread — read what upset them and reply' : 'Open the thread — reply, or send Eve’s draft'}>Reply</Link>} />
+      actions={<>
+        <Link href={i.href || '/messages'} prefetch={false} className={DARK} title={unhappy ? 'Open the thread — read what upset them and reply' : 'Open the thread — reply, or send Eve’s draft'}>Reply</Link>
+        <button onClick={close} disabled={busy} className={GHOST} title="No action needed — clears this row for today, for everyone">{busy ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}</button>
+      </>} />
   )
 }
 
@@ -619,7 +626,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   for (const a of calls) items.push({ key: 'call:' + a.reservationId, area: 'guests', sub: 'Calls', score: (a.big ? 78 : 50) + valueBonus(a.value), node: <CallRow a={a} canLog={can.calls} onChanged={onChanged} /> })
   for (const i of inbox) {
     const isUnhappy = (i.tags || []).some(x => x.label === 'Unhappy'), late = (i.tags || []).some(x => /^Late/.test(x.label))
-    items.push({ key: i.key, area: 'guests', sub: 'Inbox', score: isUnhappy ? 88 : late ? 85 : 60, node: <InboxRow i={i} /> })
+    items.push({ key: i.key, area: 'guests', sub: 'Inbox', score: isUnhappy ? 88 : late ? 85 : 60, node: <InboxRow i={i} onCleared={onCleared} /> })
   }
   for (const g of glitches) items.push({ key: 'gl:' + g.id, area: 'guests', sub: 'Glitches', score: g.overdue ? 82 : !g.hasTask ? 55 : 40, node: <GlitchRow g={g} canEdit={can.glitches} onChanged={onChanged} /> })
 
