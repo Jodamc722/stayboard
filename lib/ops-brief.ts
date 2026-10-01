@@ -1736,7 +1736,7 @@ export async function buildOpsBrief(variant: BriefVariant, lang: BriefLang = 'en
   const CLIP_BUDGET = 96_000
   const render = (scoreboard: string) => `<!doctype html><html><body style="${S.body}"><div style="${S.wrap}">
   <div style="${S.bandOuter}">
-    <p style="${S.bandBrand}">S T A Y &nbsp; H O S P I T A L I T Y</p>
+    <p style="${S.bandBrand}">LIGHTHOUSE · STAY HOSPITALITY</p>
     <p style="${S.bandTitle}">${title}</p>
     <p style="${S.bandSub}">${subTitle}</p>
   </div>
@@ -2195,7 +2195,7 @@ export async function buildGmBrief(): Promise<OpsBrief> {
 
   const html = `<!doctype html><html><body style="${S.body}"><div style="${S.wrap}">
   <div style="${S.bandOuter}">
-    <p style="${S.bandBrand}">S T A Y &nbsp; H O S P I T A L I T Y</p>
+    <p style="${S.bandBrand}">LIGHTHOUSE · STAY HOSPITALITY</p>
     <p style="${S.bandTitle}">GM Brief</p>
     <p style="${S.bandSub}">${dateNice} · whole portfolio · ${d.activeCount} active units</p>
   </div>
@@ -2375,7 +2375,7 @@ export async function buildVendorBrief(group: VendorGroup): Promise<{ subject: s
 
   const html = `<!doctype html><html><body style="${S.body}"><div style="${S.wrap}">
   <div style="${S.bandOuter}">
-    <p style="${S.bandBrand}">S T A Y &nbsp; H O S P I T A L I T Y</p>
+    <p style="${S.bandBrand}">LIGHTHOUSE · STAY HOSPITALITY</p>
     <p style="${S.bandTitle}">${def.label} — Housekeeping</p>
     <p style="${S.bandSub}">${dateNice}</p>
   </div>

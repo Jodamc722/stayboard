@@ -83,7 +83,8 @@ export function renderLaborScorecard(x: ScorecardInput): { subject: string; html
   }
 
   // ---- can the numbers be trusted? -------------------------------------------------------------
-  const failing = x.checks.filter(c => !c.ok)
+  // A check already named above (the $0-payroll person) is not repeated here.
+  const failing = x.checks.filter(c => !c.ok && !(x.noPay.length && /\$0 (of )?payroll/i.test(c.what)))
   const trust = failing.length
     ? section('Is this accurate?', failing.slice(0, 3).map(c => ({ tone: c.level, html: `<b>${esc(c.what)}</b>`, sub: esc(c.fix) })), { cap: 3, accent: A, note: `${x.checks.length - failing.length} of ${x.checks.length} checks pass · 30-day basis, audited nightly` })
     : block('Is this accurate?', `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">✓ All ${x.checks.length} checks pass</span> <span style="${T.muted}">— every Homebase week answered, every clean has a wage behind it, fees match cleans.</span>${x.seventeenWest ? `<br><span style="${T.muted};font-size:12px">17WEST covers ${money(x.seventeenWest)} of wages this window — payroll above is Stay's share.</span>` : ''}</p>`, A)
