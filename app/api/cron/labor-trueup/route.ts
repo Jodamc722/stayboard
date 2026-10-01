@@ -39,6 +39,8 @@ import { requireCron, cronAllowed } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
 import { integrityChecks, engineFailedCheck, emailIntegrityFailures } from '@/lib/labor-integrity'
 import { atEasternHour } from '@/lib/et-clock'
+import { renderLaborScorecard } from '@/lib/briefs/labor-scorecard'
+import { weekCompliance } from '@/lib/ops-brief'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -180,6 +182,7 @@ async function send(req: NextRequest) {
     let todayCard = ''
     let onShift = 0
     let cleansDueToday: number | null = null
+    let todayNums = { scheduledH: 0, standardH: 0, overStd: [] as string[], openShifts: 0 }
     try {
       const db = supabaseAdmin()
       const presets = await getOpsPresets()
@@ -220,6 +223,7 @@ async function send(req: NextRequest) {
       const totalH = r1(filled.reduce((a, s) => a + (hoursOf(s) || 0), 0))
       const standardH = filled.length * SHIFT_STANDARD_H
       const overStd = filled.filter(s => (hoursOf(s) || 0) > SHIFT_STANDARD_H + 0.25)
+      todayNums = { scheduledH: totalH, standardH, overStd: overStd.map(s => String(s.name)), openShifts }
       const rows = filled
         .slice()
         .sort((a, b) => String(a.startAt).localeCompare(String(b.startAt)) || a.name.localeCompare(b.name))
@@ -460,9 +464,13 @@ async function send(req: NextRequest) {
 
     // Yesterday's schedule flags — one line, names included.
     let flagsLine = ''
+    let clockFlags: any = null
+    let laborGoalPct = 30
     try {
       const [ySh, yTc, lset] = await Promise.all([getShifts(yd, TZ), getTimecards(yd, yd), getLaborSettings('default')])
+      laborGoalPct = Number(lset.pct_good) || 30
       const fl = computeYesterdayLabor(yd, ySh, yTc, lset)
+      clockFlags = { worked: fl.totalHoursWorked, scheduled: fl.totalScheduledHours, headcount: fl.headcount, late: fl.lateClockIns, over: fl.overSchedule, noShows: fl.noShows, openCards: fl.missedClockOuts.length }
       const bits: string[] = []
       if (fl.noShows.length) bits.push('<span style="' + RED + '">' + fl.noShows.length + ' scheduled, never clocked in</span> (' + fl.noShows.slice(0, 3).map(x => esc(x.name)).join(', ') + (fl.noShows.length > 3 ? '…' : '') + ')')
       if (fl.lateClockIns.length) bits.push(fl.lateClockIns.length + ' late (' + fl.lateClockIns.slice(0, 3).map(x => esc(x.name) + ' +' + x.minutesLate + 'm').join(', ') + ')')
@@ -514,6 +522,7 @@ async function send(req: NextRequest) {
     // Green and one line when healthy; specific and amber/red when not. The nightly integrity
     // cron runs the deeper version and emails only on failure.
     let healthCard = ''
+    let qualityRows: { noPay: any[]; outliers: any[] } = { noPay: [], outliers: [] }
     try {
       const pa: any = (ec30 as any).payrollAudit || {}
       const fa: any = (ec30 as any).feeAudit || {}
@@ -540,6 +549,7 @@ async function send(req: NextRequest) {
       const q30: any = (ec30 as any).pnl?.quality || {}
       const noPay: any[] = Array.isArray(q30.workedNoPay) ? q30.workedNoPay : []
       const outliers: any[] = Array.isArray(q30.rateOutliers) ? q30.rateOutliers : []
+      qualityRows = { noPay, outliers }
       if (noPay.length) {
         const cl = noPay.reduce((a: number, x: any) => a + (Number(x.cleans) || 0), 0)
         items.push('<span style="' + RED + '">✗</span> <b>' + nameList(noPay) + '</b> — ' + cl + ' clean' + (cl === 1 ? '' : 's') +
@@ -557,7 +567,25 @@ async function send(req: NextRequest) {
         '</div>'
     } catch { /* additive */ }
 
-    const html = '<!doctype html><html><body style="margin:0;background:#f5f5f4;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0b1220">' +
+    // THE SCORECARD (Jon, 2026-10-01): four numbers, what moved, who the numbers cannot see, can
+    // they be trusted. The classic ledger stays reachable with ?classic=1.
+    let html = ''
+    let scoreSubject = ''
+    if (sp.get('classic') !== '1') {
+      let unmatched: string[] = []
+      try { unmatched = (await weekCompliance()).cleanersNoTimecard } catch { unmatched = [] }
+      const sc = renderLaborScorecard({
+        today, yd, d7, d30, niceDay,
+        TY: TY as any, T7: T7 as any, T30: T30 as any,
+        laborGoalPct, chargeRate,
+        onShift, scheduledH: todayNums.scheduledH, standardH: todayNums.standardH, overStd: todayNums.overStd, openShifts: todayNums.openShifts, cleansDueToday,
+        clock: clockFlags, checks: checks as any,
+        noPay: (qualityRows.noPay || []).map((x: any) => ({ name: String(x.name || ''), cleans: Number(x.cleans) || 0 })),
+        outliers: (qualityRows.outliers || []).map((x: any) => ({ name: String(x.name || ''), impliedRate: Number(x.impliedRate) || 0 })),
+        unmatched, seventeenWest: (K30.seventeenWest && K30.seventeenWest.covered) || null,
+      })
+      html = sc.html; scoreSubject = sc.subject
+    } else html = '<!doctype html><html><body style="margin:0;background:#f5f5f4;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0b1220">' +
       '<div style="max-width:720px;margin:0 auto;padding:18px">' +
       '<div style="background:#111827;border-radius:12px;padding:16px 18px">' +
       '<p style="margin:0;color:#9ca3af;font-size:11px;letter-spacing:.16em">S T A Y &nbsp; H O S P I T A L I T Y</p>' +
@@ -603,7 +631,7 @@ async function send(req: NextRequest) {
 
     const moneyPlain = (n: number | null | undefined) =>
       n == null ? '—' : (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US')
-    const subject = 'Daily labor ' + niceDay(today) + ': ' +
+    const subject = scoreSubject || 'Daily labor ' + niceDay(today) + ': ' +
       TY.cleans + ' cleans' + (TY.cpc != null ? ' @ ' + moneyPlain(TY.cpc) : '') + ' · ' +
       moneyPlain(TY.profit) + (TY.profit < 0 ? ' loss' : ' profit') + ' yest' +
       ' · 30d ' + (T30.cpc != null ? moneyPlain(T30.cpc) + '/clean, ' : '') + (T30.marginPct != null ? Math.round(T30.marginPct) + '% margin' : '—') +

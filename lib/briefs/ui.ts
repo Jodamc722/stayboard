@@ -150,6 +150,19 @@ export function crewOf(names: string[], lead: string): string {
   return ' · with crew'
 }
 
+/** "shaany espinoza" → "Shaany Espinoza"; all-caps names calmed too. */
+export function personName(n: string): string {
+  return String(n || '').trim().split(/\s+/).map(w => (w.length > 1 && (w === w.toLowerCase() || w === w.toUpperCase()) ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w)).join(' ')
+}
+/** A reservation note as a crew reads it: the last human/call line, without the Talkroute preamble. */
+export function crewNote(note: string): string {
+  let n = String(note || '').replace(/\s+/g, ' ').trim()
+  n = n.replace(/^\[\d{4}-\d{2}-\d{2}\]\s*/, '')
+  if (/guest call by talkroute/i.test(n) && n.includes(' — ')) n = n.slice(n.lastIndexOf(' — ') + 3)
+  return n.length > 150 ? n.slice(0, 147).trimEnd() + '…' : n
+}
+export const isOfficeLike = (n: string) => /customer care|support team|\bccs\b|front desk|office/i.test(String(n || ''))
+
 export function unitShort(u: string): string {
   const n = String(u || '').replace(/\s+-\s*|\s*-\s+/g, ' - ').replace(/\s+/g, ' ').trim()
   if (n.length <= 26) return n

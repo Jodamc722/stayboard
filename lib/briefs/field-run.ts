@@ -12,7 +12,7 @@ import { gather, lowReviewInspections, niceDay } from '@/lib/ops-brief'
 import { upcomingAutoInspections } from '@/lib/auto-inspections'
 import { getShifts, nameMatches } from '@/lib/homebase'
 import { translator, type BriefLang } from '@/lib/brief-lang'
-import { ACCENTS, APP_URL, T, esc, masthead, headline, section, person, block, dayShape, footer, fit, pill, cleanTitle, crewOf, unitShort, type Line } from './ui'
+import { ACCENTS, APP_URL, T, esc, masthead, headline, section, person, block, dayShape, footer, fit, pill, cleanTitle, crewOf, unitShort, personName, crewNote, isOfficeLike, type Line } from './ui'
 
 export type FieldMarket = 'Miami' | 'Broward'
 export type Built = { subject: string; html: string; words: number; counts: Record<string, number> }
@@ -54,12 +54,13 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   const sameDay = cleans.filter(c => c.sameDayArrival && c.state !== 'done')
   const walkIns = arrivals.filter(a => a.bookedToday || a.bookedAfterSync)
   const office = new Set((d.officeNames || []) as string[])
-  const isOffice = (n: string) => Array.from(office).some(o => nameMatches(o, n))
-  const dept = (n: string) => str((d.deptOfPerson || {})[n] || 'housekeeping')
+  const isOffice = (n: string) => isOfficeLike(n) || Array.from(office).some(o => nameMatches(o, n))
+  const deptMap: Record<string, string> = d.deptOfPerson || {}
+  const dept = (n: string) => str(deptMap[n] || deptMap[Object.keys(deptMap).find(k => nameMatches(k, n)) || ''] || 'housekeeping')
   const isTech = (n: string) => /maint/.test(dept(n))
   const arrivalByLid: Record<string, any> = {}
   for (const a of arrivals) arrivalByLid[str(a.listingId)] = a
-  const noteOf = (lid: string) => str((d.arrivalNotes || {})[lid])
+  const noteOf = (lid: string) => crewNote(str((d.arrivalNotes || {})[lid]))
   const timeOf = (lid: string) => str(arrivalByLid[lid]?.checkInTime || '4:00 PM')
 
   const autoInsp = (autoRes as any[]).filter(i => str(i.market) === market && !isDone(i.status) && str(i.check_in) <= today)
@@ -82,13 +83,13 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   // ---- THE RUN: every field person with work, cleaners first, same-day turns first ------------
   const byPerson: Record<string, { cleans: typeof cleans; other: typeof other }> = {}
   const bucket = (n: string) => (byPerson[n] = byPerson[n] || { cleans: [], other: [] })
-  for (const c of cleans) if (!/UNASSIGNED/.test(c.assignee)) bucket(c.lead || c.assignee).cleans.push(c)
+  for (const c of cleans) if (!/UNASSIGNED/.test(c.assignee)) bucket(personName(c.lead || c.assignee)).cleans.push(c)
   for (const o of other) {
     if (/UNASSIGNED/.test(o.assignee)) continue
     const n = o.lead || o.assignee
     if (isOffice(n) || isTech(n)) continue          // office runs the desk; techs have their own run
     if (o.state === 'done') continue
-    bucket(n).other.push(o)
+    bucket(personName(n)).other.push(o)
   }
   const names = Object.keys(byPerson).sort((a, b) => {
     const ta = isTech(a) ? 1 : 0, tb = isTech(b) ? 1 : 0
@@ -133,14 +134,14 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
     flagged.push({ tone: owner || vip ? 'amber' : 'none', html: `<b>${esc(unitShort(str(a.unit)))}</b> · ${esc(str(a.checkInTime || '4:00 PM'))} · ${esc(first(a.guest))}${a.nights ? ` · ${a.nights}n` : ''} ${why}`, sub: note ? esc(note) : undefined })
   }
   const ownerStays: any[] = sheet.ownerStays || []
-  for (const o of ownerStays.slice(0, 2)) flagged.push({ tone: 'amber', html: `<b>${esc(unitShort(str(o.unit)))}</b> ${pill('OWNER IN-HOUSE', 'blue')} · ${esc(first(o.guest))} · ${pick('until', 'hasta')} ${esc(str(o.checkOut).slice(5))}`, sub: pick('White-glove — no shortcuts.', 'Servicio impecable — sin atajos.') })
+  for (const o of ownerStays.slice(0, 2)) flagged.push({ tone: 'amber', html: `<b>${esc(unitShort(str(o.unit)))}</b> ${pill('OWNER IN-HOUSE', 'blue')} · ${esc(str(o.owner || o.guest))} · ${pick('until', 'hasta')} ${esc(str(o.checkOut).slice(5))}`, sub: pick('White-glove — no shortcuts.', 'Servicio impecable — sin atajos.') })
 
   // ---- SHAPE OF THE DAY — built from the facts, in clock order ---------------------------------
   const outTimes = departures.map((x: any) => str(x.checkOutTime)).filter(Boolean)
   const firstOut = outTimes.sort()[0] || '10:00 AM'
   const supervisor = names.find(n => /superv/.test(dept(n))) || ''
   const sdList = sameDay.slice().sort((a, b) => a.unit.localeCompare(b.unit)).map(c => `${esc(unitShort(c.unit))} (${esc(first(c.lead || c.assignee))})`)
-  const notOnSched = names.filter(n => onShift.size && !shiftOf(n) && !isTech(n) && !/superv|inspect/.test(dept(n)))
+  const notOnSched = names.filter(n => onShift.size && !shiftOf(n) && !isTech(n) && !/superv|inspect/.test(dept(n)) && !isOffice(n))
   const steps: { at: string; do: string }[] = []
   steps.push({ at: '8:00', do: [
     unassigned.length ? `<b>${pick('Assign', 'Asignar')} ${unassigned.map(c => esc(unitShort(c.unit))).join(', ')}</b>.` : '',

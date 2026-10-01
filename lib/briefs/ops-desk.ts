@@ -13,7 +13,7 @@ import { getStaff } from '@/lib/staffing'
 import { buildReviewQueue, niceDate } from '@/lib/review-queue'
 import { maintData } from '@/lib/maint-brief'
 import { blockedUnits } from '@/lib/blocked-units'
-import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, dayShape, footer, fit, pill, cleanTitle, unitShort, type Line } from './ui'
+import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, dayShape, footer, fit, pill, cleanTitle, unitShort, personName, type Line } from './ui'
 import type { Built } from './field-run'
 
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
@@ -77,9 +77,9 @@ export async function buildOpsDesk(): Promise<Built> {
   // ---- UNBLOCK TODAY (≤7): what only the desk can fix, in the order the day breaks --------------
   const unblock: Line[] = []
   for (const c of unassigned) unblock.push({ tone: 'red', html: `<b>${esc(unitShort(c.unit))}</b> (${esc(mkOf(c) || '—')}) — ${c.sameDayArrival ? 'same-day turn with' : 'clean with'} <b>no one assigned</b>`, sub: idle.length ? `${idle.map(s => first(s.name)).map(esc).join(', ')} ${idle.length === 1 ? 'is' : 'are'} on the clock with nothing assigned — give it to ${idle.length === 1 ? 'them' : 'one of them'}.` : 'Nobody idle on the schedule — reassign or call the on-call.' })
-  for (const x of short.slice(0, 2)) unblock.push({ tone: 'amber', html: `<b>${esc(str(x.label || x.date))} ${esc(str(x.market))}</b> — needs ${x.needed}, ${x.rostered} rostered${x.callIn ? ` · ${x.callIn} on-call would cover it` : ''}`, sub: `Add a shift or call in the on-call today — <a href="${APP_URL}/team" style="color:${A.ink}">Weekly Planner</a>.` })
+  if (short.length) unblock.push({ tone: 'amber', html: `<b>${short.length} short day${short.length === 1 ? '' : 's'} in the next 3</b> — ${short.slice(0, 3).map((x: any) => `${esc(str(x.label || x.date))} ${esc(str(x.market))} needs ${x.needed}, ${x.rostered} rostered`).join(' · ')}${short.length > 3 ? ` +${short.length - 3}` : ''}`, sub: `Add a shift or call in the on-call today — <a href="${APP_URL}/team" style="color:${A.ink}">Weekly Planner</a>.` })
   for (const s of idle.slice(0, 2)) { if (unassigned.length) break; unblock.push({ tone: 'amber', html: `<b>${esc(s.name)}</b> — on shift ${esc(str(s.label))} with nothing on the board`, sub: 'Give them a strip, a vacant-unit deep clean or an inspection.' }) }
-  for (const a of walkIns.slice(0, 3)) unblock.push({ tone: 'amber', html: `<b>${esc(unitShort(str(a.unit)))}</b> — walk-in today (${esc(first(a.guest))}, ${esc(str(a.checkInTime || '4:00 PM'))})`, sub: 'Confirm the unit is guest-ready and the welcome message went out.' })
+  if (walkIns.length) unblock.push({ tone: 'amber', html: `<b>${walkIns.length} walk-in${walkIns.length === 1 ? '' : 's'} today</b> — ${walkIns.slice(0, 4).map(a => `${esc(unitShort(str(a.unit)))} (${esc(first(a.guest))})`).join(', ')}${walkIns.length > 4 ? ` +${walkIns.length - 4}` : ''}`, sub: 'Booked last minute — confirm each unit is guest-ready and the welcome message went out.' })
   const ALREADY = /nobody assigned|booked today|walk-?in|same-?day turn|clean not started/i
   for (const e of exceptions) { if (ALREADY.test(str(e.kind) + ' ' + str(e.detail))) continue; unblock.push({ tone: 'amber', html: `<b>${esc(unitShort(str(e.unit)))}</b> — ${esc(str(e.detail))}`, sub: esc(str(e.action)) }) }
   for (const g of glitches.slice(0, 2)) unblock.push({ tone: 'amber', html: `<b>${esc(unitShort(str(g.unit)))}</b> — open guest issue since ${esc(str(g.created_at).slice(5, 10))}`, sub: esc(str(g.overview).replace(/\s+/g, ' ').slice(0, 120)) })
@@ -98,7 +98,7 @@ export async function buildOpsDesk(): Promise<Built> {
     const sd = cs.filter(c => c.sameDayArrival).length
     const un = cs.filter(c => /UNASSIGNED/.test(c.assignee)).length
     const inN = arrivals.filter(a => mkOfRow(a) === mk).length, outN = departures.filter(a => mkOfRow(a) === mk).length
-    const leads = Array.from(new Set(cs.map(c => first(c.lead || c.assignee)).filter(x => x && !/UNASSIGNED/.test(x))))
+    const leads = Array.from(new Set(cs.map(c => personName(first(c.lead || c.assignee))).filter(x => x && !/UNASSIGNED/.test(x))))
     const link = mk === 'North' ? '' : ` <a href="${APP_URL}/day?market=${mk}" style="color:${A.ink};font-weight:600;text-decoration:none">board →</a>`
     mkLines.push({ tone: un ? 'red' : sd ? 'amber' : 'green', html: `<b>${mk}</b> · ${cs.length} cleans${sd ? ` · <b style="${T.red}">${sd} by 4pm</b>` : ''}${un ? ` · <b style="${T.red}">${un} unassigned</b>` : ''} · ${inN} in / ${outN} out${leads.length ? ` · ${esc(leads.slice(0, 5).join(', '))}${leads.length > 5 ? ` +${leads.length - 5}` : ''}` : mk === 'North' ? ' · vendor crews' : ''}${link}` })
   }

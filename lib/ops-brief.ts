@@ -627,6 +627,15 @@ function blockedCard(runs: BlockedRun[], opts?: { limit?: number; showMarket?: b
   const live = runs.filter(r => r.live)
   const later = runs.filter(r => !r.live)
   const nights = runs.reduce((a, r) => a + r.nights, 0)
+  // STANDING BLOCKS ARE NOT A DECISION (Jon, 2026-10-01: "short and compact, with the priorities").
+  // An owner living in the unit, a building manager using it, a do-not-sell, an offboarding — those
+  // never change morning to morning and were twelve rows of the same list every day. They are
+  // counted in one line. What is listed is the FIXABLE kind: AC, repair, pests, a guest moved out
+  // of a broken unit — each one is work that, finished, puts nights back on the calendar.
+  const STANDING = /do not sell|owner|building manager|offboard|long[- ]term|tenant|request|renovat|lease|personal use|staff/i
+  const whyOf = (r: BlockedRun) => String(r.note || r.reason || '')
+  const fixable = runs.filter(r => !STANDING.test(whyOf(r)))
+  const standing = runs.length - fixable.length
   const dNice = (d: string) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   const row = (r: BlockedRun) => {
     const when = r.openEnded
@@ -647,14 +656,15 @@ function blockedCard(runs: BlockedRun[], opts?: { limit?: number; showMarket?: b
       <td style="${S.td};text-align:right">${r.live ? pillRed('down now') : pillAmber('in ' + r.startsInDays + 'd')}</td>
     </tr>`
   }
-  const shown = live.concat(later).slice(0, limit)
-  const more = runs.length - shown.length
-  return card('Blocked units — off the calendar', runs.length,
-    `<p style="margin:0 0 8px;font-size:12.5px;color:#374151"><b>${live.length}</b> down right now, <b>${later.length}</b> starting soon, <b>${nights}</b> nights off the calendar in the next 30 days.
-      Every one of these is either work that needs finishing or a block that should come off.</p>` +
-    `<table width="100%" cellspacing="0" cellpadding="0"><tr>${['Unit', 'Dates', 'Nights', ''].map(h => `<th style="${S.th}">${h}</th>`).join('')}</tr>${shown.map(row).join('')}</table>` +
+  const shown = fixable.filter(r => r.live).concat(fixable.filter(r => !r.live)).slice(0, Math.min(limit, 8))
+  const more = fixable.length - shown.length
+  const fixNights = fixable.reduce((a, r) => a + r.nights, 0)
+  return card('Blocked units — the ones work can reopen', fixable.length,
+    `<p style="margin:0 0 8px;font-size:12.5px;color:#374151"><b>${runs.length}</b> blocked · <b>${live.length}</b> down now · <b>${nights}</b> nights off the calendar in 30 days.
+      <b>${standing}</b> are standing blocks (owner use, building manager, do-not-sell, offboarding) and are not chased here. The <b>${fixable.length}</b> below are repairs and moves — <b>${fixNights}</b> nights come back when they are finished.</p>` +
+    (shown.length ? `<table width="100%" cellspacing="0" cellpadding="0"><tr>${['Unit', 'Dates', 'Nights', ''].map(h => `<th style="${S.th}">${h}</th>`).join('')}</tr>${shown.map(row).join('')}</table>` : `<p style="font-size:13px;margin:0"><span style="${S.green}">Nothing is waiting on a repair.</span></p>`) +
     (more > 0 ? `<p style="font-size:11px;color:#9ca3af;margin:6px 0 0">+${more} more \u2014 full list on the board</p>` : '') + linkedNote,
-    '#dc2626')
+    fixable.length ? '#dc2626' : '#059669')
 }
 
 // ── THE LIVE BOARD (2026-08-07, Jon: "attach the link for Botanica reservations, same for PT,
@@ -2116,6 +2126,8 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       snap ? String(snap.cleans) + ' · 30d' : '—'),
   ] : [`<tr><td colspan="3" style="${S.td}"><span style="${S.muted}">Labor engine unavailable this run — numbers in the Daily Labor email.</span></td></tr>`])
     .join('')
+  // The 7-vs-30 labor trend table came off (2026-10-01): the tiles above carry the three labor
+  // numbers and the Labor Scorecard carries the movement — one place, one engine.
   const trendCard = card(`Trend · last 7 (${winNice}) vs settled 30`, null,
     `<table width="100%" cellspacing="0" cellpadding="0"><tr><th style="${S.th}"></th><th style="${S.th};text-align:right">Last 7 days</th><th style="${S.th};text-align:right">Settled 30</th></tr>${trendRows}</table>` +
     `<p style="margin:8px 0 0;font-size:11px;color:#9ca3af">Same engine as the Labor board and the Daily Labor email — the settled column is this morning’s true-up snapshot${snap && snap.takenAt ? ' (' + String(snap.takenAt).slice(0, 10) + ')' : ''}.</p>`,
@@ -2126,12 +2138,15 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     `<tr><td style="${S.td}">${label}${note ? `<br><span style="${S.muted};font-size:11.5px">${note}</span>` : ''}</td>
     <td style="${S.td};text-align:right;white-space:nowrap;vertical-align:top">${value}</td></tr>`
   const paceSpan = (p: number | null) => `<span style="${p == null || Math.abs(p) < 0.5 ? S.muted : p > 0 ? S.green : S.red}">${paceWord(p)}</span>`
-  const paceRows = pace && pace.windows.length
-    ? pace.windows.map(w => aRow(`Next ${w.days} days`,
-      `<b>${w.now.nights.toLocaleString('en-US')}</b> nights ${paceSpan(w.nightsPct)} &nbsp;·&nbsp; <b>${money0(w.now.revenue)}</b> ${paceSpan(w.revenuePct)}`,
-      `last year ${w.lastYear.nights.toLocaleString('en-US')} nights · ${money0(w.lastYear.revenue)}` +
-        (w.sameUnits ? ` · same units ${paceWord(w.sameUnits.nightsPct)} nights, ${paceWord(w.sameUnits.revenuePct)} revenue` : ''))).join('')
+  // ONE LINE, NO YEAR-OVER-YEAR (Jon, 2026-10-01). The portfolio has grown, so "▲343% revenue"
+  // against last year measured growth, not performance, and the same-units comparison is the
+  // revenue app's job. What the owner needs each morning is what is on the books, in one line.
+  const w30 = pace && pace.windows.length ? pace.windows[0] : null
+  const paceRows = w30
+    ? aRow(`On the books · next ${w30.days} days`, `<b>${w30.now.nights.toLocaleString('en-US')}</b> nights &nbsp;·&nbsp; <b>${money0(w30.now.revenue)}</b>`,
+      w30.sameUnits ? `same units vs last year: ${paceWord(w30.sameUnits.nightsPct)} nights, ${paceWord(w30.sameUnits.revenuePct)} revenue` : 'net of channel fees · owner stays out')
     : aRow('On the books', '—', 'could not be read this morning')
+  void paceSpan
   const shortAll = staff ? staff.short : []
   const staffValue = !staff ? '—'
     : shortAll.length
@@ -2148,11 +2163,10 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       : `about ${Math.round((pmT ? pmT.minutes : 0) / 60)}h of work${pmT && pmT.unknown ? ` · ${pmT.unknown} never recorded, not counted` : ''}`
   const aheadCard = card('Looking ahead', null,
     `<table width="100%" cellspacing="0" cellpadding="0">` +
-    `<tr><th style="${S.th}">On the books vs same time last year</th><th style="${S.th};text-align:right">Nights · net room revenue</th></tr>` +
     paceRows +
     aRow('Short days · next 14', staffValue, staffNote) +
     aRow('Preventive maintenance · next 30', pmValue, pmNote) +
-    `</table><p style="margin:8px 0 0;font-size:11px;color:#9ca3af">On the books is directional — we do not hold cancellation dates, so this year still counts stays that may cancel; owner and friends &amp; family stays are out; net = accommodation after channel fees. Short days = checkouts on the books × the learned booking pickup, at measured clean minutes, ÷ 414 minutes per person-day, against housekeepers Working or On Call.</p>`,
+    `</table>`,
     '#4338ca')
 
   // ── 4. GUESTS & RISK — one card ─────────────────────────────────────────────────────────────
@@ -2160,10 +2174,10 @@ export async function buildGmBrief(): Promise<OpsBrief> {
     `<b>${esc(m.market)}</b> <b style="${m.avg != null && m.avg < 4.3 ? S.red : m.avg != null && m.avg < 4.6 ? S.amber : S.green}">${m.avg != null ? m.avg.toFixed(2) : '—'}</b><span style="${S.muted}">${m.low ? ' · ' + m.low + ' low' : ''}</span>`).join(' &nbsp;·&nbsp; ')
   const guestRows = `
     ${repBits ? `<tr><td style="${S.td}">Guest score by market <span style="${S.muted}">30d</span></td><td style="${S.td};text-align:right">${repBits}</td></tr>` : ''}
-    <tr><td style="${S.td}">New reviews since the last brief</td><td style="${S.td};text-align:right"><b>${d.newSinceYesterday}</b>${d.freshLow ? ` <span style="${S.red}">· ${d.freshLow} low</span>` : ''}${d.rep.owed ? ` <span style="${S.amber}">· ${d.rep.owed} awaiting a reply</span>` : ''}</td></tr>
+    ${d.freshLow || d.rep.owed ? `<tr><td style="${S.td}">Reviews</td><td style="${S.td};text-align:right">${d.freshLow ? `<span style="${S.red}">${d.freshLow} low since yesterday</span>` : ''}${d.freshLow && d.rep.owed ? ' · ' : ''}${d.rep.owed ? `<span style="${S.amber}">${d.rep.owed} awaiting a reply</span>` : ''}</td></tr>` : ''}
     <tr><td style="${S.td}">Guests sounding unhappy</td><td style="${S.td};text-align:right">${sent.unhappy != null ? `<b>${sent.unhappy}</b> <span style="${S.muted}">of ${sent.scanned || 0} conversations</span>` : '—'}</td></tr>
     <tr><td style="${S.td}">Welcome calls</td><td style="${S.td};text-align:right">${wel.pct != null ? `<b>${pct1(wel.pct)}</b> <span style="${S.muted}">${wel.done || 0} of ${wel.arrivals || 0}</span>` : '—'}${wel.dueNow ? ` <span style="${S.red}">· ${wel.dueNow} due now</span>` : ''}</td></tr>
-    <tr><td style="${S.td}">Guest issues</td><td style="${S.td};text-align:right"><b style="${(gl.open || 0) > 0 ? S.amber : S.green}">${gl.open || 0} open</b> <span style="${S.muted}">${gl.opened || 0} raised / ${gl.closed || 0} closed · 30d</span></td></tr>
+    ${(gl.open || 0) > 0 ? `<tr><td style="${S.td}">Guest issues open</td><td style="${S.td};text-align:right"><b style="${S.amber}">${gl.open}</b></td></tr>` : ''}
     ${ownerStays.length ? `<tr><td style="${S.td}">Owners in-house</td><td style="${S.td};text-align:right"><span style="${S.muted}">${ownerStays.slice(0, 4).map((o: any) => esc(str(o.unit))).join(' · ')}</span></td></tr>` : ''}`
   const guestsCard = card('Guests & risk', null, tbl(guestRows), '#0891b2')
 
@@ -2198,19 +2212,19 @@ export async function buildGmBrief(): Promise<OpsBrief> {
 
   ${eyebrow('Where the business stands')}
   <div style="${S.tilesOuter}">${tileRow(tiles)}</div>
-  ${trendCard}
   ${guestsCard}
 
   <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:11px 18px;margin-bottom:12px">
     <p style="margin:0;font-size:12px;color:#6b7280;line-height:1.7">
-      <b>Labor deep-dive</b> → the Daily Labor email (7:58am) ·
-      <b>Ops detail</b> → Ops Command (maintenance, paperwork, the day's runs) ·
+      <b>Labor</b> → the Labor Scorecard (7:58am) ·
+      <b>The day</b> → Ops Desk (what is blocked, the markets, maintenance) ·
       <b>Everything live</b> → <a href="${APP_URL}/command" style="color:#4338ca">Command Center</a>
     </p>
   </div>
   <p style="${S.foot}">GM Brief · sent each morning by Stay Hospitality · every figure is the shared engine’s.</p>
   </div></body></html>`
 
+  void trendCard
   return {
     date: today, variant: 'GM', subject, html,
     counts: { cleans: d.cleans.length, unassigned: 0, sameDay: tod.sameDayTurns || 0, inspect: d.inspect.length, occupiedTonight: tod.inHouse || 0, activeUnits: d.activeCount },

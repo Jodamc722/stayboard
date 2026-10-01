@@ -10,6 +10,20 @@ export const dynamic = 'force-dynamic'
 
 const KEY = 'ops_brief'
 const DEFAULTS = { enabled: false, fromEmail: 'jon@stay-hospitality.com', miami: [] as string[], broward: [] as string[], full: [] as string[], gm: [] as string[] }
+// THE MAINTENANCE RUN (Jon, 2026-10-01): one email per technician, in that person's language.
+// `techs` maps the technician's name (as Breezeway and Homebase spell it) to addresses + language;
+// `maint` is the combined run (Roberto).
+const cleanTechs = (v: any): Record<string, { to: string[]; lang: 'en' | 'es' }> => {
+  const out: Record<string, { to: string[]; lang: 'en' | 'es' }> = {}
+  if (!v || typeof v !== 'object') return out
+  for (const k of Object.keys(v).slice(0, 20)) {
+    const name = String(k || '').trim().slice(0, 60)
+    if (!name) continue
+    const row = v[k] && typeof v[k] === 'object' ? v[k] : { to: v[k] }
+    out[name] = { to: cleanEmails(row.to), lang: String(row.lang || '').toLowerCase() === 'es' ? 'es' : 'en' }
+  }
+  return out
+}
 
 const cleanEmails = (v: any): string[] =>
   (Array.isArray(v) ? v : []).map(x => String(x || '').trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).slice(0, 30)
@@ -58,6 +72,7 @@ export async function GET() {
       enabled: s.enabled === true,
       fromEmail: typeof s.fromEmail === 'string' && s.fromEmail ? s.fromEmail : DEFAULTS.fromEmail,
       miami: cleanEmails(s.miami), broward: cleanEmails(s.broward), full: cleanEmails(s.full), gm: cleanEmails(s.gm),
+      maint: cleanEmails(s.maint), techs: cleanTechs(s.techs),
       vendors: { botanica: cleanEmails(s.vendors?.botanica), pt: cleanEmails(s.vendors?.pt), north: cleanEmails(s.vendors?.north) },
       trueup, salato,
       lang: { miami: asLang(s.lang?.miami), broward: asLang(s.lang?.broward) },
@@ -76,6 +91,7 @@ export async function PUT(req: NextRequest) {
     enabled: c.enabled === true,
     fromEmail: typeof c.fromEmail === 'string' && /@/.test(c.fromEmail) ? c.fromEmail.trim().toLowerCase() : DEFAULTS.fromEmail,
     miami: cleanEmails(c.miami), broward: cleanEmails(c.broward), full: cleanEmails(c.full), gm: cleanEmails(c.gm),
+    maint: cleanEmails(c.maint), techs: cleanTechs(c.techs),
     vendors: { botanica: cleanEmails(c.vendors?.botanica), pt: cleanEmails(c.vendors?.pt), north: cleanEmails(c.vendors?.north) },
     lang: { miami: asLang(c.lang?.miami), broward: asLang(c.lang?.broward) },
   }
