@@ -31,9 +31,15 @@ export type FdArrival = {
 }
 export type FdPerson = { name: string; calls: number; reached: number; voicemail: number; notices: number }
 export type FdTech = { name: string; tasks: number; withHours: number; minutes: number; billedHours: number; billable: number; missing: { id: string; unit: string; name: string; finishedAt: string | null }[] }
+export type FdPost = { reservationId: string; guest: string; unit: string; building: string; checkOut: string; phone: string; channel: string; nights: number; rating: number | null; done: boolean; outcome: string; by: string; at: string; claimedBy: string; reasons: string[] }
+export type FdCheck = { id: string; title: string; by_time: string | null; owner_role: string | null; link: string | null; done: boolean; late: boolean; in_minutes: number | null; done_by: string | null }
 export type FdData = {
   ok: true; date: string; today: string
   arrivals: FdArrival[]
+  /** Post-checkout calls owed (guests who just left a recovery unit) — today's list, whatever date is shown. */
+  postCalls: FdPost[]
+  /** Today's checklist items for the front desk (owner_role Front desk, or no role). */
+  checklist: FdCheck[]
   summary: { arrivals: number; ready: number; noticesNeeded: number; noticesSent: number; callsNeeded: number; callsDone: number; mustCallOpen: number }
   team: FdPerson[]
   /** Calls today whose outcome came from the phone system (Talkroute) rather than a person's tick. */
@@ -127,8 +133,20 @@ export async function GET(req: NextRequest) {
     const techList = Object.values(techs).sort((a, b) => b.minutes - a.minutes).map(x => ({ ...x, billable: Math.round(x.billable), billedHours: Math.round(x.billedHours * 10) / 10, missing: x.missing.slice(0, 8) }))
     const totals = techList.reduce((a, x) => ({ tasks: a.tasks + x.tasks, withHours: a.withHours + x.withHours, minutes: a.minutes + x.minutes, billedHours: a.billedHours + x.billedHours, billable: a.billable + x.billable, missing: a.missing + (x.tasks - x.withHours) }), { tasks: 0, withHours: 0, minutes: 0, billedHours: 0, billable: 0, missing: 0 })
 
+    const postCalls: FdPost[] = desk.outRows.filter(r => !r.closed).map(r => ({
+      reservationId: r.id, guest: r.guest, unit: r.listing, building: rollupBuilding(r.building, r.listing) || r.building || 'Other', checkOut: r.check_out, phone: str(r.phone), channel: str(r.source), nights: Number(r.nights) || 0,
+      rating: r.recovery ? Number(r.recovery.rating) || null : null, done: !!r.done, outcome: str(r.outcome), by: first(r.calledBy), at: str(r.calledAt), claimedBy: first(r.claimedBy),
+      reasons: (r.reasons || []).map((x: any) => str(x?.label || x?.text || x)).filter(Boolean).slice(0, 3),
+    }))
+    let checklist: FdCheck[] = []
+    try {
+      const { todayList } = await import('@/lib/daily-checklist')
+      const t = await todayList()
+      checklist = t.rows.filter(r => !r.owner_role || /front ?desk|guest|cs/i.test(r.owner_role)).map(r => ({ id: r.id, title: r.title, by_time: r.by_time, owner_role: r.owner_role, link: r.link, done: r.done, late: r.late, in_minutes: r.in_minutes, done_by: r.done_by }))
+    } catch { /* the checklist is optional here */ }
+
     const out: FdData = {
-      ok: true, date, today, arrivals, summary, team, phoneProven,
+      ok: true, date, today, arrivals, postCalls, checklist, summary, team, phoneProven,
       billable: { from: sundayOf(today), to: today, techs: techList, totals, missingDetail: weekBilling.missingDetail || 0 },
       canCall: at('welcome-calls', 'edit'), canSend: at('reservation-emails', 'edit'),
     }
