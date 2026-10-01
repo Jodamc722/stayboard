@@ -40,9 +40,9 @@ export function ScheduleHead() {
         <ScheduleSuggesterButton />
         <Pill tone={tone} title={title} onClick={() => setOpen(o => !o)}>
           <span className="inline-flex items-center gap-1">
-            <Users size={12} /> {k ? 'Crew ' + k.utilisationPct + '%' : 'Capacity'}
-            {k && k.overloaded > 0 ? <span className="opacity-80">· {k.overloaded} over</span> : null}
-            {k && k.unassignedCount > 0 ? <span className="opacity-80">· {k.unassignedCount} unowned</span> : null}
+            <Users size={12} /> {k ? (k.utilisationPct > 100 ? 'Too much work today' : k.utilisationPct >= 85 ? 'Team nearly full today' : 'Team has room today') + ' · ' + k.utilisationPct + '%' : 'Is today doable?'}
+            {k && k.unassignedCount > 0 ? <span className="opacity-80 hidden sm:inline">· {k.unassignedCount} {k.unassignedCount === 1 ? 'clean' : 'cleans'} with nobody on {k.unassignedCount === 1 ? 'it' : 'them'}</span> : null}
+            {k && k.overloaded > 0 ? <span className="opacity-80 hidden sm:inline">· {k.overloaded} past a full day</span> : null}
             <ChevronDown size={12} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
           </span>
         </Pill>

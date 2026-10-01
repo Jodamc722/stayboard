@@ -8,6 +8,7 @@
 import { Shell } from '@/components/Shell'
 import { ScheduleBoard } from '@/components/ScheduleBoard'
 import { ScheduleHead } from './ScheduleHead'
+import { TomorrowCheck } from '@/components/TomorrowCheck'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,6 +16,8 @@ export default function SchedulePage() {
   return (
     <Shell>
       <ScheduleHead />
+      {/* Tomorrow at a glance (Jon, 2026-10-01): the schedule check lives here, not in Slack. */}
+      <TomorrowCheck />
       <ScheduleBoard />
     </Shell>
   )

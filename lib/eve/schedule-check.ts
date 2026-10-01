@@ -68,6 +68,12 @@ export async function runScheduleCheck(opts: { force?: boolean; preview?: boolea
   const date = opts.date && /^\d{4}-\d{2}-\d{2}$/.test(opts.date) ? opts.date : addDays(today, 1)
   const notes: string[] = []
   const st = (await getSetting<any>(STATE_KEY, null)) || { lastFor: null }
+  // IN THE APP, NOT IN SLACK (Jon, 2026-10-01: "I don't want her to send these long scheduler
+  // messages, it's more I want the app to help with scheduling"). The check still runs — the
+  // Scheduler page shows it as "Tomorrow at a glance" (components/TomorrowCheck, /api/schedule/check)
+  // — but nothing is posted unless app_settings eve_schedule_post is true or ?run=1 forces it.
+  const postingOn = opts.force || (await getSetting<any>('eve_schedule_post', false)) === true
+  if (!opts.preview && !postingOn) return { ok: true, date, skipped: 'Slack posting is off — the Scheduler page shows the check', markets: [], posted: 0, notes }
   if (!opts.force && !opts.preview) {
     if (h < CHECK_HOUR || h >= CHECK_HOUR + 3) return { ok: true, date, skipped: 'not the hour', markets: [], posted: 0, notes }
     if (st.lastFor === date) return { ok: true, date, skipped: 'already done for ' + date, markets: [], posted: 0, notes }
