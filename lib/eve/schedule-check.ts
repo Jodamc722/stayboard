@@ -26,6 +26,8 @@ import { isDepartureCleanName } from '@/lib/breezeway'
 import { buildingOf } from '@/lib/segments'
 import { isTaskDone } from '@/lib/task-categories'
 import { standardMinutes } from '@/lib/schedule-suggest'
+import { getOpsPresets } from '@/lib/app-settings'
+import { vendorNameOf } from '@/lib/ops-presets'
 import { getSlackRules, groupForBuilding, channelFor, EVE_CHANNELS, resolveSlackId } from '@/lib/slack-rules'
 import { getDirectory, postToChannel, mention } from '@/lib/slack'
 import { getSetting, setSetting } from '@/lib/app-settings'
@@ -81,10 +83,15 @@ export async function runScheduleCheck(opts: { force?: boolean; preview?: boolea
       .eq('type_department', 'housekeeping').gte('scheduled_date', date).lte('scheduled_date', addDays(date, 3)).order('scheduled_date').order('id').range(a, b), 20),
     db.from('guesty_reservations').select('listing_id,check_in,status').gte('check_in', date).lte('check_in', addDays(date, 3)).limit(2000),
   ])
+  // Vendor buildings (Capri, Lucerne, Amrit → Opal Works; Park Towers → Probol) are the vendor's
+  // schedule to staff, not ours — their cleans are left out of every count here (Jon, 2026-10-01).
+  const vendorList = (await getOpsPresets().catch(() => null))?.vendorBuildings || []
   const meta: Record<string, { unit: string; building: string; market: string; bedrooms: number | null; checkIn: string | null }> = {}
+  let vendorSkipped = 0
   for (const l of (listings || []) as any[]) {
     const unit = str(l.nickname) || str(l.title) || 'Unit'
     const building = buildingOf(l.building, unit) || str(l.building) || unit
+    if (vendorNameOf(vendorList, building) || vendorNameOf(vendorList, unit)) { vendorSkipped++; continue }
     const kb = k.buildings[building]
     const market = kb ? kb.market : (/miami|arya|elser|17 ?west|district|eden|nomad/i.test(building + ' ' + str(l.address_city)) ? 'Miami' : /palm|lake worth|capri|lucerne|amrit|pelican|riviera/i.test(building + ' ' + str(l.address_city)) ? 'North' : 'Broward')
     meta[str(l.id)] = { unit, building, market, bedrooms: l.bedrooms == null ? null : Number(l.bedrooms), checkIn: l.checkIn ? str(l.checkIn) : null }
@@ -125,6 +132,7 @@ export async function runScheduleCheck(opts: { force?: boolean; preview?: boolea
     ;(cleansByDay[day] ||= []).push({ taskId: str(t.id), listingId: lid, unit: m.unit, building: m.building, market: m.market, who: assigneeNames(t), minutes: minutesFor(lid), sameDay, arrivesAt: sameDay ? m.checkIn : null })
   }
   const tomorrow = cleansByDay[date] || []
+  if (vendorSkipped) notes.push(`${vendorSkipped} vendor-cleaned units left out (Opal Works / Probol buildings)`)
   const markets = Array.from(new Set(tomorrow.map(c => c.market))).sort()
   const out: MarketCheck[] = []
   const medianPerDay = (market: string) => { const xs = Object.values(k.people).filter(p => p.market === market).map(p => p.perDayMedian).filter(n => n > 0); xs.sort((a, b) => a - b); return xs.length ? xs[Math.floor(xs.length / 2)] : 3 }

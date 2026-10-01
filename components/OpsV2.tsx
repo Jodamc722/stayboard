@@ -277,7 +277,6 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople, compact, dayLabel, pa
 
   const moves = (
     <div className={compact ? 'px-3 py-2 space-y-1.5' : 'border-t border-line/60 bg-white/60 rounded-b-xl px-3 py-2 space-y-1.5'}>
-      {compact && <p className={'text-[12px] font-bold ' + toneText}>{fmtH(load)} of work on {k.peopleOnShift} {k.peopleOnShift === 1 ? 'person' : 'people'} ≈ {fmtH(k.capacityMinutes)} capacity</p>}
       {sugs.length === 0 && <p className="text-[12px] text-muted py-1">Nothing worth moving.</p>}
       {sugs.map(s => (
         <div key={s.stopId + s.toPerson} className="flex items-center gap-1.5 flex-wrap text-[12px]">
@@ -309,27 +308,47 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople, compact, dayLabel, pa
     </div>
   )
 
-  // COMPACT (2026-09-09): one chip on the day line — "crew 88% · 5 over · 3 moves" — with the
-  // moves in a popover, so the capacity model costs no band of its own above the board.
+  // PLAIN WORDS (Jon, 2026-10-01: "I also never understand this little section, the crew section …
+  // I hate it"). "crew 86% · 9 over · 3 unowned · 6 moves" was four codes. The chip now says the
+  // verdict in English, and the panel explains every number before it lists the moves: how much
+  // work, how many people, how many hours they have, who is past their day, which cleans have
+  // nobody on them, and what Eve would move.
   if (compact) {
-    // The panel opens toward whichever side has room — the chip can sit at the far left (no cleans
-    // on the board) or wrap onto a new line on a phone, and a right-anchored 480px panel would then
-    // hang off the left edge of the page.
     const chipTone = over ? 'border-rose-300 bg-rose-100 text-rose-800' : warm ? 'border-amber-300 bg-amber-100 text-amber-900' : 'border-emerald-300 bg-emerald-100 text-emerald-900'
+    const verdict = over ? 'Too much work for the team today' : warm ? 'The team is nearly full today' : 'The team has room today'
+    const overPeople = (cap.people || []).filter(p => p.verdict === 'overloaded').sort((a, b) => b.utilisationPct - a.utilisationPct)
+    const lightPeople = (cap.people || []).filter(p => p.verdict === 'underloaded').sort((a, b) => a.utilisationPct - b.utilisationPct)
+    const firstName = (n: string) => n.split(' ')[0]
+    const bits: string[] = []
+    if (k.unassignedCount > 0) bits.push(k.unassignedCount + (k.unassignedCount === 1 ? ' clean has nobody on it' : ' cleans have nobody on them'))
+    if (k.overloaded > 0) bits.push(k.overloaded + (k.overloaded === 1 ? ' person has' : ' people have') + ' more than a day\'s work')
     return (
       <span className="relative inline-flex">
-        <button onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setAlignRight(r.left + 480 > window.innerWidth); setOpen(o => !o) }} aria-expanded={open} title={fmtH(load) + ' of work on ' + k.peopleOnShift + ' people ≈ ' + fmtH(k.capacityMinutes) + ' capacity'}
+        <button onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setAlignRight(r.left + 520 > window.innerWidth); setOpen(o => !o) }} aria-expanded={open}
+          title={fmtH(load) + ' of work for ' + k.peopleOnShift + ' people with ' + fmtH(k.capacityMinutes) + ' between them (' + k.utilisationPct + '% full)'}
           className={'inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[11px] font-bold whitespace-nowrap ' + chipTone}>
-          <Users size={11} /> crew {k.utilisationPct}%
-          {k.overloaded > 0 && <span className="opacity-80">· {k.overloaded} over</span>}
-          {k.unassignedCount > 0 && <span className="opacity-80">· {k.unassignedCount} unowned</span>}
-          <span className="opacity-80">· {sugs.length ? sugs.length + (sugs.length === 1 ? ' move' : ' moves') : 'balanced'}</span>
+          <Users size={11} /> {verdict} · {k.utilisationPct}% full
+          {bits.length > 0 && <span className="opacity-80 hidden sm:inline">· {bits.join(' · ')}</span>}
           <ChevronDown size={11} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
         </button>
         {open && (
           <>
             <span className="fixed inset-0 z-20" onClick={() => setOpen(false)} aria-hidden />
-            <span className={'absolute top-full mt-1 z-30 w-[min(480px,calc(100vw-2rem))] rounded-xl border border-line bg-white shadow-xl text-left ' + (alignRight ? 'right-0' : 'left-0')}>{moves}</span>
+            <span className={'absolute top-full mt-1 z-30 w-[min(520px,calc(100vw-2rem))] rounded-xl border border-line bg-white shadow-xl text-left ' + (alignRight ? 'right-0' : 'left-0')}>
+              <div className="px-3 pt-2.5 pb-2 border-b border-line/60 space-y-1">
+                <p className={'text-[13px] font-bold ' + toneText}>{verdict}.</p>
+                <p className="text-[12px] text-ink leading-snug">
+                  The work on the board adds up to <b>{fmtH(k.workMinutes)}</b>{k.travelMinutes > 0 ? <> plus about <b>{fmtH(k.travelMinutes)}</b> of driving</> : null} — {k.cleans} clean{k.cleans === 1 ? '' : 's'}{k.otherTasks ? ` and ${k.otherTasks} other task${k.otherTasks === 1 ? '' : 's'}` : ''}, priced at how long each unit really takes.
+                  {' '}<b>{k.peopleOnShift}</b> {k.peopleOnShift === 1 ? 'person is' : 'people are'} on shift with <b>{fmtH(k.capacityMinutes)}</b> between them, so the day is <b>{k.utilisationPct}% full</b>.
+                </p>
+                {k.unassignedCount > 0 && <p className="text-[12px] text-amber-900 leading-snug"><b>{k.unassignedCount} clean{k.unassignedCount === 1 ? '' : 's'}</b> {k.unassignedCount === 1 ? 'has' : 'have'} nobody assigned in Breezeway yet.</p>}
+                {overPeople.length > 0 && <p className="text-[12px] text-rose-800 leading-snug"><b>Past a full day:</b> {overPeople.slice(0, 8).map(p => `${firstName(p.person)} (${p.utilisationPct}%)`).join(', ')}{overPeople.length > 8 ? ` +${overPeople.length - 8}` : ''}.</p>}
+                {lightPeople.length > 0 && <p className="text-[12px] text-emerald-800 leading-snug"><b>Has room:</b> {lightPeople.slice(0, 8).map(p => `${firstName(p.person)} (${p.utilisationPct}%)`).join(', ')}{lightPeople.length > 8 ? ` +${lightPeople.length - 8}` : ''}.</p>}
+                <p className="text-[11px] text-muted leading-snug">100% means every hour of every shift is spoken for. A person is "past a full day" when the units on their list, at their real pace, run longer than their shift.</p>
+              </div>
+              <p className="px-3 pt-2 text-[11.5px] font-bold text-ink">{sugs.length ? 'What would help' : 'Nothing worth moving'}</p>
+              {moves}
+            </span>
           </>
         )}
       </span>

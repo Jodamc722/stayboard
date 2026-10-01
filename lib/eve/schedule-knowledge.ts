@@ -28,6 +28,8 @@ import { isDepartureCleanName } from '@/lib/breezeway'
 import { buildingOf } from '@/lib/segments'
 import { personKey } from '@/lib/person-name'
 import { standardMinutes } from '@/lib/schedule-suggest'
+import { getOpsPresets } from '@/lib/app-settings'
+import { vendorNameOf } from '@/lib/ops-presets'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { assigneeNames } from './dossiers'
 
@@ -39,6 +41,8 @@ export type UnitKnowledge = { listingId: string; unit: string; building: string;
 export type PersonKnowledge = {
   name: string; market: string | null; cleans: number; daysWorked: number
   perDayMedian: number; perDayMax: number; minPerClean: number | null
+  /** Set when most of this person's cleans are in a vendor's buildings — they are the vendor's crew, not ours. */
+  vendor: string | null
   /** median minutes by bedroom bucket: studio / 1 / 2 / 3+ */
   minByBeds: Record<string, number>
   /** building → share of this person's cleans (0..1), biggest first */
@@ -48,7 +52,7 @@ export type PersonKnowledge = {
   usualStart: string | null
   finishBy4Rate: number | null
 }
-export type BuildingKnowledge = { building: string; market: string; cleans: number; medianMin: number | null; usual: { name: string; share: number }[]; byWeekday: Record<number, string[]> }
+export type BuildingKnowledge = { building: string; market: string; cleans: number; medianMin: number | null; usual: { name: string; share: number }[]; byWeekday: Record<number, string[]>; /** The vendor that cleans it (Jon, 2026-10-01: Capri/Lucerne/Amrit → Opal Works, Park Towers → Probol); null = in-house. */ vendor: string | null }
 export type ScheduleKnowledge = {
   asOf: string; from: string; to: string; days: number; cleansRead: number; timedCleans: number
   units: Record<string, UnitKnowledge>
@@ -97,11 +101,16 @@ export async function learnSchedule(days = 90): Promise<ScheduleKnowledge> {
       .eq('type_department', 'housekeeping').gte('scheduled_date', fromYmd).lte('scheduled_date', toYmd)
       .order('scheduled_date').order('id').range(a, b), 40),
   ])
-  const meta: Record<string, { unit: string; building: string; market: string; bedrooms: number | null }> = {}
+  // WHO CLEANS WHAT (Jon, 2026-10-01): "Opal does all cleans [at Capri, Lucerne, Amrit] … PT is always
+  // done by Anthony's team, Probol … All other cleans are done in-house." The vendor registry in ops
+  // presets is that rule; a vendor building's people are the vendor's crew and stay out of our team's
+  // numbers, and the building itself is remembered as the vendor's.
+  const vendorList = (await getOpsPresets().catch(() => null))?.vendorBuildings || []
+  const meta: Record<string, { unit: string; building: string; market: string; bedrooms: number | null; vendor: string | null }> = {}
   for (const l of (listings || []) as any[]) {
     const unit = str(l.nickname) || str(l.title) || 'Unit'
     const building = buildingOf(l.building, unit) || str(l.building) || unit
-    meta[str(l.id)] = { unit, building, market: marketOf(building, str(l.address_city)), bedrooms: l.bedrooms == null ? null : Number(l.bedrooms) }
+    meta[str(l.id)] = { unit, building, market: marketOf(building, str(l.address_city)), bedrooms: l.bedrooms == null ? null : Number(l.bedrooms), vendor: vendorNameOf(vendorList, building) || vendorNameOf(vendorList, unit) }
   }
 
   type Done = { listingId: string; day: string; who: string[]; minutes: number | null; startH: number | null; endH: number | null }
@@ -151,7 +160,11 @@ export async function learnSchedule(days = 90): Promise<ScheduleKnowledge> {
     const ends = rows.map(r => r.endH).filter((x): x is number => x != null)
     const mk: Record<string, number> = {}
     for (const r of rows) { const m = meta[r.listingId]?.market; if (m) mk[m] = (mk[m] || 0) + 1 }
+    const vend: Record<string, number> = {}
+    for (const r of rows) { const v = meta[r.listingId]?.vendor; if (v) vend[v] = (vend[v] || 0) + 1 }
+    const topVendor = Object.entries(vend).sort((a, b) => b[1] - a[1])[0]
     people[k] = {
+      vendor: topVendor && topVendor[1] > rows.length / 2 ? topVendor[0] : null,
       name, market: Object.entries(mk).sort((a, b) => b[1] - a[1])[0]?.[0] || null, cleans: rows.length, daysWorked: counts.length,
       perDayMedian: median(counts), perDayMax: Math.max(...counts), minPerClean: mins.length >= 3 ? median(mins) : null,
       minByBeds: Object.fromEntries(Object.entries(byBeds).filter(([, v]) => v.length >= 3).map(([b, v]) => [b, median(v)])),
@@ -177,6 +190,7 @@ export async function learnSchedule(days = 90): Promise<ScheduleKnowledge> {
     const mins = rows.map(r => r.minutes).filter((x): x is number => x != null)
     const market = rows.map(r => meta[r.listingId]?.market).filter(Boolean)[0] || 'Broward'
     buildings[b] = {
+      vendor: rows.map(r => meta[r.listingId]?.vendor).find(Boolean) || null,
       building: b, market, cleans: rows.length, medianMin: mins.length >= 3 ? median(mins) : null,
       usual: Object.entries(who).sort((a, c) => c[1] - a[1]).slice(0, 4).map(([name, n]) => ({ name, share: Math.round((n / rows.length) * 100) / 100 })),
       byWeekday: Object.fromEntries(Object.entries(byDow).map(([d, m]) => [Number(d), Object.entries(m).sort((a, c) => c[1] - a[1]).slice(0, 2).map(x => x[0])])),
@@ -209,12 +223,15 @@ export async function learnSchedule(days = 90): Promise<ScheduleKnowledge> {
 
   // ── the facts, in sentences ──
   const facts: string[] = []
-  for (const p of Object.values(people).sort((a, b) => b.cleans - a.cleans).slice(0, 25)) {
+  const vendorPeople = Object.values(people).filter(p => p.vendor)
+  for (const v of Array.from(new Set(vendorPeople.map(p => p.vendor)))) facts.push(`${v} is a vendor crew, not our team: ${vendorPeople.filter(p => p.vendor === v).map(p => p.name).join(', ')} clean ${Object.values(buildings).filter(b => b.vendor === v).map(b => b.building).join(', ') || 'their buildings'} for ${v}.`)
+  for (const p of Object.values(people).filter(p => !p.vendor).sort((a, b) => b.cleans - a.cleans).slice(0, 25)) {
     const top = Object.entries(p.buildings).slice(0, 2).map(([b, s]) => `${b} (${Math.round(s * 100)}%)`).join(' and ')
     const dows = Object.entries(p.weekdays).sort((a, b) => Number(b[1]) - Number(a[1])).filter(([, s]) => Number(s) >= 0.12).map(([d]) => DOW[Number(d)]).join(', ')
     facts.push(`${p.name} usually cleans ${top}; ${p.perDayMedian} clean${p.perDayMedian === 1 ? '' : 's'} a day (up to ${p.perDayMax})${p.minPerClean ? `, about ${p.minPerClean} min a clean` : ''}${p.usualStart ? `, starting around ${p.usualStart}` : ''}${p.finishBy4Rate != null ? `, done by 4pm ${Math.round(p.finishBy4Rate * 100)}% of days` : ''}; works ${dows || 'most days'}. (${p.cleans} cleans in ${p.daysWorked} days)`)
   }
   for (const b of Object.values(buildings).sort((a, c) => c.cleans - a.cleans).slice(0, 20)) {
+    if (b.vendor) { facts.push(`${b.building} is cleaned by ${b.vendor} (vendor), not in-house${b.medianMin ? `; a departure clean there takes about ${b.medianMin} min` : ''}. (${b.cleans} cleans in ${days} days)`); continue }
     facts.push(`${b.building} is usually cleaned by ${b.usual.slice(0, 3).map(u => `${u.name} (${Math.round(u.share * 100)}%)`).join(', ')}${b.medianMin ? `; a departure clean there takes about ${b.medianMin} min` : ''}. (${b.cleans} cleans in ${days} days)`)
   }
   for (const m of Object.keys(demand)) {
