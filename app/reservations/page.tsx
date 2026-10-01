@@ -7,6 +7,7 @@ import { DateFilter } from '@/components/DateFilter'
 import { customFieldNameMap, filledCustomFields } from '@/lib/custom-fields'
 import { ExternalLink } from 'lucide-react'
 import { LeanHead, Pill, Tag, LeanList, LeanRow, LeanEmpty, IconBtn } from '@/components/lean'
+import { UnpaidStrip } from '@/components/UnpaidStrip'
 
 export const dynamic = 'force-dynamic'
 
@@ -206,7 +207,6 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
         <Pill title="Arrivals in the next 7 days">{arrivals7Count} next 7d</Pill>
         <Pill title="Booked revenue on arrivals in the next 7 days">{fmtMoney(revenue7, currency)} 7d</Pill>
         {sync?.last_error && <Pill tone="amber" title="The last Guesty sync reported an issue — figures may be stale">Sync issue</Pill>}
-        <Link href="/reservations/unpaid" className="text-[11.5px] font-semibold text-rose-700 hover:underline ml-1">Unpaid balances →</Link>
         {near.truncated && <Pill tone="amber" title="Could not read every stay for this week — counts and tabs may be short. Refresh to try again.">Partial read</Pill>}
       </LeanHead>
 
@@ -214,6 +214,8 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
         <LeanEmpty>No reservations synced yet.</LeanEmpty>
       ) : (
         <>
+          {/* UNPAID — the money still owed on direct / VRBO / Google stays, by how soon it bites (Jon, 2026-10-01). */}
+          <UnpaidStrip />
           <div className="flex items-center gap-2 flex-wrap mb-3">
             <div className="inline-flex rounded-xl border border-line overflow-hidden text-[12.5px] max-w-full overflow-x-auto">
               {TABS.map(t => (

@@ -42,9 +42,10 @@ const AREA: Record<Area, { label: string; short: string; Icon: any; href: string
   ops: { label: 'Operations', short: 'Ops', Icon: ListChecks, href: '/plan', hrefLabel: 'Today board', blurb: 'Departure cleans and pending units, today’s inspections, and the team’s hours' },
   guests: { label: 'Guests', short: 'Guests', Icon: MessageSquare, href: '/messages', hrefLabel: 'Inbox', blurb: 'Welcome calls, guests waiting or unhappy, and open guest issues' },
   reviews: { label: 'Reviews', short: 'Reviews', Icon: Star, href: '/reviews', hrefLabel: 'Reviews', blurb: 'Reviews waiting on a public reply — low scores first' },
-  admin: { label: 'Admin', short: 'Admin', Icon: FileText, href: '/buildings', hrefLabel: 'Properties', blurb: 'What needs your decision, the checklist, your tasks and today’s recommended listing work' },
+  admin: { label: 'Admin', short: 'Admin', Icon: FileText, href: '/buildings', hrefLabel: 'Properties', blurb: 'What needs your decision, unpaid balances to collect, the checklist, your tasks and today’s recommended listing work' },
 }
-const SUB_ORDER = ['Cleans', 'Inspections', 'Tasks', 'Team', 'Calls', 'Inbox', 'Glitches', 'Queue', 'Needs you', 'Checklist', 'Yours', 'Fixes']
+const SUB_ORDER = ['Cleans', 'Inspections', 'Tasks', 'Team', 'Calls', 'Inbox', 'Glitches', 'Queue', 'Needs you', 'Unpaid', 'Checklist', 'Yours', 'Fixes']
+const UNPAID_URL = '/api/unpaid'   // today → +7: in house, arriving today, next seven days (direct / VRBO / Google only)
 const NOW_MIN = 65     // a row needs this score to make the Now list
 const NOW_MAX = 6
 const LANE_ROWS = 5
@@ -445,6 +446,44 @@ function KpiTiles({ kpis, focus, onFocus }: { kpis: Kpi[]; focus: Area | null; o
   )
 }
 
+// ── unpaid balances (Jon, 2026-10-01: "update the today board … the items that need to be managed") ──
+// A direct / VRBO / Google guest who still owes money: inside the unit or arriving today it is a Now
+// item; the next seven days sit in the Admin lane. One button marks the guest contacted; the board
+// holds the rest (promised / disputed / waived, notes).
+export type UnpaidHubRow = {
+  id: string; unit: string; guest: string; phone: string | null; checkIn: string; checkOut: string; source: string
+  total: number; paid: number; balance: number; daysUntil: number; bucket: 'in_house' | 'today' | 'week' | 'later'
+  guestyUrl: string; tracking: { status: string; notes: { at: string; by: string; text: string }[]; updatedBy: string | null }
+}
+const UNPAID_CH: Record<string, string> = { vrbo: 'VRBO', homeaway: 'VRBO', manual: 'Direct', direct: 'Direct', 'be-api': 'Website', website: 'Website', google: 'Google' }
+const UNPAID_ST: Record<string, { label: string; tone: Tone }> = { contacted: { label: 'contacted', tone: 'sky' }, promised: { label: 'promised', tone: 'amber' }, disputed: { label: 'disputed', tone: 'rose' }, waived: { label: 'waived', tone: 'violet' } }
+export function UnpaidRow({ r, canEdit, onChanged, lane }: { r: UnpaidHubRow; canEdit: boolean; onChanged: () => void; lane?: string }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [st, setSt] = useState(r.tracking.status)
+  const mark = async () => {
+    setBusy(true); setErr('')
+    try { await post(UNPAID_URL, { reservationId: r.id, status: 'contacted' }); setSt('contacted'); onChanged() } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  const when = r.bucket === 'in_house' ? 'in the unit · out ' + r.checkOut.slice(5).replace('-', '/') : r.bucket === 'today' ? 'arrives today' : 'arrives in ' + r.daysUntil + 'd · ' + r.checkIn.slice(5).replace('-', '/')
+  const s = UNPAID_ST[st]
+  return (
+    <Row lane={lane} dot={r.bucket === 'in_house' || r.bucket === 'today' ? 'rose' : 'amber'} title={r.unit + ' — ' + r.guest}
+      tags={<>
+        <Tag tone="rose" title={'Owed · paid ' + money(r.paid) + ' of ' + money(r.total)}>{money(r.balance)} owed</Tag>
+        <Tag tone="slate" title={'Booked on ' + (r.source || '—') + ' — we collect'}>{UNPAID_CH[String(r.source || '').toLowerCase()] || r.source || '—'}</Tag>
+        {s && <Tag tone={s.tone} title={'Follow-up' + (r.tracking.updatedBy ? ' · ' + r.tracking.updatedBy : '')}>{s.label}</Tag>}
+      </>}
+      meta={when + (r.paid > 0 ? '' : ' · nothing paid')} err={err}
+      actions={<>
+        {r.phone && <a href={'tel:' + r.phone} className={GHOST} title={'Call ' + r.phone}><Phone size={12} /> Call</a>}
+        {canEdit && !s && <button onClick={mark} disabled={busy} className={DARK} title="Marks the guest contacted on the unpaid board (Guesty is not written)">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Contacted</button>}
+        <Link href="/reservations/unpaid" prefetch={false} className={GHOST} title="The unpaid board — statuses and notes"><ExternalLink size={12} /> Board</Link>
+      </>} />
+  )
+}
+
 // ── a lane ──────────────────────────────────────────────────────────────────────────────────────
 function Lane({ area, items, focused, empty, right }: { area: Area; items: HubItem[]; focused: boolean; empty: string; right?: ReactNode }) {
   const A = AREA[area]
@@ -492,7 +531,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   onCleared: (key: string) => void; onChanged: () => void
 }) {
   const acc = useAccess()
-  const can = { assign: acc.atLeast('schedule', 'edit'), plan: acc.atLeast('plan', 'edit'), calls: acc.atLeast('welcome-calls', 'edit'), glitches: acc.atLeast('glitches', 'edit'), reviews: acc.atLeast('reviews', 'edit') }
+  const can = { assign: acc.atLeast('schedule', 'edit'), plan: acc.atLeast('plan', 'edit'), calls: acc.atLeast('welcome-calls', 'edit'), glitches: acc.atLeast('glitches', 'edit'), reviews: acc.atLeast('reviews', 'edit'), unpaid: acc.atLeast('reservations', 'edit') }
   const [focus, setFocus] = useState<Area | null>(null)
   useEffect(() => { if (focus) document.getElementById('lane-' + focus)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }, [focus])
 
@@ -502,6 +541,8 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   const mineQ = useCachedFetch<Mine>(MINE_URL, { ttl: 60_000 })
   const fixQ = useCachedFetch<{ actions?: FixAction[] }>('/api/listing-health?slim=1', { ttl: 10 * 60_000 })
   const weekQ = useCachedFetch<{ tiles?: { key: string; value: string; sub: string }[] }>(SCOREBOARD_URL, { ttl: 5 * 60_000 })
+  const unpaidQ = useCachedFetch<{ rows?: UnpaidHubRow[] }>(UNPAID_URL, { ttl: 5 * 60_000 })
+  const reloadUnpaid = () => { invalidateCache(UNPAID_URL); unpaidQ.refresh() }
   const [goneReviews, setGoneReviews] = useState<Record<string, true>>({})
   const reloadReviews = () => { invalidateCache(REVIEWS_URL); reviewsQ.refresh() }
   const reloadCk = () => { invalidateCache(CK_URL); ckQ.refresh() }
@@ -544,6 +585,9 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   const mine = mineQ.data?.groups
   const mineRows: { it: MineItem; late: boolean; score: number }[] = mine ? [...mine.overdue.map(x => ({ it: x, late: true, score: 48 })), ...mine.today.map(x => ({ it: x, late: false, score: 35 }))] : []
   const channel = live.filter(i => i.kind === 'channel')
+  const unpaid = (unpaidQ.data?.rows || []).filter(r => r.tracking.status !== 'waived' && r.bucket !== 'later')
+  const unpaidOwed = unpaid.reduce((a, r) => a + r.balance, 0)
+  const unpaidHot = unpaid.filter(r => r.bucket !== 'week')
   const seenFix: Record<string, true> = {}
   const fixes = (fixQ.data?.actions || []).filter(a => (seenFix[a.listingId] ? false : (seenFix[a.listingId] = true))).slice(0, 6)
   const NEEDS: Record<string, { tag: string; tone: Tone; hover: string; clear: 'done' | 'skipped'; clearTitle: string; score: number }> = {
@@ -590,6 +634,10 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
     const m = NEEDS[i.kind]; if (!m) continue
     items.push({ key: i.key, area: 'admin', sub: 'Needs you', score: m.score, node: <NeedsRow i={i} tag={m.tag} tone={m.tone} hover={m.hover} clear={m.clear} clearTitle={m.clearTitle} onCleared={onCleared} /> })
   }
+  for (const r of unpaid) {
+    const base = r.bucket === 'in_house' ? 84 : r.bucket === 'today' ? 82 : 58
+    items.push({ key: 'unpaid:' + r.id, area: 'admin', sub: 'Unpaid', score: base + valueBonus(r.balance) - (r.tracking.status === 'open' ? 0 : 12), node: <UnpaidRow r={r} canEdit={can.unpaid} onChanged={reloadUnpaid} /> })
+  }
   for (const r of ckRows) items.push({ key: 'ck:' + r.id, area: 'admin', sub: 'Checklist', score: r.late ? 50 : 25, node: <ChecklistRow r={r} canTick={!!ck?.canTick} onTicked={reloadCk} /> })
   for (const m of mineRows) items.push({ key: 'mine:' + m.it.id, area: 'admin', sub: 'Yours', score: m.score, node: <MineRow it={m.it} late={m.late} onChanged={reloadMine} /> })
   for (const i of channel) items.push({ key: i.key, area: 'admin', sub: 'Fixes', score: 66, node: <NeedsRow i={i} tag="channel" tone="rose" hover="Unbookable on that channel until someone reconnects it" clear="done" clearTitle="Reconnected" onCleared={onCleared} /> })
@@ -609,6 +657,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
     { key: 'glitches', area: 'guests', label: 'Glitches', value: String(glitches.length), sub: [t.glitches.overdue ? t.glitches.overdue + ' overdue' : 'none overdue', wkGl && /to close/.test(wkGl.sub) ? 'wk ' + wkGl.sub.split(' · ').filter(s => /to close/.test(s))[0] : ''].filter(Boolean).join(' · '), tone: t.glitches.overdue ? 'rose' : glitches.length ? 'amber' : 'emerald', title: 'Open guest issues, how many are past due, and the month’s median time to close' },
     { key: 'reviews', area: 'reviews', label: 'Reviews', value: String(reviews.length), sub: [lowReviews.length ? lowReviews.length + ' at 3★ or under' : reviews.length ? 'to answer' : 'all answered', avg30 ? avg30.avg + '★ last 30d' : ''].filter(Boolean).join(' · '), tone: lowReviews.length ? 'rose' : reviews.length ? 'amber' : 'emerald', title: 'Reviews waiting on a public reply, and the average score of the last 30 days' },
     { key: 'admin', area: 'admin', label: 'Admin', value: String(approvals.length + claims.length + links.length), sub: [approvals.length + claims.length + links.length ? 'need your decision' : 'nothing to decide', ck?.progress?.total ? 'checklist ' + ck.progress.pct + '%' : '', fixes.length ? fixes.length + ' fixes' : ''].filter(Boolean).join(' · '), tone: approvals.length || links.length ? 'amber' : ck?.progress?.late ? 'amber' : 'emerald', title: 'Decisions waiting on you, today’s checklist, and the listing fixes recommended for today' },
+    { key: 'unpaid', area: 'admin', label: 'Unpaid', value: unpaid.length ? money(unpaidOwed) : '0', sub: unpaid.length ? unpaid.length + (unpaid.length === 1 ? ' stay' : ' stays') + (unpaidHot.length ? ' · ' + unpaidHot.length + ' to collect today' : ' · next 7 days') : 'direct / VRBO / Google all paid', tone: unpaidHot.length ? 'rose' : unpaid.length ? 'amber' : 'emerald', title: 'Money still owed by direct, VRBO and Google guests in house, arriving today or in the next 7 days — every other channel pays us itself' },
   ]
 
   const lanes: Area[] = ['ops', 'guests', 'reviews', 'admin']

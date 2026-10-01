@@ -54,9 +54,17 @@ const PRESETS: { key: string; label: string; days: number | null }[] = [
 
 export function UnpaidBoard() {
   const today = useMemo(() => ymd(new Date()), [])
+  // ?range=today|7|14|30 opens the board on that window (the Reservations strip links in by bucket).
   const [preset, setPreset] = useState('7')
   const [from, setFrom] = useState(today)
   const [to, setTo] = useState(plus(today, 7))
+  useEffect(() => {
+    try {
+      const r = new URLSearchParams(window.location.search).get('range') || ''
+      const p = PRESETS.find(x => x.key === r && x.days != null)
+      if (p && p.key !== '7') { setPreset(p.key); setTo(plus(today, p.days as number)) }
+    } catch {}
+  }, [today])
   const [data, setData] = useState<Data | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
