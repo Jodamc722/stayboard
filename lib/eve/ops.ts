@@ -561,11 +561,32 @@ export const OPS_TOOLS: EveTool[] = [
       return { from, to, scope: input?.market || 'whole portfolio', truncated: (tasksPage.truncated || resvRes.truncated) || undefined, days, note: 'A departure clean is only counted when the task NAME says departure/turnover — a deep clean or oven clean is not a turnover. A clean counts on the day the work LANDED, and a move shows on both days: the old one says it left, the new one says where it came from.' }
     },
   },
+  {
+    name: 'schedule_knowledge',
+    description: 'What you have LEARNED about how we schedule, from 90 days of finished departure cleans and the Homebase roster (lib/eve/schedule-knowledge): per person — buildings they usually clean, cleans a day (median and max), minutes a clean, usual start, done-by-4pm rate, weekdays worked; per building — who usually cleans it (and by weekday), how long a clean there actually takes; per unit — actual minutes vs the standard; the week — departure cleans a day by weekday per market against people rostered. Use it for "who usually cleans X", "how long does Y take", "how many can Z do", "what does a Friday look like in Broward", and before suggesting who should take a clean. Param about: a person, building, unit or market name, or "week"; empty = the headline facts.',
+    input_schema: obj({ about: S.str }),
+    run: async (input) => {
+      const { scheduleKnowledge, personIn } = await import('./schedule-knowledge')
+      const k = await scheduleKnowledge()
+      const q = String(input?.about || '').trim()
+      const head = { learnedFrom: `${k.cleansRead} finished departure cleans, ${k.timedCleans} with real minutes, ${k.from} → ${k.to}`, asOf: k.asOf }
+      if (!q) return { ...head, facts: k.facts.slice(0, 30) }
+      if (/^week/i.test(q)) return { ...head, week: k.week, note: 'demand = average departure cleans on that weekday over the window; supply = people rostered Working on that weekday over the next two weeks' }
+      const p = personIn(k, q); if (p) return { ...head, person: p }
+      const b = Object.values(k.buildings).find(x => x.building.toLowerCase() === q.toLowerCase()) || Object.values(k.buildings).find(x => x.building.toLowerCase().includes(q.toLowerCase()))
+      if (b) return { ...head, building: b, units: Object.values(k.units).filter(u => u.building === b.building).map(u => ({ unit: u.unit, n: u.n, medianMin: u.medianMin, p75Min: u.p75Min, standardMin: u.standardMin, usual: u.usual })).slice(0, 60) }
+      const u = Object.values(k.units).find(x => x.unit.toLowerCase() === q.toLowerCase()) || Object.values(k.units).find(x => x.unit.toLowerCase().includes(q.toLowerCase()))
+      if (u) return { ...head, unit: u }
+      const mk = Object.keys(k.week.demand).find(m => m.toLowerCase() === q.toLowerCase())
+      if (mk) return { ...head, market: mk, demand: k.week.demand[mk], supply: k.week.supply[mk] || null, people: Object.values(k.people).filter(x => x.market === mk).map(x => ({ name: x.name, perDayMedian: x.perDayMedian, perDayMax: x.perDayMax, minPerClean: x.minPerClean, buildings: Object.keys(x.buildings).slice(0, 3) })) }
+      return { ...head, error: `Nothing learned about "${q}" — try a person, building, unit or market name, or "week".` }
+    },
+  },
 ]
 
 export const OPS_DOMAIN: EveDomain = {
   key: 'ops',
   label: 'Operations',
-  blurb: 'Breezeway work, cleans running behind, per-unit work history, the glitch board, the claims desk, inspections, the turnover schedule, and what went well (team_wins).',
+  blurb: 'Breezeway work, cleans running behind, per-unit work history, the glitch board, the claims desk, inspections, the turnover schedule, what you have learned about how we schedule (schedule_knowledge), and what went well (team_wins).',
   tools: OPS_TOOLS,
 }

@@ -89,6 +89,13 @@ export async function POST(req: NextRequest) {
     // THE SHADOW SCHEDULER (Jon, 2026-09-28): evenings, score today's projection and build
     // tomorrow's. Never assigns. Own try.
     shadow = await runSchedulerShadow().catch((e: any) => ({ ok: false, notes: [String(e?.message || e).slice(0, 200)] }))
+    // THE SCHEDULE MANAGER'S EVENING PASS (Jon, 2026-10-01): at 5pm, tomorrow by market — unowned
+    // cleans, people off but assigned, people over their own usual day, same-day turns sitting late,
+    // the day short, the next three days. Own try, own receipt. lib/eve/schedule-check.ts.
+    const sc0 = Date.now()
+    const { runScheduleCheck } = await import('@/lib/eve/schedule-check')
+    const scheduleCheck = await runScheduleCheck().catch((e: any) => ({ ok: false, date: '', markets: [], posted: 0, notes: [String(e?.message || e).slice(0, 200)] }))
+    if (scheduleCheck && !(scheduleCheck as any).skipped) recordRun({ name: 'schedule-check', ok: scheduleCheck.ok !== false, itemCount: scheduleCheck.posted, detail: { date: scheduleCheck.date, posted: scheduleCheck.posted, notes: scheduleCheck.notes, markets: (scheduleCheck.markets || []).map((m: any) => ({ market: m.market, cleans: m.cleans, unassigned: m.unassigned.length, off: m.offButAssigned.length, over: m.overloaded.length, shortMin: m.shortMin })) }, error: scheduleCheck.ok === false ? (scheduleCheck.notes || []).join('; ') : null, ms: Date.now() - sc0 })
     if (shadow && !shadow.skipped) recordRun({ name: 'scheduler-shadow', ok: shadow.ok !== false, itemCount: (shadow.scored ? 1 : 0) + (shadow.projected ? 1 : 0), detail: shadow, error: shadow.ok === false ? (shadow.notes || []).join('; ') : null, ms: Date.now() - w0 })
     if (opsDesk && !opsDesk.skipped) recordRun({ name: 'ops-desk', ok: opsDesk.ok !== false, itemCount: (opsDesk.proposedAssign || 0) + (opsDesk.plan ? 1 : 0) + (opsDesk.recap ? 1 : 0), detail: opsDesk, error: opsDesk.error || null, ms: Date.now() - w0 })
     if (watch && !watch.skipped) recordRun({ name: 'on-watch', ok: watch.ok !== false, itemCount: Object.values(watch.posted || {}).reduce((a: number, b: any) => a + Number(b || 0), 0) + (watch.resolved || 0), detail: watch, error: watch.error || null, ms: Date.now() - w0 })

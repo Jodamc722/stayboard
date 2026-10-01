@@ -48,8 +48,8 @@ export const DESKS: Desk[] = [
   {
     key: 'watch', label: 'Watch', lane: 'monitoring',
     blurb: 'The one monitor: open loops in Slack, on-watch gaps, the day board digests, guest asks, no-show risk, the CCS handoff.',
-    receipts: ['slack-watch', 'on-watch', 'ops-desk', 'ccs-desk', 'scheduler-shadow', 'eve-deferred'], aiTasks: ['slack-watch', 'ops-focus'],
-    sources: ['cron:slack-watch', 'cron:on-watch', 'cron:ops-desk', 'cron:pm-recurrence', 'watch:', 'cron:scheduler-shadow', 'desk', 'slack-watch'],
+    receipts: ['slack-watch', 'on-watch', 'ops-desk', 'ccs-desk', 'scheduler-shadow', 'eve-deferred', 'schedule-check'], aiTasks: ['slack-watch', 'ops-focus'],
+    sources: ['cron:slack-watch', 'cron:on-watch', 'cron:ops-desk', 'cron:pm-recurrence', 'watch:', 'cron:scheduler-shadow', 'cron:schedule-check', 'desk', 'slack-watch'],
     hands: 'Posts nudges and digests via the slack_post rung, once per subject per day across every watcher (lib/eve/said.ts). Never a fact it cannot link.',
   },
   {
