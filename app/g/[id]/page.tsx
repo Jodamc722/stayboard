@@ -3,6 +3,7 @@
 import { notFound } from 'next/navigation'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { GuidebookView } from '@/components/GuidebookView'
+import { GuideMobile } from '@/components/GuideMobile'
 import { signPlacePhotoToken } from '@/lib/place-photo-token'
 
 export const dynamic = 'force-dynamic'
@@ -32,11 +33,22 @@ export async function generateMetadata({ params }: { params: { id: string } }) {
   return { ...base, title, description, openGraph: { title, description, type: 'website', images: img ? [{ url: img }] : undefined }, twitter: { card: img ? 'summary_large_image' : 'summary', title, description, images: img ? [img] : undefined } }
 }
 
-export default async function PublicGuidebookPage({ params }: { params: { id: string } }) {
+export default async function PublicGuidebookPage({ params, searchParams }: { params: { id: string }; searchParams?: { book?: string } }) {
   const id = String(params.id || '')
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound()
   const { data } = await supabaseAdmin().from('guidebooks').select('*').eq('id', id).limit(1)
   const gb = (data || [])[0]
   if (!gb) notFound()
-  return <GuidebookView initial={gb} guest photoToken={signPlacePhotoToken(String(gb.id))} />
+  // PHONE vs BOOK (Jon, 2026-10-02: "guidebook sharable links … optimized for phones, make it
+  // great"). Under 768px the guest gets the phone guide (GuideMobile); wider screens and print get
+  // the book. ?book=1 forces the book on a phone — the footer link for someone who wants to print.
+  const forceBook = String(searchParams?.book || '') === '1'
+  const book = <GuidebookView initial={gb} guest photoToken={signPlacePhotoToken(String(gb.id))} />
+  if (forceBook) return book
+  return (
+    <>
+      <div className="md:hidden print:hidden"><GuideMobile gb={gb} /></div>
+      <div className="hidden md:block print:block">{book}</div>
+    </>
+  )
 }
