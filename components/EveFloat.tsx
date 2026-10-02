@@ -173,8 +173,9 @@ export function EveFloat() {
           bar AND the home indicator, which is where it used to sit. */}
       {!open && (
         <button onClick={() => setOpen(true)} aria-label="Ask Eve" title="Ask Eve"
-          className="print:hidden fixed above-bar lg:bottom-5 right-4 z-40 w-14 h-14 lg:w-12 lg:h-12 rounded-full bg-brand-600 text-white shadow-lg hover:bg-brand-700 grid place-items-center transition-transform active:scale-95">
-          <Sparkles size={22} />
+          className="print:hidden fixed above-bar lg:bottom-5 right-4 z-40 h-11 pl-3 pr-3.5 rounded-full bg-ink text-white shadow-lg hover:opacity-90 inline-flex items-center gap-2 transition-transform active:scale-95">
+          <span aria-hidden className="w-2 h-2 rounded-full bg-brand-400 shadow-[0_0_0_3px_rgb(var(--c-brand-400)/0.3)]" />
+          <span className="text-[13px] font-semibold tracking-wide">Eve</span>
         </button>
       )}
 

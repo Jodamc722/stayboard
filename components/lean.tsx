@@ -40,10 +40,16 @@ export function Pill({ tone = 'slate', title, onClick, children }: { tone?: Tone
 }
 
 /** One-line page header: title left, pills (and any control) right. */
-export function LeanHead({ title, icon, children }: { title: ReactNode; icon?: ReactNode; children?: ReactNode }) {
+export function LeanHead({ title, icon, sub, children }: { title: ReactNode; icon?: ReactNode; sub?: ReactNode; children?: ReactNode }) {
+  // THE ONE PAGE HEADER (2026-10-02): title (display face in Lighthouse, via globals.css), an
+  // optional line of facts under it, and the pills / one primary action on the right. 45 pages
+  // share it, so a change here is a change everywhere.
   return (
-    <header className="flex items-center justify-between gap-3 flex-wrap mb-3">
-      <h1 className="text-2xl font-bold text-ink tracking-tight inline-flex items-center gap-2">{icon}{title}</h1>
+    <header className="lh-head flex items-end justify-between gap-3 flex-wrap mb-4">
+      <div className="min-w-0">
+        <h1 className="text-2xl font-bold text-ink tracking-tight inline-flex items-center gap-2">{icon}{title}</h1>
+        {sub ? <p className="text-[13px] text-muted mt-0.5">{sub}</p> : null}
+      </div>
       {children ? <div className="flex items-center gap-1.5 flex-wrap">{children}</div> : null}
     </header>
   )
@@ -54,11 +60,11 @@ export function LeanTabs<K extends string>({ tabs, value, onChange, right }: {
   tabs: { key: K; label: string; n?: number | null }[]; value: K; onChange: (k: K) => void; right?: ReactNode
 }) {
   return (
-    <div className="flex items-center gap-2 flex-wrap mb-3">
-      <div className="inline-flex rounded-xl border border-line overflow-hidden text-[12.5px] max-w-full overflow-x-auto">
+    <div className="lh-tabs flex items-center gap-2 flex-wrap mb-3">
+      <div className="lh-tabs-strip inline-flex rounded-xl border border-line overflow-hidden text-[12.5px] max-w-full overflow-x-auto">
         {tabs.map(t => (
-          <button key={t.key} onClick={() => onChange(t.key)}
-            className={`px-2.5 sm:px-3 py-1.5 font-semibold border-l border-line first:border-l-0 whitespace-nowrap ${value === t.key ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>
+          <button key={t.key} onClick={() => onChange(t.key)} aria-pressed={value === t.key}
+            className={`lh-tab px-2.5 sm:px-3 py-1.5 font-semibold border-l border-line first:border-l-0 whitespace-nowrap ${value === t.key ? 'lh-tab-on bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>
             {t.label}{t.n ? <span className="ml-1 opacity-70 tabular-nums">{t.n}</span> : null}
           </button>
         ))}

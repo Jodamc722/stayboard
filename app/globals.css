@@ -32,6 +32,58 @@
   --r-xl: 0.5rem;
   --r-2xl: 0.625rem;
   --shadow-soft: 0 1px 2px 0 rgb(21 22 26 / 0.04);
+  /* status families — calmer and warmer than Tailwind's; violet (Eve) becomes brass */
+  --s-rose-50: 252 241 239;
+  --s-rose-100: 248 225 221;
+  --s-rose-200: 240 196 189;
+  --s-rose-300: 227 158 147;
+  --s-rose-400: 216 92 79;
+  --s-rose-500: 200 57 43;
+  --s-rose-600: 178 50 31;
+  --s-rose-700: 143 42 28;
+  --s-rose-800: 112 35 26;
+  --s-amber-50: 251 243 228;
+  --s-amber-100: 246 230 200;
+  --s-amber-200: 238 210 160;
+  --s-amber-300: 226 184 110;
+  --s-amber-400: 207 142 46;
+  --s-amber-500: 181 100 15;
+  --s-amber-600: 157 86 13;
+  --s-amber-700: 125 69 16;
+  --s-amber-800: 99 56 18;
+  --s-emerald-50: 234 245 238;
+  --s-emerald-100: 214 236 223;
+  --s-emerald-200: 179 219 194;
+  --s-emerald-300: 134 194 158;
+  --s-emerald-400: 63 156 104;
+  --s-emerald-500: 30 122 74;
+  --s-emerald-600: 26 106 65;
+  --s-emerald-700: 23 90 56;
+  --s-emerald-800: 18 69 44;
+  --s-sky-50: 237 242 250;
+  --s-sky-100: 220 231 246;
+  --s-sky-200: 191 210 238;
+  --s-sky-300: 149 179 223;
+  --s-sky-400: 75 125 196;
+  --s-sky-500: 42 93 168;
+  --s-sky-600: 36 79 143;
+  --s-sky-700: 31 66 120;
+  --s-sky-800: 25 52 94;
+  --s-slate-50: 247 247 245;
+  --s-slate-100: 240 239 235;
+  --s-slate-200: 230 228 222;
+  --s-slate-300: 212 209 201;
+  --s-slate-400: 163 160 154;
+  --s-slate-500: 133 131 125;
+  --s-slate-600: 91 91 87;
+  --s-slate-700: 69 69 63;
+  --s-slate-800: 46 46 42;
+  --s-slate-900: 28 28 25;
+  --s-violet-50: 245 240 230;
+  --s-violet-100: 235 224 201;
+  --s-violet-200: 220 200 160;
+  --s-violet-600: 140 109 58;
+  --s-violet-700: 112 86 46;
 }
 :root[data-theme="legacy"] {
   --c-app: 247 247 248;
@@ -54,11 +106,68 @@
   --r-xl: 0.75rem;
   --r-2xl: 1rem;
   --shadow-soft: 0 1px 2px 0 rgb(11 18 32 / 0.04), 0 1px 3px 0 rgb(11 18 32 / 0.04);
+  --s-rose-50: 255 241 242;
+  --s-rose-100: 255 228 230;
+  --s-rose-200: 254 205 211;
+  --s-rose-300: 253 164 175;
+  --s-rose-400: 251 113 133;
+  --s-rose-500: 244 63 94;
+  --s-rose-600: 225 29 72;
+  --s-rose-700: 190 18 60;
+  --s-rose-800: 159 18 57;
+  --s-amber-50: 255 251 235;
+  --s-amber-100: 254 243 199;
+  --s-amber-200: 253 230 138;
+  --s-amber-300: 252 211 77;
+  --s-amber-400: 251 191 36;
+  --s-amber-500: 245 158 11;
+  --s-amber-600: 217 119 6;
+  --s-amber-700: 180 83 9;
+  --s-amber-800: 146 64 14;
+  --s-emerald-50: 236 253 245;
+  --s-emerald-100: 209 250 229;
+  --s-emerald-200: 167 243 208;
+  --s-emerald-300: 110 231 183;
+  --s-emerald-400: 52 211 153;
+  --s-emerald-500: 16 185 129;
+  --s-emerald-600: 5 150 105;
+  --s-emerald-700: 4 120 87;
+  --s-emerald-800: 6 95 70;
+  --s-sky-50: 240 249 255;
+  --s-sky-100: 224 242 254;
+  --s-sky-200: 186 230 253;
+  --s-sky-300: 125 211 252;
+  --s-sky-400: 56 189 248;
+  --s-sky-500: 14 165 233;
+  --s-sky-600: 2 132 199;
+  --s-sky-700: 3 105 161;
+  --s-sky-800: 7 89 133;
+  --s-slate-50: 248 250 252;
+  --s-slate-100: 241 245 249;
+  --s-slate-200: 226 232 240;
+  --s-slate-300: 203 213 225;
+  --s-slate-400: 148 163 184;
+  --s-slate-500: 100 116 139;
+  --s-slate-600: 71 85 105;
+  --s-slate-700: 51 65 85;
+  --s-slate-800: 30 41 59;
+  --s-slate-900: 15 23 42;
+  --s-violet-50: 245 243 255;
+  --s-violet-100: 237 233 254;
+  --s-violet-200: 221 214 254;
+  --s-violet-600: 124 58 237;
+  --s-violet-700: 109 40 217;
 }
 
 html, body { font-family: var(--font-ui); font-variant-numeric: tabular-nums; }
 /* Page titles and the big figures take the display face only in Lighthouse; Legacy keeps Inter. */
 .lh-display { font-family: var(--font-display); font-weight: 400; letter-spacing: -0.01em; }
+/* TABS AS TEXT TOGGLES in Lighthouse (the Anatomy board: one line, underline marks the active one,
+   never a filled segmented control). Legacy keeps the segmented strip these classes were born with. */
+:root:not([data-theme="legacy"]) .lh-tabs-strip { border: 0; border-radius: 0; gap: 1.1rem; overflow: visible; background: transparent; }
+:root:not([data-theme="legacy"]) .lh-tab { border: 0 !important; background: transparent !important; padding: 0.35rem 0 !important; color: rgb(var(--c-muted)); font-weight: 500; border-bottom: 1.5px solid transparent !important; border-radius: 0; }
+:root:not([data-theme="legacy"]) .lh-tab:hover { color: rgb(var(--c-ink)); }
+:root:not([data-theme="legacy"]) .lh-tab-on { color: rgb(var(--c-ink)) !important; font-weight: 600; border-bottom-color: rgb(var(--c-brand-400)) !important; }
 /* EVERY PAGE TITLE, THE SAME WAY (Jon, 2026-10-02: "same style and format… as all tabs"). The
    133 pages set their own h1 classes; in Lighthouse the title is the display face regardless. */
 :root:not([data-theme="legacy"]) main h1 { font-family: var(--font-display); font-weight: 400; letter-spacing: -0.01em; font-size: 1.85rem; line-height: 1.15; }

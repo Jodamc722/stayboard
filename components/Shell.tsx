@@ -606,7 +606,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
               {navBody(() => setDrawerOpen(false), true)}
             </nav>
             <div className="border-t border-line p-3 flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-white text-xs font-semibold flex items-center justify-center flex-shrink-0">
+              <div className="w-8 h-8 rounded-full bg-ink text-white text-xs font-semibold flex items-center justify-center flex-shrink-0">
                 {initials}
               </div>
               <div className="flex-1 min-w-0">
