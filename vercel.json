@@ -9,6 +9,10 @@
       "schedule": "2-57/5 * * * *"
     },
     {
+      "path": "/api/cron/eve-reminders",
+      "schedule": "0-55/5 * * * *"
+    },
+    {
       "path": "/api/cron/guest-comms",
       "schedule": "10,40 * * * *"
     },

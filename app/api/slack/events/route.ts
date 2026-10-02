@@ -294,18 +294,10 @@ async function handle(body: any, ev: any, isRetry: boolean): Promise<NextRespons
   // Needs the Slack app subscribed to message.groups / message.channels; without that nothing arrives
   // here and tagging still works exactly as before.
   let viaReply = false
-  // '@Eve yes' under one of her asks counts the same as a plain yes (lib/eve/slack-approvals.ts).
-  if (ev.type === 'app_mention' && ev.thread_ts && String(ev.thread_ts) !== String(ev.ts) && ev.user) {
-    try { const { handleApprovalReply } = await import('@/lib/eve/slack-approvals'); if (await handleApprovalReply(ev)) return ok() } catch { /* normal path */ }
-  }
   if (ev.type === 'message') {
     if (ev.subtype || !ev.thread_ts || String(ev.thread_ts) === String(ev.ts) || !ev.user) return ok()
     const me0 = await selfId()
-    if (!me0 || String(ev.user) === me0) return ok()
-    // A YES OR NO UNDER ONE OF HER ASKS (Jon, 2026-10-01): a proposal or a spend posted into the
-    // approvals room is decided by a reply in its thread — before anything else reads the message.
-    try { const { handleApprovalReply } = await import('@/lib/eve/slack-approvals'); if (await handleApprovalReply(ev)) return ok() } catch { /* fall through to the normal path */ }
-    if (String(ev.text || '').includes(`<@${me0}>`)) return ok()
+    if (!me0 || String(ev.user) === me0 || String(ev.text || '').includes(`<@${me0}>`)) return ok()
     if (!(await isEveRoom(String(ev.channel || '')))) return ok()
     const t = await slackGet('conversations.replies', { channel: String(ev.channel), ts: String(ev.thread_ts), limit: '50' }).catch(() => null as any)
     const msgs: any[] = (t && t.ok && t.messages) || []
@@ -590,7 +582,7 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
       onlyBuildings: grant.tier === 'vendor' && (grant.vendorRoom || grant.buildings.length) ? grant.buildings : undefined,
       // The room and the asker, for the door-code tool: in the two Customer Service rooms anyone may ask,
       // and whatever is released goes to THIS Slack user by DM, never into the room (lib/eve/door-code-rooms.ts).
-      slack: { channel, user, name: await personName(user), how: access ? who.how : null },
+      slack: { channel, user, name: await personName(user), how: access ? who.how : null, thread: threadTs },
       surfaceNote: [
         `This is ${where}. Whatever that channel is for is the likely subject — if it is a building's channel, assume the question is about that building unless told otherwise.`,
         history,

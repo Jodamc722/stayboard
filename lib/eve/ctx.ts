@@ -50,7 +50,7 @@ export type EveCtx = {
    * tool uses it to decide by ROOM and to deliver a code to the asker by DM, never into the room
    * (lib/eve/door-code-rooms.ts, Jon 2026-09-29).
    */
-  slack?: { channel: string; user: string; name?: string | null; how?: string | null }
+  slack?: { channel: string; user: string; name?: string | null; how?: string | null; /** the thread the ask lives in, so a reminder lands back where it was asked */ thread?: string | null }
 }
 
 export type ListingMeta = { name: string; status: string; building: string; rollup: string }
