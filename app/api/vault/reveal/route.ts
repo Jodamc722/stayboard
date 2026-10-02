@@ -10,7 +10,7 @@ import { getAccess, isSuperadmin } from '@/lib/access'
 import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
-  ITEMS, accessFor, decryptSecret, logAccess, vaultKeyReady, checkVaultCode, codeFrom, codeEntered,
+  ITEMS, accessFor, decryptSecret, logAccess, vaultKeyReady, checkVaultEntry, vaultAccessFor, codeFrom, codeEntered,
   unlockValid, UNLOCK_COOKIE,
 } from '@/lib/vault'
 
@@ -49,9 +49,10 @@ export async function POST(req: NextRequest) {
     // THE CODE, or an open window (Jon, 2026-08-25: "give us 1 min, still have to click reveal,
     // that how we can track"). Either way this is a deliberate per-item click and it gets its own
     // audit row — the window changes how often you type, never what is recorded.
-    const open = unlockValid(req.cookies.get(UNLOCK_COOKIE)?.value, me)
+    const _va = await vaultAccessFor(me, isSuperadmin(access.email))
+    const open = !!_va && _va.enabled && unlockValid(req.cookies.get(UNLOCK_COOKIE)?.value, me, _va.version)
     if (!open) {
-      const gate = await checkVaultCode({ code: codeFrom(req, b), email: me, ip: ipOf(req), itemId: id, purpose: 'reveal' })
+      const gate = await checkVaultEntry({ code: codeFrom(req, b), email: me, ip: ipOf(req), itemId: id, purpose: 'reveal' , isSuperadmin: isSuperadmin(access.email), access: _va })
       if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error, codeUnset: !!gate.codeUnset, wrongCode: !!gate.wrongCode, locked: true }, { status: gate.status })
     }
 

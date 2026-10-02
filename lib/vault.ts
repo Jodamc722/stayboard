@@ -9,6 +9,7 @@
 import crypto from 'crypto'
 import { supabaseAdmin } from './supabase-admin'
 import { currentVaultCode, vaultCodeVerdict } from './shareAuth'
+import { passcodeMatches, storablePasscode } from './passcode-gate'
 
 export const VAULT_BUCKET = 'vault'
 export const ITEMS = 'vault_items'
@@ -16,6 +17,7 @@ export const GRANTS = 'vault_grants'
 export const LOG = 'vault_access_log'
 export const COLLECTIONS = 'vault_collections'
 export const COLLECTION_MEMBERS = 'vault_collection_members'
+export const ACCESS = 'vault_access'
 
 export type VaultKind = 'secret' | 'file' | 'note'
 export type VaultLevel = 'view' | 'manage'
@@ -132,6 +134,55 @@ export async function collectionsFor(email: string, accessRole: string | null, i
   return out
 }
 
+// ── PER-PERSON ACCESS (Jon, 2026-10-02) ────────────────────────────────────────────────────────
+// Nobody opens the vault without a vault_access row that is switched on — not by role, not by being
+// an admin. The workspace owner is the one implied grant. The row carries the person's own PIN, the
+// vaults they may open (null = all), their level, and `version`, which a revoke or a PIN reset bumps
+// so any unlock window they hold dies at once.
+export type VaultAccess = {
+  email: string; enabled: boolean; level: VaultLevel; collections: string[] | null
+  hasPin: boolean; version: number; grantedBy: string | null; grantedAt: string | null
+  revokedAt: string | null; revokedBy: string | null; note: string | null
+  lastUnlockAt: string | null; unlockCount: number
+}
+const shapeAccess = (r: any): VaultAccess => ({
+  email: lower(r.email), enabled: r.enabled !== false, level: r.level === 'manage' ? 'manage' : 'view',
+  collections: Array.isArray(r.collections) ? r.collections.map(String) : null,
+  hasPin: !!r.pin_hash, version: Number(r.version) || 1, grantedBy: r.granted_by || null, grantedAt: r.granted_at || null,
+  revokedAt: r.revoked_at || null, revokedBy: r.revoked_by || null, note: r.note || null,
+  lastUnlockAt: r.last_unlock_at || null, unlockCount: Number(r.unlock_count) || 0,
+})
+/** The person's access row, or null when they have none (which means: no vault). The owner always has one. */
+export async function vaultAccessFor(email: string, isSuperadmin: boolean): Promise<VaultAccess | null> {
+  const me = lower(email)
+  if (!me) return null
+  try {
+    const { data, error } = await supabaseAdmin().from(ACCESS).select('*').eq('email', me).maybeSingle()
+    if (error && !isMissingTable(error.message)) throw error
+    if (data) { const a = shapeAccess(data); if (isSuperadmin) { a.enabled = true; a.level = 'manage'; a.collections = null } return a }
+  } catch { /* fall through */ }
+  if (isSuperadmin) return { email: me, enabled: true, level: 'manage', collections: null, hasPin: false, version: 1, grantedBy: null, grantedAt: null, revokedAt: null, revokedBy: null, note: null, lastUnlockAt: null, unlockCount: 0 }
+  return null
+}
+/** Every row, for the admin's Access tab. */
+export async function allVaultAccess(): Promise<VaultAccess[]> {
+  const { data, error } = await supabaseAdmin().from(ACCESS).select('*').order('email')
+  if (error) { if (isMissingTable(error.message)) return []; throw error }
+  return ((data || []) as any[]).map(shapeAccess)
+}
+export async function setVaultPin(email: string, pin: string, by: string): Promise<void> {
+  const me = lower(email)
+  const { data } = await supabaseAdmin().from(ACCESS).select('version').eq('email', me).maybeSingle()
+  const version = (Number((data as any)?.version) || 1) + 1
+  await supabaseAdmin().from(ACCESS).upsert({ email: me, pin_hash: storablePasscode(pin), pin_set_at: new Date().toISOString(), version, updated_at: new Date().toISOString(), granted_by: data ? undefined : by }, { onConflict: 'email' })
+}
+/** Does this item sit in a vault the person may open? (null collections = every vault.) */
+export function inAllowedVault(a: VaultAccess | null, collectionId: string | null | undefined): boolean {
+  if (!a || !a.enabled) return false
+  if (!a.collections) return true
+  return !!collectionId && a.collections.includes(String(collectionId))
+}
+
 /**
  * Can this person touch this item, and how much?
  *
@@ -147,12 +198,16 @@ export async function accessFor(
   item: { id: string; owner_email?: string | null; collection_id?: string | null },
   email: string,
   isSuperadmin: boolean,
-  opts?: { accessRole?: string | null; collections?: Map<string, VaultLevel> },
+  opts?: { accessRole?: string | null; collections?: Map<string, VaultLevel>; access?: VaultAccess | null },
 ): Promise<VaultLevel | null> {
   const me = lower(email)
   if (!me) return null
   if (isSuperadmin) return 'manage'
-  if (lower(item.owner_email) === me) return 'manage'
+  // THE DOOR (2026-10-02): no access row, or a revoked one, and nothing else matters.
+  const a = opts?.access !== undefined ? opts.access : await vaultAccessFor(me, false)
+  if (!a || !a.enabled) return null
+  const cap = (l: VaultLevel | null): VaultLevel | null => (l === 'manage' && a.level !== 'manage' ? 'view' : l)
+  if (lower(item.owner_email) === me) return cap('manage')
 
   let best: VaultLevel | null = null
   const { data } = await supabaseAdmin().from(GRANTS)
@@ -162,13 +217,15 @@ export async function accessFor(
   else if (lvl === 'view') best = 'view'
 
   const cid = item.collection_id ? String(item.collection_id) : ''
-  if (cid && best !== 'manage') {
+  if (cid && best !== 'manage' && inAllowedVault(a, cid)) {
     const map = opts?.collections || await collectionsFor(me, opts?.accessRole ?? null, false)
     const via = map.get(cid)
     if (via === 'manage') best = 'manage'
     else if (via === 'view' && !best) best = 'view'
+    // "All vaults" on the person's row opens every vault at their level, membership or not.
+    if (!best && a.collections === null) best = 'view'
   }
-  return best
+  return cap(best)
 }
 
 /** Item ids this person has been granted, for filtering the list. */
@@ -292,6 +349,44 @@ export async function checkVaultCode(opts: {
   return { ok: true }
 }
 
+/**
+ * THE ENTRY CHECK (2026-10-02): the person's own PIN opens the vault; the shared vault code is
+ * accepted from the workspace owner only (a fallback until every person has a PIN). Same lockouts,
+ * same log lines as the code check, so the trail reads the same.
+ */
+export async function checkVaultEntry(opts: {
+  code: string; email: string; ip?: string | null; itemId?: string | null; purpose: string; isSuperadmin: boolean; access: VaultAccess | null
+}): Promise<CodeCheck> {
+  const me = lower(opts.email)
+  if (!opts.access || !opts.access.enabled) {
+    await logAccess({ itemId: opts.itemId, email: me, action: 'denied', detail: 'no vault access (' + opts.purpose + ')', ip: opts.ip })
+    return { ok: false, status: 403, error: 'You do not have vault access. Ask an admin to switch it on for you.' }
+  }
+  if (opts.access.hasPin) {
+    try {
+      const since = new Date(Date.now() - WRONG_WINDOW_MIN * 60000).toISOString()
+      const { count } = await supabaseAdmin().from(LOG).select('id', { count: 'exact', head: true })
+        .eq('email', me).eq('action', 'denied').like('detail', WRONG + '%').not('detail', 'like', LOCKED + '%').gte('created_at', since)
+      if ((count || 0) >= WRONG_LIMIT) {
+        await logAccess({ itemId: opts.itemId, email: me, action: 'denied', detail: LOCKED + ' (' + opts.purpose + ')', ip: opts.ip })
+        return { ok: false, status: 429, wrongCode: true, error: 'Too many wrong PINs. Try again in ' + WRONG_WINDOW_MIN + ' minutes.' }
+      }
+    } catch { /* counting failures never block a correct PIN */ }
+    const { data } = await supabaseAdmin().from(ACCESS).select('pin_hash').eq('email', me).maybeSingle()
+    const hash = String((data as any)?.pin_hash || '')
+    if (hash && opts.code && passcodeMatches(opts.code, hash)) return { ok: true }
+    if (!opts.isSuperadmin) {
+      await logAccess({ itemId: opts.itemId, email: me, action: 'denied', detail: WRONG + ' (' + opts.purpose + ')', ip: opts.ip })
+      return { ok: false, status: 403, wrongCode: true, error: opts.code ? 'Wrong PIN.' : 'Enter your vault PIN.' }
+    }
+  } else if (!opts.isSuperadmin) {
+    await logAccess({ itemId: opts.itemId, email: me, action: 'denied', detail: 'no PIN set (' + opts.purpose + ')', ip: opts.ip })
+    return { ok: false, status: 403, error: 'You have vault access but no PIN yet — ask an admin to set one for you.' }
+  }
+  // The owner: their PIN if they have one (handled above), else the shared vault code.
+  return checkVaultCode({ code: opts.code, email: me, ip: opts.ip, itemId: opts.itemId, purpose: opts.purpose })
+}
+
 /** The detail string every successful code-gated action carries, so the log reads the same everywhere. */
 export function codeEntered(extra?: string | null): string {
   return 'code entered' + (extra ? ' · ' + String(extra).slice(0, 160) : '')
@@ -326,32 +421,34 @@ export async function vaultWideLog(days = 30, limit = 500): Promise<any[]> {
 // with VAULT_KEY, so it cannot be forged, cannot be lent to a colleague, and dies on its own.
 // A client-side countdown would be decoration.
 export const UNLOCK_COOKIE = 'vault_open'
-export const UNLOCK_SECONDS = 60
+export const UNLOCK_SECONDS = 600   // ten minutes (was 60 — 'more accessible, still secure': every reveal is still its own logged click)
 
 function unlockSecret(): Buffer {
   // Reuses VAULT_KEY rather than adding a second secret to lose: same blast radius, one thing to set.
   return crypto.createHash('sha256').update('vault-unlock:' + (process.env.VAULT_KEY || ''), 'utf8').digest()
 }
 
-export function mintUnlock(email: string, seconds = UNLOCK_SECONDS): { token: string; expires: number } {
+export function mintUnlock(email: string, seconds = UNLOCK_SECONDS, version = 1): { token: string; expires: number } {
   const expires = Date.now() + seconds * 1000
-  const body = lower(email) + '.' + expires
+  // The person's access VERSION rides in the token: a revoke or a PIN reset bumps it, and every
+  // window minted before that is dead from the next request.
+  const body = lower(email) + '.' + expires + '.v' + (Number(version) || 1)
   const sig = crypto.createHmac('sha256', unlockSecret()).update(body).digest('base64url')
   return { token: body + '.' + sig, expires }
 }
 
 /** Constant-time check that this cookie is this person's, and still alive. */
-export function unlockValid(token: string | undefined | null, email: string): boolean {
+export function unlockValid(token: string | undefined | null, email: string, version = 1): boolean {
   const raw = String(token || '')
   const cut = raw.lastIndexOf('.')
   if (cut < 0) return false
   const body = raw.slice(0, cut)
   const sig = raw.slice(cut + 1)
-  const dot = body.lastIndexOf('.')
-  if (dot < 0) return false
-  const who = body.slice(0, dot)
-  const expires = Number(body.slice(dot + 1))
+  const m = /^(.*)\.(\d+)\.v(\d+)$/.exec(body)
+  if (!m) return false
+  const who = m[1], expires = Number(m[2]), v = Number(m[3])
   if (who !== lower(email)) return false            // somebody else's window is not yours
+  if (v !== (Number(version) || 1)) return false     // revoked or re-pinned since this was minted
   if (!Number.isFinite(expires) || expires < Date.now()) return false
   const want = crypto.createHmac('sha256', unlockSecret()).update(body).digest('base64url')
   const a = Buffer.from(sig), b = Buffer.from(want)

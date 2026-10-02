@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAccess, isSuperadmin } from '@/lib/access'
 import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { ITEMS, logAccess, checkVaultCode, codeFrom, codeEntered, vaultKeyReady } from '@/lib/vault'
+import { ITEMS, logAccess, checkVaultEntry, vaultAccessFor, codeFrom, codeEntered, vaultKeyReady } from '@/lib/vault'
 import { listSnapshots, readSnapshot, itemsToCsv, snapshotVault } from '@/lib/vault-backup'
 import { pageRows } from '@/lib/db-page'
 
@@ -48,7 +48,8 @@ export async function POST(req: NextRequest) {
   }
 
   if (!isSuperadmin(access.email)) return NextResponse.json({ ok: false, error: 'Only the Super Admin can download the vault in clear.' }, { status: 403 })
-  const gate = await checkVaultCode({ code: codeFrom(req, b), email: me, ip: ipOf(req), purpose: 'export' })
+  const _va = await vaultAccessFor(me, isSuperadmin(access.email))
+  const gate = await checkVaultEntry({ code: codeFrom(req, b), email: me, ip: ipOf(req), purpose: 'export', isSuperadmin: isSuperadmin(access.email), access: _va })
   if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error, codeUnset: !!gate.codeUnset, wrongCode: !!gate.wrongCode }, { status: gate.status })
   if (!vaultKeyReady()) return NextResponse.json({ ok: false, error: 'VAULT_KEY is not set on the server, so nothing can be decrypted.' }, { status: 503 })
 

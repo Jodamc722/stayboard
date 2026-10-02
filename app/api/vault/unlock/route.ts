@@ -8,12 +8,13 @@
 // cannot be forged and cannot be handed to the person at the next desk. JavaScript on the page
 // never sees it; it just watches a countdown and asks again when that hits zero.
 import { NextRequest, NextResponse } from 'next/server'
-import { getAccess } from '@/lib/access'
+import { getAccess, isSuperadmin } from '@/lib/access'
 import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import {
-  logAccess, checkVaultCode, codeFrom, mintUnlock, unlockValid,
+  logAccess, checkVaultEntry, codeFrom, mintUnlock, unlockValid, vaultAccessFor, ACCESS,
   UNLOCK_COOKIE, UNLOCK_SECONDS, vaultKeyReady,
 } from '@/lib/vault'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 20
@@ -25,8 +26,9 @@ export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.allowed) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!isVrLogin(access)) return hotelOnlyRes()
-  const open = unlockValid(req.cookies.get(UNLOCK_COOKIE)?.value, String(access.email || ''))
-  return NextResponse.json({ ok: true, open, seconds: UNLOCK_SECONDS })
+  const a = await vaultAccessFor(String(access.email || ''), isSuperadmin(access.email))
+  const open = !!a && a.enabled && unlockValid(req.cookies.get(UNLOCK_COOKIE)?.value, String(access.email || ''), a.version)
+  return NextResponse.json({ ok: true, open, seconds: UNLOCK_SECONDS, access: a ? { enabled: a.enabled, level: a.level, hasPin: a.hasPin, allVaults: a.collections === null } : null })
 }
 
 /** POST { code } — verify and open the window. Wrong codes are logged and rate-limited upstream. */
@@ -41,15 +43,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'VAULT_KEY is not set on the server, so the vault cannot be unlocked.' }, { status: 503 })
   }
 
-  const gate = await checkVaultCode({ code: codeFrom(req, b), email: me, ip: ipOf(req), purpose: 'unlock' })
+  const a = await vaultAccessFor(me, isSuperadmin(access.email))
+  const gate = await checkVaultEntry({ code: codeFrom(req, b), email: me, ip: ipOf(req), purpose: 'unlock', isSuperadmin: isSuperadmin(access.email), access: a })
   if (!gate.ok) {
     return NextResponse.json({ ok: false, error: gate.error, codeUnset: !!gate.codeUnset, wrongCode: !!gate.wrongCode }, { status: gate.status })
   }
 
-  const { token, expires } = mintUnlock(me)
+  const { token, expires } = mintUnlock(me, UNLOCK_SECONDS, a?.version || 1)
   // The row that answers "who opened the vault, and when" — separate from the per-item reveals,
   // which answer "and what did they actually look at".
-  await logAccess({ itemId: null, email: me, action: 'unlock', detail: 'code entered · ' + UNLOCK_SECONDS + 's window', ip: ipOf(req) })
+  await logAccess({ itemId: null, email: me, action: 'unlock', detail: (a?.hasPin ? 'PIN entered' : 'code entered') + ' · ' + UNLOCK_SECONDS + 's window', ip: ipOf(req) })
+  try { await supabaseAdmin().from(ACCESS).update({ last_unlock_at: new Date().toISOString(), unlock_count: (a?.unlockCount || 0) + 1 }).eq('email', me) } catch { /* bookkeeping */ }
 
   const res = NextResponse.json({ ok: true, expires, seconds: UNLOCK_SECONDS })
   res.cookies.set(UNLOCK_COOKIE, token, {

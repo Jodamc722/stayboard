@@ -7,8 +7,8 @@
 // the front-desk pipeline. The vault lists them read-only and mints short-lived signed links on
 // demand — nothing is duplicated, so the vault can never drift out of date.
 import { NextRequest, NextResponse } from 'next/server'
-import { requireLevel } from '@/lib/access'
-import { checkVaultCode, codeFrom, logAccess, unlockValid, UNLOCK_COOKIE } from '@/lib/vault'
+import { requireLevel, isSuperadmin } from '@/lib/access'
+import { checkVaultEntry, vaultAccessFor, codeFrom, logAccess, unlockValid, UNLOCK_COOKIE } from '@/lib/vault'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -32,9 +32,10 @@ export async function GET(req: NextRequest) {
     // Guest IDs and signed forms leave the vault only with the vault code, like every secret.
     const me = String(gate.access.email || '')
     const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null
-    const open = unlockValid(req.cookies.get(UNLOCK_COOKIE)?.value, me)
+    const _va = await vaultAccessFor(me, isSuperadmin(gate.access.email))
+    const open = !!_va && _va.enabled && unlockValid(req.cookies.get(UNLOCK_COOKIE)?.value, me, _va.version)
     if (!open) {
-      const codeGate = await checkVaultCode({ code: codeFrom(req), email: me, ip, purpose: 'record ' + bucket })
+      const codeGate = await checkVaultEntry({ code: codeFrom(req), email: me, ip, purpose: 'record ' + bucket , isSuperadmin: isSuperadmin(gate.access.email), access: _va })
       if (!codeGate.ok) return NextResponse.json({ ok: false, error: codeGate.error, codeUnset: !!codeGate.codeUnset, wrongCode: !!codeGate.wrongCode, locked: true }, { status: codeGate.status })
     }
     const s = await db.storage.from(bucket).createSignedUrl(path, TTL)

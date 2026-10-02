@@ -8,7 +8,8 @@ import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   ITEMS, GRANTS, COLLECTIONS, accessFor, grantedItemIds, collectionsFor, logAccess, publicItem,
-  encryptSecret, maskHint, vaultKeyReady, isMissingTable, type VaultKind, type VaultLevel,
+  encryptSecret, maskHint, vaultKeyReady, isMissingTable, vaultAccessFor, inAllowedVault, UNLOCK_SECONDS,
+  type VaultKind, type VaultLevel,
 } from '@/lib/vault'
 import { snapshotVault } from '@/lib/vault-backup'
 import { currentVaultCode } from '@/lib/shareAuth'
@@ -33,6 +34,21 @@ export async function GET(req: NextRequest) {
     const q = trimmed(sp.get('q'), 80).toLowerCase()
     const category = trimmed(sp.get('category'), 40)
 
+    // THE DOOR (Jon, 2026-10-02: per-person access, not a role). No switched-on row → the page says
+    // so and lists nothing. The owner is implied. Admins still see the Access tab (isAdmin) so they can
+    // switch people on — that part is the one role-based thing left, and it is about granting, not opening.
+    const va = await vaultAccessFor(me, owner)
+    const accessInfo = {
+      enabled: !!va && va.enabled, level: va?.level || null, hasPin: !!va?.hasPin, allVaults: !va || va.collections === null,
+      vaults: va?.collections || null, lastUnlockAt: va?.lastUnlockAt || null, unlockSeconds: UNLOCK_SECONDS,
+    }
+    if (!va || !va.enabled) {
+      return NextResponse.json({
+        ok: true, items: [], grants: [], me, isOwner: owner, isAdmin: access.role === 'admin', collections: [],
+        keyReady: vaultKeyReady(), codeSet: !!(await currentVaultCode()), access: accessInfo, counts: { total: 0, expiring: 0 },
+      })
+    }
+
     let sel = db.from(ITEMS).select('*').is('deleted_at', null).order('updated_at', { ascending: false }).limit(500)
     if (category) sel = sel.eq('category', category)
     const { data, error } = await sel
@@ -49,8 +65,12 @@ export async function GET(req: NextRequest) {
     const lower = (s: any) => String(s || '').trim().toLowerCase()
     const viaCol = (r: any): VaultLevel | null =>
       r.collection_id ? (myCols.get(String(r.collection_id)) || null) : null
+    // The person's row decides which vaults open: null = every vault, a named list = only those.
+    // Collection membership/roles still decide 'manage' inside a vault; the row's level caps it.
+    const inVault = (r: any) => !!r.collection_id && inAllowedVault(va, String(r.collection_id))
+    const cap = (l: VaultLevel | null): VaultLevel | null => (l === 'manage' && va.level !== 'manage' && !owner ? 'view' : l)
     let rows = ((data || []) as any[]).filter(r =>
-      owner || lower(r.owner_email) === lower(me) || mine.has(String(r.id)) || !!viaCol(r))
+      owner || lower(r.owner_email) === lower(me) || mine.has(String(r.id)) || inVault(r))
 
     if (q) {
       rows = rows.filter(r => (
@@ -68,7 +88,8 @@ export async function GET(req: NextRequest) {
         if (mine.has(String(r.id))) level = 'view'
         const c = viaCol(r)
         if (c === 'manage') level = 'manage'
-        else if (c === 'view' && !level) level = 'view'
+        else if ((c === 'view' || inVault(r)) && !level) level = 'view'
+        level = cap(level)
       }
       return publicItem(r, level)
     })
@@ -93,6 +114,7 @@ export async function GET(req: NextRequest) {
       keyReady: vaultKeyReady(),
       // Whether the second lock exists yet. Without it nothing can be revealed — say so up front.
       codeSet: !!(await currentVaultCode()),
+      access: accessInfo,
       counts: {
         total: items.length,
         expiring: items.filter(i => i.expires_on && daysUntil(i.expires_on) !== null && daysUntil(i.expires_on)! <= 30).length,

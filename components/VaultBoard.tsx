@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Loader2, Plus, Search, Trash2, X, Check, AlertTriangle, Eye, EyeOff, Copy, Download,
   Upload, Users, Clock, KeyRound, FileText, StickyNote, ShieldCheck, History, RefreshCw, Lock,
-  Database, Unlock, ChevronRight, ChevronDown, MoreHorizontal, FolderLock, ArrowRightLeft,
+  Database, Unlock, ChevronRight, ChevronDown, MoreHorizontal, FolderLock, ArrowRightLeft, UserCheck, UserX,
 } from 'lucide-react'
 import { LeanHead, Pill, Tag, LeanTabs, IconBtn, Tip } from '@/components/lean'
 
@@ -240,10 +240,17 @@ function ActivityView() {
   )
 }
 
+type View = 'vault' | 'records' | 'activity' | 'access' | 'log'
+type AccessInfo = { enabled: boolean; level: 'view' | 'manage' | null; hasPin: boolean; allVaults: boolean; unlockSeconds: number }
+
 export function VaultBoard() {
-  const [view, setView] = useState<'vault' | 'records' | 'activity' | 'log'>('vault')
+  const [view, setView] = useState<View>('vault')
   const [isAdmin, setIsAdmin] = useState(false)
+  // PER-PERSON ACCESS (Jon, 2026-10-02). The server says whether this person has a switched-on row,
+  // whether they have their own PIN, and how long one PIN entry opens the vault for.
+  const [access, setAccess] = useState<AccessInfo>({ enabled: true, level: null, hasPin: false, allVaults: true, unlockSeconds: 600 })
   const [isOwner, setIsOwner] = useState(false)
+  const [me, setMe] = useState('')
   const [codeSet, setCodeSet] = useState(true)
   const [importState, setImportState] = useState<any | null>(null)
 
@@ -294,7 +301,8 @@ export function VaultBoard() {
       setGrants(Array.isArray(j.grants) ? j.grants : [])
       setNeedsMigration(!!j.needsMigration)
       setKeyReady(j.keyReady !== false)
-      setIsAdmin(!!j.isAdmin); setIsOwner(!!j.isOwner); setCodeSet(j.codeSet !== false)
+      setIsAdmin(!!j.isAdmin); setIsOwner(!!j.isOwner); setCodeSet(j.codeSet !== false); setMe(String(j.me || ''))
+      if (j.access) setAccess({ enabled: j.access.enabled !== false, level: j.access.level || null, hasPin: !!j.access.hasPin, allVaults: j.access.allVaults !== false, unlockSeconds: Number(j.access.unlockSeconds) || 600 })
       setCollections(Array.isArray(j.collections) ? j.collections : [])
       if (!j.ok && !j.needsMigration && j.error) setErr(j.error)
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
@@ -305,7 +313,7 @@ export function VaultBoard() {
   // A reload should not claim to be locked while the server cookie is still alive.
   useEffect(() => {
     fetch('/api/vault/unlock', { cache: 'no-store' }).then(r => r.json())
-      .then(j => { if (j.ok && j.open) setUntil(Date.now() + (j.seconds || 60) * 1000) })
+      .then(j => { if (j.ok && j.open) setUntil(Date.now() + (j.seconds || 600) * 1000) })
       .catch(() => {})
   }, [])
 
@@ -393,10 +401,10 @@ export function VaultBoard() {
       (a, b) => (daysUntil(a.expires_on) ?? 0) - (daysUntil(b.expires_on) ?? 0)),
     [items])
 
-  /** Open the window. One code entry buys 60 seconds of clicking — never of automatic revealing. */
+  /** Open the window. One PIN entry buys ten minutes of clicking — never of automatic revealing. */
   async function unlock(): Promise<boolean> {
     setErr(null)
-    const ans = await askCode('unlock the vault for a minute')
+    const ans = await askCode('unlock the vault for ' + Math.round(access.unlockSeconds / 60) + ' minutes')
     if (!ans) return false
     try {
       const j = await fetch('/api/vault/unlock', {
@@ -404,7 +412,7 @@ export function VaultBoard() {
         body: JSON.stringify({ code: ans.code }),
       }).then(x => x.json())
       if (!j.ok) throw new Error(j.error || 'Could not unlock.')
-      setUntil(Date.now() + (j.seconds || 60) * 1000); setNow(Date.now())
+      setUntil(Date.now() + (j.seconds || access.unlockSeconds) * 1000); setNow(Date.now())
       return true
     } catch (e: any) { setErr(e.message || String(e)); return false }
   }
@@ -565,33 +573,50 @@ export function VaultBoard() {
     k === 'file' ? <FileText size={13} /> : k === 'note' ? <StickyNote size={13} /> : <KeyRound size={13} />
 
   const nRevealed = Object.keys(revealed).length
+  const unlockMin = Math.max(1, Math.round(access.unlockSeconds / 60))
+  // Can this person open anything at all: their own PIN, or (owner only) the shared code.
+  const canOpen = access.enabled && (access.hasPin || (isOwner && codeSet))
+  const fmtLeft = (sec: number) => sec >= 60 ? Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0') : sec + 's'
   return (
     <div className="space-y-3">
       <LeanHead title="Vault" icon={<Lock size={20} className="text-muted" />}>
         <Pill title="Items you can open. Nothing is visible to the rest of the team unless shared, and every open is recorded.">{items.length} items</Pill>
         {expiring.length > 0 ? <Pill tone="amber" title="Expired or expiring within 30 days">{expiring.length} expiring</Pill> : null}
-        {codeSet ? (openFor > 0
-          ? <Pill tone="emerald" title="Unlock window — every reveal is still a click, and still recorded">Unlocked {openFor}s</Pill>
-          : <Pill title="Enter the code once for a minute of access. Every reveal is still a click, and still recorded.">Locked</Pill>)
-          : <Pill tone="amber" title="An admin must set the vault code before anything can be revealed">No code set</Pill>}
+        {!access.enabled
+          ? <Pill tone="rose" title="An admin switches vault access on per person, under Access">No access</Pill>
+          : canOpen ? (openFor > 0
+            ? <Pill tone="emerald" title="Unlock window — every reveal is still a click, and still recorded">Unlocked {fmtLeft(openFor)}</Pill>
+            : <Pill title={'Enter your PIN once for ' + unlockMin + ' minutes of access. Every reveal is still a click, and still recorded.'}>Locked</Pill>)
+          : <Pill tone="amber" title="You have access but no PIN yet — an admin sets one for you under Access">No PIN yet</Pill>}
       </LeanHead>
-      {/* Vault = the locked shelf · Records = the verification paper trail · Activity = who did what */}
+      {/* Vault = the locked shelf · Records = the verification paper trail · Activity = who did what · Access = who may open it */}
       <LeanTabs
-        tabs={([['vault', 'Vault'], ['records', 'Records'], ['activity', 'Activity'], ['log', 'Code log & backups']] as const)
-          .filter(([k]) => k !== 'log' || isAdmin)
-          .map(([k, label]) => ({ key: k as 'vault' | 'records' | 'activity' | 'log', label, n: k === 'vault' ? items.length : null }))}
+        tabs={([['vault', 'Vault'], ['records', 'Records'], ['activity', 'Activity'], ['access', 'Access'], ['log', 'Log & backups']] as const)
+          .filter(([k]) => (k !== 'log' && k !== 'access') || isAdmin)
+          .map(([k, label]) => ({ key: k as View, label, n: k === 'vault' ? items.length : null }))}
         value={view} onChange={setView} />
-      {codeReq && <CodePrompt purpose={codeReq.purpose} askReason={codeReq.askReason} onAnswer={answerCode} />}
+      {codeReq && <CodePrompt purpose={codeReq.purpose} askReason={codeReq.askReason} onAnswer={answerCode} usesPin={access.hasPin} minutes={unlockMin} />}
       {view === 'records' && <RecordsView askCode={askCode} />}
       {view === 'activity' && <ActivityView />}
+      {view === 'access' && <AccessView collections={collections} me={me} onChanged={load} />}
       {view === 'log' && <><VaultsPanel collections={collections} onChanged={load} /><CodeLogView askCode={askCode} canExport={isOwner} /></>}
       {view === 'vault' && <>
-      {!codeSet && !needsMigration && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
-          <div className="font-semibold flex items-center gap-1.5"><Lock size={14} /> The vault code is not set</div>
+      {!access.enabled && !needsMigration && (
+        <div className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-[13px] text-rose-900">
+          <div className="font-semibold flex items-center gap-1.5"><Lock size={14} /> You do not have vault access</div>
           <p className="mt-1">
-            Nothing here can be revealed until an admin sets the vault code at <a href="/users" className="underline font-semibold">Users &amp; admin → Share links &amp; security</a>.
-            Once set, every reveal asks for it and records who entered it.
+            The vault opens per person, not by role. Ask an admin to switch it on for you{isAdmin ? <> — or do it yourself under <button onClick={() => setView('access')} className="underline font-semibold">Access</button></> : ''}.
+            Every reveal is a click recorded against your name.
+          </p>
+        </div>
+      )}
+      {access.enabled && !canOpen && !needsMigration && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
+          <div className="font-semibold flex items-center gap-1.5"><Lock size={14} /> {isOwner ? 'No PIN and no vault code yet' : 'You have access, but no PIN yet'}</div>
+          <p className="mt-1">
+            {isOwner
+              ? <>Set your PIN under <button onClick={() => setView('access')} className="underline font-semibold">Access</button> (or the shared vault code at <a href="/users" className="underline font-semibold">Users &amp; admin</a>). Nothing can be revealed until one exists.</>
+              : <>An admin sets your PIN under Access. Until then the list is readable, but nothing can be revealed or opened.</>}
           </p>
         </div>
       )}
@@ -617,7 +642,7 @@ export function VaultBoard() {
 
       {/* THE LOCK BAR — one code entry buys a minute of clicking. Revealing stays a per-item click,
           and every click is still its own line in the log. */}
-      {codeSet && (
+      {canOpen && (
         <div className={'rounded-2xl border px-3 sm:px-4 py-1.5 flex items-center gap-2.5 flex-wrap ' +
           (openFor > 0 ? 'border-emerald-300 bg-emerald-50' : 'border-line bg-white')}>
           {openFor > 0 ? (
@@ -625,10 +650,10 @@ export function VaultBoard() {
               <Unlock size={14} className="text-emerald-700 shrink-0" />
               <span className="text-[13px] font-semibold text-emerald-900">Unlocked</span>
               <span className="text-[12px] text-emerald-800 tabular-nums" title="Click Reveal on anything you need">
-                {openFor}s left
+                {fmtLeft(openFor)} left
               </span>
               <div className="h-1.5 w-24 rounded-full bg-emerald-200 overflow-hidden" aria-hidden>
-                <div className="h-full bg-emerald-600 transition-all duration-500" style={{ width: Math.round((openFor / 60) * 100) + '%' }} />
+                <div className="h-full bg-emerald-600 transition-all duration-500" style={{ width: Math.round((openFor / access.unlockSeconds) * 100) + '%' }} />
               </div>
               <span className="grow" />
               <button onClick={lockNow}
@@ -640,9 +665,9 @@ export function VaultBoard() {
             <>
               <Lock size={14} className="text-muted shrink-0" />
               <span className="text-[13px] font-semibold text-ink">Locked</span>
-              <span className="text-[12px] text-muted">code once = 1 minute · each reveal logged</span>
+              <span className="text-[12px] text-muted">{access.hasPin ? 'your PIN' : 'vault code'} once = {unlockMin} minutes · each reveal logged</span>
               <span className="grow" />
-              <button onClick={unlock} title="Enter the vault code for a minute of access"
+              <button onClick={unlock} title={'Enter ' + (access.hasPin ? 'your PIN' : 'the vault code') + ' for ' + unlockMin + ' minutes of access'}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-2.5 py-1 text-[12px] font-semibold hover:bg-brand-700">
                 <Unlock size={13} /> Unlock
               </button>
@@ -1112,7 +1137,7 @@ function SharePanel({ itemId, onClose, onChanged }: { itemId: string; onClose: (
  * forgotten. type=password so it is not shoulder-read; autoComplete off so no browser ever offers
  * to remember the vault code for the next person at the same laptop.
  */
-function CodePrompt({ purpose, askReason, onAnswer }: { purpose: string; askReason: boolean; onAnswer: (a: CodeAnswer) => void }) {
+function CodePrompt({ purpose, askReason, onAnswer, usesPin, minutes }: { purpose: string; askReason: boolean; onAnswer: (a: CodeAnswer) => void; usesPin: boolean; minutes: number }) {
   const [code, setCode] = useState('')
   const [reason, setReason] = useState('')
   const ref = useRef<HTMLInputElement>(null)
@@ -1129,13 +1154,13 @@ function CodePrompt({ purpose, askReason, onAnswer }: { purpose: string; askReas
         className="w-full max-w-sm rounded-2xl border border-line bg-white shadow-xl p-4 space-y-3 pb-safe">
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-amber-50 text-amber-700"><Lock size={15} /></span>
-          <div className="min-w-0 cursor-help" title="This opens the vault for one minute. Revealing is still a click per item, and your name, the time and what you opened are recorded on each one. A wrong code is recorded too.">
-            <div className="text-[13.5px] font-bold text-ink">Vault code</div>
-            <div className="text-[11.5px] text-muted truncate">To {purpose} · opens 1 min · logged</div>
+          <div className="min-w-0 cursor-help" title={'This opens the vault for ' + minutes + ' minutes. Revealing is still a click per item, and your name, the time and what you opened are recorded on each one. A wrong ' + (usesPin ? 'PIN' : 'code') + ' is recorded too.'}>
+            <div className="text-[13.5px] font-bold text-ink">{usesPin ? 'Your vault PIN' : 'Vault code'}</div>
+            <div className="text-[11.5px] text-muted truncate">To {purpose} · opens {minutes} min · logged</div>
           </div>
         </div>
-        <input ref={ref} type="password" autoComplete="off" inputMode="text" value={code} onChange={e => setCode(e.target.value)}
-          placeholder="Enter the vault code" className={field + ' text-base sm:text-[13px] py-2.5'} />
+        <input ref={ref} type="password" autoComplete="off" inputMode={usesPin ? 'numeric' : 'text'} value={code} onChange={e => setCode(e.target.value)}
+          placeholder={usesPin ? 'Enter your PIN' : 'Enter the vault code'} className={field + ' text-base sm:text-[13px] py-2.5'} />
         {askReason && (
           <input value={reason} onChange={e => setReason(e.target.value)} maxLength={160}
             placeholder="Why? (optional — goes in the log)" className={field} />
@@ -1187,7 +1212,7 @@ function CodeLogView({ askCode, canExport }: { askCode: AskCode; canExport: bool
   const isEntry = (r: any) => /^code entered|^in unlock window/.test(String(r.detail || '')) ||
     ['unlock', 'reveal', 'download', 'export'].includes(r.action)
   const isDenied = (r: any) => r.action === 'denied'
-  const isChange = (r: any) => ['create', 'update', 'delete', 'grant', 'revoke', 'code-set', 'backup', 'import', 'move', 'lock'].includes(r.action)
+  const isChange = (r: any) => ['create', 'update', 'delete', 'grant', 'revoke', 'code-set', 'backup', 'import', 'move', 'lock', 'access', 'access_grant', 'access_revoke', 'access_pin'].includes(r.action)
   const shown = rows.filter(r => (!who || r.email === who) && (
     only === 'all' ? true : only === 'entries' ? isEntry(r) : only === 'denied' ? isDenied(r) : isChange(r)))
   const entries = rows.filter(isEntry).length, denied = rows.filter(isDenied).length
@@ -1440,6 +1465,175 @@ function VaultsPanel({ collections, onChanged }: { collections: Collection[]; on
           <span className="text-[11.5px] text-muted">A vault with one member is a private vault.</span>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * ACCESS (admins) — who may open the vault, one switch per person (Jon, 2026-10-02: "per user
+ * setting vs a role … log all activity and track access and be able to remove access").
+ * Each row: on/off, level, which vaults, their PIN (set/reset — never shown), when they last
+ * unlocked, what they did in the last 30 days, and a drill-down into their own log lines.
+ * Revoke is one click: it closes the door and kills any open unlock window on the spot.
+ */
+type AccessPerson = {
+  email: string; name: string; role: string | null; owner: boolean; enabled: boolean; level: 'view' | 'manage' | null
+  collections: string[] | null; hasRow: boolean; hasPin: boolean; grantedBy: string | null; grantedAt: string | null
+  revokedAt: string | null; revokedBy: string | null; note: string | null; lastUnlockAt: string | null; unlockCount: number
+  use30: { unlocks: number; reveals: number; opens: number; wrong: number; last: string | null }
+}
+function AccessView({ collections, me, onChanged }: { collections: Collection[]; me: string; onChanged: () => void }) {
+  const [people, setPeople] = useState<AccessPerson[] | null>(null)
+  const [err, setErr] = useState('')
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
+  const [open, setOpen] = useState<string | null>(null)
+  const [pinFor, setPinFor] = useState<string | null>(null)
+  const [pin, setPin] = useState('')
+  const [log, setLog] = useState<any[] | null>(null)
+  const [onlyOn, setOnlyOn] = useState(false)
+  const [needsMigration, setNeedsMigration] = useState(false)
+
+  const load = useCallback(async () => {
+    setErr('')
+    try {
+      const j = await fetch('/api/vault/access', { cache: 'no-store' }).then(r => r.json())
+      if (!j.ok) { setNeedsMigration(!!j.needsMigration); setErr(j.error || 'Could not load access.'); setPeople([]); return }
+      setPeople(j.people || [])
+    } catch (e: any) { setErr(String(e?.message || e)); setPeople([]) }
+  }, [])
+  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    if (!open || log) return
+    fetch('/api/vault/log?days=90', { cache: 'no-store' }).then(r => r.json()).then(j => setLog(j.ok ? (j.rows || []) : [])).catch(() => setLog([]))
+  }, [open, log])
+
+  async function post(body: any, okMsg: string) {
+    setBusy(body.email); setErr(''); setMsg('')
+    try {
+      const j = await fetch('/api/vault/access', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json())
+      if (!j.ok) throw new Error(j.error || 'Could not save.')
+      setMsg(okMsg); setLog(null); await load(); onChanged()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(null)
+  }
+  const fmtAt = (s?: string | null) => s ? new Date(s).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }) : '—'
+  const ago = (s?: string | null) => {
+    if (!s) return 'never'
+    const d = Math.floor((Date.now() - Date.parse(s)) / 60000)
+    return d < 2 ? 'just now' : d < 60 ? d + ' min ago' : d < 1440 ? Math.floor(d / 60) + ' h ago' : Math.floor(d / 1440) + ' d ago'
+  }
+  const name = (p: AccessPerson) => p.name || p.email.split('@')[0]
+  const vaultLabel = (p: AccessPerson) => p.collections === null ? 'All vaults' : p.collections.length === 0 ? 'Named items only' : p.collections.map(id => collections.find(c => c.id === id)?.name || '?').join(', ')
+  const shown = (people || []).filter(p => !onlyOn || p.enabled)
+  const on = (people || []).filter(p => p.enabled).length
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-2xl border border-line bg-white px-3 sm:px-4 py-2.5 flex items-center gap-2.5 flex-wrap">
+        <ShieldCheck size={15} className="text-emerald-700 shrink-0" />
+        <div className="text-[13px] text-ink"><span className="font-semibold">{on} {on === 1 ? 'person' : 'people'}</span> can open the vault <span className="text-muted">· per person, not by role · the owner is always in</span></div>
+        <span className="grow" />
+        <label className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-muted cursor-pointer"><input type="checkbox" checked={onlyOn} onChange={e => setOnlyOn(e.target.checked)} /> only switched on</label>
+        <IconBtn title="Refresh" onClick={load}><RefreshCw size={13} /></IconBtn>
+      </div>
+      {needsMigration && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
+          <div className="font-semibold flex items-center gap-1.5"><AlertTriangle size={14} /> One migration to run first</div>
+          <p className="mt-1">Run <code>supabase/migrations/143_vault_access_per_user.sql</code> in the Supabase SQL editor, then reload.</p>
+        </div>
+      )}
+      {err && !needsMigration && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-[13px] text-rose-700">{err}</div>}
+      {msg && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-[13px] text-emerald-800">{msg}</div>}
+      {people === null && <div className="rounded-2xl border border-line bg-white p-8 text-center text-[13px] text-muted">Loading people…</div>}
+      {people && (
+        <div className="rounded-2xl border border-line bg-white overflow-hidden divide-y divide-line">
+          {shown.map(p => {
+            const isOpen = open === p.email
+            const mine = log ? log.filter(r => String(r.email || '') === p.email || (String(r.detail || '').startsWith(p.email + ' ') && /^access/.test(String(r.action || '')))) : null
+            return (
+              <div key={p.email} className={'px-3 sm:px-4 py-2.5 ' + (p.enabled ? '' : 'bg-slate-50/60')}>
+                <div className="flex items-start sm:items-center gap-2.5 flex-wrap">
+                  <button onClick={() => setOpen(isOpen ? null : p.email)} className="shrink-0 text-muted hover:text-ink" aria-label="Their log">
+                    {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </button>
+                  <span className={'inline-flex items-center justify-center w-7 h-7 rounded-full shrink-0 ' + (p.enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400')}>
+                    {p.enabled ? <UserCheck size={14} /> : <UserX size={14} />}
+                  </span>
+                  <div className="min-w-0 basis-40 grow">
+                    <div className="text-[13.5px] font-bold text-ink truncate">{name(p)} {p.owner && <Tag tone="violet" title="Workspace owner — always has access">owner</Tag>}{p.email === me && !p.owner && <Tag tone="sky">you</Tag>}</div>
+                    <div className="text-[11.5px] text-muted truncate">{p.email}{p.role ? ' · ' + p.role : ''}{p.note ? ' · ' + p.note : ''}</div>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap text-[12px]">
+                    {p.enabled ? <Tag tone="emerald" title={p.grantedBy ? 'Switched on by ' + p.grantedBy + ' ' + fmtAt(p.grantedAt) : 'Has access'}>on</Tag>
+                      : <Tag tone={p.revokedAt ? 'rose' : 'slate'} title={p.revokedAt ? 'Removed by ' + (p.revokedBy || '?') + ' ' + fmtAt(p.revokedAt) : 'Never switched on'}>{p.revokedAt ? 'removed' : 'off'}</Tag>}
+                    {p.enabled && <Tag tone={p.level === 'manage' ? 'brand' : 'slate'} title="view = open and reveal · manage = also edit, move and re-file">{p.level || 'view'}</Tag>}
+                    {p.enabled && <Tag title="Which vaults they may open">{vaultLabel(p)}</Tag>}
+                    {p.enabled && !p.owner && (p.hasPin ? <Tag tone="emerald" title="Has their own PIN">PIN set</Tag> : <Tag tone="amber" title="Cannot open anything until a PIN is set">no PIN</Tag>)}
+                    {p.owner && !p.hasPin && <Tag tone="amber" title="Opens with the shared vault code until a PIN is set">no PIN · uses code</Tag>}
+                  </div>
+                  <div className="text-[11.5px] text-muted tabular-nums sm:text-right basis-full sm:basis-auto sm:ml-auto" title={'Last unlock ' + fmtAt(p.lastUnlockAt) + ' · ' + p.unlockCount + ' unlocks all time'}>
+                    <span className="font-semibold text-ink">{ago(p.lastUnlockAt)}</span>
+                    <span className="hidden sm:inline"> · 30d: {p.use30.unlocks} unlocks · {p.use30.reveals} reveals · {p.use30.opens} opens{p.use30.wrong ? <span className="text-rose-600 font-semibold"> · {p.use30.wrong} wrong</span> : null}</span>
+                  </div>
+                </div>
+                <div className="mt-2 pl-9 flex items-center gap-1.5 flex-wrap">
+                  {!p.owner && (p.enabled
+                    ? <button disabled={busy === p.email} onClick={() => post({ email: p.email, revoke: true }, 'Access removed for ' + name(p) + ' — any open window is closed.')}
+                        className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white text-rose-700 px-2.5 py-1 text-[12px] font-semibold hover:bg-rose-50 disabled:opacity-50" title="Close the door now: they cannot open or reveal anything from the next click"><UserX size={12} /> Remove access</button>
+                    : <button disabled={busy === p.email} onClick={() => post({ email: p.email, enabled: true }, name(p) + ' can open the vault' + (p.hasPin ? '.' : ' — set their PIN next.'))}
+                        className="inline-flex items-center gap-1 rounded-lg bg-brand-600 text-white px-2.5 py-1 text-[12px] font-semibold hover:bg-brand-700 disabled:opacity-50"><UserCheck size={12} /> Give access</button>)}
+                  {p.enabled && !p.owner && (
+                    <select value={p.level || 'view'} disabled={busy === p.email} onChange={e => post({ email: p.email, level: e.target.value }, 'Level set.')}
+                      className="rounded-lg border border-line bg-white px-2 py-1 text-[12px] text-ink" title="view = open and reveal · manage = also edit, move and re-file">
+                      <option value="view">view</option><option value="manage">manage</option>
+                    </select>
+                  )}
+                  {p.enabled && !p.owner && collections.length > 0 && (
+                    <select value={p.collections === null ? '*' : p.collections.length === 0 ? '-' : p.collections.length === 1 ? p.collections[0] : 'many'} disabled={busy === p.email}
+                      onChange={e => { const v = e.target.value; if (v === 'many') return; post({ email: p.email, collections: v === '*' ? null : v === '-' ? [] : [v] }, 'Vaults set.') }}
+                      className="rounded-lg border border-line bg-white px-2 py-1 text-[12px] text-ink" title="Which vaults open for them. Named items (shared on the item itself) always do.">
+                      <option value="*">All vaults</option>
+                      <option value="-">Named items only</option>
+                      {collections.map(c => <option key={c.id} value={c.id}>{c.name} only</option>)}
+                      {p.collections && p.collections.length > 1 && <option value="many">{p.collections.length} vaults</option>}
+                    </select>
+                  )}
+                  {p.enabled && (pinFor === p.email ? (
+                    <form onSubmit={e => { e.preventDefault(); if (pin.trim().length >= 4) { post({ email: p.email, pin: pin.trim() }, 'PIN ' + (p.hasPin ? 'reset' : 'set') + ' for ' + name(p) + ' — tell them in person, never by message.'); setPinFor(null); setPin('') } }}
+                      className="inline-flex items-center gap-1.5">
+                      <input autoFocus type="password" autoComplete="off" inputMode="numeric" value={pin} onChange={e => setPin(e.target.value)} placeholder="New PIN (4+)" className="rounded-lg border border-line bg-white px-2 py-1 text-[12px] w-28" />
+                      <button type="submit" disabled={pin.trim().length < 4} className="inline-flex items-center gap-1 rounded-lg bg-ink text-white px-2.5 py-1 text-[12px] font-semibold disabled:opacity-40"><Check size={12} /> Save</button>
+                      <button type="button" onClick={() => { setPinFor(null); setPin('') }} className="text-[12px] font-semibold text-muted px-1">Cancel</button>
+                    </form>
+                  ) : (
+                    <button onClick={() => { setPinFor(p.email); setPin('') }} className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] font-semibold text-ink hover:border-ink/40" title={p.hasPin ? 'Give them a new PIN (their current window closes)' : 'They cannot open anything until they have one'}><KeyRound size={12} /> {p.hasPin ? 'Reset PIN' : 'Set PIN'}</button>
+                  ))}
+                </div>
+                {isOpen && (
+                  <div className="mt-2 pl-9 text-[12px]">
+                    {mine === null ? <div className="text-muted">Loading their log…</div>
+                      : mine.length === 0 ? <div className="text-muted">Nothing in the last 90 days.</div>
+                      : <div className="rounded-xl border border-line bg-slate-50/60 divide-y divide-line max-h-72 overflow-y-auto">
+                          {mine.slice(0, 200).map(r => (
+                            <div key={r.id} className="px-2.5 py-1.5 flex items-center gap-2 flex-wrap">
+                              <span className="text-muted tabular-nums w-28 shrink-0">{fmtAt(r.created_at)}</span>
+                              <Tag tone={r.action === 'denied' ? 'rose' : /^access/.test(r.action) ? 'violet' : ['reveal', 'download', 'unlock', 'export'].includes(r.action) ? 'emerald' : 'slate'}>{String(r.action).replace('_', ' ')}</Tag>
+                              {r.title && <span className="font-semibold text-ink truncate max-w-[14rem]">{r.title}</span>}
+                              <span className="text-muted truncate">{r.detail || ''}</span>
+                              {r.ip && <span className="text-muted/70 ml-auto hidden sm:inline">{r.ip}</span>}
+                            </div>
+                          ))}
+                        </div>}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+          {shown.length === 0 && <div className="p-8 text-center text-[13px] text-muted">Nobody here yet.</div>}
+        </div>
+      )}
+      <p className="text-[11.5px] text-muted px-1">A PIN is hashed before it is stored and never shown again — hand it over in person. Removing access closes any unlock window that person holds, immediately. Every switch, PIN and removal is its own line in the log, under the admin who did it.</p>
     </div>
   )
 }
