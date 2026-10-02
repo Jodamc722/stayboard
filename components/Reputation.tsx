@@ -461,10 +461,10 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
 
       {/* FILTER BAR — one line. Everything on the page, including the feed, obeys it. */}
       <div className="flex items-center gap-1.5 flex-wrap mb-3">
-        <div className="inline-flex rounded-lg border border-line overflow-hidden">
+        <div className="lh-tabs-strip inline-flex rounded-lg border border-line overflow-hidden">
           {PERIODS.map(p => (
             <button key={p.d} onClick={() => setDays(p.d)} title={'Last ' + p.d + ' days'}
-              className={'text-[12px] font-semibold px-2 py-1 border-l border-line first:border-l-0 ' + (days === p.d ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{p.l}</button>
+              className={'lh-tab text-[12px] font-semibold px-2 py-1 border-l border-line first:border-l-0 ' + (days === p.d ? 'lh-tab-on bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{p.l}</button>
           ))}
         </div>
         <select value={market} onChange={e => setMarket(e.target.value)} className={sel} title="Market">
@@ -537,7 +537,7 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
         <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-line overflow-x-auto lh-actions">
           {TABS.map(t => (
             <button key={t} onClick={() => setTab(t)} title={TAB_TITLE[t]}
-              className={'text-[12px] font-semibold px-2 py-1 rounded-lg capitalize whitespace-nowrap ' + (tab === t ? 'bg-ink text-white' : 'text-muted hover:text-ink hover:bg-app')}>
+              className={'lh-tab text-[12px] font-semibold px-2 py-1 rounded-lg capitalize whitespace-nowrap ' + (tab === t ? 'lh-tab-on bg-ink text-white' : 'text-muted hover:text-ink hover:bg-app')}>
               {t}
               {t === 'buildings' && d?.buildings ? ' ' + d.buildings.length : ''}
               {t === 'owners' && d?.owners ? ' ' + d.owners.length : ''}

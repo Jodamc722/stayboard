@@ -119,7 +119,7 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
       {tab !== 'sentiment' && (
         <div className="flex items-center gap-1.5 flex-wrap mb-2">
           {tab === 'inbox' ? ([['messages', 'Guest messages', counts.messages], ['texts', 'Texts & voicemails', counts.texts], ['calls', 'Calls', counts.calls], ['all', 'Everything', items.length]] as const).map(([k, label, n]) => (
-            <button key={k} onClick={() => setSrc(k)} className={'h-8 px-2.5 rounded-lg border text-[12px] font-semibold ' + (src === k ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>{label} <span className="opacity-60 tabular-nums">{n}</span></button>
+            <button key={k} onClick={() => setSrc(k)} className={'lh-tab h-8 px-2.5 rounded-lg border text-[12px] font-semibold ' + (src === k ? 'lh-tab-on bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>{label} <span className="opacity-60 tabular-nums">{n}</span></button>
           )) : null}
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search guest, unit, words…" className="ml-auto h-8 w-full sm:w-64 rounded-lg border border-line bg-white px-2.5 text-[12.5px] focus:outline-none focus:ring-2 focus:ring-brand-200" />
         </div>
