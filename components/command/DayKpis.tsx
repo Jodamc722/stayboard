@@ -34,10 +34,21 @@ import { Check } from 'lucide-react'
 import { NudgeBtn } from '@/components/command/Nudge'
 import { useTaskActions, TaskStateTag, type TaskState } from '@/components/task/TaskActions'
 import type { DayCalls, DayCallRow } from '@/app/api/command/calls/route'
+import type { GuestCheckRow } from '@/app/api/guest-checks/route'
 import { UnpaidRow, type UnpaidRowT } from '@/components/UnpaidBoard'
 
 export const CALLS_URL = '/api/command/calls'
-type Key = 'cleans' | 'insp' | 'welcome' | 'recovery' | 'maint' | 'unpaid' | 'glitches' | 'claims' | 'checklist'
+type Key = 'cleans' | 'insp' | 'welcome' | 'recovery' | 'maint' | 'unpaid' | 'glitches' | 'claims' | 'checklist' | 'reviews' | 'notices' | 'checks' | 'blocked' | 'channels'
+const CHECKS_URL = '/api/guest-checks'
+const BLOCKED_URL = '/api/blocked-units?days=30'
+const CHANNELS_URL = '/api/channels'
+type BlockedRunT = { listingId: string; unit: string; building: string; market: string; from: string; to: string; nights: number; startsInDays: number; live: boolean; openEnded: boolean; reason: string; note: string | null }
+type ChannelListingT = { id: string; name: string; building: string; verdict: string; missingMajor: string[]; cells: Record<string, { verdict: string; status: string | null }> }
+const REVIEWS_URL = '/api/reviews?days=60&hub=1'
+const NOTICES_URL = '/api/reservation-notices'
+type ReviewT = { id: string; rating: number | null; channel: string; guest: string; created_at: string; hasReply: boolean; listing_name: string; dismissed?: boolean; removed?: boolean }
+type NoticeT = { id: string; guest_name: string; unit_no: string; propertyName?: string; arrival_date: string; sent_at: string | null; sent_by?: string | null; urgency?: string; hasRecipient?: boolean }
+const fiveStar = (r: number | null, ch: string) => r == null ? null : /booking/i.test(ch) && r > 5 ? Math.round((r / 2) * 10) / 10 : r
 const CK_URL = '/api/daily-checklist'
 type CkRowT = { id: string; title: string; by_time: string | null; owner_role: string | null; link: string | null; done: boolean; late: boolean; in_minutes: number | null; done_by: string | null }
 const UNPAID_URL = '/api/unpaid'   // today → +7 days, direct / VRBO / Google only
@@ -123,7 +134,7 @@ function DayCallRowView({ r, canLog, onChanged }: { r: DayCallRow; canLog: boole
 }
 
 // ── the tile ────────────────────────────────────────────────────────────────────────────────────
-function Tile({ label, done, needed, segs, sub, on, onClick, title, loading, big }: { label: string; done: number; needed: number; segs: Seg[]; sub: string; on: boolean; onClick: () => void; title: string; loading?: boolean; big?: { value: string; unit: string; tone: string } }) {
+function Tile({ label, done, needed, segs, sub, on, onClick, title, loading, big, noPct }: { label: string; done: number; needed: number; segs: Seg[]; sub: string; on: boolean; onClick: () => void; title: string; loading?: boolean; big?: { value: string; unit: string; tone: string }; noPct?: boolean }) {
   const pct = needed ? Math.round((done / needed) * 100) : 100
   const tone = big ? big.tone : !needed ? 'text-muted' : done === needed ? 'text-emerald-700' : segs.some(s => s.n && /late|urgent|unassigned/.test(s.filter)) ? 'text-rose-700' : 'text-ink'
   return (
@@ -131,7 +142,7 @@ function Tile({ label, done, needed, segs, sub, on, onClick, title, loading, big
       className={'text-left rounded-xl border bg-white px-2.5 sm:px-3 py-2 min-h-[72px] sm:min-h-[84px] transition flex flex-col gap-1 min-w-0 ' + (on ? 'border-brand-400 ring-2 ring-brand-100' : 'border-line hover:border-ink/30')}>
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10.5px] uppercase tracking-wider font-bold text-muted truncate">{label}</span>
-        {loading ? <Loader2 size={11} className="animate-spin text-muted" /> : <span className={'text-[10.5px] font-bold tabular-nums ' + (needed ? 'text-muted' : 'text-muted/50')}>{needed ? pct + '%' : ''}</span>}
+        {loading ? <Loader2 size={11} className="animate-spin text-muted" /> : <span className={'text-[10.5px] font-bold tabular-nums ' + (needed ? 'text-muted' : 'text-muted/50')}>{needed && !noPct ? pct + '%' : ''}</span>}
       </div>
       <div className="flex items-baseline gap-1">
         {big ? <>
@@ -186,6 +197,41 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const [ckBusy, setCkBusy] = useState('')
   const tickCk = async (id: string) => { setCkBusy(id); try { await fetch(CK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'tick', itemId: id, done: true }) }); invalidateCache(CK_URL); ckQ.refresh() } finally { setCkBusy('') } }
   const clock12 = (tm: string | null) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(tm || '')); if (!m) return ''; const h = Number(m[1]); return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}` }
+
+  // ── reviews responded, front-desk notices sent (Jon, 2026-10-02) ──
+  const rvQ = useCachedFetch<{ reviews?: ReviewT[]; error?: string }>(REVIEWS_URL, { ttl: 120_000 })
+  const rvAll = (rvQ.data?.reviews || []).filter(r => !r.removed)
+  const rvDone = rvAll.filter(r => r.hasReply || r.dismissed)
+  const rvWait = rvAll.filter(r => !r.hasReply && !r.dismissed)
+  const rvLow = rvWait.filter(r => { const f = fiveStar(r.rating, r.channel); return f != null && f <= 3 })
+  const ntQ = useCachedFetch<{ ok?: boolean; today?: NoticeT[]; counts?: { toSend: number; sentToday: number; late: number; due: number; blocked: number }; error?: string }>(NOTICES_URL, { ttl: 120_000 })
+  const ntToday = ntQ.data?.today || []
+  const ntC = ntQ.data?.counts || { toSend: 0, sentToday: 0, late: 0, due: 0, blocked: 0 }
+  const [ntBusy, setNtBusy] = useState('')
+  const sendNotice = async (id: string) => {
+    let ini = ''; try { ini = localStorage.getItem('frontdesk.initials') || '' } catch { /* private mode */ }
+    if (ini.length < 2) { const v = window.prompt('Your initials (so the record shows who sent it):', '') || ''; ini = v.trim().toUpperCase().slice(0, 4); if (ini.length < 2) return; try { localStorage.setItem('frontdesk.initials', ini) } catch { /* private mode */ } }
+    setNtBusy(id)
+    try { await fetch('/api/reservation-notices/mark-sent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, initials: ini }) }); invalidateCache(NOTICES_URL); ntQ.refresh() } finally { setNtBusy('') }
+  }
+
+  // ── guest checks (ID verified, deposit captured), blocked units, channels not connected (Jon, 2026-10-02) ──
+  const gcQ = useCachedFetch<{ ok?: boolean; rows?: GuestCheckRow[]; needed?: number; done?: number; canEdit?: boolean; error?: string }>(CHECKS_URL, { ttl: 120_000 })
+  const gcRows = gcQ.data?.rows || []
+  const gcNeeded = gcQ.data?.needed || 0, gcDone = gcQ.data?.done || 0
+  const gcTodayOpen = gcRows.filter(r => r.today && ((r.needId && r.idStatus === 'pending') || (r.needDeposit && r.depositStatus === 'pending'))).length
+  const gcIdOpen = gcRows.filter(r => r.needId && r.idStatus === 'pending').length
+  const gcDepOpen = gcRows.filter(r => r.needDeposit && r.depositStatus === 'pending').length
+  const [gcBusy, setGcBusy] = useState('')
+  const setCheck = async (rid: string, patch: Record<string, any>) => { setGcBusy(rid + JSON.stringify(patch)); try { await fetch(CHECKS_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: rid, ...patch }) }); invalidateCache(CHECKS_URL); gcQ.refresh() } finally { setGcBusy('') } }
+  const blQ = useCachedFetch<{ ok?: boolean; liveNow?: number; upcoming?: number; nightsBlocked?: number; runs?: BlockedRunT[]; error?: string }>(BLOCKED_URL, { ttl: 5 * 60_000 })
+  const blRuns = blQ.data?.runs || []
+  const blLive = blRuns.filter(r => r.live).length, blSoon = blRuns.filter(r => !r.live && r.startsInDays <= 7).length, blLater = Math.max(0, blRuns.length - blLive - blSoon)
+  const chQ = useCachedFetch<{ ok?: boolean; listings?: ChannelListingT[]; error?: string }>(CHANNELS_URL, { ttl: 10 * 60_000 })
+  const chAll = chQ.data?.listings || []
+  const chBad = chAll.filter(l => ['suspended', 'failed', 'disconnected', 'missing'].includes(l.verdict))
+  const chHard = chBad.filter(l => l.verdict === 'suspended' || l.verdict === 'failed' || l.verdict === 'disconnected').length
+  const chMissing = chBad.length - chHard
 
   // ── cleans ──
   const cleans = t.cleans.rows.filter(c => c.status !== 'vendor' && c.status !== 'extended')   // done rows stay: the shared strip reads 'done' and draws no verbs
@@ -254,6 +300,23 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     { key: 'checklist', label: 'Checklist', done: ckDone, needed: ckRows.length, loading: !ckQ.data && ckQ.loading, title: 'Today’s standing checklist: done, late, due within the hour, and the rest of the day',
       segs: [{ label: 'done', n: ckDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'late', n: ckLate, cls: 'bg-rose-500', tone: 'rose', filter: 'late' }, { label: 'due soon', n: ckSoon, cls: 'bg-amber-400', tone: 'amber', filter: 'soon' }, { label: 'later', n: Math.max(0, ckRows.length - ckDone - ckLate - ckSoon), cls: 'bg-slate-300', tone: 'slate', filter: 'later' }],
       sub: ckRows.length ? [ckLate ? ckLate + ' late' : '', ckSoon ? ckSoon + ' due within the hour' : '', !ckLate && !ckSoon ? (ckDone === ckRows.length ? 'all done' : 'nothing due right now') : ''].filter(Boolean).join(' · ') : 'no checklist yet' },
+    { key: 'reviews', label: 'Reviews responded', done: rvDone.length, needed: rvAll.length, loading: !rvQ.data && rvQ.loading, title: 'Reviews from the last 60 days: answered publicly (or set aside) against the ones still waiting on a reply — low scores first',
+      segs: [{ label: 'responded', n: rvDone.length, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: '3★ or under', n: rvLow.length, cls: 'bg-rose-500', tone: 'rose', filter: 'low' }, { label: 'waiting', n: Math.max(0, rvWait.length - rvLow.length), cls: 'bg-amber-400', tone: 'amber', filter: 'wait' }],
+      sub: rvQ.error ? 'could not read the reviews' : rvAll.length ? [rvWait.length ? rvWait.length + ' waiting on a reply' : 'all answered', rvLow.length ? rvLow.length + ' at 3★ or under' : ''].filter(Boolean).join(' · ') : 'no reviews in 60 days' },
+    { key: 'notices', label: 'Front-desk notices', done: ntC.sentToday, needed: ntToday.length, loading: !ntQ.data && ntQ.loading, title: 'Arrival notices the buildings need today (Elser’s registration form first): sent against to send, late ones first',
+      segs: [{ label: 'sent', n: ntC.sentToday, cls: 'bg-emerald-500', tone: 'emerald', filter: 'sent' }, { label: 'late', n: ntC.late, cls: 'bg-rose-500', tone: 'rose', filter: 'late' }, { label: 'due', n: ntC.due, cls: 'bg-amber-400', tone: 'amber', filter: 'due' }, { label: 'to send', n: Math.max(0, ntC.toSend - ntC.late - ntC.due), cls: 'bg-slate-300', tone: 'slate', filter: 'open' }],
+      sub: ntQ.error ? 'could not read the notices' : ntToday.length ? [ntC.toSend ? ntC.toSend + ' to send' : 'all sent', ntC.late ? ntC.late + ' late' : '', ntC.blocked ? ntC.blocked + ' with no recipient' : ''].filter(Boolean).join(' · ') : 'none needed today' },
+    { key: 'checks', label: 'ID & deposits', done: gcDone, needed: gcNeeded, loading: !gcQ.data && gcQ.loading, title: 'Arrivals in the next 7 days whose channel asks us to verify ID (Direct, Vrbo) or hold a deposit (Direct, Expedia, Vrbo): checks done against checks owed, today first',
+      segs: [{ label: 'done', n: gcDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'ID to verify', n: gcIdOpen, cls: 'bg-amber-400', tone: 'amber', filter: 'id' }, { label: 'deposit to take', n: gcDepOpen, cls: 'bg-rose-500', tone: 'rose', filter: 'deposit' }],
+      sub: gcQ.error ? (/migration/.test(gcQ.error) ? 'needs migration 145' : 'could not read') : gcNeeded ? [gcTodayOpen ? gcTodayOpen + ' arriving today still open' : 'today’s arrivals covered', gcIdOpen ? gcIdOpen + ' ID' : '', gcDepOpen ? gcDepOpen + ' deposit' : ''].filter(Boolean).join(' · ') : 'nothing owed this week' },
+    { key: 'blocked', label: 'Blocked units', done: 0, needed: blRuns.length, loading: !blQ.data && blQ.loading, title: 'Units out of service on the calendar: off right now, starting within a week, and later — with the block note',
+      big: { value: String(blLive), unit: blLive === 1 ? 'off today' : 'off today', tone: blLive ? 'text-rose-700' : 'text-emerald-700' },
+      segs: [{ label: 'off now', n: blLive, cls: 'bg-rose-500', tone: 'rose', filter: 'live' }, { label: 'within 7 days', n: blSoon, cls: 'bg-amber-400', tone: 'amber', filter: 'soon' }, { label: 'later', n: blLater, cls: 'bg-slate-300', tone: 'slate', filter: 'later' }],
+      sub: blQ.error ? 'could not read the calendar' : blRuns.length ? [blLive ? blLive + ' off now' : 'none off now', blSoon ? blSoon + ' starting this week' : '', blQ.data?.nightsBlocked ? blQ.data.nightsBlocked + ' nights blocked in 30d' : ''].filter(Boolean).join(' · ') : 'nothing blocked in the next 30 days' },
+    { key: 'channels', label: 'Channels', done: Math.max(0, chAll.length - chBad.length), needed: chAll.length, loading: !chQ.data && chQ.loading, title: 'Every active listing against the major channels: live, or suspended / failed / disconnected, or simply not listed on one',
+      big: { value: String(chBad.length), unit: chBad.length === 1 ? 'listing not fully live' : 'listings not fully live', tone: chHard ? 'text-rose-700' : chBad.length ? 'text-amber-800' : 'text-emerald-700' },
+      segs: [{ label: 'live everywhere', n: Math.max(0, chAll.length - chBad.length), cls: 'bg-emerald-500', tone: 'emerald', filter: 'live' }, { label: 'not on a channel', n: chMissing, cls: 'bg-amber-400', tone: 'amber', filter: 'missing' }, { label: 'suspended / failed', n: chHard, cls: 'bg-rose-500', tone: 'rose', filter: 'hard' }],
+      sub: chQ.error ? 'could not read channel health' : chAll.length ? [chHard ? chHard + ' suspended, failed or disconnected' : 'nothing broken', chMissing ? chMissing + ' missing a major channel' : ''].filter(Boolean).join(' · ') : 'no channel snapshot yet' },
   ]
 
   // ── the open list ──
@@ -273,11 +336,27 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     if (open === 'glitches') for (const g of gl.rows) out.push({ key: 'gl:' + g.id, state: g.overdue ? 'overdue' : !g.hasTask ? 'notask' : 'covered', sort: g.overdue ? 0 : !g.hasTask ? 1 : 3, node: <GlitchRow g={g} canEdit={can.plan} onChanged={onChanged} /> })
     if (open === 'claims') for (const c of cl.rows) out.push({ key: 'cl:' + c.id, state: c.daysLeft != null && c.daysLeft <= 3 ? 'due' : 'ok', sort: c.daysLeft ?? 999, node: <Row dot={c.daysLeft != null && c.daysLeft <= 3 ? 'rose' : null} title={c.unit + (c.guest ? ' · ' + c.guest : '')} tags={<>{<Tag tone={c.daysLeft != null && c.daysLeft <= 3 ? 'rose' : 'slate'}>{c.daysLeft != null ? (c.daysLeft <= 0 ? 'due today' : c.daysLeft + 'd left') : c.stageLabel}</Tag>}{c.amount != null && <Tag>{money(c.amount)}</Tag>}</>} meta={[c.stageLabel, c.waitingOn ? 'waiting on ' + c.waitingOn : ''].filter(Boolean).join(' · ')} actions={<Link href={'/claims/' + c.id} prefetch={false} className={GHOST}>Open</Link>} /> })
     if (open === 'checklist') for (const r of ckRows) out.push({ key: 'ck:' + r.id, state: r.done ? 'done' : r.late ? 'late' : r.in_minutes != null && r.in_minutes <= 60 ? 'soon' : 'later', sort: r.done ? 9 : r.late ? 0 : (r.in_minutes ?? 9999) / 1000 + 1, node: <Row dot={r.late ? 'rose' : null} title={r.title} tags={<>{r.late ? <Tag tone="rose">late</Tag> : r.in_minutes != null && !r.done && r.in_minutes <= 60 ? <Tag tone="amber">in {r.in_minutes}m</Tag> : null}{r.owner_role ? <Tag>{r.owner_role}</Tag> : null}{r.done ? <Tag tone="emerald">done · {String(r.done_by || '').split(/[\s@]/)[0]}</Tag> : null}</>} meta={r.by_time ? 'by ' + clock12(r.by_time) : 'anytime today'} actions={<>{r.link && !r.done && <Link href={r.link} prefetch={false} className={GHOST}>Open</Link>}{!r.done && ckQ.data?.canTick && <button onClick={() => tickCk(r.id)} disabled={ckBusy === r.id} className={DARK}>{ckBusy === r.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button>}</>} /> })
+    if (open === 'reviews') for (const r of rvAll) { const f = fiveStar(r.rating, r.channel); const low = f != null && f <= 3; const done = r.hasReply || r.dismissed; out.push({ key: 'rv:' + r.id, state: done ? 'done' : low ? 'low' : 'wait', sort: done ? 9 : low ? 0 : 2, node: <Row dot={!done && low ? 'rose' : null} title={(r.guest || 'Guest') + (r.listing_name ? ' · ' + r.listing_name : '')} tags={<>{f != null && <Tag tone={low ? 'rose' : f >= 4.5 ? 'emerald' : 'slate'}>{f}★</Tag>}<Tag>{String(r.channel || '').replace(/airbnb2?/i, 'Airbnb').replace(/bookingcom/i, 'Booking')}</Tag>{done ? <Tag tone="emerald">{r.hasReply ? 'responded' : 'set aside'}</Tag> : <Tag tone="amber">waiting</Tag>}</>} meta={new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' })} actions={!done ? <Link href="/reviews" prefetch={false} className={DARK}>Reply</Link> : null} /> }) }
+    if (open === 'notices') for (const n of ntToday) out.push({ key: 'nt:' + n.id, state: n.sent_at ? 'sent' : n.urgency === 'late' ? 'late' : n.urgency === 'due' ? 'due' : 'open', sort: n.sent_at ? 9 : n.urgency === 'late' ? 0 : n.urgency === 'due' ? 1 : 3, node: <Row dot={!n.sent_at && n.urgency === 'late' ? 'rose' : null} title={n.guest_name} tags={<>{n.propertyName && <Tag tone="violet">{n.propertyName}</Tag>}{n.sent_at ? <Tag tone="emerald">sent{n.sent_by ? ' · ' + n.sent_by : ''}</Tag> : n.urgency === 'late' ? <Tag tone="rose">late</Tag> : n.urgency === 'due' ? <Tag tone="amber">due now</Tag> : null}{!n.sent_at && n.hasRecipient === false && <Tag tone="amber">no recipient</Tag>}</>} meta={'Unit ' + n.unit_no + ' · arrives ' + String(n.arrival_date).slice(5)} actions={<>{!n.sent_at && <Link href="/reservation-emails" prefetch={false} className={GHOST}>Open</Link>}{!n.sent_at && <button onClick={() => sendNotice(n.id)} disabled={ntBusy === n.id} className={DARK}>{ntBusy === n.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Sent</button>}</>} /> })
+    if (open === 'checks') for (const r of gcRows) {
+      const idOpen = r.needId && r.idStatus === 'pending', depOpen = r.needDeposit && r.depositStatus === 'pending'
+      out.push({ key: 'gc:' + r.reservationId, state: !idOpen && !depOpen ? 'done' : depOpen ? 'deposit' : 'id', sort: (!idOpen && !depOpen ? 9 : r.today ? 0 : 2) + (r.checkIn > d.today ? 0.5 : 0), node: <Row dot={(idOpen || depOpen) && r.today ? 'rose' : null} title={r.guest + ' · ' + r.unit}
+        tags={<><Tag>{r.channel}</Tag><Tag tone={r.today ? 'amber' : 'slate'}>{r.today ? 'arrives today' : 'arrives ' + r.checkIn.slice(5)}</Tag>{r.needId && <Tag tone={r.idStatus === 'pending' ? 'amber' : 'emerald'}>{r.idStatus === 'verified' ? 'ID verified' + (r.salatoVerified ? ' (Salato link)' : '') : r.idStatus === 'waived' ? 'ID waived' : 'ID to verify'}</Tag>}{r.needDeposit && <Tag tone={r.depositStatus === 'pending' ? 'rose' : 'emerald'}>{r.depositStatus === 'captured' ? 'deposit captured' + (r.depositAmount ? ' · ' + money(r.depositAmount) : '') : r.depositStatus === 'waived' ? 'deposit waived' : 'deposit to take'}</Tag>}</>}
+        meta={[r.note, r.by ? 'by ' + r.by.split('@')[0] : ''].filter(Boolean).join(' · ')}
+        actions={gcQ.data?.canEdit ? <>
+          {idOpen && <button onClick={() => setCheck(r.reservationId, { id_status: 'verified' })} disabled={!!gcBusy} className={DARK}>{gcBusy.startsWith(r.reservationId) ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} ID verified</button>}
+          {depOpen && <button onClick={() => { const v = window.prompt('Deposit amount captured (optional):', ''); if (v === null) return; setCheck(r.reservationId, { deposit_status: 'captured', deposit_amount: v.trim() ? Number(v.replace(/[^\d.]/g, '')) : null }) }} disabled={!!gcBusy} className={DARK}><Check size={12} /> Deposit captured</button>}
+          {(idOpen || depOpen) && <button onClick={() => setCheck(r.reservationId, idOpen ? { id_status: 'waived' } : { deposit_status: 'waived' })} disabled={!!gcBusy} className={GHOST} title={idOpen ? 'Not needed for this stay' : 'No deposit for this stay'}>Waive</button>}
+          <Link href={'/reservations/' + encodeURIComponent(r.reservationId)} prefetch={false} className={GHOST}>Open</Link>
+        </> : <Link href={'/reservations/' + encodeURIComponent(r.reservationId)} prefetch={false} className={GHOST}>Open</Link>} /> })
+    }
+    if (open === 'blocked') for (const r of blRuns) out.push({ key: 'bl:' + r.listingId + r.from, state: r.live ? 'live' : r.startsInDays <= 7 ? 'soon' : 'later', sort: r.live ? 0 : r.startsInDays, node: <Row dot={r.live ? 'rose' : null} title={r.unit} tags={<><Tag>{r.building}</Tag><Tag tone={r.live ? 'rose' : r.startsInDays <= 7 ? 'amber' : 'slate'}>{r.live ? 'off now' : 'in ' + r.startsInDays + 'd'}</Tag><Tag>{r.nights}{r.openEnded ? '+' : ''} night{r.nights === 1 ? '' : 's'}</Tag></>} meta={[r.from.slice(5) + ' → ' + (r.openEnded ? '?' : r.to.slice(5)), r.reason, r.note].filter(Boolean).join(' · ')} actions={<Link href="/blocked" prefetch={false} className={GHOST}>Manage</Link>} /> })
+    if (open === 'channels') for (const l of chBad) out.push({ key: 'ch:' + l.id, state: l.verdict === 'missing' ? 'missing' : 'hard', sort: l.verdict === 'missing' ? 2 : 0, node: <Row dot={l.verdict !== 'missing' ? 'rose' : null} title={l.name} tags={<><Tag>{l.building}</Tag><Tag tone={l.verdict === 'missing' ? 'amber' : 'rose'}>{l.verdict}</Tag>{l.missingMajor.map(k => <Tag key={k}>not on {k.replace(/airbnb2?/i, 'Airbnb').replace(/bookingcom/i, 'Booking.com')}</Tag>)}</>} meta={Object.entries(l.cells || {}).filter(([, c]) => c.verdict !== 'live').map(([k, c]) => k + ': ' + (c.status || c.verdict)).join(' · ')} actions={<Link href="/channels" prefetch={false} className={GHOST}>Channels</Link>} /> })
     if (open === 'unpaid') for (const r of unpaidRows) out.push({ key: 'unpaid:' + r.id, state: r.tracking.status, sort: (r.bucket === 'in_house' ? 0 : r.bucket === 'today' ? 1 : 2) + (r.tracking.status === 'open' ? 0 : 0.5), node: <UnpaidRow r={r} today={unpaidQ.data?.today || d.today} canEdit={!!unpaidQ.data?.canEdit} onPatch={onUnpaidPatch} simple /> })
     if (open === 'recovery' && rc) for (const r of rc.rows) out.push({ key: r.kind + r.id, state: r.done ? 'done' : 'open', sort: r.done ? 9 : r.today ? 0 : 2, node: <DayCallRowView r={r} canLog={can.calls} onChanged={changed} /> })
     return out.sort((a, b) => a.sort - b.sort)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, d, calls, roster, can.assign, can.plan, can.calls, unpaidQ.data, unpaidPatch, ckQ.data, ckBusy])
+  }, [open, d, calls, roster, can.assign, can.plan, can.calls, unpaidQ.data, unpaidPatch, ckQ.data, ckBusy, rvQ.data, ntQ.data, ntBusy, gcQ.data, gcBusy, blQ.data, chQ.data])
 
   const tile = tiles.find(x => x.key === open) || null
   const chips = tile ? tile.segs.filter(s => s.n > 0) : []
@@ -290,12 +369,12 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     if (k === 'unpaid') { const el = document.getElementById('unpaid-today'); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); return } }
     setOpen(o => (o === k ? null : k)); setFilter('all')
   }
-  const headline = tile ? (tile.key === 'unpaid' ? money(uOwed) + ' owed · ' + tile.done + ' of ' + tile.needed + ' contacted' : tile.key === 'glitches' || tile.key === 'claims' ? tile.needed + ' open' : tile.done + ' of ' + tile.needed + ' done') : ''
+  const headline = tile ? (tile.key === 'unpaid' ? money(uOwed) + ' owed · ' + tile.done + ' of ' + tile.needed + ' contacted' : tile.key === 'glitches' || tile.key === 'claims' ? tile.needed + ' open' : tile.key === 'reviews' ? tile.done + ' of ' + tile.needed + ' responded' : tile.key === 'blocked' ? tile.needed + ' blocks in 30 days' : tile.key === 'channels' ? tile.needed - tile.done + ' of ' + tile.needed + ' not fully live' : tile.key === 'checks' ? tile.done + ' of ' + tile.needed + ' checks done' : tile.key === 'notices' ? tile.done + ' of ' + tile.needed + ' sent' : tile.done + ' of ' + tile.needed + ' done') : ''
 
   return (
     <section>
       <div className="grid grid-cols-3 lg:grid-cols-6 gap-2">
-        {tiles.map(x => <Tile key={x.key} label={x.label} done={x.done} needed={x.needed} segs={x.segs} sub={x.sub} on={open === x.key} onClick={() => toggle(x.key)} title={x.title} loading={x.loading} big={x.big} />)}
+        {tiles.map(x => <Tile key={x.key} label={x.label} done={x.done} needed={x.needed} segs={x.segs} sub={x.sub} on={open === x.key} onClick={() => toggle(x.key)} title={x.title} loading={x.loading} big={x.big} noPct={x.key === 'glitches' || x.key === 'claims' || x.key === 'blocked'} />)}
       </div>
       {open && tile && (
         <div className="mt-2 rounded-2xl border border-brand-200 bg-brand-50/30 p-2 sm:p-3">
@@ -310,7 +389,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
               {(can.assign || can.plan) && (open === 'cleans' || open === 'insp' || open === 'maint') && nudgeIds.length > 0 && (
                 <NudgeBtn taskIds={nudgeIds} label={'Message the team · ' + nudgePeople} className={DARK} title={'One Slack message per person, listing their open ' + (open === 'cleans' ? 'cleans' : open === 'insp' ? 'inspections' : 'jobs') + ' in view — posted in the building’s channel tagging them, or a DM when the building has no channel'} />
               )}
-              {open === 'glitches' ? <Link href="/glitches" className="text-[11px] font-semibold text-brand-700 hover:underline">Glitch board →</Link> : open === 'claims' ? <Link href="/claims" className="text-[11px] font-semibold text-brand-700 hover:underline">Claims →</Link> : open === 'checklist' ? <Link href="/checklist" className="text-[11px] font-semibold text-brand-700 hover:underline">Checklist →</Link> : open === 'unpaid' ? <Link href="/reservations/unpaid" className="text-[11px] font-semibold text-brand-700 hover:underline">Unpaid board →</Link> : open === 'welcome' || open === 'recovery' ? <Link href="/welcome-calls" className="text-[11px] font-semibold text-brand-700 hover:underline">Calls desk →</Link> : open === 'maint' ? <Link href="/maintenance" className="text-[11px] font-semibold text-brand-700 hover:underline">Maintenance →</Link> : <Link href="/plan" className="text-[11px] font-semibold text-brand-700 hover:underline">Today board →</Link>}
+              {open === 'checks' ? <Link href="/welcome-calls" className="text-[11px] font-semibold text-brand-700 hover:underline">Calls desk →</Link> : open === 'blocked' ? <Link href="/blocked" className="text-[11px] font-semibold text-brand-700 hover:underline">Blocked units →</Link> : open === 'channels' ? <Link href="/channels" className="text-[11px] font-semibold text-brand-700 hover:underline">Channels →</Link> : open === 'reviews' ? <Link href="/reviews" className="text-[11px] font-semibold text-brand-700 hover:underline">Reviews →</Link> : open === 'notices' ? <Link href="/reservation-emails" className="text-[11px] font-semibold text-brand-700 hover:underline">Front-desk notices →</Link> : open === 'glitches' ? <Link href="/glitches" className="text-[11px] font-semibold text-brand-700 hover:underline">Glitch board →</Link> : open === 'claims' ? <Link href="/claims" className="text-[11px] font-semibold text-brand-700 hover:underline">Claims →</Link> : open === 'checklist' ? <Link href="/checklist" className="text-[11px] font-semibold text-brand-700 hover:underline">Checklist →</Link> : open === 'unpaid' ? <Link href="/reservations/unpaid" className="text-[11px] font-semibold text-brand-700 hover:underline">Unpaid board →</Link> : open === 'welcome' || open === 'recovery' ? <Link href="/welcome-calls" className="text-[11px] font-semibold text-brand-700 hover:underline">Calls desk →</Link> : open === 'maint' ? <Link href="/maintenance" className="text-[11px] font-semibold text-brand-700 hover:underline">Maintenance →</Link> : <Link href="/plan" className="text-[11px] font-semibold text-brand-700 hover:underline">Today board →</Link>}
               <button onClick={() => setOpen(null)} className="text-muted hover:text-ink" aria-label="Close the list" title="Close"><ChevronUp size={15} /></button>
             </span>
           </div>
