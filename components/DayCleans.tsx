@@ -95,7 +95,8 @@ type MarketDay = { market: string; rows: Row[]; turnovers: number; otherJobs: nu
 
 const keyOf = (j: PJob) => String(j.id || (j.unit + '|' + j.task))
 
-export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, onChanged }: {
+export type DayStaffing = { verdict: 'short' | 'ok' | 'over' | 'unknown' | 'none'; short: number; line: string }
+export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, onChanged, staffing }: {
   days: PDay[]
   blocks: PBlock[]
   dept: 'cleaning' | 'maintenance' | 'all'
@@ -103,6 +104,8 @@ export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, 
   labor?: DayLabor | null
   canManage?: boolean
   onChanged?: () => void
+  /** Per date: is the roster short for that day (lib/forecast/staffing), already filtered to the market in view. */
+  staffing?: Record<string, DayStaffing>
 }) {
   // ONE PICKER EVERYWHERE (2026-10-01): the same InlineAssign the Today page, the Today board and the
   // Maintenance desk use — not a native select of its own. The roster is read once and shared.
@@ -207,12 +210,13 @@ export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, 
             const n = countOf(d.date)
             const on = d.date === day.date
             return (
-              <button key={d.date} onClick={() => setPicked(d.date)}
-                className={'shrink-0 w-[62px] py-2 text-center border-r border-line last:border-r-0 transition ' +
+              <button key={d.date} onClick={() => setPicked(d.date)} title={staffing?.[d.date]?.line || ''}
+                className={'shrink-0 w-[68px] py-2 text-center border-r border-line last:border-r-0 transition ' +
                   (on ? 'bg-ink' : d.weekend ? 'bg-app/50 hover:bg-app' : 'hover:bg-app/60')}>
-                <span className={'block text-[10px] font-bold uppercase tracking-wide ' + (on ? 'text-white/60' : d.today ? 'text-brand-600' : 'text-muted')}>{dowOf(d.date)}</span>
-                <span className={'block text-[10.5px] tabular-nums ' + (on ? 'text-white/50' : 'text-muted/70')}>{d.date.slice(8)}</span>
+                <span className={'block text-[10px] font-bold uppercase tracking-wide ' + (on ? 'text-white/60' : d.today ? 'text-brand-600' : 'text-muted')}>{dowOf(d.date)} {Number(d.date.slice(8))}</span>
                 <span className={'block text-[17px] font-bold tabular-nums leading-tight ' + (on ? 'text-white' : n.turnovers ? 'text-ink' : 'text-line')}>{n.turnovers || '—'}</span>
+                {/* ONE STRIP, NOT THREE (Jon, 2026-10-02): the staffing verdict rides on the day itself. */}
+                {(() => { const st = staffing?.[d.date]; if (!st || !n.turnovers) return <span className="block h-[14px]" />; const cls = st.verdict === 'short' ? (on ? 'text-rose-300' : 'text-rose-700') : st.verdict === 'over' ? (on ? 'text-sky-300' : 'text-sky-700') : st.verdict === 'ok' ? (on ? 'text-emerald-300' : 'text-emerald-700') : (on ? 'text-white/40' : 'text-muted/60'); return <span className={'block text-[9.5px] font-bold uppercase tracking-wide leading-[14px] ' + cls}>{st.verdict === 'short' ? 'short ' + (st.short || '') : st.verdict === 'over' ? 'spare' : st.verdict === 'ok' ? 'staffed' : 'no roster'}</span> })()}
               </button>
             )
           })}
