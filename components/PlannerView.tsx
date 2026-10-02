@@ -310,7 +310,7 @@ export function PlannerView({ days, blocks, dept, showLinks, marketFilter, group
                                 <li key={i} className="flex items-start gap-2 text-[13px] leading-snug">
                                   <span title={j.status} className={
                                     'mt-[7px] h-1.5 w-1.5 rounded-full shrink-0 ' +
-                                    (j.status === 'done' ? 'bg-emerald-400' : j.status === 'in progress' ? 'bg-amber-400' : 'bg-line')
+                                    (j.status === 'done' ? 'bg-emerald-400' : j.status === 'in progress' ? 'bg-sky-400' : 'bg-line')
                                   } />
                                   <span className="min-w-0">
                                     <span className="font-semibold text-ink">{j.unit}</span>

@@ -31,6 +31,7 @@ import type { CommandDay, NextItem, TaskRow } from '@/lib/command-day'
 import { InlineAssign, type Roster } from '@/components/CommandCockpit'
 import { Row, CleanRow, InspectionTaskRow, ArrivalInspectionRow, LIST, GHOST, DARK, bz, money, INSPECT, tomorrowOf } from '@/components/command/Hub'
 import { NudgeBtn } from '@/components/command/Nudge'
+import { useTaskActions, TaskStateTag, type TaskState } from '@/components/task/TaskActions'
 import type { DayCalls, DayCallRow } from '@/app/api/command/calls/route'
 import { UnpaidRow, type UnpaidRowT } from '@/components/UnpaidBoard'
 
@@ -51,25 +52,21 @@ const isInsp = (t: TaskRow) => t.dept === 'inspection' || INSPECT.test(t.name) |
 
 // ── a maintenance task row ──────────────────────────────────────────────────────────────────────
 const PRIO: Record<string, { tone: Tone; label: string }> = { urgent: { tone: 'roseSolid', label: 'urgent' }, high: { tone: 'rose', label: 'high' }, normal: { tone: 'slate', label: 'normal' }, low: { tone: 'slate', label: 'low' } }
-function MaintRow({ t, roster, canAssign, onChanged }: { t: TaskRow; roster: Roster[]; canAssign: boolean; onChanged: () => void }) {
-  const [open, setOpen] = useState(false)
+function MaintRow({ t, roster, canAssign: _canAssign, onChanged }: { t: TaskRow; roster: Roster[]; canAssign: boolean; onChanged: () => void }) {
   const nobody = !t.who
-  const st = t.state === 'done' ? { label: 'done', tone: 'emerald' as Tone, title: 'Closed in Breezeway' } : t.state === 'running' ? { label: 'in progress', tone: 'sky' as Tone, title: 'Started, not finished' } : nobody ? { label: 'unassigned', tone: 'amber' as Tone, title: 'Nobody is on this' } : { label: 'open', tone: 'slate' as Tone, title: 'Assigned, not started' }
+  const state: TaskState = t.state === 'done' ? 'done' : t.late ? 'late' : t.state === 'running' ? 'running' : 'open'
   const pr = PRIO[String(t.prio || '').toLowerCase()]
+  const ta = useTaskActions({ taskId: t.taskId, dept: 'maintenance', label: t.unit + ' — ' + t.name, link: '/maintenance', state, who: t.who, roster, onChanged })
   return (
-    <Row dot={t.state !== 'done' && (nobody || t.late || t.prio === 'urgent') ? (t.late || t.prio === 'urgent' ? 'rose' : 'amber') : null} title={t.unit}
+    <Row dot={!ta.done && (nobody || t.late || t.prio === 'urgent') ? (t.late || t.prio === 'urgent' ? 'rose' : 'amber') : null} title={t.unit}
       tags={<>
-        <Tag tone={st.tone} title={st.title}>{st.label}</Tag>
-        {pr && (pr.label === 'urgent' || pr.label === 'high') && t.state !== 'done' && <Tag tone={pr.tone} title="Priority in Breezeway">{pr.label}</Tag>}
-        {t.late && t.state !== 'done' && <Tag tone="rose" title="Past its scheduled time">late</Tag>}
+        <TaskStateTag state={ta.done ? 'done' : state} />
+        {nobody && !ta.done && <TaskStateTag state="unassigned" />}
+        {pr && (pr.label === 'urgent' || pr.label === 'high') && !ta.done && <Tag tone={pr.tone} title="Priority in Breezeway">{pr.label}</Tag>}
       </>}
       meta={[t.name, t.who, t.market].filter(Boolean).join(' · ')}
-      actions={<>
-        {canAssign && t.state !== 'done' && <button onClick={() => setOpen(o => !o)} className={nobody ? DARK : GHOST} title={nobody ? 'Pick who does it' : 'Hand it to someone else'}><UserPlus size={12} /> {nobody ? 'Assign' : 'Reassign'}</button>}
-        {canAssign && !nobody && t.state !== 'done' && <NudgeBtn taskIds={[t.taskId]} compact title={'Message ' + t.who + ' on Slack about this job'} />}
-        <a href={bz(t.taskId)} target="_blank" rel="noreferrer" className={GHOST} title="Open in Breezeway"><ExternalLink size={12} /></a>
-      </>}>
-      {open && <InlineAssign taskId={t.taskId} dept="maintenance" roster={roster} onDone={() => { setOpen(false); onChanged() }} />}
+      actions={ta.actions}>
+      {ta.panels}
     </Row>
   )
 }
@@ -176,7 +173,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const onUnpaidPatch = (id: string, tr: UnpaidRowT['tracking']) => { setUnpaidPatch(p => ({ ...p, [id]: tr })); invalidateCache(UNPAID_URL) }
 
   // ── cleans ──
-  const cleans = t.cleans.rows.filter(c => c.status !== 'vendor' && c.status !== 'extended')
+  const cleans = t.cleans.rows.filter(c => c.status !== 'vendor' && c.status !== 'extended')   // done rows stay: the shared strip reads 'done' and draws no verbs
   const cDone = cleans.filter(c => c.status === 'done').length
   const cRun = cleans.filter(c => c.status === 'running').length
   const cTrouble = cleans.filter(c => c.status === 'late' || c.status === 'atRisk').length

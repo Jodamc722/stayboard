@@ -35,6 +35,7 @@ import { InlineAssign, BTN, MINE_URL, type Roster, type Mine, type MineItem } fr
 import { SCOREBOARD_URL } from '@/components/command/Scoreboard'
 import { NudgeBtn } from '@/components/command/Nudge'
 import { DayKpis } from '@/components/command/DayKpis'
+import { useTaskActions, TaskStateTag, type TaskState } from '@/components/task/TaskActions'
 import { UnpaidBoard } from '@/components/UnpaidBoard'
 
 // ── shared bits ─────────────────────────────────────────────────────────────────────────────────
@@ -143,47 +144,41 @@ export const CLEAN_ST: Record<string, { label: string; tone: Tone; title: string
   open: { label: 'not started', tone: 'slate', title: 'Nobody has started this clean' },
   running: { label: 'in progress', tone: 'sky', title: 'Started, not finished' },
 }
-export function CleanRow({ c, value, roster, canAssign, onChanged, lane }: { c: CleanRowT; value: number; roster: Roster[]; canAssign: boolean; onChanged: () => void; lane?: string }) {
-  const [open, setOpen] = useState(false)
-  const s = CLEAN_ST[c.status] || CLEAN_ST.open
+export function CleanRow({ c, value, roster, canAssign: _canAssign, onChanged, lane }: { c: CleanRowT; value: number; roster: Roster[]; canAssign: boolean; onChanged: () => void; lane?: string }) {
+  // ONE TASK, ONE WAY (2026-10-01): the shared strip — Assign · Done · Nudge · Comments · Breezeway —
+  // and the 3-way comment thread, the same as the Schedule, Today board and Maintenance desk.
   const nobody = !c.who
+  const state: TaskState = c.status === 'done' ? 'done' : c.status === 'late' ? 'late' : c.status === 'atRisk' ? 'atRisk' : c.status === 'running' ? 'running' : 'open'
+  const ta = useTaskActions({ taskId: c.taskId, dept: 'housekeeping', label: c.unit + ' — clean', link: '/schedule', state, who: c.who, roster, onChanged })
   return (
-    <Row lane={lane} noteKey={'clean:' + c.taskId} dot={c.status === 'late' ? 'rose' : c.status === 'atRisk' || nobody ? 'amber' : null} title={c.unit}
+    <Row lane={lane} dot={state === 'late' ? 'rose' : state === 'atRisk' || (nobody && !ta.done) ? 'amber' : null} title={c.unit}
       tags={<>
-        <Tag tone={s.tone} title={s.title}>{s.label}</Tag>
-        {c.sameDay && <Tag tone="violet" title="A guest arrives into this unit today">same-day</Tag>}
-        {nobody && <Tag tone="amber" title="Nobody is assigned in Breezeway">nobody on it</Tag>}
+        <TaskStateTag state={ta.done ? 'done' : state} />
+        {c.sameDay && !ta.done && <Tag tone="violet" title="A guest arrives into this unit today">same-day</Tag>}
+        {nobody && !ta.done && <TaskStateTag state="unassigned" />}
         {value >= 1000 && <Tag tone="slate" title={'The arriving booking is worth ' + money(value) + ' — high-ticket, first in line'}>{money(value)}</Tag>}
       </>}
       meta={[c.who, c.arrivingAt ? 'guest in ' + c.arrivingAt : '', c.market].filter(Boolean).join(' · ')}
-      actions={<>
-        {canAssign && <button onClick={() => setOpen(o => !o)} className={nobody ? DARK : GHOST} title={nobody ? 'Pick who cleans it' : 'Hand it to someone else'}><UserPlus size={12} /> {nobody ? 'Assign' : 'Reassign'}</button>}
-        {canAssign && !nobody && c.status !== 'done' && <NudgeBtn taskIds={[c.taskId]} compact title={'Message ' + c.who + ' on Slack about this clean'} />}
-        <a href={bz(c.taskId)} target="_blank" rel="noreferrer" className={GHOST} title="Open the clean in Breezeway"><ExternalLink size={12} /></a>
-      </>}>
-      {open && <InlineAssign taskId={c.taskId} dept="housekeeping" roster={roster} onDone={() => { setOpen(false); onChanged() }} />}
+      actions={ta.actions}>
+      {ta.panels}
     </Row>
   )
 }
 
-export function InspectionTaskRow({ t, big, roster, canAssign, onChanged, lane }: { t: TaskRow; big: boolean; roster: Roster[]; canAssign: boolean; onChanged: () => void; lane?: string }) {
-  const [open, setOpen] = useState(false)
+export function InspectionTaskRow({ t, big, roster, canAssign: _canAssign, onChanged, lane }: { t: TaskRow; big: boolean; roster: Roster[]; canAssign: boolean; onChanged: () => void; lane?: string }) {
   const nobody = !t.who
-  const st = t.state === 'done' ? { label: 'done', tone: 'emerald' as Tone, title: 'Walked and closed' } : t.state === 'running' ? { label: 'in progress', tone: 'sky' as Tone, title: 'Somebody is in the unit' } : nobody ? { label: 'unconfirmed', tone: 'amber' as Tone, title: 'On the board with nobody assigned — confirm who walks it' } : { label: 'scheduled', tone: 'slate' as Tone, title: 'Assigned, not started' }
+  const state: TaskState = t.state === 'done' ? 'done' : t.late ? 'late' : t.state === 'running' ? 'running' : 'open'
+  const ta = useTaskActions({ taskId: t.taskId, dept: 'inspection', label: t.unit + ' — ' + t.name, link: '/command', state, who: t.who, roster, onChanged })
   return (
-    <Row lane={lane} noteKey={'insp:' + t.taskId} dot={t.state !== 'done' && (nobody || t.late) ? (t.late ? 'rose' : 'amber') : null} title={t.unit}
+    <Row lane={lane} dot={!ta.done && (nobody || t.late) ? (t.late ? 'rose' : 'amber') : null} title={t.unit}
       tags={<>
-        <Tag tone={st.tone} title={st.title}>{st.label}</Tag>
+        <TaskStateTag state={ta.done ? 'done' : state} />
+        {nobody && !ta.done && <TaskStateTag state="unassigned" />}
         {big && <Tag tone="violet" title="A big arrival lands in this unit — walk it first">big arrival</Tag>}
-        {t.late && t.state !== 'done' && <Tag tone="rose" title="Past its scheduled time">late</Tag>}
       </>}
       meta={[t.name, t.who, t.market].filter(Boolean).join(' · ')}
-      actions={<>
-        {canAssign && t.state !== 'done' && <button onClick={() => setOpen(o => !o)} className={nobody ? DARK : GHOST} title={nobody ? 'Confirm who walks it' : 'Hand it to someone else'}><UserPlus size={12} /> {nobody ? 'Assign' : 'Reassign'}</button>}
-        {canAssign && !nobody && t.state !== 'done' && <NudgeBtn taskIds={[t.taskId]} compact title={'Message ' + t.who + ' on Slack about this inspection'} />}
-        <a href={bz(t.taskId)} target="_blank" rel="noreferrer" className={GHOST} title="Open the inspection in Breezeway"><ExternalLink size={12} /></a>
-      </>}>
-      {open && <InlineAssign taskId={t.taskId} dept="inspection" roster={roster} onDone={() => { setOpen(false); onChanged() }} />}
+      actions={ta.actions}>
+      {ta.panels}
     </Row>
   )
 }

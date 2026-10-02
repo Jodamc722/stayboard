@@ -155,7 +155,9 @@ export default async function MaintenancePage() {
     if (age >= 7) flags.push('stale')
     if (!flags.length) continue
     triage.push({
-      kind: 'task', href: str(t.report_url) || '/plan', title: str(t.name) || 'Breezeway task',
+      // The task itself, not the read-only field report (2026-10-01: the row said "Open in Breezeway" and opened the report).
+      kind: 'task', href: 'https://app.breezeway.io/task/' + encodeURIComponent(str(t.id)), title: str(t.name) || 'Breezeway task',
+      taskId: str(t.id), reportUrl: str(t.report_url) || null, dept: 'maintenance', running: /progress|started/i.test(str(t.status)),
       where: lname[str(t.reference_property_id)] || 'Unknown unit',
       who: str(t.assignee_name) || null, age, flags,
       score: (flags.includes('overdue') ? 30 : 0) + (flags.includes('unassigned') ? 20 : 0) + Math.min(age, 30),

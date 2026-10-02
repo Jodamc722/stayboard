@@ -48,6 +48,7 @@ import { DueCalendar, DueCount } from '@/components/DueCalendar'
 import { VacantTab } from '@/components/VacantTab'
 import { StayPanel } from '@/components/StayPanel'
 import { Tag as LTag, Tip as LTip } from '@/components/lean'
+import { useTaskActions, TaskStateTag, TASK_GHOST, type TaskState as TaskStateT } from '@/components/task/TaskActions'
 
 // ── types (mirrors of /api/ops-today) ───────────────────────────────────────────────────────────
 export type GTask = {
@@ -186,7 +187,7 @@ type TaskState = 'done' | 'running' | 'open' | 'unassigned'
 // `swatch` went with the Key popover it existed for (2026-09-09).
 const STATE: Record<TaskState, { label: string; chip: string }> = {
   done: { label: 'Finished', chip: 'bg-emerald-500 border-emerald-500 text-white' },
-  running: { label: 'In progress', chip: 'bg-amber-400 border-amber-400 text-white' },
+  running: { label: 'In progress', chip: 'bg-sky-400 border-sky-400 text-white' },
   open: { label: 'Not started', chip: 'bg-white border-slate-300 text-slate-500' },
   // Same paint as `open` — an unassigned task IS not-started; the dot says nobody owns it.
   unassigned: { label: 'Nobody assigned', chip: 'bg-white border-slate-300 text-slate-500' },
@@ -684,168 +685,65 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
 }
 
 /** One task inside an opened row: what it is, who has it, where it stands, and one-tap assign. */
-function TaskLine({ t, roster, mode, onRefresh, comment, units, staff, unitMeta }: {
+function TaskLine({ t, roster, mode, onRefresh, comment, units: _units, staff: _staff, unitMeta }: {
   t: GTask; roster: GRoster[]; mode: 'units' | 'people'; onRefresh: () => void; comment: { body: string; at: string } | null
   units: GUnit[]; staff?: GStaff | null
   unitMeta?: { listingId?: string; building?: string | null; market?: string; unit?: string }
 }) {
-  const [assigning, setAssigning] = useState(false)
-  const [busy, setBusy] = useState(0)
-  const [err, setErr] = useState('')
-  // THE VERBS THE BOARD NEVER HAD. complete / priority / vendor / reschedule have been working APIs
-  // this whole time, wired into the OLD board — this one shipped as a viewer with a single write.
+  // ONE TASK, ONE WAY (2026-10-01): the shared strip — Assign · Done · Nudge · Comments · Breezeway
+  // — plus this board's two extras (Urgent, Vendor). Same picker, same 3-way thread, same words as
+  // the Today page, the Schedule and the Maintenance desk. (The old text-link verbs, the one-line
+  // note box and the ranked AssignPanel are gone from here so the app has one of each.)
   const [acting, setActing] = useState('')
-  const [noting, setNoting] = useState(false)
-  const [note, setNote] = useState('')
-  const [noteSent, setNoteSent] = useState(false)
-  const sug = useSuggestions()
+  const [err, setErr] = useState('')
   const { by } = useCats()
   const c = metaOf(by, catKeyOf(t))
   const mv = moveNote(t)
-  // The same 3-way comment route the Command Center uses: it reaches the Breezeway task and the
-  // in-app thread, so the person holding the job sees it wherever they are looking.
-  const sendNote = async () => {
-    const body = note.trim(); if (!body || acting) return
-    setActing('note'); setErr('')
-    try {
-      const r = await fetch('/api/comments', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        // taskId + toBreezeway are what put it on the Breezeway task itself — without them it is an
-        // in-app comment only, and the placeholder promising otherwise would be a lie.
-        body: JSON.stringify({ type: 'task', id: t.id, taskId: t.id, toBreezeway: true, body, label: t.unit + ' — ' + t.name, link: '/plan' }),
-      })
-      const j = await r.json().catch(() => ({}))
-      if (!r.ok || j?.error) throw new Error(j?.error || 'Could not send it')
-      setNote(''); setNoteSent(true); setTimeout(() => { setNoteSent(false); setNoting(false) }, 1800)
-    } catch (e: any) { setErr(String(e?.message || e)) }
-    setActing('')
-  }
-
-  const assign = async (id: number, alsoTaskIds: string[] = []) => {
-    setBusy(id); setErr('')
-    try {
-      const r = await fetch('/api/breezeway/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: t.id, assigneeIds: [id] }) })
-      const j = await r.json()
-      if (!r.ok || j.error) throw new Error(j.error || 'assign failed')
-      // Anything ticked in the panel moves onto today and goes to the same person — the trip is
-      // the expensive part, and this is the moment we know who is making it.
-      if (alsoTaskIds.length && unitMeta?.listingId) {
-        const who = roster.find(p => p.id === id)?.name
-        try {
-          await fetch('/api/suggestions', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'push', listingId: unitMeta.listingId, unit: unitMeta.unit || t.unit, taskIds: alsoTaskIds, scheduleDate: sug?.run?.date, assignee: who }),
-          })
-        } catch { /* the primary assign already succeeded — never fail the whole action on the extra */ }
-      }
-      setAssigning(false); onRefresh(); sug?.reload()
-    } catch (e: any) { setErr(String(e?.message || e)) }
-    setBusy(0)
-  }
-
-  /** complete / vendor / priority — all against the existing task-action route. */
+  const real = isReal(t)
   const act = async (action: string, extra: Record<string, any> = {}) => {
     setActing(action); setErr('')
     try {
-      const r = await fetch('/api/ops-today/task-action', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId: t.id, action, ...extra }),
-      })
+      const r = await fetch('/api/ops-today/task-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId: t.id, action, ...extra }) })
       const j = await r.json().catch(() => ({}))
       if (!r.ok || j?.ok === false) throw new Error(j?.error || 'That did not work.')
       onRefresh()
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setActing('') }
   }
+  const state: TaskStateT = t.done ? 'done' : t.late ? 'late' : t.running ? 'running' : 'open'
+  const ta = useTaskActions({
+    taskId: t.id, dept: t.dept || '', label: (unitMeta?.unit || t.unit) + ' — ' + t.name, link: '/plan', state, who: t.assignees, roster, onChanged: onRefresh,
+    hide: real ? undefined : { assign: true, done: true, nudge: true, comments: true, breezeway: true },
+    extra: real && !t.done ? <>
+      <button onClick={() => act('priority', { level: 'urgent' })} disabled={!!acting} title="Flag urgent in Breezeway" className={TASK_GHOST}>{acting === 'priority' ? <Loader2 size={12} className="animate-spin" /> : 'Urgent'}</button>
+      {!/vendor needed/i.test(t.name) && <button onClick={() => act('vendor', { on: true })} disabled={!!acting} title="Tag VENDOR NEEDED so it is never billed to the owner by mistake" className={TASK_GHOST}>{acting === 'vendor' ? <Loader2 size={12} className="animate-spin" /> : 'Vendor'}</button>}
+    </> : null,
+  })
   return (
     <div className="px-3 py-2">
       <div className="flex items-center gap-2 flex-wrap">
         <span className={'w-4 h-4 rounded-[4px] border shrink-0 inline-flex items-center justify-center ' + STATE[stateOf(t)].chip}><c.Icon size={9} strokeWidth={2.6} /></span>
-        <span className="text-[12.5px] font-semibold text-ink">{t.name}</span>
-        <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-md border border-line bg-app text-muted">{c.short}</span>
-        {t.done
-          ? <span className="text-[11px] font-bold text-emerald-700">Finished{t.finishedAt ? ' ' + shortTime(t.finishedAt) : ''}{t.minutes ? ' · ' + t.minutes + 'm' : ''}</span>
-          : t.running
-            ? <span className="text-[11px] font-bold text-amber-700">In progress{t.startedAt ? ' since ' + shortTime(t.startedAt) : ''}</span>
-            : <span className="text-[11px] font-bold text-muted">Not started</span>}
-        {t.late && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-rose-600 text-white">Late</span>}
+        <span className="text-[13px] font-semibold text-ink">{t.name}</span>
+        <LTag title="Category">{c.short}</LTag>
+        <TaskStateTag state={ta.done ? 'done' : state} />
+        {!ta.done && !t.assignees.length && <TaskStateTag state="unassigned" />}
+        {t.done && (t.finishedAt || t.minutes) && <span className="text-[11.5px] text-muted">{t.finishedAt ? shortTime(t.finishedAt) : ''}{t.minutes ? ' · ' + t.minutes + 'm' : ''}</span>}
+        {t.running && t.startedAt && <span className="text-[11.5px] text-muted">since {shortTime(t.startedAt)}</span>}
         {mv && <span className={'text-[11px] font-bold px-1.5 py-0.5 rounded-md ' + mv.cls} title={mv.line}>{mv.tag}</span>}
-        {mode === 'units' && (
-          t.assignees.length
-            ? <span className="text-[11.5px] text-muted">{t.assignees.join(', ')}</span>
-            : <span className="text-[11px] font-bold text-rose-600">Unassigned</span>
-        )}
+        {mode === 'units' && t.assignees.length > 0 && <span className="text-[11.5px] text-muted">{t.assignees.join(', ')}</span>}
         {mode === 'people' && <span className="text-[11.5px] text-muted">{t.unit}</span>}
-        <span className="ml-auto flex items-center gap-2">
-          {isReal(t) && !t.done && (
-            <button onClick={() => setAssigning(a => !a)} className="text-[11.5px] font-bold text-brand-700 hover:underline">
-              {t.assignees.length ? 'Reassign' : 'Assign'}
-            </button>
-          )}
-          {/* DONE. The single most-wanted verb on an ops board, and the one this one did not have:
-              crews finish work and forget to close it, so a board full of "not started" is often a
-              board that is actually finished. The API has existed and been wired into the old board
-              all along. */}
-          {isReal(t) && !t.done && (
-            <button onClick={() => { if (window.confirm(`Mark "${t.name}" complete in Breezeway?`)) act('complete') }}
-              disabled={!!acting}
-              className="text-[11.5px] font-bold text-emerald-700 hover:underline disabled:opacity-50 inline-flex items-center gap-1">
-              {acting === 'complete' ? <Loader2 size={10} className="animate-spin" /> : <Check size={11} />} Done
-            </button>
-          )}
-          {isReal(t) && !t.done && (
-            <button onClick={() => act('priority', { level: 'urgent' })} disabled={!!acting}
-              title="Flag urgent in Breezeway"
-              className="text-[11.5px] font-semibold text-muted hover:text-rose-700 disabled:opacity-50">
-              {acting === 'priority' ? <Loader2 size={10} className="animate-spin inline" /> : 'Urgent'}
-            </button>
-          )}
-          {isReal(t) && !t.done && !/vendor needed/i.test(t.name) && (
-            <button onClick={() => act('vendor', { on: true })} disabled={!!acting}
-              title="Tag VENDOR NEEDED so it is never billed to the owner by mistake"
-              className="text-[11.5px] font-semibold text-muted hover:text-ink disabled:opacity-50">
-              {acting === 'vendor' ? <Loader2 size={10} className="animate-spin inline" /> : 'Vendor'}
-            </button>
-          )}
-          {/* NOTE. The Command Center's rows could send a message to whoever holds a task; the board
-              where the work actually is could only READ comments. Same 3-way route: it lands on the
-              Breezeway task and in the app thread, where the person doing the job will see it. */}
-          {isReal(t) && !t.done && (
-            <button onClick={() => setNoting(n => !n)} aria-expanded={noting}
-              title="Send a note to whoever holds this task"
-              className={'text-[11.5px] font-semibold disabled:opacity-50 ' + (noting ? 'text-ink' : 'text-muted hover:text-ink')}>
-              Note
-            </button>
-          )}
-          {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" className="text-[11.5px] text-muted hover:underline" title="Read-only field report">Report</a>}
-          {isReal(t) && <a href={bzTask(t.id)} target="_blank" rel="noreferrer" className="text-muted hover:text-ink" title="Open in Breezeway"><ExternalLink size={12} /></a>}
+        <span className="ml-auto flex items-center gap-1.5">
+          {ta.actions}
+          {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" className={TASK_GHOST} title="Read-only field report">Report</a>}
         </span>
       </div>
-      {noting && (
-        <div className="mt-2 pt-2 border-t border-line flex items-center gap-2 flex-wrap" onClick={e => e.stopPropagation()}>
-          <input value={note} onChange={e => setNote(e.target.value)} autoFocus
-            placeholder={'Note for ' + (t.assignees[0] || 'whoever takes this') + ' — lands on the Breezeway task'}
-            onKeyDown={e => { if (e.key === 'Enter') sendNote() }}
-            className="flex-1 min-w-[200px] rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] focus:outline-none focus:border-ink" />
-          <button onClick={sendNote} disabled={!note.trim() || acting === 'note'}
-            className="rounded-lg bg-ink text-white px-2.5 py-1.5 text-[11.5px] font-bold disabled:opacity-40">
-            {acting === 'note' ? <Loader2 size={11} className="animate-spin" /> : 'Send'}
-          </button>
-          {noteSent && <span className="text-[11.5px] font-semibold text-emerald-700 inline-flex items-center gap-1"><Check size={11} /> sent</span>}
-        </div>
-      )}
+      {ta.panels}
       {mv && <p className={'mt-1 text-[11.5px] ' + (t.moveState === 'extended' ? 'font-semibold text-rose-700' : 'text-muted')}>{mv.line}</p>}
-      {comment && (
+      {comment && ta.panel !== 'comments' && (
         <div className="mt-1 text-[11.5px] text-muted flex items-start gap-1.5">
           <MessageSquare size={11} className="mt-0.5 shrink-0" /><span className="line-clamp-2">{comment.body}</span>
         </div>
       )}
-      {assigning && (
-        <AssignPanel
-          task={{ id: t.id, dept: t.dept, listingId: unitMeta?.listingId, unit: unitMeta?.unit || t.unit, building: unitMeta?.building, market: unitMeta?.market || t.market }}
-          units={units} roster={roster} staff={staff}
-          onAssign={assign} onClose={() => setAssigning(false)} busyId={busy} error={err} />
-      )}
-      {!assigning && err && <p className="mt-1 text-[11px] text-rose-600 font-semibold">{err}</p>}
+      {err && <p className="mt-1 text-[11px] text-rose-600 font-semibold">{err}</p>}
     </div>
   )
 }

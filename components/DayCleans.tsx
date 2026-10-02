@@ -39,7 +39,9 @@
 // gated endpoint the cockpit uses and reloading from the mirror afterwards. The share link never
 // gets it — a passcode is not a login, and its payload carries no task id to act on.
 import { useMemo, useState } from 'react'
-import { Loader2, UserCog, AlertTriangle, CalendarRange, Check } from 'lucide-react'
+import { UserCog, AlertTriangle, CalendarRange, Check } from 'lucide-react'
+import { useCachedFetch } from '@/lib/swr'
+import { InlineAssign, type Roster } from '@/components/CommandCockpit'
 import type { PDay, PBlock, PJob, PTag } from './PlannerView'
 import { nameMatches } from '@/lib/person-name'
 
@@ -102,33 +104,13 @@ export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, 
   canManage?: boolean
   onChanged?: () => void
 }) {
-  const [people, setPeople] = useState<Person[]>([])
+  // ONE PICKER EVERYWHERE (2026-10-01): the same InlineAssign the Today page, the Today board and the
+  // Maintenance desk use — not a native select of its own. The roster is read once and shared.
+  const rosterQ = useCachedFetch<{ people: Roster[] }>('/api/breezeway/people', { ttl: 10 * 60_000 })
+  const roster: Roster[] = Array.isArray(rosterQ.data?.people) ? rosterQ.data!.people : []
   const [openFor, setOpenFor] = useState<string>('')
-  const [saving, setSaving] = useState<string>('')
-  const [failed, setFailed] = useState<string>('')
-
-  const openReassign = async (taskId: string) => {
-    setOpenFor(taskId); setFailed('')
-    if (people.length) return
-    try {
-      const r = await fetch('/api/breezeway/people?department=housekeeping', { cache: 'no-store' })
-      const j = await r.json()
-      if (Array.isArray(j?.people)) setPeople(j.people.map((p: any) => ({ id: Number(p.id), name: String(p.name) })).filter((p: Person) => p.id && p.name))
-    } catch { /* the select stays empty and says so */ }
-  }
-  const reassign = async (taskId: string, personId: number) => {
-    setSaving(taskId); setFailed('')
-    try {
-      const r = await fetch('/api/breezeway/assign', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId, assigneeIds: [personId] }),
-      })
-      const j = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(j?.error || 'Breezeway refused the change.')
-      setOpenFor(''); onChanged?.()
-    } catch (e: any) { setFailed(String(e?.message || e)) }
-    setSaving('')
-  }
+  const [failed] = useState<string>('')
+  const openReassign = (taskId: string) => setOpenFor(o => (o === taskId ? '' : taskId))
 
   const scoped = useMemo(
     () => (!marketFilter || marketFilter === 'all') ? blocks : blocks.filter(b => b.market.toLowerCase() === marketFilter),
@@ -358,20 +340,8 @@ export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, 
                               <span key={t.key} className={'text-[9.5px] font-semibold px-1 rounded ring-1 ' + (TAG_RING[t.tone] || 'ring-line bg-app text-muted')}>{t.label}</span>
                             ))}
                             {canManage && j.id && j.status !== 'done' ? (
-                              openFor === j.id ? (
-                                <span className="inline-flex items-center gap-1">
-                                  <select autoFocus disabled={saving === j.id} defaultValue=""
-                                    onChange={e => { const v = Number(e.target.value); if (v) reassign(j.id as string, v) }}
-                                    className="text-[11px] rounded border border-line bg-white px-1 text-ink max-w-[130px]">
-                                    <option value="" disabled>{people.length ? 'Move to…' : 'Loading…'}</option>
-                                    {people.map(pp => <option key={pp.id} value={pp.id}>{pp.name}</option>)}
-                                  </select>
-                                  {saving === j.id ? <Loader2 size={10} className="animate-spin text-muted" /> : null}
-                                </span>
-                              ) : (
-                                <button onClick={() => openReassign(j.id as string)} title="Reassign in Breezeway"
-                                  className="text-muted/60 hover:text-brand-700"><UserCog size={11} /></button>
-                              )
+                              <button onClick={() => openReassign(j.id as string)} aria-pressed={openFor === j.id} title="Reassign in Breezeway"
+                                className={openFor === j.id ? 'text-brand-700' : 'text-muted/60 hover:text-brand-700'}><UserCog size={11} /></button>
                             ) : null}
                           </span>
                         ))}
@@ -380,6 +350,9 @@ export function DayCleans({ days, blocks, dept, marketFilter, labor, canManage, 
                             + {r.otherWork.length} other: {r.otherWork.map(j => j.task).join(', ').slice(0, 70)}
                           </span>
                         ) : null}
+                        {openFor && r.turnovers.some(j => j.id === openFor) && (
+                          <div className="basis-full"><InlineAssign taskId={openFor} dept="housekeeping" roster={roster} onDone={() => { setOpenFor(''); onChanged?.() }} /></div>
+                        )}
                       </>
                     )}
                   </div>

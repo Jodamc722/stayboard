@@ -4,8 +4,31 @@
 // (Decide / By building / Unbilled), one row per thing.
 import { useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { ArrowUpRight, Receipt } from 'lucide-react'
 import { LeanHead, LeanTabs, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, type Tone } from '@/components/lean'
+import { useCachedFetch } from '@/lib/swr'
+import { useTaskActions, TaskStateTag, TASK_GHOST } from '@/components/task/TaskActions'
+import type { Roster } from '@/components/CommandCockpit'
+
+/** A Breezeway task on the triage list wears the same strip as every other board (2026-10-01). */
+function TriageTaskRow({ t, roster, onChanged }: { t: TriageRow; roster: Roster[]; onChanged: () => void }) {
+  const ta = useTaskActions({ taskId: t.taskId!, dept: t.dept || 'maintenance', label: t.where + ' — ' + t.title, link: '/maintenance', state: t.flags.includes('overdue') ? 'late' : t.running ? 'running' : 'open', who: t.who, roster, onChanged,
+    extra: t.reportUrl ? <a href={t.reportUrl} target="_blank" rel="noreferrer" className={TASK_GHOST} title="Read-only field report">Report</a> : null })
+  return (
+    <LeanRow name={t.title} meta={[t.where, t.who].filter(Boolean).join(' · ')}
+      tags={<>
+        <TaskStateTag state={ta.done ? 'done' : t.flags.includes('overdue') ? 'late' : t.running ? 'running' : 'open'} />
+        {!ta.done && !t.who && <TaskStateTag state="unassigned" />}
+        <Tag tone={ageTone(t.age)} title={t.age + ' days old'}>{t.age}d</Tag>
+        <Tag title={KIND.task.title}>{KIND.task.label}</Tag>
+        {t.flags.includes('stale') && !t.flags.includes('overdue') && <Tag tone="amber" title="Open a week or more">stale</Tag>}
+      </>}
+      actions={<span className="inline-flex items-center gap-1.5">{ta.actions}</span>}>
+      {ta.panels}
+    </LeanRow>
+  )
+}
 
 export type TriageRow = {
   kind: 'wo' | 'task' | 'glitch'
@@ -16,6 +39,8 @@ export type TriageRow = {
   age: number
   flags: string[]        // 'unassigned' | 'overdue' | 'stale' | 'urgent' | 'blocked'
   score: number
+  /** Breezeway tasks only: the shared task strip (Assign · Done · Nudge · Comments · Breezeway) needs these. */
+  taskId?: string; reportUrl?: string | null; dept?: string; running?: boolean
 }
 type GridRow = { b: string; wo: number; task: number; glitch: number; blocked: number; unbilled: number; total: number }
 type Unbilled = { id: string; name: string; unit: string; who: string | null; hours: number | null; age: number }
@@ -34,6 +59,9 @@ export function MaintenanceView({ verdict, counts, triage, grid, unbilled }: {
   counts: { wo: number; unassigned: number; overdue: number; stale: number; unbilled: number; offline: number }
   triage: TriageRow[]; grid: GridRow[]; unbilled: Unbilled[]
 }) {
+  const router = useRouter()
+  const rosterQ = useCachedFetch<{ people: Roster[] }>('/api/breezeway/people', { ttl: 10 * 60_000 })
+  const roster: Roster[] = Array.isArray(rosterQ.data?.people) ? rosterQ.data!.people : []
   const [tab, setTab] = useState<'decide' | 'building' | 'unbilled'>('decide')
 
   return (
@@ -57,7 +85,7 @@ export function MaintenanceView({ verdict, counts, triage, grid, unbilled }: {
       {tab === 'decide' && (triage.length === 0 ? <LeanEmpty>Clean board — nothing unassigned, overdue or stale.</LeanEmpty> : (
         <>
           <LeanList>
-            {triage.slice(0, 30).map((t, i) => (
+            {triage.slice(0, 30).map((t, i) => t.kind === 'task' && t.taskId ? <TriageTaskRow key={i} t={t} roster={roster} onChanged={() => router.refresh()} /> : (
               <LeanRow key={i}
                 name={<Link href={t.href} className="hover:underline">{t.title}</Link>}
                 meta={[t.where, t.who].filter(Boolean).join(' · ')}
