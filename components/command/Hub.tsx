@@ -31,6 +31,8 @@ import { signalLabel } from '@/lib/checklist-shared'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { useAccess } from '@/lib/useAccess'
 import type { CommandDay, NextItem, GuestDeskRow, CleanRow as CleanRowT, ArrivalRow, TaskRow, TeamRow as TeamRowT, GlitchRow as GlitchRowT } from '@/lib/command-day'
+import type { PersonTask } from '@/lib/capacity-day'
+type PersonTaskGroup = PersonTask['group']
 import { InlineAssign, BTN, MINE_URL, type Roster, type Mine, type MineItem } from '@/components/CommandCockpit'
 import { SCOREBOARD_URL } from '@/components/command/Scoreboard'
 import { NudgeBtn } from '@/components/command/Nudge'
@@ -325,13 +327,52 @@ function ReviewRow({ r, canReply, onGone, lane }: { r: Review; canReply: boolean
 }
 
 export function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
+  // OPEN A PERSON, SEE THEIR DAY (Jon, 2026-10-01: "Balance does not make sense… it should be a
+  // drop-down so I can see all of their tasks for each user… organized by departure cleans,
+  // inspections, maintenance, miscellaneous"). "Balance" was only a link to the Today board. Now
+  // the row opens in place to the person's tasks in those four groups — every group always shown,
+  // "none today" when empty — and the Board link lives inside, where moving work actually happens.
+  const [open, setOpen] = useState(false)
   const over = p.utilisationPct > 100
-  const idle = p.cleans + p.otherTasks === 0
+  const tasks = p.tasks || []
+  const idle = tasks.length === 0 && p.cleans + p.otherTasks === 0
+  const GROUPS: { key: PersonTaskGroup; label: string }[] = [
+    { key: 'clean', label: 'Departure cleans' }, { key: 'inspection', label: 'Inspections' },
+    { key: 'maintenance', label: 'Maintenance' }, { key: 'misc', label: 'Miscellaneous' },
+  ]
+  const count = (g: PersonTaskGroup) => tasks.filter(t => t.group === g).length
+  const summary = GROUPS.map(g => count(g.key) ? count(g.key) + ' ' + (g.key === 'clean' ? 'cleans' : g.key === 'inspection' ? 'inspections' : g.key === 'maintenance' ? 'maintenance' : 'misc') : '').filter(Boolean).join(' · ')
+  const timeLine = p.capacityMinutes > 0 ? hm(p.loadMinutes) + ' of work in a ' + hm(p.capacityMinutes) + ' shift' : hm(p.loadMinutes) + ' of work · no shift on record'
   return (
     <Row lane={lane} noteKey={'team:' + p.person} dot={over ? 'amber' : null} title={p.person}
       tags={over ? <Tag tone="amber" title={hm(p.loadMinutes - p.capacityMinutes) + ' more work than hours'}>{p.utilisationPct}% loaded</Tag> : <Tag tone="sky" title={hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free today'}>{idle ? 'nothing assigned' : hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free'}</Tag>}
-      meta={[p.role, p.cleans ? p.cleans + ' cleans' : '', p.otherTasks ? p.otherTasks + ' tasks' : ''].filter(Boolean).join(' · ')}
-      actions={<Link href="/plan" prefetch={false} className={GHOST} title="Open the Today board to move work">Balance</Link>} />
+      meta={[p.role, summary || (idle ? '' : (p.cleans ? p.cleans + ' cleans' : '') + (p.otherTasks ? ' · ' + p.otherTasks + ' tasks' : '')), timeLine].filter(Boolean).join(' · ')}
+      actions={<button type="button" onClick={() => setOpen(o => !o)} className={GHOST} aria-expanded={open} title={open ? 'Close this person’s tasks' : 'Open this person’s tasks, grouped by kind'}>{open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</button>}>
+      {open && (
+        <div className="mt-2 pl-3.5 space-y-2.5">
+          {GROUPS.map(g => {
+            const rows = tasks.filter(t => t.group === g.key)
+            return (
+              <div key={g.key}>
+                <div className="flex items-baseline gap-2 text-[10.5px] uppercase tracking-[0.12em] font-bold text-muted">{g.label}<span className="normal-case tracking-normal font-medium">{rows.length}</span></div>
+                {rows.length === 0 ? <p className="text-[12px] text-muted/70 py-1">none today</p> : (
+                  <div className="divide-y divide-line/70">
+                    {rows.map(t => (
+                      <div key={t.id} className="flex items-center gap-2 min-h-[36px] py-1 min-w-0">
+                        <span aria-hidden className={'w-1.5 h-1.5 rounded-full shrink-0 ' + (t.status === 'done' ? 'bg-emerald-500' : t.status === 'doing' ? 'bg-sky-500' : 'bg-muted/40')} />
+                        <span className="text-[12.5px] font-semibold text-ink truncate">{t.unit}</span>
+                        <span className="text-[12px] text-muted truncate flex-1 min-w-0">{g.key === 'clean' ? '' : t.name + ' · '}{t.status === 'done' ? 'done' + (t.minutes ? ' · ' + hm(t.minutes) : '') : t.status === 'doing' ? 'in progress' : 'not started'}</span>
+                        <Link href={'/plan?unit=' + encodeURIComponent(t.unit)} prefetch={false} className={GHOST} title="Open this unit on the Today board to move or finish the work">Board</Link>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </Row>
   )
 }
 

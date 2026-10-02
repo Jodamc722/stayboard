@@ -26,12 +26,14 @@
 //
 // System check is first on the list on purpose. It is the answer to #4 and the single biggest
 // reason somebody had to come and ask me what was wrong.
+import { AppearanceSettings } from '@/components/AppearanceSettings'
 import { useEffect, useMemo, useState } from 'react'
 import dynamic from 'next/dynamic'
 import {
   Users, ShieldCheck, Sliders, ChevronRight, Search, X, ArrowLeft, Loader2, Lock,
   Activity, ListChecks, Mail, Bot, ShoppingBag, HardHat, Package, MessageSquare,
   DollarSign, Sparkles, Star, Building2, ShieldQuestion, Share2, CalendarClock, Plug, Timer, Tags, Cpu, PhoneCall,
+  Palette,
 } from 'lucide-react'
 import { UsersAdmin } from '@/components/UsersAdmin'
 import { RolesAdmin } from '@/components/RolesAdmin'
@@ -106,6 +108,12 @@ type Entry = {
 }
 
 const ENTRIES: Entry[] = [
+  {
+    key: 'appearance', title: 'Appearance', group: 'Start here', Icon: Palette,
+    blurb: 'How Lighthouse looks for you: the October 2026 look, or Legacy (the app as it was before). Saved per person.',
+    find: 'appearance theme look legacy old new design colors font dark light revert switch',
+    render: () => <AppearanceSettings />,
+  },
   {
     key: 'health', title: 'System check', group: 'Start here', Icon: Activity,
     blurb: 'Whether the integrations and keys these settings depend on are actually working — and what to do when one is not.',

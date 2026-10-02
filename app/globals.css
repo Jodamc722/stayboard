@@ -2,7 +2,67 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body { font-family: 'Inter', system-ui, sans-serif; }
+/* ================================================================================================
+   THEME TOKENS (Jon, 2026-10-02: "a theme change in settings so I can revert to legacy").
+   Two themes, one attribute. `:root` is LIGHTHOUSE — ink on paper, one brass accent, Geist for the
+   UI and Instrument Serif for titles and the numbers that matter. `[data-theme="legacy"]` is the
+   app exactly as it looked before October: Inter, indigo, grey canvas. Tailwind reads every color
+   through these variables (tailwind.config.ts), so a page never needs to know which theme is on.
+   The attribute is set before first paint by the inline script in app/layout.tsx (from
+   localStorage), then kept in step with the saved preference by Shell.
+   ================================================================================================ */
+:root {
+  --c-app: 247 247 245;        /* page ground, warm off-white */
+  --c-rail: 246 245 240;       /* sidebar and panels, paper */
+  --c-ink: 21 22 26;
+  --c-muted: 111 113 110;      /* captions — 4.6:1 on white */
+  --c-line: 225 225 220;
+  --c-brand-50: 247 241 230;   /* brass */
+  --c-brand-100: 238 228 210;
+  --c-brand-200: 224 207 174;
+  --c-brand-300: 205 178 127;
+  --c-brand-400: 187 154 95;
+  --c-brand-500: 168 134 78;
+  --c-brand-600: 140 109 58;
+  --c-brand-700: 112 86 46;
+  --c-brand-800: 87 67 36;
+  --c-brand-900: 64 49 26;
+  --font-ui: 'Geist', system-ui, sans-serif;
+  --font-display: 'Instrument Serif', Georgia, serif;
+  --r-xl: 0.5rem;
+  --r-2xl: 0.625rem;
+  --shadow-soft: 0 1px 2px 0 rgb(21 22 26 / 0.04);
+}
+:root[data-theme="legacy"] {
+  --c-app: 247 247 248;
+  --c-rail: 255 255 255;
+  --c-ink: 11 18 32;
+  --c-muted: 91 100 120;
+  --c-line: 229 231 235;
+  --c-brand-50: 238 241 255;   /* refined indigo */
+  --c-brand-100: 224 230 255;
+  --c-brand-200: 199 208 255;
+  --c-brand-300: 164 176 250;
+  --c-brand-400: 123 134 242;
+  --c-brand-500: 91 99 232;
+  --c-brand-600: 68 72 217;
+  --c-brand-700: 55 57 181;
+  --c-brand-800: 45 47 146;
+  --c-brand-900: 34 36 112;
+  --font-ui: var(--font-inter), 'Inter', system-ui, sans-serif;
+  --font-display: var(--font-inter), 'Inter', system-ui, sans-serif;
+  --r-xl: 0.75rem;
+  --r-2xl: 1rem;
+  --shadow-soft: 0 1px 2px 0 rgb(11 18 32 / 0.04), 0 1px 3px 0 rgb(11 18 32 / 0.04);
+}
+
+html, body { font-family: var(--font-ui); font-variant-numeric: tabular-nums; }
+/* Page titles and the big figures take the display face only in Lighthouse; Legacy keeps Inter. */
+.lh-display { font-family: var(--font-display); font-weight: 400; letter-spacing: -0.01em; }
+/* EVERY PAGE TITLE, THE SAME WAY (Jon, 2026-10-02: "same style and format… as all tabs"). The
+   133 pages set their own h1 classes; in Lighthouse the title is the display face regardless. */
+:root:not([data-theme="legacy"]) main h1 { font-family: var(--font-display); font-weight: 400; letter-spacing: -0.01em; font-size: 1.85rem; line-height: 1.15; }
+:root[data-theme="legacy"] .lh-display { font-weight: 700; letter-spacing: -0.015em; }
 
 /* Owner review sheet: printing it must produce the document an owner can sign off on, so the
    controls drop out, every line opens, and cards do not break across pages. */

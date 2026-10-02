@@ -8,6 +8,7 @@
 //
 // NO MIGRATION: app_users.prefs is the JSONB column added by migration 013 (notification mutes
 // live in the same object, so every write merges rather than replaces).
+import { isThemeKey } from '@/lib/theme'
 import { NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -40,7 +41,8 @@ export async function GET() {
     const prefs = await readPrefs(a.email)
     if (!prefs) return NextResponse.json({ ok: false, pins: null })
     const saved = Array.isArray(prefs.nav_pins) ? cleanPins(prefs.nav_pins, validPaths()) : null
-    return NextResponse.json({ ok: true, pins: saved })
+    const theme = isThemeKey(prefs.theme) ? prefs.theme : null
+    return NextResponse.json({ ok: true, pins: saved, theme })
   } catch {
     return NextResponse.json({ ok: false, pins: null })
   }
@@ -51,8 +53,25 @@ export async function POST(req: Request) {
   if (!a.user || !a.email) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   let body: any = null
   try { body = await req.json() } catch { body = null }
+  // THEME (2026-10-02): `{ theme: 'lighthouse' | 'legacy' }` saves the look this person wants,
+  // independently of their pins. Anything else in the body is ignored.
+  if (body && isThemeKey(body.theme) && !Array.isArray(body.pins)) {
+    try {
+      const prefs = await readPrefs(a.email)
+      if (!prefs) return NextResponse.json({ ok: true, theme: body.theme, saved: false })
+      const next: Record<string, any> = {}
+      const keys = Object.keys(prefs)
+      for (let i = 0; i < keys.length; i++) next[keys[i]] = prefs[keys[i]]
+      next.theme = body.theme
+      const sb = supabaseAdmin()
+      const { error } = await sb.from('app_users').update({ prefs: next }).eq('email', a.email)
+      return NextResponse.json({ ok: true, theme: body.theme, saved: !error })
+    } catch {
+      return NextResponse.json({ ok: true, theme: body.theme, saved: false })
+    }
+  }
   if (!body || !Array.isArray(body.pins)) {
-    return NextResponse.json({ error: 'pins must be an array of paths' }, { status: 400 })
+    return NextResponse.json({ error: 'pins must be an array of paths, or theme a known theme' }, { status: 400 })
   }
   const pins = cleanPins(body.pins, validPaths())
   try {

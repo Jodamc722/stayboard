@@ -792,6 +792,10 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   const [mode, setMode] = useState<'units' | 'vacant' | 'people' | 'review' | 'due'>('units')
   const [cat, setCat] = useState<Cat | null>(null)
   const [q, setQ] = useState('')
+  // ?unit=… (from a Team row on Today, 2026-10-02) lands on the board already filtered to that unit.
+  useEffect(() => {
+    try { const u = new URLSearchParams(window.location.search).get('unit'); if (u) { setQ(u); setSearchOpen(true) } } catch { /* fine */ }
+  }, [])
   // The search box is a whole line of a phone screen for something you use once a day. On a phone
   // it starts as the magnifier next to the Units/People switch and expands when tapped; anything
   // typed keeps it open, so a live filter is never hidden behind an icon. Desktop is unchanged.

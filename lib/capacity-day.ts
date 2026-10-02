@@ -28,12 +28,35 @@ const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 /** Collapse whitespace so the two systems' spellings of one person land in one lane. */
 const personName = (v: any) => String(v ?? '').replace(/\s+/g, ' ').trim()
 
+/** One task on a person's day, for the Team rows on Today (Jon, 2026-10-01: open a person and see
+ *  all of their tasks, grouped: departure cleans · inspections · maintenance · miscellaneous). */
+export type PersonTask = {
+  id: string
+  unit: string
+  building: string | null
+  name: string
+  group: 'clean' | 'inspection' | 'maintenance' | 'misc'
+  status: 'done' | 'doing' | 'todo'
+  minutes: number | null
+  startedAt: string | null
+  finishedAt: string | null
+}
+
+export function taskGroupOf(name: string, dept: string | null | undefined): PersonTask['group'] {
+  const n = String(name || '').toLowerCase()
+  const d = String(dept || '').toLowerCase()
+  if (isDepartureCleanName(name)) return 'clean'
+  if (/inspect|walk ?through|unit check|arrival check|vip check|quality check/.test(n) || d === 'inspection') return 'inspection'
+  if (d === 'maintenance' || /maint|repair|fix |broken|hvac|a\/c|ac unit|filter|plumb|leak|electric|lock|battery|pest|pressure wash|paint/.test(n)) return 'maintenance'
+  return 'misc'
+}
+
 export type DayPicture = {
   date: string
   /** When this picture was priced — a cached copy is never served as if it were now (lib/bust). */
   builtAt?: string
   /** Every person on shift, whether or not they have work. `shiftStartMin` is ET minutes past midnight. */
-  people: (DayLoad & { shiftStartMin?: number | null })[]
+  people: (DayLoad & { shiftStartMin?: number | null; tasks?: PersonTask[] })[]
   /** Work with nobody on it — the pool a supervisor is choosing from. */
   unassigned: Array<{ stop: Stop; minutes: number; market: string | null; bestFor: Suggestion[] }>
   /** Moves worth making, strongest first. */
@@ -140,6 +163,7 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
   if (tErr) throw new Error('could not read the day\'s tasks — ' + String(tErr.message || tErr).slice(0, 120))
 
   const stopsByPerson: Record<string, Stop[]> = {}
+  const tasksByPerson: Record<string, PersonTask[]> = {}
   const unassignedStops: Stop[] = []
   let closedOutToday = 0
 
@@ -178,6 +202,14 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
 
     if (!people.length) unassignedStops.push(stop)
     else for (const p of people) (stopsByPerson[p] = stopsByPerson[p] || []).push(stop)
+    const task: PersonTask = {
+      id: str(t.id), unit: li.name, building: li.building || null, name: str(t.name),
+      group: taskGroupOf(t.name, t.type_department),
+      status: t.finished_at || /finish|complet|done|closed/.test(status) ? 'done' : (t.started_at || /progress|started|working/.test(status) ? 'doing' : 'todo'),
+      minutes: Number.isFinite(mins) && mins > 0 ? mins : null,
+      startedAt: t.started_at ? str(t.started_at) : null, finishedAt: t.finished_at ? str(t.finished_at) : null,
+    }
+    for (const p of people) (tasksByPerson[p] = tasksByPerson[p] || []).push(task)
   }
 
   // Everyone on shift, whether or not the board knows about them. A person with nothing assigned
@@ -212,7 +244,7 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
       shiftMinutes: shiftMin[name] ?? null,
     }
     const load = assessDay({ date, person, stops: stopsByPerson[name] || [] })
-    return { ...load, shiftStartMin: shiftStartMin[name] ?? null }
+    return { ...load, shiftStartMin: shiftStartMin[name] ?? null, tasks: tasksByPerson[name] || [] }
   }).sort((a, b) => a.utilisationPct - b.utilisationPct)
 
   if (!Object.keys(shiftMin).length) {
