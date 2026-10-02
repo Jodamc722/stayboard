@@ -9,7 +9,7 @@
 // but assigned; people past their own usual day; same-day turns sitting late in somebody's list; a
 // blank roster said as a blank roster; and the three days after. A ‹ day › pager looks further out.
 import { useEffect, useState } from 'react'
-import { AlertTriangle, CalendarCheck2, Check, ChevronLeft, ChevronRight, Clock, Loader2, Send, UserX } from 'lucide-react'
+import { AlertTriangle, CalendarCheck2, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Loader2, Send, UserX } from 'lucide-react'
 import { Tag } from '@/components/lean'
 import { useCachedFetch } from '@/lib/swr'
 import { matchRoster, type RosterPerson } from '@/lib/roster-match'
@@ -61,30 +61,55 @@ export function TomorrowCheck() {
   const markets = (data?.markets || []).filter(m => m.cleans > 0)
   const quiet = !loading && !error && markets.every(m => !m.unassigned.length && !m.offButAssigned.length && !m.overloaded.length && !m.lateTurns.length && m.shortMin <= 60 && (m.rosterKnown || m.cleans < 3))
 
+  // ONE LINE, THEN DETAILS (2026-10-02 sweep). The check used to open as a wall of amber lines above
+  // the board; now it is a single sentence — the markets, the people, and what is off — and the
+  // full read (per-market cards, assign buttons) unfolds on a click. Nothing is hidden, it is folded.
+  const [open, setOpen] = useState(false)
+  const flags: string[] = []
+  const unassigned = markets.reduce((n, m) => n + m.unassigned.length, 0)
+  const late = markets.reduce((n, m) => n + m.lateTurns.length, 0)
+  const over = markets.reduce((n, m) => n + m.overloaded.length, 0)
+  const blind = markets.filter(m => !m.rosterKnown && m.cleans >= 3).length
+  if (unassigned) flags.push(unassigned + (unassigned === 1 ? ' clean with nobody on it' : ' cleans with nobody on them'))
+  if (late) flags.push(late + ' same-day ' + (late === 1 ? 'turn' : 'turns') + ' to make first')
+  if (over) flags.push(over + (over === 1 ? ' person past a full day' : ' people past a full day'))
+  if (blind) flags.push('roster blank')
+  const summary = markets.length
+    ? markets.map(m => m.market + ' ' + m.cleans + (m.cleans === 1 ? ' clean' : ' cleans') + ', ' + m.people.length + (m.people.length === 1 ? ' person' : ' people')).join(' · ')
+      + (flags.length ? ' — ' + flags.join(' · ') : (quiet ? ' — looks covered' : ''))
+    : 'no departure cleans on the board yet'
+  const tone = flags.length ? (unassigned || late ? 'bg-rose-500' : 'bg-amber-500') : 'bg-emerald-500'
+
   return (
     <div className="mb-3 rounded-xl border border-line bg-white">
-      <div className="px-3 py-2 flex items-center gap-2 border-b border-line/60">
-        <CalendarCheck2 size={15} className="text-brand-600 shrink-0" />
-        <span className="text-[13px] font-bold text-ink">{rel} at a glance</span>
-        <span className="text-[12px] text-muted hidden sm:inline">· {dayName(date)}</span>
-        <span className="ml-auto inline-flex items-center gap-1">
+      <div className="px-3 py-2 flex items-center gap-2 min-w-0">
+        <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+          className="flex-1 min-w-0 flex items-center gap-2.5 text-left" title={open ? 'Hide the full read' : 'Open the full read — per market, with who to put on what'}>
+          <span aria-hidden className={'w-1.5 h-1.5 rounded-full shrink-0 ' + (loading && !data ? 'bg-muted/40' : tone)} />
+          <span className="text-[13px] font-bold text-ink shrink-0">{rel}</span>
+          <span className="text-[12.5px] text-ink/80 truncate min-w-0 flex-1">{loading && !data ? 'reading the day…' : error ? 'could not read the day — ' + String(error) : summary}</span>
+          <ChevronDown size={14} className={'text-muted shrink-0 transition-transform ' + (open ? 'rotate-180' : '')} />
+        </button>
+        <span className="inline-flex items-center gap-1 shrink-0">
           <button onClick={() => setDate(d => addDays(d, -1))} disabled={date <= today} className="p-1 rounded-md border border-line text-muted hover:text-ink disabled:opacity-40" title="Earlier"><ChevronLeft size={13} /></button>
           <button onClick={() => setDate(d => addDays(d, 1))} disabled={date >= addDays(today, 7)} className="p-1 rounded-md border border-line text-muted hover:text-ink disabled:opacity-40" title="Later"><ChevronRight size={13} /></button>
         </span>
       </div>
-      <div className="px-3 py-2 space-y-3">
+      {open && (
+      <div className="px-3 py-2 space-y-3 border-t border-line/60">
         {loading && !data && <p className="text-[12px] text-muted inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> Reading the day…</p>}
         {error && <p className="text-[12px] text-rose-700">Could not read the day — {String(error)}</p>}
         {!loading && !error && !markets.length && <p className="text-[12px] text-muted">No departure cleans on the board for {rel.toLowerCase()} yet.</p>}
         {quiet && markets.length > 0 && (
-          <p className="text-[12px] text-emerald-800 font-semibold inline-flex items-center gap-1"><Check size={13} /> {rel} looks covered — {markets.map(m => `${m.market}: ${m.cleans} clean${m.cleans === 1 ? '' : 's'}, ${m.people.length} ${m.people.length === 1 ? 'person' : 'people'}`).join(' · ')}.</p>
+          <p className="text-[12px] text-emerald-800 font-semibold inline-flex items-center gap-1"><Check size={13} /> {rel} looks covered — {markets.map(m => `${m.market}: ${m.cleans} clean${m.cleans === 1 ? '' : 's'}, ${m.people.length} ${m.people.length === 1 ? 'person' : 'people'}`).join(' · ')}</p>
         )}
         {markets.map(m => (
           <MarketCard key={m.market} m={m} quiet={quiet} busy={busy} done={done} onAssign={assign} />
         ))}
-        {err && <p className="text-[11.5px] text-rose-600 font-semibold">{err}</p>}
+        {err && <p className="text-[11.5px] font-semibold text-rose-600">{err}</p>}
         {data?.notes?.length ? <p className="text-[11px] text-muted">{data.notes.filter(n => !/looks covered/.test(n)).join(' · ')}</p> : null}
       </div>
+      )}
     </div>
   )
 }

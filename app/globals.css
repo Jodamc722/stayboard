@@ -164,8 +164,9 @@ html, body { font-family: var(--font-ui); font-variant-numeric: tabular-nums; }
 .lh-display { font-family: var(--font-display); font-weight: 400; letter-spacing: -0.01em; }
 /* TABS AS TEXT TOGGLES in Lighthouse (the Anatomy board: one line, underline marks the active one,
    never a filled segmented control). Legacy keeps the segmented strip these classes were born with. */
-:root:not([data-theme="legacy"]) .lh-tabs-strip { border: 0; border-radius: 0; gap: 1.1rem; overflow: visible; background: transparent; }
-:root:not([data-theme="legacy"]) .lh-tab { border: 0 !important; background: transparent !important; padding: 0.35rem 0 !important; color: rgb(var(--c-muted)); font-weight: 500; border-bottom: 1.5px solid transparent !important; border-radius: 0; }
+:root:not([data-theme="legacy"]) .lh-tabs-strip { border: 0; border-radius: 0; overflow: visible; background: transparent; }
+:root:not([data-theme="legacy"]) .lh-tab { border: 0 !important; background: transparent !important; padding: 0.35rem 0 !important; margin-right: 0.9rem; color: rgb(var(--c-muted)) !important; font-weight: 500; border-bottom: 1.5px solid transparent !important; border-radius: 0 !important; font-size: 12.5px !important; }
+:root:not([data-theme="legacy"]) .lh-tab:last-child { margin-right: 0; }
 :root:not([data-theme="legacy"]) .lh-tab:hover { color: rgb(var(--c-ink)); }
 :root:not([data-theme="legacy"]) .lh-tab-on { color: rgb(var(--c-ink)) !important; font-weight: 600; border-bottom-color: rgb(var(--c-brand-400)) !important; }
 /* EVERY PAGE TITLE, THE SAME WAY (Jon, 2026-10-02: "same style and format… as all tabs"). The

@@ -684,9 +684,9 @@ function Lane({ area, items, focused, empty, right }: { area: Area; items: HubIt
       </div>
       {subs.length > 1 && (
         <div className="px-1 mb-1.5 flex items-center gap-1 flex-wrap" role="group" aria-label={A.label + ' filters'}>
-          <button onClick={() => setSub(null)} aria-pressed={!pick} className={'text-[11px] font-semibold px-2 py-0.5 rounded-full border ' + (!pick ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')} title="Every row in this lane">All</button>
+          <button onClick={() => setSub(null)} aria-pressed={!pick} className={'lh-tab text-[11px] font-semibold px-2 py-0.5 rounded-full border ' + (!pick ? 'lh-tab-on bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')} title="Every row in this lane">All</button>
           {subs.map(s => <button key={s.key} onClick={() => setSub(pick === s.key ? null : s.key)} aria-pressed={pick === s.key} title={'Only ' + s.key.toLowerCase()}
-            className={'text-[11px] font-semibold px-2 py-0.5 rounded-full border tabular-nums ' + (pick === s.key ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>{s.key} {s.n}</button>)}
+            className={'lh-tab text-[11px] font-semibold px-2 py-0.5 rounded-full border tabular-nums ' + (pick === s.key ? 'lh-tab-on bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>{s.key} {s.n}</button>)}
         </div>
       )}
       {list.length > 0 && (

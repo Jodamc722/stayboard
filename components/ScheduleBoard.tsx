@@ -594,8 +594,8 @@ async function pushBlocks() {
   // toolbar strip below while the desktop keeps it on its own line, exactly where it has always sat.
   const tabsBar = (show: string) => (
     <div className={show + ' items-center gap-1 border border-line rounded-xl p-1 bg-white'}>
-      <button onClick={() => setTab('board')} className={'px-3 py-1.5 rounded-lg text-xs font-semibold ' + (tab === 'board' ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>Day board</button>
-      <button onClick={() => setTab('planner')} className={'px-3 py-1.5 rounded-lg text-xs font-semibold ' + (tab === 'planner' ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>Weekly planner</button>
+      <button onClick={() => setTab('board')} className={'lh-tab px-3 py-1.5 rounded-lg text-xs font-semibold ' + (tab === 'board' ? 'lh-tab-on bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>Day board</button>
+      <button onClick={() => setTab('planner')} className={'lh-tab px-3 py-1.5 rounded-lg text-xs font-semibold ' + (tab === 'planner' ? 'lh-tab-on bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>Weekly planner</button>
     </div>
   )
   if (tab === 'planner') return (
@@ -619,7 +619,7 @@ async function pushBlocks() {
         {tabsBar('inline-flex sm:hidden')}
         <div className="inline-flex rounded-lg border border-line overflow-hidden">
           {(['day', 'week'] as const).map(v => (
-            <button key={v} onClick={() => { setView(v); load(v, v === 'day' ? (date || data?.today || '') : date) }} className={`text-[12px] font-semibold px-3 py-1.5 ${view === v ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>{v === 'day' ? 'Day' : 'Week'}</button>
+            <button key={v} onClick={() => { setView(v); load(v, v === 'day' ? (date || data?.today || '') : date) }} className={`lh-tab text-[12px] font-semibold px-3 py-1.5 ${view === v ? 'lh-tab-on bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>{v === 'day' ? 'Day' : 'Week'}</button>
           ))}
         </div>
         <div className="inline-flex items-center gap-1">
@@ -682,7 +682,7 @@ async function pushBlocks() {
 {/* Five market chips carrying counts and dollars wrapped to three rows on a phone. */}
 <div className="lh-actions flex items-center gap-2 flex-wrap">
         {(['all', ...MARKETS, 'vendor'] as const).map(m => (
-          <button key={m} onClick={() => setMarket(m)} className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${market === m ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{m === 'all' ? 'All markets' : m === 'vendor' ? 'Vendor' : m}{data && m !== 'all' && m !== 'vendor' ? (() => { const _e = data.totals.byMarket.find(x => x.market === m); return ' · ' + (_e?.count ?? 0) + (_e?.fee ? ' · $' + Math.round(_e.fee).toLocaleString() : '') })() : ''}</button>
+          <button key={m} onClick={() => setMarket(m)} className={`lh-tab text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${market === m ? 'lh-tab-on bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{m === 'all' ? 'All markets' : m === 'vendor' ? 'Vendor' : m}{data && m !== 'all' && m !== 'vendor' ? (() => { const _e = data.totals.byMarket.find(x => x.market === m); return ' · ' + (_e?.count ?? 0) + (_e?.fee ? ' · $' + Math.round(_e.fee).toLocaleString() : '') })() : ''}</button>
         ))}
         {data && <span className="text-[12px] text-ink font-semibold ml-1">{data.totals.cleans} cleans{data.totals.feeTotal ? ' \u00b7 $' + Math.round(data.totals.feeTotal).toLocaleString() : ''} this {view}</span>}
         {view === 'day' && (
