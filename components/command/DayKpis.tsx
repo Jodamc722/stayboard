@@ -206,22 +206,22 @@ function Tile({ label, done, needed, segs, sub, on, onClick, title, loading, big
   const tone = big ? big.tone : !needed ? 'text-muted' : done === needed ? 'text-emerald-700' : segs.some(s => s.n && /late|urgent|unassigned/.test(s.filter)) ? 'text-rose-700' : 'text-ink'
   return (
     <button onClick={onClick} aria-pressed={on} title={title + (on ? ' — click to close the list' : ' — click to open the list')}
-      className={'text-left rounded-xl border bg-white px-2.5 sm:px-3 py-2 min-h-[72px] sm:min-h-[84px] transition flex flex-col gap-1 min-w-0 ' + (on ? 'border-brand-400 ring-2 ring-brand-100' : 'border-line hover:border-ink/30')}>
+      className={'text-left rounded-2xl border bg-white px-3 sm:px-3.5 py-2.5 sm:py-3 min-h-[80px] sm:min-h-[96px] shadow-soft transition flex flex-col gap-1.5 min-w-0 ' + (on ? 'border-brand-400 ring-2 ring-brand-100' : 'border-line hover:border-ink/30')}>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10.5px] uppercase tracking-wider font-bold text-muted truncate">{label}</span>
+        <span className="text-[10.5px] uppercase tracking-[0.12em] font-semibold text-muted truncate">{label}</span>
         {loading ? <Loader2 size={11} className="animate-spin text-muted" /> : <span className={'text-[10.5px] font-bold tabular-nums ' + (needed ? 'text-muted' : 'text-muted/50')}>{needed && !noPct ? pct + '%' : ''}</span>}
       </div>
       <div className="flex items-baseline gap-1">
         {big ? <>
-          <span className={'text-[22px] leading-none font-bold tabular-nums ' + tone}>{big.value}</span>
+          <span className={'lh-display text-[26px] sm:text-[30px] leading-none font-bold tabular-nums ' + tone}>{big.value}</span>
           <span className="text-[11px] text-muted ml-1 truncate">{big.unit}</span>
         </> : <>
-          <span className={'text-[22px] leading-none font-bold tabular-nums ' + tone}>{done}</span>
-          <span className="text-[13px] font-semibold text-muted tabular-nums">/ {needed}</span>
+          <span className={'lh-display text-[26px] sm:text-[30px] leading-none font-bold tabular-nums ' + tone}>{done}</span>
+          <span className="text-[13px] font-medium text-muted tabular-nums">/ {needed}</span>
           <span className="text-[11px] text-muted ml-1">{needed ? 'done' : loading ? 'reading…' : 'none today'}</span>
         </>}
       </div>
-      <div className="w-full h-1.5 rounded-full bg-line overflow-hidden flex" aria-hidden>
+      <div className="w-full h-1 rounded-full bg-line overflow-hidden flex mt-auto" aria-hidden>
         {needed > 0 && segs.filter(s => s.n > 0).map(s => <span key={s.filter} className={'block h-full ' + s.cls} style={{ width: (s.n / needed) * 100 + '%' }} title={s.n + ' ' + s.label} />)}
       </div>
       <div className="text-[11px] text-muted truncate w-full" title={sub}>{sub || ' '}</div>
@@ -460,8 +460,8 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
           if (!mine.length) return null
           return (
             <div key={g.label}>
-              <p className="px-1 mb-1 text-[10px] font-bold uppercase tracking-[0.12em] text-muted">{g.label}</p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+              <p className="px-1 mb-1.5 mt-1 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-muted">{g.label}</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                 {mine.map(x => <Tile key={x.key} label={x.label} done={x.done} needed={x.needed} segs={x.segs} sub={x.sub} on={open === x.key} onClick={() => toggle(x.key)} title={x.title} loading={x.loading} big={x.big} noPct={x.key === 'glitches' || x.key === 'claims' || x.key === 'blocked'} />)}
               </div>
             </div>

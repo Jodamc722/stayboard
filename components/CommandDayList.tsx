@@ -229,7 +229,7 @@ function DayLine({ d, loading, reload, roster, vendorsOnSite }: { d: CommandDay;
   // first line of "How's the day". The eyebrow the page used to print is this title now.
   return (
     <section aria-live="polite">
-      <LeanHead title={<span>Today <span className="text-muted font-medium text-[14px]">· {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'America/New_York' })}</span></span>} icon={<Sparkles size={18} className="text-brand-600" />}>
+      <LeanHead title="Today" sub={new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'America/New_York' }) + ' · ' + v.detail}>
         <Pill tone={vTone} title={v.detail}>{v.headline}</Pill>
         {/* The cleans pill that sat here repeated the Departure cleans tile directly under it (2026-10-01 audit); the time left rides on the verdict instead. */}
         {left && p.cleansTotal > p.cleansDone && <Pill tone={t.cleans.late ? 'rose' : 'slate'} title="Time left on today's cleans">{left}</Pill>}

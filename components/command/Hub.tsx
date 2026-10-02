@@ -54,7 +54,7 @@ const UNPAID_URL = '/api/unpaid'   // today → +7: in house, arriving today, ne
 const NOW_MIN = 65     // a row needs this score to make the Now list
 const NOW_MAX = 6
 const LANE_ROWS = 5
-export const LIST = 'rounded-2xl border border-line bg-white divide-y divide-line'
+export const LIST = 'rounded-2xl border border-line bg-white divide-y divide-line/70 shadow-soft'
 export const GHOST = BTN + ' border border-line bg-white text-ink hover:border-ink/40'
 export const DARK = BTN + ' bg-ink text-white'
 export const bz = (id: string) => 'https://app.breezeway.io/task/' + id
@@ -121,7 +121,7 @@ export function Row({ dot, title, meta, tags, actions, children, err, lane, note
   const notesCtx = useContext(NotesCtx)
   const noteBtn = noteKey && notesCtx ? <NoteBtn noteKey={noteKey} open={notesOpen} onToggle={() => setNotesOpen(o => !o)} /> : null
   return (
-    <div className="px-3 py-1.5 min-h-[44px] flex flex-col justify-center">
+    <div className="px-3.5 py-2 min-h-[48px] flex flex-col justify-center hover:bg-app/60 transition-colors">
       <div className="flex items-center gap-2 min-w-0 flex-wrap sm:flex-nowrap">
         <span aria-hidden className={'w-1.5 h-1.5 rounded-full shrink-0 ' + (dot === 'rose' ? 'bg-rose-500' : dot === 'amber' ? 'bg-amber-400' : 'bg-transparent')} />
         <span className="flex-1 min-w-[55%] sm:min-w-0 flex items-center gap-x-1.5 flex-wrap">
@@ -881,7 +881,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
 
       {!focus && (
         <section>
-          <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-2">
+          <h2 className="px-1 mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink flex items-center gap-2">
             <button onClick={() => setNowOpen(o => !o)} aria-expanded={nowOpen} className="inline-flex items-center gap-1.5 hover:text-brand-700" title={nowOpen ? 'Back to the top six' : 'Open the whole list'}>Now {nowAll.length ? <span className="tabular-nums text-muted">{nowOpen ? nowAll.length : now.length + (nowAll.length > now.length ? ' of ' + nowAll.length : '')}</span> : null} {nowAll.length > NOW_MAX ? (nowOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : null}</button>
             <span className="normal-case tracking-normal font-medium text-muted">— {now.length ? 'what matters most in the next two hours, high-ticket first' : 'nothing urgent — the lanes below have the rest'}</span>
           </h2>
