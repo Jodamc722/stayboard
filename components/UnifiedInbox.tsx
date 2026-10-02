@@ -45,7 +45,10 @@ export function UnifiedInbox(props: { items: InboxItem[]; unitById: Record<strin
   // On a wide screen, start on the first thread waiting on us — the inbox should open on the work.
   useEffect(() => {
     if (open || typeof window === 'undefined' || window.innerWidth < 1024) return
-    const first = props.items.find(it => it.kind === 'phone' ? it.t.awaiting : !!props.waiting[it.c.id]) || props.items[0]
+    // A guest message waiting beats a missed call from an unmatched number as the thing to open first.
+    const first = props.items.find(it => it.kind === 'guesty' && !!props.waiting[it.c.id])
+      || props.items.find(it => it.kind === 'phone' && it.t.awaiting && !!it.t.reservationId)
+      || props.items.find(it => it.kind === 'guesty') || props.items[0]
     if (first) select(itemKey(first))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
