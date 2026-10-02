@@ -78,14 +78,20 @@ export function GuideMobile({ gb }: { gb: any }) {
   // Scroll-spy for the strip: the section whose top is nearest the strip is the lit one.
   const [active, setActive] = useState<string>('')
   useEffect(() => {
-    const els = sections.map(x => document.getElementById('m-' + x.id)).filter(Boolean) as HTMLElement[]
-    if (!els.length) return
-    const io = new IntersectionObserver(entries => {
-      const vis = entries.filter(e => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
-      if (vis[0]) setActive(vis[0].target.id.slice(2))
-    }, { rootMargin: '-120px 0px -60% 0px', threshold: 0 })
-    els.forEach(el => io.observe(el))
-    return () => io.disconnect()
+    // The lit chip is the last section whose top has passed the strip — and at the very bottom of
+    // the page, the last section, so Emergency lights up even when it is shorter than a screen.
+    let raf = 0
+    const pick = () => {
+      raf = 0
+      const atEnd = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 8
+      let cur = sections[0]?.id || ''
+      if (atEnd) cur = sections[sections.length - 1]?.id || cur
+      else for (const x of sections) { const el = document.getElementById('m-' + x.id); if (el && el.getBoundingClientRect().top <= 130) cur = x.id }
+      setActive(a => (a === cur ? a : cur))
+    }
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(pick) }
+    pick(); window.addEventListener('scroll', onScroll, { passive: true })
+    return () => { window.removeEventListener('scroll', onScroll); if (raf) cancelAnimationFrame(raf) }
   }, [sections])
   const stripRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -155,7 +161,7 @@ export function GuideMobile({ gb }: { gb: any }) {
         </div>
         <div className="absolute inset-x-0 bottom-0 px-5 pb-7">
           <p className="text-[10px] tracking-[0.45em] text-white/80">{lbl('cover.kicker', 'WELCOME')}</p>
-          <h1 className="mt-2 text-[40px] leading-[1.02] font-medium text-white" style={{ fontFamily: SERIF, textWrap: 'balance' as any }}>{str(s.cover?.line) || ('welcome to ' + title)}</h1>
+          <h1 className="mt-2 text-[40px] leading-[1.02] font-medium text-white" style={{ fontFamily: SERIF, textWrap: 'balance' as any }}>{str(s.cover?.line1) ? <>{str(s.cover?.line1)}{str(s.cover?.line2) ? <><br />{str(s.cover?.line2)}</> : null}</> : ('welcome to ' + title.replace(/\s*[—-]\s*Guest Guidebook$/i, ''))}</h1>
           {cityLine ? <p className="mt-2.5 text-[11px] tracking-[0.3em] uppercase text-white/75">{cityLine}</p> : null}
         </div>
       </header>
@@ -194,7 +200,7 @@ export function GuideMobile({ gb }: { gb: any }) {
                 <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full" style={{ background: c.tint, color: c.accent }}><Phone size={16} /></span>
                 <div className="min-w-0">
                   <p className="text-[10px] tracking-[0.3em] uppercase" style={{ color: c.accent }}>{lbl('ess.needus', 'NEED US?')}</p>
-                  <a href={'tel:' + tel(phone)} className="mt-0.5 block text-[14px] font-medium leading-snug underline-offset-2">{phone}</a>
+                  <a href={'tel:' + tel(phone)} className="mt-0.5 block text-[14px] font-medium leading-snug whitespace-nowrap tabular-nums">{phone}</a>
                   <p className="text-[12.5px]" style={{ color: c.mute }}>{lbl('ess.hours', '24/7')}</p>
                 </div>
               </div>
@@ -440,7 +446,8 @@ export function GuideMobile({ gb }: { gb: any }) {
         {phone ? <a href={'tel:' + tel(phone)} className="flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[10.5px] font-semibold" style={{ color: c.ink }}><Phone size={19} style={{ color: c.accent }} />Call</a> : null}
         {wifiNet ? <button type="button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[10.5px] font-semibold" style={{ color: c.ink }}><Wifi size={19} style={{ color: c.accent }} />Wi-Fi</button> : null}
         {address ? <a href={mapsUrl(address)} target="_blank" rel="noreferrer" className="flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[10.5px] font-semibold" style={{ color: c.ink }}><MapPin size={19} style={{ color: c.accent }} />Map</a> : null}
-        <button type="button" onClick={() => go('howto')} className="flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[10.5px] font-semibold" style={{ color: c.ink }}><ListChecks size={19} style={{ color: c.accent }} />How-to</button>
+        {sections.some(x => x.id === 'howto') ? <button type="button" onClick={() => go('howto')} className="flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[10.5px] font-semibold" style={{ color: c.ink }}><ListChecks size={19} style={{ color: c.accent }} />How-to</button>
+          : sections.some(x => x.id === 'local' || x.id === 'eat') ? <button type="button" onClick={() => go(sections.some(x => x.id === 'local') ? 'local' : 'eat')} className="flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[10.5px] font-semibold" style={{ color: c.ink }}><Compass size={19} style={{ color: c.accent }} />Explore</button> : null}
         <button type="button" onClick={() => go('emergency')} className="flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[10.5px] font-semibold" style={{ color: '#b42318' }}><Siren size={19} />SOS</button>
       </nav>
     </div>
