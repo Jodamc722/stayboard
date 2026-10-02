@@ -49,7 +49,7 @@ const AREA: Record<Area, { label: string; short: string; Icon: any; href: string
   reviews: { label: 'Reviews', short: 'Reviews', Icon: Star, href: '/reviews', hrefLabel: 'Reviews', blurb: 'Reviews waiting on a public reply — low scores first' },
   admin: { label: 'Admin', short: 'Admin', Icon: FileText, href: '/buildings', hrefLabel: 'Properties', blurb: 'What needs your decision, unpaid balances to collect, the checklist, your tasks and today’s recommended listing work' },
 }
-const SUB_ORDER = ['Cleans', 'Inspections', 'Tasks', 'Team', 'Calls', 'Inbox', 'Glitches', 'Queue', 'Needs you', 'Yours', 'Optimize', 'Fixes']
+const SUB_ORDER = ['Cleans', 'Inspections', 'Tasks', 'Team', 'Calls', 'Inbox', 'Glitches', 'Reviews', 'Queue', 'Needs you', 'Yours', 'Optimize', 'Fixes']
 const UNPAID_URL = '/api/unpaid'   // today → +7: in house, arriving today, next seven days (direct / VRBO / Google only)
 const NOW_MIN = 65     // a row needs this score to make the Now list
 const NOW_MAX = 6
@@ -677,7 +677,7 @@ function Lane({ area, items, focused, empty, right }: { area: Area; items: HubIt
   return (
     <section id={'lane-' + area} className="scroll-mt-4 min-w-0">
       <div className="px-1 mb-1.5 flex items-center gap-2 flex-wrap">
-        <h2 className="text-[11px] font-bold uppercase tracking-wider text-ink inline-flex items-center gap-1.5" title={A.blurb}><A.Icon size={13} className="text-brand-600" /> {A.label}</h2>
+        <button onClick={() => setAll(a => !a)} aria-expanded={all} className="text-[11px] font-bold uppercase tracking-wider text-ink inline-flex items-center gap-1.5 hover:text-brand-700" title={A.blurb + (all ? ' — click to show fewer' : ' — click to open the whole list')}><A.Icon size={13} className="text-brand-600" /> {A.label} {list.length > LANE_ROWS ? (all ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : null}</button>
         {items.length ? <span className="text-[11px] font-bold tabular-nums text-muted">{items.length}</span> : <span className="text-[11px] text-muted">— {empty}</span>}
         {right}
         <Link href={A.href} prefetch={false} className="ml-auto text-[11px] font-semibold text-brand-700 hover:underline" title={'Open ' + A.hrefLabel}>{A.hrefLabel} →</Link>
@@ -708,6 +708,8 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   const acc = useAccess()
   const can = { assign: acc.atLeast('schedule', 'edit'), plan: acc.atLeast('plan', 'edit'), calls: acc.atLeast('welcome-calls', 'edit'), glitches: acc.atLeast('glitches', 'edit'), reviews: acc.atLeast('reviews', 'edit'), unpaid: acc.atLeast('reservations', 'edit') }
   const [focus, setFocus] = useState<Area | null>(null)
+  // EVERY SECTION OPENS FULLY FROM ITS TITLE (Jon, 2026-10-02: "if you click on any of the specifics, it should open up fully").
+  const [nowOpen, setNowOpen] = useState(false)
   useEffect(() => { if (focus) document.getElementById('lane-' + focus)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }, [focus])
 
   // The other reads. Each fails soft: a 403 hides its rows, an error leaves the lane to the rest.
@@ -822,7 +824,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   for (const r of reviews) {
     const s = five(r.rating, r.channel), low = s != null && s <= 3
     const ageH = (Date.now() - Date.parse(r.created_at)) / 3600000
-    items.push({ key: 'rv:' + r.id, area: 'reviews', sub: 'Queue', score: (low ? 76 : 45) + Math.min(6, ageH / 24), node: <ReviewRow r={r} canReply={can.reviews} onGone={() => { setGoneReviews(g => ({ ...g, [r.id]: true })); reloadReviews() }} /> })
+    items.push({ key: 'rv:' + r.id, area: 'guests', sub: 'Reviews', score: (low ? 76 : 45) + Math.min(6, ageH / 24), node: <ReviewRow r={r} canReply={can.reviews} onGone={() => { setGoneReviews(g => ({ ...g, [r.id]: true })); reloadReviews() }} /> })
   }
 
   for (const row of approvals) items.push({ key: row.key, area: 'admin', sub: 'Needs you', score: 70, node: <ApprovalRow row={row} onCleared={onCleared} onChanged={onChanged} /> })
@@ -840,7 +842,8 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   for (const a of fixes) items.push({ key: 'fix:' + a.listingId + a.key, area: 'admin', sub: 'Fixes', score: a.severity === 'critical' ? 40 : a.severity === 'high' ? 30 : 20, node: <FixRow a={a} /> })
 
   // NOW: the top of everything, across areas — but only rows that clear the bar.
-  const now = items.filter(i => i.score >= NOW_MIN).sort((a, b) => b.score - a.score).slice(0, NOW_MAX)
+  const nowAll = items.filter(i => i.score >= NOW_MIN).sort((a, b) => b.score - a.score)
+  const now = nowOpen ? nowAll : nowAll.slice(0, NOW_MAX)
 
   // ── the KPIs ──
   const free = t.team.rows.reduce((a, r) => a + Math.max(0, (r.capacityMinutes || 0) - (r.loadMinutes || 0)), 0)
@@ -851,7 +854,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
     { key: 'hours', area: 'ops', label: 'Free hours', short: 'Hours', value: t.team.onShift ? hm(free) : '—', sub: t.team.onShift ? t.team.onShift + ' on shift' + (over ? ' · ' + over + ' over' : '') : 'nobody on shift', tone: !t.team.onShift ? 'rose' : over ? 'amber' : free < 60 ? 'amber' : 'emerald', title: 'Hours the people on shift can still take today: their capacity minus the work already on them' },
     { key: 'waiting', area: 'guests', label: 'Guests waiting', short: 'Waiting', value: String(inbox.length), sub: [lateReplies.length ? lateReplies.length + ' past the hour' : '', unhappy.length ? unhappy.length + ' unhappy' : 'sentiment clear'].filter(Boolean).join(' · '), tone: unhappy.length || lateReplies.length ? 'rose' : inbox.length ? 'amber' : 'emerald', title: 'Guests waiting on a reply (1-hour rule), and current guests the sentiment scan reads as unhappy' },
     { key: 'glitches', area: 'guests', label: 'Glitches', value: String(glitches.length), sub: [t.glitches.overdue ? t.glitches.overdue + ' overdue' : 'none overdue', wkGl && /to close/.test(wkGl.sub) ? 'wk ' + wkGl.sub.split(' · ').filter(s => /to close/.test(s))[0] : ''].filter(Boolean).join(' · '), tone: t.glitches.overdue ? 'rose' : glitches.length ? 'amber' : 'emerald', title: 'Open guest issues, how many are past due, and the month’s median time to close' },
-    { key: 'reviews', area: 'reviews', label: 'Reviews', value: String(reviews.length), sub: [lowReviews.length ? lowReviews.length + ' at 3★ or under' : reviews.length ? 'to answer' : 'all answered', avg30 ? avg30.avg + '★ last 30d' : ''].filter(Boolean).join(' · '), tone: lowReviews.length ? 'rose' : reviews.length ? 'amber' : 'emerald', title: 'Reviews waiting on a public reply, and the average score of the last 30 days' },
+    { key: 'reviews', area: 'guests', label: 'Reviews', value: String(reviews.length), sub: [lowReviews.length ? lowReviews.length + ' at 3★ or under' : reviews.length ? 'to answer' : 'all answered', avg30 ? avg30.avg + '★ last 30d' : ''].filter(Boolean).join(' · '), tone: lowReviews.length ? 'rose' : reviews.length ? 'amber' : 'emerald', title: 'Reviews waiting on a public reply, and the average score of the last 30 days' },
     { key: 'admin', area: 'admin', label: 'Admin', value: String(approvals.length + claims.length + links.length), sub: [approvals.length + claims.length + links.length ? 'need your decision' : 'nothing to decide', mineRows.length ? mineRows.length + ' of yours' : '', optimizeDue ? optimizeDue + ' to optimize' : '', fixes.length ? fixes.length + ' fixes' : ''].filter(Boolean).join(' · '), tone: approvals.length || links.length ? 'amber' : ck?.progress?.late ? 'amber' : 'emerald', title: 'Decisions waiting on you, your own tasks, listings past their six-month optimization, and the listing fixes recommended for today' },
   ]
 
@@ -872,16 +875,14 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
       {/* THE CHECKLIST, next two things, then NOW. The second row of tiles that used to sit here
           (free hours, guests waiting, glitches, reviews, admin) now reads as one line in each lane's
           header below — same numbers, one less band to scan (Jon, 2026-10-01: "cleaner … better organized"). */}
-      <ChecklistStrip ck={ck} onTicked={reloadCk} />
 
       {/* UNPAID — the actual reservations, one flat list with a due date each (Jon, 2026-10-01). The
           Unpaid tile above scrolls here. Hidden when nothing is owed this week. */}
-      {!focus && <div id="unpaid-today" className="scroll-mt-4"><UnpaidBoard embed /></div>}
 
       {!focus && (
         <section>
           <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-2">
-            Now {now.length ? <span className="tabular-nums text-muted">{now.length}</span> : null}
+            <button onClick={() => setNowOpen(o => !o)} aria-expanded={nowOpen} className="inline-flex items-center gap-1.5 hover:text-brand-700" title={nowOpen ? 'Back to the top six' : 'Open the whole list'}>Now {nowAll.length ? <span className="tabular-nums text-muted">{nowOpen ? nowAll.length : now.length + (nowAll.length > now.length ? ' of ' + nowAll.length : '')}</span> : null} {nowAll.length > NOW_MAX ? (nowOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : null}</button>
             <span className="normal-case tracking-normal font-medium text-muted">— {now.length ? 'what matters most in the next two hours, high-ticket first' : 'nothing urgent — the lanes below have the rest'}</span>
           </h2>
           {now.length > 0 && <div className={LIST}>{now.map(i => <div key={'now:' + i.key}>{withLane(i)}</div>)}</div>}

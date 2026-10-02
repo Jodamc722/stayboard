@@ -39,6 +39,11 @@ import { UnpaidRow, type UnpaidRowT } from '@/components/UnpaidBoard'
 
 export const CALLS_URL = '/api/command/calls'
 type Key = 'cleans' | 'insp' | 'welcome' | 'recovery' | 'maint' | 'unpaid' | 'glitches' | 'claims' | 'checklist' | 'reviews' | 'notices' | 'checks' | 'blocked' | 'channels'
+const GROUPS: { label: string; keys: Key[] }[] = [
+  { label: 'Housekeeping & maintenance', keys: ['cleans', 'insp', 'maint', 'blocked'] },
+  { label: 'Guests', keys: ['welcome', 'recovery', 'notices', 'checks', 'reviews'] },
+  { label: 'Office', keys: ['checklist', 'glitches', 'claims', 'unpaid', 'channels'] },
+]
 const CHECKS_URL = '/api/guest-checks'
 const BLOCKED_URL = '/api/blocked-units?days=30'
 const CHANNELS_URL = '/api/channels'
@@ -306,7 +311,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     { key: 'notices', label: 'Front-desk notices', done: ntC.sentToday, needed: ntToday.length, loading: !ntQ.data && ntQ.loading, title: 'Arrival notices the buildings need today (Elser’s registration form first): sent against to send, late ones first',
       segs: [{ label: 'sent', n: ntC.sentToday, cls: 'bg-emerald-500', tone: 'emerald', filter: 'sent' }, { label: 'late', n: ntC.late, cls: 'bg-rose-500', tone: 'rose', filter: 'late' }, { label: 'due', n: ntC.due, cls: 'bg-amber-400', tone: 'amber', filter: 'due' }, { label: 'to send', n: Math.max(0, ntC.toSend - ntC.late - ntC.due), cls: 'bg-slate-300', tone: 'slate', filter: 'open' }],
       sub: ntQ.error ? 'could not read the notices' : ntToday.length ? [ntC.toSend ? ntC.toSend + ' to send' : 'all sent', ntC.late ? ntC.late + ' late' : '', ntC.blocked ? ntC.blocked + ' with no recipient' : ''].filter(Boolean).join(' · ') : 'none needed today' },
-    { key: 'checks', label: 'ID & deposits', done: gcDone, needed: gcNeeded, loading: !gcQ.data && gcQ.loading, title: 'Arrivals in the next 7 days whose channel asks us to verify ID (Direct, Vrbo) or hold a deposit (Direct, Expedia, Vrbo): checks done against checks owed, today first',
+    { key: 'checks', label: 'ID & deposits', done: gcDone, needed: gcNeeded, loading: !gcQ.data && gcQ.loading, title: 'Arrivals in the next 7 days whose channel asks us to verify ID (Vrbo, Direct, Google) or collect a security deposit (Expedia): checks done against checks owed, today first',
       segs: [{ label: 'done', n: gcDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'ID to verify', n: gcIdOpen, cls: 'bg-amber-400', tone: 'amber', filter: 'id' }, { label: 'deposit to take', n: gcDepOpen, cls: 'bg-rose-500', tone: 'rose', filter: 'deposit' }],
       sub: gcQ.error ? (/migration/.test(gcQ.error) ? 'needs migration 145' : 'could not read') : gcNeeded ? [gcTodayOpen ? gcTodayOpen + ' arriving today still open' : 'today’s arrivals covered', gcIdOpen ? gcIdOpen + ' ID' : '', gcDepOpen ? gcDepOpen + ' deposit' : ''].filter(Boolean).join(' · ') : 'nothing owed this week' },
     { key: 'blocked', label: 'Blocked units', done: 0, needed: blRuns.length, loading: !blQ.data && blQ.loading, title: 'Units out of service on the calendar: off right now, starting within a week, and later — with the block note',
@@ -314,9 +319,9 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
       segs: [{ label: 'off now', n: blLive, cls: 'bg-rose-500', tone: 'rose', filter: 'live' }, { label: 'within 7 days', n: blSoon, cls: 'bg-amber-400', tone: 'amber', filter: 'soon' }, { label: 'later', n: blLater, cls: 'bg-slate-300', tone: 'slate', filter: 'later' }],
       sub: blQ.error ? 'could not read the calendar' : blRuns.length ? [blLive ? blLive + ' off now' : 'none off now', blSoon ? blSoon + ' starting this week' : '', blQ.data?.nightsBlocked ? blQ.data.nightsBlocked + ' nights blocked in 30d' : ''].filter(Boolean).join(' · ') : 'nothing blocked in the next 30 days' },
     { key: 'channels', label: 'Channels', done: Math.max(0, chAll.length - chBad.length), needed: chAll.length, loading: !chQ.data && chQ.loading, title: 'Every active listing against the major channels: live, or suspended / failed / disconnected, or simply not listed on one',
-      big: { value: String(chBad.length), unit: chBad.length === 1 ? 'listing not fully live' : 'listings not fully live', tone: chHard ? 'text-rose-700' : chBad.length ? 'text-amber-800' : 'text-emerald-700' },
+      big: { value: String(chHard), unit: chHard === 1 ? 'listing broken' : 'listings broken', tone: chHard ? 'text-rose-700' : chBad.length ? 'text-amber-800' : 'text-emerald-700' },
       segs: [{ label: 'live everywhere', n: Math.max(0, chAll.length - chBad.length), cls: 'bg-emerald-500', tone: 'emerald', filter: 'live' }, { label: 'not on a channel', n: chMissing, cls: 'bg-amber-400', tone: 'amber', filter: 'missing' }, { label: 'suspended / failed', n: chHard, cls: 'bg-rose-500', tone: 'rose', filter: 'hard' }],
-      sub: chQ.error ? 'could not read channel health' : chAll.length ? [chHard ? chHard + ' suspended, failed or disconnected' : 'nothing broken', chMissing ? chMissing + ' missing a major channel' : ''].filter(Boolean).join(' · ') : 'no channel snapshot yet' },
+      sub: chQ.error ? 'could not read channel health' : chAll.length ? [chHard ? 'suspended, failed or disconnected' : 'nothing broken', chMissing ? chMissing + ' not on every major channel' : ''].filter(Boolean).join(' · ') : 'no channel snapshot yet' },
   ]
 
   // ── the open list ──
@@ -369,12 +374,26 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     if (k === 'unpaid') { const el = document.getElementById('unpaid-today'); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); return } }
     setOpen(o => (o === k ? null : k)); setFilter('all')
   }
-  const headline = tile ? (tile.key === 'unpaid' ? money(uOwed) + ' owed · ' + tile.done + ' of ' + tile.needed + ' contacted' : tile.key === 'glitches' || tile.key === 'claims' ? tile.needed + ' open' : tile.key === 'reviews' ? tile.done + ' of ' + tile.needed + ' responded' : tile.key === 'blocked' ? tile.needed + ' blocks in 30 days' : tile.key === 'channels' ? tile.needed - tile.done + ' of ' + tile.needed + ' not fully live' : tile.key === 'checks' ? tile.done + ' of ' + tile.needed + ' checks done' : tile.key === 'notices' ? tile.done + ' of ' + tile.needed + ' sent' : tile.done + ' of ' + tile.needed + ' done') : ''
+  const headline = tile ? (tile.key === 'unpaid' ? money(uOwed) + ' owed · ' + tile.done + ' of ' + tile.needed + ' contacted' : tile.key === 'glitches' || tile.key === 'claims' ? tile.needed + ' open' : tile.key === 'reviews' ? tile.done + ' of ' + tile.needed + ' responded' : tile.key === 'blocked' ? tile.needed + ' blocks in 30 days' : tile.key === 'channels' ? chHard + ' broken · ' + chMissing + ' not on every channel' : tile.key === 'checks' ? tile.done + ' of ' + tile.needed + ' checks done' : tile.key === 'notices' ? tile.done + ' of ' + tile.needed + ' sent' : tile.done + ' of ' + tile.needed + ' done') : ''
 
   return (
     <section>
-      <div className="grid grid-cols-3 lg:grid-cols-6 gap-2">
-        {tiles.map(x => <Tile key={x.key} label={x.label} done={x.done} needed={x.needed} segs={x.segs} sub={x.sub} on={open === x.key} onClick={() => toggle(x.key)} title={x.title} loading={x.loading} big={x.big} noPct={x.key === 'glitches' || x.key === 'claims' || x.key === 'blocked'} />)}
+      {/* BY TEAM (Jon, 2026-10-02: "clear visibility … for all teams and staff"; "clunky, noisy"). Three
+          labelled rows instead of one wall of fourteen tiles: what housekeeping and maintenance own,
+          what the guest team owns, what the office owns. A tile is still one click to its full list. */}
+      <div className="space-y-2">
+        {GROUPS.map(g => {
+          const mine = tiles.filter(x => g.keys.includes(x.key))
+          if (!mine.length) return null
+          return (
+            <div key={g.label}>
+              <p className="px-1 mb-1 text-[10px] font-bold uppercase tracking-[0.12em] text-muted">{g.label}</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                {mine.map(x => <Tile key={x.key} label={x.label} done={x.done} needed={x.needed} segs={x.segs} sub={x.sub} on={open === x.key} onClick={() => toggle(x.key)} title={x.title} loading={x.loading} big={x.big} noPct={x.key === 'glitches' || x.key === 'claims' || x.key === 'blocked'} />)}
+              </div>
+            </div>
+          )
+        })}
       </div>
       {open && tile && (
         <div className="mt-2 rounded-2xl border border-brand-200 bg-brand-50/30 p-2 sm:p-3">

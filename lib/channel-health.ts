@@ -95,7 +95,11 @@ export function approvalOk(text: string | null): boolean {
 
 function cellFor(entry: any, ch: ChannelKey, bookings: { last: string | null; n90: number } | undefined): Cell {
   const book = bookings || { last: null, n90: 0 }
-  if (!entry) return { connected: false, status: null, approval: null, syncCategory: null, url: null, lastBookingAt: book.last, bookings90d: book.n90, verdict: 'missing' }
+  // BOOKED IS LIVE (Jon, 2026-10-02: "Expedia channels don't show because it doesn't show the link in
+  // Guesty"). Expedia bookings arrive through Guesty with no integration object on the listing — 368
+  // Expedia stays across 110 listings in 90 days all read "missing". A channel that produced a booking
+  // in the last 90 days is live, whatever the listing object says about the connection.
+  if (!entry) return { connected: book.n90 > 0, status: book.n90 > 0 ? '(booked, no link)' : null, approval: null, syncCategory: null, url: null, lastBookingAt: book.last, bookings90d: book.n90, verdict: book.n90 > 0 ? 'live' : 'missing' }
   const sub = entry && typeof entry[ch] === 'object' && entry[ch] ? entry[ch] : {}
   const status = str(sub.status) || null
   const approval = ch === 'airbnb2' ? approvalText(sub.approvalStatus) : null
@@ -110,7 +114,7 @@ function cellFor(entry: any, ch: ChannelKey, bookings: { last: string | null; n9
   // 2026-09-18: 238 entries, keys createdAt / cancellationPolicy / cancellationPenalty only). An
   // entry with a live link is the only signal there is, so it reads as connected rather than
   // painting 225 cells "unknown".
-  else if (!status && ch === 'expedia') verdict = url ? 'live' : 'missing'
+  else if (!status && ch === 'expedia') verdict = url || book.n90 > 0 ? 'live' : 'missing'
   else verdict = 'unknown'
   // Airbnb's own verdict outranks the connection status: a COMPLETED sync to a suspended listing
   // is still a listing nobody can book.

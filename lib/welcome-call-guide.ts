@@ -3,7 +3,7 @@
 // channel-specific checks (ID verification + security deposit) that Airbnb handles for us but
 // the other channels do not. Building data drives parking/access questions + local tips.
 
-export type Channel = 'Airbnb' | 'Vrbo' | 'Booking.com' | 'Expedia' | 'Direct' | 'Other'
+export type Channel = 'Airbnb' | 'Vrbo' | 'Booking.com' | 'Expedia' | 'Google' | 'Direct' | 'Other'
 
 export function channelOf(source?: string): Channel {
   const s = String(source || '').toLowerCase()
@@ -11,6 +11,7 @@ export function channelOf(source?: string): Channel {
   if (/vrbo|homeaway/.test(s)) return 'Vrbo'
   if (/booking\.com|bookingcom/.test(s)) return 'Booking.com'   // Guesty writes the channel as `bookingCom`
   if (/expedia|hotels\.com|travelocity|orbitz|egencia|marriott/.test(s)) return 'Expedia'
+  if (/google/.test(s)) return 'Google'
   if (/be-?api|website|direct|manual|owner/.test(s)) return 'Direct'
   return 'Other'
 }
@@ -26,9 +27,9 @@ export type ChannelPolicy = {
 export function channelPolicy(channel: Channel): ChannelPolicy {
   // Merchant of record = the OTA collects the payment (we don't chase it). Airbnb/Booking.com/Expedia.
   const merchantOfRecord = channel === 'Airbnb' || channel === 'Booking.com' || channel === 'Expedia'
-  // Verify guest ID on Direct + Vrbo. Collect a security deposit on Direct + Expedia + Vrbo.
-  const verify = channel === 'Direct' || channel === 'Vrbo'
-  const deposit = channel === 'Direct' || channel === 'Expedia' || channel === 'Vrbo'
+  // Jon, 2026-10-02: verify guest ID on Vrbo, Direct and Google; collect a security deposit on Expedia only.
+  const verify = channel === 'Direct' || channel === 'Vrbo' || channel === 'Google'
+  const deposit = channel === 'Expedia'
   const checks: ChannelPolicy['checks'] = []
   if (channel === 'Airbnb') {
     checks.push({ label: 'Airbnb is merchant of record - payment is collected by Airbnb, the guest is verified, and AirCover covers damage. No deposit or ID check needed.', tone: 'ok' })
@@ -41,6 +42,7 @@ export function channelPolicy(channel: Channel): ChannelPolicy {
     if (deposit) checks.push({ label: 'COLLECT a security deposit before arrival.', tone: 'warn' })
     if (channel === 'Direct') checks.push({ label: 'CONFIRM full payment has cleared (we collect directly).', tone: 'warn' })
     if (channel === 'Expedia') checks.push({ label: 'ID verification not required for Expedia.', tone: 'ok' })
+    if (channel === 'Google') checks.push({ label: 'No security deposit on Google bookings.', tone: 'ok' })
   }
   return { channel, verify, deposit, merchantOfRecord, checks }
 }

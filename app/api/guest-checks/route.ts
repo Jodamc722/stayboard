@@ -1,5 +1,6 @@
 // GUEST CHECKS — ID verified, deposit captured (Jon, 2026-10-02). Arrivals today and the next seven
-// days whose channel asks for either check (lib/welcome-call-guide channelPolicy), with what we have
+// days whose channel asks for either check (lib/welcome-call-guide channelPolicy: ID on Vrbo, Direct, Google;
+// deposit on Expedia), with what we have
 // recorded about each (guest_checks, migration 145; a Salato stay verified through its own link counts).
 //   GET                                           → { rows, needed, done, canEdit }
 //   POST { reservationId, id_status? | deposit_status? | deposit_amount? | note? }

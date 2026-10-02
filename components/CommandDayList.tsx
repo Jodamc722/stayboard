@@ -250,12 +250,17 @@ function DayLine({ d, loading, reload, roster, vendorsOnSite }: { d: CommandDay;
 // ── BAND + ROW primitives ───────────────────────────────────────────────────────────────────────
 /** Band label on one line; an empty band is that line and nothing else. */
 function Band({ name, count, empty, children }: { name: string; count: number; empty: string; children?: ReactNode }) {
+  // FOLDED UNTIL ASKED (Jon, 2026-10-02: "clunky, noisy"): these bands sit below the day's work and open
+  // from their title, like every other section on the page. A short band (three rows or fewer) stays open.
+  const [open, setOpen] = useState(count <= 3)
   return (
     <section>
       <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted flex items-center gap-2">
-        {name} {count ? <span className="tabular-nums">{count}</span> : <span className="normal-case tracking-normal font-medium">— {empty.replace(/\.$/, '').toLowerCase()}</span>}
+        {count > 3
+          ? <button onClick={() => setOpen(o => !o)} aria-expanded={open} className="inline-flex items-center gap-1.5 hover:text-ink">{name} <span className="tabular-nums">{count}</span> {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</button>
+          : <>{name} {count ? <span className="tabular-nums">{count}</span> : <span className="normal-case tracking-normal font-medium">— {empty.replace(/\.$/, '').toLowerCase()}</span>}</>}
       </h2>
-      {count > 0 && <div className={LIST}>{children}</div>}
+      {count > 0 && open && <div className={LIST}>{children}</div>}
     </section>
   )
 }
