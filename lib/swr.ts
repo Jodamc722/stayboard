@@ -11,6 +11,19 @@
 //   · `?date=<today>` IS THE SAME READ AS NO DATE on every route that takes one (they all default
 //     to today, ET), so both spellings share one cache entry. Only the key is normalized — the URL
 //     fetched is always the one the component asked for.
+//
+// 2026-10-02 (Jon: "it doesn't have to reload every time I go back in … it needs to be live, but I
+// hate that it's constantly reloading every single thing"):
+//   · EVERY READ IS REMEMBERED ON THE DEVICE (localStorage), not just the one that opted in, and not
+//     just for this tab. Coming back — new tab, reload, the app reopened after lunch, a deploy in
+//     between — paints the last answer at once and refreshes behind it. A spinner only appears when
+//     the device has never seen that read today. A remembered answer from a previous ET day is not
+//     painted (the day's lists would show yesterday as today for a beat); it is dropped.
+//   · QUIETLY LIVE. While the page is visible, each read refreshes itself every `ttl` (never faster
+//     than 30s), and on coming back to the tab if it is stale. Nothing flashes: the data on screen
+//     stays until the newer answer replaces it. Hidden tabs do nothing.
+//   · The device copy belongs to the signed-in person: Shell calls forgetAllCached() when the
+//     signed-in email changes or on sign-out, so the next person never sees the last one's numbers.
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 type Entry = { data: any; at: number }
@@ -20,6 +33,7 @@ const INFLIGHT = new Map<string, { gen: number; p: Promise<Result> }>()
 const GEN = new Map<string, number>()
 
 const todayET = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+const dayOfET = (ms: number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(ms))
 
 /** The cache key for a URL: the URL itself, with a `date=` equal to today (ET) dropped. */
 export function cacheKey(url: string): string {
@@ -44,20 +58,52 @@ function fetchShared(url: string, k: string): { gen: number; p: Promise<Result> 
   return entry
 }
 
-// PERSIST (2026-10-01, Command Center load time): with `persist`, the last good answer is also kept
-// in sessionStorage, so a reload or a fresh tab paints the previous read at once and refreshes
-// behind it, instead of a spinner while the day is rebuilt. Same-tab only; cleared with the tab.
+// DEVICE COPY. localStorage, so it survives the tab; same ET day only. Reads older than that, or
+// not parseable, are dropped on sight. Writes that fail (quota, private mode) are simply skipped.
 const PERSIST_PREFIX = 'swr:'
+const MAX_PERSIST_BYTES = 400_000   // a single read bigger than this stays in memory only
+function store(): Storage | null { try { return typeof window !== 'undefined' ? window.localStorage : null } catch { return null } }
 function readPersisted(k: string): Entry | undefined {
-  try { const raw = sessionStorage.getItem(PERSIST_PREFIX + k); if (!raw) return undefined; const o = JSON.parse(raw); return o && typeof o === 'object' && 'data' in o ? { data: o.data, at: Number(o.at) || 0 } : undefined } catch { return undefined }
+  const s = store(); if (!s) return undefined
+  try {
+    const raw = s.getItem(PERSIST_PREFIX + k); if (!raw) return undefined
+    const o = JSON.parse(raw)
+    if (!o || typeof o !== 'object' || !('data' in o)) return undefined
+    const at = Number(o.at) || 0
+    if (dayOfET(at) !== todayET()) { s.removeItem(PERSIST_PREFIX + k); return undefined }
+    return { data: o.data, at }
+  } catch { return undefined }
 }
-function writePersisted(k: string, e: Entry) { try { sessionStorage.setItem(PERSIST_PREFIX + k, JSON.stringify(e)) } catch { /* quota or private mode */ } }
+function writePersisted(k: string, e: Entry) {
+  const s = store(); if (!s) return
+  try { const raw = JSON.stringify(e); if (raw.length <= MAX_PERSIST_BYTES) s.setItem(PERSIST_PREFIX + k, raw) } catch { /* quota or private mode */ }
+}
+function recall(k: string): Entry | undefined {
+  let ent = CACHE.get(k)
+  if (!ent) { const p = readPersisted(k); if (p) { ent = p; CACHE.set(k, p) } }
+  return ent
+}
 
-export function useCachedFetch<T = any>(key: string | null, opts?: { ttl?: number; persist?: boolean }) {
+/** Forget every remembered read — memory and device. Shell calls this when the signed-in person changes. */
+export function forgetAllCached() {
+  CACHE.clear(); INFLIGHT.clear()
+  const s = store(); if (!s) return
+  try {
+    const dead: string[] = []
+    for (let i = 0; i < s.length; i++) { const key = s.key(i); if (key && key.startsWith(PERSIST_PREFIX)) dead.push(key) }
+    dead.forEach(key => s.removeItem(key))
+  } catch { /* fine */ }
+}
+
+const MIN_LIVE = 30_000
+
+export function useCachedFetch<T = any>(key: string | null, opts?: { ttl?: number; persist?: boolean; live?: boolean }) {
   const ttl = opts?.ttl ?? 30_000
-  const persist = !!opts?.persist
-  let initial = key ? CACHE.get(cacheKey(key)) : undefined
-  if (!initial && persist && key && typeof window !== 'undefined') { const p = readPersisted(cacheKey(key)); if (p) { initial = p; CACHE.set(cacheKey(key), p) } }
+  const persist = opts?.persist !== false
+  const live = opts?.live !== false
+  // First render reads memory only (the device copy is picked up in the effect, a frame later), so the
+  // server and client paint the same thing and hydration never trips.
+  const initial = key ? CACHE.get(cacheKey(key)) : undefined
   const [data, setData] = useState<T | undefined>(initial?.data as T | undefined)
   const [loading, setLoading] = useState<boolean>(!initial?.data)
   const [error, setError] = useState<string | null>(null)
@@ -92,16 +138,29 @@ export function useCachedFetch<T = any>(key: string | null, opts?: { ttl?: numbe
   useEffect(() => {
     mounted.current = true
     if (!key) return () => { mounted.current = false }
-    let ent = CACHE.get(cacheKey(key))
-    if (!ent && persist) { const p = readPersisted(cacheKey(key)); if (p) { ent = p; CACHE.set(cacheKey(key), p) } }
+    const k = cacheKey(key)
+    const ent = recall(k)
     // A NEW KEY MUST NOT SHOW THE OLD KEY'S DATA (2026-09-09 audit). Pressing › on the date pager
     // left yesterday's rows on screen, with loading:false, under a banner reading "You are looking
     // at Thursday" — the board asserting a day it had not read yet.
     if (ent?.data) { setData(ent.data); setLoading(false) }   // instant from cache
     else { setData(undefined); setError(null); setLoading(true) }
-    if (!ent || Date.now() - ent.at > ttl) revalidate()        // refresh in background if stale
-    return () => { mounted.current = false }
-  }, [key, ttl, revalidate])
+    const stale = () => { const e = CACHE.get(k); return !e || Date.now() - e.at > ttl }
+    if (stale()) revalidate()                                   // refresh in background if stale
+    if (!live) return () => { mounted.current = false }
+    // QUIETLY LIVE: a tick every ttl while the tab is visible; a catch-up when it becomes visible again.
+    const every = Math.max(MIN_LIVE, ttl)
+    const tick = () => { if (document.visibilityState === 'visible' && stale()) revalidate() }
+    const timer = window.setInterval(tick, every)
+    document.addEventListener('visibilitychange', tick)
+    window.addEventListener('focus', tick)
+    return () => {
+      mounted.current = false
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', tick)
+      window.removeEventListener('focus', tick)
+    }
+  }, [key, ttl, live, revalidate])
 
   return { data, loading, error, refresh: revalidate }
 }
@@ -112,4 +171,5 @@ export function invalidateCache(key: string) {
   const k = cacheKey(key)
   CACHE.delete(k)
   INFLIGHT.delete(k)
+  const s = store(); if (s) { try { s.removeItem(PERSIST_PREFIX + k) } catch { /* fine */ } }
 }

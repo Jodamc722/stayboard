@@ -1,6 +1,4 @@
 'use client'
-import { applyTheme, isThemeKey } from '@/lib/theme'
-import { LighthouseMark } from '@/components/ui/LighthouseMark'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
@@ -12,6 +10,7 @@ import { EveFloat } from '@/components/EveFloat'
 import { AddTaskHost, openAddTask } from '@/components/AddTaskSheet'
 import { BUSINESSES, businessForPath, businessDef, GARDEN_NAV, GARDEN_SECTIONS, GARDEN_ICON, LAST_VR_PATH_KEY, type BusinessKey } from '@/lib/business'
 import { AdamFloat } from '@/components/AdamFloat'
+import { forgetAllCached } from '@/lib/swr'
 import {
   Building2, MessageSquare, ListChecks, LogOut, RefreshCw, Gauge, Star, TrendingUp, Users, FileText, Bell,
   Search, Menu, X, Plus, ChevronDown, Check, Sparkles, CalendarDays, Settings as SettingsIcon } from 'lucide-react'
@@ -152,7 +151,9 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     const who = supabase.auth.getUser().then(({ data }) => {
       const e = data.user?.email || null
       setEmail(e)
-      try { const prev = sessionStorage.getItem('shell:who'); if (prev !== (e || '')) { forgetCached('/api/access/me'); forgetCached('/api/access/prefs'); sessionStorage.setItem('shell:who', e || '') } } catch { /* fine */ }
+      try { const prev = sessionStorage.getItem('shell:who'); if (prev !== (e || '')) { forgetCached('/api/access/me'); forgetCached('/api/access/prefs'); sessionStorage.setItem('shell:who', e || '') }
+        // The device copy of every read (lib/swr) belongs to one person: a different sign-in on this browser drops it.
+        const prevDev = localStorage.getItem('swr:who'); if (prevDev !== null && prevDev !== (e || '')) forgetAllCached(); localStorage.setItem('swr:who', e || '') } catch { /* fine */ }
     })
     // Paint the device copy immediately; the fetch below corrects it a moment later.
     const local = readLocal(PINS_LS_KEY)
@@ -171,8 +172,6 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
       // The saved copy wins over the device copy, but only on this first pass — after that the
       // user's own clicks are the truth.
       cachedJson('/api/access/prefs').then(p => {
-        // The saved theme wins over the device copy (a new device, or a change made elsewhere).
-        if (p && p.ok && isThemeKey(p.theme)) applyTheme(p.theme)
         if (pinsLoaded.current) return
         pinsLoaded.current = true
         if (p && p.ok && Array.isArray(p.pins) && p.pins.length) {
@@ -206,7 +205,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   }, [])
 
   async function signOut() {
-    forgetCached('/api/access/me'); forgetCached('/api/access/prefs')
+    forgetCached('/api/access/me'); forgetCached('/api/access/prefs'); forgetAllCached()
     const supabase = createClient()
     await supabase.auth.signOut()
     window.location.href = '/login'
@@ -499,10 +498,10 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     <ShellMenu.Provider value={{ open: () => setDrawerOpen(true), full }}>
     <div className="h-screen overflow-hidden flex bg-app">
       {/* Sidebar — desktop only. Below lg the header + drawer + bottom bar take over. */}
-      <aside className={full ? 'hidden' : 'hidden lg:flex w-60 bg-rail border-r border-line flex-col'}>
+      <aside className={full ? 'hidden' : 'hidden lg:flex w-60 bg-white border-r border-line flex-col'}>
         <div className="px-4 pt-5 pb-4 flex items-center gap-2.5">
-          <LighthouseMark size={24} />
-          <span className="font-bold text-[13px] tracking-[0.22em] text-ink">LIGHTHOUSE</span>
+          <img src="/icon-192.png" alt="Lighthouse" className="w-8 h-8 rounded-lg shadow-sm" />
+          <span className="font-bold text-[15px] tracking-tight text-ink">LIGHTHOUSE</span>
         </div>
         {bizSwitcher()}
         <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
@@ -511,7 +510,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
         <NotificationsBell />
         <div className="border-t border-line p-3">
           <div className="flex items-center gap-2.5 px-1.5 py-1.5">
-            <div className="w-8 h-8 rounded-full bg-ink text-white text-xs font-semibold flex items-center justify-center flex-shrink-0">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-white text-xs font-semibold flex items-center justify-center flex-shrink-0">
               {initials}
             </div>
             <div className="flex-1 min-w-0">
@@ -535,7 +534,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
             className="w-10 h-10 rounded-lg border border-line grid place-items-center text-muted hover:text-ink active:bg-app">
             <Menu size={18} />
           </button>
-          <LighthouseMark size={22} />
+          <img src="/icon-192.png" alt="Lighthouse" className="w-7 h-7 rounded-lg shadow-sm" />
           <span className="font-semibold text-[15px] text-ink truncate">{currentLabel}</span>
           {canSee('/plan') && (
             <button type="button" onClick={() => openAddTask()} aria-label="Add a task"
@@ -595,8 +594,8 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
           <div className="absolute inset-0 bg-ink/40" onClick={() => setDrawerOpen(false)} />
           <div className="absolute left-0 top-0 bottom-0 w-[86%] max-w-[320px] bg-white shadow-lifted flex flex-col pt-safe pb-safe">
             <div className="px-4 pt-4 pb-3 flex items-center gap-2.5 border-b border-line">
-              <LighthouseMark size={22} />
-              <span className="font-bold text-[12px] tracking-[0.22em] text-ink">LIGHTHOUSE</span>
+              <img src="/icon-192.png" alt="Lighthouse" className="w-7 h-7 rounded-lg shadow-sm" />
+              <span className="font-bold text-sm tracking-tight text-ink">LIGHTHOUSE</span>
               <button type="button" onClick={() => setDrawerOpen(false)} aria-label="Close menu"
                 className="ml-auto w-8 h-8 rounded-lg grid place-items-center text-muted hover:text-ink">
                 <X size={17} />
