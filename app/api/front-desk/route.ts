@@ -42,6 +42,10 @@ export type FdData = {
   checklist: FdCheck[]
   summary: { arrivals: number; ready: number; noticesNeeded: number; noticesSent: number; callsNeeded: number; callsDone: number; mustCallOpen: number }
   team: FdPerson[]
+  /** The signed-in person's own day: calls they logged today (by caller email). */
+  me: { email: string; calls: number; reached: number }
+  /** The last seven days, oldest first: calls completed per day — the week's rhythm. */
+  history: { day: string; calls: number; mustDone: number }[]
   /** Calls today whose outcome came from the phone system (Talkroute) rather than a person's tick. */
   phoneProven: number
   billable: { from: string; to: string; techs: FdTech[]; totals: { tasks: number; withHours: number; minutes: number; billedHours: number; billable: number; missing: number }; missingDetail: number }
@@ -112,6 +116,24 @@ export async function GET(req: NextRequest) {
     } catch { /* optional */ }
     const team = Object.values(people).sort((a, b) => (b.calls + b.notices) - (a.calls + a.notices))
 
+    // ── the week's rhythm and your own day, from the durable call log ──
+    const myEmail = String(gate.access.email || '').toLowerCase()
+    const me = { email: myEmail, calls: 0, reached: 0 }
+    const history: { day: string; calls: number; mustDone: number }[] = []
+    try {
+      const since = new Date(Date.now() - 7 * 86400_000).toISOString()
+      const { data: log } = await db.from('guest_calls').select('outcome,tier,called_at,caller_email,kind').gte('called_at', since).limit(5000)
+      const byDay: Record<string, { calls: number; mustDone: number }> = {}
+      for (let i = 6; i >= 0; i--) byDay[addDays(today, -i)] = { calls: 0, mustDone: 0 }
+      for (const r of (log || []) as any[]) {
+        const d = dayET(r.called_at); const done = /reached|voicemail|happy|issue|completed/i.test(str(r.outcome))
+        if (!done) continue
+        if (byDay[d]) { byDay[d].calls++; if (/lux|big|recovery/i.test(str(r.tier))) byDay[d].mustDone++ }
+        if (d === today && myEmail && str(r.caller_email).toLowerCase() === myEmail) { me.calls++; if (/reached|happy/i.test(str(r.outcome))) me.reached++ }
+      }
+      for (const [day, v] of Object.entries(byDay)) history.push({ day, ...v })
+    } catch { /* the log is optional here */ }
+
     // ── billable hours this week: maintenance tasks, per technician ──
     const maint = weekBilling.tasks.filter(t => MAINT_RE.test(str(t.department)) || MAINT_RE.test(str(t.name)))
     const techs: Record<string, FdTech> = {}
@@ -146,7 +168,7 @@ export async function GET(req: NextRequest) {
     } catch { /* the checklist is optional here */ }
 
     const out: FdData = {
-      ok: true, date, today, arrivals, postCalls, checklist, summary, team, phoneProven,
+      ok: true, date, today, arrivals, postCalls, checklist, summary, team, me, history, phoneProven,
       billable: { from: sundayOf(today), to: today, techs: techList, totals, missingDetail: weekBilling.missingDetail || 0 },
       canCall: at('welcome-calls', 'edit'), canSend: at('reservation-emails', 'edit'),
     }
