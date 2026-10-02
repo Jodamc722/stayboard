@@ -37,6 +37,7 @@ import { InlineAssign, BTN, MINE_URL, type Roster, type Mine, type MineItem } fr
 import { SCOREBOARD_URL } from '@/components/command/Scoreboard'
 import { NudgeBtn } from '@/components/command/Nudge'
 import { DayKpis } from '@/components/command/DayKpis'
+import { ArrivalsLane } from '@/components/command/ArrivalsLane'
 import { useTaskActions, TaskStateTag, type TaskState } from '@/components/task/TaskActions'
 import { UnpaidBoard } from '@/components/UnpaidBoard'
 
@@ -878,6 +879,8 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
 
       {/* UNPAID — the actual reservations, one flat list with a due date each (Jon, 2026-10-01). The
           Unpaid tile above scrolls here. Hidden when nothing is owed this week. */}
+
+      {!focus && <ArrivalsLane />}
 
       {!focus && (
         <section>

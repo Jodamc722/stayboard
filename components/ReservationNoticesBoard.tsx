@@ -333,11 +333,11 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
   async function makePdf(r: Row, silent = false) {
     setPdfBusy(r.id); if (!silent) { setErr(null); setMsg(null) }
     try {
-      const mod = await import('@/lib/elser-pdf')
-      const doc = await mod.buildElserPdf(r as any)
+      const mod = await import('@/lib/building-form')
+      const doc = await mod.buildFormPdf(r.property_id, r as any)
       // Settings owns the filename (property docName). elserPdfName is only the safety net for a
       // row whose building fell out of the config and therefore has no draft.
-      const name = (r.draft && r.draft.attachName) || mod.elserPdfName(r as any)
+      const name = (r.draft && r.draft.attachName) || mod.formPdfName(r.property_id, r as any)
       // Download ONLY on a deliberate click. The auto-build on page load used to save too, so
       // just opening the board dumped PDFs into the desk's Downloads — but those forms are
       // already attached to the Gmail drafts by the pipeline (Jon, 2026-08-21: "it automatically

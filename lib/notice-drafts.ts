@@ -21,7 +21,7 @@ import { draftGmail, draftStatus, deleteDraft, foundInSent, listGmailDrafts, ins
 import { getToken as getGuestyToken } from './guesty'
 import { writeCustomFields, readCustomFields, fieldIdOf } from './guesty-custom-fields'
 import { getTaskAutomation, type TaskAutomationCfg } from './auto-inspections'
-import { elserPdfBase64 } from './elser-pdf'
+import { formPdfBase64 } from './building-form'
 // ONE SYSTEM, TWO SESSIONS' PARTS (2026-08-19). A parallel session built the support-draft WATCH:
 // every 20 minutes (and on board load) it checks Gmail for drafts that left the Drafts folder and
 // marks those notices sent — locally AND in Guesty. This engine therefore only DRAFTS (with the
@@ -400,7 +400,7 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
       if (d.attach) {
         try {
           if (!jsPdfCtor) jsPdfCtor = await loadServerJsPdf()
-          const b64 = await elserPdfBase64(n as Notice, undefined, jsPdfCtor)
+          const b64 = await formPdfBase64(p.id, n as Notice, jsPdfCtor)
           const bytes = Buffer.from(b64, 'base64')
           attachments = [{ filename: d.attachName, contentType: 'application/pdf', content: bytes }]
           // doc_name = the PDF made it onto the draft; doc_path additionally = filed in storage.

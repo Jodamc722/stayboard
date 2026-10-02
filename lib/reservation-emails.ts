@@ -127,11 +127,14 @@ export const DEFAULT_PROPERTIES: PropertyEmail[] = [
     leadHours: 2, timing: 'arrival-day', autoCreate: true, autoBuildForm: false, attachPdf: false, folder: 'Amrit/Reservations', extraLines: '', docName: DEFAULT_DOC_NAME,
   },
   {
-    id: 'nomad', name: 'Nomad', enabled: false,
+    // NOMAD (Jon, 2026-10-02): FirstService Residential's desk, admin and manager all get every
+    // arrival, with the building's own Guest Check-In Acknowledgment Form attached (lib/nomad-pdf).
+    id: 'nomad', name: 'Nomad', enabled: true,
     match: ['nomad'],
-    to: '', cc: STAY_CC,
+    to: 'nomadfdr@fsresidential.com,NomadAdmin@fsresidential.com,NomadMgr@fsresidential.com', cc: STAY_CC,
     subject: DEFAULT_SUBJECT, body: STANDARD_BODY,
-    leadHours: 2, timing: 'on-booking', autoCreate: true, autoBuildForm: false, attachPdf: false, folder: 'Nomad/Reservations', extraLines: '', docName: DEFAULT_DOC_NAME,
+    leadHours: 2, timing: 'on-booking', autoCreate: true, autoBuildForm: true, attachPdf: true, folder: 'Nomad/Reservations', extraLines: '',
+    docName: 'Guest Check-In Acknowledgment Form - {{guest_name}} - {{unit_no}}',
   },
   {
     id: 'district225', name: 'District 225', enabled: false,
@@ -167,7 +170,7 @@ function mergeOne(stored: any, base?: PropertyEmail): PropertyEmail {
     enabled: typeof s.enabled === 'boolean' ? s.enabled : b.enabled,
     // A property with no keywords would silently match nothing, so fall back to its own name.
     match: match.length ? match : (b.match.length ? b.match : [name.toLowerCase()].filter(Boolean)),
-    to: str(s.to, b.to, 2000),
+    to: str(s.to, b.to, 2000) || b.to,
     cc: str(s.cc, b.cc, 2000),
     subject: str(s.subject, b.subject, 500),
     body: str(s.body, b.body),
