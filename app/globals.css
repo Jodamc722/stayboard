@@ -14,9 +14,9 @@
 :root {
   --c-app: 247 247 245;        /* page ground, warm off-white */
   --c-rail: 246 245 240;       /* sidebar and panels, paper */
-  --c-ink: 21 22 26;
-  --c-muted: 111 113 110;      /* captions — 4.6:1 on white */
-  --c-line: 225 225 220;
+  --c-ink: 16 17 20;
+  --c-muted: 88 90 87;         /* captions — 6.4:1 on white (Jon, 2026-10-02: "easy on the eyes") */
+  --c-line: 218 216 209;
   --c-brand-50: 247 241 230;   /* brass */
   --c-brand-100: 238 228 210;
   --c-brand-200: 224 207 174;
@@ -162,6 +162,17 @@
 html, body { font-family: var(--font-ui); font-variant-numeric: tabular-nums; }
 /* Page titles and the big figures take the display face only in Lighthouse; Legacy keeps Inter. */
 .lh-display { font-family: var(--font-display); font-weight: 400; letter-spacing: -0.01em; }
+/* NOTHING UNDER 12px ON ANY SCREEN (Jon, 2026-10-02: "easy on the eyes, it can be hard to view").
+   The app leans on 10–11.5px for badges, sub-labels and table cells. The phone layer (§4 below)
+   already lifts them below 640px; in Lighthouse the same lift applies at every width, so the
+   smallest thing you read is 12px and captions sit a step darker (--c-muted above). Legacy keeps
+   its sizes. Chips stay on one line (their padding was tuned for 10.5px). */
+:root:not([data-theme="legacy"]) .text-\[9px\], :root:not([data-theme="legacy"]) .text-\[9\.5px\],
+:root:not([data-theme="legacy"]) .text-\[10px\], :root:not([data-theme="legacy"]) .text-\[10\.5px\],
+:root:not([data-theme="legacy"]) .text-\[11px\], :root:not([data-theme="legacy"]) .text-\[11\.5px\] { font-size: 12px; line-height: 1.4; }
+:root:not([data-theme="legacy"]) .text-\[12px\], :root:not([data-theme="legacy"]) .text-xs { font-size: 12.5px; line-height: 1.45; }
+:root:not([data-theme="legacy"]) .text-\[12\.5px\] { font-size: 13px; line-height: 1.45; }
+:root:not([data-theme="legacy"]) .text-\[13px\] { font-size: 13.5px; line-height: 1.5; }
 /* TABS AS TEXT TOGGLES in Lighthouse (the Anatomy board: one line, underline marks the active one,
    never a filled segmented control). Legacy keeps the segmented strip these classes were born with. */
 :root:not([data-theme="legacy"]) .lh-tabs-strip { border: 0; border-radius: 0; overflow: visible; background: transparent; }

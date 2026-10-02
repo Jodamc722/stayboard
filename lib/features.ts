@@ -353,7 +353,14 @@ export function landingFor(levels: Record<string, Level>, preferred?: string | n
   // '/' is no longer a page, it is a redirect to /plan. Roles saved before 2026-08-24 still hold
   // '/' as their landing; translate it rather than letting the lookup miss and drop them on
   // whatever happens to be the first visible feature.
-  if (preferred === '/') preferred = '/plan'
+  if (preferred === '/') preferred = '/command'
+  // TODAY IS THE FRONT DOOR (Jon, 2026-10-02: "have page open to today as default"). A landing of
+  // /plan (the old default, and the value many saved roles still hold) opens on Today for anyone
+  // who can see it; a role that cannot see Today still lands on the board.
+  if (preferred === '/plan') {
+    const cmd = FEATURES.find(f => f.path === '/command')
+    if (cmd && levels[cmd.key] && levels[cmd.key] !== 'off') return '/command'
+  }
   if (preferred) {
     const hit = FEATURES.find(f => f.path === preferred)
     if (hit && levels[hit.key] !== 'off') return hit.path
@@ -368,7 +375,7 @@ export type Workspace = 'admin' | 'gm' | 'ops' | 'cs' | 'data'
 export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb: string; pages: 'all' | string[] }[] = [
   { key: 'admin', label: 'Admin',            landing: '/command', blurb: 'Everything + user management', pages: 'all' },
   { key: 'gm',    label: 'GM',               landing: '/command', blurb: 'Everything except admin tools', pages: 'all' },
-  { key: 'ops',   label: 'Ops',              landing: '/plan',    blurb: 'Field operations: cleans, glitches, audits, orders',
+  { key: 'ops',   label: 'Ops',              landing: '/command',    blurb: 'Field operations: cleans, glitches, audits, orders',
     pages: ['home', 'plan', 'schedule', 'glitches', 'audits', 'orders', 'requests', 'projects', 'ffe', 'onboarding', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'blocked', 'faq', 'guest-orders', 'api-keys', 'loops'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
     pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims', 'guests', 'guest-orders', 'api-keys', 'loops'] },
