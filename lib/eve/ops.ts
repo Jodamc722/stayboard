@@ -58,6 +58,19 @@ export const OPS_TOOLS: EveTool[] = [
       const unit = resolveListing(ctx, input)
       if (unit) q = q.eq('reference_property_id', unit.id)
       else if (scope) q = q.in('reference_property_id', scope)
+      // FILTER IN THE QUERY, NOT AFTER THE CAP (2026-10-02). The name query and the assignee used to
+      // be applied in JavaScript to whatever 150 rows the cap let through, so "Elena's cleans in
+      // August" was the last 150 tasks of August, then Elena's share of THOSE — a partial list that
+      // read as a complete one. A coarse ilike on the row narrows the pull before the cap; the exact
+      // fuzzy match below still decides.
+      if (String(input?.query || '').trim()) q = q.ilike('name', '%' + String(input.query).trim().replace(/[%_]/g, '') + '%')
+      if (String(input?.assignee || '').trim()) {
+        const first = String(input.assignee).trim().split(/\s+/)[0].replace(/[%_]/g, '')
+        if (first.length >= 2) q = q.ilike('assignee_name', '%' + first + '%')
+      }
+      const st0 = lc(input?.state)
+      if (st0 === 'done') q = q.or('status.ilike.%complet%,status.ilike.%done%,status.ilike.%finish%')
+      else if (st0 === 'open') q = q.not('status', 'ilike', '%complet%').not('status', 'ilike', '%done%').not('status', 'ilike', '%finish%')
       // Rule 2: order before limit, always.
       const { data } = await q.order('scheduled_date', { ascending: false }).order('id').limit(lim)
       let rows = (data || []).map((t: any) => ({
@@ -91,6 +104,74 @@ export const OPS_TOOLS: EveTool[] = [
         moved_cleans: movedRows.length ? `${movedRows.length} clean(s) in this window were MOVED off the day they were scheduled — call moved_cleans for where each one went.` : undefined,
         day_rule: 'date = the day it is scheduled for; landed_on = the day the work actually happened. Counts that must line up with payroll use landed_on.',
         note: cap(data || [], lim).truncated ? 'HIT THE ROW CAP — this is a partial list, narrow the window or the unit before drawing conclusions.' : undefined,
+      }
+    },
+  },
+
+  {
+    // THE WHOLE WINDOW, COUNTED (2026-10-02). Jon asked Eve to "audit all cleaning activities done
+    // by housekeeping in August"; search_tasks hit its row cap and she sampled. This tool pages
+    // through EVERY task in the window server-side and returns counts, minutes and late shares by
+    // person, building, department, week and day — no row cap, no sampling, so month-wide answers
+    // are arithmetic on the full set. Use it for any "how many / who did most / how long on
+    // average / which week was worst" question; use search_tasks only when you need the rows.
+    name: 'task_stats',
+    description: 'COUNT THE WHOLE WINDOW — no row cap. Aggregates every Breezeway task between from/to (scheduled_date): totals by state, by person (cleans, minutes, average minutes, late share), by building, by department, by week and by day; plus the longest and shortest cleans. Filters: dept (housekeeping|inspection|maintenance|safety), unit name/listing id, assignee (fuzzy), departure_cleans_only. ALWAYS use this instead of search_tasks for any question over more than a few days or about "all" of something — search_tasks is capped at 150 rows and samples, this one is complete. Returns `complete:false` only if the database stopped answering mid-way.',
+    input_schema: obj({ from: S.str, to: S.str, dept: S.str, name: S.str, id: S.str, assignee: S.str, departure_cleans_only: S.bool, by: S.str }),
+    run: async (input, ctx) => {
+      const from = String(input?.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.from) : shiftDay(ctx.today, -30)
+      const to = String(input?.to || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.to) : ctx.today
+      const scope = scopeIds(ctx)
+      if (scope && !scope.length) return { window: { from, to }, total: 0, note: 'This room is scoped to buildings that match no units.' }
+      const unit = resolveListing(ctx, input)
+      const dept = input?.dept ? lc(input.dept) : ''
+      const { rows, truncated } = await pageRows<any>((a, b) => {
+        let q = ctx.db.from('breezeway_tasks_sync').select(TASK_COLS).gte('scheduled_date', from).lte('scheduled_date', to)
+        if (dept) q = q.eq('type_department', dept)
+        if (unit) q = q.eq('reference_property_id', unit.id)
+        else if (scope) q = q.in('reference_property_id', scope)
+        return q.order('scheduled_date', { ascending: true }).order('id').range(a, b)
+      }, 10)
+      const who = String(input?.assignee || '').trim()
+      let tasks = rows.map((t: any) => ({
+        t, state: taskState(t), names: assigneeNames(t), dep: isDepartureCleanName(t.name), moved: isMovedClean(t) && isDepartureCleanName(t.name),
+        minutes: Number(t.total_minutes) || 0, day: cleanDay(t) || t.scheduled_date, building: ctx.buildingOf(t.reference_property_id) || '—',
+      })).filter(x => x.state !== 'gone' || x.moved)
+      if (input?.departure_cleans_only) tasks = tasks.filter(x => x.dep)
+      if (who) tasks = tasks.filter(x => x.names.some((a: string) => nameMatches(a, who)))
+      const mk = () => ({ tasks: 0, done: 0, open: 0, running: 0, minutes: 0, timed: 0, late: 0, departure_cleans: 0, moved: 0 })
+      type Agg = ReturnType<typeof mk>
+      const add = (m: Record<string, Agg>, k: string, x: any) => {
+        const a = (m[k] ||= mk()); a.tasks++
+        if (x.state === 'done') a.done++; else if (x.state === 'running') a.running++; else a.open++
+        if (x.minutes > 0) { a.minutes += x.minutes; a.timed++ }
+        if (x.dep) a.departure_cleans++
+        if (x.moved) a.moved++
+        // Late = finished after the day it was scheduled for (a next-morning clean), or still open past its day.
+        const fin = x.t.finished_at ? String(x.t.finished_at).slice(0, 10) : ''
+        if ((fin && fin > String(x.t.scheduled_date)) || (x.state !== 'done' && String(x.t.scheduled_date) < ctx.today)) a.late++
+      }
+      const byPerson: Record<string, Agg> = {}, byBuilding: Record<string, Agg> = {}, byDept: Record<string, Agg> = {}, byWeek: Record<string, Agg> = {}, byDay: Record<string, Agg> = {}
+      const total = mk()
+      for (const x of tasks) {
+        add({ t: total } as any, 't', x)
+        for (const n of (x.names.length ? x.names : ['(nobody assigned)'])) add(byPerson, n, x)
+        add(byBuilding, x.building, x)
+        add(byDept, String(x.t.type_department || '—'), x)
+        add(byDay, String(x.day), x)
+        const d = new Date(String(x.day) + 'T12:00:00Z'); const wk = new Date(d); wk.setUTCDate(d.getUTCDate() - d.getUTCDay())
+        add(byWeek, wk.toISOString().slice(0, 10), x)
+      }
+      const finish = (m: Record<string, Agg>) => Object.entries(m).map(([k, a]) => ({ key: k, ...a, avg_minutes: a.timed ? Math.round(a.minutes / a.timed) : null, late_pct: a.tasks ? Math.round(100 * a.late / a.tasks) : 0 })).sort((p, q) => q.tasks - p.tasks)
+      const timed = tasks.filter(x => x.minutes > 0).sort((p, q) => q.minutes - p.minutes)
+      const brief = (x: any) => ({ id: x.t.id, unit: ctx.nameOf(x.t.reference_property_id), name: x.t.name, date: x.t.scheduled_date, minutes: x.minutes, who: x.names })
+      return {
+        window: { from, to }, complete: !truncated, scopedToUnit: unit ? unit.meta.name : null, dept: dept || 'all', assignee: who || null,
+        total: finish({ t: total })[0], by_person: finish(byPerson).slice(0, 40), by_building: finish(byBuilding), by_department: finish(byDept),
+        by_week: finish(byWeek).sort((p, q) => p.key.localeCompare(q.key)), by_day: finish(byDay).sort((p, q) => p.key.localeCompare(q.key)),
+        longest: timed.slice(0, 5).map(brief), shortest: timed.slice(-5).reverse().map(brief),
+        rules: 'late = finished after the scheduled day, or still open past it. avg_minutes uses only tasks with a recorded time. moved = a departure clean Breezeway re-dated. Days use the day the work landed (cleanDay).',
+        note: truncated ? 'The database stopped answering before the window was fully read — these numbers are a floor, say so.' : undefined,
       }
     },
   },

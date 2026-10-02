@@ -1,0 +1,13 @@
+// THE FINGERPRINT OF AN ASK (2026-10-02). The action plus its summary with the moving parts blanked
+// — hours-ago, days-over, dates, clock times, dollar amounts — so the same ask made an hour later,
+// with the counter ticked up, still reads as the same ask. No imports: lib/eve/__tests__ loads it
+// with plain node.
+export function proposalFingerprint(action: string, summary: string): string {
+  const t = String(summary || '').toLowerCase()
+    .replace(/\b\d+\s*(h|hr|hrs|hours?|m|min|mins|minutes?|d|days?)\b(\s*(ago|over|late|overdue))?/g, '#')  // "57h ago", "94 days over"
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, '#date')
+    .replace(/\b\d{1,2}:\d{2}\s*(am|pm)?\b/g, '#time')
+    .replace(/\$[\d,.]+/g, '$#')
+    .replace(/[^a-z0-9#$ ]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220)
+  return String(action || '') + '|' + t
+}

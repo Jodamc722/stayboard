@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node scripts/test-money.mjs && node lib/eve/__tests__/fit.test.mjs && node lib/eve/__tests__/redact.test.mjs && node lib/eve/__tests__/slack-identity.test.mjs && node lib/eve/__tests__/tag-position.test.mjs && node lib/eve/__tests__/slack-mentions.test.mjs && node lib/eve/__tests__/translate-check.test.mjs && node lib/eve/__tests__/outbound-scrub.test.mjs && node lib/eve/__tests__/desks-said.test.mjs && node lib/eve/__tests__/domain-guess.test.mjs && node lib/eve/__tests__/reminders-time.test.mjs && node lib/eve/__tests__/door-code-rooms.test.mjs && node lib/__tests__/linens.test.mjs && node lib/__tests__/desks.test.mjs && node lib/__tests__/never-assign.test.mjs && node lib/__tests__/review-feedback.test.mjs"
+    "test": "node scripts/test-money.mjs && node lib/eve/__tests__/fit.test.mjs && node lib/eve/__tests__/redact.test.mjs && node lib/eve/__tests__/slack-identity.test.mjs && node lib/eve/__tests__/tag-position.test.mjs && node lib/eve/__tests__/ask-fingerprint.test.mjs && node lib/eve/__tests__/slack-mentions.test.mjs && node lib/eve/__tests__/translate-check.test.mjs && node lib/eve/__tests__/outbound-scrub.test.mjs && node lib/eve/__tests__/desks-said.test.mjs && node lib/eve/__tests__/domain-guess.test.mjs && node lib/eve/__tests__/reminders-time.test.mjs && node lib/eve/__tests__/door-code-rooms.test.mjs && node lib/__tests__/linens.test.mjs && node lib/__tests__/desks.test.mjs && node lib/__tests__/never-assign.test.mjs && node lib/__tests__/review-feedback.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.0",

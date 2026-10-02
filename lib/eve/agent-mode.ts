@@ -530,12 +530,49 @@ function metricDirection(metric: string): 'up' | 'down' {
   return /unassigned|negative|open|low_|glitches|cancel|minutes|unanswered/.test(metric) ? 'down' : 'up'
 }
 
+
+// ── ONE ASK PER THING (2026-10-02) ──────────────────────────────────────────────────────────────
+// The week's log showed the same proposal filed again every sweep: Roberto's "announce clocking"
+// reminder was proposed fifteen times over three days — five of them AFTER Jon approved it — and a
+// "silent arrival" ask on one guest went out, expired unanswered, and went out again. Every one of
+// those was a Telegram ping and one of the day's six asks. So a proposal now carries a fingerprint
+// (the action + its summary with the moving numbers blanked), and before filing we look for the
+// same fingerprint in the last 7 days: still open → return the existing row and say nothing new;
+// approved/executed → it is done, say so; rejected → the answer was no, do not ask again; expired →
+// nobody answered, do not ask the same words again this week (the morning roll-up still lists it).
+import { proposalFingerprint } from './ask-fingerprint'
+export { proposalFingerprint }
+export type SameAsk = { id: string; status: string; when: string; decided_by?: string | null; kind: string }
+export async function sameAskRecently(fp: string, days = 7): Promise<SameAsk | null> {
+  try {
+    const since = new Date(Date.now() - days * 86400_000).toISOString()
+    const { data } = await supabaseAdmin().from('eve_actions').select('id,kind,status,decided_by,created_at')
+      .in('kind', ['ask', 'draft']).eq('payload->>fp', fp).gte('created_at', since).order('created_at', { ascending: false }).limit(1)
+    const r: any = (data || [])[0]
+    return r ? { id: String(r.id), status: String(r.status), when: String(r.created_at), decided_by: r.decided_by || null, kind: String(r.kind) } : null
+  } catch { return null }
+}
+function sameAskReason(same: SameAsk): string {
+  const when = same.when.slice(0, 16).replace('T', ' ')
+  if (same.status === 'proposed') return `already on the table since ${when} (${same.id.slice(0, 8)}) — not asking twice`
+  if (same.status === 'approved' || same.status === 'executing' || same.status === 'executed') return `already ${same.status}${same.decided_by ? ' by ' + same.decided_by : ''} (${when}) — not asking again`
+  if (same.status === 'rejected') return `rejected${same.decided_by ? ' by ' + same.decided_by : ''} on ${when} — the answer was no; not asking again this week`
+  if (same.status === 'expired') return `asked ${when}, nobody answered and it expired — not repeating the same words this week`
+  return `same ask filed ${when} (${same.status}) — skipped`
+}
+
 /** Rung 1: write it down and stop. Lands in eve_actions kind 'draft' so it shows in the queue. */
-export async function saveDraft(p: Proposal): Promise<{ ok: boolean; id?: string }> {
+export async function saveDraft(p: Proposal): Promise<{ ok: boolean; id?: string; duplicateOf?: string }> {
+  const fp = proposalFingerprint(p.action, p.summary)
+  const same = await sameAskRecently(fp)
+  if (same) {
+    await recordAgentAction(p.action, { rung: 1, allowed: false, mode: 'observe', reason: sameAskReason(same), summary: p.summary, ref: same.id, by: p.by, actor: p.actor, usd: p.usd, countAs: 'none' })
+    return { ok: true, id: same.id, duplicateOf: same.id }
+  }
   try {
     const { data } = await supabaseAdmin().from('eve_actions').insert({
       created_by: p.actor || p.by, kind: 'draft',
-      payload: { action: p.action, summary: p.summary.slice(0, 600), exec: p.exec || null, usd: p.usd ?? null },
+      payload: { action: p.action, summary: p.summary.slice(0, 600), exec: p.exec || null, usd: p.usd ?? null, fp },
       why: (p.why || '').slice(0, 400), status: 'proposed',
     }).select('id').maybeSingle()
     const id = (data as any)?.id ? String((data as any).id) : undefined
@@ -556,12 +593,18 @@ export async function saveDraft(p: Proposal): Promise<{ ok: boolean; id?: string
  * approvals room, else it is logged 'undeliverable' and the panel shows it in red. In quiet hours
  * the notification is deferred to the morning, never dropped.
  */
-export async function proposeAction(p: Proposal): Promise<{ ok: boolean; id?: string; notified: string[]; error?: string }> {
+export async function proposeAction(p: Proposal): Promise<{ ok: boolean; id?: string; notified: string[]; error?: string; duplicateOf?: string }> {
   let id: string | undefined
+  const fp = proposalFingerprint(p.action, p.summary)
+  const same = await sameAskRecently(fp)
+  if (same) {
+    await recordAgentAction(p.action, { rung: 2, allowed: false, mode: 'observe', reason: sameAskReason(same), summary: p.summary, ref: same.id, by: p.by, actor: p.actor, usd: p.usd, countAs: 'none' })
+    return { ok: true, id: same.id, notified: [], duplicateOf: same.id }
+  }
   try {
     const { data, error } = await supabaseAdmin().from('eve_actions').insert({
       created_by: p.actor || p.by, kind: 'ask',
-      payload: { type: 'action', ref: '', action: p.action, summary: p.summary.slice(0, 600), exec: p.exec || null, usd: p.usd ?? null, why: (p.why || '').slice(0, 300), delivery_count: 0, by: p.by, ...proposalMeta(p) },
+      payload: { type: 'action', ref: '', action: p.action, summary: p.summary.slice(0, 600), exec: p.exec || null, usd: p.usd ?? null, why: (p.why || '').slice(0, 300), delivery_count: 0, by: p.by, fp, ...proposalMeta(p) },
       why: (p.why || p.summary).slice(0, 400), status: 'proposed',
       expires_at: new Date(Date.now() + 3 * 86400_000).toISOString(),
     }).select('id').maybeSingle()
