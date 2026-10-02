@@ -30,7 +30,7 @@
 // Stages: OPEN → OPS APPROVED (Ronnie / ops) → GM APPROVED (Jon). Ops-approved is the GM's queue.
 // GM approval is what reaches an owner's statement, and only an admin can give it.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, Undo2, ExternalLink, Loader2, ChevronDown, Search, Download } from 'lucide-react'
+import { Check, CheckSquare, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, Undo2, ExternalLink, Loader2, ChevronDown, Search, Download } from 'lucide-react'
 import { isTaskDone } from '@/lib/task-done'
 import { LeanHead, Pill, Tag, LeanTabs, LeanEmpty, IconBtn, Tip, type Tone } from '@/components/lean'
 
@@ -155,8 +155,9 @@ function TextTools({ t, onSave }: { t: Task; onSave: (id: string, name: string, 
   )
 }
 
-const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, onEdit, onText }: {
-  t: Task; stage: Stage; isGm: boolean; busy: boolean; open: boolean
+const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, onToggle, onState, onEdit, onText }: {
+  t: Task; stage: Stage; isGm: boolean; busy: boolean; open: boolean; checked: boolean
+  onCheck: (id: string, on: boolean, shift: boolean) => void
   onText: (id: string, name: string, description: string) => Promise<string | null>
   onToggle: (id: string) => void
   onState: (id: string, to: State) => void
@@ -173,7 +174,10 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, onToggle, onState, o
   const btn = 'inline-flex items-center gap-1 rounded-lg px-2.5 h-8 text-[12px] font-semibold disabled:opacity-40 transition'
   return (
     <li className={'border-b border-line last:border-b-0 ' + (over ? 'border-l-[3px] border-l-amber-400 ' : 'border-l-[3px] border-l-transparent ') + (done ? 'bg-emerald-50/40' : t.excluded ? 'bg-app/40' : '')}>
-      <div className="grid gap-3 px-3 py-2.5 items-center" style={{ gridTemplateColumns: 'minmax(0,1fr) auto auto' }}>
+      <div className={'grid gap-3 px-3 py-2.5 items-center ' + (checked ? 'bg-brand-50/60' : '')} style={{ gridTemplateColumns: 'auto minmax(0,1fr) auto auto' }}>
+        {/* BULK (Jon, 2026-10-02: "bulk change billables and approve"): tick rows, then act on them all from the bar below. Shift-click ticks a run. */}
+        <input type="checkbox" checked={checked} aria-label="Select this row" title="Select — then change or approve the selection together (shift-click for a run)"
+          onClick={e => onCheck(t.id, !checked, (e as any).shiftKey)} onChange={() => { /* onClick carries shift */ }} className="h-4 w-4 accent-brand-600 cursor-pointer" />
         <button onClick={() => onToggle(t.id)} className="text-left min-w-0">
           <span className="flex items-center gap-1.5 flex-wrap">
             <span className={'text-[13.5px] font-bold truncate ' + (t.excluded ? 'text-muted line-through' : 'text-ink')}>{t.unit}</span>
@@ -292,6 +296,7 @@ export function BillingReview() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [stage, setStage] = useState<Stage | null>(null)     // null until we know the role
+  const visibleIdsRef = useRef<string[]>([])                  // the rows on screen, in order, for shift-click runs
   const [flaggedOnly, setFlaggedOnly] = useState(false)
   const [q, setQ] = useState('')
   // FILTERS (Jon, 2026-09-30: "filter by billable amount greater than zero, by date window, by
@@ -413,6 +418,7 @@ export function BillingReview() {
     for (const list of Array.from(m.values())) list.sort((a, b) => Number(!!b.flags.length) - Number(!!a.flags.length) || b.billedAmount - a.billedAmount || a.unit.localeCompare(b.unit))
     return (data?.owners || []).map(o => ({ owner: o, rows: m.get(o.ownerId || '—') || [] }))
   }, [visible, data])
+  visibleIdsRef.current = groups.flatMap(g => g.rows.map(t => t.id))
 
   // Whole-window numbers for the strip — never the filtered view's.
   const kpi = useMemo(() => {
@@ -469,6 +475,36 @@ export function BillingReview() {
     }
   }, [byId])
   const onToggle = useCallback((id: string) => setOpenId(cur => (cur === id ? '' : id)), [])
+
+  // ── SELECTION + BULK (Jon, 2026-10-02: "need to be able to bulk change billables and approve") ──
+  // Tick rows (shift-click for a run, a box per owner for the owner's rows, "Select all shown" in
+  // the toolbar), then the bar at the bottom changes them together: approve / send back, exclude or
+  // include, one price for all, a note on all. Each change goes through the same per-row save and
+  // merge as a single edit — a bulk price is N optimistic edits, never a reload.
+  const [picks, setPicks] = useState<Set<string>>(new Set())
+  const lastCheck = useRef<string>('')
+  const [bulkPrice, setBulkPrice] = useState('')
+  const [bulkNote, setBulkNote] = useState('')
+  const [bulkBusy, setBulkBusy] = useState('')
+  const onCheck = useCallback((id: string, on: boolean, shift: boolean) => {
+    setPicks(prev => {
+      const n = new Set(prev)
+      const order = visibleIdsRef.current
+      const a = order.indexOf(lastCheck.current), b = order.indexOf(id)
+      if (shift && a >= 0 && b >= 0) { const [lo, hi] = a < b ? [a, b] : [b, a]; for (let i = lo; i <= hi; i++) on ? n.add(order[i]) : n.delete(order[i]) }
+      else on ? n.add(id) : n.delete(id)
+      return n
+    })
+    lastCheck.current = id
+  }, [])
+  const checkMany = useCallback((ids: string[], on: boolean) => setPicks(prev => { const n = new Set(prev); for (const id of ids) on ? n.add(id) : n.delete(id); return n }), [])
+  const bulkEdit = useCallback(async (patch: { override_amount?: number | null; note?: string; excluded?: boolean }, label: string) => {
+    const ids = Array.from(picks); if (!ids.length) return
+    setBulkBusy(label)
+    // Four at a time: fast, and kind to Breezeway's and Supabase's rate limits.
+    for (let i = 0; i < ids.length; i += 4) await Promise.all(ids.slice(i, i + 4).map(id => onEdit(id, patch)))
+    setBulkBusy('')
+  }, [picks, onEdit])
   const onText = useCallback(async (id: string, name: string, description: string): Promise<string | null> => {
     try {
       const r = await fetch('/api/billing/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', taskId: id, name, description }) })
@@ -580,6 +616,11 @@ export function BillingReview() {
           <Tip label="Show only rows with a flag"><button onClick={() => setFlaggedOnly(v => !v)} aria-label="Flagged only" className={'h-8 px-2.5 rounded-lg border text-[12px] font-semibold inline-flex items-center gap-1.5 ' + (flaggedOnly ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-line text-muted hover:text-ink')}><AlertTriangle size={13} /> Flagged</button></Tip>
           <label className="h-8 inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2 text-[12px]"><Search size={13} className="text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="unit, task, person, owner" className="w-36 bg-transparent outline-none text-ink" /></label>
           {aiBusy ? <Tag title={'AI is reading ' + aiBusy + ' unit checks / strips — the ones with a real description stay open only if it saw chargeable work'}><Loader2 size={10} className="animate-spin inline mr-1" />AI {aiBusy}</Tag> : null}
+          {visible.length ? (
+            <button onClick={() => checkMany(visible.map(t => t.id), !visible.every(t => picks.has(t.id)))} title="Tick every row shown, then change or approve them together from the bar below" className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1.5">
+              <CheckSquare size={13} /> {visible.every(t => picks.has(t.id)) ? 'Unselect all' : 'Select all shown'}
+            </button>
+          ) : null}
           {canApproveAll && visible.some(inStage) ? (
             <button onClick={() => setState(visible.filter(inStage).map(t => t.id), approveAllTo)} className="h-8 px-2.5 rounded-lg bg-ink text-white text-[12px] font-semibold inline-flex items-center gap-1.5"><Check size={13} /> {approveAllLabel} ({visible.filter(inStage).length})</button>
           ) : null}
@@ -632,6 +673,8 @@ export function BillingReview() {
         return (
           <section key={k} className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
             <header className="px-4 py-2.5 flex items-center gap-3 flex-wrap bg-app/40 border-b border-line">
+              <input type="checkbox" aria-label={'Select all of ' + o.ownerName + '’s rows shown'} title={'Select all ' + rows.length + ' of ' + o.ownerName + '’s rows shown'}
+                checked={rows.length > 0 && rows.every(t => picks.has(t.id))} onChange={e => checkMany(rows.map(t => t.id), e.target.checked)} className="h-4 w-4 accent-brand-600 cursor-pointer" />
               <button onClick={() => setCollapsed(c => ({ ...c, [k]: !c[k] }))} className="flex items-center gap-2 text-left min-w-0">
                 <ChevronDown size={14} className={'text-muted transition ' + (isOpen ? '' : '-rotate-90')} />
                 <span className="text-[14px] font-bold text-ink truncate">{o.ownerName}</span>
@@ -655,12 +698,49 @@ export function BillingReview() {
             </header>
             {isOpen ? (
               <ul>
-                {rows.map(t => <Row key={t.id} t={t} stage={st} isGm={isGm} busy={busy.has(t.id)} open={openId === t.id} onToggle={onToggle} onState={onState} onEdit={onEdit} onText={onText} />)}
+                {rows.map(t => <Row key={t.id} t={t} stage={st} isGm={isGm} busy={busy.has(t.id)} open={openId === t.id} checked={picks.has(t.id)} onCheck={onCheck} onToggle={onToggle} onState={onState} onEdit={onEdit} onText={onText} />)}
               </ul>
             ) : null}
           </section>
         )
       })}
+
+      {/* ── THE BULK BAR: what the ticked rows get, together ──────────────────────────────────── */}
+      {picks.size ? (() => {
+        const picked = tasks.filter(t => picks.has(t.id))
+        const total = picked.reduce((a, t) => a + (t.excluded ? 0 : t.billedAmount), 0)
+        const notFinal = picked.filter(t => t.reviewState !== 'gm_approved').map(t => t.id)
+        const toOps = picked.filter(t => t.reviewState === 'open').map(t => t.id)
+        const toGm = picked.filter(t => t.reviewState !== 'gm_approved').map(t => t.id)
+        const sendBack = picked.filter(t => t.reviewState !== 'open').map(t => t.id)
+        const anyIncluded = picked.some(t => !t.excluded)
+        const b = 'h-8 px-2.5 rounded-lg text-[12px] font-semibold inline-flex items-center gap-1.5 disabled:opacity-40'
+        const price = bulkPrice.trim() === '' ? null : Number(bulkPrice.replace(/[$,]/g, ''))
+        return (
+          <div className="sticky bottom-3 z-20 mx-auto max-w-5xl rounded-2xl bg-ink text-white shadow-2xl ring-1 ring-black/20 px-3.5 py-2.5 flex items-center gap-2 flex-wrap">
+            <span className="text-[13px] font-bold tabular-nums">{picks.size} selected · {money(total)}</span>
+            <span className="w-px h-5 bg-white/20" />
+            {toOps.length ? <button disabled={!!bulkBusy || busy.size > 0} onClick={() => setState(toOps, 'ops_approved')} className={b + ' bg-brand-500 hover:bg-brand-400'}><Check size={13} /> Approve {toOps.length}</button> : null}
+            {isGm && toGm.length ? <button disabled={!!bulkBusy || busy.size > 0} onClick={() => setState(toGm, 'gm_approved')} className={b + ' bg-emerald-500 hover:bg-emerald-400'}><Check size={13} /> Final approve {toGm.length}</button> : null}
+            {sendBack.length ? <button disabled={!!bulkBusy || busy.size > 0} onClick={() => setState(sendBack, 'open')} className={b + ' bg-white/10 hover:bg-white/20'}><Undo2 size={12} /> Send back {sendBack.length}</button> : null}
+            <span className="w-px h-5 bg-white/20" />
+            <label className="inline-flex items-center gap-1 text-[12px]">
+              <span className="text-white/70">Price all</span>
+              <input value={bulkPrice} onChange={e => setBulkPrice(e.target.value)} inputMode="decimal" placeholder="$" className="h-8 w-20 rounded-lg bg-white/10 border border-white/20 px-2 text-right tabular-nums text-white placeholder:text-white/40 outline-none focus:border-white/60" />
+              <button disabled={!!bulkBusy || price == null || !Number.isFinite(price) || !notFinal.length} onClick={() => bulkEdit({ override_amount: price }, 'price').then(() => setBulkPrice(''))} className={b + ' bg-white/10 hover:bg-white/20'} title="Set this price on every selected row that is not final-approved">{bulkBusy === 'price' ? <Loader2 size={12} className="animate-spin" /> : null}Set</button>
+              <button disabled={!!bulkBusy || !picked.some(t => t.overrideAmount != null)} onClick={() => bulkEdit({ override_amount: null }, 'clear')} className={b + ' text-white/70 hover:text-white'} title="Back to Breezeway's price on every selected row">clear</button>
+            </label>
+            <label className="inline-flex items-center gap-1 text-[12px]">
+              <span className="text-white/70">Note all</span>
+              <input value={bulkNote} onChange={e => setBulkNote(e.target.value)} placeholder="in the owner's words" className="h-8 w-44 rounded-lg bg-white/10 border border-white/20 px-2 text-white placeholder:text-white/40 outline-none focus:border-white/60" maxLength={500} />
+              <button disabled={!!bulkBusy || !bulkNote.trim()} onClick={() => bulkEdit({ note: bulkNote.trim() }, 'note').then(() => setBulkNote(''))} className={b + ' bg-white/10 hover:bg-white/20'}>{bulkBusy === 'note' ? <Loader2 size={12} className="animate-spin" /> : null}Add</button>
+            </label>
+            <button disabled={!!bulkBusy} onClick={() => bulkEdit({ excluded: anyIncluded }, 'excl')} className={b + ' bg-white/10 hover:bg-white/20'} title={anyIncluded ? 'Leave every selected row off the owner statements' : 'Put every selected row back on the owner statements'}>{bulkBusy === 'excl' ? <Loader2 size={12} className="animate-spin" /> : null}{anyIncluded ? 'Leave off statement' : 'Put back on statement'}</button>
+            <div className="flex-1" />
+            <button onClick={() => setPicks(new Set())} className={b + ' text-white/70 hover:text-white'}>Clear selection</button>
+          </div>
+        )
+      })() : null}
 
     </div>
   )

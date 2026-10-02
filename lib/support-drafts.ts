@@ -114,7 +114,7 @@ export async function checkSupportDrafts(): Promise<{ checked: number; markedSen
  *     dates, and to mail sent after the notice was created;
  *   · a notice with no resolvable subject is skipped rather than guessed at.
  */
-export async function sweepSentInGmail(opts: { backDays?: number; aheadDays?: number; limit?: number } = {}): Promise<{
+export async function sweepSentInGmail(opts: { backDays?: number; aheadDays?: number; limit?: number; budgetMs?: number } = {}): Promise<{
   scanned: number; markedSent: number; inconclusive: number; notFound: number; errors: string[]; note?: string
 }> {
   const out: { scanned: number; markedSent: number; inconclusive: number; notFound: number; errors: string[]; note?: string } = { scanned: 0, markedSent: 0, inconclusive: 0, notFound: 0, errors: [] }
@@ -127,12 +127,18 @@ export async function sweepSentInGmail(opts: { backDays?: number; aheadDays?: nu
     const pById: Record<string, PropertyEmail> = {}
     for (const p of props) pById[String(p.id)] = p
 
-    const { data: rows, error } = await db.from(TABLE).select('*')
-      .is('sent_at', null).is('deleted_at', null)
-      .gte('arrival_date', day(-back)).lte('arrival_date', day(ahead))
-      .order('arrival_date', { ascending: true })
-      .limit(opts.limit == null ? 60 : opts.limit)
-    if (error) { out.errors.push('read: ' + String(error.message || '').slice(0, 120)); return out }
+    // TODAY AND AHEAD FIRST, then the past, newest first (2026-10-02): the desk cares whether today's
+    // notices went out; with 21 days of old unsent rows ahead of them in the queue, today's were the
+    // ones the time budget never reached.
+    const lim = opts.limit == null ? 60 : opts.limit
+    const base = () => db.from(TABLE).select('*').is('sent_at', null).is('deleted_at', null)
+    const [{ data: fwd, error }, { data: bwd, error: e2 }] = await Promise.all([
+      base().gte('arrival_date', day(0)).lte('arrival_date', day(ahead)).order('arrival_date', { ascending: true }).limit(lim),
+      base().gte('arrival_date', day(-back)).lt('arrival_date', day(0)).order('arrival_date', { ascending: false }).limit(lim),
+    ])
+    if (error || e2) { out.errors.push('read: ' + String((error || e2)?.message || '').slice(0, 120)); return out }
+    const rows = ((fwd || []) as any[]).concat((bwd || []) as any[]).slice(0, lim)
+    const deadline = Date.now() + (opts.budgetMs == null ? 40_000 : opts.budgetMs)
 
     const watchCur = await getSetting<DraftWatch[]>(KEY, []).catch(() => [] as DraftWatch[])
     let watch = Array.isArray(watchCur) ? watchCur : []
@@ -157,7 +163,8 @@ export async function sweepSentInGmail(opts: { backDays?: number; aheadDays?: nu
       return hit2 === 'noscope' ? null : hit2
     }
 
-    for (const n of (rows || []) as any[]) {
+    for (const n of rows) {
+      if (Date.now() > deadline) { out.note = (out.note ? out.note + ' · ' : '') + 'stopped at the time budget; the rest next run'; break }
       out.scanned++
       try {
         const p0 = pById[String(n.property_id || '')]

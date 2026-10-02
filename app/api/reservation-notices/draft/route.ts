@@ -95,9 +95,11 @@ export async function GET(req: NextRequest) {
   // EVIDENCE FIRST, THEN HOUSEKEEPING. The order matters: anything Guesty or Gmail can prove is
   // closed on that proof and stamped with it, so only rows nobody can account for fall through to
   // the past-arrival pass, which closes them WITHOUT claiming they were sent.
+  // The mailbox is the evidence that matters most and the slowest to ask, so it goes first, on a
+  // budget that leaves room for the other two inside this route's 60s (2026-10-02).
+  const sent = await sweepSentInGmail({ ...o, budgetMs: 35_000 }).catch(() => null)
   const res = await checkSupportDrafts()
   const guesty = await sweepGuestyFlag(o).catch(() => null)
-  const sent = await sweepSentInGmail(o).catch(() => null)
   const past = u.searchParams.get('past') === '0' ? null : await closePastArrivals().catch(() => null)
   return NextResponse.json({ ok: true, ...res, guestySweep: guesty, sentSweep: sent, pastArrivals: past })
 }
