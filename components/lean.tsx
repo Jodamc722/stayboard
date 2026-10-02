@@ -50,7 +50,7 @@ export function LeanHead({ title, icon, sub, children }: { title: ReactNode; ico
         <h1 className="text-2xl font-bold text-ink tracking-tight inline-flex items-center gap-2">{icon}{title}</h1>
         {sub ? <p className="text-[13px] text-muted mt-0.5">{sub}</p> : null}
       </div>
-      {children ? <div className="flex items-center gap-1.5 flex-wrap">{children}</div> : null}
+      {children ? <div className="lh-head-right flex items-center gap-1.5 flex-wrap">{children}</div> : null}
     </header>
   )
 }

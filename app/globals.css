@@ -395,6 +395,27 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
      says something different is never marked, so it is never hidden. ~86px back on every page. */
   .lh-dupe-title { display: none !important; }
   main header:has(.lh-dupe-title) { margin-bottom: 0.25rem; }
+
+  /* PHONE PASS 2 (Jon, 2026-10-02: "improve the mobile friendliness"). The three things that still
+     ate the first screen on every page: a 1.85rem display title under an app bar that already names
+     the page, a cluster of stat pills wrapping onto two or three lines, and tab strips wrapping.
+     Title smaller; pills and tabs become ONE swipeable row that bleeds to the screen edge. */
+  :root:not([data-theme="legacy"]) main h1 { font-size: 1.4rem; line-height: 1.2; }
+  .lh-head { margin-bottom: 0.625rem; row-gap: 0.375rem; }
+  .lh-head-right {
+    flex-wrap: nowrap; overflow-x: auto; max-width: 100%; width: 100%;
+    -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; scrollbar-width: none;
+    margin-left: -0.75rem; margin-right: -0.75rem; padding: 0.125rem 0.75rem; width: calc(100% + 1.5rem);
+  }
+  .lh-head-right::-webkit-scrollbar { display: none; }
+  .lh-head-right > * { flex: 0 0 auto; }
+  .lh-tabs { flex-wrap: nowrap; }
+  .lh-tabs-strip, :root:not([data-theme="legacy"]) .lh-tabs-strip {
+    flex-wrap: nowrap; overflow-x: auto; max-width: 100%; scrollbar-width: none;
+    -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
+  }
+  .lh-tabs-strip::-webkit-scrollbar { display: none; }
+  .lh-tab { flex: 0 0 auto; }
 }
 
 /* ------------------------------------------------------------------------------------------------

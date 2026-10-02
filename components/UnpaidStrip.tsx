@@ -64,14 +64,14 @@ export function UnpaidStrip({ rep, tabHref }: { rep: UnpaidReportT; tabHref: str
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-rose-100 border-t border-rose-100">
+      <div className="grid grid-cols-4 gap-px bg-rose-100 border-t border-rose-100">
         {ORDER.map(b => {
           const xs = by(b), v = sum(xs)
           return (
             <Link key={b} href={tabHref} prefetch={false} title={BUCKET[b].hint + ' — opens the Unpaid tab'}
-              className={'bg-white px-3 py-2 min-w-0 hover:bg-rose-50/60 ' + (xs.length && BUCKET[b].hot ? 'border-t-2 border-rose-500' : xs.length && b === 'week' ? 'border-t-2 border-amber-400' : 'border-t-2 border-transparent')}>
-              <div className="text-[10.5px] uppercase tracking-wider font-bold text-muted truncate">{BUCKET[b].label}</div>
-              <div className="flex items-baseline gap-1.5">
+              className={'bg-white px-2 sm:px-3 py-1.5 sm:py-2 min-w-0 hover:bg-rose-50/60 ' + (xs.length && BUCKET[b].hot ? 'border-t-2 border-rose-500' : xs.length && b === 'week' ? 'border-t-2 border-amber-400' : 'border-t-2 border-transparent')}>
+              <div className="text-[10px] sm:text-[10.5px] uppercase tracking-wide sm:tracking-wider font-bold text-muted sm:truncate leading-tight">{BUCKET[b].label}</div>
+              <div className="flex items-baseline gap-1.5 flex-wrap">
                 <span className={'text-[18px] font-bold tabular-nums leading-tight ' + (xs.length ? (BUCKET[b].hot ? 'text-rose-700' : 'text-ink') : 'text-muted/60')}>{xs.length}</span>
                 <span className={'text-[12px] font-semibold tabular-nums ' + (xs.length ? 'text-ink' : 'text-muted/60')}>{xs.length ? money(v) : '—'}</span>
               </div>

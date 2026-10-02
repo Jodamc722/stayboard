@@ -208,7 +208,7 @@ function Tile({ label, done, needed, segs, sub, on, onClick, title, loading, big
     <button onClick={onClick} aria-pressed={on} title={title + (on ? ' — click to close the list' : ' — click to open the list')}
       className={'text-left rounded-2xl border bg-white px-3 sm:px-3.5 py-2.5 sm:py-3 min-h-[80px] sm:min-h-[96px] shadow-soft transition flex flex-col gap-1.5 min-w-0 ' + (on ? 'border-brand-400 ring-2 ring-brand-100' : 'border-line hover:border-ink/30')}>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10.5px] uppercase tracking-[0.12em] font-semibold text-muted truncate">{label}</span>
+        <span className="text-[10.5px] uppercase tracking-[0.06em] sm:tracking-[0.12em] font-semibold text-muted truncate">{label}</span>
         {loading ? <Loader2 size={11} className="animate-spin text-muted" /> : <span className={'text-[10.5px] font-bold tabular-nums ' + (needed ? 'text-muted' : 'text-muted/50')}>{needed && !noPct ? pct + '%' : ''}</span>}
       </div>
       <div className="flex items-baseline gap-1">

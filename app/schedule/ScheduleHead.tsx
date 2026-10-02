@@ -35,7 +35,7 @@ export function ScheduleHead() {
     + (open ? 'Click to hide the capacity plan.' : 'Click for the capacity plan, other days and suggested moves.')
   return (
     <>
-      <LeanHead title="Scheduler" icon={<CalendarRange size={18} className="text-brand-600" />}>
+      <LeanHead title="Schedule" icon={<CalendarRange size={18} className="text-brand-600" />}>
         {/* The sandbox (Jon, 2026-09-23): a proposed day in a popup, moved around, then approved. */}
         <ScheduleSuggesterButton />
         <Pill tone={tone} title={title} onClick={() => setOpen(o => !o)}>

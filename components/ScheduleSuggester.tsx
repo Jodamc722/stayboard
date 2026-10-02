@@ -53,7 +53,7 @@ export function ScheduleSuggesterButton() {
     <>
       <button onClick={() => setOpen(true)}
         className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl bg-ink text-white text-[12.5px] font-bold">
-        <Wand2 size={14} /> Suggest a schedule
+        <Wand2 size={14} /> Suggest<span className="hidden sm:inline">&nbsp;a schedule</span>
       </button>
       {open && typeof document !== 'undefined' ? createPortal(
         <ScheduleSuggester onClose={() => { setOpen(false); if (pushed) window.location.reload() }} onPushed={() => setPushed(true)} />,
