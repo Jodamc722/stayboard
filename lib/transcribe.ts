@@ -108,7 +108,7 @@ export async function transcribeUrl(url: string, opts: { timeoutMs?: number } = 
   const key = await transcribeKey()
   if (!key) return { ...empty, error: 'No transcription key.' }
   if (!url) return { ...empty, error: 'No recording URL.' }
-  const q = new URLSearchParams({ model: 'nova-3', punctuate: 'true', diarize: 'true', smart_format: 'true', detect_language: 'true' })
+  const q = new URLSearchParams({ model: 'nova-3', punctuate: 'true', diarize: 'true', smart_format: 'true', detect_language: 'true', utterances: 'true' })
   const ctl = new AbortController()
   const timer = setTimeout(() => ctl.abort(), opts.timeoutMs || 60_000)
   try {
@@ -129,10 +129,25 @@ export async function transcribeUrl(url: string, opts: { timeoutMs?: number } = 
     const alt = j?.results?.channels?.[0]?.alternatives?.[0] || {}
     const seconds = Math.round(Number(j?.metadata?.duration) || 0)
     const words: any[] = Array.isArray(alt.words) ? alt.words : []
-    // Fold the word stream into speaker turns. Deepgram gives a speaker per word; a turn ends when
-    // the speaker number changes.
+    // TURNS (2026-10-02). Deepgram's own utterances split on pauses as well as speaker changes, so
+    // "…how may I help you? Hi, yes, I'm calling because…" stops arriving as one block: each
+    // utterance is a turn, and consecutive utterances by the same speaker are joined only when the
+    // gap between them is under a second. Without utterances (older responses), the word stream is
+    // folded by speaker as before.
+    const utts: any[] = Array.isArray(j?.results?.utterances) ? j.results.utterances : []
     const lines: { speaker: number; text: string; at: number }[] = []
-    for (const w of words) {
+    let lastEnd = -10
+    for (const u of utts) {
+      const sp = Number(u.speaker) || 0
+      const t = String(u.transcript || '').trim()
+      if (!t) continue
+      const start = Number(u.start) || 0
+      const last = lines[lines.length - 1]
+      if (last && last.speaker === sp && start - lastEnd < 1) last.text += ' ' + t
+      else lines.push({ speaker: sp, text: t, at: Math.max(0, Math.floor(start)) })
+      lastEnd = Number(u.end) || start
+    }
+    for (const w of (lines.length ? [] : words)) {
       const sp = Number(w.speaker) || 0
       const t = String(w.punctuated_word || w.word || '')
       if (!t) continue
