@@ -4,7 +4,9 @@ import { pageRows } from '@/lib/db-page'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { SyncNowButton } from '@/components/SyncNowButton'
-import { MessagesInbox, type InboxItem, type WaitInfo, type LastInfo, type StayInfo } from '@/components/MessagesInbox'
+import { type InboxItem, type WaitInfo, type LastInfo, type StayInfo } from '@/components/MessagesInbox'
+import { UnifiedInbox } from '@/components/UnifiedInbox'
+import { Suspense } from 'react'
 import { LeanHead, Pill } from '@/components/lean'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { listPhoneThreads, type PhoneThreadSummary } from '@/lib/phone-threads'
@@ -168,7 +170,8 @@ export default async function MessagesPage() {
         <SyncNowButton />
       </LeanHead>
 
-      <MessagesInbox items={items} unitById={unitById} waiting={waitById} lastResponderById={lastResponderById} now={now} />
+      {/* UNIFIED (Jon, 2026-10-01): the list on the left, the thread and the booking beside it. useSearchParams needs a Suspense boundary. */}
+      <Suspense fallback={null}><UnifiedInbox items={items} unitById={unitById} waiting={waitById} lastResponderById={lastResponderById} now={now} /></Suspense>
     </Shell>
   )
 }
