@@ -46,6 +46,8 @@ export function OnboardingDesk() {
         <Pill title="Assigned to a live listing">{stats.linked} assigned</Pill>
         <a href="/onboarding/linens" title="Linens — the linen standard (par, per bed / bath / guest) and the order calculator for any set of units"
           className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app"><BedDouble size={13} /> Linens</a>
+        <a href="/onboarding/quick" title="Quick onboarding — one simple card per unit: beds, baths, what the kitchen has, photos (Jon, 2026-10-02)"
+          className="inline-flex items-center gap-1 rounded-lg bg-ink text-white px-2 py-1 text-[12px] font-semibold hover:bg-ink/90">Quick form</a>
       </LeanHead>
 
       <div className="flex items-center gap-2 flex-wrap mb-3">

@@ -112,7 +112,7 @@ export const DESKS: Desk[] = [
     key: 'owners', label: 'Owners',
     blurb: 'Owner onboarding and inventory, linens, quality walks, purchasing and owner reports.',
     views: [
-      { to: '/onboarding', label: 'Onboarding', hint: 'New-unit inventory links: rooms, counts, photos and the buy list' },
+      { to: '/onboarding', match: ['/onboarding/quick', '/onboarding/linens'], label: 'Onboarding', hint: 'New-unit inventory links: rooms, counts, photos and the buy list' },
       { to: '/onboarding/linens', label: 'Linens', hint: 'Your linen standard, and the linen order for any set of units' },
       { to: '/audits', label: 'Quality', hint: 'Unit walks and what they found, dispatched to Breezeway' },
       { to: '/orders', label: 'Purchasing', hint: 'Buying desk: approve, buy, receive and install' },
