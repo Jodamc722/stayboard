@@ -279,6 +279,19 @@ export function GlitchBoard() {
       </Sheet>
       {showNew && <NewGlitch onDone={() => { setShowNew(false); load() }} onCancel={() => setShowNew(false)} />}
 
+      {/* FOR MANAGERS: what is waiting on your signature (Jon, 2026-10-02). Cards the team marked
+          complete sit in Guest follow-up with a badge; this row puts them one click away. */}
+      {canApprove && rows.some(g => String(g.status) === 'manager_review') ? (
+        <div className="mb-3 rounded-2xl border border-violet-200 bg-violet-50/60 px-3 py-2 flex items-center gap-2 flex-wrap">
+          <span className="text-[12px] font-bold text-violet-900">{rows.filter(g => String(g.status) === 'manager_review').length} awaiting your approval</span>
+          {rows.filter(g => String(g.status) === 'manager_review').slice(0, 8).map(g => (
+            <button key={g.id} onClick={() => setOpen(g.id)} className="text-[12px] font-semibold px-2 h-7 rounded-lg bg-white border border-violet-200 text-violet-900 hover:border-violet-400">
+              {g.unit || 'No unit'}{g.assignee ? ' · ' + g.assignee.split(' ')[0] : ''}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {/* FOUR LANES FIT. The old seven scrolled sideways on every screen, so the board could never
           be read in one look — which is most of what "confusing" meant. On a phone the lanes still
           snap one at a time; on a desktop they simply fit. */}
@@ -575,6 +588,9 @@ function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, canApprove
 
   const lane = laneOf(g.status)
   const closed = lane.key === 'closed'
+  const awaiting = String(g.status) === 'manager_review'
+  const lastClose = (Array.isArray(g.history) ? g.history : []).slice().reverse().find((h: any) => h && /^completion_/.test(String(h.action || '')))
+  const sentBack = !awaiting && !closed && lastClose?.action === 'completion_rejected' ? lastClose : null
   const refund = Number(g.refund_approved) || 0
   const rec = Number.isFinite(Number(g.refund_recommended)) && g.refund_recommended != null ? Number(g.refund_recommended) : null
   const stay = stayState(g.check_in, g.check_out)
@@ -623,11 +639,25 @@ function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, canApprove
 
       {/* TOP BAR: complete it, where it sits, and how long it has been open. */}
       <div className="flex items-center gap-2 flex-wrap">
-        <button onClick={() => act(g.id, { action: 'move', status: closed ? 'ops' : 'closed' })}
-          className={'inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 h-8 rounded-xl border transition ' +
-            (closed ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-ink border-line hover:border-emerald-500 hover:text-emerald-700')}>
-          <Check size={14} /> {closed ? 'Completed — reopen' : 'Mark complete'}
-        </button>
+        {/* MANAGER APPROVAL (Jon, 2026-10-02). The team marks a card complete; it waits here for a
+            manager (full access on Glitches) to approve the close or send it back with a reason.
+            A manager's own "Mark complete" closes at once. */}
+        {awaiting ? (
+          canApprove
+            ? <CloseSignOff g={g} onDone={onChanged} />
+            : <span className={chip + ' bg-violet-50 text-violet-800 ring-violet-200 h-8'} title="Waiting on a manager to approve the close">Awaiting manager approval</span>
+        ) : (
+          <button onClick={() => act(g.id, { action: 'move', status: closed ? 'ops' : 'closed' })}
+            title={closed ? 'Reopen the card' : canApprove ? 'Close the card' : 'Send to a manager to approve the close'}
+            className={'inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 h-8 rounded-xl border transition ' +
+              (closed ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-ink border-line hover:border-emerald-500 hover:text-emerald-700')}>
+            <Check size={14} /> {closed ? 'Completed — reopen' : canApprove ? 'Mark complete' : 'Mark complete → manager'}
+          </button>
+        )}
+        {awaiting && !canApprove ? (
+          <button onClick={() => act(g.id, { action: 'move', status: 'ops' })} className="text-[12px] font-semibold text-muted hover:text-ink">Take it back</button>
+        ) : null}
+        {sentBack ? <span className={chip + ' bg-rose-50 text-rose-800 ring-rose-200'} title={'Sent back by ' + String(sentBack.by || 'a manager').split('@')[0] + ' · ' + fmtStamp(sentBack.at)}>Sent back{sentBack.note ? ': ' + String(sentBack.note).slice(0, 80) : ''}</span> : null}
         <OpenClock g={g} />
         {dueOver ? <span className={chip + ' bg-rose-50 text-rose-800 ring-rose-200'}>Overdue</span> : null}
         {g.refund_needs_approval ? (
@@ -784,6 +814,7 @@ function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, canApprove
                     {String(h.action || '').replace(/_/g, ' ')}
                     {h.to ? ' → ' + (LANES.find(l => l.statuses.indexOf(String(h.to)) >= 0)?.label || h.to) : ''}
                     {h.amount != null ? ' · $' + h.amount : ''}
+                    {h.note ? <span className="text-ink/80"> — “{String(h.note).slice(0, 160)}”</span> : null}
                     <span className="text-faint"> · {fmtStamp(h.at)}</span>
                   </li>
                 ))}
@@ -1251,6 +1282,7 @@ function GlitchCard({ g, onOpen }: { g: Glitch; onOpen: () => void }) {
           {refund > 0 ? <Tag tone="emerald" title="Refund given">{money(refund)}</Tag> : null}
           {owedRefund ? <Tag tone="amber" title="Sitting in refund but no amount logged">Refund?</Tag> : null}
           {(g as any).refund_needs_approval ? <Tag tone="violet" title="Refund over the cap, waiting on approval">Approval</Tag> : null}
+          {String(g.status) === 'manager_review' ? <Tag tone="violet" title="Marked complete by the team — waiting on a manager to approve the close">Awaiting manager approval</Tag> : null}
           {due ? <span className={'shrink-0 whitespace-nowrap text-[10.5px] font-semibold leading-none px-1.5 py-[3px] rounded-md border ' + due.cls}>{due.label}</span> : null}
         </div>
       </button>
@@ -1811,6 +1843,49 @@ function lastRefundEvent(g: Glitch): any | null {
  * Glitches — and the server checks the same thing. Approve keeps the amount and puts the approver
  * on the card; Reject sends it back to $0 with a reason, until someone logs a new amount.
  */
+/** A manager's decision on a card the team marked complete: approve (closes it) or send back (to ops, with why). */
+function CloseSignOff({ g, onDone }: { g: Glitch; onDone: () => void }) {
+  const chip = 'text-[11.5px] font-semibold px-2 py-0.5 rounded-md ring-1 inline-flex items-center'
+  const [busy, setBusy] = useState<'' | 'approve' | 'reject'>('')
+  const [why, setWhy] = useState('')
+  const [asking, setAsking] = useState(false)
+  const [err, setErr] = useState('')
+  const decide = async (approve: boolean) => {
+    if (!approve && !why.trim()) { setAsking(true); return }
+    setBusy(approve ? 'approve' : 'reject'); setErr('')
+    try {
+      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: g.id, action: approve ? 'approveClose' : 'rejectClose', note: why.trim() }) })
+      const j = await r.json().catch(() => ({} as any))
+      if (!r.ok || !j.ok) setErr(j.error || 'Could not save the decision.')
+      else onDone()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy('')
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 flex-wrap">
+      <span className={chip + ' bg-violet-50 text-violet-800 ring-violet-200 h-8'}>Awaiting your approval</span>
+      <button onClick={() => decide(true)} disabled={!!busy} title="Approve — the card closes and your name goes on it"
+        className="inline-flex items-center gap-1 text-[12px] font-bold px-2.5 h-8 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
+        {busy === 'approve' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Approve & close
+      </button>
+      {asking ? (
+        <form className="inline-flex items-center gap-1" onSubmit={e => { e.preventDefault(); decide(false) }}>
+          <input autoFocus value={why} onChange={e => setWhy(e.target.value)} placeholder="What still needs doing?" maxLength={300}
+            className="h-8 w-56 rounded-xl border border-line bg-white px-2.5 text-[12px] text-ink" />
+          <button type="submit" disabled={!!busy || !why.trim()} className="inline-flex items-center gap-1 text-[12px] font-bold px-2.5 h-8 rounded-xl bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50">
+            {busy === 'reject' ? <Loader2 size={12} className="animate-spin" /> : null} Send back
+          </button>
+          <button type="button" onClick={() => { setAsking(false); setWhy('') }} className="text-[12px] text-muted hover:text-ink px-1">Cancel</button>
+        </form>
+      ) : (
+        <button onClick={() => decide(false)} disabled={!!busy} title="Not done yet — send it back to ops with a reason"
+          className="inline-flex items-center gap-1 text-[12px] font-bold px-2.5 h-8 rounded-xl border border-line bg-white text-ink hover:border-rose-400 hover:text-rose-700 disabled:opacity-50">Send back</button>
+      )}
+      {err ? <span className="text-[11px] text-rose-700">{err}</span> : null}
+    </span>
+  )
+}
+
 function RefundSignOff({ g, onDone }: { g: Glitch; onDone: () => void }) {
   const [busy, setBusy] = useState<'' | 'approve' | 'reject'>('')
   const [err, setErr] = useState('')

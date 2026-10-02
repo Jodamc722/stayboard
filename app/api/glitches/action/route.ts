@@ -78,15 +78,30 @@ export async function POST(req: NextRequest) {
     const hist = Array.isArray(g.history) ? g.history : []
     const stamp = (act: string, extra?: any) => hist.concat([{ at: new Date().toISOString(), by: user.email || 'team', action: act, ...(extra || {}) }])
 
+    // MANAGER APPROVAL BEFORE A CARD CLOSES (Jon, 2026-10-02: "add manager approval in the glitch
+    // board"). Anyone with edit can say "complete" — that parks the card in manager_review, with
+    // the request stamped in history. Only full access on Glitches (the same line that signs off a
+    // refund) actually closes it: 'approveClose' closes and stamps the approver; 'rejectClose' sends
+    // it back to ops with the reason. A manager's own "complete" closes directly — asking yourself
+    // for approval is noise. Reopening a closed card never needs approval.
+    const isManager = (await requireLevel('glitches', 'full')).ok
     if (action === 'move') {
-      const status = str(b.status)
+      let status = str(b.status)
       if (STATUSES.indexOf(status) < 0) return NextResponse.json({ ok: false, error: 'Bad status.' }, { status: 400 })
+      if (status === 'closed' && !isManager && String(g.status) !== 'closed') {
+        const patch: Record<string, any> = { status: 'manager_review', history: stamp('completion_requested', { note: str(b.note) || undefined }), updated_at: new Date().toISOString() }
+        const upd = await db.from('glitches').update(patch).eq('id', id)
+        if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 })
+        bustDay()
+        return NextResponse.json({ ok: true, status: 'manager_review', awaitingApproval: true })
+      }
+      if (status === 'closed' && isManager && String(g.status) === 'manager_review') status = 'closed'
       // STAMP THE CLOSE (Jon, 2026-09-15: "track time of created, to glitch closed ... a KPI").
       // Until migration 085 there was no closure time at all — closing a card only bumped
       // updated_at, so "how long do guest issues take?" was unanswerable, and any later edit
       // moved the only timestamp that existed. Reopening clears it, so a card that bounces back
       // out of Closed is not silently counted as resolved.
-      const patch: Record<string, any> = { status, history: stamp('moved', { to: status }), updated_at: new Date().toISOString() }
+      const patch: Record<string, any> = { status, history: stamp(status === 'closed' && String(g.status) === 'manager_review' ? 'completion_approved' : 'moved', { to: status }), updated_at: new Date().toISOString() }
       if (status === 'closed') {
         if (!g.closed_at) { patch.closed_at = new Date().toISOString(); patch.closed_at_estimated = false }
       } else if (g.closed_at) {
@@ -102,6 +117,25 @@ export async function POST(req: NextRequest) {
       if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 })
       bustDay()
       return NextResponse.json({ ok: true, status })
+    }
+
+    if (action === 'approveClose' || action === 'rejectClose') {
+      if (!isManager) return NextResponse.json({ ok: false, error: 'Only a manager (full access on Glitches) can approve a completion.' }, { status: 403 })
+      if (String(g.status) !== 'manager_review') return NextResponse.json({ ok: false, error: 'This card is not waiting on approval.' }, { status: 409 })
+      const note = str(b.note).slice(0, 300)
+      const approve = action === 'approveClose'
+      if (!approve && !note) return NextResponse.json({ ok: false, error: 'Say what still needs doing — whoever asked will see it.' }, { status: 400 })
+      const nowIso = new Date().toISOString()
+      const patch: Record<string, any> = {
+        status: approve ? 'closed' : 'ops', updated_at: nowIso,
+        history: stamp(approve ? 'completion_approved' : 'completion_rejected', { note: note || undefined }),
+      }
+      if (approve) { patch.closed_at = nowIso; patch.closed_at_estimated = false }
+      let upd = await db.from('glitches').update(patch).eq('id', id)
+      if (upd.error && /column|schema/i.test(upd.error.message)) { delete patch.closed_at; delete patch.closed_at_estimated; upd = await db.from('glitches').update(patch).eq('id', id) }
+      if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 })
+      bustDay()
+      return NextResponse.json({ ok: true, status: patch.status, approved: approve })
     }
 
     // PRIORITY WITHOUT A TASK. Marking something urgent should not require filing a Breezeway job

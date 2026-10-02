@@ -260,14 +260,18 @@ function InboxRow({ i, onCleared, lane }: { i: NextItem; onCleared: (k: string) 
   )
 }
 
-export function GlitchRow({ g, canEdit, onChanged, lane }: { g: GlitchRowT; canEdit: boolean; onChanged: () => void; lane?: string }) {
-  const [busy, setBusy] = useState(false)
+export function GlitchRow({ g, canEdit, canApprove, onChanged, lane }: { g: GlitchRowT; canEdit: boolean; canApprove?: boolean; onChanged: () => void; lane?: string }) {
+  const [busy, setBusy] = useState('')
   const [gone, setGone] = useState(false)
+  const [sent, setSent] = useState(false)      // closed by a non-manager: parked for approval, not gone
+  const [why, setWhy] = useState('')
+  const [asking, setAsking] = useState(false)
   const [err, setErr] = useState('')
-  const close = async () => {
-    setBusy(true); setErr('')
-    try { await post('/api/glitches/action', { id: g.id, action: 'move', status: 'closed' }); setGone(true); onChanged() } catch (e: any) { setErr(String(e?.message || e)) }
-    setBusy(false)
+  const awaiting = sent || g.status === 'manager_review'
+  const run = async (body: Record<string, any>, after: () => void) => {
+    setBusy(String(body.action) + (body.status || '')); setErr('')
+    try { await post('/api/glitches/action', { id: g.id, ...body }).then(j => { if (j.awaitingApproval) setSent(true); else after() }); onChanged() } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy('')
   }
   if (gone) return null
   return (
@@ -275,12 +279,24 @@ export function GlitchRow({ g, canEdit, onChanged, lane }: { g: GlitchRowT; canE
       tags={<>
         {g.overdue && <Tag tone="rose" title={'Due ' + (g.due || '')}>overdue</Tag>}
         {!g.hasTask && <Tag tone="amber" title="No Breezeway task yet — open the card to push one">no task</Tag>}
-        <Tag tone="slate" title="Where the card sits on the Glitches board">{g.status.replace(/_/g, ' ')}</Tag>
+        {awaiting
+          ? <Tag tone="violet" title="Marked complete by the team — a manager approves the close">awaiting manager approval</Tag>
+          : <Tag tone="slate" title="Where the card sits on the Glitches board">{g.status.replace(/_/g, ' ')}</Tag>}
       </>}
       meta={[g.issue, g.assignee, g.ageDays + 'd old'].filter(Boolean).join(' · ')} err={err}
       actions={<>
         <Link href={g.href} prefetch={false} className={GHOST} title="Open the card: refund advice, vendor, push a task">Open</Link>
-        {canEdit && <button onClick={close} disabled={busy} className={GHOST} title="Resolved — close the card">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Close</button>}
+        {awaiting && canApprove ? (asking ? (
+          <form className="inline-flex items-center gap-1" onSubmit={e => { e.preventDefault(); if (why.trim()) run({ action: 'rejectClose', note: why.trim() }, () => setSent(false)) }}>
+            <input autoFocus value={why} onChange={e => setWhy(e.target.value)} placeholder="What still needs doing?" maxLength={300} className="h-7 w-44 rounded-md border border-line px-2 text-[12px]" />
+            <button type="submit" disabled={!!busy || !why.trim()} className={GHOST}>Send back</button>
+            <button type="button" onClick={() => setAsking(false)} className={GHOST}>Cancel</button>
+          </form>
+        ) : <>
+          <button onClick={() => run({ action: 'approveClose' }, () => setGone(true))} disabled={!!busy} className={DARK} title="Approve — the card closes with your name on it">{busy === 'approveClose' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Approve</button>
+          <button onClick={() => setAsking(true)} disabled={!!busy} className={GHOST} title="Not done yet — back to ops with a reason">Send back</button>
+        </>) : null}
+        {!awaiting && canEdit && <button onClick={() => run({ action: 'move', status: 'closed' }, () => setGone(true))} disabled={!!busy} className={GHOST} title={canApprove ? 'Resolved — close the card' : 'Resolved — sends it to a manager to approve the close'}>{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {canApprove ? 'Close' : 'Complete'}</button>}
       </>} />
   )
 }
@@ -820,7 +836,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
     const isUnhappy = (i.tags || []).some(x => x.label === 'Unhappy'), late = (i.tags || []).some(x => /^Late/.test(x.label))
     items.push({ key: i.key, area: 'guests', sub: 'Inbox', score: isUnhappy ? 88 : late ? 85 : 60, node: <InboxRow i={i} onCleared={onCleared} /> })
   }
-  for (const g of glitches) items.push({ key: 'gl:' + g.id, area: 'guests', sub: 'Glitches', score: g.overdue ? 82 : !g.hasTask ? 55 : 40, node: <GlitchRow g={g} canEdit={can.glitches} onChanged={onChanged} /> })
+  for (const g of glitches) items.push({ key: 'gl:' + g.id, area: 'guests', sub: 'Glitches', score: g.overdue ? 82 : !g.hasTask ? 55 : 40, node: <GlitchRow g={g} canEdit={can.glitches} canApprove={acc.atLeast('glitches', 'full')} onChanged={onChanged} /> })
 
   for (const r of reviews) {
     const s = five(r.rating, r.channel), low = s != null && s <= 3
@@ -871,7 +887,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
     <NotesCtx.Provider value={notesCtx}>
     <div className="space-y-5">
       {/* THE WORK TODAY — needed vs completed, with the granular list under the strip (Jon, 2026-09-30). */}
-      <DayKpis d={d} live={live} roster={roster} can={{ assign: can.assign, plan: can.plan, calls: can.calls }} onChanged={onChanged} />
+      <DayKpis d={d} live={live} roster={roster} can={{ assign: can.assign, plan: can.plan, calls: can.calls, glitchApprove: acc.atLeast('glitches', 'full') }} onChanged={onChanged} />
 
       {/* THE CHECKLIST, next two things, then NOW. The second row of tiles that used to sit here
           (free hours, guests waiting, glitches, reviews, admin) now reads as one line in each lane's
