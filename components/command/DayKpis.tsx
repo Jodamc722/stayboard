@@ -29,14 +29,17 @@ import { Tag, type Tone } from '@/components/lean'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import type { CommandDay, NextItem, TaskRow } from '@/lib/command-day'
 import { InlineAssign, type Roster } from '@/components/CommandCockpit'
-import { Row, CleanRow, InspectionTaskRow, ArrivalInspectionRow, LIST, GHOST, DARK, bz, money, INSPECT, tomorrowOf } from '@/components/command/Hub'
+import { Row, CleanRow, InspectionTaskRow, ArrivalInspectionRow, GlitchRow, LIST, GHOST, DARK, bz, money, INSPECT, tomorrowOf } from '@/components/command/Hub'
+import { Check } from 'lucide-react'
 import { NudgeBtn } from '@/components/command/Nudge'
 import { useTaskActions, TaskStateTag, type TaskState } from '@/components/task/TaskActions'
 import type { DayCalls, DayCallRow } from '@/app/api/command/calls/route'
 import { UnpaidRow, type UnpaidRowT } from '@/components/UnpaidBoard'
 
 export const CALLS_URL = '/api/command/calls'
-type Key = 'cleans' | 'insp' | 'welcome' | 'recovery' | 'maint' | 'unpaid'
+type Key = 'cleans' | 'insp' | 'welcome' | 'recovery' | 'maint' | 'unpaid' | 'glitches' | 'claims' | 'checklist'
+const CK_URL = '/api/daily-checklist'
+type CkRowT = { id: string; title: string; by_time: string | null; owner_role: string | null; link: string | null; done: boolean; late: boolean; in_minutes: number | null; done_by: string | null }
 const UNPAID_URL = '/api/unpaid'   // today → +7 days, direct / VRBO / Google only
 type Seg = { label: string; n: number; cls: string; tone: Tone; filter: string }
 type Item = { key: string; state: string; taskId?: string; who?: string; node: ReactNode; sort: number }
@@ -172,6 +175,18 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const uDisputed = unpaidRows.filter(r => r.tracking.status === 'disputed').length
   const onUnpaidPatch = (id: string, tr: UnpaidRowT['tracking']) => { setUnpaidPatch(p => ({ ...p, [id]: tr })); invalidateCache(UNPAID_URL) }
 
+  // ── glitch board, claim board, checklist board (Jon, 2026-10-02: "should be a glitch board here, claim board, checklist board") ──
+  const gl = t.glitches, cl = t.claims
+  const glCovered = Math.max(0, gl.open - gl.overdue - gl.noTask)
+  const clOk = Math.max(0, cl.open - cl.dueSoon)
+  const ckQ = useCachedFetch<{ ok?: boolean; rows?: CkRowT[]; progress?: { total: number; done: number; late: number; pct: number }; canTick?: boolean }>(CK_URL, { ttl: 60_000 })
+  const ckRows = ckQ.data?.rows || []
+  const ckDone = ckRows.filter(r => r.done).length, ckLate = ckRows.filter(r => r.late).length
+  const ckSoon = ckRows.filter(r => !r.done && !r.late && r.in_minutes != null && r.in_minutes <= 60).length
+  const [ckBusy, setCkBusy] = useState('')
+  const tickCk = async (id: string) => { setCkBusy(id); try { await fetch(CK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'tick', itemId: id, done: true }) }); invalidateCache(CK_URL); ckQ.refresh() } finally { setCkBusy('') } }
+  const clock12 = (tm: string | null) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(tm || '')); if (!m) return ''; const h = Number(m[1]); return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}` }
+
   // ── cleans ──
   const cleans = t.cleans.rows.filter(c => c.status !== 'vendor' && c.status !== 'extended')   // done rows stay: the shared strip reads 'done' and draws no verbs
   const cDone = cleans.filter(c => c.status === 'done').length
@@ -228,6 +243,17 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
       title: 'Money still owed by direct, VRBO and Google guests in house, arriving today or in the next 7 days — every other channel pays us itself. The bar is how far the chase has got',
       segs: [{ label: 'promised', n: uPromised, cls: 'bg-emerald-500', tone: 'emerald', filter: 'promised' }, { label: 'contacted', n: uContacted, cls: 'bg-sky-400', tone: 'sky', filter: 'contacted' }, { label: 'disputed', n: uDisputed, cls: 'bg-rose-500', tone: 'rose', filter: 'disputed' }, { label: 'not contacted', n: uOpen, cls: 'bg-slate-300', tone: 'slate', filter: 'open' }],
       sub: unpaidQ.error ? 'could not read the folios' : unpaidRows.length ? [uToday ? uToday + ' to collect today' : '', uOpen ? uOpen + ' not contacted' : 'everyone contacted'].filter(Boolean).join(' · ') : 'direct, VRBO and Google all paid' },
+    { key: 'glitches', label: 'Glitches', done: glCovered, needed: gl.open, title: 'Open guest issues: past due, with no Breezeway task yet, and the ones with a task and an owner',
+      big: { value: String(gl.open), unit: gl.open === 1 ? 'open' : 'open', tone: gl.overdue ? 'text-rose-700' : gl.open ? 'text-ink' : 'text-emerald-700' },
+      segs: [{ label: 'on it', n: glCovered, cls: 'bg-emerald-500', tone: 'emerald', filter: 'covered' }, { label: 'no task', n: gl.noTask, cls: 'bg-amber-400', tone: 'amber', filter: 'notask' }, { label: 'overdue', n: gl.overdue, cls: 'bg-rose-500', tone: 'rose', filter: 'overdue' }],
+      sub: gl.open ? [gl.overdue ? gl.overdue + ' overdue' : 'none overdue', gl.noTask ? gl.noTask + ' without a task' : ''].filter(Boolean).join(' · ') : 'no open glitches' },
+    { key: 'claims', label: 'Claims', done: clOk, needed: cl.open, title: 'Damage claims in flight: the filing countdown per channel, the ones due soon first',
+      big: { value: String(cl.open), unit: 'open', tone: cl.dueSoon ? 'text-rose-700' : cl.open ? 'text-ink' : 'text-emerald-700' },
+      segs: [{ label: 'on track', n: clOk, cls: 'bg-emerald-500', tone: 'emerald', filter: 'ok' }, { label: 'due soon', n: cl.dueSoon, cls: 'bg-rose-500', tone: 'rose', filter: 'due' }],
+      sub: cl.open ? [cl.dueSoon ? cl.dueSoon + ' due within 3 days' : 'nothing due soon', cl.review ? cl.review + ' in review' : ''].filter(Boolean).join(' · ') : 'no open claims' },
+    { key: 'checklist', label: 'Checklist', done: ckDone, needed: ckRows.length, loading: !ckQ.data && ckQ.loading, title: 'Today’s standing checklist: done, late, due within the hour, and the rest of the day',
+      segs: [{ label: 'done', n: ckDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'late', n: ckLate, cls: 'bg-rose-500', tone: 'rose', filter: 'late' }, { label: 'due soon', n: ckSoon, cls: 'bg-amber-400', tone: 'amber', filter: 'soon' }, { label: 'later', n: Math.max(0, ckRows.length - ckDone - ckLate - ckSoon), cls: 'bg-slate-300', tone: 'slate', filter: 'later' }],
+      sub: ckRows.length ? [ckLate ? ckLate + ' late' : '', ckSoon ? ckSoon + ' due within the hour' : '', !ckLate && !ckSoon ? (ckDone === ckRows.length ? 'all done' : 'nothing due right now') : ''].filter(Boolean).join(' · ') : 'no checklist yet' },
   ]
 
   // ── the open list ──
@@ -244,11 +270,14 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     }
     if (open === 'maint') for (const x of maint) out.push({ key: x.taskId, state: x.state === 'done' ? 'done' : x.state === 'running' ? 'running' : !x.who ? 'unassigned' : 'open', taskId: x.taskId, who: x.who, sort: x.state === 'done' ? 9 : (x.prio === 'urgent' ? 0 : x.prio === 'high' ? 1 : 3) + (!x.who ? 0 : 0.5) + (x.late ? -0.25 : 0) + (x.state === 'running' ? 2 : 0), node: <MaintRow t={x} roster={roster} canAssign={can.assign} onChanged={onChanged} /> })
     if (open === 'welcome' && w) for (const r of w.rows) out.push({ key: r.id, state: r.done ? 'done' : r.today ? 'today' : 'open', sort: r.done ? 9 : r.today ? (r.mandatory ? 0 : 1) : 3, node: <DayCallRowView r={r} canLog={can.calls} onChanged={changed} /> })
+    if (open === 'glitches') for (const g of gl.rows) out.push({ key: 'gl:' + g.id, state: g.overdue ? 'overdue' : !g.hasTask ? 'notask' : 'covered', sort: g.overdue ? 0 : !g.hasTask ? 1 : 3, node: <GlitchRow g={g} canEdit={can.plan} onChanged={onChanged} /> })
+    if (open === 'claims') for (const c of cl.rows) out.push({ key: 'cl:' + c.id, state: c.daysLeft != null && c.daysLeft <= 3 ? 'due' : 'ok', sort: c.daysLeft ?? 999, node: <Row dot={c.daysLeft != null && c.daysLeft <= 3 ? 'rose' : null} title={c.unit + (c.guest ? ' · ' + c.guest : '')} tags={<>{<Tag tone={c.daysLeft != null && c.daysLeft <= 3 ? 'rose' : 'slate'}>{c.daysLeft != null ? (c.daysLeft <= 0 ? 'due today' : c.daysLeft + 'd left') : c.stageLabel}</Tag>}{c.amount != null && <Tag>{money(c.amount)}</Tag>}</>} meta={[c.stageLabel, c.waitingOn ? 'waiting on ' + c.waitingOn : ''].filter(Boolean).join(' · ')} actions={<Link href={'/claims/' + c.id} prefetch={false} className={GHOST}>Open</Link>} /> })
+    if (open === 'checklist') for (const r of ckRows) out.push({ key: 'ck:' + r.id, state: r.done ? 'done' : r.late ? 'late' : r.in_minutes != null && r.in_minutes <= 60 ? 'soon' : 'later', sort: r.done ? 9 : r.late ? 0 : (r.in_minutes ?? 9999) / 1000 + 1, node: <Row dot={r.late ? 'rose' : null} title={r.title} tags={<>{r.late ? <Tag tone="rose">late</Tag> : r.in_minutes != null && !r.done && r.in_minutes <= 60 ? <Tag tone="amber">in {r.in_minutes}m</Tag> : null}{r.owner_role ? <Tag>{r.owner_role}</Tag> : null}{r.done ? <Tag tone="emerald">done · {String(r.done_by || '').split(/[\s@]/)[0]}</Tag> : null}</>} meta={r.by_time ? 'by ' + clock12(r.by_time) : 'anytime today'} actions={<>{r.link && !r.done && <Link href={r.link} prefetch={false} className={GHOST}>Open</Link>}{!r.done && ckQ.data?.canTick && <button onClick={() => tickCk(r.id)} disabled={ckBusy === r.id} className={DARK}>{ckBusy === r.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button>}</>} /> })
     if (open === 'unpaid') for (const r of unpaidRows) out.push({ key: 'unpaid:' + r.id, state: r.tracking.status, sort: (r.bucket === 'in_house' ? 0 : r.bucket === 'today' ? 1 : 2) + (r.tracking.status === 'open' ? 0 : 0.5), node: <UnpaidRow r={r} today={unpaidQ.data?.today || d.today} canEdit={!!unpaidQ.data?.canEdit} onPatch={onUnpaidPatch} simple /> })
     if (open === 'recovery' && rc) for (const r of rc.rows) out.push({ key: r.kind + r.id, state: r.done ? 'done' : 'open', sort: r.done ? 9 : r.today ? 0 : 2, node: <DayCallRowView r={r} canLog={can.calls} onChanged={changed} /> })
     return out.sort((a, b) => a.sort - b.sort)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, d, calls, roster, can.assign, can.plan, can.calls, unpaidQ.data, unpaidPatch])
+  }, [open, d, calls, roster, can.assign, can.plan, can.calls, unpaidQ.data, unpaidPatch, ckQ.data, ckBusy])
 
   const tile = tiles.find(x => x.key === open) || null
   const chips = tile ? tile.segs.filter(s => s.n > 0) : []
@@ -261,7 +290,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     if (k === 'unpaid') { const el = document.getElementById('unpaid-today'); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); return } }
     setOpen(o => (o === k ? null : k)); setFilter('all')
   }
-  const headline = tile ? (tile.key === 'unpaid' ? money(uOwed) + ' owed · ' + tile.done + ' of ' + tile.needed + ' contacted' : tile.done + ' of ' + tile.needed + ' done') : ''
+  const headline = tile ? (tile.key === 'unpaid' ? money(uOwed) + ' owed · ' + tile.done + ' of ' + tile.needed + ' contacted' : tile.key === 'glitches' || tile.key === 'claims' ? tile.needed + ' open' : tile.done + ' of ' + tile.needed + ' done') : ''
 
   return (
     <section>
@@ -281,7 +310,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
               {(can.assign || can.plan) && (open === 'cleans' || open === 'insp' || open === 'maint') && nudgeIds.length > 0 && (
                 <NudgeBtn taskIds={nudgeIds} label={'Message the team · ' + nudgePeople} className={DARK} title={'One Slack message per person, listing their open ' + (open === 'cleans' ? 'cleans' : open === 'insp' ? 'inspections' : 'jobs') + ' in view — posted in the building’s channel tagging them, or a DM when the building has no channel'} />
               )}
-              {open === 'unpaid' ? <Link href="/reservations/unpaid" className="text-[11px] font-semibold text-brand-700 hover:underline">Unpaid board →</Link> : open === 'welcome' || open === 'recovery' ? <Link href="/welcome-calls" className="text-[11px] font-semibold text-brand-700 hover:underline">Calls desk →</Link> : open === 'maint' ? <Link href="/maintenance" className="text-[11px] font-semibold text-brand-700 hover:underline">Maintenance →</Link> : <Link href="/plan" className="text-[11px] font-semibold text-brand-700 hover:underline">Today board →</Link>}
+              {open === 'glitches' ? <Link href="/glitches" className="text-[11px] font-semibold text-brand-700 hover:underline">Glitch board →</Link> : open === 'claims' ? <Link href="/claims" className="text-[11px] font-semibold text-brand-700 hover:underline">Claims →</Link> : open === 'checklist' ? <Link href="/checklist" className="text-[11px] font-semibold text-brand-700 hover:underline">Checklist →</Link> : open === 'unpaid' ? <Link href="/reservations/unpaid" className="text-[11px] font-semibold text-brand-700 hover:underline">Unpaid board →</Link> : open === 'welcome' || open === 'recovery' ? <Link href="/welcome-calls" className="text-[11px] font-semibold text-brand-700 hover:underline">Calls desk →</Link> : open === 'maint' ? <Link href="/maintenance" className="text-[11px] font-semibold text-brand-700 hover:underline">Maintenance →</Link> : <Link href="/plan" className="text-[11px] font-semibold text-brand-700 hover:underline">Today board →</Link>}
               <button onClick={() => setOpen(null)} className="text-muted hover:text-ink" aria-label="Close the list" title="Close"><ChevronUp size={15} /></button>
             </span>
           </div>
