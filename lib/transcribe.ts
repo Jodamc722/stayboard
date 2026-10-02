@@ -131,14 +131,14 @@ export async function transcribeUrl(url: string, opts: { timeoutMs?: number } = 
     const words: any[] = Array.isArray(alt.words) ? alt.words : []
     // Fold the word stream into speaker turns. Deepgram gives a speaker per word; a turn ends when
     // the speaker number changes.
-    const lines: { speaker: number; text: string }[] = []
+    const lines: { speaker: number; text: string; at: number }[] = []
     for (const w of words) {
       const sp = Number(w.speaker) || 0
       const t = String(w.punctuated_word || w.word || '')
       if (!t) continue
       const last = lines[lines.length - 1]
       if (last && last.speaker === sp) last.text += ' ' + t
-      else lines.push({ speaker: sp, text: t })
+      else lines.push({ speaker: sp, text: t, at: Math.max(0, Math.floor(Number(w.start) || 0)) })
     }
     const text = String(alt.transcript || '').trim()
     if (!text) return { ...empty, status: 'done', ok: true, seconds, usd: (seconds / 60) * USD_PER_MINUTE, error: 'Silent recording.' }
@@ -149,8 +149,14 @@ export async function transcribeUrl(url: string, opts: { timeoutMs?: number } = 
   } finally { clearTimeout(timer) }
 }
 
-/** The transcript as a readable script for a person or for Claude. */
-export function transcriptScript(lines: { speaker: number; text: string }[], fallback: string): string {
+/**
+ * The transcript as a readable script for a person or for Claude. Since 2026-10-02 every turn
+ * carries its offset into the call — "[1:05] Speaker 1: …" — so the page can show when things were
+ * said and a reader can find the moment in the recording. Older scripts have no stamp; the page
+ * reads both.
+ */
+export function transcriptScript(lines: { speaker: number; text: string; at?: number }[], fallback: string): string {
   if (!lines.length) return fallback
-  return lines.map(l => `Speaker ${l.speaker}: ${l.text}`).join('\n')
+  const stamp = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+  return lines.map(l => `${l.at != null ? '[' + stamp(l.at) + '] ' : ''}Speaker ${l.speaker}: ${l.text}`).join('\n')
 }

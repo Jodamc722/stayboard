@@ -20,6 +20,10 @@ export type CallIntel = {
   sentiment: 'happy' | 'fine' | 'unhappy' | 'unclear'
   followUp: boolean               // does this call leave someone owing the guest something?
   whoAnswered: 'guest' | 'someone else' | 'unclear'
+  // 2026-10-02 (Jon: "improve the Talkroute transcript"): which numbered speaker is us, so the page
+  // can print names instead of "Speaker 0 / Speaker 1"; the language the call was held in.
+  staffSpeaker?: number | null
+  language?: string
 }
 
 const SYSTEM = `You read one recorded phone call between a short-term-rental management team (Stay Hospitality, South Florida) and a guest, and you write the note that goes on the booking.
@@ -34,13 +38,17 @@ Return ONLY a JSON object:
   "issues": ["anything wrong: the unit, the booking, access, cleanliness, noise"],
   "sentiment": "happy" | "fine" | "unhappy" | "unclear",
   "followUp": true if anyone on our side still owes the guest something,
-  "whoAnswered": "guest" | "someone else" | "unclear"
+  "whoAnswered": "guest" | "someone else" | "unclear",
+  "staffSpeaker": the speaker NUMBER (0, 1, …) that is the Stay team member, or null if you cannot tell,
+  "language": the language the call was mostly held in, one word in English ("English", "Spanish", "Portuguese"…)
 }
+
+The summary, asked, promised and issues are ALWAYS written in English, whatever language the call was in.
 
 Rules. Be specific and short: "asked for a 2pm early check-in, told it depends on the clean" beats "discussed check-in". Quote a number when one was said (a time, a door code reference, a dollar amount) but NEVER write out an actual door code or card number. If the call is a wrong number, a voicemail greeting, or nobody really spoke, say so in summary and leave the arrays empty. Do not invent anything that was not said. No preamble, no markdown, JSON only.`
 
 /** Empty intel for a call with nothing in it — used when the transcript is silence or a wrong number. */
-export const EMPTY_INTEL: CallIntel = { summary: '', asked: [], promised: [], issues: [], sentiment: 'unclear', followUp: false, whoAnswered: 'unclear' }
+export const EMPTY_INTEL: CallIntel = { summary: '', asked: [], promised: [], issues: [], sentiment: 'unclear', followUp: false, whoAnswered: 'unclear', staffSpeaker: null, language: '' }
 
 const clean = (v: any, max = 120): string[] =>
   (Array.isArray(v) ? v : []).map(x => String(x || '').replace(/\s+/g, ' ').trim().slice(0, max)).filter(Boolean).slice(0, 6)
@@ -88,6 +96,8 @@ export async function readCall(script: string, context: {
         summary: String(p.summary || '').replace(/\s+/g, ' ').trim().slice(0, 600),
         asked: clean(p.asked), promised: clean(p.promised), issues: clean(p.issues),
         sentiment, followUp: !!p.followUp, whoAnswered: who,
+        staffSpeaker: Number.isInteger(Number(p.staffSpeaker)) && p.staffSpeaker !== null && p.staffSpeaker !== '' ? Number(p.staffSpeaker) : null,
+        language: String(p.language || '').replace(/[^A-Za-z ]/g, '').trim().slice(0, 24),
       },
     }
   } catch (e: any) {

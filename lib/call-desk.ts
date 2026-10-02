@@ -46,6 +46,7 @@ import { channelOf } from '@/lib/welcome-call-guide'
 import { parkingBooked } from '@/lib/parking'
 import { isLowReview, clearsRecovery } from '@/lib/review-scale'
 import { pctOrCount } from '@/lib/money'
+import { phoneDigits } from '@/lib/talkroute'
 
 export const HIGH_VALUE = 2500    // a stay worth calling about on money alone
 
@@ -540,6 +541,55 @@ const proofOf = (lg: CallLog | null, note?: CallNote | null): PhoneProof => ({
 export type CallNote = { id: string; summary: string; promised: string[]; issues: string[]; sentiment: string; at: string; caller: string }
 
 /**
+ * DID THE PHONE SYSTEM EVER SEE THIS GUEST (Jon, 2026-10-02: "verify that when it's marked completed
+ * there's a Talkroute call associated with that number. If not, inform me. International calls are
+ * made via WhatsApp, so internationally we may or may not be able to hold them").
+ *
+ * For every booking on the desk: how many Talkroute calls touched it — matched to the booking, or
+ * placed to / received from the guest's number — and whether any of them connected. A +1 number
+ * with nothing in Talkroute behind a hand-logged "reached" is the thing Jon wants told about.
+ * A non-+1 number is INTERNATIONAL: those calls go over WhatsApp, which Talkroute never sees, so
+ * a hand-logged completion is the only record there can be and is not questioned.
+ */
+export type PhoneCheck = { intl: boolean; calls: number; connected: boolean; lastAt: string }
+const NO_CHECK: PhoneCheck = { intl: false, calls: 0, connected: false, lastAt: '' }
+// Same reading as talkroute-sync's callConnected (which imports this file, so it cannot be imported here).
+const connectedCall = (c: { direction?: string; result?: any; duration?: any }): boolean => {
+  const r = String(c.result || '').toLowerCase()
+  if (r === 'answered') return true
+  if (r === 'missed' || r === 'hangup') return false
+  return String(c.direction) === 'outbound' && (Number(c.duration) || 0) > 0
+}
+export const isInternational = (phone: string): boolean => { const d = phoneDigits(phone); return !!d && !(d.length === 11 && d.startsWith('1')) }
+async function phoneChecks(sb: any, res: { id: string; phone: string; from: string }[]): Promise<Map<string, PhoneCheck>> {
+  const out = new Map<string, PhoneCheck>()
+  if (!res.length) return out
+  const byNum = new Map<string, string[]>()
+  for (const r of res) { out.set(r.id, { ...NO_CHECK, intl: isInternational(r.phone) }); const d = phoneDigits(r.phone); if (d) byNum.set(d, (byNum.get(d) || []).concat(r.id)) }
+  const since = res.map(r => r.from).sort()[0]
+  const bump = (id: string, c: any) => {
+    const cur = out.get(id); if (!cur) return
+    const connected = cur.connected || connectedCall(c)
+    const at = String(c.call_at || '')
+    out.set(id, { ...cur, calls: cur.calls + 1, connected, lastAt: at > cur.lastAt ? at : cur.lastAt })
+  }
+  try {
+    const ids = res.map(r => r.id)
+    const seen = new Set<string>()
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data } = await sb.from('talkroute_calls').select('id,reservation_id,external_number,call_at,duration,result,direction').in('reservation_id', ids.slice(i, i + 200)).gte('call_at', since)
+      for (const c of ((data as any[]) || [])) { seen.add(String(c.id)); bump(String(c.reservation_id), c) }
+    }
+    const nums = Array.from(byNum.keys())
+    for (let i = 0; i < nums.length; i += 200) {
+      const { data } = await sb.from('talkroute_calls').select('id,reservation_id,external_number,call_at,duration,result,direction').in('external_number', nums.slice(i, i + 200)).gte('call_at', since)
+      for (const c of ((data as any[]) || [])) { if (seen.has(String(c.id))) continue; seen.add(String(c.id)); for (const id of (byNum.get(String(c.external_number || '')) || [])) bump(id, c) }
+    }
+  } catch { /* the desk works without the check */ }
+  return out
+}
+
+/**
  * WHO MAKES THESE CALLS (2026-09-21, Jon: "we can add who called").
  *
  * Talkroute names nobody on an outbound call — it attaches no events at all — so the caller has to
@@ -606,6 +656,7 @@ export type WelcomeRow = {
   callValue: string; calledBy: string; calledAt: string
   claimedBy: string; claimedAt: string
   proof: PhoneProof
+  phoneCheck: PhoneCheck
   sensitive: boolean
   due: boolean; dueToday: boolean; lastChance: boolean; closed: boolean; incomplete: boolean
   prio: number
@@ -618,6 +669,7 @@ export type PostRow = {
   done: boolean; outcome: string; attempts: number; calledBy: string; calledAt: string; callNote: string
   claimedBy: string; claimedAt: string
   proof: PhoneProof
+  phoneCheck: PhoneCheck
   closed: boolean; incomplete: boolean
 }
 export type DeskData = {
@@ -675,6 +727,7 @@ export async function loadCallsDesk(sb: any, today: string, viewDate?: string): 
     .in('reservation_id', chunk).then((r: any) => r.data || [])))).flat()
   const notes = await callNotes(sb, callIds)
   const callers = await knownCallers(sb)
+  const checks = await phoneChecks(sb, [...(arrivals || []), ...(departures || [])].map((r: any) => ({ id: String(r.id), phone: String(r.guest_phone || ''), from: addDays(String(r.check_in || today).slice(0, 10), -14) })))
   const callLog = new Map<string, CallLog>()
   for (const c of logs) callLog.set(String(c.reservation_id) + '|' + String(c.kind), c)
   const logOf = (id: any, kind: 'welcome' | 'post_checkout') => callLog.get(String(id) + '|' + kind) || null
@@ -727,6 +780,7 @@ export async function loadCallsDesk(sb: any, today: string, viewDate?: string): 
       claimedBy: (lg && lg.outcome === 'in_progress') ? String(lg.called_by || '') : '',
       claimedAt: (lg && lg.outcome === 'in_progress') ? String(lg.called_at || '') : '',
       proof: proofOf(lg, notes.get(String(r.id))),
+      phoneCheck: checks.get(String(r.id)) || { ...NO_CHECK, intl: isInternational(String(r.guest_phone || '')) },
       sensitive: truthy(fieldVal(r.custom_fields, 'sensitive')),
       // Due = inside the 72-hour window, every tier alike (Jon, 2026-09-09: "complete by the day of
       // or 72 hours in advance"). Beyond the window a mandatory call is still on the 14-day list
@@ -768,6 +822,7 @@ export async function loadCallsDesk(sb: any, today: string, viewDate?: string): 
         claimedBy: (lg && lg.outcome === 'in_progress') ? String(lg.called_by || '') : '',
         claimedAt: (lg && lg.outcome === 'in_progress') ? String(lg.called_at || '') : '',
         proof: proofOf(lg, notes.get(String(r.id))),
+        phoneCheck: checks.get(String(r.id)) || { ...NO_CHECK, intl: isInternational(String(r.guest_phone || '')) },
         closed: checkOut < backDate,
         incomplete: !!lg && lg.outcome === 'incomplete',
       }

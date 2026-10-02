@@ -37,6 +37,16 @@ export type DayCallRow = {
   note: string; noteBy: string; promised: string[]; issues: string[]; callId: string
   /** No person is credited yet (Talkroute saw the call but names nobody) — offer the credit picker. */
   uncredited: boolean
+  /**
+   * Does the phone system back this completion up? (Jon, 2026-10-02)
+   *   proven   — Talkroute closed it, or has a connected call to this guest / number
+   *   attempted— Talkroute has calls to the number but none connected (voicemail, no answer)
+   *   none     — marked done by hand and Talkroute has no call to this +1 number at all: ask about it
+   *   intl     — a non-+1 number: these go over WhatsApp, which Talkroute cannot see
+   *   open     — not completed, nothing to verify
+   */
+  verify: 'proven' | 'attempted' | 'none' | 'intl' | 'open'
+  intl: boolean
   value: number; nights: number
   recovery: { rating: number; channel: string; openDays: number; at: string } | null
   reasons: string[]
@@ -58,7 +68,9 @@ const said = (r: WelcomeRow | PostRow, logNote: string) => {
     via, talkSeconds: p.talkSeconds || 0, lastResult: p.lastResult || '',
     note: p.note || logNote || '', noteBy: p.note ? (p.noteBy || '') : (logNote ? r.calledBy : ''), promised: p.promised || [], issues: p.issues || [], callId: p.callId || '',
     uncredited: r.done && NOBODY(r.calledBy),
-  }
+    verify: !r.done ? 'open' : r.phoneCheck.intl ? 'intl' : (via === 'talkroute' || r.phoneCheck.connected) ? 'proven' : r.phoneCheck.calls > 0 ? 'attempted' : 'none',
+    intl: r.phoneCheck.intl,
+  } as const
 }
 const rec = (r: WelcomeRow | PostRow) => r.recovery ? { rating: r.recovery.rating, channel: r.recovery.channel, openDays: r.recovery.openDays, at: r.recovery.at } : null
 

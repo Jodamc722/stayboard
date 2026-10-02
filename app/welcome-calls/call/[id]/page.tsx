@@ -40,9 +40,24 @@ export default async function CallPage({ params }: { params: { id: string } }) {
     res = data || null
   }
   const intel: any = (c.intel && typeof c.intel === 'object') ? c.intel : null
-  const answered = String(c.result) === 'answered'
+  const answered = String(c.result) === 'answered' || (c.direction === 'outbound' && (Number(c.duration) || 0) > 0)
   const Icon = c.direction === 'outbound' ? PhoneOutgoing : answered ? PhoneIncoming : PhoneMissed
-  const lines = String(c.transcript || '').split('\n').filter(Boolean)
+  // Each line: optional "[m:ss] " stamp (scripts since 2026-10-02), then "Speaker N: text".
+  const lines = String(c.transcript || '').split('\n').filter(Boolean).map(l => {
+    const m = l.match(/^(?:\[(\d+:\d{2})\]\s*)?(?:Speaker (\d+):\s*)?(.*)$/)
+    return { at: m?.[1] || '', who: m?.[2] != null && m[2] !== '' ? Number(m[2]) : -1, text: m?.[3] ?? l }
+  })
+  // WHO IS WHO (Jon, 2026-10-02: "improve the Talkroute transcript"). The write-up names the staff
+  // speaker when it could tell; failing that, the side that speaks first on an outbound call is the
+  // one who picked up (the guest), and on an inbound call it is us answering.
+  const speakers = Array.from(new Set(lines.map(l => l.who).filter(n => n >= 0)))
+  const first = lines.find(l => l.who >= 0)?.who ?? 0
+  const staffNo: number | null = Number.isInteger(intel?.staffSpeaker) ? Number(intel.staffSpeaker) : (speakers.length === 2 ? (c.direction === 'outbound' ? speakers.find(n => n !== first) ?? null : first) : null)
+  const inferred = !Number.isInteger(intel?.staffSpeaker) && staffNo != null
+  const guestFirst = String(res?.guest_name || c.external_name || '').trim().split(/\s+/)[0] || 'Guest'
+  const staffName = c.caller_name && String(c.caller_name).toLowerCase() !== 'talkroute' ? String(c.caller_name).split(/\s+/)[0] : 'Stay'
+  const nameOf = (n: number) => n < 0 ? '' : staffNo == null ? `Speaker ${n + 1}` : n === staffNo ? staffName : speakers.length <= 2 ? guestFirst : `Speaker ${n + 1}`
+  const lang = String(intel?.language || '').trim()
 
   return (
     <Shell>
@@ -84,7 +99,13 @@ export default async function CallPage({ params }: { params: { id: string } }) {
           )}
 
           <section className="bg-white rounded-2xl border border-line shadow-soft p-5">
-            <h2 className="text-sm font-semibold text-ink mb-3">Transcript</h2>
+            <div className="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
+              <h2 className="text-sm font-semibold text-ink">Transcript</h2>
+              <p className="text-[11px] text-muted">
+                {lang && lang.toLowerCase() !== 'english' ? <span className="rounded bg-sky-50 text-sky-800 px-1.5 py-0.5 font-semibold mr-2">in {lang} — the note above is in English</span> : null}
+                {c.audio_seconds ? `${dur(Number(c.audio_seconds))} of audio` : ''}
+              </p>
+            </div>
             {lines.length === 0 ? (
               <p className="text-sm text-muted">
                 {c.transcript_status === 'pending' ? 'Being transcribed — check back in a few minutes.'
@@ -95,20 +116,31 @@ export default async function CallPage({ params }: { params: { id: string } }) {
                   : 'No transcript.'}
               </p>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 {lines.map((l, i) => {
-                  const m = l.match(/^Speaker (\d+):\s*(.*)$/)
-                  const who = m ? Number(m[1]) : -1
-                  const text = m ? m[2] : l
+                  const us = staffNo != null && l.who === staffNo
+                  const name = nameOf(l.who)
+                  const prevSame = i > 0 && lines[i - 1].who === l.who
                   return (
-                    <div key={i} className="flex gap-3">
-                      <span className={`shrink-0 text-[11px] font-semibold mt-0.5 w-16 ${who === 0 ? 'text-brand-600' : 'text-slate-500'}`}>{who >= 0 ? `Speaker ${who}` : ''}</span>
-                      <p className="text-[14px] text-ink leading-relaxed">{text}</p>
+                    <div key={i} className={'flex ' + (us ? 'justify-end' : 'justify-start')}>
+                      <div className={'max-w-[85%] rounded-2xl px-3.5 py-2 ' + (us ? 'bg-brand-50 text-ink rounded-br-md' : 'bg-slate-100 text-ink rounded-bl-md')}>
+                        {!prevSame && (name || l.at) ? (
+                          <p className={'text-[10.5px] font-semibold mb-0.5 flex items-center gap-2 ' + (us ? 'text-brand-700' : 'text-slate-500')}>
+                            <span>{name}</span>{l.at ? <span className="font-normal tabular-nums opacity-70">{l.at}</span> : null}
+                          </p>
+                        ) : (l.at ? <p className="text-[10px] tabular-nums opacity-50 mb-0.5">{l.at}</p> : null)}
+                        <p className="text-[14px] leading-relaxed whitespace-pre-wrap">{l.text}</p>
+                      </div>
                     </div>
                   )
                 })}
                 <p className="text-[11px] text-muted pt-2 border-t border-line">
-                  Speakers are numbered, not named — Talkroute does not label them. {c.audio_seconds ? `${dur(Number(c.audio_seconds))} of audio.` : ''}
+                  {staffNo == null
+                    ? 'Talkroute does not label speakers and the write-up could not tell them apart — they are numbered.'
+                    : inferred
+                      ? `Speakers worked out from who spoke first (${c.direction === 'outbound' ? 'the guest picks up an outbound call' : 'we answer an inbound call'}) — the names may be swapped on an unusual call.`
+                      : 'Speakers named from the write-up of the call.'}
+                  {' '}Times are minutes into the call.
                 </p>
               </div>
             )}

@@ -37,6 +37,7 @@ type Row = {
   callValue: string; calledBy: string; calledAt: string
   claimedBy: string; claimedAt: string
   proof: Proof
+  phoneCheck?: PhoneCheck
   sensitive: boolean
   due: boolean; dueToday: boolean; lastChance: boolean; closed: boolean; incomplete: boolean
   prio: number
@@ -49,8 +50,11 @@ type OutRow = {
   done: boolean; outcome: string; attempts: number; calledBy: string; calledAt: string; callNote: string
   claimedBy: string; claimedAt: string
   proof: Proof
+  phoneCheck?: PhoneCheck
   closed: boolean; incomplete: boolean
 }
+/** Whether Talkroute has any call to this guest / number at all (lib/call-desk phoneChecks). */
+type PhoneCheck = { intl: boolean; calls: number; connected: boolean; lastAt: string }
 // TALKROUTE (2026-09-21). What the phone system last saw for this call: the source of the outcome
 // ('talkroute' when the call record proved it, 'manual' / '' when a person pressed a button), the
 // last attempt and its result, and how long the guest actually talked.
@@ -60,11 +64,20 @@ type Proof = {
 }
 /** How the call was proven and whether it was written up (Jon, 2026-09-25: "see if called with
  *  Talkroute, who completed and if transcribed"). Three small tags, only when they apply. */
-function ProofTags({ p, done, by }: { p: Proof; done: boolean; by?: string }) {
+function ProofTags({ p, done, by, pc }: { p: Proof; done: boolean; by?: string; pc?: PhoneCheck }) {
   const tr = p.source === 'talkroute' || p.lastResult === 'answered' || p.talkSeconds > 0
+  // BY HAND, CHECKED AGAINST THE PHONE SYSTEM (Jon, 2026-10-02: "verify that when it's marked completed
+  // there's a Talkroute call associated with that number. If not, inform me"). International numbers
+  // are called over WhatsApp, which Talkroute never sees — so those are never questioned.
+  const byHand = done && !tr
+  const verdict = !byHand ? '' : pc?.intl ? 'intl' : pc?.connected ? 'proven' : (pc?.calls || 0) > 0 ? 'attempted' : 'none'
   return (<>
     {tr && <Tag tone="brand" title={`Talkroute saw this call${p.lastAttemptAt ? ' · ' + day(p.lastAttemptAt) : ''}${p.talkSeconds ? ' · talked ' + talkMins(p.talkSeconds) : ''}`}>Talkroute{p.talkSeconds ? ` ${talkMins(p.talkSeconds)}` : ''}</Tag>}
-    {done && !tr && <Tag title="Marked complete by hand, not seen by the phone system">By hand</Tag>}
+    {byHand && verdict === 'proven' && <Tag title="Marked complete by hand — and Talkroute has a connected call to this guest's number">By hand · Talkroute agrees</Tag>}
+    {byHand && verdict === 'attempted' && <Tag tone="amber" title="Marked complete by hand; Talkroute has calls to this number but none that connected">By hand · Talkroute: tried, not connected</Tag>}
+    {byHand && verdict === 'none' && <Tag tone="rose" title="Marked complete by hand and Talkroute has NO call to this guest's number in the last two weeks — made from a personal phone, or not made?">By hand · no Talkroute call</Tag>}
+    {byHand && verdict === 'intl' && <Tag title="Marked complete by hand — international number, called over WhatsApp, which Talkroute cannot see">By hand · intl (WhatsApp)</Tag>}
+    {!done && pc?.intl && <Tag title="International number — call over WhatsApp, then log it here (Talkroute will not see it)">intl · WhatsApp</Tag>}
     {p.callId
       ? <Tag tone="emerald" title={'Transcribed and written up' + (p.noteBy ? ' · ' + who(p.noteBy) : '')}>Transcribed</Tag>
       : (tr && p.talkSeconds > 0 ? <Tag tone="amber" title="The phone system saw a conversation but no transcript has been written up yet">Not transcribed</Tag> : null)}
@@ -881,7 +894,7 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
                   {owes && <Tag tone="amber">Owes {money(r.status.balance)}</Tag>}
                   {r.sensitive && <Tag tone="rose">Sensitive</Tag>}
                   {r.done && <Tag tone="emerald">{r.outcome === 'voicemail' ? 'Voicemail' : 'Reached'}</Tag>}
-                  <ProofTags p={r.proof} done={r.done} by={r.calledBy} />
+                  <ProofTags p={r.proof} done={r.done} by={r.calledBy} pc={r.phoneCheck} />
                   {live && r.proof.lastResult !== 'answered' && r.attempts > 0 && <Tag>No answer ×{r.attempts}</Tag>}
                   {live && r.claimedBy && <Tag tone="amber">{mine ? 'You have it' : `Taken · ${r.claimedBy}`}</Tag>}
                   {r.closed && !r.done && <Tag>Closed · missed</Tag>}
@@ -957,7 +970,7 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
                   </span>
                   {r.reasons.map(k => { const m = REASON_TAG[k]; return m ? <Tag key={k} tone={m.tone}>{m.label}{k === 'value' && r.value ? ` ${money(r.value)}` : ''}</Tag> : null })}
                   {r.done && <Tag tone={r.outcome === 'issue' ? 'rose' : 'emerald'}>{r.outcome === 'issue' ? 'Issue raised' : 'All good'}</Tag>}
-                  <ProofTags p={r.proof} done={r.done} by={r.calledBy} />
+                  <ProofTags p={r.proof} done={r.done} by={r.calledBy} pc={r.phoneCheck} />
                   {live && r.proof.lastResult !== 'answered' && r.attempts > 0 && <Tag>No answer ×{r.attempts}</Tag>}
                   {live && r.claimedBy && <Tag tone="amber">Taken · {r.claimedBy}</Tag>}
                   {r.closed && !r.done && <Tag>Closed · missed</Tag>}

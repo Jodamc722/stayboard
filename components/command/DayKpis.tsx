@@ -24,7 +24,7 @@
 // disagree. Nothing here completes a Breezeway task; a call is logged the way the Calls desk logs it.
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { ExternalLink, UserPlus, Loader2, Phone, PhoneCall, ChevronUp } from 'lucide-react'
+import { ExternalLink, UserPlus, Loader2, Phone, PhoneCall, PhoneOff, ChevronUp } from 'lucide-react'
 import { Tag, type Tone } from '@/components/lean'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import type { CommandDay, NextItem, TaskRow } from '@/lib/command-day'
@@ -161,6 +161,9 @@ function DayCallRowView({ r, canLog, callers, onChanged }: { r: DayCallRow; canL
           {r.via === 'talkroute' && <Tag tone="brand" title={viaTitle}><PhoneCall size={10} /> Talkroute{r.talkSeconds ? ' · ' + mins(r.talkSeconds) : ''}</Tag>}
           {r.via !== 'talkroute' && <Tag tone="slate" title={viaTitle}>{r.via === 'manual' ? 'logged by hand' : 'ticked in Guesty'}</Tag>}
           {hasNotes && <Tag tone={r.issues?.length ? 'rose' : 'slate'} title="There are notes from this call">notes</Tag>}
+          {r.verify === 'none' && <Tag tone="rose" title="Marked done by hand, but Talkroute has no call to this guest's number in the last two weeks — was it made from a personal phone, or not made?"><PhoneOff size={10} /> no Talkroute call</Tag>}
+          {r.verify === 'attempted' && <Tag tone="amber" title="Talkroute has calls to this number, but none that connected — the completion may be a voicemail or a WhatsApp follow-up">Talkroute: tried, not connected</Tag>}
+          {r.intl && <Tag tone="slate" title="International number — calls go over WhatsApp, which Talkroute cannot see, so this one is taken on the caller's word">intl · WhatsApp</Tag>}
           {recTag}
         </>}
         meta={[r.unit, when, by ? 'by ' + by : (r.uncredited && !credited ? 'nobody credited yet' : ''), r.calledAt ? 'at ' + hhmm(r.calledAt) : ''].filter(Boolean).join(' · ')}
@@ -184,6 +187,7 @@ function DayCallRowView({ r, canLog, callers, onChanged }: { r: DayCallRow; canL
         {r.mandatory && !r.recovery && <Tag tone="violet" title={'Mandatory — ' + r.tier + ' tier'}>{r.tier}</Tag>}
         {recTag}
         {r.value >= 1000 && <Tag tone="slate" title={money(r.value) + ' booking'}>{money(r.value)}</Tag>}
+        {r.intl && <Tag tone="slate" title="International number — call over WhatsApp (Talkroute will not see it), then log it here">intl · WhatsApp</Tag>}
         {r.claimedBy && <Tag tone="amber" title="Somebody has claimed this call">{r.claimedBy.split(' ')[0]} on it</Tag>}
         {r.attempts > 0 && <Tag tone="slate" title="Attempts so far">{r.attempts} tr{r.attempts === 1 ? 'y' : 'ies'}</Tag>}
       </>}
