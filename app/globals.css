@@ -409,7 +409,9 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   }
   .lh-head-right::-webkit-scrollbar { display: none; }
   .lh-head-right > * { flex: 0 0 auto; }
-  .lh-tabs { flex-wrap: nowrap; }
+  /* The strip keeps one line and scrolls; anything beside it (a sentiment pill) drops under it. */
+  .lh-tabs { flex-wrap: wrap; }
+  .lh-tabs > .lh-tabs-strip { flex: 1 1 100%; }
   .lh-tabs-strip, :root:not([data-theme="legacy"]) .lh-tabs-strip {
     flex-wrap: nowrap; overflow-x: auto; max-width: 100%; scrollbar-width: none;
     -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
