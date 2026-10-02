@@ -464,38 +464,57 @@ function ChecklistRow({ r, canTick, onTicked, lane }: { r: CkRow; canTick: boole
 // already completed, they should be auto-marked complete … dynamic, not static"). Every open item,
 // late first then by time, each with its live count; the done ones (auto or by hand) fold under one
 // line. Holds its spot before the read lands and when nothing is scheduled.
+// A DROPDOWN, PENDING-BY-TIME (Jon, 2026-10-02: "make checklist dropdown and show the pending ones
+// only based on time"). Collapsed — the default — it shows only what is pending NOW: late items and
+// items due inside the next two hours (an untimed item counts once its part of the day has begun).
+// The header is the toggle; open, it adds the rest of today in time order and the done ones.
+const NOW_WINDOW_MIN = 120
+const BAND_START: Record<string, number> = { morning: 0, midday: 11 * 60, afternoon: 14 * 60, evening: 17 * 60 }
 function ChecklistStrip({ ck, onTicked }: { ck: Ck | undefined; onTicked: () => void }) {
-  const [showDone, setShowDone] = useState(false)
-  const head = (txt: ReactNode, right?: ReactNode) => (
+  const [open, setOpen] = useState(false)
+  const head = (txt: ReactNode, right?: ReactNode, toggle?: boolean) => (
     <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-2 flex-wrap">
-      <ListChecks size={13} className="text-brand-600" /> Checklist
+      {toggle
+        ? <button onClick={() => setOpen(o => !o)} aria-expanded={open} className="inline-flex items-center gap-1.5 hover:text-brand-700" title={open ? 'Show only what is pending now' : 'Show the whole day'}><ListChecks size={13} className="text-brand-600" /> Checklist {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}</button>
+        : <><ListChecks size={13} className="text-brand-600" /> Checklist</>}
       <span className="normal-case tracking-normal font-medium text-muted">— {txt}</span>
       <span className="ml-auto inline-flex items-center gap-2">{right}<Link href="/checklist" prefetch={false} className="text-[11px] font-semibold text-brand-700 hover:underline">Checklist →</Link></span>
     </h2>
   )
   if (!ck || !ck.ok || !ck.progress?.total) return <section>{head(!ck ? 'reading…' : ck.ok ? 'nothing scheduled today' : 'could not read the checklist')}</section>
-  const open = ck.rows.filter(r => !r.done)
-  const late = open.filter(r => r.late).sort((a, b) => (a.in_minutes ?? 0) - (b.in_minutes ?? 0))
-  const soon = open.filter(r => !r.late).sort((a, b) => (a.in_minutes ?? 9e9) - (b.in_minutes ?? 9e9))
+  const nowMin = (() => { const d = new Date(); const et = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hour12: false }).formatToParts(d); const h = Number(et.find(x => x.type === 'hour')?.value || 0) % 24, m = Number(et.find(x => x.type === 'minute')?.value || 0); return h * 60 + m })()
+  const pending = ck.rows.filter(r => !r.done)
+  const isNow = (r: CkRow) => r.late || (r.in_minutes != null ? r.in_minutes <= NOW_WINDOW_MIN : nowMin >= (BAND_START[r.band] ?? 0))
+  const byTime = (a: CkRow, b: CkRow) => (a.in_minutes ?? 9e9) - (b.in_minutes ?? 9e9)
+  const now = pending.filter(isNow).sort((a, b) => (Number(b.late) - Number(a.late)) || byTime(a, b))
+  const later = pending.filter(r => !isNow(r)).sort(byTime)
+  const late = now.filter(r => r.late).length
   const done = ck.rows.filter(r => r.done)
   const auto = done.filter(r => r.auto).length
   const p = ck.progress
-  const txt = open.length ? (late.length ? `${late.length} late · ` : '') + `${open.length} to do` + (done.length ? ` · ${done.length} done${auto ? ` (${auto} by itself)` : ''}` : '') : `everything done${auto ? ` · ${auto} ticked by itself` : ''}`
+  const txt = now.length
+    ? (late ? `${late} late · ` : '') + `${now.length} pending now` + (later.length ? ` · ${later.length} later today` : '')
+    : later.length ? `nothing due right now · ${later.length} later today` : `everything done${auto ? ` · ${auto} ticked by itself` : ''}`
   return (
     <section>
       {head(txt, <>
         <span className="w-16 h-1.5 rounded-full bg-line overflow-hidden"><span className={'block h-full ' + (p.late ? 'bg-amber-500' : 'bg-emerald-500')} style={{ width: p.pct + '%' }} /></span>
         <span className={'text-[11px] font-semibold tabular-nums ' + (p.late ? 'text-amber-700' : 'text-emerald-700')}>{p.done}/{p.total}</span>
-      </>)}
-      <div className={LIST}>
-        {[...late, ...soon].map(r => <div key={'cks:' + r.id}><ChecklistRow r={r} canTick={!!ck.canTick} onTicked={onTicked} /></div>)}
-        {done.length > 0 && (
-          <button onClick={() => setShowDone(v => !v)} className="w-full text-left px-3 py-2 text-[12px] font-semibold text-muted hover:bg-app inline-flex items-center gap-1" title={showDone ? 'Hide what is done' : 'Show what is done'}>
-            {showDone ? <ChevronUp size={13} /> : <ChevronDown size={13} />} {done.length} done{auto ? ` · ${auto} by itself` : ''}
-          </button>
-        )}
-        {showDone && done.map(r => <div key={'ckd:' + r.id}><ChecklistRow r={r} canTick={!!ck.canTick} onTicked={onTicked} /></div>)}
-      </div>
+      </>, true)}
+      {(now.length > 0 || open) && (
+        <div className={LIST}>
+          {now.map(r => <div key={'cks:' + r.id}><ChecklistRow r={r} canTick={!!ck.canTick} onTicked={onTicked} /></div>)}
+          {open && later.length > 0 && <div className="px-3 py-1.5 text-[10.5px] font-bold uppercase tracking-wider text-muted bg-app/60">Later today · {later.length}</div>}
+          {open && later.map(r => <div key={'ckl:' + r.id}><ChecklistRow r={r} canTick={!!ck.canTick} onTicked={onTicked} /></div>)}
+          {open && done.length > 0 && <div className="px-3 py-1.5 text-[10.5px] font-bold uppercase tracking-wider text-muted bg-app/60">Done · {done.length}{auto ? ` · ${auto} by itself` : ''}</div>}
+          {open && done.map(r => <div key={'ckd:' + r.id}><ChecklistRow r={r} canTick={!!ck.canTick} onTicked={onTicked} /></div>)}
+          {!open && (later.length > 0 || done.length > 0) && (
+            <button onClick={() => setOpen(true)} className="w-full text-left px-3 py-2 text-[12px] font-semibold text-muted hover:bg-app inline-flex items-center gap-1" title="Show the whole day">
+              <ChevronDown size={13} /> {[later.length ? `${later.length} later today` : '', done.length ? `${done.length} done` : ''].filter(Boolean).join(' · ')}
+            </button>
+          )}
+        </div>
+      )}
     </section>
   )
 }
