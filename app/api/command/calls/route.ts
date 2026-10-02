@@ -28,6 +28,15 @@ export type DayCallRow = {
   tier: string; mandatory: boolean
   done: boolean; outcome: string; attempts: number; calledBy: string; calledAt: string
   claimedBy: string
+  // WHAT HAPPENED ON THE CALL (Jon, 2026-10-02: "I should be able to see notes if it's been completed …
+  // if it was completed via Talkroute, mention it"). via = 'talkroute' when the phone system proved the
+  // call, 'manual' when a person pressed a button, '' when the Welcome Call field was ticked in Guesty.
+  via: 'talkroute' | 'manual' | ''
+  talkSeconds: number; lastResult: string
+  /** The written-up call: the transcript summary when there is one, else the note typed on the log. */
+  note: string; noteBy: string; promised: string[]; issues: string[]; callId: string
+  /** No person is credited yet (Talkroute saw the call but names nobody) — offer the credit picker. */
+  uncredited: boolean
   value: number; nights: number
   recovery: { rating: number; channel: string; openDays: number; at: string } | null
   reasons: string[]
@@ -37,13 +46,26 @@ export type DayCalls = {
   welcome: { needed: number; done: number; todayNeeded: number; todayDone: number; rows: DayCallRow[] }
   recovery: { needed: number; done: number; pre: number; post: number; rows: DayCallRow[] }
   recoveryFailed: boolean
+  /** Names to offer when crediting a call; the signed-in person can log and credit. */
+  callers: string[]; canEdit: boolean
 }
 
+const NOBODY = (by: string) => !by || by.toLowerCase() === 'talkroute'
+const said = (r: WelcomeRow | PostRow, logNote: string) => {
+  const p = r.proof
+  const via: DayCallRow['via'] = p.source === 'talkroute' || p.talkSeconds > 0 ? 'talkroute' : (r.outcome ? 'manual' : '')
+  return {
+    via, talkSeconds: p.talkSeconds || 0, lastResult: p.lastResult || '',
+    note: p.note || logNote || '', noteBy: p.note ? (p.noteBy || '') : (logNote ? r.calledBy : ''), promised: p.promised || [], issues: p.issues || [], callId: p.callId || '',
+    uncredited: r.done && NOBODY(r.calledBy),
+  }
+}
 const rec = (r: WelcomeRow | PostRow) => r.recovery ? { rating: r.recovery.rating, channel: r.recovery.channel, openDays: r.recovery.openDays, at: r.recovery.at } : null
 
 export async function GET() {
   const gate = await requireLevel('welcome-calls', 'view')
   if (!gate.ok) return gate.res
+  const canEdit = (await requireLevel('welcome-calls', 'edit')).ok
   const today = ymdET(new Date())
   try {
     const d = await loadCallsDesk(supabaseAdmin(), today)
@@ -52,14 +74,14 @@ export async function GET() {
       id: r.id, kind: r.recovery ? 'pre' : 'welcome', guest: r.guest, unit: r.listing, building: r.building, listingId: r.listingId,
       date: r.check_in, today: r.check_in === today, tier: r.tier, mandatory: r.mandatory,
       done: r.done, outcome: r.outcome, attempts: r.attempts, calledBy: r.calledBy, calledAt: r.calledAt, claimedBy: r.claimedBy,
-      value: r.value, nights: r.status?.nights || 0, recovery: rec(r), reasons: [],
+      value: r.value, nights: r.status?.nights || 0, recovery: rec(r), reasons: [], ...said(r, ''),
     }))
     const post = d.outRows.filter(r => !r.closed)
     const postRows: DayCallRow[] = post.map(r => ({
       id: r.id, kind: 'post', guest: r.guest, unit: r.listing, building: r.building, listingId: r.listingId,
       date: r.check_out, today: r.check_out === today, tier: 'recovery', mandatory: true,
       done: r.done, outcome: r.outcome, attempts: r.attempts, calledBy: r.calledBy, calledAt: r.calledAt, claimedBy: r.claimedBy,
-      value: r.value, nights: r.nights, recovery: rec(r), reasons: r.reasons,
+      value: r.value, nights: r.nights, recovery: rec(r), reasons: r.reasons, ...said(r, r.callNote),
     }))
     const preRec = welcomeRows.filter(r => r.kind === 'pre')
     const recoveryRows = preRec.concat(postRows)
@@ -77,6 +99,7 @@ export async function GET() {
         rows: recoveryRows.sort(sortRows),
       },
       recoveryFailed: d.recoveryFailed,
+      callers: d.callers, canEdit,
     }
     return NextResponse.json(out)
   } catch (e: any) {

@@ -10,6 +10,8 @@ import { watchSupportDraft, checkSupportDrafts, sweepSentInGmail, sweepGuestyFla
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
+// The reconcile asks Gmail once per unsent notice; the platform default cut it off mid-sweep.
+export const maxDuration = 60
 
 // The mailbox the desk actually works out of. Its Google connection must hold the drafts scope.
 const SUPPORT_FROM = 'support@stay-hospitality.com'

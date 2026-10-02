@@ -22,9 +22,9 @@
 //
 // Numbers come from the same reads the rest of the page uses, so the strip and the lanes never
 // disagree. Nothing here completes a Breezeway task; a call is logged the way the Calls desk logs it.
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { ExternalLink, UserPlus, Loader2, Phone, ChevronUp } from 'lucide-react'
+import { ExternalLink, UserPlus, Loader2, Phone, PhoneCall, ChevronUp } from 'lucide-react'
 import { Tag, type Tone } from '@/components/lean'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import type { CommandDay, NextItem, TaskRow } from '@/lib/command-day'
@@ -91,11 +91,45 @@ function MaintRow({ t, roster, canAssign: _canAssign, onChanged }: { t: TaskRow;
 }
 
 // ── a call row (welcome or recovery), logged the way the Calls desk logs it ────────────────────
-function DayCallRowView({ r, canLog, onChanged }: { r: DayCallRow; canLog: boolean; onChanged: () => void }) {
+const mins = (sec: number) => sec < 60 ? sec + 's' : Math.round(sec / 60) + ' min'
+const hhmm = (iso: string) => { try { return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }) } catch { return '' } }
+
+/** "Who called?" — a name from the list, Me, or a typed name. Credits a completed call. */
+function CreditPicker({ callers, onPick, busy }: { callers: string[]; onPick: (name: string) => void; busy: boolean }) {
+  const [other, setOther] = useState(false)
+  const [typed, setTyped] = useState('')
+  if (other) return (
+    <form className="flex items-center gap-1" onSubmit={e => { e.preventDefault(); if (typed.trim()) onPick(typed.trim()) }}>
+      <input autoFocus value={typed} onChange={e => setTyped(e.target.value)} placeholder="Name" className="text-[12px] border border-line rounded-md px-2 py-1 w-28" maxLength={60} />
+      <button type="submit" disabled={busy || !typed.trim()} className={DARK}>{busy ? <Loader2 size={12} className="animate-spin" /> : null}Credit</button>
+      <button type="button" onClick={() => setOther(false)} className={GHOST}>Cancel</button>
+    </form>
+  )
+  return (
+    <select disabled={busy} value="" onChange={e => { const v = e.target.value; if (v === '__other') setOther(true); else if (v) onPick(v) }}
+      className="text-[12px] border border-line rounded-md px-2 py-1 bg-white max-w-[160px]" title="Talkroute saw this call but names nobody — who made it?">
+      <option value="">{busy ? 'Crediting…' : 'Who called? (credit)'}</option>
+      <option value="__me">Me</option>
+      {callers.map(c => <option key={c} value={c}>{c}</option>)}
+      <option value="__other">Someone else…</option>
+    </select>
+  )
+}
+
+function DayCallRowView({ r, canLog, callers, onChanged }: { r: DayCallRow; canLog: boolean; callers: string[]; onChanged: () => void }) {
   const [busy, setBusy] = useState('')
   const [done, setDone] = useState('')
+  const [credited, setCredited] = useState('')
   const [err, setErr] = useState('')
   const isPost = r.kind === 'post'
+  const credit = async (name: string) => {
+    setBusy('credit'); setErr('')
+    try {
+      const j = await post('/api/guest-calls/credit', { reservationId: r.id, kind: isPost ? 'post_checkout' : 'welcome', name: name === '__me' ? '' : name })
+      setCredited(String(j.by || name)); onChanged()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy('')
+  }
   const log = async (outcome: string) => {
     setBusy(outcome); setErr('')
     try {
@@ -110,10 +144,38 @@ function DayCallRowView({ r, canLog, onChanged }: { r: DayCallRow; canLog: boole
   const B = (o: string, label: string, title: string, primary?: boolean) => (
     <button onClick={() => log(o)} disabled={!!busy} className={primary ? DARK : GHOST} title={title}>{busy === o ? <Loader2 size={12} className="animate-spin" /> : null}{label}</button>
   )
-  const shown = done || (r.done ? r.outcome : '')
+  const shown = done || (r.done ? (r.outcome || 'done') : '')   // done with no log = ticked in Guesty
   if (shown) {
-    const lbl = shown === 'no_answer' ? 'no answer — try again' : shown === 'voicemail' ? 'voicemail left' : shown === 'issue' ? 'called — issue raised' : shown === 'happy' ? 'called — happy' : 'called'
-    return <Row title={r.guest} tags={<><Tag tone={shown === 'no_answer' ? 'amber' : 'emerald'} title={r.calledBy ? 'By ' + r.calledBy : ''}>{lbl}</Tag>{recTag}</>} meta={[r.unit, when, r.calledBy].filter(Boolean).join(' · ')} />
+    // A COMPLETED CALL SAYS WHAT HAPPENED (Jon, 2026-10-02): the outcome, whether Talkroute proved it
+    // (and how long they talked), who gets the credit, and the notes — the transcript write-up when
+    // there is one, else what the caller typed. A Talkroute-closed call with nobody credited offers
+    // the picker right here, so the person who made it gets it on their scorecard.
+    const lbl = shown === 'no_answer' ? 'no answer — try again' : shown === 'voicemail' ? 'voicemail left' : shown === 'issue' ? 'reached — issue raised' : shown === 'happy' ? 'reached — happy' : shown === 'reached' ? 'reached' : 'called'
+    const viaTitle = r.via === 'talkroute' ? 'Talkroute saw this call' + (r.lastResult ? ' · ' + r.lastResult : '') + (r.talkSeconds ? ' · talked ' + mins(r.talkSeconds) : '') : r.via === 'manual' ? 'Logged by hand in Lighthouse' : 'Welcome Call field ticked in Guesty'
+    const by = credited || (r.calledBy && r.calledBy.toLowerCase() !== 'talkroute' ? r.calledBy : '')
+    const hasNotes = !!(r.note || r.promised?.length || r.issues?.length)
+    return (
+      <Row title={r.guest}
+        tags={<>
+          <Tag tone={shown === 'no_answer' ? 'amber' : 'emerald'} title={by ? 'By ' + by : ''}>{lbl}</Tag>
+          {r.via === 'talkroute' && <Tag tone="brand" title={viaTitle}><PhoneCall size={10} /> Talkroute{r.talkSeconds ? ' · ' + mins(r.talkSeconds) : ''}</Tag>}
+          {r.via !== 'talkroute' && <Tag tone="slate" title={viaTitle}>{r.via === 'manual' ? 'logged by hand' : 'ticked in Guesty'}</Tag>}
+          {hasNotes && <Tag tone={r.issues?.length ? 'rose' : 'slate'} title="There are notes from this call">notes</Tag>}
+          {recTag}
+        </>}
+        meta={[r.unit, when, by ? 'by ' + by : (r.uncredited && !credited ? 'nobody credited yet' : ''), r.calledAt ? 'at ' + hhmm(r.calledAt) : ''].filter(Boolean).join(' · ')}
+        actions={r.uncredited && !credited && canLog ? <CreditPicker callers={callers} onPick={credit} busy={busy === 'credit'} /> : undefined}
+        err={err}>
+        {hasNotes && (
+          <div className="text-[12px] text-ink/80 space-y-0.5 mt-1">
+            {r.note && <p>{r.note}{r.noteBy ? <span className="text-muted"> — {r.noteBy}</span> : null}</p>}
+            {r.promised?.length ? <p><b>We promised:</b> {r.promised.join(' · ')}</p> : null}
+            {r.issues?.length ? <p><b className="text-rose-700">Issues:</b> {r.issues.join(' · ')}</p> : null}
+            {r.callId && <Link href={'/welcome-calls/call/' + r.callId} className="text-brand-600 hover:underline font-semibold">Open the transcript →</Link>}
+          </div>
+        )}
+      </Row>
+    )
   }
   return (
     <Row dot={r.today ? (r.mandatory ? 'rose' : 'amber') : null} title={r.guest} err={err}
@@ -210,6 +272,17 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const rvWait = rvAll.filter(r => !r.hasReply && !r.dismissed)
   const rvLow = rvWait.filter(r => { const f = fiveStar(r.rating, r.channel); return f != null && f <= 3 })
   const ntQ = useCachedFetch<{ ok?: boolean; today?: NoticeT[]; counts?: { toSend: number; sentToday: number; late: number; due: number; blocked: number }; error?: string }>(NOTICES_URL, { ttl: 120_000 })
+  // SENT IS CHECKED WHEN THE LIST IS OPENED (Jon, 2026-10-02: "front desk notices need to be marked sent
+  // when sent"). The Notices page reconciles Gmail on open; the Today tile did not, so a notice sent an
+  // hour ago still read "to send" here until the hourly cron. Once per page load, in the background.
+  const [ntChecked, setNtChecked] = useState(false)
+  useEffect(() => {
+    if (open !== 'notices' || ntChecked) return
+    setNtChecked(true)
+    fetch('/api/reservation-notices/draft?check=1&past=0').then(r => r.ok ? r.json() : null).then(j => {
+      if (j && (j.markedSent || j.sentSweep?.markedSent || j.guestySweep?.markedSent)) { invalidateCache(NOTICES_URL); ntQ.refresh() }
+    }).catch(() => { /* the hourly cron will */ })
+  }, [open, ntChecked, ntQ])
   const ntToday = ntQ.data?.today || []
   const ntC = ntQ.data?.counts || { toSend: 0, sentToday: 0, late: 0, due: 0, blocked: 0 }
   const [ntBusy, setNtBusy] = useState('')
@@ -337,7 +410,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
       for (const a of arrivalsInsp) out.push({ key: 'arr:' + a.reservationId, state: a.inspection === 'none' ? 'missing' : a.inspection === 'done' ? 'done' : 'open', sort: a.inspection === 'none' ? (a.today ? 0 : 2) : 8, node: <ArrivalInspectionRow a={a} create={createFor(a.reservationId)} canCreate={can.plan} onChanged={onChanged} /> })
     }
     if (open === 'maint') for (const x of maint) out.push({ key: x.taskId, state: x.state === 'done' ? 'done' : x.state === 'running' ? 'running' : !x.who ? 'unassigned' : 'open', taskId: x.taskId, who: x.who, sort: x.state === 'done' ? 9 : (x.prio === 'urgent' ? 0 : x.prio === 'high' ? 1 : 3) + (!x.who ? 0 : 0.5) + (x.late ? -0.25 : 0) + (x.state === 'running' ? 2 : 0), node: <MaintRow t={x} roster={roster} canAssign={can.assign} onChanged={onChanged} /> })
-    if (open === 'welcome' && w) for (const r of w.rows) out.push({ key: r.id, state: r.done ? 'done' : r.today ? 'today' : 'open', sort: r.done ? 9 : r.today ? (r.mandatory ? 0 : 1) : 3, node: <DayCallRowView r={r} canLog={can.calls} onChanged={changed} /> })
+    if (open === 'welcome' && w) for (const r of w.rows) out.push({ key: r.id, state: r.done ? 'done' : r.today ? 'today' : 'open', sort: r.done ? 9 : r.today ? (r.mandatory ? 0 : 1) : 3, node: <DayCallRowView r={r} canLog={can.calls || !!calls?.canEdit} callers={calls?.callers || []} onChanged={changed} /> })
     if (open === 'glitches') for (const g of gl.rows) out.push({ key: 'gl:' + g.id, state: g.overdue ? 'overdue' : !g.hasTask ? 'notask' : 'covered', sort: g.overdue ? 0 : !g.hasTask ? 1 : 3, node: <GlitchRow g={g} canEdit={can.plan} onChanged={onChanged} /> })
     if (open === 'claims') for (const c of cl.rows) out.push({ key: 'cl:' + c.id, state: c.daysLeft != null && c.daysLeft <= 3 ? 'due' : 'ok', sort: c.daysLeft ?? 999, node: <Row dot={c.daysLeft != null && c.daysLeft <= 3 ? 'rose' : null} title={c.unit + (c.guest ? ' · ' + c.guest : '')} tags={<>{<Tag tone={c.daysLeft != null && c.daysLeft <= 3 ? 'rose' : 'slate'}>{c.daysLeft != null ? (c.daysLeft <= 0 ? 'due today' : c.daysLeft + 'd left') : c.stageLabel}</Tag>}{c.amount != null && <Tag>{money(c.amount)}</Tag>}</>} meta={[c.stageLabel, c.waitingOn ? 'waiting on ' + c.waitingOn : ''].filter(Boolean).join(' · ')} actions={<Link href={'/claims/' + c.id} prefetch={false} className={GHOST}>Open</Link>} /> })
     if (open === 'checklist') for (const r of ckRows) out.push({ key: 'ck:' + r.id, state: r.done ? 'done' : r.late ? 'late' : r.in_minutes != null && r.in_minutes <= 60 ? 'soon' : 'later', sort: r.done ? 9 : r.late ? 0 : (r.in_minutes ?? 9999) / 1000 + 1, node: <Row dot={r.late ? 'rose' : null} title={r.title} tags={<>{r.late ? <Tag tone="rose">late</Tag> : r.in_minutes != null && !r.done && r.in_minutes <= 60 ? <Tag tone="amber">in {r.in_minutes}m</Tag> : null}{r.owner_role ? <Tag>{r.owner_role}</Tag> : null}{r.done ? <Tag tone="emerald">done · {String(r.done_by || '').split(/[\s@]/)[0]}</Tag> : null}</>} meta={r.by_time ? 'by ' + clock12(r.by_time) : 'anytime today'} actions={<>{r.link && !r.done && <Link href={r.link} prefetch={false} className={GHOST}>Open</Link>}{!r.done && ckQ.data?.canTick && <button onClick={() => tickCk(r.id)} disabled={ckBusy === r.id} className={DARK}>{ckBusy === r.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button>}</>} /> })
@@ -358,7 +431,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     if (open === 'blocked') for (const r of blRuns) out.push({ key: 'bl:' + r.listingId + r.from, state: r.live ? 'live' : r.startsInDays <= 7 ? 'soon' : 'later', sort: r.live ? 0 : r.startsInDays, node: <Row dot={r.live ? 'rose' : null} title={r.unit} tags={<><Tag>{r.building}</Tag><Tag tone={r.live ? 'rose' : r.startsInDays <= 7 ? 'amber' : 'slate'}>{r.live ? 'off now' : 'in ' + r.startsInDays + 'd'}</Tag><Tag>{r.nights}{r.openEnded ? '+' : ''} night{r.nights === 1 ? '' : 's'}</Tag></>} meta={[r.from.slice(5) + ' → ' + (r.openEnded ? '?' : r.to.slice(5)), r.reason, r.note].filter(Boolean).join(' · ')} actions={<Link href="/blocked" prefetch={false} className={GHOST}>Manage</Link>} /> })
     if (open === 'channels') for (const l of chBad) out.push({ key: 'ch:' + l.id, state: l.verdict === 'missing' ? 'missing' : 'hard', sort: l.verdict === 'missing' ? 2 : 0, node: <Row dot={l.verdict !== 'missing' ? 'rose' : null} title={l.name} tags={<><Tag>{l.building}</Tag><Tag tone={l.verdict === 'missing' ? 'amber' : 'rose'}>{l.verdict}</Tag>{l.missingMajor.map(k => <Tag key={k}>not on {k.replace(/airbnb2?/i, 'Airbnb').replace(/bookingcom/i, 'Booking.com')}</Tag>)}</>} meta={Object.entries(l.cells || {}).filter(([, c]) => c.verdict !== 'live').map(([k, c]) => k + ': ' + (c.status || c.verdict)).join(' · ')} actions={<Link href="/channels" prefetch={false} className={GHOST}>Channels</Link>} /> })
     if (open === 'unpaid') for (const r of unpaidRows) out.push({ key: 'unpaid:' + r.id, state: r.tracking.status, sort: (r.bucket === 'in_house' ? 0 : r.bucket === 'today' ? 1 : 2) + (r.tracking.status === 'open' ? 0 : 0.5), node: <UnpaidRow r={r} today={unpaidQ.data?.today || d.today} canEdit={!!unpaidQ.data?.canEdit} onPatch={onUnpaidPatch} simple /> })
-    if (open === 'recovery' && rc) for (const r of rc.rows) out.push({ key: r.kind + r.id, state: r.done ? 'done' : 'open', sort: r.done ? 9 : r.today ? 0 : 2, node: <DayCallRowView r={r} canLog={can.calls} onChanged={changed} /> })
+    if (open === 'recovery' && rc) for (const r of rc.rows) out.push({ key: r.kind + r.id, state: r.done ? 'done' : 'open', sort: r.done ? 9 : r.today ? 0 : 2, node: <DayCallRowView r={r} canLog={can.calls || !!calls?.canEdit} callers={calls?.callers || []} onChanged={changed} /> })
     return out.sort((a, b) => a.sort - b.sort)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, d, calls, roster, can.assign, can.plan, can.calls, unpaidQ.data, unpaidPatch, ckQ.data, ckBusy, rvQ.data, ntQ.data, ntBusy, gcQ.data, gcBusy, blQ.data, chQ.data])

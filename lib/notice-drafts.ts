@@ -225,7 +225,7 @@ async function auditSentAndOrphans(db: any, cfg: TaskAutomationCfg, props: Prope
       subjects.push(subject)
       const inSent = await foundInSent(cfg.noticeDrafts.fromEmail, subject, since)
       if (inSent === true) { out.confirmedSentNoForm++; continue }
-      if (inSent === null) {
+      if (inSent === null || inSent === 'noscope') {
         // Inconclusive (no Gmail read scope yet). Jon, 2026-08-19: "draft it for now, even if
         // sent" — a duplicate the desk discards beats a building never told. Queue a SAFETY draft:
         // the notice keeps its sent status (Guesty untouched), but a complete, form-attached copy

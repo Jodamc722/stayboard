@@ -9,7 +9,8 @@
 // nothing either — this only ever acts on a definite 404.
 import 'server-only'
 import { getSetting, setSetting } from './app-settings'
-import { checkGmailDraftExists, foundInSent } from './gmail-send'
+import { checkGmailDraftExists, foundInSent, foundMailFrom } from './gmail-send'
+import { getGoogleReadGrant } from './google-read'
 import { supabaseAdmin } from './supabase-admin'
 import { getToken } from './guesty'
 import { writeCustomFields, readCustomFields, fieldIdOf } from './guesty-custom-fields'
@@ -114,9 +115,9 @@ export async function checkSupportDrafts(): Promise<{ checked: number; markedSen
  *   · a notice with no resolvable subject is skipped rather than guessed at.
  */
 export async function sweepSentInGmail(opts: { backDays?: number; aheadDays?: number; limit?: number } = {}): Promise<{
-  scanned: number; markedSent: number; inconclusive: number; notFound: number; errors: string[]
+  scanned: number; markedSent: number; inconclusive: number; notFound: number; errors: string[]; note?: string
 }> {
-  const out = { scanned: 0, markedSent: 0, inconclusive: 0, notFound: 0, errors: [] as string[] }
+  const out: { scanned: number; markedSent: number; inconclusive: number; notFound: number; errors: string[]; note?: string } = { scanned: 0, markedSent: 0, inconclusive: 0, notFound: 0, errors: [] }
   const back = opts.backDays == null ? 21 : opts.backDays
   const ahead = opts.aheadDays == null ? 14 : opts.aheadDays
   const day = (n: number) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10)
@@ -137,6 +138,25 @@ export async function sweepSentInGmail(opts: { backDays?: number; aheadDays?: nu
     let watch = Array.isArray(watchCur) ? watchCur : []
     let watchChanged = false
 
+    // WHO CAN ANSWER (2026-10-02). support@ is connected with send + compose only, so searching its
+    // Sent folder is a 403 — which this sweep had been counting as "inconclusive" on every notice
+    // while the desk's sent Elser notices stayed red. When support@ cannot be searched, the mailbox
+    // with the read grant (jon@, on cc of every notice) is asked whether it RECEIVED the notice from
+    // support@ — the same proof, from the other end of the wire.
+    const reader = await getGoogleReadGrant().catch(() => null)
+    const readerEmail = reader && reader.granted && reader.email && reader.scopes.some(x => /gmail\.readonly/.test(x)) && String(reader.email).toLowerCase() !== SUPPORT_FROM.toLowerCase() ? String(reader.email) : ''
+    let supportSearchable: boolean | null = null   // null = not yet known this run
+    const evidence = async (subject: string, since: number): Promise<boolean | null> => {
+      if (supportSearchable !== false) {
+        const hit = await foundInSent(SUPPORT_FROM, subject, since)
+        if (hit === 'noscope') { supportSearchable = false; if (!out.note) out.note = 'support@ cannot search its Sent folder (connected without Gmail read) — ' + (readerEmail ? 'using ' + readerEmail + "'s cc copy" : 'no mailbox with Gmail read to fall back on') }
+        else { supportSearchable = true; return hit }
+      }
+      if (!readerEmail) return null
+      const hit2 = await foundMailFrom(readerEmail, SUPPORT_FROM, subject, since)
+      return hit2 === 'noscope' ? null : hit2
+    }
+
     for (const n of (rows || []) as any[]) {
       out.scanned++
       try {
@@ -149,7 +169,7 @@ export async function sweepSentInGmail(opts: { backDays?: number; aheadDays?: nu
         // in the same unit must not close out this one.
         const created = Date.parse(String(n.created_at || '')) || (Date.now() - back * 864e5)
         const since = Math.floor(Math.max(created, Date.now() - (back + 7) * 864e5) / 1000)
-        const hit = await foundInSent(SUPPORT_FROM, subject, since)
+        const hit = await evidence(subject, since)
         if (hit === null) { out.inconclusive++; continue }
         if (hit !== true) { out.notFound++; continue }
 

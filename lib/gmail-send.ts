@@ -12,10 +12,15 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { recordEmail, sourceFromSubject } from './automation-runs'
 
+// One refresh per mailbox per ~45 minutes, not one per call: the sent-sweep asks Gmail once per
+// unsent notice, and each ask was refreshing the token first (2026-10-02).
+const TOKENS = new Map<string, { token: string; until: number }>()
 async function accessTokenFor(email: string): Promise<{ token?: string; error?: string }> {
   const clientId = process.env.GOOGLE_CLIENT_ID
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET
   if (!clientId || !clientSecret) return { error: 'GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set' }
+  const hot = TOKENS.get(email.toLowerCase())
+  if (hot && hot.until > Date.now()) return { token: hot.token }
   try {
     const { data } = await supabaseAdmin().from('google_tokens').select('refresh_token').eq('user_email', email.toLowerCase()).maybeSingle()
     if (!data?.refresh_token) return { error: `No Google connection for ${email} — connect it (with the Gmail permission) first.` }
@@ -32,6 +37,7 @@ async function accessTokenFor(email: string): Promise<{ token?: string; error?: 
     if (!r.ok || !d.access_token) return { error: `Google token refresh failed: ${String(d.error_description || d.error || r.status)}` }
     // If the stored grant predates the Gmail scope, the send below will 403 — the caller surfaces
     // that as "reconnect Google with the Gmail permission".
+    TOKENS.set(email.toLowerCase(), { token: String(d.access_token), until: Date.now() + 45 * 60_000 })
     return { token: String(d.access_token) }
   } catch (e: any) { return { error: String(e?.message || e) } }
 }
@@ -210,15 +216,45 @@ export async function deleteDraft(fromEmail: string, draftId: string): Promise<b
   } catch { return false }
 }
 
-/** Was a message with this subject actually SENT from the mailbox since `sinceEpochSec`? */
-export async function foundInSent(fromEmail: string, subject: string, sinceEpochSec: number): Promise<boolean | null> {
-  const { token } = await accessTokenFor(fromEmail)
+/**
+ * Was a message with this subject actually SENT from the mailbox since `sinceEpochSec`?
+ *   true / false  — Gmail answered
+ *   null          — inconclusive (no token, network)
+ *   'noscope'     — the mailbox's connection cannot search mail at all (403: it was granted
+ *                   send + compose only, which is enough to file drafts and nothing more)
+ *
+ * 2026-10-02 (Jon: "front desk notices need to be marked sent when sent"): every Elser notice the
+ * desk had sent was still showing "to send". support@ is connected with gmail.send + gmail.compose,
+ * so this search came back 403 on every notice and the sweep counted them all "inconclusive",
+ * silently, for weeks. The caller now gets told, and falls back to a mailbox that CAN read.
+ */
+export async function foundInSent(fromEmail: string, subject: string, sinceEpochSec: number): Promise<boolean | null | 'noscope'> {
+  return foundMail(fromEmail, 'in:sent ' + subjectQuery(subject), sinceEpochSec)
+}
+
+/**
+ * The same question asked of ANOTHER mailbox: did `readerEmail` receive a message FROM `fromEmail`
+ * with this subject? Every notice copies the office (jon@ is on cc), and jon@'s connection holds
+ * gmail.readonly — so his copy is proof the notice went out, when support@ cannot be searched.
+ */
+export async function foundMailFrom(readerEmail: string, fromEmail: string, subject: string, sinceEpochSec: number): Promise<boolean | null | 'noscope'> {
+  return foundMail(readerEmail, 'from:' + fromEmail + ' ' + subjectQuery(subject), sinceEpochSec)
+}
+
+// Gmail's subject search is a phrase match on tokens; the slashes, commas and dashes in a notice
+// subject ("Stay Hospitality / Lucas Theis / 4102 / Oct 1, 2026 - Oct 5, 2026") are not tokens.
+// Quote the whole thing and let Gmail tokenize it — the punctuation drops out on both sides.
+function subjectQuery(subject: string): string { return 'subject:"' + subject.replace(/"/g, ' ').replace(/\s+/g, ' ').trim() + '"' }
+
+async function foundMail(mailbox: string, q0: string, sinceEpochSec: number): Promise<boolean | null | 'noscope'> {
+  const { token } = await accessTokenFor(mailbox)
   if (!token) return null
   try {
-    const q = 'in:sent after:' + Math.floor(sinceEpochSec) + ' subject:"' + subject.replace(/"/g, '') + '"'
+    const q = q0 + ' after:' + Math.floor(sinceEpochSec)
     const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=3&q=' + encodeURIComponent(q), {
       headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
     })
+    if (r.status === 403) return 'noscope'
     if (!r.ok) return null
     const j = await r.json().catch(() => ({} as any))
     return Array.isArray(j.messages) && j.messages.length > 0
