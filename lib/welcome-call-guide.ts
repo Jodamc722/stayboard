@@ -40,14 +40,18 @@ export type ChannelRule = {
 export const DEFAULT_CHECK_RULES: Record<Channel, ChannelRule> = {
   'Airbnb':      { verify: false, deposit: false, depositAmount: 0,   depositMethod: '',           releaseDays: 0, merchantOfRecord: true,  note: 'Airbnb verifies the guest and AirCover covers damage.' },
   'Booking.com': { verify: false, deposit: false, depositAmount: 0,   depositMethod: '',           releaseDays: 0, merchantOfRecord: true,  note: 'Platform collects payment; no deposit or ID check.' },
-  'Vrbo':        { verify: true,  deposit: true,  depositAmount: 500, depositMethod: 'card_link',  releaseDays: 7, merchantOfRecord: false, note: '' },
-  'Direct':      { verify: true,  deposit: true,  depositAmount: 500, depositMethod: 'guesty_hold', releaseDays: 7, merchantOfRecord: false, note: 'Confirm full payment has cleared — we collect directly.' },
-  'Google':      { verify: true,  deposit: true,  depositAmount: 500, depositMethod: 'guesty_hold', releaseDays: 7, merchantOfRecord: false, note: '' },
-  'Expedia':     { verify: false, deposit: true,  depositAmount: 500, depositMethod: 'card_link',  releaseDays: 7, merchantOfRecord: true,  note: 'Expedia collects the stay; the deposit is ours to hold.' },
-  'Blueground':  { verify: false, deposit: true,  depositAmount: 500, depositMethod: 'card_link',  releaseDays: 7, merchantOfRecord: true,  note: '' },
-  'Marriott':    { verify: false, deposit: true,  depositAmount: 500, depositMethod: 'card_link',  releaseDays: 7, merchantOfRecord: true,  note: 'Homes & Villas by Marriott.' },
-  'Other':       { verify: true,  deposit: true,  depositAmount: 500, depositMethod: 'card_link',  releaseDays: 7, merchantOfRecord: false, note: 'Unknown channel — treat as direct until told otherwise.' },
+  'Vrbo':        { verify: true,  deposit: true,  depositAmount: 350, depositMethod: 'card_link',  releaseDays: 7, merchantOfRecord: false, note: '' },
+  'Direct':      { verify: true,  deposit: true,  depositAmount: 350, depositMethod: 'guesty_hold', releaseDays: 7, merchantOfRecord: false, note: 'Confirm full payment has cleared — we collect directly.' },
+  'Google':      { verify: true,  deposit: true,  depositAmount: 350, depositMethod: 'guesty_hold', releaseDays: 7, merchantOfRecord: false, note: '' },
+  'Expedia':     { verify: false, deposit: true,  depositAmount: 350, depositMethod: 'card_link',  releaseDays: 7, merchantOfRecord: true,  note: 'Expedia collects the stay; the deposit is ours to hold.' },
+  'Blueground':  { verify: false, deposit: true,  depositAmount: 350, depositMethod: 'card_link',  releaseDays: 7, merchantOfRecord: true,  note: '' },
+  'Marriott':    { verify: false, deposit: true,  depositAmount: 350, depositMethod: 'card_link',  releaseDays: 7, merchantOfRecord: true,  note: 'Homes & Villas by Marriott.' },
+  'Other':       { verify: true,  deposit: true,  depositAmount: 350, depositMethod: 'card_link',  releaseDays: 7, merchantOfRecord: false, note: 'Unknown channel — treat as direct until told otherwise.' },
 }
+/** Per-building deposit amounts that beat the channel amount (Jon, 2026-10-03: "$350 for all properties minus Salato which is $500"). Key = building name as the listing carries it; 'Salato' matches the Salato unit set. */
+export type BuildingAmounts = Record<string, number>
+export const DEFAULT_BUILDING_AMOUNTS: BuildingAmounts = { Salato: 500 }
+
 export const DEPOSIT_METHODS: { key: ChannelRule['depositMethod']; label: string }[] = [
   { key: 'guesty_hold', label: 'Guesty card hold' }, { key: 'card_link', label: 'Card link (pre-auth)' }, { key: 'ota', label: 'Collected by the platform' }, { key: 'cash', label: 'Cash / in person' }, { key: 'other', label: 'Other' }, { key: '', label: '—' },
 ]

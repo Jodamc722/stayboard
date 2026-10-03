@@ -10,14 +10,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { channelOf, channelPolicy, type Channel, type ChannelRule } from '@/lib/welcome-call-guide'
-import { loadGuestCheckRules } from '@/lib/guest-check-rules'
+import { loadGuestCheckRules, loadBuildingAmounts, depositAmountFor } from '@/lib/guest-check-rules'
+import { isSalatoListing } from '@/lib/salato-units'
 import { guestVerifyUrl } from '@/lib/guest-verify-token'
 import { atLeast } from '@/lib/features'
 export const dynamic = 'force-dynamic'
 
 export type GuestCheckRow = {
   reservationId: string; guest: string; unit: string; listingId: string; checkIn: string; checkOut: string; channel: Channel; today: boolean; inHouse: boolean
-  needId: boolean; needDeposit: boolean; rule: ChannelRule
+  needId: boolean; needDeposit: boolean; rule: ChannelRule; building: string | null; depositDue: number
   idStatus: 'pending' | 'verified' | 'waived'; idMethod: string | null; idCapturedAt: string | null; idName: string | null; hasIdPhoto: boolean; hasSelfie: boolean
   idLinkSentAt: string | null; idLinkSentVia: string | null; verifyUrl: string | null; salatoVerified: boolean
   depositStatus: 'pending' | 'captured' | 'waived' | 'released' | 'claimed'; depositAmount: number | null; depositMethod: string | null; depositRef: string | null
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
   const days = Math.max(1, Math.min(60, Number(sp.get('days') || 7) || 7))
   const today = dayET(), to = addDays(today, days)
   try {
-    const rules = await loadGuestCheckRules()
+    const [rules, amounts] = await Promise.all([loadGuestCheckRules(), loadBuildingAmounts()])
     // Arrivals in the window, plus anyone in-house or just departed whose deposit is still held (release is work too).
     const [{ data: res }, { data: held }] = await Promise.all([
       db.from('guesty_reservations').select('id,listing_id,guest_name,listing_name,check_in,check_out,status,source').gte('check_in', today).lt('check_in', addDays(to, 1)).limit(800),
@@ -63,6 +64,12 @@ export async function GET(req: NextRequest) {
       for (const s of (sv || []) as any[]) { try { const v = typeof s.value === 'string' ? JSON.parse(s.value) : s.value; if (v && v.status === 'verified') salato[str(s.key).slice(3)] = str(v.signedAt || '') } catch { /* not ours */ } }
     }
     const canEdit = atLeast(g.access.levels['welcome-calls'], 'edit')
+    // Building per listing, and whether it is a Salato unit — the deposit amount is per building.
+    const lids = Array.from(new Set(needs.map(x => str(x.r.listing_id)).filter(Boolean)))
+    const bld: Record<string, { building: string; l: any }> = {}
+    if (lids.length) { const { data: ls } = await db.from('guesty_listings').select('id,nickname,title,building').in('id', lids.slice(0, 500)); for (const l of (ls || []) as any[]) bld[str(l.id)] = { building: str(l.building), l } }
+    const salatoUnit: Record<string, boolean> = {}
+    for (const lid of lids) { try { salatoUnit[lid] = await isSalatoListing(db, lid, bld[lid]?.l) } catch { salatoUnit[lid] = false } }
     const rows: GuestCheckRow[] = needs.map(({ r, ch, p }) => {
       const c = checks[str(r.id)] || {}
       const sal = salato[str(r.id)]
@@ -70,7 +77,8 @@ export async function GET(req: NextRequest) {
       const idStatus = (sal ? 'verified' : (c.id_status || 'pending')) as GuestCheckRow['idStatus']
       return {
         reservationId: str(r.id), guest: str(r.guest_name) || 'Guest', unit: str(r.listing_name), listingId: str(r.listing_id), checkIn: ci, checkOut: co, channel: ch, today: ci === today, inHouse: ci <= today && co > today,
-        needId: p.verify, needDeposit: p.deposit, rule: p.rule,
+        needId: p.verify, needDeposit: p.deposit, rule: p.rule, building: bld[str(r.listing_id)]?.building || null,
+        depositDue: depositAmountFor(p.rule, bld[str(r.listing_id)]?.building, !!salatoUnit[str(r.listing_id)], amounts),
         idStatus, idMethod: sal && !c.id_method ? 'salato' : (c.id_method || null), idCapturedAt: c.id_captured_at || (sal || null), idName: c.id_name || null, hasIdPhoto: !!c.id_path, hasSelfie: !!c.selfie_path,
         idLinkSentAt: c.id_link_sent_at || null, idLinkSentVia: c.id_link_sent_via || null, verifyUrl: p.verify && canEdit ? guestVerifyUrl(str(r.id)) : null, salatoVerified: !!sal,
         depositStatus: (c.deposit_status || 'pending') as any, depositAmount: c.deposit_amount == null ? null : Number(c.deposit_amount), depositMethod: c.deposit_method || null, depositRef: c.deposit_ref || null,
@@ -81,7 +89,7 @@ export async function GET(req: NextRequest) {
     const needed = rows.reduce((a, r) => a + (r.needId ? 1 : 0) + (r.needDeposit ? 1 : 0), 0)
     const done = rows.reduce((a, r) => a + (r.needId && r.idStatus !== 'pending' ? 1 : 0) + (r.needDeposit && r.depositStatus !== 'pending' ? 1 : 0), 0)
     const releaseDue = rows.filter(r => r.depositStatus === 'captured' && r.depositReleaseDue && r.depositReleaseDue <= today).length
-    return NextResponse.json({ ok: true, today, days, rows, needed, done, releaseDue, canEdit, isAdmin: g.access.role === 'admin', rules })
+    return NextResponse.json({ ok: true, today, days, rows, needed, done, releaseDue, canEdit, isAdmin: g.access.role === 'admin', rules, buildingAmounts: amounts })
   } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 }) }
 }
 

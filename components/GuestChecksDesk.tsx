@@ -21,7 +21,7 @@ const field = 'rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] 
 
 export function GuestChecksDesk({ embed }: { embed?: boolean }) {
   const [days, setDays] = useState(7)
-  const [data, setData] = useState<{ ok?: boolean; today?: string; rows?: GuestCheckRow[]; needed?: number; done?: number; releaseDue?: number; canEdit?: boolean; isAdmin?: boolean; rules?: Record<Channel, ChannelRule>; error?: string } | null>(null)
+  const [data, setData] = useState<{ ok?: boolean; today?: string; rows?: GuestCheckRow[]; needed?: number; done?: number; releaseDue?: number; canEdit?: boolean; isAdmin?: boolean; rules?: Record<Channel, ChannelRule>; buildingAmounts?: Record<string, number>; error?: string } | null>(null)
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
@@ -104,7 +104,7 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
         {data?.isAdmin && <button onClick={() => setRulesOpen(o => !o)} className={TASK_GHOST + (rulesOpen ? ' !bg-ink !text-white' : '')} title="Which channels need an ID check or a deposit, how much, how it is collected"><Settings2 size={13} /> Rules</button>}
         <button onClick={load} className={TASK_GHOST} title="Reload"><RefreshCw size={13} /></button>
       </div>
-      {rulesOpen && data?.rules && <RulesPanel rules={data.rules} onSaved={() => { load() }} />}
+      {rulesOpen && data?.rules && <RulesPanel rules={data.rules} buildings={data.buildingAmounts || {}} onSaved={() => { load() }} />}
       {err && <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-700">{err}</p>}
       {msg && <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[13px] text-emerald-800">{msg}</p>}
       {!data && <div className="rounded-2xl border border-line bg-white p-8 text-center text-[13px] text-muted">Loading…</div>}
@@ -131,7 +131,7 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
                         : r.depositStatus === 'released' ? <Tag tone="slate">deposit released {fmtAt(r.depositReleasedAt)}</Tag>
                         : r.depositStatus === 'claimed' ? <Tag tone="violet">deposit claimed</Tag>
                         : r.depositStatus === 'waived' ? <Tag>deposit waived</Tag>
-                        : <Tag tone="amber">deposit to collect{r.rule.depositAmount ? ' · ' + money(r.rule.depositAmount) : ''}{r.rule.depositMethod ? ' · ' + methodLabel(r.rule.depositMethod) : ''}</Tag>)}
+                        : <Tag tone="amber">deposit to collect{r.depositDue ? ' · ' + money(r.depositDue) : ''}{r.rule.depositMethod ? ' · ' + methodLabel(r.rule.depositMethod) : ''}</Tag>)}
                     </div>
                     {(r.note || r.depositRef || r.idName) && <div className="mt-1 text-[11.5px] text-muted truncate">{[r.idName ? 'ID: ' + r.idName : '', r.depositRef ? 'ref ' + r.depositRef : '', r.note].filter(Boolean).join(' · ')}</div>}
                   </div>
@@ -176,7 +176,7 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
 }
 
 function DepositForm({ r, busy, onSave, onCancel }: { r: GuestCheckRow; busy: boolean; onSave: (p: Record<string, any>) => void; onCancel: () => void }) {
-  const [amount, setAmount] = useState(r.depositAmount != null ? String(r.depositAmount) : (r.rule.depositAmount ? String(r.rule.depositAmount) : ''))
+  const [amount, setAmount] = useState(r.depositAmount != null ? String(r.depositAmount) : (r.depositDue ? String(r.depositDue) : ''))
   const [method, setMethod] = useState(r.depositMethod || r.rule.depositMethod || '')
   const [ref, setRef] = useState(r.depositRef || '')
   const [due, setDue] = useState(r.depositReleaseDue || '')
@@ -196,14 +196,15 @@ function DepositForm({ r, busy, onSave, onCancel }: { r: GuestCheckRow; busy: bo
 }
 
 /** The rules, one row per channel. Admins edit; saves on Save. */
-function RulesPanel({ rules, onSaved }: { rules: Record<Channel, ChannelRule>; onSaved: () => void }) {
+function RulesPanel({ rules, buildings, onSaved }: { rules: Record<Channel, ChannelRule>; buildings: Record<string, number>; onSaved: () => void }) {
   const [draft, setDraft] = useState<Record<Channel, ChannelRule>>(() => JSON.parse(JSON.stringify(rules)))
+  const [bld, setBld] = useState<{ name: string; amount: string }[]>(() => Object.entries(buildings).map(([name, amount]) => ({ name, amount: String(amount) })))
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const set = (ch: Channel, k: keyof ChannelRule, v: any) => setDraft(d => ({ ...d, [ch]: { ...d[ch], [k]: v } }))
   const save = async () => {
     setBusy(true); setMsg('')
-    try { const j = await fetch(API + '/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rules: draft }) }).then(r => r.json()); if (!j.ok) throw new Error(j.error || 'Could not save.'); setMsg('Rules saved — the desk and the call scripts use them from now.'); onSaved() }
+    try { const j = await fetch(API + '/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rules: { ...draft, _buildings: Object.fromEntries(bld.filter(b => b.name.trim() && Number(b.amount) > 0).map(b => [b.name.trim(), Number(b.amount)])) } }) }).then(r => r.json()); if (!j.ok) throw new Error(j.error || 'Could not save.'); setMsg('Rules saved — the desk and the call scripts use them from now.'); onSaved() }
     catch (e: any) { setMsg(String(e?.message || e)) }
     setBusy(false)
   }
@@ -234,6 +235,26 @@ function RulesPanel({ rules, onSaved }: { rules: Record<Channel, ChannelRule>; o
             ) })}
           </tbody>
         </table>
+      </div>
+      {/* Per-building amounts beat the channel amount (Jon, 2026-10-03: $350 everywhere, Salato $500). */}
+      <div className="mt-3 border-t border-line pt-3">
+        <div className="flex items-center gap-2 flex-wrap mb-1.5">
+          <span className="text-[12.5px] font-bold text-ink">Deposit amount by building</span>
+          <span className="text-[11.5px] text-muted">beats the channel amount above · "Salato" matches every Salato unit · other names match the building on the listing</span>
+          <span className="grow" />
+          <button type="button" onClick={() => setBld(b => [...b, { name: '', amount: '' }])} className={TASK_GHOST}>+ Building</button>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {bld.map((b, i) => (
+            <span key={i} className="inline-flex items-center gap-1 rounded-lg border border-line bg-white p-1">
+              <input value={b.name} onChange={e => setBld(x => x.map((y, j) => j === i ? { ...y, name: e.target.value } : y))} placeholder="Building" className={field + ' w-32 py-1 border-0'} />
+              <span className="text-[12px] text-muted">$</span>
+              <input value={b.amount} onChange={e => setBld(x => x.map((y, j) => j === i ? { ...y, amount: e.target.value.replace(/[^\d]/g, '') } : y))} inputMode="numeric" placeholder="500" className={field + ' w-16 py-1 border-0'} />
+              <button type="button" onClick={() => setBld(x => x.filter((_, j) => j !== i))} className="px-1 text-muted hover:text-rose-600" aria-label="Remove"><X size={12} /></button>
+            </span>
+          ))}
+          {bld.length === 0 && <span className="text-[12px] text-muted">None — every stay uses its channel amount.</span>}
+        </div>
       </div>
     </div>
   )
