@@ -66,11 +66,19 @@ function dueState(due: string | null | undefined, closed: boolean): { label: str
 // historical value readable — nothing in the database has to change for the board to make sense —
 // and `write` is the one status a drop into that lane records.
 export type Lane = { key: string; label: string; hint: string; write: string; statuses: string[] }
+//
+// SIX, SINCE 2026-10-02 (Sulaman via Jon: "can you create the 'refund' and 'manager review' columns,
+// please?"). Refund and Manager review came back as lanes because the desk works them as queues —
+// "what is waiting on a refund decision" and "what is waiting on a manager" are lists people open,
+// not badges they scan for. Manager review is also where a card lands when the team marks it
+// complete (the approval gate), so the column IS the manager's inbox.
 export const LANES: Lane[] = [
-  { key: 'open',     label: 'Open',            hint: 'nobody has picked it up',     write: 'pool',            statuses: ['pool', ''] },
-  { key: 'ops',      label: 'With ops',        hint: 'being fixed',                 write: 'ops',             statuses: ['ops', 'incident'] },
-  { key: 'followup', label: 'Guest follow-up', hint: 'fixed, guest still owed a reply', write: 'guest_followup', statuses: ['guest_followup', 'refund', 'manager_review'] },
-  { key: 'closed',   label: 'Closed',          hint: 'done and answered',           write: 'closed',          statuses: ['closed', 'done', 'resolved'] },
+  { key: 'open',     label: 'Open',            hint: 'nobody has picked it up',          write: 'pool',            statuses: ['pool', ''] },
+  { key: 'ops',      label: 'With ops',        hint: 'being fixed',                      write: 'ops',             statuses: ['ops', 'incident'] },
+  { key: 'refund',   label: 'Refund',          hint: 'waiting on a refund decision',     write: 'refund',          statuses: ['refund'] },
+  { key: 'review',   label: 'Manager review',  hint: 'marked complete — a manager approves the close', write: 'manager_review', statuses: ['manager_review'] },
+  { key: 'followup', label: 'Guest follow-up', hint: 'fixed, guest still owed a reply',  write: 'guest_followup',  statuses: ['guest_followup'] },
+  { key: 'closed',   label: 'Closed',          hint: 'done and answered',                write: 'closed',          statuses: ['closed', 'done', 'resolved'] },
 ]
 export function laneOf(status: string | null | undefined): Lane {
   const s = String(status || '')
@@ -295,7 +303,7 @@ export function GlitchBoard() {
       {/* FOUR LANES FIT. The old seven scrolled sideways on every screen, so the board could never
           be read in one look — which is most of what "confusing" meant. On a phone the lanes still
           snap one at a time; on a desktop they simply fit. */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 items-start">
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 items-start">
         {LANES.map(lane => {
           const cards = rows.filter(g => laneOf(g.status).key === lane.key)
           return (
@@ -1257,7 +1265,8 @@ function GlitchCard({ g, onOpen }: { g: Glitch; onOpen: () => void }) {
         (urgent ? 'border-rose-300' : 'border-line')}>
       <button onClick={onOpen} title={hover} className="w-full text-left px-2.5 py-2 min-w-0">
         <div className="flex items-center gap-1.5 min-w-0">
-          <p className="text-[13px] font-semibold text-ink truncate flex-1 min-w-0">{g.unit || 'No unit'}</p>
+          {/* UNIT · GUEST (Sulaman via Jon, 2026-10-02: "show the guest name in the title as well"). */}
+          <p className="text-[13px] font-semibold text-ink truncate flex-1 min-w-0">{g.unit || 'No unit'}{g.guest_name ? <span className="font-medium text-ink/70"> · {g.guest_name}</span> : null}</p>
           {age ? (
             <span title={'Open for ' + age} className={'shrink-0 text-[10.5px] font-bold tabular-nums px-1.5 py-[2px] rounded-md ' +
               (ageDays >= 3 ? 'bg-rose-50 text-rose-700' : ageDays >= 1 ? 'bg-amber-50 text-amber-800' : 'bg-app text-muted')}>{age}</span>
