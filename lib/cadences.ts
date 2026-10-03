@@ -304,11 +304,14 @@ const SUPERSEDED_MATCH: Record<string, string[]> = {
 }
 // Same idea for the other fields that shipped one way and were changed on Jon's word (2026-10-03):
 // a stored value equal to the OLD shipped value came along with a Save, not from a decision.
-const SUPERSEDED_FIELDS: Record<string, Partial<Record<'everyDays' | 'label' | 'equipment', any[]>>> = {
-  ac_filter: { everyDays: [30] },
-  ac_deep: { label: ['A/C deep clean (coils)'], equipment: ['any'] },
+const SUPERSEDED_FIELDS: Record<string, Partial<Record<'everyDays' | 'label' | 'equipment' | 'needsScope', any[]>>> = {
+  // needsScope: the filter cadence shipped INERT ("pick the buildings") before the equipment
+  // inference existed; a saved config still carries that true, which left the Upkeep page's filter
+  // tile reading "no buildings picked yet" against 112 known central units (2026-10-03).
+  ac_filter: { everyDays: [30], needsScope: [true] },
+  ac_deep: { label: ['A/C deep clean (coils)', 'A/C deep clean'], equipment: ['any'] },
 }
-const superseded = (key: string, field: 'everyDays' | 'label' | 'equipment', v: any) => ((SUPERSEDED_FIELDS[key] || {})[field] || []).indexOf(v) >= 0
+const superseded = (key: string, field: 'everyDays' | 'label' | 'equipment' | 'needsScope', v: any) => ((SUPERSEDED_FIELDS[key] || {})[field] || []).indexOf(v) >= 0
 
 /** A pattern that does not compile is worse than no pattern — it would read every task as a match. */
 export function cadenceRe(src: string): RegExp | null {
@@ -367,7 +370,7 @@ export function resolveCadences(raw: any): CadenceCfg {
         : base.requiresAmenity,
       scopeBuildings: strList(o?.scopeBuildings, base.scopeBuildings),
       scopeUnits: strList(o?.scopeUnits, base.scopeUnits),
-      needsScope: o?.needsScope == null ? base.needsScope : o.needsScope === true,
+      needsScope: o?.needsScope == null || superseded(base.key, 'needsScope', o.needsScope) ? !!base.needsScope : o.needsScope === true,
       successor: o?.successor == null ? (base.successor !== false) : o.successor === true,
       leadDays: num(o?.leadDays, base.leadDays ?? 14, 0, 120),
       perBuilding: o?.perBuilding == null ? !!base.perBuilding : o.perBuilding === true,

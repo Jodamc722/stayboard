@@ -105,7 +105,11 @@ export function UpkeepBoard() {
         </select>
       ) : null}
       <button onClick={reload} title="Re-read the ledger" className="h-8 w-8 rounded-lg border border-line bg-white text-muted hover:text-ink grid place-items-center"><RefreshCw size={13} className={loading ? 'animate-spin' : ''} /></button>
-      <Link href="/users?tab=settings&section=cadences" className="text-[12px] font-semibold text-muted hover:text-ink">Cadences →</Link>
+      {/* THE PROGRAMS ARE BUILT IN SETTINGS (Jon, 2026-10-03: "build out proper specific activities that
+          need to be done in a particular period of time, so there should be a settings where we can
+          build that into") — Settings → Preventative cadences: name, every N days, trade, what counts
+          as done, which equipment / buildings, whether the next one is filed automatically. */}
+      <Link href="/users?tab=settings&panel=cadences" className="h-8 px-2.5 rounded-lg bg-ink text-white text-[12px] font-semibold inline-flex items-center gap-1"><Plus size={12} /> Program</Link>
     </LeanHead>
   )
 
@@ -183,7 +187,7 @@ export function UpkeepBoard() {
           )}
         </section>
       ) : (
-        <p className="text-[12px] text-muted">Open a tile to see its units. A program's clock restarts whenever a Breezeway task matching it is completed; what counts as a match, and how often each is due, is in Settings → Cadences.</p>
+        <p className="text-[12px] text-muted">Open a tile to see its units. A program's clock restarts whenever a Breezeway task matching it is completed (or, for FF&E, a finished walk in /ffe). To add an activity on a period — what it is called, every how many days, which trade, which equipment or buildings, what counts as done — use <Link href="/users?tab=settings&panel=cadences" className="font-semibold text-brand-700 hover:underline">+ Program</Link>; it shows here the moment it is saved.</p>
       )}
     </div>
   )
