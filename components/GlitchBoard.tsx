@@ -303,11 +303,15 @@ export function GlitchBoard() {
       {/* FOUR LANES FIT. The old seven scrolled sideways on every screen, so the board could never
           be read in one look — which is most of what "confusing" meant. On a phone the lanes still
           snap one at a time; on a desktop they simply fit. */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 items-start">
+      {/* SIDEWAYS, LIKE ASANA (Sulaman via Jon, 2026-10-03: "the task width is becoming smaller, and
+          even the unit number is now hidden … make the screen horizontally scrollable"). Every lane
+          keeps a full card width whatever the count of lanes; the board scrolls across and snaps a
+          lane at a time on a phone. */}
+      <div className="flex gap-3 overflow-x-auto pb-3 -mx-1 px-1 snap-x snap-mandatory items-start" style={{ scrollbarGutter: 'stable' }}>
         {LANES.map(lane => {
           const cards = rows.filter(g => laneOf(g.status).key === lane.key)
           return (
-            <div key={lane.key} className="rounded-2xl bg-app/70 border border-line min-w-0">
+            <div key={lane.key} className="rounded-2xl bg-app/70 border border-line w-[86vw] sm:w-[300px] shrink-0 snap-start">
               <div className="px-3 py-2 border-b border-line flex items-center gap-2" title={lane.label + ' — ' + lane.hint}>
                 <span className="text-[12px] font-bold text-ink">{lane.label}</span>
                 <span className={'text-[11px] font-bold tabular-nums px-1.5 rounded ' + (cards.length ? 'bg-ink text-white' : 'text-faint')}>{cards.length}</span>
@@ -1266,7 +1270,10 @@ function GlitchCard({ g, onOpen }: { g: Glitch; onOpen: () => void }) {
       <button onClick={onOpen} title={hover} className="w-full text-left px-2.5 py-2 min-w-0">
         <div className="flex items-center gap-1.5 min-w-0">
           {/* UNIT · GUEST (Sulaman via Jon, 2026-10-02: "show the guest name in the title as well"). */}
-          <p className="text-[13px] font-semibold text-ink truncate flex-1 min-w-0">{g.unit || 'No unit'}{g.guest_name ? <span className="font-medium text-ink/70"> · {g.guest_name}</span> : null}</p>
+          <p className="text-[13px] font-semibold text-ink flex-1 min-w-0 flex items-baseline gap-1">
+            <span className="shrink-0">{g.unit || 'No unit'}</span>
+            {g.guest_name ? <span className="font-medium text-ink/70 truncate min-w-0">· {g.guest_name}</span> : null}
+          </p>
           {age ? (
             <span title={'Open for ' + age} className={'shrink-0 text-[10.5px] font-bold tabular-nums px-1.5 py-[2px] rounded-md ' +
               (ageDays >= 3 ? 'bg-rose-50 text-rose-700' : ageDays >= 1 ? 'bg-amber-50 text-amber-800' : 'bg-app text-muted')}>{age}</span>
