@@ -201,7 +201,7 @@ export const OPEN_PREFIXES = [
   // /api/ WITH the slash: a bare /api also matched the /api-keys page and skipped its role gate.
   '/login', '/auth', '/api/', '/g/', '/day/', '/guide/', '/r/', '/audit/', '/walk/',
   '/field/', '/approve/', '/new-order', '/vendor/', '/delivery', '/owner-orders',
-  '/salato/share', '/salato/verify', '/report/', '/favicon', '/project/', '/share/',
+  '/salato/share', '/salato/verify', '/verify/', '/report/', '/favicon', '/project/', '/share/',
   '/order/', '/orders-live',
   // ONBOARDING INVENTORY (Jon, 2026-09-02). /onboard/<code> is a capability link like /walk and
   // /audit: the code resolves to one onboarding unit, the API checks it on every call.

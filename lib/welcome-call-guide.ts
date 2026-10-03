@@ -3,48 +3,77 @@
 // channel-specific checks (ID verification + security deposit) that Airbnb handles for us but
 // the other channels do not. Building data drives parking/access questions + local tips.
 
-export type Channel = 'Airbnb' | 'Vrbo' | 'Booking.com' | 'Expedia' | 'Google' | 'Direct' | 'Other'
+export type Channel = 'Airbnb' | 'Vrbo' | 'Booking.com' | 'Expedia' | 'Google' | 'Direct' | 'Blueground' | 'Marriott' | 'Other'
+export const CHANNELS: Channel[] = ['Airbnb', 'Vrbo', 'Booking.com', 'Expedia', 'Google', 'Direct', 'Blueground', 'Marriott', 'Other']
 
 export function channelOf(source?: string): Channel {
   const s = String(source || '').toLowerCase()
   if (/airbnb/.test(s)) return 'Airbnb'
   if (/vrbo|homeaway/.test(s)) return 'Vrbo'
   if (/booking\.com|bookingcom/.test(s)) return 'Booking.com'   // Guesty writes the channel as `bookingCom`
-  if (/expedia|hotels\.com|travelocity|orbitz|egencia|marriott/.test(s)) return 'Expedia'
+  // Blueground and Marriott (Homes & Villas) get their own rules (Jon, 2026-10-03: deposits on both).
+  if (/blueground/.test(s)) return 'Blueground'
+  if (/marriott|homes.?(and|&).?villas|hvmi/.test(s)) return 'Marriott'
+  if (/expedia|hotels\.com|travelocity|orbitz|egencia/.test(s)) return 'Expedia'
   if (/google/.test(s)) return 'Google'
   if (/be-?api|website|direct|manual|owner/.test(s)) return 'Direct'
   return 'Other'
 }
+
+// ── THE RULES, EDITABLE (Jon, 2026-10-03: "allow us to customize the rules") ──────────────────
+// One row per channel: do we verify ID, do we take a deposit, how much, how it is collected, and
+// how many days after check-out it is released. DEFAULT_CHECK_RULES is what ships; an admin's edits
+// live in app_settings 'guest_check_rules' (lib/guest-check-rules loadGuestCheckRules) and win.
+export type ChannelRule = {
+  verify: boolean
+  deposit: boolean
+  /** Default deposit in dollars; 0 = "per listing / ask". */
+  depositAmount: number
+  /** How we collect it — shown to the desk as the method to use. */
+  depositMethod: 'guesty_hold' | 'card_link' | 'ota' | 'cash' | 'other' | ''
+  /** Days after check-out before the hold is released. */
+  releaseDays: number
+  /** The platform collects the stay payment (we do not chase it). */
+  merchantOfRecord: boolean
+  note: string
+}
+export const DEFAULT_CHECK_RULES: Record<Channel, ChannelRule> = {
+  'Airbnb':      { verify: false, deposit: false, depositAmount: 0,   depositMethod: '',           releaseDays: 0, merchantOfRecord: true,  note: 'Airbnb verifies the guest and AirCover covers damage.' },
+  'Booking.com': { verify: false, deposit: false, depositAmount: 0,   depositMethod: '',           releaseDays: 0, merchantOfRecord: true,  note: 'Platform collects payment; no deposit or ID check.' },
+  'Vrbo':        { verify: true,  deposit: true,  depositAmount: 500, depositMethod: 'card_link',  releaseDays: 7, merchantOfRecord: false, note: '' },
+  'Direct':      { verify: true,  deposit: true,  depositAmount: 500, depositMethod: 'guesty_hold', releaseDays: 7, merchantOfRecord: false, note: 'Confirm full payment has cleared — we collect directly.' },
+  'Google':      { verify: true,  deposit: true,  depositAmount: 500, depositMethod: 'guesty_hold', releaseDays: 7, merchantOfRecord: false, note: '' },
+  'Expedia':     { verify: false, deposit: true,  depositAmount: 500, depositMethod: 'card_link',  releaseDays: 7, merchantOfRecord: true,  note: 'Expedia collects the stay; the deposit is ours to hold.' },
+  'Blueground':  { verify: false, deposit: true,  depositAmount: 500, depositMethod: 'card_link',  releaseDays: 7, merchantOfRecord: true,  note: '' },
+  'Marriott':    { verify: false, deposit: true,  depositAmount: 500, depositMethod: 'card_link',  releaseDays: 7, merchantOfRecord: true,  note: 'Homes & Villas by Marriott.' },
+  'Other':       { verify: true,  deposit: true,  depositAmount: 500, depositMethod: 'card_link',  releaseDays: 7, merchantOfRecord: false, note: 'Unknown channel — treat as direct until told otherwise.' },
+}
+export const DEPOSIT_METHODS: { key: ChannelRule['depositMethod']; label: string }[] = [
+  { key: 'guesty_hold', label: 'Guesty card hold' }, { key: 'card_link', label: 'Card link (pre-auth)' }, { key: 'ota', label: 'Collected by the platform' }, { key: 'cash', label: 'Cash / in person' }, { key: 'other', label: 'Other' }, { key: '', label: '—' },
+]
 
 export type ChannelPolicy = {
   channel: Channel
   verify: boolean
   deposit: boolean
   merchantOfRecord: boolean
+  rule: ChannelRule
   checks: { label: string; tone: 'do' | 'warn' | 'ok' }[]
 }
 
-export function channelPolicy(channel: Channel): ChannelPolicy {
-  // Merchant of record = the OTA collects the payment (we don't chase it). Airbnb/Booking.com/Expedia.
-  const merchantOfRecord = channel === 'Airbnb' || channel === 'Booking.com' || channel === 'Expedia'
-  // Jon, 2026-10-02: verify guest ID on Vrbo, Direct and Google; collect a security deposit on Expedia only.
-  const verify = channel === 'Direct' || channel === 'Vrbo' || channel === 'Google'
-  const deposit = channel === 'Expedia'
+/** The policy for a channel — from the shipped defaults, or from an admin's edited rules when passed. */
+export function channelPolicy(channel: Channel, rules?: Partial<Record<Channel, ChannelRule>> | null): ChannelPolicy {
+  const rule: ChannelRule = { ...DEFAULT_CHECK_RULES[channel], ...((rules && rules[channel]) || {}) }
+  const { verify, deposit, merchantOfRecord } = rule
   const checks: ChannelPolicy['checks'] = []
-  if (channel === 'Airbnb') {
-    checks.push({ label: 'Airbnb is merchant of record - payment is collected by Airbnb, the guest is verified, and AirCover covers damage. No deposit or ID check needed.', tone: 'ok' })
-  } else if (channel === 'Booking.com') {
-    checks.push({ label: 'Booking.com is merchant of record - payment is collected by the platform. No security deposit or ID check needed.', tone: 'ok' })
-  } else {
-    if (merchantOfRecord) checks.push({ label: `${channel} is merchant of record - payment is collected by the platform.`, tone: 'ok' })
-    else checks.push({ label: 'Not an OTA merchant of record - we collect the payment ourselves.', tone: 'warn' })
-    if (verify) checks.push({ label: 'VERIFY guest identity - confirm name and get a photo ID on file.', tone: 'warn' })
-    if (deposit) checks.push({ label: 'COLLECT a security deposit before arrival.', tone: 'warn' })
-    if (channel === 'Direct') checks.push({ label: 'CONFIRM full payment has cleared (we collect directly).', tone: 'warn' })
-    if (channel === 'Expedia') checks.push({ label: 'ID verification not required for Expedia.', tone: 'ok' })
-    if (channel === 'Google') checks.push({ label: 'No security deposit on Google bookings.', tone: 'ok' })
-  }
-  return { channel, verify, deposit, merchantOfRecord, checks }
+  if (merchantOfRecord) checks.push({ label: `${channel} is merchant of record - payment is collected by the platform.`, tone: 'ok' })
+  else checks.push({ label: 'Not an OTA merchant of record - we collect the payment ourselves.', tone: 'warn' })
+  if (verify) checks.push({ label: 'VERIFY guest identity - send the verification link; a photo ID and a selfie go on file.', tone: 'warn' })
+  else checks.push({ label: `ID verification not required on ${channel}.`, tone: 'ok' })
+  if (deposit) checks.push({ label: `COLLECT a security deposit before arrival${rule.depositAmount ? ' ($' + rule.depositAmount + ')' : ''}${rule.depositMethod ? ' — ' + (DEPOSIT_METHODS.find(m => m.key === rule.depositMethod)?.label || rule.depositMethod) : ''}.`, tone: 'warn' })
+  else checks.push({ label: `No security deposit on ${channel} bookings.`, tone: 'ok' })
+  if (rule.note) checks.push({ label: rule.note, tone: merchantOfRecord ? 'ok' : 'warn' })
+  return { channel, verify, deposit, merchantOfRecord, rule, checks }
 }
 
 export type BuildingGuide = {

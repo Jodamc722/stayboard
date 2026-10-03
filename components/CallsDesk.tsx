@@ -23,6 +23,17 @@ import { RefreshCw, PhoneCall, Check, AlertTriangle, Loader2, Copy, StickyNote, 
 import { channelOf, channelPolicy, buildingGuideFor } from '@/lib/welcome-call-guide'
 import { IconBtn, Tip } from '@/components/lean'
 import { StayPanel } from '@/components/StayPanel'
+import { GuestChecksDesk } from '@/components/GuestChecksDesk'
+import type { Channel, ChannelRule } from '@/lib/welcome-call-guide'
+
+// THE EDITED RULES (Jon, 2026-10-03): the call script reads the same per-channel rules the ID &
+// deposits desk uses, so a rule changed there changes what the caller is told to check.
+let RULES_CACHE: Partial<Record<Channel, ChannelRule>> | null = null
+function useCheckRules() {
+  const [rules, setRules] = useState<Partial<Record<Channel, ChannelRule>> | null>(RULES_CACHE)
+  useEffect(() => { if (RULES_CACHE) return; fetch('/api/guest-checks/rules', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j && j.ok && j.rules) { RULES_CACHE = j.rules; setRules(j.rules) } }).catch(() => {}) }, [])
+  return rules
+}
 
 type Recovery = { listingId: string; rating: number; channel: string; guest: string; content: string; at: string; openDays: number; reviewsSince: number }
 type Glitch = { id: string; overview: string; status: string; at: string }
@@ -293,7 +304,8 @@ function WelcomeScript({ r, draft, setDraft, onSaveNote, saving, saved, myName }
   const [showGuide, setShowGuide] = useState(false)
   const [copiedTpl, setCopiedTpl] = useState<string | null>(null)
   const ch = channelOf(r.source)
-  const pol = channelPolicy(ch)
+  const rules = useCheckRules()
+  const pol = channelPolicy(ch, rules)
   const bg = buildingGuideFor(r.listing)
   const musts = pol.checks.filter(c => c.tone === 'warn')
   const me = myName || '[your name]'
@@ -408,7 +420,9 @@ function WelcomeScript({ r, draft, setDraft, onSaveNote, saving, saved, myName }
 export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today, date: date0, me, meName = '', talkroute = false }: { rows: Row[]; outRows: OutRow[]; kpis: Kpis; today: string; date?: string; me: string; meName?: string; talkroute?: boolean; callers?: string[] }) {
   const [rows, setRows] = useState<Row[]>(initial)
   const [outRows, setOutRows] = useState<OutRow[]>(initialOut)
-  const [tab, setTab] = useState<'welcome' | 'post' | 'done' | 'board' | 'all'>('welcome')
+  const [tab, setTab] = useState<'welcome' | 'post' | 'done' | 'board' | 'all' | 'checks'>('welcome')
+  // ?tab=checks from the Today page lands on the ID & deposits desk.
+  useEffect(() => { try { if (new URLSearchParams(window.location.search).get('tab') === 'checks') setTab('checks') } catch { /* server */ } }, [])
   // BY DATE (team ask, 2026-09-25): "by default show today's check-ins for welcome calls and
   // today's checkouts for follow-up calls, with the option to change the date." `date` is the day
   // the desk is pointed at; DAY shows only that day, 72H is the old rolling sheet.
@@ -591,6 +605,8 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
     { key: 'done' as const, label: 'Done', n: doneCalls.length },
     { key: 'board' as const, label: 'Scoreboard', n: null as number | null },
     { key: 'all' as const, label: 'Not called · 14 days', n: allSorted.length },
+    // ID & deposits (Jon, 2026-10-03): the channel checks live with the calls that ask for them.
+    { key: 'checks' as const, label: 'ID & deposits', n: null as number | null },
   ]
 
   // The two numbers the desk is judged on, in one line (the 7-day strip lives on the Scoreboard tab).
@@ -659,6 +675,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
       )}
 
       {tab === 'done' && <CompletedList rows={doneCalls} today={today} copied={copied} copyPhone={copyPhone} />}
+      {tab === 'checks' && <GuestChecksDesk />}
 
       {tab === 'board' && (
         <div className="space-y-4">
@@ -861,11 +878,12 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
   saveNote: (id: string) => void; saving: string | null; saved: string | null; myName: string
   failedId: string | null; error: string | null
 }) {
+  const rules = useCheckRules()
   return (
     <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 [&>li:first-child]:rounded-t-2xl [&>li:last-child]:rounded-b-2xl">
       {rows.map(r => {
         const ch = channelOf(r.source)
-        const pol = channelPolicy(ch)
+        const pol = channelPolicy(ch, rules)
         const open = openId === r.id
         const live = !r.done && !r.closed
         const mine = !!r.claimedBy && !!myName && r.claimedBy.toLowerCase() === myName.toLowerCase()
