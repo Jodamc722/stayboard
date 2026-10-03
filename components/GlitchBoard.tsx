@@ -75,9 +75,11 @@ export type Lane = { key: string; label: string; hint: string; write: string; st
 export const LANES: Lane[] = [
   { key: 'open',     label: 'Open',            hint: 'nobody has picked it up',          write: 'pool',            statuses: ['pool', ''] },
   { key: 'ops',      label: 'With ops',        hint: 'being fixed',                      write: 'ops',             statuses: ['ops', 'incident'] },
+  // The order is the order of the work (Jon, 2026-10-03: "after ops review, it should be Guest
+  // follow-up"): fix it, tell the guest, settle any refund, then a manager signs it off.
+  { key: 'followup', label: 'Guest follow-up', hint: 'fixed, guest still owed a reply',  write: 'guest_followup',  statuses: ['guest_followup'] },
   { key: 'refund',   label: 'Refund',          hint: 'waiting on a refund decision',     write: 'refund',          statuses: ['refund'] },
   { key: 'review',   label: 'Manager review',  hint: 'marked complete — a manager approves the close', write: 'manager_review', statuses: ['manager_review'] },
-  { key: 'followup', label: 'Guest follow-up', hint: 'fixed, guest still owed a reply',  write: 'guest_followup',  statuses: ['guest_followup'] },
   { key: 'closed',   label: 'Closed',          hint: 'done and answered',                write: 'closed',          statuses: ['closed', 'done', 'resolved'] },
 ]
 export function laneOf(status: string | null | undefined): Lane {
