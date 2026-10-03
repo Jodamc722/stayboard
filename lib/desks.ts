@@ -65,6 +65,8 @@ export const DESKS: Desk[] = [
     blurb: 'The field: today’s board, the cleaning schedule, the daily checklist, maintenance and projects.',
     views: [
       { to: '/plan', label: 'Today board', hint: 'Every unit’s work today against the 4pm deadline; assign and add tasks' },
+      // Upkeep (Jon, 2026-10-03): the recurring programs — PM, deep cleans, A/C filters and coils, batteries, inspections, FF&E — late / due soon / on track, per unit.
+      { to: '/upkeep', label: 'Upkeep', hint: 'PM audits, deep cleans, A/C filters & coils, batteries, inspections, FF&E — what is late, due soon and on track, per unit' },
       { to: '/schedule', label: 'Schedule', hint: 'Turnovers by day: stage, assign and push to Breezeway' },
       // Scheduling sits together (Jon, 2026-09-30: "Scheduler — all the scheduling features").
       { to: '/team', label: 'Week plan', hint: 'Who works which day, by trade and market, with the 14-day forecast' },

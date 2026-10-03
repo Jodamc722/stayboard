@@ -26,7 +26,7 @@ type Cad = {
   match: string; needsVacant: boolean; needsDays: number; minutes: number
   mode: 'off' | 'suggest' | 'auto'; seedIfNever: boolean; requiresAmenity?: string
   scopeBuildings?: string[]; scopeUnits?: string[]; needsScope?: boolean
-  successor?: boolean; leadDays?: number; perBuilding?: boolean; equipment?: 'any' | 'central' | 'mini-split' | 'window'
+  successor?: boolean; leadDays?: number; perBuilding?: boolean; equipment?: 'any' | 'central' | 'mini-split' | 'window' | 'non-central'
 }
 type Cfg = {
   enabled: boolean; dailyCap: number; perUnitCap: number; perPersonMinutes: number
@@ -304,6 +304,7 @@ export function CadencesAdmin({ isOwner }: { isOwner: boolean }) {
                         <option value="central">Central A/C only{equip ? ` (${equip.counts.central || 0})` : ''}</option>
                         <option value="mini-split">Mini-splits only{equip ? ` (${equip.counts['mini-split'] || 0})` : ''}</option>
                         <option value="window">Window / PTAC only{equip ? ` (${equip.counts.window || 0})` : ''}</option>
+                        <option value="non-central">Mini-splits + window / wall units{equip ? ` (${(equip.counts['mini-split'] || 0) + (equip.counts.window || 0)})` : ''}</option>
                       </select>
                       {c.equipment && c.equipment !== 'any' && equip && (equip.counts.unknown || 0) > 0 ? <span className="text-[11px] text-amber-700">{equip.counts.unknown} units still unknown — set them in Equipment below</span> : null}
                     </div>

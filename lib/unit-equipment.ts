@@ -154,5 +154,8 @@ export function bustAcCache() { _cache = null }
 /** Does this unit's A/C match a cadence's equipment rule? unknown never matches a specific rule. */
 export function equipmentMatches(rule: string | undefined, ac: AcType | undefined): boolean {
   if (!rule || rule === 'any') return true
+  // 'non-central' = the ductless kinds together: a mini-split and a wall / window / PTAC unit get
+  // the same six-monthly deep clean (Jon, 2026-10-03). An unknown unit never qualifies.
+  if (rule === 'non-central') return ac === 'mini-split' || ac === 'window'
   return ac === rule
 }

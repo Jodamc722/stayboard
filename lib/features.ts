@@ -57,6 +57,10 @@ export const FEATURES: Feature[] = [
   // open — OPEN_PREFIXES wins before the role gate in middleware.
   { key: 'salato',        label: 'Salato settings',   path: '/salato', group: 'Guest Experience' },
   { key: 'plan',          label: 'Today in Ops',      path: '/plan', group: 'Operations' },
+  // Upkeep (Jon, 2026-10-03): the recurring programs as a KPI page — late / due soon / on track per
+  // unit. Its own key so a role can read it without being able to file tasks from it. Admin and
+  // manager inherit it through '*'; other roles get it when somebody switches it on in Roles.
+  { key: 'upkeep',        label: 'Upkeep',            path: '/upkeep', group: 'Operations' },
   { key: 'maintenance',   label: 'Maintenance',       path: '/maintenance', group: 'Operations' },
   { key: 'schedule',      label: 'Scheduler',         path: '/schedule', group: 'Operations' },
   { key: 'glitches',      label: 'Glitches',          path: '/glitches', group: 'Guest Experience' },
@@ -376,7 +380,7 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'admin', label: 'Admin',            landing: '/command', blurb: 'Everything + user management', pages: 'all' },
   { key: 'gm',    label: 'GM',               landing: '/command', blurb: 'Everything except admin tools', pages: 'all' },
   { key: 'ops',   label: 'Ops',              landing: '/command',    blurb: 'Field operations: cleans, glitches, audits, orders',
-    pages: ['home', 'plan', 'schedule', 'glitches', 'audits', 'orders', 'requests', 'projects', 'ffe', 'onboarding', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'blocked', 'faq', 'guest-orders', 'api-keys', 'loops'] },
+    pages: ['home', 'plan', 'upkeep', 'schedule', 'glitches', 'audits', 'orders', 'requests', 'projects', 'ffe', 'onboarding', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'blocked', 'faq', 'guest-orders', 'api-keys', 'loops'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
     pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims', 'guests', 'guest-orders', 'api-keys', 'loops'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',

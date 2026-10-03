@@ -98,7 +98,7 @@ export type DueCalendar = {
  * creates nothing and dismisses nothing.
  */
 export async function buildDueCalendar(today: string, opts: { horizonDays?: number; market?: string } = {}): Promise<DueCalendar> {
-  const horizon = Math.max(7, Math.min(180, opts.horizonDays ?? 30))
+  const horizon = Math.max(7, Math.min(400, opts.horizonDays ?? 30))
   const market = opts.market || 'all'
   const db = supabaseAdmin()
   const degraded: string[] = []
@@ -216,6 +216,19 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
       const cur = (lastDone[lid] = lastDone[lid] || {})
       if (!cur[key] || day > cur[key]) cur[key] = day
     }
+  }
+  // FF&E AUDITS ARE RECORDED IN /ffe, not only as tasks (2026-10-03, Upkeep page): a unit marked
+  // finished there counts as that cadence done on that day. A missing table reads as "no record".
+  if (usable.some(c => c.key === 'ffe_audit')) {
+    try {
+      const { data: ffe } = await db.from('ffe_unit_status').select('listing_id,completed_at').not('completed_at', 'is', null)
+      for (const r of ((ffe || []) as any[])) {
+        const lid = String(r.listing_id), day = dOf(r.completed_at)
+        if (!day) continue
+        const cur = (lastDone[lid] = lastDone[lid] || {})
+        if (!cur.ffe_audit || day > cur.ffe_audit) cur.ffe_audit = day
+      }
+    } catch { /* no FF&E table yet */ }
   }
   const scheduledAhead: Record<string, Record<string, { taskId: string; date: string }>> = {}
   for (const t of openPaged.rows as any[]) {

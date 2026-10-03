@@ -98,11 +98,12 @@ export type CadenceDef = {
   perBuilding?: boolean
   /**
    * EQUIPMENT RULE (Jon, 2026-09-28): 'central' = central A/C units only, 'mini-split' = mini-splits
-   * only, 'window' = window / PTAC only, 'any' = every unit. The type per unit is inferred and
+   * only, 'window' = window / PTAC only, 'non-central' = mini-splits AND window / wall units (Jon,
+   * 2026-10-03: "mini splits and wall units deep cleaned every 6 months"), 'any' = every unit. The type per unit is inferred and
    * overridable in Settings → Cadences → Equipment (lib/unit-equipment). A unit still unknown is
    * excluded from a specific rule and counted, never assumed.
    */
-  equipment?: 'any' | 'central' | 'mini-split' | 'window'
+  equipment?: 'any' | 'central' | 'mini-split' | 'window' | 'non-central'
 }
 
 export type CadenceCfg = {
@@ -132,10 +133,18 @@ export type CadenceCfg = {
 // meant to be argued with in settings, which is where they can now be changed.
 export const DEFAULT_CADENCES: CadenceDef[] = [
   {
-    key: 'ac_deep', label: 'A/C deep clean (coils)', everyDays: 182, dept: 'maintenance', equipment: 'any',
-    // Jon, 2026-08-26: "Ac deep cleans should be every 6 months."
-    match: '(a\\/?c|air ?con|hvac|mini ?split).*(deep|coil|blower|sanit)|deep clean.*(a\\/?c|hvac|split)',
+    // Jon, 2026-08-26: "Ac deep cleans should be every 6 months." Split in two on 2026-10-03 (Jon:
+    // "Mini splits and wall units deep cleaned every 6 months, Central AC coils cleaned every 6
+    // months"): the central system's coil clean here, the ductless units' deep clean below. Same
+    // clock, different equipment, different job — and the Upkeep page counts them apart.
+    key: 'ac_deep', label: 'Central A/C coil clean', everyDays: 182, dept: 'maintenance', equipment: 'central',
+    match: '(a\\/?c|air ?con|hvac|air ?handler).*(deep|coil|blower|sanit)|deep clean.*(a\\/?c|hvac)|coil clean',
     needsVacant: true, needsDays: 1, minutes: 120, mode: 'suggest', seedIfNever: true,
+  },
+  {
+    key: 'ac_split_clean', label: 'Mini-split / wall unit deep clean', everyDays: 182, dept: 'maintenance', equipment: 'non-central',
+    match: '(mini ?split|wall unit|ptac|window unit|ductless|split).*(deep|clean|sanit|coil)|deep clean.*(split|wall unit|ptac)',
+    needsVacant: true, needsDays: 1, minutes: 90, mode: 'suggest', seedIfNever: true,
   },
   {
     // MONTHLY, AND CENTRAL SYSTEMS ONLY (Jon, 2026-08-27: "AC Filter change is for units only with
@@ -154,7 +163,8 @@ export const DEFAULT_CADENCES: CadenceDef[] = [
     //
     // Thirty days, not ninety, because a central return in a coastal rental that turns over every
     // few days is a dirty filter for two months out of three on a quarterly cycle.
-    key: 'ac_filter', label: 'A/C filter change (central A/C)', everyDays: 30, dept: 'maintenance',
+    // 35 days (Jon, 2026-10-03: "ac filter change for central ac done every 35 days").
+    key: 'ac_filter', label: 'A/C filter change (central A/C)', everyDays: 35, dept: 'maintenance',
     // Jon, 2026-09-28: central units only — a mini-split's filter is rinsed at every departure
     // clean; its coils are the 6-month job (A/C deep clean, below, every kind). The central list
     // now comes from the equipment inference (lib/unit-equipment), so this is no longer inert;
@@ -201,6 +211,14 @@ export const DEFAULT_CADENCES: CadenceDef[] = [
     key: 'unit_inspection', label: 'Unit inspection (every 45–60 days)', everyDays: 50, dept: 'inspection',
     match: '^(?!.*strip).*(inspect|unit check|walk.?through)',
     needsVacant: false, needsDays: 0, minutes: 45, mode: 'suggest', seedIfNever: true,
+  },
+  {
+    // FF&E AUDIT (Jon, 2026-10-03: the Upkeep page tracks "FFE audits"). The walk-through of the
+    // furniture, fixtures and equipment in /ffe. Its completion is recorded there (ffe_unit_status)
+    // as well as by any Breezeway task named for it; lib/pm-calendar reads both.
+    key: 'ffe_audit', label: 'FF&E audit', everyDays: 365, dept: 'inspection',
+    match: 'ff ?& ?e|ffe|furnish(ing|ed)? audit|fixture',
+    needsVacant: false, needsDays: 0, minutes: 60, mode: 'suggest', seedIfNever: true, successor: false,
   },
   {
     // The maintenance walk: every system checked against a checklist, work orders raised from it.
@@ -282,7 +300,15 @@ const txt = (v: any, fb: string, max: number) =>
 const SUPERSEDED_MATCH: Record<string, string[]> = {
   unit_inspection: ['inspect|unit check|walk.?through|walkthrough'],
   ac_filter: ['filter'],
+  ac_deep: ['(a\\/?c|air ?con|hvac|mini ?split).*(deep|coil|blower|sanit)|deep clean.*(a\\/?c|hvac|split)'],
 }
+// Same idea for the other fields that shipped one way and were changed on Jon's word (2026-10-03):
+// a stored value equal to the OLD shipped value came along with a Save, not from a decision.
+const SUPERSEDED_FIELDS: Record<string, Partial<Record<'everyDays' | 'label' | 'equipment', any[]>>> = {
+  ac_filter: { everyDays: [30] },
+  ac_deep: { label: ['A/C deep clean (coils)'], equipment: ['any'] },
+}
+const superseded = (key: string, field: 'everyDays' | 'label' | 'equipment', v: any) => ((SUPERSEDED_FIELDS[key] || {})[field] || []).indexOf(v) >= 0
 
 /** A pattern that does not compile is worse than no pattern — it would read every task as a match. */
 export function cadenceRe(src: string): RegExp | null {
@@ -321,8 +347,8 @@ export function resolveCadences(raw: any): CadenceCfg {
     const match = (SUPERSEDED_MATCH[base.key] || []).indexOf(typed) >= 0 ? base.match : typed
     return {
       key: base.key,
-      label: txt(o?.label, base.label, 60),
-      everyDays: num(o?.everyDays, base.everyDays, 1, 3650),
+      label: superseded(base.key, 'label', o?.label) ? base.label : txt(o?.label, base.label, 60),
+      everyDays: superseded(base.key, 'everyDays', Number(o?.everyDays)) ? base.everyDays : num(o?.everyDays, base.everyDays, 1, 3650),
       dept: /housekeep|clean/.test(String(o?.dept || '')) ? 'housekeeping'
         : /inspect/.test(String(o?.dept || '')) ? 'inspection'
           : /maint/.test(String(o?.dept || '')) ? 'maintenance' : base.dept,
@@ -345,7 +371,7 @@ export function resolveCadences(raw: any): CadenceCfg {
       successor: o?.successor == null ? (base.successor !== false) : o.successor === true,
       leadDays: num(o?.leadDays, base.leadDays ?? 14, 0, 120),
       perBuilding: o?.perBuilding == null ? !!base.perBuilding : o.perBuilding === true,
-      equipment: ['any', 'central', 'mini-split', 'window'].includes(String(o?.equipment)) ? o.equipment : (base.equipment || 'any'),
+      equipment: superseded(base.key, 'equipment', o?.equipment) ? (base.equipment || 'any') : ['any', 'central', 'mini-split', 'window', 'non-central'].includes(String(o?.equipment)) ? o.equipment : (base.equipment || 'any'),
     }
   }
 
