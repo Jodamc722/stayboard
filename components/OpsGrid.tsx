@@ -493,7 +493,9 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
             : row.atRisk ? 'before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[3px] before:bg-amber-400' : '')}
         onClick={() => setOpen(o => !o)}>
         {/* who / what */}
-        <div className="order-1 flex-1 min-w-0 flex items-center gap-1.5 lg:order-none lg:flex-none lg:w-[16rem] lg:gap-2">
+        {/* PHONE: the unit's name is never the thing that gives way (Jon, 2026-10-03: "Rustic 8 - 1…").
+            It takes the width it needs; the status pills share the rest and wrap under it. */}
+        <div className="order-1 max-lg:shrink-0 max-lg:max-w-full lg:flex-1 min-w-0 flex items-center gap-1.5 lg:order-none lg:flex-none lg:w-[16rem] lg:gap-2">
           <ChevronRight size={14} className={'text-muted shrink-0 transition-transform ' + (open ? 'rotate-90' : '')} />
           <div className="min-w-0">
             {/* IN THE PEOPLE AXIS THE NAME IS A LINK to that person's whole task list (Jon,
@@ -504,14 +506,14 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
                 title={'Every task assigned to ' + row.title}
                 className="text-[14px] font-bold text-ink truncate block hover:underline decoration-dotted underline-offset-2">{row.title}</a>
             ) : (
-              <div className="text-[14px] font-bold text-ink truncate">{row.title}</div>
+              <div className="text-[14px] font-bold text-ink lg:truncate">{row.title}</div>
             )}
             {/* On a phone this rides on the meta line below instead, next to the reservation. */}
             {metaSub && <div className="hidden lg:block text-[11.5px] text-muted truncate">{metaSub}</div>}
           </div>
         </div>
         {/* status — beside the name on a phone, its own column on desktop */}
-        <div className="order-2 flex items-center gap-1.5 flex-wrap min-w-0 shrink-0 lg:order-none lg:flex-none lg:w-[14rem] lg:gap-2">
+        <div className="order-2 flex items-center gap-1.5 flex-wrap min-w-0 max-lg:flex-1 lg:order-none lg:flex-none lg:w-[14rem] lg:gap-2">
           <span className={'text-[11.5px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ' + row.status.cls}>{row.status.label}</span>
           {total > 0 && (
             <span className="text-[11px] font-semibold text-muted tabular-nums" title={done + ' of ' + total + ' finished'}>
@@ -565,7 +567,7 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
           )}
         </div>
         {/* the day's work */}
-        <div className="order-4 w-full flex items-center gap-1 flex-wrap lg:order-none lg:w-auto lg:flex-none lg:max-w-[15rem]">
+        <div className="order-4 max-lg:flex-1 max-lg:min-w-0 flex items-center gap-1 flex-wrap lg:order-none lg:w-auto lg:flex-none lg:max-w-[15rem]">
           {row.tasks.length === 0
             ? <span className="text-[11px] text-muted">No tasks today</span>
             : row.tasks.slice(0, 14).map(t => <TaskChip key={t.id} t={t} />)}
@@ -573,7 +575,7 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
         </div>
         {/* issues + gap + the ＋ — desktop keeps its own right-hand column; the ＋ rides along on
             a phone too, because filing the task is the reason you opened the row. */}
-        <div className="order-5 ml-auto flex items-center gap-2 lg:order-none lg:ml-0 lg:flex-none lg:justify-end">
+        <div className="order-5 ml-auto self-end flex items-center gap-2 lg:order-none lg:ml-0 lg:self-auto lg:flex-none lg:justify-end">
           {row.issues.length > 0 && (
             <span className="hidden lg:inline-flex text-[11px] font-bold px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200 items-center gap-1"
               title={row.issues.map(i => i.text).join(' · ')}>
@@ -1212,24 +1214,6 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           At 4pm the question stops being "will it land" and becomes "did it". `missed` — cleans
           finished after the hour — has been computed all along and shown nowhere, so nobody could
           answer "who was late, and by how much" without opening Breezeway. */}
-      {dl?.passed && dl.cleans > 0 && mode === 'units' && (
-        <div className="mb-3 rounded-xl border border-line bg-white px-3 py-2.5">
-          <div className="flex items-center gap-x-4 gap-y-1 flex-wrap">
-            <span className="text-[12.5px] font-bold text-ink">Day closed out</span>
-            <span className="text-[12.5px]"><b className="text-emerald-700 tabular-nums">{dl.done - (dl.missed || 0)}</b> <span className="text-muted">landed on time</span></span>
-            {(dl.missed || 0) > 0 && <span className="text-[12.5px]"><b className="text-amber-800 tabular-nums">{dl.missed}</b> <span className="text-muted">finished after {dl.dueBy}</span></span>}
-            {dl.remaining > 0 && <span className="text-[12.5px]"><b className="text-rose-700 tabular-nums">{dl.remaining}</b> <span className="text-muted">still open</span></span>}
-            {dl.untracked > 0 && <span className="text-[11.5px] text-muted">{dl.untracked} vendor — no clock</span>}
-            <span className="ml-auto text-[11.5px] text-muted">{clock}</span>
-          </div>
-          {dl.remaining > 0 && (
-            <p className="mt-1 text-[11.5px] text-rose-800">
-              Still open past {dl.dueBy}: {units.filter(u => u.tasks.some(t => t.type === 'departure_clean' && !t.done && !t.untracked)).slice(0, 8).map(u => u.unit).join(' · ') || '—'}
-            </p>
-          )}
-        </div>
-      )}
-
       {/* ── THE DAY, ONE LINE (Jon, 2026-09-22: "still just very visually difficult to see or read").
           The clock stays the biggest thing — the whole board is a 4pm deadline — and everything else
           on the strip is a plain pill: cleans left, under way, late, at risk, the crew, how fresh. */}
@@ -1248,6 +1232,18 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
             {dl.atRisk > 0 && <LTag tone="amber" title="Projected to land after the deadline">{dl.atRisk} at risk</LTag>}
             {dl.untracked > 0 && <LTag tone="slate" title="Vendor-cleaned units never close their tasks in Breezeway, so they carry no deadline.">{dl.untracked} vendor</LTag>}
           </span>
+          {/* CLOSED OUT, IN THE SAME CARD (Jon, 2026-10-03, phone screenshot: two cards both saying
+              "3 still open · 0h 37m past" filled the first screen). Once the deadline has passed the
+              verdict is one line here, with the units still open named. */}
+          {dl.passed && mode === 'units' && (
+            <p className="basis-full text-[12px] text-ink/80 flex items-center gap-x-3 gap-y-0.5 flex-wrap">
+              <span className="font-bold text-ink">Closed out</span>
+              <span><b className="text-emerald-700 tabular-nums">{dl.done - (dl.missed || 0)}</b> <span className="text-muted">on time</span></span>
+              {(dl.missed || 0) > 0 && <span><b className="text-amber-800 tabular-nums">{dl.missed}</b> <span className="text-muted">after {dl.dueBy}</span></span>}
+              {dl.remaining > 0 && <span className="text-rose-800"><b className="tabular-nums">{dl.remaining}</b> still open: {units.filter(u => u.tasks.some(t => t.type === 'departure_clean' && !t.done && !t.untracked)).slice(0, 8).map(u => u.unit).join(' · ') || '—'}</span>}
+              {dl.untracked > 0 && <span className="text-[11.5px] text-muted">{dl.untracked} vendor — no clock</span>}
+            </p>
+          )}
           <span className="flex-1" />
           {aside}
           <span className="text-[11.5px] text-muted shrink-0 inline-flex items-center gap-1.5">
@@ -1261,10 +1257,13 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       {/* ── VIEWS + FILTERS, ONE ROW. The five views are tabs with counts; the category counters that
           used to be a second row of chips are one select (still counted, still a filter). ── */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        <div className="inline-flex rounded-xl border border-line bg-white overflow-hidden max-w-full overflow-x-auto">
+        {/* PHONE (Jon, 2026-10-03, screenshot): the five views were squeezing — "Uni…", the Focus icon
+            over "People" — because Safari lets a <button> flex item shrink under its own text. Each
+            tab keeps its width (shrink-0) and the strip scrolls sideways instead. */}
+        <div className="flex max-lg:basis-full rounded-xl border border-line bg-white overflow-hidden max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {([['units', 'Units', LayoutGrid], ['vacant', 'Vacant', DoorOpen], ['people', 'People', Users], ['review', 'Focus', Sparkles], ['due', 'Due', CalendarClock]] as const).map(([k, label, Icon]) => (
             <button key={k} onClick={() => pickMode(k as any)}
-              className={'px-3 py-2 text-[13px] font-bold inline-flex items-center gap-1.5 border-l border-line first:border-l-0 whitespace-nowrap ' + (mode === k ? 'bg-brand-600 text-white' : 'text-muted hover:text-ink')}>
+              className={'shrink-0 px-3 py-2 text-[13px] font-bold inline-flex items-center gap-1.5 border-l border-line first:border-l-0 whitespace-nowrap ' + (mode === k ? 'bg-brand-600 text-white' : 'text-muted hover:text-ink')}>
               <Icon size={14} /> {label}
               {k === 'vacant' && (data?.vacants || []).length > 0 && <span className="text-[11px] opacity-75 tabular-nums">{(data?.vacants || []).filter(v => mkt === 'all' || v.market === mkt || (v as any).market2 === mkt).length}</span>}
               {k === 'review' && <ReviewCount market={prefsReady ? mkt : null} date={boardDate} />}
