@@ -98,6 +98,17 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
     for (const r of roster) { const h = habits.people[personKey(r.name)]; if (h) out[r.id] = h.hubs || {} }
     return out
   }, [habits, roster])
+  // HOME MARKET (Jon, 2026-10-05: "putting Broward staff in Miami"). Where a person has cleaned over
+  // the last 30 days decides their market; the Breezeway region (nearly always "Broward") only
+  // stands in for someone with no history. The suggester treats it as a wall, not a nudge.
+  // Keyed by name, not roster id, so it is right the moment the day loads (the roster state lands
+  // in the same tick as the first suggestion).
+  const homeMarket = useMemo(() => {
+    const out: Record<string, string> = {}
+    for (const [k, h] of Object.entries<any>(habits?.people || {})) if (h?.market) out[k] = String(h.market)
+    return out
+  }, [habits])
+  const marketOfPerson = useCallback((p: Person | undefined) => (p && homeMarket[personKey(p.name)]) || marketFromRegion(p?.region || null), [homeMarket])
   useEffect(() => {
     fetch('/api/breezeway/people?department=housekeeping', { cache: 'no-store' }).then(r => r.json())
       .then(j => { const m: Record<string, string> = {}; for (const p of (j?.people || [])) m[personKey(p.name)] = String(p.role || ''); setBzRoles(m) }).catch(() => {})
@@ -115,8 +126,8 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
 
   const people: SugPerson[] = useMemo(() => working.map(id => {
     const p = roster.find(r => r.id === id)
-    return { id, name: p?.name || String(id), market: marketFromRegion(p?.region || null), capacityMin: capBy[id] || DEFAULT_CAPACITY_MIN, role: roleOf(p?.name || '') }
-  }), [working, roster, capBy, roleOf])
+    return { id, name: p?.name || String(id), market: marketOfPerson(p), capacityMin: capBy[id] || DEFAULT_CAPACITY_MIN, role: roleOf(p?.name || '') }
+  }), [working, roster, capBy, roleOf, marketOfPerson])
 
   const runSuggest = useCallback((rs: Row[], ps: SugPerson[], keep: boolean, t = target, ot = overtime) => {
     const s = suggestSchedule(rs, ps, { keepCurrent: keep, targetCleans: t, overtimeMin: ot, affinity })
@@ -168,7 +179,7 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
         for (const r of rs) for (const id of r.currentIds) if (hk.some(h => h.id === id)) on.add(id)
         const ws = Array.from(on)
         setRows(rs); setRoster(hk); setCapBy(caps); setWorking(ws)
-        const ps = ws.map(id => { const p = hk.find(h => h.id === id); return { id, name: p?.name || '', market: marketFromRegion(p?.region || null), capacityMin: caps[id] || DEFAULT_CAPACITY_MIN, role: roleOf(p?.name || '') } })
+        const ps = ws.map(id => { const p = hk.find(h => h.id === id); return { id, name: p?.name || '', market: marketOfPerson(p), capacityMin: caps[id] || DEFAULT_CAPACITY_MIN, role: roleOf(p?.name || '') } })
         runSuggest(rs, ps, keepCurrent)
         setLoading(false)
       } catch (e: any) { if (!dead) { setErr(String(e?.message || e)); setLoading(false) } }
@@ -182,14 +193,18 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
   // administrator is not handed cleans before we knew who they were.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (rows.length && Object.keys(bzRoles).length) resuggest() }, [bzRoles])
+  // The 30-day habits (home markets + affinity) also arrive after the first pass; suggest again
+  // with them, or a Broward cleaner is placed in Miami before we knew where she works.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (rows.length && habits) resuggest() }, [habits])
   const toggleWorking = (id: number) => {
     const next = working.includes(id) ? working.filter(x => x !== id) : working.concat(id)
     setWorking(next)
-    const ps = next.map(pid => { const p = roster.find(r => r.id === pid); return { id: pid, name: p?.name || '', market: marketFromRegion(p?.region || null), capacityMin: capBy[pid] || DEFAULT_CAPACITY_MIN, role: roleOf(p?.name || '') } })
+    const ps = next.map(pid => { const p = roster.find(r => r.id === pid); return { id: pid, name: p?.name || '', market: marketOfPerson(p), capacityMin: capBy[pid] || DEFAULT_CAPACITY_MIN, role: roleOf(p?.name || '') } })
     // Keep what is on the board now (including hand moves) for everyone still working; only the
     // cleans that lost their person get placed again. "Re-suggest" is the full reshuffle.
     const sandbox = rows.map(r => { const to = assign[r.key]; return { ...r, currentIds: to != null && next.includes(to) ? [to] : [] } })
-    const s = suggestSchedule(sandbox, ps, { keepCurrent: true, targetCleans: target, overtimeMin: overtime })
+    const s = suggestSchedule(sandbox, ps, { keepCurrent: true, targetCleans: target, overtimeMin: overtime, affinity })
     setAssign(s.assign); setWhy(w => { const o = { ...s.why }; for (const k of Object.keys(o)) if (o[k] === 'already assigned' && w[k]) o[k] = w[k]; return o })
   }
   const move = (key: string, to: number | null) => { setAssign(a => ({ ...a, [key]: to })); setWhy(w => ({ ...w, [key]: 'moved by hand' })) }

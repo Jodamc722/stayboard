@@ -41,7 +41,7 @@ import { isDepartureCleanName } from '@/lib/breezeway'
 import { suggestSchedule, standardMinutes, loadFor, hubCentres, DEFAULT_CAPACITY_MIN, type SugClean, type SugPerson } from '@/lib/schedule-suggest'
 import { matchRoster, personKey } from '@/lib/roster-match'
 import { nameMatchesRoster } from '@/lib/person-name'
-import { learnHabits, affinityFor, type Habits } from '@/lib/schedule-habits'
+import { learnHabits, affinityFor, homeMarketFor, type Habits } from '@/lib/schedule-habits'
 import { postToChannel } from '@/lib/slack'
 import { EVE_CHANNELS } from '@/lib/slack-rules'
 import { agentAllowed, stepDown } from './agent-mode'
@@ -263,16 +263,20 @@ export async function projectDay(date: string, opts: ProjectOpts = {}): Promise<
       on.add(h.id); rosterSeeded++
     }
   }
-  const people: SugPerson[] = Array.from(on).map(id => { const p = hk.find(h => h.id === id); return { id, name: p?.name || String(id), market: marketFromRegion(p?.region || null), capacityMin: caps[id] || DEFAULT_CAPACITY_MIN, role: roleOf(p?.name || '') } })
-  if (!people.length) return null
+  if (!on.size) return null
   // From scratch, not "keep current": the point is what SHE would do with the same people — with the
   // last 30 days of habits as a tie-breaker (Jon, 2026-09-28: "go back 30 days to learn how we schedule").
   // A caller planning a week passes the habits in, learned once — not relearned for every day.
+  // The same 30 days say which market each person belongs to (Jon, 2026-10-05: "putting Broward
+  // staff in Miami"); the Breezeway region only stands in for someone with no history.
   let affinity: Record<number, Record<string, number>> = {}
+  let home: Record<number, string> = {}
   try {
     const habits = opts.habits !== undefined ? opts.habits : await learnHabits(30)
     affinity = habits ? affinityFor(habits, hk) : {}
-  } catch { affinity = {} }
+    home = habits ? homeMarketFor(habits, hk) : {}
+  } catch { affinity = {}; home = {} }
+  const people: SugPerson[] = Array.from(on).map(id => { const p = hk.find(h => h.id === id); return { id, name: p?.name || String(id), market: home[id] || marketFromRegion(p?.region || null), capacityMin: caps[id] || DEFAULT_CAPACITY_MIN, role: roleOf(p?.name || '') } })
   const sug = suggestSchedule(cleans, people, { keepCurrent: false, targetCleans: 4, overtimeMin: 60, affinity })
   const centres = hubCentres(cleans)
   const byPerson: Record<string, string[]> = {}

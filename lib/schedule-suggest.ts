@@ -12,7 +12,12 @@
 //   2. Same-day turns first. A guest is arriving at 4pm to those.
 //   3. Keep a person inside one building. Three cleans in Eden for one person beats one each for three
 //      people, because the drive between buildings is the part nobody gets paid to do well.
-//   4. Stay in the person's market (their Breezeway region, or where their current work already is).
+//   4. Stay in the person's market. A WALL, not a preference (Jon, 2026-10-05: "the suggest schedule
+//      is not working correctly, putting Broward staff in Miami"): a Broward cleaner is never handed a
+//      Miami clean while anyone from Miami has room. Only when nobody in the market can take it does
+//      the suggester cross, and then it says so on the card ("nobody in Miami had room"). Home market
+//      = the last 30 days of their cleans (lib/schedule-habits), else where today's work already is,
+//      else the Breezeway region — which is "Broward" for nearly everyone, so it comes last.
 //   5. Fill the person with the most room left, and never past their capacity. A clean that does not
 //      fit anywhere stays in "Unassigned" rather than quietly overloading somebody.
 //
@@ -45,7 +50,11 @@ export type SugClean = {
   minutes: number
   currentIds: number[]
 }
-/** role: 'cleaner' (default), 'supervisor' (last resort), 'other' (ops, handyman: never auto-assigned). */
+/**
+ * role: 'cleaner' (default), 'supervisor' (last resort), 'other' (ops, handyman: never auto-assigned).
+ * market: the person's HOME market (Miami / Broward / North), from their recent cleans where known.
+ * A known market is a wall; null means "anywhere", and the first clean they take settles it for the day.
+ */
 export type SugPerson = { id: number; name: string; market: string | null; capacityMin: number; role?: 'cleaner' | 'supervisor' | 'other' }
 export type SuggestOptions = {
   keepCurrent?: boolean; targetCleans?: number; overtimeMin?: number
@@ -146,13 +155,17 @@ export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: S
   for (const p of people) mine[p.id] = []
   const byId = new Map(people.map(p => [p.id, p]))
 
-  // A person's market: where their work already is, else what Breezeway says. The work wins: the
-  // first live run found nearly everyone's Breezeway region set to "Broward", including people who
-  // clean in Arya every day. And it is a preference, not a wall (see the score below).
+  // A person's market, in the order we trust it: what the caller knows (their recent cleans), else
+  // the market MOST of their current cleans today are in, else nothing — and nothing means anywhere.
+  // (Before 2026-10-05 this took the first current clean's market and the Breezeway region, and used
+  // it as a −900 nudge; a Broward cleaner was still handed Miami cleans once "already out" and
+  // "same building" stacked up. Now it is a wall; see the two passes below.)
   const marketOf: Record<number, string | null> = {}
   for (const p of people) {
-    const theirs = cleans.filter(c => c.currentIds.includes(p.id))
-    marketOf[p.id] = theirs.length ? theirs[0].market : (p.market || null)
+    if (p.market) { marketOf[p.id] = p.market; continue }
+    const n: Record<string, number> = {}
+    for (const c of cleans) if (c.currentIds.includes(p.id) && c.market) n[c.market] = (n[c.market] || 0) + 1
+    marketOf[p.id] = Object.keys(n).sort((a, b) => n[b] - n[a])[0] || null
   }
 
   // 1. Keep.
@@ -177,28 +190,38 @@ export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: S
     group.sort((a, b) => Number(b.sameDayTurn) - Number(a.sameDayTurn) || String(a.unit).localeCompare(String(b.unit)))
     for (const c of group) {
       const pool = people.filter(p => (p.role || 'cleaner') !== 'other')
-      let best: SugPerson | null = null, bestScore = -Infinity, bestWhy = ''
-      for (const p of pool) {
-        const add = addedIf(p.id, c)
-        const left = room(p.id) - add
-        const n = mine[p.id].length
-        // Fits inside the shift, or up to `overtime` past it while they are still short of `target`.
-        if (left < 0 && !(n < target && left >= -overtime)) continue
-        const inHub = mine[p.id].some(x => x.hub === c.hub)
-        const sup = p.role === 'supervisor'
-        // 3: same building dominates. 6: someone already out beats starting someone new.
-        // 7: a supervisor only when nobody else can. Then the least extra driving, then room.
-        const away = !!marketOf[p.id] && marketOf[p.id] !== c.market
-        // 8: the habit. Usually works this building (from the last 30 days) → up to +500, below
-        // "same building today" and "already out", above the driving and the room.
-        const habit = opts.affinity?.[p.id]?.[c.hub] || 0
-        const score = (inHub ? 1000 : 0) + (n > 0 ? 600 : 0) - (sup ? 3000 : 0) - (away ? 900 : 0) + habit * 500 - add + Math.max(left, 0) / 10
-        if (score > bestScore) {
-          best = p; bestScore = score
-          bestWhy = sup ? 'supervisor, nobody else had room' : inHub ? `already in ${c.hub}` : habit >= 0.3 ? `usually works ${c.hub} (${Math.round(habit * 100)}% of recent cleans)` : left < 0 ? `fills ${first(p.name)}'s day (+${-left}m over)` : n ? 'fills a day already started' : 'has the most room'
+      const away = (p: SugPerson) => !!marketOf[p.id] && !!c.market && marketOf[p.id] !== c.market
+      // Two passes. First the people in this clean's market (plus anyone with no market yet). Only
+      // if none of them can take it, everyone — and the card says the market ran out of room.
+      const pick = (cands: SugPerson[]) => {
+        let best: SugPerson | null = null, bestScore = -Infinity, bestWhy = ''
+        for (const p of cands) {
+          const add = addedIf(p.id, c)
+          const left = room(p.id) - add
+          const n = mine[p.id].length
+          // Fits inside the shift, or up to `overtime` past it while they are still short of `target`.
+          if (left < 0 && !(n < target && left >= -overtime)) continue
+          const inHub = mine[p.id].some(x => x.hub === c.hub)
+          const sup = p.role === 'supervisor'
+          // 3: same building dominates. 6: someone already out beats starting someone new.
+          // 7: a supervisor only when nobody else can. Then the least extra driving, then room.
+          // 8: the habit. Usually works this building (from the last 30 days) → up to +500, below
+          // "same building today" and "already out", above the driving and the room.
+          const habit = opts.affinity?.[p.id]?.[c.hub] || 0
+          const score = (inHub ? 1000 : 0) + (n > 0 ? 600 : 0) - (sup ? 3000 : 0) + habit * 500 - add + Math.max(left, 0) / 10
+          if (score > bestScore) {
+            best = p; bestScore = score
+            bestWhy = sup ? 'supervisor, nobody else had room' : inHub ? `already in ${c.hub}` : habit >= 0.3 ? `usually works ${c.hub} (${Math.round(habit * 100)}% of recent cleans)` : left < 0 ? `fills ${first(p.name)}'s day (+${-left}m over)` : n ? 'fills a day already started' : 'has the most room'
+          }
         }
+        return best ? { best, why: bestWhy } : null
       }
-      if (best) { assign[c.key] = best.id; why[c.key] = bestWhy; mine[best.id].push(c); if (!marketOf[best.id]) marketOf[best.id] = c.market }
+      let hit = pick(pool.filter(p => !away(p)))
+      if (!hit) {
+        const crossed = pick(pool.filter(p => away(p)))
+        if (crossed) hit = { best: crossed.best, why: `nobody in ${c.market} had room — ${first(crossed.best.name)} crosses from ${marketOf[crossed.best.id]}` }
+      }
+      if (hit) { assign[c.key] = hit.best.id; why[c.key] = hit.why; mine[hit.best.id].push(c); if (!marketOf[hit.best.id]) marketOf[hit.best.id] = c.market }
       else { assign[c.key] = null; why[c.key] = people.length ? 'nobody working has room' : 'nobody selected as working' }
     }
   }

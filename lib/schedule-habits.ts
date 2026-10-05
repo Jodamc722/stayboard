@@ -107,6 +107,21 @@ export async function learnHabits(days = 30): Promise<Habits> {
   return { from, to, days, people, hubs, perDay, totalCleans: total }
 }
 
+/**
+ * Each person's HOME market from the last 30 days of cleans (Jon, 2026-10-05: "putting Broward staff
+ * in Miami"). Person id → 'Miami' | 'Broward' | 'North'; nobody is listed who has no recent cleans.
+ * The suggester treats this as a wall; the Breezeway region (nearly always "Broward") is only the
+ * fallback for people with no history.
+ */
+export function homeMarketFor(h: Habits, roster: { id: number; name: string }[]): Record<number, string> {
+  const out: Record<number, string> = {}
+  for (const r of roster) {
+    const p = h.people[personKey(r.name)]
+    if (p?.market) out[r.id] = p.market
+  }
+  return out
+}
+
 /** The suggester's affinity map: person id → hub → 0..1, from the habits and the roster's names. */
 export function affinityFor(h: Habits, roster: { id: number; name: string }[]): Record<number, Record<string, number>> {
   const out: Record<number, Record<string, number>> = {}
