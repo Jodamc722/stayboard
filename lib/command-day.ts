@@ -1040,6 +1040,10 @@ function withDismissals(core: CommandCore, dismissRow: any): CommandDay {
 
   // ── THE VERDICT ─────────────────────────────────────────────────────────────────────────────
   const dl = core.clock
+  // The verdict speaks the same language as the cleans tile (2026-10-05): "at risk" is a clean
+  // nobody has started; a started one running long is said separately, never as "at risk".
+  const cr = core.tiles.cleans
+  const behindN = cr.rows.filter(r => r.behind).length
   const util = core.util
   const tUnassigned = core.unowned
   const glOverdue = core.glitchesOverdue
@@ -1056,9 +1060,10 @@ function withDismissals(core: CommandCore, dismissRow: any): CommandDay {
     if (dl.missed) drivers.push(dl.missed + ' finished late')
     if (nowRows.length) drivers.push(nowRows.length + ' issue' + (nowRows.length === 1 ? ' needs' : 's need') + ' a person now')
   } else {
-    if (dl.late > 0) { state = 'behind'; drivers.push(dl.late + ' clean' + (dl.late === 1 ? '' : 's') + ' late') }
+    if (cr.late > 0) { state = 'behind'; drivers.push(cr.late + ' clean' + (cr.late === 1 ? '' : 's') + ' late, not started') }
     if (turnsOpen > 0) { if (state === 'on_track') state = 'at_risk'; drivers.push(turnsOpen + ' same-day turn' + (turnsOpen === 1 ? '' : 's') + ' not started') }
-    if (dl.atRisk > 0) { if (state === 'on_track') state = 'at_risk'; drivers.push(dl.atRisk + ' at risk for 4pm') }
+    if (cr.atRisk > 0) { if (state === 'on_track') state = 'at_risk'; drivers.push(cr.atRisk + ' not started, at risk for 4pm') }
+    if (behindN > 0) { if (state === 'on_track') state = 'at_risk'; drivers.push(behindN + ' in progress, may run past 4pm') }
     if (tUnassigned > 0) { if (state === 'on_track') state = 'at_risk'; drivers.push(tUnassigned + ' task' + (tUnassigned === 1 ? '' : 's') + ' unowned') }
     if (util != null && util > 100) { if (state !== 'behind') state = 'at_risk'; drivers.push('crew at ' + util + '%') }
     if (glOverdue) drivers.push(glOverdue + ' guest issue' + (glOverdue === 1 ? '' : 's') + ' overdue')

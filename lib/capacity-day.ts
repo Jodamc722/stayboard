@@ -26,6 +26,7 @@ import { assessDay, spread, unitCost, PERFORMED_FLOOR_MIN, type Stop, type DayLo
 
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 /** Collapse whitespace so the two systems' spellings of one person land in one lane. */
+import { nameMatches, nameMatchesRoster, bestSpelling } from './person-name'
 const personName = (v: any) => String(v ?? '').replace(/\s+/g, ' ').trim()
 
 /** One task on a person's day, for the Team rows on Today (Jon, 2026-10-01: open a person and see
@@ -234,6 +235,35 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
     if (s.role) roleOf[s.name] = str(s.role)
   }
 
+  // ONE PERSON, ONE ROW (2026-10-05). Homebase and Breezeway spell people differently — "Vilma
+  // Martinez" / "vilma martinez", "Elianys" / "Elyanis Cardenas", "Yunisleydi" / "Yunisleidi Perez",
+  // "Yoslenis Rodiguez" / "Rodriguez" — and the exact-string join split each into two Team rows: one
+  // with the shift and no work ("nothing assigned"), one with the work and "no shift on record". Each
+  // Breezeway name is folded onto the Homebase person it matches (the same matcher the scheduler and
+  // payroll use), so the shift and the tasks meet on one row.
+  {
+    const shiftNames = Object.keys(shiftMin)
+    const fold = <T,>(m: Record<string, T[]>) => {
+      for (const k of Object.keys(m)) {
+        if (shiftMin[k] != null) continue
+        const to = nameMatchesRoster(k, shiftNames)
+        if (!to || to === k) continue
+        m[to] = (m[to] || []).concat(m[k]); delete m[k]
+      }
+    }
+    fold(stopsByPerson); fold(tasksByPerson)
+    // Two Breezeway spellings of someone with no shift today still collapse to one row.
+    const fold2 = <T,>(m: Record<string, T[]>) => {
+      const ks = Object.keys(m).filter(k => shiftMin[k] == null)
+      for (let i = 0; i < ks.length; i++) for (let j = i + 1; j < ks.length; j++) {
+        const a = ks[i], b = ks[j]
+        if (!m[a] || !m[b] || !nameMatches(a, b)) continue
+        const keep = bestSpelling(a, b) === a ? a : b, drop = keep === a ? b : a
+        m[keep] = m[keep].concat(m[drop]); delete m[drop]
+      }
+    }
+    fold2(stopsByPerson); fold2(tasksByPerson)
+  }
   const names = Array.from(new Set([...Object.keys(shiftMin), ...Object.keys(stopsByPerson)]))
   const people: DayLoad[] = names.map(name => {
     const dept = crew ? crew.deptOf(name, roleOf[name] || null) : 'other'
