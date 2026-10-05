@@ -249,6 +249,7 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
               <button disabled={busy} onClick={() => onState(t.id, 'ops_approved')} className={btn + ' bg-brand-600 text-white hover:bg-brand-700'}>{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={13} />} Approve</button>
             </>
           )}
+          <Tip label="Open the task in Breezeway"><a href={'https://app.breezeway.io/task/' + encodeURIComponent(t.id)} target="_blank" rel="noreferrer" aria-label="Open the task in Breezeway" className="p-1 text-muted hover:text-ink"><ExternalLink size={13} /></a></Tip>
           <Tip label={open ? 'Close details' : 'Details, price and note'}><button onClick={() => onToggle(t.id)} className="p-1 text-muted hover:text-ink" aria-label="Details"><ChevronDown size={14} className={'transition ' + (open ? 'rotate-180' : '')} /></button></Tip>
         </div>
       </div>
@@ -276,7 +277,13 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
             {t.billable ? <p className="text-[11.5px] text-ink/80 mt-2"><b>Billable model:</b> {VERDICT_WORD[t.billable.verdict]} · {CAT_LABEL[t.billable.category] || t.billable.category} · {Math.round(t.billable.confidence * 100)}% — {t.billable.reasons.join(' · ')}</p> : null}
             {t.aiVerdict === 'bill' && t.aiReason ? <p className="text-[11.5px] text-brand-800 mt-2">AI: {t.aiReason}{t.aiAmount != null ? ' — suggests ' + money(t.aiAmount) : ''}</p> : null}
             {t.description ? <p className="text-[11.5px] text-muted mt-2 whitespace-pre-wrap">{t.description}</p> : null}
-            {t.reportUrl ? <a href={t.reportUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand-700 mt-2"><ExternalLink size={11} /> Open in Breezeway</a> : null}
+            {/* THE TASK, NOT ONLY ITS REPORT (Jon, 2026-10-05: "need to be able to get to the main task as
+                well, not just the report"). The task is where costs, photos and status are edited; the
+                report is the read-only printout. */}
+            <span className="inline-flex items-center gap-3 mt-2 flex-wrap">
+              <a href={'https://app.breezeway.io/task/' + encodeURIComponent(t.id)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand-700"><ExternalLink size={11} /> Open task in Breezeway</a>
+              {t.reportUrl ? <a href={t.reportUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-muted hover:text-ink"><ExternalLink size={11} /> Task report</a> : null}
+            </span>
           </div>
           <div className="min-w-0 space-y-2">
             <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted">Our adjustment</p>
