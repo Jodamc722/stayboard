@@ -192,8 +192,6 @@ export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: S
   }
 
   const used = (id: number) => loadFor(mine[id], centres).minutes
-  const room = (id: number) => (byId.get(id)?.capacityMin || DEFAULT_CAPACITY_MIN) - used(id)
-  const addedIf = (id: number, c: SugClean) => loadFor(mine[id].concat(c), centres).minutes - used(id)
 
   // 2. Buildings with same-day turns first, then the biggest buildings.
   const groups: Record<string, SugClean[]> = {}
@@ -201,43 +199,66 @@ export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: S
   const order = Object.values(groups).sort((a, b) =>
     b.filter(c => c.sameDayTurn).length - a.filter(c => c.sameDayTurn).length || b.length - a.length)
 
+  // ONE CLEANER PER BUILDING (Jon, 2026-10-05: "should pick the same cleaner per building, shouldn't
+  // space it out"). Before this the suggester placed one clean at a time and preferred whoever was
+  // "already out": Vilma took one Rustic clean on top of her Eden day, ran out of room, and the second
+  // Rustic clean went to Maribel — two people for a two-clean building. Now each BUILDING is offered
+  // whole: the person who can take the most of it (ideally all of it) gets it, and it is split only
+  // when nobody has room for all of it — then into as few hands as possible, biggest share first.
+  const fitsAll = (id: number, extra: SugClean[]) => {
+    const cap = byId.get(id)?.capacityMin || DEFAULT_CAPACITY_MIN
+    const total = mine[id].length + extra.length
+    const left = cap - loadFor(mine[id].concat(extra), centres).minutes
+    // Inside the shift, or up to `overtime` past it while the day is still at or under `target` cleans.
+    return { ok: left >= 0 || (total <= target && left >= -overtime), left }
+  }
   for (const group of order) {
     group.sort((a, b) => Number(b.sameDayTurn) - Number(a.sameDayTurn) || String(a.unit).localeCompare(String(b.unit)))
-    for (const c of group) {
-      const pool = people.filter(p => (p.role || 'cleaner') !== 'other')
-      const away = (p: SugPerson) => !!marketOf[p.id] && !!c.market && marketOf[p.id] !== c.market
-      // Two passes. First the people in this clean's market (plus anyone with no market yet). Only
-      // if none of them can take it, everyone — and the card says the market ran out of room.
-      const pick = (cands: SugPerson[]) => {
-        let best: SugPerson | null = null, bestScore = -Infinity, bestWhy = ''
-        for (const p of cands) {
-          const add = addedIf(p.id, c)
-          const left = room(p.id) - add
-          const n = mine[p.id].length
-          // Fits inside the shift, or up to `overtime` past it while they are still short of `target`.
-          if (left < 0 && !(n < target && left >= -overtime)) continue
-          const inHub = mine[p.id].some(x => x.hub === c.hub)
-          const sup = p.role === 'supervisor'
-          // 3: same building dominates. 6: someone already out beats starting someone new.
-          // 7: a supervisor only when nobody else can. Then the least extra driving, then room.
-          // 8: the habit. Usually works this building (from the last 30 days) → up to +500, below
-          // "same building today" and "already out", above the driving and the room.
-          const habit = opts.affinity?.[p.id]?.[c.hub] || 0
-          const score = (inHub ? 1000 : 0) + (n > 0 ? 600 : 0) - (sup ? 3000 : 0) + habit * 500 - add + Math.max(left, 0) / 10
-          if (score > bestScore) {
-            best = p; bestScore = score
-            bestWhy = sup ? 'supervisor, nobody else had room' : inHub ? `already in ${c.hub}` : habit >= 0.3 ? `usually works ${c.hub} (${Math.round(habit * 100)}% of recent cleans)` : left < 0 ? `fills ${first(p.name)}'s day (+${-left}m over)` : n ? 'fills a day already started' : 'has the most room'
-          }
-        }
-        return best ? { best, why: bestWhy } : null
+    const hub = group[0].hub, mkt = group[0].market, total = group.length
+    let rest = group.slice()
+    const pool = people.filter(p => (p.role || 'cleaner') !== 'other')
+    const away = (p: SugPerson) => !!marketOf[p.id] && !!mkt && marketOf[p.id] !== mkt
+    // The biggest run of this building's cleans one person can take, in order (same-day first).
+    const chunk = (cands: SugPerson[]) => {
+      let best: { p: SugPerson; take: SugClean[]; left: number } | null = null, bestScore = -Infinity
+      for (const p of cands) {
+        const take: SugClean[] = []
+        let left = 0
+        for (const c of rest) { const f = fitsAll(p.id, take.concat(c)); if (f.ok) { take.push(c); left = f.left } }
+        if (!take.length) continue
+        const n = mine[p.id].length
+        const inHub = mine[p.id].some(x => x.hub === hub)
+        const sup = p.role === 'supervisor'
+        const habit = opts.affinity?.[p.id]?.[hub] || 0
+        const add = loadFor(mine[p.id].concat(take), centres).minutes - used(p.id)
+        // Most of the building in one pair of hands first; a supervisor only when no cleaner can take
+        // any of it; then already in the building, the habit, a day already started (fewer people out),
+        // and the least extra time.
+        const score = take.length * 10000 - (sup ? 100000 : 0) + (inHub ? 1000 : 0) + habit * 500 + (n > 0 ? 300 : 0) - add / 10
+        if (score > bestScore) { bestScore = score; best = { p, take, left } }
       }
-      let hit = pick(pool.filter(p => !away(p)))
+      return best
+    }
+    while (rest.length) {
+      let hit = chunk(pool.filter(p => !away(p)))
+      let crossed = false
+      if (!hit) { hit = chunk(pool.filter(p => away(p))); crossed = !!hit }
       if (!hit) {
-        const crossed = pick(pool.filter(p => away(p)))
-        if (crossed) hit = { best: crossed.best, why: `nobody in ${c.market} had room — ${first(crossed.best.name)} crosses from ${marketOf[crossed.best.id]}` }
+        for (const c of rest) { assign[c.key] = null; why[c.key] = people.length ? 'nobody working has room' : 'nobody selected as working' }
+        break
       }
-      if (hit) { assign[c.key] = hit.best.id; why[c.key] = hit.why; mine[hit.best.id].push(c); if (!marketOf[hit.best.id]) marketOf[hit.best.id] = c.market }
-      else { assign[c.key] = null; why[c.key] = people.length ? 'nobody working has room' : 'nobody selected as working' }
+      const { p, take, left } = hit
+      const inHub = mine[p.id].some(x => x.hub === hub)
+      const habit = opts.affinity?.[p.id]?.[hub] || 0
+      const whole = take.length === total
+      const w = crossed ? `nobody in ${mkt} had room — ${first(p.name)} crosses from ${marketOf[p.id]}`
+        : p.role === 'supervisor' ? 'supervisor, nobody else had room'
+        : inHub ? `already in ${hub}`
+        : whole ? (total > 1 ? `all ${total} in ${hub}, one cleaner` : habit >= 0.3 ? `usually works ${hub} (${Math.round(habit * 100)}% of recent cleans)` : left < 0 ? `fills ${first(p.name)}'s day (+${-left}m over)` : mine[p.id].length ? 'fills a day already started' : 'has the most room')
+        : `${take.length} of ${total} in ${hub} — nobody had room for all`
+      for (const c of take) { assign[c.key] = p.id; why[c.key] = w; mine[p.id].push(c) }
+      if (!marketOf[p.id]) marketOf[p.id] = mkt
+      rest = rest.filter(c => !take.includes(c))
     }
   }
   return { assign, why }
