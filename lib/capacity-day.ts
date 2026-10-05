@@ -61,7 +61,7 @@ export type DayPicture = {
   /** When this picture was priced — a cached copy is never served as if it were now (lib/bust). */
   builtAt?: string
   /** Every person on shift, whether or not they have work. `shiftStartMin` is ET minutes past midnight. */
-  people: (DayLoad & { shiftStartMin?: number | null; tasks?: PersonTask[]; clock?: PersonClock | null })[]
+  people: (DayLoad & { shiftStartMin?: number | null; tasks?: PersonTask[]; clock?: PersonClock | null; crewDept?: string | null })[]
   /** Work with nobody on it — the pool a supervisor is choosing from. */
   unassigned: Array<{ stop: Stop; minutes: number; market: string | null; bestFor: Suggestion[] }>
   /** Moves worth making, strongest first. */
@@ -298,7 +298,9 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
         clock = { in: ins[0] || null, out: open ? null : (outs[outs.length - 1] || null), open }
       } else clock = { in: null, out: null, open: false }
     }
-    return { ...load, shiftStartMin: shiftStartMin[name] ?? null, tasks: tasksByPerson[name] || [], clock }
+    // crewDept: the Crew & roles department (lib/crew) — null when the roster could not be read, so
+    // a missing roster never hides anyone from Who's working.
+    return { ...load, shiftStartMin: shiftStartMin[name] ?? null, tasks: tasksByPerson[name] || [], clock, crewDept: crew ? str(dept) : null }
   }).sort((a, b) => a.utilisationPct - b.utilisationPct)
 
   if (!Object.keys(shiftMin).length) {

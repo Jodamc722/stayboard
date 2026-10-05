@@ -322,14 +322,15 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   // ── who's working (Jon, 2026-10-05: "the Who's Working strip … should be at the top in one of the Today
   //    tabs, like all the other tab selectors") — the same lib/team-where read as Today › Team.
   const nowD = new Date()
-  const teamRead = t.team.rows.map(p => {
+  const fieldRows = t.team.rows.filter(p => p.field !== false)   // field team only — not CCS / office
+  const teamRead = fieldRows.map(p => {
     const w = whereNow(p.tasks || [], nowD, p.clock)
     const bucket = w.kind === 'at' ? 'at' : w.kind === 'last' ? 'done' : w.tone === 'amber' ? 'quiet' : w.kind === 'still' || w.kind === 'heading' ? 'between' : (p.tasks || []).length ? 'none' : 'idle'
     return { p, w, bucket }
   })
   const tmCount = (b: string) => teamRead.filter(x => x.bucket === b).length
-  const tmOn = t.team.rows.filter(p => p.clock?.open).length
-  const tmKnownClock = t.team.rows.some(p => p.clock)
+  const tmOn = fieldRows.filter(p => p.clock?.open).length
+  const tmKnownClock = fieldRows.some(p => p.clock)
   const tmWorking = teamRead.filter(x => x.bucket !== 'idle' || x.p.clock?.open).length
 
   // ── cleans ──
@@ -378,7 +379,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const rcLater = rc ? rc.rows.filter(r => !r.today && !r.done).length : 0
 
   const tiles: { key: Key; label: string; done: number; needed: number; segs: Seg[]; sub: string; title: string; loading?: boolean; big?: { value: string; unit: string; tone: string } }[] = [
-    { key: 'team', label: 'Who’s working', done: tmCount('at') + tmCount('between'), needed: tmWorking, title: 'Who is working today and where they probably are: a task in progress puts them in that unit; otherwise their last finish and their next task. On the clock comes from Homebase',
+    { key: 'team', label: 'Who’s working', done: tmCount('at') + tmCount('between'), needed: tmWorking, title: 'The field team (housekeeping, supervisors, maintenance, inspectors — not CCS or office) working today and where they probably are: a task in progress puts them in that unit; otherwise their last finish and their next task. On the clock comes from Homebase',
       big: { value: String(tmKnownClock ? tmOn : tmWorking), unit: tmKnownClock ? 'on the clock' : 'working', tone: tmCount('quiet') ? 'text-amber-800' : 'text-ink' },
       segs: [{ label: 'in a unit', n: tmCount('at'), cls: 'bg-sky-400', tone: 'sky', filter: 'at' }, { label: 'between units', n: tmCount('between'), cls: 'bg-slate-400', tone: 'slate', filter: 'between' }, { label: 'quiet', n: tmCount('quiet'), cls: 'bg-amber-400', tone: 'amber', filter: 'quiet' }, { label: 'not started', n: tmCount('none'), cls: 'bg-slate-300', tone: 'slate', filter: 'none' }, { label: 'done for the day', n: tmCount('done'), cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }],
       sub: [tmCount('at') ? tmCount('at') + ' in a unit' : '', tmCount('between') ? tmCount('between') + ' between units' : '', tmCount('quiet') ? tmCount('quiet') + ' quiet' : ''].filter(Boolean).join(' · ') || (tmWorking ? 'nobody started yet' : 'nobody on today') },
@@ -531,7 +532,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
               <button onClick={() => setOpen(null)} className="text-muted hover:text-ink" aria-label="Close the list" title="Close"><ChevronUp size={15} /></button>
             </span>
           </div>
-          {open === 'team' && <div className={LIST + ' mb-2'}><TeamWhereStrip rows={t.team.rows} /></div>}
+          {open === 'team' && <div className={LIST + ' mb-2'}><TeamWhereStrip rows={fieldRows} /></div>}
           {shown.length === 0
             ? <p className="px-2 py-3 text-[12.5px] text-muted">{(open === 'welcome' || open === 'recovery') && !calls ? (callsQ.loading ? 'Reading the Calls desk…' : 'Could not read the Calls desk.') : 'Nothing here.'}</p>
             : <div className={LIST + ' max-h-[520px] overflow-y-auto'}>{shown.map(i => <div key={i.key}>{i.node}</div>)}</div>}

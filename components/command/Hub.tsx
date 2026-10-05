@@ -881,7 +881,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   }
   for (const i of otherFix) items.push({ key: i.key, area: 'ops', sub: 'Tasks', score: i.severity === 'now' ? 66 : i.severity === 'today' ? 52 : 30, node: <NextRow i={i} roster={roster} canAssign={can.assign} canCreate={can.plan} onCleared={onCleared} onChanged={onChanged} /> })
   // Working first: on the clock or in a unit, then the rest; the most loaded first within each.
-  for (const r of teamRows) {
+  for (const r of teamRows.filter(x => x.field !== false)) {   // field team only — not CCS / office
     const w = whereNow(r.tasks || [], new Date(), r.clock)
     const active = r.clock?.open || w.kind === 'at' || w.kind === 'still' || w.kind === 'heading'
     items.push({ key: 'team:' + r.person, area: 'ops', sub: 'Team', score: (active ? 44 : 24) + Math.min(r.utilisationPct, 150) / 15 /* ≤ 54: never reaches Now */, node: <TeamRow p={r} /> })

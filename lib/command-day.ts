@@ -172,7 +172,17 @@ export type CleanRow = {
 /** inspection 'auto' = a big arrival with none yet that Task automation files on its next run — nobody is asked. */
 export type ArrivalRow = { reservationId: string; guest: string; unit: string; listingId: string | null; checkIn: string; nights: number; value: number; big: boolean; today: boolean; inspection: 'none' | 'open' | 'done' | 'n/a' | 'auto'; inspectionTaskId: string | null; welcomeDone: boolean }
 export type TaskRow = { taskId: string; unit: string; market: string; name: string; dept: string; type: string; who: string; state: 'done' | 'running' | 'open'; prio: string; late: boolean }
-export type TeamRow = { person: string; role: string | null; cleans: number; otherTasks: number; loadMinutes: number; capacityMinutes: number; utilisationPct: number; verdict: string; headroomCleans: number; triggers: string[]; tasks: PersonTask[]; shiftStartMin?: number | null; clock?: PersonClock | null }
+// WHO'S WORKING IS THE FIELD TEAM (Jon, 2026-10-05: "Who is working should be field team, Karla is
+// field coordinator not field team"). Housekeeping, supervisors, maintenance and inspectors are in the
+// field; the CCS team (field coordinators, CCS managers) and office/other are not. No department known
+// (roster unreadable) counts as field, so nobody vanishes because a read failed.
+export function isFieldDept(dept: string | null | undefined): boolean {
+  if (!dept) return true
+  return ['housekeeping', 'supervision', 'maintenance', 'inspection'].includes(String(dept))
+}
+export type TeamRow = { person: string; role: string | null; cleans: number; otherTasks: number; loadMinutes: number; capacityMinutes: number; utilisationPct: number; verdict: string; headroomCleans: number; triggers: string[]; tasks: PersonTask[]; shiftStartMin?: number | null; clock?: PersonClock | null
+  /** Crew & roles department; field = housekeeping · supervision · maintenance · inspection. */
+  dept?: string | null; field?: boolean }
 export type GlitchRow = { id: string; unit: string; issue: string; status: string; due: string | null; overdue: boolean; ageDays: number; assignee: string; hasTask: boolean; taskStatus: string | null; href: string }
 export type ClaimRow = { id: string; unit: string; property: string; guest: string; stage: string; stageLabel: string; deadline: string | null; daysLeft: number | null; amount: number | null; waitingOn: string | null }
 export type OverdueRow = { key: string; kind: 'breezeway' | 'field' | 'glitch' | 'urgent'; text: string; href: string | null; count?: number }
@@ -920,7 +930,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   const overdueTotal = bzOverdue + fieldOverdue.length + glOverdue
 
   // ── TEAM: the capacity model, priced per person ─────────────────────────────────────────────
-  const teamRows: TeamRow[] = (cap?.people || []).map(p => ({ person: p.person, role: null, cleans: p.cleans, otherTasks: p.otherTasks, loadMinutes: p.loadMinutes, capacityMinutes: p.capacityMinutes, utilisationPct: p.utilisationPct, verdict: p.verdict, headroomCleans: p.headroomCleans, triggers: p.triggers || [], tasks: p.tasks || [], shiftStartMin: (p as any).shiftStartMin ?? null, clock: (p as any).clock ?? null }))
+  const teamRows: TeamRow[] = (cap?.people || []).map(p => ({ person: p.person, role: null, cleans: p.cleans, otherTasks: p.otherTasks, loadMinutes: p.loadMinutes, capacityMinutes: p.capacityMinutes, utilisationPct: p.utilisationPct, verdict: p.verdict, headroomCleans: p.headroomCleans, triggers: p.triggers || [], tasks: p.tasks || [], shiftStartMin: (p as any).shiftStartMin ?? null, clock: (p as any).clock ?? null, dept: (p as any).crewDept ?? null, field: isFieldDept((p as any).crewDept) }))
     .sort((a, b) => (a.verdict === 'implausible' ? 1 : 0) - (b.verdict === 'implausible' ? 1 : 0) || b.utilisationPct - a.utilisationPct)
   const idle = teamRows.filter(p => p.verdict !== 'implausible' && p.capacityMinutes > 0 && p.cleans + p.otherTasks === 0).map(p => p.person)
   const k = cap?.kpi
