@@ -38,6 +38,7 @@
 // after Jon hits OFF is the one latency this design refuses to have.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { isSuperadmin } from '@/lib/access'
 import { setSetting } from '@/lib/app-settings'
 import { todayET, pageRows } from './ctx'
 
@@ -884,6 +885,12 @@ export async function executeProposal(id: string, by: string): Promise<{ ok: boo
   const exec = row.payload?.exec || {}
   const s = await getAgentSettings()
   if (!s.enabled) return { ok: false, error: 'Agent mode is OFF — switch it on to let her carry this out, or do it by hand.' }
+  // THE APPROVER LIST APPROVES (audit 2026-10-05). Settings → Eve → Agent mode names the approvers, and
+  // until now that list only chose who was notified — any admin could execute from the panel. With
+  // a list set, only those people (and the owner) may; an empty list keeps the old rule.
+  const byEmail = String(by || '').toLowerCase().trim()
+  const approvers = (s.approvers || []).map((x: any) => String(x).toLowerCase().trim()).filter(Boolean)
+  if (approvers.length && !isSuperadmin(byEmail) && approvers.indexOf(byEmail) < 0) return { ok: false, error: `only an approver can carry this out (${approvers.map(a => a.split('@')[0]).join(', ')})` }
 
   const nowISO = new Date().toISOString()
   // CLAIM FIRST (2026-09-28 audit, F20). A Telegram "yes" and a panel Approve a second apart both

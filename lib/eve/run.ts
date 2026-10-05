@@ -23,10 +23,10 @@ import { wireTools, runTool, DOMAIN_KEYS } from './registry'
 import { guessDomains } from './domain-guess'
 import { loadMemories, renderMemories, touchMemories, scopesForText, saveMemory, memoryHitsFor, recordMemoryHits } from './memory'
 import { appAtlas } from './atlas'
-import { buildSystemBlocks, getVoiceProfile } from './prompt'
+import { buildSystemBlocks, getVoiceProfile, nowET } from './prompt'
 import { detectLanguage, languageNote, getLingo, lingoNote } from './voice'
 import { getOperatingModel, renderOperatingModel } from './operating-model'
-import { modelFor } from '@/lib/ai-models'
+import { modelFor, modelPairFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 import { getAgentSettings, normalizeAgentSettings, renderAgentModeForPrompt, agentAllowed } from './agent-mode'
 import { maskMoneyText, scrubStoredText, scrubReleasedInValue, isGuestOrPersonMemory } from './redact'
@@ -196,6 +196,16 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   if (!messages.length) return { ok: false, status: 400, error: 'no messages' }
 
   const startedAt = Date.now()
+  // ONE CLOCK PER RUN (audit 2026-10-05). The dynamic system block carried nowET() to the minute and
+  // was rebuilt every turn, so a six-turn answer that crossed a minute boundary invalidated its own
+  // 5-minute cache and the conversation cache behind it. The time is read once; "remind me in ten
+  // minutes" still has a minute-accurate anchor.
+  const runNow = nowET()
+  // A WALL CLOCK (audit 2026-10-05): Vercel ends the function at its maxDuration regardless, and a
+  // run cut off there answers nobody. Past this budget the loop stops asking for more tools and
+  // answers with what it has.
+  const WALL_MS = 150_000
+  let outOfTime = false
   const source = input.source || 'web'
   const noTools = !!input.noTools
   const isProbe = source === 'probe'
@@ -361,7 +371,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       // redacted; the memories and the mind block went into the prompt whole, so a staff member in
       // Slack could be read a dollar figure Jon once taught her. Masked here for anyone not cleared.
       const memText = renderMemories(memories)
-      const blocks = buildSystemBlocks({ headline, atlas: appAtlas(), memories: canMoney ? memText : maskMoneyText(memText), mind: canMoney ? mind : maskMoneyText(mind), openDomains: open, voice: voicePlus, userName, canMoney, operatingModel, agentMode })
+      const blocks = buildSystemBlocks({ now: runNow, headline, atlas: appAtlas(), memories: canMoney ? memText : maskMoneyText(memText), mind: canMoney ? mind : maskMoneyText(mind), openDomains: open, voice: voicePlus, userName, canMoney, operatingModel, agentMode })
       // TWO BREAKPOINTS, NOT ONE. `stable` survives between conversations while the five-minute
       // window holds; `dynamic` (memories, headline, who is asking) is constant within ONE
       // conversation and different in the next, so it earns its own entry rather than riding free
@@ -381,17 +391,29 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       // tool the API is still waiting on, it 400s with "but no web_search tool was provided".
       // noTools: the model is never told a tool exists (the only reliable way to keep one from
       // being used), and the tools key is left off the request entirely.
-      const toolset: any[] = noTools ? [] : allowed(wireTools(open))
-      if (webOk && !noTools) toolset.push(WEB_SEARCH_TOOL as any)
+      const toolset: any[] = (noTools || outOfTime) ? [] : allowed(wireTools(open))
+      if (webOk && !noTools && !outOfTime) toolset.push(WEB_SEARCH_TOOL as any)
       const messages = withCacheBreakpoint(convo)
 
       const HEADERS = { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json', 'anthropic-beta': 'extended-cache-ttl-2025-04-11' }
-      let r = await aiFetch('eve', {
-        method: 'POST',
-        headers: HEADERS,
-        body: JSON.stringify({ model: await modelFor('eve'), max_tokens: noTools ? 600 : 4096, system, ...(toolset.length ? { tools: toolset } : {}), messages }),
-      })
-      let d: any = await r.json()
+      // RETRY, THEN FALL BACK (audit 2026-10-05). The loop used to return the first 429 or 5xx to the
+      // room as "Anthropic 429" and stop. A rate limit or an overloaded model now waits (2s, then 6s)
+      // and retries; a third failure goes to the task's fallback model (lib/ai-models) once, so a
+      // busy minute costs a slower answer rather than no answer.
+      const pair = await modelPairFor('eve')
+      const call = async (model: string, body: Record<string, any>) => {
+        const rr = await aiFetch('eve', { method: 'POST', headers: HEADERS, body: JSON.stringify({ model, ...body }) })
+        return { r: rr, d: (await rr.json().catch(() => ({}))) as any }
+      }
+      const baseBody = { max_tokens: noTools ? 600 : 4096, system, ...(toolset.length ? { tools: toolset } : {}), messages }
+      let { r, d } = await call(pair.model, baseBody)
+      for (let attempt = 0; !r.ok && (r.status === 429 || r.status === 529 || r.status >= 500) && attempt < 3; attempt++) {
+        if (Date.now() - startedAt > WALL_MS - 20_000) break
+        const useFallback = attempt === 2 && !!pair.fallback && pair.fallback !== pair.model
+        await new Promise(res => setTimeout(res, useFallback ? 500 : attempt === 0 ? 2000 : 6000))
+        ;({ r, d } = await call(useFallback ? pair.fallback : pair.model, baseBody))
+        if (useFallback && r.ok) toolsUsed.push('_fallback_model')
+      }
       // The long TTL refused (an account or model without it): same request, 5-minute cache.
       if (!r.ok && longCache && /ttl|cache_control|extended-cache/i.test(JSON.stringify(d?.error || ''))) {
         longCache = false
@@ -429,6 +451,13 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       // API carries on. Treating this as terminal (the obvious bug) silently truncates the search.
       if (d.stop_reason === 'pause_turn') { pauses++; if (pauses > 4) break; continue }
 
+      // Over the wall clock with another round of tools asked for: answer from what is known.
+      if (d.stop_reason === 'tool_use' && Date.now() - startedAt > WALL_MS && !outOfTime) {
+        outOfTime = true
+        const results = (d.content || []).filter((b: any) => b?.type === 'tool_use').map((b: any) => ({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify({ error: 'Out of time for more lookups. Answer now from what you already have, and say plainly what you could not check.' }) }))
+        convo.push({ role: 'user', content: results })
+        continue
+      }
       if (d.stop_reason === 'tool_use') {
         const results: any[] = []
         for (const block of (d.content || [])) {

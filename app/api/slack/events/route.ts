@@ -50,6 +50,7 @@ import { accessForEmail } from '@/lib/access'
 import { tierFor, tierNote, isEveRoom } from '@/lib/eve/slack-tier'
 import { postProvenance } from '@/lib/eve/provenance'
 import { tagPosition, translateChecked } from '@/lib/eve/slack-triage'
+import { handleApprovalReply } from '@/lib/eve/slack-approvals'
 import { getEveAskers, canAskEve } from '@/lib/eve/slack-askers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { protectMentions } from '@/lib/eve/slack-mentions'
@@ -408,6 +409,18 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
     return ok()
   }
 
+  // A YES OR NO UNDER ONE OF HER ASKS (audit 2026-10-05). postProposalToSlack and postSpendToSlack
+  // tell approvers to "reply yes in this thread" — and handleApprovalReply, which reads that reply,
+  // was never called from here, so every Slack approval fell through to a normal Eve turn that had
+  // no way to act on it. It runs first: a thread that is an ask is decided (or told who may decide)
+  // and nothing else happens; any other thread carries on exactly as before.
+  if (ev.thread_ts && String(ev.thread_ts) !== String(ev.ts)) {
+    try {
+      const decided = await handleApprovalReply({ channel, thread_ts: String(ev.thread_ts), ts: String(ev.ts || ''), user, text: String(ev.text || '') })
+      if (decided) { await finish(eventId); await recordRun({ name: 'slack-approve', ok: true, detail: { channel, ts: String(ev.ts || '') } }); return ok() }
+    } catch (e: any) { console.error('[slack-events] approval reply failed', String(e?.message || e)) }
+  }
+
   const question = cleanText(ev.text, me)
   if (!question) {
     await say(channel, threadTs, 'I am here — what do you need?')
@@ -513,6 +526,22 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
     const verdict = canAskEve(askers, user, email)
     if (!verdict.allowed) {
       await say(channel, threadTs, verdict.line)
+      return ok()
+    }
+  } catch { /* a gate that cannot load must not silence her */ }
+
+  // A PER-PERSON RATE LIMIT (audit 2026-10-05). Telegram has one (40 an hour); Slack and the web had
+  // none, and the daily AI budget never capped chat spend — so one looping script or one person
+  // pasting a channel's worth of questions could spend the day's budget in an hour. Admins get 60
+  // answers an hour, everyone else 30; translations are not counted (they are one Haiku call).
+  try {
+    const limit = grant.tier === 'admin' ? 60 : 30
+    const since = new Date(Date.now() - 3600_000).toISOString()
+    const who = email || ('slack:' + user)
+    const { count } = await supabaseAdmin().from('eve_chats').select('id', { count: 'exact', head: true }).eq('source', 'slack').eq('user_email', who).gte('created_at', since)
+    if ((count || 0) >= limit) {
+      await say(channel, threadTs, `I've answered ${limit} questions for you in the last hour — give it a few minutes and ask again.`)
+      await recordRun({ name: 'slack-eve', ok: false, error: 'rate limit', detail: { channel, user, email } })
       return ok()
     }
   } catch { /* a gate that cannot load must not silence her */ }

@@ -103,7 +103,15 @@ export async function fireDueReminders(): Promise<{ due: number; fired: number; 
       }
     } catch (e: any) { res = { ok: false, error: String(e?.message || e) } }
     if (res.ok) { fired++; await db.from('eve_reminders').update({ fired_at: new Date().toISOString(), error: null }).eq('id', r.id) }
-    else { failed++; await db.from('eve_reminders').update({ error: String(res.error || 'post failed').slice(0, 300), attempts: ((r as any).attempts || 0) + 1 }).eq('id', r.id); notes.push(`${r.id.slice(0, 8)}: ${res.error}`) }
+    else {
+      // SIX TRIES, THEN IT STOPS (audit 2026-10-05): a reminder whose channel is gone retried every
+      // five minutes forever. After six it is marked fired with the error kept, so the cron is quiet
+      // and my_reminders still shows what happened.
+      const attempts = ((r as any).attempts || 0) + 1
+      failed++
+      await db.from('eve_reminders').update({ error: String(res.error || 'post failed').slice(0, 300), attempts, ...(attempts >= 6 ? { fired_at: new Date().toISOString() } : {}) }).eq('id', r.id)
+      notes.push(`${r.id.slice(0, 8)}: ${res.error}${attempts >= 6 ? ' — given up' : ''}`)
+    }
   }
   return { due: rows.length, fired, failed, notes }
 }

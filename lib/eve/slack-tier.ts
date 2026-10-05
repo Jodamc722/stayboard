@@ -104,6 +104,12 @@ const VENDOR_ALSO = ['slack_search', 'slack_thread', 'open_items', 'dossier', 'm
 // Every share link's page IS the access for an open link (2026-09-28 audit, F10): listing them in a
 // shared room hands one vendor the others' boards. An admin asks for them; nobody else in Slack.
 const LINK_TOOLS = ['share_links']
+// COSTLY OR PERSISTING, SO NOT FOR EVERY ASKER IN SLACK (audit 2026-10-05). operator_review is one
+// large Fable call that writes plans and questions; audit_status run=true re-runs the whole audit;
+// look_at_unit spends vision calls; a reminder is a standing Slack post. Admins keep them all; staff
+// keep reminders (their own day) and lose the heavy three; vendors and unknown askers get none.
+const HEAVY_TOOLS = ['operator_review', 'look_at_unit']
+const REMINDER_TOOLS = ['set_reminder', 'my_reminders', 'cancel_reminder']
 // THE ROOM, NOT THE ASKER (2026-09-29 review, N3/N4). An admin asking in a vendor room is still
 // answering in front of the vendor, and redacting guest NAMES from a guest thread still posts the
 // guest's own words. So in a vendor room, whoever asks, the guest tools go, and so do the ways into
@@ -190,7 +196,10 @@ async function baseTierFor(access: Access | null, channelId: string): Promise<Ti
     // waits for an approver's yes; money stays out as everywhere in Slack, and door codes go by room
     // (enforceDoorCodes) — the approvals room may itself be #vr-customercareteam.
     const eveRoom = await isEveRoom(channelId)
-    return { tier: 'staff', buildings: [], canMoney: false, canDirect: eveRoom, denyTools: ADMIN_ONLY.concat(LINK_TOOLS), memoryWeightCap: 5, group, eveRoom, vendorRoom: false, doorCodes: 'never' }
+    // memoryWeightCap 6 (audit 2026-10-05): a recognised colleague's correction in Slack is captured
+    // only at cap ≥ 6 (run.ts), and the cap was 5 — so staff corrections were silently dropped and the
+    // same lesson had to be taught twice. 6 is what personSource already caps a colleague at.
+    return { tier: 'staff', buildings: [], canMoney: false, canDirect: eveRoom, denyTools: ADMIN_ONLY.concat(LINK_TOOLS, HEAVY_TOOLS), memoryWeightCap: 6, group, eveRoom, vendorRoom: false, doorCodes: 'never' }
   }
   // Unrecognised, or a vendor room. Still answered — about their own buildings, minus what is ours.
   // (Unrecognised in a Customer Service room is usually a CCS agent with no Lighthouse login: they may
@@ -199,7 +208,7 @@ async function baseTierFor(access: Access | null, channelId: string): Promise<Ti
     tier: 'vendor',
     buildings: group ? (group.buildings || []).slice() : [],
     canMoney: false, canDirect: false,
-    denyTools: ADMIN_ONLY.concat(GUEST_TOOLS, VENDOR_ALSO, VENDOR_ROOM_TOOLS, LINK_TOOLS, ['remember', 'recommend', 'ask_jon', 'close_item']),
+    denyTools: ADMIN_ONLY.concat(GUEST_TOOLS, VENDOR_ALSO, VENDOR_ROOM_TOOLS, LINK_TOOLS, HEAVY_TOOLS, REMINDER_TOOLS, ['remember', 'recommend', 'ask_jon', 'close_item', 'audit_status']),
     memoryWeightCap: 0,
     group,
     vendorRoom,

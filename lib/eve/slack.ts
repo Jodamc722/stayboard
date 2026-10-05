@@ -37,7 +37,7 @@ export const SLACK_TOOLS: EveTool[] = [
   },
   {
     name: 'open_items',
-    description: 'What you are KEEPING TABS ON from the channels: commitments people made, problems still open, questions nobody answered, decisions made in chat. Twice a day you read the team rooms and track these; they close when a thread reply says done, a Breezeway task finishes, or a glitch is closed. Use this when someone asks what is outstanding, what was promised, whether something got handled, or what is open for a unit or a person. Params: unit, owner, kind — all optional filters.',
+    description: 'What you are KEEPING TABS ON from the channels: commitments people made, problems still open, questions nobody answered, decisions made in chat. Every hour you read the team rooms and track these; they close when a thread reply says done, a Breezeway task finishes, or a glitch is closed. Use this when someone asks what is outstanding, what was promised, whether something got handled, or what is open for a unit or a person. Params: unit, owner, kind — all optional filters.',
     input_schema: obj({ unit: S.str, owner: S.str, kind: S.str }),
     run: async (input) => {
       const all = await openItems(100)

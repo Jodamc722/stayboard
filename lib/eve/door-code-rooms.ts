@@ -2,7 +2,7 @@
 // Customer Service team member in CCS and Jon Channel, VR Customer Care channel. Never in team
 // channels with field team."
 //
-// So Slack has exactly two rooms where a code can be asked for, and both are Customer Service's own
+// So Slack has exactly one room where a code can be asked for (two until 2026-10-01), Customer Service's own
 // private rooms: #vr-customercareteam. In either one, anyone in the room may ask —
 // through Eve or /doorcode — including the CCS agents who have no Lighthouse login, because the room
 // IS the team. What asking gets them is unchanged: the three checks still run (lib/eve/door-code.ts),

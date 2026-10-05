@@ -612,7 +612,11 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     for (const f of (memGate.mode === 'observe' ? [] : (Array.isArray(res.facts) ? res.facts : [])).slice(0, 6)) {
       const text = clean(f?.text).slice(0, 400)
       if (!text || /\$\s?\d|\b\d{4,6}\b/.test(text)) continue   // no money, nothing code-shaped
-      const r = await saveMemory({ text, kind: ['rule', 'insight', 'person', 'issue', 'decision'].includes(String(f?.kind)) ? f.kind : 'insight', why: clean(f?.why).slice(0, 300) || `Overheard in #${ch.label}`, scope: String(f?.scope || 'portfolio').slice(0, 80), weight: 6, source: 'slack', created_by: 'slack-watch' })
+      const r = await saveMemory({ text, kind: ['rule', 'insight', 'person', 'issue', 'decision'].includes(String(f?.kind)) ? f.kind : 'insight', why: clean(f?.why).slice(0, 300) || `Overheard in #${ch.label}`, scope: String(f?.scope || 'portfolio').slice(0, 80),
+        // WEIGHT BY WHO SAID IT (audit 2026-10-05). A fact overheard in a vendor's room is the vendor's
+        // account, not ours: weight 4, so a colleague's explicit teaching (6) and Jon's rules (8+) outrank
+        // it rather than the other way round.
+        weight: ch.vendor ? 4 : 6, source: 'slack', created_by: 'slack-watch' })
       if (r.ok && !r.deduped) { out.learned++; learnedTexts.push(text) }
     }
     for (const q of (Array.isArray(res.questions) ? res.questions : []).slice(0, 2)) {
