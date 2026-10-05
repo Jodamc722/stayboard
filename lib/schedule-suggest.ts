@@ -212,6 +212,28 @@ export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: S
     // Inside the shift, or up to `overtime` past it while the day is still at or under `target` cleans.
     return { ok: left >= 0 || (total <= target && left >= -overtime), left }
   }
+  // LOCATION DENSITY (Jon, 2026-10-05: "the scheduler needs to think about location density").
+  // Measured on our map that day: Broward splits into two tight clusters 12–16 km apart — Pelican /
+  // 906 / Salato / 3316 / 1587 (all within ~3 km) and Eden / Hendricks / Rustic / Oasis (~5 km) —
+  // and Miami has Elser / Nomad / 17WEST within ~6 km with Arya and PT further out. So a person who
+  // already has work is a strong pick for a building within ~3 km of it, a fair one within ~6 km,
+  // neutral to 10 km, and a poor one beyond — a fresh person beats sending somebody across the county.
+  const hubKm = (a: string, b: string): number | null => {
+    if (a === b) return 0
+    const A = centres[a], B = centres[b]
+    return A && B ? km(A, B) : null
+  }
+  const nearestKm = (id: number, hub: string): { km: number; hub: string } | null => {
+    let best: { km: number; hub: string } | null = null
+    for (const h of Array.from(new Set(mine[id].map(x => x.hub)))) { const d = hubKm(h, hub); if (d != null && (!best || d < best.km)) best = { km: d, hub: h } }
+    return best
+  }
+  const density = (id: number, hub: string): number => {
+    if (!mine[id].length) return 0
+    const n = nearestKm(id, hub)
+    if (!n) return 0                 // no coordinates: neutral, never a penalty
+    return n.km <= 3 ? 900 : n.km <= 6 ? 500 : n.km <= 10 ? 0 : -800
+  }
   for (const group of order) {
     group.sort((a, b) => Number(b.sameDayTurn) - Number(a.sameDayTurn) || String(a.unit).localeCompare(String(b.unit)))
     const hub = group[0].hub, mkt = group[0].market, total = group.length
@@ -234,7 +256,8 @@ export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: S
         // Most of the building in one pair of hands first; a supervisor only when no cleaner can take
         // any of it; then already in the building, the habit, a day already started (fewer people out),
         // and the least extra time.
-        const score = take.length * 10000 - (sup ? 100000 : 0) + (inHub ? 1000 : 0) + habit * 500 + (n > 0 ? 300 : 0) - add / 10
+        // + density: already working nearby beats starting a new person; across the county loses to one.
+        const score = take.length * 10000 - (sup ? 100000 : 0) + (inHub ? 1000 : 0) + density(p.id, hub) + habit * 500 + (n > 0 ? 300 : 0) - add / 10
         if (score > bestScore) { bestScore = score; best = { p, take, left } }
       }
       return best
@@ -251,9 +274,12 @@ export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: S
       const inHub = mine[p.id].some(x => x.hub === hub)
       const habit = opts.affinity?.[p.id]?.[hub] || 0
       const whole = take.length === total
+      const near = !inHub ? nearestKm(p.id, hub) : null
+      const nearTxt = near && near.km <= 6 ? `near ${near.hub} (${near.km < 1 ? '<1' : Math.round(near.km)} km)` : ''
       const w = crossed ? `nobody in ${mkt} had room — ${first(p.name)} crosses from ${marketOf[p.id]}`
         : p.role === 'supervisor' ? 'supervisor, nobody else had room'
         : inHub ? `already in ${hub}`
+        : whole && nearTxt ? (total > 1 ? `all ${total} in ${hub}, one cleaner · ${nearTxt}` : `${nearTxt} — keeps ${first(p.name)} in one area`)
         : whole ? (total > 1 ? `all ${total} in ${hub}, one cleaner` : habit >= 0.3 ? `usually works ${hub} (${Math.round(habit * 100)}% of recent cleans)` : left < 0 ? `fills ${first(p.name)}'s day (+${-left}m over)` : mine[p.id].length ? 'fills a day already started' : 'has the most room')
         : `${take.length} of ${total} in ${hub} — nobody had room for all`
       for (const c of take) { assign[c.key] = p.id; why[c.key] = w; mine[p.id].push(c) }
