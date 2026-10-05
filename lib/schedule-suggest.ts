@@ -49,7 +49,14 @@ export type SugClean = {
   sameDayTurn: boolean
   minutes: number
   currentIds: number[]
+  /**
+   * Breezeway's state for this clean (Jon, 2026-10-05: "make sure it shows in progress if task is
+   * started"). A clean that is 'in_progress' or 'completed' is LOCKED: it stays with whoever has it,
+   * even with "Keep current" off, and the suggester never offers it to anyone else.
+   */
+  taskStatus?: 'created' | 'in_progress' | 'completed' | null
 }
+export const isLocked = (c: { taskStatus?: string | null }) => c.taskStatus === 'in_progress' || c.taskStatus === 'completed'
 /**
  * role: 'cleaner' (default), 'supervisor' (last resort), 'other' (ops, handyman: never auto-assigned).
  * market: the person's HOME market (Miami / Broward / North), from their recent cleans where known.
@@ -172,6 +179,14 @@ export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: S
   const rest: SugClean[] = []
   for (const c of cleans) {
     const cur = c.currentIds.find(id => byId.has(id))
+    // Started or finished: it stays where it is, whatever the toggles say. If the person doing it is
+    // not on the board, it is left out of the plan rather than handed to somebody else.
+    if (isLocked(c)) {
+      const done = c.taskStatus === 'completed'
+      if (cur != null) { assign[c.key] = cur; why[c.key] = done ? 'finished' : 'in progress — stays with ' + first(byId.get(cur)!.name); mine[cur].push(c) }
+      else { assign[c.key] = null; why[c.key] = (done ? 'finished' : 'in progress') + ' by someone not on this board' }
+      continue
+    }
     if (keep && cur != null) { assign[c.key] = cur; why[c.key] = 'already assigned'; mine[cur].push(c) }
     else rest.push(c)
   }

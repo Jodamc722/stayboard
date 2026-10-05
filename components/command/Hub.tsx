@@ -359,11 +359,12 @@ export function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
   ]
   const count = (g: PersonTaskGroup) => tasks.filter(t => t.group === g).length
   const summary = GROUPS.map(g => count(g.key) ? count(g.key) + ' ' + (g.key === 'clean' ? 'cleans' : g.key === 'inspection' ? 'inspections' : g.key === 'maintenance' ? 'maintenance' : 'misc') : '').filter(Boolean).join(' · ')
+  const doing = tasks.filter(t => t.status === 'doing').length
   const timeLine = p.capacityMinutes > 0 ? hm(p.loadMinutes) + ' of work in a ' + hm(p.capacityMinutes) + ' shift' : hm(p.loadMinutes) + ' of work · no shift on record'
   return (
     <Row lane={lane} noteKey={'team:' + p.person} dot={over ? 'amber' : null} title={p.person}
       tags={over ? <Tag tone="amber" title={hm(p.loadMinutes - p.capacityMinutes) + ' more work than hours'}>{p.utilisationPct}% loaded</Tag> : <Tag tone="sky" title={hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free today'}>{idle ? 'nothing assigned' : hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free'}</Tag>}
-      meta={[p.role, summary || (idle ? '' : (p.cleans ? p.cleans + ' cleans' : '') + (p.otherTasks ? ' · ' + p.otherTasks + ' tasks' : '')), timeLine].filter(Boolean).join(' · ')}
+      meta={[p.role, doing ? doing + ' in progress' : '', summary || (idle ? '' : (p.cleans ? p.cleans + ' cleans' : '') + (p.otherTasks ? ' · ' + p.otherTasks + ' tasks' : '')), timeLine].filter(Boolean).join(' · ')}
       actions={<button type="button" onClick={() => setOpen(o => !o)} className={GHOST} aria-expanded={open} title={open ? 'Close this person’s tasks' : 'Open this person’s tasks, grouped by kind'}>{open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</button>}>
       {open && (
         <div className="mt-2 pl-3.5 space-y-2.5">
@@ -378,7 +379,8 @@ export function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
                       <div key={t.id} className="flex items-center gap-2 min-h-[36px] py-1 min-w-0">
                         <span aria-hidden className={'w-1.5 h-1.5 rounded-full shrink-0 ' + (t.status === 'done' ? 'bg-emerald-500' : t.status === 'doing' ? 'bg-sky-500' : 'bg-muted/40')} />
                         <span className="text-[12.5px] font-semibold text-ink truncate">{t.unit}</span>
-                        <span className="text-[12px] text-muted truncate flex-1 min-w-0">{g.key === 'clean' ? '' : t.name + ' · '}{t.status === 'done' ? 'done' + (t.minutes ? ' · ' + hm(t.minutes) : '') : t.status === 'doing' ? 'in progress' : 'not started'}</span>
+                        <span className="text-[12px] text-muted truncate flex-1 min-w-0">{g.key === 'clean' ? '' : t.name + ' · '}{t.status === 'done' ? 'done' + (t.minutes ? ' · ' + hm(t.minutes) : '') : t.status === 'doing' ? '' : 'not started'}</span>
+                        {t.status === 'doing' ? <Tag tone="sky" title={t.startedAt ? 'Started ' + new Date(t.startedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }) : 'Started in Breezeway'}>in progress</Tag> : null}
                         <Link href={'/plan?unit=' + encodeURIComponent(t.unit)} prefetch={false} className={GHOST} title="Open this unit on the Today board to move or finish the work">Board</Link>
                       </div>
                     ))}

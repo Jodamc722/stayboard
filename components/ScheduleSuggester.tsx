@@ -21,7 +21,7 @@ import { Wand2, X, Loader2, RotateCcw, Check, UserPlus, AlertTriangle } from 'lu
 import { useModal } from '@/components/Modal'
 import { matchRoster, personKey } from '@/lib/roster-match'
 import { useOpsPresets } from '@/lib/useOpsPresets'
-import { suggestSchedule, standardMinutes, loadFor, hubCentres, DEFAULT_CAPACITY_MIN, type SugClean, type SugPerson } from '@/lib/schedule-suggest'
+import { suggestSchedule, isLocked, standardMinutes, loadFor, hubCentres, DEFAULT_CAPACITY_MIN, type SugClean, type SugPerson } from '@/lib/schedule-suggest'
 
 type Person = { id: number; name: string; region: string | null }
 type Row = SugClean & { raw: any; minSource: 'unit' | 'standard'; minN: number }
@@ -163,6 +163,7 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
             lat: c.lat ?? null, lng: c.lng ?? null, bedrooms: c.bedrooms ?? null, sameDayTurn: !!c.sameDayTurn,
             minutes: t ? t.minutes : standardMinutes(c.bedrooms, c.market), minSource: t ? 'unit' : 'standard', minN: t ? t.n : 0,
             currentIds: Array.isArray(c.assignedIds) ? c.assignedIds : [], raw: c,
+            taskStatus: c.taskStatus === 'in_progress' || c.taskStatus === 'completed' ? c.taskStatus : 'created',
           }
         })
         const hk: Person[] = Array.isArray(sch.housekeepers) ? sch.housekeepers : []
@@ -207,7 +208,7 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
     const s = suggestSchedule(sandbox, ps, { keepCurrent: true, targetCleans: target, overtimeMin: overtime, affinity })
     setAssign(s.assign); setWhy(w => { const o = { ...s.why }; for (const k of Object.keys(o)) if (o[k] === 'already assigned' && w[k]) o[k] = w[k]; return o })
   }
-  const move = (key: string, to: number | null) => { setAssign(a => ({ ...a, [key]: to })); setWhy(w => ({ ...w, [key]: 'moved by hand' })) }
+  const move = (key: string, to: number | null) => { const r = rows.find(x => x.key === key); if (r && isLocked(r)) return; setAssign(a => ({ ...a, [key]: to })); setWhy(w => ({ ...w, [key]: 'moved by hand' })) }
 
   const centres = useMemo(() => hubCentres(rows), [rows])
   const cols = useMemo(() => {
@@ -217,7 +218,7 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
     for (const k of Object.keys(byP)) byP[k].sort((a, b) => Number(b.sameDayTurn) - Number(a.sameDayTurn) || a.hub.localeCompare(b.hub) || a.unit.localeCompare(b.unit))
     return byP
   }, [rows, people, assign])
-  const changed = rows.filter(r => { const to = assign[r.key]; return to != null && !(r.currentIds.length === 1 && r.currentIds[0] === to) })
+  const changed = rows.filter(r => { if (isLocked(r)) return false; const to = assign[r.key]; return to != null && !(r.currentIds.length === 1 && r.currentIds[0] === to) })
 
   const approve = async () => {
     if (!changed.length) return
@@ -264,18 +265,23 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
   const card = (r: Row) => {
     const to = assign[r.key]
     const isChange = to != null && !(r.currentIds.length === 1 && r.currentIds[0] === to)
+    // Started or finished in Breezeway: shown, and locked where it is (Jon, 2026-10-05).
+    const locked = isLocked(r)
     return (
-      <div key={r.key} draggable={!busy} onDragStart={() => setDragKey(r.key)} onDragEnd={() => setDragKey(null)}
-        className={'rounded-lg border bg-white px-2 py-1.5 text-[12px] cursor-grab active:cursor-grabbing ' + (isChange ? 'border-brand-400 ring-1 ring-brand-200' : 'border-line')}>
+      <div key={r.key} draggable={!busy && !locked} onDragStart={() => setDragKey(r.key)} onDragEnd={() => setDragKey(null)}
+        title={locked ? (r.taskStatus === 'completed' ? 'Finished in Breezeway — it stays where it is' : 'Started in Breezeway — it stays with whoever is doing it') : undefined}
+        className={'rounded-lg border px-2 py-1.5 text-[12px] ' + (locked ? (r.taskStatus === 'completed' ? 'bg-emerald-50/50 border-emerald-200 cursor-default' : 'bg-sky-50/60 border-sky-300 cursor-default') : 'bg-white cursor-grab active:cursor-grabbing ' + (isChange ? 'border-brand-400 ring-1 ring-brand-200' : 'border-line'))}>
         <div className="flex items-center gap-1">
           <span className="font-bold text-ink truncate flex-1">{shortUnit(r.unit)}</span>
+          {r.taskStatus === 'in_progress' ? <span className="text-[9.5px] font-bold text-sky-800 bg-sky-100 border border-sky-300 rounded px-1">IN PROGRESS</span> : null}
+          {r.taskStatus === 'completed' ? <span className="text-[9.5px] font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 rounded px-1">DONE</span> : null}
           {r.sameDayTurn ? <span className="text-[9.5px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded px-1">SAME-DAY</span> : null}
         </div>
         <div className="text-[11px] text-muted flex items-center gap-1 mt-0.5">
           <span title={r.minSource === 'unit' ? `This unit's median over its last ${r.minN} timed cleans` : 'No timing history yet: the bedroom standard'}>
             {r.bedrooms == null ? '?' : r.bedrooms === 0 ? 'Studio' : r.bedrooms + 'BR'} · ~{hm(r.minutes)}{r.minSource === 'unit' ? '' : '*'}
           </span>
-          <select value={to == null ? '' : String(to)} disabled={busy} onChange={e => move(r.key, e.target.value ? Number(e.target.value) : null)}
+          <select value={to == null ? '' : String(to)} disabled={busy || locked} onChange={e => move(r.key, e.target.value ? Number(e.target.value) : null)}
             className="ml-auto text-[10.5px] border border-line rounded px-0.5 py-0 bg-white max-w-[92px]" title="Move to…">
             <option value="">Unassigned</option>
             {people.map(p => <option key={p.id} value={p.id}>{first(p.name)}</option>)}
