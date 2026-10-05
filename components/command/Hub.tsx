@@ -735,11 +735,11 @@ function Lane({ area, items, focused, empty, right }: { area: Area; items: HubIt
   useEffect(() => { if (focused) setAll(true) }, [focused])
   const subs = useMemo(() => {
     const n: Record<string, number> = {}
-    for (const it of items) n[it.sub] = (n[it.sub] || 0) + 1
+    for (const it of items) if (it.key !== 'team:where') n[it.sub] = (n[it.sub] || 0) + 1
     return Object.keys(n).sort((a, b) => SUB_ORDER.indexOf(a) - SUB_ORDER.indexOf(b)).map(k => ({ key: k, n: n[k] }))
   }, [items])
   const pick = sub && subs.some(s => s.key === sub) ? sub : null
-  const list = (pick ? items.filter(i => i.sub === pick) : items).slice().sort((a, b) => b.score - a.score)
+  const list = (pick ? items.filter(i => i.sub === pick) : items.filter(i => i.key !== 'team:where')).slice().sort((a, b) => b.score - a.score)
   const shown = all ? list : list.slice(0, LANE_ROWS)
   const hidden = list.length - shown.length
   return (

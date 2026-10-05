@@ -48,22 +48,37 @@ const ago = (m: number) => m < 60 ? m + 'm' : Math.floor(m / 60) + 'h' + (m % 60
 
 /** A gap this long with work left and nothing in progress is worth a look. */
 export const QUIET_MIN = 90
+/** An in-progress task started longer ago than this is a task left open, not where they are now. */
+export const STALE_MIN = 10 * 60
+function dayOrTime(iso: string | null, now: Date): string {
+  if (!iso) return 'earlier'
+  const d = new Date(iso)
+  const day = (x: Date) => x.toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  return day(d) === day(now) ? clockTime(iso) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' })
+}
 
 export function whereNow(tasks: WhereTask[], now: Date = new Date(), clock?: WhereClock): Where {
   const t = Array.isArray(tasks) ? tasks : []
   const mins = (iso: string | null) => iso ? Math.max(0, Math.round((now.getTime() - new Date(iso).getTime()) / 60000)) : null
 
-  // 1. In progress — the latest start wins if Breezeway shows two running.
+  const done = t.filter(x => x.status === 'done' && x.finishedAt).sort((a, b) => String(b.finishedAt).localeCompare(String(a.finishedAt)))
+  const lastFinish = done[0]?.finishedAt || ''
+  // 1. In progress — the latest start wins if Breezeway shows two running. But only a FRESH one that
+  //    is also their latest move: a task started on Friday and never closed (Roberto's Pelican 1,
+  //    seen 2026-10-05) says nothing about where he is today, and a finish after the start means
+  //    they have moved on and simply left the other task open.
   const doing = t.filter(x => x.status === 'doing').sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')))
-  if (doing.length) {
-    const d = doing[0]
+  const fresh = doing.filter(x => { const m = mins(x.startedAt); return m == null || m <= STALE_MIN })
+  const leftOpen = doing.find(x => !fresh.includes(x)) || null
+  if (fresh.length && String(fresh[0].startedAt || '') >= lastFinish) {
+    const d = fresh[0]
     const since = mins(d.startedAt)
     return { kind: 'at', building: bldg(d), tone: 'sky', quietMin: since,
       line: 'At ' + shortUnit(d.unit) + (d.startedAt ? ' · started ' + clockTime(d.startedAt) : '') }
   }
+  const stale = leftOpen ? ' · ' + shortUnit(leftOpen.unit) + ' left in progress since ' + dayOrTime(leftOpen.startedAt, now) : ''
 
   const todo = t.filter(x => x.status === 'todo')
-  const done = t.filter(x => x.status === 'done' && x.finishedAt).sort((a, b) => String(b.finishedAt).localeCompare(String(a.finishedAt)))
 
   // 2. Between jobs — read from the last finish and what is left.
   if (done.length) {
@@ -73,9 +88,9 @@ export function whereNow(tasks: WhereTask[], now: Date = new Date(), clock?: Whe
     const next = todo.find(x => bldg(x) === where) || todo[0] || null
     const fin = 'finished ' + shortUnit(last.unit) + ' ' + clockTime(last.finishedAt)
     const gap = next && quiet != null && quiet >= QUIET_MIN ? ' · nothing started in ' + ago(quiet) : ''
-    if (!next) return { kind: 'last', building: where, tone: 'emerald', quietMin: quiet, line: 'Last at ' + (where || shortUnit(last.unit)) + ' · ' + fin + ' · nothing left' }
-    if (bldg(next) === where) return { kind: 'still', building: where, tone: gap ? 'amber' : 'slate', quietMin: quiet, line: 'Likely still at ' + where + ' · ' + fin + ' · next ' + shortUnit(next.unit) + gap }
-    return { kind: 'heading', building: bldg(next), tone: gap ? 'amber' : 'slate', quietMin: quiet, line: 'Likely heading to ' + (bldg(next) || shortUnit(next.unit)) + ' · ' + fin + ' · next ' + shortUnit(next.unit) + gap }
+    if (!next) return { kind: 'last', building: where, tone: 'emerald', quietMin: quiet, line: 'Last at ' + (where || shortUnit(last.unit)) + ' · ' + fin + ' · nothing left' + stale }
+    if (bldg(next) === where) return { kind: 'still', building: where, tone: gap ? 'amber' : 'slate', quietMin: quiet, line: 'Likely still at ' + where + ' · ' + fin + ' · next ' + shortUnit(next.unit) + gap + stale }
+    return { kind: 'heading', building: bldg(next), tone: gap ? 'amber' : 'slate', quietMin: quiet, line: 'Likely heading to ' + (bldg(next) || shortUnit(next.unit)) + ' · ' + fin + ' · next ' + shortUnit(next.unit) + gap + stale }
   }
 
   // 3. Nothing started yet.
