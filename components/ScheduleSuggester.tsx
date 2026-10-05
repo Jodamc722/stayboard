@@ -21,7 +21,7 @@ import { Wand2, X, Loader2, RotateCcw, Check, UserPlus, AlertTriangle } from 'lu
 import { useModal } from '@/components/Modal'
 import { matchRoster, personKey } from '@/lib/roster-match'
 import { useOpsPresets } from '@/lib/useOpsPresets'
-import { suggestSchedule, isLocked, standardMinutes, loadFor, hubCentres, DEFAULT_CAPACITY_MIN, type SugClean, type SugPerson } from '@/lib/schedule-suggest'
+import { suggestSchedule, planStats, isLocked, standardMinutes, loadFor, hubCentres, DEFAULT_CAPACITY_MIN, type SugClean, type SugPerson } from '@/lib/schedule-suggest'
 
 type Person = { id: number; name: string; region: string | null }
 type Row = SugClean & { raw: any; minSource: 'unit' | 'standard'; minN: number }
@@ -406,6 +406,24 @@ export function ScheduleSuggester({ onClose, onPushed }: { onClose: () => void; 
               {people.filter(p => !(cols[p.id] || []).length).length ? ` · ${people.filter(p => !(cols[p.id] || []).length).length} not needed` : ''}
               {' · '}* no timing history yet, bedroom standard used
             </div>
+            {/* HOW EFFICIENT IS THIS DAY (Jon, 2026-10-05: "the goal is to optimize efficiency"). The plan on
+                screen — including hand moves — against what Breezeway has right now, on the same yardstick
+                the optimizer uses: people out, cleans each, driving, overtime, split buildings. */}
+            {rows.length > 0 && (() => {
+              const plan = planStats(rows, people, assign)
+              const nowAssign: Record<string, number | null> = {}
+              for (const r of rows) nowAssign[r.key] = r.currentIds.find(id => people.some(p => p.id === id)) ?? null
+              const now = planStats(rows, people, nowAssign)
+              const fmt = (x: typeof plan) => `${x.people} out · ${x.perPerson} cleans each · ${hm(x.driveMin)} driving · ${x.overMin ? hm(x.overMin) + ' over shift' : 'no overtime'}${x.splitBuildings ? ' · ' + x.splitBuildings + ' split bldg' + (x.splitBuildings === 1 ? '' : 's') : ''}${x.unplaced ? ' · ' + x.unplaced + ' unplaced' : ''}`
+              const better = plan.cost < now.cost - 0.5
+              return (
+                <div className="px-4 py-1.5 text-[12px] border-b border-line flex flex-wrap gap-x-4 gap-y-0.5" title="Driving is the modelled drive between buildings; overtime is minutes past each person's shift. Same model as the cards.">
+                  <span><b className="text-ink">This plan:</b> <span className="text-muted">{fmt(plan)}</span></span>
+                  <span><b className="text-ink">Breezeway now:</b> <span className="text-muted">{fmt(now)}</span></span>
+                  {better && <span className="text-emerald-700 font-semibold">{[now.people - plan.people > 0 ? (now.people - plan.people) + ' fewer out' : '', now.driveMin - plan.driveMin > 4 ? hm(now.driveMin - plan.driveMin) + ' less driving' : '', now.overMin - plan.overMin > 4 ? hm(now.overMin - plan.overMin) + ' less overtime' : '', now.unplaced - plan.unplaced > 0 ? (now.unplaced - plan.unplaced) + ' more placed' : ''].filter(Boolean).join(' · ') || 'more efficient'}</span>}
+                </div>
+              )
+            })()}
 
             <div className="flex-1 overflow-auto p-3">
               {rows.length === 0 ? <p className="text-[13px] text-muted p-4">No departure cleans for our team on this day.</p> : (

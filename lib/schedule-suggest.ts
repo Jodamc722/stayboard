@@ -151,6 +151,42 @@ export function loadFor(list: SugClean[], centres: Record<string, Pt>): Load {
   return { minutes: Math.round(work + travel), work, travel: Math.round(travel), cleans: list.length, hubs, sameDay: list.filter(c => c.sameDayTurn).length }
 }
 
+// ── EFFICIENCY (Jon, 2026-10-05: "the goal is to optimize efficiency") ─────────────────────────────
+// One number for a whole day's plan, so the suggester can compare plans instead of placing buildings
+// one at a time and never looking back. Lower is better. The weights say what we pay for:
+//   a person sent out ............ 1000   (fewer people, fuller days — Jon, 2026-09-23)
+//   an unplaced clean ............ 5000   (worse than anything else here)
+//   a clean done by a supervisor .. 600   (supervisors clean last)
+//   a minute of driving ........... 3     (paid, produces nothing)
+//   a minute over the shift ....... 2     (overtime)
+//   a building split across people 150 per extra person (one cleaner per building)
+export const COST = { person: 1000, unplaced: 5000, supervisorClean: 600, driveMin: 3, overMin: 2, splitPerson: 150 }
+export type PlanStats = { people: number; cleans: number; placed: number; unplaced: number; perPerson: number; driveMin: number; overMin: number; workMin: number; supervisorCleans: number; splitBuildings: number; cost: number }
+/** The efficiency of a plan: who is out, how much driving, how much overtime, how many split buildings. */
+export function planStats(cleans: SugClean[], people: SugPerson[], assign: Record<string, number | null>): PlanStats {
+  const centres = hubCentres(cleans)
+  const byId = new Map(people.map(p => [p.id, p]))
+  const mine: Record<number, SugClean[]> = {}
+  let unplaced = 0
+  for (const c of cleans) { const to = assign[c.key]; if (to == null || !byId.has(to)) { unplaced++; continue } (mine[to] = mine[to] || []).push(c) }
+  let out = 0, drive = 0, over = 0, work = 0, sup = 0
+  for (const [id, list] of Object.entries(mine)) {
+    if (!list.length) continue
+    const p = byId.get(Number(id))!
+    const L = loadFor(list, centres)
+    out++; drive += L.travel; work += L.work
+    over += Math.max(0, L.minutes - (p.capacityMin || DEFAULT_CAPACITY_MIN))
+    if (p.role === 'supervisor') sup += list.length
+  }
+  const hubPeople: Record<string, Set<number>> = {}
+  for (const c of cleans) { const to = assign[c.key]; if (to != null && byId.has(to)) (hubPeople[c.hub] = hubPeople[c.hub] || new Set()).add(to) }
+  let splitExtra = 0, splitBuildings = 0
+  for (const set of Object.values(hubPeople)) if (set.size > 1) { splitBuildings++; splitExtra += set.size - 1 }
+  const placed = cleans.length - unplaced
+  const cost = out * COST.person + unplaced * COST.unplaced + sup * COST.supervisorClean + drive * COST.driveMin + over * COST.overMin + splitExtra * COST.splitPerson
+  return { people: out, cleans: cleans.length, placed, unplaced, perPerson: out ? Math.round((placed / out) * 10) / 10 : 0, driveMin: Math.round(drive), overMin: Math.round(over), workMin: Math.round(work), supervisorCleans: sup, splitBuildings, cost: Math.round(cost) }
+}
+
 export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: SuggestOptions = {}): Suggestion {
   const keep = opts.keepCurrent !== false
   const target = Math.max(1, Math.round(Number(opts.targetCleans) || 4))
@@ -286,6 +322,67 @@ export function suggestSchedule(cleans: SugClean[], people: SugPerson[], opts: S
       if (!marketOf[p.id]) marketOf[p.id] = mkt
       rest = rest.filter(c => !take.includes(c))
     }
+  }
+  // ── THE OPTIMIZER (Jon, 2026-10-05: "the goal is to optimize efficiency") ─────────────────────────
+  // The building-first pass above makes a good plan quickly but never looks back: on 10/06 it gave
+  // Yunisleidi Arya plus one 17WEST clean 12 km away (an hour over) while Elser 4105, 7.7 km from
+  // Arya, went to a supervisor. So: take the plan, and keep moving one clean to someone else — or
+  // swapping two — whenever the whole day's cost (planStats) goes down and nobody breaks the rules
+  // (shift + the overtime allowance, the market wall, 'other' roles never). Kept, started and
+  // finished cleans never move. Stops when nothing improves.
+  const fixed = new Set(cleans.filter(c => !rest.includes(c)).map(c => c.key))
+  const movable = rest.slice()
+  const pool = people.filter(p => (p.role || 'cleaner') !== 'other')
+  const okFor = (p: SugPerson, c: SugClean) => !marketOf[p.id] || !c.market || marketOf[p.id] === c.market || assign[c.key] === p.id
+  const feasible = (id: number) => {
+    const list = cleans.filter(c => assign[c.key] === id)
+    if (!list.length) return true
+    const cap = byId.get(id)?.capacityMin || DEFAULT_CAPACITY_MIN
+    const left = cap - loadFor(list, centres).minutes
+    return left >= 0 || (list.length <= target && left >= -overtime)
+  }
+  // A person the greedy pass already overloaded stays as feasible as they were: judge by "not worse".
+  const overBy = (id: number) => { const list = cleans.filter(c => assign[c.key] === id); return list.length ? Math.max(0, loadFor(list, centres).minutes - (byId.get(id)?.capacityMin || DEFAULT_CAPACITY_MIN)) : 0 }
+  let best = planStats(cleans, people, assign).cost
+  const before: Record<string, number | null> = { ...assign }
+  for (let pass = 0; pass < 12; pass++) {
+    let improved = false
+    // Moves: one clean to another person (or from unplaced to someone).
+    for (const c of movable) {
+      const from = assign[c.key]
+      for (const p of pool) {
+        if (p.id === from || !okFor(p, c)) continue
+        const was = overBy(p.id)
+        assign[c.key] = p.id
+        const ok = feasible(p.id) || overBy(p.id) <= was
+        const cost = ok ? planStats(cleans, people, assign).cost : Infinity
+        if (cost < best - 0.5) { best = cost; improved = true; break }
+        assign[c.key] = from
+      }
+    }
+    // Swaps: two cleans trade people.
+    for (let i = 0; i < movable.length; i++) for (let j = i + 1; j < movable.length; j++) {
+      const a = movable[i], b = movable[j]
+      const pa = assign[a.key], pb = assign[b.key]
+      if (pa == null || pb == null || pa === pb) continue
+      const A = byId.get(pa)!, B = byId.get(pb)!
+      if (!okFor(B, a) || !okFor(A, b)) continue
+      const wasA = overBy(pa), wasB = overBy(pb)
+      assign[a.key] = pb; assign[b.key] = pa
+      const ok = (feasible(pa) || overBy(pa) <= wasA) && (feasible(pb) || overBy(pb) <= wasB)
+      const cost = ok ? planStats(cleans, people, assign).cost : Infinity
+      if (cost < best - 0.5) { best = cost; improved = true }
+      else { assign[a.key] = pa; assign[b.key] = pb }
+    }
+    if (!improved) break
+  }
+  // Say why on every clean the optimizer moved.
+  for (const c of movable) {
+    if (assign[c.key] === before[c.key] || fixed.has(c.key)) continue
+    const to = assign[c.key]
+    if (to == null) continue
+    const near = (() => { let b: { km: number; hub: string } | null = null; for (const x of cleans) { if (x === c || assign[x.key] !== to || x.hub === c.hub) continue; const d = hubKm(x.hub, c.hub); if (d != null && (!b || d < b.km)) b = { km: d, hub: x.hub } } return b })()
+    why[c.key] = 'optimized — ' + (cleans.some(x => x !== c && assign[x.key] === to && x.hub === c.hub) ? `joins ${first(byId.get(to)!.name)} in ${c.hub}` : near && near.km <= 8 ? `near ${near.hub} (${Math.max(1, Math.round(near.km))} km), less driving` : 'less driving and overtime for the day')
   }
   return { assign, why }
 }
