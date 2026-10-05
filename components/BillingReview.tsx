@@ -38,7 +38,7 @@ type Flag = 'over_150' | 'no_price' | 'override_far' | 'no_detail' | 'duplicate'
 type BVerdict = 'bill' | 'likely' | 'maybe' | 'no'
 type Billable = { verdict: BVerdict; category: string; confidence: number; reasons: string[]; history?: { billed: number; total: number } | null; ai?: 'bill' | 'no' | null }
 type State = 'open' | 'ops_approved' | 'gm_approved'
-type Item = { key: string; description: string; amount: number; originalAmount: number | null; bill_to: string | null; kind: string }
+type Item = { key: string; description: string; type?: string; amount: number; originalAmount: number | null; bill_to: string | null; kind: string }
 type Task = {
   id: string; unit: string; building: string | null; ownerId: string | null; ownerName: string
   department: string; name: string; description: string | null; status: string; doer: string | null
@@ -155,6 +155,20 @@ function TextTools({ t, onSave }: { t: Task; onSave: (id: string, name: string, 
   )
 }
 
+/** "labor $10 · parts $60 · rate $45": owner-billed money by type, labor from the rate math first. */
+function breakdown(t: Task): string[] {
+  const out: string[] = []
+  if (t.laborAmount) out.push((t.rateType === 'hourly' ? 'hourly ' : 'rate ') + money(t.laborAmount))
+  const byType = new Map<string, number>()
+  for (const it of t.items) {
+    if (String(it.bill_to || 'owner') === 'guest') continue
+    const k = String(it.type || (it.kind === 'supply' ? 'Supply' : it.kind === 'extra' ? 'Adjustment' : 'Cost')).toLowerCase()
+    byType.set(k, (byType.get(k) || 0) + it.amount)
+  }
+  for (const [k, v] of Array.from(byType.entries())) out.push(k + ' ' + money(v))
+  return out
+}
+
 const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, onToggle, onState, onEdit, onText }: {
   t: Task; stage: Stage; isGm: boolean; busy: boolean; open: boolean; checked: boolean
   onCheck: (id: string, on: boolean, shift: boolean) => void
@@ -207,8 +221,11 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
               {money(t.billedAmount)}
             </button>
           )}
-          <span className="block text-[10.5px] text-muted">
-            {t.overrideAmount != null ? 'set by hand' : t.rateType === 'hourly' ? 'hourly' : t.laborAmount ? 'rate' : t.items.length ? 'line items' : 'no charge'}
+          {/* THE BREAKDOWN UNDER THE NUMBER (Jon, 2026-10-05: "full amount on the title, the breakdown or
+              type when you expand"): what Breezeway's cost lines add up to, by type — "labor $10 ·
+              parts $60" — so a price is never a bare figure. */}
+          <span className="block text-[10.5px] text-muted truncate max-w-[14rem] ml-auto" title={breakdown(t).join(' · ')}>
+            {t.overrideAmount != null ? 'set by hand' : breakdown(t).join(' · ') || 'no charge'}
           </span>
         </div>
 
@@ -247,7 +264,10 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
               <li className="flex justify-between gap-3"><span className="text-muted">Labor ({t.rateType || 'rate'}{t.ratePaid != null ? ' ' + money(t.ratePaid) : ''}{t.billedHours != null ? ' × ' + t.billedHours + 'h' : ''})</span><span className="tabular-nums text-ink">{money(t.laborAmount)}</span></li>
               {t.items.map(it => (
                 <li key={it.key} className="flex justify-between gap-3">
-                  <span className={'truncate ' + (String(it.bill_to || 'owner') === 'guest' ? 'text-muted line-through' : 'text-ink/80')}>{it.description || it.kind}{String(it.bill_to || 'owner') === 'guest' ? ' (guest pays)' : ''}</span>
+                  <span className={'truncate ' + (String(it.bill_to || 'owner') === 'guest' ? 'text-muted line-through' : 'text-ink/80')}>
+                    <span className="inline-block text-[10px] font-semibold uppercase tracking-wide px-1 py-[1px] rounded bg-app text-muted mr-1.5 align-middle">{it.type || (it.kind === 'supply' ? 'Supply' : it.kind === 'extra' ? 'Adjustment' : 'Cost')}</span>
+                    {it.description && it.description !== it.type ? it.description : ''}{String(it.bill_to || 'owner') === 'guest' ? ' (guest pays)' : ''}
+                  </span>
                   <span className="tabular-nums text-ink shrink-0">{money(it.amount)}{it.originalAmount != null ? <span className="text-muted line-through ml-1">{money(it.originalAmount)}</span> : null}</span>
                 </li>
               ))}

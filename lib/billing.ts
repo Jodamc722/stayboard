@@ -22,7 +22,10 @@ import { classify, loadModel, type Billable } from './billable-model'
 // key identifies a line item across pulls ('cost:<breezewayId>' / 'supply:<id>' / 'extra:<idx>').
 // originalAmount is set when OUR override replaced the Breezeway amount (the override wins in
 // totals + exports; the original stays visible for the audit trail).
-export type BillingLineItem = { key: string; description: string; amount: number; originalAmount: number | null; bill_to: string | null; kind: 'cost' | 'supply' | 'extra' }
+// `type` is Breezeway's cost type ("Labor", "Materials", "Parts"…) or 'Supply' / 'Adjustment' — the
+// word the row's breakdown and the expanded list print (Jon, 2026-10-05: "the breakdown or type
+// when you expand").
+export type BillingLineItem = { key: string; description: string; type: string; amount: number; originalAmount: number | null; bill_to: string | null; kind: 'cost' | 'supply' | 'extra' }
 
 export type BillingTask = {
   id: string
@@ -253,17 +256,18 @@ export async function listingNames(ids: string[]): Promise<Record<string, { unit
 function detailItems(costs: any, supplies: any, extras: any, overrides: any): BillingLineItem[] {
   const ov: Record<string, any> = overrides && typeof overrides === 'object' ? overrides : {}
   const items: BillingLineItem[] = []
-  const push = (key: string, description: string, amount: number, bill_to: string | null, kind: 'cost' | 'supply' | 'extra') => {
+  const push = (key: string, description: string, type: string, amount: number, bill_to: string | null, kind: 'cost' | 'supply' | 'extra') => {
     const o = num(ov[key])
     const adjusted = kind !== 'extra' && o != null && o !== amount
-    items.push({ key, description, amount: adjusted ? (o as number) : amount, originalAmount: adjusted ? amount : null, bill_to, kind })
+    items.push({ key, description, type, amount: adjusted ? (o as number) : amount, originalAmount: adjusted ? amount : null, bill_to, kind })
   }
   const cArr = Array.isArray(costs) ? costs : []
   for (let i = 0; i < cArr.length; i++) {
     const c = cArr[i]
     const amt = num(c?.cost)
     if (amt == null) continue
-    push('cost:' + (c?.id ?? i), String(c?.description || (c?.type_cost && c.type_cost.name) || 'Cost'), amt, c?.bill_to ? String(c.bill_to) : null, 'cost')
+    const type = String((c?.type_cost && (c.type_cost.name || c.type_cost.type)) || c?.type || c?.category || 'Cost').trim()
+    push('cost:' + (c?.id ?? i), String(c?.description || type), type, amt, c?.bill_to ? String(c.bill_to) : null, 'cost')
   }
   const sArr = Array.isArray(supplies) ? supplies : []
   for (let i = 0; i < sArr.length; i++) {
@@ -271,7 +275,7 @@ function detailItems(costs: any, supplies: any, extras: any, overrides: any): Bi
     const amt = num(s?.total_price != null ? s.total_price : s?.unit_cost)
     if (amt == null) continue
     if (s?.billable === false) continue
-    push('supply:' + (s?.id ?? i), String(s?.name || s?.description || 'Supply') + (s?.quantity && Number(s.quantity) > 1 ? ' ×' + Number(s.quantity) : ''), amt, s?.bill_to ? String(s.bill_to) : null, 'supply')
+    push('supply:' + (s?.id ?? i), String(s?.name || s?.description || 'Supply') + (s?.quantity && Number(s.quantity) > 1 ? ' ×' + Number(s.quantity) : ''), 'Supply', amt, s?.bill_to ? String(s.bill_to) : null, 'supply')
   }
   const eArr = Array.isArray(extras) ? extras : []
   for (let i = 0; i < eArr.length; i++) {
@@ -281,7 +285,7 @@ function detailItems(costs: any, supplies: any, extras: any, overrides: any): Bi
     // Our line items can be typed: a supplies cost added on the board (Jon, 2026-08-21: "be able
     // to add labor cost and supplies cost") displays as a supply. The key stays 'extra:<i>' —
     // that prefix, not the kind, is what marks an item as OURS for editing/round-tripping.
-    push('extra:' + i, String(e?.description || 'Adjustment'), amt, e?.bill_to ? String(e.bill_to) : 'owner', e?.kind === 'supply' ? 'supply' : 'extra')
+    push('extra:' + i, String(e?.description || 'Adjustment'), e?.kind === 'supply' ? 'Supply' : (String(e?.type || '').trim() || 'Adjustment'), amt, e?.bill_to ? String(e.bill_to) : 'owner', e?.kind === 'supply' ? 'supply' : 'extra')
   }
   return items
 }

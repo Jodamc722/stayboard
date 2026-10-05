@@ -64,7 +64,7 @@ function linesOf(t: BillingTask): Line[] {
   for (const it of t.items) {
     if (String(it.bill_to || 'owner') === 'guest') continue
     const desc = it.originalAmount != null ? it.description + ' (adjusted from $' + money(it.originalAmount) + ')' : it.description
-    out.push({ ...base, kind: it.kind, description: desc, hours: '', rate: '', amount: it.amount })
+    out.push({ ...base, kind: it.type ? it.type.toLowerCase() : it.kind, description: desc, hours: '', rate: '', amount: it.amount })
   }
   if (!out.length) out.push({ ...base, kind: 'labor', description: 'No billing recorded', hours: hrs(t.actualMinutes), rate: '', amount: 0 })
   return out
