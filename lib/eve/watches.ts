@@ -642,7 +642,12 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
         // A subject only OBSERVED (a thought on the Thinking tab) is not in cooldown once she would
         // do more than observe: flipping the switch or raising a rung should let her raise what
         // she saw, not wait a day. While she still observes, the thought stands and is not redone.
-        for (const r of ((data as any[]) || [])) if (!(r.mode === 'observe' && !observesNow)) cooled.add(str(r.subject))
+        // A FLAG COOLS LIKE ANYTHING ELSE (audit 2026-10-05): an observeOnly subject (no_show_risk's
+        // tomorrow arrivals) can never be more than a thought, so "not in cooldown once she would do
+        // more" never applies to it — yet it was re-raised every hourly run, 55 decisions a day of the
+        // same silent arrivals, burying the real ones on the Thinking tab.
+        const flagOnly = new Set(found.filter(f => f.observeOnly).map(f => f.subject))
+        for (const r of ((data as any[]) || [])) if (!(r.mode === 'observe' && !observesNow && !flagOnly.has(str(r.subject)))) cooled.add(str(r.subject))
       } catch { /* no table = no cooldown; the per-run cap still holds */ }
       // SECOND LOCK on repeats: the receipt the fire itself leaves. If the eve_watch_fires write
       // failed last time, the proposal / draft / guest draft it made still carries (watchKey,
