@@ -333,16 +333,15 @@ export function ListingAiAdmin({ isOwner }: { isOwner: boolean }) {
       {/* ── PHOTOS ───────────────────────────────────────────────────────── */}
       {tab === 'photos' && (
         <div className="space-y-2.5">
-          <Row title="Ordering &amp; tagging" sub="How the analyst decides the display order and classifies each photo" badge={edited.has('orderPrompt')}>
-            <Area value={cfg.photos.orderPrompt} rows={12} disabled={ro} onChange={v => mutate(c => { c.photos.orderPrompt = v })} />
-            <div className="flex flex-wrap gap-2 mt-2.5">
-              <Knob label="Photos per run"><Num value={cfg.photos.maxPhotos} disabled={ro} onChange={n => mutate(c => { c.photos.maxPhotos = n })} /></Knob>
-              <button onClick={() => mutate(c => { c.photos.orderPrompt = DEFAULT_LISTING_AI.photos.orderPrompt })} disabled={ro}
-                className="text-[11.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1 disabled:opacity-40"><RotateCcw size={11} /> Reset</button>
-            </div>
-            <p className="text-[11.5px] text-muted mt-2">
-              Room grouping is enforced in code after the model answers, so this prompt steers the judgement, not the mechanics.
-              The photo the host picked as the cover is never reordered.
+          <Row title="Ordering &amp; tagging" sub="How photos are ordered" badge={false}>
+            {/* AUDIT 2026-10-05: the editable ordering prompt and "Photos per run" were read by nothing —
+                the photo analyst reports facts per photo and lib/photo-order places them by a fixed
+                playbook (cover → showcase five → room-by-room tour → building → demoted). Showing a
+                dead control as if it steered something was the worse option, so it is stated plainly. */}
+            <p className="text-[12px] text-ink/80">
+              Ordering is not a prompt any more. The analyst reports facts about every photo (room, quality, faults, what it proves); a fixed playbook then places them —
+              the host’s cover first, a showcase of five that previews the whole home, the room-by-room tour, building amenities, and duplicates / stock / weak shots demoted.
+              Change the playbook in code (lib/photo-order) if the recipe needs to change; the caption and copywriter controls below are live.
             </p>
           </Row>
 

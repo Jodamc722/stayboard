@@ -118,7 +118,7 @@ const DEFAULT_SECTIONS: Record<SectionKey, SectionConfig> = {
   },
   summary: {
     label: 'Summary',
-    guide: 'The headline blurb shown first (maps to the main Airbnb/Vrbo description). HARD CAP 500 characters. Open with a hook that pairs the experience with one quantified, REAL perk only if the data supports it; state layout (beds/baths/sleeps) early; weave in real search keywords naturally; close warm. ALWAYS END the summary with a short standalone closing line that nudges guests to read the important notes, phrased like: "Please see Other things to note before booking." (keep it within the 500-char cap). Most important field.',
+    guide: 'The headline blurb shown first (maps to the main Airbnb/Vrbo description). HARD CAP 500 characters. Shape: (1) a one-line picture of the stay — the strongest true hook, the real area and, if measured, the walk to the water or the district ("about a 10-minute walk to Las Olas"); (2) the layout (beds/baths/sleeps) and who it suits; (3) the two or three amenities guests book for; (4) close warm with a true reason to book. Weave in real search keywords naturally. ALWAYS END the summary with a short standalone closing line that nudges guests to read the important notes, phrased like: "Please see Other things to note before booking." (keep it within the 500-char cap). Most important field.',
     targetMin: 350, targetMax: 500, hardCap: 500, mustInclude: '', neverSay: '', enabled: true, examples: [],
   },
   space: {
@@ -133,12 +133,12 @@ const DEFAULT_SECTIONS: Record<SectionKey, SectionConfig> = {
   },
   neighborhood: {
     label: 'Neighborhood',
-    guide: 'The area and concrete THINGS TO DO nearby, using the real city/area from the address. Name only WELL-KNOWN, real nearby beaches, dining/nightlife districts and attractions for that exact city. Highlight genuinely desirable, KEY draws - do NOT pad with trivial conveniences (a laundromat, convenience store, ATM, gas station, pharmacy). Do NOT fabricate distances or specific business names you are not sure of — keep proximity general unless the data states it.',
+    guide: 'The area as a story a guest can plan around. Build it from the VERIFIED AREA FACTS (and VERIFIED BUILDING FACTS when present): open with the character of the immediate neighbourhood in one honest line, then WALKABLE — the beach, street or park guests reach on foot with the measured minutes ("about a 12-minute walk to Fort Lauderdale Beach"); then A SHORT DRIVE — the districts, nightlife and attractions people come to this part of South Florida for, with drive minutes; then, if listed, FURTHER OUT as outings worth planning (the Everglades, a stadium, a day in Miami), named as a drive so nobody expects them next door. Hyphen lines, each a place with its minutes and one clause on what it is. Name ONLY places in the verified blocks; no business names, distances or stops from anywhere else. Skip trivial conveniences (ATM, gas, pharmacy). If no verified block exists, write two or three honest, general lines about the real city and stop.',
     targetMin: 500, targetMax: 1000, hardCap: null, mustInclude: '', neverSay: '', enabled: true, examples: [],
   },
   transit: {
     label: 'Getting around',
-    guide: 'Transport and orientation for the real area: parking, whether a car is useful, walkability, airport proximity in general terms. Do not invent precise drive times or distances.',
+    guide: 'How a guest actually gets here and around, from the verified facts: the airports and train stations by name with measured drive minutes (from VERIFIED AREA FACTS), whether a car is useful or a burden here, parking exactly as the facts describe it (garage, lot, street, paid), rideshare and walkability, the cruise port if one is listed. Set the expectation honestly — "street parking only" or "a 30-minute drive to the beach" belongs here, said plainly. Do not invent any time or place that is not in a verified block.',
     targetMin: 250, targetMax: 600, hardCap: null, mustInclude: '', neverSay: '', enabled: true, examples: [],
   },
   notes: {
@@ -154,6 +154,13 @@ GOALS
 1) MAXIMIZE VISIBILITY: OTAs rank complete, specific, keyword-rich, high-converting listings. Fill every section fully with REAL detail; lead with the strongest true differentiators.
 2) SET GREAT, HONEST EXPECTATIONS: lean into what guests genuinely praise (review signal); never over-promise. Accurate, complete copy earns better reviews and ranking over time.
 3) BE WORLD-CLASS, NEVER LAZY: this is a top property manager's flagship copy. Every section must be ROBUST, specific and benefit-led, written to DRIVE BOOKINGS - sell the experience, maximize SEO with the real keywords guests search, and speak directly to what guests want (space, cleanliness, location, and the amenities). Thin, generic or templated copy loses rankings AND bookings - go deep with real, concrete detail.
+
+STORY AND EXPECTATIONS (2026-10-05 — this is what makes copy convert)
+- PAINT THE STAY, NOT THE INVENTORY: open each selling section on a moment a guest will actually have here — the first thing they see walking in, coffee on the balcony, the walk to the water — grounded in a photo or a verified fact. Then the facts.
+- SAY WHO IT SUITS, when the data supports it: a studio with a workspace is for a solo traveller or a couple on a long stay; a 3BR with a full kitchen is for a family or a crew; a building with a pool and gym is for someone who wants to stay in. One honest line placing the right guest saves a wrong booking and a bad review.
+- SET EXPECTATIONS IN PLAIN WORDS: if the facts say street parking, a walk-up, a lively street, a pool shared with the building, a mini-split rather than central air, a longer drive to the beach — say it, kindly and early, as part of the picture. Guests forgive what they were told; they punish what they discover. Never hide a trade-off under a positive adjective.
+- USE THE AREA AS A STORY: from the verified area facts, pick the three or four places that define THIS spot (the beach you walk to, the street you eat on, the district you drive to for a night out, the airport the trip starts at) and say how far they really are in minutes. A place "further out" is an outing, named so a guest can plan — never dressed up as next door.
+- END WITH A REASON TO BOOK NOW that is true: the view, the price-free perks (parking, laundry, pool), the location — not urgency words or exclamation marks.
 
 HOUSE STYLE
 - Structured and scannable: short labeled lines or tight, skimmable paragraphs per topic; lead each section with its strongest true point. Vivid but never padded or flowery.

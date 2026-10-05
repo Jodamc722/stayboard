@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildingFactsFor, factsPrompt } from '@/lib/building-facts'
+import { areaFactsFor, areaPrompt } from '@/lib/local-area'
 import { HONESTY } from '@/lib/listing-rules'
 import { loadListingAi } from '@/lib/listing-ai-server'
 import { sectionRules, bannedRule } from '@/lib/listing-ai'
@@ -134,6 +135,13 @@ export async function POST(req: NextRequest) {
       L.push('unless it appears in the verified facts or in what the units already say. A guest checks these')
       L.push('on arrival, and a confident invented detail is worse than a plain true sentence.')
       place = L.join('\n')
+      // THE MEASURED AREA (2026-10-05, lib/local-area): the one thing that lets the Location and
+      // Getting-around sections name real places and real minutes for a building with no pack.
+      if (Number.isFinite(lat) && Number.isFinite(lng) && (lat || lng)) {
+        const area = await areaFactsFor(lat, lng).catch(() => null)
+        const block = areaPrompt(area)
+        if (block) place += '\n\n' + block
+      }
     }
   }
 
@@ -204,6 +212,14 @@ Return ONLY JSON: {${want.map(k => `"${k}":"..."`).join(',')},"rationale":"one o
       if (v) sections[k] = v.slice(0, sectionOf(k)!.max)
     }
     if (!Object.keys(sections).length) return NextResponse.json({ error: 'The model returned no usable text.' }, { status: 502 })
+    // THE SAME CHECKS THE SINGLE-LISTING RUN GETS (audit 2026-10-05): this text lands on up to sixty
+    // listings at once, so a phone number, a URL or a banned phrase here costs more, not less.
+    const warnings: string[] = []
+    const banned = String(cfg.bannedPhrases || '').split(',').map(x => x.trim()).filter(Boolean)
+    for (const [k, v] of Object.entries(sections)) {
+      if (/\b[\w.+-]+@[\w-]+\.[\w.-]+\b/.test(v) || /https?:\/\/|www\./i.test(v) || /\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/.test(v)) warnings.push(`${k}: contains a phone, email or URL`)
+      for (const bp of banned) { const re = new RegExp('(^|[^a-z])' + bp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^a-z]|$)', bp.includes(' ') ? 'i' : ''); if (re.test(v)) warnings.push(`${k}: uses the banned phrase “${bp}”`) }
+    }
 
     return NextResponse.json({
       ok: true, building: building || null, sections,
@@ -211,6 +227,7 @@ Return ONLY JSON: {${want.map(k => `"${k}":"..."`).join(',')},"rationale":"one o
       sampled: existing.length,
       grounded: !!facts,
       located: !!place,
+      warnings,
     })
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || String(e) }, { status: 500 })

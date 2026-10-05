@@ -26,6 +26,7 @@ import { UnitTasks } from '@/components/UnitTasks'
 import { UnitAudit } from '@/components/UnitAudit'
 import { FaqDesk } from '@/components/FaqDesk'
 import { AmenityEditor } from '@/components/AmenityEditor'
+import { AreaFacts } from '@/components/AreaFacts'
 import { GuidebookLauncher } from '@/components/GuidebookLauncher'
 import { ListingWorkspace, type WorkTab } from '@/components/ListingWorkspace'
 import { ContentTable } from '@/components/ContentTable'
@@ -382,6 +383,14 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
           badge: String(res.amenities.score),
           tone: res.amenities.mustFix.length ? 'bad' : res.amenities.score >= 80 ? 'good' : 'warn',
           panel: <AmenityEditor listingId={listing.id} current={amenities} recommended={recommendedAdds} catalog={amenityCatalog} />,
+        },
+        {
+          // AREA (Jon, 2026-10-05): the measured walk / drive times to the places guests book for, and
+          // the staff layer over them — exactly what the copywriter may say about where this unit is.
+          id: 'area', label: 'Area',
+          badge: null,
+          tone: 'muted',
+          panel: <AreaFacts listingId={listing.id} />,
         },
         {
           id: 'reviews', label: 'Reviews',

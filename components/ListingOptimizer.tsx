@@ -224,7 +224,7 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
             <>
               {result.reviewSignal && (
                 <p className="text-[12px] text-muted flex items-start gap-1.5">
-                  <Info size={13} className="mt-0.5 flex-shrink-0" /> Grounded in {result.reviewSignal.count} guest review{result.reviewSignal.count === 1 ? '' : 's'}{result.reviewSignal.avgRating != null ? ` (avg ${result.reviewSignal.avgRating})` : ''}, this unit&apos;s booking settings, and Airbnb&apos;s formatting rules.
+                  <Info size={13} className="mt-0.5 flex-shrink-0" /> Grounded in {result.reviewSignal.count} guest review{result.reviewSignal.count === 1 ? '' : 's'}{result.reviewSignal.avgRating != null ? ` (avg ${result.reviewSignal.avgRating})` : ''}, this unit&apos;s booking settings, the measured walk/drive times in the Area tab, and Airbnb&apos;s formatting rules.
                 </p>
               )}
               {result.warnings.length > 0 && (
@@ -279,6 +279,11 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
                         <div className="text-[10px] uppercase tracking-wider text-brand-700 font-semibold mb-1 flex items-center gap-1"><Sparkles size={10} /> Proposed (editable)</div>
                         <textarea value={val} onChange={e => setField(f.key, e.target.value)} rows={f.rows}
                           className={`w-full text-[13px] text-ink leading-relaxed rounded-lg border px-3 py-2 focus:outline-none ${over ? 'border-rose-300 focus:border-rose-500' : 'border-line focus:border-brand-500'}`} />
+                        {/* WHAT A PHONE SHOWS (2026-10-05): Airbnb's search card cuts the title around 32
+                            characters, so the hook has to land before that. */}
+                        {isTitle && val ? (
+                          <div className="mt-1 text-[11px] text-muted">On a phone card: <span className="text-ink font-semibold">{val.slice(0, 32)}</span>{val.length > 32 ? <span className="text-faint">{val.slice(32)}…</span> : null}</div>
+                        ) : null}
                         <div className="flex items-center justify-between gap-2 mt-1">
                           <div className={`text-[11px] ${over ? 'text-rose-600 font-semibold' : 'text-muted'}`}>{val.length}{isTitle ? ` / ${result.titleMax}` : ''} chars{over ? ' · over limit' : ''}</div>
                           <button onClick={() => pushField(f.key)} disabled={!!pushKey || !val.trim() || over} className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 disabled:opacity-40"><UploadCloud size={12} /> {pushingThis ? 'pushing…' : 'push this section'}</button>

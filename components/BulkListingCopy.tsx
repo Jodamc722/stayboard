@@ -131,7 +131,7 @@ export function BulkListingCopy({ scope, building, defaultOpen }: { scope: 'prop
       const d = await r.json()
       if (!r.ok || d?.error) throw new Error(d?.error || `HTTP ${r.status}`)
       setText(t => ({ ...t, ...(d.sections || {}) }))
-      setRationale(String(d.rationale || ''))
+      setRationale(String(d.rationale || '') + (Array.isArray(d.warnings) && d.warnings.length ? ' ⚠ Before you push: ' + d.warnings.join(' · ') : ''))
     } catch (e: any) { setErr(e?.message || String(e)) }
     finally { setDrafting(null) }
   }

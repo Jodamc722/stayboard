@@ -18,6 +18,8 @@
 //    editable and is assembled here on every call.
 import { NextRequest, NextResponse } from 'next/server'
 import { buildingFactsFor, factsPrompt } from '@/lib/building-facts'
+import { areaFactsFor, areaPrompt, listingLatLng } from '@/lib/local-area'
+import { ratingToStars } from '@/lib/optimize-score'
 import { HONESTY, PHOTO_RULES_LABELLED, PHOTO_RULES_RAW } from '@/lib/listing-rules'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -204,10 +206,12 @@ export async function POST(req: NextRequest) {
 
   // Guest-review signal: what guests genuinely praise (lean in) + average rating.
   const reviews = Array.isArray(reviewRows) ? reviewRows : []
-  const rated = reviews.map(r => Number(r.rating)).filter(n => Number.isFinite(n))
+  // Stars, whatever the channel's scale (audit 2026-10-05): a Booking.com 9.2 or an Expedia 10 was
+  // being averaged with Airbnb 5s, which is how a 4.8 unit read as 6.1 to the copywriter.
+  const rated = reviews.map(r => ratingToStars(r.rating)).filter((n): n is number => n != null && Number.isFinite(n))
   const avgRating = rated.length ? Math.round((rated.reduce((a, b) => a + b, 0) / rated.length) * 10) / 10 : null
   const praise = reviews
-    .filter(r => (Number(r.rating) >= 4 || r.rating == null) && str(r.content).trim().length > 12)
+    .filter(r => ((ratingToStars(r.rating) ?? 5) >= 4) && str(r.content).trim().length > 12)
     .map(r => str(r.content).replace(/\s+/g, ' ').trim().slice(0, 220)).slice(0, 8)
   const reviewSignal = { count: reviews.length, avgRating, guestPraiseSamples: praise }
 
@@ -217,7 +221,14 @@ export async function POST(req: NextRequest) {
   const bFacts = await buildingFactsFor({
     building: (listing as any).building, nickname: (listing as any).nickname, title: (listing as any).title,
   }).catch(() => null)
-  const factsBlock = factsPrompt(bFacts)
+  // THE MEASURED AREA (2026-10-05, lib/local-area): walk and drive times from this unit's coordinates
+  // to the places guests book South Florida for, with the staff layer. This is what lets the
+  // Neighborhood and Getting-around sections name real places and real minutes honestly — for every
+  // unit, not only the 13 buildings with a hand-written pack.
+  const pt = listingLatLng(listing)
+  const area = pt ? await areaFactsFor(pt.lat, pt.lng).catch(() => null) : null
+  const areaBlock = areaPrompt(area)
+  const factsBlock = [factsPrompt(bFacts), areaBlock].filter(Boolean).join('\n\n')
 
   const facts = {
     currentTitle: current.title || null,

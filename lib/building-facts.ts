@@ -127,7 +127,8 @@ export function factsPrompt(f: BuildingFacts | null): string {
   L.push('these specifically, by name and by distance, because a human stands behind them. Use them —')
   L.push('this is what makes the Neighborhood and Getting-around sections worth reading. Do not embellish')
   L.push('them, do not add places that are not listed here, and do not turn a walk into a stroll.')
-  if (f.area) L.push(`- Area: ${f.area}`)
+  // A placeholder written for staff ('confirm exact unit location') is not a fact a guest may be told (audit 2026-10-05).
+  if (f.area && !/confirm|tbd|\?\?/i.test(f.area)) L.push(`- Area: ${f.area}`)
   if (f.beach) L.push(`- Beach: ${f.beach}`)
   if (f.parking) L.push(`- Parking: ${f.parking} (describe it accurately — if it says garage, it is a garage)`)
   if (f.food.length) L.push(`- Restaurants guests actually go to: ${f.food.join(', ')}`)

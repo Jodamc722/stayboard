@@ -27,8 +27,10 @@ LOCATION (use it; never print it verbatim)
 - NEVER print the exact street address, unit number, lock/door codes, phone, email, or URLs anywhere in the copy. Keep proximity general ("a short walk to the beach") unless the data gives an exact distance.
 - PARKING: describe only the parking the data confirms. If a VERIFIED BUILDING FACTS block states a garage, it is a garage and you should say so — that is a booking driver. If nothing confirms parking, do not mention it.
 
-THE ONE EXCEPTION TO ALL OF THE ABOVE
-- If a block headed VERIFIED BUILDING FACTS appears below, everything in it was written and checked by Stay staff. You MAY state those places, distances and walk times specifically and by name. That block is the ONLY licence to be that specific — it does not extend to anything you know from elsewhere.`
+THE TWO EXCEPTIONS TO ALL OF THE ABOVE
+- If a block headed VERIFIED BUILDING FACTS appears below, everything in it was written and checked by Stay staff. You MAY state those places, distances and walk times specifically and by name.
+- If a block headed VERIFIED AREA FACTS appears below, those places and times were MEASURED from this unit's coordinates on the road network. You MAY name them and quote the times — always as "about N minutes' walk" or "about N minutes' drive", never in blocks or as "steps from". Walkable places are the story of the stay; a short drive is the plan for the trip; "further out" places are named as an outing so a guest plans for it, never as "nearby".
+- Those two blocks are the ONLY licence to be that specific — they do not extend to anything you know from elsewhere, and you may not add a place that is not in them.`
 
 export const PHOTO_RULES_LABELLED = `PHOTOS (you can SEE them, and they are LABELLED)
 - Each attached photo is introduced by a line naming the room it shows and what is in it. That labelling was produced by a vision pass over the whole photo set — trust it for WHICH space you are looking at, and use the image itself for how it looks.
