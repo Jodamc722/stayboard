@@ -538,24 +538,21 @@ export async function buildAudit(month: string): Promise<AuditData> {
     rows.push(...batch)
     if (batch.length < PAGE) break
   }
-  // TWINS (2026-10-05). Guesty re-issues a journal line under a new id each time it recomputes a
-  // statement and never voids the old one; the sweep now retires what a full pass no longer sees
-  // (lib/guesty-owner-sync), but between sweeps — or on a month that has not had a full pass — the
-  // mirror can still hold two or ten copies of one line. September 2026 held 2.9 copies per line:
-  // rental read $1.15M instead of $337K and the low-rate benchmark flagged 72% of stays. Collapse
-  // exact twins here so the board is right regardless, and say how many there were.
+  // REPEATED LINES (2026-10-05). Guesty re-issues a journal line under a new id each time it
+  // recomputes a statement and never voids the old one; the sweep now retires what a full pass no
+  // longer returns (lib/guesty-owner-sync), which is what made September read 3× — $1.15M of rental
+  // for $337K. What is left after a full sweep is what Guesty itself holds, and Guesty legitimately
+  // posts identical lines on one day (a per-night adjustment dated on the posting day, one line per
+  // night, consecutive ids), so nothing is collapsed here: the mirror IS the statement. The count
+  // is still surfaced — a month with thousands of repeats has not had a full sweep since the fix.
   let twins = 0
   {
     const seen = new Set<string>()
-    const kept: LedgerRow[] = []
     for (const r of rows) {
       const k = [r.owner_id, r.listing_id, r.entry_date, r.charge_code, r.amount, (r as any).name || '', (r as any).res || ''].join('|')
-      if (seen.has(k)) { twins++; continue }
-      seen.add(k); kept.push(r)
+      if (seen.has(k)) twins++; else seen.add(k)
     }
-    rows.length = 0; rows.push(...kept)
   }
-
   // 4. Group by owner, then by reservation code (or grouped line for codeless rows).
   type Group = {
     ownerId: string; resCode: string; lineKey: string
