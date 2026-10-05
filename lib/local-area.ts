@@ -43,7 +43,7 @@ export type AreaFacts = {
 
 const TABLE = 'area_facts'
 const FRESH_DAYS = 60
-const WALK_MAX_MIN = 25          // beyond this a guest drives
+const WALK_MAX_MIN = 30          // beyond this a guest drives (a 30-minute beach walk is still a walk)
 const FAR_MIN = 35               // beyond this it is "a drive away", said as such
 const LOCAL_RADIUS_M = 14_000
 const REGIONAL_RADIUS_M = 65_000
@@ -103,7 +103,10 @@ export async function computeAreaFacts(lat: number, lng: number): Promise<{ item
   })
   // Keep the list a guest can read: everything walkable, then the closest drives per kind, then the regional anchors.
   const walk = items.filter(i => i.mode === 'walk')
-  const drive = items.filter(i => i.mode === 'drive').slice(0, 10)
+  // The trip's anchors (airport, train, port) are always kept; the rest of the drives are the ten nearest.
+  const anchor = (i: AreaItem) => i.kind === 'airport' || i.kind === 'station' || i.kind === 'port'
+  const drives = items.filter(i => i.mode === 'drive')
+  const drive = [...drives.filter(anchor), ...drives.filter(i => !anchor(i)).slice(0, 10)]
   const far = items.filter(i => i.mode === 'far' && ['airport', 'station', 'port', 'arena', 'shopping', 'nature', 'beach', 'district'].includes(i.kind)).slice(0, 6)
   const out = [...walk, ...drive, ...far]
   out.sort((a, b) => rank(a) - rank(b) || a.distanceM - b.distanceM)
@@ -162,8 +165,8 @@ const minutes = (n: number) => n <= 3 ? 'a couple of minutes' : `about ${n} min`
 
 /** One line per place, the way the copy may say it. */
 export function areaLine(i: AreaItem): string {
-  const how = i.mode === 'walk' && i.walkMin != null ? `${minutes(i.walkMin)} walk`
-    : i.driveMin != null ? `${minutes(i.driveMin)} drive${i.mode === 'far' ? ' — a day trip or an outing, not next door' : ''}` : ''
+  const how = i.mode === 'walk' && i.walkMin != null ? `${minutes(i.walkMin)} walk${i.walkMin > 15 && i.driveMin != null ? ` (or ${minutes(i.driveMin)} drive)` : ''}`
+    : i.driveMin != null ? `${minutes(i.driveMin)} drive${i.walkMin != null && i.walkMin <= 40 ? ` (a ${i.walkMin}-minute walk)` : ''}${i.mode === 'far' ? ' — a day trip or an outing, not next door' : ''}` : ''
   return `- ${KIND_WORD[i.kind]}: ${i.name} — ${how}${i.basis === 'estimated' ? ' (estimated)' : ''}${i.what ? ` · ${i.what}` : ''}${i.note ? ` · Staff note: ${i.note}` : ''}`
 }
 
