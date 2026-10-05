@@ -151,22 +151,46 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   for (const o of ownerStays.slice(0, 2)) P(pick('OWNER IN-HOUSE', 'PROPIETARIO'), 'blue', `<b>${esc(unitShort(str(o.unit)))}</b> — ${esc(str(o.owner || o.guest))} · ${pick('until', 'hasta')} ${esc(str(o.checkOut).slice(5))}`, pick('White-glove — no shortcuts, no surprises.', 'Servicio impecable — sin atajos.'))
   const prioNumbered: Line[] = prio.map((l, i) => ({ ...l, html: `<span style="display:inline-block;min-width:18px;font-weight:700;color:${A.ink}">${i + 1}</span> ${l.html}` }))
 
-  // ---- DEPARTURE CLEANS — every one: unit · cleaner · guest lands · status --------------------
+  // ---- DEPARTURE CLEANS — BY CLEANER (Jon, 2026-10-05: "organize by cleaner so that it's just
+  // easier to visually see"). The flat unit list made the coordinator find each person's doors by
+  // scanning the second column. Now: the unassigned doors first, in red, because they are nobody's;
+  // then one block per cleaner — her name, her shift state, her count — and her run numbered in the
+  // order to work it: same-day turns first (with the arrival time that sets the deadline), then the
+  // rest. The row order IS the instruction. ------------------------------------------------------
   const stateOf = (c: Clean) => c.state === 'done' ? pill(t('done'), 'green') : c.state === 'running' ? pill(t('in progress'), 'amber') : `<span style="${T.faint}">${pick('scheduled', 'programada')}</span>`
-  const cleanRows = cleans.slice().sort((a, b) => (b.sameDayArrival ? 1 : 0) - (a.sameDayArrival ? 1 : 0) || (/UNASSIGNED/.test(a.assignee) ? -1 : 0) - (/UNASSIGNED/.test(b.assignee) ? -1 : 0) || a.unit.localeCompare(b.unit)).map(c => {
-    const ppl = c.assignee.split(',').map(x => x.trim()).filter(Boolean)
-    const who = /UNASSIGNED/.test(c.assignee) ? `<b style="${T.red}">${t('NO ONE ASSIGNED')}</b>` : `<b>${esc(personName(first(c.lead || ppl[0])))}</b>${crewOf(ppl, c.lead)}`
+  const ownerOf = (c: Clean) => /UNASSIGNED/.test(c.assignee) ? '' : personName(first(c.lead || c.assignee.split(',')[0].trim()))
+  const othersOn = (c: Clean, me: string) => c.assignee.split(',').map(x => x.trim()).filter(x => x && !/UNASSIGNED/.test(x) && !nameMatches(x, me)).map(personName)
+  const cleanRow = (c: Clean, n: number | null, me: string) => {
     const note = noteOf(c.lid)
+    const extra = me ? othersOn(c, me) : []
     return `<tr>
-      <td style="padding:5px 6px 5px 0;font-size:13px;border-top:1px solid #f3f4f6;vertical-align:top"><b>${esc(unitShort(c.unit))}</b>${note ? `<div style="font-size:11.5px;color:#4338ca">📝 ${esc(note)}</div>` : ''}</td>
-      <td style="padding:5px 6px;font-size:13px;border-top:1px solid #f3f4f6;vertical-align:top">${who}</td>
+      <td style="padding:5px 4px 5px 0;font-size:12px;border-top:1px solid #f3f4f6;vertical-align:top;width:22px;text-align:center">${n != null ? `<span style="display:inline-block;min-width:18px;padding:1px 4px;border-radius:9px;background:${c.sameDayArrival ? '#fee2e2' : '#f1f5f9'};color:${c.sameDayArrival ? '#b91c1c' : '#475569'};font-weight:700;font-size:11px">${n}</span>` : ''}</td>
+      <td style="padding:5px 6px;font-size:13px;border-top:1px solid #f3f4f6;vertical-align:top"><b>${esc(unitShort(c.unit))}</b>${extra.length ? ` <span style="${T.muted};font-size:11.5px">· ${pick('with', 'con')} ${esc(extra.join(', '))}</span>` : ''}${me ? crewOf(c.assignee.split(',').map(x => x.trim()), c.lead) : ''}${note ? `<div style="font-size:11.5px;color:#4338ca">📝 ${esc(note)}</div>` : ''}</td>
       <td style="padding:5px 6px;font-size:12px;border-top:1px solid #f3f4f6;vertical-align:top;white-space:nowrap">${c.sameDayArrival ? pill(`${pick('lands', 'llega')} ${timeOf(c.lid)}`, 'red') + (isVip(c.lid) ? ' ' + vipWhy(c.lid) : '') : `<span style="${T.faint}">—</span>`}</td>
       <td style="padding:5px 0 5px 6px;font-size:12px;border-top:1px solid #f3f4f6;vertical-align:top;text-align:right;white-space:nowrap">${stateOf(c)}</td>
     </tr>`
+  }
+  const runOrder = (a: Clean, b: Clean) => (b.sameDayArrival ? 1 : 0) - (a.sameDayArrival ? 1 : 0) || (a.state === 'done' ? 1 : 0) - (b.state === 'done' ? 1 : 0) || a.unit.localeCompare(b.unit)
+  const cleansByPerson: Record<string, Clean[]> = {}
+  for (const c of cleans) { const n = ownerOf(c); if (n) (cleansByPerson[n] = cleansByPerson[n] || []).push(c) }
+  const personOrder = Object.keys(cleansByPerson).sort((a, b) => {
+    const ha = cleansByPerson[a].some(c => c.sameDayArrival && c.state !== 'done') ? 0 : 1
+    const hb = cleansByPerson[b].some(c => c.sameDayArrival && c.state !== 'done') ? 0 : 1
+    return ha - hb || cleansByPerson[b].length - cleansByPerson[a].length || a.localeCompare(b)
   })
+  const personHead = (n: string, list: Clean[]) => {
+    const doneN = list.filter(c => c.state === 'done').length
+    const hot = list.filter(c => c.sameDayArrival && c.state !== 'done').length
+    const sched = onShift.size && !shiftOf(n) && !isTech(n) && !/superv|inspect/.test(dept(n)) && !isOffice(n) ? ` · <span style="${T.amber}">${pick('not on the schedule — confirm', 'no está en el horario — confirmar')}</span>` : ''
+    return `<tr><td colspan="4" style="padding:10px 0 4px;font-size:13.5px;border-top:2px solid #e5e7eb"><b>${esc(n)}</b> <span style="${T.muted};font-size:12px">· ${list.length} ${list.length === 1 ? t('clean') : t('cleans')}${hot ? ` · <span style="${T.red}">${hot} ${pick('same-day', 'mismo día')}</span>` : ''}${doneN ? ` · ${doneN} ${t('done')}` : ''}${sched}</span></td></tr>`
+  }
+  const unassignedRows = unassigned.length
+    ? `<tr><td colspan="4" style="padding:6px 0 4px;font-size:13.5px"><b style="${T.red}">${t('NO ONE ASSIGNED')}</b> <span style="${T.muted};font-size:12px">· ${unassigned.length} — ${pick('nobody’s list; assign before 10am', 'sin dueño; asignar antes de las 10')}</span></td></tr>` + unassigned.slice().sort(runOrder).map(c => cleanRow(c, null, '')).join('')
+    : ''
+  const personRows = personOrder.map(n => personHead(n, cleansByPerson[n]) + cleansByPerson[n].slice().sort(runOrder).map((c, i) => cleanRow(c, i + 1, n)).join('')).join('')
   const th = (x: string, right = false) => `<th style="padding:4px 6px 4px 0;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;text-align:${right ? 'right' : 'left'}">${x}</th>`
   const cleansTable = cleans.length
-    ? `<table width="100%" cellspacing="0" cellpadding="0"><tr>${th(pick('Unit', 'Unidad'))}${th(pick('Cleaner', 'Limpieza'))}${th(pick('Guest lands', 'Llega'))}${th(pick('Status', 'Estado'), true)}</tr>${cleanRows.join('')}</table>`
+    ? `<table width="100%" cellspacing="0" cellpadding="0"><tr>${th('#')}${th(pick('Unit', 'Unidad'))}${th(pick('Guest lands', 'Llega'))}${th(pick('Status', 'Estado'), true)}</tr>${unassignedRows}${personRows}</table>`
     : `<p style="margin:6px 0 0;font-size:13px;color:#6b7280">${t('Nothing on the board today.')}</p>`
 
   // ---- ARRIVALS — every one, tagged ---------------------------------------------------------------
@@ -232,7 +256,7 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
     { html: masthead(A, pick('Field Run', 'Ruta del día') + ' — ' + market, pick('Field coordinator', 'Coordinador de campo'), niceDay(today)) },
     { html: headline(A, head + `<br><span style="font-size:12px;color:#6b7280">${pick('7am snapshot — the board is live. Confirm access before entering any unit.', 'Foto de las 7am — el tablero está en vivo. Confirme acceso antes de entrar a una unidad.')}</span>`, links) },
     { html: prioNumbered.length ? section(pick('Top priorities — in order', 'Prioridades — en orden'), prioNumbered, { cap: 12, accent: A }) : block(pick('Top priorities', 'Prioridades'), `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">${t('Nothing on fire.')}</span> <span style="${T.muted}">${pick('Run the list, keep 4pm in sight.', 'Siga la lista, con las 4pm en mente.')}</span></p>`, A) },
-    { html: block(pick('Departure cleans — same-day turns first', 'Limpiezas de salida — primero los del mismo día'), cleansTable, A, cleans.length) },
+    { html: block(pick('Departure cleans — by cleaner, same-day turns first', 'Limpiezas de salida — por persona, primero los del mismo día'), cleansTable, A, cleans.length) },
     { html: inspLines.length ? section(pick('Inspections — pending', 'Inspecciones — pendientes'), inspLines, { cap: 10, accent: A, note: pick('Only open ones are listed. A completed inspection leaves this list the next morning.', 'Solo las pendientes. Una inspección completada desaparece a la mañana siguiente.') }) : block(pick('Inspections — pending', 'Inspecciones — pendientes'), `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">${pick('None pending.', 'Ninguna pendiente.')}</span></p>`, A) },
     { html: dayShape(A, steps, pick('Running the day', 'El día, hora por hora')) },
     { html: block(pick('Arrivals today', 'Llegadas hoy'), arrivalsTable, A, arrivals.length) },
