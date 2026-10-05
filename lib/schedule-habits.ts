@@ -14,7 +14,7 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { pageRows } from './db-page'
 import { isDepartureCleanName } from './breezeway'
-import { buildingOf } from './segments'
+import { buildingOf, marketOf } from './segments'
 import { personKey } from './person-name'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
@@ -58,8 +58,11 @@ export async function learnHabits(days = 30): Promise<Habits> {
   for (const l of ((ls || []) as any[])) {
     const nm = str(l.nickname || l.title)
     const hub = str(l.building) || buildingOf(nm) || nm
-    const city = str(l.address_city).toLowerCase()
-    const market = /miami|beach|coral|grove|brickell/.test(city) || /arya|elser|17 ?west|district|eden|miami/i.test(hub) ? 'Miami' : /palm|lake worth|lantana|capri|lucerne|amrit/i.test(city + ' ' + hub) ? 'North' : 'Broward'
+    // The canonical building → market map (lib/segments), the same one the board uses. The regex
+    // that stood here until 2026-10-05 sent every "… Beach" city — Hallandale, Pompano, Lake
+    // Worth — to Miami, so Vilma (Eden, Pelican, Rustic) and Opal (Capri) were "Miami" people and
+    // the suggester, trusting that, put Broward staff in Miami.
+    const market = marketOf(l.building, l.address_city, nm)
     meta[str(l.id)] = { hub, market }
   }
   const people: Record<string, PersonHabit> = {}
