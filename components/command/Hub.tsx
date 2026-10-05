@@ -154,9 +154,10 @@ export function CleanRow({ c, value, roster, canAssign: _canAssign, onChanged, l
   const state: TaskState = c.status === 'done' ? 'done' : c.status === 'late' ? 'late' : c.status === 'atRisk' ? 'atRisk' : c.status === 'running' ? 'running' : 'open'
   const ta = useTaskActions({ taskId: c.taskId, dept: 'housekeeping', label: c.unit + ' — clean', link: '/schedule', state, who: c.who, roster, onChanged })
   return (
-    <Row lane={lane} dot={state === 'late' ? 'rose' : state === 'atRisk' || (nobody && !ta.done) ? 'amber' : null} title={c.unit}
+    <Row lane={lane} dot={state === 'late' || (c.behind === 'late' && !ta.done) ? 'rose' : state === 'atRisk' || (c.behind && !ta.done) || (nobody && !ta.done) ? 'amber' : null} title={c.unit}
       tags={<>
         <TaskStateTag state={ta.done ? 'done' : state} />
+        {c.behind && !ta.done && <Tag tone={c.behind === 'late' ? 'rose' : 'amber'} title={c.behind === 'late' ? 'In progress, but at this pace it finishes after the deadline' : 'In progress, finishing close to the deadline'}>{c.behind === 'late' ? 'running late' : 'tight'}</Tag>}
         {c.sameDay && !ta.done && <Tag tone="violet" title="A guest arrives into this unit today">same-day</Tag>}
         {nobody && !ta.done && <TaskStateTag state="unassigned" />}
         {value >= 1000 && <Tag tone="slate" title={'The arriving booking is worth ' + money(value) + ' — high-ticket, first in line'}>{money(value)}</Tag>}

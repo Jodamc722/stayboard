@@ -160,7 +160,15 @@ export type Verdict = {
   tomorrow: string
 }
 
-export type CleanRow = { taskId: string; unit: string; market: string; who: string; status: 'done' | 'running' | 'late' | 'atRisk' | 'open' | 'vendor' | 'extended'; arrivingAt: string | null; sameDay: boolean; outAt: string | null }
+export type CleanRow = {
+  taskId: string; unit: string; market: string; who: string
+  /** A started clean is ALWAYS 'running' (Jon, 2026-10-05: "make sure it shows in progress if task is
+   *  started") — the deadline worry rides on `behind`, it never hides that somebody is on it. */
+  status: 'done' | 'running' | 'late' | 'atRisk' | 'open' | 'vendor' | 'extended'
+  /** Only on a running clean: the projection says it lands past the deadline ('late') or close to it. */
+  behind?: 'late' | 'atRisk' | null
+  arrivingAt: string | null; sameDay: boolean; outAt: string | null
+}
 /** inspection 'auto' = a big arrival with none yet that Task automation files on its next run — nobody is asked. */
 export type ArrivalRow = { reservationId: string; guest: string; unit: string; listingId: string | null; checkIn: string; nights: number; value: number; big: boolean; today: boolean; inspection: 'none' | 'open' | 'done' | 'n/a' | 'auto'; inspectionTaskId: string | null; welcomeDone: boolean }
 export type TaskRow = { taskId: string; unit: string; market: string; name: string; dept: string; type: string; who: string; state: 'done' | 'running' | 'open'; prio: string; late: boolean }
@@ -484,7 +492,10 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
         if (extended) extendedN++
         cleanRows.push({
           taskId: t.id, unit: u.unit, market: u.market, who: t.assignees.join(', '),
-          status: extended ? 'extended' : (t.guestyOnly || t.untracked) ? 'vendor' : t.done ? 'done' : t.late ? 'late' : t.atRisk ? 'atRisk' : t.running ? 'running' : 'open',
+          // In progress wins over the deadline flags (2026-10-05): before this, a clean somebody was
+          // halfway through read "at risk" after 3pm and the bar said 0 in progress, 13 at risk.
+          status: extended ? 'extended' : (t.guestyOnly || t.untracked) ? 'vendor' : t.done ? 'done' : t.running ? 'running' : t.late ? 'late' : t.atRisk ? 'atRisk' : 'open',
+          behind: !extended && !t.done && t.running ? (t.late ? 'late' : t.atRisk ? 'atRisk' : null) : null,
           arrivingAt: u.arrivingAt || null, sameDay: !!u.sameDayTurn, outAt: u.checkOutTime || null,
         })
         continue
@@ -946,7 +957,8 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     pulse: { ...dayPulse, cleansDone: dl.done, cleansTotal: dl.cleans, minsLeft: dl.minsLeft, lastSync: day ? day.lastSync : null },
     tiles: {
       // ONE denominator: cleans on the 4pm clock + vendor cleans. Extended stays are listed but not counted.
-      cleans: { total: dl.cleans + dl.untracked, done: dl.done, running: dl.running, late: dl.late, atRisk: dl.atRisk, vendor: dl.untracked, extended: extendedN, rows: cleanRows.sort((a, b) => cleanOrder(a) - cleanOrder(b) || a.unit.localeCompare(b.unit)) },
+      // late / atRisk count rows NOT started (a started clean is counted as running, see CleanRow).
+      cleans: { total: dl.cleans + dl.untracked, done: dl.done, running: cleanRows.filter(r => r.status === 'running').length, late: cleanRows.filter(r => r.status === 'late').length, atRisk: cleanRows.filter(r => r.status === 'atRisk').length, vendor: dl.untracked, extended: extendedN, rows: cleanRows.sort((a, b) => cleanOrder(a) - cleanOrder(b) || a.unit.localeCompare(b.unit)) },
       arrivals: { today: arrivalRows.filter(a => a.today).length, big: arrivalRows.filter(a => a.big).length, bigToday: arrivalRows.filter(a => a.big && a.today).length, missingInspection, rows: arrivalRows.sort((a, b) => a.checkIn.localeCompare(b.checkIn) || (b.big ? 1 : 0) - (a.big ? 1 : 0) || b.value - a.value) },
       tasks: { total: taskRows.length, open: tOpen, running: tRunning, done: tDone, unassigned: tUnassigned, late: tLate, urgent: tUrgent, byDept, rows: taskRows.sort((a, b) => taskOrder(a) - taskOrder(b) || a.unit.localeCompare(b.unit)) },
       team: { onShift: k?.peopleOnShift ?? teamRows.length, utilisationPct: util ?? 0, overloaded: k?.overloaded ?? 0, underloaded: k?.underloaded ?? 0, idle, unowned: k?.unassignedCount ?? 0, implausible: k?.implausible ?? 0, moves: (cap?.suggestions || []).slice(0, 6), notes: cap?.notes || [], rows: teamRows },
