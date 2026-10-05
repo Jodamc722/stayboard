@@ -8,17 +8,18 @@ import { useRouter } from 'next/navigation'
 import { ArrowUpRight, Receipt } from 'lucide-react'
 import { LeanHead, LeanTabs, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, type Tone } from '@/components/lean'
 import { useCachedFetch } from '@/lib/swr'
-import { useTaskActions, TaskStateTag, TASK_GHOST } from '@/components/task/TaskActions'
+import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, TASK_GHOST } from '@/components/task/TaskActions'
 import type { Roster } from '@/components/CommandCockpit'
 
 /** A Breezeway task on the triage list wears the same strip as every other board (2026-10-01). */
 function TriageTaskRow({ t, roster, onChanged }: { t: TriageRow; roster: Roster[]; onChanged: () => void }) {
-  const ta = useTaskActions({ taskId: t.taskId!, dept: t.dept || 'maintenance', label: t.where + ' — ' + t.title, link: '/maintenance', state: t.flags.includes('overdue') ? 'late' : t.running ? 'running' : 'open', who: t.who, roster, onChanged,
+  const ta = useTaskActions({ taskId: t.taskId!, dept: t.dept || 'maintenance', label: t.where + ' — ' + t.title, link: '/maintenance', state: taskStateOf({ running: t.running, late: t.flags.includes('overdue') }), who: t.who, roster, onChanged,
     extra: t.reportUrl ? <a href={t.reportUrl} target="_blank" rel="noreferrer" className={TASK_GHOST} title="Read-only field report">Report</a> : null })
   return (
     <LeanRow name={t.title} meta={[t.where, t.who].filter(Boolean).join(' · ')}
       tags={<>
-        <TaskStateTag state={ta.done ? 'done' : t.flags.includes('overdue') ? 'late' : t.running ? 'running' : 'open'} />
+        <TaskStateTag state={ta.done ? 'done' : taskStateOf({ running: t.running, late: t.flags.includes('overdue') })} />
+        {!ta.done && t.running && <BehindTag late={t.flags.includes('overdue')} />}
         {!ta.done && !t.who && <TaskStateTag state="unassigned" />}
         <Tag tone={ageTone(t.age)} title={t.age + ' days old'}>{t.age}d</Tag>
         <Tag title={KIND.task.title}>{KIND.task.label}</Tag>

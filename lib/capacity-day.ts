@@ -17,6 +17,7 @@ import { unstable_cache } from 'next/cache'
 import { supabaseAdmin } from './supabase-admin'
 import { DAY_TAG, freshEnough } from './bust'
 import { getShifts } from './homebase'
+import { getTimecardsAudited, type Timecard } from './homebase-labor'
 import { getCrew } from './crew'
 import { marketOf } from './segments'
 import { getOpsPresets } from './app-settings'
@@ -43,6 +44,9 @@ export type PersonTask = {
   finishedAt: string | null
 }
 
+/** Homebase time card for the day (Jon, 2026-10-05: "see who's working"). null = no card read. */
+export type PersonClock = { in: string | null; out: string | null; open: boolean }
+
 export function taskGroupOf(name: string, dept: string | null | undefined): PersonTask['group'] {
   const n = String(name || '').toLowerCase()
   const d = String(dept || '').toLowerCase()
@@ -57,7 +61,7 @@ export type DayPicture = {
   /** When this picture was priced — a cached copy is never served as if it were now (lib/bust). */
   builtAt?: string
   /** Every person on shift, whether or not they have work. `shiftStartMin` is ET minutes past midnight. */
-  people: (DayLoad & { shiftStartMin?: number | null; tasks?: PersonTask[] })[]
+  people: (DayLoad & { shiftStartMin?: number | null; tasks?: PersonTask[]; clock?: PersonClock | null })[]
   /** Work with nobody on it — the pool a supervisor is choosing from. */
   unassigned: Array<{ stop: Stop; minutes: number; market: string | null; bestFor: Suggestion[] }>
   /** Moves worth making, strongest first. */
@@ -129,10 +133,20 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
   const db = supabaseAdmin()
   const notes: string[] = []
 
-  const [presets, crew, shifts] = await Promise.all([
+  // WHO IS ON THE CLOCK (2026-10-05). Today's Homebase time cards — best-effort and capped at 5s:
+  // a slow Homebase must never hold up the day. Only for today; past days are settled elsewhere.
+  const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  const cardsP: Promise<Timecard[] | null> = date === todayET
+    ? Promise.race([
+        getTimecardsAudited(date, date).then(a => a.cards).catch(() => null),
+        new Promise<null>(r => setTimeout(() => r(null), 5000)),
+      ])
+    : Promise.resolve(null)
+  const [presets, crew, shifts, cards] = await Promise.all([
     getOpsPresets().catch(() => ({} as any)),
     getCrew().catch(() => null),
     getShifts(date).catch(() => [] as any[]),
+    cardsP,
   ])
   const VENDOR_RE = vendorRegex((presets as any)?.vendorBuildings)
 
@@ -274,7 +288,17 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
       shiftMinutes: shiftMin[name] ?? null,
     }
     const load = assessDay({ date, person, stops: stopsByPerson[name] || [] })
-    return { ...load, shiftStartMin: shiftStartMin[name] ?? null, tasks: tasksByPerson[name] || [] }
+    let clock: PersonClock | null = null
+    if (cards) {
+      const mine = cards.filter(c => (c.date || date) === date && nameMatches(c.name, name))
+      if (mine.length) {
+        const ins = mine.map(c => c.clockIn).filter(Boolean).sort() as string[]
+        const outs = mine.map(c => c.clockOut).filter(Boolean).sort() as string[]
+        const open = mine.some(c => c.open)
+        clock = { in: ins[0] || null, out: open ? null : (outs[outs.length - 1] || null), open }
+      } else clock = { in: null, out: null, open: false }
+    }
+    return { ...load, shiftStartMin: shiftStartMin[name] ?? null, tasks: tasksByPerson[name] || [], clock }
   }).sort((a, b) => a.utilisationPct - b.utilisationPct)
 
   if (!Object.keys(shiftMin).length) {

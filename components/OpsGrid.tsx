@@ -48,7 +48,7 @@ import { DueCalendar, DueCount } from '@/components/DueCalendar'
 import { VacantTab } from '@/components/VacantTab'
 import { StayPanel } from '@/components/StayPanel'
 import { Tag as LTag, Tip as LTip } from '@/components/lean'
-import { useTaskActions, TaskStateTag, TASK_GHOST, type TaskState as TaskStateT } from '@/components/task/TaskActions'
+import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, TASK_GHOST, type TaskState as TaskStateT } from '@/components/task/TaskActions'
 
 // ── types (mirrors of /api/ops-today) ───────────────────────────────────────────────────────────
 export type GTask = {
@@ -711,7 +711,7 @@ function TaskLine({ t, roster, mode, onRefresh, comment, units: _units, staff: _
       onRefresh()
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setActing('') }
   }
-  const state: TaskStateT = t.done ? 'done' : t.late ? 'late' : t.running ? 'running' : 'open'
+  const state: TaskStateT = taskStateOf({ done: t.done, running: t.running, late: t.late })
   const ta = useTaskActions({
     taskId: t.id, dept: t.dept || '', label: (unitMeta?.unit || t.unit) + ' — ' + t.name, link: '/plan', state, who: t.assignees, roster, onChanged: onRefresh,
     hide: real ? undefined : { assign: true, done: true, nudge: true, comments: true, breezeway: true },
@@ -727,6 +727,7 @@ function TaskLine({ t, roster, mode, onRefresh, comment, units: _units, staff: _
         <span className="text-[13px] font-semibold text-ink">{t.name}</span>
         <LTag title="Category">{c.short}</LTag>
         <TaskStateTag state={ta.done ? 'done' : state} />
+        {!ta.done && state === 'running' && <BehindTag late={t.late} />}
         {!ta.done && !t.assignees.length && <TaskStateTag state="unassigned" />}
         {t.done && (t.finishedAt || t.minutes) && <span className="text-[11.5px] text-muted">{t.finishedAt ? shortTime(t.finishedAt) : ''}{t.minutes ? ' · ' + t.minutes + 'm' : ''}</span>}
         {t.running && t.startedAt && <span className="text-[11.5px] text-muted">since {shortTime(t.startedAt)}</span>}

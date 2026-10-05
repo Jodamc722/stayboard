@@ -38,7 +38,8 @@ import { SCOREBOARD_URL } from '@/components/command/Scoreboard'
 import { NudgeBtn } from '@/components/command/Nudge'
 import { DayKpis } from '@/components/command/DayKpis'
 import { ArrivalsLane } from '@/components/command/ArrivalsLane'
-import { useTaskActions, TaskStateTag, type TaskState } from '@/components/task/TaskActions'
+import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, type TaskState } from '@/components/task/TaskActions'
+import { whereNow, clockTag } from '@/lib/team-where'
 import { UnpaidBoard } from '@/components/UnpaidBoard'
 
 // ── shared bits ─────────────────────────────────────────────────────────────────────────────────
@@ -171,12 +172,13 @@ export function CleanRow({ c, value, roster, canAssign: _canAssign, onChanged, l
 
 export function InspectionTaskRow({ t, big, roster, canAssign: _canAssign, onChanged, lane }: { t: TaskRow; big: boolean; roster: Roster[]; canAssign: boolean; onChanged: () => void; lane?: string }) {
   const nobody = !t.who
-  const state: TaskState = t.state === 'done' ? 'done' : t.late ? 'late' : t.state === 'running' ? 'running' : 'open'
+  const state: TaskState = taskStateOf({ done: t.state === 'done', running: t.state === 'running', late: t.late })
   const ta = useTaskActions({ taskId: t.taskId, dept: 'inspection', label: t.unit + ' — ' + t.name, link: '/command', state, who: t.who, roster, onChanged })
   return (
     <Row lane={lane} dot={!ta.done && (nobody || t.late) ? (t.late ? 'rose' : 'amber') : null} title={t.unit}
       tags={<>
         <TaskStateTag state={ta.done ? 'done' : state} />
+        {!ta.done && state === 'running' && <BehindTag late={t.late} />}
         {nobody && !ta.done && <TaskStateTag state="unassigned" />}
         {big && <Tag tone="violet" title="A big arrival lands in this unit — walk it first">big arrival</Tag>}
       </>}
@@ -344,6 +346,46 @@ function ReviewRow({ r, canReply, onGone, lane }: { r: Review; canReply: boolean
   )
 }
 
+/** WHO IS WHERE, ONE LINE (Jon, 2026-10-05: "see who's working and … where they might be"). Groups the
+ *  team by the building each person is most likely in right now, plus who is on the clock. */
+export function TeamWhereStrip({ rows }: { rows: TeamRowT[] }) {
+  const now = new Date()
+  const read = rows.map(p => ({ p, w: whereNow(p.tasks || [], now, p.clock) }))
+  const byB: Record<string, { name: string; kind: string }[]> = {}
+  for (const { p, w } of read) {
+    if (w.kind === 'none' || w.kind === 'last' || !w.building) continue
+    ;(byB[w.building] = byB[w.building] || []).push({ name: p.person.split(/\s+/)[0], kind: w.kind })
+  }
+  const on = rows.filter(p => p.clock?.open).length
+  const known = rows.some(p => p.clock)
+  const atN = read.filter(x => x.w.kind === 'at').length
+  const movingN = read.filter(x => x.w.kind === 'still' || x.w.kind === 'heading').length
+  const notN = read.filter(x => x.w.kind === 'none' && (x.p.tasks || []).length).length
+  const doneN = read.filter(x => x.w.kind === 'last').length
+  const quiet = read.filter(x => x.w.tone === 'amber').map(x => x.p.person.split(/\s+/)[0])
+  const bs = Object.keys(byB).sort((a, b) => byB[b].length - byB[a].length || a.localeCompare(b))
+  return (
+    <div className="px-3.5 py-3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {known && <Tag tone="emerald" title="Clocked in right now (Homebase)">{on} on the clock</Tag>}
+        <Tag tone="sky" title="A task in progress in Breezeway">{atN} in a unit</Tag>
+        {movingN > 0 && <Tag tone="slate" title="Finished a task, more to do">{movingN} between units</Tag>}
+        {notN > 0 && <Tag tone="slate" title="Has work, nothing started yet">{notN} not started</Tag>}
+        {doneN > 0 && <Tag tone="emerald" title="Everything assigned is finished">{doneN} done for the day</Tag>}
+        {quiet.length > 0 && <Tag tone="amber" title={'Nothing started in a while, with work left: ' + quiet.join(', ')}>{quiet.length} quiet</Tag>}
+      </div>
+      {bs.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12.5px]">
+          {bs.map(b => (
+            <span key={b} className="whitespace-nowrap"><span className="font-semibold text-ink">{b}</span> <span className="text-muted">{byB[b].map(x => x.name + (x.kind === 'heading' ? ' →' : '')).join(', ')}</span></span>
+          ))}
+        </div>
+      )}
+      <p className="mt-1.5 text-[12px] text-muted">Where people probably are: a task in progress puts them in that unit; otherwise their last finish and their next task. → means heading there.</p>
+    </div>
+  )
+}
+
 export function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
   // OPEN A PERSON, SEE THEIR DAY (Jon, 2026-10-01: "Balance does not make sense… it should be a
   // drop-down so I can see all of their tasks for each user… organized by departure cleans,
@@ -354,6 +396,9 @@ export function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
   const over = p.utilisationPct > 100
   const tasks = p.tasks || []
   const idle = tasks.length === 0 && p.cleans + p.otherTasks === 0
+  // WHERE THEY PROBABLY ARE (Jon, 2026-10-05) — lib/team-where, the same read the strip above uses.
+  const where = whereNow(tasks, new Date(), p.clock)
+  const ck = clockTag(p.clock, p.shiftStartMin)
   const GROUPS: { key: PersonTaskGroup; label: string }[] = [
     { key: 'clean', label: 'Departure cleans' }, { key: 'inspection', label: 'Inspections' },
     { key: 'maintenance', label: 'Maintenance' }, { key: 'misc', label: 'Miscellaneous' },
@@ -363,9 +408,12 @@ export function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
   const doing = tasks.filter(t => t.status === 'doing').length
   const timeLine = p.capacityMinutes > 0 ? hm(p.loadMinutes) + ' of work in a ' + hm(p.capacityMinutes) + ' shift' : hm(p.loadMinutes) + ' of work · no shift on record'
   return (
-    <Row lane={lane} noteKey={'team:' + p.person} dot={over ? 'amber' : null} title={p.person}
-      tags={over ? <Tag tone="amber" title={hm(p.loadMinutes - p.capacityMinutes) + ' more work than hours'}>{p.utilisationPct}% loaded</Tag> : <Tag tone="sky" title={hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free today'}>{idle ? 'nothing assigned' : hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free'}</Tag>}
-      meta={[p.role, doing ? doing + ' in progress' : '', summary || (idle ? '' : (p.cleans ? p.cleans + ' cleans' : '') + (p.otherTasks ? ' · ' + p.otherTasks + ' tasks' : '')), timeLine].filter(Boolean).join(' · ')}
+    <Row lane={lane} noteKey={'team:' + p.person} dot={over || where.tone === 'amber' || ck?.tone === 'amber' ? 'amber' : null} title={p.person}
+      tags={<>
+        {ck && <Tag tone={ck.tone} title={ck.title}>{ck.label}</Tag>}
+        {over ? <Tag tone="amber" title={hm(p.loadMinutes - p.capacityMinutes) + ' more work than hours'}>{p.utilisationPct}% loaded</Tag> : <Tag tone="sky" title={hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free today'}>{idle ? 'nothing assigned' : hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free'}</Tag>}
+      </>}
+      meta={[where.line, p.role, doing ? doing + ' in progress' : '', summary || (idle ? '' : (p.cleans ? p.cleans + ' cleans' : '') + (p.otherTasks ? ' · ' + p.otherTasks + ' tasks' : '')), timeLine].filter(Boolean).join(' · ')}
       actions={<button type="button" onClick={() => setOpen(o => !o)} className={GHOST} aria-expanded={open} title={open ? 'Close this person’s tasks' : 'Open this person’s tasks, grouped by kind'}>{open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</button>}>
       {open && (
         <div className="mt-2 pl-3.5 space-y-2.5">
@@ -832,7 +880,13 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
     items.push({ key: 'arr:' + a.reservationId, area: 'ops', sub: 'Inspections', score: base + valueBonus(a.value), node: <ArrivalInspectionRow a={a} create={createFor(a.reservationId)} canCreate={can.plan} onChanged={onChanged} /> })
   }
   for (const i of otherFix) items.push({ key: i.key, area: 'ops', sub: 'Tasks', score: i.severity === 'now' ? 66 : i.severity === 'today' ? 52 : 30, node: <NextRow i={i} roster={roster} canAssign={can.assign} canCreate={can.plan} onCleared={onCleared} onChanged={onChanged} /> })
-  for (const r of teamRows) items.push({ key: 'team:' + r.person, area: 'ops', sub: 'Team', score: r.utilisationPct > 100 ? 46 : 34, node: <TeamRow p={r} /> })
+  if (teamRows.length) items.push({ key: 'team:where', area: 'ops', sub: 'Team', score: 64 /* top of Team, under NOW_MIN: never in Now */, node: <TeamWhereStrip rows={teamRows} /> })
+  // Working first: on the clock or in a unit, then the rest; the most loaded first within each.
+  for (const r of teamRows) {
+    const w = whereNow(r.tasks || [], new Date(), r.clock)
+    const active = r.clock?.open || w.kind === 'at' || w.kind === 'still' || w.kind === 'heading'
+    items.push({ key: 'team:' + r.person, area: 'ops', sub: 'Team', score: (active ? 44 : 24) + Math.min(r.utilisationPct, 150) / 15 /* ≤ 54: never reaches Now */, node: <TeamRow p={r} /> })
+  }
 
   for (const a of calls) items.push({ key: 'call:' + a.reservationId, area: 'guests', sub: 'Calls', score: (a.big ? 78 : 50) + valueBonus(a.value), node: <CallRow a={a} canLog={can.calls} onChanged={onChanged} /> })
   for (const i of inbox) {

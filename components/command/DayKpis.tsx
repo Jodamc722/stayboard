@@ -32,7 +32,7 @@ import { InlineAssign, type Roster } from '@/components/CommandCockpit'
 import { Row, CleanRow, InspectionTaskRow, ArrivalInspectionRow, GlitchRow, LIST, GHOST, DARK, bz, money, INSPECT, tomorrowOf } from '@/components/command/Hub'
 import { Check } from 'lucide-react'
 import { NudgeBtn } from '@/components/command/Nudge'
-import { useTaskActions, TaskStateTag, type TaskState } from '@/components/task/TaskActions'
+import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, type TaskState } from '@/components/task/TaskActions'
 import type { DayCalls, DayCallRow } from '@/app/api/command/calls/route'
 import type { GuestCheckRow } from '@/app/api/guest-checks/route'
 import { UnpaidRow, type UnpaidRowT } from '@/components/UnpaidBoard'
@@ -73,13 +73,14 @@ const isInsp = (t: TaskRow) => t.dept === 'inspection' || INSPECT.test(t.name) |
 const PRIO: Record<string, { tone: Tone; label: string }> = { urgent: { tone: 'roseSolid', label: 'urgent' }, high: { tone: 'rose', label: 'high' }, normal: { tone: 'slate', label: 'normal' }, low: { tone: 'slate', label: 'low' } }
 function MaintRow({ t, roster, canAssign: _canAssign, onChanged }: { t: TaskRow; roster: Roster[]; canAssign: boolean; onChanged: () => void }) {
   const nobody = !t.who
-  const state: TaskState = t.state === 'done' ? 'done' : t.late ? 'late' : t.state === 'running' ? 'running' : 'open'
+  const state: TaskState = taskStateOf({ done: t.state === 'done', running: t.state === 'running', late: t.late })
   const pr = PRIO[String(t.prio || '').toLowerCase()]
   const ta = useTaskActions({ taskId: t.taskId, dept: 'maintenance', label: t.unit + ' — ' + t.name, link: '/maintenance', state, who: t.who, roster, onChanged })
   return (
     <Row dot={!ta.done && (nobody || t.late || t.prio === 'urgent') ? (t.late || t.prio === 'urgent' ? 'rose' : 'amber') : null} title={t.unit}
       tags={<>
         <TaskStateTag state={ta.done ? 'done' : state} />
+        {!ta.done && state === 'running' && <BehindTag late={t.late} />}
         {nobody && !ta.done && <TaskStateTag state="unassigned" />}
         {pr && (pr.label === 'urgent' || pr.label === 'high') && !ta.done && <Tag tone={pr.tone} title="Priority in Breezeway">{pr.label}</Tag>}
       </>}

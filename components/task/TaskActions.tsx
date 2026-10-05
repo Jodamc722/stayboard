@@ -38,12 +38,20 @@ export const TASK_STATE: Record<TaskState, { label: string; tone: Tone; title: s
   atRisk: { label: 'at risk', tone: 'amber', title: 'Tight against the next arrival or the deadline' },
   unassigned: { label: 'nobody on it', tone: 'amber', title: 'No one is assigned in Breezeway' },
 }
+// STARTED WINS (Jon, 2026-10-05: "make sure it shows in progress if task is started … do that for
+// all tasks"). A task somebody has started always reads "in progress"; whether it is running long
+// is said beside it by BehindTag, never instead of it.
 export function taskStateOf(t: { done?: boolean; running?: boolean; late?: boolean; atRisk?: boolean; who?: string | null | string[] }): TaskState {
   if (t.done) return 'done'
+  if (t.running) return 'running'
   if (t.late) return 'late'
   if (t.atRisk) return 'atRisk'
-  if (t.running) return 'running'
   return 'open'
+}
+/** Beside "in progress" only: the task is past its time ('late') or close to it ('atRisk'). */
+export function BehindTag({ late, atRisk }: { late?: boolean; atRisk?: boolean }) {
+  if (!late && !atRisk) return null
+  return <Tag tone={late ? 'rose' : 'amber'} title={late ? 'In progress, but past its time' : 'In progress, close to its deadline'}>{late ? 'running late' : 'tight'}</Tag>
 }
 export function TaskStateTag({ state }: { state: TaskState }) {
   const s = TASK_STATE[state]
