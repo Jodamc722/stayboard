@@ -250,8 +250,25 @@ export async function syncLedgerMonth(month: string, deadline = Date.now() + 240
     }
     if (batch.length) { await chunkUpsert('guesty_owner_ledger', batch, 'id'); total += batch.length }
 
+    // RETIRE WHAT GUESTY NO LONGER RETURNS (2026-10-05, Jon: "something is off" on the statement
+    // page). Guesty re-issues a journal line under a NEW id whenever it recomputes a statement, and
+    // the old id simply stops coming back — it is never voided. An upsert-only sweep therefore kept
+    // every generation: by September 65% of the month's rows were stale twins (three ids for one
+    // "Net Rental Nightly Income −$35.97"), every rental figure read 2–3×, and the low-rate
+    // benchmark — built on those doubled sums — flagged 72% of stays. After a pass that started
+    // at skip 0 and ran to the end, every row of the month that this pass did not touch (its
+    // synced_at is older than the pass) is a line Guesty has withdrawn: delete it. A resumed or
+    // early-stopped pass never deletes — it has not seen the whole month.
+    let retired = 0
+    if (resumeAt === 0) {
+      const startedISO = new Date(started).toISOString()
+      const { data: gone } = await sb.from('guesty_owner_ledger').delete()
+        .eq('entry_month', month).lt('synced_at', startedISO).select('id')
+      retired = Array.isArray(gone) ? gone.length : 0
+    }
+
     await sb.from('guesty_ledger_months').upsert({
-      month, status: 'done', rows_synced: total, last_error: null,
+      month, status: 'done', rows_synced: total, retired_rows: retired, last_error: null,
       completed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     })
     return { month, rows: total, pages, ms: Date.now() - started }

@@ -101,7 +101,7 @@ type Data = {
     review: number; action: number; done: number; clear: number; postedThisWeek: number; signedOff: number; prepOpen: number
     rental: number; commission: number; net: number; paid: number; dueToOwner: number
   }
-  coverage: { ready: boolean; missing: string[]; syncedAt: string | null; resScanned: number; ownerStaysFound: number }
+  coverage: { ready: boolean; missing: string[]; syncedAt: string | null; resScanned: number; ownerStaysFound: number; twins?: number }
   rules: Rules
   prep: PrepItem[]
   resolutions: { claims: ResolutionClaim[]; lines: ResolutionLine[] }
@@ -1155,6 +1155,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
             {data.coverage.syncedAt ? 'Synced ' + agoShort(data.coverage.syncedAt) : 'Never synced'}
           </Tag>
           {!data.coverage.ready && <Tag tone="amber" title={'The statement line items for ' + data.label + ' are still syncing from Guesty — rows may be incomplete until the sync finishes.'}>Still syncing</Tag>}
+          {(data.coverage.twins || 0) > 0 && <Tag tone="amber" title={(data.coverage.twins || 0).toLocaleString() + ' ledger lines were held more than once in our mirror (Guesty re-issues a line under a new id when it recomputes a statement). They are collapsed here, so every figure on this page counts each line once; the next full sweep removes them for good.'}>{(data.coverage.twins || 0).toLocaleString()} duplicate lines collapsed</Tag>}
           {/* PRE-STATEMENT MONTH — the daily/weekly mode: audit the month as it accrues. */}
           {preStatement && <Tag tone="violet" title={'No statements generated for ' + data.label + ' yet — you are auditing the month as it builds. Work the flagged rows and Posted this week each week, and by generation day there is nothing left to find.'}>Pre-statement</Tag>}
           {/* DRAFT MONTH — balances still moving, so nothing to reconcile against yet. */}

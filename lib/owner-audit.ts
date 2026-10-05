@@ -204,6 +204,7 @@ export type AuditData = {
     ready: boolean; missing: string[]; syncedAt: string | null
     resScanned: number          // reservations touching the month, scanned for owner / F&F stays
     ownerStaysFound: number     // how many of them matched — 0 means the markers are not where we look
+    twins: number               // identical ledger lines the mirror held more than once (collapsed here; the sweep retires them)
   }
   rules: AuditRules
   prep: PrepItem[]
@@ -353,6 +354,9 @@ export const AUDIT_RULES_KEY = 'owner_audit_rules'
 // A cohort average is only trusted when built on at least this many OTHER in-month nights;
 // thinner cohorts fall through to the next wider one.
 const BENCH_MIN_NIGHTS = 20
+// The unit's own history is the best yardstick there is, so it is trusted on fewer nights — but
+// not on three: one long discounted stay would then be its own benchmark.
+const UNIT_MIN_NIGHTS = 12
 
 const num = (v: any, fb: number) => { const n = Number(v); return Number.isFinite(n) ? n : fb }
 
@@ -533,6 +537,23 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const batch = (data || []) as unknown as LedgerRow[]
     rows.push(...batch)
     if (batch.length < PAGE) break
+  }
+  // TWINS (2026-10-05). Guesty re-issues a journal line under a new id each time it recomputes a
+  // statement and never voids the old one; the sweep now retires what a full pass no longer sees
+  // (lib/guesty-owner-sync), but between sweeps — or on a month that has not had a full pass — the
+  // mirror can still hold two or ten copies of one line. September 2026 held 2.9 copies per line:
+  // rental read $1.15M instead of $337K and the low-rate benchmark flagged 72% of stays. Collapse
+  // exact twins here so the board is right regardless, and say how many there were.
+  let twins = 0
+  {
+    const seen = new Set<string>()
+    const kept: LedgerRow[] = []
+    for (const r of rows) {
+      const k = [r.owner_id, r.listing_id, r.entry_date, r.charge_code, r.amount, (r as any).name || '', (r as any).res || ''].join('|')
+      if (seen.has(k)) { twins++; continue }
+      seen.add(k); kept.push(r)
+    }
+    rows.length = 0; rows.push(...kept)
   }
 
   // 4. Group by owner, then by reservation code (or grouped line for codeless rows).
@@ -763,12 +784,24 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const unitOf: Record<string, string> = {}
   const bldgOf: Record<string, string> = {}
   const bedsOf: Record<string, number> = {}
+  // UNIT TYPE (Jon, 2026-10-05: "look at average rates per building / unit types"). A studio is
+  // bedrooms = 0 in Guesty, which the old cohort key read as "unknown" — so every Elser studio was
+  // judged against the Elser-wide average (1BR, 2BR, 3BR included) and read as cheap. The type is
+  // 'Studio' | '1BR' | '2BR' …, from the bedrooms field or, failing that, the unit's own name.
+  const typeOf: Record<string, string> = {}
   const listFeeOf: Record<string, number> = {}
   for (const l of (listingRows || []) as any[]) {
     const id = String(l.id)
     unitOf[id] = String(l.nickname || l.title || (l.building ? l.building + '/' + (l.unit ?? '') : '') || l.id)
     bldgOf[id] = String(l.building || '')
     bedsOf[id] = Number(l.bedrooms) || 0
+    {
+      const nm = unitOf[id]
+      const bd = l.bedrooms == null || l.bedrooms === '' ? null : Number(l.bedrooms)
+      const m = /\b(\d)\s*-?\s*(br|bd|bed)\b/i.exec(nm)
+      typeOf[id] = bd != null && Number.isFinite(bd) ? (bd === 0 ? 'Studio' : bd + 'BR')
+        : /studio|\bstu\b/i.test(nm) ? 'Studio' : m ? m[1] + 'BR' : ''
+    }
     // What Guesty says this unit SHOULD charge. It separates "nobody set a fee" from "a fee is
     // set and the bookings aren't picking it up", which are different fixes in different places.
     { const f = Number(l.cleanFee); if (Number.isFinite(f) && f > 0) listFeeOf[id] = f }
@@ -891,15 +924,20 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const pres: Pre[] = []
 
   const isWeekendNight = (d: string) => { const dow = new Date(d + 'T00:00:00Z').getUTCDay(); return dow === 5 || dow === 6 }
+  // Narrowest first: the unit's own nights (this + last month, the stay's own nights left out),
+  // then the building's units of the same TYPE (studio / 1BR / 2BR …), then the building, then
+  // the portfolio's same type, then the portfolio. A level is used only when it has enough other
+  // nights behind it (BENCH_MIN_NIGHTS; the unit itself needs UNIT_MIN_NIGHTS).
   const cohortKeys = (lid: string): [string, string][] => {
     const b = bldgOf[lid] || ''
-    const bd = bedsOf[lid] || 0
+    const t = typeOf[lid] || ''
     const out: [string, string][] = []
+    out.push(['L|' + lid, (unitOf[lid] || 'this unit') + ' own average'])
     if (b) {
-      if (bd) out.push(['B|' + b + '|' + bd, b + ' ' + bd + 'BR average'])
+      if (t) out.push(['B|' + b + '|' + t, b + ' ' + t + ' average'])
       out.push(['B|' + b + '|*', b + ' average'])
     }
-    if (bd) out.push(['P|' + bd, 'portfolio ' + bd + 'BR average'])
+    if (t) out.push(['P|' + t, 'portfolio ' + t + ' average'])
     out.push(['P|*', 'portfolio average'])
     return out
   }
@@ -997,7 +1035,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
       const wdN = c.wdN + p.wdN - sWdN, wdR = c.wdR + p.wdR - sWdR
       const weN = c.weN + p.weN - sWeN, weR = c.weR + p.weR - sWeR
       const totN = wdN + weN, totR = wdR + weR
-      if (totN < BENCH_MIN_NIGHTS || totR <= 0) continue
+      if (totN < (k.startsWith('L|') ? UNIT_MIN_NIGHTS : BENCH_MIN_NIGHTS) || totR <= 0) continue
       const blended = totR / totN
       const wdAvg = wdN >= 6 && wdR > 0 ? wdR / wdN : blended
       const weAvg = weN >= 6 && weR > 0 ? weR / weN : blended
@@ -1638,7 +1676,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     owners: Object.values(owners).sort((a, b) => a.ownerName.localeCompare(b.ownerName)),
     items,
     totals: t,
-    coverage: { ready: covered, missing: covered ? [] : [month], syncedAt, resScanned: ownerScanCount, ownerStaysFound: ownerStayRes.length },
+    coverage: { ready: covered, missing: covered ? [] : [month], syncedAt, resScanned: ownerScanCount, ownerStaysFound: ownerStayRes.length, twins },
     rules,
     prep: prep.sort((a, b) =>
       Number(prepResolved(a)) - Number(prepResolved(b))
