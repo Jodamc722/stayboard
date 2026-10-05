@@ -359,7 +359,7 @@ export function TeamWhereStrip({ rows }: { rows: TeamRowT[] }) {
   const on = rows.filter(p => p.clock?.open).length
   const known = rows.some(p => p.clock)
   const atN = read.filter(x => x.w.kind === 'at').length
-  const movingN = read.filter(x => x.w.kind === 'still' || x.w.kind === 'heading').length
+  const movingN = read.filter(x => (x.w.kind === 'still' || x.w.kind === 'heading') && x.w.tone !== 'amber').length
   const notN = read.filter(x => x.w.kind === 'none' && (x.p.tasks || []).length).length
   const doneN = read.filter(x => x.w.kind === 'last').length
   const quiet = read.filter(x => x.w.tone === 'amber').map(x => x.p.person.split(/\s+/)[0])
