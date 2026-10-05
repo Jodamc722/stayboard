@@ -2,6 +2,7 @@
 -- journal line under a new id when it recomputes a statement; the sweep (lib/guesty-owner-sync
 -- syncLedgerMonth) now deletes the rows a full pass did not see again, and records how many.
 alter table public.guesty_ledger_months add column if not exists retired_rows integer not null default 0;
+alter table public.guesty_ledger_months add column if not exists sweep_epoch timestamptz;
 -- One-time clean-up of the stale generations already in the mirror (May–Oct 2026): keep, per
 -- identical journal line, only the newest-synced row. The next full sweep makes this exact.
 with ranked as (

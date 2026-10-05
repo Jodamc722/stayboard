@@ -186,14 +186,18 @@ export async function syncLedgerMonth(month: string, deadline = Date.now() + 240
   // next re-sweep starts from zero again, which catches late entries that posted into the
   // middle of the ordering between passes.
   const { data: prior } = await sb.from('guesty_ledger_months')
-    .select('status, last_error').eq('month', month).maybeSingle()
+    .select('status, last_error, sweep_epoch').eq('month', month).maybeSingle()
   const resumed = /deadline reached at skip=(\d+)/.exec(String((prior as any)?.last_error || ''))
   const resumeAt = ((prior as any)?.status !== 'done' && resumed)
     ? Math.max(0, parseInt(resumed[1], 10) - 100)   // one page of overlap, in case a page was mid-write
     : 0
+  // THE SWEEP EPOCH: when the current from-zero pass began. A resumed pass keeps it, so a month
+  // too big for one invocation (August 2026: 24,000 rows, ~260s) still retires its stale rows once
+  // the pass finally reaches the end — every row seen since the epoch carries a newer synced_at.
+  const sweepEpoch = resumeAt > 0 && (prior as any)?.sweep_epoch ? String((prior as any).sweep_epoch) : new Date(started).toISOString()
 
   await sb.from('guesty_ledger_months').upsert({
-    month, status: 'running', last_error: null,
+    month, status: 'running', last_error: null, sweep_epoch: sweepEpoch,
     started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   })
 
@@ -257,13 +261,12 @@ export async function syncLedgerMonth(month: string, deadline = Date.now() + 240
     // "Net Rental Nightly Income −$35.97"), every rental figure read 2–3×, and the low-rate
     // benchmark — built on those doubled sums — flagged 72% of stays. After a pass that started
     // at skip 0 and ran to the end, every row of the month that this pass did not touch (its
-    // synced_at is older than the pass) is a line Guesty has withdrawn: delete it. A resumed or
-    // early-stopped pass never deletes — it has not seen the whole month.
+    // synced_at is older than the pass's epoch) is a line Guesty has withdrawn: delete it. An
+    // early-stopped pass never deletes — only the completion does, resumed or not.
     let retired = 0
-    if (resumeAt === 0) {
-      const startedISO = new Date(started).toISOString()
+    {
       const { data: gone } = await sb.from('guesty_owner_ledger').delete()
-        .eq('entry_month', month).lt('synced_at', startedISO).select('id')
+        .eq('entry_month', month).lt('synced_at', sweepEpoch).select('id')
       retired = Array.isArray(gone) ? gone.length : 0
     }
 
