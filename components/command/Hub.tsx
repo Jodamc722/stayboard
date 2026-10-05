@@ -880,7 +880,6 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
     items.push({ key: 'arr:' + a.reservationId, area: 'ops', sub: 'Inspections', score: base + valueBonus(a.value), node: <ArrivalInspectionRow a={a} create={createFor(a.reservationId)} canCreate={can.plan} onChanged={onChanged} /> })
   }
   for (const i of otherFix) items.push({ key: i.key, area: 'ops', sub: 'Tasks', score: i.severity === 'now' ? 66 : i.severity === 'today' ? 52 : 30, node: <NextRow i={i} roster={roster} canAssign={can.assign} canCreate={can.plan} onCleared={onCleared} onChanged={onChanged} /> })
-  if (teamRows.length) items.push({ key: 'team:where', area: 'ops', sub: 'Team', score: 64 /* top of Team, under NOW_MIN: never in Now */, node: <TeamWhereStrip rows={teamRows} /> })
   // Working first: on the clock or in a unit, then the rest; the most loaded first within each.
   for (const r of teamRows) {
     const w = whereNow(r.tasks || [], new Date(), r.clock)
