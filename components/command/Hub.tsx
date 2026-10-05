@@ -39,7 +39,7 @@ import { NudgeBtn } from '@/components/command/Nudge'
 import { DayKpis } from '@/components/command/DayKpis'
 import { ArrivalsLane } from '@/components/command/ArrivalsLane'
 import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, type TaskState } from '@/components/task/TaskActions'
-import { whereNow, clockTag } from '@/lib/team-where'
+import { whereNow, shiftStatus } from '@/lib/team-where'
 import { UnpaidBoard } from '@/components/UnpaidBoard'
 
 // ── shared bits ─────────────────────────────────────────────────────────────────────────────────
@@ -356,8 +356,8 @@ export function TeamWhereStrip({ rows }: { rows: TeamRowT[] }) {
     if (w.kind === 'none' || w.kind === 'last' || !w.building) continue
     ;(byB[w.building] = byB[w.building] || []).push({ name: p.person.split(/\s+/)[0], kind: w.kind })
   }
-  const on = rows.filter(p => p.clock?.open).length
-  const known = rows.some(p => p.clock)
+  const sh = rows.map(p => shiftStatus(p.clock, p.shiftStartMin, p.shiftEndMin, now).key)
+  const shN = (k: string) => sh.filter(x => x === k).length
   const atN = read.filter(x => x.w.kind === 'at').length
   const movingN = read.filter(x => (x.w.kind === 'still' || x.w.kind === 'heading') && x.w.tone !== 'amber').length
   const notN = read.filter(x => x.w.kind === 'none' && (x.p.tasks || []).length).length
@@ -367,7 +367,14 @@ export function TeamWhereStrip({ rows }: { rows: TeamRowT[] }) {
   return (
     <div className="px-3.5 py-3">
       <div className="flex flex-wrap items-center gap-1.5">
-        {known && <Tag tone="emerald" title="Clocked in right now (Homebase)">{on} on the clock</Tag>}
+        {/* Shift first (Jon, 2026-10-05: "needs to show who is on shift, clocked out"), then where. */}
+        <Tag tone="emerald" title="Clocked in right now (Homebase)">{shN('on')} on shift</Tag>
+        {shN('out') > 0 && <Tag tone="slate" title="Clocked out today">{shN('out')} clocked out</Tag>}
+        {shN('late') > 0 && <Tag tone="amber" title="Shift started 15+ min ago, no clock-in">{shN('late')} not clocked in</Tag>}
+        {shN('later') > 0 && <Tag tone="sky" title="Shift starts later today">{shN('later')} starting later</Tag>}
+        {shN('scheduled') > 0 && <Tag tone="sky" title="On the Homebase schedule; clock-ins could not be read">{shN('scheduled')} scheduled</Tag>}
+        {shN('noshift') > 0 && <Tag tone="slate" title="Has Breezeway work but no Homebase shift today">{shN('noshift')} no shift</Tag>}
+        <span className="mx-0.5 text-line" aria-hidden>|</span>
         <Tag tone="sky" title="A task in progress in Breezeway">{atN} in a unit</Tag>
         {movingN > 0 && <Tag tone="slate" title="Finished a task, more to do">{movingN} between units</Tag>}
         {notN > 0 && <Tag tone="slate" title="Has work, nothing started yet">{notN} not started</Tag>}
@@ -398,7 +405,7 @@ export function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
   const idle = tasks.length === 0 && p.cleans + p.otherTasks === 0
   // WHERE THEY PROBABLY ARE (Jon, 2026-10-05) — lib/team-where, the same read the strip above uses.
   const where = whereNow(tasks, new Date(), p.clock)
-  const ck = clockTag(p.clock, p.shiftStartMin)
+  const ck = shiftStatus(p.clock, p.shiftStartMin, p.shiftEndMin)
   const GROUPS: { key: PersonTaskGroup; label: string }[] = [
     { key: 'clean', label: 'Departure cleans' }, { key: 'inspection', label: 'Inspections' },
     { key: 'maintenance', label: 'Maintenance' }, { key: 'misc', label: 'Miscellaneous' },
@@ -408,9 +415,9 @@ export function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
   const doing = tasks.filter(t => t.status === 'doing').length
   const timeLine = p.capacityMinutes > 0 ? hm(p.loadMinutes) + ' of work in a ' + hm(p.capacityMinutes) + ' shift' : hm(p.loadMinutes) + ' of work · no shift on record'
   return (
-    <Row lane={lane} noteKey={'team:' + p.person} dot={over || where.tone === 'amber' || ck?.tone === 'amber' ? 'amber' : null} title={p.person}
+    <Row lane={lane} noteKey={'team:' + p.person} dot={over || where.tone === 'amber' || ck.tone === 'amber' ? 'amber' : null} title={p.person}
       tags={<>
-        {ck && <Tag tone={ck.tone} title={ck.title}>{ck.label}</Tag>}
+        <Tag tone={ck.tone} title={ck.title}>{ck.label}</Tag>
         {over ? <Tag tone="amber" title={hm(p.loadMinutes - p.capacityMinutes) + ' more work than hours'}>{p.utilisationPct}% loaded</Tag> : <Tag tone="sky" title={hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free today'}>{idle ? 'nothing assigned' : hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free'}</Tag>}
       </>}
       meta={[where.line, p.role, doing ? doing + ' in progress' : '', summary || (idle ? '' : (p.cleans ? p.cleans + ' cleans' : '') + (p.otherTasks ? ' · ' + p.otherTasks + ' tasks' : '')), timeLine].filter(Boolean).join(' · ')}

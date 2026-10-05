@@ -180,7 +180,7 @@ export function isFieldDept(dept: string | null | undefined): boolean {
   if (!dept) return true
   return ['housekeeping', 'supervision', 'maintenance', 'inspection'].includes(String(dept))
 }
-export type TeamRow = { person: string; role: string | null; cleans: number; otherTasks: number; loadMinutes: number; capacityMinutes: number; utilisationPct: number; verdict: string; headroomCleans: number; triggers: string[]; tasks: PersonTask[]; shiftStartMin?: number | null; clock?: PersonClock | null
+export type TeamRow = { person: string; role: string | null; cleans: number; otherTasks: number; loadMinutes: number; capacityMinutes: number; utilisationPct: number; verdict: string; headroomCleans: number; triggers: string[]; tasks: PersonTask[]; shiftStartMin?: number | null; shiftEndMin?: number | null; clock?: PersonClock | null
   /** Crew & roles department; field = housekeeping · supervision · maintenance · inspection. */
   dept?: string | null; field?: boolean }
 export type GlitchRow = { id: string; unit: string; issue: string; status: string; due: string | null; overdue: boolean; ageDays: number; assignee: string; hasTask: boolean; taskStatus: string | null; href: string }
@@ -930,7 +930,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   const overdueTotal = bzOverdue + fieldOverdue.length + glOverdue
 
   // ── TEAM: the capacity model, priced per person ─────────────────────────────────────────────
-  const teamRows: TeamRow[] = (cap?.people || []).map(p => ({ person: p.person, role: null, cleans: p.cleans, otherTasks: p.otherTasks, loadMinutes: p.loadMinutes, capacityMinutes: p.capacityMinutes, utilisationPct: p.utilisationPct, verdict: p.verdict, headroomCleans: p.headroomCleans, triggers: p.triggers || [], tasks: p.tasks || [], shiftStartMin: (p as any).shiftStartMin ?? null, clock: (p as any).clock ?? null, dept: (p as any).crewDept ?? null, field: isFieldDept((p as any).crewDept) }))
+  const teamRows: TeamRow[] = (cap?.people || []).map(p => ({ person: p.person, role: null, cleans: p.cleans, otherTasks: p.otherTasks, loadMinutes: p.loadMinutes, capacityMinutes: p.capacityMinutes, utilisationPct: p.utilisationPct, verdict: p.verdict, headroomCleans: p.headroomCleans, triggers: p.triggers || [], tasks: p.tasks || [], shiftStartMin: (p as any).shiftStartMin ?? null, shiftEndMin: (p as any).shiftEndMin ?? null, clock: (p as any).clock ?? null, dept: (p as any).crewDept ?? null, field: isFieldDept((p as any).crewDept) }))
     .sort((a, b) => (a.verdict === 'implausible' ? 1 : 0) - (b.verdict === 'implausible' ? 1 : 0) || b.utilisationPct - a.utilisationPct)
   const idle = teamRows.filter(p => p.verdict !== 'implausible' && p.capacityMinutes > 0 && p.cleans + p.otherTasks === 0).map(p => p.person)
   const k = cap?.kpi

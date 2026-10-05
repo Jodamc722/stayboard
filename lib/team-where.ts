@@ -63,6 +63,14 @@ export function whereNow(tasks: WhereTask[], now: Date = new Date(), clock?: Whe
 
   const done = t.filter(x => x.status === 'done' && x.finishedAt).sort((a, b) => String(b.finishedAt).localeCompare(String(a.finishedAt)))
   const lastFinish = done[0]?.finishedAt || ''
+  // 0. Clocked out (Homebase) and not clocked back in: they are off — say where they finished, don't
+  //    guess where they are heading (Jon, 2026-10-05: "needs to show who is on shift, clocked out").
+  if (clock && !clock.open && clock.out) {
+    const lastAt = done[0] || null
+    const left = t.filter(x => x.status !== 'done').length
+    return { kind: 'last', building: null, tone: 'slate', quietMin: mins(clock.out),
+      line: 'Clocked out ' + clockTime(clock.out) + (lastAt ? ' · last at ' + shortUnit(lastAt.unit) : '') + (left ? ' · ' + left + ' left open' : '') }
+  }
   // 1. In progress — the latest start wins if Breezeway shows two running. But only a FRESH one that
   //    is also their latest move: a task started on Friday and never closed (Roberto's Pelican 1,
   //    seen 2026-10-05) says nothing about where he is today, and a finish after the start means
@@ -114,4 +122,36 @@ export function clockTag(clock: WhereClock, shiftStartMin?: number | null, now: 
   const nowMin = hh * 60 + mm
   if (shiftStartMin != null && nowMin > shiftStartMin + 15) return { label: 'not clocked in', tone: 'amber', title: 'Shift started over 15 minutes ago and Homebase has no clock-in' }
   return null
+}
+
+/** "9:00am–5:30pm" from ET minutes past midnight. */
+export function shiftHours(start?: number | null, end?: number | null): string {
+  const f = (m: number) => { const h = Math.floor(m / 60), mm = m % 60, ap = h >= 12 ? 'pm' : 'am', h12 = ((h + 11) % 12) + 1; return h12 + (mm ? ':' + String(mm).padStart(2, '0') : '') + ap }
+  if (start == null) return ''
+  return f(start) + (end != null ? '–' + f(end) : '')
+}
+
+export type ShiftKey = 'on' | 'out' | 'late' | 'later' | 'scheduled' | 'noshift'
+/**
+ * WHO IS ON SHIFT (Jon, 2026-10-05: "Who is working needs to show who is on shift, clocked out").
+ *   on        clocked in right now (Homebase time card open)
+ *   out       clocked out today
+ *   late      shift started 15+ min ago, no clock-in
+ *   later     shift starts later today
+ *   scheduled has a shift, clock not readable (Homebase time cards failed)
+ *   noshift   no Homebase shift today (working off the Breezeway board only)
+ */
+export function shiftStatus(clock: WhereClock, shiftStartMin?: number | null, shiftEndMin?: number | null, now: Date = new Date()): { key: ShiftKey; label: string; tone: 'emerald' | 'slate' | 'amber' | 'sky'; title: string } {
+  const hours = shiftHours(shiftStartMin, shiftEndMin)
+  const [hh, mm] = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' }).split(':').map(Number)
+  const nowMin = hh * 60 + mm
+  const shiftT = hours ? 'Shift ' + hours + ' (Homebase)' : 'No Homebase shift today'
+  if (clock?.open) return { key: 'on', label: 'on shift' + (clock.in ? ' since ' + clockTime(clock.in) : ''), tone: 'emerald', title: 'Clocked in · ' + shiftT }
+  if (clock?.out) return { key: 'out', label: 'clocked out ' + clockTime(clock.out), tone: 'slate', title: 'Clocked out' + (clock.in ? ' (in ' + clockTime(clock.in) + ')' : '') + ' · ' + shiftT }
+  if (shiftStartMin == null) return { key: 'noshift', label: 'no shift', tone: 'slate', title: shiftT }
+  if (!clock) return { key: 'scheduled', label: 'shift ' + hours, tone: 'sky', title: shiftT + ' · clock-ins could not be read' }
+  if (nowMin < shiftStartMin) return { key: 'later', label: 'starts ' + shiftHours(shiftStartMin), tone: 'sky', title: shiftT }
+  if (shiftEndMin != null && nowMin > shiftEndMin) return { key: 'out', label: 'shift ended, no punch', tone: 'amber', title: shiftT + ' · Homebase has no clock-in for today' }
+  if (nowMin > shiftStartMin + 15) return { key: 'late', label: 'not clocked in', tone: 'amber', title: shiftT + ' · started over 15 minutes ago, no clock-in' }
+  return { key: 'later', label: 'starts ' + shiftHours(shiftStartMin), tone: 'sky', title: shiftT }
 }

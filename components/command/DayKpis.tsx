@@ -34,7 +34,7 @@ import { Check } from 'lucide-react'
 import { NudgeBtn } from '@/components/command/Nudge'
 import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, type TaskState } from '@/components/task/TaskActions'
 import type { DayCalls, DayCallRow } from '@/app/api/command/calls/route'
-import { whereNow } from '@/lib/team-where'
+import { whereNow, shiftStatus } from '@/lib/team-where'
 import type { GuestCheckRow } from '@/app/api/guest-checks/route'
 import { UnpaidRow, type UnpaidRowT } from '@/components/UnpaidBoard'
 
@@ -326,12 +326,11 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const teamRead = fieldRows.map(p => {
     const w = whereNow(p.tasks || [], nowD, p.clock)
     const bucket = w.kind === 'at' ? 'at' : w.kind === 'last' ? 'done' : w.tone === 'amber' ? 'quiet' : w.kind === 'still' || w.kind === 'heading' ? 'between' : (p.tasks || []).length ? 'none' : 'idle'
-    return { p, w, bucket }
+    const sh = shiftStatus(p.clock, p.shiftStartMin, p.shiftEndMin, nowD)
+    return { p, w, bucket, shift: sh.key }
   })
+  const shCount = (k: string) => teamRead.filter(x => x.shift === k).length
   const tmCount = (b: string) => teamRead.filter(x => x.bucket === b).length
-  const tmOn = fieldRows.filter(p => p.clock?.open).length
-  const tmKnownClock = fieldRows.some(p => p.clock)
-  const tmWorking = teamRead.filter(x => x.bucket !== 'idle' || x.p.clock?.open).length
 
   // ── cleans ──
   const cleans = t.cleans.rows.filter(c => c.status !== 'vendor' && c.status !== 'extended')   // done rows stay: the shared strip reads 'done' and draws no verbs
@@ -379,10 +378,10 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const rcLater = rc ? rc.rows.filter(r => !r.today && !r.done).length : 0
 
   const tiles: { key: Key; label: string; done: number; needed: number; segs: Seg[]; sub: string; title: string; loading?: boolean; big?: { value: string; unit: string; tone: string } }[] = [
-    { key: 'team', label: 'Who’s working', done: tmCount('at') + tmCount('between'), needed: tmWorking, title: 'The field team (housekeeping, supervisors, maintenance, inspectors — not CCS or office) working today and where they probably are: a task in progress puts them in that unit; otherwise their last finish and their next task. On the clock comes from Homebase',
-      big: { value: String(tmKnownClock ? tmOn : tmWorking), unit: tmKnownClock ? 'on the clock' : 'working', tone: tmCount('quiet') ? 'text-amber-800' : 'text-ink' },
-      segs: [{ label: 'in a unit', n: tmCount('at'), cls: 'bg-sky-400', tone: 'sky', filter: 'at' }, { label: 'between units', n: tmCount('between'), cls: 'bg-slate-400', tone: 'slate', filter: 'between' }, { label: 'quiet', n: tmCount('quiet'), cls: 'bg-amber-400', tone: 'amber', filter: 'quiet' }, { label: 'not started', n: tmCount('none'), cls: 'bg-slate-300', tone: 'slate', filter: 'none' }, { label: 'done for the day', n: tmCount('done'), cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }],
-      sub: [tmCount('at') ? tmCount('at') + ' in a unit' : '', tmCount('between') ? tmCount('between') + ' between units' : '', tmCount('quiet') ? tmCount('quiet') + ' quiet' : ''].filter(Boolean).join(' · ') || (tmWorking ? 'nobody started yet' : 'nobody on today') },
+    { key: 'team', label: 'Who’s working', done: shCount('on'), needed: teamRead.length, title: 'The field team today (housekeeping, supervisors, maintenance, inspectors — not CCS or office): on shift, clocked out, not clocked in, starting later, from Homebase — and where each one probably is, from Breezeway',
+      big: { value: String(shCount('on') + shCount('scheduled')), unit: shCount('scheduled') && !shCount('on') ? 'scheduled' : 'on shift', tone: shCount('late') ? 'text-amber-800' : 'text-ink' },
+      segs: [{ label: 'on shift', n: shCount('on'), cls: 'bg-emerald-500', tone: 'emerald', filter: 'on' }, { label: 'not clocked in', n: shCount('late'), cls: 'bg-amber-400', tone: 'amber', filter: 'late' }, { label: 'starting later', n: shCount('later') + shCount('scheduled'), cls: 'bg-sky-400', tone: 'sky', filter: 'later' }, { label: 'clocked out', n: shCount('out'), cls: 'bg-slate-400', tone: 'slate', filter: 'out' }, { label: 'no shift', n: shCount('noshift'), cls: 'bg-slate-200', tone: 'slate', filter: 'noshift' }],
+      sub: [shCount('out') ? shCount('out') + ' clocked out' : '', shCount('late') ? shCount('late') + ' not clocked in' : '', tmCount('at') ? tmCount('at') + ' in a unit' : '', tmCount('quiet') ? tmCount('quiet') + ' quiet' : ''].filter(Boolean).join(' · ') || (teamRead.length ? 'nobody on shift yet' : 'nobody on today') },
     { key: 'cleans', label: 'Departure cleans', done: cDone, needed: cleans.length, title: 'Departure cleans on today’s board: done, in progress, not started, and the ones the clock says are late or at risk',
       segs: [{ label: 'done', n: cDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'in progress', n: cRun, cls: 'bg-sky-400', tone: 'sky', filter: 'running' }, { label: 'not started', n: cOpen, cls: 'bg-slate-300', tone: 'slate', filter: 'open' }, { label: 'late / at risk', n: cTrouble, cls: 'bg-rose-500', tone: 'rose', filter: 'late' }],
       sub: [cRun ? cRun + ' in progress' : '', cOpen ? cOpen + ' not started' : '', cTrouble ? cTrouble + ' late/at risk' : '', cNobody ? cNobody + ' nobody on it' : ''].filter(Boolean).join(' · ') || (cleans.length ? 'all done' : '') },
@@ -438,8 +437,8 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     if (!open) return []
     const out: Item[] = []
     if (open === 'team') for (const x of teamRead) {
-      if (x.bucket === 'idle' && !x.p.clock?.open) continue
-      out.push({ key: 'tm:' + x.p.person, state: x.bucket, sort: ({ quiet: 0, at: 1, between: 2, none: 3, done: 5, idle: 6 } as Record<string, number>)[x.bucket] ?? 4, node: <TeamRow p={x.p} /> })
+      const st = x.shift === 'scheduled' ? 'later' : x.shift
+      out.push({ key: 'tm:' + x.p.person, state: st, sort: (({ on: 0, late: 2, later: 3, out: 4, noshift: 5 } as Record<string, number>)[st] ?? 6) + (x.bucket === 'quiet' ? -0.5 : 0), node: <TeamRow p={x.p} /> })
     }
     if (open === 'cleans') for (const c of cleans) {
       const state = c.status === 'late' || c.status === 'atRisk' ? 'late' : c.status
@@ -494,7 +493,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     if (k === 'unpaid') { const el = document.getElementById('unpaid-today'); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); return } }
     setOpen(o => (o === k ? null : k)); setFilter('all')
   }
-  const headline = tile ? (tile.key === 'team' ? tmWorking + ' working · ' + (tmKnownClock ? tmOn + ' on the clock · ' : '') + tmCount('at') + ' in a unit' : tile.key === 'unpaid' ? money(uOwed) + ' owed · ' + tile.done + ' of ' + tile.needed + ' contacted' : tile.key === 'glitches' || tile.key === 'claims' ? tile.needed + ' open' : tile.key === 'reviews' ? tile.done + ' of ' + tile.needed + ' responded' : tile.key === 'blocked' ? tile.needed + ' blocks in 30 days' : tile.key === 'channels' ? chHard + ' broken · ' + chMissing + ' not on every channel' : tile.key === 'checks' ? tile.done + ' of ' + tile.needed + ' checks done' : tile.key === 'notices' ? tile.done + ' of ' + tile.needed + ' sent' : tile.done + ' of ' + tile.needed + ' done') : ''
+  const headline = tile ? (tile.key === 'team' ? teamRead.length + ' field team · ' + shCount('on') + ' on shift · ' + shCount('out') + ' clocked out · ' + tmCount('at') + ' in a unit' : tile.key === 'unpaid' ? money(uOwed) + ' owed · ' + tile.done + ' of ' + tile.needed + ' contacted' : tile.key === 'glitches' || tile.key === 'claims' ? tile.needed + ' open' : tile.key === 'reviews' ? tile.done + ' of ' + tile.needed + ' responded' : tile.key === 'blocked' ? tile.needed + ' blocks in 30 days' : tile.key === 'channels' ? chHard + ' broken · ' + chMissing + ' not on every channel' : tile.key === 'checks' ? tile.done + ' of ' + tile.needed + ' checks done' : tile.key === 'notices' ? tile.done + ' of ' + tile.needed + ' sent' : tile.done + ' of ' + tile.needed + ' done') : ''
 
   return (
     <section>

@@ -61,7 +61,7 @@ export type DayPicture = {
   /** When this picture was priced — a cached copy is never served as if it were now (lib/bust). */
   builtAt?: string
   /** Every person on shift, whether or not they have work. `shiftStartMin` is ET minutes past midnight. */
-  people: (DayLoad & { shiftStartMin?: number | null; tasks?: PersonTask[]; clock?: PersonClock | null; crewDept?: string | null })[]
+  people: (DayLoad & { shiftStartMin?: number | null; shiftEndMin?: number | null; tasks?: PersonTask[]; clock?: PersonClock | null; crewDept?: string | null })[]
   /** Work with nobody on it — the pool a supervisor is choosing from. */
   unassigned: Array<{ stop: Stop; minutes: number; market: string | null; bestFor: Suggestion[] }>
   /** Moves worth making, strongest first. */
@@ -235,6 +235,7 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
   // could say "9h 42m of work" and not "the last unit lands at 6:10pm" — which is the sentence a
   // coordinator actually needs against a 4pm deadline.
   const shiftStartMin: Record<string, number> = {}
+  const shiftEndMin: Record<string, number> = {}
   for (const s of (shifts as any[])) {
     if (!s?.name || s.open) continue
     s.name = personName(s.name)
@@ -245,6 +246,10 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
     if (Number.isFinite(a)) {
       const m = etMinutesOf(new Date(a))
       if (shiftStartMin[s.name] == null || m < shiftStartMin[s.name]) shiftStartMin[s.name] = m
+    }
+    if (Number.isFinite(b)) {
+      const m = etMinutesOf(new Date(b))
+      if (shiftEndMin[s.name] == null || m > shiftEndMin[s.name]) shiftEndMin[s.name] = m
     }
     if (s.role) roleOf[s.name] = str(s.role)
   }
@@ -300,7 +305,7 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
     }
     // crewDept: the Crew & roles department (lib/crew) — null when the roster could not be read, so
     // a missing roster never hides anyone from Who's working.
-    return { ...load, shiftStartMin: shiftStartMin[name] ?? null, tasks: tasksByPerson[name] || [], clock, crewDept: crew ? str(dept) : null }
+    return { ...load, shiftStartMin: shiftStartMin[name] ?? null, shiftEndMin: shiftEndMin[name] ?? null, tasks: tasksByPerson[name] || [], clock, crewDept: crew ? str(dept) : null }
   }).sort((a, b) => a.utilisationPct - b.utilisationPct)
 
   if (!Object.keys(shiftMin).length) {
