@@ -90,6 +90,21 @@ export function ComposedSlide({ cs, edit, set, pick, Ed, ink, accent, serif, tin
     <button className="sb-noprint" onClick={() => pick(photos.length)} style={{ fontSize: 11.5, fontWeight: 600, color: accent, background: 'none', border: 0, cursor: 'pointer', padding: 0, marginTop: 8 }}>+ Photo</button>
   ) : null
 
+  // Figures the team supplied show on EVERY layout (on 2026-10-06 a "$4,860, paid from the reserve" was
+  // kept by the builder but had nowhere to sit on a gallery page). Small here; the stats layout gives
+  // them the whole page.
+  const figs = (stats.length || (edit && layout !== 'stats')) ? (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px 32px', marginTop: 18 }}>
+      {stats.map((x, i) => (
+        <div key={i} style={{ borderLeft: '2px solid ' + accent, paddingLeft: 12 }}>
+          <div style={{ fontFamily: serif, fontSize: 26, lineHeight: 1, color: ink, fontVariantNumeric: 'tabular-nums' }}><Ed v={x.value} set={v => set('stats.' + i + '.value', v)} edit={edit} placeholder="$0" /></div>
+          <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.13em', textTransform: 'uppercase', color: tint(0.5), marginTop: 6 }}><Ed v={x.label} set={v => set('stats.' + i + '.label', v)} edit={edit} placeholder="Label" /></div>
+        </div>
+      ))}
+      {edit && stats.length < 4 ? <button className="sb-noprint" onClick={() => set('stats', stats.concat({ value: '', label: '' }))} style={{ fontSize: 11.5, fontWeight: 600, color: accent, background: 'none', border: 0, cursor: 'pointer', padding: 0, alignSelf: 'center' }}>+ Figure</button> : null}
+    </div>
+  ) : null
+
   const root: CSSProperties = { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', width: '100%' }
 
   if (layout === 'gallery') {
@@ -97,7 +112,7 @@ export function ComposedSlide({ cs, edit, set, pick, Ed, ink, accent, serif, tin
     const rest = photos.slice(1, 5)
     return (
       <div style={root}>
-        <div style={{ flex: '0 0 auto' }}>{eyebrow}{title}{bodyP}</div>
+        <div style={{ flex: '0 0 auto' }}>{eyebrow}{title}{bodyP}{figs}</div>
         <div style={{ flex: '1 1 auto', minHeight: 300, marginTop: 20, display: 'grid', gap: 14,
           gridTemplateColumns: n <= 1 ? '1fr' : n === 2 ? '1fr 1fr' : n === 3 ? '1.4fr 1fr' : '1.3fr 1fr 1fr',
           gridTemplateRows: n <= 2 ? '1fr' : '1fr 1fr' }}>
@@ -155,7 +170,7 @@ export function ComposedSlide({ cs, edit, set, pick, Ed, ink, accent, serif, tin
     return (
       <div style={root}>
         <div style={{ display: 'grid', gridTemplateColumns: side ? '1.35fr 0.65fr' : '1fr', columnGap: 44, flex: '1 1 auto', minHeight: 0 }}>
-          <div style={{ minWidth: 0 }}>{eyebrow}{title}{bodyP}{list(side ? 1 : 2)}</div>
+          <div style={{ minWidth: 0 }}>{eyebrow}{title}{bodyP}{list(side ? 1 : 2)}{figs}</div>
           {side ? photo(0, { minHeight: 260 }) : null}
         </div>
       </div>
@@ -166,7 +181,7 @@ export function ComposedSlide({ cs, edit, set, pick, Ed, ink, accent, serif, tin
     return (
       <div style={root}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 48, flex: '1 1 auto', minHeight: 0 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 0 }}>{eyebrow}{title}{bodyP}{list(1)}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 0 }}>{eyebrow}{title}{bodyP}{list(1)}{figs}</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 300 }}>
             {photo(0, { flex: photos.length > 1 ? '1.6 1 0' : '1 1 auto' })}
             {photos.length > 1 ? (
@@ -189,6 +204,7 @@ export function ComposedSlide({ cs, edit, set, pick, Ed, ink, accent, serif, tin
         <Ed v={String(cs.body || '')} set={v => set('body', v)} edit={edit} multiline placeholder="Write it here" />
       </p>
       {list(2)}
+      {figs}
     </div>
   )
 }
