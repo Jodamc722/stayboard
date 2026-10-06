@@ -5,6 +5,7 @@
 // project items be removed/added, and sections be hidden/shown (content.omit).
 // Save PUTs the whole content JSON to /api/reports. Subcomponents live at module
 // scope (never inline in render) so inputs keep focus while typing.
+import { ComposedSlide } from '@/components/report/ComposedSlide'
 import { buildVerdict } from '@/lib/report-verdict'
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
@@ -666,6 +667,29 @@ function buildPptx(P: Any, c: Any, t: Any, heroData: string | null, logoData?: s
   const custom = Array.isArray(c.custom) ? c.custom : []
   for (let ci = 0; ci < custom.length; ci++) {
     const cs = custom[ci]
+    if (cs && String(cs.kind || '') === 'composed') {
+      // A built slide: headline + copy on the left, its photos on the right (as links — the deck's
+      // own images are fetched elsewhere; PptxGenJS takes a URL path for these).
+      const s = pptx.addSlide()
+      head(s, String(cs.eyebrow || 'SECTION').toUpperCase().slice(0, 40), String(cs.title || ''))
+      const pics: string[] = (Array.isArray(cs.photos) ? cs.photos : []).filter(Boolean).slice(0, 4)
+      const wText = pics.length ? 6.2 : 12.13
+      const lines: string[] = []
+      if (cs.layout === 'quote' && cs.quote) lines.push('\u201c' + String(cs.quote) + '\u201d' + (cs.by ? '\n\u2014 ' + String(cs.by) : ''))
+      if (cs.body) lines.push(String(cs.body))
+      if (Array.isArray(cs.stats) && cs.stats.length) lines.push(cs.stats.map((x: Any) => String(x.value) + '  ' + String(x.label)).join('\n'))
+      if (Array.isArray(cs.bullets) && cs.bullets.length) lines.push(cs.bullets.map((b: Any) => '\u2022 ' + String(b)).join('\n'))
+      s.addText(lines.join('\n\n').slice(0, 2200), { x: 0.6, y: CT, w: wText, h: CBOT - CT, fontSize: 14, color: BODY, valign: 'top' })
+      if (pics.length) {
+        const x0 = 7.0, w0 = 5.73, gap = 0.12
+        if (pics.length === 1) s.addImage({ path: pics[0], x: x0, y: CT, w: w0, h: CBOT - CT, sizing: { type: 'cover', w: w0, h: CBOT - CT } })
+        else {
+          const hh = (CBOT - CT - gap) / 2, ww = (w0 - gap) / 2
+          pics.forEach((u, k) => s.addImage({ path: u, x: x0 + (k % 2) * (ww + gap), y: CT + Math.floor(k / 2) * (hh + gap), w: ww, h: hh, sizing: { type: 'cover', w: ww, h: hh } }))
+        }
+      }
+      continue
+    }
     if (!cs || (!String(cs.title || '').trim() && !String(cs.body || '').trim())) continue
     const s = pptx.addSlide()
     head(s, String(cs.eyebrow || 'SECTION').toUpperCase().slice(0, 40), String(cs.title || ''))
@@ -1889,6 +1913,53 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     } catch { setAttachMsg('Upload failed') }
     return null
   }
+  // ── BUILD A SLIDE FROM A PROMPT (Jon, 2026-10-06) ─────────────────────────────────────────────
+  // "add a slide where I can prompt it and give it details and add photos as well and it arranges it
+  // on the owner reports or onboarding". The dialog collects the prompt, the details and the photos;
+  // /api/reports/compose-slide picks a layout and writes the copy from those facts only; the slide is
+  // inserted (or, for Rebuild, replaced) in content.custom and saves with the report as usual.
+  const [compose, setCompose] = useState<{ at: number | null; prompt: string; details: string; photos: string[]; busy: boolean; up: boolean; err: string } | null>(null)
+  const openCompose = (at: number | null = null) => {
+    const cur: Any = at != null && Array.isArray(c.custom) ? c.custom[at] : null
+    setCompose({ at, prompt: cur ? String(cur.prompt || '') : '', details: cur ? String(cur.details || '') : '', photos: cur && Array.isArray(cur.photos) ? cur.photos.filter(Boolean) : [], busy: false, up: false, err: '' })
+  }
+  async function composeUpload(files: FileList | null) {
+    if (!files || !files.length) return
+    setCompose(x => x ? { ...x, up: true, err: '' } : x)
+    const got: string[] = []
+    for (const f of Array.from(files).slice(0, 8)) { const u = await uploadOne(f); if (u) got.push(u) }
+    setCompose(x => x ? { ...x, up: false, photos: x.photos.concat(got).slice(0, 8), err: got.length ? '' : 'Upload failed — try again.' } : x)
+  }
+  async function runCompose() {
+    if (!compose) return
+    const at = compose.at
+    setCompose(x => x ? { ...x, busy: true, err: '' } : x)
+    try {
+      const r = await fetch('/api/reports/compose-slide', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reportId: initial.id, prompt: compose.prompt, details: compose.details, photos: compose.photos,
+          deck: String((c.meta || {}).kind || '') === 'onboarding' ? 'onboarding' : 'review',
+          current: at != null && Array.isArray(c.custom) ? c.custom[at] : null }),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok || !d?.slide) { setCompose(x => x ? { ...x, busy: false, err: d?.error || 'Could not build that slide.' } : x); return }
+      mutate((dd: Any) => {
+        dd.custom = Array.isArray(dd.custom) ? dd.custom : []
+        const id = at != null && dd.custom[at] ? dd.custom[at].id : 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+        const slide = { ...d.slide, id }
+        if (at != null && dd.custom[at]) dd.custom[at] = slide
+        else dd.custom.push(slide)
+      })
+      setCompose(null)
+    } catch { setCompose(x => x ? { ...x, busy: false, err: 'Could not reach the server — try again.' } : x) }
+  }
+  const moveCustom = (at: number, by: number) => mutate((d: Any) => {
+    const arr = Array.isArray(d.custom) ? d.custom : []
+    const to = at + by
+    if (to < 0 || to >= arr.length) return
+    const x = arr[at]; arr[at] = arr[to]; arr[to] = x
+  })
+
   async function parseAttach(payload: Any): Promise<Any | null> {
     try {
       const r = await fetch('/api/reports/attach', {
@@ -2197,7 +2268,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const footer = (hero.title || '') + '  ·  ' + (hero.dateLabel || 'OWNER REVIEW')
   // A custom slide is kept if it has ANY content — a photo page and a notes page are both
   // legitimately empty of body copy on the day they are added (Jon, 2026-09-22).
-  const customSecs: Any[] = (Array.isArray(c.custom) ? c.custom : []).filter((cs: Any) => cs && (String(cs.title || '').trim() || String(cs.body || '').trim() || String(cs.kind || '') === 'photos' || String(cs.kind || '') === 'notes'))
+  const customSecs: Any[] = (Array.isArray(c.custom) ? c.custom : []).filter((cs: Any) => cs && (String(cs.title || '').trim() || String(cs.body || '').trim() || String(cs.kind || '') === 'photos' || String(cs.kind || '') === 'notes' || String(cs.kind || '') === 'composed'))
   // JON'S EIGHT, PLUS ANY EXTRA SWITCHED BACK ON (see the onboarding block below). Present mode
   // counts slides off this, so a deck with the extras off says "6 of 8" and not "6 of 17".
   const onboardingSectionKeys = ['welcome', 'agenda', 'team', 'overview', 'experience', 'craft', 'guestcare',
@@ -3028,6 +3099,62 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           </div>
         )
       })()}
+
+      {compose && (
+        <div className="sb-noprint fixed inset-0 z-[70] flex items-center justify-center p-5" style={{ background: 'rgba(10,14,20,0.6)' }}
+          onClick={() => { if (!compose.busy && !compose.up) setCompose(null) }}>
+          <div onClick={e => e.stopPropagation()} className="rounded-2xl w-full max-w-2xl max-h-[88vh] overflow-auto p-6" style={{ background: t.card, color: t.ink, border: '1px solid ' + t.cardBorder }}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10.5px] font-bold uppercase tracking-[0.2em]" style={{ color: t.accent }}>{compose.at != null ? 'Rebuild this slide' : 'Build a slide'}</p>
+                <h3 className="mt-1 text-[20px] font-semibold">Say what it should show — it lays it out in this deck’s style</h3>
+              </div>
+              <button onClick={() => { if (!compose.busy) setCompose(null) }} title="Close" className="rounded-full p-1.5" style={{ color: t.sub }}><X size={16} /></button>
+            </div>
+            <label className="block mt-5 text-[12px] font-semibold" style={{ color: t.sub }}>What is this slide for?</label>
+            <textarea value={compose.prompt} onChange={e => setCompose(x => x ? { ...x, prompt: e.target.value } : x)} rows={2}
+              placeholder="e.g. Show the owner the lobby refresh we finished this month"
+              className="mt-1.5 w-full rounded-xl px-3 py-2 text-[14px]" style={{ background: t.bg, border: '1px solid ' + t.cardBorder, color: t.ink }} />
+            <label className="block mt-4 text-[12px] font-semibold" style={{ color: t.sub }}>Details <span style={{ color: t.muted, fontWeight: 400 }}>— the facts, figures and names to use. Nothing else gets made up.</span></label>
+            <textarea value={compose.details} onChange={e => setCompose(x => x ? { ...x, details: e.target.value } : x)} rows={5}
+              placeholder={'e.g. New sofas and rugs in units 403 and 516. Completed Sept 28. Cost $4,860, paid from the reserve. Guests mentioned the living room in 3 reviews since.'}
+              className="mt-1.5 w-full rounded-xl px-3 py-2 text-[14px]" style={{ background: t.bg, border: '1px solid ' + t.cardBorder, color: t.ink }} />
+            <div className="mt-4 flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-[12px] font-semibold" style={{ color: t.sub }}>Photos <span style={{ color: t.muted, fontWeight: 400 }}>— up to 8; it puts the strongest first and captions them</span></p>
+              <div className="flex items-center gap-2">
+                <label className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold cursor-pointer" style={{ background: t.ink, color: t.bg }}>
+                  {compose.up ? <Loader2 size={12} className="animate-spin" /> : <UploadCloud size={12} />} Upload
+                  <input type="file" accept="image/*" multiple className="hidden" disabled={compose.up || compose.busy} onChange={e => { composeUpload(e.target.files); e.target.value = '' }} />
+                </label>
+                <button onClick={() => { setPhotoUrl(''); setPhotoPick({ title: 'Photo for this slide', cur: '', set: (u: string) => setCompose(x => x ? { ...x, photos: x.photos.concat(u).slice(0, 8) } : x) }) }}
+                  disabled={compose.busy || compose.photos.length >= 8}
+                  className="rounded-full px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }}>From the gallery</button>
+              </div>
+            </div>
+            {compose.photos.length ? (
+              <div className="mt-3 grid grid-cols-4 gap-2">
+                {compose.photos.map((u, i) => (
+                  <div key={u + i} className="relative rounded-lg overflow-hidden" style={{ aspectRatio: '4 / 3', background: t.chip }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={u} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    <button onClick={() => setCompose(x => x ? { ...x, photos: x.photos.filter((_, k) => k !== i) } : x)} title="Remove"
+                      className="absolute top-1 right-1 rounded-full p-1" style={{ background: 'rgba(255,255,255,0.92)', color: '#111' }}><X size={11} /></button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {compose.err ? <p className="mt-4 text-[12.5px]" style={{ color: t.accent }}>{compose.err}</p> : null}
+            <div className="mt-6 flex items-center justify-end gap-2">
+              <button onClick={() => setCompose(null)} disabled={compose.busy} className="rounded-full px-4 py-2 text-[13px] font-semibold" style={{ color: t.sub }}>Cancel</button>
+              <button onClick={runCompose} disabled={compose.busy || compose.up || (!compose.prompt.trim() && !compose.details.trim() && !compose.photos.length)}
+                className="inline-flex items-center gap-1.5 rounded-full px-5 py-2 text-[13px] font-semibold disabled:opacity-50" style={{ background: t.ink, color: t.bg }}>
+                {compose.busy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} {compose.busy ? 'Building…' : compose.at != null ? 'Rebuild slide' : 'Build slide'}
+              </button>
+            </div>
+            <p className="mt-3 text-[11.5px]" style={{ color: t.muted }}>It lands at the end of the deck — move it with Earlier / Later. Everything on it stays editable, and nothing saves until you save the report.</p>
+          </div>
+        </div>
+      )}
 
       {photoPick && (
         <div className="sb-noprint fixed inset-0 z-[80] flex items-center justify-center p-5"
@@ -5453,6 +5580,24 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // where an owner-specific addition belongs.
           const customs: Any[] = Array.isArray(c.custom) ? c.custom : []
           customs.forEach((cs: Any, ci: number) => {
+            if (String(cs.kind || '') === 'composed') {
+              const setC1 = (field: string, v: Any) => patch('custom.' + ci + '.' + field, v)
+              slides.push({ key: 'custom', node: (
+                <Slide nav={String(cs.title || 'New slide')} warn={edit} ground={GROUND.light}>
+                  <div className="flex flex-col h-full">
+                    {edit ? <div className="sb-noprint flex items-center justify-end" style={{ gap: 6, marginBottom: 8 }}>
+                        {[['Rebuild', () => openCompose(ci)], ['Earlier', () => moveCustom(ci, -1)], ['Later', () => moveCustom(ci, 1)], ['Delete', () => mutate((d: Any) => { d.custom.splice(ci, 1) })]].map(([l, f]: Any) => (
+                          <button key={l} onClick={f} style={{ fontSize: 11, fontWeight: 600, borderRadius: 999, padding: '5px 11px', background: 'rgba(255,255,255,0.9)', border: '1px solid rgba(0,0,0,0.12)', color: l === 'Delete' ? t.accent : '#333' }}>{l}</button>
+                        ))}
+                      </div> : null}
+                    <ComposedSlide cs={cs} edit={edit} set={setC1} Ed={Ed as Any} ink={t.ink} accent={t.accent} serif={SERIF} tint={(a: number) => inkA(t.ink, a)}
+                      pick={(j: number) => { setPhotoUrl(''); setPhotoPick({ title: 'Photo for this slide', cur: String((cs.photos || [])[j] || ''), set: (u: string) => setC1('photos.' + j, u) }) }} />
+                    <Foot label={String(cs.title || 'Your slide')} />
+                  </div>
+                </Slide>
+              ) })
+              return
+            }
             slides.push({ key: 'custom', node: (
               <Slide nav={String(cs.title || 'New slide')} warn={edit} ground={GROUND.light}>
                 <div className="flex flex-col h-full">
@@ -5542,12 +5687,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 return (
                   <div className="sb-noprint" style={{ marginTop: 26 }}>
                     <div className="flex flex-wrap items-center" style={{ gap: 10 }}>
+                      <B on={() => openCompose(null)}>✨ Build a slide</B>
                       <B on={() => add('text', 'New slide', { photo: '' })}>+ A slide</B>
                       <B on={() => add('photos', 'The property', { photos: ['', '', ''], caps: [] })}>+ Photos</B>
                       <B on={() => add('photos', 'Work completed', { photos: ['', '', ''], caps: [] })}>+ Work completed</B>
                       <B on={() => add('notes', 'Notes from this review', {})}>+ Notes page</B>
                     </div>
                     <p style={{ fontSize: 12.5, color: t.muted, marginTop: 10, maxWidth: '72ch' }}>
+                      ✨ Build a slide: say what it is for, give it the details and photos, and it lays the page out for you.
                       Each one lands at the end of the deck, editable straight away, and saves with this report only — never the template.
                       Photos come from the same gallery the rest of the deck draws on, or paste a URL.
                     </p>
@@ -6978,6 +7125,22 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               return
             }
 
+            if (kind === 'composed') {
+              slides.push({ key: 'custom', node: (
+                <Frame nav={String(cs.title || 'Slide')} sec={String(cs.eyebrow || 'Note')} subj={String(cs.title || '')} tone={tone} n={n}>
+                  {edit ? <div className="sb-noprint flex items-center justify-end" style={{ gap: 6, marginBottom: 8 }}>
+                        {[['Rebuild', () => openCompose(at)], ['Earlier', () => moveCustom(at, -1)], ['Later', () => moveCustom(at, 1)], ['Delete', () => mutate((d: Any) => { d.custom.splice(at, 1) })]].map(([l, f]: Any) => (
+                          <button key={l} onClick={f} style={{ fontSize: 11, fontWeight: 600, borderRadius: 999, padding: '5px 11px', background: 'rgba(255,255,255,0.9)', border: '1px solid rgba(0,0,0,0.12)', color: l === 'Delete' ? t.accent : '#333' }}>{l}</button>
+                        ))}
+                      </div> : null}
+                  <ComposedSlide cs={cs} edit={edit} set={setCs} Ed={Ed as Any} ink={t.ink} accent={t.accent} serif={SERIF} tint={tint}
+                    heading={(node: React.ReactNode) => <><Tick /><H2 w="22ch">{node}</H2></>}
+                    pick={(j: number) => { setPhotoUrl(''); setPhotoPick({ title: 'Photo for this slide', cur: String((cs.photos || [])[j] || ''), set: (u: string) => setCs('photos.' + j, u) }) }} />
+                </Frame>
+              ) })
+              return
+            }
+
             if (kind === 'notes') {
               slides.push({ key: 'custom', node: (
                 <Frame nav={String(cs.title || 'Notes')} sec={String(cs.eyebrow || 'Notes')} subj={String(cs.title || 'Notes')} tone={tone} n={n}>
@@ -7014,6 +7177,27 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   {sl.node}
                 </SectionShell>
               ))}
+              {/* ADD A SLIDE (Jon, 2026-10-06): build one from a prompt, or start a photo / notes page. */}
+              {edit && (() => {
+                const add = (kind: string, title: string, extra: Any) => mutate((d: Any) => {
+                  d.custom = Array.isArray(d.custom) ? d.custom : []
+                  d.custom.push({ id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), kind, eyebrow: '', title, body: '', ...extra })
+                })
+                const btn = { fontSize: 13, fontWeight: 600, borderRadius: 999, padding: '11px 20px', background: t.ink, color: t.bg } as React.CSSProperties
+                return (
+                  <div className="sb-noprint" style={{ marginTop: 26 }}>
+                    <div className="flex flex-wrap items-center" style={{ gap: 10 }}>
+                      <button onClick={() => openCompose(null)} style={btn}>✨ Build a slide</button>
+                      <button onClick={() => add('photos', 'The property', { photos: ['', '', ''], caps: [] })} style={btn}>+ Photos</button>
+                      <button onClick={() => add('photos', 'Work completed', { photos: ['', '', ''], caps: [] })} style={btn}>+ Work completed</button>
+                      <button onClick={() => add('notes', 'Notes from this review', {})} style={btn}>+ Notes page</button>
+                    </div>
+                    <p style={{ fontSize: 12.5, color: t.muted, marginTop: 10, maxWidth: '72ch' }}>
+                      ✨ Build a slide: say what it is for, give it the details and photos, and it lays the page out in this deck’s style. It lands at the end — move it with Earlier / Later.
+                    </p>
+                  </div>
+                )
+              })()}
             </TextScale.Provider>
           )
         })()}
@@ -8203,7 +8387,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         </>)}
 
         {/* ---------- CUSTOM SECTIONS (owner-added: label + write anything) ---------- */}
-        {(Array.isArray(c.custom) ? c.custom : []).map((cs: Any, ci: number) => {
+        {/* The two decks draw content.custom as slides of their own; drawing it again here put every
+            added slide twice on a deck, once as a slide and once as a bare section below it. */}
+        {(!isOnboarding && !isReviewDeck ? (Array.isArray(c.custom) ? c.custom : []) : []).map((cs: Any, ci: number) => {
           if (!edit && !String(cs.title || '').trim() && !String(cs.body || '').trim()) return null
           return (
             <section key={cs.id || ci} className="relative">
@@ -8229,8 +8415,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           )
         })}
 
-        {/* Add a custom section (edit mode only) */}
-        {edit && (
+        {/* Add a custom section (edit mode only) — the decks have their own add row */}
+        {edit && !isOnboarding && !isReviewDeck && (
           <div className="mt-10 flex justify-center">
             <button
               onClick={() => mutate(d => { d.custom = Array.isArray(d.custom) ? d.custom : []; d.custom.push({ id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), eyebrow: '', title: 'New section', body: '' }) })}
