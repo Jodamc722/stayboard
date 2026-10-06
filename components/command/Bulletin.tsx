@@ -152,7 +152,11 @@ function Postcards() {
   }, [stats.data, week.data, eve.rows])
   const [order, setOrder] = useState<Fact[]>([])
   const [turn, setTurn] = useState(0)
-  useEffect(() => { setOrder(shuffle(all)) }, [all])
+  // Reshuffle only when the SET of facts changes — a background refresh keeps the cards in place and
+  // just updates their numbers (it used to reshuffle on every refetch and the cards flickered).
+  const keys = all.map(f => f.key).sort().join('|')
+  useEffect(() => { setOrder(shuffle(all)) }, [keys])   // eslint-disable-line react-hooks/exhaustive-deps
+  const byKey = useMemo(() => Object.fromEntries(all.map(f => [f.key, f])), [all])
   useEffect(() => {
     if (all.length <= 3) return
     const id = setInterval(() => { setOrder(o => o.length > 3 ? [...o.slice(3), ...o.slice(0, 3)] : o); setTurn(t => t + 1) }, 12_000)
@@ -160,7 +164,7 @@ function Postcards() {
   }, [all.length])
   const { health, open } = useHealth()
   if (!order.length && !health) return null
-  const show = order.slice(0, 3)
+  const show = order.slice(0, 3).map(f => byKey[f.key] || f)
   const tint = (t?: Fact['tone']) => t === 'emerald' ? { bg: C.lagoonPaper, ink: '#13706B' } : t === 'amber' ? { bg: C.sunPaper, ink: '#8A5A00' } : t === 'sky' ? { bg: C.skyPaper, ink: '#2F4A93' } : { bg: '#F3F4F7', ink: C.ink }
   return (
     <div className="px-3.5 pb-0.5">
