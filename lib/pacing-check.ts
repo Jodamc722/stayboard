@@ -45,7 +45,8 @@ const okDate = (s: any) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s
  * `year` fills a missing year. null when nothing usable.
  */
 export function pacingWindow(subtitle: string, explicit: any, year: number): { from: string; to: string } | null {
-  if (explicit && okDate(explicit.from) && okDate(explicit.to) && explicit.from <= explicit.to) return { from: explicit.from, to: explicit.to }
+  // The printed dates win (the PDF says "for Oct 01, 2026 – Oct 06, 2026"); the model's own window
+  // came back as Sep 28–Oct 6 on 2026-10-06 because it read the chart's x axis instead.
   const t = String(subtitle || '')
   const yM = t.match(/\b(20\d{2})\b/); const y = yM ? Number(yM[1]) : year
   // "Oct 01–06" / "Oct 1 - 6"
@@ -58,6 +59,7 @@ export function pacingWindow(subtitle: string, explicit: any, year: number): { f
     const y1 = m2 < m1 ? y - 1 : y
     return { from: ymd(y1, m1, Number(m[2])), to: ymd(y, m2, Number(m[4])) }
   }
+  if (explicit && okDate(explicit.from) && okDate(explicit.to) && explicit.from <= explicit.to) return { from: explicit.from, to: explicit.to }
   return null
 }
 export type OurTruth = { occPct?: number; adr?: number; revpar?: number }
@@ -195,4 +197,33 @@ export function seriesRows(series: any, w: { from: string; to: string } | null):
   const ad = avg(series.adr)
   if (ad) out.push({ metric: 'ADR', ours: '~' + money(ad.o), comps: '~' + money(ad.m), delta: '' })
   return out.length ? out : null
+}
+
+/**
+ * CROSS-CHECK AGAINST THE PDF'S OWN REVPAR CHART (2026-10-06). The same 17WEST pull, re-read by the
+ * live reader: occupancy right (77% vs 63%), ADR lines flipped ($205 vs $221 — it took the dash-dot
+ * "Market ADR (last year)" line, which rises above both solid lines, for the market). The PDF also
+ * charts RevPAR (ours ~$164, market ~$124). occupancy × ADR must land on it: if the ADR row only does
+ * so with ours and market exchanged, exchange it. Requires both RevPAR averages and a clear margin.
+ */
+export function crossCheckAdr(rows: PacingRow[], revpar: { o: number; m: number } | null): { rows: PacingRow[]; note: string | null } {
+  if (!revpar || !(revpar.o > 0) || !(revpar.m > 0)) return { rows, note: null }
+  const occ = findRow(rows, OCC), adr = findRow(rows, ADR)
+  if (!occ || !adr) return { rows, note: null }
+  const oo = numOf(occ.ours) / 100, co = numOf(occ.comps) / 100, oa = numOf(adr.ours), ca = numOf(adr.comps)
+  if (![oo, co, oa, ca].every(isFinite)) return { rows, note: null }
+  const keep = Math.abs(oo * oa - revpar.o) + Math.abs(co * ca - revpar.m)
+  const swap = Math.abs(oo * ca - revpar.o) + Math.abs(co * oa - revpar.m)
+  if (swap < keep * 0.6 && keep - swap >= 6) {
+    const out = rows.map(r => r === adr ? { ...r, ours: r.comps, comps: r.ours } : r)
+    return { rows: out, note: 'The ADR lines were read backwards and have been exchanged: occupancy × ADR only matches the PDF\'s own RevPAR chart ($' + Math.round(revpar.o) + ' vs $' + Math.round(revpar.m) + ') that way round.' }
+  }
+  return { rows, note: null }
+}
+/** Average of a RevPAR series inside the window, for crossCheckAdr. */
+export function seriesAvg(pts: any, w: { from: string; to: string } | null): { o: number; m: number } | null {
+  if (!Array.isArray(pts)) return null
+  const use = pts.filter((p: SeriesPoint) => { const d = String(p?.date || ''); if (w && /^\d{4}-\d{2}-\d{2}$/.test(d) && (d < w.from || d > w.to)) return false; return isFinite(numOf(p?.ours)) && isFinite(numOf(p?.market)) })
+  if (use.length < 2) return null
+  return { o: use.reduce((a: number, p: SeriesPoint) => a + numOf(p.ours), 0) / use.length, m: use.reduce((a: number, p: SeriesPoint) => a + numOf(p.market), 0) / use.length }
 }
