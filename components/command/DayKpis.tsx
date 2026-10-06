@@ -30,7 +30,8 @@ import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import type { CommandDay, NextItem, TaskRow } from '@/lib/command-day'
 import { InlineAssign, type Roster } from '@/components/CommandCockpit'
 import { Row, CleanRow, InspectionTaskRow, ArrivalInspectionRow, GlitchRow, TeamRow, TeamWhereStrip, LIST, GHOST, DARK, bz, money, INSPECT, tomorrowOf } from '@/components/command/Hub'
-import { opsHealth, type OpsHealth } from '@/lib/ops-health'
+import { opsHealth } from '@/lib/ops-health'
+import { publishHealth } from '@/components/command/health-bus'
 import { Check } from 'lucide-react'
 import { NudgeBtn } from '@/components/command/Nudge'
 import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, type TaskState } from '@/components/task/TaskActions'
@@ -204,40 +205,6 @@ function DayCallRowView({ r, canLog, callers, onChanged }: { r: DayCallRow; canL
         {B('voicemail', 'Voicemail', 'Left a voicemail — counts as called')}
         {B('no_answer', 'No answer', 'No answer — stays on the list for another try')}
       </>) : <Link href="/welcome-calls" className={GHOST}><Phone size={12} /> Open</Link>} />
-  )
-}
-
-// ── OPS HEALTH CARD ─────────────────────────────────────────────────────────────────────────────
-// The score as a ring, the band as a word, the worst thing as a sentence, and the six dimensions as
-// chips that open the tile behind them. It sits above the tile rows and reads in one glance.
-function HealthCard({ h, onOpen }: { h: OpsHealth; onOpen: (tile: string) => void }) {
-  const tone = h.band === 'smooth' ? { ring: '#10b981', text: 'text-emerald-700', bg: 'bg-emerald-50 border-emerald-200' } : h.band === 'watch' ? { ring: '#f59e0b', text: 'text-amber-700', bg: 'bg-amber-50 border-amber-200' } : { ring: '#f43f5e', text: 'text-rose-700', bg: 'bg-rose-50 border-rose-200' }
-  const r = 26, c = 2 * Math.PI * r
-  const dimTone = (s: number) => s >= 85 ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : s >= 65 ? 'text-amber-800 bg-amber-50 border-amber-200' : 'text-rose-700 bg-rose-50 border-rose-200'
-  return (
-    <div className={'mb-3 rounded-2xl border px-3.5 py-3 flex items-center gap-4 flex-wrap ' + tone.bg} title="Ops health: one number from today’s board — glitches and rooms ready by 4pm weigh half, then maintenance, guest touch, inspections and the office. Click a chip to open its list.">
-      <div className="flex items-center gap-3 shrink-0">
-        <svg width="64" height="64" viewBox="0 0 64 64" aria-hidden>
-          <circle cx="32" cy="32" r={r} fill="none" stroke="rgba(0,0,0,.08)" strokeWidth="6" />
-          <circle cx="32" cy="32" r={r} fill="none" stroke={tone.ring} strokeWidth="6" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - h.score / 100)} transform="rotate(-90 32 32)" />
-          <text x="32" y="37" textAnchor="middle" className="fill-current" style={{ fontSize: 18, fontWeight: 800 }}>{h.score}</text>
-        </svg>
-        <div>
-          <p className="text-[10.5px] uppercase tracking-[0.14em] font-bold text-muted">Ops health</p>
-          <p className={'text-[18px] font-black leading-tight ' + tone.text}>{h.label}</p>
-          <p className="text-[12px] text-ink/80 max-w-[26rem]">{h.headline}</p>
-        </div>
-      </div>
-      <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-0">
-        {h.dims.map(d => (
-          <button key={d.key} onClick={() => onOpen(d.tile)} title={d.why ? d.label + ' — ' + d.why + ' (weight ' + d.weight + ')' : d.label + ' — nothing slipping (weight ' + d.weight + ')'}
-            className={'rounded-lg border px-2 py-1 text-left hover:ring-2 hover:ring-brand-100 ' + dimTone(d.score)}>
-            <span className="block text-[10.5px] font-semibold leading-tight">{d.label}</span>
-            <span className="block text-[14px] font-black tabular-nums leading-tight">{d.score}</span>
-          </button>
-        ))}
-      </div>
-    </div>
   )
 }
 
@@ -549,9 +516,11 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     unpaid: { open: uOpen, today: unpaidRows.filter(r => r.tracking.status === 'open' && (r.bucket === 'in_house' || r.bucket === 'today')).length },
   })
 
+  useEffect(() => { publishHealth(health, k => { toggle(k as Key); setTimeout(() => document.getElementById('day-kpis')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50) }) })
+
   return (
-    <section>
-      <HealthCard h={health} onOpen={k => toggle(k as Key)} />
+    <section id="day-kpis">
+      {/* Ops health lives on the Bulletin board now, as its first card (Jon, 2026-10-06) — published below. */}
       {/* BY TEAM (Jon, 2026-10-02: "clear visibility … for all teams and staff"; "clunky, noisy"). Three
           labelled rows instead of one wall of fourteen tiles: what housekeeping and maintenance own,
           what the guest team owns, what the office owns. A tile is still one click to its full list. */}

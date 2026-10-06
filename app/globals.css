@@ -431,3 +431,23 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .lh-hscroll [class*='min-w-\['], .overflow-x-auto [class*='min-w-\['] { max-width: none; }
   img, video, canvas, svg:not(.lucide) { max-width: 100%; height: auto; }
 }
+
+/* ── BULLETIN BOARD (components/command/Bulletin.tsx, 2026-10-06) ─────────────────────────────── */
+/* The board: a pale sand surface with a fine dot grid, like a pinboard. */
+.bb-cork { background-color: #F7F3EA; background-image: radial-gradient(rgba(30,43,74,0.10) 1px, transparent 1.2px); background-size: 14px 14px; }
+/* A pinned note sits a little crooked; it straightens when you reach for it. */
+.bb-note { transform: rotate(var(--tilt, 0deg)); transition: transform .18s ease; }
+.bb-note:hover, .bb-note:focus-within { transform: rotate(0deg) translateY(-1px); }
+/* Postcards cross-fade in when the set rotates. */
+@keyframes bb-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.bb-card-in { animation: bb-in .35s ease both; }
+/* A reaction pops when you tap it. */
+@keyframes bb-pop { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
+.bb-pop { animation: bb-pop .35s ease; }
+/* Ticking a reminder done (and cheering an employee of the month) throws a little confetti. */
+@keyframes bb-confetti { from { opacity: 1; transform: translate(-50%, -50%) scale(1); } to { opacity: 0; transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy) + 18px)) scale(.6) rotate(220deg); } }
+.bb-confetti { position: absolute; left: 50%; top: 50%; width: 6px; height: 8px; border-radius: 1.5px; pointer-events: none; z-index: 5; animation: bb-confetti .7s cubic-bezier(.2,.7,.3,1) forwards; }
+@media (prefers-reduced-motion: reduce) {
+  .bb-note, .bb-note:hover, .bb-note:focus-within { transform: none; transition: none; }
+  .bb-card-in, .bb-pop { animation: none; }
+}
