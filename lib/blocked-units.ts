@@ -43,6 +43,7 @@ export type BlockedRun = {
   createdBy: string | null
   createdAt: string | null
   blockEnd: string | null   // Guesty's own end date for the block (last blocked night), when it has one
+  blockStart: string | null // Guesty's own start date — often before today, which our window clips
   // LINKED INVENTORY (Jon, 2026-08-10: "some are parent listing, meaning if one is booked can
   // take some offline"). A unit sold as a whole AND as its parts — "3316 Full - 4BR" alongside
   // "3316/1" and "3316/2", or "Capri 115/116" alongside "Capri 115" — goes unavailable the moment
@@ -137,6 +138,7 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
       const refs = Array.from(cur.refs.values()).sort((a, b) => (b.end || '').localeCompare(a.end || ''))
       const lead = refs[0]
       const blockEnd = refs.reduce<string | null>((acc, r) => (r.end && (!acc || r.end > acc) ? r.end : acc), null)
+      const blockStart = refs.reduce<string | null>((acc, r) => (r.start && (!acc || r.start < acc) ? r.start : acc), null)
       runs.push({
         listingId: lid, unit: m.unit, building: m.building, market: m.market,
         from: cur.from, to: cur.to, nights,
@@ -145,7 +147,7 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
         openEnded: cur.to >= end,
         reason: reasonLabel(keys), note: cur.note || lead?.note || null, keys,
         guestyLabel: refs.map(r => r.reason).filter(Boolean)[0] || null,
-        createdBy: lead?.createdBy || null, createdAt: lead?.createdAt || null, blockEnd,
+        createdBy: lead?.createdBy || null, createdAt: lead?.createdAt || null, blockEnd, blockStart,
         linked: false, alsoBlocks: [],
       })
       cur = null

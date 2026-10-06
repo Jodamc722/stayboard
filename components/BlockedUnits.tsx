@@ -21,7 +21,7 @@ type Run = {
   from: string; to: string; nights: number; startsInDays: number
   live: boolean; openEnded: boolean
   reason: string; note: string | null; keys: string[]
-  guestyLabel: string | null; createdBy: string | null; createdAt: string | null; blockEnd: string | null
+  guestyLabel: string | null; createdBy: string | null; createdAt: string | null; blockEnd: string | null; blockStart?: string | null
   linked: boolean; alsoBlocks: string[]
 }
 type CalRow = { listingId: string; unit: string; building: string; market: string; cells: string }
@@ -52,7 +52,7 @@ function RunRow({ r, auto }: { r: Run; auto?: boolean }) {
       {r.openEnded ? (r.blockEnd
         ? <Tag title="Runs past this window — this is the end date on the block in Guesty">Until {dNice(r.blockEnd)}</Tag>
         : <Tag title="Still blocked on the last day in this window — the end date is unknown">No end date</Tag>) : null}
-      <Tag title={r.openEnded ? 'From ' + dNice(r.from) : dNice(r.from) + ' – ' + dNice(r.to)}>{r.nights}n · {r.openEnded ? dNice(r.from) + '…' : dNice(r.from) + '–' + dNice(r.to)}</Tag>
+      <Tag title={'Block in Guesty: ' + dFull(r.blockStart || r.from) + ' → ' + (r.blockEnd ? dFull(r.blockEnd) : r.openEnded ? 'no end date' : dFull(r.to))}>{r.nights}n · {r.openEnded ? dNice(r.from) + '…' : dNice(r.from) + '–' + dNice(r.to)}</Tag>
       {r.market ? <Tag>{r.market}</Tag> : null}
       {r.alsoBlocks.length ? <Tag tone="amber" title={'Also unsellable while this is down: ' + r.alsoBlocks.join(', ')}>+{r.alsoBlocks.length} linked</Tag> : null}
     </>}>
@@ -86,7 +86,9 @@ function segmentsOf(row: CalRow, days: string[], runsFor: Run[]): Seg[] {
   }
   return segs
 }
-const dShort = (d: string) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })
+// Month/day, with the year when it is not this year — a block ending "2/28" in 2028 must say so.
+const dShort = (d: string) => { const dt = new Date(d + 'T12:00:00'); return dt.toLocaleDateString('en-US', dt.getFullYear() === new Date().getFullYear() ? { month: 'numeric', day: 'numeric' } : { month: 'numeric', day: 'numeric', year: '2-digit' }) }
+const dFull = (d: string) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
 function MultiCal({ days, rows, runs, onlyLive, market }: { days: string[]; rows: CalRow[]; runs: Run[]; onlyLive: boolean; market: string }) {
   const today = days[0]
@@ -110,7 +112,7 @@ function MultiCal({ days, rows, runs, onlyLive, market }: { days: string[]; rows
       const r = seg.run
       return [
         seg.kind === 'L' ? 'Auto-closed by Guesty (a linked listing sold)' : (r?.guestyLabel ? 'Guesty: ' + r.guestyLabel : r?.reason || 'Blocked'),
-        r ? 'Block: ' + dNice(r.from) + ' → ' + (r.blockEnd ? dNice(r.blockEnd) : r.openEnded ? 'no end date' : dNice(r.to)) : 'Shown: ' + range,
+        r ? 'Block: ' + dFull(r.blockStart || r.from) + ' → ' + (r.blockEnd ? dFull(r.blockEnd) : r.openEnded ? 'no end date' : dFull(r.to)) : 'Shown: ' + range,
         r?.note ? 'Note: ' + r.note.replace(/\s+/g, ' ') : '',
         r?.createdBy ? 'Blocked by ' + r.createdBy.split('@')[0] + (r.createdAt ? ' on ' + dNice(r.createdAt.slice(0, 10)) : '') : '',
       ].filter(Boolean).join('\n')
@@ -125,7 +127,7 @@ function MultiCal({ days, rows, runs, onlyLive, market }: { days: string[]; rows
       const r = seg.run
       const title = seg.kind === 'L' ? 'Auto-closed' : (r?.guestyLabel || r?.reason || 'Blocked')
       const ends = r ? (r.blockEnd ? dShort(r.blockEnd) : r.openEnded ? '…' : dShort(r.to)) : dShort(days[seg.start + seg.len - 1])
-      const dates = (r ? dShort(r.from) : dShort(days[seg.start])) + ' → ' + ends
+      const dates = (r ? dShort(r.blockStart && r.blockStart < r.from ? r.blockStart : r.from) : dShort(days[seg.start])) + ' → ' + ends
       const cls = seg.kind === 'L' ? 'bg-slate-200 text-slate-800 border-slate-300' : (r?.live ? 'bg-rose-500 text-white border-rose-600' : 'bg-rose-300 text-rose-950 border-rose-400')
       return (
         <div className={'h-full rounded-md border px-1.5 py-0.5 overflow-hidden ' + cls} style={{ width: w - 2 }}>
