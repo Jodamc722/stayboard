@@ -27,7 +27,39 @@
 // swapped "Your"/"Market" series — a swap is a large, obvious difference — and never to
 // overwrite a value the PDF legitimately reports for a different window.
 
+// THE WINDOW MUST MATCH (17WEST October review, 2026-10-06). The swap test compared the PDF's
+// Oct 1–6 pull against our figure for the WHOLE of October — 59%, dragged down by weeks nobody
+// has booked yet. The model had read the chart correctly (ours 75% / $200, market 68% / $215; our
+// own Oct 1–6 is 78% / $188), but 68% sat closer to 59%, so the table was "un-swapped" and the slide
+// told the owner we trailed the market on occupancy when we led it. Our truth is now computed for
+// the PDF's own window (pacingWindow below), and a swap needs occupancy AND ADR to agree.
+
 export type PacingRow = { metric: string; ours: string; comps: string; delta: string }
+
+const MON: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 }
+const ymd = (y: number, m: number, d: number) => y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0')
+const okDate = (s: any) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s)
+/**
+ * The stay-date window a PriceLabs pull covers: the model's explicit {from,to} when it gave one,
+ * else read out of the subtitle ("Oct 01–06, 2026", "Aug 31–Sep 11", "Sep 1 - Sep 30, 2026").
+ * `year` fills a missing year. null when nothing usable.
+ */
+export function pacingWindow(subtitle: string, explicit: any, year: number): { from: string; to: string } | null {
+  if (explicit && okDate(explicit.from) && okDate(explicit.to) && explicit.from <= explicit.to) return { from: explicit.from, to: explicit.to }
+  const t = String(subtitle || '')
+  const yM = t.match(/\b(20\d{2})\b/); const y = yM ? Number(yM[1]) : year
+  // "Oct 01–06" / "Oct 1 - 6"
+  let m = t.match(/\b([A-Za-z]{3,4})\.?\s+(\d{1,2})\s*[–—-]\s*(\d{1,2})\b(?!\s*[A-Za-z]{3})/)
+  if (m && MON[m[1].toLowerCase()]) { const mo = MON[m[1].toLowerCase()]; const a = Number(m[2]), b = Number(m[3]); if (a <= b) return { from: ymd(y, mo, a), to: ymd(y, mo, b) } }
+  // "Aug 31–Sep 11" / "Sep 1 - Sep 30"
+  m = t.match(/\b([A-Za-z]{3,4})\.?\s+(\d{1,2})\s*[–—-]\s*([A-Za-z]{3,4})\.?\s+(\d{1,2})\b/)
+  if (m && MON[m[1].toLowerCase()] && MON[m[3].toLowerCase()]) {
+    const m1 = MON[m[1].toLowerCase()], m2 = MON[m[3].toLowerCase()]
+    const y1 = m2 < m1 ? y - 1 : y
+    return { from: ymd(y1, m1, Number(m[2])), to: ymd(y, m2, Number(m[4])) }
+  }
+  return null
+}
 export type OurTruth = { occPct?: number; adr?: number; revpar?: number }
 
 const numOf = (s: any): number => {
@@ -62,7 +94,13 @@ export function reconcilePacing(input: PacingRow[], truth: OurTruth = {}): { row
   const occ0 = findRow(rows, OCC)
   if (occ0 && typeof truth.occPct === 'number' && truth.occPct > 0) {
     const o = numOf(occ0.ours), c = numOf(occ0.comps)
-    if (isFinite(o) && isFinite(c) && Math.abs(c - truth.occPct) + 3 < Math.abs(o - truth.occPct)) {
+    const occSaysSwap = isFinite(o) && isFinite(c) && Math.abs(c - truth.occPct) + 3 < Math.abs(o - truth.occPct)
+    // ADR gets a vote: when our ADR sits clearly closer to the "ours" reading, the table is NOT
+    // backwards, whatever occupancy suggests (2026-10-06: a wrong-window occupancy flipped a correct read).
+    const adr0 = findRow(rows, ADR)
+    const ao = adr0 ? numOf(adr0.ours) : NaN, ac = adr0 ? numOf(adr0.comps) : NaN
+    const adrSaysKeep = typeof truth.adr === 'number' && truth.adr > 0 && isFinite(ao) && isFinite(ac) && Math.abs(ao - truth.adr) + 5 < Math.abs(ac - truth.adr)
+    if (occSaysSwap && !adrSaysKeep) {
       rows = rows.map(r => ({ ...r, ours: r.comps, comps: r.ours }))
       notes.push('The "Your" and "Market" series were read backwards and have been swapped (our occupancy is ' + truth.occPct + '%).')
     }
