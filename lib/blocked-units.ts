@@ -13,7 +13,7 @@
 // answer as the board does, and two implementations of "what counts as blocked" would drift.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
-import { getMultiCalendar, isOpsBlock } from './guesty'
+import { getMultiCalendar, isOpsBlock, type BlockRef } from './guesty'
 import { marketOf, buildingOf } from './segments'
 
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
@@ -35,6 +35,14 @@ export type BlockedRun = {
   reason: string
   note: string | null
   keys: string[]       // raw Guesty flags, so our labels never hide the truth
+  // AS GUESTY SHOWS IT (Jon, 2026-10-06: "see how the block is labeled in Guesty"). The block
+  // reason the team picked in Guesty ("Offboarded", "Owner stay"), who created it and when, and
+  // the block's real last night — which is often months past the window, so "no end date" can
+  // say the date instead of a shrug.
+  guestyLabel: string | null
+  createdBy: string | null
+  createdAt: string | null
+  blockEnd: string | null   // Guesty's own end date for the block (last blocked night), when it has one
   // LINKED INVENTORY (Jon, 2026-08-10: "some are parent listing, meaning if one is booked can
   // take some offline"). A unit sold as a whole AND as its parts — "3316 Full - 4BR" alongside
   // "3316/1" and "3316/2", or "Capri 115/116" alongside "Capri 115" — goes unavailable the moment
@@ -44,8 +52,14 @@ export type BlockedRun = {
   alsoBlocks: string[]     // other listings on the same room that this block also takes offline
 }
 
+// MULTI-CALENDAR (Jon, 2026-10-06: "a multi calendar view"). One row per unit with a block in the
+// window, one character per day: B out of service · L auto-closed by Guesty (linked listing sold)
+// · R reserved · . open · ? no calendar data. Compact enough to send for 120 days × every unit.
+export type CalendarRow = { listingId: string; unit: string; building: string; market: string; cells: string }
+
 export type BlockedReport = {
   from: string; to: string; days: number
+  calendar: { days: string[]; rows: CalendarRow[] }
   listingsChecked: number; calendarDays: number
   liveNow: number; upcoming: number; nightsBlocked: number
   linkedCount: number      // Guesty auto-blocks, reported separately from work to chase
@@ -114,18 +128,24 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
     const m = meta[lid]
     if (!m) continue
     const sorted = byUnit[lid].slice().sort((a, b) => a.date.localeCompare(b.date))
-    let cur: { from: string; to: string; keys: Set<string>; note: string | null } | null = null
+    let cur: { from: string; to: string; keys: Set<string>; note: string | null; refs: Map<string, BlockRef> } | null = null
     const flush = () => {
       if (!cur) return
       const nights = Math.round((new Date(cur.to + 'T12:00:00').getTime() - new Date(cur.from + 'T12:00:00').getTime()) / 86400000) + 1
       const keys = Array.from(cur.keys)
+      // The block that covers the most of this run speaks for it: its Guesty reason, author and end.
+      const refs = Array.from(cur.refs.values()).sort((a, b) => (b.end || '').localeCompare(a.end || ''))
+      const lead = refs[0]
+      const blockEnd = refs.reduce<string | null>((acc, r) => (r.end && (!acc || r.end > acc) ? r.end : acc), null)
       runs.push({
         listingId: lid, unit: m.unit, building: m.building, market: m.market,
         from: cur.from, to: cur.to, nights,
         startsInDays: Math.round((new Date(cur.from + 'T12:00:00').getTime() - new Date(today + 'T12:00:00').getTime()) / 86400000),
         live: cur.from <= today && cur.to >= today,
         openEnded: cur.to >= end,
-        reason: reasonLabel(keys), note: cur.note, keys,
+        reason: reasonLabel(keys), note: cur.note || lead?.note || null, keys,
+        guestyLabel: refs.map(r => r.reason).filter(Boolean)[0] || null,
+        createdBy: lead?.createdBy || null, createdAt: lead?.createdAt || null, blockEnd,
         linked: false, alsoBlocks: [],
       })
       cur = null
@@ -138,9 +158,10 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
         cur.to = d.date
         on.forEach(k => cur!.keys.add(k))
         if (!cur.note && d.note) cur.note = d.note
+        for (const r of d.refs || []) if (r.id && !cur.refs.has(r.id)) cur.refs.set(r.id, r)
       } else {
         flush()
-        cur = { from: d.date, to: d.date, keys: new Set(on), note: d.note }
+        cur = { from: d.date, to: d.date, keys: new Set(on), note: d.note, refs: new Map((d.refs || []).filter(r => r.id).map(r => [r.id, r])) }
       }
     }
     flush()
@@ -198,8 +219,35 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
     const e = byMarket[r.market] = byMarket[r.market] || { units: 0, nights: 0 }
     e.units += 1; e.nights += r.nights
   }
+  // THE MULTI-CALENDAR. Every unit that has any block in the window, every day of the window, one
+  // character each — so the board can draw the same picture Guesty's multi-calendar does, with the
+  // blocked nights in context of the bookings around them.
+  const dayList: string[] = []
+  for (let d = today; d < end; d = addDays(d, 1)) dayList.push(d)
+  const dayIdx: Record<string, number> = {}
+  dayList.forEach((d, i) => { dayIdx[d] = i })
+  const linkedIds = new Set(linkedRuns.map(r => r.listingId))
+  const outIds = new Set(outOfService.map(r => r.listingId))
+  const grid: Record<string, string[]> = {}
+  for (const d of cal) {
+    const i = dayIdx[d.date]
+    if (i == null || !meta[d.listingId]) continue
+    if (!(outIds.has(d.listingId) || linkedIds.has(d.listingId))) continue
+    const row = grid[d.listingId] = grid[d.listingId] || new Array(dayList.length).fill('?')
+    const on = Object.keys(d.blocks || {}).filter(k => { const v = (d.blocks as any)[k]; return v === true || (v && typeof v === 'object') })
+    if (isOpsBlock(d)) row[i] = on.some(k => k === 'bd' || k === 'sr') ? 'L' : 'B'
+    else if (d.reservationId || on.some(k => k === 'r')) row[i] = 'R'
+    else row[i] = '.'
+  }
+  const order = new Map<string, number>()
+  outOfService.concat(linkedRuns).forEach((r, i) => { if (!order.has(r.listingId)) order.set(r.listingId, i) })
+  const calendarRows: CalendarRow[] = Object.keys(grid)
+    .sort((a, b) => (order.get(a) ?? 1e9) - (order.get(b) ?? 1e9))
+    .map(lid => ({ listingId: lid, unit: meta[lid].unit, building: meta[lid].building, market: meta[lid].market, cells: grid[lid].join('') }))
+
   return {
     from: today, to: end, days: win,
+    calendar: { days: dayList, rows: calendarRows },
     listingsChecked: Object.keys(meta).length,
     calendarDays: cal.length,
     liveNow: outOfService.filter(r => r.live).length,

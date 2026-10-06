@@ -134,6 +134,21 @@ export async function getListingCalendar(listingId: string, startDate: string, e
 // defensively and a day is normalised to { listingId, date, status, blocks, note }. A chunk that
 // fails is skipped rather than taking the whole pull down — a partial blocked list still beats no
 // blocked list on a morning brief.
+// THE BLOCK AS GUESTY HAS IT (Jon, 2026-10-06: "see how the block is labeled in Guesty"). A manual
+// block in Guesty carries a reason picked from their list ("Offboarded", "Owner stay", "Maintenance"),
+// a free note, who made it, when, and its REAL start and end — which can run far past any window
+// we happen to look at. All of that is on the day as `blockRefs`; we keep it rather than our
+// label for the flag.
+export type BlockRef = {
+  id: string
+  type: string          // Guesty's flag: m, o, bd, sr …
+  reason: string | null // Guesty's "block reason" label, exactly as the team sees it there
+  note: string | null
+  createdBy: string | null
+  createdAt: string | null
+  start: string | null  // YYYY-MM-DD
+  end: string | null    // YYYY-MM-DD (Guesty's endDate is the last blocked night)
+}
 export type MultiCalDay = {
   listingId: string
   date: string
@@ -141,6 +156,7 @@ export type MultiCalDay = {
   blocks: Record<string, any>
   note: string | null
   reservationId: string | null
+  refs: BlockRef[]
   raw?: any
 }
 const CAL_CHUNK = 20
@@ -171,6 +187,12 @@ export async function getMultiCalendar(listingIds: string[], startDate: string, 
           blocks,
           note: d?.note ? String(d.note) : (d?.blockRef?.note ? String(d.blockRef.note) : null),
           reservationId: d?.reservationId || d?.reservation?._id || d?.blockRef?.reservationId || null,
+          refs: (Array.isArray(d?.blockRefs) ? d.blockRefs : d?.blockRef ? [d.blockRef] : []).map((b: any): BlockRef => ({
+            id: String(b?._id || ''), type: String(b?.type || ''),
+            reason: b?.blockReason ? String(b.blockReason) : null, note: b?.note ? String(b.note) : null,
+            createdBy: b?.createdBy ? String(b.createdBy) : null, createdAt: b?.createdAt ? String(b.createdAt) : null,
+            start: b?.startDate ? String(b.startDate).slice(0, 10) : null, end: b?.endDate ? String(b.endDate).slice(0, 10) : null,
+          })),
           raw: d,
         })
       }

@@ -641,7 +641,7 @@ function blockedCard(runs: BlockedRun[], opts?: { limit?: number; showMarket?: b
   // counted in one line. What is listed is the FIXABLE kind: AC, repair, pests, a guest moved out
   // of a broken unit — each one is work that, finished, puts nights back on the calendar.
   const STANDING = /do not sell|owner|building manager|offboard|long[- ]term|tenant|request|renovat|lease|personal use|staff/i
-  const whyOf = (r: BlockedRun) => String(r.note || r.reason || '')
+  const whyOf = (r: BlockedRun) => String(r.note || r.guestyLabel || r.reason || '')
   const fixable = runs.filter(r => !STANDING.test(whyOf(r)))
   const standing = runs.length - fixable.length
   const dNice = (d: string) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
