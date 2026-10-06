@@ -7133,7 +7133,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           <button key={l} onClick={f} style={{ fontSize: 11, fontWeight: 600, borderRadius: 999, padding: '5px 11px', background: 'rgba(255,255,255,0.9)', border: '1px solid rgba(0,0,0,0.12)', color: l === 'Delete' ? t.accent : '#333' }}>{l}</button>
                         ))}
                       </div> : null}
-                  <ComposedSlide cs={cs} edit={edit} set={setCs} Ed={Ed as Any} ink={t.ink} accent={t.accent} serif={SERIF} tint={tint}
+                  <ComposedSlide cs={cs} edit={edit} set={setCs} Ed={Ed as Any} ink={t.ink} accent={t.accent} serif={SERIF} tint={tint} noEyebrow
                     heading={(node: React.ReactNode) => <><Tick /><H2 w="22ch">{node}</H2></>}
                     pick={(j: number) => { setPhotoUrl(''); setPhotoPick({ title: 'Photo for this slide', cur: String((cs.photos || [])[j] || ''), set: (u: string) => setCs('photos.' + j, u) }) }} />
                 </Frame>

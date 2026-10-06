@@ -87,6 +87,8 @@ export async function POST(req: NextRequest) {
     + 'Stay Hospitality is a short-term-rental operator in South Florida. Voice: confident, warm, specific, zero fluff; short declarative sentences; no exclamation marks; no emojis. '
     + 'Never admit fault or liability, never mention pests, security incidents or disputes, never disparage a guest. '
     + 'USE ONLY FACTS THE TEAM GAVE YOU. Never invent a number, a date, a price, a name or a result; if a figure is not in the prompt or details, it does not appear. '
+    + 'No claims the team did not make: no "performing", "guest-ready", "elevated", "strong results" or any outcome, quality or guest reaction unless the details say it. '
+    + 'Every element says something new: bullets never repeat the body, and a figure shown in "stats" is not repeated in a bullet or the body. If there is nothing new for bullets, return []. '
     + 'Return STRICT JSON only, no markdown.'
   const text = [
     current ? 'The slide as it stands (revise it per the instruction, keep what still fits):\n' + JSON.stringify({ layout: current.layout, eyebrow: current.eyebrow, title: current.title, body: current.body, bullets: current.bullets, stats: current.stats, quote: current.quote, by: current.by, caps: current.caps }) : '',
@@ -136,7 +138,9 @@ export async function POST(req: NextRequest) {
     eyebrow: clip(j.eyebrow, 40),
     title: clip(j.title, 90) || 'New slide',
     body: clip(j.body, 480),
-    bullets: (Array.isArray(j.bullets) ? j.bullets : []).map((b: any) => clip(b, 90)).filter(Boolean).slice(0, 8),
+    bullets: (Array.isArray(j.bullets) ? j.bullets : []).map((b: any) => clip(b, 90)).filter(Boolean)
+      .filter((b: string) => !statsOk.some((x: any) => x.value && b.indexOf(x.value) >= 0))   // a figure lives in one place
+      .slice(0, 8),
     stats: statsOk,
     quote: clip(j.quote, 400),
     by: clip(j.by, 60),

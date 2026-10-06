@@ -11,7 +11,7 @@ export type ComposedLayout = 'feature' | 'gallery' | 'stats' | 'list' | 'quote' 
 type Any = any
 type EdT = ComponentType<{ v: string; set: (s: string) => void; edit: boolean; multiline?: boolean; placeholder?: string; className?: string }>
 
-export function ComposedSlide({ cs, edit, set, pick, Ed, ink, accent, serif, tint, heading }: {
+export function ComposedSlide({ cs, edit, set, pick, Ed, ink, accent, serif, tint, heading, noEyebrow }: {
   cs: Any
   edit: boolean
   /** patch one field of this custom section ('title', 'bullets.2', 'stats.0.value', …) */
@@ -25,6 +25,8 @@ export function ComposedSlide({ cs, edit, set, pick, Ed, ink, accent, serif, tin
   tint: (a: number) => string
   /** the deck's own headline treatment, so this slide's title matches its neighbours */
   heading?: (node: ReactNode) => ReactNode
+  /** the deck's frame already prints the section label (the owner review does) — don't say it twice */
+  noEyebrow?: boolean
 }) {
   const layout: ComposedLayout = (['feature', 'gallery', 'stats', 'list', 'quote', 'text'].includes(String(cs.layout)) ? cs.layout : 'text') as ComposedLayout
   const photos: string[] = Array.isArray(cs.photos) ? cs.photos : []
@@ -32,12 +34,13 @@ export function ComposedSlide({ cs, edit, set, pick, Ed, ink, accent, serif, tin
   const bullets: string[] = Array.isArray(cs.bullets) ? cs.bullets : []
   const stats: { value: string; label: string }[] = Array.isArray(cs.stats) ? cs.stats : []
 
-  const eyebrow = (edit || String(cs.eyebrow || '').trim()) ? (
+  const eyebrow = !noEyebrow && (edit || String(cs.eyebrow || '').trim()) ? (
     <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase', color: accent, margin: '0 0 10px' }}>
       <Ed v={String(cs.eyebrow || '')} set={v => set('eyebrow', v)} edit={edit} placeholder="OVERLINE" />
     </p>
   ) : null
-  const titleNode = <Ed v={String(cs.title || '')} set={v => set('title', v)} edit={edit} placeholder="Headline" />
+  // multiline: a single-line box cut a long headline off mid-word in edit mode (2026-10-06)
+  const titleNode = <Ed v={String(cs.title || '')} set={v => set('title', v)} edit={edit} multiline placeholder="Headline" />
   const title = heading ? heading(titleNode) : (
     <h2 style={{ fontFamily: serif, fontWeight: 400, fontSize: 36, lineHeight: 1.14, letterSpacing: '-0.02em', color: ink, margin: 0, maxWidth: '22ch' }}>{titleNode}</h2>
   )
