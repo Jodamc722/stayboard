@@ -166,3 +166,33 @@ export function reconcilePacing(input: PacingRow[], truth: OurTruth = {}): { row
   const ahead = rows.length > 0 && rows.every(r => !behind(r))
   return { rows, notes, ahead }
 }
+
+/**
+ * READ THE LINES, THEN AVERAGE (2026-10-06, the 17WEST October pull). Asked for one number per line,
+ * the model guessed — market occupancy 68% where the line runs 64%→57%, ADR $200 vs $215 where ours
+ * runs $212→$230 above a flat ~$206 market. Asked for both solid lines at every labelled stay date,
+ * the average over the window is mechanical. Points outside the window are ignored; fewer than two
+ * usable points means "no series" and the single-number read stands.
+ */
+export type SeriesPoint = { date?: string; ours?: any; market?: any }
+export function seriesRows(series: any, w: { from: string; to: string } | null): PacingRow[] | null {
+  if (!series || typeof series !== 'object') return null
+  const avg = (pts: any): { o: number; m: number } | null => {
+    if (!Array.isArray(pts)) return null
+    const use = pts.filter((p: SeriesPoint) => {
+      const d = String(p?.date || '')
+      if (w && /^\d{4}-\d{2}-\d{2}$/.test(d) && (d < w.from || d > w.to)) return false
+      return isFinite(numOf(p?.ours)) && isFinite(numOf(p?.market))
+    })
+    if (use.length < 2) return null
+    const o = use.reduce((a: number, p: SeriesPoint) => a + numOf(p.ours), 0) / use.length
+    const m = use.reduce((a: number, p: SeriesPoint) => a + numOf(p.market), 0) / use.length
+    return { o, m }
+  }
+  const out: PacingRow[] = []
+  const oc = avg(series.occupancy)
+  if (oc) out.push({ metric: 'Occupancy', ours: '~' + pct(oc.o), comps: '~' + pct(oc.m), delta: '' })
+  const ad = avg(series.adr)
+  if (ad) out.push({ metric: 'ADR', ours: '~' + money(ad.o), comps: '~' + money(ad.m), delta: '' })
+  return out.length ? out : null
+}

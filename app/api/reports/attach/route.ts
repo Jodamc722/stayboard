@@ -11,7 +11,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { hasEditCookie } from '@/lib/edit-access'
 import { resolveScope, pullTasks, weekBuckets, type ReportListing } from '@/lib/owner-report'
 import { aiFetch } from '@/lib/ai-usage'
-import { reconcilePacing } from '@/lib/pacing-check'
+import { reconcilePacing, seriesRows } from '@/lib/pacing-check'
 import { checkWindow, truthForWindow } from '@/lib/pacing-truth'
 import { requireReportLevel } from '@/lib/garden/access'
 import { requireUser } from '@/lib/access'
@@ -59,9 +59,9 @@ async function parsePacing(url: string, scopeLabel: string, periodLabel: string,
   const block = await fetchDocBlock(url)
   if (!block) return null
   const text = await anthropic({
-    model: DOC_MODEL, max_tokens: 900,
+    model: DOC_MODEL, max_tokens: 1800,
     system: 'You extract market-pacing figures from PriceLabs reports for an owner report. Output STRICT JSON only.',
-    messages: [{ role: 'user', content: [block, { type: 'text', text: 'This is a PriceLabs pacing/market report for the property "' + scopeLabel + '" (period: ' + periodLabel + '). Extract OUR property vs the market/comp set. CRITICAL chart-reading rules: in PriceLabs "Pacing vs Market" charts the legend maps each line - the "Your Occupancy"/"Your ADR"/"Your RevPAR" series (solid dark/black line) is OUR property, and the "Market ..." series (solid red line) is the comp set; dash-dot lines are last year - ignore them. Read each series at the most recent stay dates (at or after the "This Week" marker). Before answering, double-check you have NOT swapped the two: "ours" must come from the "Your ..." series only. DO NOT report RevPAR - it is occupancy x ADR and we compute it ourselves; reading a third line off the chart is where this goes wrong. Report Occupancy and ADR only, and prefer a printed/labelled number over estimating the height of a line against the axis. If a value is not printed and you are estimating, still give your best read - but never invent a metric the document does not show. Return JSON: {"subtitle": one line naming the pull window + comp set (e.g. "Jul 2026 pacing - vs PriceLabs ABB comp set (13 listings)"), "window": {"from": "YYYY-MM-DD", "to": "YYYY-MM-DD"} - the first and last STAY DATE the figures you report cover (null if the document does not say), "rows": [{"metric": "RevPAR"|"ADR"|"Occupancy", "ours": display value like "$265" or "82%", "comps": same format, "delta": signed advantage like "+56%" or "+25 pts" (negative if behind)}]}. Include only metrics actually present. If the document has no usable comparison, return {"rows": []}.' }] }],
+    messages: [{ role: 'user', content: [block, { type: 'text', text: 'This is a PriceLabs pacing/market report for the property "' + scopeLabel + '" (period: ' + periodLabel + '). Extract OUR property vs the market/comp set. CRITICAL chart-reading rules: in PriceLabs "Pacing vs Market" charts the legend maps each line - the "Your Occupancy"/"Your ADR"/"Your RevPAR" series (solid dark/black line) is OUR property, and the "Market ..." series (solid red line) is the comp set; dash-dot lines are last year - ignore them. Read each series at the most recent stay dates (at or after the "This Week" marker). Before answering, double-check you have NOT swapped the two: "ours" must come from the "Your ..." series only. DO NOT report RevPAR - it is occupancy x ADR and we compute it ourselves; reading a third line off the chart is where this goes wrong. Report Occupancy and ADR only, and prefer a printed/labelled number over estimating the height of a line against the axis. If a value is not printed and you are estimating, still give your best read - but never invent a metric the document does not show. Return JSON: {"subtitle": one line naming the pull window + comp set (e.g. "Jul 2026 pacing - vs PriceLabs ABB comp set (13 listings)"), "window": {"from": "YYYY-MM-DD", "to": "YYYY-MM-DD"} - the first and last STAY DATE the figures you report cover (null if the document does not say), "series": {"occupancy": [{"date": "YYYY-MM-DD", "ours": number, "market": number}], "adr": [same shape]} - read BOTH solid lines (the Your line and the Market line) at EVERY labelled stay date on the x axis inside the window, and at its first and last day, as plain numbers (percent without the % sign, dollars without the $ sign); we average them ourselves, so do not average, "rows": [{"metric": "RevPAR"|"ADR"|"Occupancy", "ours": display value like "$265" or "82%", "comps": same format, "delta": signed advantage like "+56%" or "+25 pts" (negative if behind)}]}. Include only metrics actually present. If the document has no usable comparison, return {"rows": []}.' }] }],
   })
   const j = parseJson(text)
   if (!j || !Array.isArray(j.rows) || !j.rows.length) return null
@@ -77,6 +77,9 @@ async function parsePacing(url: string, scopeLabel: string, periodLabel: string,
   // OUR NUMBERS FOR THE SAME WINDOW (2026-10-06): the PDF's own stay dates, else month-to-date —
   // never the whole report period, whose unbooked weeks once flipped a correct read.
   const win = checkWindow(str(j.subtitle), j.window, scope.periodStart, scope.periodEnd)
+  // The averaged series, when the model gave one, replaces its single-number guess for those rows.
+  const fromSeries = seriesRows(j.series, win.source === 'pdf' ? win : null)
+  if (fromSeries) for (const sr of fromSeries) { const i = rows.findIndex((r: any) => String(r.metric).toLowerCase().slice(0, 3) === sr.metric.toLowerCase().slice(0, 3)); if (i >= 0) rows[i] = sr; else rows.push(sr) }
   const truth = await truthForWindow(scope.listingIds, win)
   const fixed = reconcilePacing(rows, truth || {})
   if (truth && truth.occPct) fixed.notes.push('Checked against our own ' + win.from.slice(5).replace('-', '/') + '–' + win.to.slice(5).replace('-', '/') + (win.source === 'to-date' ? ' (month to date)' : '') + ': ' + truth.occPct + '% occupancy · $' + Math.round(truth.adr || 0) + ' ADR.')
