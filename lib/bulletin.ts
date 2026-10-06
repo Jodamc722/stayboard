@@ -44,7 +44,8 @@ export type Post = {
   reactions?: Record<string, string[]>   // emoji → emails
   replies?: Reply[]
 }
-export type Board = { posts: Post[] }
+/** birthdays: name → 'MM-DD' (no year — nobody's age lives here). */
+export type Board = { posts: Post[]; birthdays?: Record<string, string> }
 
 export const MAX_POSTS = 120
 export const MAX_REPLIES = 40
@@ -165,4 +166,71 @@ export function prune(posts: Post[], today: string): Post[] {
   const cut = addDays(today, -30)
   return posts.filter(p => !(p.expires && p.expires < cut) && !(p.doneAt && etDay(new Date(p.doneAt)) < cut))
     .sort((a, b) => b.at.localeCompare(a.at)).slice(0, MAX_POSTS)
+}
+
+// ── BIRTHDAYS (Jon, 2026-10-06: "if it knows people's birthday it should populate it") ───────────
+/** 'YYYY-MM-DD' or 'MM-DD' or 'M/D' → 'MM-DD'; null when it isn't a date. */
+export function monthDay(v: any): string | null {
+  const s = String(v || '').trim()
+  let m = s.match(/^(?:\d{4}-)?(\d{1,2})-(\d{1,2})(?:T.*)?$/) || s.match(/^(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?$/)
+  if (!m) return null
+  const mo = Number(m[1]), d = Number(m[2])
+  if (!(mo >= 1 && mo <= 12 && d >= 1 && d <= 31)) return null
+  return pad(mo) + '-' + pad(d)
+}
+export type Celebration = { name: string; md: string; inDays: number }
+/** Birthdays from today through `days` ahead, soonest first. Feb 29 is celebrated on Feb 28 off leap years. */
+export function upcomingBirthdays(map: Record<string, string>, today: string, days = 6): Celebration[] {
+  const out: Celebration[] = []
+  for (let k = 0; k <= days; k++) {
+    const day = addDays(today, k)
+    const y = Number(day.slice(0, 4)), md = day.slice(5)
+    const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0
+    for (const [name, raw] of Object.entries(map || {})) {
+      const b = monthDay(raw)
+      if (!b) continue
+      if (b === md || (!leap && b === '02-29' && md === '02-28')) out.push({ name, md: b, inDays: k })
+    }
+  }
+  return out
+}
+
+// ── QUOTE OF THE DAY — the fallback when the daily quote service can't be reached ─────────────────
+// Short, attributed, on work, service and teams. Picked by day of year so everyone sees the same one.
+export const QUOTES: { q: string; a: string }[] = [
+  { q: 'Well done is better than well said.', a: 'Benjamin Franklin' },
+  { q: 'Quality is not an act, it is a habit.', a: 'Will Durant' },
+  { q: 'The secret of getting ahead is getting started.', a: 'Mark Twain' },
+  { q: 'Coming together is a beginning; keeping together is progress; working together is success.', a: 'Edward Everett Hale' },
+  { q: 'Do what you can, with what you have, where you are.', a: 'Theodore Roosevelt' },
+  { q: 'It is not enough to be busy. The question is: what are we busy about?', a: 'Henry David Thoreau' },
+  { q: 'The best way out is always through.', a: 'Robert Frost' },
+  { q: 'Little things make big things happen.', a: 'John Wooden' },
+  { q: 'Alone we can do so little; together we can do so much.', a: 'Helen Keller' },
+  { q: 'Whatever you are, be a good one.', a: 'Abraham Lincoln' },
+  { q: 'Energy and persistence conquer all things.', a: 'Benjamin Franklin' },
+  { q: 'Act as if what you do makes a difference. It does.', a: 'William James' },
+  { q: 'He that is good for making excuses is seldom good for anything else.', a: 'Benjamin Franklin' },
+  { q: 'Nothing will work unless you do.', a: 'Maya Angelou' },
+  { q: 'Courtesy is the one coin you can never have too much of.', a: 'Arthur Helps' },
+  { q: 'The way to get started is to quit talking and begin doing.', a: 'Walt Disney' },
+  { q: 'Hospitality is making your guests feel at home, even if you wish they were.', a: 'Unknown' },
+  { q: 'Excellence is never an accident.', a: 'Aristotle' },
+  { q: 'Don’t watch the clock; do what it does. Keep going.', a: 'Sam Levenson' },
+  { q: 'The details are not the details. They make the design.', a: 'Charles Eames' },
+  { q: 'Plans are nothing; planning is everything.', a: 'Dwight D. Eisenhower' },
+  { q: 'Do the hard jobs first. The easy jobs will take care of themselves.', a: 'Dale Carnegie' },
+  { q: 'Talent wins games, but teamwork wins championships.', a: 'Michael Jordan' },
+  { q: 'What gets measured gets managed.', a: 'Peter Drucker' },
+  { q: 'People will forget what you said, but never how you made them feel.', a: 'Maya Angelou' },
+  { q: 'Make each day your masterpiece.', a: 'John Wooden' },
+  { q: 'Start where you are. Use what you have. Do what you can.', a: 'Arthur Ashe' },
+  { q: 'Done is better than perfect.', a: 'Sheryl Sandberg' },
+  { q: 'Small deeds done are better than great deeds planned.', a: 'Peter Marshall' },
+  { q: 'If you take care of your people, they will take care of your guests.', a: 'J. W. Marriott' },
+  { q: 'Whatever you do, do it well.', a: 'Walt Disney' },
+]
+export function fallbackQuote(today: string): { q: string; a: string } {
+  const doy = Math.floor((Date.parse(today + 'T12:00:00Z') - Date.parse(today.slice(0, 4) + '-01-01T12:00:00Z')) / 86400000)
+  return QUOTES[((doy % QUOTES.length) + QUOTES.length) % QUOTES.length]
 }

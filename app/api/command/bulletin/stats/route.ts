@@ -16,6 +16,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { welcomeRate, addDays } from '@/lib/call-desk'
 import { ratingToStars } from '@/lib/optimize-score'
 import { etDay } from '@/lib/bulletin'
+import { kindOfTask } from '@/lib/labor-econ'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 
@@ -59,10 +61,41 @@ async function build(): Promise<Fact[]> {
       facts.push({ key: 'avgStars', label: 'Guest rating · last 7 days', value: (Math.round(avg * 100) / 100).toFixed(2) + '★', sub: stars.length + ' reviews, all channels on a /5 scale', href: '/reviews', tone: avg >= 4.7 ? 'emerald' : avg >= 4.4 ? 'sky' : 'amber' })
     }
   }
+  // ── THE TEAM (Jon, 2026-10-06: "share stats of the team on the board"). Breezeway tasks finished in
+  // the last 7 days, by kind (lib/labor-econ kindOfTask — the Labor board's own rule for what a
+  // departure clean is). Vendor-run buildings never close tasks, so this is the in-house team.
+  try {
+    const since = new Date(Date.now() - 7 * 86400000).toISOString()
+    const { rows } = await pageRows<any>((a, b) => sb.from('breezeway_tasks_sync').select('id,name,type_department,assignees,finished_at')
+      .gte('finished_at', since).order('id').range(a, b), 6)
+    const by: Record<string, Record<string, number>> = { clean: {}, inspection: {}, maintenance: {} }
+    const total: Record<string, number> = { clean: 0, inspection: 0, maintenance: 0 }
+    for (const t of rows) {
+      const k = kindOfTask(t)
+      if (!(k in by)) continue
+      total[k]++
+      for (const p of (Array.isArray(t.assignees) ? t.assignees : [])) { const n = String(p?.name || '').trim(); if (n) by[k][n] = (by[k][n] || 0) + 1 }
+    }
+    const top = (m: Record<string, number>) => Object.entries(m).sort((a, b) => b[1] - a[1])
+    const first = (n: string) => n.split(/\s+/)[0]
+    if (total.clean) {
+      const t = top(by.clean)
+      facts.push({ key: 'teamCleans', label: 'Cleans turned · last 7 days', value: String(total.clean), sub: t.length + ' cleaner' + (t.length === 1 ? '' : 's') + ' on the board', href: '/labor', tone: 'emerald' })
+      if (t.length >= 2) facts.push({ key: 'topCleaners', label: 'Most cleans this week', value: first(t[0][0]), sub: t.slice(0, 3).map(([n, c]) => first(n) + ' ' + c).join(' · '), href: '/labor', tone: 'slate' })
+    }
+    if (total.inspection) {
+      const t = top(by.inspection)
+      facts.push({ key: 'teamInsp', label: 'Inspections · last 7 days', value: String(total.inspection), sub: t.slice(0, 3).map(([n, c]) => first(n) + ' ' + c).join(' · ') || 'done', href: '/maintenance', tone: 'sky' })
+    }
+    if (total.maintenance) {
+      const t = top(by.maintenance)
+      facts.push({ key: 'teamMaint', label: 'Maintenance closed · last 7 days', value: String(total.maintenance), sub: t.slice(0, 3).map(([n, c]) => first(n) + ' ' + c).join(' · ') || 'done', href: '/maintenance', tone: 'sky' })
+    }
+  } catch { /* the team facts are a bonus; the rest still show */ }
   return facts
 }
 
-const cached = unstable_cache(build, ['bulletin-stats-v1'], { revalidate: 600 })
+const cached = unstable_cache(build, ['bulletin-stats-v2'], { revalidate: 600 })
 
 export async function GET() {
   const gate = await requireVrUser()

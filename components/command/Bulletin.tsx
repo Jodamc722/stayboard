@@ -31,7 +31,7 @@ export const BULLETIN_URL = '/api/command/bulletin'
 const STATS_URL = '/api/command/bulletin/stats'
 const PLANS_URL = '/api/eve/review?n=1'   // same key the Decide band reads — one fetch for both
 
-type BoardRes = { ok: boolean; error?: string; today: string; me: string; canPost: boolean; posts: Post[]; haveTo: Post[]; reviews?: ReviewRef[]; people?: string[] }
+type BoardRes = { ok: boolean; error?: string; today: string; me: string; canPost: boolean; posts: Post[]; haveTo: Post[]; reviews?: ReviewRef[]; people?: string[]; quote?: { q: string; a: string; src: string }; celebrations?: { name: string; md: string; inDays: number }[]; birthdays?: Record<string, string> }
 type Fact = { key: string; label: string; value: string; sub: string; href?: string; tone?: 'emerald' | 'amber' | 'slate' | 'sky' }
 type Plan = { id: string; title: string; detail: string | null; area: string | null }
 type Slide = { key: string; label: string; secs: number; node: ReactNode }
@@ -90,7 +90,11 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
       statSlides.push({ key: 'stats:' + pair.map(f => f.key).join('+'), label: 'By the numbers', secs: 7, node: <StatsSlide facts={pair} /> })
     }
     // Interleave so no two of a kind run back to back: quote, then post / rec / stats round-robin.
+    // A quote every day: a leader's wins; otherwise the day's quote from the internet (or our list).
     if (quote) out.push({ key: 'post:' + quote.id, label: KIND_LABEL.quote, secs: 10, node: <PostSlide p={quote} me={me} canPost={canPost} act={act} /> })
+    else if (data?.quote?.q) out.push({ key: 'quote:auto', label: KIND_LABEL.quote, secs: 10, node: <AutoQuote q={data.quote} /> })
+    const cel = data?.celebrations || []
+    if (cel.length) out.push({ key: 'bday:' + cel.map(c => c.name).join('+'), label: cel.some(c => !c.inDays) ? 'Birthday' : 'Birthdays this week', secs: 9, node: <BirthdaySlide cel={cel} today={data?.today || ''} /> })
     const lanes: Slide[][] = [
       others.map(p => ({ key: 'post:' + p.id, label: KIND_LABEL[p.kind], secs: p.kind === 'review' ? 10 : 8, node: <PostSlide p={p} me={me} canPost={canPost} act={act} /> })),
       recs.map((r, i) => ({ key: 'rec:' + r.id, label: 'Eve recommends', secs: 9, node: <RecSlide r={r} n={i + 1} of={recs.length} /> })),
@@ -148,7 +152,7 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
         {cur && !paused && <div key={cur.key + ':' + idx} className="lh-progress h-full bg-ink/25" style={{ animationDuration: cur.secs + 's' }} />}
       </div>
       {composing && data ? (
-        <Composer data={data} initial={composing} onClose={() => setComposing(null)} onPost={async p => { await act({ action: 'create', post: p }); setComposing(null) }} />
+        <Composer data={data} initial={composing} onClose={() => setComposing(null)} onPost={async p => { await act({ action: 'create', post: p }); setComposing(null) }} onAct={act} />
       ) : (
         <div className="px-4 py-3 min-h-[112px] flex items-center" aria-live="polite">
           {cur ? <div key={cur.key} className="lh-fade w-full min-w-0">{cur.node}</div>
@@ -315,9 +319,37 @@ function PostSlide({ p, me, canPost, act }: { p: Post; me: string; canPost: bool
   )
 }
 
+function AutoQuote({ q }: { q: { q: string; a: string; src: string } }) {
+  return (
+    <figure>
+      <blockquote className="lh-display text-[26px] sm:text-[30px] leading-[1.2] text-ink">“{q.q}”</blockquote>
+      <figcaption className="text-[13px] text-muted mt-1">— {q.a}{q.src === 'zenquotes' && <span className="text-[11px] text-muted/70"> · via <a href="https://zenquotes.io/" target="_blank" rel="noreferrer" className="underline">ZenQuotes</a></span>}</figcaption>
+    </figure>
+  )
+}
+
+function BirthdaySlide({ cel, today }: { cel: { name: string; md: string; inDays: number }[]; today: string }) {
+  const now = cel.filter(c => !c.inDays), soon = cel.filter(c => c.inDays)
+  const dayName = (k: number) => { try { const d = new Date(today + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + k); return k === 1 ? 'tomorrow' : new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(d) } catch { return '' } }
+  const names = (xs: { name: string }[]) => xs.map(x => x.name.split(/\s+/)[0]).join(', ').replace(/, ([^,]*)$/, ' and $1')
+  return (
+    <div>
+      {now.length > 0 && <div className="lh-display text-[30px] leading-[1.1] text-ink">Happy birthday, {names(now)} 🎂</div>}
+      {soon.length > 0 && (
+        <div className={now.length ? 'text-[13px] text-muted mt-1.5' : ''}>
+          {!now.length && <div className="lh-display text-[24px] leading-[1.15] text-ink">Birthdays coming up</div>}
+          <div className={now.length ? '' : 'text-[13px] text-muted mt-1'}>{(now.length ? 'Coming up: ' : '') + soon.map(c => c.name.split(/\s+/)[0] + ' ' + dayName(c.inDays)).join(' · ')}</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── COMPOSER (leaders) ──────────────────────────────────────────────────────────────────────────
-function Composer({ data, initial, onClose, onPost }: { data: BoardRes; initial: PostKind; onClose: () => void; onPost: (p: any) => Promise<void> }) {
+function Composer({ data, initial, onClose, onPost, onAct }: { data: BoardRes; initial: PostKind; onClose: () => void; onPost: (p: any) => Promise<void>; onAct: (b: any) => Promise<void> }) {
   const [kind, setKind] = useState<PostKind>(initial)
+  const [bday, setBday] = useState(false)
+  const [bName, setBName] = useState(''); const [bDate, setBDate] = useState('')
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [due, setDue] = useState('')
@@ -336,13 +368,34 @@ function Composer({ data, initial, onClose, onPost }: { data: BoardRes; initial:
     <div className="px-4 py-3 space-y-2.5">
       <div className="flex flex-wrap items-center gap-1.5">
         {KINDS.map(k => (
-          <button key={k.key} onClick={() => setKind(k.key)} aria-pressed={kind === k.key}
-            className={'text-[12px] font-medium rounded-lg px-2.5 h-7 border ' + (kind === k.key ? 'bg-ink text-white border-ink' : 'border-line text-ink hover:border-ink/40')}>{k.label}</button>
+          <button key={k.key} onClick={() => { setKind(k.key); setBday(false) }} aria-pressed={!bday && kind === k.key}
+            className={'text-[12px] font-medium rounded-lg px-2.5 h-7 border ' + (!bday && kind === k.key ? 'bg-ink text-white border-ink' : 'border-line text-ink hover:border-ink/40')}>{k.label}</button>
         ))}
+        <button onClick={() => setBday(true)} aria-pressed={bday}
+          className={'text-[12px] font-medium rounded-lg px-2.5 h-7 border ' + (bday ? 'bg-ink text-white border-ink' : 'border-line text-ink hover:border-ink/40')}>Birthday</button>
         <span className="flex-1" />
         <button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink"><X size={15} /></button>
       </div>
-      {kind === 'review' && (
+      {bday && (
+        <div className="space-y-2">
+          <div className="grid grid-cols-[1fr_auto_auto] gap-2 items-end">
+            <label className="block"><span className="text-[11.5px] text-muted">Who</span><input value={bName} onChange={e => setBName(e.target.value)} list="bulletin-people" className={field} placeholder="Start typing a name" /><datalist id="bulletin-people">{(data.people || []).map(n => <option key={n} value={n} />)}</datalist></label>
+            <label className="block"><span className="text-[11.5px] text-muted">Birthday</span><input type="date" value={bDate} onChange={e => setBDate(e.target.value)} className={field} /></label>
+            <button disabled={!bName.trim() || !bDate || busy} onClick={async () => { setBusy(true); try { await onAct({ action: 'birthday', name: bName, date: bDate }); setBName(''); setBDate('') } finally { setBusy(false) } }}
+              className="rounded-lg px-3 h-8 text-[12.5px] font-semibold bg-ink text-white disabled:opacity-40">Save</button>
+          </div>
+          <div className="text-[11.5px] text-muted">Only the month and day are kept. It shows on the board on the day, and in the week before.</div>
+          {Object.keys(data.birthdays || {}).length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(data.birthdays || {}).sort((a, b) => a[1].localeCompare(b[1])).map(([n, md]) => (
+                <span key={n} className="inline-flex items-center gap-1 text-[12px] rounded-lg border border-line px-2 h-7">{n} <span className="text-muted">{shortDay('2000-' + md)}</span>
+                  <button onClick={() => onAct({ action: 'unbirthday', name: n })} aria-label={'Remove ' + n} className="text-muted hover:text-rose-600"><X size={11} /></button></span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {!bday && kind === 'review' && (
         <div className="space-y-1 max-h-[220px] overflow-y-auto pr-1">
           {!(data.reviews || []).length && <div className="text-[12.5px] text-muted">No new five-star reviews with a written comment in the last three weeks.</div>}
           {(data.reviews || []).map(r => (
@@ -353,6 +406,7 @@ function Composer({ data, initial, onClose, onPost }: { data: BoardRes; initial:
           ))}
         </div>
       )}
+      {!bday && <>
       <div className="grid sm:grid-cols-[1fr_1fr] gap-2">
         <label className="block"><span className="text-[11.5px] text-muted">{titleLabel}</span>
           <input value={title} onChange={e => setTitle(e.target.value)} list={person ? 'bulletin-people' : undefined} className={field} placeholder={person ? 'Start typing a name' : ''} />
@@ -375,6 +429,7 @@ function Composer({ data, initial, onClose, onPost }: { data: BoardRes; initial:
           {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Post
         </button>
       </div>
+      </>}
     </div>
   )
 }

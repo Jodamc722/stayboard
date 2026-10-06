@@ -13,8 +13,10 @@ import { isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { setSetting } from '@/lib/app-settings'
 import { ratingToStars } from '@/lib/optimize-score'
+import { unstable_cache } from 'next/cache'
 import {
   type Board, type Post, boardPosts, haveToPosts, etDay, makePost, editPost, toggleReaction, prune, MAX_REPLIES,
+  monthDay, upcomingBirthdays, fallbackQuote,
 } from '@/lib/bulletin'
 
 export const dynamic = 'force-dynamic'
@@ -25,16 +27,57 @@ async function readBoard(): Promise<Board> {
     const { data } = await supabaseAdmin().from('app_settings').select('value').eq('key', KEY).limit(1)
     const raw = (data as any)?.[0]?.value
     const j = typeof raw === 'string' ? JSON.parse(raw) : raw
-    return { posts: Array.isArray(j?.posts) ? j.posts : [] }
-  } catch { return { posts: [] } }
+    return { posts: Array.isArray(j?.posts) ? j.posts : [], birthdays: j?.birthdays && typeof j.birthdays === 'object' ? j.birthdays : {} }
+  } catch { return { posts: [], birthdays: {} } }
 }
 
 const isLeader = (a: any) => isSuperadmin(a.email) || a.role === 'admin'
 const nameOf = (a: any) => String(a.profile?.name || (a.email ? String(a.email).split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) : 'Someone'))
 
-function view(board: Board, me: string, canPost: boolean) {
+// ── QUOTE OF THE DAY (Jon, 2026-10-06: "find quotes from the internet, one for each day") ─────────
+// ZenQuotes' quote of the day (free tier; attribution shown on the slide), fetched once per day and
+// cached; when it can't be reached, a short list of our own picked by day of year (lib/bulletin).
+// A quote a leader posts always wins over both.
+async function zenToday(day: string): Promise<{ q: string; a: string; src: string }> {
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 4000)
+    const r = await fetch('https://zenquotes.io/api/today', { signal: ctl.signal, cache: 'no-store' })
+    clearTimeout(t)
+    const j: any = await r.json()
+    const q = String(j?.[0]?.q || '').trim(), a = String(j?.[0]?.a || '').trim()
+    if (r.ok && q && q.length <= 260 && !/too many requests/i.test(q)) return { q, a: a || 'Unknown', src: 'zenquotes' }
+  } catch { /* fall through */ }
+  return { ...fallbackQuote(day), src: 'stay' }
+}
+const quoteFor = (day: string) => unstable_cache(() => zenToday(day), ['bulletin-quote-v1', day], { revalidate: 86400 })()
+
+// ── BIRTHDAYS (Jon, 2026-10-06: "if it knows people's birthday it should populate it") ──────────
+// Two sources: what leaders add on the board, and any birthday Homebase carries on the employee
+// record (its field names vary by account — lib/homebase keeps unknown fields in `extra`). The board
+// wins when both have someone. Month and day only; no year is ever kept.
+const homebaseBirthdays = unstable_cache(async (): Promise<Record<string, string>> => {
+  try {
+    const { getEmployees } = await import('@/lib/homebase')
+    const out: Record<string, string> = {}
+    for (const e of await getEmployees()) {
+      if (!e.active || !e.name) continue
+      const k = Object.keys(e.extra || {}).find(x => /birth|dob/i.test(x))
+      const md = k ? monthDay(e.extra[k]) : null
+      if (md) out[e.name] = md
+    }
+    return out
+  } catch { return {} }
+}, ['bulletin-hb-birthdays-v1'], { revalidate: 6 * 3600 })
+
+async function view(board: Board, me: string, canPost: boolean) {
   const today = etDay()
-  return { ok: true, today, me, canPost, posts: boardPosts(board.posts, today), haveTo: haveToPosts(board.posts, today) }
+  const [quote, hb] = await Promise.all([quoteFor(today), homebaseBirthdays()])
+  const birthdays = { ...hb, ...(board.birthdays || {}) }
+  return {
+    ok: true, today, me, canPost, posts: boardPosts(board.posts, today), haveTo: haveToPosts(board.posts, today),
+    quote, celebrations: upcomingBirthdays(birthdays, today, 6),
+    birthdays: canPost ? board.birthdays || {} : undefined,
+  }
 }
 
 /** 5★ reviews from the last 21 days with something worth reading — for leaders to pin. */
@@ -71,7 +114,7 @@ export async function GET() {
   const a = gate.access
   const board = await readBoard()
   const canPost = isLeader(a)
-  const out: any = view(board, String(a.email || ''), canPost)
+  const out: any = await view(board, String(a.email || ''), canPost)
   if (canPost) {
     const pinned = new Set(board.posts.map(p => p.review?.id).filter(Boolean) as string[])
     const [reviews, ppl] = await Promise.all([goodReviews(pinned).catch(() => []), people()])
@@ -96,7 +139,15 @@ export async function POST(req: NextRequest) {
   const deny = (m: string, s = 403) => NextResponse.json({ ok: false, error: m }, { status: s })
   const put = (p: Post) => { board.posts[idx] = p }
 
-  if (action === 'create') {
+  if (action === 'birthday' || action === 'unbirthday') {
+    if (!leader) return deny('Only leaders can set birthdays.')
+    const name = String(b?.name || '').replace(/\s+/g, ' ').trim().slice(0, 60)
+    if (!name) return deny('Who?', 400)
+    const bd = { ...(board.birthdays || {}) }
+    if (action === 'unbirthday') delete bd[name]
+    else { const md = monthDay(b?.date); if (!md) return deny('Pick the month and day.', 400); bd[name] = md }
+    board.birthdays = bd
+  } else if (action === 'create') {
     if (!leader) return deny('Only leaders can post to the board.')
     const p = makePost(b?.post, { name: nameOf(a), email: me }, today, randomUUID(), nowIso)
     if (!p) return deny('Say something first.', 400)
@@ -123,5 +174,5 @@ export async function POST(req: NextRequest) {
   board.posts = prune(board.posts, today)
   const saved = await setSetting(KEY, board, me)
   if (!saved.ok) return NextResponse.json({ ok: false, error: 'Could not save: ' + saved.error }, { status: 500 })
-  return NextResponse.json(view(board, me, leader))
+  return NextResponse.json(await view(board, me, leader))
 }
