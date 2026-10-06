@@ -67,11 +67,27 @@ function RunRow({ r, auto }: { r: Run; auto?: boolean }) {
 )
 }
 
-// MULTI-CALENDAR (Jon, 2026-10-06: "a multi calender view"). The same picture Guesty draws: one
-// row per unit with a block in the window, one cell per night, so a block is seen in the context
-// of the bookings around it — a two-night hold between two reservations looks very different from
-// a month shut with nothing either side. Rose = out of service, slate = Guesty auto-closed it,
-// blue = a guest is in. Hover a cell for the date; click a unit to jump to its row.
+// MULTI-CALENDAR (Jon, 2026-10-06: "a multi calender view" … "it should also have just
+// multi-calendar blocks, the block titles, block notes, etc. Should show dates"). Drawn the way
+// Guesty draws it: one row per unit, and each block is a BAR across its nights carrying the block's
+// Guesty label, its dates and the note typed on it — not a run of coloured squares you have to
+// hover to understand. Reservations are the pale bars between, so a block is read in the context
+// of the bookings around it. A bar too short for its text still says it all on hover.
+type Seg = { kind: 'B' | 'L' | 'R' | '.' | '?'; start: number; len: number; run?: Run }
+function segmentsOf(row: CalRow, days: string[], runsFor: Run[]): Seg[] {
+  const segs: Seg[] = []
+  for (let i = 0; i < days.length; i++) {
+    const c = (row.cells[i] || '?') as Seg['kind']
+    const run = c === 'B' || c === 'L' ? runsFor.find(r => r.from <= days[i] && r.to >= days[i]) : undefined
+    const last = segs[segs.length - 1]
+    // A new bar starts when the kind changes, or when a different block takes over the same day colour.
+    if (last && last.kind === c && last.run === run) last.len += 1
+    else segs.push({ kind: c, start: i, len: 1, run })
+  }
+  return segs
+}
+const dShort = (d: string) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })
+
 function MultiCal({ days, rows, runs, onlyLive, market }: { days: string[]; rows: CalRow[]; runs: Run[]; onlyLive: boolean; market: string }) {
   const today = days[0]
   const liveIds = new Set(runs.filter(r => r.live).map(r => r.listingId))
@@ -80,61 +96,95 @@ function MultiCal({ days, rows, runs, onlyLive, market }: { days: string[]; rows
   const shown = rows.filter(r => (market === 'all' || r.market === market) && (!onlyLive || liveIds.has(r.listingId)))
   const months: { label: string; span: number }[] = []
   for (const d of days) {
-    const label = new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short' })
+    const label = new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
     const last = months[months.length - 1]
     if (last && last.label === label) last.span += 1; else months.push({ label, span: 1 })
   }
-  const cellClass = (c: string) =>
-    c === 'B' ? 'bg-rose-400' : c === 'L' ? 'bg-slate-300' : c === 'R' ? 'bg-sky-200' : c === '.' ? 'bg-emerald-50' : 'bg-white'
-  const cellTitle = (row: CalRow, i: number) => {
-    const c = row.cells[i]
-    const d = dNice(days[i])
-    if (c === 'B') { const run = (byId.get(row.listingId) || []).find(r => r.from <= days[i] && r.to >= days[i]); return d + ' · out of service' + (run ? ' — ' + (run.guestyLabel || run.reason) + (run.note ? ' · ' + run.note : '') : '') }
-    if (c === 'L') return d + ' · auto-closed by Guesty (a linked listing sold)'
-    if (c === 'R') return d + ' · guest in'
-    if (c === '.') return d + ' · open to sell'
-    return d + ' · no calendar data'
-  }
   if (!shown.length) return <LeanEmpty>No blocked units to draw{market === 'all' ? '' : ' in ' + market}.</LeanEmpty>
-  const colW = days.length > 60 ? 10 : days.length > 30 ? 14 : 22
+  // Wide enough that a week-long block can carry its label; the 90-day view scrolls sideways.
+  const colW = days.length > 60 ? 26 : days.length > 30 ? 34 : 44
+  const barTitle = (seg: Seg) => {
+    const from = days[seg.start], to = days[seg.start + seg.len - 1]
+    const range = dNice(from) + (seg.len > 1 ? ' – ' + dNice(to) : '')
+    if (seg.kind === 'B' || seg.kind === 'L') {
+      const r = seg.run
+      return [
+        seg.kind === 'L' ? 'Auto-closed by Guesty (a linked listing sold)' : (r?.guestyLabel ? 'Guesty: ' + r.guestyLabel : r?.reason || 'Blocked'),
+        r ? 'Block: ' + dNice(r.from) + ' → ' + (r.blockEnd ? dNice(r.blockEnd) : r.openEnded ? 'no end date' : dNice(r.to)) : 'Shown: ' + range,
+        r?.note ? 'Note: ' + r.note.replace(/\s+/g, ' ') : '',
+        r?.createdBy ? 'Blocked by ' + r.createdBy.split('@')[0] + (r.createdAt ? ' on ' + dNice(r.createdAt.slice(0, 10)) : '') : '',
+      ].filter(Boolean).join('\n')
+    }
+    if (seg.kind === 'R') return 'Guest in · ' + range
+    if (seg.kind === '.') return 'Open to sell · ' + range
+    return 'No calendar data · ' + range
+  }
+  const bar = (seg: Seg) => {
+    const w = seg.len * colW
+    if (seg.kind === 'B' || seg.kind === 'L') {
+      const r = seg.run
+      const title = seg.kind === 'L' ? 'Auto-closed' : (r?.guestyLabel || r?.reason || 'Blocked')
+      const ends = r ? (r.blockEnd ? dShort(r.blockEnd) : r.openEnded ? '…' : dShort(r.to)) : dShort(days[seg.start + seg.len - 1])
+      const dates = (r ? dShort(r.from) : dShort(days[seg.start])) + ' → ' + ends
+      const cls = seg.kind === 'L' ? 'bg-slate-200 text-slate-800 border-slate-300' : (r?.live ? 'bg-rose-500 text-white border-rose-600' : 'bg-rose-300 text-rose-950 border-rose-400')
+      return (
+        <div className={'h-full rounded-md border px-1.5 py-0.5 overflow-hidden ' + cls} style={{ width: w - 2 }}>
+          {w >= 70 ? <>
+            <div className="text-[11px] font-bold leading-tight truncate">{title}<span className="font-medium opacity-80"> · {dates}</span></div>
+            {r?.note ? <div className="text-[10.5px] leading-tight truncate opacity-90">{r.note.replace(/\s+/g, ' ')}</div> : null}
+          </> : null}
+        </div>
+      )
+    }
+    if (seg.kind === 'R') return <div className="h-full rounded-md bg-sky-100 border border-sky-200 px-1.5 py-0.5 overflow-hidden text-[10.5px] text-sky-900 truncate" style={{ width: w - 2 }}>{w >= 60 ? 'Guest · ' + dShort(days[seg.start]) + ' → ' + dShort(days[seg.start + seg.len - 1]) : ''}</div>
+    if (seg.kind === '.') return <div className="h-full" style={{ width: w }} />
+    return <div className="h-full bg-[repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(0,0,0,.05)_4px,rgba(0,0,0,.05)_8px)]" style={{ width: w }} />
+  }
   return (
     <div className="rounded-2xl border border-line bg-white overflow-hidden">
       <div className="flex items-center gap-3 px-3 py-2 border-b border-line text-[11px] text-muted flex-wrap">
-        <span className="inline-flex items-center gap-1"><i className="inline-block w-3 h-3 rounded-sm bg-rose-400" /> Out of service</span>
-        <span className="inline-flex items-center gap-1"><i className="inline-block w-3 h-3 rounded-sm bg-slate-300" /> Auto-closed by Guesty</span>
-        <span className="inline-flex items-center gap-1"><i className="inline-block w-3 h-3 rounded-sm bg-sky-200" /> Guest in</span>
-        <span className="inline-flex items-center gap-1"><i className="inline-block w-3 h-3 rounded-sm bg-emerald-50 border border-emerald-100" /> Open</span>
+        <span className="inline-flex items-center gap-1"><i className="inline-block w-3 h-3 rounded-sm bg-rose-500" /> Down now</span>
+        <span className="inline-flex items-center gap-1"><i className="inline-block w-3 h-3 rounded-sm bg-rose-300" /> Blocked later</span>
+        <span className="inline-flex items-center gap-1"><i className="inline-block w-3 h-3 rounded-sm bg-slate-200" /> Auto-closed by Guesty</span>
+        <span className="inline-flex items-center gap-1"><i className="inline-block w-3 h-3 rounded-sm bg-sky-100 border border-sky-200" /> Guest in</span>
+        <span>Each bar: Guesty label · dates · note. Hover for the whole block.</span>
         <span className="ml-auto">{shown.length} unit{shown.length === 1 ? '' : 's'} · {days.length} nights from {dNice(today)}</span>
       </div>
       <div className="overflow-x-auto">
-        <table className="border-collapse text-[11px]" style={{ minWidth: 180 + days.length * colW }}>
+        <table className="border-collapse text-[11px]" style={{ minWidth: 200 + days.length * colW }}>
           <thead>
             <tr>
-              <th className="sticky left-0 z-10 bg-white text-left px-3 py-1 font-semibold text-muted border-b border-line" style={{ minWidth: 180 }}>Unit</th>
-              {months.map((m, i) => <th key={i} colSpan={m.span} className="text-left px-1 py-1 font-semibold text-muted border-b border-l border-line">{m.label}</th>)}
+              <th className="sticky left-0 z-10 bg-white text-left px-3 py-1 font-semibold text-muted border-b border-line" style={{ minWidth: 200 }}>Unit</th>
+              {months.map((m, i) => <th key={i} colSpan={m.span} className="text-left px-1.5 py-1 font-semibold text-ink border-b border-l border-line">{m.label}</th>)}
             </tr>
             <tr>
               <th className="sticky left-0 z-10 bg-white border-b border-line" />
               {days.map((d, i) => {
-                const dow = new Date(d + 'T12:00:00').getDay()
-                return <th key={d} title={dNice(d)} className={'font-medium text-center border-b border-line ' + (dow === 0 || dow === 6 ? 'text-ink/70 bg-slate-50' : 'text-muted') + (i === 0 ? ' text-brand-700 font-bold' : '')} style={{ width: colW, minWidth: colW, padding: 0 }}>{colW >= 14 ? d.slice(8) : (dow === 1 ? d.slice(8) : '')}</th>
+                const dt = new Date(d + 'T12:00:00'), dow = dt.getDay()
+                return <th key={d} title={dNice(d)} className={'font-medium text-center border-b border-l border-line/60 ' + (dow === 0 || dow === 6 ? 'bg-slate-50 text-ink/70' : 'text-muted') + (i === 0 ? ' text-brand-700 font-bold' : '')} style={{ width: colW, minWidth: colW, padding: '2px 0' }}>
+                  <div className="text-[9.5px] uppercase">{dt.toLocaleDateString('en-US', { weekday: 'narrow' })}</div>
+                  <div>{d.slice(8)}</div>
+                </th>
               })}
             </tr>
           </thead>
           <tbody>
-            {shown.map(row => (
-              <tr key={row.listingId} className="group">
-                <td className="sticky left-0 z-10 bg-white group-hover:bg-slate-50 px-3 py-0.5 border-b border-line whitespace-nowrap" style={{ minWidth: 180 }}>
-                  <span className={'font-semibold ' + (liveIds.has(row.listingId) ? 'text-rose-700' : 'text-ink')}>{row.unit}</span>
-                  <span className="text-muted"> · {row.building}</span>
-                </td>
-                {days.map((d, i) => (
-                  <td key={d} title={cellTitle(row, i)} className={'border-b border-line p-0 ' + (i === 0 ? 'border-l-2 border-l-brand-400 ' : '')} style={{ width: colW, minWidth: colW, height: 22 }}>
-                    <div className={'h-full w-full ' + cellClass(row.cells[i] || '?')} style={{ height: 22, opacity: row.cells[i] === 'B' || row.cells[i] === 'L' || row.cells[i] === 'R' ? 1 : 0.9 }} />
+            {shown.map(row => {
+              const segs = segmentsOf(row, days, byId.get(row.listingId) || [])
+              return (
+                <tr key={row.listingId} className="group">
+                  <td className="sticky left-0 z-10 bg-white group-hover:bg-slate-50 px-3 py-0.5 border-b border-line whitespace-nowrap align-middle" style={{ minWidth: 200 }}>
+                    <div className={'font-semibold text-[12px] ' + (liveIds.has(row.listingId) ? 'text-rose-700' : 'text-ink')}>{row.unit}</div>
+                    <div className="text-[10.5px] text-muted">{row.building}{row.market ? ' · ' + row.market : ''}</div>
                   </td>
-                ))}
-              </tr>
-            ))}
+                  <td colSpan={days.length} className="border-b border-line p-0 align-middle" style={{ height: 40 }}>
+                    <div className="flex items-stretch h-[36px] my-[2px]" style={{ backgroundImage: 'repeating-linear-gradient(90deg, rgba(0,0,0,.06) 0 1px, transparent 1px ' + colW + 'px)' }}>
+                      {segs.map(seg => <div key={seg.start} title={barTitle(seg)} className="shrink-0 px-[1px]" style={{ width: seg.len * colW }}>{bar(seg)}</div>)}
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
