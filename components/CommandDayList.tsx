@@ -188,12 +188,13 @@ export function CommandDayList() {
   return (
     <div className="max-w-[1120px] mx-auto space-y-5">
       <DayLine d={data} loading={loading} reload={reload} roster={roster} vendorsOnSite={vendorsOnSite} />
+      {/* THE BULLETIN BOARD (Jon, 2026-10-06) — replaced the week Scoreboard strip: Did you know stats,
+          Have to, and what leaders post (Employee of the month, quote, shout-outs, 5★ reviews). At the TOP,
+          under the day line — below the Hub it sat ~2,250px down and Jon couldn't find it. */}
+      <BulletinBoard d={data} />
       {/* THE OPERATIONAL HUB (Jon, 2026-09-30): KPIs by area, the Now list, four lanes side by side —
           every row actionable in place, no drop-downs. components/command/Hub.tsx. */}
       <CommandHub d={data} live={live} roster={roster} fixRows={fixRows} claims={claims} links={links} approvals={approvals} onCleared={hide} onChanged={reload} />
-      {/* THE BULLETIN BOARD (Jon, 2026-10-06) — replaced the week Scoreboard strip: Did you know stats,
-          Have to, and what leaders post (Employee of the month, quote, shout-outs, 5★ reviews). */}
-      <BulletinBoard d={data} />
       {/* Eve's questions, plans and drafts, and Slack posts waiting to send — the calls only a person makes. */}
       <DecideBand d={data} claims={[]} links={[]} approvals={[]} onCleared={hide} onChanged={reload} />
       <ClearBand d={data} dups={dups} vendorNotes={vendorNotes} backlog={backlog} onCleared={hide} onChanged={reload} />
