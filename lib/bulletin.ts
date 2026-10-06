@@ -41,6 +41,8 @@ export type Post = {
   doneAt?: string | null   // reminders ticked done
   doneBy?: string | null
   review?: ReviewRef | null
+  /** photos on the post (public URLs from the uploader), up to MAX_PHOTOS */
+  photos?: string[]
   reactions?: Record<string, string[]>   // emoji → emails
   replies?: Reply[]
 }
@@ -49,6 +51,13 @@ export type Board = { posts: Post[]; birthdays?: Record<string, string> }
 
 export const MAX_POSTS = 120
 export const MAX_REPLIES = 40
+export const MAX_PHOTOS = 4
+/** Only https URLs, deduped, at most MAX_PHOTOS. */
+export function cleanPhotos(v: any): string[] {
+  const out: string[] = []
+  for (const u of Array.isArray(v) ? v : []) { const s = String(u || '').trim(); if (/^https:\/\/\S+$/.test(s) && s.length < 600 && !out.includes(s)) out.push(s) }
+  return out.slice(0, MAX_PHOTOS)
+}
 
 const pad = (n: number) => String(n).padStart(2, '0')
 /** Today in Miami, YYYY-MM-DD. */
@@ -136,14 +145,15 @@ export function makePost(input: any, author: { name: string; email: string }, to
   } : null
   const title = clip(input?.title, 120) || (review ? review.unit : '')
   const body = String(input?.body || '').trim().slice(0, 1500)
-  if (!title && !body && !review) return null
+  const photos = cleanPhotos(input?.photos)
+  if (!title && !body && !review && !photos.length) return null
   const exp = input?.expires === null ? null : ymd(input?.expires) || defaultExpiry(kind, today)
   return {
     id, kind, title, body, by: clip(author.name, 60) || 'A leader', byEmail: author.email, at: nowIso,
     pinned: !!input?.pinned, expires: exp,
     due: kind === 'reminder' ? ymd(input?.due) : null,
     owner: kind === 'reminder' ? clip(input?.owner, 60) || null : null,
-    review, reactions: {}, replies: [],
+    review, photos, reactions: {}, replies: [],
   }
 }
 
@@ -153,6 +163,7 @@ export function editPost(p: Post, input: any): Post {
   if (input?.title != null) out.title = clip(input.title, 120)
   if (input?.body != null) out.body = String(input.body).trim().slice(0, 1500)
   if (input?.pinned != null) out.pinned = !!input.pinned
+  if (input?.photos !== undefined) out.photos = cleanPhotos(input.photos)
   if (input?.expires !== undefined) out.expires = input.expires === null ? null : ymd(input.expires) || out.expires
   if (p.kind === 'reminder') {
     if (input?.due !== undefined) out.due = ymd(input.due)

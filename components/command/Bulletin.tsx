@@ -19,13 +19,13 @@
 // /api/eve/review (plans), the day already loaded (d.tiles).
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { Plus, Trash2, X, Check, Loader2, ChevronLeft, ChevronRight, Pin } from 'lucide-react'
+import { Plus, Trash2, X, Check, Loader2, ChevronLeft, ChevronRight, Pin, ImagePlus } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { SCOREBOARD_URL } from '@/components/command/Scoreboard'
 import { useHealth } from '@/components/command/health-bus'
 import type { OpsHealth } from '@/lib/ops-health'
 import type { CommandDay } from '@/lib/command-day'
-import { KINDS, REACTIONS, dueState, type Post, type PostKind, type ReviewRef } from '@/lib/bulletin'
+import { KINDS, REACTIONS, MAX_PHOTOS, dueState, type Post, type PostKind, type ReviewRef } from '@/lib/bulletin'
 
 export const BULLETIN_URL = '/api/command/bulletin'
 const STATS_URL = '/api/command/bulletin/stats'
@@ -46,6 +46,28 @@ async function send(body: any): Promise<BoardRes> {
   return j
 }
 const shortDay = (ymd?: string | null) => { if (!ymd) return ''; try { return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(ymd + 'T12:00:00Z')) } catch { return ymd } }
+/** Shrink a phone photo in the browser (longest side 1600px, JPEG) so big iPhone shots and HEICs
+ *  upload under the request limit, then store it through the app's uploader. null = it failed. */
+async function uploadPhoto(file: File): Promise<string | null> {
+  let blob: Blob = file
+  try {
+    const url = URL.createObjectURL(file)
+    const img = await new Promise<HTMLImageElement>((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = url })
+    const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight))
+    const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k)
+    c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height)
+    URL.revokeObjectURL(url)
+    const out = await new Promise<Blob | null>(ok => c.toBlob(ok, 'image/jpeg', 0.85))
+    if (out) blob = out
+  } catch { /* the browser couldn't read it — send the original and let the server decide */ }
+  const fd = new FormData()
+  fd.append('file', new File([blob], (file.name || 'photo').replace(/\.[^.]+$/, '') + '.jpg', { type: blob.type || file.type }))
+  try {
+    const r = await fetch('/api/guidebook/upload', { method: 'POST', body: fd })
+    const j = await r.json().catch(() => ({}))
+    return j?.ok && j?.url ? String(j.url) : null
+  } catch { return null }
+}
 const cap = (s: string) => s ? s[0].toUpperCase() + s.slice(1) : s
 
 export function BulletinBoard({ d }: { d: CommandDay }) {
@@ -265,7 +287,41 @@ function StatsSlide({ facts }: { facts: Fact[] }) {
   )
 }
 
-function PostSlide({ p, me, canPost, act }: { p: Post; me: string; canPost: boolean; act: (b: any) => Promise<void> }) {
+// A post with photos: the photos on the left (they cross-fade every few seconds when there are
+// several — nothing on the board sits still), the words on the right. Tap a photo to open it full size.
+function PostSlide(props: { p: Post; me: string; canPost: boolean; act: (b: any) => Promise<void> }) {
+  const ph = props.p.photos || []
+  if (!ph.length) return <PostBody {...props} />
+  return (
+    <div className="flex flex-col sm:flex-row gap-4 sm:items-center">
+      <PhotoCycler photos={ph} />
+      <div className="flex-1 min-w-0"><PostBody {...props} /></div>
+    </div>
+  )
+}
+function PhotoCycler({ photos }: { photos: string[] }) {
+  const [i, setI] = useState(0)
+  useEffect(() => {
+    if (photos.length < 2) return
+    const t = setInterval(() => setI(x => (x + 1) % photos.length), 3000)
+    return () => clearInterval(t)
+  }, [photos.length])
+  return (
+    <a href={photos[i]} target="_blank" rel="noreferrer" className="relative block shrink-0 w-full sm:w-[210px] h-[150px] sm:h-[132px] rounded-xl overflow-hidden bg-slate-100" aria-label="Open photo">
+      {photos.map((u, k) => (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img key={u} src={u} alt="" loading="lazy" className={'absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ' + (k === i ? 'opacity-100' : 'opacity-0')} />
+      ))}
+      {photos.length > 1 && (
+        <span className="absolute bottom-1.5 left-1/2 -translate-x-1/2 flex gap-1">
+          {photos.map((u, k) => <span key={u} className={'h-1 rounded-full ' + (k === i ? 'w-3 bg-white' : 'w-1 bg-white/60')} />)}
+        </span>
+      )}
+    </a>
+  )
+}
+
+function PostBody({ p, me, canPost, act }: { p: Post; me: string; canPost: boolean; act: (b: any) => Promise<void> }) {
   const reactions = (
     <div className="flex items-center gap-1 mt-2">
       {REACTIONS.map(e => {
@@ -359,8 +415,20 @@ function Composer({ data, initial, onClose, onPost, onAct }: { data: BoardRes; i
   const [busy, setBusy] = useState(false)
   const person = kind === 'eotm' || kind === 'shoutout'
   const field = 'w-full text-[13px] rounded-lg border border-line px-2.5 py-1.5 bg-white focus:outline-none focus:border-ink/40'
-  const ok = kind === 'review' ? !!review : !!(title.trim() || body.trim())
-  const submit = async () => { setBusy(true); try { await onPost({ kind, title, body, due: due || null, owner: owner || null, pinned, review }) } finally { setBusy(false) } }
+  const [photos, setPhotos] = useState<string[]>([])
+  const [up, setUp] = useState(false)
+  const [upErr, setUpErr] = useState('')
+  const addPhotos = async (files: FileList | null) => {
+    if (!files || !files.length) return
+    setUp(true); setUpErr('')
+    const got: string[] = []
+    for (const f of Array.from(files).slice(0, MAX_PHOTOS - photos.length)) { const u = await uploadPhoto(f); if (u) got.push(u) }
+    setPhotos(x => x.concat(got).slice(0, MAX_PHOTOS))
+    if (got.length < Math.min(files.length, MAX_PHOTOS - photos.length)) setUpErr('A photo did not upload. Try a JPG or PNG.')
+    setUp(false)
+  }
+  const ok = kind === 'review' ? !!review : !!(title.trim() || body.trim() || photos.length)
+  const submit = async () => { setBusy(true); try { await onPost({ kind, title, body, due: due || null, owner: owner || null, pinned, review, photos }) } finally { setBusy(false) } }
   const titleLabel = person ? 'Who' : kind === 'quote' ? 'Who said it (optional)' : kind === 'reminder' ? 'What has to get done' : kind === 'review' ? 'Headline (optional)' : 'Headline'
   const bodyLabel = kind === 'eotm' ? 'Why they earned it' : kind === 'shoutout' ? 'What they did' : kind === 'quote' ? 'The quote' : kind === 'reminder' ? 'Details (optional)' : kind === 'review' ? 'Your note (optional)' : 'Details'
   const life = kind === 'quote' ? 'Up today only.' : kind === 'eotm' ? 'Up until the end of the month.' : kind === 'reminder' ? 'Shows under Have to until ticked done.' : kind === 'review' ? 'Up for two weeks.' : 'Up for a week.'
@@ -422,6 +490,25 @@ function Composer({ data, initial, onClose, onPost, onAct }: { data: BoardRes; i
         )}
       </div>
       {kind === 'reminder' && <label className="block"><span className="text-[11.5px] text-muted">{bodyLabel}</span><input value={body} onChange={e => setBody(e.target.value)} className={field} /></label>}
+      {kind !== 'reminder' && (
+        <div className="flex flex-wrap items-center gap-2">
+          {photos.map((u, i) => (
+            <span key={u} className="relative w-16 h-12 rounded-lg overflow-hidden bg-slate-100">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={u} alt="" className="w-full h-full object-cover" />
+              <button onClick={() => setPhotos(x => x.filter((_, k) => k !== i))} aria-label="Remove photo" className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white flex items-center justify-center"><X size={10} /></button>
+            </span>
+          ))}
+          {photos.length < MAX_PHOTOS && (
+            <label className={'inline-flex items-center gap-1.5 rounded-lg border border-dashed border-line px-2.5 h-8 text-[12px] font-medium text-ink cursor-pointer hover:border-ink/40 ' + (up ? 'opacity-60 pointer-events-none' : '')}>
+              {up ? <Loader2 size={12} className="animate-spin" /> : <ImagePlus size={13} />} {up ? 'Uploading…' : photos.length ? 'Add more' : 'Add photos'}
+              <input type="file" accept="image/*" multiple className="hidden" onChange={e => { addPhotos(e.target.files); e.target.value = '' }} />
+            </label>
+          )}
+          <span className="text-[11.5px] text-muted">Up to {MAX_PHOTOS}. They rotate on the slide.</span>
+          {upErr && <span className="text-[11.5px] text-rose-700">{upErr}</span>}
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <label className="text-[12px] text-ink inline-flex items-center gap-1.5"><input type="checkbox" checked={pinned} onChange={e => setPinned(e.target.checked)} /> Show first</label>
         <span className="text-[12px] text-muted flex-1">{life}</span>
