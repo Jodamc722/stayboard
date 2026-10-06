@@ -635,6 +635,25 @@ export async function syncConversations(): Promise<number> {
   return rows.length
 }
 
+/** THE INBOX LIST, LIVE (lib/inbox-live): Guesty's newest threads mapped to our rows, not stored. */
+export async function pullConversationsLive(limit = 50): Promise<ReturnType<typeof mapConversation>[]> {
+  let data: any = null, lastErr: any = null
+  for (const lim of [limit, 25]) {
+    try { data = await api<any>(`/communication/conversations?limit=${lim}&sort=-lastMessageAt`); lastErr = null; break }
+    catch (e: any) { lastErr = e }
+  }
+  if (lastErr) throw lastErr
+  const list: any[] =
+    Array.isArray(data) ? data
+    : Array.isArray(data?.results) ? data.results
+    : Array.isArray(data?.data) ? data.data
+    : Array.isArray(data?.data?.conversations) ? data.data.conversations
+    : Array.isArray(data?.conversations) ? data.conversations
+    : Array.isArray(data?.data?.results) ? data.data.results
+    : []
+  return list.map(mapConversation).filter(r => r.id)
+}
+
 export async function syncMessages(conversationId: string): Promise<number> {
   const sb = supabaseAdmin()
   const data = await api<any>(

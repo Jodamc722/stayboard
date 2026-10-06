@@ -45,12 +45,14 @@ type TabKey = 'inbox' | 'reply' | 'sentiment'
 /** How a row identifies itself to the unified inbox: 'g:<conversation id>' or 'p:<digits>'. */
 export const itemKey = (it: InboxItem) => it.kind === 'phone' ? 'p:' + it.t.number : 'g:' + it.c.id
 
-export function MessagesInbox({ items, unitById, waiting, lastResponderById, now: serverNow, onOpen, selected, embedded }: {
+export function MessagesInbox({ items, unitById, waiting, lastResponderById, now: serverNow, onOpen, selected, embedded, moved }: {
   items: InboxItem[]; unitById: Record<string, string>; waiting: Record<string, WaitInfo>; lastResponderById: Record<string, string>; now: number
   /** UNIFIED INBOX (2026-10-01): when given, a row opens in the pane beside the list instead of navigating. */
   onOpen?: (key: string) => void
   selected?: string | null
   embedded?: boolean
+  /** LIVE (2026-10-06): threads that moved on the last pull from Guesty — they flash for a few seconds. */
+  moved?: Set<string>
 }) {
   const [tab, setTab] = useState<TabKey>('inbox')
   // WHAT TO SHOW (Jon, 2026-09-30: the inbox was a wall of "Outbound call · no answer"). Guest
@@ -63,6 +65,7 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
   // "Reply by" to "Late" on its own.
   const [now, setNow] = useState(serverNow)
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(t) }, [])
+  useEffect(() => { setNow(serverNow) }, [serverNow])
   const sentById = useMemo(() => {
     const m: Record<string, SentimentRow> = {}
     sent.rows.forEach(r => { m[r.id] = r })
@@ -131,9 +134,9 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
         ) : (
           <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 overflow-hidden">
             {shown.map(it => it.kind === 'phone'
-              ? <PhoneLine key={'p' + it.t.number} t={it.t} unit={unitById[it.t.listingId] || ''} onOpen={onOpen ? () => onOpen(itemKey(it)) : undefined} active={selected === itemKey(it)} />
+              ? <PhoneLine key={'p' + it.t.number} t={it.t} unit={unitById[it.t.listingId] || ''} onOpen={onOpen ? () => onOpen(itemKey(it)) : undefined} active={selected === itemKey(it)} flash={!!moved?.has(itemKey(it))} />
               : <ConvoLine key={it.c.id} c={it.c} unit={it.c.listing_id ? unitById[it.c.listing_id] || '' : ''}
-                  wait={waiting[it.c.id]} now={now} lastBy={lastResponderById[it.c.id] || ''} sentiment={sentById[it.c.id]} onOpen={onOpen ? () => onOpen(itemKey(it)) : undefined} active={selected === itemKey(it)} />)}
+                  wait={waiting[it.c.id]} now={now} lastBy={lastResponderById[it.c.id] || ''} sentiment={sentById[it.c.id]} onOpen={onOpen ? () => onOpen(itemKey(it)) : undefined} active={selected === itemKey(it)} flash={!!moved?.has(itemKey(it))} />)}
           </ul>
         )
       )}
@@ -147,14 +150,14 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
  * ("Guest", a teammate's name, "Auto" for a Guesty template, "Note"), so the list reads as a
  * conversation instead of a column of unattributed text.
  */
-function Line({ href, name, unit, tags, who, whoTone, preview, bold, at, urgent, onOpen, active }: {
+function Line({ href, name, unit, tags, who, whoTone, preview, bold, at, urgent, onOpen, active, flash }: {
   href: string; name: string; unit: string; tags: ReactNode; who: string; whoTone: 'guest' | 'team' | 'auto' | 'note'; preview: string; bold: boolean; at: string | null
   /** Waiting on us: a red bar down the left edge of the row (Jon, 2026-10-01). */
-  urgent?: boolean; onOpen?: () => void; active?: boolean
+  urgent?: boolean; onOpen?: () => void; active?: boolean; flash?: boolean
 }) {
   const whoCls = whoTone === 'guest' ? 'text-sky-700' : whoTone === 'team' ? 'text-emerald-700' : 'text-slate-500'
   return (
-    <li className={'relative ' + (active ? 'bg-brand-50/70' : '')}>
+    <li className={'relative transition-colors duration-700 ' + (active ? 'bg-brand-50/70' : flash ? 'bg-amber-50' : '')}>
       {urgent && <span aria-hidden className="absolute left-0 top-0 bottom-0 w-1 bg-rose-500" />}
       {bold && !urgent && <span aria-hidden className="absolute left-0 top-0 bottom-0 w-1 bg-brand-500" />}
       <Link href={href} onClick={onOpen ? (e) => { e.preventDefault(); onOpen() } : undefined} aria-current={active ? 'true' : undefined}
@@ -163,6 +166,7 @@ function Line({ href, name, unit, tags, who, whoTone, preview, bold, at, urgent,
           <span className={'text-[13.5px] text-ink truncate max-w-[16rem] ' + (bold ? 'font-bold' : 'font-semibold')}>{name}</span>
           {unit && <span className="text-[12px] text-ink/70 shrink-0" title="Unit">{unit}</span>}
           {tags}
+          {flash && <Tag tone="amber" title="Moved on the last pull from Guesty">New</Tag>}
           <span className="ml-auto text-[11.5px] text-muted shrink-0 tabular-nums" title={at ? etFull(at) : ''} suppressHydrationWarning>{at ? clock(at) : ''}</span>
         </div>
         <div className="mt-0.5 flex items-baseline gap-1.5 min-w-0">
@@ -190,7 +194,7 @@ function StayTag({ stay, now }: { stay?: StayInfo | null; now: number }) {
   return <Tag title={range}>Stayed {range}</Tag>
 }
 
-function ConvoLine({ c, unit, wait, now, lastBy, sentiment, onOpen, active }: { c: InboxConvo; unit: string; wait?: WaitInfo; now: number; lastBy: string; sentiment?: SentimentRow; onOpen?: () => void; active?: boolean }) {
+function ConvoLine({ c, unit, wait, now, lastBy, sentiment, onOpen, active, flash }: { c: InboxConvo; unit: string; wait?: WaitInfo; now: number; lastBy: string; sentiment?: SentimentRow; onOpen?: () => void; active?: boolean; flash?: boolean }) {
   const unread = c.unread_count || 0
   const bad = sentiment && (sentiment.mood ? (sentiment.mood === 'sensitive' || sentiment.mood === 'frustrated' || sentiment.mood === 'happy') : (sentiment.dissatisfied || sentiment.band === 'negative'))
   const mu = sentiment ? moodUi(sentiment) : null
@@ -199,7 +203,7 @@ function ConvoLine({ c, unit, wait, now, lastBy, sentiment, onOpen, active }: { 
   const who = !l ? (wait ? guest.split(' ')[0] : (lastBy || 'Last')) : l.who === 'guest' ? guest.split(' ')[0] : l.who === 'auto' ? 'Auto' : l.who === 'note' ? 'Note' : (l.name ? l.name.split(' ')[0] : 'Team')
   const tone: 'guest' | 'team' | 'auto' | 'note' = !l ? (wait ? 'guest' : 'team') : l.who
   return (
-    <Line href={`/messages/${c.id}`} name={guest} unit={unit} urgent={!!wait} onOpen={onOpen} active={active}
+    <Line href={`/messages/${c.id}`} name={guest} unit={unit} urgent={!!wait} onOpen={onOpen} active={active} flash={flash}
       who={who} whoTone={tone}
       preview={l?.text || c.last_message_preview || ''} bold={unread > 0 || !!wait}
       at={c.last_message_at}
@@ -214,7 +218,7 @@ function ConvoLine({ c, unit, wait, now, lastBy, sentiment, onOpen, active }: { 
   )
 }
 
-function PhoneLine({ t, unit, onOpen, active }: { t: PhoneThreadSummary; unit: string; onOpen?: () => void; active?: boolean }) {
+function PhoneLine({ t, unit, onOpen, active, flash }: { t: PhoneThreadSummary; unit: string; onOpen?: () => void; active?: boolean; flash?: boolean }) {
   const Icon = t.lastKind === 'voicemail' ? Voicemail : t.lastKind === 'call' ? (t.awaiting ? PhoneMissed : PhoneCall) : MessageSquare
   const label = t.lastKind === 'voicemail' ? 'Voicemail' : t.lastKind === 'call' ? 'Call' : 'SMS'
   const counts = [
@@ -223,7 +227,7 @@ function PhoneLine({ t, unit, onOpen, active }: { t: PhoneThreadSummary; unit: s
     t.counts.calls ? `${t.counts.calls} call${t.counts.calls === 1 ? '' : 's'}` : '',
   ].filter(Boolean).join(' · ')
   return (
-    <Line href={`/messages/phone/${t.number}`} name={t.guestName || t.display} unit={unit} urgent={t.awaiting} onOpen={onOpen} active={active}
+    <Line href={`/messages/phone/${t.number}`} name={t.guestName || t.display} unit={unit} urgent={t.awaiting} onOpen={onOpen} active={active} flash={flash}
       who={t.lastKind === 'call' ? 'Call' : t.lastKind === 'voicemail' ? 'Voicemail' : (t.awaiting ? (t.guestName ? t.guestName.split(' ')[0] : 'Guest') : 'Text')} whoTone={t.awaiting ? 'guest' : 'note'}
       preview={t.preview || ''} bold={t.unread || t.awaiting}
       at={t.lastAt || null}

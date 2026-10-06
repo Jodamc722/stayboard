@@ -11,7 +11,7 @@
 // (?open=g:<id> | p:<digits>) so a link lands on the right conversation; nothing is opened by default
 // except, on a wide screen, the first thread waiting on a reply. On a phone the list and the thread
 // take turns.
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, ExternalLink, Loader2, MessageSquare, Phone, CalendarDays, Moon, BadgeDollarSign, Inbox as InboxIcon } from 'lucide-react'
@@ -28,7 +28,7 @@ const fmtDay = (s?: string | null) => { if (!s) return '—'; const d = new Date
 const phoneFmt = (p?: string | null) => { const d = String(p || '').replace(/\D/g, ''); const n = d.length === 11 && d.startsWith('1') ? d.slice(1) : d; return n.length === 10 ? `(${n.slice(0, 3)}) ${n.slice(3, 6)}-${n.slice(6)}` : (p || '') }
 const money = (n?: number | null, cur?: string | null) => n == null ? null : new Intl.NumberFormat('en-US', { style: 'currency', currency: cur || 'USD', maximumFractionDigits: 0 }).format(n)
 
-export function UnifiedInbox(props: { items: InboxItem[]; unitById: Record<string, string>; waiting: Record<string, WaitInfo>; lastResponderById: Record<string, string>; now: number }) {
+export function UnifiedInbox(props: { items: InboxItem[]; unitById: Record<string, string>; waiting: Record<string, WaitInfo>; lastResponderById: Record<string, string>; now: number; moved?: Set<string> }) {
   const router = useRouter()
   const sp = useSearchParams()
   const open = sp.get('open') || ''
@@ -52,14 +52,30 @@ export function UnifiedInbox(props: { items: InboxItem[]; unitById: Record<strin
     if (first) select(itemKey(first))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // THE OPEN THREAD IS LIVE (Jon, 2026-10-06). It opens from our copy at once, then asks Guesty for
+  // the thread's posts (?live=1) and swaps them in; while it stays open it asks again every 20s and
+  // whenever the list says this thread moved. The reply box keeps its text — only the messages change.
+  const [liveAt, setLiveAt] = useState<string | null>(null)
+  const [liveErr, setLiveErr] = useState('')
+  const loadThread = useCallback((key: string, live: boolean, quiet: boolean) => {
+    const q = key.startsWith('p:') ? 'phone=' + encodeURIComponent(key.slice(2)) : 'id=' + encodeURIComponent(key.slice(2)) + (live ? '&live=1' : '')
+    if (!quiet) { setLoading(true); setErr('') }
+    return fetch('/api/messages/thread?' + q, { cache: 'no-store' }).then(r => r.json()).then(j => {
+      if (openRef.current !== key) return
+      if (j?.ok) { setThread(j.thread); if (live) { setLiveAt(j.at || new Date().toISOString()); setLiveErr(j.live?.error || '') } }
+      else if (!quiet) setErr(j?.error || 'Could not open that thread.')
+    }).catch(e => { if (!quiet && openRef.current === key) setErr(String(e?.message || e)) }).finally(() => { if (!quiet && openRef.current === key) setLoading(false) })
+  }, [])
+  const openRef = useRef(open)
+  openRef.current = open
   useEffect(() => {
     if (!open) { setThread(null); return }
-    let alive = true
-    setLoading(true); setErr('')
-    const q = open.startsWith('p:') ? 'phone=' + encodeURIComponent(open.slice(2)) : 'id=' + encodeURIComponent(open.slice(2))
-    fetch('/api/messages/thread?' + q, { cache: 'no-store' }).then(r => r.json()).then(j => { if (!alive) return; if (j?.ok) setThread(j.thread); else setErr(j?.error || 'Could not open that thread.') }).catch(e => alive && setErr(String(e?.message || e))).finally(() => alive && setLoading(false))
-    return () => { alive = false }
-  }, [open])
+    setThread(null); setLiveAt(null); setLiveErr('')
+    loadThread(open, false, false).then(() => loadThread(open, true, true))
+    const t = setInterval(() => { if (document.visibilityState === 'visible') loadThread(open, true, true) }, 20_000)
+    return () => clearInterval(t)
+  }, [open, loadThread])
+  useEffect(() => { if (open && props.moved?.has(open)) loadThread(open, true, true) }, [props.moved, open, loadThread])
 
   const selectedItem = useMemo(() => props.items.find(it => itemKey(it) === open) || null, [props.items, open])
 
@@ -67,7 +83,7 @@ export function UnifiedInbox(props: { items: InboxItem[]; unitById: Record<strin
     <div className="grid gap-3 lg:grid-cols-[minmax(320px,380px)_minmax(0,1fr)] 2xl:grid-cols-[minmax(340px,400px)_minmax(0,1fr)_minmax(300px,340px)] items-start">
       {/* LEFT — the list. On a phone it hides while a thread is open. */}
       <aside className={'min-w-0 lg:sticky lg:top-3 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1 ' + (open ? 'hidden lg:block' : '')}>
-        <MessagesInbox {...props} onOpen={select} selected={open} embedded />
+        <MessagesInbox {...props} onOpen={select} selected={open} embedded moved={props.moved} />
       </aside>
 
       {/* MIDDLE — the thread. */}
@@ -84,6 +100,12 @@ export function UnifiedInbox(props: { items: InboxItem[]; unitById: Record<strin
             <button onClick={() => select('')} className="lg:hidden inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink"><ArrowLeft size={15} /> All conversations</button>
             {loading && !thread && <div className="rounded-2xl border border-line bg-white px-5 py-10 text-center text-[13px] text-muted inline-flex items-center gap-2 w-full justify-center"><Loader2 size={14} className="animate-spin" /> Opening the thread…</div>}
             {err && <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-800">{err}</div>}
+            {thread && thread.kind === 'guesty' && (
+              <p className="text-[11px] text-muted -mb-1 flex items-center gap-1.5" title="This thread is re-read from Guesty every 20 seconds while it is open">
+                <span className={'inline-block w-1.5 h-1.5 rounded-full ' + (liveErr ? 'bg-amber-500' : liveAt ? 'bg-emerald-500' : 'bg-slate-300')} />
+                {liveErr ? 'Showing our copy — Guesty did not answer (' + liveErr + ')' : liveAt ? 'Live from Guesty · ' + new Date(liveAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', timeZone: 'America/New_York' }) : 'Our copy · asking Guesty…'}
+              </p>
+            )}
             {thread && thread.kind === 'guesty' && (
               <MessageThread key={thread.conversationId} conversationId={thread.conversationId} channel={thread.channel} guest={thread.guest} unit={thread.unit}
                 initialMessages={thread.messages as any} reservation={thread.reservation as any} guestyUrl={thread.guestyUrl} canReply={thread.canReply} />

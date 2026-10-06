@@ -24,7 +24,11 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
   const [sent, setSent] = useState<Msg[]>([])
   const [replyOpen, setReplyOpen] = useState(false)
   const [hideAuto, setHideAuto] = useState(false)
-  const messages = initialMessages.concat(sent)
+  // LIVE (2026-10-06): the thread is re-read from Guesty while open, so a reply sent from here comes
+  // back as the real post. The local copy steps aside once Guesty has it, rather than showing twice.
+  const norm = (t: string | null | undefined) => plainText(t || '').replace(/\s+/g, ' ').trim()
+  const pending = sent.filter(x => !initialMessages.some(m => m.sender !== 'guest' && norm(m.body) === norm(x.body)))
+  const messages = initialMessages.concat(pending)
   // Open at the newest message, like any inbox.
   const scroller = useRef<HTMLDivElement | null>(null)
   useEffect(() => { const el = scroller.current; if (el) el.scrollTop = el.scrollHeight }, [messages.length])
@@ -172,6 +176,18 @@ const isAuto = (m: Msg) => m.is_automated === true || isMachineName(m.sender_nam
 
 function Bubble({ m, guest }: { m: Msg; guest: string }) {
   const [open, setOpen] = useState(false)
+  // RAW (Jon, 2026-10-06: "more real raw data"): the post exactly as Guesty returned it, on demand.
+  const [raw, setRaw] = useState<any>(null)
+  const [rawOpen, setRawOpen] = useState(false)
+  const showRaw = async () => {
+    if (rawOpen) { setRawOpen(false); return }
+    setRawOpen(true)
+    if (raw) return
+    try { const r = await fetch('/api/messages/raw?id=' + encodeURIComponent(m.id), { cache: 'no-store' }); const j = await r.json(); setRaw(j.ok ? j.message : { error: j.error || 'not found' }) }
+    catch (e: any) { setRaw({ error: String(e?.message || e) }) }
+  }
+  const local = /^(sent|eve)-/.test(m.id)
+  const exact = m.sent_at ? new Date(m.sent_at).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' }) + ' ET' : ''
   const g = m.sender === 'guest'
   if (m.sender === 'system') return <div className="text-center text-[11px] text-muted italic px-6">{m.sender_name && m.sender_name !== 'System' ? m.sender_name + ': ' : ''}{plainText(m.body)} · {timeOf(m.sent_at)}</div>
   const auto = !g && isAuto(m)
@@ -190,10 +206,15 @@ function Bubble({ m, guest }: { m: Msg; guest: string }) {
           <span className="font-bold">{name}</span>
           <span className="opacity-80">· {role}</span>
           {ch ? <span className="opacity-80">· via {ch}</span> : null}
-          <span className="opacity-80">· {timeOf(m.sent_at)}</span>
+          <span className="opacity-80" title={exact}>· {timeOf(m.sent_at)}</span>
+          {local ? <span className="opacity-80" title="Sent from Lighthouse; replaced by Guesty's own copy on the next live read">· sending…</span>
+            : <button onClick={showRaw} className="opacity-60 hover:opacity-100 font-mono" title="Show this post exactly as Guesty returned it">{rawOpen ? 'hide raw' : 'raw'}</button>}
         </div>
         <div className="whitespace-pre-wrap leading-relaxed break-words">{body}</div>
         {long ? <button onClick={() => setOpen(o => !o)} className={`mt-0.5 text-[11px] font-semibold ${meta} hover:underline`}>{open ? 'Show less' : 'Show all'}</button> : null}
+        {rawOpen ? (
+          <pre className="mt-1.5 max-h-72 overflow-auto rounded-lg bg-slate-900 text-slate-100 text-[10.5px] leading-snug p-2 whitespace-pre-wrap break-all">{raw ? JSON.stringify(raw, null, 2) : 'Loading…'}</pre>
+        ) : null}
       </div>
     </div>
   )
