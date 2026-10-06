@@ -43,6 +43,8 @@ export type Post = {
   review?: ReviewRef | null
   /** photos on the post (public URLs from the uploader), up to MAX_PHOTOS */
   photos?: string[]
+  /** how each photo sits in the slide's frame, same order as photos */
+  frames?: Frame[]
   reactions?: Record<string, string[]>   // emoji → emails
   replies?: Reply[]
 }
@@ -52,6 +54,20 @@ export type Board = { posts: Post[]; birthdays?: Record<string, string> }
 export const MAX_POSTS = 120
 export const MAX_REPLIES = 40
 export const MAX_PHOTOS = 4
+/** PHOTO FRAMING (Jon, 2026-10-06: "need to be able to be cropped or fitted better").
+ *  fill = crop to fill the box, positioned at x/y % and zoomed z×; fit = the whole photo, letterboxed
+ *  over a blurred copy of itself. */
+export type Frame = { fit: 'fill' | 'fit'; x: number; y: number; z: number }
+export const DEFAULT_FRAME: Frame = { fit: 'fill', x: 50, y: 50, z: 1 }
+export function cleanFrame(v: any): Frame {
+  const n = (x: any, lo: number, hi: number, d: number) => { const k = Number(x); return Number.isFinite(k) ? Math.max(lo, Math.min(hi, Math.round(k * 100) / 100)) : d }
+  return { fit: v?.fit === 'fit' ? 'fit' : 'fill', x: n(v?.x, 0, 100, 50), y: n(v?.y, 0, 100, 50), z: n(v?.z, 1, 3, 1) }
+}
+/** One frame per photo (missing ones get the default). */
+export function cleanFrames(v: any, count: number): Frame[] {
+  const a = Array.isArray(v) ? v : []
+  return Array.from({ length: count }, (_, i) => cleanFrame(a[i]))
+}
 /** Only https URLs, deduped, at most MAX_PHOTOS. */
 export function cleanPhotos(v: any): string[] {
   const out: string[] = []
@@ -153,7 +169,7 @@ export function makePost(input: any, author: { name: string; email: string }, to
     pinned: !!input?.pinned, expires: exp,
     due: kind === 'reminder' ? ymd(input?.due) : null,
     owner: kind === 'reminder' ? clip(input?.owner, 60) || null : null,
-    review, photos, reactions: {}, replies: [],
+    review, photos, frames: cleanFrames(input?.frames, photos.length), reactions: {}, replies: [],
   }
 }
 
@@ -164,6 +180,7 @@ export function editPost(p: Post, input: any): Post {
   if (input?.body != null) out.body = String(input.body).trim().slice(0, 1500)
   if (input?.pinned != null) out.pinned = !!input.pinned
   if (input?.photos !== undefined) out.photos = cleanPhotos(input.photos)
+  if (input?.photos !== undefined || input?.frames !== undefined) out.frames = cleanFrames(input?.frames !== undefined ? input.frames : out.frames, (out.photos || []).length)
   if (input?.expires !== undefined) out.expires = input.expires === null ? null : ymd(input.expires) || out.expires
   if (p.kind === 'reminder') {
     if (input?.due !== undefined) out.due = ymd(input.due)

@@ -196,7 +196,7 @@ export function CommandDayList() {
           every row actionable in place, no drop-downs. components/command/Hub.tsx. */}
       <CommandHub d={data} live={live} roster={roster} fixRows={fixRows} claims={claims} links={links} approvals={approvals} onCleared={hide} onChanged={reload} />
       {/* Eve's questions, plans and drafts, and Slack posts waiting to send — the calls only a person makes. */}
-      <DecideBand d={data} claims={[]} links={[]} approvals={[]} onCleared={hide} onChanged={reload} />
+      <div id="decide" className="scroll-mt-4"><DecideBand d={data} claims={[]} links={[]} approvals={[]} onCleared={hide} onChanged={reload} /></div>
       <ClearBand d={data} dups={dups} vendorNotes={vendorNotes} backlog={backlog} onCleared={hide} onChanged={reload} />
       {/* WHAT EVE IS THINKING (2026-09-21): a collapsed line, the same cards as Settings → Eve → Thinking. Admins only; hidden otherwise. */}
       <EveThinking />

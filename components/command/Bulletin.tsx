@@ -19,13 +19,13 @@
 // /api/eve/review (plans), the day already loaded (d.tiles).
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { Plus, Trash2, X, Check, Loader2, ChevronLeft, ChevronRight, Pin, ImagePlus } from 'lucide-react'
+import { Plus, Trash2, X, Check, Loader2, ChevronLeft, ChevronRight, Pin, ImagePlus, Crop } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { SCOREBOARD_URL } from '@/components/command/Scoreboard'
 import { useHealth } from '@/components/command/health-bus'
 import type { OpsHealth } from '@/lib/ops-health'
 import type { CommandDay } from '@/lib/command-day'
-import { KINDS, REACTIONS, MAX_PHOTOS, dueState, type Post, type PostKind, type ReviewRef } from '@/lib/bulletin'
+import { KINDS, REACTIONS, MAX_PHOTOS, DEFAULT_FRAME, dueState, type Frame, type Post, type PostKind, type ReviewRef } from '@/lib/bulletin'
 
 export const BULLETIN_URL = '/api/command/bulletin'
 const STATS_URL = '/api/command/bulletin/stats'
@@ -68,6 +68,8 @@ async function uploadPhoto(file: File): Promise<string | null> {
     return j?.ok && j?.url ? String(j.url) : null
   } catch { return null }
 }
+/** Words that make a recommendation read as blame or bad news about people. */
+const NEGATIVE = /accountab|blame|fault|dirty|redo|re-do|absorb|complain|late\b|missed|slow|sloppy|poor|bad review|failing|failed|negligen|warn|discipline|write[- ]?up|fire\b|lazy|careless|mistake|stop treating|not doing/i
 const cap = (s: string) => s ? s[0].toUpperCase() + s.slice(1) : s
 
 export function BulletinBoard({ d }: { d: CommandDay }) {
@@ -79,6 +81,8 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
   const [local, setLocal] = useState<BoardRes | null>(null)
   const data = local || q.data
   const [composing, setComposing] = useState<PostKind | null>(null)
+  const [framing, setFraming] = useState<Post | null>(null)
+  const [viewing, setViewing] = useState<string | null>(null)
   const [err, setErr] = useState('')
   const act = useCallback(async (body: any) => {
     setErr('')
@@ -99,8 +103,11 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
     const posts = data?.posts || []
     const quote = posts.find(p => p.kind === 'quote')
     const others = posts.filter(p => p.kind !== 'quote')
-    const recs = ((plans.data?.open?.plans || []) as Plan[]).slice(0, 4)
-    const facts: Fact[] = [...(stats.data?.facts || [])]
+    // NOTHING NEGATIVE ABOUT THE TEAM (Jon, 2026-10-06). The board is the team's page: a recommendation
+    // worded as blame stays in Decide where a leader acts on it, and a stat only shows when it is good
+    // news — an amber number (a low call rate, a slow close time) belongs in the tiles, not up here.
+    const recs = ((plans.data?.open?.plans || []) as Plan[]).filter(r => !NEGATIVE.test(r.title + ' ' + String(r.detail || '').slice(0, 300))).slice(0, 4)
+    const facts: Fact[] = (stats.data?.facts || []).filter(f => f.tone !== 'amber')
     for (const t of week.data?.tiles || []) {
       if (t.key === 'billable' && /\$/.test(t.value)) facts.push({ key: 'billable', label: 'Billable this week', value: t.value, sub: t.sub, href: '/billing', tone: 'emerald' })
       if (t.key === 'claims' && /\$[\d,]+ back/.test(t.sub)) facts.push({ key: 'claimsBack', label: 'Claims recovered this month', value: (t.sub.match(/\$[\d,]+/) || [''])[0], sub: t.value + ' still open', href: '/claims', tone: 'emerald' })
@@ -113,12 +120,12 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
     }
     // Interleave so no two of a kind run back to back: quote, then post / rec / stats round-robin.
     // A quote every day: a leader's wins; otherwise the day's quote from the internet (or our list).
-    if (quote) out.push({ key: 'post:' + quote.id, label: KIND_LABEL.quote, secs: 10, node: <PostSlide p={quote} me={me} canPost={canPost} act={act} /> })
+    if (quote) out.push({ key: 'post:' + quote.id, label: KIND_LABEL.quote, secs: 10, node: <PostSlide p={quote} me={me} canPost={canPost} act={act} onFrame={setFraming} onOpen={x => setViewing(x.id)} /> })
     else if (data?.quote?.q) out.push({ key: 'quote:auto', label: KIND_LABEL.quote, secs: 10, node: <AutoQuote q={data.quote} /> })
     const cel = data?.celebrations || []
     if (cel.length) out.push({ key: 'bday:' + cel.map(c => c.name).join('+'), label: cel.some(c => !c.inDays) ? 'Birthday' : 'Birthdays this week', secs: 9, node: <BirthdaySlide cel={cel} today={data?.today || ''} /> })
     const lanes: Slide[][] = [
-      others.map(p => ({ key: 'post:' + p.id, label: KIND_LABEL[p.kind], secs: p.kind === 'review' ? 10 : 8, node: <PostSlide p={p} me={me} canPost={canPost} act={act} /> })),
+      others.map(p => ({ key: 'post:' + p.id, label: KIND_LABEL[p.kind], secs: p.kind === 'review' ? 10 : 8, node: <PostSlide p={p} me={me} canPost={canPost} act={act} onFrame={setFraming} onOpen={x => setViewing(x.id)} /> })),
       recs.map((r, i) => ({ key: 'rec:' + r.id, label: 'Eve recommends', secs: 9, node: <RecSlide r={r} n={i + 1} of={recs.length} /> })),
       statSlides,
     ]
@@ -137,7 +144,7 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
   }, [slides])
   const cur = slides[Math.min(idx, slides.length - 1)]
   useEffect(() => { if (cur) curKey.current = cur.key }, [cur])
-  const paused = hold || !!composing || slides.length < 2
+  const paused = hold || !!composing || !!framing || !!viewing || slides.length < 2
   useEffect(() => {
     if (paused || !cur) return
     const t = setTimeout(() => setIdx(i => (i + 1) % slides.length), cur.secs * 1000)
@@ -173,7 +180,11 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
       <div className="h-[2px] bg-transparent">
         {cur && !paused && <div key={cur.key + ':' + idx} className="lh-progress h-full bg-ink/25" style={{ animationDuration: cur.secs + 's' }} />}
       </div>
-      {composing && data ? (
+      {viewing && data?.posts.find(x => x.id === viewing) ? (
+        <PostView p={data!.posts.find(x => x.id === viewing)!} me={data?.me || ''} canPost={!!data?.canPost} act={act} onClose={() => setViewing(null)} />
+      ) : framing ? (
+        <FrameDialog p={framing} onClose={() => setFraming(null)} onSave={async frames => { await act({ action: 'edit', id: framing.id, post: { frames } }); setFraming(null) }} />
+      ) : composing && data ? (
         <Composer data={data} initial={composing} onClose={() => setComposing(null)} onPost={async p => { await act({ action: 'create', post: p }); setComposing(null) }} onAct={act} />
       ) : (
         <div className="px-4 py-3 min-h-[112px] flex items-center" aria-live="polite">
@@ -198,10 +209,10 @@ function HealthSlide({ h, open }: { h: OpsHealth; open: ((tile: string) => void)
           <circle cx="30" cy="30" r={r} fill="none" stroke="rgba(15,23,42,.08)" strokeWidth="5" />
           <circle cx="30" cy="30" r={r} fill="none" stroke={tone.ring} strokeWidth="5" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - h.score / 100)} transform="rotate(-90 30 30)" />
         </svg>
-        <div>
+        <button onClick={() => document.getElementById('day-kpis')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="text-left rounded-lg hover:bg-slate-50 -mx-1.5 px-1.5" title="See the tiles behind this score">
           <div className="flex items-baseline gap-2"><span className={'lh-display text-[40px] leading-none tabular-nums ' + tone.text}>{h.score}</span><span className={'text-[14px] font-semibold ' + tone.text}>{h.label}</span></div>
           <p className="text-[12.5px] text-muted max-w-[30rem] line-clamp-2">{h.headline}</p>
-        </div>
+        </button>
       </div>
       <div className="flex flex-wrap gap-1.5 flex-1 min-w-[200px]">
         {weak.map(dm => (
@@ -262,11 +273,11 @@ function HaveToSlide({ must, rem, today, canPost, act }: { must: Must[]; rem: Po
 function RecSlide({ r, n, of }: { r: Plan; n: number; of: number }) {
   const first = (String(r.detail || '').match(/FIRST STEP:\s*([^\n]+)/) || [])[1] || ''
   return (
-    <div className="min-w-0">
+    <button onClick={() => { const el = document.getElementById('decide'); el?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }} className="block w-full text-left min-w-0 rounded-lg hover:bg-slate-50 -mx-1.5 px-1.5" title="Open it in Decide to accept or pass">
       <div className="text-[11.5px] text-muted">Priority {n} of {of}{r.area ? ' · ' + cap(r.area) : ''}</div>
       <div className="lh-display text-[22px] leading-[1.2] text-ink mt-0.5 line-clamp-2">{r.title}</div>
       {first && <div className="text-[12.5px] text-ink/75 mt-1 line-clamp-1"><span className="font-semibold text-ink">First step:</span> {first}</div>}
-    </div>
+    </button>
   )
 }
 
@@ -289,17 +300,48 @@ function StatsSlide({ facts }: { facts: Fact[] }) {
 
 // A post with photos: the photos on the left (they cross-fade every few seconds when there are
 // several — nothing on the board sits still), the words on the right. Tap a photo to open it full size.
-function PostSlide(props: { p: Post; me: string; canPost: boolean; act: (b: any) => Promise<void> }) {
+function PostSlide(props: { p: Post; me: string; canPost: boolean; act: (b: any) => Promise<void>; onFrame?: (p: Post) => void; onOpen?: (p: Post) => void }) {
   const ph = props.p.photos || []
-  if (!ph.length) return <PostBody {...props} />
+  // Tap anywhere on a post that isn't a control → open it full size (photos, the whole text, replies).
+  const open = (e: React.MouseEvent) => { if (!(e.target as Element).closest('button,a,input,label')) props.onOpen?.(props.p) }
+  if (!ph.length) return <div onClick={open} className="cursor-pointer"><PostBody {...props} /></div>
   return (
-    <div className="flex flex-col sm:flex-row gap-4 sm:items-center">
-      <PhotoCycler photos={ph} />
+    <div onClick={open} className="flex flex-col sm:flex-row gap-4 sm:items-center cursor-pointer">
+      <div className="relative shrink-0 group">
+        <PhotoCycler photos={ph} frames={props.p.frames} />
+        {props.canPost && props.onFrame && (
+          <button onClick={() => props.onFrame!(props.p)} className="absolute top-1.5 right-1.5 inline-flex items-center gap-1 rounded-md bg-black/55 text-white text-[11px] font-semibold px-1.5 h-6 opacity-0 group-hover:opacity-100 focus:opacity-100">
+            <Crop size={11} /> Adjust
+          </button>
+        )}
+      </div>
       <div className="flex-1 min-w-0"><PostBody {...props} /></div>
     </div>
   )
 }
-function PhotoCycler({ photos }: { photos: string[] }) {
+
+// THE SLIDE'S PHOTO BOX — 210×132 on a desktop, full width on a phone. Every photo sits in it the
+// way its frame says: FILL crops to the box at the chosen spot and zoom; FIT shows the whole photo
+// over a soft blurred copy of itself, so a tall phone shot never gets its head cut off.
+const BOX = 'w-full sm:w-[210px] h-[150px] sm:h-[132px]'
+function FramedImg({ src, frame, className = '' }: { src: string; frame?: Frame; className?: string }) {
+  const f = frame || DEFAULT_FRAME
+  /* eslint-disable @next/next/no-img-element */
+  if (f.fit === 'fit') return (
+    <span className={'absolute inset-0 overflow-hidden ' + className}>
+      <img src={src} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover scale-110 blur-md opacity-60" />
+      <img src={src} alt="" className="absolute inset-0 w-full h-full object-contain" draggable={false} />
+    </span>
+  )
+  return (
+    <span className={'absolute inset-0 overflow-hidden ' + className}>
+      <img src={src} alt="" draggable={false} className="absolute inset-0 w-full h-full object-cover"
+        style={{ objectPosition: f.x + '% ' + f.y + '%', transform: 'scale(' + f.z + ')', transformOrigin: f.x + '% ' + f.y + '%' }} />
+    </span>
+  )
+  /* eslint-enable @next/next/no-img-element */
+}
+function PhotoCycler({ photos, frames }: { photos: string[]; frames?: Frame[] }) {
   const [i, setI] = useState(0)
   useEffect(() => {
     if (photos.length < 2) return
@@ -307,17 +349,140 @@ function PhotoCycler({ photos }: { photos: string[] }) {
     return () => clearInterval(t)
   }, [photos.length])
   return (
-    <a href={photos[i]} target="_blank" rel="noreferrer" className="relative block shrink-0 w-full sm:w-[210px] h-[150px] sm:h-[132px] rounded-xl overflow-hidden bg-slate-100" aria-label="Open photo">
-      {photos.map((u, k) => (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img key={u} src={u} alt="" loading="lazy" className={'absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ' + (k === i ? 'opacity-100' : 'opacity-0')} />
-      ))}
+    <span className={'relative block rounded-xl overflow-hidden bg-slate-100 ' + BOX}>
+      {photos.map((u, k) => <FramedImg key={u} src={u} frame={frames?.[k]} className={'transition-opacity duration-700 ' + (k === i ? 'opacity-100' : 'opacity-0')} />)}
       {photos.length > 1 && (
         <span className="absolute bottom-1.5 left-1/2 -translate-x-1/2 flex gap-1">
           {photos.map((u, k) => <span key={u} className={'h-1 rounded-full ' + (k === i ? 'w-3 bg-white' : 'w-1 bg-white/60')} />)}
         </span>
       )}
-    </a>
+    </span>
+  )
+}
+
+// THE FRAMING EDITOR — one photo at a time in a box the shape of the slide's. Fill: drag the photo
+// to choose what shows, the slider zooms in. Fit: the whole photo. What you see is what the slide shows.
+function FrameEditor({ photos, frames, onChange }: { photos: string[]; frames: Frame[]; onChange: (f: Frame[]) => void }) {
+  const [at, setAt] = useState(0)
+  const box = useRef<HTMLDivElement>(null)
+  const drag = useRef<{ x: number; y: number; fx: number; fy: number } | null>(null)
+  const f = frames[at] || DEFAULT_FRAME
+  const set = (patch: Partial<Frame>) => onChange(frames.map((x, k) => k === at ? { ...(x || DEFAULT_FRAME), ...patch } : (x || DEFAULT_FRAME)))
+  const down = (e: React.PointerEvent) => { if (f.fit !== 'fill') return; (e.target as Element).setPointerCapture?.(e.pointerId); drag.current = { x: e.clientX, y: e.clientY, fx: f.x, fy: f.y } }
+  const move = (e: React.PointerEvent) => {
+    const d = drag.current, el = box.current
+    if (!d || !el) return
+    const r = el.getBoundingClientRect()
+    // Dragging right shows more of the left of the photo, so the focus point moves the other way.
+    const k = 100 / f.z
+    set({ x: Math.max(0, Math.min(100, d.fx - ((e.clientX - d.x) / r.width) * k)), y: Math.max(0, Math.min(100, d.fy - ((e.clientY - d.y) / r.height) * k)) })
+  }
+  const up = () => { drag.current = null }
+  if (!photos.length) return null
+  return (
+    <div className="flex flex-col sm:flex-row gap-3">
+      <div ref={box} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+        className={'relative rounded-xl overflow-hidden bg-slate-100 shrink-0 w-full sm:w-[315px] h-[198px] touch-none select-none ' + (f.fit === 'fill' ? 'cursor-grab active:cursor-grabbing' : '')}>
+        <FramedImg src={photos[at]} frame={f} />
+      </div>
+      <div className="flex-1 min-w-0 space-y-2.5">
+        {photos.length > 1 && (
+          <div className="flex gap-1.5">
+            {photos.map((u, k) => (
+              <button key={u} onClick={() => setAt(k)} aria-label={'Photo ' + (k + 1)} className={'relative w-12 h-9 rounded-md overflow-hidden ' + (k === at ? 'ring-2 ring-ink' : 'opacity-70 hover:opacity-100')}>
+                <FramedImg src={u} frame={frames[k]} />
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="inline-flex rounded-lg border border-line p-0.5" role="radiogroup" aria-label="How the photo fits">
+          {([['fill', 'Fill the box'], ['fit', 'Show whole photo']] as const).map(([k, l]) => (
+            <button key={k} role="radio" aria-checked={f.fit === k} onClick={() => set({ fit: k })}
+              className={'text-[12px] font-medium rounded-md px-2.5 h-7 ' + (f.fit === k ? 'bg-ink text-white' : 'text-ink hover:bg-slate-50')}>{l}</button>
+          ))}
+        </div>
+        {f.fit === 'fill' ? (
+          <>
+            <label className="flex items-center gap-2 text-[12px] text-muted">Zoom
+              <input type="range" min={1} max={3} step={0.05} value={f.z} onChange={e => set({ z: Number(e.target.value) })} className="flex-1 accent-[#0f172a]" />
+              <span className="tabular-nums w-9 text-right">{f.z.toFixed(1)}×</span>
+            </label>
+            <p className="text-[11.5px] text-muted">Drag the photo to choose what shows.</p>
+          </>
+        ) : <p className="text-[11.5px] text-muted">The whole photo shows, with a soft blur filling the sides.</p>}
+        <button onClick={() => set({ ...DEFAULT_FRAME })} className="text-[12px] text-muted hover:text-ink underline">Reset</button>
+      </div>
+    </div>
+  )
+}
+
+/** A post opened full size: every photo whole, the full text, reactions and replies. The strip pauses. */
+function PostView({ p, me, canPost, act, onClose }: { p: Post; me: string; canPost: boolean; act: (b: any) => Promise<void>; onClose: () => void }) {
+  const ph = p.photos || []
+  const [at, setAt] = useState(0)
+  const [reply, setReply] = useState('')
+  const [busy, setBusy] = useState(false)
+  const doReply = async () => { if (!reply.trim()) return; setBusy(true); try { await act({ action: 'reply', id: p.id, text: reply }); setReply('') } finally { setBusy(false) } }
+  const text = p.kind === 'review' && p.review ? p.review.text : p.body
+  return (
+    <div className="px-4 py-3">
+      <div className="flex items-center gap-2 mb-2"><span className="text-[12px] text-muted flex-1">{KIND_LABEL[p.kind]} · {p.by}</span><button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink"><X size={15} /></button></div>
+      <div className="flex flex-col md:flex-row gap-4">
+        {ph.length > 0 && (
+          <div className="md:w-[420px] shrink-0">
+            <div className="relative rounded-xl overflow-hidden bg-slate-100 h-[260px]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={ph[at]} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover scale-110 blur-md opacity-50" />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={ph[at]} alt="" className="absolute inset-0 w-full h-full object-contain" />
+              {ph.length > 1 && <>
+                <button onClick={() => setAt((at - 1 + ph.length) % ph.length)} aria-label="Previous photo" className="absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/45 text-white flex items-center justify-center"><ChevronLeft size={15} /></button>
+                <button onClick={() => setAt((at + 1) % ph.length)} aria-label="Next photo" className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/45 text-white flex items-center justify-center"><ChevronRight size={15} /></button>
+              </>}
+              <a href={ph[at]} target="_blank" rel="noreferrer" className="absolute bottom-2 right-2 text-[11px] font-semibold rounded-md bg-black/50 text-white px-1.5 h-6 inline-flex items-center">Open original</a>
+            </div>
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          {p.kind === 'review' && p.review && <div className="text-amber-500 text-[13px] tracking-[1px]">{'★'.repeat(Math.round(p.review.stars))}</div>}
+          {p.title && <div className="lh-display text-[26px] leading-[1.15] text-ink">{p.kind === 'quote' && !p.body ? '“' + p.title + '”' : p.title}</div>}
+          {text && <div className={(p.kind === 'quote' || p.kind === 'review' ? 'lh-display text-[19px] leading-[1.35] text-ink' : 'text-[13.5px] text-ink/80') + ' mt-1 whitespace-pre-line'}>{p.kind === 'quote' || p.kind === 'review' ? '“' + text + '”' : text}</div>}
+          {p.kind === 'review' && p.review && <div className="text-[12px] text-muted mt-1">{p.review.guest}, {p.review.unit}, {shortDay(p.review.date)}</div>}
+          <div className="flex items-center gap-1 mt-3">
+            {REACTIONS.map(e => {
+              const who = p.reactions?.[e] || [], mine = who.includes(me)
+              return <button key={e} onClick={() => act({ action: 'react', id: p.id, emoji: e })} aria-pressed={mine} className={'text-[13px] rounded-full px-2 h-7 inline-flex items-center gap-1 border ' + (mine ? 'border-ink/30 bg-slate-50' : 'border-line')}>{e}{who.length ? <span className="text-[11px] font-semibold tabular-nums">{who.length}</span> : null}</button>
+            })}
+          </div>
+          <div className="mt-3 space-y-1">
+            {(p.replies || []).map(r => (
+              <div key={r.id} className="text-[12.5px] flex gap-1.5 group"><span className="font-semibold text-ink shrink-0">{r.by}</span><span className="text-ink/80 flex-1">{r.text}</span>
+                {canPost && <button onClick={() => act({ action: 'unreply', id: p.id, replyId: r.id })} aria-label="Remove reply" className="opacity-0 group-hover:opacity-100 text-muted hover:text-rose-600"><X size={11} /></button>}</div>
+            ))}
+            <div className="flex gap-1.5 pt-1">
+              <input value={reply} onChange={e => setReply(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') doReply() }} placeholder={p.kind === 'eotm' || p.kind === 'shoutout' ? 'Say congrats…' : 'Write a reply…'} className="flex-1 min-w-0 text-[12.5px] rounded-lg border border-line px-2.5 py-1.5" />
+              <button onClick={doReply} disabled={busy || !reply.trim()} className="rounded-lg px-3 text-[12px] font-semibold bg-ink text-white disabled:opacity-40">{busy ? <Loader2 size={12} className="animate-spin" /> : 'Send'}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Adjusting the photos of a post already on the board (leaders): the strip pauses on this. */
+function FrameDialog({ p, onSave, onClose }: { p: Post; onSave: (frames: Frame[]) => Promise<void>; onClose: () => void }) {
+  const [frames, setFrames] = useState<Frame[]>(() => (p.photos || []).map((_, k) => p.frames?.[k] || DEFAULT_FRAME))
+  const [busy, setBusy] = useState(false)
+  return (
+    <div className="px-4 py-3 space-y-3">
+      <div className="flex items-center gap-2"><span className="text-[13px] font-semibold text-ink flex-1">Adjust photos{p.title ? ' · ' + p.title : ''}</span><button onClick={onClose} aria-label="Close" className="text-muted hover:text-ink"><X size={15} /></button></div>
+      <FrameEditor photos={p.photos || []} frames={frames} onChange={setFrames} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onClose} className="rounded-lg px-3 h-8 text-[12.5px] font-semibold border border-line text-ink">Cancel</button>
+        <button disabled={busy} onClick={async () => { setBusy(true); try { await onSave(frames) } finally { setBusy(false) } }} className="rounded-lg px-3 h-8 text-[12.5px] font-semibold bg-ink text-white inline-flex items-center gap-1.5 disabled:opacity-40">{busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save</button>
+      </div>
+    </div>
   )
 }
 
@@ -416,6 +581,8 @@ function Composer({ data, initial, onClose, onPost, onAct }: { data: BoardRes; i
   const person = kind === 'eotm' || kind === 'shoutout'
   const field = 'w-full text-[13px] rounded-lg border border-line px-2.5 py-1.5 bg-white focus:outline-none focus:border-ink/40'
   const [photos, setPhotos] = useState<string[]>([])
+  const [frames, setFrames] = useState<Frame[]>([])
+  const [framingOpen, setFramingOpen] = useState(false)
   const [up, setUp] = useState(false)
   const [upErr, setUpErr] = useState('')
   const addPhotos = async (files: FileList | null) => {
@@ -424,11 +591,12 @@ function Composer({ data, initial, onClose, onPost, onAct }: { data: BoardRes; i
     const got: string[] = []
     for (const f of Array.from(files).slice(0, MAX_PHOTOS - photos.length)) { const u = await uploadPhoto(f); if (u) got.push(u) }
     setPhotos(x => x.concat(got).slice(0, MAX_PHOTOS))
+    setFrames(x => x.concat(got.map(() => DEFAULT_FRAME)).slice(0, MAX_PHOTOS))
     if (got.length < Math.min(files.length, MAX_PHOTOS - photos.length)) setUpErr('A photo did not upload. Try a JPG or PNG.')
     setUp(false)
   }
   const ok = kind === 'review' ? !!review : !!(title.trim() || body.trim() || photos.length)
-  const submit = async () => { setBusy(true); try { await onPost({ kind, title, body, due: due || null, owner: owner || null, pinned, review, photos }) } finally { setBusy(false) } }
+  const submit = async () => { setBusy(true); try { await onPost({ kind, title, body, due: due || null, owner: owner || null, pinned, review, photos, frames }) } finally { setBusy(false) } }
   const titleLabel = person ? 'Who' : kind === 'quote' ? 'Who said it (optional)' : kind === 'reminder' ? 'What has to get done' : kind === 'review' ? 'Headline (optional)' : 'Headline'
   const bodyLabel = kind === 'eotm' ? 'Why they earned it' : kind === 'shoutout' ? 'What they did' : kind === 'quote' ? 'The quote' : kind === 'reminder' ? 'Details (optional)' : kind === 'review' ? 'Your note (optional)' : 'Details'
   const life = kind === 'quote' ? 'Up today only.' : kind === 'eotm' ? 'Up until the end of the month.' : kind === 'reminder' ? 'Shows under Have to until ticked done.' : kind === 'review' ? 'Up for two weeks.' : 'Up for a week.'
@@ -494,9 +662,8 @@ function Composer({ data, initial, onClose, onPost, onAct }: { data: BoardRes; i
         <div className="flex flex-wrap items-center gap-2">
           {photos.map((u, i) => (
             <span key={u} className="relative w-16 h-12 rounded-lg overflow-hidden bg-slate-100">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={u} alt="" className="w-full h-full object-cover" />
-              <button onClick={() => setPhotos(x => x.filter((_, k) => k !== i))} aria-label="Remove photo" className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white flex items-center justify-center"><X size={10} /></button>
+              <FramedImg src={u} frame={frames[i]} />
+              <button onClick={() => { setPhotos(x => x.filter((_, k) => k !== i)); setFrames(x => x.filter((_, k) => k !== i)) }} aria-label="Remove photo" className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white flex items-center justify-center"><X size={10} /></button>
             </span>
           ))}
           {photos.length < MAX_PHOTOS && (
@@ -505,10 +672,12 @@ function Composer({ data, initial, onClose, onPost, onAct }: { data: BoardRes; i
               <input type="file" accept="image/*" multiple className="hidden" onChange={e => { addPhotos(e.target.files); e.target.value = '' }} />
             </label>
           )}
+          {photos.length > 0 && <button onClick={() => setFramingOpen(o => !o)} className={'inline-flex items-center gap-1.5 rounded-lg border px-2.5 h-8 text-[12px] font-medium ' + (framingOpen ? 'border-ink text-ink' : 'border-line text-ink hover:border-ink/40')}><Crop size={12} /> Crop & fit</button>}
           <span className="text-[11.5px] text-muted">Up to {MAX_PHOTOS}. They rotate on the slide.</span>
           {upErr && <span className="text-[11.5px] text-rose-700">{upErr}</span>}
         </div>
       )}
+      {kind !== 'reminder' && framingOpen && photos.length > 0 && <FrameEditor photos={photos} frames={frames} onChange={setFrames} />}
       <div className="flex flex-wrap items-center gap-3">
         <label className="text-[12px] text-ink inline-flex items-center gap-1.5"><input type="checkbox" checked={pinned} onChange={e => setPinned(e.target.checked)} /> Show first</label>
         <span className="text-[12px] text-muted flex-1">{life}</span>
