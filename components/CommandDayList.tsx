@@ -5,8 +5,9 @@
 // ONE ranked list of everything that needs JON today, in four bands, each row with its one-tap
 // action. Nothing informational about THE DAY above the fold — the numbers strip and the tile
 // drawers still exist, behind "How's the day". THE WEEK's KPIs (welcome calls, claims, glitches,
-// labor per clean, maintenance/billable labor, checklist) are the Scoreboard strip under the
-// verdict line (components/command/Scoreboard, /api/command/scoreboard) — Jon, 2026-09-18.
+// labor per clean, maintenance/billable labor, checklist) were the Scoreboard strip (2026-09-18);
+// on 2026-10-06 Jon swapped it for the Bulletin board (components/command/Bulletin) — the tiles'
+// API stays, the Hub and the board's "Did you know" read it.
 //
 //   DECIDE  things only Jon can do: Eve's questions (answer in place), spend approvals (approve /
 //           reject), claims in his review or near a filing deadline (review), refunds over the cap
@@ -48,7 +49,7 @@ import {
 } from '@/components/CommandCockpit'
 import { useSlackQueue, EVENT_LABEL, expiresIn, type Pending as SlackPending } from '@/components/SlackQueueCard'
 import { AvailabilityAlert } from '@/components/AvailabilityAlert'
-import { Scoreboard } from '@/components/command/Scoreboard'
+import { BulletinBoard } from '@/components/command/Bulletin'
 import { ThoughtCard, useThoughts } from '@/components/EveThoughts'
 import { CommandHub, ApprovalRow } from '@/components/command/Hub'
 
@@ -190,14 +191,15 @@ export function CommandDayList() {
       {/* THE OPERATIONAL HUB (Jon, 2026-09-30): KPIs by area, the Now list, four lanes side by side —
           every row actionable in place, no drop-downs. components/command/Hub.tsx. */}
       <CommandHub d={data} live={live} roster={roster} fixRows={fixRows} claims={claims} links={links} approvals={approvals} onCleared={hide} onChanged={reload} />
+      {/* THE BULLETIN BOARD (Jon, 2026-10-06) — replaced the week Scoreboard strip: Did you know stats,
+          Have to, and what leaders post (Employee of the month, quote, shout-outs, 5★ reviews). */}
+      <BulletinBoard d={data} />
       {/* Eve's questions, plans and drafts, and Slack posts waiting to send — the calls only a person makes. */}
       <DecideBand d={data} claims={[]} links={[]} approvals={[]} onCleared={hide} onChanged={reload} />
       <ClearBand d={data} dups={dups} vendorNotes={vendorNotes} backlog={backlog} onCleared={hide} onChanged={reload} />
       {/* WHAT EVE IS THINKING (2026-09-21): a collapsed line, the same cards as Settings → Eve → Thinking. Admins only; hidden otherwise. */}
       <EveThinking />
       <CompletedLine d={data} onChanged={reload} />
-      {/* THE WEEK — the KPI strip (Jon, 2026-09-18), below the day's work. */}
-      <Scoreboard />
       <AvailabilityAlert />
     </div>
   )
