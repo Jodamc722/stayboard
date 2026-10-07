@@ -1133,13 +1133,15 @@ export async function buildAudit(month: string): Promise<AuditData> {
       if (on.resolution) {
         const folio = res ? (folioByRes[String(res.id || '')] || []) : []
         const itemText = (x: any) => String(x?.title || x?.name || '') + ' ' + String(x?.normalType || x?.type || '')
-        const fRes = folio.filter((x: any) => RESOLUTION_RE.test(itemText(x)))
-        const sRes = g.lines.filter(l => RESOLUTION_RE.test(l.label))
+        // Guesty puts an "Airbnb Resolution Center" item at $0.00 on most Airbnb bookings — a
+        // placeholder, not a resolution (Sept 2026: 142 of 159). Only money counts.
+        const fRes = folio.filter((x: any) => RESOLUTION_RE.test(itemText(x)) && Math.abs(Number(x?.amount) || 0) > 0.005)
+        const sRes = g.lines.filter(l => RESOLUTION_RE.test(l.label) && Math.abs(l.amount) > 0.005)
         if (fRes.length || sRes.length) {
           const fTot = money(fRes.reduce((a: number, x: any) => a + (Number(x?.amount) || 0), 0))
           const sTot = money(sRes.reduce((a, l) => a + l.amount, 0))
           const fTxt = fRes.length ? 'Folio: ' + fRes.slice(0, 3).map((x: any) => '“' + String(x?.title || x?.name || 'Resolution').trim() + '” $' + (Number(x?.amount) || 0).toFixed(2)).join(', ') + (fRes.length > 3 ? ' +' + (fRes.length - 3) + ' more' : '') + '.' : ''
-          const sTxt = sRes.length ? ' Statement: ' + sRes.length + ' line' + (sRes.length === 1 ? '' : 's') + ', $' + sTot.toFixed(2) + ' to the owner.' : (fRes.length ? ' Not on this month’s statement.' : '')
+          const sTxt = sRes.length ? ' Statement: ' + sRes.length + ' line' + (sRes.length === 1 ? '' : 's') + ', $' + sTot.toFixed(2) + ' to the owner.' : (fRes.length ? ' No line named “resolution” on this month’s statement — check where the money landed.' : '')
           flags.push({
             type: 'resolution', severity: 'review', amount: fRes.length ? fTot : sTot,
             detail: 'Airbnb resolution on this reservation. ' + (fTxt + sTxt).trim() + ' Check it belongs to this stay and that the owner gets the right share.',
@@ -1367,7 +1369,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
         const amt = money(g.lines.filter(l => REFUND_RE.test(l.label)).reduce((a, l) => a + l.amount, 0))
         flags.push({ type: 'refund', severity: 'review', amount: amt, detail: 'Refund-looking line outside any reservation — verify.' })
       }
-      if (on.resolution && g.lines.some(l => RESOLUTION_RE.test(l.label))) {
+      if (on.resolution && g.lines.some(l => RESOLUTION_RE.test(l.label) && Math.abs(l.amount) > 0.005)) {
         const amt = money(g.lines.filter(l => RESOLUTION_RE.test(l.label)).reduce((a, l) => a + l.amount, 0))
         flags.push({ type: 'resolution', severity: 'review', amount: amt, detail: 'Airbnb resolution posted with no reservation attached — find the stay it belongs to.' })
       }
