@@ -342,9 +342,17 @@ export async function cancelBreezewayTask(taskId: string | number): Promise<{ ok
 }
 
 export async function completeBreezewayTask(taskId: string | number): Promise<{ ok: boolean; status: number; data: any; text: string }> {
-  const r = await bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type_task_status: { code: 'complete' } }) })
-  if (landed(r)) bustBoards()
-  return r
+  // Breezeway's own statuses read `finished` and `closed` far more often than `complete`
+  // (lib/task-done counted them), and it rejects a code it does not know. Walk the codes the way
+  // cancel does and stop at the first that lands, rather than betting the whole write on one word.
+  const path = `/task/${encodeURIComponent(String(taskId))}`
+  let last: { ok: boolean; status: number; data: any; text: string } | null = null
+  for (const code of ['complete', 'finished', 'finish', 'closed']) {
+    const r = await bzApi(path, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type_task_status: { code } }) })
+    last = r
+    if (landed(r)) { bustBoards(); return r }
+  }
+  return last || { ok: false, status: 422, data: null, text: 'Breezeway rejected every complete status code' }
 }
 
 // Housekeeping tasks for ONE property over a scheduled-date window (YYYY-MM-DD). Breezeway requires

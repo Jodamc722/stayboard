@@ -16,7 +16,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'node:crypto'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { createBreezewayTask, mapBreezewayTask, breezewayConfigured, breezewayPeopleLite, createBreezewayComment } from '@/lib/breezeway'
+import { createBreezewayTask, mapBreezewayTask, breezewayConfigured, breezewayPeopleLite, createBreezewayComment, completeBreezewayTask } from '@/lib/breezeway'
+import { refreshFromBreezeway } from '@/lib/breezeway-refresh'
 import { getSetting } from '@/lib/app-settings'
 import { bustBoards } from '@/lib/bust'
 import { readLocalTasks, writeLocalTasks, readExtras, writeExtras, newToken, type LocalTask } from '@/lib/task-extras'
@@ -42,7 +43,7 @@ export async function GET() {
 }
 
 /** Create in Breezeway and mirror it. Returns the new id, or the reason it could not. */
-async function toBreezeway(db: any, t: { listingId: string; name: string; description: string; department: string; date: string | null; assigneeId: number | null }, photos: string[]): Promise<{ id: string | null; error: string | null }> {
+async function toBreezeway(db: any, t: { listingId: string; name: string; description: string; department: string; date: string | null; assigneeId: number | null; done?: boolean }, photos: string[]): Promise<{ id: string | null; error: string | null; completed?: boolean }> {
   if (!breezewayConfigured()) return { id: null, error: 'Breezeway is not configured' }
   try {
     const { data: prop } = await db.from('breezeway_properties').select('home_id').eq('reference_property_id', t.listingId).limit(1)
@@ -70,7 +71,20 @@ async function toBreezeway(db: any, t: { listingId: string; name: string; descri
     } catch { /* mirror catches up on the next sync */ }
     // Photos: Breezeway's API takes no uploads, so they go on as a comment with the links.
     if (photos.length) { try { await createBreezewayComment(id, 'Photos from Lighthouse:\n' + photos.join('\n')) } catch { /* the photos stay in Lighthouse */ } }
-    return { id, error: null }
+    // ALREADY DONE (Jon, 2026-10-07: "it needs to be a completed task"). Work logged after the
+    // fact is finished the moment it is written down; a task left open is flagged "not finished"
+    // on the billing desk and its money waits behind a status nobody is going to change. Complete
+    // it, then re-read the task so the mirror carries Breezeway's own status and finished time
+    // rather than our guess at them.
+    let completed = false
+    if (t.done) {
+      try {
+        const c = await completeBreezewayTask(id)
+        completed = !!c.ok
+        await refreshFromBreezeway(db, id)
+      } catch { /* it stays open; the desk can finish it in Breezeway */ }
+    }
+    return { id, error: null, completed }
   } catch (e: any) { return { id: null, error: String(e?.message || e).slice(0, 200) } }
 }
 
@@ -122,7 +136,7 @@ export async function POST(req: NextRequest) {
     const t = local.find(x => x.id === id)
     if (!t) return NextResponse.json({ ok: false, error: 'That task is already in Breezeway (or gone).' }, { status: 404 })
     const ex = await readExtras()
-    const r = await toBreezeway(db, t, ex[id]?.photos || [])
+    const r = await toBreezeway(db, { ...t, done: t.done !== false }, ex[id]?.photos || [])
     if (!r.id) {
       t.pushError = r.error; await writeLocalTasks(local, by)
       return NextResponse.json({ ok: false, error: 'Breezeway still says no — ' + r.error })
@@ -147,9 +161,11 @@ export async function POST(req: NextRequest) {
   const assigneeId = Number(body?.assigneeId) || null
   const assigneeName = String(body?.assigneeName || '').slice(0, 80) || null
   const photos = cleanPhotos(body?.photos)
+  // Default TRUE: this box exists to write down work that has already happened and bill it.
+  const done = body?.done === undefined ? true : body.done !== false
   if (!listingId || !name) return NextResponse.json({ ok: false, error: 'Unit and title are required.' }, { status: 400 })
 
-  const draft = { listingId, name, description, department, date, assigneeId }
+  const draft = { listingId, name, description, department, date, assigneeId, done }
   const bz = await toBreezeway(db, draft, photos)
   let id = bz.id
   if (!id) {
@@ -157,7 +173,7 @@ export async function POST(req: NextRequest) {
     const { data: l } = await db.from('guesty_listings').select('nickname,title').eq('id', listingId).limit(1)
     const unit = l && l[0] ? String((l[0] as any).nickname || (l[0] as any).title || '') : null
     const local = await readLocalTasks()
-    const t: LocalTask = { id: 'lh-' + randomUUID().slice(0, 12), listingId, unit, name, description, department, date: date || new Date().toISOString().slice(0, 10), assigneeId, assigneeName, createdBy: by || 'someone', createdAt: new Date().toISOString(), pushError: bz.error }
+    const t: LocalTask = { id: 'lh-' + randomUUID().slice(0, 12), listingId, unit, name, description, department, date: date || new Date().toISOString().slice(0, 10), assigneeId, assigneeName, createdBy: by || 'someone', createdAt: new Date().toISOString(), pushError: bz.error, done, finishedAt: done ? ((date || new Date().toISOString().slice(0, 10)) + 'T12:00:00Z') : null }
     local.push(t)
     const s = await writeLocalTasks(local, by)
     if (!s.ok) return NextResponse.json({ ok: false, error: 'Could not save the task: ' + s.error }, { status: 500 })
@@ -171,6 +187,7 @@ export async function POST(req: NextRequest) {
   await writeExtras(ex, by)
   return NextResponse.json({
     ok: true, id, inBreezeway: !!bz.id, breezewayError: bz.id ? null : bz.error,
+    done, completedInBreezeway: !!bz.completed,
     ownerUrl: APP_URL + '/job/' + ex[id].token,
     warning: warnings.join('; ') || undefined,
   })

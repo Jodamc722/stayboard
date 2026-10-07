@@ -24,6 +24,11 @@ export type LocalTask = {
   assigneeId: number | null; assigneeName: string | null
   createdBy: string; createdAt: string
   pushError: string | null         // why Breezeway said no, last time it was asked
+  /** Work that had already happened when it was filed (Jon, 2026-10-07: "it needs to be a
+   *  completed task"). A job logged after the fact is finished the moment it is written down —
+   *  leaving it 'created' makes the billing desk flag it as unfinished and hold back the money. */
+  done?: boolean
+  finishedAt?: string | null       // ISO; set when done
 }
 export type TaskExtra = { photos: string[]; ownerNote?: string | null; token?: string | null; title?: string | null }
 
@@ -57,9 +62,10 @@ export const newToken = () => randomBytes(9).toString('base64url')
 export function localAsMirrorRows(tasks: LocalTask[], from: string, to: string): any[] {
   return tasks.filter(t => t.date && t.date >= from && t.date <= to).map(t => ({
     id: t.id, home_id: null, reference_property_id: t.listingId, type_department: t.department,
-    name: t.name, status: 'created',
+    name: t.name, status: t.done ? 'finished' : 'created',
     assignees: t.assigneeName ? [{ id: t.assigneeId, name: t.assigneeName }] : [],
-    assignee_name: t.assigneeName, finished_by_name: null, finished_at: null, total_minutes: null,
+    assignee_name: t.assigneeName, finished_by_name: t.done ? t.assigneeName : null,
+    finished_at: t.done ? (t.finishedAt || (t.date ? t.date + 'T12:00:00Z' : t.createdAt)) : null, total_minutes: null,
     rate_paid: null, scheduled_date: t.date, report_url: null, descr: t.description,
   }))
 }

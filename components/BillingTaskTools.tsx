@@ -80,17 +80,21 @@ export function AddTaskDialog({ month, onClose, onCreated }: { month: string; on
   useEffect(() => { fetch(API, { cache: 'no-store' }).then(r => r.json()).then(j => setOpts({ units: j.units || [], people: j.people || [] })).catch(() => setOpts({ units: [], people: [] })) }, [])
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
   const [f, setF] = useState({ listingId: '', name: '', description: '', department: 'maintenance', date: today.slice(0, 7) === month ? today : month + '-01', assigneeId: '', amount: '' })
+  // ALREADY DONE, by default (Jon, 2026-10-07: "it needs to be a completed task"). This box is for
+  // writing down work that has happened and billing it — a task left open is flagged "not
+  // finished" on this very desk and the money sits behind it.
+  const [alreadyDone, setAlreadyDone] = useState(true)
   const [photos, setPhotos] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  const [done, setDone] = useState<{ inBreezeway: boolean; breezewayError: string | null; ownerUrl: string; warning?: string } | null>(null)
+  const [done, setDone] = useState<{ inBreezeway: boolean; breezewayError: string | null; ownerUrl: string; warning?: string; completedInBreezeway?: boolean } | null>(null)
   const set = (k: keyof typeof f, v: string) => setF(x => ({ ...x, [k]: v }))
   const field = 'w-full h-9 rounded-lg border border-line bg-white px-2.5 text-[13px] text-ink focus:outline-none focus:border-ink/40'
   const submit = async () => {
     setBusy(true); setErr('')
     try {
       const person = opts?.people.find(p => String(p.id) === f.assigneeId)
-      const j = await post({ action: 'create', ...f, assigneeId: f.assigneeId ? Number(f.assigneeId) : null, assigneeName: person?.name || null, amount: f.amount ? Number(f.amount.replace(/[$,]/g, '')) : null, photos })
+      const j = await post({ action: 'create', ...f, done: alreadyDone, assigneeId: f.assigneeId ? Number(f.assigneeId) : null, assigneeName: person?.name || null, amount: f.amount ? Number(f.amount.replace(/[$,]/g, '')) : null, photos })
       setDone(j); onCreated()
     } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy(false) }
   }
@@ -101,7 +105,7 @@ export function AddTaskDialog({ month, onClose, onCreated }: { month: string; on
         {done ? (
           <div className="space-y-3">
             {done.inBreezeway
-              ? <p className="text-[13px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">In Breezeway{f.assigneeId ? ', assigned' : ''}, and on the board{f.amount ? ' billing ' + (f.amount.startsWith('$') ? f.amount : '$' + f.amount) : ''}.</p>
+              ? <p className="text-[13px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">In Breezeway{f.assigneeId ? ', assigned' : ''}{alreadyDone ? (done.completedInBreezeway ? ', marked done' : ' — but Breezeway would not mark it done, so close it there') : ''}, and on the board{f.amount ? ' billing ' + (f.amount.startsWith('$') ? f.amount : '$' + f.amount) : ''}.</p>
               : <p className="text-[13px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Saved in Lighthouse and on the board — Breezeway didn&apos;t take it ({done.breezewayError}). Use <b>Push to Breezeway</b> on the row to try again.</p>}
             {done.warning && <p className="text-[12px] text-rose-700">Note: {done.warning}</p>}
             <div><div className="text-[12px] text-muted mb-1">Owner link — the job, its photos and the charge</div><CopyLink url={done.ownerUrl} /></div>
@@ -134,6 +138,13 @@ export function AddTaskDialog({ month, onClose, onCreated }: { month: string; on
             </label>
             <label className="block"><span className="text-[12px] text-muted">Value billed to the owner</span><input value={f.amount} onChange={e => set('amount', e.target.value)} inputMode="decimal" placeholder="$0.00" className={field + ' tabular-nums'} /></label>
           </div>
+          <label className="flex items-start gap-2 text-[13px] text-ink cursor-pointer rounded-lg border border-line px-2.5 py-2">
+            <input type="checkbox" checked={alreadyDone} onChange={e => setAlreadyDone(e.target.checked)} className="mt-0.5 h-4 w-4 accent-brand-600" />
+            <span>
+              This job is already done
+              <span className="block text-[11.5px] text-muted">Files it finished on that date, so it bills straight away. Untick it and it goes over as work still to do.</span>
+            </span>
+          </label>
           <div><div className="text-[12px] text-muted mb-1">Photos</div><PhotoPicker photos={photos} setPhotos={setPhotos} /></div>
           {err && <p className="text-[12px] text-rose-700">{err}</p>}
           <div className="flex items-center justify-end gap-2 pt-1">
