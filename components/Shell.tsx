@@ -1,5 +1,5 @@
 'use client'
-import { HandoffBell, HandoffPopup } from '@/components/HandoffAlerts'
+import { HandoffFloater } from '@/components/HandoffAlerts'
 import { applyTheme, isThemeKey } from '@/lib/theme'
 import { LighthouseMark } from '@/components/ui/LighthouseMark'
 import Link from 'next/link'
@@ -512,7 +512,6 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
         <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
           {navBody()}
         </nav>
-        {business !== 'garden' && <HandoffBell variant="sidebar" />}
         <NotificationsBell />
         <div className="border-t border-line p-3">
           <div className="flex items-center gap-2.5 px-1.5 py-1.5">
@@ -548,7 +547,6 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
               <Plus size={18} />
             </button>
           )}
-          {business !== 'garden' && <HandoffBell variant="icon" />}
           <button type="button" onClick={() => setPaletteOpen(true)} aria-label="Jump to a tab"
             className={(canSee('/plan') ? '' : 'ml-auto ') + 'w-10 h-10 rounded-lg border border-line grid place-items-center text-muted hover:text-ink active:bg-app'}>
             <Search size={17} />
@@ -566,8 +564,8 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
         {/* Eve rides along on every page (Jon, 2026-08-19: floating icon, not a page). Same
             role gate the old sidebar entry used — a role with eve 'off' never sees the bubble. */}
         {business === 'garden' ? <AdamFloat /> : (canSee('/eve') && <EveFloat />)}
-        {/* HANDOFF ALERTS (Jon, 2026-10-07): an alert for you pops up over whatever page you are on. */}
-        {business !== 'garden' && <HandoffPopup />}
+        {/* HANDOFF ALERTS (Jon, 2026-10-07): a small floater, top right of every page — the bell, and a card for anything you still have to confirm. */}
+        {business !== 'garden' && <HandoffFloater />}
 
         {/* One mount for the whole app; openAddTask() from anywhere raises it. */}
         {canSee('/plan') && <AddTaskHost />}

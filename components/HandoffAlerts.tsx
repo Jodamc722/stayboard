@@ -59,16 +59,6 @@ const SEV = {
   info: { bar: 'bg-ink', chip: 'bg-slate-100 text-slate-700', label: 'Handoff' },
 } as const
 
-// ── the shell of a dialog ─────────────────────────────────────────────────────────────────────────
-function Modal({ onClose, children, label }: { onClose: () => void; children: React.ReactNode; label: string }) {
-  useEffect(() => { const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k) }, [onClose])
-  return (
-    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/30 p-0 sm:p-4" role="dialog" aria-modal="true" aria-label={label} onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="w-full sm:max-w-[560px] max-h-[88vh] overflow-y-auto bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl">{children}</div>
-    </div>
-  )
-}
-
 // ── one alert, in full ────────────────────────────────────────────────────────────────────────────
 export function AlertView({ a, me, leader, onClose }: { a: Alert; me: string; leader: boolean; onClose: () => void }) {
   const [text, setText] = useState('')
@@ -151,91 +141,132 @@ export function AlertView({ a, me, leader, onClose }: { a: Alert; me: string; le
   )
 }
 
-// ── the pop-up, on every page ─────────────────────────────────────────────────────────────────────
+// ── THE FLOATER, top right of every page (Jon, 2026-10-07: "want it to function in a way that follows
+// you around like a floater, maybe small top right"). One small bell, pinned; under it, a compact card
+// for each alert you still have to confirm — title, who, Got it, Open — that you can tuck away (it
+// comes back in an hour if still unconfirmed). Open shows the whole alert in a panel hanging off the
+// bell, not over the page; the bell itself opens the list and New alert.
 const DISMISS_KEY = (id: string) => 'handoff:closed:' + id
 const POP_AGAIN_MS = 60 * 60_000
-export function HandoffPopup() {
-  const s = useAlerts()
-  const [shown, setShown] = useState<string | null>(null)
-  const seenSent = useRef(new Set<string>())
-  const next = useMemo(() => {
-    if (!s?.mine?.length) return null
-    const now = Date.now()
-    return s.mine.find(a => { let t = 0; try { t = Number(localStorage.getItem(DISMISS_KEY(a.id)) || 0) } catch { /* private mode */ } return now - t > POP_AGAIN_MS }) || null
-  }, [s])
-  useEffect(() => { if (!shown && next) setShown(next.id) }, [next, shown])
-  const a = shown ? (s?.open.find(x => x.id === shown) || s?.mine.find(x => x.id === shown)) : null
+const tucked = (id: string) => { try { return Date.now() - Number(localStorage.getItem(DISMISS_KEY(id)) || 0) < POP_AGAIN_MS } catch { return false } }
+
+function Panel({ onClose, children, label }: { onClose: () => void; children: React.ReactNode; label: string }) {
+  const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    if (!a || seenSent.current.has(a.id) || stageOf(a, s?.me || '') !== 'none') return
-    seenSent.current.add(a.id)
-    post({ action: 'seen', id: a.id }).catch(() => {})
-  }, [a, s?.me])
-  if (!a || !s) return null
-  const close = () => { try { localStorage.setItem(DISMISS_KEY(a.id), String(Date.now())) } catch { /* fine */ } setShown(null) }
-  return <Modal onClose={close} label="Handoff alert"><AlertView a={a} me={s.me} leader={s.leader} onClose={close} /></Modal>
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const out = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node) && !(e.target as Element)?.closest?.('[data-handoff-bell]')) onClose() }
+    window.addEventListener('keydown', k); document.addEventListener('mousedown', out)
+    return () => { window.removeEventListener('keydown', k); document.removeEventListener('mousedown', out) }
+  }, [onClose])
+  return <div ref={ref} role="dialog" aria-label={label} className="mt-2 w-[min(440px,calc(100vw-24px))] max-h-[min(78vh,720px)] overflow-y-auto bg-white rounded-2xl border border-line shadow-2xl">{children}</div>
 }
 
-// ── the bell ──────────────────────────────────────────────────────────────────────────────────────
-export function HandoffBell({ variant }: { variant: 'sidebar' | 'icon' }) {
+export function HandoffFloater() {
   const s = useAlerts()
-  const [list, setList] = useState(false)
-  const [open, setOpen] = useState<string | null>(null)
-  const [creating, setCreating] = useState(false)
-  const n = s?.mine?.length || 0
-  const a = open ? s?.open.find(x => x.id === open) : null
-  const button = variant === 'sidebar' ? (
-    <div className="px-2 pt-1.5">
-      <button onClick={() => { setList(true); load() }} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-muted hover:bg-app hover:text-ink transition-all">
-        <BellRing size={16} className={n ? 'text-rose-600' : ''} /> Alerts
-        {n > 0 && <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-600 text-white">{n}</span>}
+  const [view, setView] = useState<null | 'list' | 'new' | string>(null)   // string = an alert id
+  const [, force] = useState(0)
+  const seenSent = useRef(new Set<string>())
+  const mine = s?.mine || []
+  const cards = mine.filter(a => !tucked(a.id))
+  const n = mine.length
+  // SEEN: a card came up on your screen.
+  useEffect(() => {
+    for (const a of cards) {
+      if (seenSent.current.has(a.id) || stageOf(a, s?.me || '') !== 'none') continue
+      seenSent.current.add(a.id)
+      post({ action: 'seen', id: a.id }).catch(() => {})
+    }
+  }, [cards, s?.me])
+  // a tucked card comes back on its own after an hour
+  useEffect(() => { const t = setInterval(() => force(x => x + 1), 5 * 60_000); return () => clearInterval(t) }, [])
+  if (!s) return null
+  const tuck = (id: string) => { try { localStorage.setItem(DISMISS_KEY(id), String(Date.now())) } catch { /* fine */ } force(x => x + 1) }
+  const open = typeof view === 'string' && view !== 'list' && view !== 'new' ? (s.open.find(x => x.id === view) || mine.find(x => x.id === view)) : null
+  const sevBar = (a: Alert) => a.severity === 'urgent' ? 'bg-rose-600' : a.severity === 'warn' ? 'bg-amber-500' : 'bg-ink'
+  return (
+    <div className="fixed z-[65] right-3 top-[64px] lg:right-5 lg:top-4 flex flex-col items-end pointer-events-none print:hidden">
+      <button data-handoff-bell onClick={() => { setView(v => v ? null : 'list'); load() }}
+        aria-label={'Alerts' + (n ? ', ' + n + ' to confirm' : '')}
+        className={'pointer-events-auto relative h-9 min-w-9 rounded-full border bg-white shadow-md inline-flex items-center justify-center gap-1.5 ' + (n ? 'px-3' : 'px-0 w-9') + ' text-[12.5px] font-semibold transition-colors ' + (n ? 'border-rose-200 text-rose-700' : 'border-line text-muted hover:text-ink')}>
+        <BellRing size={15} className={n ? 'motion-safe:animate-[wiggle_1.2s_ease-in-out_2]' : ''} />
+        {n ? <span>{n}</span> : null}
       </button>
+
+      {view === null && cards.length > 0 && (
+        <div className="pointer-events-auto mt-2 flex flex-col gap-2 w-[min(340px,calc(100vw-24px))]">
+          {cards.slice(0, 2).map(a => (
+            <div key={a.id} className="lh-fade relative bg-white rounded-xl border border-line shadow-xl overflow-hidden" role="alert">
+              <span className={'absolute left-0 top-0 bottom-0 w-1 ' + sevBar(a)} />
+              <div className="pl-3.5 pr-2 py-2.5">
+                <div className="flex items-start gap-2">
+                  <button onClick={() => setView(a.id)} className="flex-1 min-w-0 text-left">
+                    <div className="text-[11px] text-muted">{a.source === 'eve' ? 'Eve' : a.by} · {when(a.firedAt)}{a.unit ? ' · ' + a.unit : ''}</div>
+                    <div className="text-[13.5px] font-semibold text-ink leading-snug line-clamp-2">{a.title}</div>
+                  </button>
+                  <button onClick={() => tuck(a.id)} aria-label="Tuck away for an hour" title="Tuck away — it stays in the bell" className="w-6 h-6 rounded-md flex items-center justify-center text-muted hover:text-ink hover:bg-slate-100 shrink-0"><X size={13} /></button>
+                </div>
+                <div className="flex items-center gap-1.5 mt-2">
+                  <button onClick={() => post({ action: 'ack', id: a.id }).catch(() => {})} className="inline-flex items-center gap-1 rounded-lg bg-ink text-white px-2.5 h-7 text-[12px] font-semibold"><Check size={12} /> Got it</button>
+                  <button onClick={() => setView(a.id)} className="rounded-lg border border-line px-2.5 h-7 text-[12px] font-semibold text-ink hover:border-ink/40">Open{(a.comments || []).length ? ' · ' + a.comments!.length + ' comment' + (a.comments!.length === 1 ? '' : 's') : ''}</button>
+                </div>
+              </div>
+            </div>
+          ))}
+          {cards.length > 2 && <button onClick={() => setView('list')} className="self-end text-[12px] font-semibold text-ink bg-white border border-line rounded-full px-3 h-7 shadow">+{cards.length - 2} more</button>}
+        </div>
+      )}
+
+      {view !== null && (
+        <div className="pointer-events-auto">
+          <Panel onClose={() => setView(null)} label={view === 'new' ? 'New alert' : open ? 'Alert' : 'Alerts'}>
+            {view === 'new' ? <NewAlert onDone={id => setView(id || 'list')} />
+              : open ? <AlertView a={open} me={s.me} leader={s.leader} onClose={() => setView('list')} />
+                : <AlertList s={s} onOpen={id => setView(id)} onNew={() => setView('new')} onClose={() => setView(null)} />}
+          </Panel>
+        </div>
+      )}
     </div>
-  ) : (
-    <button onClick={() => { setList(true); load() }} aria-label={'Alerts' + (n ? ', ' + n + ' to confirm' : '')} className="relative w-10 h-10 rounded-lg border border-line grid place-items-center text-muted hover:text-ink active:bg-app">
-      <BellRing size={17} className={n ? 'text-rose-600' : ''} />
-      {n > 0 && <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] font-bold grid place-items-center">{n}</span>}
-    </button>
   )
+}
+
+function AlertList({ s, onOpen, onNew, onClose }: { s: Res; onOpen: (id: string) => void; onNew: () => void; onClose: () => void }) {
   return (
     <>
-      {button}
-      {list && !a && !creating && s && (
-        <Modal onClose={() => setList(false)} label="Alerts">
-          <div className="px-5 pt-4 pb-3 border-b border-line flex items-center gap-2">
-            <h2 className="lh-display text-[22px] leading-none text-ink flex-1">Alerts</h2>
-            <button onClick={() => setCreating(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3 h-8 text-[12.5px] font-semibold"><Plus size={13} /> New alert</button>
-            <button onClick={() => setList(false)} aria-label="Close" className="w-8 h-8 rounded-lg flex items-center justify-center text-muted hover:text-ink hover:bg-slate-100"><X size={16} /></button>
-          </div>
-          {!s.open.length && <p className="px-5 py-8 text-center text-[13px] text-muted">No alerts. Use New alert to leave the incoming team a note they have to confirm.</p>}
-          <ul className="divide-y divide-line">
-            {s.open.map(x => {
-              const st = stageOf(x, s.me)
-              const forMe = s.mine.some(m => m.id === x.id)
-              const acked = Object.keys(x.acks || {}).length, total = (x.recipients || []).length
-              return (
-                <li key={x.id}>
-                  <button onClick={() => setOpen(x.id)} className="w-full text-left px-5 py-3 hover:bg-slate-50 flex items-start gap-3">
-                    <span className={'mt-1.5 w-2 h-2 rounded-full shrink-0 ' + (x.closedAt ? 'bg-slate-300' : x.severity === 'urgent' ? 'bg-rose-600' : x.severity === 'warn' ? 'bg-amber-500' : 'bg-ink')} />
-                    <span className="min-w-0 flex-1">
-                      <span className={'block text-[13.5px] ' + (forMe ? 'font-semibold text-ink' : 'text-ink')}>{x.title}</span>
-                      <span className="block text-[11.5px] text-muted mt-0.5">
-                        {x.by} · {x.firedAt ? when(x.firedAt) : <span className="inline-flex items-center gap-0.5"><Clock size={10} /> goes out {when(x.fireAt)}</span>}
-                        {' · '}{total ? acked + '/' + total + ' confirmed' : acked + ' confirmed'}{(x.comments || []).length ? ' · ' + x.comments!.length + ' comment' + (x.comments!.length === 1 ? '' : 's') : ''}{x.closedAt ? ' · closed' : ''}
-                      </span>
-                    </span>
-                    {forMe ? <span className="text-[11px] font-semibold text-rose-700 shrink-0">confirm</span> : st === 'ack' ? <CircleCheck size={15} className="text-emerald-600 shrink-0" /> : null}
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-        </Modal>
-      )}
-      {a && s && <Modal onClose={() => setOpen(null)} label="Alert"><AlertView a={a} me={s.me} leader={s.leader} onClose={() => setOpen(null)} /></Modal>}
-      {creating && <Modal onClose={() => setCreating(false)} label="New alert"><NewAlert onDone={id => { setCreating(false); if (id) setOpen(id) }} /></Modal>}
+      <div className="px-4 pt-3.5 pb-3 border-b border-line flex items-center gap-2">
+        <h2 className="lh-display text-[20px] leading-none text-ink flex-1">Alerts</h2>
+        <button onClick={onNew} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-2.5 h-8 text-[12.5px] font-semibold"><Plus size={13} /> New alert</button>
+        <button onClick={onClose} aria-label="Close" className="w-8 h-8 rounded-lg flex items-center justify-center text-muted hover:text-ink hover:bg-slate-100"><X size={15} /></button>
+      </div>
+      {!s.open.length && <p className="px-4 py-8 text-center text-[13px] text-muted">No alerts. Use New alert to leave the incoming team a note they have to confirm.</p>}
+      <ul className="divide-y divide-line">
+        {s.open.map(x => {
+          const st = stageOf(x, s.me)
+          const forMe = s.mine.some(m => m.id === x.id)
+          const acked = Object.keys(x.acks || {}).length, total = (x.recipients || []).length
+          return (
+            <li key={x.id}>
+              <button onClick={() => onOpen(x.id)} className="w-full text-left px-4 py-2.5 hover:bg-slate-50 flex items-start gap-2.5">
+                <span className={'mt-1.5 w-2 h-2 rounded-full shrink-0 ' + (x.closedAt ? 'bg-slate-300' : x.severity === 'urgent' ? 'bg-rose-600' : x.severity === 'warn' ? 'bg-amber-500' : 'bg-ink')} />
+                <span className="min-w-0 flex-1">
+                  <span className={'block text-[13px] leading-snug ' + (forMe ? 'font-semibold text-ink' : 'text-ink')}>{x.title}</span>
+                  <span className="block text-[11.5px] text-muted mt-0.5">
+                    {x.source === 'eve' ? 'Eve' : x.by} · {x.firedAt ? when(x.firedAt) : <span className="inline-flex items-center gap-0.5"><Clock size={10} /> goes out {when(x.fireAt)}</span>}
+                    {' · '}{total ? acked + '/' + total + ' confirmed' : acked + ' confirmed'}{(x.comments || []).length ? ' · ' + x.comments!.length + ' comment' + (x.comments!.length === 1 ? '' : 's') : ''}{x.closedAt ? ' · closed' : ''}
+                  </span>
+                </span>
+                {forMe ? <span className="text-[11px] font-semibold text-rose-700 shrink-0">confirm</span> : st === 'ack' ? <CircleCheck size={15} className="text-emerald-600 shrink-0" /> : null}
+              </button>
+            </li>
+          )
+        })}
+      </ul>
     </>
   )
 }
+
+/** Old mount names, kept so nothing else breaks: the floater is the whole thing now. */
+export const HandoffPopup = HandoffFloater
+export function HandoffBell(_: { variant: 'sidebar' | 'icon' }) { return null }
 
 // ── a new alert ───────────────────────────────────────────────────────────────────────────────────
 export function NewAlert({ onDone }: { onDone: (id: string | null) => void }) {

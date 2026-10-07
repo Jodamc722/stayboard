@@ -439,3 +439,6 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 @keyframes lh-progress { from { width: 0; } to { width: 100%; } }
 .lh-progress { width: 0; animation: lh-progress linear forwards; }
 @media (prefers-reduced-motion: reduce) { .lh-fade { animation: none; } .lh-progress { display: none; } }
+
+/* The alerts bell (components/HandoffAlerts) gives a small shake when something needs confirming. */
+@keyframes wiggle { 0%, 100% { transform: rotate(0); } 15% { transform: rotate(-14deg); } 30% { transform: rotate(12deg); } 45% { transform: rotate(-8deg); } 60% { transform: rotate(5deg); } 75% { transform: rotate(0); } }
