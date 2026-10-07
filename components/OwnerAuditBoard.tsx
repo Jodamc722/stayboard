@@ -24,7 +24,7 @@ import {
 } from 'lucide-react'
 import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanEmpty, IconBtn, Tip } from '@/components/lean'
 
-type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay' | 'owner_stay_cleaning' | 'cleaning_fee'
+type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay' | 'owner_stay_cleaning' | 'cleaning_fee' | 'resolution'
 type Severity = 'high' | 'review' | 'info'
 // 'clear' = the engine found nothing and no human decision is needed. It is computed, never saved,
 // and never counted as completed work — see the ladder in lib/owner-audit.ts.
@@ -114,6 +114,7 @@ const FLAG_LABEL: Record<FlagType, string> = {
   empty_statement: 'Empty statement', owner_stay: 'Owner / F&F stay',
   owner_stay_cleaning: 'Owner stay cleaning',
   cleaning_fee: 'No cleaning fee',
+  resolution: 'Airbnb resolution',
 }
 const FLAG_HELP: Record<FlagType, string> = {
   negative: 'Rental income below zero — erroneous refund, chargeback or duplicate reversal.',
@@ -129,6 +130,7 @@ const FLAG_HELP: Record<FlagType, string> = {
   owner_stay: 'Owner stays and friends & family stays. Discounted by design, never a pricing error — noted so each one is confirmed as authorised and its costs land correctly.',
   owner_stay_cleaning: 'Every owner and owner-guest stay still costs a turnover, so the owner must be charged for it. Green when the cleaning fee is on the guest folio; amber when it is on the statement only, or posted as a bare "Owner charge" that needs labelling as cleaning; red when nothing was charged at all.',
   cleaning_fee: 'Every reservation should collect a cleaning fee, and the fee is judged by what it NETS to — one that was charged and refunded counts as none. A channel that bills a single lump instead of itemising (Expedia\u2019s "Service" line) HAS collected the fee, so it is noted but never flagged; splitting it out is the Expedia prep list\u2019s job. Where a unit has charged nobody all month the listing is the finding, flagged once on its earliest stay instead of once per booking.',
+  resolution: 'An Airbnb Resolution Center payment or AirCover reimbursement on this reservation — a folio line item (or a statement line) whose name says resolution, AirCover, damage protection or guest damage. Shows the folio amounts and whether the money is on this month\u2019s statement, so you can check it belongs to this stay and the owner gets the right share.',
 }
 const FLAG_CLS: Record<Severity, string> = {
   high: 'bg-rose-50 text-rose-700 ring-rose-200',
@@ -811,7 +813,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               {it.leadDays != null && it.leadDays <= (data?.rules.lastMinDays ?? 3) && <Tag tone="sky" title={'Booked ' + it.leadDays + ' days before check-in — last-minute stays get rate slack'}>last-minute</Tag>}
               {it.flags.filter(f => f.severity !== 'info').map((f, i) => (
                 <span key={i} title={f.detail} className={'shrink-0 whitespace-nowrap text-[10.5px] font-semibold leading-none px-1.5 py-[3px] rounded-md ring-1 ring-inset ' + FLAG_CLS[f.severity]}>
-                  {FLAG_LABEL[f.type]}{(f.type === 'orphan_reimb' || f.type === 'owner_stay_cleaning') && f.amount !== undefined ? ' ' + fmt(f.amount) : ''}
+                  {FLAG_LABEL[f.type]}{(f.type === 'orphan_reimb' || f.type === 'owner_stay_cleaning' || f.type === 'resolution') && f.amount !== undefined ? ' ' + fmt(f.amount) : ''}
                 </span>
               ))}
               {it.flags.filter(f => f.severity === 'info').map((f, i) => (

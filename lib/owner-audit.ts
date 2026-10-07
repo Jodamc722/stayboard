@@ -36,6 +36,7 @@ export type AuditFlagType =
   | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay'
   | 'owner_stay_cleaning'
   | 'cleaning_fee'
+  | 'resolution'
 export type AuditSeverity = 'high' | 'review' | 'info'
 export type AuditFlag = { type: AuditFlagType; severity: AuditSeverity; detail: string; amount?: number }
 
@@ -347,7 +348,7 @@ export const DEFAULT_AUDIT_RULES: AuditRules = {
   offBookingMin: 25,
   // Three. Under that, "the unit normally charges" is an opinion about two bookings.
   cleaningPeerMin: 3,
-  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true, commission_off: true, off_booking: true, empty_statement: true, owner_stay: true, owner_stay_cleaning: true, cleaning_fee: true },
+  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true, commission_off: true, off_booking: true, empty_statement: true, owner_stay: true, owner_stay_cleaning: true, cleaning_fee: true, resolution: true },
 }
 export const AUDIT_RULES_KEY = 'owner_audit_rules'
 
@@ -1124,6 +1125,27 @@ export async function buildAudit(month: string): Promise<AuditData> {
       if (on.refund && g.lines.some(l => REFUND_RE.test(l.label))) {
         flags.push({ type: 'refund', severity: 'review', amount: refundAmt, detail: 'Refund on this reservation — verify it was authorized.' })
       }
+      // AIRBNB RESOLUTIONS (Jon, 2026-10-07: "check for Airbnb resolutions — if there's a line item
+      // in the folio that shows resolution, please flag it"). The guest folio (Guesty invoice items)
+      // is where a Resolution Center payment or AirCover reimbursement lands; the statement's own
+      // lines are the second look. Either one raises the flag, and the detail says which, with the
+      // amounts, so the reviewer can see at a glance whether the money reached the owner.
+      if (on.resolution) {
+        const folio = res ? (folioByRes[String(res.id || '')] || []) : []
+        const itemText = (x: any) => String(x?.title || x?.name || '') + ' ' + String(x?.normalType || x?.type || '')
+        const fRes = folio.filter((x: any) => RESOLUTION_RE.test(itemText(x)))
+        const sRes = g.lines.filter(l => RESOLUTION_RE.test(l.label))
+        if (fRes.length || sRes.length) {
+          const fTot = money(fRes.reduce((a: number, x: any) => a + (Number(x?.amount) || 0), 0))
+          const sTot = money(sRes.reduce((a, l) => a + l.amount, 0))
+          const fTxt = fRes.length ? 'Folio: ' + fRes.slice(0, 3).map((x: any) => '“' + String(x?.title || x?.name || 'Resolution').trim() + '” $' + (Number(x?.amount) || 0).toFixed(2)).join(', ') + (fRes.length > 3 ? ' +' + (fRes.length - 3) + ' more' : '') + '.' : ''
+          const sTxt = sRes.length ? ' Statement: ' + sRes.length + ' line' + (sRes.length === 1 ? '' : 's') + ', $' + sTot.toFixed(2) + ' to the owner.' : (fRes.length ? ' Not on this month’s statement.' : '')
+          flags.push({
+            type: 'resolution', severity: 'review', amount: fRes.length ? fTot : sTot,
+            detail: 'Airbnb resolution on this reservation. ' + (fTxt + sTxt).trim() + ' Check it belongs to this stay and that the owner gets the right share.',
+          })
+        }
+      }
       // ORPHANED REVENUE — the bookkeeper's rule (2026-08-19): flag when rental income is ZERO but
       // other revenue NETS to something real — channel-fee reimbursements, parking, cleaning — and
       // put the VALUE in the flag, because "orphaned" without the amount made the team open Guesty
@@ -1344,6 +1366,10 @@ export async function buildAudit(month: string): Promise<AuditData> {
       if (on.refund && g.lines.some(l => REFUND_RE.test(l.label))) {
         const amt = money(g.lines.filter(l => REFUND_RE.test(l.label)).reduce((a, l) => a + l.amount, 0))
         flags.push({ type: 'refund', severity: 'review', amount: amt, detail: 'Refund-looking line outside any reservation — verify.' })
+      }
+      if (on.resolution && g.lines.some(l => RESOLUTION_RE.test(l.label))) {
+        const amt = money(g.lines.filter(l => RESOLUTION_RE.test(l.label)).reduce((a, l) => a + l.amount, 0))
+        flags.push({ type: 'resolution', severity: 'review', amount: amt, detail: 'Airbnb resolution posted with no reservation attached — find the stay it belongs to.' })
       }
       // MONEY THAT BELONGS TO NO BOOKING. Management fees, owner charges, one-off adjustments:
       // real money moving on the owner's statement with no reservation to explain it, and until
