@@ -137,7 +137,7 @@ type Detail = {
     checkIn: string; checkOut: string; nights: number | null; status: string; source: string; code: string
     total: number | null; paid: number | null; balance: number | null; currency: string
     conversationId: string | null; notes: string | null
-    guests: { adults: number | null; children: number | null; infants: number | null; pets: number | null } | null
+    guests: { adults: number | null; children: number | null; pets: string | null } | null
   }
   check: NoticeCheck | null
   guestyUrl: string | null
@@ -165,7 +165,8 @@ function NoticeDetail({ id, onView }: { id: string; onView: (rid: string, which:
   const c = d.check
   const rid = r?.id || ''
   const line = (k: string, v: any) => v ? <div><span className="text-muted">{k}</span> <span className="text-ink font-semibold">{v}</span></div> : null
-  const people = r?.guests ? [r.guests.adults ? r.guests.adults + ' adult' + (r.guests.adults === 1 ? '' : 's') : '', r.guests.children ? r.guests.children + ' child' + (r.guests.children === 1 ? '' : 'ren') : '', r.guests.infants ? r.guests.infants + ' infant' + (r.guests.infants === 1 ? '' : 's') : '', r.guests.pets ? r.guests.pets + ' pet' + (r.guests.pets === 1 ? '' : 's') : ''].filter(Boolean).join(' · ') : ''
+  const g = r?.guests
+  const people = g ? [g.adults ? g.adults + ' adult' + (g.adults === 1 ? '' : 's') : '', g.children ? g.children + ' child' + (g.children === 1 ? '' : 'ren') : '', g.pets ? 'pet: ' + g.pets : ''].filter(Boolean).join(' · ') : ''
 
   return (
     <div className="rounded-xl border border-line overflow-hidden">

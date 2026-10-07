@@ -13,6 +13,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { RESERVATION_EMAILS_KEY, mergeProperties } from '@/lib/reservation-emails'
 import { checksForNotices } from '@/lib/notice-checks'
+import { guestSplit } from '@/lib/reservation-pull'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,20 +45,16 @@ export async function GET(req: NextRequest) {
   if (rid) { const { data } = await db.from('guesty_reservations').select(COLS).eq('id', rid).maybeSingle(); res = data || null }
   if (!res && code) { const { data } = await db.from('guesty_reservations').select(COLS).eq('confirmation_code', code).maybeSingle(); res = data || null }
 
-  // Guests and pets live in the raw payload, not in a column of their own.
-  let guests: { adults: number | null; children: number | null; infants: number | null; pets: number | null } | null = null
+  // Guests live in the raw payload, spelled four different ways by channel and API version —
+  // guestSplit is the same probe the notice pull uses, so the two can't disagree. What the notice
+  // already recorded wins nothing: it came from here in the first place, and is the fallback.
+  let guests: { adults: number | null; children: number | null; pets: string | null } | null = null
   if (res?.id) {
     const { data: raw } = await db.from('guesty_reservations').select('raw').eq('id', res.id).maybeSingle()
-    const g = (raw as any)?.raw?.guestsCount != null || (raw as any)?.raw?.guests ? ((raw as any).raw.guests || {}) : null
-    if (g || (raw as any)?.raw) {
-      const r0 = (raw as any)?.raw || {}
-      guests = {
-        adults: num(r0.guestsCount ?? g?.numberOfAdults ?? r0.adults),
-        children: num(g?.numberOfChildren ?? r0.children),
-        infants: num(g?.numberOfInfants ?? r0.infants),
-        pets: num(g?.numberOfPets ?? r0.pets),
-      }
-    }
+    const g = guestSplit((raw as any)?.raw || {})
+    guests = { adults: g.adults ?? num(notice.adults), children: g.children ?? num(notice.children), pets: str(notice.pets) || null }
+  } else {
+    guests = { adults: num(notice.adults), children: num(notice.children), pets: str(notice.pets) || null }
   }
 
   const checks = await checksForNotices([{ id: notice.id, reservation_id: notice.reservation_id, channel: notice.channel, property_id: notice.property_id, propertyName: notice.propertyName }])

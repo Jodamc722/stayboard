@@ -65,7 +65,7 @@ function intOrNull(v: any): number | null {
  * a building's registration form that nobody verified, so a bare total is left as adults with
  * children null — and the email drops the line entirely rather than inventing a split.
  */
-function guestSplit(raw: any): { adults: number | null; children: number | null } {
+export function guestSplit(raw: any): { adults: number | null; children: number | null } {
   const gc = raw?.guestsCount
   if (gc && typeof gc === 'object') {
     return { adults: intOrNull(gc.adults), children: intOrNull(gc.children) }
