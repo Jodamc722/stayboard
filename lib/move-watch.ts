@@ -80,8 +80,8 @@ export async function findMoveConflicts(): Promise<{ findings: MoveFinding[]; ch
         findings.push({
           kind: 'blocked', severity: 'urgent', unit: b.unit,
           dedupe: 'move:blocked:' + r.id + ':' + b.listingId + ':' + from,
-          title: `Guest booked into a blocked unit: ${b.unit}`,
-          body: `${stay(r)} is on ${b.unit}, but the unit is blocked ${nice(from)}–${nice(to)}${b.guestyLabel ? ' (' + b.guestyLabel + ')' : ''}${b.note ? ': “' + clip(b.note, 160) + '”' : ''}. Either the guest was moved and the reservation still sits on this unit, or the block needs lifting.`,
+          title: `Where is ${r.guest_name || 'the guest'}? ${b.unit} is blocked`,
+          body: `Guesty's calendar has ${b.unit} blocked ${nice(from)}–${nice(to)} (${(b.guestyLabel || b.reason || 'block').toLowerCase()}${b.createdBy ? ', set by ' + b.createdBy : ''}${b.note ? ': “' + clip(b.note, 140) + '”' : ''}) with no reservation on those nights — but our reservation record still has ${stay(r)} in the unit. Either the guest was moved or left early and the reservation wasn't updated, or the block is sitting on a live stay. Check where the guest is and fix whichever is wrong.`,
         })
       }
       if (b.note && MOVE_WORDS.test(b.note) && !clash.length && from <= addDays(today, 3)) {
@@ -121,12 +121,20 @@ export async function findMoveConflicts(): Promise<{ findings: MoveFinding[]; ch
   let messages = 0
   try {
     const soon = res.filter(r => String(r.check_in) <= addDays(today, 3))
-    const convIds = soon.map(r => r.conversation_id).filter(Boolean)
+    // The conversation for a reservation: guesty_conversations.reservation_id (the reservation's own
+    // conversation_id is often empty in the mirror).
+    const byConv: Record<string, any> = {}
+    if (soon.length) {
+      const { data: convs } = await db.from('guesty_conversations').select('id,reservation_id').in('reservation_id', soon.map(r => r.id).slice(0, 900))
+      const byRes: Record<string, any> = {}
+      for (const r of soon) byRes[String(r.id)] = r
+      for (const c of (convs || []) as any[]) if (byRes[String(c.reservation_id)]) byConv[String(c.id)] = byRes[String(c.reservation_id)]
+      for (const r of soon) if (r.conversation_id) byConv[String(r.conversation_id)] = r
+    }
+    const convIds = Object.keys(byConv)
     if (convIds.length) {
       const since = new Date(Date.now() - 72 * 3600_000).toISOString()
       const { data: msgs } = await db.from('guesty_messages').select('conversation_id,sender,body,sent_at').in('conversation_id', convIds.slice(0, 900)).gte('sent_at', since).limit(4000)
-      const byConv: Record<string, any> = {}
-      for (const r of soon) if (r.conversation_id) byConv[String(r.conversation_id)] = r
       const seen = new Set<string>()
       for (const m of (msgs || []) as any[]) {
         messages++
