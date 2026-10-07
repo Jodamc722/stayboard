@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto'
 import { requireVrUser } from '@/lib/vr-gate'
 import { isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { makeAlert, bannerFor, isOpen, isFor, mark, withTagged, type Alert } from '@/lib/handoff'
+import { makeAlert, bannerFor, isOpen, isFor, mark, withTagged, GROUP_EVERYONE, type Alert } from '@/lib/handoff'
 import { readAlerts, writeAlerts, teamDirectory, runHandoffs, mentionsFor } from '@/lib/handoff-store'
 import { HANDOFF_CHANNELS } from '@/lib/slack-rules'
 
@@ -87,10 +87,35 @@ export async function POST(req: NextRequest) {
       // nothing: each one is added to the alert so it lands in their bell, and @-mentioned in the
       // Slack thread. Tagging yourself is dropped — you are already reading it.
       const want = (Array.isArray(b?.mentions) ? b.mentions : []).map((e: any) => String(e || '').toLowerCase().trim()).filter((e: string) => /@/.test(e)).slice(0, 10)
-      const tagged = want.length ? (await teamDirectory()).filter(t => want.includes(t.email) && t.email !== me.email).map(t => ({ email: t.email, name: t.name })) : []
+      // GROUPS expand to people here, once, at post time (Jon, 2026-10-07). What gets recorded is
+      // both: the group that was tagged, so the comment still reads "@Customer service", and the
+      // people it actually reached, so the alert's recipient list is a fact rather than a lookup
+      // that would answer differently next year.
+      const groupKeys = (Array.isArray(b?.groups) ? b.groups : []).map((g: any) => String(g || '').trim()).filter(Boolean).slice(0, 6)
+      const dir = (want.length || groupKeys.length) ? await teamDirectory() : []
+      const picked = new Map<string, { email: string; name: string }>()
+      for (const t of dir) if (want.includes(t.email)) picked.set(t.email, { email: t.email, name: t.name })
+      const groupLabels: Record<string, string> = {}
+      if (groupKeys.length) {
+        const roles = await roleList()
+        for (const g of groupKeys) {
+          if (g === GROUP_EVERYONE) {
+            groupLabels[g] = 'Everyone'
+            for (const t of dir) picked.set(t.email, { email: t.email, name: t.name })
+            continue
+          }
+          const r = roles.find(x => x.key === g)
+          if (!r) continue
+          groupLabels[g] = r.label
+          for (const t of dir) if (t.role === g) picked.set(t.email, { email: t.email, name: t.name })
+        }
+      }
+      picked.delete(me.email)
+      const tagged = Array.from(picked.values()).slice(0, 60)
       const c = {
         id: randomUUID(), by: nameOf(a), byEmail: me.email, text, at: nowIso,
         ...(tagged.length ? { mentions: tagged.map(t => t.email), mentionNames: Object.fromEntries(tagged.map(t => [t.email, t.name])) } : {}),
+        ...(Object.keys(groupLabels).length ? { groups: Object.keys(groupLabels), groupLabels } : {}),
       }
       const withC = { ...mark(al, me.email, nameOf(a), 'read', nowIso), comments: [...(al.comments || []), c].slice(-100) }
       alerts[i] = withTagged(withC, tagged)
@@ -99,8 +124,14 @@ export async function POST(req: NextRequest) {
       if (al.channel && al.slackTs) {
         try {
           const { postThreadReply } = await import('@/lib/slack')
-          const who = tagged.length ? await mentionsFor(tagged) : ''
-          await postThreadReply(al.channel, al.slackTs, `💬 *${c.by}:* ${text}` + (who ? `\n${who} — you were tagged on this.` : ''))
+          // A group of twenty people does not need twenty @s on one line: name the group, tag at
+          // most ten, and say how many more it reached.
+          const names = Object.values(groupLabels)
+          const head = names.length ? names.map(n => '@' + n).join(' ') + ' — ' : ''
+          const who = tagged.length ? await mentionsFor(tagged.slice(0, 10)) : ''
+          const more = tagged.length > 10 ? ` +${tagged.length - 10} more` : ''
+          const tail = (head || who) ? `\n${head}${who}${more} — you were tagged on this.` : ''
+          await postThreadReply(al.channel, al.slackTs, `💬 *${c.by}:* ${text}` + tail)
         } catch { /* Lighthouse has it either way */ }
       }
     } else if (action === 'close') {

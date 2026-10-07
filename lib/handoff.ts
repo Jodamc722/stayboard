@@ -23,7 +23,18 @@ export type Recipient = { email: string; name: string }
 // … it notifies them in the comments"). Tagging puts the alert on that person's screen — they are
 // added to the alert's recipients, so it shows in their bell until they confirm — and @-mentions
 // them in the alert's Slack thread. `mentions` is emails; `mentionNames` is how to draw them.
-export type Comment = { id: string; by: string; byEmail: string; text: string; at: string; mentions?: string[]; mentionNames?: Record<string, string> }
+export type Comment = {
+  id: string; by: string; byEmail: string; text: string; at: string
+  mentions?: string[]; mentionNames?: Record<string, string>
+  // GROUPS (Jon, 2026-10-07: "can we make it so you can tag by groups, similar to Slack —
+  // @channel, @CCS, @manager"). A group is a role key, or the reserved 'everyone'. It is expanded
+  // to people when the comment is posted, so the tag means the same thing a year later even if
+  // the team changed — the people it reached are recorded in `mentions`.
+  groups?: string[]; groupLabels?: Record<string, string>
+}
+
+/** The reserved group: everyone with a Lighthouse login. Slack spells it @channel. */
+export const GROUP_EVERYONE = 'everyone'
 
 export type Alert = {
   id: string

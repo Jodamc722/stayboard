@@ -43,7 +43,8 @@ async function post(body: any): Promise<Res> {
 }
 // THE TEAM, for tagging in a comment. The banner polls every minute and has no use for this list,
 // so it is fetched once, the first time somebody opens an alert, and kept.
-let teamList: { email: string; name: string }[] = []
+type Who = { kind: 'person'; email: string; name: string } | { kind: 'group'; key: string; name: string; n: number }
+let whoList: Who[] = []
 const teamSubs = new Set<() => void>()
 let teamAsked = false
 async function loadTeam() {
@@ -53,12 +54,21 @@ async function loadTeam() {
     const r = await fetch(URL_ + '?form=1', { cache: 'no-store' })
     if (!r.ok) { teamAsked = false; return }
     const j = await r.json()
-    teamList = (j.team || []).map((t: any) => ({ email: String(t.email), name: String(t.name) }))
+    const team = (j.team || []).map((t: any) => ({ email: String(t.email), name: String(t.name), role: t.role ? String(t.role) : null }))
+    // GROUPS FIRST (Jon, 2026-10-07: "tag by groups … @channel, @CCS, @manager"). Channel is the
+    // reserved one; the rest are the roles the business already runs on, so nothing new to keep in
+    // step. A role nobody holds is left out — a tag that reaches no one is a trap.
+    const groups: Who[] = [{ kind: 'group', key: 'everyone', name: 'channel', n: team.length }]
+    for (const r0 of (j.roles || [])) {
+      const n = team.filter((t: any) => t.role === r0.key).length
+      if (n > 0) groups.push({ kind: 'group', key: String(r0.key), name: String(r0.label || r0.key), n })
+    }
+    whoList = groups.concat(team.map((t: any) => ({ kind: 'person' as const, email: t.email, name: t.name })))
     teamSubs.forEach(f => f())
   } catch { teamAsked = false }
 }
 function useTeam() {
-  return useSyncExternalStore(f => { teamSubs.add(f); return () => { teamSubs.delete(f) } }, () => teamList, () => teamList)
+  return useSyncExternalStore(f => { teamSubs.add(f); return () => { teamSubs.delete(f) } }, () => whoList, () => whoList)
 }
 
 // ── TAG SOMEBODY IN A COMMENT (Jon, 2026-10-07) ──────────────────────────────────────────────────
@@ -68,12 +78,12 @@ function useTeam() {
 // A half-written comment is kept outside React, per alert. The floater re-renders on every poll
 // and can be remounted by the page around it; losing what you were typing to that is the whole of
 // Jon's "it just closes out" (2026-10-07), and a draft that survives makes it a non-event.
-const drafts = new Map<string, { text: string; picked: { email: string; name: string }[] }>()
+const drafts = new Map<string, { text: string; picked: Who[] }>()
 
-function CommentBox({ alertId, onSend, busy }: { alertId: string; onSend: (text: string, mentions: string[]) => Promise<void>; busy: boolean }) {
+function CommentBox({ alertId, onSend, busy }: { alertId: string; onSend: (text: string, mentions: string[], groups: string[]) => Promise<void>; busy: boolean }) {
   const team = useTeam()
   const [text, setText] = useState(() => drafts.get(alertId)?.text || '')
-  const [picked, setPicked] = useState<{ email: string; name: string }[]>(() => drafts.get(alertId)?.picked || [])
+  const [picked, setPicked] = useState<Who[]>(() => drafts.get(alertId)?.picked || [])
   const [menu, setMenu] = useState<{ q: string; at: number } | null>(null)
   const ref = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
@@ -86,8 +96,9 @@ function CommentBox({ alertId, onSend, busy }: { alertId: string; onSend: (text:
     const m = upto.match(/(?:^|\s)@([A-Za-zÀ-ÿ .'-]{0,24})$/)
     setMenu(m ? { q: m[1].toLowerCase(), at: upto.length - m[1].length - 1 } : null)
   }
-  const hits = menu ? team.filter(t => !picked.some(p => p.email === t.email) && (!menu.q || t.name.toLowerCase().includes(menu.q))).slice(0, 6) : []
-  const choose = (t: { email: string; name: string }) => {
+  const keyOf = (w: Who) => w.kind === 'group' ? 'g:' + w.key : 'p:' + w.email
+  const hits = menu ? team.filter(t => !picked.some(p => keyOf(p) === keyOf(t)) && (!menu.q || t.name.toLowerCase().includes(menu.q))).slice(0, 7) : []
+  const choose = (t: Who) => {
     if (!menu) return
     const before = text.slice(0, menu.at)
     const after = text.slice((ref.current?.selectionStart ?? text.length))
@@ -98,9 +109,11 @@ function CommentBox({ alertId, onSend, busy }: { alertId: string; onSend: (text:
   const send = async () => {
     const t = text.trim()
     if (!t) return
-    // Only the people still written in the line are tagged.
-    const mentions = picked.filter(p => t.includes('@' + p.name)).map(p => p.email)
-    await onSend(t, mentions)
+    // Only what is still written in the line is tagged.
+    const live = picked.filter(p => t.includes('@' + p.name))
+    const mentions = live.filter(p => p.kind === 'person').map(p => (p as any).email as string)
+    const groups = live.filter(p => p.kind === 'group').map(p => (p as any).key as string)
+    await onSend(t, mentions, groups)
     drafts.delete(alertId)
     setText(''); setPicked([]); setMenu(null)
   }
@@ -118,22 +131,25 @@ function CommentBox({ alertId, onSend, busy }: { alertId: string; onSend: (text:
       {hits.length > 0 && (
         <ul ref={listRef} className="mt-1 max-h-48 overflow-y-auto rounded-xl border border-line bg-white shadow-lg py-1">
           {hits.map(t => (
-            <li key={t.email}>
-              <button type="button" onPointerDown={e => { e.preventDefault(); choose(t) }} className="w-full text-left px-3 py-2 text-[13px] text-ink hover:bg-app">{t.name}</button>
+            <li key={keyOf(t)}>
+              <button type="button" onPointerDown={e => { e.preventDefault(); choose(t) }} className="w-full text-left px-3 py-2 text-[13px] text-ink hover:bg-app flex items-center gap-2">
+                <span className="truncate">@{t.name}</span>
+                {t.kind === 'group' ? <span className="ml-auto text-[11px] text-muted shrink-0">{t.n} {t.n === 1 ? 'person' : 'people'}</span> : null}
+              </button>
             </li>
           ))}
         </ul>
       )}
       {picked.some(p => text.includes('@' + p.name)) && (
-        <p className="text-[11.5px] text-muted mt-1">Tagging {picked.filter(p => text.includes('@' + p.name)).map(p => p.name).join(', ')} — it lands in their alerts and tags them in the Slack thread.</p>
+        <p className="text-[11.5px] text-muted mt-1">Tagging {picked.filter(p => text.includes('@' + p.name)).map(p => p.name + (p.kind === 'group' ? ' (' + p.n + ')' : '')).join(', ')} — it lands in their alerts and tags them in the Slack thread.</p>
       )}
     </div>
   )
 }
 
 /** A comment with its @names picked out, so a tag reads as a tag. */
-function CommentText({ c }: { c: { text: string; mentionNames?: Record<string, string> } }) {
-  const names = Object.values(c.mentionNames || {})
+function CommentText({ c }: { c: { text: string; mentionNames?: Record<string, string>; groupLabels?: Record<string, string> } }) {
+  const names = Object.values(c.mentionNames || {}).concat(Object.values(c.groupLabels || {}))
   if (!names.length) return <div className="text-ink/85 whitespace-pre-line">{c.text}</div>
   const re = new RegExp('(@(?:' + names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + '))', 'g')
   return (
@@ -234,12 +250,17 @@ export function AlertView({ a, me, leader, onClose }: { a: Alert; me: string; le
             <div key={c.id} className="text-[13px]">
               <span className="font-semibold text-ink">{c.by}</span> <span className="text-[11px] text-muted">{when(c.at)}</span>
               <CommentText c={c} />
-              {c.mentions?.length ? <p className="text-[11px] text-muted mt-0.5">tagged {Object.values(c.mentionNames || {}).join(', ')}</p> : null}
+              {(c.mentions?.length || c.groups?.length) ? (
+                <p className="text-[11px] text-muted mt-0.5">
+                  tagged {Object.values(c.groupLabels || {}).map(g => '@' + g).concat(Object.values(c.mentionNames || {})).slice(0, 6).join(', ')}
+                  {(c.mentions?.length || 0) > 6 ? ' +' + ((c.mentions?.length || 0) - 6) + ' more' : ''}
+                </p>
+              ) : null}
             </div>
           ))}
           {!(a.comments || []).length && <p className="text-[12.5px] text-muted">Ask a question or add an update — everyone on this alert sees it{a.slackTs ? ', and it goes to the Slack thread' : ''}. Type <b>@</b> to tag someone in.</p>}
         </div>
-        <CommentBox alertId={a.id} busy={busy === 'c'} onSend={(t, mentions) => run('c', { action: 'comment', id: a.id, text: t, mentions })} />
+        <CommentBox alertId={a.id} busy={busy === 'c'} onSend={(t, mentions, groups) => run('c', { action: 'comment', id: a.id, text: t, mentions, groups })} />
       </div>
     </div>
   )
