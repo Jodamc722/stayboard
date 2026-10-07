@@ -17,11 +17,11 @@ export type BriefEvent = { at: string; by: string; what: 'added' | 'done' | 'reo
 export type BriefLinkKind = 'unit' | 'reservation' | 'claim' | 'glitch' | 'project' | 'link'
 export type BriefLink = { kind: BriefLinkKind; ref: string; label: string }
 export const LINK_KINDS: { key: BriefLinkKind; label: string; hint: string }[] = [
-  { key: 'unit', label: 'Unit', hint: 'e.g. Rustic 21' },
-  { key: 'reservation', label: 'Reservation', hint: 'confirmation code or guest' },
-  { key: 'claim', label: 'Claim', hint: 'claim id' },
-  { key: 'glitch', label: 'Glitch', hint: 'glitch id' },
-  { key: 'project', label: 'Project', hint: 'what we are working on' },
+  { key: 'unit', label: 'Unit', hint: 'Search a unit — Rustic 21…' },
+  { key: 'reservation', label: 'Reservation', hint: 'Search a guest or a code…' },
+  { key: 'claim', label: 'Claim', hint: 'Search a guest, unit or claim…' },
+  { key: 'glitch', label: 'Glitch', hint: 'Search a unit or guest…' },
+  { key: 'project', label: 'Project', hint: 'Search a project…' },
   { key: 'link', label: 'Link', hint: 'https://…' },
 ]
 /** Where the chip goes when you click it. Null when we have nowhere sensible to send you. */

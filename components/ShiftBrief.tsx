@@ -97,6 +97,66 @@ export function BriefPanel({ onClose }: { onClose: () => void }) {
   )
 }
 
+// ── WHAT IT IS ABOUT, BY SEARCH ──────────────────────────────────────────────────────────────────
+// Jon, 2026-10-07: "the More option in the brief should allow me to attach a reservation to a unit,
+// and it should be able to search it and actually tag it to an individual unit."
+//
+// Type a guest, a code or a unit name and the real thing comes back from /api/brief/lookup. What is
+// stored is its id, so the chip deep-links to the booking, the claim or the glitch itself — and the
+// unit it belongs to is attached at the same time, because a note about a stay is a note about that
+// unit. A link is the one kind you still just paste.
+type Found = { ref: string; label: string; sub?: string; unit?: string | null }
+function AboutPicker({ kind, picked, onPick }: { kind: BriefLinkKind | ''; picked: Found | null; onPick: (f: Found | null) => void }) {
+  const [q, setQ] = useState('')
+  const [rows, setRows] = useState<Found[]>([])
+  const [busy, setBusy] = useState(false)
+  useEffect(() => { setQ(''); setRows([]); onPick(null) /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [kind])
+  useEffect(() => {
+    if (!kind || kind === 'link' || picked || q.trim().length < 2) { setRows([]); return }
+    let live = true
+    setBusy(true)
+    const t = setTimeout(async () => {
+      try {
+        const j = await fetch('/api/brief/lookup?kind=' + kind + '&q=' + encodeURIComponent(q.trim()), { cache: 'no-store' }).then(r => r.json())
+        if (live) setRows(j.rows || [])
+      } catch { if (live) setRows([]) } finally { if (live) setBusy(false) }
+    }, 220)
+    return () => { live = false; clearTimeout(t) }
+  }, [q, kind, picked])
+  if (!kind) return null
+  const f = 'text-[12.5px] rounded-lg border border-line px-2 py-1.5 bg-white focus:outline-none focus:border-ink/40'
+  if (kind === 'link') {
+    return <input value={picked?.ref || ''} onChange={e => onPick(e.target.value.trim() ? { ref: e.target.value.trim(), label: e.target.value.trim() } : null)} placeholder="https://…" className={f + ' w-full'} />
+  }
+  if (picked) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="min-w-0 flex-1 truncate text-[12.5px] rounded-lg border border-line bg-app/40 px-2 py-1.5 text-ink">{picked.label}{picked.unit && picked.unit !== picked.label ? <span className="text-muted"> · {picked.unit}</span> : null}</span>
+        <button type="button" onClick={() => onPick(null)} aria-label="Change" className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-ink hover:bg-slate-100"><X size={13} /></button>
+      </div>
+    )
+  }
+  return (
+    <div>
+      <input value={q} onChange={e => setQ(e.target.value)} placeholder={LINK_KINDS.find(k => k.key === kind)?.hint} className={f + ' w-full'} />
+      {busy && q.trim().length >= 2 && !rows.length && <p className="text-[11.5px] text-muted mt-1">Looking…</p>}
+      {rows.length > 0 && (
+        <ul className="mt-1 max-h-40 overflow-y-auto rounded-xl border border-line bg-white shadow-lg py-1">
+          {rows.map(r => (
+            <li key={r.ref}>
+              <button type="button" onPointerDown={e => { e.preventDefault(); onPick(r); setRows([]) }} className="w-full text-left px-2.5 py-1.5 hover:bg-app">
+                <span className="block text-[12.5px] text-ink">{r.label}</span>
+                {r.sub && <span className="block text-[11px] text-muted truncate">{r.sub}</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {q.trim().length >= 2 && !busy && !rows.length && <p className="text-[11.5px] text-muted mt-1">Nothing found — keep typing, or pick a different kind.</p>}
+    </div>
+  )
+}
+
 // ── ADD SOMETHING ────────────────────────────────────────────────────────────────────────────────
 // Jon, 2026-10-07: "they don't have to be attached to a unit. It could just be a note that I can
 // leave, that I can tag to somebody, and that I could put a due date on. I can set it as a
@@ -111,9 +171,9 @@ function AddItem({ busy, run }: { busy: string; run: (k: string, b: any) => Prom
   const [due, setDue] = useState('')
   const [remind, setRemind] = useState(true)
   const [kind, setKind] = useState<BriefLinkKind | ''>('')
-  const [ref, setRef] = useState('')
+  const [about, setAbout] = useState<Found | null>(null)
   const open = () => { setMore(m => !m); if (!team.length) load(true) }
-  const reset = () => { setText(''); setDue(''); setRef(''); setKind(''); setOwner(''); setMore(false) }
+  const reset = () => { setText(''); setDue(''); setAbout(null); setKind(''); setOwner(''); setMore(false) }
   const submit = () => {
     if (!text.trim()) return
     run('add', { action: 'add', item: {
@@ -121,9 +181,10 @@ function AddItem({ busy, run }: { busy: string; run: (k: string, b: any) => Prom
       owner: owner || undefined,
       due: due || undefined,
       remind,
-      link: kind && ref.trim() ? { kind, ref: ref.trim(), label: ref.trim() } : undefined,
-      // A unit stays a unit, so the old field keeps working for anything that reads it.
-      unit: kind === 'unit' ? ref.trim() : undefined,
+      link: kind && about ? { kind, ref: about.ref, label: about.label } : undefined,
+      // The unit comes along with whatever it is about — a stay, a claim or a glitch all sit in one
+      // — so the old unit field keeps working for everything that reads it.
+      unit: about?.unit || (kind === 'unit' ? about?.label : undefined),
     } }).then(reset)
   }
   const f = 'text-[12.5px] rounded-lg border border-line px-2 py-1.5 bg-white focus:outline-none focus:border-ink/40'
@@ -157,14 +218,14 @@ function AddItem({ busy, run }: { busy: string; run: (k: string, b: any) => Prom
               <BellRing size={12} className="text-muted" /> Remind me then{owner && owner !== 'pool' ? ' — it goes to them' : ''}
             </label>
           )}
-          <div className="grid grid-cols-[auto_1fr] gap-1.5 items-end">
+          <div>
             <label className="block"><span className="text-[11.5px] text-muted">About</span>
-              <select value={kind} onChange={e => setKind(e.target.value as any)} className={f}>
-                <option value="">Nothing</option>
+              <select value={kind} onChange={e => setKind(e.target.value as any)} className={f + ' w-full'}>
+                <option value="">Nothing — it is just a note</option>
                 {LINK_KINDS.map(k => <option key={k.key} value={k.key}>{k.label}</option>)}
               </select>
             </label>
-            {kind ? <input value={ref} onChange={e => setRef(e.target.value)} placeholder={LINK_KINDS.find(k => k.key === kind)?.hint} className={f + ' w-full'} /> : <span />}
+            {kind ? <div className="mt-1.5"><AboutPicker kind={kind} picked={about} onPick={setAbout} /></div> : null}
           </div>
         </div>
       )}

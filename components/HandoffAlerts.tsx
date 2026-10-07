@@ -65,13 +65,20 @@ function useTeam() {
 // Type @ and the team appears; pick one and their name goes in the line. What the server needs is
 // the email, so the picked people are kept beside the text and matched back out of it on send — a
 // name deleted from the box is a tag taken off, which is what deleting it looks like it should do.
-function CommentBox({ onSend, busy }: { onSend: (text: string, mentions: string[]) => Promise<void>; busy: boolean }) {
+// A half-written comment is kept outside React, per alert. The floater re-renders on every poll
+// and can be remounted by the page around it; losing what you were typing to that is the whole of
+// Jon's "it just closes out" (2026-10-07), and a draft that survives makes it a non-event.
+const drafts = new Map<string, { text: string; picked: { email: string; name: string }[] }>()
+
+function CommentBox({ alertId, onSend, busy }: { alertId: string; onSend: (text: string, mentions: string[]) => Promise<void>; busy: boolean }) {
   const team = useTeam()
-  const [text, setText] = useState('')
-  const [picked, setPicked] = useState<{ email: string; name: string }[]>([])
+  const [text, setText] = useState(() => drafts.get(alertId)?.text || '')
+  const [picked, setPicked] = useState<{ email: string; name: string }[]>(() => drafts.get(alertId)?.picked || [])
   const [menu, setMenu] = useState<{ q: string; at: number } | null>(null)
   const ref = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
   useEffect(() => { loadTeam() }, [])
+  useEffect(() => { if (text.trim()) drafts.set(alertId, { text, picked }); else drafts.delete(alertId) }, [alertId, text, picked])
 
   const onChange = (v: string) => {
     setText(v)
@@ -94,23 +101,29 @@ function CommentBox({ onSend, busy }: { onSend: (text: string, mentions: string[
     // Only the people still written in the line are tagged.
     const mentions = picked.filter(p => t.includes('@' + p.name)).map(p => p.email)
     await onSend(t, mentions)
+    drafts.delete(alertId)
     setText(''); setPicked([]); setMenu(null)
   }
+  // The panel scrolls, so a list floating ABOVE the box can sit off-screen and read as nothing
+  // happening. It hangs below instead, and brings itself into view.
+  useEffect(() => { if (hits.length) setTimeout(() => listRef.current?.scrollIntoView({ block: 'nearest' }), 0) }, [hits.length])
   return (
-    <div className="relative mt-2.5">
-      {hits.length > 0 && (
-        <ul className="absolute bottom-full mb-1 left-0 z-10 w-56 max-h-48 overflow-y-auto rounded-xl border border-line bg-white shadow-xl py-1">
-          {hits.map(t => (
-            <li key={t.email}><button type="button" onMouseDown={e => { e.preventDefault(); choose(t) }} className="w-full text-left px-3 py-1.5 text-[13px] text-ink hover:bg-app">{t.name}</button></li>
-          ))}
-        </ul>
-      )}
+    <div className="relative mt-2.5 pb-1">
       <div className="flex gap-2">
         <input ref={ref} value={text} onChange={e => onChange(e.target.value)}
           onKeyDown={e => { if (e.key === 'Escape' && menu) { e.stopPropagation(); setMenu(null) } else if (e.key === 'Enter' && hits.length && menu) { e.preventDefault(); choose(hits[0]) } else if (e.key === 'Enter') { send() } }}
           placeholder="Write a comment — @ to tag someone…" className="flex-1 min-w-0 text-[13px] rounded-lg border border-line px-3 py-2 focus:outline-none focus:border-ink/40" />
         <button disabled={!text.trim() || busy} onClick={send} className="rounded-lg bg-ink text-white px-3 h-9 text-[12.5px] font-semibold inline-flex items-center gap-1.5 disabled:opacity-40">{busy ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Send</button>
       </div>
+      {hits.length > 0 && (
+        <ul ref={listRef} className="mt-1 max-h-48 overflow-y-auto rounded-xl border border-line bg-white shadow-lg py-1">
+          {hits.map(t => (
+            <li key={t.email}>
+              <button type="button" onPointerDown={e => { e.preventDefault(); choose(t) }} className="w-full text-left px-3 py-2 text-[13px] text-ink hover:bg-app">{t.name}</button>
+            </li>
+          ))}
+        </ul>
+      )}
       {picked.some(p => text.includes('@' + p.name)) && (
         <p className="text-[11.5px] text-muted mt-1">Tagging {picked.filter(p => text.includes('@' + p.name)).map(p => p.name).join(', ')} — it lands in their alerts and tags them in the Slack thread.</p>
       )}
@@ -226,7 +239,7 @@ export function AlertView({ a, me, leader, onClose }: { a: Alert; me: string; le
           ))}
           {!(a.comments || []).length && <p className="text-[12.5px] text-muted">Ask a question or add an update — everyone on this alert sees it{a.slackTs ? ', and it goes to the Slack thread' : ''}. Type <b>@</b> to tag someone in.</p>}
         </div>
-        <CommentBox busy={busy === 'c'} onSend={(t, mentions) => run('c', { action: 'comment', id: a.id, text: t, mentions })} />
+        <CommentBox alertId={a.id} busy={busy === 'c'} onSend={(t, mentions) => run('c', { action: 'comment', id: a.id, text: t, mentions })} />
       </div>
     </div>
   )
@@ -244,10 +257,28 @@ const tucked = (id: string) => { try { return Date.now() - Number(localStorage.g
 function Panel({ onClose, children, label }: { onClose: () => void; children: React.ReactNode; label: string }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    const out = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node) && !(e.target as Element)?.closest?.('[data-handoff-bell]')) onClose() }
-    window.addEventListener('keydown', k); document.addEventListener('mousedown', out)
-    return () => { window.removeEventListener('keydown', k); document.removeEventListener('mousedown', out) }
+    // Escape closes — unless a field inside has focus, where Escape means "drop what I am doing in
+    // this box", not "throw the panel away with my half-written comment in it".
+    const inside = () => !!(ref.current && document.activeElement && ref.current.contains(document.activeElement))
+    // "Typing" means there is something in the box worth protecting — an empty field never blocks
+    // a close, so the panel still shuts on the first click outside when nothing is at stake.
+    const typing = () => {
+      if (!inside()) return false
+      const el = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null
+      return !!el && /^(INPUT|TEXTAREA)$/.test(el.tagName) && !!String(el.value || '').trim()
+    }
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape' && !typing()) onClose() }
+    // pointerdown, not mousedown, so a tap on a phone is read the same way — and never a click
+    // that landed inside the panel, on the bell, or while a field in here is being typed into.
+    const out = (e: Event) => {
+      const t = e.target as Node
+      if (ref.current && ref.current.contains(t)) return
+      if ((t as Element)?.closest?.('[data-handoff-bell]')) return
+      if (typing()) return
+      onClose()
+    }
+    window.addEventListener('keydown', k); document.addEventListener('pointerdown', out)
+    return () => { window.removeEventListener('keydown', k); document.removeEventListener('pointerdown', out) }
   }, [onClose])
   return <div ref={ref} role="dialog" aria-label={label} className="mt-2 w-[min(440px,calc(100vw-24px))] max-h-[min(78vh,720px)] overflow-y-auto bg-white rounded-2xl border border-line shadow-2xl">{children}</div>
 }
