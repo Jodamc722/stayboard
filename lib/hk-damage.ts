@@ -27,7 +27,7 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { setSetting } from './app-settings'
-import { slackGet, slackUserMap, botToken } from './slack'
+import { slackGet, fetchUsers, botToken } from './slack'
 import { anthropicMessages, textOf } from './anthropic-call'
 import { modelPairFor } from './ai-models'
 import { deadlineFor, dueDateFor, policyFor, todayET } from './claims'
@@ -268,7 +268,16 @@ export async function scanHk(opts: { days?: number } = {}): Promise<{ ok: boolea
   const { msgs, error } = await history(since)
   const now = new Date().toISOString()
   if (error && !msgs.length) { s.lastError = error; s.lastScanAt = now; await writeHk(s, null); return { ok: false, added: [], error } }
-  const users = await slackUserMap().catch(() => ({} as Record<string, string>))
+  // Slack id → real name (users.list). Not slackUserMap — that one maps ids to emails for access.
+  const users: Record<string, string> = {}
+  try { for (const u of await fetchUsers()) users[u.id] = u.name } catch { /* names fall back */ }
+  // Reports read before names worked: look their author up once.
+  for (const r of s.reports) {
+    if (r.author !== 'Someone' || r.status !== 'new') continue
+    const h = await slackGet('conversations.history', { channel: HK_CHANNEL_ID, latest: r.id, inclusive: 'true', limit: '1' })
+    const uid = h.ok && h.messages && h.messages[0] ? str(h.messages[0].user) : ''
+    if (uid && users[uid]) r.author = users[uid]
+  }
   const groups = group(msgs, users)
   // A report already on the board can still gain photos that arrived after it was read.
   const fresh: Group[] = []
