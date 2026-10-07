@@ -689,7 +689,7 @@ export function BillingBoard() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   // ?view=labor opens straight on the labor tab (the review desk at /billing links here for it).
-  const [view, setView] = useState<'approved' | 'owner' | 'all' | 'labor'>('approved')
+  const [view, setView] = useState<'approved' | 'owner' | 'all' | 'labor'>('owner')
   useEffect(() => { try { if (new URLSearchParams(window.location.search).get('view') === 'labor') setView('labor') } catch {} }, [])
   const [dept, setDept] = useState('all')
   const [billableOnly, setBillableOnly] = useState(true)

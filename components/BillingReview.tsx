@@ -316,6 +316,132 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
   )
 })
 
+// ── APPROVED, BY OWNER ────────────────────────────────────────────────────────────────────────
+// Jon, 2026-10-07: "can we also have it where we can see the approved billable by owner in simple
+// collapsed view, we can open it to see how much each billable labor per owner will be."
+//
+// One line per owner, closed. The line is the money that will land on that owner's statement —
+// only final-approved, excluded rows left out. Open it and the money comes apart: by unit, then by
+// job, with the labour (and the hours behind it) separated from the parts and supplies, so the
+// question "how much labour am I billing this owner" has an answer you can read without arithmetic.
+// Anything still waiting on an approval is counted beside it, never inside it.
+type ApTask = { t: Task; labor: number; parts: number; hours: number }
+type ApUnit = { unit: string; rows: ApTask[]; total: number; labor: number; parts: number; hours: number }
+type ApOwner = { owner: Owner; units: ApUnit[]; jobs: number; total: number; labor: number; parts: number; hours: number; pendingN: number; pending$: number; zero: number }
+const hoursTxt = (h: number) => (Math.round(h * 10) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 }) + 'h'
+const partsOf = (t: Task) => Math.round(t.items.reduce((s, x) => s + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0) * 100) / 100
+const hoursOf = (t: Task) => t.billedHours != null ? t.billedHours : (t.actualMinutes ? t.actualMinutes / 60 : 0)
+
+function ApprovedByOwner({ owners, open, setOpen, winQS }: {
+  owners: ApOwner[]
+  open: Record<string, boolean>
+  setOpen: (f: (o: Record<string, boolean>) => Record<string, boolean>) => void
+  winQS: string
+}) {
+  const total = owners.reduce((a, o) => a + o.total, 0)
+  const labor = owners.reduce((a, o) => a + o.labor, 0)
+  const parts = owners.reduce((a, o) => a + o.parts, 0)
+  const pend = owners.reduce((a, o) => ({ n: a.n + o.pendingN, $: a.$ + o.pending$ }), { n: 0, $: 0 })
+  const allOpen = owners.length > 0 && owners.every(o => open[o.owner.ownerId || '—'])
+  if (!owners.length) return <LeanEmpty>Nothing final-approved yet in this window.</LeanEmpty>
+  return (
+    <div className="space-y-2">
+      {/* what the statements add up to, and what is not in that number yet */}
+      <div className="rounded-2xl bg-white ring-1 ring-line px-4 py-3 flex items-end gap-6 flex-wrap">
+        <div>
+          <div className="text-[11.5px] font-semibold uppercase tracking-wide text-muted">Approved to bill</div>
+          <div className="text-[26px] font-bold text-ink tabular-nums leading-tight">{money(total)}</div>
+          <div className="text-[12px] text-muted">{owners.length} owner{owners.length === 1 ? '' : 's'} · {owners.reduce((a, o) => a + o.jobs, 0)} job{owners.reduce((a, o) => a + o.jobs, 0) === 1 ? '' : 's'}</div>
+        </div>
+        <div>
+          <div className="text-[11.5px] font-semibold uppercase tracking-wide text-muted">Labour</div>
+          <div className="text-[18px] font-bold text-ink tabular-nums leading-tight">{money(labor)}</div>
+          <div className="text-[12px] text-muted">{hoursTxt(owners.reduce((a, o) => a + o.hours, 0))} billed</div>
+        </div>
+        <div>
+          <div className="text-[11.5px] font-semibold uppercase tracking-wide text-muted">Parts &amp; supplies</div>
+          <div className="text-[18px] font-bold text-ink tabular-nums leading-tight">{money(parts)}</div>
+          <div className="text-[12px] text-muted">{total ? Math.round(parts / total * 100) : 0}% of the bill</div>
+        </div>
+        {pend.n ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+            <div className="text-[11.5px] font-semibold uppercase tracking-wide text-amber-800">Still to approve</div>
+            <div className="text-[18px] font-bold text-amber-900 tabular-nums leading-tight">{money(pend.$)}</div>
+            <div className="text-[12px] text-amber-800">{pend.n} job{pend.n === 1 ? '' : 's'} not in the number above</div>
+          </div>
+        ) : null}
+        <div className="flex-1" />
+        <button onClick={() => setOpen(() => allOpen ? {} : Object.fromEntries(owners.map(o => [o.owner.ownerId || '—', true])))}
+          className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-muted hover:text-ink">
+          {allOpen ? 'Collapse all' : 'Open all'}
+        </button>
+        <IconBtn title="Download every final-approved statement (ZIP)" href={'/api/billing/export?' + winQS + '&format=zip&reviewed=1'}><Download size={14} /></IconBtn>
+      </div>
+
+      {owners.map(o => {
+        const k = o.owner.ownerId || '—'
+        const isOpen = !!open[k]
+        return (
+          <section key={k} className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
+            <header className="px-3.5 sm:px-4 py-2.5 flex items-center gap-2 sm:gap-3 flex-wrap">
+              <button onClick={() => setOpen(c => ({ ...c, [k]: !c[k] }))} className="flex items-center gap-2 text-left min-w-0 grow basis-48">
+                <ChevronDown size={14} className={'text-muted shrink-0 transition ' + (isOpen ? '' : '-rotate-90')} />
+                <span className="text-[14px] font-bold text-ink truncate">{o.owner.ownerName}</span>
+                <span className="text-[12px] text-muted tabular-nums whitespace-nowrap">{o.units.length}u · {o.jobs}j · {hoursTxt(o.hours)}</span>
+              </button>
+              <span className="text-[12px] text-muted tabular-nums hidden sm:inline" title="Labour and parts inside the owner total">
+                labour {money(o.labor)}{o.parts ? ' · parts ' + money(o.parts) : ''}
+              </span>
+              {o.pendingN ? <Tag tone="amber" title={money(o.pending$) + ' on ' + o.pendingN + ' job' + (o.pendingN === 1 ? '' : 's') + ' not approved yet — not in this total'}>{o.pendingN} to approve</Tag> : null}
+              {o.zero ? <Tag title={o.zero + ' approved job' + (o.zero === 1 ? '' : 's') + ' bill the owner nothing'}>{o.zero} at $0</Tag> : null}
+              <span className="text-[15px] font-bold text-ink tabular-nums ml-auto">{money(o.total)}</span>
+              {o.owner.ownerId ? <IconBtn title={'Download ' + o.owner.ownerName + '’s sheet (Excel)'} href={'/api/billing/export?' + winQS + '&format=xls&done=1&owner=' + encodeURIComponent(o.owner.ownerId)}><Download size={13} /></IconBtn> : null}
+            </header>
+            {isOpen ? (
+              <div className="border-t border-line divide-y divide-line">
+                {o.units.map(u => (
+                  <div key={u.unit} className="px-3.5 sm:px-4 py-2">
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <span className="text-[13px] font-bold text-ink">{u.unit}</span>
+                      <span className="text-[11.5px] text-muted tabular-nums">{u.rows.length} job{u.rows.length === 1 ? '' : 's'} · labour {money(u.labor)} ({hoursTxt(u.hours)}){u.parts ? ' · parts ' + money(u.parts) : ''}</span>
+                      <span className="flex-1" />
+                      <span className="text-[13px] font-bold text-ink tabular-nums">{money(u.total)}</span>
+                    </div>
+                    <ul className="mt-1 space-y-0.5">
+                      {u.rows.map(({ t, labor: l, parts: pp, hours: hh }) => (
+                        <li key={t.id} className="flex items-baseline gap-2 flex-wrap text-[12.5px]">
+                          <span className="text-muted tabular-nums w-[52px] shrink-0">{short(t.finishedAt || t.scheduledDate)}</span>
+                          <span className="text-ink min-w-0 grow basis-48 truncate" title={t.name}>{t.name}</span>
+                          <span className="text-muted whitespace-nowrap">
+                            {t.overrideAmount != null
+                              ? 'set by hand'
+                              : (l ? 'labour ' + money(l) + (hh ? ' (' + hoursTxt(hh) + ')' : '') : 'no labour') + (pp ? ' · parts ' + money(pp) : '')}
+                          </span>
+                          {t.doer ? <span className="text-muted hidden sm:inline">· {t.doer}</span> : null}
+                          {t.gmBy ? <span className="text-muted hidden md:inline" title={'Final-approved by ' + t.gmBy + (t.gmAt ? ' on ' + short(t.gmAt) : '')}>· {who(t.gmBy)}</span> : null}
+                          <span className="flex-1" />
+                          <span className="text-ink font-semibold tabular-nums">{money(t.billedAmount)}</span>
+                          {t.reportUrl ? <a href={t.reportUrl} target="_blank" rel="noreferrer" title="Open the job in Breezeway" className="text-muted hover:text-ink"><ExternalLink size={11} /></a> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+                <div className="px-3.5 sm:px-4 py-2 bg-app/40 flex items-baseline gap-2 flex-wrap">
+                  <span className="text-[12px] font-semibold text-muted">{o.owner.ownerName} — on the statement</span>
+                  <span className="text-[11.5px] text-muted tabular-nums">labour {money(o.labor)} ({hoursTxt(o.hours)}){o.parts ? ' · parts & supplies ' + money(o.parts) : ''}</span>
+                  <span className="flex-1" />
+                  <span className="text-[14px] font-bold text-ink tabular-nums">{money(o.total)}</span>
+                </div>
+              </div>
+            ) : null}
+          </section>
+        )
+      })}
+    </div>
+  )
+}
+
 // ── THE DESK ──────────────────────────────────────────────────────────────────────────────────
 export function BillingReview() {
   const [month, setMonth] = useState(todayMonth())
@@ -357,6 +483,10 @@ export function BillingReview() {
   const [openId, setOpenId] = useState<string>('')
   const [busy, setBusy] = useState<Set<string>>(new Set())
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  // The Approved tab's summary: owners start CLOSED here (the point is the one-line read), and the
+  // reviewer can still drop to the full rows with the toggle.
+  const [apOpen, setApOpen] = useState<Record<string, boolean>>({})
+  const [apMode, setApMode] = useState<'summary' | 'rows'>('summary')
   // The snapshot that keeps rows from vanishing mid-session (rule 2).
   const [viewIds, setViewIds] = useState<Set<string> | null>(null)
   const seq = useRef(0)
@@ -452,6 +582,56 @@ export function BillingReview() {
     const sum = (f: (t: Task) => boolean) => tasks.filter(f).reduce((a, t) => ({ n: a.n + 1, $: a.$ + t.billedAmount }), { n: 0, $: 0 })
     return { should: sum(t => t.flags.includes('should_bill')), open: sum(t => t.reviewState === 'open'), gm: sum(t => t.reviewState === 'ops_approved'), done: sum(t => t.reviewState === 'gm_approved'), flagged: sum(t => t.flags.length > 0 && t.reviewState !== 'gm_approved') }
   }, [tasks])
+
+  // What each owner is actually being billed, once it is final-approved. Whole window, so the
+  // filters above never quietly shrink a statement total.
+  const approved = useMemo<ApOwner[]>(() => {
+    const byOwner = new Map<string, Task[]>()
+    const pending = new Map<string, { n: number; $: number }>()
+    for (const t of tasks) {
+      const k = t.ownerId || '—'
+      if (t.reviewState === 'gm_approved') { if (!byOwner.has(k)) byOwner.set(k, []); byOwner.get(k)!.push(t) }
+      else if (!t.excluded && t.billedAmount > 0) { const x = pending.get(k) || { n: 0, $: 0 }; x.n++; x.$ += t.billedAmount; pending.set(k, x) }
+    }
+    const out: ApOwner[] = []
+    for (const o of (data?.owners || [])) {
+      const k = o.ownerId || '—'
+      const rows = (byOwner.get(k) || []).filter(t => !t.excluded)
+      const p = pending.get(k) || { n: 0, $: 0 }
+      if (!rows.length && !p.n) continue
+      const paying = rows.filter(t => t.billedAmount > 0)
+      const um = new Map<string, ApTask[]>()
+      for (const t of paying) {
+        const u = t.unit || '—'
+        const parts = partsOf(t)
+        // An override replaces the computed total, so the split it implies is not knowable —
+        // show it as set by hand rather than inventing a labour figure.
+        const labor = t.overrideAmount != null ? 0 : Math.round(t.laborAmount * 100) / 100
+        if (!um.has(u)) um.set(u, [])
+        um.get(u)!.push({ t, labor, parts: t.overrideAmount != null ? 0 : parts, hours: hoursOf(t) })
+      }
+      const units: ApUnit[] = Array.from(um.entries()).map(([unit, list]) => {
+        list.sort((a, b) => b.t.billedAmount - a.t.billedAmount)
+        return {
+          unit, rows: list,
+          total: Math.round(list.reduce((a, x) => a + x.t.billedAmount, 0) * 100) / 100,
+          labor: Math.round(list.reduce((a, x) => a + x.labor, 0) * 100) / 100,
+          parts: Math.round(list.reduce((a, x) => a + x.parts, 0) * 100) / 100,
+          hours: list.reduce((a, x) => a + x.hours, 0),
+        }
+      }).sort((a, b) => b.total - a.total || a.unit.localeCompare(b.unit))
+      out.push({
+        owner: o, units, jobs: paying.length,
+        total: Math.round(units.reduce((a, u) => a + u.total, 0) * 100) / 100,
+        labor: Math.round(units.reduce((a, u) => a + u.labor, 0) * 100) / 100,
+        parts: Math.round(units.reduce((a, u) => a + u.parts, 0) * 100) / 100,
+        hours: units.reduce((a, u) => a + u.hours, 0),
+        pendingN: p.n, pending$: Math.round(p.$ * 100) / 100,
+        zero: rows.length - paying.length,
+      })
+    }
+    return out
+  }, [tasks, data])
 
   // ── actions: merge, never reload ────────────────────────────────────────────────────────────
   const markBusy = (ids: string[], on: boolean) => setBusy(prev => { const n = new Set(prev); for (const id of ids) on ? n.add(id) : n.delete(id); return n })
@@ -640,6 +820,14 @@ export function BillingReview() {
         ]}
         value={st} onChange={k => { setStage(k); resnapshot() }}
         right={<>
+          {st === 'done' ? (
+            <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px] h-8">
+              {([['summary', 'By owner'], ['rows', 'Every job']] as const).map(([k, l]) => (
+                <button key={k} onClick={() => setApMode(k)} title={k === 'summary' ? 'One line per owner — open it for the labour and parts behind the number' : 'The full reviewed rows'}
+                  className={'px-2.5 font-semibold border-l border-line first:border-l-0 ' + (apMode === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{l}</button>
+              ))}
+            </div>
+          ) : null}
           <Tip label="Show only rows with a flag"><button onClick={() => setFlaggedOnly(v => !v)} aria-label="Flagged only" className={'h-8 px-2.5 rounded-lg border text-[12px] font-semibold inline-flex items-center gap-1.5 ' + (flaggedOnly ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-line text-muted hover:text-ink')}><AlertTriangle size={13} /> Flagged</button></Tip>
           <label className="h-8 inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2 text-[12px]"><Search size={13} className="text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="unit, task, person, owner" className="w-36 bg-transparent outline-none text-ink" /></label>
           {aiBusy ? <Tag title={'AI is reading ' + aiBusy + ' unit checks / strips — the ones with a real description stay open only if it saw chargeable work'}><Loader2 size={10} className="animate-spin inline mr-1" />AI {aiBusy}</Tag> : null}
@@ -653,7 +841,10 @@ export function BillingReview() {
           ) : null}
         </>} />
 
-      {/* ── filters: billable only, minimum, department, building, person ─────────────────────── */}
+      {/* ── filters: billable only, minimum, department, building, person ───────────────────────
+            The by-owner summary is a statement total, so the filters do not apply to it and are
+            hidden rather than left there doing nothing. */}
+      {st === 'done' && apMode === 'summary' ? null : (
       <div className="flex items-center gap-1.5 flex-wrap">
         <button onClick={() => setBillOnly(v => !v)} title="Only rows that bill the owner something" className={'h-8 px-2.5 rounded-lg border text-[12px] font-semibold ' + (billOnly ? 'bg-brand-600 text-white border-brand-600' : 'bg-white border-line text-muted hover:text-ink')}>Billable &gt; $0</button>
         <label className="h-8 inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 text-[12px] text-muted" title="Only rows billing at least this much">min $<input value={minAmt} onChange={e => setMinAmt(e.target.value)} inputMode="decimal" placeholder="0" className="w-14 bg-transparent outline-none text-ink tabular-nums" /></label>
@@ -684,11 +875,14 @@ export function BillingReview() {
           <button onClick={clearFilters} className="text-[12px] font-semibold text-muted hover:text-ink px-1">Clear</button>
         </> : null}
       </div>
+      )}
 
       {err ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {err}</div> : null}
 
       {/* ── by owner, in an order that never changes ───────────────────────────────────────── */}
-      {!visible.length ? (
+      {st === 'done' && apMode === 'summary' ? (
+        <ApprovedByOwner owners={approved} open={apOpen} setOpen={setApOpen} winQS={winQS} />
+      ) : !visible.length ? (
         <LeanEmpty>
           {st === 'ops' ? 'Nothing open for ops to review.' : st === 'gm' ? 'Nothing waiting on final review.' : st === 'done' ? 'Nothing final-approved yet in this window.' : 'No tasks in this window.'}
           {filtersOn ? ' (with the current filters)' : ''}
