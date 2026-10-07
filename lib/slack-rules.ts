@@ -192,6 +192,25 @@ export const EVE_CHANNELS = {
 }
 
 /**
+ * Where a HANDOFF ALERT can post (lib/handoff — Jon, 2026-10-07: "notifies them in the VR customer
+ * care team channel / they can assign it to any channel"). Customer care first: it is the default.
+ * Every one is private, so the bot must be a member or the alert says it could not post.
+ */
+export const HANDOFF_CHANNELS: { id: string; label: string }[] = [
+  { id: CH.ccsJon, label: '#vr-customercareteam' },
+  { id: CH.ccsBoard, label: '#vr-ccs-messageboard' },
+  { id: CH.leadership, label: '#leadership' },
+  { id: CH.miami, label: '#vr-miami-hk-maintenance' },
+  { id: CH.w17_hk, label: '#vr-miami-housekeeping-17west' },
+  { id: CH.w17_mt, label: '#vr-maintenance-17west' },
+  { id: CH.brow_hk, label: '#vr-broward-housekeeping' },
+  { id: CH.brow_mt, label: '#vr-broward-maintenance' },
+  { id: CH.north, label: '#vr-lakeworth-palmbeach' },
+  { id: CH.botanica, label: '#vr-botanica' },
+  { id: CH.parktower, label: '#vr-parktower' },
+]
+
+/**
  * Buildings come from lib/segments KNOWN_BUILDINGS. Nomad and Miami House have no channel of
  * their own — the Miami room is the only sensible home, and Jon can move them in one dropdown.
  */

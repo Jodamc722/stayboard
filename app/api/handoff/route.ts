@@ -1,0 +1,105 @@
+// HANDOFF ALERTS API (lib/handoff, lib/handoff-store). Any Stay Hospitality login.
+// GET  → { mine (my banner: fired, open, for me, not confirmed), open (every open alert, with who has
+//          confirmed), team, roles, channels, me }
+// POST { action: 'create', alert } · { action: 'ack', id } · { action: 'close', id } (writer or admin)
+//      · { action: 'fire', id } (writer or admin: send it now instead of waiting for its time)
+import { NextRequest, NextResponse } from 'next/server'
+import { randomUUID } from 'node:crypto'
+import { requireVrUser } from '@/lib/vr-gate'
+import { isSuperadmin } from '@/lib/access'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { makeAlert, bannerFor, isOpen, isFor, mark, type Alert } from '@/lib/handoff'
+import { readAlerts, writeAlerts, teamDirectory, runHandoffs } from '@/lib/handoff-store'
+import { HANDOFF_CHANNELS } from '@/lib/slack-rules'
+
+export const dynamic = 'force-dynamic'
+export const maxDuration = 60
+
+const nameOf = (a: any) => String(a.profile?.name || (a.email ? String(a.email).split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) : 'Someone'))
+const isLeader = (a: any) => isSuperadmin(a.email) || a.role === 'admin'
+const meOf = (a: any) => ({ email: String(a.email || '').toLowerCase(), role: a.role === 'admin' ? 'admin' : (a.accessRole || null) })
+
+async function roleList(): Promise<{ key: string; label: string }[]> {
+  try {
+    const { data } = await supabaseAdmin().from('app_roles').select('key,label,sort').order('sort', { ascending: true })
+    return ((data || []) as any[]).map(r => ({ key: String(r.key), label: String(r.label || r.key) }))
+  } catch { return [] }
+}
+
+function view(alerts: Alert[], a: any) {
+  const me = meOf(a)
+  const now = Date.now()
+  return {
+    ok: true, me: me.email, leader: isLeader(a),
+    mine: bannerFor(alerts, me),
+    // The bell: open alerts (and the last day's closed) that are for me, that I wrote, or — for an
+    // admin — all of them. Newest first. Fired ones only, plus my own scheduled ones.
+    open: alerts.filter(x => (isOpen(x) || (x.closedAt && now - Date.parse(x.closedAt) < 86400_000))
+      && (isLeader(a) || x.byEmail === me.email || (x.firedAt && isFor(x, me))))
+      .sort((x, y) => String(y.firedAt || y.fireAt).localeCompare(String(x.firedAt || x.fireAt))).slice(0, 40),
+  }
+}
+
+export async function GET(req: NextRequest) {
+  const gate = await requireVrUser()
+  if (!gate.ok) return gate.res
+  const alerts = await readAlerts()
+  const out: any = view(alerts, gate.access)
+  // The form's lists only when asked (the banner polls without them).
+  out.channels = HANDOFF_CHANNELS
+  if (req.nextUrl.searchParams.get('form') === '1') {
+    const [team, roles] = await Promise.all([teamDirectory(), roleList()])
+    out.team = team.map(t => ({ email: t.email, name: t.name, role: t.role })).sort((x, y) => x.name.localeCompare(y.name))
+    out.roles = roles
+  }
+  return NextResponse.json(out)
+}
+
+export async function POST(req: NextRequest) {
+  const gate = await requireVrUser()
+  if (!gate.ok) return gate.res
+  const a = gate.access
+  const me = meOf(a)
+  const b = await req.json().catch(() => ({} as any))
+  const action = String(b?.action || '')
+  const alerts = await readAlerts()
+  const nowIso = new Date().toISOString()
+  const deny = (m: string, s = 403) => NextResponse.json({ ok: false, error: m }, { status: s })
+  let fireNow = false
+
+  if (action === 'create') {
+    const al = makeAlert({ ...(b?.alert || {}), source: 'person' }, { name: nameOf(a), email: me.email }, randomUUID(), nowIso)
+    if (!al) return deny('Write what the team needs to know.', 400)
+    alerts.unshift(al)
+    fireNow = Date.parse(al.fireAt) <= Date.now()
+  } else {
+    const al = alerts.find(x => x.id === String(b?.id || ''))
+    if (!al) return deny('That alert is gone.', 404)
+    const mine = al.byEmail === me.email || isLeader(a)
+    const i = alerts.indexOf(al)
+    if (action === 'seen' || action === 'read' || action === 'ack') {
+      alerts[i] = mark(al, me.email, nameOf(a), action, nowIso)
+      if (action === 'ack') alerts[i].ackNames = { ...(al.ackNames || {}), [me.email]: nameOf(a) }
+    } else if (action === 'comment') {
+      const text = String(b?.text || '').trim().slice(0, 1000)
+      if (!text) return deny('Write something first.', 400)
+      const c = { id: randomUUID(), by: nameOf(a), byEmail: me.email, text, at: nowIso }
+      alerts[i] = { ...mark(al, me.email, nameOf(a), 'read', nowIso), comments: [...(al.comments || []), c].slice(-100) }
+      // The conversation follows the alert into Slack: a reply on its thread.
+      if (al.channel && al.slackTs) {
+        try { const { postThreadReply } = await import('@/lib/slack'); await postThreadReply(al.channel, al.slackTs, `💬 *${c.by}:* ${text}`) } catch { /* Lighthouse has it either way */ }
+      }
+    } else if (action === 'close') {
+      if (!mine) return deny('Only whoever wrote it or an admin can close it.')
+      al.closedAt = nowIso; al.closedBy = nameOf(a)
+    } else if (action === 'fire') {
+      if (!mine) return deny('Only whoever wrote it or an admin can send it early.')
+      if (!al.firedAt) { al.fireAt = nowIso; fireNow = true }
+    } else return deny('Unknown action.', 400)
+  }
+  const saved = await writeAlerts(alerts, me.email)
+  if (!saved.ok) return NextResponse.json({ ok: false, error: 'Could not save: ' + saved.error }, { status: 500 })
+  // "Now" means now — post it straight away rather than on the next 5-minute tick.
+  if (fireNow) { try { await runHandoffs() } catch { /* the cron picks it up */ } }
+  return NextResponse.json({ ...view(await readAlerts(), a), channels: HANDOFF_CHANNELS })
+}

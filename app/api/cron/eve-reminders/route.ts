@@ -20,5 +20,21 @@ export async function GET(req: NextRequest) {
   const { fireDueReminders } = await import('@/lib/eve/reminders')
   const r = await fireDueReminders()
   if (r.due > 0 || r.notes.length) await recordRun({ name: 'eve-reminders', ok: r.failed === 0, itemCount: r.fired, ms: Date.now() - t0, error: r.failed ? r.notes.slice(0, 3).join(' · ') : null, detail: { due: r.due, fired: r.fired, failed: r.failed } })
-  return NextResponse.json({ ok: true, ...r })
+  // HANDOFF ALERTS ride the same 5-minute tick (Jon, 2026-10-07): fire what is due, nag who hasn't
+  // confirmed, close what is done — and every half hour the guest-move watch looks for conflicts.
+  let handoffs: any = null, moves: any = null
+  try {
+    const { runHandoffs } = await import('@/lib/handoff-store')
+    const { getSetting } = await import('@/lib/app-settings')
+    const mw = await getSetting<{ on?: boolean }>('move_watch', { on: false })
+    if (mw.on && new Date().getUTCMinutes() % 30 < 5) {
+      const { runMoveWatch } = await import('@/lib/move-watch')
+      const m = await runMoveWatch()
+      moves = { found: m.found, raised: m.raised, errors: m.errors }
+      await recordRun({ name: 'move-watch', ok: !m.errors.length, itemCount: m.raised, ms: 0, error: m.errors.slice(0, 2).join(' · ') || null, detail: { found: m.found, raised: m.raised, checked: m.checked } })
+    }
+    handoffs = await runHandoffs()
+    if (handoffs.fired || handoffs.nagged || handoffs.closed || handoffs.notes.length) await recordRun({ name: 'handoff-alerts', ok: !handoffs.notes.length, itemCount: handoffs.fired, ms: 0, error: handoffs.notes.slice(0, 2).join(' · ') || null, detail: handoffs })
+  } catch (e: any) { handoffs = { error: String(e?.message || e).slice(0, 200) } }
+  return NextResponse.json({ ok: true, ...r, handoffs, moves })
 }
