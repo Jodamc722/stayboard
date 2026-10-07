@@ -15,8 +15,9 @@
 //   COMMENTS questions and answers inside the alert; each also goes to the alert's Slack thread.
 // Rules: lib/handoff.ts · data: /api/handoff · firing + Slack + nags: lib/handoff-store (cron).
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { BellRing, X, Check, Loader2, Send, Plus, Clock, Hash, Eye, BookOpen, CircleCheck, Circle } from 'lucide-react'
+import { BellRing, X, Check, Loader2, Send, Plus, Clock, Hash, Eye, BookOpen, CircleCheck, Circle, ClipboardList } from 'lucide-react'
 import { people as peopleOf, stageOf, type Alert, type Audience } from '@/lib/handoff'
+import { BriefPanel, useBrief, briefCounts } from '@/components/ShiftBrief'
 
 const URL_ = '/api/handoff'
 type Res = { ok: boolean; me: string; leader: boolean; mine: Alert[]; open: Alert[]; team?: { email: string; name: string; role: string | null }[]; roles?: { key: string; label: string }[]; channels?: { id: string; label: string }[] }
@@ -163,7 +164,9 @@ function Panel({ onClose, children, label }: { onClose: () => void; children: Re
 
 export function HandoffFloater() {
   const s = useAlerts()
-  const [view, setView] = useState<null | 'list' | 'new' | string>(null)   // string = an alert id
+  const [view, setView] = useState<null | 'list' | 'new' | 'brief' | string>(null)   // string = an alert id
+  const brief = useBrief()
+  const bc = briefCounts(brief)
   const [, force] = useState(0)
   const seenSent = useRef(new Set<string>())
   const mine = s?.mine || []
@@ -181,16 +184,25 @@ export function HandoffFloater() {
   useEffect(() => { const t = setInterval(() => force(x => x + 1), 5 * 60_000); return () => clearInterval(t) }, [])
   if (!s) return null
   const tuck = (id: string) => { try { localStorage.setItem(DISMISS_KEY(id), String(Date.now())) } catch { /* fine */ } force(x => x + 1) }
-  const open = typeof view === 'string' && view !== 'list' && view !== 'new' ? (s.open.find(x => x.id === view) || mine.find(x => x.id === view)) : null
+  const open = typeof view === 'string' && view !== 'list' && view !== 'new' && view !== 'brief' ? (s.open.find(x => x.id === view) || mine.find(x => x.id === view)) : null
   const sevBar = (a: Alert) => a.severity === 'urgent' ? 'bg-rose-600' : a.severity === 'warn' ? 'bg-amber-500' : 'bg-ink'
   return (
     <div className="fixed z-[65] right-3 top-[64px] lg:right-5 lg:top-4 flex flex-col items-end pointer-events-none print:hidden">
-      <button data-handoff-bell onClick={() => { setView(v => v ? null : 'list'); load() }}
+      <div className="flex items-center gap-1.5">
+      {/* THE SHIFT BRIEF (Jon, 2026-10-07) — the running checklist, beside the bell on every page. */}
+      <button data-handoff-bell onClick={() => setView(v => v === 'brief' ? null : 'brief')}
+        aria-label={'Shift brief' + (bc.open ? ', ' + bc.open + ' open' : '')}
+        className={'pointer-events-auto relative h-9 rounded-full border bg-white shadow-md inline-flex items-center gap-1.5 px-3 text-[12.5px] font-semibold ' + (bc.fresh ? 'border-amber-300 text-amber-800' : 'border-line text-ink/80 hover:text-ink')}>
+        <ClipboardList size={15} /> <span className="hidden sm:inline">Brief</span>{bc.open ? <span className="tabular-nums">{bc.open}</span> : null}
+        {bc.fresh > 0 && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-500 ring-2 ring-white" />}
+      </button>
+      <button data-handoff-bell onClick={() => { setView(v => v && v !== 'brief' ? null : 'list'); load() }}
         aria-label={'Alerts' + (n ? ', ' + n + ' to confirm' : '')}
         className={'pointer-events-auto relative h-9 min-w-9 rounded-full border bg-white shadow-md inline-flex items-center justify-center gap-1.5 ' + (n ? 'px-3' : 'px-0 w-9') + ' text-[12.5px] font-semibold transition-colors ' + (n ? 'border-rose-200 text-rose-700' : 'border-line text-muted hover:text-ink')}>
         <BellRing size={15} className={n ? 'motion-safe:animate-[wiggle_1.2s_ease-in-out_2]' : ''} />
         {n ? <span>{n}</span> : null}
       </button>
+      </div>
 
       {view === null && cards.length > 0 && (
         <div className="pointer-events-auto mt-2 flex flex-col gap-2 w-[min(340px,calc(100vw-24px))]">
@@ -218,8 +230,9 @@ export function HandoffFloater() {
 
       {view !== null && (
         <div className="pointer-events-auto">
-          <Panel onClose={() => setView(null)} label={view === 'new' ? 'New alert' : open ? 'Alert' : 'Alerts'}>
-            {view === 'new' ? <NewAlert onDone={id => setView(id || 'list')} />
+          <Panel onClose={() => setView(null)} label={view === 'brief' ? 'Shift brief' : view === 'new' ? 'New alert' : open ? 'Alert' : 'Alerts'}>
+            {view === 'brief' ? <BriefPanel onClose={() => setView(null)} />
+              : view === 'new' ? <NewAlert onDone={id => setView(id || 'list')} />
               : open ? <AlertView a={open} me={s.me} leader={s.leader} onClose={() => setView('list')} />
                 : <AlertList s={s} onOpen={id => setView(id)} onNew={() => setView('new')} onClose={() => setView(null)} />}
           </Panel>
