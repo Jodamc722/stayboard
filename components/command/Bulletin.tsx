@@ -127,10 +127,20 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
     const lanes: Slide[][] = [
       others.map(p => ({ key: 'post:' + p.id, label: KIND_LABEL[p.kind], secs: p.kind === 'review' ? 10 : 8, node: <PostSlide p={p} me={me} canPost={canPost} act={act} onFrame={setFraming} onOpen={x => setViewing(x.id)} /> })),
       recs.map((r, i) => ({ key: 'rec:' + r.id, label: 'Eve recommends', secs: 9, node: <RecSlide r={r} n={i + 1} of={recs.length} /> })),
-      statSlides,
     ]
     for (let i = 0; lanes.some(l => i < l.length); i++) for (const l of lanes) if (l[i]) out.push(l[i])
-    return out
+    // The stats are spread evenly between everything else, so two never run back to back while there
+    // is something else to show (they used to bunch up at the end of the loop).
+    if (!statSlides.length) return out
+    const mixed: Slide[] = []
+    const gap = out.length / statSlides.length
+    let next = gap > 1 ? gap : 1, si = 0
+    out.forEach((sl, i) => {
+      mixed.push(sl)
+      while (si < statSlides.length && i + 1 >= next) { mixed.push(statSlides[si++]); next += gap }
+    })
+    while (si < statSlides.length) mixed.push(statSlides[si++])
+    return mixed
   }, [health, openTile, d, data, plans.data, stats.data, week.data, act])
 
   // ── ONE CLOCK FOR EVERYONE (Jon, 2026-10-07: "it flows weird when you land … keep it where everyone
