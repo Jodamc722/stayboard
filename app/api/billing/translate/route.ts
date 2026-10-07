@@ -33,6 +33,15 @@ const PREFS = 'billing_prefs'
 // and over. Each task's text is fingerprinted once it has been through; it is sent again only when
 // its title or description actually changes.
 const SEEN = 'billing_translate_seen'
+const WEEK_MS = 7 * 86400000
+/** seen[id] = "fpIn|fpOut|@<epoch ms>"; the old single-fingerprint form still reads. */
+function triedRecently(v: string | undefined, cur: string): boolean {
+  if (!v) return false
+  const parts = String(v).split('|')
+  if (parts.includes(cur)) return true
+  const at = Number((parts.find(x => x.startsWith('@')) || '@0').slice(1))
+  return at > 0 && Date.now() - at < WEEK_MS
+}
 const fp = (t: string, d: string) => { let h = 5381; const s = t + '\u0001' + d; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -74,7 +83,12 @@ export async function POST(req: NextRequest) {
   const candidates = tasks
     .map(t => ({ id: String(t.id), title: String(t.name || ''), description: String(t.descr || '') }))
     .filter(t => !t.id.startsWith('lh-') && (!only || only.includes(t.id)) && t.title && (SPANISHY.test(t.title) || SPANISHY.test(t.description)))
-    .filter(t => force || seen[t.id] !== fp(t.title, t.description))
+    // ONE TRY PER TASK A WEEK (2026-10-07, the $19 day). The memory used to hold only the text a task
+    // LEFT the translator with — so when Breezeway refused the write, or the mirror kept the Spanish
+    // description, the task looked new again and was re-sent on every page load, all day. Now the
+    // memory holds what went in, what came out, and when it was tried; any match, or a try in the
+    // last 7 days, and it is not sent again (the ES → EN button still forces it).
+    .filter(t => force || !triedRecently(seen[t.id], fp(t.title, t.description)))
   if (!candidates.length) return NextResponse.json({ ok: true, scanned: tasks.length, candidates: 0, translated: 0, remaining: 0 })
 
   const started = Date.now()
@@ -82,9 +96,9 @@ export async function POST(req: NextRequest) {
   let failed = 0
   let processed = 0
   const changed: { id: string; name: string; description: string }[] = []
-  for (let i = 0; i < candidates.length; i += 20) {
+  for (let i = 0; i < candidates.length; i += 10) {
     if (Date.now() - started > 240_000) break
-    const batch = candidates.slice(i, i + 20).map(c => ({ ...c, description: c.description.slice(0, 1200) }))
+    const batch = candidates.slice(i, i + 10).map(c => ({ ...c, description: c.description.slice(0, 1200) }))
     let out: { id: string; title: string; description?: string }[] = []
     try {
       const { model, fallback } = await modelPairFor('billing')
@@ -95,12 +109,13 @@ export async function POST(req: NextRequest) {
     } catch { /* batch failed — skip, counted below */ }
     const byId: Record<string, { title: string; description: string | null }> = {}
     for (const o of Array.isArray(out) ? out : []) if (o && o.id && typeof o.title === 'string') byId[String(o.id)] = { title: o.title.trim().slice(0, 200), description: typeof o.description === 'string' ? o.description.trim().slice(0, 4000) : null }
-    for (const c of candidates.slice(i, i + 20)) {
+    for (const c of candidates.slice(i, i + 10)) {
       processed++
       const nt = byId[c.id]
-      if (!nt) continue
-      // Through the translator: remember the text it LEFT with (or came in with, if unchanged).
-      seen[c.id] = fp(nt.title || c.title, nt.description != null && c.description.length <= 1200 ? nt.description : c.description)
+      const inFp = fp(c.title, c.description)
+      // Tried — remembered whether or not the model answered, so a failure is not retried on every load.
+      if (!nt) { seen[c.id] = inFp + '|@' + Date.now(); continue }
+      seen[c.id] = inFp + '|' + fp(nt.title || c.title, nt.description != null && c.description.length <= 1200 ? nt.description : c.description) + '|@' + Date.now()
       const newName = nt.title || c.title
       // A description longer than what we sent keeps its tail: only replace it when we sent it whole.
       const newDesc = nt.description != null && c.description.length <= 1200 ? nt.description : c.description

@@ -850,7 +850,7 @@ export function BillingReview() {
         total += Number(j.translated || 0)
         for (const c of (j.changed || [])) setData(d => d ? { ...d, tasks: d.tasks.map(t => t.id === c.id ? { ...t, name: c.name, description: c.description } : t) } : d)
         setTrBusy(`Translated ${total}…`)
-        if (!j.remaining || ++guard > 8) break
+        if (!j.remaining || ++guard > 2) break
       }
       setTrBusy(total ? `Translated ${total} to English` : 'Nothing in Spanish')
     } catch (e: any) { setTrBusy(String(e?.message || e)) }

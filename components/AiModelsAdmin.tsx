@@ -14,7 +14,8 @@ import { Cpu, Loader2, Save, Check, AlertTriangle, RotateCcw, Clock, DollarSign 
 type Tier = { key: string; label: string; id: string; price: { in: number; out: number } }
 type Task = { key: string; title: string; what: string; matters: string; group: string; background?: boolean; def: string; tier: string; overridden: boolean }
 type Agg = { calls: number; usd: number; input: number; output: number; cacheRead: number; cacheWrite: number; errors: number; avgMs: number }
-type UsageData = { ok: boolean; days: number; missing?: boolean; total: Agg; byTask: Record<string, Agg>; byDay: { day: string; usd: number; calls: number }[]; byModel: Record<string, Agg>; last7Usd: number; projectedMonthUsd: number; daysWithData?: number }
+type Budget = { automaticUsd: number; totalUsd: number; monthUsd: number; on: boolean; todayUsd: number; monthUsd_spent: number }
+type UsageData = { ok: boolean; days: number; missing?: boolean; total: Agg; byTask: Record<string, Agg>; byDay: { day: string; usd: number; calls: number }[]; byModel: Record<string, Agg>; last7Usd: number; projectedMonthUsd: number; daysWithData?: number; budget?: Budget | null }
 
 const usd = (n: number) => n >= 100 ? '$' + Math.round(n).toLocaleString() : n >= 1 ? '$' + n.toFixed(2) : n > 0 ? '$' + n.toFixed(3) : '$0'
 const tok = (n: number) => n >= 1_000_000 ? (n / 1_000_000).toFixed(1) + 'M' : n >= 1000 ? Math.round(n / 1000) + 'k' : String(n)
@@ -83,6 +84,7 @@ export function AiModelsAdmin({ isOwner }: { isOwner: boolean }) {
         {tiers.map(t => <span key={t.key} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2 py-1 text-muted"><Cpu size={11} /> <b className="text-ink">{t.label}</b> ${t.price.in} / ${t.price.out}</span>)}
       </div>
 
+      {usage?.budget ? <BudgetStrip b={usage.budget} /> : null}
       <UsageStrip usage={usage} days={usageDays} setDays={setUsageDays} />
 
       {GROUPS.map(g => {
@@ -193,6 +195,52 @@ function RowSpend({ a, days, total }: { a?: Agg; days: number; total: number }) 
       {a.cacheRead > 0 && <span>{Math.round(100 * a.cacheRead / Math.max(1, a.input + a.cacheRead + a.cacheWrite))}% cached</span>}
       {a.errors > 0 && <span className="text-rose-700">{a.errors} failed</span>}
       <span>{a.avgMs >= 1000 ? (a.avgMs / 1000).toFixed(1) + 's' : a.avgMs + 'ms'} avg</span>
+    </div>
+  )
+}
+
+// ── THE HARD STOP (lib/ai-budget, Jon 2026-10-07: "need to put a hard stop on some things") ───────
+// Today's spend against the two daily caps and the monthly one. Over the automatic cap, background
+// jobs stop until midnight; over the daily or monthly cap, everything stops, Eve's chat included.
+function BudgetStrip({ b }: { b: Budget }) {
+  const [v, setV] = useState({ automaticUsd: String(b.automaticUsd), totalUsd: String(b.totalUsd), monthUsd: String(b.monthUsd) })
+  const [on, setOn] = useState(b.on)
+  const [msg, setMsg] = useState('')
+  const save = async (nextOn = on) => {
+    setMsg('Saving…')
+    const r = await fetch('/api/settings/ai-usage', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ automaticUsd: Number(v.automaticUsd), totalUsd: Number(v.totalUsd), monthUsd: Number(v.monthUsd), on: nextOn }) })
+    const j = await r.json().catch(() => ({}))
+    setMsg(r.ok && j.ok ? 'Saved — takes effect within a minute.' : (j.error || 'Could not save.'))
+  }
+  const pct = (x: number, cap: number) => cap > 0 ? Math.min(100, Math.round(100 * x / cap)) : 0
+  const bar = (x: number, cap: number) => (
+    <span className="block h-1.5 rounded-full bg-app overflow-hidden mt-1"><span className={'block h-full ' + (x >= cap ? 'bg-rose-500' : x >= cap * 0.75 ? 'bg-amber-500' : 'bg-emerald-500')} style={{ width: pct(x, cap) + '%' }} /></span>
+  )
+  const field = (k: 'automaticUsd' | 'totalUsd' | 'monthUsd', label: string, spent: number) => (
+    <label className="block text-[12px] min-w-[150px] flex-1">
+      <span className="text-muted">{label}</span>
+      <span className="flex items-center gap-1 mt-0.5"><span className="text-muted">$</span>
+        <input value={v[k]} onChange={e => setV({ ...v, [k]: e.target.value })} inputMode="decimal" className="h-8 w-20 rounded-lg border border-line px-2 tabular-nums" />
+        <span className="text-[11.5px] text-muted tabular-nums">· ${spent.toFixed(2)} spent</span>
+      </span>
+      {bar(spent, Number(v[k]) || 0)}
+    </label>
+  )
+  return (
+    <div className="rounded-2xl border border-line bg-white px-3.5 py-3 mb-3">
+      <div className="flex items-center gap-2 flex-wrap mb-2">
+        <span className="text-[10.5px] font-bold uppercase tracking-wider text-muted">Spending cap — the hard stop</span>
+        <label className="ml-auto inline-flex items-center gap-1.5 text-[12px] font-semibold"><input type="checkbox" checked={on} onChange={e => { setOn(e.target.checked); save(e.target.checked) }} /> On</label>
+      </div>
+      <div className="flex gap-4 flex-wrap">
+        {field('automaticUsd', 'Automatic jobs stop at (per day)', b.todayUsd)}
+        {field('totalUsd', 'Everything stops at (per day)', b.todayUsd)}
+        {field('monthUsd', 'Everything stops at (per month)', b.monthUsd_spent)}
+      </div>
+      <div className="flex items-center gap-2 mt-2">
+        <button onClick={() => save()} className="h-8 px-3 rounded-lg bg-ink text-white text-[12px] font-semibold">Save caps</button>
+        <span className="text-[11.5px] text-muted">{msg || 'Days reset at midnight Eastern; the month on the 1st.'}</span>
+      </div>
     </div>
   )
 }

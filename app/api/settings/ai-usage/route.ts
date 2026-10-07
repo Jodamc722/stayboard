@@ -72,5 +72,29 @@ export async function GET(req: NextRequest) {
   const daysWithData = rows.length ? Math.min(7, Math.max(1, Math.ceil((Date.now() - Math.max(oldest, sevenAgo)) / 86400_000))) : 0
   const projectedMonthUsd = daysWithData ? Number(((last7Usd / daysWithData) * 30).toFixed(2)) : 0
 
-  return NextResponse.json({ ok: true, days, total: finish(total), byTask, byDay, byModel, last7Usd: Number(last7Usd.toFixed(4)), projectedMonthUsd, daysWithData })
+  const { spendNow } = await import('@/lib/ai-budget')
+  const sp = await spendNow(true).catch(() => null)
+  return NextResponse.json({ ok: true, days, total: finish(total), byTask, byDay, byModel, last7Usd: Number(last7Usd.toFixed(4)), projectedMonthUsd, daysWithData,
+    budget: sp ? { ...sp.budget, todayUsd: Number(sp.day.toFixed(2)), monthUsd_spent: Number(sp.month.toFixed(2)) } : null })
+}
+
+// PUT { automaticUsd?, totalUsd?, monthUsd?, on? } — change the hard stop (lib/ai-budget). Admins only.
+export async function PUT(req: NextRequest) {
+  const access = await getAccess()
+  if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  if (access.role !== 'admin') return NextResponse.json({ error: 'admins only' }, { status: 403 })
+  const b = await req.json().catch(() => ({} as any))
+  const { getSetting, setSetting } = await import('@/lib/app-settings')
+  const { DEFAULT_BUDGET, bustBudgetCache } = await import('@/lib/ai-budget')
+  const cur = { ...DEFAULT_BUDGET, ...(await getSetting<any>('ai_budget', {}).catch(() => ({}))) }
+  const n = (v: any, lo: number, hi: number) => { const x = Number(v); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : undefined }
+  const next = {
+    automaticUsd: n(b.automaticUsd, 0, 500) ?? cur.automaticUsd,
+    totalUsd: n(b.totalUsd, 0, 1000) ?? cur.totalUsd,
+    monthUsd: n(b.monthUsd, 0, 20000) ?? cur.monthUsd,
+    on: typeof b.on === 'boolean' ? b.on : cur.on,
+  }
+  const saved = await setSetting('ai_budget', next, access.email || 'admin')
+  bustBudgetCache()
+  return NextResponse.json({ ok: !!saved.ok, budget: next })
 }

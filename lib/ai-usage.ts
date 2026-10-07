@@ -99,6 +99,12 @@ export async function aiFetch(task: string, init: RequestInit): Promise<Response
   const t0 = Date.now()
   let bodyModel = ''
   try { bodyModel = String(JSON.parse(String(init.body || '{}'))?.model || '') } catch { /* streaming or non-JSON body */ }
+  // THE HARD STOP (lib/ai-budget): over today's or this month's cap, the call never leaves.
+  const { budgetBlock } = await import('./ai-budget')
+  const blocked = await budgetBlock(task)
+  if (blocked) {
+    return new Response(JSON.stringify({ type: 'error', error: { type: 'budget_exceeded', message: blocked } }), { status: 429, headers: { 'content-type': 'application/json' } })
+  }
   const r = await fetch(ANTHROPIC_URL, init)
   const ms = Date.now() - t0
   try {
