@@ -70,6 +70,19 @@ export async function GET(req: NextRequest) {
       me: { email: gate.access.email || '', isGm: gate.access.role === 'admin', canEdit: atLeast(gate.access.levels['billing'], 'edit') },
       tasks: data.tasks.map(slim),
       owners,
+      // Photos, owner-link tokens and the "not in Breezeway yet" reason for the tasks in this window
+      // (lib/task-extras — Jon, 2026-10-07).
+      extras: await (async () => {
+        try {
+          const { readExtras, readLocalTasks } = await import('@/lib/task-extras')
+          const [ex, local] = await Promise.all([readExtras(), readLocalTasks()])
+          const ids = new Set(data.tasks.map(t => t.id))
+          const out: Record<string, { photos: string[]; token: string | null; ownerNote: string | null; local: boolean; pushError: string | null }> = {}
+          for (const id of Object.keys(ex)) if (ids.has(id)) out[id] = { photos: ex[id].photos || [], token: ex[id].token || null, ownerNote: ex[id].ownerNote ?? null, local: id.startsWith('lh-'), pushError: null }
+          for (const t of local) if (ids.has(t.id)) out[t.id] = { ...(out[t.id] || { photos: [], token: null, ownerNote: null }), local: true, pushError: t.pushError }
+          return out
+        } catch { return {} }
+      })(),
       missingDetail: data.missingDetail,
       // Routine tasks (unit check / strip) with a real description the model has not judged yet.
       // The desk kicks off POST /api/billing/ai-check when this is > 0.

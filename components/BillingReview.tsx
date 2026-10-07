@@ -33,6 +33,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, CheckSquare, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, Undo2, ExternalLink, Loader2, ChevronDown, Search, Download } from 'lucide-react'
 import { isTaskDone } from '@/lib/task-done'
 import { LeanHead, Pill, Tag, LeanTabs, LeanEmpty, IconBtn, Tip, type Tone } from '@/components/lean'
+import { AddTaskDialog, TaskExtrasPanel, type Extra } from '@/components/BillingTaskTools'
 
 type Flag = 'over_150' | 'no_price' | 'override_far' | 'no_detail' | 'duplicate' | 'long_hours' | 'no_owner' | 'ai_bill' | 'ai_pending' | 'not_done' | 'should_bill' | 'billed_routine'
 type BVerdict = 'bill' | 'likely' | 'maybe' | 'no'
@@ -54,7 +55,7 @@ type Task = {
   billable?: Billable
 }
 type Owner = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; open: number; opsApproved: number; gmApproved: number; flagged: number }
-type Payload = { ok: true; month: string; from: string; to: string; me: { email: string; isGm: boolean }; tasks: Task[]; owners: Owner[]; missingDetail: number; aiPending?: number; billableModel?: { stale: boolean; trainedAt: number | null; maybes: number } }
+type Payload = { ok: true; month: string; from: string; to: string; me: { email: string; isGm: boolean }; tasks: Task[]; owners: Owner[]; missingDetail: number; aiPending?: number; billableModel?: { stale: boolean; trainedAt: number | null; maybes: number }; extras?: Record<string, Extra> }
 type Stage = 'ops' | 'gm' | 'done' | 'all'
 
 const FLAG_LABEL: Record<Flag, string> = {
@@ -173,8 +174,9 @@ function breakdown(t: Task): string[] {
   return out
 }
 
-const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, onToggle, onState, onEdit, onText }: {
+const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, onToggle, onState, onEdit, onText, extra, onExtra, onReload }: {
   t: Task; stage: Stage; isGm: boolean; busy: boolean; open: boolean; checked: boolean
+  extra?: Extra; onExtra: (id: string, e: Extra) => void; onReload: () => void
   onCheck: (id: string, on: boolean, shift: boolean) => void
   onText: (id: string, name: string, description: string) => Promise<string | null>
   onToggle: (id: string) => void
@@ -182,6 +184,7 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
   onEdit: (id: string, patch: { override_amount?: number | null; note?: string; excluded?: boolean }) => Promise<void>
 }) {
   const over = t.flags.includes('over_150')
+  const local = t.id.startsWith('lh-')
   const done = t.reviewState === 'gm_approved'
   const inGmQueue = t.reviewState === 'ops_approved'
   const [amt, setAmt] = useState<string>(t.overrideAmount != null ? String(t.overrideAmount) : '')
@@ -200,6 +203,8 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
           <span className="flex items-center gap-1.5 flex-wrap">
             <span className={'text-[13.5px] font-bold truncate ' + (t.excluded ? 'text-muted line-through' : 'text-ink')}>{t.unit}</span>
             <span className="text-[12.5px] text-ink/80 break-words min-w-0" title={t.name}>{t.name}</span>
+            {local ? <Tag tone="amber" title="Added in Lighthouse — Breezeway did not take it yet. Open the row to push it.">Not in Breezeway</Tag> : null}
+            {(extra?.photos?.length || 0) > 0 ? <Tag tone="sky" title="Photos attached in Lighthouse">{extra!.photos.length} photo{extra!.photos.length === 1 ? '' : 's'}</Tag> : null}
             {looksSpanish(t) ? <Tag tone="sky" title="Written in Spanish — translate it from the row, or in bulk from the toolbar">ES</Tag> : null}
             <span className="text-[11.5px] text-muted truncate">
               {t.doer || 'no one assigned'} · {short(t.scheduledDate || t.finishedAt)}
@@ -253,7 +258,7 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
               <button disabled={busy} onClick={() => onState(t.id, 'ops_approved')} className={btn + ' bg-brand-600 text-white hover:bg-brand-700'}>{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={13} />} Approve</button>
             </>
           )}
-          <Tip label="Open the task in Breezeway"><a href={'https://app.breezeway.io/task/' + encodeURIComponent(t.id)} target="_blank" rel="noreferrer" aria-label="Open the task in Breezeway" className="p-1 text-muted hover:text-ink"><ExternalLink size={13} /></a></Tip>
+          {local ? null : <Tip label="Open the task in Breezeway"><a href={'https://app.breezeway.io/task/' + encodeURIComponent(t.id)} target="_blank" rel="noreferrer" aria-label="Open the task in Breezeway" className="p-1 text-muted hover:text-ink"><ExternalLink size={13} /></a></Tip>}
           <Tip label={open ? 'Close details' : 'Details, price and note'}><button onClick={() => onToggle(t.id)} className="p-1 text-muted hover:text-ink" aria-label="Details"><ChevronDown size={14} className={'transition ' + (open ? 'rotate-180' : '')} /></button></Tip>
         </div>
       </div>
@@ -261,7 +266,11 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
       {open ? (
         <div className="px-3 pb-3 pt-1 border-t border-line bg-app/40 grid gap-3 md:grid-cols-2">
           <div className="min-w-0 md:col-span-2">
-            <TextTools t={t} onSave={onText} />
+            {local ? null : <TextTools t={t} onSave={onText} />}
+          </div>
+          {/* PHOTOS, OWNER LINK, PUSH (Jon, 2026-10-07: "add photo directly from here … generate an owner-viewable link to the task with photos and a description") */}
+          <div className="min-w-0 md:col-span-2 md:order-last">
+            <TaskExtrasPanel id={t.id} extra={extra} onChange={e => onExtra(t.id, e)} onPushed={onReload} />
           </div>
           <div className="min-w-0">
             <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted mb-1">What Breezeway has</p>
@@ -285,7 +294,7 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
                 well, not just the report"). The task is where costs, photos and status are edited; the
                 report is the read-only printout. */}
             <span className="inline-flex items-center gap-3 mt-2 flex-wrap">
-              <a href={'https://app.breezeway.io/task/' + encodeURIComponent(t.id)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand-700"><ExternalLink size={11} /> Open task in Breezeway</a>
+              {local ? null : <a href={'https://app.breezeway.io/task/' + encodeURIComponent(t.id)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand-700"><ExternalLink size={11} /> Open task in Breezeway</a>}
               {t.reportUrl ? <a href={t.reportUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-muted hover:text-ink"><ExternalLink size={11} /> Task report</a> : null}
             </span>
           </div>
@@ -809,6 +818,10 @@ export function BillingReview() {
     for (let i = 0; i < ids.length; i += 4) await Promise.all(ids.slice(i, i + 4).map(id => onEdit(id, patch)))
     setBulkBusy('')
   }, [picks, onEdit])
+  // Photos / owner link changed on a row: merge into the payload, nothing reloads.
+  const onExtra = useCallback((id: string, e: Extra) => { setData(d => d ? { ...d, extras: { ...(d.extras || {}), [id]: e } } : d) }, [])
+  const [addOpen, setAddOpen] = useState(false)
+  const reload = useCallback(() => { loadRef.current(month, range) }, [month, range])
   const onText = useCallback(async (id: string, name: string, description: string): Promise<string | null> => {
     try {
       const r = await fetch('/api/billing/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', taskId: id, name, description }) })
@@ -898,6 +911,8 @@ export function BillingReview() {
           {presets.map(p => <option key={p.label} value={p.label}>{p.label === 'Month' ? 'By month' : p.label}</option>)}
           <option value="custom">Custom dates…</option>
         </select>
+        <button onClick={() => setAddOpen(true)} title="Add a task — date, assignee, photos and a value; it goes to Breezeway when Breezeway will take it" className="h-8 px-2.5 rounded-lg bg-ink text-white text-[12px] font-semibold inline-flex items-center gap-1">+ Add task</button>
+        {addOpen ? <AddTaskDialog month={month} onClose={() => setAddOpen(false)} onCreated={() => load(month, range)} /> : null}
         <IconBtn title="Reload" onClick={() => load(month, range)} disabled={loading}><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></IconBtn>
         <IconBtn title="Download final-approved statements (ZIP)" href={'/api/billing/export?' + winQS + '&format=zip&reviewed=1'}><Download size={14} /></IconBtn>
         <a href="/billing?view=labor" title="The older board: labor vs payroll, rates, bulk edits" className="text-[12px] font-semibold text-muted hover:text-ink px-1">Labor &amp; rates</a>
@@ -1025,7 +1040,7 @@ export function BillingReview() {
             </header>
             {isOpen ? (
               <ul>
-                {rows.map(t => <Row key={t.id} t={t} stage={st} isGm={isGm} busy={busy.has(t.id)} open={openId === t.id} checked={picks.has(t.id)} onCheck={onCheck} onToggle={onToggle} onState={onState} onEdit={onEdit} onText={onText} />)}
+                {rows.map(t => <Row key={t.id} t={t} stage={st} isGm={isGm} busy={busy.has(t.id)} open={openId === t.id} checked={picks.has(t.id)} onCheck={onCheck} onToggle={onToggle} onState={onState} onEdit={onEdit} onText={onText} extra={data.extras?.[t.id]} onExtra={onExtra} onReload={reload} />)}
               </ul>
             ) : null}
           </section>

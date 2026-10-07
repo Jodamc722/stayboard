@@ -216,6 +216,11 @@ export async function rangeTasks(from: string, to: string): Promise<any[]> {
     seen[id] = true
     out.push(t)
   }
+  // Tasks added on Billable Hours that Breezeway would not take (lib/task-extras) — same shape, 'lh-' id.
+  try {
+    const { readLocalTasks, localAsMirrorRows } = await import('./task-extras')
+    for (const t of localAsMirrorRows(await readLocalTasks(), from, to)) if (!seen[t.id]) { seen[t.id] = true; out.push(t) }
+  } catch { /* the board still loads without them */ }
   return out
 }
 

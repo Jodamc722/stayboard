@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
   const force = body?.force === true
   const candidates = tasks
     .map(t => ({ id: String(t.id), title: String(t.name || ''), description: String(t.descr || '') }))
-    .filter(t => (!only || only.includes(t.id)) && t.title && (SPANISHY.test(t.title) || SPANISHY.test(t.description)))
+    .filter(t => !t.id.startsWith('lh-') && (!only || only.includes(t.id)) && t.title && (SPANISHY.test(t.title) || SPANISHY.test(t.description)))
     .filter(t => force || seen[t.id] !== fp(t.title, t.description))
   if (!candidates.length) return NextResponse.json({ ok: true, scanned: tasks.length, candidates: 0, translated: 0, remaining: 0 })
 

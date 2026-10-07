@@ -207,6 +207,8 @@ export const OPEN_PREFIXES = [
   '/field/', '/approve/', '/new-order', '/vendor/', '/delivery', '/owner-orders',
   '/salato/share', '/salato/verify', '/verify/', '/report/', '/favicon', '/project/', '/share/',
   '/order/', '/orders-live',
+  // OWNER JOB LINKS (Jon, 2026-10-07). /job/<token> shows an owner one job with its photos and charge.
+  '/job/',
   // ONBOARDING INVENTORY (Jon, 2026-09-02). /onboard/<code> is a capability link like /walk and
   // /audit: the code resolves to one onboarding unit, the API checks it on every call.
   '/onboard/',

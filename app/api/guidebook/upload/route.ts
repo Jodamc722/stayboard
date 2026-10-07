@@ -16,7 +16,7 @@ const OK_TYPES: Record<string, string> = {
 export async function POST(req: NextRequest) {
   // This is the generic file upload: Guidebooks, and the Reports desk (pacing sheet, hero photo,
   // report attachments) use it too. Edit on either tab is the bar.
-  const gate = await requireAnyLevel(['guidebooks', 'reports'], 'edit')
+  const gate = await requireAnyLevel(['guidebooks', 'reports', 'billing'], 'edit')   // billing: task photos (2026-10-07)
   if (!gate.ok) return gate.res
 
   const form = await req.formData().catch(() => null)
