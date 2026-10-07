@@ -17,7 +17,7 @@ export type Feature = { key: string; label: string; path: string; group: string 
 export const GROUP_ORDER = ['Today', 'Eve', 'Operations', 'Guest Experience', 'Reviews', 'Listings', 'Owners', 'Team', 'Financials', 'Admin', 'Garden Hotel']
 
 export const FEATURES: Feature[] = [
-  { key: 'command',       label: 'Command Center',    path: '/command', group: 'Today' },
+  { key: 'command',       label: 'Today (everyone)',  path: '/command', group: 'Today' },
   // Open loops (Jon, 2026-09-28): the page behind Eve's 'Keeping tabs' — guest asks, problems,
   // promises, unanswered questions, decisions — with Done / Not a loop. Replaces the long roll-up.
   { key: 'loops',         label: 'Open loops (Eve tab)', path: '/loops', group: 'Eve' },
@@ -326,6 +326,14 @@ export function overriddenKeys(features: Record<string, any> | null | undefined)
 // should only be me"). No role, workspace bundle or admin flag grants these — only a per-person
 // setting on /users → Edit access (features.garden = view|edit|full), or the superadmin.
 export const HAND_PICKED: string[] = ['garden']
+// TODAY IS FOR EVERYONE (Jon, 2026-10-07: "make Today available to all users and have it in user
+// settings"). These pages are on for every Stay Hospitality login whatever their role says — a role
+// can only raise the level, never switch it off. The one way to turn it off is per person: the
+// "Today page" switch in Users → person → Edit (features.command = 'off'). Each section on Today is
+// still gated by its own API (money, Eve, approvals), so opening the page grants nothing else.
+export const EVERYONE_PAGES: string[] = ['command']
+/** A role's level for an everyone-page is never below full (Today's own buttons each check their own tab). */
+export function everyoneFloor(key: string, lv: Level): Level { return EVERYONE_PAGES.includes(key) && lv === 'off' ? 'full' : lv }
 export function applyHandPicked(levels: Record<string, Level>, features?: Record<string, any> | null): Record<string, Level> {
   for (const k of HAND_PICKED) levels[k] = userOverride(features, k) ?? 'off'
   return levels
@@ -334,7 +342,7 @@ export function applyHandPicked(levels: Record<string, Level>, features?: Record
 export function levelsForRole(role: RoleDef | null | undefined, features?: Record<string, any> | null): Record<string, Level> {
   const out: Record<string, Level> = {}
   for (const f of FEATURES) {
-    out[f.key] = userOverride(features, f.key) ?? roleLevel(role, f.key)
+    out[f.key] = userOverride(features, f.key) ?? everyoneFloor(f.key, roleLevel(role, f.key))
   }
   return applyHandPicked(out, features)
 }
@@ -347,7 +355,7 @@ export function legacyLevels(ws: any, features?: Record<string, any> | null): Re
   for (const f of FEATURES) {
     // A per-person override still wins here, so someone can be customised before they are ever
     // assigned a role — otherwise the override would silently do nothing for legacy users.
-    out[f.key] = userOverride(features, f.key) ?? (workspaceAllows(ws, f.key) ? 'full' : 'off')
+    out[f.key] = userOverride(features, f.key) ?? (workspaceAllows(ws, f.key) ? 'full' : 'off')   // workspaceAllows includes EVERYONE_PAGES
   }
   return applyHandPicked(out, features)
 }
@@ -399,13 +407,14 @@ export function workspaceDef(ws: any) {
 
 // Does this workspace include the page? ('all' or listed). Fail-open on unknown workspace (gm=all).
 export function workspaceAllows(ws: any, key: string): boolean {
+  if (EVERYONE_PAGES.includes(key)) return true
   const def = workspaceDef(ws)
   return def.pages === 'all' || def.pages.includes(key)
 }
 
 export function featureEnabled(features: Record<string, any> | null | undefined, key: string): boolean {
   if (!features) return true
-  return features[key] !== false
+  return features[key] !== false && features[key] !== 'off'
 }
 
 // Combined check: the workspace must include the page AND the per-user toggle must not disable it.

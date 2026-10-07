@@ -10,7 +10,7 @@ import {
   UserPlus, Shield, User as UserIcon, Check, AlertTriangle, Loader2, Ban, RotateCcw, Trash2,
   KeyRound, ChevronDown, ChevronRight, BellOff, Bell, IdCard, Clock, SlidersHorizontal, ShieldCheck
 } from 'lucide-react'
-import { workspaceDef, normWorkspace, FEATURES, EXTRA_PERMS, LEVELS, roleLevel, userOverride, overriddenKeys, type Level } from '@/lib/features'
+import { workspaceDef, normWorkspace, FEATURES, EXTRA_PERMS, LEVELS, roleLevel, userOverride, overriddenKeys, everyoneFloor, type Level } from '@/lib/features'
 
 type Row = {
   email: string; role: 'admin' | 'member'; status: 'active' | 'disabled'
@@ -239,7 +239,7 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
   // The role's level for a tab, and this person's override on it — the two halves of the table
   // below. Kept as plain lookups so the row always shows what it is departing from.
   const roleDef = roles.find(r => r.key === (u.access_role || (u.role === 'admin' ? 'admin' : ''))) || null
-  const roleLevelOf = (key: string): Level => roleLevel(roleDef as any, key)
+  const roleLevelOf = (key: string): Level => everyoneFloor(key, roleLevel(roleDef as any, key))
   const overrideOf = (key: string): Level | null => userOverride(u.features as any, key)
   const overrideCount = overriddenKeys(u.features as any).length
   const profileDirty = pName !== String(u.profile?.name || '') || pTitle !== String(u.profile?.title || '') || pPhone !== String(u.profile?.phone || '')
@@ -341,6 +341,30 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
           {isOwnerRow && (
             <div className="rounded-xl border border-line bg-app/40 p-3 lg:col-span-2 text-[12px] text-muted"><b className="text-ink">{G ? 'Stay Hospitality' : 'Garden Hotel'}:</b> {G ? 'Owner' : 'General manager'} — the owner always has both businesses in full.</div>
           )}
+
+          {/* TODAY PAGE (Jon, 2026-10-07: "make Today available to all users and have it in user settings").
+              On for everyone by default, whatever the role; this switch is the one way to turn it
+              off for a person (features.command = 'off'). lib/features EVERYONE_PAGES. */}
+          {!isOwnerRow && !G && (() => {
+            const on = overrideOf('command') !== 'off'
+            return (
+              <div className="rounded-xl border border-line bg-app/40 p-3 lg:col-span-2 flex items-start gap-3">
+                <button role="switch" aria-checked={on || u.role === 'admin'} aria-label="Today page" disabled={!isOwner || me || u.role === 'admin'}
+                  onClick={() => {
+                    const next: Record<string, any> = { ...(u.features || {}) }
+                    if (on) next.command = 'off'; else delete next.command
+                    onPatch(u.email, { features: next }, on ? `Today is off for ${name || u.email}.` : `Today is on for ${name || u.email}.`)
+                  }}
+                  className={'mt-0.5 relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-50 ' + (on || u.role === 'admin' ? 'bg-brand-600' : 'bg-slate-300')}>
+                  <span className={'absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ' + (on || u.role === 'admin' ? 'left-[18px]' : 'left-0.5')} />
+                </button>
+                <div className="min-w-0">
+                  <div className="text-[12px] font-semibold text-ink">Today page <span className={'ml-1.5 text-[10px] font-bold uppercase tracking-wide ' + (on || u.role === 'admin' ? 'text-brand-700' : 'text-muted')}>{on || u.role === 'admin' ? 'on' : 'off'}</span>{u.role === 'admin' && <span className="ml-1.5 text-[10.5px] font-normal text-muted">admins always have it</span>}</div>
+                  <div className="text-[10.5px] text-muted">On for everyone by default — the Bulletin, the day&apos;s tiles and the lists. Each section still only shows what this person&apos;s other tabs allow (dollar amounts, Eve and approvals stay hidden unless they have them).</div>
+                </div>
+              </div>
+            )
+          })()}
 
           {/* WHAT THEY MAY SEE, as opposed to which tabs they may open (Jon 2026-08-10: "only view
               of that data should be me … meaning i should be able to toggle on and off per user").
