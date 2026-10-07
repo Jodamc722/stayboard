@@ -37,6 +37,7 @@ import { isOwnerOrFriendsFamily } from './owner-audit'
 export const HK_CHANNEL_ID = 'C02T4T7BG3A'          // #vr-hkdamagereports (private)
 export const HK_CHANNEL_NAME = 'vr-hkdamagereports'
 const KEY = 'hk_damage_reports'
+export const HK_START_TS = Math.floor(Date.parse('2026-10-07T04:00:00Z') / 1000)   // midnight ET, 2026-10-07
 const PHOTO_BUCKET = 'claim-files'
 
 export type Claimable = 'likely' | 'maybe' | 'no'
@@ -258,10 +259,12 @@ export async function scanHk(opts: { days?: number } = {}): Promise<{ ok: boolea
   const db = supabaseAdmin()
   const s = await readHk()
   const known = new Set(s.reports.map(r => r.id))
-  // First look: the last 10 days, so anything still inside a 14-day filing window is caught.
-  const oldest = s.lastTs && !opts.days ? s.lastTs : String(Math.floor(Date.now() / 1000) - (opts.days || 10) * 86400)
+  // STARTS TODAY (Jon, 2026-10-07: "Let's do the slack HK damages starting today"): nothing posted
+  // before midnight Eastern on Oct 7 2026 is ever read, so the queue opens empty of history.
+  const fromWanted = s.lastTs && !opts.days ? Number(s.lastTs) : Math.floor(Date.now() / 1000) - (opts.days || 10) * 86400
+  const oldest = String(Math.max(fromWanted, HK_START_TS))
   // Re-read the last half hour too: photos often arrive a few minutes after the line of text.
-  const since = String(Math.max(0, Number(oldest) - 1800))
+  const since = String(Math.max(HK_START_TS, Number(oldest) - 1800))
   const { msgs, error } = await history(since)
   const now = new Date().toISOString()
   if (error && !msgs.length) { s.lastError = error; s.lastScanAt = now; await writeHk(s, null); return { ok: false, added: [], error } }
