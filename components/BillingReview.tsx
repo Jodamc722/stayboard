@@ -75,6 +75,10 @@ const FLAG_SHORT: Record<Flag, string> = {
 const FLAG_TONE = (f: Flag): Tone => f === 'over_150' ? 'amber' : f === 'ai_bill' || f === 'should_bill' ? 'brand' : f === 'ai_pending' || f === 'no_price' ? 'sky' : f === 'billed_routine' ? 'amber' : 'rose'
 // The billable model's read, as one small chip per row.
 const CAT_LABEL: Record<string, string> = { repair: 'Repair', pm: 'PM', pest: 'Pest', extra_clean: 'Extra clean', owner_item: 'Owner item', guest_fix: 'Guest fix', departure_clean: 'Departure', routine: 'Routine', inspection: 'Inspection', building: 'Common area', our_fault: 'Re-clean', other: 'Other' }
+/** A task's kind for the Task filter: its title without the unit, numbers and dates. */
+function taskKey(name: string): string {
+  return String(name || '').replace(/\s*[-–|:]\s*(?=[A-Z0-9]*\d)[^-–|:]*$/, '').replace(/\b\d+[a-z]?\b/gi, '').replace(/\s{2,}/g, ' ').trim().slice(0, 60) || '—'
+}
 const VERDICT_WORD: Record<BVerdict, string> = { bill: 'billable', likely: 'likely billable', maybe: 'maybe', no: 'not billable' }
 const STAGE_OF: Record<Stage, (t: Task) => boolean> = {
   ops: t => t.reviewState === 'open',
@@ -216,8 +220,8 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
               onBlur={() => { setEditing(false); const v = amt.trim() === '' ? null : Number(amt.replace(/[$,]/g, '')); if (v !== (t.overrideAmount ?? null) && (v === null || Number.isFinite(v))) onEdit(t.id, { override_amount: v }) }}
               className="h-8 w-28 rounded-lg border border-brand-400 ring-2 ring-brand-100 bg-white px-2 text-right text-[15px] font-bold tabular-nums text-ink outline-none" />
           ) : (
-            <button onClick={() => { if (!done) setEditing(true) }} disabled={done} title={done ? 'GM-approved — send back to change' : 'Click to set the price (Enter saves, Esc cancels)'}
-              className={'block ml-auto text-[16px] font-bold tabular-nums leading-tight rounded px-1 -mx-1 ' + (done ? '' : 'hover:bg-brand-50 hover:ring-1 hover:ring-brand-200 ') + (t.excluded ? 'text-muted line-through' : over ? 'text-amber-800' : 'text-ink')}>
+            <button onClick={() => { if (!done || isGm) setEditing(true) }} disabled={done && !isGm} title={done ? (isGm ? 'Final-approved — click to change the amount; it stays approved' : 'Final-approved — only the final approver can change it') : 'Click to set the price (Enter saves, Esc cancels)'}
+              className={'block ml-auto text-[16px] font-bold tabular-nums leading-tight rounded px-1 -mx-1 ' + (done && !isGm ? '' : 'hover:bg-brand-50 hover:ring-1 hover:ring-brand-200 ') + (t.excluded ? 'text-muted line-through' : over ? 'text-amber-800' : 'text-ink')}>
               {money(t.billedAmount)}
             </button>
           )}
@@ -332,11 +336,32 @@ const hoursTxt = (h: number) => (Math.round(h * 10) / 10).toLocaleString('en-US'
 const partsOf = (t: Task) => Math.round(t.items.reduce((s, x) => s + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0) * 100) / 100
 const hoursOf = (t: Task) => t.billedHours != null ? t.billedHours : (t.actualMinutes ? t.actualMinutes / 60 : 0)
 
-function ApprovedByOwner({ owners, open, setOpen, winQS }: {
+// THE FINAL AMOUNT, EDITABLE IN PLACE (Jon, 2026-10-07: "I should be able to edit the approved
+// amount in final"). The final approver clicks a job's amount, types, Enter — it is saved as the price
+// and the job stays final-approved. Anyone else sees the figure.
+function InlineAmount({ t, canEdit, onEdit, className = '' }: { t: Task; canEdit: boolean; onEdit: (id: string, patch: { override_amount?: number | null }) => void; className?: string }) {
+  const [editing, setEditing] = useState(false)
+  const [v, setV] = useState('')
+  if (!canEdit) return <span className={className}>{money(t.billedAmount)}</span>
+  if (editing) return (
+    <input autoFocus value={v} onChange={e => setV(e.target.value)} inputMode="decimal" placeholder={money(t.billedAmount)}
+      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') { setV(''); setEditing(false) } }}
+      onBlur={() => { setEditing(false); const s = v.trim(); if (s === '') return; const n = Number(s.replace(/[$,]/g, '')); if (Number.isFinite(n) && n !== t.billedAmount) onEdit(t.id, { override_amount: n }) }}
+      className="h-6 w-20 rounded border border-brand-400 ring-2 ring-brand-100 bg-white px-1.5 text-right text-[12.5px] font-semibold tabular-nums text-ink outline-none" />
+  )
+  return <button onClick={() => { setV(String(t.billedAmount)); setEditing(true) }} title="Change the approved amount — it stays final-approved" className={className + ' rounded px-1 -mx-1 hover:bg-brand-50 hover:ring-1 hover:ring-brand-200'}>{money(t.billedAmount)}</button>
+}
+
+function ApprovedByOwner({ owners, open, setOpen, winQS, isGm, onEdit, picks, checkMany, filtered }: {
   owners: ApOwner[]
   open: Record<string, boolean>
   setOpen: (f: (o: Record<string, boolean>) => Record<string, boolean>) => void
   winQS: string
+  isGm: boolean
+  onEdit: (id: string, patch: { override_amount?: number | null }) => void
+  picks: Set<string>
+  checkMany: (ids: string[], on: boolean) => void
+  filtered: boolean
 }) {
   const [showQuiet, setShowQuiet] = useState(false)
   const total = owners.reduce((a, o) => a + o.total, 0)
@@ -354,6 +379,7 @@ function ApprovedByOwner({ owners, open, setOpen, winQS }: {
   if (!owners.length) return <LeanEmpty>Nothing final-approved yet in this window.</LeanEmpty>
   return (
     <div className="space-y-2">
+      {filtered ? <div className="rounded-xl border border-brand-200 bg-brand-50 px-3 py-2 text-[12.5px] text-brand-800">Filtered — these totals cover only the jobs the filters let through, not whole statements.</div> : null}
       {/* what the statements add up to, and what is not in that number yet */}
       <div className="rounded-2xl bg-white ring-1 ring-line px-4 py-3 flex items-end gap-6 flex-wrap">
         <div>
@@ -397,6 +423,9 @@ function ApprovedByOwner({ owners, open, setOpen, winQS }: {
         return (
           <section key={k} className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
             <header className="px-3.5 sm:px-4 py-2.5 flex items-center gap-2 sm:gap-3 flex-wrap">
+              {(() => { const ids = o.units.flatMap(u => u.rows.map(r => r.t.id)); return ids.length ? (
+                <input type="checkbox" checked={ids.every(id => picks.has(id))} onChange={e => checkMany(ids, e.target.checked)} aria-label={'Select every job for ' + o.owner.ownerName} title={'Select all ' + ids.length + ' jobs — then change them together from the bar below'} className="h-4 w-4 accent-brand-600 cursor-pointer" />
+              ) : null })()}
               <button onClick={() => setOpen(c => ({ ...c, [k]: !c[k] }))} className="flex items-center gap-2 text-left min-w-0 grow basis-48">
                 <ChevronDown size={14} className={'text-muted shrink-0 transition ' + (isOpen ? '' : '-rotate-90')} />
                 <span className="text-[14px] font-bold text-ink truncate">{o.owner.ownerName}</span>
@@ -422,7 +451,8 @@ function ApprovedByOwner({ owners, open, setOpen, winQS }: {
                     </div>
                     <ul className="mt-1 space-y-0.5">
                       {u.rows.map(({ t, labor: l, parts: pp, hand: hd, hours: hh }) => (
-                        <li key={t.id} className="flex items-baseline gap-2 flex-wrap text-[12.5px]">
+                        <li key={t.id} className={'flex items-baseline gap-2 flex-wrap text-[12.5px] ' + (picks.has(t.id) ? 'bg-brand-50/60 -mx-1 px-1 rounded' : '')}>
+                          <input type="checkbox" checked={picks.has(t.id)} onChange={e => checkMany([t.id], e.target.checked)} aria-label="Select this job" title="Select — then change the selection together from the bar below" className="h-3.5 w-3.5 accent-brand-600 cursor-pointer self-center" />
                           <span className="text-muted tabular-nums w-[52px] shrink-0">{short(t.finishedAt || t.scheduledDate)}</span>
                           <span className="text-ink min-w-0 grow basis-48 truncate" title={t.name}>{t.name}</span>
                           <span className="text-muted whitespace-nowrap">
@@ -433,7 +463,7 @@ function ApprovedByOwner({ owners, open, setOpen, winQS }: {
                           {t.doer ? <span className="text-muted hidden sm:inline">· {t.doer}</span> : null}
                           {t.gmBy ? <span className="text-muted hidden md:inline" title={'Final-approved by ' + t.gmBy + (t.gmAt ? ' on ' + short(t.gmAt) : '')}>· {who(t.gmBy)}</span> : null}
                           <span className="flex-1" />
-                          <span className="text-ink font-semibold tabular-nums">{money(t.billedAmount)}</span>
+                          <InlineAmount t={t} canEdit={isGm} onEdit={onEdit} className="text-ink font-semibold tabular-nums" />
                           {t.reportUrl ? <a href={t.reportUrl} target="_blank" rel="noreferrer" title="Open the job in Breezeway" className="text-muted hover:text-ink"><ExternalLink size={11} /></a> : null}
                         </li>
                       ))}
@@ -480,6 +510,8 @@ function ApprovedByOwner({ owners, open, setOpen, winQS }: {
 export function BillingReview() {
   const [month, setMonth] = useState(todayMonth())
   const [data, setData] = useState<Payload | null>(null)
+  const dataRef = useRef<Payload | null>(null)
+  dataRef.current = data
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [stage, setStage] = useState<Stage | null>(null)     // null until we know the role
@@ -496,6 +528,10 @@ export function BillingReview() {
   const [building, setBuilding] = useState('')
   const [person, setPerson] = useState('')
   const [minAmt, setMinAmt] = useState('')
+  // (Jon, 2026-10-07: "filter by owner, billable, by task and amount, and bulk edit")
+  const [maxAmt, setMaxAmt] = useState('')
+  const [ownerF, setOwnerF] = useState('')
+  const [taskF, setTaskF] = useState('')        // 'cat:<category>' or 'name:<task name>'
   const [bFilter, setBFilter] = useState<'' | 'should' | 'bill' | 'maybe' | 'no'>('')
   const trained = useRef(false)
   const judged = useRef<Set<string>>(new Set())
@@ -512,6 +548,9 @@ export function BillingReview() {
     if (sp.get('building')) setBuilding(sp.get('building')!)
     if (sp.get('person')) setPerson(sp.get('person')!)
     if (sp.get('min')) setMinAmt(sp.get('min')!)
+    if (sp.get('max')) setMaxAmt(sp.get('max')!)
+    if (sp.get('owner')) setOwnerF(sp.get('owner')!)
+    if (sp.get('task')) setTaskF(sp.get('task')!)
     const bf = sp.get('bill'); if (bf === 'should' || bf === 'bill' || bf === 'maybe' || bf === 'no') setBFilter(bf)
   }, [])
   const [openId, setOpenId] = useState<string>('')
@@ -564,8 +603,9 @@ export function BillingReview() {
     set('month', range ? null : month); set('from', range?.from || null); set('to', range?.to || null)
     set('billable', billOnly ? '1' : null); set('dept', depts.length ? depts.join(',') : null)
     set('building', building || null); set('person', person || null); set('min', minAmt || null); set('bill', bFilter || null)
+    set('max', maxAmt || null); set('owner', ownerF || null); set('task', taskF || null)
     window.history.replaceState(null, '', url.toString())
-  }, [month, range, billOnly, depts, building, person, minAmt, bFilter])
+  }, [month, range, billOnly, depts, building, person, minAmt, bFilter, maxAmt, ownerF, taskF])
 
   const tasks = data?.tasks || []
   const byId = useMemo(() => { const m = new Map<string, Task>(); for (const t of tasks) m.set(t.id, t); return m }, [tasks])
@@ -579,28 +619,40 @@ export function BillingReview() {
   }, [data, stage, viewIds, tasks, inStage])
   const resnapshot = () => setViewIds(null)
 
+  // ONE TEST FOR EVERY FILTER, used by the rows AND by the Approved tab's by-owner read.
+  const passes = useMemo(() => {
+    const needle = q.trim().toLowerCase()
+    const num = (v: string) => { const n = v.trim() === '' ? null : Number(v.replace(/[$,]/g, '')); return n != null && Number.isFinite(n) ? n : null }
+    const min = num(minAmt), max = num(maxAmt)
+    return (t: Task) => (!flaggedOnly || t.flags.length > 0)
+      && (!billOnly || t.billedAmount > 0)
+      && (!bFilter || (bFilter === 'should' ? t.flags.includes('should_bill') : bFilter === 'bill' ? (t.billable?.verdict === 'bill' || t.billable?.verdict === 'likely') : t.billable?.verdict === bFilter))
+      && (min == null || t.billedAmount >= min)
+      && (max == null || t.billedAmount <= max)
+      && (!ownerF || (t.ownerId || '—') === ownerF)
+      && (!taskF || (taskF.startsWith('cat:') ? (t.billable?.category || 'other') === taskF.slice(4) : taskKey(t.name) === taskF.slice(5)))
+      && (!depts.length || depts.includes(t.department))
+      && (!building || (t.building || '—') === building)
+      && (!person || (t.doer || '—') === person)
+      && (!needle || (t.unit + ' ' + t.name + ' ' + (t.doer || '') + ' ' + t.ownerName).toLowerCase().includes(needle))
+  }, [q, flaggedOnly, billOnly, minAmt, maxAmt, ownerF, taskF, depts, building, person, bFilter])
   const visible = useMemo(() => {
     if (!viewIds) return [] as Task[]
-    const needle = q.trim().toLowerCase()
-    const min = minAmt.trim() === '' ? null : Number(minAmt.replace(/[$,]/g, ''))
-    return tasks.filter(t => viewIds.has(t.id))
-      .filter(t => !flaggedOnly || t.flags.length)
-      .filter(t => !billOnly || t.billedAmount > 0)
-      .filter(t => !bFilter || (bFilter === 'should' ? t.flags.includes('should_bill') : bFilter === 'bill' ? (t.billable?.verdict === 'bill' || t.billable?.verdict === 'likely') : t.billable?.verdict === bFilter))
-      .filter(t => min == null || !Number.isFinite(min) || t.billedAmount >= min)
-      .filter(t => !depts.length || depts.includes(t.department))
-      .filter(t => !building || (t.building || '—') === building)
-      .filter(t => !person || (t.doer || '—') === person)
-      .filter(t => !needle || (t.unit + ' ' + t.name + ' ' + (t.doer || '') + ' ' + t.ownerName).toLowerCase().includes(needle))
-  }, [tasks, viewIds, q, flaggedOnly, billOnly, minAmt, depts, building, person, bFilter])
+    return tasks.filter(t => viewIds.has(t.id)).filter(passes)
+  }, [tasks, viewIds, passes])
   // The choices each filter offers — what this window actually holds, with counts.
   const facets = useMemo(() => {
     const count = (f: (t: Task) => string) => { const m = new Map<string, number>(); for (const t of tasks) { const k = f(t); m.set(k, (m.get(k) || 0) + 1) } return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0])) }
-    return { depts: count(t => t.department), buildings: count(t => t.building || '—'), people: count(t => t.doer || '—') }
+    // Owners and task types, with counts. A task "name" is its title with the unit and dates
+    // stripped (taskKey), so 40 "Departure Clean - Eden 2104" rows read as one choice.
+    const owners = (() => { const m = new Map<string, { name: string; n: number }>(); for (const t of tasks) { const k = t.ownerId || '—'; const x = m.get(k) || { name: t.ownerName || 'No owner', n: 0 }; x.n++; m.set(k, x) } return Array.from(m.entries()).sort((a, b) => a[1].name.localeCompare(b[1].name)) })()
+    const cats = count(t => t.billable?.category || 'other')
+    const names = count(t => taskKey(t.name)).filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 40)
+    return { depts: count(t => t.department), buildings: count(t => t.building || '—'), people: count(t => t.doer || '—'), owners, cats, names }
   }, [tasks])
-  const filtersOn = !!bFilter || billOnly || !!depts.length || !!building || !!person || minAmt.trim() !== '' || flaggedOnly || !!q.trim()
+  const filtersOn = !!bFilter || billOnly || !!depts.length || !!building || !!person || minAmt.trim() !== '' || maxAmt.trim() !== '' || !!ownerF || !!taskF || flaggedOnly || !!q.trim()
   const shownTotal = useMemo(() => visible.reduce((a, t) => a + t.billedAmount, 0), [visible])
-  const clearFilters = () => { setBFilter(''); setBillOnly(false); setDepts([]); setBuilding(''); setPerson(''); setMinAmt(''); setFlaggedOnly(false); setQ('') }
+  const clearFilters = () => { setBFilter(''); setBillOnly(false); setDepts([]); setBuilding(''); setPerson(''); setMinAmt(''); setMaxAmt(''); setOwnerF(''); setTaskF(''); setFlaggedOnly(false); setQ('') }
 
   // Owners in server order (name), rows inside sorted: flagged first, then biggest.
   const groups = useMemo(() => {
@@ -622,7 +674,8 @@ export function BillingReview() {
   const approved = useMemo<ApOwner[]>(() => {
     const byOwner = new Map<string, Task[]>()
     const pending = new Map<string, { n: number; $: number }>()
-    for (const t of tasks) {
+    // Filters narrow this read too (Jon, 2026-10-07) — the header says so when they are on.
+    for (const t of (filtersOn ? tasks.filter(passes) : tasks)) {
       const k = t.ownerId || '—'
       if (t.reviewState === 'gm_approved') { if (!byOwner.has(k)) byOwner.set(k, []); byOwner.get(k)!.push(t) }
       else if (!t.excluded && t.billedAmount > 0) { const x = pending.get(k) || { n: 0, $: 0 }; x.n++; x.$ += t.billedAmount; pending.set(k, x) }
@@ -672,7 +725,7 @@ export function BillingReview() {
     // order can't shift under a click the way the review rows could.
     out.sort((a, b) => b.total - a.total || b.pending$ - a.pending$ || a.owner.ownerName.localeCompare(b.owner.ownerName))
     return out
-  }, [tasks, data])
+  }, [tasks, data, filtersOn, passes])
 
   // ── actions: merge, never reload ────────────────────────────────────────────────────────────
   const markBusy = (ids: string[], on: boolean) => setBusy(prev => { const n = new Set(prev); for (const id of ids) on ? n.add(id) : n.delete(id); return n })
@@ -747,7 +800,10 @@ export function BillingReview() {
   }, [])
   const checkMany = useCallback((ids: string[], on: boolean) => setPicks(prev => { const n = new Set(prev); for (const id of ids) on ? n.add(id) : n.delete(id); return n }), [])
   const bulkEdit = useCallback(async (patch: { override_amount?: number | null; note?: string; excluded?: boolean }, label: string) => {
-    const ids = Array.from(picks); if (!ids.length) return
+    // The final approver edits every selected row; anyone else, only the ones not yet final-approved
+    // (the server refuses those anyway).
+    const gm = !!dataRef.current?.me?.isGm
+    const ids = Array.from(picks).filter(id => gm || dataRef.current?.tasks.find(t => t.id === id)?.reviewState !== 'gm_approved'); if (!ids.length) return
     setBulkBusy(label)
     // Four at a time: fast, and kind to Breezeway's and Supabase's rate limits.
     for (let i = 0; i < ids.length; i += 4) await Promise.all(ids.slice(i, i + 4).map(id => onEdit(id, patch)))
@@ -885,10 +941,19 @@ export function BillingReview() {
       {/* ── filters: billable only, minimum, department, building, person ───────────────────────
             The by-owner summary is a statement total, so the filters do not apply to it and are
             hidden rather than left there doing nothing. */}
-      {st === 'done' && apMode === 'summary' ? null : (
+      {(
       <div className="flex items-center gap-1.5 flex-wrap">
+        <select value={ownerF} onChange={e => setOwnerF(e.target.value)} className={sel} title="Owner">
+          <option value="">All owners</option>
+          {facets.owners.map(([k, o]) => <option key={k} value={k}>{o.name} ({o.n})</option>)}
+        </select>
+        <select value={taskF} onChange={e => setTaskF(e.target.value)} className={sel} title="Task — by type, or by the task itself">
+          <option value="">All tasks</option>
+          <optgroup label="Type">{facets.cats.map(([c, n]) => <option key={'c' + c} value={'cat:' + c}>{CAT_LABEL[c] || c} ({n})</option>)}</optgroup>
+          <optgroup label="Task">{facets.names.map(([nm, n]) => <option key={'n' + nm} value={'name:' + nm}>{nm} ({n})</option>)}</optgroup>
+        </select>
         <button onClick={() => setBillOnly(v => !v)} title="Only rows that bill the owner something" className={'h-8 px-2.5 rounded-lg border text-[12px] font-semibold ' + (billOnly ? 'bg-brand-600 text-white border-brand-600' : 'bg-white border-line text-muted hover:text-ink')}>Billable &gt; $0</button>
-        <label className="h-8 inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 text-[12px] text-muted" title="Only rows billing at least this much">min $<input value={minAmt} onChange={e => setMinAmt(e.target.value)} inputMode="decimal" placeholder="0" className="w-14 bg-transparent outline-none text-ink tabular-nums" /></label>
+        <label className="h-8 inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 text-[12px] text-muted" title="Amount — at least / at most">$<input value={minAmt} onChange={e => setMinAmt(e.target.value)} inputMode="decimal" placeholder="min" className="w-12 bg-transparent outline-none text-ink tabular-nums" />–<input value={maxAmt} onChange={e => setMaxAmt(e.target.value)} inputMode="decimal" placeholder="max" className="w-12 bg-transparent outline-none text-ink tabular-nums" /></label>
         <select value={bFilter} onChange={e => setBFilter(e.target.value as any)} className={sel} title="The billable model's read">
           <option value="">Billable? — all</option>
           <option value="should">Should bill (still $0)</option>
@@ -922,7 +987,7 @@ export function BillingReview() {
 
       {/* ── by owner, in an order that never changes ───────────────────────────────────────── */}
       {st === 'done' && apMode === 'summary' ? (
-        <ApprovedByOwner owners={approved} open={apOpen} setOpen={setApOpen} winQS={winQS} />
+        <ApprovedByOwner owners={approved} open={apOpen} setOpen={setApOpen} winQS={winQS} isGm={isGm} onEdit={onEdit} picks={picks} checkMany={checkMany} filtered={filtersOn} />
       ) : !visible.length ? (
         <LeanEmpty>
           {st === 'ops' ? 'Nothing open for ops to review.' : st === 'gm' ? 'Nothing waiting on final review.' : st === 'done' ? 'Nothing final-approved yet in this window.' : 'No tasks in this window.'}
@@ -972,6 +1037,7 @@ export function BillingReview() {
         const picked = tasks.filter(t => picks.has(t.id))
         const total = picked.reduce((a, t) => a + (t.excluded ? 0 : t.billedAmount), 0)
         const notFinal = picked.filter(t => t.reviewState !== 'gm_approved').map(t => t.id)
+        const editable = isGm ? picked.map(t => t.id) : notFinal
         const toOps = picked.filter(t => t.reviewState === 'open').map(t => t.id)
         const toGm = picked.filter(t => t.reviewState !== 'gm_approved').map(t => t.id)
         const sendBack = picked.filter(t => t.reviewState !== 'open').map(t => t.id)
@@ -989,7 +1055,7 @@ export function BillingReview() {
             <label className="inline-flex items-center gap-1 text-[12px]">
               <span className="text-white/70">Price all</span>
               <input value={bulkPrice} onChange={e => setBulkPrice(e.target.value)} inputMode="decimal" placeholder="$" className="h-8 w-20 rounded-lg bg-white/10 border border-white/20 px-2 text-right tabular-nums text-white placeholder:text-white/40 outline-none focus:border-white/60" />
-              <button disabled={!!bulkBusy || price == null || !Number.isFinite(price) || !notFinal.length} onClick={() => bulkEdit({ override_amount: price }, 'price').then(() => setBulkPrice(''))} className={b + ' bg-white/10 hover:bg-white/20'} title="Set this price on every selected row that is not final-approved">{bulkBusy === 'price' ? <Loader2 size={12} className="animate-spin" /> : null}Set</button>
+              <button disabled={!!bulkBusy || price == null || !Number.isFinite(price) || !editable.length} onClick={() => bulkEdit({ override_amount: price }, 'price').then(() => setBulkPrice(''))} className={b + ' bg-white/10 hover:bg-white/20'} title={isGm ? 'Set this price on every selected row — final-approved ones stay approved' : 'Set this price on every selected row that is not final-approved'}>{bulkBusy === 'price' ? <Loader2 size={12} className="animate-spin" /> : null}Set</button>
               <button disabled={!!bulkBusy || !picked.some(t => t.overrideAmount != null)} onClick={() => bulkEdit({ override_amount: null }, 'clear')} className={b + ' text-white/70 hover:text-white'} title="Back to Breezeway's price on every selected row">clear</button>
             </label>
             <label className="inline-flex items-center gap-1 text-[12px]">

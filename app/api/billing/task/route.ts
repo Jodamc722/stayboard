@@ -60,6 +60,13 @@ export async function POST(req: NextRequest) {
     // Partial upsert: only the keys the caller sent change; the rest keep their stored value.
     const { data } = await db.from('billing_adjustments').select('*').eq('task_id', taskId).limit(1)
     const cur = ((data || [])[0] as any) || {}
+    // A FINAL-APPROVED ROW IS THE GM'S (Jon, 2026-10-07: "I should be able to edit the approved amount
+    // in final"). Its money — the price, leaving it off the statement, line items — changes only for
+    // someone who can final-approve (admin); it stays approved. Everyone else sends it back first.
+    const moneyChange = body?.override_amount !== undefined || typeof body?.excluded === 'boolean' || body?.item_overrides !== undefined || body?.extra_items !== undefined || body?.billed_hours !== undefined
+    if (cur.review_state === 'gm_approved' && moneyChange && gate.access.role !== 'admin') {
+      return NextResponse.json({ ok: false, error: 'This one is final-approved — only the final approver can change its amount. Send it back to review first.' }, { status: 403 })
+    }
     const row: Record<string, any> = {
       task_id: taskId,
       excluded: typeof body?.excluded === 'boolean' ? body.excluded : !!cur.excluded,
