@@ -323,7 +323,21 @@ Return STRICT minified JSON only, no markdown:
   const error = allFailed ? `every model call failed (${failed}) — ${lastFail}` : null
   recordRun({ name: 'sentiment', ok: !allFailed, itemCount: scanned, detail: { scanned, flagged, failed, rateLimited, remaining, windowDays: days, guesty }, error })
 
-  return NextResponse.json({ ok: !allFailed, scanned, flagged, failed, rateLimited, remaining, windowDays: days, guesty, flushed, watched, ...(error ? { error } : {}) })
+  // EVERY GUEST ISSUE BECOMES A GLITCH (Jon, 2026-10-07). This scan is where a guest's unhappiness
+  // in the message thread is first written down; the watch runs behind it so a thread scored
+  // dissatisfied becomes a glitch and a customer-care flag in the same half hour, not whenever
+  // somebody next opens the Sentiment tab. Cron only — an interactive scan should not file things
+  // under the person who pressed a button. Best effort: never costs the scan its result.
+  let heard: any = null
+  if (viaCron && flagged > 0) {
+    try {
+      const { runGuestIssueWatch } = await import('@/lib/guest-issue')
+      const { getSetting } = await import('@/lib/app-settings')
+      const cfg = await getSetting<any>('guest_issue_watch', null)
+      if (!cfg || cfg.on !== false) heard = await runGuestIssueWatch({ hours: 12, by: 'cron:sentiment-scan' })
+    } catch (e: any) { heard = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+  }
+  return NextResponse.json({ ok: !allFailed, scanned, flagged, failed, rateLimited, remaining, windowDays: days, guesty, flushed, watched, guestIssues: heard, ...(error ? { error } : {}) })
 }
 
 export const GET = POST
