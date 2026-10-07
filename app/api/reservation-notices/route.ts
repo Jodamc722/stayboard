@@ -14,6 +14,7 @@ import { getSetting } from '@/lib/app-settings'
 import { RESERVATION_EMAILS_KEY, mergeProperties } from '@/lib/reservation-emails'
 import { buildDraft, dupeKeyFor, urgencyOf, type Notice } from '@/lib/reservation-draft'
 import { pageRows } from '@/lib/db-page'
+import { checksForNotices } from '@/lib/notice-checks'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -144,6 +145,17 @@ export async function GET(req: NextRequest) {
       ((a.sent_at ? 1 : 0) - (b.sent_at ? 1 : 0)) ||
       onDay(a).localeCompare(onDay(b))
     today_.sort(bySend); upcoming.sort(bySend)
+
+    // CHANNEL, ID AND DEPOSIT, ON THE LINE (Jon, 2026-10-07). Only for the two lists the desk
+    // actually reads — the 60 days of sent history behind them would double the work for nothing.
+    try {
+      const live = today_.concat(upcoming).slice(0, 600)
+      const checks = await checksForNotices(live)
+      for (const r of live) (r as any).check = checks[r.id] || null
+    } catch (e: any) {
+      // The ID/deposit side is an addition to this screen, never a reason it fails to load.
+      console.error('reservation-notices: checks lookup failed', String(e?.message || e))
+    }
 
     const openToday = today_.filter(r => !r.sent_at)
     return NextResponse.json({

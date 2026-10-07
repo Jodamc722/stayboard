@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { ReservationEmailsAdmin } from './ReservationEmailsAdmin'
 import { LeanHead, LeanTabs, LeanList, LeanRow, LeanSection, LeanEmpty, Pill, Tag, IconBtn, Tip } from '@/components/lean'
+import type { NoticeCheck } from '@/lib/notice-checks'
 
 type NTab = 'today' | 'upcoming' | 'sent'
 
@@ -34,6 +35,9 @@ type Row = {
   sent_at?: string | null; sent_by?: string | null
   doc_path?: string | null; doc_name?: string | null
   leadHours: number | null; urgency: 'sent' | 'late' | 'due' | 'upcoming'
+  // Channel, ID verification and deposit for this stay — the same answer the Calls desk gives
+  // (Jon, 2026-10-07). Null on the Sent tab, where it is history rather than work.
+  check?: NoticeCheck | null
   attach: boolean; autoBuild?: boolean; propertyOrder?: number; hasRecipient: boolean; draft: Draft | null
 }
 type Property = { id: string; name: string; enabled: boolean; attachPdf: boolean; leadHours: number; to: string; timing?: string }
@@ -93,6 +97,141 @@ const EMPTY = {
  * `isOwner` only gates EDITING the settings panel below — everyone who can reach this page can see
  * the desk and send. It is resolved on the server (see the page) so the browser cannot claim it.
  */
+// ── CHANNEL · ID · DEPOSIT ─────────────────────────────────────────────────────────────────────
+// Jon, 2026-10-07: "for front desk notices can we put channel, whether we need id verification,
+// deposit payment etc so we can see it from there."
+//
+// A chip says one of three things and never more: not required on this channel (nothing shown),
+// owed and not done (amber), done (green, with when). The capture itself still happens at the
+// Calls desk — this screen tells the front desk where the stay stands before the guest walks in.
+const dollars = (n?: number | null) => n == null ? '' : '$' + Math.round(n).toLocaleString('en-US')
+const dayOf = (s?: string | null) => s ? fmt(String(s).slice(0, 10)) : ''
+
+function CheckTags({ c }: { c: NoticeCheck }) {
+  const idDone = c.idStatus === 'verified' || c.idStatus === 'waived'
+  const depDone = c.depositStatus !== 'pending'
+  return (
+    <>
+      <Tag tone="slate" title={c.merchantOfRecord ? c.channel + ' collects the stay payment' : 'We collect the stay payment ourselves on ' + c.channel}>{c.channel}</Tag>
+      {c.needId ? (
+        idDone
+          ? <Tag tone="emerald" title={'ID ' + c.idStatus + (c.idCapturedAt ? ' ' + when(c.idCapturedAt) : '') + (c.idMethod ? ' · ' + c.idMethod : '')}>ID ✓{c.idCapturedAt ? ' ' + dayOf(c.idCapturedAt) : ''}</Tag>
+          : <Tag tone="amber" title={c.idLinkSentAt ? 'Verification link sent ' + when(c.idLinkSentAt) + ' — the guest has not sent their ID back' : 'This channel needs a photo ID and a selfie before arrival'}>{c.idLinkSentAt ? 'ID link sent' : 'ID needed'}</Tag>
+      ) : null}
+      {c.needDeposit ? (
+        depDone
+          ? <Tag tone={c.depositStatus === 'claimed' ? 'rose' : c.depositStatus === 'released' ? 'slate' : 'emerald'}
+              title={'Deposit ' + c.depositStatus + (c.depositCapturedAt ? ' ' + when(c.depositCapturedAt) : '') + (c.depositReleaseDue ? ' · back ' + dayOf(c.depositReleaseDue) : '')}>
+              {c.depositStatus === 'released' ? 'Deposit back' : c.depositStatus === 'claimed' ? 'Deposit claimed' : 'Deposit ' + dollars(c.depositAmount ?? c.depositDue) + ' held'}
+            </Tag>
+          : <Tag tone="amber" title={'Not taken yet — ' + dollars(c.depositDue) + (c.rule.depositMethod ? ' by ' + c.rule.depositMethod.replace(/_/g, ' ') : '')}>Deposit {dollars(c.depositDue)} due</Tag>
+      ) : null}
+    </>
+  )
+}
+
+type Detail = {
+  ok: boolean
+  reservation: null | {
+    id: string; unit: string; guest: string; email: string; phone: string
+    checkIn: string; checkOut: string; nights: number | null; status: string; source: string; code: string
+    total: number | null; paid: number | null; balance: number | null; currency: string
+    conversationId: string | null; notes: string | null
+    guests: { adults: number | null; children: number | null; infants: number | null; pets: number | null } | null
+  }
+  check: NoticeCheck | null
+  guestyUrl: string | null
+  error?: string
+}
+
+/** The booking behind the notice, fetched when the row is opened — never with the list. */
+function NoticeDetail({ id, onView }: { id: string; onView: (rid: string, which: 'id' | 'selfie' | 'proof', title: string) => void }) {
+  const [d, setD] = useState<Detail | null>(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    let live = true
+    setD(null); setErr('')
+    fetch('/api/reservation-notices/detail?id=' + encodeURIComponent(id), { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (!live) return; if (j.ok) setD(j); else setErr(j.error || 'Could not read the booking.') })
+      .catch(e => { if (live) setErr(String(e?.message || e)) })
+    return () => { live = false }
+  }, [id])
+
+  if (err) return <div className="rounded-xl border border-line bg-app px-3 py-2 text-[12px] text-muted">{err}</div>
+  if (!d) return <div className="rounded-xl border border-line bg-app px-3 py-2 text-[12px] text-muted inline-flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Reading the booking…</div>
+
+  const r = d.reservation
+  const c = d.check
+  const rid = r?.id || ''
+  const line = (k: string, v: any) => v ? <div><span className="text-muted">{k}</span> <span className="text-ink font-semibold">{v}</span></div> : null
+  const people = r?.guests ? [r.guests.adults ? r.guests.adults + ' adult' + (r.guests.adults === 1 ? '' : 's') : '', r.guests.children ? r.guests.children + ' child' + (r.guests.children === 1 ? '' : 'ren') : '', r.guests.infants ? r.guests.infants + ' infant' + (r.guests.infants === 1 ? '' : 's') : '', r.guests.pets ? r.guests.pets + ' pet' + (r.guests.pets === 1 ? '' : 's') : ''].filter(Boolean).join(' · ') : ''
+
+  return (
+    <div className="rounded-xl border border-line overflow-hidden">
+      <div className="px-3 py-2 bg-app border-b border-line flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">The booking</span>
+        {c ? <CheckTags c={c} /> : null}
+        <span className="flex-1" />
+        {d.guestyUrl ? (
+          <a href={d.guestyUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white text-ink hover:border-ink/40">
+            <ExternalLink size={12} /> Open in Guesty
+          </a>
+        ) : null}
+        <a href="/welcome-calls?tab=checks" className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white text-muted hover:text-ink" title="Send the verification link, record the deposit, view what is on file">
+          ID &amp; deposits desk
+        </a>
+      </div>
+
+      {r ? (
+        <div className="px-3 py-2 grid gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3 text-[12.5px]">
+          {line('Unit', r.unit)}
+          {line('Stay', dayOf(r.checkIn) + ' – ' + dayOf(r.checkOut) + (r.nights ? ' · ' + r.nights + ' night' + (r.nights === 1 ? '' : 's') : ''))}
+          {line('Channel', (c?.channel || r.source) + (r.code ? ' · ' + r.code : ''))}
+          {line('Status', r.status)}
+          {line('Guests', people)}
+          {line('Phone', r.phone)}
+          {line('Email', r.email)}
+          {line('Booking total', r.total == null ? '' : dollars(r.total) + (r.balance ? ' · ' + dollars(r.balance) + ' unpaid' : ' · paid'))}
+        </div>
+      ) : (
+        <div className="px-3 py-2 text-[12.5px] text-muted">No Guesty booking is linked to this notice — it was filed by hand.</div>
+      )}
+
+      {c && (c.needId || c.needDeposit) ? (
+        <div className="px-3 py-2 border-t border-line text-[12.5px] space-y-1">
+          {c.needId ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-muted w-[86px] shrink-0">ID check</span>
+              {c.idStatus === 'verified'
+                ? <span className="text-ink">Verified{c.idCapturedAt ? ' ' + when(c.idCapturedAt) : ''}{c.idMethod ? ' · ' + (c.idMethod === 'link' ? 'guest’s link' : c.idMethod === 'manual' ? 'seen in person' : c.idMethod === 'salato' ? 'Salato iPad' : c.idMethod) : ''}</span>
+                : <span className="text-amber-800 font-semibold">Not verified{c.idLinkSentAt ? ' — link sent ' + when(c.idLinkSentAt) : ''}</span>}
+              {rid && c.hasIdPhoto ? <button onClick={() => onView(rid, 'id', 'ID')} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-0.5 rounded-lg border border-line text-muted hover:text-ink" title="Opens a 10-minute link; the view is logged">View ID</button> : null}
+              {rid && c.hasSelfie ? <button onClick={() => onView(rid, 'selfie', 'Selfie')} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-0.5 rounded-lg border border-line text-muted hover:text-ink" title="Opens a 10-minute link; the view is logged">Selfie</button> : null}
+            </div>
+          ) : null}
+          {c.needDeposit ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-muted w-[86px] shrink-0">Deposit</span>
+              {c.depositStatus === 'pending'
+                ? <span className="text-amber-800 font-semibold">{dollars(c.depositDue)} not taken yet</span>
+                : <span className="text-ink">
+                    {dollars(c.depositAmount ?? c.depositDue)} {c.depositStatus}
+                    {c.depositCapturedAt ? ' ' + when(c.depositCapturedAt) : ''}
+                    {c.depositMethod ? ' · ' + c.depositMethod.replace(/_/g, ' ') : ''}
+                    {c.depositReleaseDue && !c.depositReleasedAt ? ' · back ' + dayOf(c.depositReleaseDue) : ''}
+                  </span>}
+              {rid && c.hasDepositProof ? <button onClick={() => onView(rid, 'proof', 'Deposit proof')} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-0.5 rounded-lg border border-line text-muted hover:text-ink">Proof</button> : null}
+            </div>
+          ) : null}
+        </div>
+      ) : c ? (
+        <div className="px-3 py-2 border-t border-line text-[12.5px] text-muted">No ID check or deposit is required on {c.channel}.</div>
+      ) : null}
+    </div>
+  )
+}
+
 export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean }) {
   const [today, setToday] = useState<Row[]>([])
   const [upcoming, setUpcoming] = useState<Row[]>([])
@@ -121,6 +260,17 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
   // happened" (Jon, 2026-08-17: "not working").
   const [draftErr, setDraftErr] = useState<Record<string, string>>({})
   const [pdfBusy, setPdfBusy] = useState<string | null>(null)
+  // A 10-minute signed look at an ID, a selfie or a deposit proof — same route the Calls desk uses,
+  // same vault log line under whoever opened it.
+  const [viewer, setViewer] = useState<{ url: string; title: string; isPdf: boolean } | null>(null)
+  const viewPhoto = useCallback(async (rid: string, which: 'id' | 'selfie' | 'proof', title: string) => {
+    setErr(null)
+    try {
+      const j = await fetch('/api/guest-checks/photo?rid=' + encodeURIComponent(rid) + '&which=' + which, { cache: 'no-store' }).then(r => r.json())
+      if (!j.ok) throw new Error(j.error || 'Nothing on file.')
+      setViewer({ url: j.url, title, isPdf: /\.pdf(\?|$)/i.test(String(j.url)) })
+    } catch (e: any) { setErr(String(e?.message || e)) }
+  }, [])
 
   async function addToDrafts(id: string, d: { to: string; cc: string; subject: string; body: string; wantsForm?: boolean }) {
     setDraftBusy(id); setDraftErr(x => ({ ...x, [id]: '' }))
@@ -389,6 +539,13 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
     })
   }
 
+  // Arrivals today whose channel asks for an ID or a deposit and we have neither on file yet.
+  const checksOutstanding = useMemo(() => today.filter(r => {
+    const c = r.check
+    if (!c) return false
+    return (c.needId && c.idStatus === 'pending') || (c.needDeposit && c.depositStatus === 'pending')
+  }).length, [today])
+
   const head = (
     <LeanHead title={<span title="Buildings that won't let a guest in until their front desk has been told who is coming. Red means the guest is arriving and nothing has gone out. Recipients, wording and automation live under Settings.">Front-Desk Notices</span>}>
       {counts.late > 0 && <Pill tone="rose" title="Guest arriving today and no notice has gone out">{counts.late} arriving, unsent</Pill>}
@@ -396,6 +553,8 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
       <Pill tone={counts.toSend ? 'brand' : 'emerald'} title="Notices still to send for today">{counts.toSend} to send today</Pill>
       {counts.sentToday > 0 && <Pill tone="emerald" title="Sent for today's arrivals">{counts.sentToday} sent</Pill>}
       {counts.blocked > 0 && <Pill tone="amber" onClick={() => setShowSettings(true)} title="That building has no recipient yet — click to add one in Settings">{counts.blocked} no recipient</Pill>}
+      {/* Arriving today with a check still owed — the thing the front desk finds out too late. */}
+      {checksOutstanding > 0 && <Pill tone="amber" title="Arriving today on a channel that needs a photo ID or a security deposit, and we do not have it yet. Capture it at the Calls desk → ID & deposits.">{checksOutstanding} ID/deposit outstanding</Pill>}
     </LeanHead>
   )
 
@@ -546,6 +705,24 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
             ))
         )}
       </div>
+
+      {/* The ID, the selfie or the deposit proof, full size. The link expires in ten minutes and
+          the look is already written to the vault log by the time this opens. */}
+      {viewer ? (
+        <div className="fixed inset-0 z-50 bg-black/70 p-4 flex items-center justify-center" onClick={() => setViewer(null)}>
+          <div className="bg-white rounded-2xl overflow-hidden max-w-3xl w-full max-h-full flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-3 py-2 border-b border-line flex items-center gap-2">
+              <span className="text-[13px] font-bold text-ink">{viewer.title}</span>
+              <span className="text-[11.5px] text-muted">link expires in 10 minutes · this view is logged</span>
+              <span className="flex-1" />
+              <IconBtn title="Close" onClick={() => setViewer(null)}><X size={14} /></IconBtn>
+            </div>
+            {viewer.isPdf
+              ? <iframe src={viewer.url} className="w-full h-[70vh]" title={viewer.title} />
+              : <img src={viewer.url} alt={viewer.title} className="max-h-[75vh] w-auto mx-auto object-contain" />}
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 
@@ -567,6 +744,7 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
         name={r.guest_name}
         meta={`${r.propertyName} ${r.unit_no} · ${fmt(r.arrival_date)}${r.departure_date ? '–' + fmt(r.departure_date) : ''}`}
         tags={<>
+          {r.check ? <CheckTags c={r.check} /> : null}
           {!r.sent_at && r.urgency === 'late' && <Tag tone="roseSolid" title={URGENCY.late.text}>Arriving · unsent</Tag>}
           {!r.sent_at && r.urgency === 'due' && <Tag tone="amber" title={URGENCY.due.text}>Past cutoff</Tag>}
           {r.attach && <Tag tone={r.doc_path ? 'brand' : 'amber'} title={pdfTitle}>{r.doc_path ? 'Form filed' : 'Needs form'}</Tag>}
@@ -590,6 +768,7 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
           {r.sent_at && <IconBtn title="Not sent — put it back on the list" onClick={() => unmarkSent(r.id)}><Undo2 size={14} /></IconBtn>}
         </>}
       >
+        <NoticeDetail id={r.id} onView={viewPhoto} />
         <div className="text-[12px] text-muted flex items-center gap-x-3 gap-y-1 flex-wrap">
           {r.eta && <span>ETA {r.eta}</span>}
           {r.leadHours != null && <span>{r.leadHours}h lead</span>}
