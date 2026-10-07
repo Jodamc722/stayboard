@@ -133,36 +133,61 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
     return out
   }, [health, openTile, d, data, plans.data, stats.data, week.data, act])
 
-  // ── cycling ───────────────────────────────────────────────────────────────────────────────────
-  const [idx, setIdx] = useState(0)
-  const [hold, setHold] = useState(false)
-  const curKey = useRef<string>('')
-  // Keep the slide you are on when the list changes underneath (a refresh, a new post).
+  // ── ONE CLOCK FOR EVERYONE (Jon, 2026-10-07: "it flows weird when you land … keep it where everyone
+  // is seeing the same thing at the same time unless they move it forward — set on a timer vs on
+  // load"). The slide on screen is a function of the wall clock, not of when you opened the page:
+  // every SLOT seconds the board moves one slide, and slot n shows slide n mod N — so everyone looking
+  // at Today sees the same slide and they turn together. People with different access (dollar
+  // amounts, Eve) can have a slide or two more or fewer, so they can drift by a slide; the rest line up.
+  //   · arrows / dots move YOUR view only; 30 seconds after your last tap you rejoin everyone
+  //   · pointing at it or typing in it holds your view; letting go rejoins everyone
+  //   · nothing shows until the sources are in (or 4s pass), so the list doesn't grow under you on landing
+  const SLOT_MS = 9000
+  const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
-    const at = slides.findIndex(s => s.key === curKey.current)
-    setIdx(at >= 0 ? at : i => Math.min(i, Math.max(0, slides.length - 1)))
-  }, [slides])
-  const cur = slides[Math.min(idx, slides.length - 1)]
-  useEffect(() => { if (cur) curKey.current = cur.key }, [cur])
-  const paused = hold || !!composing || !!framing || !!viewing || slides.length < 2
+    let t: ReturnType<typeof setTimeout>
+    const tick = () => { const n = Date.now(); setNow(n); t = setTimeout(tick, SLOT_MS - (n % SLOT_MS) + 30) }
+    tick()
+    const vis = () => { if (document.visibilityState === 'visible') { clearTimeout(t); tick() } }
+    document.addEventListener('visibilitychange', vis)
+    return () => { clearTimeout(t); document.removeEventListener('visibilitychange', vis) }
+  }, [])
+  const [waited, setWaited] = useState(false)
+  useEffect(() => { const t = setTimeout(() => setWaited(true), 4000); return () => clearTimeout(t) }, [])
+  const ready = !!data && ((!stats.loading && !plans.loading && !!health) || waited)
+  const [manual, setManual] = useState<{ key: string; until: number } | null>(null)
+  const [held, setHeld] = useState<string | null>(null)
+  const N = slides.length
+  const live = N ? Math.floor(now / SLOT_MS) % N : 0
+  const pick = (key?: string | null) => { if (!key) return -1; return slides.findIndex(s => s.key === key) }
+  const manualIdx = manual && manual.until > now ? pick(manual.key) : -1
+  const heldIdx = pick(held)
+  const overlay = !!composing || !!framing || !!viewing
+  const idx = manualIdx >= 0 ? manualIdx : heldIdx >= 0 ? heldIdx : live
+  const cur = ready ? slides[idx] : undefined
+  const onLive = manualIdx < 0 && heldIdx < 0 && !overlay
+  const go = (n: number) => { if (!N) return; const k = slides[(n + N) % N].key; setManual({ key: k, until: Date.now() + 30_000 }); setHeld(null) }
+  const hold = (on: boolean) => setHeld(on && cur ? cur.key : null)
+  // the manual window ends between clock ticks too
   useEffect(() => {
-    if (paused || !cur) return
-    const t = setTimeout(() => setIdx(i => (i + 1) % slides.length), cur.secs * 1000)
+    if (!manual) return
+    const t = setTimeout(() => { setManual(null); setNow(Date.now()) }, Math.max(0, manual.until - Date.now()))
     return () => clearTimeout(t)
-  }, [paused, cur, slides.length, idx])
-  const go = (n: number) => setIdx((n + slides.length) % slides.length)
+  }, [manual])
+  const slotLeft = SLOT_MS - (Date.now() % SLOT_MS)
 
-  if (!slides.length && !data?.canPost) return null
+  if (ready && !slides.length && !data?.canPost) return null
   return (
     <section aria-roledescription="carousel" aria-label="Bulletin"
       className="rounded-2xl border border-line bg-white overflow-hidden"
-      onMouseEnter={() => setHold(true)} onMouseLeave={() => setHold(false)}
-      onFocusCapture={() => setHold(true)} onBlurCapture={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setHold(false) }}>
+      onMouseEnter={() => hold(true)} onMouseLeave={() => hold(false)}
+      onFocusCapture={() => { if (!held) hold(true) }} onBlurCapture={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) hold(false) }}>
       <div className="flex items-center gap-2 px-3.5 h-9 border-b border-line/70">
         <span className="lh-display text-[16px] leading-none text-ink">Bulletin</span>
         {cur && <span className="text-[12px] text-muted truncate">{cur.label}</span>}
+        {ready && manualIdx >= 0 && <button onClick={() => { setManual(null); setNow(Date.now()) }} className="text-[11.5px] text-muted hover:text-ink underline shrink-0">Back to live</button>}
         <span className="flex-1" />
-        {slides.length > 1 && (
+        {ready && slides.length > 1 && (
           <div className="hidden sm:flex items-center gap-1 mr-1" role="tablist" aria-label="Slides">
             {slides.map((s, i) => (
               <button key={s.key} role="tab" aria-selected={i === idx} aria-label={s.label} onClick={() => go(i)}
@@ -170,7 +195,7 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
             ))}
           </div>
         )}
-        {slides.length > 1 && <>
+        {ready && slides.length > 1 && <>
           <button onClick={() => go(idx - 1)} aria-label="Previous" className="w-6 h-6 rounded-md flex items-center justify-center text-muted hover:text-ink hover:bg-slate-100"><ChevronLeft size={14} /></button>
           <button onClick={() => go(idx + 1)} aria-label="Next" className="w-6 h-6 rounded-md flex items-center justify-center text-muted hover:text-ink hover:bg-slate-100"><ChevronRight size={14} /></button>
         </>}
@@ -178,7 +203,7 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
       </div>
       {/* time to the next slide */}
       <div className="h-[2px] bg-transparent">
-        {cur && !paused && <div key={cur.key + ':' + idx} className="lh-progress h-full bg-ink/25" style={{ animationDuration: cur.secs + 's' }} />}
+        {cur && onLive && N > 1 && <div key={'slot:' + Math.floor(now / SLOT_MS)} className="lh-progress h-full bg-ink/25" style={{ animationDuration: SLOT_MS + 'ms', animationDelay: -(SLOT_MS - slotLeft) + 'ms' }} />}
       </div>
       {viewing && data?.posts.find(x => x.id === viewing) ? (
         <PostView p={data!.posts.find(x => x.id === viewing)!} me={data?.me || ''} canPost={!!data?.canPost} act={act} onClose={() => setViewing(null)} />
@@ -187,8 +212,13 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
       ) : composing && data ? (
         <Composer data={data} initial={composing} onClose={() => setComposing(null)} onPost={async p => { await act({ action: 'create', post: p }); setComposing(null) }} onAct={act} />
       ) : (
-        <div className="px-4 py-3 min-h-[112px] flex items-center" aria-live="polite">
-          {cur ? <div key={cur.key} className="lh-fade w-full min-w-0">{cur.node}</div>
+        // ONE HEIGHT for every slide, so the page under it never jumps as the board turns.
+        <div className="px-4 py-3 h-[150px] flex items-center overflow-hidden" aria-live="polite">
+          {!ready ? (
+            <div className="w-full space-y-2.5 animate-pulse" aria-label="Loading the board">
+              <div className="h-3 w-24 rounded bg-slate-100" /><div className="h-6 w-2/3 rounded bg-slate-100" /><div className="h-3 w-1/3 rounded bg-slate-100" />
+            </div>
+          ) : cur ? <div key={cur.key} className="lh-fade w-full min-w-0">{cur.node}</div>
             : <div className="text-[13px] text-muted">Post an employee of the month, a quote, a reminder or a five-star review.</div>}
         </div>
       )}
@@ -214,7 +244,7 @@ function HealthSlide({ h, open }: { h: OpsHealth; open: ((tile: string) => void)
           <p className="text-[12.5px] text-muted max-w-[30rem] line-clamp-2">{h.headline}</p>
         </button>
       </div>
-      <div className="flex flex-wrap gap-1.5 flex-1 min-w-[200px]">
+      <div className="hidden sm:flex flex-wrap gap-1.5 flex-1 min-w-[200px]">
         {weak.map(dm => (
           <button key={dm.key} onClick={() => open?.(dm.tile)} title={dm.why || dm.label}
             className={'rounded-lg border px-2 py-1 text-left hover:border-ink/40 ' + (dm.score >= 85 ? 'border-emerald-200' : dm.score >= 65 ? 'border-amber-200' : 'border-rose-200')}>
@@ -241,7 +271,7 @@ function haveToRows(d: CommandDay): Must[] {
 function HaveToSlide({ must, rem, today, canPost, act }: { must: Must[]; rem: Post[]; today: string; canPost: boolean; act: (b: any) => Promise<void> }) {
   return (
     <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-1">
-      {must.slice(0, 4).map(m => (
+      {must.slice(0, rem.length ? 2 : 4).map(m => (
         <li key={m.key}>
           <Link href={m.href} className="flex items-baseline gap-2 rounded-md py-0.5 hover:underline">
             <span className={'lh-display text-[22px] leading-none tabular-nums w-8 text-right ' + (m.hot ? 'text-rose-700' : 'text-amber-700')}>{m.n}</span>
@@ -249,7 +279,7 @@ function HaveToSlide({ must, rem, today, canPost, act }: { must: Must[]; rem: Po
           </Link>
         </li>
       ))}
-      {rem.slice(0, 4).map(p => {
+      {rem.slice(0, 4 - Math.min(must.length, rem.length ? 2 : 4)).map(p => {
         const st = dueState(p, today), done = st === 'done'
         return (
           <li key={p.id} className="flex items-center gap-2 py-0.5 group">
@@ -306,7 +336,7 @@ function PostSlide(props: { p: Post; me: string; canPost: boolean; act: (b: any)
   const open = (e: React.MouseEvent) => { if (!(e.target as Element).closest('button,a,input,label')) props.onOpen?.(props.p) }
   if (!ph.length) return <div onClick={open} className="cursor-pointer"><PostBody {...props} /></div>
   return (
-    <div onClick={open} className="flex flex-col sm:flex-row gap-4 sm:items-center cursor-pointer">
+    <div onClick={open} className="flex flex-row gap-3 sm:gap-4 items-center cursor-pointer">
       <div className="relative shrink-0 group">
         <PhotoCycler photos={ph} frames={props.p.frames} />
         {props.canPost && props.onFrame && (
@@ -323,7 +353,7 @@ function PostSlide(props: { p: Post; me: string; canPost: boolean; act: (b: any)
 // THE SLIDE'S PHOTO BOX — 210×132 on a desktop, full width on a phone. Every photo sits in it the
 // way its frame says: FILL crops to the box at the chosen spot and zoom; FIT shows the whole photo
 // over a soft blurred copy of itself, so a tall phone shot never gets its head cut off.
-const BOX = 'w-full sm:w-[210px] h-[150px] sm:h-[132px]'
+const BOX = 'w-[118px] h-[104px] sm:w-[210px] sm:h-[124px]'
 function FramedImg({ src, frame, className = '' }: { src: string; frame?: Frame; className?: string }) {
   const f = frame || DEFAULT_FRAME
   /* eslint-disable @next/next/no-img-element */
