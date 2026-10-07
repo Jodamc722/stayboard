@@ -75,7 +75,9 @@ export async function findMoveConflicts(): Promise<{ findings: MoveFinding[]; ch
     blocks = rep.runs.length
     for (const b of rep.runs) {
       const from = String(b.from), to = String(b.to)
-      const clash = (byListing[String(b.listingId)] || []).filter(r => String(r.check_in) <= to && String(r.check_out) > from)
+      // Botanica is the hotel's inventory (run from the Garden side, with placeholder "reservations"
+      // named after the building) — its blocks are the hotel's business, not a guest move.
+      const clash = /botanica/i.test(b.unit) ? [] : (byListing[String(b.listingId)] || []).filter(r => String(r.check_in) <= to && String(r.check_out) > from)
       for (const r of clash) {
         findings.push({
           kind: 'blocked', severity: 'urgent', unit: b.unit,
