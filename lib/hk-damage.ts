@@ -113,7 +113,7 @@ async function history(oldest: string): Promise<{ msgs: Msg[]; error: string | n
   let cursor = ''
   for (let page = 0; page < 5; page++) {
     const j = await slackGet('conversations.history', { channel: HK_CHANNEL_ID, oldest, limit: '200', ...(cursor ? { cursor } : {}) })
-    if (!j.ok) return { msgs: out, error: 'Slack: ' + j.error + (j.error === 'not_in_channel' ? ' — invite the Lighthouse bot to #' + HK_CHANNEL_NAME : '') }
+    if (!j.ok) return { msgs: out, error: 'Slack: ' + j.error + (j.error === 'not_in_channel' || j.error === 'channel_not_found' ? ' — Lighthouse is not in #' + HK_CHANNEL_NAME + ' (private). In that channel type: /invite @Eve' : '') }
     for (const x of (j.messages || []) as any[]) {
       if (x?.type !== 'message') continue
       if (x.subtype && x.subtype !== 'file_share' && x.subtype !== 'thread_broadcast') continue
