@@ -182,7 +182,7 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
   const now = new Date().toISOString()
 
   // ── Read
-  const { data: itemRows } = await db.from('eve_slack_items').select('id,kind,summary,unit,listing_id,channel_name,status,tracked_in,first_seen,closed_reason')
+  const { data: itemRows } = await db.from('eve_slack_items').select('id,kind,summary,unit,listing_id,channel_name,status,tracked_in,first_seen,closed_reason,urgent')
     .gte('first_seen', new Date(Date.now() - 3 * 86400_000).toISOString()).limit(400)
   const items = (itemRows as any[]) || []
   const { data: gRows } = await db.from('glitches').select('id,unit,listing_id,status,category,overview,assignee,guest_name,check_in,check_out,breezeway_task_id,reservation_id,created_at,closed_at')
@@ -284,7 +284,10 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
   // there must be no non-turnover Breezeway task or glitch on that unit since the day it was raised.
   // One line per unit; a second report about the same unit rides along silently.
   const SAYS_TRACKED = /task (was |has been |is )?(created|made|opened|submitted|in breezeway)|created (a |the )?task|in breezeway|breezeway task|glitch (was |has been )?(created|submitted|filed)|work order/i
-  const aCands = items.filter(it => it.status === 'open' && it.kind === 'problem' && !it.tracked_in
+  // ALREADY SAID AS "AFFECTS A GUEST TODAY" (Eve audit 2026-10-07): an urgent Slack problem is posted
+  // the hour it is seen (slack-watch step 5). Saying it again here 45 minutes later was the same
+  // problem twice in one room — the heater went out four times in an hour. Urgent ones are skipped.
+  const aCands = items.filter(it => it.status === 'open' && it.kind === 'problem' && !it.tracked_in && !it.urgent
     && hoursSince(it.first_seen) * 60 >= SLACK_ITEM_AFTER_MIN && hoursSince(it.first_seen) <= 12 && !SAYS_TRACKED.test(String(it.summary || '')))
   const aLids = Array.from(new Set(aCands.map(it => String(it.listing_id || '')).filter(Boolean)))
   const handled = new Set<string>()
@@ -384,6 +387,10 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     if (!rows.length) return null
     const channel = cfg.rooms[room]
     if (!channel) { out.notes.push(`${room}: no room set`); return null }
+    // ONE LINE PER THING (Eve audit 2026-10-07): two glitches on the same unit and trade printed
+    // "17WEST · AC — glitch open 14h" twice in one post. The same line is said once; the twin rides along.
+    const byLine: Record<string, string> = {}
+    rows = rows.filter(([k, f]) => { const key = f.line.toLowerCase(); if (byLine[key]) { const prim = rows.find(r => r[0] === byLine[key]); if (prim) (prim[1].also = prim[1].also || []).push(k); return false } byLine[key] = k; return true })
     const shown = rows.slice(0, MAX_LINES)
     const more = rows.length > shown.length ? `\n…and ${rows.length - shown.length} more. Ask me for the list.` : ''
     const text = `${head}\n${shown.map(([, f]) => `• ${f.line}`).join('\n')}${more}${tail ? '\n' + tail : ''}`
@@ -400,7 +407,7 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
   const freshRows = Object.entries(fresh)
   const t = clock(now)
   for (const [room, head, tail] of [
-    ['ops', `*On watch · ${t}*`, 'Tag @Eve here if you want me to create or assign any of these.'],
+    ['ops', `*On watch · ${t}*`, ''],
     ['guest', `*Fixed, guest not told yet · ${t}*`, ''],
   ] as [Room, string, string][]) {
     // Guest in the unit first (E, C), then a glitch with nothing behind it (B), then Slack reports (A).
@@ -418,7 +425,9 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
   // ── Remember
   for (const [key, f] of Object.entries(flags)) {
     const old = hoursSince(f.resolvedAt || f.at)
-    if ((f.resolved && old > 48) || old > 5 * 24) delete flags[key]
+    // Kept past the 7-day lookback of B/C (Eve audit 2026-10-07): forgetting a flag on day 5 let the
+    // same glitch be flagged again on days 5–7.
+    if ((f.resolved && old > 48) || old > 8 * 24) delete flags[key]
   }
   await setSetting(STATE_KEY, { flags, seen: seenNow }, 'on-watch')
   return out

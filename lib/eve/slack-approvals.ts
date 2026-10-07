@@ -57,6 +57,66 @@ export async function postProposalToSlack(id: string, p: { summary: string; why?
   return { ok: true, ts: String(r.ts), channel: ch.id }
 }
 
+/**
+ * THE APPROVALS DIGEST (Eve audit 2026-10-07). Proposals are queued (payload.slack_pending) by
+ * agent-mode notifyProposal and go out here: ONE post, numbered, answered in its thread with
+ * "1 yes", "2 no", "1 3 yes", "all yes" (or a bare yes/no when there is only one). Each row keeps the
+ * post's ts and its number, so the reply finds it exactly as before. Upkeep proposals are not listed —
+ * only counted, with the link to where they wait. Called hourly from the slack-watch cron and right
+ * after the morning post. Returns how many it listed.
+ */
+export const DIGEST_MAX = 10
+export async function flushApprovalDigest(opts: { preview?: boolean } = {}): Promise<{ posted: number; waiting: number; upkeep: number; text?: string; error?: string }> {
+  const db = supabaseAdmin()
+  const since = new Date(Date.now() - 3 * 86400_000).toISOString()
+  const { data } = await db.from('eve_actions').select('id,payload,status,created_at').eq('kind', 'ask').eq('status', 'proposed').gte('created_at', since).order('created_at', { ascending: true }).limit(200)
+  const rows = ((data as any[]) || []).filter(r => r.payload?.type === 'action')
+  const pending = rows.filter(r => r.payload?.slack_pending === true && !r.payload?.slack_ts)
+  const upkeep = rows.filter(r => r.payload?.slack_skip === 'upkeep').length
+  if (!pending.length) return { posted: 0, waiting: 0, upkeep }
+  const ch = await getApprovalsChannel()
+  if (!ch) return { posted: 0, waiting: pending.length, upkeep, error: 'no Slack approvals channel' }
+  const list = pending.slice(0, DIGEST_MAX)
+  const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
+  const line = (r: any, i: number) => {
+    const pl = r.payload || {}
+    const why = String(pl.why || '').replace(/\s+/g, ' ').slice(0, 140)
+    const usd = Number(pl.usd) || 0
+    return `*${i + 1}.* ${String(pl.summary || '').replace(/\s+/g, ' ').slice(0, 220)}${usd ? ` · ${money(usd)}` : ''}${why ? `\n      _${why}_` : ''}`
+  }
+  const one = list.length === 1
+  const text = [
+    `🤖 *Eve wants to (${list.length})* — ${one ? 'reply *yes* or *no* in this thread.' : 'reply in this thread: `1 yes` · `2 no` · `1 3 yes` · `all yes`.'}`,
+    list.map(line).join('\n'),
+    pending.length > list.length ? `_…${pending.length - list.length} more in the next list._` : '',
+    upkeep ? `_${upkeep} preventative upkeep task${upkeep === 1 ? '' : 's'} waiting on <${base}/upkeep|the Upkeep page> — not listed here._` : '',
+  ].filter(Boolean).join('\n')
+  if (opts.preview) return { posted: 0, waiting: pending.length, upkeep, text }
+  const r = await postToChannel(ch.id, text)
+  if (!r.ok || !r.ts) return { posted: 0, waiting: pending.length, upkeep, error: r.error || 'refused' }
+  for (let i = 0; i < list.length; i++) {
+    const pl = list[i].payload || {}
+    try { await db.from('eve_actions').update({ payload: { ...pl, slack_pending: false, slack_channel: ch.id, slack_ts: String(r.ts), slack_index: i + 1, slack_sent_at: new Date().toISOString() } }).eq('id', list[i].id) } catch { /* a reply cannot find this one; Lighthouse still can */ }
+  }
+  return { posted: list.length, waiting: pending.length - list.length, upkeep }
+}
+
+/** Which numbers a reply decides, and how. "1 yes 2 no", "1,3 yes", "yes 2", "all yes". */
+export function parseDigestReply(text: string, n: number): { idx: number; yes: boolean }[] {
+  const t = String(text || '').toLowerCase().replace(/<@[a-z0-9]+>/g, ' ')
+  const out: Record<number, boolean> = {}
+  const verdict = (w: string) => (YES.test(w) ? true : NO.test(w) ? false : null)
+  const nums = (s: string): number[] => /all|every|both/.test(s) ? Array.from({ length: n }, (_, i) => i + 1) : (s.match(/\d+/g) || []).map(Number).filter(x => x >= 1 && x <= n)
+  const W = '(yes|y|yep|yeah|ok|okay|approve[d]?|go|do it|no|n|nope|nah|reject(?:ed)?|drop|skip|deny)'
+  const L = '((?:all|every|both)|\\d+(?:\\s*(?:,|&|and|\\s)\\s*\\d+)*)'
+  // "1 3 yes", "all yes", "2: no"
+  for (const m of Array.from(t.matchAll(new RegExp(L + '\\s*[:.\\-–—=]?\\s*' + W + '\\b', 'g')))) { const v = verdict(m[2]); if (v != null) for (const i of nums(m[1])) out[i] = v }
+  // "yes 1 3", "no to 2"
+  for (const m of Array.from(t.matchAll(new RegExp('\\b' + W + '\\s*(?:to|for|on)?\\s*' + L, 'g')))) { const v = verdict(m[1]); if (v != null) for (const i of nums(m[2])) if (!(i in out)) out[i] = v }
+  if (!Object.keys(out).length && n === 1) { const v = verdict(t.trim()); if (v != null) out[1] = v }
+  return Object.keys(out).map(k => ({ idx: Number(k), yes: out[Number(k)] }))
+}
+
 /** A spend waiting on approval, into the approvals room. Called when the request is filed. */
 export async function postSpendToSlack(req: { id: string | number; title?: string | null; amount_usd?: number | null; unit?: string | null; building?: string | null; vendor?: string | null; created_by_email?: string | null; description?: string | null; type?: string | null }): Promise<{ ok: boolean; error?: string }> {
   const ch = await getApprovalsChannel()
@@ -92,10 +152,14 @@ export async function handleApprovalReply(ev: { channel?: string; thread_ts?: st
 
   // Which ask is this thread? A proposal first (its row carries the ts), then a spend (the map).
   let proposal: any = null
+  let digest: any[] = []
   try {
-    const { data } = await supabaseAdmin().from('eve_actions').select('id,status,payload').eq('payload->>slack_ts', root).limit(1)
-    proposal = (data || [])[0] || null
+    const { data } = await supabaseAdmin().from('eve_actions').select('id,status,payload').eq('payload->>slack_ts', root).limit(DIGEST_MAX + 5)
+    const found = (data || []) as any[]
+    if (found.length > 1 || (found[0] && found[0].payload?.slack_index)) digest = found.sort((a, b) => Number(a.payload?.slack_index || 0) - Number(b.payload?.slack_index || 0))
+    else proposal = found[0] || null
   } catch { proposal = null }
+  if (digest.length) return await decideDigest(channel, root, String(ev.user), text, digest)
   let spend: SpendPost | null = null
   if (!proposal) {
     try { const m = (await getSetting<Record<string, SpendPost>>(SPEND_POSTS_KEY, {})) || {}; spend = m[root] || null } catch { spend = null }
@@ -137,5 +201,31 @@ export async function handleApprovalReply(ev: { channel?: string; thread_ts?: st
     const amt = Number((cur as any).amount_usd) > 0 ? ' ' + money(Number((cur as any).amount_usd)) : ''
     await reply(approved ? `✅ Approved${amt} — ${String((cur as any).title || '').slice(0, 120)}. (${by.split('@')[0]})` : `❌ Rejected — ${String((cur as any).title || '').slice(0, 120)}. (${by.split('@')[0]})`)
   } catch (e: any) { await reply(`I couldn't record that: ${String(e?.message || e).slice(0, 120)}`) }
+  return true
+}
+
+/** A reply under an approvals digest: decide each number it names. */
+async function decideDigest(channel: string, root: string, user: string, text: string, rows: any[]): Promise<boolean> {
+  const reply = (t: string) => postThreadReply(channel, root, t).catch(() => null)
+  const n = rows.length
+  const picks = parseDigestReply(text, n)
+  if (!picks.length) {
+    // Not an answer (a question, a comment): say how to answer once, briefly.
+    await reply(n === 1 ? 'Reply *yes* or *no*.' : 'Reply with the numbers, like `1 yes`, `2 no` or `all yes`.')
+    return true
+  }
+  const email = await emailForSlackUser(user).catch(() => null)
+  if (!(await isApprover(email))) { await reply(`Only an approver can decide these (Settings → Eve → Agent mode)${email ? '' : ' — and I could not match your Slack account to a Lighthouse login'}.`); return true }
+  const by = String(email)
+  const lines: string[] = []
+  for (const pk of picks.sort((a, b) => a.idx - b.idx)) {
+    const row = rows.find(r => Number(r.payload?.slack_index) === pk.idx) || rows[pk.idx - 1]
+    if (!row) continue
+    if (row.status !== 'proposed') { lines.push(`${pk.idx}. already ${row.status}`); continue }
+    if (!pk.yes) { await rejectProposal(String(row.id), by, text); lines.push(`${pk.idx}. dropped`); continue }
+    const res = await executeProposal(String(row.id), by)
+    lines.push(res.ok ? `${pk.idx}. done — ${String(res.done || '').slice(0, 120)}` : `${pk.idx}. couldn't: ${String(res.error || '').slice(0, 120)}`)
+  }
+  await reply(`${lines.join('\n')}\n(${by.split('@')[0]})`)
   return true
 }

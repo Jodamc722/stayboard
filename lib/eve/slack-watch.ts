@@ -79,7 +79,11 @@ const SIG = {
 }
 const UNIT = /\b(\d{3,4}(?:\/\d)?)\b|\b(oasis|botanica|arya|elser|17 ?west|salato|rustic|hendricks|pelican|waves|eden|nomad|capri|lucerne|amrit|park ?towers?|district ?225|miami house)\b/i
 
-const ACK = /\b(done|fixed|resolved|completed|complete|handled|sorted|closed|taken care|all set|finished|delivered|sent it|sent them|replaced|listo|hecho|resuelto|ya está|ya esta|terminado|terminada|arreglado|arreglada|solucionado|entregado)\b/i
+const ACK_WORDS = /\b(done|fixed|resolved|completed|complete|handled|sorted|closed|taken care|all set|finished|delivered|sent it|sent them|replaced|listo|hecho|resuelto|ya está|ya esta|terminado|terminada|arreglado|arreglada|solucionado|entregado)\b/i
+// "NOT DONE YET" IS NOT DONE (Eve audit 2026-10-07). The bare word test closed a loop on "not done
+// yet", "isn't fixed", "todavía no está listo". A negation just before the word means it is still open.
+const ACK_NEGATED = /\b(not|isn'?t|wasn'?t|aren'?t|haven'?t|hasn'?t|didn'?t|never|no|not yet|still not|aun no|aún no|todavia no|todavía no|no está|no esta|sin)\s+(\w+\s+){0,2}(done|fixed|resolved|completed?|handled|sorted|closed|finished|delivered|replaced|listo|hecho|resuelto|terminad[oa]|arreglad[oa]|solucionado|entregado)\b/i
+const ACK = { test: (t: string) => ACK_WORDS.test(t) && !ACK_NEGATED.test(t) }
 
 function signals(text: string): string[] {
   const t = String(text || '').trim()
@@ -688,7 +692,11 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   // 00:20, so the "morning" roll-up was a midnight snapshot held by quiet hours and posted at 7 —
   // without anything raised overnight. It is built only between 07:00 and 10:59 ET now.
   const today = etDate()
-  if (opts?.digest && st.lastDigest !== today && hour >= 7 && hour <= 10) {
+  // FOLDED INTO THE ONE MORNING POST (Eve audit 2026-10-07): the loops this roll-up listed are now the
+  // "Waiting on a person" lines of lib/eve/morning.ts, each said on its first morning and once more if
+  // it ages, instead of every morning. With eve_morning off this roll-up runs as before.
+  const { morningOn } = await import('./morning')
+  if (opts?.digest && st.lastDigest !== today && hour >= 7 && hour <= 10 && !(await morningOn())) {
     const openNow = open.filter(i => i.status === 'open')
     const { data: closedRows } = await db.from('eve_slack_items').select('summary,closed_reason,unit').eq('status', 'closed').gte('closed_at', new Date(Date.now() - 26 * 3600_000).toISOString()).limit(30)
     const closed = (closedRows || []) as any[]

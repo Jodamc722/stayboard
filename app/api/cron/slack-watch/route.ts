@@ -41,6 +41,9 @@ export async function GET(req: NextRequest) {
   // ?desk=plan|recap — what the ops desk would post right now, posting nothing.
   const deskPrev = new URL(req.url).searchParams.get('desk')
   if (deskPrev === 'plan' || deskPrev === 'recap') return NextResponse.json(await runOpsDesk({ force: deskPrev, preview: true }))
+  // ?morning=preview — the one morning post as it would read now, posting nothing. ?approvals=preview — the digest.
+  if (new URL(req.url).searchParams.get('morning') === 'preview') { const { runMorning } = await import('@/lib/eve/morning'); return NextResponse.json(await runMorning({ preview: true })) }
+  if (new URL(req.url).searchParams.get('approvals') === 'preview') { const { flushApprovalDigest } = await import('@/lib/eve/slack-approvals'); return NextResponse.json(await flushApprovalDigest({ preview: true })) }
   // ?sweep=1 — expire moot loops and calm stale 'urgent' flags now, reading no Slack.
   if (new URL(req.url).searchParams.get('sweep') === '1') return NextResponse.json(await sweepLoops())
   // ?shadow=1 — run the shadow scheduler's evening pass now (score today, project tomorrow), saving.
@@ -79,6 +82,22 @@ export async function POST(req: NextRequest) {
   const o0 = Date.now()
   const outcomes = await checkOutcomes().catch((e: any) => ({ checked: 0, updated: 0, byOutcome: {}, error: String(e?.message || e).slice(0, 160) }))
   if (outcomes.checked || outcomes.error) recordRun({ name: 'eve-outcomes', ok: !outcomes.error, itemCount: outcomes.updated, detail: outcomes, error: outcomes.error || null, ms: Date.now() - o0 })
+  // THE ONE MORNING POST and THE APPROVALS DIGEST (Eve audit 2026-10-07). The morning post (7–10am ET,
+  // once a day) replaces the roll-up, the ops-desk plan and the empty handoffs; the digest lists every
+  // queued proposal as one numbered post. Each in its own try, each with its own receipt.
+  let morning: any = null, approvals: any = null
+  if (digest) {
+    const m0 = Date.now()
+    const { runMorning } = await import('@/lib/eve/morning')
+    morning = await runMorning().catch((e: any) => ({ posted: false, note: String(e?.message || e).slice(0, 200) }))
+    if (morning && !morning.skipped) recordRun({ name: 'eve-morning', ok: morning.posted || morning.mode !== 'act', itemCount: morning.posted ? 1 : 0, detail: { mode: morning.mode, note: morning.note }, error: null, ms: Date.now() - m0 })
+  }
+  {
+    const a0 = Date.now()
+    const { flushApprovalDigest } = await import('@/lib/eve/slack-approvals')
+    approvals = await flushApprovalDigest().catch((e: any) => ({ posted: 0, waiting: 0, upkeep: 0, error: String(e?.message || e).slice(0, 200) }))
+    if (approvals && (approvals.posted || approvals.error)) recordRun({ name: 'eve-approvals-digest', ok: !approvals.error, itemCount: approvals.posted, detail: approvals, error: approvals.error || null, ms: Date.now() - a0 })
+  }
   let watch: any = null, opsDesk: any = null, shadow: any = null
   if (url.searchParams.get('watch') !== '0') {
     const w0 = Date.now()
@@ -100,5 +119,5 @@ export async function POST(req: NextRequest) {
     if (opsDesk && !opsDesk.skipped) recordRun({ name: 'ops-desk', ok: opsDesk.ok !== false, itemCount: (opsDesk.proposedAssign || 0) + (opsDesk.plan ? 1 : 0) + (opsDesk.recap ? 1 : 0), detail: opsDesk, error: opsDesk.error || null, ms: Date.now() - w0 })
     if (watch && !watch.skipped) recordRun({ name: 'on-watch', ok: watch.ok !== false, itemCount: Object.values(watch.posted || {}).reduce((a: number, b: any) => a + Number(b || 0), 0) + (watch.resolved || 0), detail: watch, error: watch.error || null, ms: Date.now() - w0 })
   }
-  return NextResponse.json({ ...res, outcomes, watch, opsDesk, shadow }, { status: res.ok ? 200 : 500 })
+  return NextResponse.json({ ...res, outcomes, morning, approvals, watch, opsDesk, shadow }, { status: res.ok ? 200 : 500 })
 }

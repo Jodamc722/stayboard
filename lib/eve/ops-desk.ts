@@ -161,8 +161,14 @@ export async function runOpsDesk(opts: { force?: 'plan' | 'recap' | 'chase'; pre
   const proposed: Record<string, string> = st.proposed || {}
   for (const k of Object.keys(proposed)) if (proposed[k] < shift(today, -3)) delete proposed[k]   // three days of memory is plenty
 
-  const wantPlan = opts.force === 'plan' || (st.lastPlan !== today && h >= cfg.planHour && h < cfg.planHour + 3)
-  const wantRecap = opts.force === 'recap' || (st.lastRecap !== today && h >= cfg.recapHour && h < cfg.recapHour + 3)
+  // ONE MORNING POST (Eve audit 2026-10-07, Jon: "consolidate Eve's engagement"). The 7am plan and the
+  // 6pm recap were two of the ~61 posts a week in #vr-eve that nobody answered. The plan is now part
+  // of the single Ops Command post (lib/eve/morning.ts); the recap lives on the Today board. Both still
+  // build on demand (?desk=plan|recap) for the preview. Switch eve_morning off to bring them back.
+  const { morningOn } = await import('./morning')
+  const consolidated = await morningOn()
+  const wantPlan = opts.force === 'plan' || (!consolidated && st.lastPlan !== today && h >= cfg.planHour && h < cfg.planHour + 3)
+  const wantRecap = opts.force === 'recap' || (!consolidated && st.lastRecap !== today && h >= cfg.recapHour && h < cfg.recapHour + 3)
   const wantChase = opts.force === 'chase' || (h >= cfg.chaseFrom && h < cfg.chaseTo)
   if (!wantPlan && !wantRecap && !wantChase) return { ...out, skipped: `nothing due at ${h}:00 ET` }
 

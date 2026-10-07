@@ -251,6 +251,28 @@ async function fileGlitch(d: Detection): Promise<string | null> {
   return ins.data ? str((ins.data as any).id) : null
 }
 
+/**
+ * The open glitch this detection belongs on: same reservation (or same conversation), not closed,
+ * opened in the last 72 hours. When there is one, the new report is appended to its overview and
+ * history and its id is returned; `security` says whether that glitch was already a safety matter.
+ */
+async function mergeIntoOpenGlitch(d: Detection): Promise<{ id: string; security: boolean } | null> {
+  if (!d.reservationId && !d.conversationId) return null
+  const db = supabaseAdmin()
+  const since = new Date(Date.now() - 72 * 3600_000).toISOString()
+  let q = db.from('glitches').select('id,status,glitch_type,overview,history').gte('created_at', since).order('created_at', { ascending: false }).limit(5)
+  q = d.reservationId ? q.eq('reservation_id', d.reservationId) : q.eq('conversation_id', d.conversationId as string)
+  const { data } = await q
+  const g = ((data || []) as any[]).find(r => !/closed|resolved|done|cancel/i.test(str(r.status)))
+  if (!g) return null
+  const when = new Date(d.occurredAt || Date.now()).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  const add = `\n\nAlso heard (${d.kind === 'call' ? 'call' : 'message'}, ${when}): ${d.headline}${d.issues.length > 1 ? ' — ' + d.issues.join('; ') : ''}\n${d.link}`
+  const history = Array.isArray(g.history) ? g.history.slice(-40) : []
+  history.push({ at: new Date().toISOString(), by: 'lighthouse', action: 'note', detail: 'another report on this stay merged from ' + d.sourceKey })
+  await db.from('glitches').update({ overview: (str(g.overview) + add).slice(0, 6000), history }).eq('id', g.id)
+  return { id: str(g.id), security: /security/i.test(str(g.glitch_type)) }
+}
+
 /** The line customer care sees — in the pop-up they must acknowledge, and in Slack. */
 export function alertText(d: Detection, glitchId: string | null): { title: string; body: string } {
   const who = [d.guestName || 'A guest', d.unit ? 'at ' + d.unit : ''].filter(Boolean).join(' ')
@@ -335,9 +357,21 @@ export async function runGuestIssueWatch(opts: { hours?: number; dryRun?: boolea
       await recordDetection(d, { verdict: 'skipped', glitchId: null, alerted: false, note: 'nothing concrete named — left for a person' })
       continue
     }
-    let glitchId: string | null = null
-    try { glitchId = await fileGlitch(d) } catch (e: any) { out.error = String(e?.message || e).slice(0, 200) }
-    if (glitchId) out.filed++
+    // ONE GUEST, ONE GLITCH, ONE HANDOFF (Eve audit 2026-10-07). Two calls about the same stay — or a
+    // call and a message — filed two glitches and posted two handoffs in the same minute, each tagging
+    // three people (Kamala Birch, Yoicel Hernandez). An open glitch on the same reservation from the
+    // last three days now takes the new report as a note instead; customer care already has the alert,
+    // so no second one is raised — unless the new report is a safety matter and the first was not.
+    const merged = await mergeIntoOpenGlitch(d).catch(() => null)
+    if (merged && !(d.severity === 'security' && !merged.security)) {
+      out.skipped++
+      await recordDetection(d, { verdict: 'merged', glitchId: merged.id, alerted: false, note: 'added to the open glitch on this stay' })
+      out.detections.push({ ...d, verdict: 'merged', glitchId: merged.id, alerted: false })
+      continue
+    }
+    let glitchId: string | null = merged ? merged.id : null
+    if (!glitchId) { try { glitchId = await fileGlitch(d) } catch (e: any) { out.error = String(e?.message || e).slice(0, 200) } }
+    if (glitchId && !merged) out.filed++
     // FLAG CUSTOMER CARE, ALWAYS (Jon: "we need to flag the customer service team immediately").
     // raiseEveAlert is the intrusive pop-up with acknowledgement tracking AND the Slack post to
     // #vr-customercareteam tagging Roberto, Karla and Silvia — one call does both.

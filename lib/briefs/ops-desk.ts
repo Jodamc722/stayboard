@@ -1,5 +1,19 @@
-// OPS DESK — the operations manager's morning (Jon, 2026-10-01). The whole portfolio on one
-// screen, as decisions, not lists:
+// OPS COMMAND — the operations manager's morning (Jon, 2026-10-01 as "Ops Desk"; brought back as
+// Ops Command and made better 2026-10-07: "bring the ops command brief and make it better").
+//
+// 2026-10-07 — WHAT CHANGED. It now opens the way the Today board thinks (lib/briefs/direction):
+//   • Ops Health — the board's score, the one thing dragging it, the six dimensions in a row
+//   • Decide today — the board's ranked rows, each with ONE owner and ONE next step, then the desk's
+//     own (short staffed, idle on shift, window open) — one numbered list, no repeats by unit
+//   • Guest issues — open / overdue / waiting on a manager, the overdue ones named
+//   • Waiting on a person — what Slack says nobody closed (guest asks, problems with no owner, stale
+//     promises). This is where Eve's old "Keeping tabs" post lives now: in the brief, once a day.
+//   • Blocked — the units down now with their Guesty label and note
+//   • Tomorrow — the board's one-line read of tomorrow
+// and keeps what worked: markets at a glance, the shape of the day, free trips, maintenance, paperwork,
+// yesterday. Eve's morning Slack post is the short form of this email and links here.
+//
+// The original layout (2026-10-01): the whole portfolio on one screen, as decisions, not lists:
 //   the day in numbers → Unblock today (≤7, in order) → markets at a glance (one line each, a
 //   link to that market's Field Run) → free trips → maintenance in three lines → paperwork in
 //   two → yesterday in one → the shape of the manager's day.
@@ -13,7 +27,8 @@ import { getStaff } from '@/lib/staffing'
 import { buildReviewQueue, niceDate } from '@/lib/review-queue'
 import { maintData } from '@/lib/maint-brief'
 import { blockedUnits } from '@/lib/blocked-units'
-import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, dayShape, footer, fit, pill, cleanTitle, unitShort, personName, type Line } from './ui'
+import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, dayShape, footer, fit, pill, cleanTitle, unitShort, personName, tiles, type Line } from './ui'
+import { buildDirection, type DayDirection } from './direction'
 import type { Built } from './field-run'
 
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
@@ -33,7 +48,7 @@ export async function buildOpsDesk(): Promise<Built> {
   const scope = new Set<string>(); const nameOf: Record<string, string> = {}
   const soak = (rows: any) => { for (const r of (Array.isArray(rows) ? rows : [])) { const lid = str(r?.listingId || r?.listing_id || r?.lid); if (!lid) continue; scope.add(lid); const nm = str(r?.unit || r?.unit_name || r?.name); if (nm && !nameOf[lid]) nameOf[lid] = nm } }
   soak(d.cleans); soak(d.hkOther); soak(sheet.vacants); soak(sheet.arrivals); soak(sheet.departures); soak(sheet.units)
-  const [shifts, salaried, staff, review, maintMi, maintBr, comp, blocked, forecast] = await Promise.all([
+  const [shifts, salaried, staff, review, maintMi, maintBr, comp, blocked, forecast, dir] = await Promise.all([
     capped(getShifts(today, 'America/New_York')),
     capped(getSalaried()), capped(getStaff()),
     capped(buildReviewQueue(Array.from(scope), today, { nameOf, horizon: 21 })),
@@ -41,6 +56,7 @@ export async function buildOpsDesk(): Promise<Built> {
     capped(weekCompliance()),
     capped(blockedUnits(30)),
     capped(import('@/lib/forecast/staffing').then(m => m.buildStaffingForecast({ days: 7 }))),
+    capped(buildDirection(), 50_000) as Promise<DayDirection | null>,
   ])
 
   // ---- the facts -----------------------------------------------------------------------------
@@ -144,6 +160,39 @@ export async function buildOpsDesk(): Promise<Built> {
     { at: '5:00', do: 'Close the paperwork: every clean closed in Breezeway, every maintenance close with its charge. Tomorrow\'s numbers are made now.' },
   ]
 
+  // ---- OPS COMMAND (2026-10-07): health, decide, guest issues, waiting on a person, blocked, tomorrow ----
+  const D = dir as DayDirection | null
+  const H = D?.health || null
+  const tone = (n: number) => (n >= 85 ? 'green' : n >= 65 ? 'amber' : 'red') as 'green' | 'amber' | 'red'
+  const healthHtml = H ? block('Ops health — right now', `<p style="margin:6px 0 8px;font-size:14px"><b style="font-size:22px;${H.band === 'smooth' ? T.green : H.band === 'watch' ? T.amber : T.red}">${H.score}</b> <b>${esc(H.label)}</b>${H.score < 100 ? ` — <span style="${T.muted}">${esc(H.headline)}</span>` : ''}</p>${tiles(H.dims.map(x => ({ label: x.label, value: String(x.score), note: x.why ? x.why.slice(0, 60) : 'on track', tone: tone(x.score) })))}`, A) : ''
+  // Decide today: the board's rows first (owner + next step), then the desk's own lines for units the board did not already name.
+  const decideLines: Line[] = (D?.decide || []).map(x => ({ tone: x.severity === 'now' ? 'red' : 'amber', html: `<b>${esc(unitShort(x.unit || ''))}</b> — ${esc(x.title)} ${pill(x.owner.toUpperCase(), x.severity === 'now' ? 'red' : 'amber')}${x.due ? ` <span style="${T.muted}">${esc(x.due)}</span>` : ''}`, sub: `→ ${esc(x.next)}${x.href ? ` · <a href="${x.href.startsWith('http') ? x.href : APP_URL + x.href}" style="color:${A.ink}">open</a>` : ''}` }))
+  const named = new Set((D?.decide || []).map(x => unitShort(x.unit || '').toLowerCase()).filter(Boolean))
+  const deskExtra = unblock.filter(l => { const m = l.html.match(/<b>([^<]+)<\/b>/); const u = m ? m[1].toLowerCase() : ''; return !u || !named.has(u) })
+  const decideAll: Line[] = decideLines.concat(deskExtra).map((l, i) => ({ ...l, html: `<span style="display:inline-block;min-width:18px;font-weight:700;color:${A.ink}">${i + 1}</span> ${l.html}` }))
+  // Guest issues — glitches carry the heaviest weight on the board.
+  const gt = D?.day?.tiles.glitches
+  const glLines: Line[] = []
+  if (gt) {
+    const waitingMgr = Number(gt.byLane?.manager_review || 0)
+    glLines.push({ tone: gt.overdue ? 'red' : gt.open ? 'amber' : 'green', html: `<b>${gt.open} open</b>${gt.overdue ? ` · <b style="${T.red}">${gt.overdue} overdue</b>` : ''}${gt.noTask ? ` · ${gt.noTask} with no Breezeway task` : ''}${waitingMgr ? ` · ${waitingMgr} waiting on a manager to close` : ''}`, sub: `<a href="${APP_URL}/glitches" style="color:${A.ink}">Glitch board →</a>` })
+    for (const g of gt.rows.filter(r => r.overdue).slice(0, 4)) glLines.push({ tone: 'red', html: `<b>${esc(unitShort(g.unit))}</b> — ${esc(String(g.issue).replace(/\s+/g, ' ').slice(0, 90))} · ${g.ageDays}d · ${esc(first(g.assignee) || 'nobody')}`, sub: g.hasTask ? `Task ${esc(g.taskStatus || 'open')} — chase it to done, then close with the guest told.` : 'No Breezeway task — make one or close it.' })
+  }
+  // Waiting on a person — what Slack says nobody closed.
+  const L = D?.loops
+  const ageTxt = (h: number) => (h < 48 ? h + 'h' : Math.round(h / 24) + 'd')
+  const loopLines: Line[] = []
+  if (L) {
+    for (const l of L.asks.slice(0, 3)) loopLines.push({ tone: l.ageH >= 4 ? 'red' : 'amber', html: `${pill('GUEST ASK', 'blue')} <b>${esc(unitShort(l.unit || ''))}</b> ${esc(l.summary.slice(0, 100))}`, sub: `${esc(l.owner || 'Nobody')} · waiting ${ageTxt(l.ageH)}` })
+    for (const l of L.unowned.slice(0, 3)) loopLines.push({ tone: 'red', html: `${pill('NO OWNER', 'red')} <b>${esc(unitShort(l.unit || ''))}</b> ${esc(l.summary.slice(0, 100))}`, sub: `Raised in #${esc(l.channel || 'a room')} ${ageTxt(l.ageH)} ago — name someone or close it.` })
+    for (const l of L.late.slice(0, 2)) loopLines.push({ tone: 'amber', html: `${pill('PROMISED', 'amber')} ${esc(l.summary.slice(0, 110))}`, sub: `${esc(l.owner || 'Someone')} · ${ageTxt(l.ageH)} ago` })
+  }
+  const loopsMore = L ? Math.max(0, L.asks.length + L.unowned.length + L.late.length - loopLines.length) : 0
+  // Blocked — the units down now, with what Guesty calls the block.
+  const downRows = ((bl?.runs || []) as any[]).filter(r => r.live).slice(0, 5)
+  const blockedLines: Line[] = downRows.map(r => ({ tone: r.nights >= 14 ? 'amber' : 'none', html: `<b>${esc(unitShort(r.unit))}</b> — ${esc(r.guestyLabel || r.reason)}${r.blockEnd ? ` · until ${esc(niceDate(r.blockEnd))}` : r.openEnded ? ' · no end date' : ''}`, sub: r.note ? esc(String(r.note).replace(/\s+/g, ' ').slice(0, 120)) : undefined }))
+  const tomorrow = D?.day?.verdict?.tomorrow || ''
+
   // ---- assemble ------------------------------------------------------------------------------
   const head = [
     `<b>${cleans.length}</b> cleans`, sameDay.length ? `<b style="${T.red}">${sameDay.length} by 4pm</b>` : '',
@@ -152,19 +201,24 @@ export async function buildOpsDesk(): Promise<Built> {
     short.length ? `<b style="${T.amber}">${short.length} short day${short.length === 1 ? '' : 's'} ahead</b>` : '',
   ].filter(Boolean).join(' · ')
   const parts = [
-    { html: masthead(A, 'Ops Desk', 'Operations manager · all markets', niceDay(today)) },
-    { html: headline(A, head + (blockedLine ? `<br><span style="font-size:12px;color:#6b7280">${blockedLine}</span>` : ''), [{ label: 'Command Center', href: `${APP_URL}/` }, { label: 'Boards', href: `${APP_URL}/day` }, { label: 'Review tab', href: `${APP_URL}/plan?tab=review` }]) },
-    { html: unblock.length ? section('Unblock today — in order', unblock.map((l, i) => ({ ...l, html: `<span style="display:inline-block;min-width:18px;font-weight:700;color:${A.ink}">${i + 1}</span> ${l.html}` })), { cap: 9, accent: A, more: 'on the Command Center' }) : block('Unblock today', `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">Nothing is blocked.</span> <span style="${T.muted}">Every clean has a name and nobody is waiting on the desk.</span></p>`, A) },
+    { html: masthead(A, 'Ops Command', 'Operations manager · all markets', niceDay(today)) },
+    { html: headline(A, head + (blockedLine ? `<br><span style="font-size:12px;color:#6b7280">${blockedLine}</span>` : ''), [{ label: 'Today board', href: `${APP_URL}/command` }, { label: 'Boards', href: `${APP_URL}/day` }, { label: 'Glitches', href: `${APP_URL}/glitches` }, { label: 'Review tab', href: `${APP_URL}/plan?tab=review` }]) },
+    { html: healthHtml, optional: true },
+    { html: decideAll.length ? section('Decide today — in order', decideAll, { cap: 9, accent: A, more: 'on the Today board' }) : block('Decide today', `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">Nothing needs a decision.</span> <span style="${T.muted}">Every clean has a name and nobody is waiting on the desk.</span></p>`, A) },
+    { html: glLines.length ? section('Guest issues', glLines, { cap: 5, accent: A }) : '', optional: true },
+    { html: loopLines.length ? section('Waiting on a person — from Slack', loopLines, { cap: 8, accent: A, note: loopsMore ? `${loopsMore} more on the Eve tab.` : undefined }) : '', optional: true },
     { html: section('Markets at a glance', mkLines, { cap: 4, accent: A }) },
     { html: dayShape(A, steps, 'Shape of the day') },
     { html: freeLines.length ? section('Free trips — send it with someone already going', freeLines, { cap: 4, accent: A }) : '', optional: true },
     { html: maintLines.length ? section('Maintenance', maintLines, { cap: 3, accent: A }) : '', optional: true },
     { html: paper.length ? section('Paperwork', paper, { cap: 2, accent: A }) : '', optional: true },
-    { html: block('Yesterday', `<p style="margin:6px 0 0;font-size:13px">${yLine}</p>`, A), optional: true },
-    { html: footer(`Ops Desk · every morning at 7 · labor in the Labor Scorecard (7:58) · the Field Runs carry each market's roster.`) },
+    { html: blockedLines.length ? section('Blocked — down now', blockedLines, { cap: 5, accent: A, note: `<a href="${APP_URL}/blocked" style="color:${A.ink}">All blocks and the calendar →</a>` }) : '', optional: true },
+    { html: block('Yesterday', `<p style="margin:6px 0 0;font-size:13px">${yLine}${D?.wins?.length ? `<br><span style="${T.green}">${esc(D.wins.join(' · '))}</span>` : ''}</p>`, A), optional: true },
+    { html: tomorrow ? block('Tomorrow', `<p style="margin:6px 0 0;font-size:13px">${esc(tomorrow)}</p>`, A) : '', optional: true },
+    { html: footer(`Ops Command · every morning at 7 · Eve posts the short form in Slack · labor in the Labor Scorecard (7:58) · the Field Runs carry each market's roster.`) },
   ]
   const { html } = fit(parts, 60_000)
-  const subject = `Ops Desk · ${cleans.length} cleans${sameDay.length ? ` · ${sameDay.length} by 4pm` : ''}${unassigned.length ? ` · ${unassigned.length} UNASSIGNED` : ''}${short.length ? ` · ${short.length} short day${short.length === 1 ? '' : 's'}` : ''} · ${niceDay(today)}`
+  const subject = `Ops Command${H ? ` · health ${H.score}` : ''} · ${cleans.length} cleans${sameDay.length ? ` · ${sameDay.length} by 4pm` : ''}${unassigned.length ? ` · ${unassigned.length} UNASSIGNED` : ''}${short.length ? ` · ${short.length} short day${short.length === 1 ? '' : 's'}` : ''} · ${niceDay(today)}`
   return { subject, html, words: words(html), counts: { cleans: cleans.length, sameDay: sameDay.length, unassigned: unassigned.length, unblock: unblock.length, arrivals: arrivals.length, departures: departures.length } }
 }
 

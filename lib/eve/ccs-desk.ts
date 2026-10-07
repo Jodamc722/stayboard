@@ -225,6 +225,9 @@ export async function runHandoff(open: AskItem[], cfg: CcsDeskCfg, now = new Dat
   const slot = `${d}T${String(h).padStart(2, '0')}`
   const st = (await getSetting<any>(HANDOFF_STATE_KEY, null)) || {}
   if (st.lastHandoff === slot) return { posted: false }
+  // NOTHING TO HAND OFF, NOTHING POSTED (Eve audit 2026-10-07): "CCS handoff — no open guest asks.
+  // Clean slate." went out up to three times a day. An empty list is not news; the slot is claimed quietly.
+  if (!open.length) { await setSetting(HANDOFF_STATE_KEY, { ...st, lastHandoff: slot }, 'ccs-desk'); return { posted: false, note: 'nothing open — not posted' } }
   const text = handoffText(open, now.getTime())
   // AT THE HOUR IT WAS SET FOR (2026-09-28 audit, F27). The 23:00 slot falls in quiet hours, so it
   // was held and posted at 7am next to the fresh 7am handoff — stale on arrival. A handoff runs at

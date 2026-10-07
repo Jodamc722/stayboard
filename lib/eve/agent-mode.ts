@@ -321,6 +321,8 @@ export type AgentVerdict = {
   /** What the caller should do instead (or as well): act | propose | draft | observe. */
   mode: Mode
   reason: string
+  /** The caller said this one is urgent (a person asked, a guest is affected now) — the room cap does not apply. */
+  urgent?: boolean
   needsApproval: boolean
   enabled: boolean
   settings: AgentSettings
@@ -374,7 +376,7 @@ export async function agentAllowed(action: ActionType, opts: { usd?: number; now
   }
 
   const reason = why.length ? why.join('; ') : (mode === 'act' ? `rung ${rung}: act` : `rung ${rung}: ${mode}`)
-  return { ok: mode === 'act', rung, mode, reason, needsApproval: mode === 'propose', enabled: s.enabled, settings: s }
+  return { ok: mode === 'act', rung, mode, reason, needsApproval: mode === 'propose', enabled: s.enabled, settings: s, urgent: !!opts.urgent }
 }
 
 // ---- The log and the counters --------------------------------------------------------------------
@@ -553,11 +555,24 @@ export async function sameAskRecently(fp: string, days = 7): Promise<SameAsk | n
     return r ? { id: String(r.id), status: String(r.status), when: String(r.created_at), decided_by: r.decided_by || null, kind: String(r.kind) } : null
   } catch { return null }
 }
+export async function rejectedRecently(fp: string, watchKey: string | null, subject: string | null, days = 30): Promise<SameAsk | null> {
+  try {
+    const since = new Date(Date.now() - days * 86400_000).toISOString()
+    const db = supabaseAdmin()
+    const byFp = await db.from('eve_actions').select('id,kind,status,decided_by,created_at').in('kind', ['ask', 'draft']).eq('status', 'rejected').eq('payload->>fp', fp).gte('created_at', since).order('created_at', { ascending: false }).limit(1)
+    let r: any = (byFp.data || [])[0]
+    if (!r && watchKey && subject) {
+      const bySubj = await db.from('eve_actions').select('id,kind,status,decided_by,created_at').in('kind', ['ask', 'draft']).eq('status', 'rejected').eq('payload->>watchKey', watchKey).eq('payload->>subject', subject).gte('created_at', since).order('created_at', { ascending: false }).limit(1)
+      r = (bySubj.data || [])[0]
+    }
+    return r ? { id: String(r.id), status: 'rejected', when: String(r.created_at), decided_by: r.decided_by || null, kind: String(r.kind) } : null
+  } catch { return null }
+}
 function sameAskReason(same: SameAsk): string {
   const when = same.when.slice(0, 16).replace('T', ' ')
   if (same.status === 'proposed') return `already on the table since ${when} (${same.id.slice(0, 8)}) — not asking twice`
   if (same.status === 'approved' || same.status === 'executing' || same.status === 'executed') return `already ${same.status}${same.decided_by ? ' by ' + same.decided_by : ''} (${when}) — not asking again`
-  if (same.status === 'rejected') return `rejected${same.decided_by ? ' by ' + same.decided_by : ''} on ${when} — the answer was no; not asking again this week`
+  if (same.status === 'rejected') return `rejected${same.decided_by ? ' by ' + same.decided_by : ''} on ${when} — the answer was no; not asking again for 30 days`
   if (same.status === 'expired') return `asked ${when}, nobody answered and it expired — not repeating the same words this week`
   return `same ask filed ${when} (${same.status}) — skipped`
 }
@@ -597,7 +612,10 @@ export async function saveDraft(p: Proposal): Promise<{ ok: boolean; id?: string
 export async function proposeAction(p: Proposal): Promise<{ ok: boolean; id?: string; notified: string[]; error?: string; duplicateOf?: string }> {
   let id: string | undefined
   const fp = proposalFingerprint(p.action, p.summary)
-  const same = await sameAskRecently(fp)
+  // A "NO" STICKS (Eve audit 2026-10-07): a rejection muted the exact words for 7 days and the same
+  // ask came back in other words. Now a no holds for 30 days on the same fingerprint, AND on the
+  // same watch + subject (the thing it was about), whatever the wording.
+  const same = (await sameAskRecently(fp)) || (await rejectedRecently(fp, p.watchKey || null, p.subject || null))
   if (same) {
     await recordAgentAction(p.action, { rung: 2, allowed: false, mode: 'observe', reason: sameAskReason(same), summary: p.summary, ref: same.id, by: p.by, actor: p.actor, usd: p.usd, countAs: 'none' })
     return { ok: true, id: same.id, notified: [], duplicateOf: same.id }
@@ -668,12 +686,19 @@ export async function notifyProposal(id: string, settings?: AgentSettings): Prom
 
   // SLACK, ALWAYS when it is on (Jon, 2026-10-01: "approve any Eve ask via Slack") — not only when
   // Telegram failed. The post's thread is the answer slot (lib/eve/slack-approvals.ts).
+  //
+  // ONE LIST, NOT ONE POST PER ASK (Eve audit 2026-10-07): 82 proposals in a week, each its own
+  // "Reply yes in this thread" post, six to nine at a time at 7:21am — nobody answered them. A
+  // proposal is now QUEUED for Slack and goes out in the next approvals digest (lib/eve/slack-approvals
+  // flushApprovalDigest, hourly): one numbered list, answered "1 yes · 2 no · all yes". Preventative
+  // upkeep (pm_recurrence) never goes to Slack at all — it waits on the Upkeep page and in Agent mode,
+  // and the digest says how many are waiting there.
   if (s.channels.slack) {
     try {
-      const { postProposalToSlack } = await import('./slack-approvals')
-      const r = await postProposalToSlack(id, { summary, why, usd })
-      if (r.ok) { notified.push('slack'); if (notified.length === 1) await supabaseAdmin().from('eve_actions').update({ result: { delivery: 'slack' } }).eq('id', id) }
-      else errors.push(`Slack: ${String(r.error || 'refused').slice(0, 80)}`)
+      const upkeep = String(pl.watchKey || '') === 'pm_recurrence'
+      await supabaseAdmin().from('eve_actions').update({ payload: { ...pl, slack_pending: !upkeep, slack_skip: upkeep ? 'upkeep' : null } }).eq('id', id)
+      notified.push(upkeep ? 'upkeep' : 'slack')
+      if (notified.length === 1) await supabaseAdmin().from('eve_actions').update({ result: { delivery: upkeep ? 'upkeep page' : 'slack digest' } }).eq('id', id)
     } catch (e: any) { errors.push(`Slack: ${String(e?.message || e).slice(0, 80)}`) }
   } else if (!notified.length) errors.push('Slack is switched off')
 
@@ -788,6 +813,27 @@ export async function stepDown(verdict: AgentVerdict, p: Proposal, act?: () => P
         return { mode: 'observe', ok: true, ref: null, logId, error: undefined }
       }
     } catch { /* the registry never blocks a post */ }
+    // A DAILY CEILING PER ROOM (Eve audit 2026-10-07): ~61 automated posts in #vr-eve in eight days
+    // and one human reply. Top-level posts from her own desks (cron:*) are capped per room per ET
+    // day — default 6, app_settings eve_room_caps { default, [channelId]: n } — and what is over the
+    // cap waits for tomorrow's morning post instead. Thread replies, answers to people and urgent
+    // posts (verdict.urgent) are never capped.
+    if (!p.exec.thread_ts && String(p.by || '').startsWith('cron:') && !verdict.urgent) {
+      try {
+        const { getSetting } = await import('@/lib/app-settings')
+        const caps = (await getSetting<Record<string, number>>('eve_room_caps', {})) || {}
+        const ch = String(p.exec.channel || p.exec.channel_id || '')
+        const cap = Number(caps[ch] ?? caps.default ?? 6)
+        if (cap >= 0) {
+          const dayStart = new Date(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) + 'T04:00:00Z').toISOString()
+          const { count } = await supabaseAdmin().from('eve_said').select('key', { count: 'exact', head: true }).eq('channel', ch).eq('thread_ts', '').gte('last_at', dayStart)
+          if ((count || 0) >= cap) {
+            const logId = await recordAgentAction(p.action, { rung: verdict.rung, allowed: false, mode: 'observe', reason: `room cap — ${count} posts here today already (cap ${cap}); it waits for the morning post`, summary: p.summary, by: p.by, actor: p.actor, usd: p.usd, countAs: 'none' })
+            return { mode: 'observe', ok: true, ref: null, logId, error: undefined }
+          }
+        }
+      } catch { /* a cap that cannot be read never blocks a post */ }
+    }
   }
   if (verdict.mode === 'act') {
     let r: ExecResult
