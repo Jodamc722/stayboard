@@ -34,22 +34,10 @@ async function readBoard(): Promise<Board> {
 const isLeader = (a: any) => isSuperadmin(a.email) || a.role === 'admin'
 const nameOf = (a: any) => String(a.profile?.name || (a.email ? String(a.email).split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) : 'Someone'))
 
-// ── QUOTE OF THE DAY (Jon, 2026-10-06: "find quotes from the internet, one for each day") ─────────
-// ZenQuotes' quote of the day (free tier; attribution shown on the slide), fetched once per day and
-// cached; when it can't be reached, a short list of our own picked by day of year (lib/bulletin).
-// A quote a leader posts always wins over both.
-async function zenToday(day: string): Promise<{ q: string; a: string; src: string }> {
-  try {
-    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 4000)
-    const r = await fetch('https://zenquotes.io/api/today', { signal: ctl.signal, cache: 'no-store' })
-    clearTimeout(t)
-    const j: any = await r.json()
-    const q = String(j?.[0]?.q || '').trim(), a = String(j?.[0]?.a || '').trim()
-    if (r.ok && q && q.length <= 260 && !/too many requests/i.test(q)) return { q, a: a || 'Unknown', src: 'zenquotes' }
-  } catch { /* fall through */ }
-  return { ...fallbackQuote(day), src: 'stay' }
-}
-const quoteFor = (day: string) => unstable_cache(() => zenToday(day), ['bulletin-quote-v1', day], { revalidate: 86400 })()
+// ── QUOTE OF THE DAY — hospitality only (Jon, 2026-10-07). The general-purpose daily quote service
+// (ZenQuotes) had no way to ask for hospitality, so the day's quote comes from lib/bulletin QUOTES.
+// A quote a leader posts always wins.
+const quoteFor = async (day: string) => ({ ...fallbackQuote(day), src: 'stay' })
 
 // ── BIRTHDAYS (Jon, 2026-10-06: "if it knows people's birthday it should populate it") ──────────
 // Two sources: what leaders add on the board, and any birthday Homebase carries on the employee

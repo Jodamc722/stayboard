@@ -223,40 +223,34 @@ export function upcomingBirthdays(map: Record<string, string>, today: string, da
   return out
 }
 
-// ── QUOTE OF THE DAY — the fallback when the daily quote service can't be reached ─────────────────
-// Short, attributed, on work, service and teams. Picked by day of year so everyone sees the same one.
+// ── QUOTE OF THE DAY — HOSPITALITY ONLY (Jon, 2026-10-07: "The bulletin board should be hospitality
+// quotes"). Service, guests, care and the people who give it. Picked by day of year so everyone sees
+// the same one; a quote a leader posts still wins.
 export const QUOTES: { q: string; a: string }[] = [
-  { q: 'Well done is better than well said.', a: 'Benjamin Franklin' },
-  { q: 'Quality is not an act, it is a habit.', a: 'Will Durant' },
-  { q: 'The secret of getting ahead is getting started.', a: 'Mark Twain' },
-  { q: 'Coming together is a beginning; keeping together is progress; working together is success.', a: 'Edward Everett Hale' },
-  { q: 'Do what you can, with what you have, where you are.', a: 'Theodore Roosevelt' },
-  { q: 'It is not enough to be busy. The question is: what are we busy about?', a: 'Henry David Thoreau' },
-  { q: 'The best way out is always through.', a: 'Robert Frost' },
-  { q: 'Little things make big things happen.', a: 'John Wooden' },
-  { q: 'Alone we can do so little; together we can do so much.', a: 'Helen Keller' },
-  { q: 'Whatever you are, be a good one.', a: 'Abraham Lincoln' },
-  { q: 'Energy and persistence conquer all things.', a: 'Benjamin Franklin' },
-  { q: 'Act as if what you do makes a difference. It does.', a: 'William James' },
-  { q: 'He that is good for making excuses is seldom good for anything else.', a: 'Benjamin Franklin' },
-  { q: 'Nothing will work unless you do.', a: 'Maya Angelou' },
-  { q: 'Courtesy is the one coin you can never have too much of.', a: 'Arthur Helps' },
-  { q: 'The way to get started is to quit talking and begin doing.', a: 'Walt Disney' },
-  { q: 'Hospitality is making your guests feel at home, even if you wish they were.', a: 'Unknown' },
-  { q: 'Excellence is never an accident.', a: 'Aristotle' },
-  { q: 'Don’t watch the clock; do what it does. Keep going.', a: 'Sam Levenson' },
-  { q: 'The details are not the details. They make the design.', a: 'Charles Eames' },
-  { q: 'Plans are nothing; planning is everything.', a: 'Dwight D. Eisenhower' },
-  { q: 'Do the hard jobs first. The easy jobs will take care of themselves.', a: 'Dale Carnegie' },
-  { q: 'Talent wins games, but teamwork wins championships.', a: 'Michael Jordan' },
-  { q: 'What gets measured gets managed.', a: 'Peter Drucker' },
+  { q: 'Service is a monologue. Hospitality is a dialogue.', a: 'Danny Meyer' },
+  { q: 'Hospitality is present when something happens for you. It is absent when something happens to you.', a: 'Danny Meyer' },
+  { q: 'We are Ladies and Gentlemen serving Ladies and Gentlemen.', a: 'The Ritz-Carlton motto' },
+  { q: 'Take care of associates and they will take care of your customers.', a: 'J. W. Marriott' },
   { q: 'People will forget what you said, but never how you made them feel.', a: 'Maya Angelou' },
-  { q: 'Make each day your masterpiece.', a: 'John Wooden' },
-  { q: 'Start where you are. Use what you have. Do what you can.', a: 'Arthur Ashe' },
-  { q: 'Done is better than perfect.', a: 'Sheryl Sandberg' },
-  { q: 'Small deeds done are better than great deeds planned.', a: 'Peter Marshall' },
-  { q: 'If you take care of your people, they will take care of your guests.', a: 'J. W. Marriott' },
-  { q: 'Whatever you do, do it well.', a: 'Walt Disney' },
+  { q: 'We see our customers as invited guests to a party, and we are the hosts.', a: 'Jeff Bezos' },
+  { q: 'There are no traffic jams along the extra mile.', a: 'Roger Staubach' },
+  { q: 'Do what you do so well that they will want to see it again and bring their friends.', a: 'Walt Disney' },
+  { q: 'Your most unhappy customers are your greatest source of learning.', a: 'Bill Gates' },
+  { q: 'It takes 20 years to build a reputation and five minutes to ruin it.', a: 'Warren Buffett' },
+  { q: 'Quality in a product or service is not what the supplier puts in. It is what the customer gets out and is willing to pay for.', a: 'Peter Drucker' },
+  { q: 'The customer’s perception is your reality.', a: 'Kate Zabriskie' },
+  { q: 'Make a customer, not a sale.', a: 'Katherine Barchetti' },
+  { q: 'A guest never forgets the host who treated him kindly.', a: 'Homer, The Odyssey' },
+  { q: 'Courtesy is the one coin you can never have too much of.', a: 'Arthur Helps' },
+  { q: 'Treat others as you would want to be treated.', a: 'The Four Seasons Golden Rule' },
+  { q: 'Belong anywhere.', a: 'Airbnb' },
+  { q: 'Every contact we have with a customer influences whether or not they’ll come back.', a: 'Kevin Stirtz' },
+  { q: 'If you’re not taking care of your customer, your competitor will.', a: 'Bob Hooey' },
+  { q: 'Your employees come first. And if you treat your employees right, your customers come back.', a: 'Herb Kelleher' },
+  { q: 'The details are not the details. They make the design.', a: 'Charles Eames' },
+  { q: 'Little things make big things happen.', a: 'John Wooden' },
+  { q: 'Hospitality means primarily the creation of a free space where the stranger can enter and become a friend.', a: 'Henri Nouwen' },
+  { q: 'Be my guest.', a: 'Conrad Hilton' },
 ]
 export function fallbackQuote(today: string): { q: string; a: string } {
   const doy = Math.floor((Date.parse(today + 'T12:00:00Z') - Date.parse(today.slice(0, 4) + '-01-01T12:00:00Z')) / 86400000)
