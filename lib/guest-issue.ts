@@ -319,7 +319,13 @@ export async function runGuestIssueWatch(opts: { hours?: number; dryRun?: boolea
   for (const d of found) {
     const already = seen.has(d.sourceKey)
     if (dryRun) {
-      out.detections.push({ ...d, verdict: already ? 'handled' : d.severity === 'watch' ? 'skipped' : 'would file', glitchId: null, alerted: false })
+      // A PREVIEW THAT CAN BE ACTED ON. Reading without recording left the Detected tab with
+      // nothing to put a File it button on, so a person could see an issue and not file it — the
+      // exact gap this whole module exists to close. A preview writes the row as `pending`: no
+      // glitch, no alert, nothing said to anyone, but it is now something a person can file or
+      // dismiss in one click. An entry we have already judged is never overwritten.
+      if (!already) await recordDetection(d, { verdict: 'pending', glitchId: null, alerted: false, note: 'seen by a preview — not filed, waiting on a person' })
+      out.detections.push({ ...d, verdict: already ? 'handled' : 'pending', glitchId: null, alerted: false })
       continue
     }
     // A grumble with nothing concrete behind it is recorded and left alone — the Detected tab

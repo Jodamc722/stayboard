@@ -70,9 +70,10 @@ export function GuestIssuesDetected({ onFiled }: { onFiled?: () => void }) {
   }
 
   const all = rows || []
-  const shown = all.filter(r => only === 'all' ? true : only === 'security' ? r.severity === 'security' : (r.verdict === 'skipped' || !r.glitch_id) && r.verdict !== 'dismissed')
+  const open_ = (r: Row) => !r.glitch_id && r.verdict !== 'dismissed'
+  const shown = all.filter(r => only === 'all' ? true : only === 'security' ? r.severity === 'security' : open_(r))
   const nSec = all.filter(r => r.severity === 'security').length
-  const nOpen = all.filter(r => (r.verdict === 'skipped' || !r.glitch_id) && r.verdict !== 'dismissed').length
+  const nOpen = all.filter(open_).length
 
   return (
     <div className="rounded-2xl border border-line bg-white p-3 sm:p-4 mb-3">
@@ -120,7 +121,7 @@ export function GuestIssuesDetected({ onFiled }: { onFiled?: () => void }) {
                     {r.channel ? <Tag>{r.channel}</Tag> : null}
                     {r.category ? <Tag>{r.category.replace(/^Maintenance - /, '')}</Tag> : null}
                     <Tag tone="slate" title={fmt(r.occurred_at)}>{fmt(r.occurred_at) || fmt(r.detected_at)}</Tag>
-                    {r.glitch_id ? <Tag tone="emerald">glitch filed</Tag> : r.verdict === 'dismissed' ? <Tag>dismissed</Tag> : <Tag tone="amber">no glitch yet</Tag>}
+                    {r.glitch_id ? <Tag tone="emerald">glitch filed</Tag> : r.verdict === 'dismissed' ? <Tag>dismissed</Tag> : r.verdict === 'pending' ? <Tag tone="amber">waiting on you</Tag> : <Tag tone="amber">no glitch yet</Tag>}
                     {r.alerted ? <Tag tone="violet" title="Customer care got the pop-up and the Slack post">customer care flagged</Tag> : null}
                   </div>
                 </div>
