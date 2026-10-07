@@ -325,9 +325,9 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
 // job, with the labour (and the hours behind it) separated from the parts and supplies, so the
 // question "how much labour am I billing this owner" has an answer you can read without arithmetic.
 // Anything still waiting on an approval is counted beside it, never inside it.
-type ApTask = { t: Task; labor: number; parts: number; hours: number }
-type ApUnit = { unit: string; rows: ApTask[]; total: number; labor: number; parts: number; hours: number }
-type ApOwner = { owner: Owner; units: ApUnit[]; jobs: number; total: number; labor: number; parts: number; hours: number; pendingN: number; pending$: number; zero: number }
+type ApTask = { t: Task; labor: number; parts: number; hand: number; hours: number }
+type ApUnit = { unit: string; rows: ApTask[]; total: number; labor: number; parts: number; hand: number; hours: number }
+type ApOwner = { owner: Owner; units: ApUnit[]; jobs: number; total: number; labor: number; parts: number; hand: number; hours: number; pendingN: number; pending$: number; zero: number }
 const hoursTxt = (h: number) => (Math.round(h * 10) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 }) + 'h'
 const partsOf = (t: Task) => Math.round(t.items.reduce((s, x) => s + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0) * 100) / 100
 const hoursOf = (t: Task) => t.billedHours != null ? t.billedHours : (t.actualMinutes ? t.actualMinutes / 60 : 0)
@@ -338,11 +338,19 @@ function ApprovedByOwner({ owners, open, setOpen, winQS }: {
   setOpen: (f: (o: Record<string, boolean>) => Record<string, boolean>) => void
   winQS: string
 }) {
+  const [showQuiet, setShowQuiet] = useState(false)
   const total = owners.reduce((a, o) => a + o.total, 0)
   const labor = owners.reduce((a, o) => a + o.labor, 0)
   const parts = owners.reduce((a, o) => a + o.parts, 0)
+  const hand = owners.reduce((a, o) => a + o.hand, 0)
+  const hours = owners.reduce((a, o) => a + o.hours, 0)
   const pend = owners.reduce((a, o) => ({ n: a.n + o.pendingN, $: a.$ + o.pending$ }), { n: 0, $: 0 })
-  const allOpen = owners.length > 0 && owners.every(o => open[o.owner.ownerId || '—'])
+  // Owners whose approved work bills them nothing sit under a line of their own — otherwise a
+  // month like this one is forty $0.00 rows with the three that matter buried in them.
+  const billing = owners.filter(o => o.total > 0 || o.pendingN > 0)
+  const quiet = owners.filter(o => !(o.total > 0 || o.pendingN > 0))
+  const jobs = owners.reduce((a, o) => a + o.jobs, 0)
+  const allOpen = billing.length > 0 && billing.every(o => open[o.owner.ownerId || '—'])
   if (!owners.length) return <LeanEmpty>Nothing final-approved yet in this window.</LeanEmpty>
   return (
     <div className="space-y-2">
@@ -351,17 +359,22 @@ function ApprovedByOwner({ owners, open, setOpen, winQS }: {
         <div>
           <div className="text-[11.5px] font-semibold uppercase tracking-wide text-muted">Approved to bill</div>
           <div className="text-[26px] font-bold text-ink tabular-nums leading-tight">{money(total)}</div>
-          <div className="text-[12px] text-muted">{owners.length} owner{owners.length === 1 ? '' : 's'} · {owners.reduce((a, o) => a + o.jobs, 0)} job{owners.reduce((a, o) => a + o.jobs, 0) === 1 ? '' : 's'}</div>
+          <div className="text-[12px] text-muted">{billing.length} owner{billing.length === 1 ? '' : 's'} · {jobs} job{jobs === 1 ? '' : 's'}</div>
         </div>
-        <div>
+        <div title="Breezeway's own labour lines — the rate times the hours. Most of this desk's money is priced by hand instead, which is the third figure.">
           <div className="text-[11.5px] font-semibold uppercase tracking-wide text-muted">Labour</div>
           <div className="text-[18px] font-bold text-ink tabular-nums leading-tight">{money(labor)}</div>
-          <div className="text-[12px] text-muted">{hoursTxt(owners.reduce((a, o) => a + o.hours, 0))} billed</div>
+          <div className="text-[12px] text-muted">{hoursTxt(hours)} on the clock</div>
         </div>
         <div>
           <div className="text-[11.5px] font-semibold uppercase tracking-wide text-muted">Parts &amp; supplies</div>
           <div className="text-[18px] font-bold text-ink tabular-nums leading-tight">{money(parts)}</div>
           <div className="text-[12px] text-muted">{total ? Math.round(parts / total * 100) : 0}% of the bill</div>
+        </div>
+        <div title="Jobs a reviewer priced by hand. The price replaces the computed one, so what is labour inside it is not recorded.">
+          <div className="text-[11.5px] font-semibold uppercase tracking-wide text-muted">Priced by hand</div>
+          <div className="text-[18px] font-bold text-ink tabular-nums leading-tight">{money(hand)}</div>
+          <div className="text-[12px] text-muted">{total ? Math.round(hand / total * 100) : 0}% of the bill</div>
         </div>
         {pend.n ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
@@ -371,14 +384,14 @@ function ApprovedByOwner({ owners, open, setOpen, winQS }: {
           </div>
         ) : null}
         <div className="flex-1" />
-        <button onClick={() => setOpen(() => allOpen ? {} : Object.fromEntries(owners.map(o => [o.owner.ownerId || '—', true])))}
+        <button onClick={() => setOpen(() => allOpen ? {} : Object.fromEntries(billing.map(o => [o.owner.ownerId || '—', true])))}
           className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-muted hover:text-ink">
           {allOpen ? 'Collapse all' : 'Open all'}
         </button>
         <IconBtn title="Download every final-approved statement (ZIP)" href={'/api/billing/export?' + winQS + '&format=zip&reviewed=1'}><Download size={14} /></IconBtn>
       </div>
 
-      {owners.map(o => {
+      {billing.map(o => {
         const k = o.owner.ownerId || '—'
         const isOpen = !!open[k]
         return (
@@ -389,8 +402,8 @@ function ApprovedByOwner({ owners, open, setOpen, winQS }: {
                 <span className="text-[14px] font-bold text-ink truncate">{o.owner.ownerName}</span>
                 <span className="text-[12px] text-muted tabular-nums whitespace-nowrap">{o.units.length}u · {o.jobs}j · {hoursTxt(o.hours)}</span>
               </button>
-              <span className="text-[12px] text-muted tabular-nums hidden sm:inline" title="Labour and parts inside the owner total">
-                labour {money(o.labor)}{o.parts ? ' · parts ' + money(o.parts) : ''}
+              <span className="text-[12px] text-muted tabular-nums hidden sm:inline" title="What makes up the owner total">
+                {[o.labor ? 'labour ' + money(o.labor) : '', o.parts ? 'parts ' + money(o.parts) : '', o.hand ? 'by hand ' + money(o.hand) : ''].filter(Boolean).join(' · ') || 'nothing priced'}
               </span>
               {o.pendingN ? <Tag tone="amber" title={money(o.pending$) + ' on ' + o.pendingN + ' job' + (o.pendingN === 1 ? '' : 's') + ' not approved yet — not in this total'}>{o.pendingN} to approve</Tag> : null}
               {o.zero ? <Tag title={o.zero + ' approved job' + (o.zero === 1 ? '' : 's') + ' bill the owner nothing'}>{o.zero} at $0</Tag> : null}
@@ -403,19 +416,19 @@ function ApprovedByOwner({ owners, open, setOpen, winQS }: {
                   <div key={u.unit} className="px-3.5 sm:px-4 py-2">
                     <div className="flex items-baseline gap-2 flex-wrap">
                       <span className="text-[13px] font-bold text-ink">{u.unit}</span>
-                      <span className="text-[11.5px] text-muted tabular-nums">{u.rows.length} job{u.rows.length === 1 ? '' : 's'} · labour {money(u.labor)} ({hoursTxt(u.hours)}){u.parts ? ' · parts ' + money(u.parts) : ''}</span>
+                      <span className="text-[11.5px] text-muted tabular-nums">{u.rows.length} job{u.rows.length === 1 ? '' : 's'} · {[u.labor ? 'labour ' + money(u.labor) : '', u.parts ? 'parts ' + money(u.parts) : '', u.hand ? 'by hand ' + money(u.hand) : ''].filter(Boolean).join(' · ')}{u.hours ? ' · ' + hoursTxt(u.hours) + ' on the clock' : ''}</span>
                       <span className="flex-1" />
                       <span className="text-[13px] font-bold text-ink tabular-nums">{money(u.total)}</span>
                     </div>
                     <ul className="mt-1 space-y-0.5">
-                      {u.rows.map(({ t, labor: l, parts: pp, hours: hh }) => (
+                      {u.rows.map(({ t, labor: l, parts: pp, hand: hd, hours: hh }) => (
                         <li key={t.id} className="flex items-baseline gap-2 flex-wrap text-[12.5px]">
                           <span className="text-muted tabular-nums w-[52px] shrink-0">{short(t.finishedAt || t.scheduledDate)}</span>
                           <span className="text-ink min-w-0 grow basis-48 truncate" title={t.name}>{t.name}</span>
                           <span className="text-muted whitespace-nowrap">
-                            {t.overrideAmount != null
-                              ? 'set by hand'
-                              : (l ? 'labour ' + money(l) + (hh ? ' (' + hoursTxt(hh) + ')' : '') : 'no labour') + (pp ? ' · parts ' + money(pp) : '')}
+                            {hd
+                              ? 'priced by hand' + (hh ? ' · ' + hoursTxt(hh) + ' on the clock' : '')
+                              : [l ? 'labour ' + money(l) + (hh ? ' (' + hoursTxt(hh) + ')' : '') : '', pp ? 'parts ' + money(pp) : ''].filter(Boolean).join(' · ') || 'no labour'}
                           </span>
                           {t.doer ? <span className="text-muted hidden sm:inline">· {t.doer}</span> : null}
                           {t.gmBy ? <span className="text-muted hidden md:inline" title={'Final-approved by ' + t.gmBy + (t.gmAt ? ' on ' + short(t.gmAt) : '')}>· {who(t.gmBy)}</span> : null}
@@ -429,7 +442,7 @@ function ApprovedByOwner({ owners, open, setOpen, winQS }: {
                 ))}
                 <div className="px-3.5 sm:px-4 py-2 bg-app/40 flex items-baseline gap-2 flex-wrap">
                   <span className="text-[12px] font-semibold text-muted">{o.owner.ownerName} — on the statement</span>
-                  <span className="text-[11.5px] text-muted tabular-nums">labour {money(o.labor)} ({hoursTxt(o.hours)}){o.parts ? ' · parts & supplies ' + money(o.parts) : ''}</span>
+                  <span className="text-[11.5px] text-muted tabular-nums">{[o.labor ? 'labour ' + money(o.labor) : '', o.parts ? 'parts & supplies ' + money(o.parts) : '', o.hand ? 'priced by hand ' + money(o.hand) : ''].filter(Boolean).join(' · ')}{o.hours ? ' · ' + hoursTxt(o.hours) + ' on the clock' : ''}</span>
                   <span className="flex-1" />
                   <span className="text-[14px] font-bold text-ink tabular-nums">{money(o.total)}</span>
                 </div>
@@ -438,6 +451,27 @@ function ApprovedByOwner({ owners, open, setOpen, winQS }: {
           </section>
         )
       })}
+
+      {quiet.length ? (
+        <div className="rounded-2xl bg-white ring-1 ring-line px-3.5 sm:px-4 py-2.5">
+          <button onClick={() => setShowQuiet(v => !v)} className="text-[12.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1.5">
+            <ChevronDown size={13} className={'transition ' + (showQuiet ? '' : '-rotate-90')} />
+            {quiet.length} owner{quiet.length === 1 ? '' : 's'} with nothing to bill
+            <span className="font-normal">— approved work that costs them nothing</span>
+          </button>
+          {showQuiet ? (
+            <ul className="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
+              {quiet.map(o => (
+                <li key={o.owner.ownerId || o.owner.ownerName} className="flex items-baseline gap-2 text-[12.5px]">
+                  <span className="text-ink truncate">{o.owner.ownerName}</span>
+                  <span className="flex-1" />
+                  <span className="text-muted tabular-nums whitespace-nowrap">{o.zero} job{o.zero === 1 ? '' : 's'} · $0.00</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -603,12 +637,14 @@ export function BillingReview() {
       const um = new Map<string, ApTask[]>()
       for (const t of paying) {
         const u = t.unit || '—'
-        const parts = partsOf(t)
-        // An override replaces the computed total, so the split it implies is not knowable —
-        // show it as set by hand rather than inventing a labour figure.
-        const labor = t.overrideAmount != null ? 0 : Math.round(t.laborAmount * 100) / 100
+        // Three buckets, and a dollar lands in exactly one of them. A price set by hand replaces
+        // the computed total, so the labour/parts split behind it is not knowable — it gets its
+        // own bucket rather than a made-up labour figure. (Most of this desk's money is that.)
+        const hand = t.overrideAmount != null ? Math.round(t.billedAmount * 100) / 100 : 0
+        const labor = hand ? 0 : Math.round(t.laborAmount * 100) / 100
+        const parts = hand ? 0 : partsOf(t)
         if (!um.has(u)) um.set(u, [])
-        um.get(u)!.push({ t, labor, parts: t.overrideAmount != null ? 0 : parts, hours: hoursOf(t) })
+        um.get(u)!.push({ t, labor, parts, hand, hours: hoursOf(t) })
       }
       const units: ApUnit[] = Array.from(um.entries()).map(([unit, list]) => {
         list.sort((a, b) => b.t.billedAmount - a.t.billedAmount)
@@ -617,6 +653,7 @@ export function BillingReview() {
           total: Math.round(list.reduce((a, x) => a + x.t.billedAmount, 0) * 100) / 100,
           labor: Math.round(list.reduce((a, x) => a + x.labor, 0) * 100) / 100,
           parts: Math.round(list.reduce((a, x) => a + x.parts, 0) * 100) / 100,
+          hand: Math.round(list.reduce((a, x) => a + x.hand, 0) * 100) / 100,
           hours: list.reduce((a, x) => a + x.hours, 0),
         }
       }).sort((a, b) => b.total - a.total || a.unit.localeCompare(b.unit))
@@ -625,11 +662,15 @@ export function BillingReview() {
         total: Math.round(units.reduce((a, u) => a + u.total, 0) * 100) / 100,
         labor: Math.round(units.reduce((a, u) => a + u.labor, 0) * 100) / 100,
         parts: Math.round(units.reduce((a, u) => a + u.parts, 0) * 100) / 100,
+        hand: Math.round(units.reduce((a, u) => a + u.hand, 0) * 100) / 100,
         hours: units.reduce((a, u) => a + u.hours, 0),
         pendingN: p.n, pending$: Math.round(p.$ * 100) / 100,
         zero: rows.length - paying.length,
       })
     }
+    // Biggest bill first — this view is read for the money, and nothing here is approved, so the
+    // order can't shift under a click the way the review rows could.
+    out.sort((a, b) => b.total - a.total || b.pending$ - a.pending$ || a.owner.ownerName.localeCompare(b.owner.ownerName))
     return out
   }, [tasks, data])
 
