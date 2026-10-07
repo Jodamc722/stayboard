@@ -54,6 +54,46 @@ export function healthFromDay(day: CommandDay): OpsHealth {
   })
 }
 
+/** The row's title without the board's long prefixes ("Guest issue past its due date: …" → "Overdue: …"). */
+function shortTitle(n: NextItem): string {
+  return str(n.title)
+    .replace(/^Guest issue past its due date:\s*/i, 'Overdue glitch: ')
+    .replace(/^Guest issue in Ops with no Breezeway task:\s*/i, 'Glitch, no task: ')
+    .replace(/^Incident open:\s*/i, 'Incident: ')
+    .replace(/\s*—\s*inspections are not automated$/i, '')
+}
+
+/**
+ * THE NEXT STEP, IN WORDS (2026-10-07). The board's `why` is evidence ("Jordan Chang · 2d old ·
+ * Yoslenis · task done"), not an instruction. A direction needs one verb: what the owner does next.
+ * The row's own action label wins when it has one; otherwise it is read from the kind and the evidence.
+ */
+export function nextStep(n: NextItem): string {
+  if (n.action && n.action.type !== 'open' && n.action.label) return n.action.label
+  const why = str(n.why)
+  const who = (() => { const parts = why.split(' · '); const a = parts.find(p => /^[A-Z][a-z]+ [A-Z]/.test(p) && !/old$/.test(p) && parts.indexOf(p) > 0); return a ? a.split(' ')[0] : '' })()
+  switch (n.kind) {
+    case 'glitch':
+      if (/task done|task completed/i.test(why)) return `fixed in Breezeway — tell the guest and close the glitch${who ? ` (${who})` : ''}`
+      if (/task deleted|task cancel/i.test(why)) return 'its task was deleted — re-open a task or close the glitch with a reason'
+      if (/no Breezeway task|nobody assigned/i.test(why + ' ' + n.title)) return 'make a Breezeway task and put someone on it'
+      return `chase the task to done${who ? ` with ${who}` : ''}, then close it with the guest told`
+    case 'guest': return /unhappy/i.test(n.title) ? 'call or reply now — the guest is unhappy' : 'reply to the guest'
+    case 'turn': return /in progress/i.test(why) ? 'watch it lands before the guest' : 'start the clean now — a guest lands today'
+    case 'late': return /nobody assigned/i.test(why) ? 'assign a cleaner now' : 'call the cleaner — it is running late'
+    case 'unassigned': return 'put someone on it'
+    case 'inspection': return 'book the pre-arrival inspection'
+    case 'feedback': return 'send someone to check the complaint before the guest lands'
+    case 'pending': return 'get the overdue work done before the arrival'
+    case 'duplicate': return 'cancel the duplicate task'
+    case 'refund': return 'approve or decline the refund'
+    case 'claim': return 'move the claim before its deadline'
+    case 'staffing': return 'add a shift or call the on-call'
+    case 'channel': return 'fix the listing in Guesty channel settings'
+    default: return why || (n.action ? n.action.label : '')
+  }
+}
+
 /** The board's ranked list, cut to what decides today: now first, then today, one row per unit. */
 export function decideFrom(day: CommandDay, max = 6): Direction[] {
   const out: Direction[] = []
@@ -63,8 +103,7 @@ export function decideFrom(day: CommandDay, max = 6): Direction[] {
     const k = (n.unit || n.key).toLowerCase() + '|' + n.kind
     if (seen.has(k)) continue
     seen.add(k)
-    const next = n.action && n.action.type !== 'open' ? n.action.label : (n.why || (n.action ? n.action.label : ''))
-    out.push({ key: n.key, unit: n.unit, title: n.title, owner: OWNER_LABEL[n.owner] || String(n.owner), next: str(next).replace(/\s+/g, ' ').slice(0, 140), due: n.due, severity: n.severity, href: n.href || (n.action && n.action.type === 'open' ? n.action.href : null) })
+    out.push({ key: n.key, unit: n.unit, title: shortTitle(n), owner: OWNER_LABEL[n.owner] || String(n.owner), next: nextStep(n).replace(/\s+/g, ' ').slice(0, 140), due: n.due, severity: n.severity, href: n.href || (n.action && n.action.type === 'open' ? n.action.href : null) })
     if (out.length >= max) break
   }
   return out
