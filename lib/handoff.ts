@@ -12,6 +12,8 @@
 //     hour, up to three times. Who has and has not confirmed is on the alert for everyone to see.
 //   · It CLOSES when everyone it was for has confirmed, when its writer or an admin closes it, or —
 //     for an everyone alert, which has no "everyone" to count — a day after it fired.
+//   · Anyone it reached can mark it RESOLVED, which closes it for everyone with a note (2026-10-07).
+//   · Eve's alerts are QUIET (2026-10-07): bell only, no pop-up, no "Got it", no nag, no Slack tags.
 
 export type Audience =
   | { kind: 'everyone' }
@@ -67,7 +69,21 @@ export type Alert = {
   comments?: Comment[]
   closedAt?: string | null
   closedBy?: string | null
+  // QUIET (Jon, 2026-10-07: "the alerts system is too sensitive … we can still alert us but it does
+  // not need to be so intrusive"). A quiet alert is information, not a task: it sits in the bell
+  // with a small dot, never pops a card over the page, never asks anyone to tap "Got it", never nags
+  // and never @-tags people in Slack. Every alert Eve raises is quiet; people's handoffs are not.
+  quiet?: boolean
+  // RESOLVED FOR EVERYONE (Jon, 2026-10-07: "an option to close them for everyone (Resolved)" · "if
+  // the immediate issue is resolved attach it to the glitch"). Anyone it reached can resolve it, with
+  // a note; when it is about a glitch, the note goes onto that glitch.
+  glitchId?: string | null
+  resolvedNote?: string | null
+  resolvedGlitchId?: string | null
 }
+
+/** Quiet: Eve's alerts always; anything explicitly marked. */
+export const isQuiet = (a: Alert) => a.quiet === true || a.source === 'eve'
 
 export const NAG_EVERY_MIN = 60
 export const MAX_NAGS = 3
@@ -97,6 +113,8 @@ export function makeAlert(input: any, author: { name: string; email: string }, i
     dedupe: input?.dedupe ? clip(input.dedupe, 200) : null,
     slackMentions: Array.isArray(input?.slackMentions) ? input.slackMentions.map((x: any) => clip(x, 20)).filter(Boolean).slice(0, 8) : [],
     severity: input?.severity === 'urgent' || input?.severity === 'warn' ? input.severity : 'info',
+    quiet: input?.quiet === true || input?.source === 'eve',
+    glitchId: input?.glitchId ? clip(input.glitchId, 60) : null,
     acks: {}, seen: {}, read: {}, names: {}, comments: [],
   }
 }
@@ -135,10 +153,16 @@ export function withTagged(a: Alert, people: Recipient[]): Alert {
 export const isOpen = (a: Alert) => !a.closedAt
 export const hasFired = (a: Alert) => !!a.firedAt
 
-/** The alerts that should be on this person's screen right now: fired, open, for them, not confirmed. */
+/** Quiet alerts this person has not opened yet — the bell's small dot, never a pop-up. */
+export function fyiFor(alerts: Alert[], me: { email: string; role?: string | null }): Alert[] {
+  const e = String(me.email || '').toLowerCase()
+  return alerts.filter(a => isOpen(a) && hasFired(a) && isQuiet(a) && isFor(a, me) && !a.read?.[e] && !a.acks?.[e])
+}
+
+/** The alerts that should be on this person's screen right now: fired, open, for them, not confirmed. Quiet ones never are. */
 export function bannerFor(alerts: Alert[], me: { email: string; role?: string | null }): Alert[] {
   const e = String(me.email || '').toLowerCase()
-  return alerts.filter(a => isOpen(a) && hasFired(a) && isFor(a, me) && !a.acks[e])
+  return alerts.filter(a => isOpen(a) && hasFired(a) && !isQuiet(a) && isFor(a, me) && !a.acks[e])
     .sort((x, y) => sevRank(y) - sevRank(x) || String(x.firedAt).localeCompare(String(y.firedAt)))
 }
 const sevRank = (a: Alert) => a.severity === 'urgent' ? 2 : a.severity === 'warn' ? 1 : 0
@@ -151,7 +175,7 @@ export function pending(a: Alert): Recipient[] {
 /** Fired and should close now: everyone named confirmed, or an everyone alert a day old. */
 export function shouldClose(a: Alert, now: number): boolean {
   if (!isOpen(a) || !hasFired(a)) return false
-  if (a.audience.kind === 'everyone' || !(a.recipients || []).length) return now - Date.parse(String(a.firedAt)) >= EVERYONE_OPEN_HOURS * 3600_000
+  if (isQuiet(a) || a.audience.kind === 'everyone' || !(a.recipients || []).length) return now - Date.parse(String(a.firedAt)) >= EVERYONE_OPEN_HOURS * 3600_000
   return pending(a).length === 0
 }
 
@@ -160,7 +184,7 @@ export function isDue(a: Alert, now: number): boolean { return isOpen(a) && !has
 
 /** Due a nag: fired, nagging on, people still pending, an hour since the last word, under the cap. */
 export function needsNag(a: Alert, now: number): boolean {
-  if (!isOpen(a) || !hasFired(a) || !a.nag || !a.channel) return false
+  if (!isOpen(a) || !hasFired(a) || !a.nag || !a.channel || isQuiet(a)) return false
   if ((a.nags || 0) >= MAX_NAGS) return false
   if (!pending(a).length) return false
   const last = Date.parse(String(a.lastNagAt || a.firedAt))

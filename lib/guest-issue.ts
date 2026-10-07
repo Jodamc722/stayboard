@@ -380,7 +380,7 @@ export async function runGuestIssueWatch(opts: { hours?: number; dryRun?: boolea
       const { raiseEveAlert } = await import('./handoff-store')
       const { title, body } = alertText(d, glitchId)
       alerted = await raiseEveAlert({
-        title, body, unit: d.unit || null, dedupe: 'guest-issue:' + d.sourceKey,
+        title, body, unit: d.unit || null, dedupe: 'guest-issue:' + d.sourceKey, glitchId,
         severity: d.severity === 'security' ? 'urgent' : 'warn',
       })
       if (alerted) out.alerted++

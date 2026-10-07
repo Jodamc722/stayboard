@@ -2,14 +2,15 @@
 // GET  → { mine (my banner: fired, open, for me, not confirmed), open (every open alert, with who has
 //          confirmed), team, roles, channels, me }
 // POST { action: 'create', alert } · { action: 'ack', id } · { action: 'close', id } (writer or admin)
+//      · { action: 'resolve', id, note?, attach? } (anyone it reached: closes it for everyone; note onto the glitch)
 //      · { action: 'fire', id } (writer or admin: send it now instead of waiting for its time)
 import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'node:crypto'
 import { requireVrUser } from '@/lib/vr-gate'
 import { isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { makeAlert, bannerFor, isOpen, isFor, mark, withTagged, GROUP_EVERYONE, type Alert } from '@/lib/handoff'
-import { readAlerts, writeAlerts, teamDirectory, runHandoffs, mentionsFor } from '@/lib/handoff-store'
+import { makeAlert, bannerFor, fyiFor, isOpen, isFor, mark, withTagged, GROUP_EVERYONE, type Alert } from '@/lib/handoff'
+import { readAlerts, writeAlerts, teamDirectory, runHandoffs, mentionsFor, resolveAlert } from '@/lib/handoff-store'
 import { HANDOFF_CHANNELS } from '@/lib/slack-rules'
 
 export const dynamic = 'force-dynamic'
@@ -32,6 +33,8 @@ function view(alerts: Alert[], a: any) {
   return {
     ok: true, me: me.email, leader: isLeader(a),
     mine: bannerFor(alerts, me),
+    // QUIET (2026-10-07): Eve's alerts this person has not opened — a small dot on the bell, no pop-up.
+    fyi: fyiFor(alerts, me).map(x => x.id),
     // The bell: open alerts (and the last day's closed) that are for me, that I wrote, or — for an
     // admin — all of them. Newest first. Fired ones only, plus my own scheduled ones.
     open: alerts.filter(x => (isOpen(x) || (x.closedAt && now - Date.parse(x.closedAt) < 86400_000))
@@ -134,6 +137,15 @@ export async function POST(req: NextRequest) {
           await postThreadReply(al.channel, al.slackTs, `💬 *${c.by}:* ${text}` + tail)
         } catch { /* Lighthouse has it either way */ }
       }
+    } else if (action === 'resolve') {
+      // RESOLVED FOR EVERYONE (Jon, 2026-10-07). Anyone it reached — not only its writer — can say it
+      // is handled. It closes for everybody, with who and why; the note goes onto the glitch when
+      // the alert is about one (attach defaults on).
+      if (!(mine || isFor(al, me))) return deny('Only someone this alert reached can resolve it.')
+      if (al.closedAt) return deny('Already closed.', 400)
+      const note = String(b?.note || '').trim().slice(0, 600)
+      await resolveAlert(al, { name: nameOf(a), email: me.email }, note, b?.attach !== false)
+      alerts[i] = mark(al, me.email, nameOf(a), 'read', nowIso)
     } else if (action === 'close') {
       if (!mine) return deny('Only whoever wrote it or an admin can close it.')
       al.closedAt = nowIso; al.closedBy = nameOf(a)

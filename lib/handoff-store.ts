@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { supabaseAdmin } from './supabase-admin'
 import { setSetting } from './app-settings'
 import {
-  type Alert, type Recipient, isDue, needsNag, shouldClose, pending, pruneAlerts, makeAlert,
+  type Alert, type Recipient, isDue, needsNag, shouldClose, pending, pruneAlerts, makeAlert, isQuiet,
 } from './handoff'
 
 const KEY = 'handoff_alerts'
@@ -68,6 +68,13 @@ export async function mentionsFor(people: Recipient[]): Promise<string> {
 
 function slackText(a: Alert, who: string): string {
   const icon = a.severity === 'urgent' ? '🚨' : a.severity === 'warn' ? '⚠️' : '🔔'
+  // QUIET (2026-10-07): Eve's alerts tell the room, they do not ask anyone to confirm anything and
+  // they tag nobody. "Resolved" in Lighthouse closes it for everyone and says so in this thread.
+  if (isQuiet(a)) return [
+    `${icon} *${a.source === 'eve' ? 'Eve' : a.by}:* ${a.title}`,
+    a.body ? a.body : '',
+    `_FYI — no reply needed. Mark it resolved in <${APP_URL}/command|Lighthouse> when it's handled._`,
+  ].filter(Boolean).join('\n')
   return [
     `${icon} *Handoff${a.source === 'eve' ? ' from Eve' : ' from ' + a.by}:* ${a.title}`,
     a.body ? a.body : '',
@@ -92,8 +99,8 @@ export async function runHandoffs(): Promise<{ fired: number; nagged: number; cl
       a.recipients = await recipientsFor(a)
       a.firedAt = new Date(now).toISOString()
       if (a.channel) {
-        const extra = (a.slackMentions || []).map(id => '<@' + id + '>').join(' ')
-        const r = await postToChannel(a.channel, slackText(a, [await mentionsFor(a.recipients), extra].filter(Boolean).join(' ')))
+        const extra = isQuiet(a) ? '' : (a.slackMentions || []).map(id => '<@' + id + '>').join(' ')
+        const r = await postToChannel(a.channel, slackText(a, isQuiet(a) ? '' : [await mentionsFor(a.recipients), extra].filter(Boolean).join(' ')))
         if (r.ok) { a.slackTs = r.ts || null; a.slackError = null } else { a.slackError = r.error || 'failed'; notes.push(a.title + ': ' + a.slackError) }
       }
       fired++; changed = true
@@ -148,15 +155,57 @@ export async function cancelBriefReminder(alertId: string | null | undefined): P
  * Eve raises an alert (the guest-move watch). One open alert per `dedupe` key — the same conflict
  * found again on the next run does not post again. Fires on the next cron tick.
  */
-export async function raiseEveAlert(input: { title: string; body: string; unit?: string | null; dedupe: string; severity?: 'info' | 'warn' | 'urgent'; channel?: string | null }): Promise<boolean> {
+export async function raiseEveAlert(input: { title: string; body: string; unit?: string | null; dedupe: string; severity?: 'info' | 'warn' | 'urgent'; channel?: string | null; glitchId?: string | null }): Promise<boolean> {
   const alerts = await readAlerts()
   if (alerts.some(a => a.dedupe === input.dedupe && (!a.closedAt || Date.now() - Date.parse(a.closedAt) < 12 * 3600_000))) return false
-  const { EVE_CHANNELS, ROBERTO_SLACK_ID, KARLA_SLACK_ID, SILVIA_SLACK_ID } = await import('./slack-rules')
-  // Everyone sees it in Lighthouse; in Slack it tags the people who run the handoff (Roberto,
-  // Karla, Silvia) in the customer care room.
-  const a = makeAlert({ ...input, source: 'eve', audience: { kind: 'everyone' }, slackMentions: [ROBERTO_SLACK_ID, KARLA_SLACK_ID, SILVIA_SLACK_ID], channel: input.channel === undefined ? EVE_CHANNELS.ccsJon : input.channel }, { name: 'Eve', email: 'eve@lighthouse' }, randomUUID(), new Date().toISOString())
+  const { EVE_CHANNELS } = await import('./slack-rules')
+  // QUIET (Jon, 2026-10-07: "too sensitive … still alert us but not so intrusive"). Everyone can see
+  // it in the bell and it is posted once to the customer care room — no pop-up over the page, no
+  // "Got it" demanded, no hourly nag, no @-tagging Roberto, Karla and Silvia on every one.
+  const a = makeAlert({ ...input, source: 'eve', quiet: true, audience: { kind: 'everyone' }, slackMentions: [], channel: input.channel === undefined ? EVE_CHANNELS.ccsJon : input.channel }, { name: 'Eve', email: 'eve@lighthouse' }, randomUUID(), new Date().toISOString())
   if (!a) return false
   alerts.unshift(a)
   await writeAlerts(alerts, 'eve')
   return true
+}
+
+/**
+ * RESOLVED, FOR EVERYONE (Jon, 2026-10-07: "an option to close them for everyone (Resolved)" · "if
+ * the immediate issue is resolved attach it to the glitch"). Closes the alert, keeps who and why,
+ * says so in its Slack thread, and — when the alert is about a glitch (the one it was filed with, or
+ * the newest open glitch on the same unit from the last week) — adds the note to that glitch's
+ * history so the glitch carries the story. The glitch itself is not closed: the guest side may still
+ * be open; whoever owns it closes it on the board. Returns the glitch it went onto, if any.
+ */
+export async function resolveAlert(a: Alert, by: { name: string; email: string }, note: string, attach: boolean): Promise<{ glitchId: string | null }> {
+  const nowIso = new Date().toISOString()
+  a.closedAt = nowIso; a.closedBy = by.name
+  a.resolvedNote = note || null
+  let glitchId: string | null = null
+  if (attach) {
+    const db = supabaseAdmin()
+    try {
+      if (a.glitchId) glitchId = a.glitchId
+      else if (a.unit) {
+        const since = new Date(Date.now() - 7 * 86400_000).toISOString()
+        const { data } = await db.from('glitches').select('id,status,unit').ilike('unit', a.unit.replace(/[%_]/g, '') + '%').gte('created_at', since).order('created_at', { ascending: false }).limit(5)
+        const g = ((data || []) as any[]).find(r => !/closed|resolved|done|cancel/i.test(String(r.status || '')))
+        glitchId = g ? String(g.id) : null
+      }
+      if (glitchId) {
+        const { data: g } = await db.from('glitches').select('history').eq('id', glitchId).maybeSingle()
+        const history = Array.isArray((g as any)?.history) ? (g as any).history.slice(-60) : []
+        history.push({ at: nowIso, by: by.name, action: 'note', detail: `Alert resolved — "${a.title.slice(0, 120)}"${note ? ': ' + note.slice(0, 500) : ''}` })
+        await db.from('glitches').update({ history }).eq('id', glitchId)
+      }
+    } catch { glitchId = null }
+  }
+  a.resolvedGlitchId = glitchId
+  if (a.channel && a.slackTs) {
+    try {
+      const { postThreadReply } = await import('./slack')
+      await postThreadReply(a.channel, a.slackTs, `✅ *Resolved* by ${by.name}${note ? ': ' + note.slice(0, 400) : ''}${glitchId ? ` · <${APP_URL}/glitches?id=${glitchId}|added to the glitch>` : ''}`)
+    } catch { /* Lighthouse has it */ }
+  }
+  return { glitchId }
 }

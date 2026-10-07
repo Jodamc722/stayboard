@@ -16,11 +16,11 @@
 // Rules: lib/handoff.ts · data: /api/handoff · firing + Slack + nags: lib/handoff-store (cron).
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { BellRing, X, Check, Loader2, Send, Plus, Clock, Hash, Eye, BookOpen, CircleCheck, Circle, ClipboardList } from 'lucide-react'
-import { people as peopleOf, stageOf, type Alert, type Audience } from '@/lib/handoff'
+import { people as peopleOf, stageOf, isQuiet, type Alert, type Audience } from '@/lib/handoff'
 import { BriefPanel, useBrief, briefCounts } from '@/components/ShiftBrief'
 
 const URL_ = '/api/handoff'
-type Res = { ok: boolean; me: string; leader: boolean; mine: Alert[]; open: Alert[]; team?: { email: string; name: string; role: string | null }[]; roles?: { key: string; label: string }[]; channels?: { id: string; label: string }[] }
+type Res = { ok: boolean; me: string; leader: boolean; mine: Alert[]; fyi?: string[]; open: Alert[]; team?: { email: string; name: string; role: string | null }[]; roles?: { key: string; label: string }[]; channels?: { id: string; label: string }[] }
 
 // ── one shared copy of the alerts for the bell and the pop-up ─────────────────────────────────────
 let state: Res | null = null
@@ -185,8 +185,16 @@ export function AlertView({ a, me, leader, onClose }: { a: Alert; me: string; le
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
   const sev = SEV[a.severity || 'info']
-  const mineToAck = !!a.firedAt && !a.closedAt && stageOf(a, me) !== 'ack' && (a.audience.kind === 'everyone' || (a.recipients || []).some(r => r.email === me))
+  const quiet = isQuiet(a)
+  const reached = a.audience.kind === 'everyone' || (a.recipients || []).some(r => r.email === me)
+  const mineToAck = !quiet && !!a.firedAt && !a.closedAt && stageOf(a, me) !== 'ack' && reached
   const canManage = leader || a.byEmail === me
+  // RESOLVED FOR EVERYONE (Jon, 2026-10-07): anyone it reached can close it, with a note that goes
+  // onto the glitch when it is about one.
+  const canResolve = !!a.firedAt && !a.closedAt && (canManage || reached)
+  const [resolving, setResolving] = useState(false)
+  const [note, setNote] = useState('')
+  const [attach, setAttach] = useState(true)
   const ppl = peopleOf(a)
   const acked = Object.keys(a.acks || {}).length
   const total = (a.recipients || []).length
@@ -204,6 +212,7 @@ export function AlertView({ a, me, leader, onClose }: { a: Alert; me: string; le
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className={'text-[11px] font-semibold rounded-full px-2 py-0.5 ' + sev.chip}>{sev.label}</span>
+              {quiet && <span className="text-[11px] font-semibold rounded-full px-2 py-0.5 bg-slate-100 text-slate-600" title="Information only — nobody has to confirm it">FYI</span>}
               <span className="text-[12px] text-muted">from {a.by} · {a.firedAt ? when(a.firedAt) : 'goes out ' + when(a.fireAt)}</span>
               {a.closedAt && <span className="text-[11px] font-semibold rounded-full px-2 py-0.5 bg-emerald-50 text-emerald-700">Closed</span>}
             </div>
@@ -217,10 +226,28 @@ export function AlertView({ a, me, leader, onClose }: { a: Alert; me: string; le
           {mineToAck && <button disabled={!!busy} onClick={() => run('ack', { action: 'ack', id: a.id })} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-4 h-9 text-[13px] font-semibold disabled:opacity-50">{busy === 'ack' ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Got it</button>}
           {!mineToAck && stageOf(a, me) === 'ack' && <span className="inline-flex items-center gap-1 text-[12.5px] text-emerald-700 font-semibold"><CircleCheck size={14} /> You confirmed {when(a.acks[me])}</span>}
           {canManage && !a.firedAt && <button disabled={!!busy} onClick={() => run('fire', { action: 'fire', id: a.id })} className="rounded-lg border border-line px-3 h-9 text-[12.5px] font-semibold text-ink hover:border-ink/40">Send now</button>}
-          {canManage && !a.closedAt && <button disabled={!!busy} onClick={() => run('close', { action: 'close', id: a.id })} className="rounded-lg border border-line px-3 h-9 text-[12.5px] font-semibold text-muted hover:text-ink hover:border-ink/40">Close alert</button>}
+          {canResolve && !resolving && <button disabled={!!busy} onClick={() => setResolving(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 h-9 text-[12.5px] font-semibold text-emerald-800 hover:bg-emerald-100"><CircleCheck size={14} /> Resolved</button>}
+          {canManage && !a.closedAt && !a.firedAt && <button disabled={!!busy} onClick={() => run('close', { action: 'close', id: a.id })} className="rounded-lg border border-line px-3 h-9 text-[12.5px] font-semibold text-muted hover:text-ink hover:border-ink/40">Cancel it</button>}
           <span className="flex-1" />
           {ch && <span className={'text-[11.5px] inline-flex items-center gap-1 ' + (a.slackError ? 'text-rose-700' : 'text-muted')} title={a.slackError ? 'Slack said: ' + a.slackError + (a.slackError === 'not_in_channel' ? ' — invite the Lighthouse bot to that channel' : '') : ''}><Hash size={11} />{a.slackError ? 'Could not post to ' + ch : (a.slackTs ? 'Posted to ' : 'Will post to ') + ch}</span>}
         </div>
+        {resolving && (
+          <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/50 p-3 space-y-2">
+            <p className="text-[12.5px] font-semibold text-ink">Close this for everyone</p>
+            <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} maxLength={600} autoFocus placeholder="What was done? (optional — e.g. moved the guest to 1406, tech fixed the lock)" className="w-full rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px]" />
+            <label className="flex items-center gap-2 text-[12.5px] text-ink">
+              <input type="checkbox" checked={attach} onChange={e => setAttach(e.target.checked)} className="accent-emerald-600 w-3.5 h-3.5" />
+              {a.glitchId ? 'Add this note to the glitch it was filed with' : a.unit ? `Add this note to the open glitch on ${a.unit}, if there is one` : 'Add this note to a matching open glitch, if there is one'}
+            </label>
+            <div className="flex items-center gap-2">
+              <button disabled={!!busy} onClick={async () => { await run('resolve', { action: 'resolve', id: a.id, note, attach }); setResolving(false) }} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 text-white px-3 h-8 text-[12.5px] font-semibold disabled:opacity-50">{busy === 'resolve' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Mark resolved</button>
+              <button onClick={() => setResolving(false)} className="text-[12.5px] font-semibold text-muted hover:text-ink px-2">Not yet</button>
+            </div>
+          </div>
+        )}
+        {a.closedAt && a.closedBy && a.closedBy !== 'auto' && (
+          <p className="mt-3 text-[12.5px] text-emerald-800 inline-flex items-start gap-1.5"><CircleCheck size={14} className="mt-0.5 shrink-0" /><span>Resolved by <b>{a.closedBy}</b> {when(a.closedAt)}{a.resolvedNote ? <> — {a.resolvedNote}</> : null}{a.resolvedGlitchId ? <> · <a href={'/glitches?id=' + a.resolvedGlitchId} className="underline">added to the glitch</a></> : null}</span></p>
+        )}
         {err && <p className="text-[12px] text-rose-700 mt-2">{err}</p>}
       </div>
 
@@ -228,7 +255,7 @@ export function AlertView({ a, me, leader, onClose }: { a: Alert; me: string; le
       <div className="px-5 py-3 border-b border-line">
         <div className="flex items-baseline gap-2 mb-1.5">
           <h3 className="text-[13px] font-semibold text-ink">Who&apos;s seen it</h3>
-          <span className="text-[12px] text-muted">{total ? acked + ' of ' + total + ' confirmed' : acked + ' confirmed'}</span>
+          <span className="text-[12px] text-muted">{quiet ? 'information only — nobody has to confirm' : total ? acked + ' of ' + total + ' confirmed' : acked + ' confirmed'}</span>
         </div>
         {!ppl.length && <p className="text-[12.5px] text-muted">{a.firedAt ? 'Nobody has opened it yet.' : 'It goes out ' + when(a.fireAt) + '.'}</p>}
         <ul className="grid sm:grid-cols-2 gap-x-4 gap-y-1">
@@ -314,6 +341,8 @@ export function HandoffFloater() {
   const mine = s?.mine || []
   const cards = mine.filter(a => !tucked(a.id))
   const n = mine.length
+  // FYI: Eve's quiet alerts not opened yet — a small dot on the bell, never a card over the page.
+  const fyi = (s?.fyi || []).length
   // SEEN: a card came up on your screen.
   useEffect(() => {
     for (const a of cards) {
@@ -339,10 +368,11 @@ export function HandoffFloater() {
         {bc.fresh > 0 && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-500 ring-2 ring-white" />}
       </button>
       <button data-handoff-bell onClick={() => { setView(v => v && v !== 'brief' ? null : 'list'); load() }}
-        aria-label={'Alerts' + (n ? ', ' + n + ' to confirm' : '')}
+        aria-label={'Alerts' + (n ? ', ' + n + ' to confirm' : '') + (fyi ? ', ' + fyi + ' new FYI' : '')}
         className={'pointer-events-auto relative h-9 min-w-9 rounded-full border bg-white shadow-md inline-flex items-center justify-center gap-1.5 ' + (n ? 'px-3' : 'px-0 w-9') + ' text-[12.5px] font-semibold transition-colors ' + (n ? 'border-rose-200 text-rose-700' : 'border-line text-muted hover:text-ink')}>
         <BellRing size={15} className={n ? 'motion-safe:animate-[wiggle_1.2s_ease-in-out_2]' : ''} />
         {n ? <span>{n}</span> : null}
+        {!n && fyi > 0 && <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-white" title={fyi + ' new FYI from Eve'} />}
       </button>
       </div>
 
@@ -406,10 +436,10 @@ function AlertList({ s, onOpen, onNew, onClose }: { s: Res; onOpen: (id: string)
                   <span className={'block text-[13px] leading-snug ' + (forMe ? 'font-semibold text-ink' : 'text-ink')}>{x.title}</span>
                   <span className="block text-[11.5px] text-muted mt-0.5">
                     {x.source === 'eve' ? 'Eve' : x.by} · {x.firedAt ? when(x.firedAt) : <span className="inline-flex items-center gap-0.5"><Clock size={10} /> goes out {when(x.fireAt)}</span>}
-                    {' · '}{total ? acked + '/' + total + ' confirmed' : acked + ' confirmed'}{(x.comments || []).length ? ' · ' + x.comments!.length + ' comment' + (x.comments!.length === 1 ? '' : 's') : ''}{x.closedAt ? ' · closed' : ''}
+                    {isQuiet(x) ? ' · FYI' : ' · ' + (total ? acked + '/' + total + ' confirmed' : acked + ' confirmed')}{(x.comments || []).length ? ' · ' + x.comments!.length + ' comment' + (x.comments!.length === 1 ? '' : 's') : ''}{x.closedAt ? (x.closedBy && x.closedBy !== 'auto' ? ' · resolved by ' + x.closedBy : ' · closed') : ''}
                   </span>
                 </span>
-                {forMe ? <span className="text-[11px] font-semibold text-rose-700 shrink-0">confirm</span> : st === 'ack' ? <CircleCheck size={15} className="text-emerald-600 shrink-0" /> : null}
+                {forMe ? <span className="text-[11px] font-semibold text-rose-700 shrink-0">confirm</span> : (s.fyi || []).includes(x.id) ? <span className="text-[11px] font-semibold text-amber-700 shrink-0">FYI · new</span> : st === 'ack' ? <CircleCheck size={15} className="text-emerald-600 shrink-0" /> : null}
               </button>
             </li>
           )
