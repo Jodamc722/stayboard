@@ -52,7 +52,7 @@ async function recipientsFor(a: Alert): Promise<Recipient[]> {
 }
 
 /** Slack @-mentions for the people, matched by email first, then by name (lib/slack-rules). */
-async function mentionsFor(people: Recipient[]): Promise<string> {
+export async function mentionsFor(people: Recipient[]): Promise<string> {
   if (!people.length) return ''
   try {
     const [{ getDirectory, mention }, { getSlackRules, resolveSlackId }] = await Promise.all([import('./slack'), import('./slack-rules')])
@@ -110,6 +110,38 @@ export async function runHandoffs(): Promise<{ fired: number; nagged: number; cl
   }
   if (changed) await writeAlerts(alerts, 'cron')
   return { fired, nagged, closed, notes }
+}
+
+/**
+ * A REMINDER FROM THE SHIFT BRIEF (Jon, 2026-10-07: "I could put a due date on. I can set it as a
+ * reminder"). The alert engine already does intrusive-at-a-time-and-confirm, so a brief reminder is
+ * one of its alerts rather than a second mechanism: Lighthouse only (no Slack channel), no nagging,
+ * for one person. Returns the alert id so the brief can cancel it if the date moves.
+ */
+export async function scheduleBriefReminder(input: {
+  title: string; body?: string; fireAt: string; forEmail: string; unit?: string | null
+  by: { name: string; email: string }
+}): Promise<string | null> {
+  const alerts = await readAlerts()
+  const id = randomUUID()
+  const a = makeAlert({
+    title: input.title, body: input.body || '', unit: input.unit || null,
+    audience: { kind: 'people', emails: [input.forEmail] },
+    fireAt: input.fireAt, channel: null, nag: false, severity: 'info', source: 'person',
+  }, input.by, id, new Date().toISOString())
+  if (!a) return null
+  alerts.unshift(a)
+  const saved = await writeAlerts(alerts, input.by.email)
+  return saved.ok ? id : null
+}
+
+/** Drop a reminder that has not fired yet (the date moved, or the item was ticked off). */
+export async function cancelBriefReminder(alertId: string | null | undefined): Promise<void> {
+  if (!alertId) return
+  const alerts = await readAlerts()
+  const a = alerts.find(x => x.id === alertId)
+  if (!a || a.firedAt) return
+  await writeAlerts(alerts.filter(x => x.id !== alertId), 'brief')
 }
 
 /**

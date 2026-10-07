@@ -7,8 +7,8 @@
 //   Incoming  the pool the last shift left; Claim moves an item into your brief
 //   Close out shift — only when nothing of yours is still open; optional post to #vr-customercareteam
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { Check, X, Loader2, Plus, ArrowRightLeft, MessageSquare, Hand, ClipboardCheck, Trash2 } from 'lucide-react'
-import type { BriefItem, Closeout } from '@/lib/shift-brief'
+import { Check, X, Loader2, Plus, ArrowRightLeft, MessageSquare, Hand, ClipboardCheck, Trash2, CalendarClock, BellRing, Link2, ChevronDown } from 'lucide-react'
+import { LINK_KINDS, linkHref, dueState, type BriefItem, type BriefLinkKind, type Closeout } from '@/lib/shift-brief'
 
 type Res = { ok: boolean; me: string; mine: BriefItem[]; pool: BriefItem[]; lastCloseout: Closeout | null; lastTeamCloseout: Closeout | null; team?: { email: string; name: string }[]; error?: string }
 
@@ -45,8 +45,6 @@ const when = (iso?: string | null) => { if (!iso) return ''; const d = new Date(
 export function BriefPanel({ onClose }: { onClose: () => void }) {
   const s = useBrief()
   const [tab, setTab] = useState<'mine' | 'pool' | 'close'>('mine')
-  const [text, setText] = useState('')
-  const [unit, setUnit] = useState('')
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
   useEffect(() => { load(true); act({ action: 'seen' }).catch(() => {}) }, [])
@@ -71,11 +69,7 @@ export function BriefPanel({ onClose }: { onClose: () => void }) {
 
       {tab === 'mine' && (
         <div className="px-4 py-3">
-          <form onSubmit={e => { e.preventDefault(); if (!text.trim()) return; run('add', { action: 'add', item: { text, unit } }).then(() => { setText(''); setUnit('') }) }} className="flex gap-1.5">
-            <input value={text} onChange={e => setText(e.target.value)} placeholder="Add something to keep on top of…" className="flex-1 min-w-0 text-[13px] rounded-lg border border-line px-2.5 py-2 focus:outline-none focus:border-ink/40" />
-            <input value={unit} onChange={e => setUnit(e.target.value)} placeholder="Unit" className="w-[76px] text-[13px] rounded-lg border border-line px-2 py-2 focus:outline-none focus:border-ink/40" />
-            <button disabled={!text.trim() || !!busy} className="rounded-lg bg-ink text-white px-2.5 disabled:opacity-40" aria-label="Add">{busy === 'add' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={15} />}</button>
-          </form>
+          <AddItem busy={busy} run={run} />
           {!s.mine.length && <p className="text-[12.5px] text-muted py-5 text-center">Nothing on your brief. Add what you need to keep on top of, or claim something from Incoming.</p>}
           <ul className="mt-2.5 space-y-1.5">{s.mine.map(i => <Row key={i.id} i={i} busy={busy} run={run} />)}</ul>
         </div>
@@ -88,7 +82,8 @@ export function BriefPanel({ onClose }: { onClose: () => void }) {
           <ul className="space-y-1.5">
             {s.pool.map(i => (
               <li key={i.id} className="rounded-xl border border-line px-3 py-2">
-                <div className="text-[13px] text-ink">{i.text}{i.unit ? <span className="text-muted"> · {i.unit}</span> : null}</div>
+                <div className="text-[13px] text-ink">{i.text}</div>
+                <Chips i={i} />
                 {i.from && <div className="text-[11.5px] text-muted mt-0.5">from {i.from}{i.passNote ? ': “' + i.passNote + '”' : ''} · {when(i.history[i.history.length - 1]?.at)}</div>}
                 <button disabled={!!busy} onClick={() => run('c' + i.id, { action: 'claim', id: i.id })} className="mt-1.5 inline-flex items-center gap-1 rounded-lg bg-ink text-white px-2.5 h-7 text-[12px] font-semibold disabled:opacity-40">{busy === 'c' + i.id ? <Loader2 size={12} className="animate-spin" /> : <Hand size={12} />} I&apos;ve got it</button>
               </li>
@@ -102,10 +97,109 @@ export function BriefPanel({ onClose }: { onClose: () => void }) {
   )
 }
 
+// ── ADD SOMETHING ────────────────────────────────────────────────────────────────────────────────
+// Jon, 2026-10-07: "they don't have to be attached to a unit. It could just be a note that I can
+// leave, that I can tag to somebody, and that I could put a due date on. I can set it as a
+// reminder. It could be attached to a reservation, a claim, a glitch, or maybe it's just a project."
+//
+// So the line is the only required thing. Everything else is one row of optional controls under it,
+// folded away until you want them — a note you jot in two seconds must not cost six fields.
+function AddItem({ busy, run }: { busy: string; run: (k: string, b: any) => Promise<void> }) {
+  const [text, setText] = useState('')
+  const [more, setMore] = useState(false)
+  const [owner, setOwner] = useState('')            // '' = me
+  const [due, setDue] = useState('')
+  const [remind, setRemind] = useState(true)
+  const [kind, setKind] = useState<BriefLinkKind | ''>('')
+  const [ref, setRef] = useState('')
+  const open = () => { setMore(m => !m); if (!team.length) load(true) }
+  const reset = () => { setText(''); setDue(''); setRef(''); setKind(''); setOwner(''); setMore(false) }
+  const submit = () => {
+    if (!text.trim()) return
+    run('add', { action: 'add', item: {
+      text,
+      owner: owner || undefined,
+      due: due || undefined,
+      remind,
+      link: kind && ref.trim() ? { kind, ref: ref.trim(), label: ref.trim() } : undefined,
+      // A unit stays a unit, so the old field keeps working for anything that reads it.
+      unit: kind === 'unit' ? ref.trim() : undefined,
+    } }).then(reset)
+  }
+  const f = 'text-[12.5px] rounded-lg border border-line px-2 py-1.5 bg-white focus:outline-none focus:border-ink/40'
+  return (
+    <form onSubmit={e => { e.preventDefault(); submit() }}>
+      <div className="flex gap-1.5">
+        <input value={text} onChange={e => setText(e.target.value)} placeholder="Add a note, or something to keep on top of…" className="flex-1 min-w-0 text-[13px] rounded-lg border border-line px-2.5 py-2 focus:outline-none focus:border-ink/40" />
+        <button type="button" onClick={open} title="Tag someone, set a due date, say what it is about"
+          className={'rounded-lg border px-2 text-[12px] font-semibold inline-flex items-center gap-1 ' + (more ? 'border-ink text-ink' : 'border-line text-muted hover:text-ink')}>
+          <ChevronDown size={13} className={more ? '' : '-rotate-90'} /> More
+        </button>
+        <button disabled={!text.trim() || !!busy} className="rounded-lg bg-ink text-white px-2.5 disabled:opacity-40" aria-label="Add">{busy === 'add' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={15} />}</button>
+      </div>
+      {more && (
+        <div className="mt-2 rounded-xl border border-line p-2.5 space-y-2">
+          <div className="grid grid-cols-2 gap-1.5">
+            <label className="block"><span className="text-[11.5px] text-muted">For</span>
+              <select value={owner} onChange={e => setOwner(e.target.value)} className={f + ' w-full'}>
+                <option value="">Me</option>
+                <option value="pool">The incoming shift</option>
+                {team.map(t => <option key={t.email} value={t.email}>{t.name}</option>)}
+              </select>
+            </label>
+            <label className="block"><span className="text-[11.5px] text-muted">Due</span>
+              <input type="datetime-local" value={due} onChange={e => setDue(e.target.value)} className={f + ' w-full'} />
+            </label>
+          </div>
+          {due && (
+            <label className="text-[12.5px] text-ink inline-flex items-center gap-1.5">
+              <input type="checkbox" checked={remind} onChange={e => setRemind(e.target.checked)} />
+              <BellRing size={12} className="text-muted" /> Remind me then{owner && owner !== 'pool' ? ' — it goes to them' : ''}
+            </label>
+          )}
+          <div className="grid grid-cols-[auto_1fr] gap-1.5 items-end">
+            <label className="block"><span className="text-[11.5px] text-muted">About</span>
+              <select value={kind} onChange={e => setKind(e.target.value as any)} className={f}>
+                <option value="">Nothing</option>
+                {LINK_KINDS.map(k => <option key={k.key} value={k.key}>{k.label}</option>)}
+              </select>
+            </label>
+            {kind ? <input value={ref} onChange={e => setRef(e.target.value)} placeholder={LINK_KINDS.find(k => k.key === kind)?.hint} className={f + ' w-full'} /> : <span />}
+          </div>
+        </div>
+      )}
+    </form>
+  )
+}
+
+// What an item is about, and when it is due — the two chips that make a bare note useful.
+function Chips({ i }: { i: BriefItem }) {
+  const href = linkHref(i.link)
+  const d = dueState(i)
+  const label = i.link ? i.link.label : i.unit
+  const dueTxt = i.due ? new Date(i.due).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''
+  if (!label && !i.due) return null
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap mt-1">
+      {label ? (href
+        ? <a href={href} target={i.link?.kind === 'link' ? '_blank' : undefined} rel="noreferrer" className="inline-flex items-center gap-1 text-[11.5px] font-semibold rounded-full border border-line px-2 py-0.5 text-ink hover:border-ink/40"><Link2 size={10} />{label}</a>
+        : <span className="inline-flex items-center gap-1 text-[11.5px] rounded-full border border-line px-2 py-0.5 text-muted">{label}</span>) : null}
+      {i.due ? (
+        <span title={i.remind ? 'You get a reminder then' : 'No reminder set'}
+          className={'inline-flex items-center gap-1 text-[11.5px] font-semibold rounded-full px-2 py-0.5 ' + (d === 'overdue' ? 'bg-rose-50 text-rose-700' : d === 'today' ? 'bg-amber-50 text-amber-800' : 'bg-slate-100 text-muted')}>
+          {i.remind ? <BellRing size={10} /> : <CalendarClock size={10} />}{d === 'overdue' ? 'was due ' : 'due '}{dueTxt}
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
 function Row({ i, busy, run }: { i: BriefItem; busy: string; run: (k: string, b: any) => Promise<void> }) {
-  const [mode, setMode] = useState<null | 'pass' | 'note'>(null)
+  const [mode, setMode] = useState<null | 'pass' | 'note' | 'due'>(null)
   const [to, setTo] = useState('pool')
   const [note, setNote] = useState('')
+  const [due, setDue] = useState(i.due ? new Date(i.due).toISOString().slice(0, 16) : '')
+  const [remind, setRemind] = useState(i.remind !== false)
   const done = i.status === 'done'
   const notes = i.history.filter(h => h.what === 'note')
   const fresh = !!i.from && !i.seenByOwner && !done
@@ -117,19 +211,29 @@ function Row({ i, busy, run }: { i: BriefItem; busy: string; run: (k: string, b:
           {done && <Check size={11} className="text-white" strokeWidth={3} />}
         </button>
         <div className="flex-1 min-w-0">
-          <div className={'text-[13px] ' + (done ? 'line-through text-muted' : 'text-ink')}>{i.text}{i.unit ? <span className="text-muted"> · {i.unit}</span> : null}</div>
+          <div className={'text-[13px] ' + (done ? 'line-through text-muted' : 'text-ink')}>{i.text}</div>
+          {!done && <Chips i={i} />}
           {i.from && !done && <div className="text-[11.5px] text-amber-800 mt-0.5">from {i.from}{i.passNote ? ': “' + i.passNote + '”' : ''}</div>}
           {notes.slice(-2).map((h, k) => <div key={k} className="text-[11.5px] text-muted mt-0.5">{h.by}: {h.note}</div>)}
           {done && i.doneBy && <div className="text-[11px] text-muted">done {when(i.doneAt)}</div>}
         </div>
         {!done && (
           <div className="flex gap-0.5 shrink-0">
+            <button onClick={() => setMode(m => m === 'due' ? null : 'due')} title={i.due ? 'Change the due date' : 'Set a due date and a reminder'} className={'w-7 h-7 rounded-md flex items-center justify-center hover:bg-slate-100 ' + (i.due ? 'text-ink' : 'text-muted hover:text-ink')}><CalendarClock size={13} /></button>
             <button onClick={() => setMode(m => m === 'note' ? null : 'note')} title="Add a note" className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-ink hover:bg-slate-100"><MessageSquare size={13} /></button>
             <button onClick={() => { setMode(m => m === 'pass' ? null : 'pass'); if (!team.length) load(true) }} title="Pass it over" className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-ink hover:bg-slate-100"><ArrowRightLeft size={13} /></button>
             <button onClick={() => run('r' + i.id, { action: 'remove', id: i.id })} title="Remove (added by mistake)" className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-rose-600 hover:bg-slate-100"><Trash2 size={13} /></button>
           </div>
         )}
       </div>
+      {mode === 'due' && (
+        <form onSubmit={e => { e.preventDefault(); run('d' + i.id, { action: 'due', id: i.id, due, remind }).then(() => setMode(null)) }} className="mt-2 flex items-center gap-1.5 flex-wrap">
+          <input type="datetime-local" value={due} onChange={e => setDue(e.target.value)} className="text-[12.5px] rounded-lg border border-line px-2 py-1.5 bg-white" />
+          <label className="text-[12px] text-ink inline-flex items-center gap-1"><input type="checkbox" checked={remind} onChange={e => setRemind(e.target.checked)} /> remind me</label>
+          <button disabled={!!busy} className="rounded-lg bg-ink text-white px-2.5 h-8 text-[12px] font-semibold">{busy === 'd' + i.id ? <Loader2 size={12} className="animate-spin" /> : 'Save'}</button>
+          {i.due && <button type="button" onClick={() => run('d' + i.id, { action: 'due', id: i.id, due: '', remind: false }).then(() => { setDue(''); setMode(null) })} className="text-[12px] font-semibold text-muted hover:text-ink px-1">Clear</button>}
+        </form>
+      )}
       {mode === 'note' && (
         <form onSubmit={e => { e.preventDefault(); if (note.trim()) run('n' + i.id, { action: 'note', id: i.id, note }).then(() => { setNote(''); setMode(null) }) }} className="flex gap-1.5 mt-2">
           <input autoFocus value={note} onChange={e => setNote(e.target.value)} placeholder="Where it stands…" className="flex-1 min-w-0 text-[12.5px] rounded-lg border border-line px-2.5 py-1.5" />

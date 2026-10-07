@@ -8,8 +8,8 @@ import { randomUUID } from 'node:crypto'
 import { requireVrUser } from '@/lib/vr-gate'
 import { isSuperadmin } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { makeAlert, bannerFor, isOpen, isFor, mark, type Alert } from '@/lib/handoff'
-import { readAlerts, writeAlerts, teamDirectory, runHandoffs } from '@/lib/handoff-store'
+import { makeAlert, bannerFor, isOpen, isFor, mark, withTagged, type Alert } from '@/lib/handoff'
+import { readAlerts, writeAlerts, teamDirectory, runHandoffs, mentionsFor } from '@/lib/handoff-store'
 import { HANDOFF_CHANNELS } from '@/lib/slack-rules'
 
 export const dynamic = 'force-dynamic'
@@ -83,11 +83,25 @@ export async function POST(req: NextRequest) {
     } else if (action === 'comment') {
       const text = String(b?.text || '').trim().slice(0, 1000)
       if (!text) return deny('Write something first.', 400)
-      const c = { id: randomUUID(), by: nameOf(a), byEmail: me.email, text, at: nowIso }
-      alerts[i] = { ...mark(al, me.email, nameOf(a), 'read', nowIso), comments: [...(al.comments || []), c].slice(-100) }
-      // The conversation follows the alert into Slack: a reply on its thread.
+      // TAGGED PEOPLE (Jon, 2026-10-07). Only real teammates, and never a tag that silently does
+      // nothing: each one is added to the alert so it lands in their bell, and @-mentioned in the
+      // Slack thread. Tagging yourself is dropped — you are already reading it.
+      const want = (Array.isArray(b?.mentions) ? b.mentions : []).map((e: any) => String(e || '').toLowerCase().trim()).filter((e: string) => /@/.test(e)).slice(0, 10)
+      const tagged = want.length ? (await teamDirectory()).filter(t => want.includes(t.email) && t.email !== me.email).map(t => ({ email: t.email, name: t.name })) : []
+      const c = {
+        id: randomUUID(), by: nameOf(a), byEmail: me.email, text, at: nowIso,
+        ...(tagged.length ? { mentions: tagged.map(t => t.email), mentionNames: Object.fromEntries(tagged.map(t => [t.email, t.name])) } : {}),
+      }
+      const withC = { ...mark(al, me.email, nameOf(a), 'read', nowIso), comments: [...(al.comments || []), c].slice(-100) }
+      alerts[i] = withTagged(withC, tagged)
+      // The conversation follows the alert into Slack: a reply on its thread, tagging whoever the
+      // comment tagged so they are told where the question is, not just that there is one.
       if (al.channel && al.slackTs) {
-        try { const { postThreadReply } = await import('@/lib/slack'); await postThreadReply(al.channel, al.slackTs, `💬 *${c.by}:* ${text}`) } catch { /* Lighthouse has it either way */ }
+        try {
+          const { postThreadReply } = await import('@/lib/slack')
+          const who = tagged.length ? await mentionsFor(tagged) : ''
+          await postThreadReply(al.channel, al.slackTs, `💬 *${c.by}:* ${text}` + (who ? `\n${who} — you were tagged on this.` : ''))
+        } catch { /* Lighthouse has it either way */ }
       }
     } else if (action === 'close') {
       if (!mine) return deny('Only whoever wrote it or an admin can close it.')

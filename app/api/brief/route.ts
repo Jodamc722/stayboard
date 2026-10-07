@@ -2,6 +2,7 @@
 // GET  → { mine, pool, team, lastCloseout, me }
 // POST { action: 'add', item } · { action: 'tick', id } · { action: 'pass', id, to: email|'pool', note }
 //      · { action: 'claim', id } · { action: 'note', id, note } · { action: 'remove', id } · { action: 'seen' }
+//      · { action: 'due', id, due, remind } — set or clear the date, arming/cancelling the reminder
 //      · { action: 'closeout', note?, slack?: boolean } — refused while anything of mine is still open
 // Stored as one JSON value in app_settings ('shift_brief'); every write reads it fresh.
 import { NextRequest, NextResponse } from 'next/server'
@@ -9,9 +10,10 @@ import { randomUUID } from 'node:crypto'
 import { requireVrUser } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { setSetting } from '@/lib/app-settings'
-import { teamDirectory } from '@/lib/handoff-store'
+import { teamDirectory, scheduleBriefReminder, cancelBriefReminder } from '@/lib/handoff-store'
 import {
-  type BriefStore, newItem, mineOf, poolOf, tick, pass, claim, addNote, openOf, closeoutOf, pruneBrief,
+  type BriefStore, type BriefItem, newItem, mineOf, poolOf, tick, pass, claim, addNote, openOf, closeoutOf, pruneBrief,
+  dueIso, cleanLink, setDue,
 } from '@/lib/shift-brief'
 
 export const dynamic = 'force-dynamic'
@@ -43,6 +45,18 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(view(s, me, team))
 }
 
+/** Arm (or re-arm) the item's reminder for whoever holds it. Null when there is nothing to arm. */
+async function armReminder(i: BriefItem, by: { email: string; name: string }): Promise<string | null> {
+  if (!i.due || !i.remind || !i.owner) return null
+  if (Date.parse(i.due) <= Date.now()) return null          // already past: no point waking anyone
+  const about = i.link ? i.link.label : (i.unit || null)
+  return scheduleBriefReminder({
+    title: i.text,
+    body: 'From your shift brief' + (about ? ' · ' + about : '') + (i.passNote ? '\n' + i.passNote : ''),
+    fireAt: i.due, forEmail: i.owner, unit: about, by,
+  })
+}
+
 export async function POST(req: NextRequest) {
   const gate = await requireVrUser()
   if (!gate.ok) return gate.res
@@ -60,6 +74,9 @@ export async function POST(req: NextRequest) {
     const ownerName = team.find(t => t.email === String(b.item.owner).toLowerCase())?.name || null
     const n = newItem({ ...(b?.item || {}), ownerName }, me, randomUUID(), now)
     if (!n) return deny('Write what needs doing.')
+    // The reminder is an alert, armed for whoever holds the item (nobody holds a pool item, so a
+    // pool item gets no reminder — there is no one to remind).
+    if (n.due && n.remind && n.owner) n.alertId = await armReminder(n, me)
     s.items.push(n)
   } else if (action === 'seen') {
     s.items = s.items.map(i => i.owner === me.email && !i.seenByOwner ? { ...i, seenByOwner: true } : i)
@@ -90,9 +107,27 @@ export async function POST(req: NextRequest) {
       if (it.byEmail !== me.email && it.owner !== me.email) return deny('Only whoever added it or holds it can remove it.', 403)
       s.items.splice(idx, 1)
     }
-    else if (action === 'tick') s.items[idx] = tick(it, me.name, now)
+    else if (action === 'tick') {
+      s.items[idx] = tick(it, me.name, now)
+      // Ticked off: no reminder should arrive for work that is finished.
+      if (s.items[idx].status === 'done') { await cancelBriefReminder(it.alertId); s.items[idx].alertId = null }
+    }
+    else if (action === 'due') {
+      if (it.owner !== me.email && it.byEmail !== me.email) return deny('Only whoever holds it can change the date.', 403)
+      const due = dueIso(b?.due)
+      const remind = b?.remind !== false
+      await cancelBriefReminder(it.alertId)
+      const next = setDue(it, due, remind, me.name, now)
+      next.alertId = due && remind && next.owner ? await armReminder(next, me) : null
+      s.items[idx] = next
+    }
     else if (action === 'note') { const n = String(b?.note || '').trim(); if (!n) return deny('Write a note.'); s.items[idx] = addNote(it, me.name, n, now) }
-    else if (action === 'claim') { if (it.owner) return deny('Someone already has it.', 409); s.items[idx] = claim(it, me, now) }
+    else if (action === 'claim') {
+      if (it.owner) return deny('Someone already has it.', 409)
+      const c = claim(it, me, now)
+      c.alertId = c.due && c.remind ? await armReminder(c, me) : null
+      s.items[idx] = c
+    }
     else if (action === 'pass') {
       const toPool = !b?.to || b.to === 'pool'
       let to = { email: null as string | null, name: null as string | null }
@@ -101,7 +136,11 @@ export async function POST(req: NextRequest) {
         if (!t) return deny('Pick someone on the team.')
         to = { email: t.email, name: t.name }
       }
-      s.items[idx] = pass(it, to, me.name, b?.note || null, now)
+      const moved = pass(it, to, me.name, b?.note || null, now)
+      // The reminder belongs to whoever holds the item, so it moves with it.
+      await cancelBriefReminder(it.alertId)
+      moved.alertId = moved.due && moved.remind && moved.owner ? await armReminder(moved, me) : null
+      s.items[idx] = moved
     } else return deny('Unknown action.')
   }
   const saved = await setSetting(KEY, pruneBrief(s), me.email)

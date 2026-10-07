@@ -9,7 +9,33 @@
 //                 close-out records what was done and what went where (and can post it to Slack)
 // Pure — no imports — so the route, the panel and a test share one copy of the rules.
 
-export type BriefEvent = { at: string; by: string; what: 'added' | 'done' | 'reopened' | 'passed' | 'claimed' | 'note'; to?: string | null; note?: string | null }
+export type BriefEvent = { at: string; by: string; what: 'added' | 'done' | 'reopened' | 'passed' | 'claimed' | 'note' | 'due'; to?: string | null; note?: string | null }
+
+// WHAT IT IS ABOUT (Jon, 2026-10-07: "they don't have to be attached to a unit … it could be
+// attached to a reservation, a claim, a glitch, or maybe it's just a project we're working on").
+// Nothing here is required: a brief item is allowed to be a note and nothing else.
+export type BriefLinkKind = 'unit' | 'reservation' | 'claim' | 'glitch' | 'project' | 'link'
+export type BriefLink = { kind: BriefLinkKind; ref: string; label: string }
+export const LINK_KINDS: { key: BriefLinkKind; label: string; hint: string }[] = [
+  { key: 'unit', label: 'Unit', hint: 'e.g. Rustic 21' },
+  { key: 'reservation', label: 'Reservation', hint: 'confirmation code or guest' },
+  { key: 'claim', label: 'Claim', hint: 'claim id' },
+  { key: 'glitch', label: 'Glitch', hint: 'glitch id' },
+  { key: 'project', label: 'Project', hint: 'what we are working on' },
+  { key: 'link', label: 'Link', hint: 'https://…' },
+]
+/** Where the chip goes when you click it. Null when we have nowhere sensible to send you. */
+export function linkHref(l: BriefLink | null | undefined): string | null {
+  if (!l || !l.ref) return null
+  const r = encodeURIComponent(l.ref)
+  if (l.kind === 'link') return /^https?:\/\//i.test(l.ref) ? l.ref : null
+  if (l.kind === 'claim') return '/claims?claim=' + r
+  if (l.kind === 'glitch') return '/glitches?id=' + r
+  if (l.kind === 'reservation') return '/reservations?q=' + r
+  if (l.kind === 'project') return '/projects?q=' + r
+  if (l.kind === 'unit') return '/schedule?q=' + r
+  return null
+}
 export type BriefItem = {
   id: string
   text: string
@@ -22,6 +48,13 @@ export type BriefItem = {
   from?: string | null           // who passed it to the current owner
   passNote?: string | null       // what they said when they passed it
   seenByOwner?: boolean          // the current owner has opened their brief since it landed
+  // A DUE DATE, AND A REMINDER (Jon, 2026-10-07: "I could put a due date on. I can set it as a
+  // reminder"). `remind` arms the alert engine: at `due` the owner gets the same intrusive card
+  // they get for a handoff, and `alertId` is the alert it armed, so changing the date can cancel it.
+  due?: string | null            // ISO
+  remind?: boolean
+  alertId?: string | null
+  link?: BriefLink | null
   history: BriefEvent[]
 }
 export type Closeout = { id: string; at: string; by: string; byEmail: string; done: string[]; passed: { text: string; to: string }[]; note: string | null; slackTs?: string | null }
@@ -34,8 +67,11 @@ export function newItem(input: any, who: { email: string; name: string }, id: st
   if (!text) return null
   const toPool = input?.owner === null || input?.owner === 'pool'
   const owner = toPool ? null : clip(input?.owner, 120).toLowerCase() || who.email
+  const due = dueIso(input?.due)
   return {
     id, text, unit: clip(input?.unit, 80) || null,
+    due, remind: !!due && input?.remind !== false, alertId: null,
+    link: cleanLink(input?.link),
     owner, ownerName: toPool ? null : clip(input?.ownerName, 60) || (owner === who.email ? who.name : null),
     status: 'open', at: nowIso, by: who.name, byEmail: who.email,
     from: owner && owner !== who.email ? who.name : (toPool ? who.name : null),
@@ -48,7 +84,43 @@ export function newItem(input: any, who: { email: string; name: string }, id: st
 export function mineOf(items: BriefItem[], email: string): BriefItem[] {
   const e = email.toLowerCase()
   return items.filter(i => i.owner === e && (i.status === 'open' || recentlyDone(i)))
-    .sort((a, b) => Number(a.status === 'done') - Number(b.status === 'done') || Number(!!b.from && !b.seenByOwner) - Number(!!a.from && !a.seenByOwner) || a.at.localeCompare(b.at))
+    .sort((a, b) =>
+      Number(a.status === 'done') - Number(b.status === 'done') ||
+      Number(!!b.from && !b.seenByOwner) - Number(!!a.from && !a.seenByOwner) ||
+      // Anything with a date on it comes before anything without, soonest first — a due date you
+      // have to scroll to find is not a due date.
+      Number(!a.due) - Number(!b.due) ||
+      (a.due && b.due ? a.due.localeCompare(b.due) : 0) ||
+      a.at.localeCompare(b.at))
+}
+
+/** An ISO instant from a date or a date+time, or null. A bare date means end of that day, local. */
+export function dueIso(v: any): string | null {
+  const s = String(v == null ? '' : v).trim()
+  if (!s) return null
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(s) ? s + 'T17:00' : s
+  const t = Date.parse(/Z$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : iso + ':00')
+  const t2 = Number.isFinite(t) ? t : Date.parse(iso)
+  return Number.isFinite(t2) ? new Date(t2).toISOString() : null
+}
+export function cleanLink(v: any): BriefLink | null {
+  if (!v || typeof v !== 'object') return null
+  const kind = LINK_KINDS.some(k => k.key === v.kind) ? v.kind as BriefLinkKind : null
+  const ref = clip(v.ref, 200)
+  if (!kind || !ref) return null
+  return { kind, ref, label: clip(v.label, 80) || ref }
+}
+/** How a due date reads right now: late, today, or still ahead. */
+export function dueState(i: BriefItem, now = Date.now()): 'overdue' | 'today' | 'later' | null {
+  if (!i.due || i.status === 'done') return null
+  const t = Date.parse(i.due)
+  if (!Number.isFinite(t)) return null
+  if (t < now) return 'overdue'
+  const end = new Date(); end.setHours(23, 59, 59, 999)
+  return t <= end.getTime() ? 'today' : 'later'
+}
+export function setDue(i: BriefItem, due: string | null, remind: boolean, who: string, nowIso: string): BriefItem {
+  return { ...i, due, remind: !!due && remind, history: [...i.history, { at: nowIso, by: who, what: 'due', note: due ? new Date(due).toISOString() : null }] }
 }
 export function poolOf(items: BriefItem[]): BriefItem[] {
   return items.filter(i => i.owner === null && i.status === 'open').sort((a, b) => a.at.localeCompare(b.at))

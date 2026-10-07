@@ -41,6 +41,97 @@ async function post(body: any): Promise<Res> {
   state = { ...(state || {} as any), ...j }; emit()
   return j
 }
+// THE TEAM, for tagging in a comment. The banner polls every minute and has no use for this list,
+// so it is fetched once, the first time somebody opens an alert, and kept.
+let teamList: { email: string; name: string }[] = []
+const teamSubs = new Set<() => void>()
+let teamAsked = false
+async function loadTeam() {
+  if (teamAsked) return
+  teamAsked = true
+  try {
+    const r = await fetch(URL_ + '?form=1', { cache: 'no-store' })
+    if (!r.ok) { teamAsked = false; return }
+    const j = await r.json()
+    teamList = (j.team || []).map((t: any) => ({ email: String(t.email), name: String(t.name) }))
+    teamSubs.forEach(f => f())
+  } catch { teamAsked = false }
+}
+function useTeam() {
+  return useSyncExternalStore(f => { teamSubs.add(f); return () => { teamSubs.delete(f) } }, () => teamList, () => teamList)
+}
+
+// ── TAG SOMEBODY IN A COMMENT (Jon, 2026-10-07) ──────────────────────────────────────────────────
+// Type @ and the team appears; pick one and their name goes in the line. What the server needs is
+// the email, so the picked people are kept beside the text and matched back out of it on send — a
+// name deleted from the box is a tag taken off, which is what deleting it looks like it should do.
+function CommentBox({ onSend, busy }: { onSend: (text: string, mentions: string[]) => Promise<void>; busy: boolean }) {
+  const team = useTeam()
+  const [text, setText] = useState('')
+  const [picked, setPicked] = useState<{ email: string; name: string }[]>([])
+  const [menu, setMenu] = useState<{ q: string; at: number } | null>(null)
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => { loadTeam() }, [])
+
+  const onChange = (v: string) => {
+    setText(v)
+    const upto = v.slice(0, ref.current?.selectionStart ?? v.length)
+    const m = upto.match(/(?:^|\s)@([A-Za-zÀ-ÿ .'-]{0,24})$/)
+    setMenu(m ? { q: m[1].toLowerCase(), at: upto.length - m[1].length - 1 } : null)
+  }
+  const hits = menu ? team.filter(t => !picked.some(p => p.email === t.email) && (!menu.q || t.name.toLowerCase().includes(menu.q))).slice(0, 6) : []
+  const choose = (t: { email: string; name: string }) => {
+    if (!menu) return
+    const before = text.slice(0, menu.at)
+    const after = text.slice((ref.current?.selectionStart ?? text.length))
+    setText(before + '@' + t.name + ' ' + after)
+    setPicked(p => p.concat(t)); setMenu(null)
+    setTimeout(() => ref.current?.focus(), 0)
+  }
+  const send = async () => {
+    const t = text.trim()
+    if (!t) return
+    // Only the people still written in the line are tagged.
+    const mentions = picked.filter(p => t.includes('@' + p.name)).map(p => p.email)
+    await onSend(t, mentions)
+    setText(''); setPicked([]); setMenu(null)
+  }
+  return (
+    <div className="relative mt-2.5">
+      {hits.length > 0 && (
+        <ul className="absolute bottom-full mb-1 left-0 z-10 w-56 max-h-48 overflow-y-auto rounded-xl border border-line bg-white shadow-xl py-1">
+          {hits.map(t => (
+            <li key={t.email}><button type="button" onMouseDown={e => { e.preventDefault(); choose(t) }} className="w-full text-left px-3 py-1.5 text-[13px] text-ink hover:bg-app">{t.name}</button></li>
+          ))}
+        </ul>
+      )}
+      <div className="flex gap-2">
+        <input ref={ref} value={text} onChange={e => onChange(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Escape' && menu) { e.stopPropagation(); setMenu(null) } else if (e.key === 'Enter' && hits.length && menu) { e.preventDefault(); choose(hits[0]) } else if (e.key === 'Enter') { send() } }}
+          placeholder="Write a comment — @ to tag someone…" className="flex-1 min-w-0 text-[13px] rounded-lg border border-line px-3 py-2 focus:outline-none focus:border-ink/40" />
+        <button disabled={!text.trim() || busy} onClick={send} className="rounded-lg bg-ink text-white px-3 h-9 text-[12.5px] font-semibold inline-flex items-center gap-1.5 disabled:opacity-40">{busy ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Send</button>
+      </div>
+      {picked.some(p => text.includes('@' + p.name)) && (
+        <p className="text-[11.5px] text-muted mt-1">Tagging {picked.filter(p => text.includes('@' + p.name)).map(p => p.name).join(', ')} — it lands in their alerts and tags them in the Slack thread.</p>
+      )}
+    </div>
+  )
+}
+
+/** A comment with its @names picked out, so a tag reads as a tag. */
+function CommentText({ c }: { c: { text: string; mentionNames?: Record<string, string> } }) {
+  const names = Object.values(c.mentionNames || {})
+  if (!names.length) return <div className="text-ink/85 whitespace-pre-line">{c.text}</div>
+  const re = new RegExp('(@(?:' + names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + '))', 'g')
+  return (
+    <div className="text-ink/85 whitespace-pre-line">
+      {c.text.split(re).map((part, i) => re.test(part) || names.some(n => part === '@' + n)
+        ? <span key={i} className="font-semibold text-brand-700">{part}</span>
+        : <span key={i}>{part}</span>)}
+    </div>
+  )
+}
+
 function useAlerts(): Res | null {
   const v = useSyncExternalStore(f => { subs.add(f); return () => { subs.delete(f) } }, () => state, () => null)
   useEffect(() => {
@@ -62,7 +153,6 @@ const SEV = {
 
 // ── one alert, in full ────────────────────────────────────────────────────────────────────────────
 export function AlertView({ a, me, leader, onClose }: { a: Alert; me: string; leader: boolean; onClose: () => void }) {
-  const [text, setText] = useState('')
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
   const sev = SEV[a.severity || 'info']
@@ -128,15 +218,15 @@ export function AlertView({ a, me, leader, onClose }: { a: Alert; me: string; le
         <h3 className="text-[13px] font-semibold text-ink mb-1.5">Questions &amp; comments</h3>
         <div className="space-y-2">
           {(a.comments || []).map(c => (
-            <div key={c.id} className="text-[13px]"><span className="font-semibold text-ink">{c.by}</span> <span className="text-[11px] text-muted">{when(c.at)}</span><div className="text-ink/85 whitespace-pre-line">{c.text}</div></div>
+            <div key={c.id} className="text-[13px]">
+              <span className="font-semibold text-ink">{c.by}</span> <span className="text-[11px] text-muted">{when(c.at)}</span>
+              <CommentText c={c} />
+              {c.mentions?.length ? <p className="text-[11px] text-muted mt-0.5">tagged {Object.values(c.mentionNames || {}).join(', ')}</p> : null}
+            </div>
           ))}
-          {!(a.comments || []).length && <p className="text-[12.5px] text-muted">Ask a question or add an update — everyone on this alert sees it{a.slackTs ? ', and it goes to the Slack thread' : ''}.</p>}
+          {!(a.comments || []).length && <p className="text-[12.5px] text-muted">Ask a question or add an update — everyone on this alert sees it{a.slackTs ? ', and it goes to the Slack thread' : ''}. Type <b>@</b> to tag someone in.</p>}
         </div>
-        <div className="flex gap-2 mt-2.5">
-          <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && text.trim()) { run('c', { action: 'comment', id: a.id, text }).then(() => setText('')) } }}
-            placeholder="Write a comment or a question…" className="flex-1 min-w-0 text-[13px] rounded-lg border border-line px-3 py-2 focus:outline-none focus:border-ink/40" />
-          <button disabled={!text.trim() || !!busy} onClick={() => run('c', { action: 'comment', id: a.id, text }).then(() => setText(''))} className="rounded-lg bg-ink text-white px-3 h-9 text-[12.5px] font-semibold inline-flex items-center gap-1.5 disabled:opacity-40">{busy === 'c' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Send</button>
-        </div>
+        <CommentBox busy={busy === 'c'} onSend={(t, mentions) => run('c', { action: 'comment', id: a.id, text: t, mentions })} />
       </div>
     </div>
   )

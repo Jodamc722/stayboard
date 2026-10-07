@@ -19,7 +19,11 @@ export type Audience =
   | { kind: 'people'; emails: string[] }        // app_users emails
 
 export type Recipient = { email: string; name: string }
-export type Comment = { id: string; by: string; byEmail: string; text: string; at: string }
+// A comment can TAG people (Jon, 2026-10-07: "in the alerts column, let me be able to tag somebody
+// … it notifies them in the comments"). Tagging puts the alert on that person's screen — they are
+// added to the alert's recipients, so it shows in their bell until they confirm — and @-mentions
+// them in the alert's Slack thread. `mentions` is emails; `mentionNames` is how to draw them.
+export type Comment = { id: string; by: string; byEmail: string; text: string; at: string; mentions?: string[]; mentionNames?: Record<string, string> }
 
 export type Alert = {
   id: string
@@ -94,6 +98,27 @@ export function isFor(a: Alert, me: { email: string; role?: string | null }): bo
   if (a.recipients && a.recipients.length) return a.recipients.some(r => r.email === e)
   if (a.audience.kind === 'people') return a.audience.emails.includes(e)
   return !!me.role && a.audience.roles.includes(me.role)
+}
+
+/**
+ * Tagged in a comment = on the alert from now on. The people snapshot (`recipients`) is what the
+ * bell, the nag and "who's seen it" all read, so adding them there is what makes the tag a
+ * notification rather than a decoration. An `everyone` alert already includes them; a closed one
+ * is left alone — reopening an alert by tagging someone in it would be a surprise.
+ */
+export function withTagged(a: Alert, people: Recipient[]): Alert {
+  if (!people.length || a.closedAt || a.audience.kind === 'everyone') return a
+  const have = new Set((a.recipients || []).map(r => r.email))
+  const add = people.filter(p => !have.has(p.email))
+  const emails = a.audience.kind === 'people'
+    ? Array.from(new Set([...a.audience.emails, ...people.map(p => p.email)])).slice(0, 60)
+    : null
+  return {
+    ...a,
+    audience: emails ? { kind: 'people', emails } : a.audience,
+    recipients: add.length ? [...(a.recipients || []), ...add] : a.recipients,
+    names: { ...(a.names || {}), ...Object.fromEntries(people.map(p => [p.email, p.name])) },
+  }
 }
 
 export const isOpen = (a: Alert) => !a.closedAt
