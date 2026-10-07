@@ -26,6 +26,14 @@ const SYS = `You translate property-maintenance task titles and descriptions fro
 Rules: keep unit numbers, names, amounts and technical details exactly; produce a natural, professional result; anything ALREADY fully English is returned unchanged, character for character. Never add, drop or invent information.
 Input is a JSON array of {"id","title","description"}. Answer with ONLY a JSON array of {"id","title","description"} in English.`
 const PREFS = 'billing_prefs'
+// WHAT HAS ALREADY BEEN THROUGH THE TRANSLATOR (2026-10-07). The Auto switch runs this on every
+// load of the Billing review, and a task that only LOOKS Spanish — a name with an accent, "Mesa",
+// a title that was already translated but still carries one Spanish word — came back unchanged and
+// so matched again on the next load: 188 calls, $15 in one morning, translating the same tasks over
+// and over. Each task's text is fingerprinted once it has been through; it is sent again only when
+// its title or description actually changes.
+const SEEN = 'billing_translate_seen'
+const fp = (t: string, d: string) => { let h = 5381; const s = t + '\u0001' + d; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
@@ -61,9 +69,12 @@ export async function POST(req: NextRequest) {
   else return NextResponse.json({ ok: false, error: 'month or from/to required' }, { status: 400 })
   const only: string[] | null = Array.isArray(body?.ids) ? body.ids.map(String) : null
 
+  const seen: Record<string, string> = { ...(await getSetting<Record<string, string>>(SEEN, {}).catch(() => ({}))) }
+  const force = body?.force === true
   const candidates = tasks
     .map(t => ({ id: String(t.id), title: String(t.name || ''), description: String(t.descr || '') }))
     .filter(t => (!only || only.includes(t.id)) && t.title && (SPANISHY.test(t.title) || SPANISHY.test(t.description)))
+    .filter(t => force || seen[t.id] !== fp(t.title, t.description))
   if (!candidates.length) return NextResponse.json({ ok: true, scanned: tasks.length, candidates: 0, translated: 0, remaining: 0 })
 
   const started = Date.now()
@@ -88,6 +99,8 @@ export async function POST(req: NextRequest) {
       processed++
       const nt = byId[c.id]
       if (!nt) continue
+      // Through the translator: remember the text it LEFT with (or came in with, if unchanged).
+      seen[c.id] = fp(nt.title || c.title, nt.description != null && c.description.length <= 1200 ? nt.description : c.description)
       const newName = nt.title || c.title
       // A description longer than what we sent keeps its tail: only replace it when we sent it whole.
       const newDesc = nt.description != null && c.description.length <= 1200 ? nt.description : c.description
@@ -106,6 +119,9 @@ export async function POST(req: NextRequest) {
       await sleep(100)
     }
   }
+  // Keep the memory small: the most recent few thousand tasks is every month anyone reviews.
+  { const ks = Object.keys(seen); if (ks.length > 6000) for (const k of ks.slice(0, ks.length - 6000)) delete seen[k] }
+  await setSetting(SEEN, seen, gate.access.email || 'billing').catch(() => {})
   // Renamed tasks show on the Scheduler and the day through cached reads of the mirror.
   if (translated > 0) bustBoards()
   return NextResponse.json({ ok: true, scanned: tasks.length, candidates: candidates.length, translated, failed, remaining: candidates.length - processed, changed })
