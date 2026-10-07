@@ -154,6 +154,7 @@ export function TaskExtrasPanel({ id, extra, onChange, onPushed }: { id: string;
   const [photos, setPhotosState] = useState<string[]>(e.photos)
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
+  const [note, setNote] = useState<string>(e.ownerNote || '')
   const [url, setUrl] = useState<string | null>(e.token ? (typeof window !== 'undefined' ? window.location.origin : '') + '/job/' + e.token : null)
   useEffect(() => { setPhotosState(e.photos) }, [e.photos])
   const setPhotos = async (fn: (p: string[]) => string[]) => {
@@ -171,6 +172,12 @@ export function TaskExtrasPanel({ id, extra, onChange, onPushed }: { id: string;
         </div>
       )}
       <div><div className="text-[11.5px] font-semibold text-muted mb-1">Photos</div><PhotoPicker photos={photos} setPhotos={setPhotos} /></div>
+      <div>
+        <div className="text-[11.5px] font-semibold text-muted mb-1">Description for the owner <span className="font-normal">(blank = the task's own description)</span></div>
+        <textarea value={note} onChange={x => setNote(x.target.value)} rows={2} placeholder="What was done, in words an owner reads"
+          onBlur={async () => { const v = note.trim(); if (v === (e.ownerNote || '')) return; try { const j = await post({ action: 'photos', id, photos, ownerNote: v }); onChange({ ...e, ownerNote: j.ownerNote }); setErr('') } catch (x: any) { setErr(x?.message || String(x)) } }}
+          className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px] text-ink" />
+      </div>
       <div>
         <div className="text-[11.5px] font-semibold text-muted mb-1">Owner link — the job, its description, photos and charge</div>
         {url ? <CopyLink url={url} /> : <button onClick={share} disabled={!!busy} className="h-8 px-2.5 rounded-lg border border-line text-[12px] font-semibold text-ink inline-flex items-center gap-1.5 hover:border-ink/40">{busy === 'share' ? <Loader2 size={12} className="animate-spin" /> : <Link2 size={13} />} Make owner link</button>}
