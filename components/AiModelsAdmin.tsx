@@ -14,7 +14,7 @@ import { Cpu, Loader2, Save, Check, AlertTriangle, RotateCcw, Clock, DollarSign 
 type Tier = { key: string; label: string; id: string; price: { in: number; out: number } }
 type Task = { key: string; title: string; what: string; matters: string; group: string; background?: boolean; def: string; tier: string; overridden: boolean }
 type Agg = { calls: number; usd: number; input: number; output: number; cacheRead: number; cacheWrite: number; errors: number; avgMs: number }
-type Budget = { automaticUsd: number; totalUsd: number; monthUsd: number; on: boolean; todayUsd: number; monthUsd_spent: number }
+type Budget = { automaticUsd: number; totalUsd: number; monthUsd: number; on: boolean; paused?: boolean; perTaskHour?: number; todayUsd: number; monthUsd_spent: number }
 type UsageData = { ok: boolean; days: number; missing?: boolean; total: Agg; byTask: Record<string, Agg>; byDay: { day: string; usd: number; calls: number }[]; byModel: Record<string, Agg>; last7Usd: number; projectedMonthUsd: number; daysWithData?: number; budget?: Budget | null }
 
 const usd = (n: number) => n >= 100 ? '$' + Math.round(n).toLocaleString() : n >= 1 ? '$' + n.toFixed(2) : n > 0 ? '$' + n.toFixed(3) : '$0'
@@ -205,10 +205,11 @@ function RowSpend({ a, days, total }: { a?: Agg; days: number; total: number }) 
 function BudgetStrip({ b }: { b: Budget }) {
   const [v, setV] = useState({ automaticUsd: String(b.automaticUsd), totalUsd: String(b.totalUsd), monthUsd: String(b.monthUsd) })
   const [on, setOn] = useState(b.on)
+  const [paused, setPaused] = useState(!!b.paused)
   const [msg, setMsg] = useState('')
-  const save = async (nextOn = on) => {
+  const save = async (nextOn = on, nextPaused = paused) => {
     setMsg('Saving…')
-    const r = await fetch('/api/settings/ai-usage', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ automaticUsd: Number(v.automaticUsd), totalUsd: Number(v.totalUsd), monthUsd: Number(v.monthUsd), on: nextOn }) })
+    const r = await fetch('/api/settings/ai-usage', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ automaticUsd: Number(v.automaticUsd), totalUsd: Number(v.totalUsd), monthUsd: Number(v.monthUsd), on: nextOn, paused: nextPaused }) })
     const j = await r.json().catch(() => ({}))
     setMsg(r.ok && j.ok ? 'Saved — takes effect within a minute.' : (j.error || 'Could not save.'))
   }
@@ -227,7 +228,15 @@ function BudgetStrip({ b }: { b: Budget }) {
     </label>
   )
   return (
-    <div className="rounded-2xl border border-line bg-white px-3.5 py-3 mb-3">
+    <div className={'rounded-2xl border px-3.5 py-3 mb-3 ' + (paused ? 'border-rose-300 bg-rose-50' : 'border-line bg-white')}>
+      {/* THE PAUSE BUTTON (Jon, 2026-10-07): one press and no AI call leaves Lighthouse until it is pressed again. */}
+      <div className="flex items-center gap-3 flex-wrap mb-3 pb-3 border-b border-line">
+        <button onClick={() => { const n = !paused; setPaused(n); save(on, n) }}
+          className={'h-9 px-4 rounded-lg text-[13px] font-bold ' + (paused ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white')}>
+          {paused ? 'Resume AI' : 'Pause all AI'}
+        </button>
+        <span className="text-[12.5px] text-ink">{paused ? 'AI is paused — nothing is being charged. Eve, translations and every automatic job are off until you resume.' : 'Stops every AI call in Lighthouse at once, until you press it again.'}</span>
+      </div>
       <div className="flex items-center gap-2 flex-wrap mb-2">
         <span className="text-[10.5px] font-bold uppercase tracking-wider text-muted">Spending cap — the hard stop</span>
         <label className="ml-auto inline-flex items-center gap-1.5 text-[12px] font-semibold"><input type="checkbox" checked={on} onChange={e => { setOn(e.target.checked); save(e.target.checked) }} /> On</label>
@@ -239,7 +248,7 @@ function BudgetStrip({ b }: { b: Budget }) {
       </div>
       <div className="flex items-center gap-2 mt-2">
         <button onClick={() => save()} className="h-8 px-3 rounded-lg bg-ink text-white text-[12px] font-semibold">Save caps</button>
-        <span className="text-[11.5px] text-muted">{msg || 'Days reset at midnight Eastern; the month on the 1st.'}</span>
+        <span className="text-[11.5px] text-muted">{msg || 'Days reset at midnight Eastern; the month on the 1st. You get a bell at 75% and when a cap stops AI; any one feature making ' + (b.perTaskHour || 40) + '+ calls in an hour is braked for the hour.'}</span>
       </div>
     </div>
   )

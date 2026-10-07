@@ -93,6 +93,8 @@ export async function PUT(req: NextRequest) {
     totalUsd: n(b.totalUsd, 0, 1000) ?? cur.totalUsd,
     monthUsd: n(b.monthUsd, 0, 20000) ?? cur.monthUsd,
     on: typeof b.on === 'boolean' ? b.on : cur.on,
+    paused: typeof b.paused === 'boolean' ? b.paused : !!cur.paused,
+    perTaskHour: n(b.perTaskHour, 5, 1000) ?? (cur.perTaskHour || 40),
   }
   const saved = await setSetting('ai_budget', next, access.email || 'admin')
   bustBudgetCache()
