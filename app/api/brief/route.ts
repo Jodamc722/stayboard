@@ -1,7 +1,7 @@
 // THE SHIFT BRIEF API (lib/shift-brief). Any Stay Hospitality login.
 // GET  → { mine, pool, team, lastCloseout, me }
 // POST { action: 'add', item } · { action: 'tick', id } · { action: 'pass', id, to: email|'pool', note }
-//      · { action: 'claim', id } · { action: 'note', id, note } · { action: 'seen' }
+//      · { action: 'claim', id } · { action: 'note', id, note } · { action: 'remove', id } · { action: 'seen' }
 //      · { action: 'closeout', note?, slack?: boolean } — refused while anything of mine is still open
 // Stored as one JSON value in app_settings ('shift_brief'); every write reads it fresh.
 import { NextRequest, NextResponse } from 'next/server'
@@ -85,7 +85,12 @@ export async function POST(req: NextRequest) {
     s.closeouts.push(c)
   } else {
     if (!it) return deny('That item is gone.', 404)
-    if (action === 'tick') s.items[idx] = tick(it, me.name, now)
+    if (action === 'remove') {
+      // Added by mistake: whoever wrote it or whoever holds it can take it off.
+      if (it.byEmail !== me.email && it.owner !== me.email) return deny('Only whoever added it or holds it can remove it.', 403)
+      s.items.splice(idx, 1)
+    }
+    else if (action === 'tick') s.items[idx] = tick(it, me.name, now)
     else if (action === 'note') { const n = String(b?.note || '').trim(); if (!n) return deny('Write a note.'); s.items[idx] = addNote(it, me.name, n, now) }
     else if (action === 'claim') { if (it.owner) return deny('Someone already has it.', 409); s.items[idx] = claim(it, me, now) }
     else if (action === 'pass') {

@@ -7,7 +7,7 @@
 //   Incoming  the pool the last shift left; Claim moves an item into your brief
 //   Close out shift — only when nothing of yours is still open; optional post to #vr-customercareteam
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { Check, X, Loader2, Plus, ArrowRightLeft, MessageSquare, Hand, ClipboardCheck } from 'lucide-react'
+import { Check, X, Loader2, Plus, ArrowRightLeft, MessageSquare, Hand, ClipboardCheck, Trash2 } from 'lucide-react'
 import type { BriefItem, Closeout } from '@/lib/shift-brief'
 
 type Res = { ok: boolean; me: string; mine: BriefItem[]; pool: BriefItem[]; lastCloseout: Closeout | null; lastTeamCloseout: Closeout | null; team?: { email: string; name: string }[]; error?: string }
@@ -126,6 +126,7 @@ function Row({ i, busy, run }: { i: BriefItem; busy: string; run: (k: string, b:
           <div className="flex gap-0.5 shrink-0">
             <button onClick={() => setMode(m => m === 'note' ? null : 'note')} title="Add a note" className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-ink hover:bg-slate-100"><MessageSquare size={13} /></button>
             <button onClick={() => { setMode(m => m === 'pass' ? null : 'pass'); if (!team.length) load(true) }} title="Pass it over" className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-ink hover:bg-slate-100"><ArrowRightLeft size={13} /></button>
+            <button onClick={() => run('r' + i.id, { action: 'remove', id: i.id })} title="Remove (added by mistake)" className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-rose-600 hover:bg-slate-100"><Trash2 size={13} /></button>
           </div>
         )}
       </div>
