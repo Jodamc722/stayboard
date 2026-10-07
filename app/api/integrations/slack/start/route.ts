@@ -58,6 +58,9 @@ const SCOPES = [
   // never here — and a re-authorisation grants exactly the list in this URL, so the next reconnect
   // would have quietly revoked it and @Eve would have stopped answering with no error anywhere.
   'app_mentions:read',
+  // HK damage reports → claims (2026-10-07): the photos housekeepers post in #vr-hkdamagereports are
+  // copied into the claim as evidence. Slack only hands over file bytes with this scope.
+  'files:read',
 ].join(',')
 
 export async function GET(req: NextRequest) {

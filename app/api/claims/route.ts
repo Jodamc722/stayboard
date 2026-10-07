@@ -21,15 +21,8 @@ export const maxDuration = 30
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
 /** Guesty's `source` is a slug ("airbnb2", "bookingCom"); the claim wants the channel's real name. */
-export function channelName(source: any): string {
-  const s = str(source).toLowerCase()
-  if (/airbnb/.test(s)) return 'Airbnb'
-  if (/homeaway|vrbo/.test(s)) return 'VRBO'
-  if (/booking/.test(s)) return 'Booking.com'
-  if (/expedia|orbitz|travelocity/.test(s)) return 'Expedia'
-  if (/direct|manual|website/.test(s)) return 'Direct'
-  return str(source) || 'Other'
-}
+import { channelName, createClaimFromReservation } from '@/lib/claim-create'
+export { channelName }
 
 export async function GET(req: NextRequest) {
   // Signed in AND an active Lighthouse member (a session alone let any login in, 2026-09-29).
@@ -160,72 +153,9 @@ export async function POST(req: NextRequest) {
     const reservationId = str(b.reservationId).trim()
     if (!reservationId) return NextResponse.json({ ok: false, error: 'Pick the reservation this claim is against.' }, { status: 400 })
     const db = supabaseAdmin()
-
-    // Everything identifying the claim is read from the booking, not typed. Typed confirmation
-    // codes are how claims end up filed against the wrong stay.
-    const { data: r } = await db.from('guesty_reservations')
-      .select('id,listing_id,listing_name,guest_name,check_in,check_out,source,confirmation_code')
-      .eq('id', reservationId).maybeSingle()
-    if (!r) return NextResponse.json({ ok: false, error: 'That reservation is not in the mirror yet.' }, { status: 404 })
-
-    let property = '', unitNo = ''
-    try {
-      const { data: l } = await db.from('guesty_listings').select('building,unit,nickname,title').eq('id', str((r as any).listing_id)).maybeSingle()
-      if (l) { property = str((l as any).building) || str((l as any).nickname) || str((l as any).title); unitNo = str((l as any).unit) }
-    } catch { /* listing lookup is a nicety, not a blocker */ }
-
-    const checkOut = str((r as any).check_out).slice(0, 10)
-    const ch = channelName((r as any).source)
-    const pol = await loadPolicy()
-    const p = policyFor(ch, pol)
-    // The stored due date is the channel target. The turnover clock is applied on read.
-    const due = { due: dueDateFor(checkOut, ch, pol) }
-    const row: Record<string, any> = {
-      stage: 'draft',
-      reservation_id: reservationId,
-      listing_id: str((r as any).listing_id) || null,
-      property: property || str((r as any).listing_name) || null,
-      unit_no: unitNo || null,
-      guest_name: str((r as any).guest_name) || null,
-      channel: ch,
-      confirmation_code: str((r as any).confirmation_code) || null,
-      check_in: str((r as any).check_in).slice(0, 10) || null,
-      check_out: checkOut || null,
-      discovered_on: str(b.discoveredOn).slice(0, 10) || todayET(),
-      deadline_on: deadlineFor(checkOut, ch, pol),
-      // due_on holds the CHANNEL TARGET. The turnover is not stored — it is read fresh on every
-      // load (see lib/claim-turnover) because bookings move after a claim is opened.
-      due_on: due.due,
-      due_source: 'policy',
-      deposit_held: p.deposit,
-      guesty_url: 'https://app.guesty.com/reservations/' + reservationId + '/summary',
-      created_by: str(user.email) || null,
-      assignee_email: str(b.assignee) || str(user.email) || null,
-      history: [{ at: new Date().toISOString(), by: str(user.email) || 'team', action: 'created', to: 'draft' }],
-    }
-    // A CLAIM PULLS THE GLITCH (Jon, 2026-09-22: "if a claim is created but there was a glitch for the
-    // guest, it should pull that information"). Every guest issue already logged on this booking is
-    // written into the claim's notes and history at creation, so the claim opens with what happened
-    // during the stay instead of starting blank. The live list also shows on the claim via StayPanel.
-    try {
-      const { data: gl } = await db.from('glitches').select('id,overview,status,category,created_at,refund_approved')
-        .eq('reservation_id', reservationId).order('created_at', { ascending: true }).limit(10)
-      const gs = Array.isArray(gl) ? gl : []
-      if (gs.length) {
-        const lines = gs.map((g: any) => '• ' + str(g.created_at).slice(0, 10) + ' — ' + (str(g.overview) || 'Guest issue') + (g.category ? ' [' + str(g.category) + ']' : '') + ' (' + (str(g.status) || 'open') + (Number(g.refund_approved) ? ', refunded $' + Math.round(Number(g.refund_approved)) : '') + ')')
-        row.notes = 'Guest issues logged during this stay:\n' + lines.join('\n')
-        row.history.push({ at: new Date().toISOString(), by: 'system', action: 'linked glitches', to: gs.map((g: any) => str(g.id)).join(',') })
-      }
-    } catch { /* the claim is still worth creating without them */ }
-    let ins = await db.from('claims').insert(row).select('id').single()
-    if (ins.error && /column|schema/i.test(ins.error.message)) {
-      // Migration 020 (due dates) has not run on this database yet — save the claim rather than
-      // failing in the user's face over a column they cannot add.
-      delete row.due_on; delete row.due_source; delete row.deposit_held; delete row.notes
-      ins = await db.from('claims').insert(row).select('id').single()
-    }
-    const { data, error } = ins
-    if (error || !data) return NextResponse.json({ ok: false, error: (error && error.message) || 'Could not create the claim.' }, { status: 500 })
+    const made = await createClaimFromReservation(db, reservationId, { by: str(user.email) || null, assignee: str(b.assignee) || null, discoveredOn: str(b.discoveredOn) || null })
+    if (!made.ok) return NextResponse.json({ ok: false, error: made.error }, { status: made.status })
+    const data = { id: made.id }
     bustDay()   // open claims feed the Command Center's cached day
     return NextResponse.json({ ok: true, id: String((data as any).id) })
   } catch (e: any) {

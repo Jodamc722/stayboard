@@ -19,6 +19,7 @@ import {
   type Claim,
 } from '@/lib/claims'
 import { ClaimPolicyPanel } from '@/components/ClaimPolicy'
+import { HkDamageQueue } from '@/components/HkDamageQueue'
 
 type Board = { ok: boolean; today: string; claims: Claim[]; totals: { open: number; sought: number; recovered: number }; error?: string }
 type Match = {
@@ -95,6 +96,8 @@ export function ClaimsBoard() {
   // someone — the same trick the projects board uses for ?task=. /claims/<id> still renders the
   // desk as a page, so every link already sent out keeps working.
   const [openId, setOpenId] = useState<string | null>(null)
+  const [hkFocus, setHkFocus] = useState<string | null>(null)
+  useEffect(() => { try { setHkFocus(new URLSearchParams(window.location.search).get('hk')) } catch { /* no focus */ } }, [])
   const [showPolicy, setShowPolicy] = useState(false)
   const [undo, setUndo] = useState<{ trashId: string; label: string } | null>(null)
 
@@ -233,6 +236,9 @@ export function ClaimsBoard() {
       {err && <div className="text-[12.5px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
       {showPolicy && <ClaimPolicyPanel onClose={() => setShowPolicy(false)} onSaved={load} />}
       {showTrash && <TrashDrawer kind="claim" onRestored={load} onClose={() => setShowTrash(false)} />}
+
+      {/* HK DAMAGE REPORTS (Jon, 2026-10-07) — new reports from #vr-hkdamagereports, to autofill or close. */}
+      <HkDamageQueue onOpenClaim={setOpenId} onClaimsChanged={load} focusId={hkFocus} />
 
       {loading && !data && <LeanEmpty>Loading claims…</LeanEmpty>}
 

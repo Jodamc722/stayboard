@@ -155,6 +155,10 @@
     {
       "path": "/api/cron/call-notes",
       "schedule": "9,39 * * * *"
+    },
+    {
+      "path": "/api/cron/hk-damage",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

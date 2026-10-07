@@ -212,6 +212,9 @@ export const AUTOMATIONS: AutomationDef[] = [
     what: 'Every 30 minutes: transcribes recorded calls and turns each into a note on the booking (Contact history) and a one-line summary in the Guesty reservation notes — newest first, time-boxed, a backlog drains over several passes.', receipt: 'automation_runs',
     notes: 'lib/call-notes.ts. Does nothing until Talkroute is connected.' },
 
+  { key: 'hk-damage', label: 'HK damage reports → claims', area: 'guests', path: '/api/cron/hk-damage',
+    what: 'Every 15 minutes: reads new posts in #vr-hkdamagereports, groups each line of text with its photos, works out the unit, what was found and the guest who just checked out, and puts it in the HK damage reports queue on the Claims board (Autofill claim / Not claimable) with a bell to whoever runs claims. Plain maintenance with no photos is filed straight to Handled.', receipt: 'automation_runs',
+    notes: 'lib/hk-damage.ts. Photos need the Slack files:read permission.' },
   // ---- Ops ------------------------------------------------------------------------------------
   { key: 'auto-inspections', label: 'Automatic inspections', area: 'ops', path: '/api/cron/auto-inspections',
     what: 'Creates and assigns an inspection ahead of big, VIP or owner arrivals, and for units whose reviews have slipped.',
