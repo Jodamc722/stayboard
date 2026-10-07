@@ -28,6 +28,8 @@ type Task = {
   excluded: boolean; note: string | null; overrideAmount: number | null; billedHours: number | null
   reviewedBy: string | null; reviewedAt: string | null
   laborAmount: number; billedAmount: number; reportUrl: string | null
+  reviewState?: 'open' | 'ops_approved' | 'gm_approved'
+  opsBy?: string | null; gmBy?: string | null; gmAt?: string | null
 }
 type OwnerGroup = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; labor: number; items: number; actualMinutes: number }
 type Data = { ok: boolean; month: string; from?: string; to?: string; custom?: boolean; tasks: Task[]; owners: OwnerGroup[]; missingDetail: number; laborRates: Record<string, number>; defaultRate?: number; reviews?: Record<string, { by: string; at: string }>; units?: { id: string; name: string }[]; maintenancePayroll?: { cost: number; hours: number; people: number; source: string; roster?: { name: string; hours: number; cost: number }[]; tasks: number; tasksWithBilling: number; tasksWithTime: number; hoursOnTask: number; billed: number } | null; maintenanceByMarket?: { market: string; tasks: number; tasksWithBilling: number; tasksWithTime: number; minutes: number; billed: number }[]; error?: string }
@@ -687,7 +689,7 @@ export function BillingBoard() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   // ?view=labor opens straight on the labor tab (the review desk at /billing links here for it).
-  const [view, setView] = useState<'owner' | 'all' | 'labor'>('owner')
+  const [view, setView] = useState<'approved' | 'owner' | 'all' | 'labor'>('approved')
   useEffect(() => { try { if (new URLSearchParams(window.location.search).get('view') === 'labor') setView('labor') } catch {} }, [])
   const [dept, setDept] = useState('all')
   const [billableOnly, setBillableOnly] = useState(true)
@@ -866,6 +868,53 @@ export function BillingBoard() {
     })
     return groups
   }, [filtered, cmpTasks, ownerSort])
+
+  // ── APPROVED BILLABLE, BY OWNER (Jon, 2026-10-07: "see the approved billable by owner in a
+  //    simple collapsed view, we can open it to see how much each billable labor per owner will
+  //    be"). This is the money question, not the review queue: what has been signed off and will
+  //    reach the statements. It reads the month's tasks directly rather than the filter strip
+  //    above — a department filter left on from a review pass must not quietly change an owner's
+  //    total. `gm_approved` is the final signature; ops-approved work is counted separately as
+  //    still-coming so the headline number is never mistaken for the finished one.
+  const approved = useMemo(() => {
+    const all = (data && data.tasks) || []
+    const map: Record<string, {
+      ownerId: string | null; ownerName: string
+      tasks: Task[]; billed: number; labor: number; items: number; minutes: number
+      zeroTasks: number; pending: number; pendingTasks: number
+    }> = {}
+    const touch = (t: Task) => {
+      const k = t.ownerId || '—'
+      if (!map[k]) map[k] = { ownerId: t.ownerId, ownerName: t.ownerName, tasks: [], billed: 0, labor: 0, items: 0, minutes: 0, zeroTasks: 0, pending: 0, pendingTasks: 0 }
+      return map[k]
+    }
+    for (const t of all) {
+      if (t.excluded) continue
+      const itemsOwner = t.items.reduce((s2, x) => s2 + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0)
+      if (t.reviewState === 'gm_approved') {
+        const g = touch(t)
+        if (t.billedAmount > 0) {
+          g.tasks.push(t)
+          g.billed += t.billedAmount
+          g.labor += t.laborAmount
+          g.items += itemsOwner
+          g.minutes += t.actualMinutes || 0
+        } else g.zeroTasks += 1
+      } else if (t.billedAmount > 0) {
+        // Signed off by ops but not by the GM, or not looked at yet — money that is coming.
+        const g = touch(t)
+        g.pending += t.billedAmount
+        g.pendingTasks += 1
+      }
+    }
+    const groups = Object.keys(map).map(k => map[k]).filter(g => g.tasks.length || g.pendingTasks || g.zeroTasks)
+    for (const g of groups) g.tasks.sort(cmpTasks)
+    groups.sort((a, b) => b.billed - a.billed || a.ownerName.localeCompare(b.ownerName))
+    const total = Math.round(groups.reduce((s2, g) => s2 + g.billed, 0) * 100) / 100
+    const pending = Math.round(groups.reduce((s2, g) => s2 + g.pending, 0) * 100) / 100
+    const withMoney = groups.filter(g => g.billed > 0).length
+    return { groups, total, pending, withMoney }
+  }, [data, cmpTasks])
 
   // ---- bulk actions over the current selection ----
   const selIds = useMemo(() => Object.keys(sel).filter(k => sel[k]), [sel])
@@ -1097,14 +1146,15 @@ export function BillingBoard() {
             `sm:contents` dissolves this wrapper from 640px up so the desktop bar is untouched. */}
         <div className="lh-actions sm:contents flex items-center gap-2">
         <div className="flex items-center rounded-xl border border-line bg-neutral-50 overflow-hidden">
-          {(['owner', 'all', 'labor'] as const).map(v => (
+          {(['approved', 'owner', 'all', 'labor'] as const).map(v => (
             <button key={v} onClick={() => setView(v)}
+              title={v === 'approved' ? 'What is signed off and will reach the owners’ statements — one line per owner, open it for the money' : undefined}
               className={'px-3 py-1.5 text-[12.5px] font-semibold ' + (view === v ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
-              {v === 'owner' ? 'By owner' : v === 'all' ? 'All tasks' : 'Labor'}
+              {v === 'approved' ? 'Approved' : v === 'owner' ? 'By owner' : v === 'all' ? 'All tasks' : 'Labor'}
             </button>
           ))}
         </div>
-        {view !== 'labor' ? (
+        {view !== 'labor' && view !== 'approved' ? (
           <>
             <select value={dept} onChange={e => setDept(e.target.value)} aria-label="Department" className="rounded-lg border border-line bg-white px-1.5 py-1 text-[12px]">
               {DEPTS.map(d => <option key={d} value={d}>{d === 'all' ? 'All departments' : d}</option>)}
@@ -1256,6 +1306,109 @@ export function BillingBoard() {
 
       {loading && !data ? (
         <div className="rounded-2xl border border-line bg-white px-4 py-6 text-center text-[13px] text-muted">Loading the month…</div>
+      ) : null}
+
+      {/* APPROVED — the collapsed answer to "what are we billing each owner this month". */}
+      {view === 'approved' && data ? (
+        <div className="space-y-3">
+          <div className="rounded-2xl border border-line bg-white px-4 py-3 flex items-center gap-3 flex-wrap">
+            <div>
+              <div className="text-[11px] font-semibold tracking-[0.12em] uppercase text-muted">Approved billable · {data.custom ? 'this window' : monthLabel(month)}</div>
+              <div className="text-[26px] font-bold text-ink tabular-nums leading-tight">{money(approved.total)}</div>
+              <div className="text-[12px] text-muted">{approved.withMoney} owner{approved.withMoney === 1 ? '' : 's'} · signed off by the GM, ready for the statements</div>
+            </div>
+            <span className="grow" />
+            {approved.pending > 0 ? (
+              <Tip label="Billable work that has not been GM-approved yet — it is not in the number on the left, and it will change it once signed off.">
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-right">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-800">Still to approve</div>
+                  <div className="text-[18px] font-bold text-amber-900 tabular-nums leading-tight">{money(approved.pending)}</div>
+                </div>
+              </Tip>
+            ) : (
+              <span className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12.5px] font-semibold text-emerald-800">Everything billable is approved</span>
+            )}
+            <IconBtn title="Reload" onClick={reload}><RefreshCw className="w-3.5 h-3.5" /></IconBtn>
+          </div>
+
+          {approved.groups.map(g => {
+            const k = 'ap:' + (g.ownerId || '—')
+            const open = !!openOwners[k]
+            const unitMap: Record<string, Task[]> = {}
+            for (const t of g.tasks) { if (!unitMap[t.unit]) unitMap[t.unit] = []; unitMap[t.unit].push(t) }
+            const unitKeys = Object.keys(unitMap).sort((a, b) => a.localeCompare(b))
+            return (
+              <div key={k} className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+                <button onClick={() => setOpenOwners(s2 => ({ ...s2, [k]: !open }))}
+                  className="w-full px-4 py-2.5 flex items-center gap-2.5 text-left hover:bg-neutral-50/70">
+                  {open ? <ChevronDown className="w-4 h-4 text-muted shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted shrink-0" />}
+                  <span className="min-w-0 grow">
+                    <span className="font-bold text-ink">{g.ownerName}</span>
+                    <span className="ml-2 text-[11.5px] text-muted">
+                      {unitKeys.length} unit{unitKeys.length === 1 ? '' : 's'} · {g.tasks.length} job{g.tasks.length === 1 ? '' : 's'} · {hours(g.minutes)}
+                    </span>
+                    {g.pending > 0 ? <Tag tone="amber" title={g.pendingTasks + ' job(s) billable but not GM-approved yet'}>{money(g.pending)} to approve</Tag> : null}
+                  </span>
+                  <span className="font-bold text-ink tabular-nums text-[15px] shrink-0">{money(g.billed)}</span>
+                </button>
+                {open ? (
+                  <div className="border-t border-line">
+                    {!g.tasks.length ? (
+                      <div className="px-4 py-3 text-[12.5px] text-muted">Nothing approved with a charge yet{g.pending > 0 ? ' — ' + money(g.pending) + ' is waiting on approval.' : '.'}</div>
+                    ) : null}
+                    {unitKeys.map(u => {
+                      const ts = unitMap[u]
+                      const unitTotal = ts.reduce((s2, t) => s2 + t.billedAmount, 0)
+                      return (
+                        <div key={u}>
+                          <div className="px-4 py-1.5 flex items-center gap-2 bg-neutral-50/70 border-b border-line">
+                            <span className="text-[12px] font-bold text-ink">{u}</span>
+                            {ts[0] && ts[0].building ? <span className="text-[11px] text-muted">{ts[0].building}</span> : null}
+                            <span className="grow" />
+                            <span className="text-[12px] font-semibold text-ink tabular-nums">{money(unitTotal)}</span>
+                          </div>
+                          {ts.map(t => {
+                            const itemsOwner = t.items.reduce((s2, x) => s2 + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0)
+                            // How the money is made up, in the words the desk uses: the labour, then the parts.
+                            const parts: string[] = []
+                            if (t.laborAmount > 0) parts.push('labour ' + money(t.laborAmount) + (t.billedHours != null ? ' (' + t.billedHours + 'h)' : t.actualMinutes ? ' (' + hours(t.actualMinutes) + ' on the clock)' : ''))
+                            if (itemsOwner > 0) parts.push('parts & supplies ' + money(itemsOwner))
+                            if (t.overrideAmount != null) parts.push('set by hand')
+                            return (
+                              <div key={t.id} className="px-4 py-2 border-b border-line/70 last:border-b-0 flex items-start gap-3">
+                                <span className="text-[11.5px] text-muted tabular-nums w-[52px] shrink-0 pt-0.5">{(t.scheduledDate || (t.finishedAt || '').slice(0, 10) || '').slice(5)}</span>
+                                <span className="min-w-0 grow">
+                                  <span className="block text-[12.5px] font-semibold text-ink">{t.name}</span>
+                                  <span className="block text-[11.5px] text-muted">
+                                    {t.department}
+                                    {parts.length ? ' · ' + parts.join(' · ') : ''}
+                                    {t.gmBy ? ' · approved by ' + String(t.gmBy).split('@')[0] : ''}
+                                  </span>
+                                  {t.note ? <span className="block text-[11.5px] text-muted italic">{t.note}</span> : null}
+                                </span>
+                                <span className="text-[12.5px] font-semibold text-ink tabular-nums shrink-0">{money(t.billedAmount)}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )
+                    })}
+                    {g.zeroTasks > 0 ? <div className="px-4 py-1.5 text-[11.5px] text-muted border-t border-line">{g.zeroTasks} more approved job{g.zeroTasks === 1 ? '' : 's'} at no charge.</div> : null}
+                    <div className="px-4 py-2 flex items-center gap-2 border-t border-line bg-neutral-50/70">
+                      <span className="text-[12px] font-bold text-ink">Total for {g.ownerName}</span>
+                      <span className="grow" />
+                      {g.ownerId ? <IconBtn title={'Download ' + g.ownerName + '’s sheet (Excel)'} href={exportUrl('xls', g.ownerId)}><Download className="w-3.5 h-3.5" /></IconBtn> : null}
+                      <span className="text-[14px] font-bold text-ink tabular-nums">{money(g.billed)}</span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )
+          })}
+          {!approved.groups.length && !loading ? (
+            <div className="rounded-2xl border border-line bg-white px-4 py-6 text-center text-[12.5px] text-muted">Nothing billable this window yet.</div>
+          ) : null}
+        </div>
       ) : null}
 
       {view === 'labor' && data ? (
