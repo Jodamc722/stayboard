@@ -51,7 +51,8 @@ for (const p of MUST_GATE) ok('gated: ' + p, gated(p))
 // changes, the new asset belongs in the matcher by name, not by loosening the pattern.
 const MUST_PASS = [
   '/stay-logo.png',                    // the mark on every owner deck and report — the whole reason
-  '/icon-180.png', '/icon-192.png', '/icon-512.png',
+  '/icon-180.png', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png',
+  '/favicon.svg', '/favicon-32.png', '/favicon-16.png', '/lighthouse-mark.svg',
   '/favicon.ico', '/manifest.json',
   '/_next/static/chunks/main.js', '/_next/image',
   '/api/cron/ops-focus',               // route handlers do their own auth

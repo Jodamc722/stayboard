@@ -9,6 +9,7 @@
 // Grouping is by what the thing IS: your private boards first (they are yours), then one-on-ones
 // (private to two people), then team projects. Done and cancelled projects fall to the bottom of
 // their group rather than vanishing — a finished 1:1 is still worth opening.
+import { LighthouseMark } from '@/components/ui/LighthouseMark'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -139,7 +140,7 @@ export function ProjectsRail() {
     <button onClick={menu.open} title="Lighthouse menu" aria-label="Open the Lighthouse menu"
       className="flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-white/80 text-left">
       <span className="w-8 h-8 rounded-lg border border-line bg-white grid place-items-center text-muted"><Menu size={16} /></span>
-      <img src="/icon-192.png" alt="" className="w-6 h-6 rounded-md shadow-sm" />
+      <LighthouseMark size={22} />
       <span className="min-w-0">
         <span className="block text-[12.5px] font-bold text-ink leading-tight">Projects</span>
         <span className="block text-[10px] text-muted leading-tight">Lighthouse · menu</span>

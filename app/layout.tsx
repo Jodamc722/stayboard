@@ -27,7 +27,19 @@ export const metadata: Metadata = {
   title: 'LIGHTHOUSE — Stay Hospitality',
   description: 'Every property, watched. The Stay Hospitality operating system.',
   manifest: '/manifest.json',
-  icons: { icon: '/icon-192.png', apple: '/icon-180.png' },
+  // THE MARK EVERYWHERE (Jon, 2026-10-07: "make sure that the Lighthouse logo is updated across all
+  // parts of our platform, from the login to when you save it to your phone"). One icon set, drawn
+  // from components/ui/LighthouseMark: the ink tile, the paper tower and beams, the brass lamp.
+  // ?v=2 so browsers and phones drop the old blue icon they cached.
+  icons: {
+    icon: [
+      { url: '/favicon.svg?v=2', type: 'image/svg+xml' },
+      { url: '/favicon-32.png?v=2', sizes: '32x32', type: 'image/png' },
+      { url: '/icon-192.png?v=2', sizes: '192x192', type: 'image/png' },
+    ],
+    shortcut: '/favicon.ico?v=2',
+    apple: { url: '/icon-180.png?v=2', sizes: '180x180' },
+  },
   // Added to the home screen, Lighthouse opens as an app rather than a Safari tab: no URL bar
   // eating 60px of a 667px screen, and the bottom nav bar sits where a native tab bar would.
   appleWebApp: { capable: true, title: 'Lighthouse', statusBarStyle: 'default' },

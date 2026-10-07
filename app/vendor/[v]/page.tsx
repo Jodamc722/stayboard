@@ -289,7 +289,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                 <div className="mt-3">
                   <label className="block text-xs font-semibold text-neutral-500 mb-1">Rules password</label>
                   <input type="password" value={rulesPw} onChange={e => setRulesPw(e.target.value)} placeholder="Enter the rules password to save" className="w-full max-w-xs text-sm border border-neutral-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-neutral-300" />
-                  <div className="text-[11px] text-neutral-400 mt-1">Set by an admin in Users → Share links &amp; security. Signed-in Stayboard users don&rsquo;t need it.</div>
+                  <div className="text-[11px] text-neutral-400 mt-1">Set by an admin in Users → Share links &amp; security. Signed-in Lighthouse users don&rsquo;t need it.</div>
                 </div>
               )}
             </div>
@@ -393,7 +393,7 @@ export default function VendorPage({ params }: { params: { v: string } }) {
                                       {r.signatureUrl && <a href={r.signatureUrl} target="_blank" rel="noopener noreferrer"><div className="text-[10px] text-neutral-400 mb-0.5">Signature</div><img src={r.signatureUrl} alt="Signature" className="w-full rounded-lg border border-neutral-200 bg-white" /></a>}
                                     </div>
                                   ) : (
-                                    <div className="text-neutral-400 text-[12px]">Sign in to the Stayboard app to view the ID, selfie &amp; signature.</div>
+                                    <div className="text-neutral-400 text-[12px]">Sign in to Lighthouse to view the ID, selfie &amp; signature.</div>
                                   )}
                                   {data.isAppUser && (
                                     <div className="text-[11px] mt-2">

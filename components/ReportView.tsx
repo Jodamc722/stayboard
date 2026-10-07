@@ -1176,9 +1176,9 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
  * service can be blocked, slow, or simply gone, and four broken-image glyphs on an owner's screen
  * is worse than four clean letters. `onError` swaps back silently, so the row always reads as a row.
  */
-function StackMark({ logo, mono, name, accent, card, border, wide, bare, lockup, height }: {
+function StackMark({ logo, mono, name, accent, card, border, wide, bare, lockup, height, ink }: {
   logo?: string; mono?: string; name?: string; accent: string; card: string; border: string; wide?: boolean
-  bare?: boolean; lockup?: boolean; height?: number
+  bare?: boolean; lockup?: boolean; height?: number; ink?: string
 }) {
   const [failed, setFailed] = useState(false)
   const src = String(logo || '').trim()
@@ -1192,7 +1192,11 @@ function StackMark({ logo, mono, name, accent, card, border, wide, bare, lockup,
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, height: h + 4 }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={src} alt="" onError={() => setFailed(true)} style={{ width: h, height: h, borderRadius: Math.round(h * 0.24) }} />
-        <span style={{ fontSize: Math.round(h * 0.72), fontWeight: 700, letterSpacing: '-0.02em', color: '#4c4fd3', lineHeight: 1 }}>{name}</span>
+        {/* Lighthouse is set the way the app sets it: spaced capitals in the slide's ink (2026-10-07 —
+            the old indigo was the retired icon's colour). */}
+        {/lighthouse/i.test(String(name || ''))
+          ? <span style={{ fontSize: Math.round(h * 0.5), fontWeight: 700, letterSpacing: '0.2em', color: ink || '#15161a', lineHeight: 1 }}>LIGHTHOUSE</span>
+          : <span style={{ fontSize: Math.round(h * 0.72), fontWeight: 700, letterSpacing: '-0.02em', color: ink || '#15161a', lineHeight: 1 }}>{name}</span>}
       </span>
     )
     if (src && !failed) return (
@@ -4195,7 +4199,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         return (
                           <div key={i} className="flex" style={{ gap: 28, alignItems: 'center', padding: '14px 0', borderTop: '1px solid ' + t.cardBorder }}>
                             <span style={{ position: 'relative', flex: '0 0 180px', display: 'flex', alignItems: 'center', height: 44 }}>
-                              <StackMark logo={logo} mono={f.mono} name={f.name} accent={t.accent} card={t.card} border={t.cardBorder} bare lockup={!wordmark} height={wordmark ? 34 : 32} />
+                              <StackMark logo={logo} mono={f.mono} name={f.name} accent={t.accent} card={t.card} border={t.cardBorder} bare lockup={!wordmark} height={wordmark ? 34 : 32} ink={t.ink} />
                               {edit ? (
                                 <button onClick={() => { setPhotoUrl(''); setPhotoPick({ title: String(f.name || 'Logo') + ' logo', cur: String(f.logo || ''), set: (u: string) => patch('stack.tools.' + i + '.logo', u) }) }}
                                   className="sb-noprint" title={'Change the ' + String(f.name || '') + ' logo'}
@@ -4900,7 +4904,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   <div className="flex flex-col min-h-0" style={{ width: 372, flexShrink: 0 }}>
                     {/* The Lighthouse mark (Jon, 2026-09-24: "use this as a promotion for Lighthouse"). */}
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src="/icon-192.png" alt="Lighthouse" style={{ width: 52, height: 52, borderRadius: 13, marginBottom: 18, boxShadow: '0 6px 18px rgba(0,0,0,0.25)' }} />
+                    <img src="/icon-192.png?v=2" alt="Lighthouse" style={{ width: 52, height: 52, borderRadius: 13, marginBottom: 18, border: '1px solid rgba(255,255,255,0.16)', boxShadow: '0 6px 18px rgba(0,0,0,0.25)' }} />
                     <p className="onb-h" style={{ fontSize: 30, color: D.ink, lineHeight: 1.15 }}>
                       <Ed v={houseLine(sec('ai').headline, AI_HEADLINE)} set={v => patch('ai.headline', v)} edit={edit} multiline />
                     </p>

@@ -8,6 +8,7 @@
 // Setting one stamps `password_set: true` into user_metadata, which /auth/callback reads — so this
 // screen shows once and then never again. Skipping is allowed (nobody should be trapped on a form
 // they did not ask for), and it will simply offer again next time.
+import { LighthouseMark } from '@/components/ui/LighthouseMark'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
@@ -52,10 +53,10 @@ export default function SetPasswordPage() {
     <div className="min-h-[100dvh] bg-app flex items-center justify-center p-4">
       <div className="max-w-md w-full">
         <div className="text-center mb-7">
-          <div className="inline-flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-white border border-line shadow-soft">
-            <img src="/icon-192.png" alt="Lighthouse" className="w-7 h-7 rounded-lg" />
-            <span className="font-bold tracking-tight text-ink">LIGHTHOUSE</span>
-          </div>
+          <span className="inline-flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-white border border-line shadow-soft">
+            <LighthouseMark size={24} />
+            <span className="font-bold text-[13px] tracking-[0.22em] text-ink">LIGHTHOUSE</span>
+          </span>
         </div>
 
         <div className="bg-white rounded-2xl shadow-lifted border border-line p-6 sm:p-8">
