@@ -12,6 +12,7 @@ import { VendorField, VendorName } from './VendorCard'
 import CommentThread from './CommentThread'
 import { DeleteButton, UndoBar, TrashDrawer } from './DeleteControl'
 import { Sheet } from './Sheet'
+import { EveSuggestions } from './EveSuggestions'
 import { StepDots, StepBar, Field, Chips, type Step } from './Steps'
 import { ImageDrop } from './ImageDrop'
 import { RefundTraining, TeachFromGlitch } from './RefundTraining'
@@ -285,7 +286,8 @@ export function GlitchBoard() {
         </span>
       </div>
       {err && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
-      {/* "What we heard" (suggested glitches from calls and threads) is off the board (Jon, 2026-10-08: "remove them from the glitch board page"). Real issues are still filed automatically, and a repeat on the same stay is merged into its open glitch (lib/guest-issue). */}
+      {/* WHAT EVE CAUGHT — one line, only when there is something to review; the list opens in a side sheet (Jon, 2026-10-08). */}
+      <EveSuggestions onFiled={load} />
       {showTrash && <TrashDrawer kind="glitch" onRestored={load} onClose={() => setShowTrash(false)} />}
       <Sheet open={showTrain} onClose={() => setShowTrain(false)} title="Train the refund advisor" subtitle="House guidance and saved cases — read on every recommendation">
         {showTrain ? <RefundTraining compact /> : null}

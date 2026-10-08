@@ -23,14 +23,14 @@ const fmt = (s?: string | null) => s ? new Date(s).toLocaleString('en-US', { mon
 const GHOST = 'inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1 rounded-lg border border-line bg-white text-ink hover:border-ink/40 disabled:opacity-50'
 const DARK = 'inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1 rounded-lg bg-ink text-white disabled:opacity-50'
 
-export function GuestIssuesDetected({ onFiled }: { onFiled?: () => void }) {
+export function GuestIssuesDetected({ onFiled, initialOnly }: { onFiled?: () => void; initialOnly?: 'all' | 'open' | 'security' }) {
   const [rows, setRows] = useState<Row[] | null>(null)
   const [settings, setSettings] = useState<{ on: boolean }>({ on: true })
   const [canEdit, setCanEdit] = useState(false)
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
-  const [only, setOnly] = useState<'all' | 'open' | 'security'>('all')
+  const [only, setOnly] = useState<'all' | 'open' | 'security'>(initialOnly || 'all')
   const [needsMigration, setNeedsMigration] = useState(false)
 
   const load = useCallback(async () => {
