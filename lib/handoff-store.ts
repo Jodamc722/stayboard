@@ -66,21 +66,46 @@ export async function mentionsFor(people: Recipient[]): Promise<string> {
   } catch { return people.map(p => p.name).join(', ') }
 }
 
+/**
+ * THE BRIEF — the first useful sentence of the alert, and nothing after it.
+ *
+ * The body of a guest-issue alert is a report: what the guest said, what is wrong, who owns it,
+ * the glitch link, the transcript link. That is the right thing to read in Lighthouse and the
+ * wrong thing to paste into a room — the post scrolls, and the one line that matters scrolls with
+ * it. So Slack gets a sentence and a link (Jon, 2026-10-07: "it too should just be the link and a
+ * small brief").
+ */
+function brief(body: string, max = 180): string {
+  const flat = String(body || '')
+    .split('\n')
+    // Lines that are links, labels or instructions are not the brief.
+    .filter(l => l.trim() && !/^https?:\/\//i.test(l.trim()) && !/^(glitch filed|read it in full|what is wrong|customer care owns this)/i.test(l.trim()))
+    .join(' ')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!flat) return ''
+  if (flat.length <= max) return flat
+  // Cut at the end of a sentence where there is one, otherwise at a word.
+  const stop = flat.slice(0, max).lastIndexOf('. ')
+  if (stop > 60) return flat.slice(0, stop + 1)
+  const sp = flat.slice(0, max).lastIndexOf(' ')
+  return flat.slice(0, sp > 60 ? sp : max).trim() + '…'
+}
+
 function slackText(a: Alert, who: string): string {
   const icon = a.severity === 'urgent' ? '🚨' : a.severity === 'warn' ? '⚠️' : '🔔'
+  const link = `${APP_URL}/command?alert=${encodeURIComponent(a.id)}`
+  // Eve's titles start with their own siren and usually name the unit already; one icon and one
+  // mention of the unit is the point of condensing it.
+  const title = String(a.title || '').replace(/^(?:[\u2190-\u2BFF\u2600-\u27BF\uFE0F\uD800-\uDFFF]|\s)+/, '').trim() || a.title
+  const unit = a.unit && !title.toLowerCase().includes(String(a.unit).toLowerCase()) ? ` · ${a.unit}` : ''
+  const head = `${icon} *${title}*${unit}`
+  const b = brief(a.body)
   // QUIET (2026-10-07): Eve's alerts tell the room, they do not ask anyone to confirm anything and
   // they tag nobody. "Resolved" in Lighthouse closes it for everyone and says so in this thread.
-  if (isQuiet(a)) return [
-    `${icon} *${a.source === 'eve' ? 'Eve' : a.by}:* ${a.title}`,
-    a.body ? a.body : '',
-    `_FYI — no reply needed. Mark it resolved in <${APP_URL}/command|Lighthouse> when it's handled._`,
-  ].filter(Boolean).join('\n')
-  return [
-    `${icon} *Handoff${a.source === 'eve' ? ' from Eve' : ' from ' + a.by}:* ${a.title}`,
-    a.body ? a.body : '',
-    a.unit ? `_About:_ ${a.unit}` : '',
-    (who ? `For ${who} — ` : 'For the team — ') + `please confirm you've got it: <${APP_URL}/command|Got it in Lighthouse>`,
-  ].filter(Boolean).join('\n')
+  if (isQuiet(a)) return [head, b, `<${link}|Open in Lighthouse> · FYI, no reply needed`].filter(Boolean).join('\n')
+  return [head, b, `${who ? who + ' · ' : ''}<${link}|Open and confirm>`].filter(Boolean).join('\n')
 }
 
 /**
@@ -108,7 +133,7 @@ export async function runHandoffs(): Promise<{ fired: number; nagged: number; cl
     }
     if (needsNag(a, now) && a.slackTs) {
       const who = await mentionsFor(pending(a))
-      const r = await postThreadReply(a.channel!, a.slackTs, `Still waiting on ${who} to confirm this one: <${APP_URL}/command|Got it in Lighthouse>`)
+      const r = await postThreadReply(a.channel!, a.slackTs, `Still waiting on ${who}: <${APP_URL}/command?alert=${encodeURIComponent(a.id)}|open and confirm>`)
       a.nags = (a.nags || 0) + 1; a.lastNagAt = new Date(now).toISOString()
       if (!r.ok) notes.push('nag ' + a.title + ': ' + (r.error || 'failed'))
       nagged++; changed = true

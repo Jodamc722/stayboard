@@ -353,6 +353,21 @@ export function HandoffFloater() {
   }, [cards, s?.me])
   // a tucked card comes back on its own after an hour
   useEffect(() => { const t = setInterval(() => force(x => x + 1), 5 * 60_000); return () => clearInterval(t) }, [])
+  // THE LINK IN SLACK LANDS ON THE ALERT (Jon, 2026-10-07). /command?alert=<id> from any page opens
+  // that one alert in the floater — a link that drops you on a dashboard is not a link to an alert.
+  const deepLinked = useRef(false)
+  useEffect(() => {
+    if (deepLinked.current || !s) return
+    try {
+      const id = new URLSearchParams(window.location.search).get('alert')
+      if (!id) { deepLinked.current = true; return }
+      deepLinked.current = true
+      setView(id)
+      const url = new URL(window.location.href)
+      url.searchParams.delete('alert')
+      window.history.replaceState(null, '', url.toString())
+    } catch { deepLinked.current = true }
+  }, [s])
   if (!s) return null
   const tuck = (id: string) => { try { localStorage.setItem(DISMISS_KEY(id), String(Date.now())) } catch { /* fine */ } force(x => x + 1) }
   const open = typeof view === 'string' && view !== 'list' && view !== 'new' && view !== 'brief' ? (s.open.find(x => x.id === view) || mine.find(x => x.id === view)) : null
