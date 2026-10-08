@@ -11,7 +11,6 @@ import { StayPanel } from './StayPanel'
 import { VendorField, VendorName } from './VendorCard'
 import CommentThread from './CommentThread'
 import { DeleteButton, UndoBar, TrashDrawer } from './DeleteControl'
-import { GuestIssuesDetected } from './GuestIssuesDetected'
 import { Sheet } from './Sheet'
 import { StepDots, StepBar, Field, Chips, type Step } from './Steps'
 import { ImageDrop } from './ImageDrop'
@@ -186,7 +185,6 @@ export function GlitchBoard() {
   const [showTrash, setShowTrash] = useState(false)
   // WHAT WE HEARD (Jon, 2026-10-07). Open by default when something is waiting: a guest issue the
   // app picked up and nobody has filed is exactly the thing that must not sit quietly.
-  const [showHeard, setShowHeard] = useState(true)
   const [undo, setUndo] = useState<{ trashId: string; label: string } | null>(null)
   // TRAIN THE ADVISOR (Jon, 2026-09-22) — admins and glitch-board leads only. Read once here and
   // handed to each card's refund section, which used to fetch it again on every open.
@@ -282,14 +280,12 @@ export function GlitchBoard() {
         <GlitchKpis rows={rows} />
         <span className="ml-auto flex items-center gap-1">
           {canTrain ? <IconBtn title="Train the refund advisor" tone="brand" onClick={() => setShowTrain(true)}><GraduationCap size={14} /></IconBtn> : null}
-          <button onClick={() => setShowHeard(h => !h)} title="Guest issues Lighthouse heard in calls and message threads — read the transcript, file or dismiss"
-            className={'text-[12px] font-semibold px-2.5 py-1 rounded-lg border ' + (showHeard ? 'border-ink bg-ink text-white' : 'border-line bg-white text-muted hover:text-ink')}>What we heard</button>
           <IconBtn title="Recently deleted glitches (restore)" onClick={() => setShowTrash(!showTrash)}><Trash2 size={13} /></IconBtn>
           <IconBtn title="Reload the board" onClick={() => { setLoading(true); load() }}><RefreshCw size={13} /></IconBtn>
         </span>
       </div>
       {err && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
-      {showHeard && <GuestIssuesDetected onFiled={load} />}
+      {/* "What we heard" (suggested glitches from calls and threads) is off the board (Jon, 2026-10-08: "remove them from the glitch board page"). Real issues are still filed automatically, and a repeat on the same stay is merged into its open glitch (lib/guest-issue). */}
       {showTrash && <TrashDrawer kind="glitch" onRestored={load} onClose={() => setShowTrash(false)} />}
       <Sheet open={showTrain} onClose={() => setShowTrain(false)} title="Train the refund advisor" subtitle="House guidance and saved cases — read on every recommendation">
         {showTrain ? <RefundTraining compact /> : null}
