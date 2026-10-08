@@ -193,6 +193,70 @@ export async function buildOpsDesk(): Promise<Built> {
   const blockedLines: Line[] = downRows.map(r => ({ tone: r.nights >= 14 ? 'amber' : 'none', html: `<b>${esc(unitShort(r.unit))}</b> — ${esc(r.guestyLabel || r.reason)}${r.blockEnd ? ` · until ${esc(niceDate(r.blockEnd))}` : r.openEnded ? ' · no end date' : ''}`, sub: r.note ? esc(String(r.note).replace(/\s+/g, ' ').slice(0, 120)) : undefined }))
   const tomorrow = D?.day?.verdict?.tomorrow || ''
 
+  // ---- TODAY ON THE GROUND (Jon, 2026-10-08: "the ops brief needs to include everything
+  // happening in ops that day — cleaner working, what units cleaning, arrivals, vacant units,
+  // inspections etc") -------------------------------------------------------------------------
+  //
+  // This reverses the 2026-10-01 decision to keep rosters and lists out of Ops Command and leave
+  // them to the Field Runs. The manager reads one email; "it's on another brief" is not an answer
+  // at 7am. The decisions still come first — this sits under them as the day itself.
+  //
+  // Each line is a person or a door, not a paragraph: who is on, what they are on, who is coming
+  // in, what is empty, what is being looked at.
+
+  // WHO IS WORKING, AND WHAT THEY ARE ON. Cleans and everything else, by the person a task is
+  // credited to, busiest first. Done is struck through so a glance separates what is left.
+  const byPerson = new Map<string, { units: string[]; done: number; other: { unit: string; task: string }[] }>()
+  const bump = (name: string) => { if (!byPerson.has(name)) byPerson.set(name, { units: [], done: 0, other: [] }); return byPerson.get(name)! }
+  for (const c of cleans) {
+    if (/UNASSIGNED/.test(c.assignee)) continue
+    const e = bump(c.lead || c.assignee)
+    e.units.push(unitShort(c.unit) + (c.state === 'done' ? '' : c.sameDayArrival ? ' ⚡' : ''))
+    if (c.state === 'done') e.done++
+  }
+  for (const o of other) {
+    if (/UNASSIGNED/.test(o.assignee) || o.state === 'done') continue
+    bump(o.lead || o.assignee).other.push({ unit: unitShort(o.unit), task: cleanTitle(o.task) })
+  }
+  const crewLines: Line[] = Array.from(byPerson.entries())
+    .sort((a, b) => (b[1].units.length + b[1].other.length) - (a[1].units.length + a[1].other.length))
+    .map(([name, e]) => ({
+      tone: 'none' as const,
+      html: `<b>${esc(personName(name))}</b> <span style="${T.muted}">${e.units.length ? `${e.units.length} clean${e.units.length === 1 ? '' : 's'}${e.done ? `, ${e.done} done` : ''}` : ''}${e.units.length && e.other.length ? ' · ' : ''}${e.other.length ? `${e.other.length} other` : ''}</span>`,
+      sub: [e.units.length ? esc(e.units.join(', ')) : '', e.other.length ? e.other.slice(0, 4).map(x => esc(x.unit + ' — ' + x.task)).join(' · ') + (e.other.length > 4 ? ` +${e.other.length - 4}` : '') : ''].filter(Boolean).join('<br>'),
+    }))
+  if (unassigned.length) crewLines.unshift({ tone: 'red', html: `<b>Nobody assigned</b> — ${unassigned.length} clean${unassigned.length === 1 ? '' : 's'}`, sub: esc(unassigned.map(c => unitShort(c.unit)).join(', ')) })
+  for (const sft of idle.slice(0, 4)) crewLines.push({ tone: 'amber', html: `<b>${esc(personName(str(sft.name)))}</b> <span style="${T.muted}">on shift, nothing on the board</span>`, sub: 'Give them a unit or send them home.' })
+
+  // ARRIVALS — who is landing, when, and whether anyone has heard about them.
+  const arrTime = (a: any) => str(a.checkInTime) || '—'
+  const arrivalLines: Line[] = arrivals
+    .slice()
+    .sort((x: any, y: any) => (y.bookedToday || y.bookedAfterSync ? 1 : 0) - (x.bookedToday || x.bookedAfterSync ? 1 : 0) || str(x.unit).localeCompare(str(y.unit)))
+    .map((a: any) => ({
+      tone: (a.bookedToday || a.bookedAfterSync) ? 'amber' as const : 'none' as const,
+      html: `<b>${esc(unitShort(str(a.unit)))}</b> ${esc(first(str(a.guest)))} <span style="${T.muted}">${esc(arrTime(a))}${a.nights ? ` · ${a.nights}n` : ''}${a.source ? ` · ${esc(str(a.source))}` : ''}</span>${a.ownerFlag ? ' ' + pill('OWNER', 'blue') : ''}${(a.bookedToday || a.bookedAfterSync) ? ' ' + pill('WALK-IN', 'amber') : ''}`,
+      sub: cleans.some(c => c.lid === str(a.listingId)) ? undefined : 'No clean on the board for this door today.',
+    }))
+
+  // VACANT — empty tonight, and how long it has been since anyone was inside.
+  const vacants: any[] = (sheet.vacants || [])
+  const vacantLines: Line[] = vacants
+    .slice()
+    .sort((x: any, y: any) => (x.daysUntilArrival ?? 99) - (y.daysUntilArrival ?? 99))
+    .map((v: any) => ({
+      tone: v.arrivingSoon ? 'amber' as const : 'none' as const,
+      html: `<b>${esc(unitShort(str(v.unit)))}</b> <span style="${T.muted}">${v.nextArrival ? `next in ${v.daysUntilArrival}d (${esc(niceDate(str(v.nextArrival)))})` : 'nothing booked'}${v.departedToday ? ' · out today' : ''}</span>`,
+      sub: v.idleDays != null && v.idleDays > 7 ? `Nobody inside for ${v.idleDays} days — worth a look.` : undefined,
+    }))
+
+  // INSPECTIONS — what is being looked at today, and by whom.
+  const inspections = other.filter(o => /inspect|quality|audit|unit check/i.test(o.dept + ' ' + o.task))
+  const inspectionLines: Line[] = inspections.map(o => ({
+    tone: o.state === 'done' ? 'green' as const : 'none' as const,
+    html: `<b>${esc(unitShort(o.unit))}</b> ${esc(cleanTitle(o.task))} <span style="${T.muted}">${/UNASSIGNED/.test(o.assignee) ? 'nobody assigned' : esc(personName(o.lead || o.assignee))}${o.state === 'done' ? ' · done' : o.state === 'running' ? ' · under way' : ''}</span>`,
+  }))
+
   // ---- assemble ------------------------------------------------------------------------------
   const head = [
     `<b>${cleans.length}</b> cleans`, sameDay.length ? `<b style="${T.red}">${sameDay.length} by 4pm</b>` : '',
@@ -209,15 +273,24 @@ export async function buildOpsDesk(): Promise<Built> {
     { html: loopLines.length ? section('Waiting on a person — from Slack', loopLines, { cap: 8, accent: A, note: loopsMore ? `${loopsMore} more on the Eve tab.` : undefined }) : '', optional: true },
     { html: section('Markets at a glance', mkLines, { cap: 4, accent: A }) },
     { html: dayShape(A, steps, 'Shape of the day') },
+    // The day itself, under the decisions: who is on it, who is coming, what is empty, what is
+    // being looked at. Capped generously — a manager who wants the whole list came here for it.
+    { html: crewLines.length ? section('Who is working — and what each person is on', crewLines, { cap: 24, accent: A, more: 'on the Field Runs' }) : '' },
+    { html: arrivalLines.length ? section('Arrivals today', arrivalLines, { cap: 24, accent: A, more: `on the <a href="${APP_URL}/day" style="color:${A.ink}">boards</a>`, note: departures.length ? `${departures.length} checkout${departures.length === 1 ? '' : 's'} today${sameDay.length ? ` · ${sameDay.length} same-day turn${sameDay.length === 1 ? '' : 's'}` : ''}.` : undefined }) : '', optional: true },
+    { html: vacantLines.length ? section('Vacant tonight', vacantLines, { cap: 20, accent: A, note: 'Empty doors are where PM, deep cleans and audits go.' }) : '', optional: true },
+    { html: inspectionLines.length ? section('Inspections today', inspectionLines, { cap: 14, accent: A }) : '', optional: true },
     { html: freeLines.length ? section('Free trips — send it with someone already going', freeLines, { cap: 4, accent: A }) : '', optional: true },
     { html: maintLines.length ? section('Maintenance', maintLines, { cap: 3, accent: A }) : '', optional: true },
     { html: paper.length ? section('Paperwork', paper, { cap: 2, accent: A }) : '', optional: true },
     { html: blockedLines.length ? section('Blocked — down now', blockedLines, { cap: 5, accent: A, note: `<a href="${APP_URL}/blocked" style="color:${A.ink}">All blocks and the calendar →</a>` }) : '', optional: true },
     { html: block('Yesterday', `<p style="margin:6px 0 0;font-size:13px">${yLine}${D?.wins?.length ? `<br><span style="${T.green}">${esc(D.wins.join(' · '))}</span>` : ''}</p>`, A), optional: true },
     { html: tomorrow ? block('Tomorrow', `<p style="margin:6px 0 0;font-size:13px">${esc(tomorrow)}</p>`, A) : '', optional: true },
-    { html: footer(`Ops Command · every morning at 7 · Eve posts the short form in Slack · labor in the Labor Scorecard (7:58) · the Field Runs carry each market's roster.`) },
+    { html: footer(`Ops Command · every morning at 7 · Eve posts the short form in Slack · labor in the Labor Scorecard (7:58) · the Field Runs carry each market's own sheet.`) },
   ]
-  const { html } = fit(parts, 60_000)
+  // The budget went up with the day itself (Jon, 2026-10-08). Gmail clips a message around 102KB
+  // and hides the rest behind "View entire message"; 90KB keeps the whole brief above that line
+  // while `fit` still sheds the optional sections first if a day is genuinely enormous.
+  const { html } = fit(parts, 90_000)
   const subject = `Ops Command${H ? ` · health ${H.score}` : ''} · ${cleans.length} cleans${sameDay.length ? ` · ${sameDay.length} by 4pm` : ''}${unassigned.length ? ` · ${unassigned.length} UNASSIGNED` : ''}${short.length ? ` · ${short.length} short day${short.length === 1 ? '' : 's'}` : ''} · ${niceDay(today)}`
   return { subject, html, words: words(html), counts: { cleans: cleans.length, sameDay: sameDay.length, unassigned: unassigned.length, unblock: unblock.length, arrivals: arrivals.length, departures: departures.length } }
 }
