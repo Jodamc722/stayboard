@@ -216,6 +216,9 @@ export const AUTOMATIONS: AutomationDef[] = [
     what: 'Every 15 minutes: reads new posts in #vr-hkdamagereports, groups each line of text with its photos, works out the unit, what was found and the guest who just checked out, and puts it in the HK damage reports queue on the Claims board (Autofill claim / Not claimable) with a bell to whoever runs claims. Plain maintenance with no photos is filed straight to Handled.', receipt: 'automation_runs',
     notes: 'lib/hk-damage.ts. Photos need the Slack files:read permission.' },
   // ---- Ops ------------------------------------------------------------------------------------
+  { key: 'walkthroughs', label: 'Weekly property exterior walkthroughs', area: 'ops', path: '/api/cron/walkthroughs',
+    what: 'Once a week (first run each week, from Monday): one Breezeway inspection "Property Exterior Walkthrough: Check for leaks, exterior damages, etc." at 906, Eden Oasis, Hendricks, 17 West, 3316, Rustic and Pelican — on the building\'s Exterior property where Breezeway has one, otherwise one of its units — assigned to the market supervisors plus Ronnie, Roberto and Jon. Never twice in a week.', receipt: 'automation_runs',
+    notes: 'lib/standing-walkthroughs.ts. Dry run: /api/cron/walkthroughs?dry=1' },
   { key: 'auto-inspections', label: 'Automatic inspections', area: 'ops', path: '/api/cron/auto-inspections',
     what: 'Creates and assigns an inspection ahead of big, VIP or owner arrivals, and for units whose reviews have slipped.',
     configKey: 'task_automation', enabledPath: 'enabled', defaultOff: true,
