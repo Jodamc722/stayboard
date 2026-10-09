@@ -64,6 +64,26 @@ function taskView(t: any, p: any): any {
   }
 }
 
+/**
+ * The roster the link may tag, as NAMES. A member row often carries an email where a display name
+ * should be, and "@jon@stay-hospitality.com" on an owner's screen is both ugly and a mail address
+ * handed to whoever holds the link — so an email is cut to its local part and tidied. Anyone on
+ * the project, plus anyone carrying one of its tasks; nobody else in the company.
+ */
+function teamNames(p: any): string[] {
+  const pretty = (v: string) => {
+    const raw = str(v)
+    if (!raw) return ''
+    const base = raw.includes('@') ? raw.split('@')[0] : raw
+    return base.replace(/[._-]+/g, ' ').replace(/\b[a-z]/g, c => c.toUpperCase()).trim()
+  }
+  const out: string[] = []
+  const push = (v: string) => { const n = pretty(v); if (n && !out.includes(n)) out.push(n) }
+  for (const m of (p.members || [])) push(str(m.display) || str(m.email))
+  for (const t of (p.steps || [])) for (const a of (t.assignees || [])) push(str(a.display) || str(a.email))
+  return out.slice(0, 40)
+}
+
 /** Strip everything commercial. Whitelist, not blacklist — a new column must not leak by default. */
 function vendorView(p: any) {
   return {
@@ -80,7 +100,7 @@ function vendorView(p: any) {
     canEdit: shareCanEdit(p),
     // WHO CAN BE TAGGED (Jon chose "our team by name"). Display names only — never the emails,
     // never the roles, never anyone who is not actually on this project.
-    team: (p.members || []).map((m: any) => str(m.display) || str(m.email).split('@')[0]).filter(Boolean).slice(0, 40),
+    team: teamNames(p),
     photos: (p.photos || []).filter((x: any) => !x.task_id).map((x: any) => ({ id: x.id, url: x.url, caption: x.caption, phase: x.phase, created_at: x.created_at })),
     // Only the conversation the vendor is part of — internal comments stay internal.
     notes: (p.notes || []).filter((n: any) => !n.task_id && sharedNote(n)).map((n: any) => ({ body: n.body, author: n.author, created_at: n.created_at })),
@@ -135,7 +155,7 @@ export async function POST(req: NextRequest) {
       if (!body) return NextResponse.json({ error: 'Write something first.' }, { status: 400 })
       const { data: step } = await supabaseAdmin().from('project_steps').select('id,title').eq('id', taskId).eq('project_id', p.id).maybeSingle()
       if (!step) return NextResponse.json({ error: 'No such item.' }, { status: 404 })
-      const roster = (p.members || []).map((m: any) => str(m.display) || str(m.email).split('@')[0]).filter(Boolean)
+      const roster = teamNames(p)
       const tags = (Array.isArray(b.mentions) ? b.mentions : []).map((x: any) => str(x)).filter((x: string) => roster.includes(x)).slice(0, 10)
       const noteId = await addNote(p.id, body.slice(0, 2000), who, 'comment', true, { taskId, mentions: tags })
       // The people tagged are told, exactly as they would be from inside the app — same path, same
