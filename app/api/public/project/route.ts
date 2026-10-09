@@ -45,9 +45,9 @@ function taskView(t: any, p: any): any {
     id: t.id, title: t.title, done: t.status === 'done' || !!t.done, status: t.status || null,
     due_on: t.due_on, section: t.section || null, note: t.description || null,
     addedByShare: !!t.via_share,
-    assignees: (t.assignees || []).map((a: any) => str(a.display)).filter(Boolean),
+    assignees: (t.assignees || []).map((a: any) => prettyName(str(a.display) || str(a.email))).filter(Boolean),
     // Action steps. A checklist under the job, tickable from the link like the job itself.
-    subtasks: (t.subtasks || []).map((s: any) => ({ id: s.id, title: s.title, done: s.status === 'done' || !!s.done })),
+    subtasks: (t.subtasks || []).map((s: any) => ({ id: s.id, title: s.title, done: s.status === 'done' || !!s.done, due_on: s.due_on || null })),
     breezeway: t.breezeway_task_id
       ? { id: String(t.breezeway_task_id), status: bz?.status || 'unknown', tone: bz?.tone || 'open', assignee: bz?.assignee || null, date: bz?.date || null, reportUrl: bz?.reportUrl || null }
       : null,
@@ -75,15 +75,16 @@ function taskView(t: any, p: any): any {
  * handed to whoever holds the link — so an email is cut to its local part and tidied. Anyone on
  * the project, plus anyone carrying one of its tasks; nobody else in the company.
  */
+function prettyName(v: string): string {
+  const raw = str(v)
+  if (!raw) return ''
+  const base = raw.includes('@') ? raw.split('@')[0] : raw
+  return base.replace(/[._-]+/g, ' ').replace(/\b[a-z]/g, c => c.toUpperCase()).trim()
+}
+
 function teamNames(p: any): string[] {
-  const pretty = (v: string) => {
-    const raw = str(v)
-    if (!raw) return ''
-    const base = raw.includes('@') ? raw.split('@')[0] : raw
-    return base.replace(/[._-]+/g, ' ').replace(/\b[a-z]/g, c => c.toUpperCase()).trim()
-  }
   const out: string[] = []
-  const push = (v: string) => { const n = pretty(v); if (n && !out.includes(n)) out.push(n) }
+  const push = (v: string) => { const n = prettyName(v); if (n && !out.includes(n)) out.push(n) }
   for (const m of (p.members || [])) push(str(m.display) || str(m.email))
   for (const t of (p.steps || [])) for (const a of (t.assignees || [])) push(str(a.display) || str(a.email))
   return out.slice(0, 40)
@@ -238,14 +239,31 @@ export async function POST(req: NextRequest) {
         const fresh0 = await getProjectByToken(str(b.token))
         return NextResponse.json({ ok: true, project: fresh0 ? await viewOf(fresh0) : null })
       }
-      const { error } = await supabaseAdmin().from('project_steps').insert({
+      const { data: made0, error } = await supabaseAdmin().from('project_steps').insert({
         project_id: p.id, title: title.slice(0, 200), done: false,
         due_on: /^\d{4}-\d{2}-\d{2}$/.test(str(b.due_on)) ? str(b.due_on) : null,
         section: str(b.section).slice(0, 80) || null,
         description: str(b.description).slice(0, 2000) || null,
         assignee: who.slice(0, 60), via_share: true, sort: Date.now(),
-      })
+      }).select('id').maybeSingle()
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      // Assigned at the moment it is written down, which is the only moment anybody knows who
+      // should have it. Same roster rule as taskAssign: real people on this project, or nobody.
+      const names = (Array.isArray(b.assign) ? b.assign : []).map((x: any) => str(x)).slice(0, 8)
+      if (names.length && made0?.id) {
+        const roster = (p.members || []) as any[]
+        const people = names.map((n: string) => roster.find((m: any) => prettyName(str(m.display) || str(m.email)) === n)).filter(Boolean) as any[]
+        if (people.length) {
+          const rows = people.map((m: any) => ({ task_id: String(made0.id), project_id: p.id, person_key: m.person_key, display: m.display, email: m.email || null, role: 'assignee' }))
+          let { error: eA } = await supabaseAdmin().from('project_task_assignees').upsert(rows, { onConflict: 'task_id,person_key' })
+          if (eA && /column|schema/i.test(eA.message || '')) {
+            await supabaseAdmin().from('project_task_assignees').upsert(rows.map(({ role: _r, ...rest }) => rest), { onConflict: 'task_id,person_key' })
+          }
+          const { onAssigned } = await import('@/lib/project-notify')
+          await onAssigned(p.id, { id: String(made0.id), title: title.slice(0, 200) }, people, who, roster)
+            .catch(e => console.error('[public project] assign notify failed:', String(e?.message || e)))
+        }
+      }
       await addNote(p.id, `${who} added: ${title.slice(0, 160)}`, who, 'event', true)
       await tellLeadership(p.id, who, { kind: 'added', task: title, note: str(b.description) })
     } else if (action === 'taskNote') {
@@ -343,6 +361,33 @@ export async function POST(req: NextRequest) {
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       await addNote(p.id, `${who} removed “${String((step as any).title || '').slice(0, 120)}”`, who, 'event', true)
       await tellLeadership(p.id, who, { kind: 'removed', task: String((step as any).title || '') })
+    } else if (action === 'taskAssign') {
+      // WHO HAS IT (Jon, 2026-10-09: "easier to assign"). The link can put a name on a job, and
+      // the name has to be a real one: only people already on this project, matched to the SAME
+      // rows the app uses, so an owner assigning Guillermo puts it on the Guillermo who gets the
+      // notification and sees it in My Tasks — not a string that looks right on one screen.
+      if (!canEdit) return NextResponse.json({ error: 'This link cannot assign work.' }, { status: 403 })
+      const taskId = str(b.taskId)
+      const { data: step } = await supabaseAdmin().from('project_steps').select('id,title').eq('id', taskId).eq('project_id', p.id).maybeSingle()
+      if (!step) return NextResponse.json({ error: 'No such item.' }, { status: 404 })
+      const want = (Array.isArray(b.names) ? b.names : []).map((x: any) => str(x)).slice(0, 8)
+      const roster = (p.members || []) as any[]
+      const pick = (name: string) => roster.find((m: any) => prettyName(str(m.display) || str(m.email)) === name)
+      const people = want.map(pick).filter(Boolean) as any[]
+      await supabaseAdmin().from('project_task_assignees').delete().eq('task_id', taskId).eq('project_id', p.id)
+      if (people.length) {
+        const rows = people.map((m: any) => ({ task_id: taskId, project_id: p.id, person_key: m.person_key, display: m.display, email: m.email || null, role: 'assignee' }))
+        let { error } = await supabaseAdmin().from('project_task_assignees').upsert(rows, { onConflict: 'task_id,person_key' })
+        if (error && /column|schema/i.test(error.message || '')) {
+          await supabaseAdmin().from('project_task_assignees').upsert(rows.map(({ role: _r, ...rest }) => rest), { onConflict: 'task_id,person_key' })
+        }
+        const { onAssigned } = await import('@/lib/project-notify')
+        await onAssigned(p.id, { id: taskId, title: String((step as any).title || '') }, people, who, roster)
+          .catch(e => console.error('[public project] assign notify failed:', String(e?.message || e)))
+      }
+      const names = people.map((m: any) => prettyName(str(m.display) || str(m.email))).join(', ')
+      await addNote(p.id, `${who} put “${String((step as any).title || '').slice(0, 100)}” on ${names || 'nobody'}`, who, 'event', true)
+      await tellLeadership(p.id, who, { kind: 'edited', task: String((step as any).title || '') + (names ? ' → ' + names : ' — unassigned') })
     } else if (action === 'subDone') {
       // An action step ticks like the job it sits under.
       const stepId = str(b.stepId)
@@ -359,6 +404,7 @@ export async function POST(req: NextRequest) {
       if (!parent) return NextResponse.json({ error: 'No such item.' }, { status: 404 })
       const { error } = await supabaseAdmin().from('project_steps').insert({
         project_id: p.id, parent_id: parentId, title: title.slice(0, 200), done: false,
+        due_on: /^\d{4}-\d{2}-\d{2}$/.test(str(b.due_on)) ? str(b.due_on) : null,
         section: (parent as any).section || null, assignee: who.slice(0, 60), via_share: true, sort: Date.now(),
       })
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })

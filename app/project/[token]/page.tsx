@@ -19,7 +19,7 @@ type Step = {
   id: string; title: string; done: boolean; status?: string | null; due_on: string | null
   section?: string | null; note?: string | null; addedByShare?: boolean
   assignees?: string[]
-  subtasks?: { id: string; title: string; done: boolean }[]
+  subtasks?: { id: string; title: string; done: boolean; due_on?: string | null }[]
   breezeway?: { id: string; status: string; tone: string; assignee: string | null; date: string | null; reportUrl: string | null } | null
   requested?: boolean
   photos?: { id: string; url: string; caption: string | null; created_at: string }[]
@@ -119,7 +119,36 @@ const UI: Record<string, { en: string; es: string }> = {
   pushBz: { en: 'Push to Breezeway', es: 'Enviar a Breezeway' },
   pushSent: { en: 'Sent to the team — they will schedule it in Breezeway.', es: 'Enviado al equipo — lo programarán en Breezeway.' },
   pushSentShort: { en: 'Sent', es: 'Enviado' },
+  assignedTo: { en: 'Who has it', es: 'Quién lo tiene' },
+  nobody: { en: 'Nobody yet', es: 'Nadie todavía' },
+  due: { en: 'Due', es: 'Para' },
+  overdue: { en: 'Overdue', es: 'Atrasado' },
+  today: { en: 'Today', es: 'Hoy' },
+  tomorrow: { en: 'Tomorrow', es: 'Mañana' },
+  noDate: { en: 'No date', es: 'Sin fecha' },
 }
+
+/** Today in New York, which is where the work is. */
+const todayISO = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+
+/**
+ * A DATE SOMEBODY CAN ACT ON. "Wed, Oct 14" tells you when; it does not tell you that it was due
+ * yesterday, which is the only thing that changes what you do next. So a date near now is named
+ * rather than printed, and late reads late.
+ */
+function dueChip(iso: string | null | undefined, lang: Lang, T: (k: string) => string) {
+  if (!iso) return null
+  const t = todayISO()
+  const tomorrow = new Date(new Date(t + 'T12:00:00').getTime() + 864e5).toLocaleDateString('en-CA')
+  const label = iso < t ? T('overdue') : iso === t ? T('today') : iso === tomorrow ? T('tomorrow') : day(iso, lang)
+  const tone = iso < t ? 'border-rose-200 bg-rose-50 text-rose-700'
+    : iso === t ? 'border-amber-200 bg-amber-50 text-amber-800'
+    : 'border-line text-muted'
+  return { label: String(label), tone, late: iso < t }
+}
+
+/** Two letters for a face that is not there. Steadier to scan down a column than a full name. */
+const initials = (n: string) => n.split(/\s+/).filter(Boolean).slice(0, 2).map(x => x[0]).join('').toUpperCase()
 
 const day = (iso: string | null, lang: Lang = 'en') =>
   !iso ? null : new Date(iso + 'T12:00:00').toLocaleDateString(lang === 'es' ? 'es-US' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric' })
@@ -373,32 +402,48 @@ export default function VendorProjectPage({ params }: { params: { token: string 
               {groupSteps(p.steps, T('everythingElse')).map(g => (
                 <div key={g.key}>
                   {g.name && (
-                    <div className="flex items-baseline gap-2 px-3 pt-3 pb-1.5 bg-app/60">
+                    <div className="sticky top-0 z-10 flex items-baseline gap-2 px-3 pt-2.5 pb-1.5 bg-app/95 backdrop-blur border-b border-line/60">
                       <h3 className="text-[12px] font-bold text-ink">{TX(g.name)}</h3>
                       <span className="text-[11px] text-muted tabular-nums">{g.rows.filter(s => s.done).length}/{g.rows.length}</span>
                     </div>
                   )}
                   <div className="divide-y divide-line">
-                    {g.rows.map(s => (
-                      <div key={s.id} className={'flex items-start gap-2.5 px-3 py-2.5 text-[14px] ' + (s.done ? 'bg-emerald-50/40' : 'hover:bg-app')}>
-                        <input type="checkbox" checked={s.done} disabled={busy === 'step' + s.id} aria-label={'Mark “' + s.title + '” done'}
-                          onChange={e => post({ action: 'stepDone', stepId: s.id, done: e.target.checked }, 'step' + s.id)}
-                          className="w-4 h-4 shrink-0 mt-0.5 cursor-pointer" />
+                    {g.rows.map(s => {
+                      const d = dueChip(s.due_on, lang, T)
+                      const owner = (s.assignees || [])[0]
+                      return (
+                      <div key={s.id} className={'flex items-start gap-3 px-3 py-3 text-[14px] ' + (s.done ? 'bg-emerald-50/40' : 'hover:bg-app')}>
+                        {/* Round, like the one in the sheet, and big enough to hit on a phone. */}
+                        <button onClick={() => post({ action: 'stepDone', stepId: s.id, done: !s.done }, 'step' + s.id)} disabled={busy === 'step' + s.id}
+                          aria-label={(s.done ? T('isDone') : T('markDone')) + ': ' + s.title}
+                          className={'shrink-0 mt-0.5 w-5 h-5 rounded-full border-2 grid place-items-center transition disabled:opacity-50 ' +
+                            (s.done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-line text-transparent hover:border-ink')}>
+                          {busy === 'step' + s.id ? <Loader2 size={11} className="animate-spin text-muted" /> : <Check size={12} strokeWidth={3} />}
+                        </button>
                         {/* THE WHOLE ROW OPENS (Jon, 2026-10-09: "each item should be able to open
-                            up"). The checkbox stays a checkbox — ticking a job you can see from
-                            the list should never cost you a trip into a panel and back. */}
+                            up"). The circle stays a circle — ticking a job you can see from the
+                            list should never cost you a trip into a panel and back. */}
                         <button onClick={() => setOpenTask(s.id)} className="min-w-0 flex-1 text-left group">
-                          <span className={s.done ? 'line-through text-muted' : 'text-ink group-hover:underline'}>{TX(s.title)}</span>
-                          {s.addedByShare && <span className="ml-2 text-[10px] uppercase tracking-wide text-muted">{T('yours')}</span>}
-                          {s.note && <span className="block text-[12px] text-muted mt-0.5 line-clamp-2">{TX(s.note)}</span>}
+                          <span className={'block leading-snug ' + (s.done ? 'line-through text-muted' : 'text-ink group-hover:underline')}>{TX(s.title)}</span>
+                          {s.note && <span className="block text-[12.5px] text-muted/90 mt-0.5 line-clamp-1">{TX(s.note)}</span>}
                           <Chips s={s} T={T} />
                         </button>
-                        <span className="shrink-0 mt-0.5 flex items-center gap-1.5">
-                          {s.due_on && <span className="text-[11px] text-muted">{day(s.due_on, lang)}</span>}
-                          <ChevronRight size={14} className="text-muted/50" />
+                        {/* WHO AND WHEN, in the same place on every row, so the column can be read
+                            straight down without reading a single title. */}
+                        <span className="shrink-0 flex items-center gap-2 pt-0.5">
+                          {d && (
+                            <span className={'rounded-full border px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ' + d.tone}>{d.label}</span>
+                          )}
+                          <span title={owner || T('nobody')}
+                            className={'w-6 h-6 rounded-full grid place-items-center text-[9.5px] font-bold ' +
+                              (owner ? 'bg-ink text-white' : 'border border-dashed border-line text-muted/50')}>
+                            {owner ? initials(owner) : '·'}
+                          </span>
+                          <ChevronRight size={14} className="text-muted/40" />
                         </span>
                       </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </div>
               ))}
@@ -544,7 +589,7 @@ function Chips({ s, T }: { s: Step; T: (k: string) => string }) {
   if (s.photos?.length) bits.push(<span key="p" className="inline-flex items-center gap-0.5"><Camera size={9} />{s.photos.length}</span>)
   if (s.invoices?.length) bits.push(<span key="i" className="inline-flex items-center gap-0.5"><FileText size={9} />{s.invoices.length}</span>)
   if (s.comments?.length) bits.push(<span key="c" className="inline-flex items-center gap-0.5"><MessageSquare size={9} />{s.comments.length}</span>)
-  if (s.assignees?.length) bits.push(<span key="a">{s.assignees.join(', ')}</span>)
+  if ((s.assignees?.length || 0) > 1) bits.push(<span key="a">+{(s.assignees || []).length - 1}</span>)
   if (!bits.length) return null
   return <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 mt-1 text-[10.5px] text-muted">{bits}</span>
 }
@@ -567,6 +612,7 @@ function AddSheet({ p, busy, T, post, onClose }: {
   const [unit, setUnit] = useState('')
   const [desc, setDesc] = useState('')
   const [due, setDue] = useState('')
+  const [who, setWho] = useState<string[]>([])
   const ref = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -581,7 +627,7 @@ function AddSheet({ p, busy, T, post, onClose }: {
   const save = async () => {
     const t = title.trim()
     if (!t) return
-    await post({ action: 'addTask', kind, title: t, section: unit || null, description: desc, due_on: due || null }, 'addTask')
+    await post({ action: 'addTask', kind, title: t, section: unit || null, description: desc, due_on: due || null, assign: who }, 'addTask')
     onClose()
   }
 
@@ -629,9 +675,29 @@ function AddSheet({ p, busy, T, post, onClose }: {
               className={box + ' text-[13.5px]'} />
           </Field>
 
-          <Field label={T('dateLabel')}>
+          <Field label={T('due')}>
             <input type="date" value={due} onChange={e => setDue(e.target.value)} className={box} />
           </Field>
+
+          {/* Assigned at the moment it is written down, which is the only moment anybody actually
+              knows who should have it. A task added and assigned later is a task nobody owns. */}
+          {kind === 'task' && !!(p.team || []).length && (
+            <Field label={T('assignedTo')}>
+              <div className="flex flex-wrap gap-1.5">
+                {(p.team || []).map(n => {
+                  const on = who.includes(n)
+                  return (
+                    <button key={n} type="button" onClick={() => setWho(v => on ? v.filter(x => x !== n) : [...v, n])}
+                      className={'inline-flex items-center gap-1.5 rounded-full border pl-1 pr-2.5 py-0.5 text-[12.5px] ' +
+                        (on ? 'border-ink bg-ink text-white font-semibold' : 'border-line text-muted hover:text-ink')}>
+                      <span className={'w-5 h-5 rounded-full grid place-items-center text-[9px] font-bold ' + (on ? 'bg-white/20' : 'bg-app text-muted')}>{initials(n)}</span>
+                      {n}
+                    </button>
+                  )
+                })}
+              </div>
+            </Field>
+          )}
 
           <div className="flex gap-2 justify-end pt-1">
             <button onClick={onClose} className="text-[13.5px] text-muted hover:text-ink px-2">{T('cancel')}</button>
@@ -666,6 +732,7 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
   const [tags, setTags] = useState<string[]>([])
   const [sub, setSub] = useState('')
   const [ask, setAsk] = useState('')
+  const [subDue, setSubDue] = useState('')
   const [report, setReport] = useState(false)
   // EVERYTHING EDITABLE (Jon, 2026-10-09). The title, the detail, the date and the unit are typed
   // straight into the sheet and saved on blur — no edit mode, no pencil to find. Edits always act
@@ -728,9 +795,14 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
             ) : (
               <h2 className="text-[15px] font-bold text-ink leading-snug">{TX(t.title)}</h2>
             )}
-            <p className="text-[11.5px] text-muted mt-0.5">
-              {t.done ? T('done') : T('open')}{t.due_on ? ' · ' + day(t.due_on, lang) : ''}{t.assignees?.length ? ' · ' + t.assignees.join(', ') : ''}
-            </p>
+            <div className="flex flex-wrap items-center gap-1.5 mt-1">
+              {(() => { const d = dueChip(t.due_on, lang, T); return d
+                ? <span className={'rounded-full border px-2 py-0.5 text-[11px] font-semibold ' + d.tone}>{d.label}</span>
+                : <span className="text-[11px] text-muted">{T('noDate')}</span> })()}
+              {(t.assignees || []).map(n => (
+                <span key={n} className="inline-flex items-center gap-1 rounded-full bg-app px-2 py-0.5 text-[11px] text-ink">{n}</span>
+              ))}
+            </div>
           </div>
           <button onClick={onClose} className="shrink-0 text-muted hover:text-ink p-1" aria-label="Close"><X size={18} /></button>
         </div>
@@ -745,20 +817,49 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
           )}
 
           {p.canEdit && (
-            <div className="flex flex-wrap gap-2">
-              <label className="flex-1 min-w-[140px]">
-                <span className="block text-[10.5px] font-bold uppercase tracking-wide text-muted mb-1">{T('whichUnit')}</span>
-                <select value={draft.section} onChange={e => { setDraft({ section: e.target.value }); setTimeout(saveEdit, 0) }}
-                  className="w-full text-[13.5px] rounded-xl border border-line px-2.5 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200">
-                  <option value="">—</option>
-                  {unitNames(p).map(u => <option key={u} value={u}>{u}</option>)}
-                </select>
-              </label>
-              <label className="flex-1 min-w-[140px]">
-                <span className="block text-[10.5px] font-bold uppercase tracking-wide text-muted mb-1">{lang === 'es' ? 'Fecha' : 'Date'}</span>
-                <input type="date" value={draft.due} onChange={e => setDraft({ due: e.target.value })} onBlur={saveEdit}
-                  className="w-full text-[13.5px] rounded-xl border border-line px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-              </label>
+            <div className="rounded-xl border border-line divide-y divide-line">
+              {/* WHO HAS IT (Jon: "easier to assign"). Names from this project's own people —
+                  tapping one puts the job on the real person, who gets told the same way they
+                  would from inside the app. Tap again to take it off. */}
+              <div className="px-3 py-2.5">
+                <span className="block text-[10.5px] font-bold uppercase tracking-wide text-muted mb-1.5">{T('assignedTo')}</span>
+                {team.length ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {team.map(n => {
+                      const on = (t.assignees || []).includes(n)
+                      return (
+                        <button key={n} disabled={busy === 'assign' + t.id}
+                          onClick={() => {
+                            const next = on ? (t.assignees || []).filter(x => x !== n) : [...(t.assignees || []), n]
+                            post({ action: 'taskAssign', taskId: t.id, names: next }, 'assign' + t.id)
+                          }}
+                          className={'inline-flex items-center gap-1.5 rounded-full border pl-1 pr-2.5 py-0.5 text-[12.5px] transition disabled:opacity-50 ' +
+                            (on ? 'border-ink bg-ink text-white font-semibold' : 'border-line text-muted hover:text-ink')}>
+                          <span className={'w-5 h-5 rounded-full grid place-items-center text-[9px] font-bold ' + (on ? 'bg-white/20' : 'bg-app text-muted')}>{initials(n)}</span>
+                          {n}
+                        </button>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-[12.5px] text-muted">{T('nobody')}</p>
+                )}
+              </div>
+              <div className="flex flex-wrap">
+                <label className="flex-1 min-w-[150px] px-3 py-2.5">
+                  <span className="block text-[10.5px] font-bold uppercase tracking-wide text-muted mb-1">{T('due')}</span>
+                  <input type="date" value={draft.due} onChange={e => setDraft({ due: e.target.value })} onBlur={saveEdit}
+                    className="w-full text-[13.5px] rounded-lg border border-line px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                </label>
+                <label className="flex-1 min-w-[150px] px-3 py-2.5">
+                  <span className="block text-[10.5px] font-bold uppercase tracking-wide text-muted mb-1">{T('unitLabel')}</span>
+                  <select value={draft.section} onChange={e => { setDraft({ section: e.target.value }); setTimeout(saveEdit, 0) }}
+                    className="w-full text-[13.5px] rounded-lg border border-line px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200">
+                    <option value="">{T('noUnit')}</option>
+                    {unitNames(p).map(u => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                </label>
+              </div>
             </div>
           )}
 
@@ -778,6 +879,8 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
                   ) : (
                     <span className={'py-0.5 ' + (x.done ? 'line-through text-muted' : 'text-ink')}>{TX(x.title)}</span>
                   )}
+                  {x.due_on && (() => { const d = dueChip(x.due_on, lang, T); return d
+                    ? <span className={'shrink-0 mt-1 rounded-full border px-1.5 text-[10.5px] font-semibold ' + d.tone}>{d.label}</span> : null })()}
                   {p.canEdit && (
                     <button onClick={() => post({ action: 'subDelete', stepId: x.id }, 'sub' + x.id)} disabled={busy === 'sub' + x.id}
                       className="shrink-0 mt-1 text-muted/40 hover:text-rose-600 opacity-0 group-hover/sub:opacity-100 focus:opacity-100" aria-label="Remove">
@@ -788,9 +891,11 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
               ))}
             </div>
             {p.canEdit && (
-              <form className="flex gap-2 mt-2" onSubmit={e => { e.preventDefault(); if (sub.trim()) { post({ action: 'subAdd', parentId: t.id, title: sub }, 'sub' + t.id); setSub('') } }}>
+              <form className="flex gap-2 mt-2" onSubmit={e => { e.preventDefault(); if (sub.trim()) { post({ action: 'subAdd', parentId: t.id, title: sub, due_on: subDue || null }, 'sub' + t.id); setSub(''); setSubDue('') } }}>
                 <input value={sub} onChange={e => setSub(e.target.value)} placeholder={T('addStep')}
-                  className="flex-1 text-[13.5px] rounded-lg border border-line px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                  className="flex-1 min-w-0 text-[13.5px] rounded-lg border border-line px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                <input type="date" value={subDue} onChange={e => setSubDue(e.target.value)} title={T('due')}
+                  className="shrink-0 w-[130px] text-[12.5px] rounded-lg border border-line px-2 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
                 <button disabled={!sub.trim() || busy === 'sub' + t.id} className="text-[13px] font-semibold px-2.5 rounded-lg border border-line text-ink disabled:opacity-40">{T('add')}</button>
               </form>
             )}
