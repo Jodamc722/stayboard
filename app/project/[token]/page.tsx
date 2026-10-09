@@ -316,11 +316,14 @@ export default function VendorProjectPage({ params }: { params: { token: string 
             listing swapped its hero shot. No photo simply leaves the dark band. */}
         {p.hero && (
           <>
-            <img src={p.hero} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover opacity-40" />
-            <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/80 to-ink/50" />
+            <img src={p.hero} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover" />
+            {/* The photo carries the top of the band and the type sits on solid ink at the
+                bottom — a straight dim over the whole thing made the picture pointless, and no
+                dim at all makes a light kitchen unreadable. */}
+            <div className="absolute inset-0 bg-gradient-to-b from-ink/45 via-ink/75 to-ink" />
           </>
         )}
-        <div className="relative max-w-2xl mx-auto px-4 pt-6 pb-5">
+        <div className={'relative max-w-2xl mx-auto px-4 pb-5 ' + (p.hero ? 'pt-20 sm:pt-28' : 'pt-6')}>
           <div className="flex items-start gap-3">
             <div className="min-w-0 flex-1">
               <p className="text-[10.5px] uppercase tracking-[0.14em] font-semibold text-white/55">Stay Hospitality {p.ref ? '· ' + p.ref : ''}</p>
