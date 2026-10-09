@@ -25,11 +25,30 @@ import { buildDirection, type DayDirection, type Loop } from '@/lib/briefs/direc
 
 export const MORNING_KEY = 'eve_morning'
 const STATE_KEY = 'eve_morning_state'
-type Cfg = { enabled?: boolean; channel?: string }
+type Cfg = { enabled?: boolean; channel?: string; slack?: boolean }
 type State = { lastDay?: string | null; seen?: Record<string, { n: number; first: string }> }
 
+/**
+ * Is the CONSOLIDATED morning in force? This is what keeps the old roll-up, the ops-desk plan and
+ * the handoff posts suppressed — it is not the same question as "does Eve post in the morning".
+ */
 export async function morningOn(): Promise<boolean> {
   try { const c = (await getSetting<Cfg>(MORNING_KEY, {})) || {}; return c.enabled !== false } catch { return true }
+}
+
+/**
+ * DOES IT GO TO SLACK? (Jon, 2026-10-09: "this is noise, only want this in email for ops command".)
+ *
+ * Off by default now. The post was a shortened Ops Command in a room where it competed with the
+ * email that says the same thing better — the brief is the document, Slack was a duplicate. The
+ * switch is separate from `enabled` on purpose: turning the morning post OFF used to turn three
+ * older, noisier posts back ON, which is the opposite of what quiet means. With this, the legacy
+ * posts stay suppressed and nothing is said in the morning at all.
+ *
+ * Set app_settings `eve_morning` to { slack: true } to bring it back.
+ */
+export async function morningSlackOn(): Promise<boolean> {
+  try { const c = (await getSetting<Cfg>(MORNING_KEY, {})) || {}; return c.slack === true } catch { return false }
 }
 
 const APP = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
@@ -107,6 +126,8 @@ export async function runMorning(opts: { force?: boolean; preview?: boolean } = 
   const picked = pickLoops(all, seen, 5)
   const text = morningText(d, picked)
   if (opts.preview) return { posted: false, text }
+  // Email only, unless somebody has switched the Slack post back on.
+  if (!opts.force && !(await morningSlackOn())) return { posted: false, skipped: 'email only — Ops Command goes out as the brief', text }
 
   const channel = cfg.channel || EVE_CHANNELS.approvals
   // A person's schedule, not Eve's initiative — urgent, so the room cap and quiet hours never hold it.
