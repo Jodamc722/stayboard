@@ -193,7 +193,14 @@ export function ShareLinksHub() {
   }
 
   // ── filtering + grouping ──
-  const all = useMemo(() => (links || []).concat(showGen ? generated : []), [links, generated, showGen])
+  // PROJECT BOARDS ARE NEVER HIDDEN (Jon, 2026-10-09: "I don't see the Arya link in share link
+  // tabs"). The "generated" toggle is for things minted by their own tab and listed here for
+  // completeness — an owner report, a count sheet. A project board shared with an owner is a live
+  // door into the company that stays open until somebody closes it, so it shows whatever the
+  // filter says; hiding it behind a checkbox is how a link survives everyone forgetting it.
+  const all = useMemo(
+    () => (links || []).concat(showGen ? generated : generated.filter(g => g.kind === 'project-board')),
+    [links, generated, showGen])
   const shown = useMemo(() => {
     const n = search.trim().toLowerCase()
     return all.filter(l => {
@@ -520,7 +527,7 @@ export function ShareLinksHub() {
         <select value={fKind} onChange={e => setFKind(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1 text-[12px]"><option value="">Every kind</option>{KIND_ORDER.map(k => <option key={k} value={k}>{KIND_LABEL[k as keyof typeof KIND_LABEL]}</option>)}</select>
         <select value={fBld} onChange={e => setFBld(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1 text-[12px]"><option value="">Any building</option>{(meta?.buildings || []).map(b => <option key={b} value={b}>{b}</option>)}</select>
         <select value={fStatus} onChange={e => setFStatus(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1 text-[12px]"><option value="">Any status</option>{['live', 'expiring', 'expired', 'revoked', 'unset', 'locked-out'].map(s => <option key={s} value={s}>{s}</option>)}</select>
-        <label title="Include owner reports, guidebooks, guide pages and count sheets minted by their own tabs" className="rounded-lg border border-line bg-white px-2 py-1 text-[12px] inline-flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={showGen} onChange={e => setShowGen(e.target.checked)} /> {showGen ? <Eye size={11} /> : <EyeOff size={11} />} generated ({generated.length})</label>
+        <label title="Include owner reports, guidebooks, guide pages and count sheets minted by their own tabs. Project boards always show." className="rounded-lg border border-line bg-white px-2 py-1 text-[12px] inline-flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={showGen} onChange={e => setShowGen(e.target.checked)} /> {showGen ? <Eye size={11} /> : <EyeOff size={11} />} generated ({generated.filter(g => g.kind !== 'project-board').length})</label>
         <IconBtn title="Refresh" onClick={load}><RefreshCw size={12} /></IconBtn>
       </div>
       {selected.length ? (

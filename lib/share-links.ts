@@ -24,7 +24,9 @@ export type Audience = typeof AUDIENCES[number]
 export const CREATABLE_KINDS: LinkKind[] = ['vendor-board', 'scheduler', 'field-board', 'parking', 'day-sheet', 'delivery', 'orders-live', 'marketing', 'owner-audit', 'botanica', 'custom-page']
 
 /** Kinds whose link never expires by nature — the crew boards. Everything else is "generated". */
-export const STANDING_KINDS: LinkKind[] = ['vendor-board', 'scheduler', 'field-board', 'parking', 'day-sheet', 'delivery', 'orders-live', 'salato-desk', 'marketing', 'owner-audit', 'botanica']
+// 'project-board' is standing on purpose: a board handed to an owner is open until somebody
+// revokes it, which makes it exactly the kind of link that must not hide behind a filter.
+export const STANDING_KINDS: LinkKind[] = ['vendor-board', 'scheduler', 'field-board', 'parking', 'day-sheet', 'delivery', 'orders-live', 'salato-desk', 'marketing', 'owner-audit', 'botanica', 'project-board']
 
 export const KIND_LABEL: Record<LinkKind, string> = {
   'vendor-board': 'Vendor cleaning board', scheduler: 'Team scheduler', 'field-board': 'Live field board', parking: 'Parking board',
