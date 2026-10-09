@@ -62,7 +62,7 @@ export type Resolved = {
   existing: { id: string; scheduled: string | null; status: string } | null
 }
 
-export async function resolveWalkthroughs(): Promise<{ week: string; today: string; targets: Resolved[] }> {
+export async function resolveWalkthroughs(): Promise<{ week: string; today: string; targets: Resolved[]; exteriors: string[] }> {
   const db = supabaseAdmin()
   const today = ymdET(new Date())
   const week = mondayOf(today)
@@ -104,7 +104,9 @@ export async function resolveWalkthroughs(): Promise<{ week: string; today: stri
     }
     out.push({ key: t.key, label: t.label, market, homeId, where, whereKind, listingId, assignees: a.got, missingPeople: a.miss, existing })
   }
-  return { week, today, targets: out }
+  // Every Exterior-looking property Breezeway has, so a building whose exterior is named oddly can be matched.
+  const exteriors = allProps.filter(p => /exterior|common|building|grounds/i.test(str(p.name))).map(p => str(p.name) + ' #' + p.home_id + (p.status ? ' (' + p.status + ')' : ''))
+  return { week, today, targets: out, exteriors }
 }
 
 export async function runWalkthroughs(opts: { dryRun?: boolean } = {}) {
