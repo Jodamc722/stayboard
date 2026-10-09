@@ -27,7 +27,7 @@ import { getStaff } from '@/lib/staffing'
 import { buildReviewQueue, niceDate } from '@/lib/review-queue'
 import { maintData } from '@/lib/maint-brief'
 import { blockedUnits } from '@/lib/blocked-units'
-import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, dayShape, footer, fit, pill, cleanTitle, unitShort, personName, tiles, type Line } from './ui'
+import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, dayShape, footer, fit, pill, cleanTitle, unitShort, personName, tiles, person, type Line } from './ui'
 import { buildDirection, type DayDirection } from './direction'
 import type { Built } from './field-run'
 
@@ -204,29 +204,7 @@ export async function buildOpsDesk(): Promise<Built> {
   // Each line is a person or a door, not a paragraph: who is on, what they are on, who is coming
   // in, what is empty, what is being looked at.
 
-  // WHO IS WORKING, AND WHAT THEY ARE ON. Cleans and everything else, by the person a task is
-  // credited to, busiest first. Done is struck through so a glance separates what is left.
-  const byPerson = new Map<string, { units: string[]; done: number; other: { unit: string; task: string }[] }>()
-  const bump = (name: string) => { if (!byPerson.has(name)) byPerson.set(name, { units: [], done: 0, other: [] }); return byPerson.get(name)! }
-  for (const c of cleans) {
-    if (/UNASSIGNED/.test(c.assignee)) continue
-    const e = bump(c.lead || c.assignee)
-    e.units.push(unitShort(c.unit) + (c.state === 'done' ? '' : c.sameDayArrival ? ' ⚡' : ''))
-    if (c.state === 'done') e.done++
-  }
-  for (const o of other) {
-    if (/UNASSIGNED/.test(o.assignee) || o.state === 'done') continue
-    bump(o.lead || o.assignee).other.push({ unit: unitShort(o.unit), task: cleanTitle(o.task) })
-  }
-  const crewLines: Line[] = Array.from(byPerson.entries())
-    .sort((a, b) => (b[1].units.length + b[1].other.length) - (a[1].units.length + a[1].other.length))
-    .map(([name, e]) => ({
-      tone: 'none' as const,
-      html: `<b>${esc(personName(name))}</b> <span style="${T.muted}">${e.units.length ? `${e.units.length} clean${e.units.length === 1 ? '' : 's'}${e.done ? `, ${e.done} done` : ''}` : ''}${e.units.length && e.other.length ? ' · ' : ''}${e.other.length ? `${e.other.length} other` : ''}</span>`,
-      sub: [e.units.length ? esc(e.units.join(', ')) : '', e.other.length ? e.other.slice(0, 4).map(x => esc(x.unit + ' — ' + x.task)).join(' · ') + (e.other.length > 4 ? ` +${e.other.length - 4}` : '') : ''].filter(Boolean).join('<br>'),
-    }))
-  if (unassigned.length) crewLines.unshift({ tone: 'red', html: `<b>Nobody assigned</b> — ${unassigned.length} clean${unassigned.length === 1 ? '' : 's'}`, sub: esc(unassigned.map(c => unitShort(c.unit)).join(', ')) })
-  for (const sft of idle.slice(0, 4)) crewLines.push({ tone: 'amber', html: `<b>${esc(personName(str(sft.name)))}</b> <span style="${T.muted}">on shift, nothing on the board</span>`, sub: 'Give them a unit or send them home.' })
+  // (WHO IS WORKING moved up into the Housekeeping / Maintenance cards below — 2026-10-09.)
 
   // ARRIVALS — who is landing, when, and whether anyone has heard about them.
   const arrTime = (a: any) => str(a.checkInTime) || '—'
@@ -257,6 +235,74 @@ export async function buildOpsDesk(): Promise<Built> {
     html: `<b>${esc(unitShort(o.unit))}</b> ${esc(cleanTitle(o.task))} <span style="${T.muted}">${/UNASSIGNED/.test(o.assignee) ? 'nobody assigned' : esc(personName(o.lead || o.assignee))}${o.state === 'done' ? ' · done' : o.state === 'running' ? ' · under way' : ''}</span>`,
   }))
 
+  // ---- SUPERVISORS FIRST (Jon, 2026-10-09: "supervisors at the top should show top priorities — big
+  // reservations, glitches, VIP arrivals … organized in a way that's usable"). Every big or VIP arrival
+  // today with what its unit needs: is the clean done, who has it, when the guest lands.
+  const flags: Record<string, { long: boolean; big: boolean; owner: boolean; total: number; nights: number }> = (d as any).todayFlags || {}
+  const cleanOf: Record<string, typeof cleans[number]> = {}
+  for (const c of cleans) cleanOf[c.lid] = c
+  const landsAt = (a: any) => str(a?.checkInTime) || '4:00 PM'
+  const vipKind = (a: any): string[] => {
+    const lid = str(a.listingId), f = flags[lid]
+    const k: string[] = []
+    if (f?.owner || /owner booking/i.test(str(a.ownerFlag))) k.push(pill('OWNER', 'blue'))
+    if (/\bvip\b/i.test(str(a.notes))) k.push(pill('VIP', 'amber'))
+    if (f?.big) k.push(pill('BIG $' + (f.total ? ' · ' + money0(f.total) : ''), 'amber'))
+    if (f?.long) k.push(pill(`LONG · ${f.nights}N`, 'amber'))
+    return k
+  }
+  const vipArr = arrivals.filter(a => vipKind(a).length).sort((a, b) => landsAt(a).localeCompare(landsAt(b)))
+  const vipLines: Line[] = vipArr.map(a => {
+    const lid = str(a.listingId), c = cleanOf[lid]
+    const ready = c ? (c.state === 'done' ? `<span style="${T.green}">clean done</span>` : `clean ${c.state === 'running' ? 'in progress' : 'not started'} — <b>${esc(/UNASSIGNED/.test(c.assignee) ? 'nobody assigned' : c.assignee.split(',').map(x => first(x)).join(', '))}</b>`) : 'no clean today — walk it before they land'
+    return { tone: c && c.state !== 'done' ? (/UNASSIGNED/.test(c.assignee) ? 'red' : 'amber') : 'green', html: `${vipKind(a).join(' ')} <b>${esc(unitShort(str(a.unit)))}</b> — ${esc(first(a.guest))}${a.nights ? ` · ${a.nights} nights` : ''} · lands ${esc(landsAt(a))}`, sub: ready + (a.notes ? ` · <span style="${T.muted}">${esc(String(a.notes).replace(/\s+/g, ' ').slice(0, 90))}</span>` : '') }
+  })
+
+  // ---- WHO'S WORKING (Jon, 2026-10-09: "organize who's working, their cleans, their same-day turns,
+  // basically their schedule — break it out housekeeping and maintenance"). One block per person:
+  // their shift, then their cleans (same-day turns first, with when the guest lands), then their other
+  // jobs. Housekeeping and maintenance are separate cards; nobody-assigned work leads each card.
+  type Day = { name: string; dept: string; cleans: typeof cleans; tasks: typeof other }
+  const people: Record<string, Day> = {}
+  const deptOf = (n: string, fallback: string) => { const dd = str(((d as any).deptOfPerson || {})[n]); return /maint/i.test(dd) ? 'maintenance' : /clean|house/i.test(dd) ? 'housekeeping' : fallback }
+  const add = (n: string, fallback: string): Day => (people[n] = people[n] || { name: n, dept: deptOf(n, fallback), cleans: [], tasks: [] })
+  const unCleans = cleans.filter(c => /UNASSIGNED/.test(c.assignee))
+  const unTasks = other.filter(o => /UNASSIGNED/.test(o.assignee) && o.state !== 'done')
+  for (const c of cleans) if (!/UNASSIGNED/.test(c.assignee)) for (const n of c.assignee.split(',').map(x => x.trim()).filter(Boolean)) add(n, 'housekeeping').cleans.push(c)
+  for (const o of other) if (!/UNASSIGNED/.test(o.assignee)) for (const n of o.assignee.split(',').map(x => x.trim()).filter(Boolean)) add(n, o.dept === 'maintenance' ? 'maintenance' : 'housekeeping').tasks.push(o)
+  // Somebody holding cleans is on the housekeeping card today, whatever their usual crew.
+  for (const p of Object.values(people)) if (p.cleans.length) p.dept = 'housekeeping'
+  const shiftLabel = (n: string) => { const sh = ((shifts || []) as any[]).find(x => !x.open && nameMatches(str(x.name), n)); return sh ? str(sh.label || '') : '' }
+  const stateTxt = (st: string) => st === 'done' ? `<span style="${T.green}">✓ done</span>` : st === 'running' ? `<span style="${T.amber}">in progress</span>` : `<span style="${T.muted}">not started</span>`
+  const cleanRow = (c: typeof cleans[number]) => {
+    const a = arrivals.find(x => str(x.listingId) === c.lid)
+    const vip = a ? vipKind(a) : []
+    return `${c.sameDayArrival ? pill('SAME-DAY · lands ' + landsAt(a), 'red') + ' ' : ''}<b>${esc(unitShort(c.unit))}</b>${vip.length ? ' ' + vip.join(' ') : ''} — ${c.sameDayArrival ? 'turn' : 'departure clean'} · ${stateTxt(c.state)}`
+  }
+  const taskRow = (o: typeof other[number]) => `<b>${esc(unitShort(o.unit))}</b> — ${esc(cleanTitle(o.task))} · ${stateTxt(o.state)}`
+  const card = (dept: 'housekeeping' | 'maintenance'): { html: string; n: number } => {
+    const crew = Object.values(people).filter(p => p.dept === dept)
+      .sort((a, b) => b.cleans.filter(c => c.sameDayArrival).length - a.cleans.filter(c => c.sameDayArrival).length || (b.cleans.length + b.tasks.length) - (a.cleans.length + a.tasks.length) || a.name.localeCompare(b.name))
+    const blocks: string[] = []
+    const unC = dept === 'housekeeping' ? unCleans : []
+    const unT = unTasks.filter(o => (o.dept === 'maintenance') === (dept === 'maintenance'))
+    if (unC.length || unT.length) blocks.push(person('Nobody assigned', `${unC.length ? unC.length + ' clean' + (unC.length === 1 ? '' : 's') : ''}${unC.length && unT.length ? ' · ' : ''}${unT.length ? unT.length + ' job' + (unT.length === 1 ? '' : 's') : ''} — put a name on these first`, unC.sort((a, b) => Number(b.sameDayArrival) - Number(a.sameDayArrival)).map(cleanRow), unT.map(taskRow), { bulletCap: 6, tone: 'red' }))
+    for (const p of crew) {
+      const sd = p.cleans.filter(c => c.sameDayArrival)
+      const ordered = p.cleans.slice().sort((a, b) => Number(b.sameDayArrival) - Number(a.sameDayArrival) || a.unit.localeCompare(b.unit))
+      const sh = shiftLabel(p.name)
+      const meta = [sh ? esc(sh) : '<span style="color:#b45309">not on the schedule</span>', p.cleans.length ? `${p.cleans.length} clean${p.cleans.length === 1 ? '' : 's'}` : '', sd.length ? `<b style="${T.red}">${sd.length} same-day</b>` : '', p.tasks.length ? `${p.tasks.length} other job${p.tasks.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')
+      const numbered = dept === 'housekeeping' ? ordered.slice(0, 10).map(cleanRow) : p.tasks.slice().sort((a, b) => Number(a.state === 'done') - Number(b.state === 'done')).slice(0, 10).map(taskRow)
+      const bullets = dept === 'housekeeping' ? p.tasks.map(taskRow) : []
+      blocks.push(person(personName(p.name), meta, numbered, bullets, { bulletCap: 4, tone: sd.some(c => c.state === 'not_started') ? 'red' : 'none' }))
+    }
+    // On the clock with nothing on the board — named once, on the card of their usual crew.
+    const idleHere = idle.filter(s => deptOf(str(s.name), 'housekeeping') === dept)
+    if (idleHere.length) blocks.push(`<p style="margin:10px 0 0;font-size:12.5px;${T.amber}">On shift with nothing assigned: ${idleHere.map(s => esc(personName(str(s.name))) + (s.label ? ` (${esc(str(s.label))})` : '')).join(', ')}</p>`)
+    return { html: blocks.join(''), n: crew.length }
+  }
+  const hk = card('housekeeping'), mt = card('maintenance')
+
   // ---- assemble ------------------------------------------------------------------------------
   const head = [
     `<b>${cleans.length}</b> cleans`, sameDay.length ? `<b style="${T.red}">${sameDay.length} by 4pm</b>` : '',
@@ -267,15 +313,19 @@ export async function buildOpsDesk(): Promise<Built> {
   const parts = [
     { html: masthead(A, 'Ops Command', 'Operations manager · all markets', niceDay(today)) },
     { html: headline(A, head + (blockedLine ? `<br><span style="font-size:12px;color:#6b7280">${blockedLine}</span>` : ''), [{ label: 'Today board', href: `${APP_URL}/command` }, { label: 'Boards', href: `${APP_URL}/day` }, { label: 'Glitches', href: `${APP_URL}/glitches` }, { label: 'Review tab', href: `${APP_URL}/plan?tab=review` }]) },
+    // SUPERVISORS: the three things that decide the day, in this order.
+    { html: section('Supervisors · big reservations & VIP arrivals', vipLines, { cap: 10, accent: A, note: vipLines.length ? 'Walk or check every one before the guest lands.' : undefined }) || block('Supervisors · big reservations & VIP arrivals', `<p style="margin:6px 0 0;font-size:13px;${T.muted}">No big, long or owner arrivals today.</p>`, A) },
+    { html: glLines.length ? section('Supervisors · glitches', glLines, { cap: 6, accent: A }) : '' },
+    { html: decideAll.length ? section('Supervisors · decide today — in order', decideAll, { cap: 8, accent: A, more: 'on the Today board' }) : block('Supervisors · decide today', `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">Nothing needs a decision.</span> <span style="${T.muted}">Every clean has a name and nobody is waiting on the desk.</span></p>`, A) },
+    // WHO'S WORKING: housekeeping, then maintenance — each person's schedule.
+    { html: block("Housekeeping · who's working", hk.html || `<p style="margin:6px 0 0;font-size:13px;${T.muted}">No housekeeping on the board today.</p>`, A, hk.n || null) },
+    { html: block("Maintenance · who's working", mt.html || `<p style="margin:6px 0 0;font-size:13px;${T.muted}">No maintenance jobs on the board today.</p>`, A, mt.n || null) },
     { html: healthHtml, optional: true },
-    { html: decideAll.length ? section('Decide today — in order', decideAll, { cap: 9, accent: A, more: 'on the Today board' }) : block('Decide today', `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">Nothing needs a decision.</span> <span style="${T.muted}">Every clean has a name and nobody is waiting on the desk.</span></p>`, A) },
-    { html: glLines.length ? section('Guest issues', glLines, { cap: 5, accent: A }) : '', optional: true },
     { html: loopLines.length ? section('Waiting on a person — from Slack', loopLines, { cap: 8, accent: A, note: loopsMore ? `${loopsMore} more on the Eve tab.` : undefined }) : '', optional: true },
-    { html: section('Markets at a glance', mkLines, { cap: 4, accent: A }) },
-    { html: dayShape(A, steps, 'Shape of the day') },
+    { html: section('Markets at a glance', mkLines, { cap: 4, accent: A }), optional: true },
+    { html: dayShape(A, steps, 'Shape of the day'), optional: true },
     // The day itself, under the decisions: who is on it, who is coming, what is empty, what is
     // being looked at. Capped generously — a manager who wants the whole list came here for it.
-    { html: crewLines.length ? section('Who is working — and what each person is on', crewLines, { cap: 24, accent: A, more: 'on the Field Runs' }) : '' },
     { html: arrivalLines.length ? section('Arrivals today', arrivalLines, { cap: 24, accent: A, more: `on the <a href="${APP_URL}/day" style="color:${A.ink}">boards</a>`, note: departures.length ? `${departures.length} checkout${departures.length === 1 ? '' : 's'} today${sameDay.length ? ` · ${sameDay.length} same-day turn${sameDay.length === 1 ? '' : 's'}` : ''}.` : undefined }) : '', optional: true },
     { html: vacantLines.length ? section('Vacant tonight', vacantLines, { cap: 20, accent: A, note: 'Empty doors are where PM, deep cleans and audits go.' }) : '', optional: true },
     { html: inspectionLines.length ? section('Inspections today', inspectionLines, { cap: 14, accent: A }) : '', optional: true },
