@@ -43,7 +43,13 @@ async function opsFacts(money: boolean): Promise<Fact[]> {
   const out: Fact[] = []
   const t = k?.today || {}, rv = k?.revenue || {}, wk = k?.work || {}, se = k?.sentiment || {}
   if (t.units) out.push({ key: 'occTonight', kpi: true, label: 'Occupancy tonight', value: Math.round(t.occupancy) + '%', sub: t.inHouse + ' stays in house · ' + t.units + ' units', href: '/', tone: t.occupancy >= 75 ? 'emerald' : t.occupancy >= 55 ? 'sky' : 'amber' })
-  if (t.cleansScheduled || t.departures) out.push({ key: 'turnToday', kpi: true, label: 'Today’s turnover', value: (t.cleansDone || 0) + ' / ' + (t.cleansScheduled || 0) + ' cleans', sub: (t.departures || 0) + ' out · ' + (t.arrivals || 0) + ' in · ' + (t.sameDayTurns || 0) + ' same-day turns', href: '/schedule', tone: 'sky' })
+  // Today's cleans straight from the Breezeway mirror — the KPI window above ends yesterday.
+  let cs = 0, cd = 0
+  try {
+    const { data } = await supabaseAdmin().from('breezeway_tasks_sync').select('name,type_department,status,finished_at').eq('scheduled_date', today).limit(2000)
+    for (const x of (data || []) as any[]) if (kindOfTask(x) === 'clean') { cs++; if (x.finished_at || /finish|complete|approved|closed/i.test(String(x.status || ''))) cd++ }
+  } catch { /* the guest counts still show */ }
+  if (cs || t.departures) out.push({ key: 'turnToday', kpi: true, label: 'Today’s turnover', value: cd + ' / ' + cs + ' cleans', sub: (t.departures || 0) + ' out · ' + (t.arrivals || 0) + ' in · ' + (t.sameDayTurns || 0) + ' same-day turns', href: '/schedule', tone: 'sky' })
   if (rv.available) out.push({ key: 'occ7', kpi: true, label: 'Occupancy · last 7 days', value: rv.occupancy + '%', sub: arrow(rv.occupancyPrev != null ? Math.round((rv.occupancy - rv.occupancyPrev) * 10) / 10 : null, ' pts') || rv.nights + ' nights sold', href: '/revenue', tone: rv.occupancy >= 70 ? 'emerald' : rv.occupancy >= 55 ? 'sky' : 'amber' })
   if (money && rv.adr) out.push({ key: 'adr7', kpi: true, label: 'ADR · RevPAR · last 7 days', value: '$' + Math.round(rv.adr) + ' · $' + Math.round(rv.revpar), sub: arrow(pctChg(rv.adr, rv.adrPrev)) ? 'ADR ' + arrow(pctChg(rv.adr, rv.adrPrev)) : 'room revenue per night sold · per night available', href: '/revenue', tone: 'slate' })
   if (t.arrivals7) out.push({ key: 'arr7', kpi: true, label: 'Arrivals · next 7 days', value: String(t.arrivals7), sub: money && t.booked7 ? '$' + Math.round(t.booked7).toLocaleString('en-US') + ' booked' : 'stays starting this week', href: '/reservations', tone: 'sky' })
