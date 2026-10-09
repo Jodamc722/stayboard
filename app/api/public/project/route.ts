@@ -27,7 +27,11 @@ function vendorView(p: any) {
     starts_on: p.starts_on, due_on: p.due_on,
     building: p.building, vendor_name: p.vendor_name,
     units: (p.links || []).filter((l: any) => l.kind === 'listing').map((l: any) => ({ ref_id: l.ref_id, label: l.label, done: l.done })),
-    steps: (p.steps || []).map((s: any) => ({ id: s.id, title: s.title, done: s.done, due_on: s.due_on, assignee: s.assignee || null, addedByShare: !!s.via_share })),
+    // GROUPED BY UNIT (Jon, 2026-10-09: "can you help me organize this"). Fourteen jobs across six
+    // units read as one undifferentiated list; the section each task already carries is what turns
+    // it back into six short lists. The owner's add form writes the section too, so what they add
+    // lands under the unit rather than at the bottom of everything.
+    steps: (p.steps || []).map((s: any) => ({ id: s.id, title: s.title, done: s.done, due_on: s.due_on, section: s.section || null, note: s.description || null, assignee: s.assignee || null, addedByShare: !!s.via_share })),
     canEdit: shareCanEdit(p),
     photos: (p.photos || []).map((x: any) => ({ id: x.id, url: x.url, caption: x.caption, phase: x.phase, created_at: x.created_at })),
     // Only the conversation the vendor is part of — internal comments stay internal.
@@ -68,6 +72,7 @@ export async function POST(req: NextRequest) {
       const { error } = await supabaseAdmin().from('project_steps').insert({
         project_id: p.id, title: title.slice(0, 200), done: false,
         due_on: /^\d{4}-\d{2}-\d{2}$/.test(str(b.due_on)) ? str(b.due_on) : null,
+        section: str(b.section).slice(0, 80) || null,
         assignee: who.slice(0, 60), via_share: true, sort: Date.now(),
       })
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })

@@ -20,7 +20,7 @@ type V = {
   stage: string; category: string; starts_on: string | null; due_on: string | null
   building: string | null; vendor_name: string | null
   units: { ref_id: string; label: string | null; done: boolean }[]
-  steps: { id: string; title: string; done: boolean; due_on: string | null; assignee?: string | null; addedByShare?: boolean }[]
+  steps: { id: string; title: string; done: boolean; due_on: string | null; section?: string | null; note?: string | null; assignee?: string | null; addedByShare?: boolean }[]
   canEdit?: boolean
   photos: { id: string; url: string; caption: string | null; phase: string; created_at: string }[]
   notes: { body: string; author: string | null; created_at: string }[]
@@ -30,6 +30,32 @@ type V = {
 const day = (iso: string | null) =>
   !iso ? null : new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 
+// ORGANISED BY UNIT. A board that covers twenty-three units collects work from all of them, and a
+// single running list hides which flat a job belongs to. Tasks keep the order they were given in;
+// only the grouping is imposed. Anything with no unit on it falls to the end under its own
+// heading rather than being hidden or guessed at.
+function groupSteps(steps: V['steps']) {
+  const order: string[] = []
+  const by: Record<string, V['steps']> = {}
+  for (const s of steps) {
+    const k = (s.section || '').trim() || '\u0000'
+    if (!by[k]) { by[k] = []; order.push(k) }
+    by[k].push(s)
+  }
+  const loose = order.filter(k => k === '\u0000')
+  const named = order.filter(k => k !== '\u0000')
+  return [...named, ...loose].map(k => ({ key: k, name: k === '\u0000' ? (named.length ? 'Everything else' : '') : k, rows: by[k] }))
+}
+
+// The unit picker offers the sections already in use plus every unit on the board, so an owner
+// adding a second job to 1404 files it under the same heading rather than a near-miss spelling.
+function unitNames(p: V) {
+  const out: string[] = []
+  for (const s of p.steps) { const n = (s.section || '').trim(); if (n && !out.includes(n)) out.push(n) }
+  for (const u of p.units) { const n = (u.label || '').trim(); if (n && !out.includes(n)) out.push(n) }
+  return out
+}
+
 export default function VendorProjectPage({ params }: { params: { token: string } }) {
   const token = params.token
   const [p, setP] = useState<V | null>(null)
@@ -37,6 +63,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   const [busy, setBusy] = useState<string | null>(null)
   const [note, setNote] = useState('')
   const [task, setTask] = useState('')
+  const [taskUnit, setTaskUnit] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
   // The passcode and the name live in this browser, not in the URL — a link pasted into a chat
   // should not carry the code that unlocks it.
@@ -166,23 +193,45 @@ export default function VendorProjectPage({ params }: { params: { token: string 
           <section className="rounded-2xl border border-line bg-white overflow-hidden">
             <h2 className="text-[12px] font-bold text-ink px-3 py-2 border-b border-line">What needs doing</h2>
             <div className="divide-y divide-line">
-              {p.steps.map(s => (
-                <label key={s.id} className={'flex items-center gap-2.5 px-3 py-2.5 text-[14px] cursor-pointer ' + (s.done ? 'bg-emerald-50/40' : 'hover:bg-app')}>
-                  <input type="checkbox" checked={s.done} disabled={busy === 'step' + s.id}
-                    onChange={e => post({ action: 'stepDone', stepId: s.id, done: e.target.checked }, 'step' + s.id)}
-                    className="w-4 h-4 shrink-0" />
-                  <span className={s.done ? 'line-through text-muted' : 'text-ink'}>{s.title}</span>
-                  {s.addedByShare && <span className="text-[10px] uppercase tracking-wide text-muted shrink-0">yours</span>}
-                  {s.due_on && <span className="ml-auto text-[11px] text-muted shrink-0">{day(s.due_on)}</span>}
-                </label>
+              {groupSteps(p.steps).map(g => (
+                <div key={g.key}>
+                  {g.name && (
+                    <div className="flex items-baseline gap-2 px-3 pt-3 pb-1.5 bg-app/60">
+                      <h3 className="text-[12px] font-bold text-ink">{g.name}</h3>
+                      <span className="text-[11px] text-muted tabular-nums">{g.rows.filter(s => s.done).length}/{g.rows.length}</span>
+                    </div>
+                  )}
+                  <div className="divide-y divide-line">
+                    {g.rows.map(s => (
+                      <label key={s.id} className={'flex items-start gap-2.5 px-3 py-2.5 text-[14px] cursor-pointer ' + (s.done ? 'bg-emerald-50/40' : 'hover:bg-app')}>
+                        <input type="checkbox" checked={s.done} disabled={busy === 'step' + s.id}
+                          onChange={e => post({ action: 'stepDone', stepId: s.id, done: e.target.checked }, 'step' + s.id)}
+                          className="w-4 h-4 shrink-0 mt-0.5" />
+                        <span className="min-w-0 flex-1">
+                          <span className={s.done ? 'line-through text-muted' : 'text-ink'}>{s.title}</span>
+                          {s.addedByShare && <span className="ml-2 text-[10px] uppercase tracking-wide text-muted">yours</span>}
+                          {s.note && <span className="block text-[12px] text-muted mt-0.5">{s.note}</span>}
+                        </span>
+                        {s.due_on && <span className="text-[11px] text-muted shrink-0 mt-0.5">{day(s.due_on)}</span>}
+                      </label>
+                    ))}
+                  </div>
+                </div>
               ))}
               {!p.steps.length && <p className="px-3 py-3 text-[13px] text-muted">Nothing on the list yet.</p>}
             </div>
             {p.canEdit && (
-              <form onSubmit={e => { e.preventDefault(); if (task.trim()) { post({ action: 'addTask', title: task }, 'addTask'); setTask('') } }}
-                className="flex gap-2 border-t border-line p-2.5">
+              <form onSubmit={e => { e.preventDefault(); if (task.trim()) { post({ action: 'addTask', title: task, section: taskUnit || null }, 'addTask'); setTask('') } }}
+                className="flex flex-wrap gap-2 border-t border-line p-2.5">
                 <input value={task} onChange={e => setTask(e.target.value)} placeholder="Add something that needs doing…"
-                  className="flex-1 text-[14px] rounded-xl border border-line px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                  className="flex-1 min-w-[180px] text-[14px] rounded-xl border border-line px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                {/* WHICH UNIT (2026-10-09). A job with no unit on it is a job somebody has to come
+                    back and ask about, so the form asks while the person still knows the answer. */}
+                <select value={taskUnit} onChange={e => setTaskUnit(e.target.value)}
+                  className="text-[14px] rounded-xl border border-line px-2 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200">
+                  <option value="">Which unit?</option>
+                  {unitNames(p).map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
                 <button disabled={!task.trim() || busy === 'addTask'} className="text-[14px] font-semibold px-3 rounded-xl bg-ink text-white disabled:opacity-40 inline-flex items-center gap-1">
                   {busy === 'addTask' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={15} />} Add
                 </button>
