@@ -85,16 +85,6 @@ export async function POST(req: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
     await addNote(projectId, `Photo added${caption ? ' — ' + caption : ''} (${phase}) by ${uploader}.`, uploader, 'event', viaShare, { taskId: taskId || null })
-    // A photo from the link is somebody outside showing us something. Leadership sees it live.
-    if (viaShare) {
-      const { tellLeadership } = await import('@/lib/project-board-feed')
-      let title: string | null = null
-      if (taskId) {
-        const { data: st } = await sb.from('project_steps').select('title').eq('id', taskId).maybeSingle()
-        title = String((st as any)?.title || '') || null
-      }
-      await tellLeadership(projectId, uploader, { kind: 'photo', task: title })
-    }
     return NextResponse.json({ ok: true, photo: data })
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message || e).slice(0, 300) }, { status: 500 })

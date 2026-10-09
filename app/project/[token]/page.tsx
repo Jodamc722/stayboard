@@ -126,6 +126,12 @@ const UI: Record<string, { en: string; es: string }> = {
   today: { en: 'Today', es: 'Hoy' },
   tomorrow: { en: 'Tomorrow', es: 'Mañana' },
   noDate: { en: 'No date', es: 'Sin fecha' },
+  addTask: { en: 'Add a task', es: 'Añadir una tarea' },
+  stepsLabel: { en: 'Steps', es: 'Pasos' },
+  stepsHint: { en: 'One per line', es: 'Uno por línea' },
+  photoLabel: { en: 'Photo', es: 'Foto' },
+  choosePhoto: { en: 'Add a photo', es: 'Añadir una foto' },
+  saving: { en: 'Saving…', es: 'Guardando…' },
 }
 
 /** Today in New York, which is where the work is. */
@@ -189,6 +195,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   const [taskUnit, setTaskUnit] = useState('')
   const [taskDesc, setTaskDesc] = useState('')
   const [adding, setAdding] = useState(false)
+  const [naming, setNaming] = useState(false)
   const [openTask, setOpenTask] = useState<string | null>(null)
   const [lang, setLang] = useState<Lang>('en')
   // original → translation, for the language currently chosen. Cleared when the language flips,
@@ -240,14 +247,15 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   }
   const saveWho = (name: string) => { setWho(name); try { localStorage.setItem(KEY, JSON.stringify({ pass, who: name, lang })) } catch { /* fine */ } }
 
-  const post = async (body: any, key: string) => {
+  const post = async (body: any, key: string): Promise<any> => {
     setBusy(key); setErr(null)
     try {
       const r = await fetch('/api/public/project', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, pass, who, ...body }) })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || 'Could not save.')
       if (j.project) setP(j.project)
-    } catch (e: any) { setErr(String(e.message || e)) } finally { setBusy(null) }
+      return j
+    } catch (e: any) { setErr(String(e.message || e)); return null } finally { setBusy(null) }
   }
 
   const upload = async (f: File, taskId?: string) => {
@@ -387,24 +395,44 @@ export default function VendorProjectPage({ params }: { params: { token: string 
       <div className="max-w-2xl mx-auto px-4 py-5 space-y-4">
         {err && <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-800">{err}</p>}
 
-        {p.canEdit && (
-          <section className="rounded-2xl border border-line bg-white p-3">
+        {/* WHO ARE YOU is a question asked once, not a permanent field. Answered, it shrinks to
+            a line you can click to change — a full card at the top of every visit, repeating a
+            question you already answered, is the kind of furniture that makes a page feel long. */}
+        {p.canEdit && (who && !naming ? (
+          <button onClick={() => setNaming(true)} className="flex items-center gap-2 px-1 text-[12px] text-muted hover:text-ink">
+            <span className="w-5 h-5 rounded-full bg-ink text-white grid place-items-center text-[9px] font-bold">{initials(who)}</span>
+            {who}<span className="text-muted/60">· {lang === 'es' ? 'cambiar' : 'change'}</span>
+          </button>
+        ) : (
+          <section className="rounded-2xl border border-line bg-white p-3 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
             <label className="block text-[12px] font-bold text-ink mb-1.5">{T('whoAreYou')}</label>
-            <input value={who} onChange={e => saveWho(e.target.value)} placeholder={T('yourName')}
+            <input value={who} autoFocus={naming} onChange={e => saveWho(e.target.value)} onBlur={() => setNaming(false)}
+              onKeyDown={e => { if (e.key === 'Enter') setNaming(false) }} placeholder={T('yourName')}
               className="w-full text-[14px] rounded-xl border border-line px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
           </section>
-        )}
+        ))}
 
         {(!!p.steps.length || p.canEdit) && (
-          <section className="rounded-2xl border border-line bg-white overflow-hidden">
-            <h2 className="text-[12px] font-bold text-ink px-3 py-2 border-b border-line">{T('needsDoing')}</h2>
+          <section className="rounded-2xl border border-line bg-white overflow-hidden shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
+            {/* THE BUTTON IS AT THE TOP (Jon, 2026-10-09). At the bottom of fourteen jobs it was
+                a scroll away on a phone and read as the end of the list rather than the way to
+                add to it. */}
+            <div className="flex items-center gap-2 px-3 py-2.5 border-b border-line">
+              <h2 className="text-[12px] font-bold text-ink flex-1">{T('needsDoing')}</h2>
+              {p.canEdit && (
+                <button onClick={() => setAdding(true)}
+                  className="text-[12.5px] font-semibold rounded-lg bg-ink text-white px-2.5 py-1.5 inline-flex items-center gap-1 hover:opacity-90">
+                  <Plus size={14} /> {T('addTask')}
+                </button>
+              )}
+            </div>
             <div className="divide-y divide-line">
               {groupSteps(p.steps, T('everythingElse')).map(g => (
                 <div key={g.key}>
                   {g.name && (
                     <div className="sticky top-0 z-10 flex items-baseline gap-2 px-3 pt-2.5 pb-1.5 bg-app/95 backdrop-blur border-b border-line/60">
-                      <h3 className="text-[12px] font-bold text-ink">{TX(g.name)}</h3>
-                      <span className="text-[11px] text-muted tabular-nums">{g.rows.filter(s => s.done).length}/{g.rows.length}</span>
+                      <h3 className="text-[11.5px] font-bold uppercase tracking-wide text-ink/80">{TX(g.name)}</h3>
+                      <span className="text-[11px] text-muted tabular-nums ml-auto">{g.rows.filter(s => s.done).length}/{g.rows.length}</span>
                     </div>
                   )}
                   <div className="divide-y divide-line">
@@ -449,25 +477,14 @@ export default function VendorProjectPage({ params }: { params: { token: string 
               ))}
               {!p.steps.length && <p className="px-3 py-3 text-[13px] text-muted">{T('nothingYet')}</p>}
             </div>
-            {/* ONE BUTTON, THEN A FORM (Jon, 2026-10-09: "make this a button + then allows to add").
-                Three controls jammed into a strip under the list was the board's worst corner —
-                the title box too narrow to read what you typed, the dropdown shouting "Which
-                unit?" at somebody who had not written anything yet, and no room at all for the
-                detail. Now the row is a button, and the form it opens has the fields in the order
-                Jon asked for: title, what it is, unit, then everything else. */}
-            {p.canEdit && (
-              <button onClick={() => setAdding(true)}
-                className="w-full border-t border-line px-3 py-3 text-[13.5px] font-semibold text-ink hover:bg-app inline-flex items-center justify-center gap-1.5">
-                <Plus size={15} /> {T('addOne')}
-              </button>
-            )}
+
           </section>
         )}
 
         {/* BOARDS HANGING OFF THIS ONE. A project raised here is a line, not a nested board:
             the work lives on its own board and this one says it exists. */}
         {!!p.boards?.length && (
-          <section className="rounded-2xl border border-line bg-white overflow-hidden">
+          <section className="rounded-2xl border border-line bg-white overflow-hidden shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
             <h2 className="text-[12px] font-bold text-ink px-3 py-2 border-b border-line">{T('projects')}</h2>
             <div className="divide-y divide-line">
               {p.boards.map(bd => (
@@ -484,7 +501,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
         {/* THE UNITS, as a grid of chips rather than twenty-three rows in a scroller — the list
             was taller than the work it belonged to and still needed scrolling to read. */}
         {!!p.units.length && (
-          <section className="rounded-2xl border border-line bg-white p-3">
+          <section className="rounded-2xl border border-line bg-white p-3 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
             <h2 className="text-[12px] font-bold text-ink mb-2">{T('units')} ({p.units.length})</h2>
             <div className="flex flex-wrap gap-1.5">
               {p.units.map(u => (
@@ -503,7 +520,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
             appear here, so an empty section means nothing has been let out, never that nobody
             walked the unit. */}
         {!!p.inspections?.length && (
-          <section className="rounded-2xl border border-line bg-white overflow-hidden">
+          <section className="rounded-2xl border border-line bg-white overflow-hidden shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
             <h2 className="text-[12px] font-bold text-ink px-3 py-2 border-b border-line">{T('inspections')}</h2>
             <div className="divide-y divide-line">
               {p.inspections.map(i => (
@@ -523,12 +540,12 @@ export default function VendorProjectPage({ params }: { params: { token: string 
           </section>
         )}
 
-        <section className="rounded-2xl border border-line bg-white p-3">
+        <section className="rounded-2xl border border-line bg-white p-3 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
           <h2 className="text-[12px] font-bold text-ink mb-2">{T('photos')}</h2>
           <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden
             onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = '' }} />
           <button onClick={() => fileRef.current?.click()} disabled={busy === 'photo'}
-            className="w-full rounded-xl bg-ink text-white text-[14px] font-semibold py-3 inline-flex items-center justify-center gap-2 disabled:opacity-50">
+            className="w-full rounded-xl border border-line text-ink text-[13.5px] font-semibold py-2.5 inline-flex items-center justify-center gap-2 hover:bg-app disabled:opacity-50">
             {busy === 'photo' ? <Loader2 size={15} className="animate-spin" /> : <Camera size={16} />} {T('takePhoto')}
           </button>
           {!!p.photos.length && (
@@ -542,7 +559,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
           )}
         </section>
 
-        <section className="rounded-2xl border border-line bg-white p-3">
+        <section className="rounded-2xl border border-line bg-white p-3 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
           <h2 className="text-[12px] font-bold text-ink mb-2">{T('messages')}</h2>
           <form onSubmit={e => { e.preventDefault(); if (note.trim()) { post({ action: 'note', body: note }, 'note'); setNote('') } }} className="flex gap-2">
             <input value={note} onChange={e => setNote(e.target.value)} placeholder={T('updateTeam')}
@@ -566,7 +583,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
       </div>
 
       {adding && (
-        <AddSheet p={p} busy={busy} T={T} post={post} onClose={() => setAdding(false)} />
+        <AddSheet p={p} busy={busy} T={T} post={post} upload={upload} onClose={() => setAdding(false)} />
       )}
 
       {openTask && (() => {
@@ -602,18 +619,22 @@ function Chips({ s, T }: { s: Step; T: (k: string) => string }) {
  * own and shows here as a line — because the alternative, a task that grows six checklists and
  * still is not a project, is how a board stops being readable.
  */
-function AddSheet({ p, busy, T, post, onClose }: {
+function AddSheet({ p, busy, T, post, upload, onClose }: {
   p: V; busy: string | null; T: (k: string) => string
-  post: (body: any, key: string) => Promise<void>
+  post: (body: any, key: string) => Promise<any>
+  upload: (f: File, taskId?: string) => Promise<void>
   onClose: () => void
 }) {
-  const [kind, setKind] = useState<'task' | 'project'>('task')
   const [title, setTitle] = useState('')
   const [unit, setUnit] = useState('')
   const [desc, setDesc] = useState('')
+  const [steps, setSteps] = useState('')
   const [due, setDue] = useState('')
   const [who, setWho] = useState<string[]>([])
+  const [photo, setPhoto] = useState<File | null>(null)
+  const [saving, setSaving] = useState(false)
   const ref = useRef<HTMLInputElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     ref.current?.focus()
@@ -626,14 +647,23 @@ function AddSheet({ p, busy, T, post, onClose }: {
 
   const save = async () => {
     const t = title.trim()
-    if (!t) return
-    await post({ action: 'addTask', kind, title: t, section: unit || null, description: desc, due_on: due || null, assign: who }, 'addTask')
-    onClose()
+    if (!t || saving) return
+    setSaving(true)
+    const lines = steps.split('\n').map(x => x.trim()).filter(Boolean)
+    const j = await post({ action: 'addTask', title: t, section: unit || null, description: desc, due_on: due || null, assign: who, steps: lines }, 'addTask')
+    // The photo needs the job's id, so it goes up after — the one thing that cannot ride along
+    // with the write. If it fails the job is still there, which is the right way round.
+    if (j?.taskId && photo) await upload(photo, j.taskId)
+    setSaving(false)
+    if (j) onClose()
   }
 
-  const Field = ({ label, children }: { label: string; children: any }) => (
+  const L = ({ label, hint, children }: { label: string; hint?: string; children: any }) => (
     <label className="block">
-      <span className="block text-[10.5px] font-bold uppercase tracking-wide text-muted mb-1">{label}</span>
+      <span className="flex items-baseline gap-2 mb-1">
+        <span className="text-[10.5px] font-bold uppercase tracking-wide text-muted">{label}</span>
+        {hint && <span className="text-[10.5px] text-muted/70">{hint}</span>}
+      </span>
       {children}
     </label>
   )
@@ -641,48 +671,57 @@ function AddSheet({ p, busy, T, post, onClose }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center">
-      <div className="absolute inset-0 bg-ink/40" onClick={onClose} />
-      <div className="relative w-full sm:max-w-md max-h-[92vh] overflow-y-auto bg-white rounded-t-2xl sm:rounded-2xl border border-line">
+      <div className="absolute inset-0 bg-ink/40" onClick={() => !saving && onClose()} />
+      <div className="relative w-full sm:max-w-md max-h-[92vh] overflow-y-auto bg-white rounded-t-2xl sm:rounded-2xl border border-line shadow-2xl">
         <div className="sticky top-0 bg-white border-b border-line px-4 py-3 flex items-center gap-2">
           <Plus size={15} className="text-muted" />
-          <span className="text-[14px] font-bold text-ink flex-1">{T('addOne')}</span>
-          <button onClick={onClose} className="text-muted hover:text-ink p-1" aria-label="Close"><X size={17} /></button>
+          <span className="text-[14px] font-bold text-ink flex-1">{T('addTask')}</span>
+          <button onClick={onClose} disabled={saving} className="text-muted hover:text-ink p-1" aria-label="Close"><X size={17} /></button>
         </div>
 
         <div className="p-4 space-y-3.5">
-          <Field label={T('titleLabel')}>
-            <input ref={ref} value={title} onChange={e => setTitle(e.target.value)} placeholder={T('whatNeedsDoing')}
-              onKeyDown={e => { if (e.key === 'Enter') save() }}
-              className={box + ' text-[15px] font-semibold'} />
-          </Field>
+          <input ref={ref} value={title} onChange={e => setTitle(e.target.value)} placeholder={T('whatNeedsDoing')}
+            className="w-full text-[16px] font-semibold text-ink bg-transparent rounded-lg px-1 -mx-1 py-1 focus:outline-none focus:bg-app placeholder:text-muted/60" />
 
-          <Field label={T('whatKind')}>
-            <select value={kind} onChange={e => setKind(e.target.value as any)} className={box}>
-              <option value="task">{T('aTask')}</option>
-              <option value="project">{T('aProject')}</option>
-            </select>
-          </Field>
-
-          <Field label={T('unitLabel')}>
+          <L label={T('unitLabel')}>
             <select value={unit} onChange={e => setUnit(e.target.value)} className={box}>
               <option value="">{T('noUnit')}</option>
               {unitNames(p).map(u => <option key={u} value={u}>{u}</option>)}
             </select>
-          </Field>
+          </L>
 
-          <Field label={T('detailsLabel')}>
+          <L label={T('detailsLabel')}>
             <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder={T('details')}
               className={box + ' text-[13.5px]'} />
-          </Field>
+          </L>
 
-          <Field label={T('due')}>
-            <input type="date" value={due} onChange={e => setDue(e.target.value)} className={box} />
-          </Field>
+          {/* THE STEPS, typed as lines (Jon: "add descriptions and tasks to it"). Five steps are
+              five lines and four Returns — not five rounds of click, type, click Add. */}
+          <L label={T('stepsLabel')} hint={T('stepsHint')}>
+            <textarea value={steps} onChange={e => setSteps(e.target.value)} rows={3}
+              placeholder={'Buy the glass\nFit the door\nTouch up the paint'}
+              className={box + ' text-[13.5px]'} />
+          </L>
 
-          {/* Assigned at the moment it is written down, which is the only moment anybody actually
-              knows who should have it. A task added and assigned later is a task nobody owns. */}
-          {kind === 'task' && !!(p.team || []).length && (
-            <Field label={T('assignedTo')}>
+          <div className="flex flex-wrap gap-3">
+            <L label={T('due')}>
+              <input type="date" value={due} onChange={e => setDue(e.target.value)} className={box + ' min-w-[150px]'} />
+            </L>
+            <div className="flex-1 min-w-[150px]">
+              <L label={T('photoLabel')}>
+                <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden
+                  onChange={e => setPhoto(e.target.files?.[0] || null)} />
+                <button type="button" onClick={() => fileRef.current?.click()}
+                  className={box + ' text-left text-[13px] inline-flex items-center gap-2 ' + (photo ? 'text-ink' : 'text-muted')}>
+                  <Camera size={15} className="shrink-0" />
+                  <span className="truncate">{photo ? photo.name : T('choosePhoto')}</span>
+                </button>
+              </L>
+            </div>
+          </div>
+
+          {!!(p.team || []).length && (
+            <L label={T('assignedTo')}>
               <div className="flex flex-wrap gap-1.5">
                 {(p.team || []).map(n => {
                   const on = who.includes(n)
@@ -696,14 +735,14 @@ function AddSheet({ p, busy, T, post, onClose }: {
                   )
                 })}
               </div>
-            </Field>
+            </L>
           )}
 
           <div className="flex gap-2 justify-end pt-1">
-            <button onClick={onClose} className="text-[13.5px] text-muted hover:text-ink px-2">{T('cancel')}</button>
-            <button onClick={save} disabled={!title.trim() || busy === 'addTask'}
+            <button onClick={onClose} disabled={saving} className="text-[13.5px] text-muted hover:text-ink px-2">{T('cancel')}</button>
+            <button onClick={save} disabled={!title.trim() || saving}
               className="text-[14px] font-semibold px-4 py-2.5 rounded-xl bg-ink text-white disabled:opacity-40 inline-flex items-center gap-1.5">
-              {busy === 'addTask' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={15} />} {T('newItem')}
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={15} />} {saving ? T('saving') : T('add')}
             </button>
           </div>
         </div>
@@ -721,7 +760,7 @@ function AddSheet({ p, busy, T, post, onClose }: {
  */
 function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
   t: Step; p: V; who: string; busy: string | null
-  post: (body: any, key: string) => Promise<void>
+  post: (body: any, key: string) => Promise<any>
   upload: (f: File, taskId?: string) => Promise<void>
   T: (k: string) => string
   TX: (v: string | null | undefined) => string

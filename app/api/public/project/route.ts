@@ -15,7 +15,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getProjectByToken, addNote, shareLocked, shareCanEdit } from '@/lib/projects'
 import { onComment } from '@/lib/project-notify'
-import { tellLeadership } from '@/lib/project-board-feed'
 
 export const dynamic = 'force-dynamic'
 
@@ -235,7 +234,6 @@ export async function POST(req: NextRequest) {
         if (seed.length) await supabaseAdmin().from('project_members').upsert(seed, { onConflict: 'project_id,person_key' })
         await supabaseAdmin().from('project_links').insert({ project_id: p.id, kind: 'project', ref_id: child, label: String((made as any).title || title).slice(0, 200) })
         await addNote(p.id, `${who} started a project: ${title.slice(0, 160)}`, who, 'event', true)
-        await tellLeadership(p.id, who, { kind: 'added', task: title, note: 'new project ' + String((made as any).ref || '') })
         const fresh0 = await getProjectByToken(str(b.token))
         return NextResponse.json({ ok: true, project: fresh0 ? await viewOf(fresh0) : null })
       }
@@ -264,8 +262,19 @@ export async function POST(req: NextRequest) {
             .catch(e => console.error('[public project] assign notify failed:', String(e?.message || e)))
         }
       }
+      // THE CHECKLIST, written at the same time (Jon, 2026-10-09: the add form should let you
+      // "add descriptions and tasks to it"). One job with its steps under it, in one go — the
+      // alternative is creating the job, finding it again and typing the steps one at a time.
+      const steps = (Array.isArray(b.steps) ? b.steps : []).map((x: any) => str(x)).filter(Boolean).slice(0, 30)
+      if (steps.length && made0?.id) {
+        await supabaseAdmin().from('project_steps').insert(steps.map((title2: string, i: number) => ({
+          project_id: p.id, parent_id: String(made0.id), title: title2.slice(0, 200), done: false,
+          section: str(b.section).slice(0, 80) || null, assignee: who.slice(0, 60), via_share: true, sort: i,
+        })))
+      }
       await addNote(p.id, `${who} added: ${title.slice(0, 160)}`, who, 'event', true)
-      await tellLeadership(p.id, who, { kind: 'added', task: title, note: str(b.description) })
+      const fresh1 = await getProjectByToken(str(b.token))
+      return NextResponse.json({ ok: true, taskId: made0?.id ? String(made0.id) : null, project: fresh1 ? await viewOf(fresh1) : null })
     } else if (action === 'taskNote') {
       // COMMENTING ON ONE ITEM. Anyone holding the link can talk on a job — ticking and talking
       // were always the two things a share is for. Tags are stored as display names because that
@@ -287,7 +296,6 @@ export async function POST(req: NextRequest) {
           task: { id: taskId, title: String((step as any).title || '') }, actor: who, members: p.members || [], taskAssignees: [],
         }).catch(e => console.error('[public project] notify failed:', String(e?.message || e)))
       }
-      await tellLeadership(p.id, who, { kind: 'comment', task: String((step as any).title || ''), body })
     } else if (action === 'translate') {
       // SPANISH AND ENGLISH, BOTH WAYS (Jon, 2026-10-09). Half this team works in Spanish and the
       // owners do not all read English; a board nobody can read is a board nobody uses. The page
@@ -327,7 +335,6 @@ export async function POST(req: NextRequest) {
       if (error && /column|schema/i.test(error.message || '')) return NextResponse.json({ error: 'Requests are not switched on yet.' }, { status: 503 })
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       await addNote(p.id, `${who} asked for a technician on “${String((step as any).title || '').slice(0, 120)}”${note ? ': ' + note : ''}`, who, 'event', true)
-      await tellLeadership(p.id, who, { kind: 'asked', task: String((step as any).title || ''), note })
     } else if (action === 'taskEdit' || action === 'subEdit') {
       // EVERYTHING EDITABLE (Jon, 2026-10-09). A board an owner can only tick is a board that
       // goes stale the first time a job changes shape. With edit access they can retitle a job,
@@ -347,7 +354,6 @@ export async function POST(req: NextRequest) {
       const { error } = await supabaseAdmin().from('project_steps').update(patch).eq('id', stepId)
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       await addNote(p.id, `${who} edited “${String((step as any).title || '').slice(0, 120)}”`, who, 'event', true)
-      await tellLeadership(p.id, who, { kind: 'edited', task: str(b.title) || String((step as any).title || '') })
     } else if (action === 'subDelete') {
       // Removing work is the one edit kept to what came IN through the link. Our own jobs are
       // taken off the board by us — an owner who thinks one should go says so in the comments,
@@ -360,7 +366,6 @@ export async function POST(req: NextRequest) {
       const { error } = await supabaseAdmin().from('project_steps').delete().eq('id', stepId).eq('project_id', p.id)
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       await addNote(p.id, `${who} removed “${String((step as any).title || '').slice(0, 120)}”`, who, 'event', true)
-      await tellLeadership(p.id, who, { kind: 'removed', task: String((step as any).title || '') })
     } else if (action === 'taskAssign') {
       // WHO HAS IT (Jon, 2026-10-09: "easier to assign"). The link can put a name on a job, and
       // the name has to be a real one: only people already on this project, matched to the SAME
@@ -387,7 +392,6 @@ export async function POST(req: NextRequest) {
       }
       const names = people.map((m: any) => prettyName(str(m.display) || str(m.email))).join(', ')
       await addNote(p.id, `${who} put “${String((step as any).title || '').slice(0, 100)}” on ${names || 'nobody'}`, who, 'event', true)
-      await tellLeadership(p.id, who, { kind: 'edited', task: String((step as any).title || '') + (names ? ' → ' + names : ' — unassigned') })
     } else if (action === 'subDone') {
       // An action step ticks like the job it sits under.
       const stepId = str(b.stepId)
@@ -412,7 +416,6 @@ export async function POST(req: NextRequest) {
       const body = str(b.body)
       if (!body) return NextResponse.json({ error: 'empty note' }, { status: 400 })
       await addNote(p.id, body.slice(0, 2000), who, 'comment', true)
-      await tellLeadership(p.id, who, { kind: 'comment', task: null, body })
     } else if (action === 'stepDone') {
       // Ticking is allowed on every share: a vendor marking their own work done was the original
       // point of the link. Adding and renaming is what edit access opens up.
@@ -424,7 +427,6 @@ export async function POST(req: NextRequest) {
       await addNote(p.id, `${who} marked a step ${b.done ? 'done' : 'not done'}.`, who, 'event', true)
       {
         const { data: s0 } = await supabaseAdmin().from('project_steps').select('title').eq('id', stepId).maybeSingle()
-        await tellLeadership(p.id, who, { kind: b.done ? 'done' : 'undone', task: String((s0 as any)?.title || 'an item') })
       }
     } else {
       return NextResponse.json({ error: 'Unknown action.' }, { status: 400 })
