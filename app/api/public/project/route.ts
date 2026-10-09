@@ -14,10 +14,55 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getProjectByToken, addNote, shareLocked, shareCanEdit } from '@/lib/projects'
+import { onComment } from '@/lib/project-notify'
 
 export const dynamic = 'force-dynamic'
 
 const str = (v: any) => (typeof v === 'string' ? v.trim() : '')
+
+/**
+ * A note reaches the link if it was written THROUGH the link, or if whoever wrote it marked it
+ * shared. Events — "X moved this to done", the audit trail — never do: they are our bookkeeping.
+ */
+const sharedNote = (n: any) => n.kind === 'comment' && (!!n.via_share || !!n.shared)
+
+/**
+ * ONE ITEM, OPENED (Jon, 2026-10-09: "each item should be able to open up ... comment on each
+ * item and attach a Breezeway task. If we do attach a Breezeway task to it, it should show you
+ * the report. Should be able to attach photos, action steps, invoices, etc., and tag").
+ *
+ * Everything the holder needs to judge one job, and nothing about the rest of the business. The
+ * Breezeway block is the field's own word on the work — its status, who has it, and the report
+ * with the photos the technician took. The invoice shows as paperwork: the document and who
+ * billed it, because the owner asked to SEE the invoice, not to be handed our margins.
+ */
+function taskView(t: any, p: any): any {
+  const notes = (p.notes || []).filter((n: any) => n.task_id === t.id && sharedNote(n))
+  const files = (p.photos || []).filter((f: any) => f.task_id === t.id)
+  const bz = t.breezeway || null
+  return {
+    id: t.id, title: t.title, done: t.status === 'done' || !!t.done, status: t.status || null,
+    due_on: t.due_on, section: t.section || null, note: t.description || null,
+    addedByShare: !!t.via_share,
+    assignees: (t.assignees || []).map((a: any) => str(a.display)).filter(Boolean),
+    // Action steps. A checklist under the job, tickable from the link like the job itself.
+    subtasks: (t.subtasks || []).map((s: any) => ({ id: s.id, title: s.title, done: s.status === 'done' || !!s.done })),
+    breezeway: t.breezeway_task_id
+      ? { id: String(t.breezeway_task_id), status: bz?.status || 'unknown', tone: bz?.tone || 'open', assignee: bz?.assignee || null, date: bz?.date || null, reportUrl: bz?.reportUrl || null }
+      : null,
+    photos: files.filter((f: any) => f.kind !== 'file').map((f: any) => ({ id: f.id, url: f.url, caption: f.caption, created_at: f.created_at })),
+    // The paperwork, not the ledger: what it is and who billed it. No approval state, no running
+    // spend, no budget — those stay on our side of the wall.
+    invoices: (p.invoices || []).filter((i: any) => i.task_id === t.id).map((i: any) => ({
+      id: i.id, number: i.number || null, vendor: i.vendor_name || null, issued_on: i.issued_on || null,
+      file: i.file ? { name: i.file.name, url: i.file.url, mime: i.file.mime } : null,
+    })),
+    comments: notes.slice().reverse().map((n: any) => ({
+      body: n.body, author: n.author, created_at: n.created_at,
+      mine: !!n.via_share, mentions: Array.isArray(n.mentions) ? n.mentions : [],
+    })),
+  }
+}
 
 /** Strip everything commercial. Whitelist, not blacklist — a new column must not leak by default. */
 function vendorView(p: any) {
@@ -31,11 +76,14 @@ function vendorView(p: any) {
     // units read as one undifferentiated list; the section each task already carries is what turns
     // it back into six short lists. The owner's add form writes the section too, so what they add
     // lands under the unit rather than at the bottom of everything.
-    steps: (p.steps || []).map((s: any) => ({ id: s.id, title: s.title, done: s.done, due_on: s.due_on, section: s.section || null, note: s.description || null, assignee: s.assignee || null, addedByShare: !!s.via_share })),
+    steps: (p.tasks || []).map((t: any) => taskView(t, p)),
     canEdit: shareCanEdit(p),
-    photos: (p.photos || []).map((x: any) => ({ id: x.id, url: x.url, caption: x.caption, phase: x.phase, created_at: x.created_at })),
+    // WHO CAN BE TAGGED (Jon chose "our team by name"). Display names only — never the emails,
+    // never the roles, never anyone who is not actually on this project.
+    team: (p.members || []).map((m: any) => str(m.display) || str(m.email).split('@')[0]).filter(Boolean).slice(0, 40),
+    photos: (p.photos || []).filter((x: any) => !x.task_id).map((x: any) => ({ id: x.id, url: x.url, caption: x.caption, phase: x.phase, created_at: x.created_at })),
     // Only the conversation the vendor is part of — internal comments stay internal.
-    notes: (p.notes || []).filter((n: any) => n.via_share).map((n: any) => ({ body: n.body, author: n.author, created_at: n.created_at })),
+    notes: (p.notes || []).filter((n: any) => !n.task_id && sharedNote(n)).map((n: any) => ({ body: n.body, author: n.author, created_at: n.created_at })),
     progress: p.progress,
   }
 }
@@ -77,6 +125,46 @@ export async function POST(req: NextRequest) {
       })
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       await addNote(p.id, `${who} added: ${title.slice(0, 160)}`, who, 'event', true)
+    } else if (action === 'taskNote') {
+      // COMMENTING ON ONE ITEM. Anyone holding the link can talk on a job — ticking and talking
+      // were always the two things a share is for. Tags are stored as display names because that
+      // is what both sides read, and they are checked against the project's actual roster: the
+      // link cannot invent a person, and cannot be used to probe who else works here.
+      const body = str(b.body)
+      const taskId = str(b.taskId)
+      if (!body) return NextResponse.json({ error: 'Write something first.' }, { status: 400 })
+      const { data: step } = await supabaseAdmin().from('project_steps').select('id,title').eq('id', taskId).eq('project_id', p.id).maybeSingle()
+      if (!step) return NextResponse.json({ error: 'No such item.' }, { status: 404 })
+      const roster = (p.members || []).map((m: any) => str(m.display) || str(m.email).split('@')[0]).filter(Boolean)
+      const tags = (Array.isArray(b.mentions) ? b.mentions : []).map((x: any) => str(x)).filter((x: string) => roster.includes(x)).slice(0, 10)
+      const noteId = await addNote(p.id, body.slice(0, 2000), who, 'comment', true, { taskId, mentions: tags })
+      // The people tagged are told, exactly as they would be from inside the app — same path, same
+      // inbox. A tag nobody ever sees is the reason people stop using a board.
+      if (noteId) {
+        await onComment({
+          projectId: p.id, projectTitle: p.title, note: { id: noteId, body: body.slice(0, 2000), task_id: taskId },
+          task: { id: taskId, title: String((step as any).title || '') }, actor: who, members: p.members || [], taskAssignees: [],
+        }).catch(e => console.error('[public project] notify failed:', String(e?.message || e)))
+      }
+    } else if (action === 'subDone') {
+      // An action step ticks like the job it sits under.
+      const stepId = str(b.stepId)
+      const { error } = await supabaseAdmin().from('project_steps')
+        .update({ status: b.done ? 'done' : 'todo', done: !!b.done, done_at: b.done ? new Date().toISOString() : null, done_by: b.done ? who : null })
+        .eq('id', stepId).eq('project_id', p.id)
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    } else if (action === 'subAdd') {
+      if (!canEdit) return NextResponse.json({ error: 'This link can tick items and comment, but not add work.' }, { status: 403 })
+      const title = str(b.title)
+      const parentId = str(b.parentId)
+      if (!title) return NextResponse.json({ error: 'Write what needs doing.' }, { status: 400 })
+      const { data: parent } = await supabaseAdmin().from('project_steps').select('id,section').eq('id', parentId).eq('project_id', p.id).maybeSingle()
+      if (!parent) return NextResponse.json({ error: 'No such item.' }, { status: 404 })
+      const { error } = await supabaseAdmin().from('project_steps').insert({
+        project_id: p.id, parent_id: parentId, title: title.slice(0, 200), done: false,
+        section: (parent as any).section || null, assignee: who.slice(0, 60), via_share: true, sort: Date.now(),
+      })
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     } else if (action === 'note') {
       const body = str(b.body)
       if (!body) return NextResponse.json({ error: 'empty note' }, { status: 400 })

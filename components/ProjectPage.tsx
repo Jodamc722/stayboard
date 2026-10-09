@@ -1688,7 +1688,11 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, onOpe
   const feed = useMemo(() => p.notes.filter(n => n.task_id === task.id).slice().reverse(), [p.notes, task.id])
   const [title, setTitle] = useState(task.title)
   const [desc, setDesc] = useState(task.description || '')
-  useEffect(() => { setTitle(task.title); setDesc(task.description || '') }, [task.id, task.title, task.description])
+  // A live share link means a comment on this task is read by whoever holds it, so the composer
+  // has to say so — and has to offer a way out for the remark that is only for us.
+  const shareLive = !!(p as any).share_token && (!(p as any).share_expires || new Date((p as any).share_expires).getTime() > Date.now())
+  const [internal, setInternal] = useState(false)
+  useEffect(() => { setTitle(task.title); setDesc(task.description || ''); setInternal(false) }, [task.id, task.title, task.description])
 
   const set = (patch: any) => act({ action: 'taskSet', taskId: task.id, ...patch })
   const assignees = task.assignees
@@ -1858,8 +1862,17 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, onOpe
 
         {/* composer pinned to the bottom, like a chat — the field you came here to type in */}
         <div className="border-t border-line px-3 py-2 bg-white">
+          {/* WHO ELSE READS THIS (2026-10-09). When the board has a live share link, a task
+              comment goes to the people holding it. Saying so above the box is the whole safety
+              mechanism: nobody should discover after the fact that an owner read it. */}
+          {shareLive && (
+            <label className="flex items-center gap-1.5 mb-1.5 text-[11px] text-muted cursor-pointer select-none">
+              <input type="checkbox" checked={internal} onChange={e => setInternal(e.target.checked)} className="w-3 h-3" />
+              <span>{internal ? 'Internal — the share link will not see this.' : 'Visible on the share link. Tick to keep it internal.'}</span>
+            </label>
+          )}
           <Composer busy={busy} members={p.members} placeholder={`Comment on “${task.title.slice(0, 40)}${task.title.length > 40 ? '…' : ''}” — @ to mention`}
-            onSend={body => act({ action: 'comment', taskId: task.id, body })} />
+            onSend={body => act({ action: 'comment', taskId: task.id, body, internal })} />
         </div>
       </div>
     </>

@@ -540,15 +540,26 @@ export async function gateProject(id: string, viewer: Viewer, need: 'view' | 'ed
 
 // ---------------------------------------------------------------- writes
 export async function addNote(projectId: string, body: string, author: string | null, kind: 'comment' | 'event' = 'comment', viaShare = false,
-  extra: { taskId?: string | null; meta?: any } = {}) {
+  extra: { taskId?: string | null; meta?: any; mentions?: string[]; shared?: boolean } = {}): Promise<string | null> {
   try {
-    const { error } = await supabaseAdmin().from('project_notes').insert({
+    const row: any = {
       project_id: projectId, body: String(body).slice(0, 4000), author, kind, via_share: viaShare,
       task_id: extra.taskId || null, meta: extra.meta || null,
-    })
+    }
+    // Both columns arrive with migration 150. A board running ahead of its database must still be
+    // able to take a comment, so they are only set when asked for and the insert retries without
+    // them if the column is not there yet.
+    if (extra.mentions?.length) row.mentions = extra.mentions
+    if (extra.shared) row.shared = true
+    let { data, error } = await supabaseAdmin().from('project_notes').insert(row).select('id').maybeSingle()
+    if (error && /column|schema/i.test(error.message || '')) {
+      delete row.mentions; delete row.shared
+      ;({ data, error } = await supabaseAdmin().from('project_notes').insert(row).select('id').maybeSingle())
+    }
     // Best-effort, as it always was — but a note that did not land says so in the log.
-    if (error) console.error('projects.addNote: note insert failed', error.message)
-  } catch (e) { console.error('projects.addNote: note insert failed', e) }
+    if (error) { console.error('projects.addNote: note insert failed', error.message); return null }
+    return data ? String((data as any).id) : null
+  } catch (e) { console.error('projects.addNote: note insert failed', e); return null }
 }
 
 /** An activity event: what somebody did, with enough structure for the feed to link the task. */

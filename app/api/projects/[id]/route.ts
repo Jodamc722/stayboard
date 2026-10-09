@@ -82,6 +82,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const projectTitle = async () => String((await sb.from('projects').select('title').eq('id', id).maybeSingle()).data?.title || 'a project')
     // Notifications are best-effort: a mail-table hiccup must never fail the edit that caused it.
     const tell = (p: Promise<any>) => p.catch(e => console.error('[projects] notify failed:', String(e?.message || e)))
+    /** Does this project have a share link out? Decides whether a task comment reaches an owner. */
+    const shareLive = async (pid: string) => {
+      const { data } = await sb.from('projects').select('share_token,share_expires').eq('id', pid).maybeSingle()
+      if (!data || !(data as any).share_token) return false
+      const exp = (data as any).share_expires
+      return !exp || new Date(exp).getTime() > Date.now()
+    }
 
     // Keep the old single-assignee column honest: FIRST ASSIGNEE, or null. Collaborators never
     // fill it — the legacy column means "who is doing this", and that is not what a collaborator is.
@@ -770,10 +777,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         const taskId = str(b.taskId) || null
         const task = taskId ? await taskRow(taskId) : null
         if (taskId && !task) return NextResponse.json({ error: 'No such task.' }, { status: 404 })
-        const { data, error } = await sb.from('project_notes').insert({
-          project_id: id, task_id: taskId, body, author: me, kind: 'comment', via_share: false,
-        }).select('id').single()
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        // VISIBLE TO THE LINK, OR NOT (Jon, 2026-10-09: "we can comment on each item"). A board
+        // that is shared with an owner needs a conversation both sides can see, or they write and
+        // nothing ever comes back. So on a project that HAS a live share link, a comment on a task
+        // goes to that link unless the author says internal. A project with no link shares
+        // nothing, because there is nowhere for it to go.
+        const shareOn = !!(await shareLive(id))
+        const shared = taskId ? (shareOn && b.internal !== true) : false
+        const row: any = { project_id: id, task_id: taskId, body, author: me, kind: 'comment', via_share: false }
+        if (shared) row.shared = true
+        let { data, error } = await sb.from('project_notes').insert(row).select('id').single()
+        if (error && /column|schema/i.test(error.message || '')) {
+          delete row.shared
+          ;({ data, error } = await sb.from('project_notes').insert(row).select('id').single())
+        }
+        if (error || !data) return NextResponse.json({ error: error?.message || 'comment failed' }, { status: 500 })
         const { data: asg } = taskId ? await sb.from('project_task_assignees').select('person_key,display,email').eq('task_id', taskId) : { data: [] as any[] }
         await tell(onComment({
           projectId: id, projectTitle: await projectTitle(), note: { id: data.id, body, task_id: taskId },
