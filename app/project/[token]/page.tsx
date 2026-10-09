@@ -209,7 +209,6 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   const [p, setP] = useState<V | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  const [note, setNote] = useState('')
   const [task, setTask] = useState('')
   const [taskUnit, setTaskUnit] = useState('')
   const [taskDesc, setTaskDesc] = useState('')
@@ -313,7 +312,6 @@ export default function VendorProjectPage({ params }: { params: { token: string 
       for (const x of (t.subtasks || [])) take(x.title)
       for (const c of (t.comments || [])) take(c.body)
     }
-    for (const n of p.notes) take(n.body)
     if (!lines.length) return
     setTranslating(true)
     try {
@@ -633,24 +631,6 @@ export default function VendorProjectPage({ params }: { params: { token: string 
             </section>
           )
         })()}
-
-        <section className="rounded-2xl border border-line bg-white p-3 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
-          <h2 className="text-[12px] font-bold text-ink mb-2">{T('messages')}</h2>
-          <form onSubmit={e => { e.preventDefault(); if (note.trim()) { post({ action: 'note', body: note }, 'note'); setNote('') } }} className="flex gap-2">
-            <input value={note} onChange={e => setNote(e.target.value)} placeholder={T('updateTeam')}
-              className="flex-1 text-[14px] rounded-xl border border-line px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-            <button disabled={busy === 'note'} className="text-[14px] font-semibold px-4 rounded-xl bg-brand-600 text-white disabled:opacity-50">{T('send')}</button>
-          </form>
-          <div className="space-y-1.5 mt-3">
-            {p.notes.map((n, i) => (
-              <div key={i} className="rounded-lg bg-app px-2.5 py-1.5 text-[13px] text-ink">
-                <p>{TX(n.body)}</p>
-                <p className="text-[10px] text-muted mt-0.5">{n.author || 'you'} · {new Date(n.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>
-              </div>
-            ))}
-            {!p.notes.length && <p className="text-[12px] text-muted py-2">{T('noMessages')}</p>}
-          </div>
-        </section>
 
         <div className="pb-8 pt-2 text-center">
           <img src="/stay-logo.png" alt="Stay Hospitality" className="h-5 w-auto mx-auto opacity-30 mb-2" />
