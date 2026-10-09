@@ -70,9 +70,20 @@ export async function eveningRecap(opts: { dry?: boolean } = {}): Promise<{ post
     // lines of "marked a step done" is the noise he objected to in the first place.
     const ticks = rows.filter(r => / marked a step /i.test(str(r.body))).length
     const said = rows.filter(r => r.kind === 'comment')
-    const rest = rows.filter(r => r.kind === 'event' && !/ marked a step /i.test(str(r.body)))
+    const events = rows.filter(r => r.kind === 'event' && !/ marked a step /i.test(str(r.body)))
+    // EDITS COLLAPSE THE SAME WAY TICKS DO. Fixing a title, then its date, then its unit is one
+    // piece of work to the room and three rows in the table; listing all three is the noise this
+    // whole change was about. Named once each, counted after that.
+    const edited: string[] = []
+    const rest: any[] = []
+    for (const r of events) {
+      const m = str(r.body).match(/ edited [“"](.+?)[”"]\s*$/)
+      if (m) { if (!edited.includes(m[1])) edited.push(m[1]) }
+      else rest.push(r)
+    }
     const bits: string[] = []
     if (ticks) bits.push(`• ${ticks} ${ticks === 1 ? 'item' : 'items'} ticked`)
+    if (edited.length) bits.push(`• ${edited.length} ${edited.length === 1 ? 'item' : 'items'} changed — ${edited.slice(0, 3).map(x => trim(x, 46)).join('; ')}${edited.length > 3 ? '; …' : ''}`)
     for (const r of rest.slice(0, 8)) bits.push(`• ${trim(r.body, 160)}`)
     if (rest.length > 8) bits.push(`• …and ${rest.length - 8} more`)
     for (const r of said.slice(0, 5)) bits.push(`• _${trim(r.author, 30) || 'someone'}_: “${trim(r.body, 160)}”`)
