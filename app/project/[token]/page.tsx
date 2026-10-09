@@ -18,6 +18,7 @@ import { Camera, Check, Loader2, AlertTriangle, Building2, Lock, Plus, X, Wrench
 type Step = {
   id: string; title: string; done: boolean; status?: string | null; due_on: string | null
   section?: string | null; note?: string | null; addedByShare?: boolean
+  done_at?: string | null; done_by?: string | null
   assignees?: string[]
   subtasks?: { id: string; title: string; done: boolean; due_on?: string | null }[]
   breezeway?: { id: string; status: string; tone: string; assignee: string | null; date: string | null; reportUrl: string | null } | null
@@ -132,6 +133,9 @@ const UI: Record<string, { en: string; es: string }> = {
   photoLabel: { en: 'Photo', es: 'Foto' },
   choosePhoto: { en: 'Add a photo', es: 'Añadir una foto' },
   saving: { en: 'Saving…', es: 'Guardando…' },
+  completed: { en: 'Completed', es: 'Completado' },
+  nothingDone: { en: 'Nothing finished yet.', es: 'Todavía no se ha terminado nada.' },
+  allClear: { en: 'Everything on the board is done.', es: 'Todo en el tablero está hecho.' },
 }
 
 /** Today in New York, which is where the work is. */
@@ -197,6 +201,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   const [adding, setAdding] = useState(false)
   const [naming, setNaming] = useState(false)
   const [openSubs, setOpenSubs] = useState<Set<string>>(new Set())
+  const [showDone, setShowDone] = useState(false)
   const [openTask, setOpenTask] = useState<string | null>(null)
   const [lang, setLang] = useState<Lang>('en')
   // original → translation, for the language currently chosen. Cleared when the language flips,
@@ -428,7 +433,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
               )}
             </div>
             <div className="divide-y divide-line">
-              {groupSteps(p.steps, T('everythingElse')).map(g => (
+              {groupSteps(p.steps.filter(x => !x.done), T('everythingElse')).map(g => (
                 <div key={g.key}>
                   {g.name && (
                     <div className="sticky top-0 z-10 flex items-baseline gap-2 px-3 pt-2.5 pb-1.5 bg-app/95 backdrop-blur border-b border-line/60">
@@ -524,6 +529,9 @@ export default function VendorProjectPage({ params }: { params: { token: string 
                 </div>
               ))}
               {!p.steps.length && <p className="px-3 py-3 text-[13px] text-muted">{T('nothingYet')}</p>}
+              {!!p.steps.length && !p.steps.some(x => !x.done) && (
+                <p className="px-3 py-3 text-[13px] text-muted">{T('allClear')}</p>
+              )}
             </div>
 
           </section>
@@ -546,47 +554,42 @@ export default function VendorProjectPage({ params }: { params: { token: string 
           </section>
         )}
 
-        {/* THE UNITS, as a grid of chips rather than twenty-three rows in a scroller — the list
-            was taller than the work it belonged to and still needed scrolling to read. */}
-        {!!p.units.length && (
-          <section className="rounded-2xl border border-line bg-white p-3 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
-            <h2 className="text-[12px] font-bold text-ink mb-2">{T('units')} ({p.units.length})</h2>
-            <div className="flex flex-wrap gap-1.5">
-              {p.units.map(u => (
-                <span key={u.ref_id}
-                  className={'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] ' +
-                    (u.done ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-line text-ink/80')}>
-                  {u.done && <Check size={11} />}{u.label || u.ref_id}
-                </span>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* INSPECTIONS — visibility, not a verdict (Jon: "it's not a pass or not, just gives them
-            visibility into inspections from Breezeway"). Only the ones released from our side
-            appear here, so an empty section means nothing has been let out, never that nobody
-            walked the unit. */}
-        {!!p.inspections?.length && (
-          <section className="rounded-2xl border border-line bg-white overflow-hidden shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
-            <h2 className="text-[12px] font-bold text-ink px-3 py-2 border-b border-line">{T('inspections')}</h2>
-            <div className="divide-y divide-line">
-              {p.inspections.map(i => (
-                <div key={i.id} className="flex items-start gap-2.5 px-3 py-2.5">
-                  <Check size={13} className="text-emerald-600 shrink-0 mt-0.5" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[13.5px] text-ink">{i.unit}</p>
-                    <p className="text-[11.5px] text-muted">{[i.name, i.inspector].filter(Boolean).join(' · ')}</p>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    {i.date && <p className="text-[11px] text-muted">{day(i.date, lang)}</p>}
-                    {i.reportUrl && <a href={i.reportUrl} target="_blank" rel="noreferrer" className="text-[11.5px] font-semibold text-brand-700 hover:underline">{T('report')} ↗</a>}
-                  </div>
+        {/* COMPLETED, AT THE BOTTOM (Jon, 2026-10-09). Finished work left in the main list makes
+            the board look busier than the job is: fourteen rows, six of them nothing to do. It
+            moves down here instead of disappearing, because an owner wanting to know what we
+            actually did this week is the whole reason to keep a record — newest first, with who
+            and when. Folded, since the point of the page above it is what is still open. */}
+        {(() => {
+          const done = p.steps.filter(x => x.done)
+            .sort((a, b) => String(b.done_at || '').localeCompare(String(a.done_at || '')))
+          if (!done.length) return null
+          return (
+            <section className="rounded-2xl border border-line bg-white overflow-hidden shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
+              <button onClick={() => setShowDone(v => !v)} className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-app">
+                <Check size={13} className="text-emerald-600 shrink-0" />
+                <h2 className="text-[12px] font-bold text-ink">{T('completed')}</h2>
+                <span className="text-[11px] text-muted tabular-nums">{done.length}</span>
+                <span className="ml-auto text-muted">{showDone ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
+              </button>
+              {showDone && (
+                <div className="divide-y divide-line/70 border-t border-line">
+                  {done.map(x => (
+                    <button key={x.id} onClick={() => setOpenTask(x.id)}
+                      className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-app">
+                      <Check size={13} className="text-emerald-600 shrink-0 mt-0.5" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[13.5px] text-muted line-through">{TX(x.title)}</span>
+                        <span className="block text-[11px] text-muted/80 mt-0.5">
+                          {[x.section, x.done_by, x.done_at ? day(String(x.done_at).slice(0, 10), lang) : null].filter(Boolean).join(' · ')}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </section>
-        )}
+              )}
+            </section>
+          )
+        })()}
 
         <section className="rounded-2xl border border-line bg-white p-3 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
           <h2 className="text-[12px] font-bold text-ink mb-2">{T('messages')}</h2>

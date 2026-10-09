@@ -42,6 +42,9 @@ function taskView(t: any, p: any): any {
   const bz = t.breezeway || null
   return {
     id: t.id, title: t.title, done: t.status === 'done' || !!t.done, status: t.status || null,
+    // When it was finished and by whom — the completed list is a record, and a record with no
+    // date on it is just a shorter version of the same list.
+    done_at: t.done_at || null, done_by: t.done_by || null,
     due_on: t.due_on, section: t.section || null, note: t.description || null,
     addedByShare: !!t.via_share,
     assignees: (t.assignees || []).map((a: any) => prettyName(str(a.display) || str(a.email))).filter(Boolean),
