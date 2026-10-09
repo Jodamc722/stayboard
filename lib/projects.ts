@@ -562,6 +562,19 @@ export async function logEvent(projectId: string, who: string | null, type: Even
 }
 
 /** 32 hex chars from the crypto RNG — long enough that a link cannot be guessed. */
+/**
+ * THE SHARE GATE (Jon, 2026-10-09). A project with no passcode is open to whoever holds the link,
+ * exactly as the vendor share has always been. With one set, every public read and write has to
+ * carry it. Compared whole-string and case-insensitively — people type a door code with a capital.
+ */
+export function shareLocked(p: { share_passcode?: string | null } | null, pass: string | null | undefined): boolean {
+  const want = String(p?.share_passcode || '').trim()
+  if (!want) return false
+  return String(pass || '').trim().toLowerCase() !== want.toLowerCase()
+}
+/** May the holder of this link change things beyond ticking our checklist? */
+export const shareCanEdit = (p: { share_can_edit?: boolean | null } | null): boolean => !!p?.share_can_edit
+
 export function newShareToken(): string {
   const b = new Uint8Array(16)
   ;(globalThis.crypto as Crypto).getRandomValues(b)

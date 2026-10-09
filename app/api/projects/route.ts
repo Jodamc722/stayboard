@@ -211,6 +211,18 @@ export async function PATCH(req: NextRequest) {
     if (b.approval_note !== undefined) patch.approval_note = str(b.approval_note) || null
 
     // Vendor share link: create, rotate or revoke.
+    // THE LINK'S OWN SETTINGS (Jon, 2026-10-09: "sharable with the owners, and password protected.
+    // They should have edit access too"). Separate from minting the token, so a passcode can be
+    // changed or edit granted on a link that is already out without breaking it.
+    if (b.share_passcode !== undefined) {
+      const code = str(b.share_passcode).slice(0, 40)
+      patch.share_passcode = code || null
+      events.push(code ? (before.share_passcode ? 'Share passcode changed.' : 'Share link locked with a passcode.') : 'Share passcode removed — the link opens to anyone who has it.')
+    }
+    if (b.share_can_edit !== undefined) {
+      patch.share_can_edit = !!b.share_can_edit
+      events.push(b.share_can_edit ? 'Share link can now add tasks and change status.' : 'Share link is back to ticking and comments only.')
+    }
     if (b.share === 'new' || b.share === 'rotate') {
       patch.share_token = newShareToken()
       patch.share_expires = str(b.share_expires) || null

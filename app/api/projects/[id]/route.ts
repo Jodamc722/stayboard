@@ -415,7 +415,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         // reservation this task is about, the owner it needs a yes from. Without, it is the project's.
         const taskId = str(b.taskId) || null
         if (taskId && !(await taskRow(taskId))) return NextResponse.json({ error: 'No such task.' }, { status: 404 })
-        const rows: any[] = refs.slice(0, 400).map(ref_id => ({ project_id: id, kind, ref_id, label: str(b.label) || null, task_id: taskId }))
+        // A UNIT LINK WITHOUT A LABEL LOOKS ITSELF UP (2026-10-09). The label is what the board and
+        // the shared vendor page print; a caller that attaches 23 listings by id and sends no label
+        // used to leave every row null, and the shared page then showed a column of raw Guesty ids.
+        // One `label` still applies to all when it is given — this only fills the blanks.
+        const labelOf: Record<string, string> = {}
+        if (kind === 'listing' && !str(b.label)) {
+          const { data: ls } = await sb.from('guesty_listings').select('id,nickname,title').in('id', refs.slice(0, 400))
+          for (const l of ((ls || []) as any[])) labelOf[String(l.id)] = String(l.nickname || l.title || '')
+        }
+        const rows: any[] = refs.slice(0, 400).map(ref_id => ({ project_id: id, kind, ref_id, label: str(b.label) || labelOf[ref_id] || null, task_id: taskId }))
         // A BUILDING IS A COLLECTIVE OF UNITS (Jon, 2026-09-08). Attaching one attaches the building
         // row AND one listing row per unit, so "12 of 34 done" is computed from real links rather
         // than typed, and a unit that joins the building in Guesty later shows up as not-done.

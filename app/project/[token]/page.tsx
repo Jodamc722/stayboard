@@ -1,20 +1,27 @@
 'use client'
-// VENDOR VIEW — one project, no login, no commercials.
+// THE SHARED BOARD — one project, no login, no commercials.
 //
-// A contractor holding this link sees the job: what it is, which units, the checklist, the dates
-// and the photos. They can tick their steps, add a note and upload photos from a phone. They never
-// see budget, spend, the owner, or anything the team said internally — that filtering happens on
-// the server (app/api/public/project), not here, so a curious person reading this page's source
-// finds nothing extra.
+// A contractor or an owner holding this link sees the job: what it is, which units, the checklist,
+// the dates and the photos. They can tick steps, add a note and upload photos from a phone, and —
+// when the link was given edit access — add work of their own. They never see budget, spend, the
+// owner, or anything the team said internally: that filtering happens on the server
+// (app/api/public/project), not here, so a curious person reading this page's source finds nothing.
+//
+// 2026-10-09 (Jon: "sharable with the owners, and password protected. They should have edit access
+// too"). Two things changed. A link can ask for a PASSCODE before it shows anything, and it can
+// grant EDIT. The passcode is kept in this browser so the owner types it once, not every morning,
+// and a name is asked for the same way so their comments and tasks are signed by a person rather
+// than by "vendor".
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, Check, Loader2, AlertTriangle, Building2 } from 'lucide-react'
+import { Camera, Check, Loader2, AlertTriangle, Building2, Lock, Plus } from 'lucide-react'
 
 type V = {
   id: string; ref: string | null; title: string; summary: string | null
   stage: string; category: string; starts_on: string | null; due_on: string | null
   building: string | null; vendor_name: string | null
   units: { ref_id: string; label: string | null; done: boolean }[]
-  steps: { id: string; title: string; done: boolean; due_on: string | null }[]
+  steps: { id: string; title: string; done: boolean; due_on: string | null; assignee?: string | null; addedByShare?: boolean }[]
+  canEdit?: boolean
   photos: { id: string; url: string; caption: string | null; phase: string; created_at: string }[]
   notes: { body: string; author: string | null; created_at: string }[]
   progress: { done: number; total: number; pct: number | null; basis: string }
@@ -29,22 +36,52 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [note, setNote] = useState('')
+  const [task, setTask] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
+  // The passcode and the name live in this browser, not in the URL — a link pasted into a chat
+  // should not carry the code that unlocks it.
+  const KEY = 'share:' + token
+  const [pass, setPass] = useState('')
+  const [who, setWho] = useState('')
+  const [locked, setLocked] = useState(false)
+  const [tryPass, setTryPass] = useState('')
+  const [ready, setReady] = useState(false)
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    try { const raw = localStorage.getItem(KEY); if (raw) { const v = JSON.parse(raw); setPass(v.pass || ''); setWho(v.who || '') } } catch { /* fresh browser */ }
+    setReady(true)
+  }, [KEY])
+
+  const load = useCallback(async (code?: string) => {
     try {
-      const r = await fetch(`/api/public/project?token=${encodeURIComponent(token)}`, { cache: 'no-store' })
+      const c = code !== undefined ? code : pass
+      const r = await fetch('/api/public/project?token=' + encodeURIComponent(token) + (c ? '&pass=' + encodeURIComponent(c) : ''), { cache: 'no-store' })
       const j = await r.json()
+      if (r.status === 401 && j.needsPass) { setLocked(true); setP(null); return }
       if (!r.ok || !j.ok) throw new Error(j.error || 'This link is not valid.')
-      setP(j.project)
+      setLocked(false); setErr(null); setP(j.project)
     } catch (e: any) { setErr(String(e.message || e)) }
-  }, [token])
-  useEffect(() => { load() }, [load])
+  }, [token, pass])
+  useEffect(() => { if (ready) load() }, [ready, load])
+
+  const unlock = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setBusy('unlock'); setErr(null)
+    const code = tryPass.trim()
+    const r = await fetch('/api/public/project?token=' + encodeURIComponent(token) + '&pass=' + encodeURIComponent(code), { cache: 'no-store' })
+    const j = await r.json().catch(() => ({}))
+    setBusy(null)
+    if (r.status === 401) { setErr('That code does not open this board.'); return }
+    if (!r.ok || !j.ok) { setErr(j.error || 'Could not open the board.'); return }
+    setPass(code); setLocked(false); setP(j.project)
+    try { localStorage.setItem(KEY, JSON.stringify({ pass: code, who })) } catch { /* private window */ }
+  }
+  const saveWho = (name: string) => { setWho(name); try { localStorage.setItem(KEY, JSON.stringify({ pass, who: name })) } catch { /* fine */ } }
 
   const post = async (body: any, key: string) => {
     setBusy(key); setErr(null)
     try {
-      const r = await fetch('/api/public/project', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, ...body }) })
+      const r = await fetch('/api/public/project', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, pass, who, ...body }) })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || 'Could not save.')
       if (j.project) setP(j.project)
@@ -54,7 +91,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   const upload = async (f: File) => {
     setBusy('photo'); setErr(null)
     try {
-      const fd = new FormData(); fd.append('file', f); fd.append('token', token); fd.append('phase', 'during')
+      const fd = new FormData(); fd.append('file', f); fd.append('token', token); fd.append('phase', 'during'); fd.append('pass', pass); fd.append('who', who)
       const r = await fetch('/api/projects/photo', { method: 'POST', body: fd })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || 'Upload failed.')
@@ -62,6 +99,23 @@ export default function VendorProjectPage({ params }: { params: { token: string 
     } catch (e: any) { setErr(String(e.message || e)) } finally { setBusy(null) }
   }
 
+  if (locked) {
+    return (
+      <main className="min-h-screen bg-app flex items-center justify-center p-6">
+        <form onSubmit={unlock} className="w-full max-w-xs text-center">
+          <Lock size={24} className="text-muted mx-auto mb-3" />
+          <h1 className="text-lg font-bold text-ink">This board is private</h1>
+          <p className="text-[13px] text-muted mt-1 mb-4">Enter the code you were given.</p>
+          <input value={tryPass} onChange={e => setTryPass(e.target.value)} autoFocus placeholder="Code"
+            className="w-full text-center text-[16px] tracking-widest rounded-xl border border-line px-3 py-3 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+          {err && <p className="text-[12.5px] text-rose-700 mt-2">{err}</p>}
+          <button disabled={!tryPass.trim() || busy === 'unlock'} className="mt-3 w-full rounded-xl bg-ink text-white text-[14px] font-semibold py-3 disabled:opacity-50">
+            {busy === 'unlock' ? <Loader2 size={15} className="animate-spin inline" /> : 'Open the board'}
+          </button>
+        </form>
+      </main>
+    )
+  }
   if (err && !p) {
     return (
       <main className="min-h-screen bg-app flex items-center justify-center p-6">
@@ -100,7 +154,15 @@ export default function VendorProjectPage({ params }: { params: { token: string 
           </div>
         )}
 
-        {!!p.steps.length && (
+        {p.canEdit && (
+          <section className="rounded-2xl border border-line bg-white p-3">
+            <label className="block text-[12px] font-bold text-ink mb-1.5">Who are you?</label>
+            <input value={who} onChange={e => saveWho(e.target.value)} placeholder="Your name — so the team knows who ticked it"
+              className="w-full text-[14px] rounded-xl border border-line px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+          </section>
+        )}
+
+        {(!!p.steps.length || p.canEdit) && (
           <section className="rounded-2xl border border-line bg-white overflow-hidden">
             <h2 className="text-[12px] font-bold text-ink px-3 py-2 border-b border-line">What needs doing</h2>
             <div className="divide-y divide-line">
@@ -110,10 +172,22 @@ export default function VendorProjectPage({ params }: { params: { token: string 
                     onChange={e => post({ action: 'stepDone', stepId: s.id, done: e.target.checked }, 'step' + s.id)}
                     className="w-4 h-4 shrink-0" />
                   <span className={s.done ? 'line-through text-muted' : 'text-ink'}>{s.title}</span>
+                  {s.addedByShare && <span className="text-[10px] uppercase tracking-wide text-muted shrink-0">yours</span>}
                   {s.due_on && <span className="ml-auto text-[11px] text-muted shrink-0">{day(s.due_on)}</span>}
                 </label>
               ))}
+              {!p.steps.length && <p className="px-3 py-3 text-[13px] text-muted">Nothing on the list yet.</p>}
             </div>
+            {p.canEdit && (
+              <form onSubmit={e => { e.preventDefault(); if (task.trim()) { post({ action: 'addTask', title: task }, 'addTask'); setTask('') } }}
+                className="flex gap-2 border-t border-line p-2.5">
+                <input value={task} onChange={e => setTask(e.target.value)} placeholder="Add something that needs doing…"
+                  className="flex-1 text-[14px] rounded-xl border border-line px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                <button disabled={!task.trim() || busy === 'addTask'} className="text-[14px] font-semibold px-3 rounded-xl bg-ink text-white disabled:opacity-40 inline-flex items-center gap-1">
+                  {busy === 'addTask' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={15} />} Add
+                </button>
+              </form>
+            )}
           </section>
         )}
 

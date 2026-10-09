@@ -43,8 +43,11 @@ export async function POST(req: NextRequest) {
     if (token) {
       const p = await getProjectByToken(token)
       if (!p) return NextResponse.json({ error: 'This link is no longer valid.' }, { status: 403 })
+      // A locked link has to show its passcode to upload, the same as to read (2026-10-09).
+      const { shareLocked } = await import('@/lib/projects')
+      if (shareLocked(p, String(form.get('pass') || ''))) return NextResponse.json({ ok: false, needsPass: true }, { status: 401 })
       projectId = p.id
-      uploader = p.vendor_name || 'vendor'
+      uploader = String(form.get('who') || '').trim().slice(0, 60) || p.vendor_name || 'vendor'
       viaShare = true
     } else {
       const access = await getAccess()

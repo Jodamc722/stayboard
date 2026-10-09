@@ -29,6 +29,10 @@ export type Project = {
   owner_id: string | null; owner_name: string | null
   approval: string; approval_note: string | null; approved_at: string | null; approved_by: string | null
   share_token: string | null; share_expires: string | null; vendor_name: string | null
+  // The shared link's own settings (2026-10-09): a passcode it asks for, and whether the holder
+  // may add work rather than only tick ours. The passcode never leaves the server for a public
+  // reader — it is whitelisted out of the shared view.
+  share_passcode?: string | null; share_can_edit?: boolean | null
   archived: boolean; sort: number | null
   created_by: string | null; created_at: string; updated_at: string
 }
