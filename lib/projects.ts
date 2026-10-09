@@ -444,20 +444,24 @@ const BZ_GONE = /cancel/i
 async function enrichLinks(L: any[]) {
   const sb = supabaseAdmin()
   const ids = (k: string) => L.filter(l => l.kind === k).map(l => String(l.ref_id))
-  const [claims, glitches, tasks, stays] = await Promise.all([
+  const [claims, glitches, tasks, stays, boards] = await Promise.all([
     ids('claim').length ? soft(sb.from('claims').select('id,stage,outcome,amount_sought,amount_paid,guest_name,unit_no').in('id', ids('claim'))) : null,
     ids('glitch').length ? soft(sb.from('glitches').select('id,status,category,unit,breezeway_task_id,guest_name').in('id', ids('glitch'))) : null,
     ids('task').length ? soft(sb.from('breezeway_tasks_sync').select('id,status,name,scheduled_date,assignee_name,report_url,finished_at').in('id', ids('task'))) : null,
     ids('reservation').length ? soft(sb.from('guesty_reservations').select('id,status,check_in,check_out,guest_name').in('id', ids('reservation'))) : null,
+    // A BOARD INSIDE A BOARD (2026-10-09). The line shows the child's real stage and its own ref,
+    // so "Arya — 1404 build" reads as a project rather than as a title somebody typed once.
+    ids('project').length ? soft(sb.from('projects').select('id,ref,title,stage,due_on').in('id', ids('project'))) : null,
   ])
   const by = (rows: any[] | null) => Object.fromEntries(((rows || []) as any[]).map(r => [String(r.id), r]))
-  const C = by(claims), G = by(glitches), T = by(tasks), R = by(stays)
+  const C = by(claims), G = by(glitches), T = by(tasks), R = by(stays), P = by(boards)
   for (const l of L) {
-    const r = l.kind === 'claim' ? C[l.ref_id] : l.kind === 'glitch' ? G[l.ref_id] : l.kind === 'task' ? T[l.ref_id] : l.kind === 'reservation' ? R[l.ref_id] : null
+    const r = l.kind === 'claim' ? C[l.ref_id] : l.kind === 'glitch' ? G[l.ref_id] : l.kind === 'task' ? T[l.ref_id] : l.kind === 'reservation' ? R[l.ref_id] : l.kind === 'project' ? P[l.ref_id] : null
     if (!r) continue
     if (l.kind === 'claim') l.state = { label: String(r.stage || ''), tone: r.stage === 'closed' ? 'done' : r.outcome === 'denied' ? 'bad' : r.stage === 'submitted' ? 'wait' : 'open', detail: r.amount_paid ? `$${Number(r.amount_paid).toLocaleString('en-US', { maximumFractionDigits: 0 })} paid` : r.amount_sought ? `$${Number(r.amount_sought).toLocaleString('en-US', { maximumFractionDigits: 0 })} sought` : null, href: `/claims?open=${l.ref_id}` }
     if (l.kind === 'glitch') l.state = { label: String(r.status || 'open'), tone: /done|resolved|closed/i.test(String(r.status)) ? 'done' : 'open', detail: [r.category, r.guest_name].filter(Boolean).join(' · ') || null, href: `/glitches?open=${l.ref_id}`, bz: r.breezeway_task_id || null }
     if (l.kind === 'task') l.state = { label: String(r.status || ''), tone: BZ_DONE.test(String(r.status)) ? 'done' : BZ_GONE.test(String(r.status)) ? 'bad' : 'open', detail: [r.assignee_name, r.scheduled_date ? String(r.scheduled_date).slice(0, 10) : null].filter(Boolean).join(' · ') || null, href: r.report_url || null }
+    if (l.kind === 'project') { if (!l.label) l.label = String(r.title || 'Project'); l.state = { label: String(r.stage || 'idea').replace('_', ' '), tone: r.stage === 'done' ? 'done' : 'open', detail: r.ref || null, href: '/projects?open=' + l.ref_id } }
     if (l.kind === 'reservation') l.state = { label: String(r.status || ''), tone: /cancel/i.test(String(r.status)) ? 'bad' : 'open', detail: `${String(r.check_in).slice(0, 10)} → ${String(r.check_out).slice(0, 10)}`, href: `/reservations?open=${l.ref_id}` }
   }
 }

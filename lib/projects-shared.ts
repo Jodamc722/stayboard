@@ -17,7 +17,9 @@ export const STAGE_LABEL: Record<Stage, string> = {
 }
 export const PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const
 export const APPROVALS = ['not_needed', 'needed', 'requested', 'approved', 'declined'] as const
-export const LINK_KINDS = ['listing', 'reservation', 'task', 'owner', 'building', 'claim', 'glitch'] as const
+// 'project' (2026-10-09): a board can carry another board — "add a task / project", where the
+// bigger piece of work gets its own board and shows on this one as a line you can open.
+export const LINK_KINDS = ['listing', 'reservation', 'task', 'owner', 'building', 'claim', 'glitch', 'project'] as const
 export const PHOTO_PHASES = ['before', 'during', 'after'] as const
 
 export type Project = {
