@@ -195,13 +195,30 @@ function groupSteps(steps: Step[], elseLabel: string) {
   const order: string[] = []
   const by: Record<string, Step[]> = {}
   for (const s of steps) {
-    const k = (s.section || '').trim() || '\u0000'
+    const k = unitKey(s.section) || '\u0000'
     if (!by[k]) { by[k] = []; order.push(k) }
     by[k].push(s)
   }
   const loose = order.filter(k => k === '\u0000')
   const named = order.filter(k => k !== '\u0000')
   return [...named, ...loose].map(k => ({ key: k, name: k === '\u0000' ? (named.length ? elseLabel : '') : k, rows: by[k] }))
+}
+
+/**
+ * ONE UNIT, ONE BLOCK — whatever it was called when the job was written down.
+ *
+ * The same flat arrives spelled three ways: "Arya 1404", "Arya 1404 - 1BR", "1404". Grouping on
+ * the raw text split one unit into three cards, each with part of its work, which is worse than
+ * not grouping at all. So the key is the unit ITSELF — its number and, where it exists, which
+ * half — and the card is titled with that: "1404", "1418/2". Shorter to read down a column, and
+ * impossible to spell two ways.
+ */
+function unitKey(section: string | null | undefined): string {
+  const raw = String(section || '').trim()
+  if (!raw) return ''
+  const m = raw.match(/(\d{3,4})\s*(?:[-/]\s*([12])\b)?/)
+  if (!m) return raw
+  return m[2] ? `${m[1]}/${m[2]}` : m[1]
 }
 
 // The unit picker offers the sections already in use plus every unit on the board, so an owner
