@@ -13,7 +13,7 @@
 // and a name is asked for the same way so their comments and tasks are signed by a person rather
 // than by "vendor".
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, Check, Loader2, AlertTriangle, Building2, Lock, Plus, X, Wrench, FileText, MessageSquare, ChevronRight, Paperclip, Layers } from 'lucide-react'
+import { Camera, Check, Loader2, AlertTriangle, Building2, Lock, Plus, X, Wrench, FileText, MessageSquare, ChevronRight, ChevronDown, Paperclip, Layers } from 'lucide-react'
 
 type Step = {
   id: string; title: string; done: boolean; status?: string | null; due_on: string | null
@@ -196,6 +196,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   const [taskDesc, setTaskDesc] = useState('')
   const [adding, setAdding] = useState(false)
   const [naming, setNaming] = useState(false)
+  const [openSubs, setOpenSubs] = useState<Set<string>>(new Set())
   const [openTask, setOpenTask] = useState<string | null>(null)
   const [lang, setLang] = useState<Lang>('en')
   // original → translation, for the language currently chosen. Cleared when the language flips,
@@ -435,12 +436,18 @@ export default function VendorProjectPage({ params }: { params: { token: string 
                       <span className="text-[11px] text-muted tabular-nums ml-auto">{g.rows.filter(s => s.done).length}/{g.rows.length}</span>
                     </div>
                   )}
-                  <div className="divide-y divide-line">
+                  <div className="divide-y divide-line/70">
                     {g.rows.map(s => {
                       const d = dueChip(s.due_on, lang, T)
                       const owner = (s.assignees || [])[0]
+                      const subs = s.subtasks || []
+                      const open = openSubs.has(s.id)
                       return (
-                      <div key={s.id} className={'flex items-start gap-3 px-3 py-3 text-[14px] ' + (s.done ? 'bg-emerald-50/40' : 'hover:bg-app')}>
+                      <div key={s.id}>
+                      <div className={'flex items-start gap-3 pr-3 py-3 text-[14px] border-l-2 pl-[10px] ' +
+                        (s.done ? 'bg-emerald-50/40 border-l-transparent'
+                          : d?.late ? 'border-l-rose-400 hover:bg-app'
+                          : 'border-l-transparent hover:bg-app')}>
                         {/* Round, like the one in the sheet, and big enough to hit on a phone. */}
                         <button onClick={() => post({ action: 'stepDone', stepId: s.id, done: !s.done }, 'step' + s.id)} disabled={busy === 'step' + s.id}
                           aria-label={(s.done ? T('isDone') : T('markDone')) + ': ' + s.title}
@@ -452,23 +459,64 @@ export default function VendorProjectPage({ params }: { params: { token: string 
                             up"). The circle stays a circle — ticking a job you can see from the
                             list should never cost you a trip into a panel and back. */}
                         <button onClick={() => setOpenTask(s.id)} className="min-w-0 flex-1 text-left group">
-                          <span className={'block leading-snug ' + (s.done ? 'line-through text-muted' : 'text-ink group-hover:underline')}>{TX(s.title)}</span>
-                          {s.note && <span className="block text-[12.5px] text-muted/90 mt-0.5 line-clamp-1">{TX(s.note)}</span>}
+                          <span className={'block leading-snug font-medium ' + (s.done ? 'line-through text-muted font-normal' : 'text-ink group-hover:underline')}>{TX(s.title)}</span>
+                          {s.note && <span className="block text-[12.5px] text-muted/80 mt-1 line-clamp-1 leading-relaxed">{TX(s.note)}</span>}
                           <Chips s={s} T={T} />
                         </button>
+                        {!!(s.subtasks || []).length && (
+                          <button onClick={() => setOpenSubs(v => { const n = new Set(v); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n })}
+                            title={T('stepsLabel')}
+                            className="shrink-0 mt-0.5 inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 text-[11px] font-semibold text-muted hover:text-ink hover:bg-app tabular-nums">
+                            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                            {(s.subtasks || []).filter(x => x.done).length}/{(s.subtasks || []).length}
+                          </button>
+                        )}
                         {/* WHO AND WHEN, in the same place on every row, so the column can be read
                             straight down without reading a single title. */}
                         <span className="shrink-0 flex items-center gap-2 pt-0.5">
                           {d && (
                             <span className={'rounded-full border px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ' + d.tone}>{d.label}</span>
                           )}
-                          <span title={owner || T('nobody')}
-                            className={'w-6 h-6 rounded-full grid place-items-center text-[9.5px] font-bold ' +
-                              (owner ? 'bg-ink text-white' : 'border border-dashed border-line text-muted/50')}>
-                            {owner ? initials(owner) : '·'}
-                          </span>
+                          {/* The faces, not just the first one — a job on two people reads as a
+                              job on two people. Beyond three it counts, so the column holds. */}
+                          {(s.assignees || []).length ? (
+                            <span className="flex -space-x-1.5">
+                              {(s.assignees || []).slice(0, 3).map(n => (
+                                <span key={n} title={n} className="w-6 h-6 rounded-full grid place-items-center text-[9.5px] font-bold bg-ink text-white ring-2 ring-white">{initials(n)}</span>
+                              ))}
+                              {(s.assignees || []).length > 3 && (
+                                <span className="w-6 h-6 rounded-full grid place-items-center text-[9.5px] font-bold bg-app text-muted ring-2 ring-white">+{(s.assignees || []).length - 3}</span>
+                              )}
+                            </span>
+                          ) : (
+                            <span title={T('nobody')} className="w-6 h-6 rounded-full grid place-items-center text-[11px] text-muted/40 border border-dashed border-line">·</span>
+                          )}
                           <ChevronRight size={14} className="text-muted/40" />
                         </span>
+                      </div>
+                      {/* THE STEPS, IN PLACE (Jon: "each project can have subtasks"). Folded by
+                          default so fourteen jobs stay fourteen lines, and ticked from the list
+                          when they are open — going into a sheet to tick one step of five is the
+                          kind of trip that stops people keeping a board current. */}
+                      {!!subs.length && open && (
+                        <div className="pl-11 pr-3 pb-2.5 space-y-1">
+                          {subs.map(x => {
+                            const sd = dueChip(x.due_on, lang, T)
+                            return (
+                              <div key={x.id} className="flex items-center gap-2 text-[13px]">
+                                <button onClick={() => post({ action: 'subDone', stepId: x.id, done: !x.done }, 'sub' + x.id)} disabled={busy === 'sub' + x.id}
+                                  aria-label={x.title}
+                                  className={'shrink-0 w-4 h-4 rounded-full border-2 grid place-items-center transition ' +
+                                    (x.done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-line text-transparent hover:border-ink')}>
+                                  <Check size={10} strokeWidth={3} />
+                                </button>
+                                <span className={'min-w-0 flex-1 truncate ' + (x.done ? 'line-through text-muted' : 'text-ink/85')}>{TX(x.title)}</span>
+                                {sd && <span className={'shrink-0 rounded-full border px-1.5 text-[10.5px] font-semibold ' + sd.tone}>{sd.label}</span>}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
                       </div>
                       )
                     })}
@@ -541,25 +589,6 @@ export default function VendorProjectPage({ params }: { params: { token: string 
         )}
 
         <section className="rounded-2xl border border-line bg-white p-3 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
-          <h2 className="text-[12px] font-bold text-ink mb-2">{T('photos')}</h2>
-          <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden
-            onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = '' }} />
-          <button onClick={() => fileRef.current?.click()} disabled={busy === 'photo'}
-            className="w-full rounded-xl border border-line text-ink text-[13.5px] font-semibold py-2.5 inline-flex items-center justify-center gap-2 hover:bg-app disabled:opacity-50">
-            {busy === 'photo' ? <Loader2 size={15} className="animate-spin" /> : <Camera size={16} />} {T('takePhoto')}
-          </button>
-          {!!p.photos.length && (
-            <div className="grid grid-cols-3 gap-2 mt-3">
-              {p.photos.map(ph => (
-                <a key={ph.id} href={ph.url} target="_blank" rel="noreferrer" className="block rounded-lg overflow-hidden border border-line">
-                  <img src={ph.url} alt={ph.caption || ''} className="w-full h-24 object-cover" />
-                </a>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-2xl border border-line bg-white p-3 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
           <h2 className="text-[12px] font-bold text-ink mb-2">{T('messages')}</h2>
           <form onSubmit={e => { e.preventDefault(); if (note.trim()) { post({ action: 'note', body: note }, 'note'); setNote('') } }} className="flex gap-2">
             <input value={note} onChange={e => setNote(e.target.value)} placeholder={T('updateTeam')}
@@ -600,7 +629,6 @@ export default function VendorProjectPage({ params }: { params: { token: string 
 function Chips({ s, T }: { s: Step; T: (k: string) => string }) {
   const bits: React.ReactNode[] = []
   const subs = s.subtasks || []
-  if (subs.length) bits.push(<span key="s" className="tabular-nums">{subs.filter(x => x.done).length}/{subs.length} {T('steps')}</span>)
   if (s.requested) bits.push(<span key="r" className="inline-flex items-center gap-0.5 font-semibold text-brand-700"><Wrench size={9} />{T('pushSentShort')}</span>)
   if (s.breezeway) bits.push(<span key="b" className={'inline-flex items-center gap-0.5 font-semibold ' + (s.breezeway.tone === 'done' ? 'text-emerald-700' : s.breezeway.tone === 'bad' ? 'text-amber-700' : 'text-brand-700')}><Wrench size={9} />{s.breezeway.status || 'Breezeway'}</span>)
   if (s.photos?.length) bits.push(<span key="p" className="inline-flex items-center gap-0.5"><Camera size={9} />{s.photos.length}</span>)
