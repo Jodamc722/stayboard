@@ -32,7 +32,7 @@ const STATS_URL = '/api/command/bulletin/stats'
 const PLANS_URL = '/api/eve/review?n=1'   // same key the Decide band reads — one fetch for both
 
 type BoardRes = { ok: boolean; error?: string; today: string; me: string; canPost: boolean; posts: Post[]; haveTo: Post[]; reviews?: ReviewRef[]; people?: string[]; quote?: { q: string; a: string; src: string }; celebrations?: { name: string; md: string; inDays: number }[]; birthdays?: Record<string, string> }
-type Fact = { key: string; label: string; value: string; sub: string; href?: string; tone?: 'emerald' | 'amber' | 'slate' | 'sky' }
+type Fact = { key: string; label: string; value: string; sub: string; href?: string; tone?: 'emerald' | 'amber' | 'slate' | 'sky'; kpi?: boolean }
 type Plan = { id: string; title: string; detail: string | null; area: string | null }
 type Slide = { key: string; label: string; secs: number; node: ReactNode }
 
@@ -74,7 +74,7 @@ const cap = (s: string) => s ? s[0].toUpperCase() + s.slice(1) : s
 
 export function BulletinBoard({ d }: { d: CommandDay }) {
   const q = useCachedFetch<BoardRes>(BULLETIN_URL, { ttl: 60_000 })
-  const stats = useCachedFetch<{ facts?: Fact[] }>(STATS_URL, { ttl: 10 * 60_000 })
+  const stats = useCachedFetch<{ facts?: Fact[]; asOf?: string }>(STATS_URL, { ttl: 5 * 60_000 })
   const week = useCachedFetch<{ tiles?: { key: string; value: string; sub: string }[] }>(SCOREBOARD_URL, { ttl: 5 * 60_000 })
   const plans = useCachedFetch<{ open?: { plans?: Plan[] } }>(PLANS_URL, { ttl: 300_000 })
   const { health, open: openTile } = useHealth()
@@ -107,7 +107,8 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
     // worded as blame stays in Decide where a leader acts on it, and a stat only shows when it is good
     // news — an amber number (a low call rate, a slow close time) belongs in the tiles, not up here.
     const recs = ((plans.data?.open?.plans || []) as Plan[]).filter(r => !NEGATIVE.test(r.title + ' ' + String(r.detail || '').slice(0, 300))).slice(0, 4)
-    const facts: Fact[] = (stats.data?.facts || []).filter(f => f.tone !== 'amber')
+    // Business KPIs always show, good or bad (Jon, 2026-10-09: "a better indication of what's happening in ops"); only team facts keep the no-amber rule.
+    const facts: Fact[] = (stats.data?.facts || []).filter(f => f.kpi || f.tone !== 'amber')
     for (const t of week.data?.tiles || []) {
       if (t.key === 'billable' && /\$/.test(t.value)) facts.push({ key: 'billable', label: 'Billable this week', value: t.value, sub: t.sub, href: '/billing', tone: 'emerald' })
       if (t.key === 'claims' && /\$[\d,]+ back/.test(t.sub)) facts.push({ key: 'claimsBack', label: 'Claims recovered this month', value: (t.sub.match(/\$[\d,]+/) || [''])[0], sub: t.value + ' still open', href: '/claims', tone: 'emerald' })
@@ -116,7 +117,7 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
     const statSlides: Slide[] = []
     for (let i = 0; i < facts.length; i += 2) {
       const pair = facts.slice(i, i + 2)
-      statSlides.push({ key: 'stats:' + pair.map(f => f.key).join('+'), label: 'By the numbers', secs: 7, node: <StatsSlide facts={pair} /> })
+      statSlides.push({ key: 'stats:' + pair.map(f => f.key).join('+'), label: 'By the numbers', secs: 7, node: <StatsSlide facts={pair} asOf={stats.data?.asOf} /> })
     }
     // Interleave so no two of a kind run back to back: quote, then post / rec / stats round-robin.
     // A quote every day: a leader's wins; otherwise the day's quote from the internet (or our list).
@@ -321,15 +322,17 @@ function RecSlide({ r, n, of }: { r: Plan; n: number; of: number }) {
   )
 }
 
-function StatsSlide({ facts }: { facts: Fact[] }) {
+function StatsSlide({ facts, asOf }: { facts: Fact[]; asOf?: string }) {
+  const at = asOf ? new Date(asOf).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }) : ''
   return (
-    <div className="grid grid-cols-2 gap-4">
+    <div className="relative grid grid-cols-2 gap-4">
+      {at ? <span className="absolute -top-1 right-0 text-[10.5px] text-muted/80" title="These numbers refresh every 5 minutes">Updated {at}</span> : null}
       {facts.map(f => {
         const inner = (
           <div className="min-w-0">
             <div className="text-[12px] text-muted truncate">{f.label}</div>
-            <div className={'lh-display text-[34px] leading-[1.05] tabular-nums ' + TONE_TEXT[f.tone || 'slate']}>{f.value}</div>
-            <div className="text-[12px] text-muted truncate">{f.sub}</div>
+            <div className={'lh-display leading-[1.05] tabular-nums ' + (f.value.length > 9 ? 'text-[26px] ' : 'text-[34px] ') + TONE_TEXT[f.tone || 'slate']}>{f.value}</div>
+            <div className="text-[12px] text-muted line-clamp-2">{f.sub}</div>
           </div>
         )
         return f.href ? <Link key={f.key} href={f.href} className="block rounded-lg hover:bg-slate-50 -mx-1.5 px-1.5">{inner}</Link> : <div key={f.key}>{inner}</div>

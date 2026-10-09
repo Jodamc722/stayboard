@@ -18,17 +18,45 @@ import { ratingToStars } from '@/lib/optimize-score'
 import { etDay } from '@/lib/bulletin'
 import { kindOfTask } from '@/lib/labor-econ'
 import { pageRows } from '@/lib/db-page'
+import { buildKpiFor } from '@/lib/kpi'
+import { canSeeMoney } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
 
-export type Fact = { key: string; label: string; value: string; sub: string; href?: string; tone?: 'emerald' | 'amber' | 'slate' | 'sky' }
+// `kpi`: a business number — it always shows, good day or bad (Jon, 2026-10-09: "it should give a
+// better indication of what's happening in ops, overall KPIs"). Facts without it are about the team
+// and keep the 10-06 rule: an amber one stays off the board.
+export type Fact = { key: string; label: string; value: string; sub: string; href?: string; tone?: 'emerald' | 'amber' | 'slate' | 'sky'; kpi?: boolean }
 
 const span = (d: number) => d < 1 ? Math.round(d * 24) + 'h' : (Math.round(d * 10) / 10) + ' days'
 
-async function build(): Promise<Fact[]> {
+const pctChg = (now: number, prev: number) => prev ? Math.round(((now - prev) / prev) * 1000) / 10 : null
+const arrow = (c: number | null, unit = '%') => c == null ? '' : (c >= 0 ? '▲ ' : '▼ ') + Math.abs(c) + unit + ' vs prior week'
+const md = (ymd: string) => new Date(ymd.slice(0, 10) + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+
+// ── OPS & KPIs (2026-10-09) — the Home board's own numbers (lib/kpi buildKpiFor), so the board and
+// Home can never disagree: tonight, today's turnover, the last 7 settled days, the week ahead.
+async function opsFacts(money: boolean): Promise<Fact[]> {
+  const today = etDay()
+  const yday = addDays(today, -1)
+  const k: any = await buildKpiFor(new URLSearchParams({ from: addDays(yday, -6), to: yday }), money)
+  const out: Fact[] = []
+  const t = k?.today || {}, rv = k?.revenue || {}, wk = k?.work || {}, se = k?.sentiment || {}
+  if (t.units) out.push({ key: 'occTonight', kpi: true, label: 'Occupancy tonight', value: Math.round(t.occupancy) + '%', sub: t.inHouse + ' stays in house · ' + t.units + ' units', href: '/', tone: t.occupancy >= 75 ? 'emerald' : t.occupancy >= 55 ? 'sky' : 'amber' })
+  if (t.cleansScheduled || t.departures) out.push({ key: 'turnToday', kpi: true, label: 'Today’s turnover', value: (t.cleansDone || 0) + ' / ' + (t.cleansScheduled || 0) + ' cleans', sub: (t.departures || 0) + ' out · ' + (t.arrivals || 0) + ' in · ' + (t.sameDayTurns || 0) + ' same-day turns', href: '/schedule', tone: 'sky' })
+  if (rv.available) out.push({ key: 'occ7', kpi: true, label: 'Occupancy · last 7 days', value: rv.occupancy + '%', sub: arrow(rv.occupancyPrev != null ? Math.round((rv.occupancy - rv.occupancyPrev) * 10) / 10 : null, ' pts') || rv.nights + ' nights sold', href: '/revenue', tone: rv.occupancy >= 70 ? 'emerald' : rv.occupancy >= 55 ? 'sky' : 'amber' })
+  if (money && rv.adr) out.push({ key: 'adr7', kpi: true, label: 'ADR · RevPAR · last 7 days', value: '$' + Math.round(rv.adr) + ' · $' + Math.round(rv.revpar), sub: arrow(pctChg(rv.adr, rv.adrPrev)) ? 'ADR ' + arrow(pctChg(rv.adr, rv.adrPrev)) : 'room revenue per night sold · per night available', href: '/revenue', tone: 'slate' })
+  if (t.arrivals7) out.push({ key: 'arr7', kpi: true, label: 'Arrivals · next 7 days', value: String(t.arrivals7), sub: money && t.booked7 ? '$' + Math.round(t.booked7).toLocaleString('en-US') + ' booked' : 'stays starting this week', href: '/reservations', tone: 'sky' })
+  if (wk.scheduled) out.push({ key: 'onTime7', kpi: true, label: 'Tasks on time · last 7 days', value: Math.round(wk.onTimeRate) + '%', sub: (wk.completed || 0) + ' of ' + wk.scheduled + ' done · ' + Math.round(wk.completionRate) + '% completion', href: '/maintenance', tone: wk.onTimeRate >= 95 ? 'emerald' : wk.onTimeRate >= 85 ? 'sky' : 'amber' })
+  if (se.scanned) out.push({ key: 'mood7', kpi: true, label: 'Guest mood · last 7 days', value: Math.round(se.happyPct) + '% happy', sub: (se.unhappy || 0) + ' unhappy threads · ' + se.scanned + ' read', href: '/sentiment', tone: se.happyPct >= 95 ? 'emerald' : se.happyPct >= 90 ? 'sky' : 'amber' })
+  if (t.openGlitches != null) out.push({ key: 'glitchOpen', kpi: true, label: 'Guest issues open now', value: String(t.openGlitches), sub: (k?.glitches?.closed || 0) + ' closed in the last 7 days', href: '/glitches', tone: t.openGlitches <= 10 ? 'emerald' : t.openGlitches <= 25 ? 'sky' : 'amber' })
+  return out
+}
+
+async function build(money = false): Promise<Fact[]> {
   const sb = supabaseAdmin()
   const today = etDay()
-  const facts: Fact[] = []
+  const facts: Fact[] = await opsFacts(money).catch(() => [])
   const [w3, w7, gl, rv] = await Promise.all([
     welcomeRate(sb, addDays(today, -3), addDays(today, -1)).catch(() => null),
     welcomeRate(sb, addDays(today, -7), addDays(today, -1)).catch(() => null),
@@ -52,13 +80,27 @@ async function build(): Promise<Fact[]> {
     if (wk) facts.push({ key: 'glitchWeek', label: 'Glitches closed · last 7 days', value: String(wk), sub: 'guest issues resolved', href: '/glitches', tone: 'emerald' })
   }
 
+  // ── REVIEWS (2026-10-09: "more up-to-date review scores, average review scores for the last 7 days").
+  // The 7-day average always shows, next to the 30-day one, so a quiet week of five 5★ reviews never
+  // reads as the whole story. And when a channel goes SILENT — Guesty stops delivering its reviews,
+  // as Airbnb did Oct 4 and in August — the board says so instead of averaging what did arrive.
   if (!rv.error) {
     const stars = ((rv.data || []) as any[]).map(r => ratingToStars(Number(r.rating))).filter((s): s is number => s != null)
-    const five = stars.filter(s => s >= 4.8).length
-    if (five) facts.push({ key: 'fiveStar', label: '5★ reviews · last 7 days', value: String(five), sub: 'of ' + stars.length + ' reviews', href: '/reviews', tone: 'emerald' })
-    if (stars.length >= 5) {
-      const avg = stars.reduce((a, b) => a + b, 0) / stars.length
-      facts.push({ key: 'avgStars', label: 'Guest rating · last 7 days', value: (Math.round(avg * 100) / 100).toFixed(2) + '★', sub: stars.length + ' reviews, all channels on a /5 scale', href: '/reviews', tone: avg >= 4.7 ? 'emerald' : avg >= 4.4 ? 'sky' : 'amber' })
+    const { data: r30 } = await sb.from('guesty_reviews').select('rating').eq('excluded_from_score', false).is('removed_at', null).gte('created_at', new Date(Date.now() - 30 * 86400000).toISOString()).limit(5000)
+    const s30 = ((r30 || []) as any[]).map(r => ratingToStars(Number(r.rating))).filter((s): s is number => s != null)
+    const avg = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length
+    const tone = (v: number) => v >= 4.7 ? 'emerald' : v >= 4.4 ? 'sky' : 'amber'
+    const silent: string[] = []
+    for (const [ch, days] of [['Airbnb', 3], ['Vrbo', 14]] as [string, number][]) {
+      const { data: nd } = await sb.from('guesty_reviews').select('created_at').ilike('channel', ch + '%').order('created_at', { ascending: false }).limit(1)
+      const newest = nd && nd[0] ? String((nd[0] as any).created_at) : ''
+      if (newest && Date.now() - Date.parse(newest) > days * 86400000) silent.push(ch + ' since ' + md(newest))
+    }
+    const sil = silent.length ? ' · no ' + silent.join(', no ') + ' (Guesty isn’t sending them)' : ''
+    if (stars.length) facts.push({ key: 'avgStars', kpi: true, label: 'Guest rating · last 7 days', value: avg(stars).toFixed(2) + '★', sub: stars.length + ' review' + (stars.length === 1 ? '' : 's') + (s30.length ? ' · 30 days ' + avg(s30).toFixed(2) + '★' : '') + sil, href: '/reviews', tone: silent.length ? 'amber' : tone(avg(stars)) as any })
+    if (s30.length >= 5) {
+      const five = s30.filter(s => s >= 4.8).length
+      facts.push({ key: 'avg30', kpi: true, label: 'Guest rating · last 30 days', value: avg(s30).toFixed(2) + '★', sub: s30.length + ' reviews · ' + Math.round(100 * five / s30.length) + '% five-star', href: '/reviews', tone: tone(avg(s30)) as any })
     }
   }
   // ── THE TEAM (Jon, 2026-10-06: "share stats of the team on the board"). Breezeway tasks finished in
@@ -95,11 +137,12 @@ async function build(): Promise<Fact[]> {
   return facts
 }
 
-const cached = unstable_cache(build, ['bulletin-stats-v2'], { revalidate: 600 })
+// Five minutes, one copy per money state (dollars only for people with the money switch).
+const cached = unstable_cache(async (money: boolean) => ({ facts: await build(money), asOf: new Date().toISOString() }), ['bulletin-stats-v3'], { revalidate: 300 })
 
 export async function GET() {
   const gate = await requireVrUser()
   if (!gate.ok) return gate.res
-  try { return NextResponse.json({ ok: true, facts: await cached() }) }
+  try { const c = await cached(canSeeMoney(gate.access as any)); return NextResponse.json({ ok: true, facts: c.facts, asOf: c.asOf }) }
   catch (e: any) { return NextResponse.json({ ok: false, facts: [], error: String(e?.message || e).slice(0, 200) }) }
 }
