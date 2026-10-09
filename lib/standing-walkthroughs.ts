@@ -36,7 +36,7 @@ const DESCRIPTION = [
 export type Target = { key: string; label: string; unitRe: RegExp; exteriorRe?: RegExp }
 export const TARGETS: Target[] = [
   { key: '906', label: '906', unitRe: /^906\b/i },
-  { key: 'eden', label: 'Eden Oasis', unitRe: /^eden\b/i, exteriorRe: /eden|oasis/i },
+  { key: 'eden', label: 'Eden Oasis', unitRe: /^eden\b/i, exteriorRe: /\beden\b/i },
   { key: 'hendricks', label: 'Hendricks', unitRe: /^hendricks\b/i },
   { key: '17west', label: '17 West', unitRe: /^17\s*west\b/i },
   { key: '3316', label: '3316', unitRe: /^3316\b/i },
@@ -83,7 +83,7 @@ export async function resolveWalkthroughs(): Promise<{ week: string; today: stri
     const market = marketOf(t.label, null, t.label)
     let homeId: number | null = null, where = '', whereKind: Resolved['whereKind'] = 'none', listingId: string | null = null
     if (t.exteriorRe) {
-      const ext = allProps.find(p => /exterior/i.test(str(p.name)) && t.exteriorRe!.test(str(p.name)) && !/inactive|deleted/i.test(str(p.status)))
+      const ext = allProps.find(p => /exterior|building/i.test(str(p.name)) && t.exteriorRe!.test(str(p.name))  /* Eden's is "Eden Building" */ && !/inactive|deleted/i.test(str(p.status)))
       if (ext) { homeId = Number(ext.home_id); where = str(ext.name); whereKind = 'exterior' }
     }
     if (homeId == null) {
