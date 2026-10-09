@@ -45,7 +45,13 @@ export async function POST(req: NextRequest) {
       if (!p) return NextResponse.json({ error: 'This link is no longer valid.' }, { status: 403 })
       // A locked link has to show its passcode to upload, the same as to read (2026-10-09).
       const { shareLocked } = await import('@/lib/projects')
-      if (shareLocked(p, String(form.get('pass') || ''))) return NextResponse.json({ ok: false, needsPass: true }, { status: 401 })
+      // A signed-in team member is past the door code (2026-10-09) — see the note in
+      // app/api/public/project. The code keeps a forwarded link out, not our own people.
+      if (shareLocked(p, String(form.get('pass') || ''))) {
+        const a = await getAccess()
+        const team = !!a.user && !!a.allowed && atLeast(a.levels['projects'], 'view')
+        if (!team) return NextResponse.json({ ok: false, needsPass: true }, { status: 401 })
+      }
       projectId = p.id
       uploader = String(form.get('who') || '').trim().slice(0, 60) || p.vendor_name || 'vendor'
       viaShare = true

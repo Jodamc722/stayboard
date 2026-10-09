@@ -184,6 +184,19 @@ async function heroFor(p: any): Promise<string | null> {
 }
 
 /**
+ * A SIGNED-IN TEAM MEMBER NEVER MEETS THE DOOR CODE (Jon, 2026-10-09: "all users should be able
+ * to access"). The passcode exists to keep a forwarded link from opening the board to a stranger
+ * — it was never meant to stand between our own people and their own work. Somebody already
+ * authenticated to Lighthouse has, by definition, passed a stronger check than a shared code.
+ */
+async function isTeam(): Promise<boolean> {
+  try {
+    const access = await getAccess()
+    return !!access.user && !!access.allowed && atLeast(access.levels['projects'], 'view')
+  } catch { return false }
+}
+
+/**
  * IS A MEMBER OF STAFF READING THIS? (Jon, 2026-10-09: "if you're a user ... you can see a tab".)
  *
  * The same URL serves both. An owner gets the board; somebody signed in to Lighthouse gets the
@@ -242,7 +255,7 @@ export async function GET(req: NextRequest) {
   if (!p) return NextResponse.json({ error: 'This link is not valid or has expired.' }, { status: 404 })
   // The passcode is checked before ANY of the project is described — a locked link does not leak
   // its title, its units or how many tasks are on it.
-  if (shareLocked(p, str(req.nextUrl.searchParams.get('pass')))) {
+  if (shareLocked(p, str(req.nextUrl.searchParams.get('pass'))) && !(await isTeam())) {
     return NextResponse.json({ ok: false, needsPass: true, name: 'Stay Hospitality' }, { status: 401 })
   }
   return NextResponse.json({ ok: true, project: await viewOf(p) })
@@ -253,7 +266,7 @@ export async function POST(req: NextRequest) {
     const b = await req.json().catch(() => ({}))
     const p = await getProjectByToken(str(b.token))
     if (!p) return NextResponse.json({ error: 'This link is not valid or has expired.' }, { status: 404 })
-    if (shareLocked(p, str(b.pass))) return NextResponse.json({ ok: false, needsPass: true }, { status: 401 })
+    if (shareLocked(p, str(b.pass)) && !(await isTeam())) return NextResponse.json({ ok: false, needsPass: true }, { status: 401 })
     const who = str(b.who) || p.vendor_name || 'vendor'
     const action = str(b.action)
     const canEdit = shareCanEdit(p)

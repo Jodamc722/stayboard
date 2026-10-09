@@ -248,6 +248,8 @@ export default function VendorProjectPage({ params }: { params: { token: string 
       const c = code !== undefined ? code : pass
       const r = await fetch('/api/public/project?token=' + encodeURIComponent(token) + (c ? '&pass=' + encodeURIComponent(c) : ''), { cache: 'no-store' })
       const j = await r.json()
+      // The server decides. A signed-in team member is answered with the board and never sees
+      // this screen; only a 401 means the code is actually needed.
       if (r.status === 401 && j.needsPass) { setLocked(true); setP(null); return }
       if (!r.ok || !j.ok) throw new Error(j.error || 'This link is not valid.')
       setLocked(false); setErr(null); setP(j.project)
