@@ -176,7 +176,7 @@ export async function buildOpsDesk(): Promise<Built> {
   if (gt) {
     const waitingMgr = Number(gt.byLane?.manager_review || 0)
     glLines.push({ tone: gt.overdue ? 'red' : gt.open ? 'amber' : 'green', html: `<b>${gt.open} open</b>${gt.overdue ? ` · <b style="${T.red}">${gt.overdue} overdue</b>` : ''}${gt.noTask ? ` · ${gt.noTask} with no Breezeway task` : ''}${waitingMgr ? ` · ${waitingMgr} waiting on a manager to close` : ''}`, sub: `<a href="${APP_URL}/glitches" style="color:${A.ink}">Glitch board →</a>` })
-    for (const g of gt.rows.filter(r => r.overdue).slice(0, 4)) glLines.push({ tone: 'red', html: `<b>${esc(unitShort(g.unit))}</b> — ${esc(String(g.issue).replace(/\s+/g, ' ').slice(0, 90))} · ${g.ageDays}d · ${esc(first(g.assignee) || 'nobody')}`, sub: g.hasTask ? `Task ${esc(g.taskStatus || 'open')} — chase it to done, then close with the guest told.` : 'No Breezeway task — make one or close it.' })
+    for (const g of gt.rows.filter(r => r.overdue).slice(0, 4)) glLines.push({ tone: 'red', html: `<b>${esc(unitShort(g.unit))}</b> — ${esc(String(g.issue).replace(/\s+/g, ' ').slice(0, 90))} · ${g.ageDays}d · ${esc(first(g.assignee) || 'nobody')}`, sub: !g.hasTask ? 'No Breezeway task — make one or close it.' : /done|complet|finish|close/i.test(String(g.taskStatus || '')) ? 'Fixed in Breezeway — tell the guest and close the glitch.' : /delet|cancel/i.test(String(g.taskStatus || '')) ? 'Its task was deleted — re-open a task or close the glitch with a reason.' : `Task ${esc(g.taskStatus || 'open')} — chase it to done, then close with the guest told.` })
   }
   // Waiting on a person — what Slack says nobody closed.
   const L = D?.loops
@@ -279,7 +279,7 @@ export async function buildOpsDesk(): Promise<Built> {
     const vip = a ? vipKind(a) : []
     return `${c.sameDayArrival ? pill('SAME-DAY · lands ' + landsAt(a), 'red') + ' ' : ''}<b>${esc(unitShort(c.unit))}</b>${vip.length ? ' ' + vip.join(' ') : ''} — ${c.sameDayArrival ? 'turn' : 'departure clean'} · ${stateTxt(c.state)}`
   }
-  const taskRow = (o: typeof other[number]) => `<b>${esc(unitShort(o.unit))}</b> — ${esc(cleanTitle(o.task))} · ${stateTxt(o.state)}`
+  const taskRow = (o: typeof other[number]) => `<b>${esc(/^unknown unit$/i.test(o.unit) ? 'Common areas' : unitShort(o.unit))}</b> — ${esc(cleanTitle(o.task))} · ${stateTxt(o.state)}`
   const card = (dept: 'housekeeping' | 'maintenance'): { html: string; n: number } => {
     const crew = Object.values(people).filter(p => p.dept === dept)
       .sort((a, b) => b.cleans.filter(c => c.sameDayArrival).length - a.cleans.filter(c => c.sameDayArrival).length || (b.cleans.length + b.tasks.length) - (a.cleans.length + a.tasks.length) || a.name.localeCompare(b.name))
