@@ -144,7 +144,7 @@ async function build(money = false): Promise<Fact[]> {
 }
 
 // Five minutes, one copy per money state (dollars only for people with the money switch).
-const cached = unstable_cache(async (money: boolean) => ({ facts: await build(money), asOf: new Date().toISOString() }), ['bulletin-stats-v3'], { revalidate: 300 })
+const cached = unstable_cache(async (money: boolean) => ({ facts: await build(money), asOf: new Date().toISOString() }), ['bulletin-stats-v4'], { revalidate: 300 })
 
 export async function GET() {
   const gate = await requireVrUser()
