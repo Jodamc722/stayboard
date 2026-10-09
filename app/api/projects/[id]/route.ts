@@ -911,7 +911,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         }
         let assigned = false
         if (ids.length) { try { assigned = !!(await updateBreezewayTask(bzId, { assignments: ids })).ok } catch { assigned = false } }
-        await sb.from('project_steps').update({ breezeway_task_id: bzId, status: t.status === 'todo' ? 'doing' : t.status }).eq('id', t.id)
+        // A request from the share link is answered by the push itself — the flag comes off here
+        // rather than needing a second click, and the link stops saying "requested" because the
+        // field task is now the truth it shows.
+        await sb.from('project_steps').update({ breezeway_task_id: bzId, status: t.status === 'todo' ? 'doing' : t.status, bz_request: null }).eq('id', t.id)
+          .then(r => r.error && /column|schema/i.test(r.error.message || '')
+            ? sb.from('project_steps').update({ breezeway_task_id: bzId, status: t.status === 'todo' ? 'doing' : t.status }).eq('id', t.id)
+            : r)
         try {
           await sb.from('breezeway_tasks_sync').upsert({ id: bzId, reference_property_id: listingId, name: t.title, status: 'created', scheduled_date: date, type_department: department, assignees: [], report_url: r.data.report_url || null, raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString() }, { onConflict: 'id' })
         } catch { /* the sync catches up */ }
@@ -922,6 +928,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       }
 
       // Reassign or reschedule the field task from the board. Assignments REPLACE (Breezeway semantics).
+      // TURNING A REQUEST DOWN (Jon, 2026-10-09). The link holder is told nothing: the item simply
+      // stops saying "requested", because the approval step is the part he said they must not see.
+      // The reason is kept on our side, where somebody asking "why didn't this happen" can read it.
+      case 'bzRequestDecline': {
+        const t = await taskRow(str(b.taskId))
+        if (!t) return NextResponse.json({ error: 'No such task.' }, { status: 404 })
+        const { error } = await sb.from('project_steps').update({ bz_request: null }).eq('id', t.id)
+        if (error && !/column|schema/i.test(error.message || '')) return NextResponse.json({ error: error.message }, { status: 500 })
+        const why = str(b.reason).slice(0, 300)
+        await logEvent(id, me, 'task_moved', `declined the request for a technician${why ? ' — ' + why : ''}`, { task_id: t.id, task_title: t.title })
+        break
+      }
       case 'taskBreezewayUpdate': {
         const t = await taskRow(str(b.taskId))
         if (!t) return NextResponse.json({ error: 'No such task.' }, { status: 404 })

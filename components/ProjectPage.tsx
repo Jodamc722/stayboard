@@ -665,6 +665,9 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
             : k === 'about' ? <LinksPanel key={k} p={p} canEdit={canEdit} act={act} busy={busy} onHide={() => hidePanel('about')} />
             : <FilesPanel key={k} p={p} canEdit={canEdit} act={act} busy={busy} upload={upload} onOpen={setOpenTask} onHide={() => hidePanel('files')} />
           ))}
+          {/* WHAT THE FIELD WALKED, and what of it an owner may see (Jon, 2026-10-09). Only on a
+              board with units attached — everywhere else there is nothing to inspect. */}
+          {p.links.some(l => l.kind === 'listing') && <InspectionsPanel projectId={p.id} canEdit={canEdit} shareLive={!!(p as any).share_token} />}
 
         </div>
         </>
@@ -677,6 +680,79 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
       )}
     </div>
     </FoldCtx.Provider></DoneCtx.Provider>
+  )
+}
+
+// ── INSPECTIONS, AND WHO MAY SEE THEM ─────────────────────────────────────────────────────────
+//
+// Jon, 2026-10-09: "should be able to see all inspection completed from Roberto, Ernesto and
+// Yoslenis. Must be approved by me, they should not see it." So: every completed inspection on
+// this project's units, listed here for us, and a switch per row that releases one to the share
+// link. Nothing is released by default — a board shared this morning shows the owner no
+// inspection at all until somebody has looked at it and decided.
+//
+// Deliberately not a score. Jon: "it's not a pass or not, just gives them visibility into
+// inspections from Breezeway." Who walked it, when, and the report.
+function InspectionsPanel({ projectId, canEdit, shareLive }: { projectId: string; canEdit: boolean; shareLive: boolean }) {
+  type Row = { id: string; unit: string; name: string; inspector: string | null; date: string | null; reportUrl: string | null; shared: boolean }
+  const [rows, setRows] = useState<Row[] | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [all, setAll] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    fetch('/api/projects/inspections?project=' + encodeURIComponent(projectId))
+      .then(r => r.json()).then(j => { if (live) setRows(Array.isArray(j?.rows) ? j.rows : []) })
+      .catch(() => { if (live) setRows([]) })
+    return () => { live = false }
+  }, [projectId])
+
+  const toggle = async (r: Row) => {
+    setBusy(r.id)
+    try {
+      const res = await fetch('/api/projects/inspections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId, bzTaskId: r.id, on: !r.shared }) })
+      if (res.ok) setRows(list => (list || []).map(x => (x.id === r.id ? { ...x, shared: !r.shared } : x)))
+    } finally { setBusy(null) }
+  }
+
+  if (rows === null) return null
+  if (!rows.length) return null
+  const show = all ? rows : rows.slice(0, 8)
+
+  return (
+    <div className="rounded-2xl border border-line bg-white overflow-hidden">
+      <div className="flex items-baseline gap-2 px-3 py-2 border-b border-line">
+        <h3 className="text-[11px] font-bold uppercase tracking-wider text-muted">Inspections</h3>
+        <span className="text-[10.5px] text-muted tabular-nums ml-auto">{rows.filter(r => r.shared).length}/{rows.length} shared</span>
+      </div>
+      <div className="divide-y divide-line">
+        {show.map(r => (
+          <div key={r.id} className="px-3 py-2 text-[12px]">
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-ink font-semibold truncate">{r.unit}</p>
+                <p className="text-[11px] text-muted truncate">{[r.name, r.inspector].filter(Boolean).join(' · ')}</p>
+              </div>
+              <div className="shrink-0 text-right">
+                {r.date && <p className="text-[10.5px] text-muted tabular-nums">{r.date}</p>}
+                {r.reportUrl && <a href={r.reportUrl} target="_blank" rel="noreferrer" className="text-[10.5px] font-semibold text-brand-700 hover:underline">Report ↗</a>}
+              </div>
+            </div>
+            {canEdit && shareLive && (
+              <label className="mt-1 flex items-center gap-1.5 text-[11px] text-muted cursor-pointer select-none">
+                <input type="checkbox" checked={r.shared} disabled={busy === r.id} onChange={() => toggle(r)} className="w-3 h-3" />
+                <span>{r.shared ? 'The owner link can see this one.' : 'Show on the owner link'}</span>
+              </label>
+            )}
+          </div>
+        ))}
+      </div>
+      {rows.length > 8 && (
+        <button onClick={() => setAll(v => !v)} className="w-full border-t border-line px-3 py-1.5 text-[11px] font-semibold text-muted hover:text-ink">
+          {all ? 'Show fewer' : `All ${rows.length}`}
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -846,6 +922,7 @@ function BoardCard({ t, name, canEdit, busy, openId, onOpen, act, counts, dragId
   if (t.subtasks.length > 0) quiet.push(<span key="sub" className="tabular-nums">{subDone}/{t.subtasks.length}</span>)
   if (c && c.comments > 0) quiet.push(<span key="cm" className="inline-flex items-center gap-0.5"><MessageSquare size={9} />{c.comments}</span>)
   if (c && c.files > 0) quiet.push(<span key="fl" className="inline-flex items-center gap-0.5"><Paperclip size={9} />{c.files}</span>)
+  if (!t.breezeway_task_id && String(t.bz_request || '') === 'pending') quiet.push(<span key="ask" className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase px-1 rounded border border-brand-300 bg-brand-50 text-brand-700"><Wrench size={8} />asked</span>)
   if (t.breezeway_task_id) quiet.push(<span key="bz" className={'inline-flex items-center gap-0.5 text-[9px] font-bold uppercase px-1 rounded border ' + (TONE_CLS[t.breezeway?.tone || 'open'])}><Wrench size={8} />{t.breezeway?.status || 'BZ'}</span>)
   return (
     <div>
@@ -1296,6 +1373,8 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, cols, dra
         if (t.priority !== 'normal' && !done) bits.push(<span key="pri" className="inline-flex items-center gap-1"><span className={'w-1.5 h-1.5 rounded-full ' + PRIORITY_DOT[t.priority]} />{PRIORITY_LABEL[t.priority]}</span>)
         if (c && c.comments > 0) bits.push(<span key="cm" className="inline-flex items-center gap-0.5" title={`${c.comments} comments`}><MessageSquare size={10} />{c.comments}</span>)
         if (c && c.files > 0) bits.push(<span key="fl" className="inline-flex items-center gap-0.5" title={`${c.files} files`}><Paperclip size={10} />{c.files}</span>)
+        // A request from the share link has to be visible without opening anything, or it waits.
+        if (!t.breezeway_task_id && String(t.bz_request || '') === 'pending') bits.push(<button key="ask" onClick={e => { e.stopPropagation(); onPush?.(t.id) }} className="inline-flex items-center gap-0.5 text-[9.5px] font-bold uppercase px-1 rounded border border-brand-300 bg-brand-50 text-brand-700" title={'Asked for by ' + (t.bz_request_by || 'the share link')}><Wrench size={9} /> asked</button>)
         if (t.breezeway_task_id) bits.push(<button key="bz" onClick={e => { e.stopPropagation(); onPush?.(t.id) }} className={'inline-flex items-center gap-0.5 text-[9.5px] font-bold uppercase px-1 rounded border ' + (TONE_CLS[t.breezeway?.tone || 'open'])} title="In Breezeway — click to reassign or move"><Wrench size={9} /> {t.breezeway?.status || 'BZ'}</button>)
         const live = bits.filter(Boolean)
         if (!live.length && !(t.vendor_name || t.visit_on)) return null
@@ -2063,12 +2142,35 @@ function BreezewayBox({ task, p, canEdit, busy, act, startOpen }: { task: Task; 
     )
   }
   if (!canEdit) return null
+  // SOMEBODY ON THE SHARE LINK ASKED FOR THIS (Jon, 2026-10-09: "Must be approved by me, they
+  // should not see it"). The request is loud HERE and invisible there — the owner's screen says
+  // only that a technician was asked for, whichever way this goes.
+  const asked = String(task.bz_request || '') === 'pending'
+  const banner = asked ? (
+    <div className="rounded-xl border border-brand-200 bg-brand-50 px-3 py-2.5 text-[12.5px] space-y-2">
+      <p className="font-semibold text-brand-800 inline-flex items-center gap-1.5">
+        <Wrench size={12} />{task.bz_request_by || 'Someone on the share link'} asked for a technician
+      </p>
+      {task.bz_request_note && <p className="text-[12px] text-ink/80">“{task.bz_request_note}”</p>}
+      <p className="text-[10.5px] text-brand-800/70">They are not told whether you approve this — only that it was asked for.</p>
+      <div className="flex gap-2">
+        {!open && <button onClick={() => setOpen(true)} className="rounded-lg bg-ink text-white px-2.5 py-1 text-[12px] font-bold">Approve and push…</button>}
+        <button onClick={() => act({ action: 'bzRequestDecline', taskId: task.id })} disabled={busy}
+          className="rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] font-semibold text-ink disabled:opacity-40">Not this one</button>
+      </div>
+    </div>
+  ) : null
   if (!open) return (
-    <button onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-ink hover:border-ink">
-      <Wrench size={12} /> Push to Breezeway…
-    </button>
+    <div className="space-y-2">
+      {banner}
+      <button onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-ink hover:border-ink">
+        <Wrench size={12} /> Push to Breezeway…
+      </button>
+    </div>
   )
   return (
+    <div className="space-y-2">
+      {banner}
     <div className="rounded-xl border border-line bg-app/40 px-3 py-2.5 space-y-2.5 text-[12.5px]">
       <p className="font-semibold text-ink inline-flex items-center gap-1.5"><Wrench size={12} /> Push to Breezeway</p>
       {units.length === 0 && !hasStay ? (
@@ -2102,6 +2204,7 @@ function BreezewayBox({ task, p, canEdit, busy, act, startOpen }: { task: Task; 
           </div>
         </>
       )}
+    </div>
     </div>
   )
 }

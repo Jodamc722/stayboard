@@ -115,6 +115,11 @@ export type Task = {
   recurs?: Recurrence | null; recurred_from?: string | null
   /** Set when this task was sent to Breezeway; `breezeway` is the field task's live state (read-time). */
   breezeway_task_id?: string | null
+  /** Raised from the share link: somebody holding it asked for a technician (migration 151). */
+  bz_request?: string | null
+  bz_request_by?: string | null
+  bz_request_at?: string | null
+  bz_request_note?: string | null
   breezeway?: { status: string; tone: 'open' | 'done' | 'bad'; assignee?: string | null; date?: string | null; reportUrl?: string | null } | null
 }
 
