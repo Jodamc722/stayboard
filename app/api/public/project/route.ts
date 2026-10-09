@@ -97,6 +97,10 @@ function vendorView(p: any) {
     starts_on: p.starts_on, due_on: p.due_on,
     building: p.building, vendor_name: p.vendor_name,
     units: (p.links || []).filter((l: any) => l.kind === 'listing').map((l: any) => ({ ref_id: l.ref_id, label: l.label, done: l.done })),
+    // Boards hanging off this one. The stage and the ref, never the budget or the lead.
+    boards: (p.links || []).filter((l: any) => l.kind === 'project').map((l: any) => ({
+      id: String(l.ref_id), label: l.label || 'Project', stage: l.state?.label || null, ref: l.state?.detail || null,
+    })),
     // GROUPED BY UNIT (Jon, 2026-10-09: "can you help me organize this"). Fourteen jobs across six
     // units read as one undifferentiated list; the section each task already carries is what turns
     // it back into six short lists. The owner's add form writes the section too, so what they add
@@ -113,6 +117,7 @@ function vendorView(p: any) {
     // RELEASED INSPECTIONS. Only what Jon has personally let out, and deliberately not a verdict:
     // who walked the unit, when, and the report. Breezeway holds the judgement.
     inspections: p.sharedInspections || [],
+    hero: p.heroUrl || null,
   }
 }
 
@@ -148,9 +153,33 @@ async function sharedInspections(p: any) {
     .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
 }
 
+/**
+ * A PICTURE OF THE PLACE (Jon, 2026-10-09: "the header should be a photo of the unit"). A board
+ * about twenty-three flats opening on a grey band says nothing; the building says where you are
+ * before you read a word. Taken from the first linked unit that actually has a photo on the
+ * Guesty mirror, so it is the real unit rather than stock.
+ */
+async function heroFor(p: any): Promise<string | null> {
+  try {
+    const ids = (p.links || []).filter((l: any) => l.kind === 'listing').map((l: any) => String(l.ref_id)).slice(0, 40)
+    if (!ids.length) return null
+    const { data } = await supabaseAdmin().from('guesty_listings').select('id,pictures').in('id', ids)
+    const by: Record<string, any> = {}
+    for (const r of ((data || []) as any[])) by[String(r.id)] = r
+    // In the order the units are attached, so the board's first unit is the board's face.
+    for (const id of ids) {
+      const pics = Array.isArray(by[id]?.pictures) ? by[id].pictures : []
+      const url = pics.find((x: any) => typeof x === 'string' && x.startsWith('https://'))
+      if (url) return String(url)
+    }
+    return null
+  } catch { return null }
+}
+
 /** One read, one shape — GET and every POST return the project the same way. */
 async function viewOf(p: any) {
-  return vendorView({ ...p, sharedInspections: await sharedInspections(p) })
+  const [ins, hero] = await Promise.all([sharedInspections(p), heroFor(p)])
+  return vendorView({ ...p, sharedInspections: ins, heroUrl: hero })
 }
 
 export async function GET(req: NextRequest) {
@@ -182,6 +211,33 @@ export async function POST(req: NextRequest) {
       if (!canEdit) return NextResponse.json({ error: 'This link can tick items and comment, but not add work.' }, { status: 403 })
       const title = str(b.title)
       if (!title) return NextResponse.json({ error: 'Write what needs doing.' }, { status: 400 })
+      // A TASK, OR A WHOLE BOARD (Jon, 2026-10-09: "add a task / project"). Some of what an owner
+      // raises is one job; some of it is a renovation with a dozen jobs under it. A project gets
+      // its own board, inherits this one's team so nothing lands where nobody can see it, and
+      // shows here as a line that opens — rather than being crammed in as a task that will grow
+      // six checklists and still not be a project.
+      if (str(b.kind) === 'project') {
+        const { data: made, error: eP } = await supabaseAdmin().from('projects').insert({
+          title: title.slice(0, 200),
+          summary: str(b.description).slice(0, 2000) || null,
+          category: p.category || 'other',
+          building: p.building || null,
+          stage: 'idea',
+          due_on: /^\d{4}-\d{2}-\d{2}$/.test(str(b.due_on)) ? str(b.due_on) : null,
+          created_by: who.slice(0, 60),
+        }).select('id,ref,title').maybeSingle()
+        if (eP || !made) return NextResponse.json({ error: eP?.message || 'Could not start that project.' }, { status: 500 })
+        const child = String((made as any).id)
+        // The parent's team comes along. A board created from outside with nobody on it is
+        // invisible to every person who would have worked it.
+        const seed = (p.members || []).map((m: any) => ({ project_id: child, person_key: m.person_key, display: m.display, email: m.email, role: m.role || 'owner' }))
+        if (seed.length) await supabaseAdmin().from('project_members').upsert(seed, { onConflict: 'project_id,person_key' })
+        await supabaseAdmin().from('project_links').insert({ project_id: p.id, kind: 'project', ref_id: child, label: String((made as any).title || title).slice(0, 200) })
+        await addNote(p.id, `${who} started a project: ${title.slice(0, 160)}`, who, 'event', true)
+        await tellLeadership(p.id, who, { kind: 'added', task: title, note: 'new project ' + String((made as any).ref || '') })
+        const fresh0 = await getProjectByToken(str(b.token))
+        return NextResponse.json({ ok: true, project: fresh0 ? await viewOf(fresh0) : null })
+      }
       const { error } = await supabaseAdmin().from('project_steps').insert({
         project_id: p.id, title: title.slice(0, 200), done: false,
         due_on: /^\d{4}-\d{2}-\d{2}$/.test(str(b.due_on)) ? str(b.due_on) : null,

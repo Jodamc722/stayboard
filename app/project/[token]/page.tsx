@@ -13,7 +13,7 @@
 // and a name is asked for the same way so their comments and tasks are signed by a person rather
 // than by "vendor".
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, Check, Loader2, AlertTriangle, Building2, Lock, Plus, X, Wrench, FileText, MessageSquare, ChevronRight, Paperclip } from 'lucide-react'
+import { Camera, Check, Loader2, AlertTriangle, Building2, Lock, Plus, X, Wrench, FileText, MessageSquare, ChevronRight, Paperclip, Layers } from 'lucide-react'
 
 type Step = {
   id: string; title: string; done: boolean; status?: string | null; due_on: string | null
@@ -35,6 +35,8 @@ type V = {
   steps: Step[]
   team?: string[]
   inspections?: { id: string; unit: string; name: string; inspector: string | null; date: string | null; reportUrl: string | null }[]
+  boards?: { id: string; label: string; stage: string | null; ref: string | null }[]
+  hero?: string | null
   canEdit?: boolean
   photos: { id: string; url: string; caption: string | null; phase: string; created_at: string }[]
   notes: { body: string; author: string | null; created_at: string }[]
@@ -101,6 +103,22 @@ const UI: Record<string, { en: string; es: string }> = {
   seeEnglish: { en: 'See in English', es: 'See in English' },
   seeSpanish: { en: 'Ver en español', es: 'Ver en español' },
   ofUnitsDone: { en: 'units done', es: 'unidades hechas' },
+  addOne: { en: 'Add a task or project', es: 'Añadir una tarea o proyecto' },
+  newItem: { en: 'Add', es: 'Añadir' },
+  whatKind: { en: 'What is it?', es: '¿Qué es?' },
+  aTask: { en: 'A task — one job', es: 'Una tarea — un trabajo' },
+  aProject: { en: 'A project — its own board', es: 'Un proyecto — su propio tablero' },
+  titleLabel: { en: 'Title', es: 'Título' },
+  whatNeedsDoing: { en: 'What needs doing?', es: '¿Qué hay que hacer?' },
+  unitLabel: { en: 'Unit', es: 'Unidad' },
+  detailsLabel: { en: 'Details', es: 'Detalles' },
+  dateLabel: { en: 'Date', es: 'Fecha' },
+  cancel: { en: 'Cancel', es: 'Cancelar' },
+  noUnit: { en: 'No unit', es: 'Sin unidad' },
+  projects: { en: 'Projects', es: 'Proyectos' },
+  pushBz: { en: 'Push to Breezeway', es: 'Enviar a Breezeway' },
+  pushSent: { en: 'Sent to the team — they will schedule it in Breezeway.', es: 'Enviado al equipo — lo programarán en Breezeway.' },
+  pushSentShort: { en: 'Sent', es: 'Enviado' },
 }
 
 const day = (iso: string | null, lang: Lang = 'en') =>
@@ -141,6 +159,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   const [task, setTask] = useState('')
   const [taskUnit, setTaskUnit] = useState('')
   const [taskDesc, setTaskDesc] = useState('')
+  const [adding, setAdding] = useState(false)
   const [openTask, setOpenTask] = useState<string | null>(null)
   const [lang, setLang] = useState<Lang>('en')
   // original → translation, for the language currently chosen. Cleared when the language flips,
@@ -290,8 +309,18 @@ export default function VendorProjectPage({ params }: { params: { token: string 
       {/* THE HEADER (2026-10-09 look). One dark band carrying the name, the two numbers and the
           language switch — so the page opens on something composed rather than on a stack of
           white cards, and the switch is the first thing a Spanish reader meets. */}
-      <header className="bg-ink text-white">
-        <div className="max-w-2xl mx-auto px-4 pt-6 pb-5">
+      <header className="relative bg-ink text-white">
+        {/* THE PLACE ITSELF (Jon, 2026-10-09). The first attached unit's own photo, dimmed hard
+            enough that white type stays readable over any picture — a light kitchen and a dark
+            bedroom both have to work, and the board must never become unreadable because a
+            listing swapped its hero shot. No photo simply leaves the dark band. */}
+        {p.hero && (
+          <>
+            <img src={p.hero} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover opacity-40" />
+            <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/80 to-ink/50" />
+          </>
+        )}
+        <div className="relative max-w-2xl mx-auto px-4 pt-6 pb-5">
           <div className="flex items-start gap-3">
             <div className="min-w-0 flex-1">
               <p className="text-[10.5px] uppercase tracking-[0.14em] font-semibold text-white/55">Stay Hospitality {p.ref ? '· ' + p.ref : ''}</p>
@@ -372,44 +401,50 @@ export default function VendorProjectPage({ params }: { params: { token: string 
               ))}
               {!p.steps.length && <p className="px-3 py-3 text-[13px] text-muted">{T('nothingYet')}</p>}
             </div>
+            {/* ONE BUTTON, THEN A FORM (Jon, 2026-10-09: "make this a button + then allows to add").
+                Three controls jammed into a strip under the list was the board's worst corner —
+                the title box too narrow to read what you typed, the dropdown shouting "Which
+                unit?" at somebody who had not written anything yet, and no room at all for the
+                detail. Now the row is a button, and the form it opens has the fields in the order
+                Jon asked for: title, what it is, unit, then everything else. */}
             {p.canEdit && (
-              <form onSubmit={e => { e.preventDefault(); if (task.trim()) { post({ action: 'addTask', title: task, section: taskUnit || null, description: taskDesc }, 'addTask'); setTask(''); setTaskDesc('') } }}
-                className="border-t border-line p-2.5 space-y-2">
-                <div className="flex flex-wrap gap-2">
-                  <input value={task} onChange={e => setTask(e.target.value)} placeholder={T('addSomething')}
-                    className="flex-1 min-w-[180px] text-[14px] rounded-xl border border-line px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-                  {/* WHICH UNIT (2026-10-09). A job with no unit on it is a job somebody has to come
-                      back and ask about, so the form asks while the person still knows the answer. */}
-                  <select value={taskUnit} onChange={e => setTaskUnit(e.target.value)}
-                    className="text-[14px] rounded-xl border border-line px-2 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200">
-                    <option value="">{T('whichUnit')}</option>
-                    {unitNames(p).map(u => <option key={u} value={u}>{u}</option>)}
-                  </select>
-                  <button disabled={!task.trim() || busy === 'addTask'} className="text-[14px] font-semibold px-3 rounded-xl bg-ink text-white disabled:opacity-40 inline-flex items-center gap-1">
-                    {busy === 'addTask' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={15} />} {T('add')}
-                  </button>
-                </div>
-                {/* THE DETAIL (Jon, 2026-10-09: "be able to add description section"). A title is
-                    what to do; this is what the person doing it needs to know, and it travels on
-                    the job rather than in somebody's memory of a phone call. */}
-                {(task.trim() || taskDesc) && (
-                  <textarea value={taskDesc} onChange={e => setTaskDesc(e.target.value)} rows={2} placeholder={T('details')}
-                    className="w-full text-[13px] rounded-xl border border-line px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
-                )}
-              </form>
+              <button onClick={() => setAdding(true)}
+                className="w-full border-t border-line px-3 py-3 text-[13.5px] font-semibold text-ink hover:bg-app inline-flex items-center justify-center gap-1.5">
+                <Plus size={15} /> {T('addOne')}
+              </button>
             )}
           </section>
         )}
 
-        {!!p.units.length && (
+        {/* BOARDS HANGING OFF THIS ONE. A project raised here is a line, not a nested board:
+            the work lives on its own board and this one says it exists. */}
+        {!!p.boards?.length && (
           <section className="rounded-2xl border border-line bg-white overflow-hidden">
-            <h2 className="text-[12px] font-bold text-ink px-3 py-2 border-b border-line">{T('units')} ({p.units.length})</h2>
-            <div className="divide-y divide-line max-h-64 overflow-y-auto">
-              {p.units.map(u => (
-                <div key={u.ref_id} className="flex items-center gap-2 px-3 py-2 text-[13px]">
-                  {u.done ? <Check size={13} className="text-emerald-600 shrink-0" /> : <span className="w-3.5 shrink-0" />}
-                  <span className={u.done ? 'text-muted line-through' : 'text-ink'}>{u.label || u.ref_id}</span>
+            <h2 className="text-[12px] font-bold text-ink px-3 py-2 border-b border-line">{T('projects')}</h2>
+            <div className="divide-y divide-line">
+              {p.boards.map(bd => (
+                <div key={bd.id} className="flex items-center gap-2.5 px-3 py-2.5">
+                  <Layers size={13} className="text-muted shrink-0" />
+                  <span className="min-w-0 flex-1 text-[13.5px] text-ink truncate">{TX(bd.label)}</span>
+                  {bd.stage && <span className="shrink-0 text-[10.5px] uppercase tracking-wide text-muted">{bd.stage}</span>}
                 </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* THE UNITS, as a grid of chips rather than twenty-three rows in a scroller — the list
+            was taller than the work it belonged to and still needed scrolling to read. */}
+        {!!p.units.length && (
+          <section className="rounded-2xl border border-line bg-white p-3">
+            <h2 className="text-[12px] font-bold text-ink mb-2">{T('units')} ({p.units.length})</h2>
+            <div className="flex flex-wrap gap-1.5">
+              {p.units.map(u => (
+                <span key={u.ref_id}
+                  className={'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] ' +
+                    (u.done ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-line text-ink/80')}>
+                  {u.done && <Check size={11} />}{u.label || u.ref_id}
+                </span>
               ))}
             </div>
           </section>
@@ -482,6 +517,10 @@ export default function VendorProjectPage({ params }: { params: { token: string 
         </p>
       </div>
 
+      {adding && (
+        <AddSheet p={p} busy={busy} T={T} post={post} onClose={() => setAdding(false)} />
+      )}
+
       {openTask && (() => {
         const t = p.steps.find(x => x.id === openTask)
         return t ? <ItemSheet t={t} p={p} who={who} busy={busy} post={post} upload={upload}
@@ -497,7 +536,7 @@ function Chips({ s, T }: { s: Step; T: (k: string) => string }) {
   const bits: React.ReactNode[] = []
   const subs = s.subtasks || []
   if (subs.length) bits.push(<span key="s" className="tabular-nums">{subs.filter(x => x.done).length}/{subs.length} {T('steps')}</span>)
-  if (s.requested) bits.push(<span key="r" className="inline-flex items-center gap-0.5 font-semibold text-brand-700"><Wrench size={9} />{T('requestedShort')}</span>)
+  if (s.requested) bits.push(<span key="r" className="inline-flex items-center gap-0.5 font-semibold text-brand-700"><Wrench size={9} />{T('pushSentShort')}</span>)
   if (s.breezeway) bits.push(<span key="b" className={'inline-flex items-center gap-0.5 font-semibold ' + (s.breezeway.tone === 'done' ? 'text-emerald-700' : s.breezeway.tone === 'bad' ? 'text-amber-700' : 'text-brand-700')}><Wrench size={9} />{s.breezeway.status || 'Breezeway'}</span>)
   if (s.photos?.length) bits.push(<span key="p" className="inline-flex items-center gap-0.5"><Camera size={9} />{s.photos.length}</span>)
   if (s.invoices?.length) bits.push(<span key="i" className="inline-flex items-center gap-0.5"><FileText size={9} />{s.invoices.length}</span>)
@@ -505,6 +544,103 @@ function Chips({ s, T }: { s: Step; T: (k: string) => string }) {
   if (s.assignees?.length) bits.push(<span key="a">{s.assignees.join(', ')}</span>)
   if (!bits.length) return null
   return <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 mt-1 text-[10.5px] text-muted">{bits}</span>
+}
+
+/**
+ * ADDING SOMETHING — one button, then a real form (Jon, 2026-10-09).
+ *
+ * The order is his: TITLE at the top, then WHAT IT IS, then the UNIT, then everything else. A
+ * task is one job on this board. A project is a bigger piece of work that gets a board of its
+ * own and shows here as a line — because the alternative, a task that grows six checklists and
+ * still is not a project, is how a board stops being readable.
+ */
+function AddSheet({ p, busy, T, post, onClose }: {
+  p: V; busy: string | null; T: (k: string) => string
+  post: (body: any, key: string) => Promise<void>
+  onClose: () => void
+}) {
+  const [kind, setKind] = useState<'task' | 'project'>('task')
+  const [title, setTitle] = useState('')
+  const [unit, setUnit] = useState('')
+  const [desc, setDesc] = useState('')
+  const [due, setDue] = useState('')
+  const ref = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    ref.current?.focus()
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', k)
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { window.removeEventListener('keydown', k); document.body.style.overflow = prev }
+  }, [onClose])
+
+  const save = async () => {
+    const t = title.trim()
+    if (!t) return
+    await post({ action: 'addTask', kind, title: t, section: unit || null, description: desc, due_on: due || null }, 'addTask')
+    onClose()
+  }
+
+  const Field = ({ label, children }: { label: string; children: any }) => (
+    <label className="block">
+      <span className="block text-[10.5px] font-bold uppercase tracking-wide text-muted mb-1">{label}</span>
+      {children}
+    </label>
+  )
+  const box = 'w-full text-[14px] rounded-xl border border-line px-3 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center">
+      <div className="absolute inset-0 bg-ink/40" onClick={onClose} />
+      <div className="relative w-full sm:max-w-md max-h-[92vh] overflow-y-auto bg-white rounded-t-2xl sm:rounded-2xl border border-line">
+        <div className="sticky top-0 bg-white border-b border-line px-4 py-3 flex items-center gap-2">
+          <Plus size={15} className="text-muted" />
+          <span className="text-[14px] font-bold text-ink flex-1">{T('addOne')}</span>
+          <button onClick={onClose} className="text-muted hover:text-ink p-1" aria-label="Close"><X size={17} /></button>
+        </div>
+
+        <div className="p-4 space-y-3.5">
+          <Field label={T('titleLabel')}>
+            <input ref={ref} value={title} onChange={e => setTitle(e.target.value)} placeholder={T('whatNeedsDoing')}
+              onKeyDown={e => { if (e.key === 'Enter') save() }}
+              className={box + ' text-[15px] font-semibold'} />
+          </Field>
+
+          <Field label={T('whatKind')}>
+            <select value={kind} onChange={e => setKind(e.target.value as any)} className={box}>
+              <option value="task">{T('aTask')}</option>
+              <option value="project">{T('aProject')}</option>
+            </select>
+          </Field>
+
+          <Field label={T('unitLabel')}>
+            <select value={unit} onChange={e => setUnit(e.target.value)} className={box}>
+              <option value="">{T('noUnit')}</option>
+              {unitNames(p).map(u => <option key={u} value={u}>{u}</option>)}
+            </select>
+          </Field>
+
+          <Field label={T('detailsLabel')}>
+            <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder={T('details')}
+              className={box + ' text-[13.5px]'} />
+          </Field>
+
+          <Field label={T('dateLabel')}>
+            <input type="date" value={due} onChange={e => setDue(e.target.value)} className={box} />
+          </Field>
+
+          <div className="flex gap-2 justify-end pt-1">
+            <button onClick={onClose} className="text-[13.5px] text-muted hover:text-ink px-2">{T('cancel')}</button>
+            <button onClick={save} disabled={!title.trim() || busy === 'addTask'}
+              className="text-[14px] font-semibold px-4 py-2.5 rounded-xl bg-ink text-white disabled:opacity-40 inline-flex items-center gap-1.5">
+              {busy === 'addTask' ? <Loader2 size={14} className="animate-spin" /> : <Plus size={15} />} {T('newItem')}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 /**
@@ -571,6 +707,16 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
       <div className="absolute inset-0 bg-ink/40" onClick={onClose} />
       <div className="relative w-full sm:max-w-lg max-h-[92vh] overflow-y-auto bg-white rounded-t-2xl sm:rounded-2xl border border-line">
         <div className="sticky top-0 bg-white border-b border-line px-4 py-3 flex items-start gap-3">
+          {/* DONE, WHERE THE EYE ALREADY IS (Jon, 2026-10-09: "mark done should be in a better
+              spot"). It was a full-width box three sections down, below the detail — which put
+              the commonest action on the sheet behind a scroll. It belongs beside the title, the
+              way it sits beside the title in the list. */}
+          <button onClick={() => post({ action: 'stepDone', stepId: t.id, done: !t.done }, 'step' + t.id)} disabled={busy === 'step' + t.id}
+            title={t.done ? T('isDone') : T('markDone')} aria-label={t.done ? T('isDone') : T('markDone')}
+            className={'shrink-0 mt-0.5 w-6 h-6 rounded-full border-2 grid place-items-center transition disabled:opacity-50 ' +
+              (t.done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-line text-transparent hover:border-ink')}>
+            {busy === 'step' + t.id ? <Loader2 size={12} className="animate-spin text-muted" /> : <Check size={14} strokeWidth={3} />}
+          </button>
           <div className="min-w-0 flex-1">
             {t.section && <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{TX(t.section)}</p>}
             {p.canEdit ? (
@@ -612,12 +758,6 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
               </label>
             </div>
           )}
-
-          <label className="flex items-center gap-2.5 text-[14px] rounded-xl border border-line px-3 py-2.5 cursor-pointer">
-            <input type="checkbox" checked={t.done} disabled={busy === 'step' + t.id} className="w-4 h-4"
-              onChange={e => post({ action: 'stepDone', stepId: t.id, done: e.target.checked }, 'step' + t.id)} />
-            <span className="font-semibold text-ink">{t.done ? T('isDone') : T('markDone')}</span>
-          </label>
 
           {/* ACTION STEPS */}
           <div>
@@ -688,7 +828,7 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
           {!t.breezeway && (
             t.requested ? (
               <p className="rounded-xl border border-line bg-app px-3 py-2.5 text-[12.5px] text-muted">
-                <Wrench size={12} className="inline mr-1.5 -mt-0.5" />{T('requested')}
+                <Wrench size={12} className="inline mr-1.5 -mt-0.5" />{T('pushSent')}
               </p>
             ) : (
               <div>
@@ -697,7 +837,7 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
                 <button onClick={() => { post({ action: 'requestBreezeway', taskId: t.id, note: ask }, 'ask' + t.id); setAsk('') }}
                   disabled={busy === 'ask' + t.id}
                   className="w-full rounded-xl border border-line text-[13.5px] font-semibold py-2.5 inline-flex items-center justify-center gap-2 text-ink disabled:opacity-50">
-                  {busy === 'ask' + t.id ? <Loader2 size={14} className="animate-spin" /> : <Wrench size={15} />} {T('askTech')}
+                  {busy === 'ask' + t.id ? <Loader2 size={14} className="animate-spin" /> : <Wrench size={15} />} {T('pushBz')}
                 </button>
               </div>
             )
