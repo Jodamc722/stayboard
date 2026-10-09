@@ -161,6 +161,18 @@ const UI: Record<string, { en: string; es: string }> = {
   pushNow: { en: 'Push to Breezeway now', es: 'Enviar a Breezeway ahora' },
   pushing: { en: 'Creating the field task…', es: 'Creando la tarea…' },
   needUnit: { en: 'Pick the unit first — a field task has to live somewhere.', es: 'Elige la unidad primero — la tarea necesita una unidad.' },
+  pushTitle: { en: 'Send to the field', es: 'Enviar al campo' },
+  dept: { en: 'Team', es: 'Equipo' },
+  deptMaintenance: { en: 'Maintenance', es: 'Mantenimiento' },
+  deptHousekeeping: { en: 'Housekeeping', es: 'Limpieza' },
+  deptInspection: { en: 'Inspection', es: 'Inspección' },
+  deptSafety: { en: 'Safety', es: 'Seguridad' },
+  whoField: { en: 'Who is doing it', es: 'Quién lo hace' },
+  searchPeople: { en: 'Search the crew…', es: 'Buscar en el equipo…' },
+  extraNote: { en: 'Anything else they need to know', es: 'Algo más que deban saber' },
+  extraHint: { en: 'Added to the job and sent with the task.', es: 'Se añade al trabajo y va con la tarea.' },
+  create: { en: 'Create the task', es: 'Crear la tarea' },
+  byName: { en: 'Nobody ticked — the people on this job are matched into Breezeway by name.', es: 'Nadie marcado — las personas del trabajo se emparejan en Breezeway por nombre.' },
   activity: { en: 'Activity', es: 'Actividad' },
   coverPhoto: { en: 'Cover photo', es: 'Foto de portada' },
   coverHint: { en: 'Pick the picture at the top of the board.', es: 'Elige la foto que va arriba del tablero.' },
@@ -1285,6 +1297,24 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, reload, onClose
   const [subDue, setSubDue] = useState('')
   const [busyBz, setBusyBz] = useState(false)
   const [bzErr, setBzErr] = useState<string | null>(null)
+  const [bzOpen, setBzOpen] = useState(false)
+  const [dept, setDept] = useState('maintenance')
+  const [bzDate, setBzDate] = useState(t.due_on || todayISO())
+  const [bzWho, setBzWho] = useState<number[]>([])
+  const [bzNote, setBzNote] = useState('')
+  const [crewQ, setCrewQ] = useState('')
+  const [crew, setCrew] = useState<{ id: number; name: string }[] | null>(null)
+
+  // The Breezeway roster, fetched only once somebody opens the form — a signed-in read, so it
+  // never happens for an owner and never costs anything on a page that is only being read.
+  useEffect(() => {
+    if (!bzOpen || crew !== null) return
+    let live = true
+    fetch('/api/projects/breezeway', { cache: 'no-store' }).then(r => r.json())
+      .then(j => { if (live) setCrew(((j?.people || []) as any[]).map(x => ({ id: Number(x.id), name: String(x.name || '') })).filter(x => x.id && x.name)) })
+      .catch(() => { if (live) setCrew([]) })
+    return () => { live = false }
+  }, [bzOpen, crew])
 
   /** The unit this job belongs to, as Guesty knows it — matched from the job's own section. */
   const listingFor = (x: Step) => {
@@ -1298,12 +1328,26 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, reload, onClose
     if (!listingId) { setBzErr(T('needUnit')); return }
     setBusyBz(true); setBzErr(null)
     try {
+      // The extra note goes onto the JOB first, then travels with the field task — so it is on
+      // the board a month later, not only in Breezeway where the owner cannot read it.
+      const extra = bzNote.trim()
+      if (extra) {
+        const merged = [x.note || '', extra].filter(Boolean).join('\n\n')
+        await post({ action: 'taskEdit', taskId: x.id, description: merged }, 'edit' + x.id)
+      }
       const r = await fetch('/api/projects/' + p.id, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'taskToBreezeway', taskId: x.id, listingId, department: 'maintenance', date: x.due_on || undefined }),
+        body: JSON.stringify({
+          action: 'taskToBreezeway', taskId: x.id, listingId,
+          department: dept, date: bzDate || undefined,
+          priority: prioOf(x) === 'urgent' || prioOf(x) === 'high' ? prioOf(x) : 'normal',
+          // Empty means "match this job's people by name", which the server already does.
+          assigneeIds: bzWho,
+        }),
       })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || 'Breezeway said no.')
+      setBzOpen(false); setBzNote('')
       // Re-read through the share so the sheet shows the field task, its status and its report.
       await reload()
     } catch (e: any) { setBzErr(String(e.message || e)) } finally { setBusyBz(false) }
@@ -1539,14 +1583,89 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, reload, onClose
               all behave identically; the unit comes from the job's own unit, and whoever is on
               the task is matched into Breezeway by name. An owner still only gets to ask. */}
           {!t.breezeway && p.staff ? (
-            <div>
-              <button onClick={() => pushBz(t)} disabled={busyBz}
-                className="w-full rounded-xl bg-ink text-white text-[13.5px] font-semibold py-2.5 inline-flex items-center justify-center gap-2 disabled:opacity-50">
-                {busyBz ? <Loader2 size={14} className="animate-spin" /> : <Wrench size={15} />}
-                {busyBz ? T('pushing') : T('pushNow')}
-              </button>
-              {bzErr && <p className="text-[12px] text-rose-700 mt-1.5">{bzErr}</p>}
-            </div>
+            !bzOpen ? (
+              <div>
+                <button onClick={() => setBzOpen(true)}
+                  className="w-full rounded-xl bg-ink text-white text-[13.5px] font-semibold py-2.5 inline-flex items-center justify-center gap-2">
+                  <Wrench size={15} /> {T('pushNow')}
+                </button>
+                {bzErr && <p className="text-[12px] text-rose-700 mt-1.5">{bzErr}</p>}
+              </div>
+            ) : (
+              /* THE PUSH, WITH ITS DETAILS (Jon: "it should allow you to pick an assignee ...
+                 multiple assignees and add details"). Sending a job to the field blind — right
+                 department? right day? who? — is how a task lands on the board and sits there.
+                 Everything is pre-filled from the job, so the common case is still one click. */
+              <div className="rounded-xl border border-line overflow-hidden">
+                <div className="flex items-center gap-2 px-3 py-2 bg-app/60 border-b border-line">
+                  <Wrench size={13} className="text-muted" />
+                  <span className="text-[12px] font-bold text-ink flex-1">{T('pushTitle')}</span>
+                  <button onClick={() => setBzOpen(false)} className="text-muted hover:text-ink"><X size={15} /></button>
+                </div>
+                <div className="p-3 space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    <label className="flex-1 min-w-[140px]">
+                      <span className="block text-[10.5px] font-bold uppercase tracking-wide text-muted mb-1">{T('dept')}</span>
+                      <select value={dept} onChange={e => setDept(e.target.value)}
+                        className="w-full text-[13.5px] rounded-lg border border-line px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200">
+                        <option value="maintenance">{T('deptMaintenance')}</option>
+                        <option value="housekeeping">{T('deptHousekeeping')}</option>
+                        <option value="inspection">{T('deptInspection')}</option>
+                        <option value="safety">{T('deptSafety')}</option>
+                      </select>
+                    </label>
+                    <label className="flex-1 min-w-[140px]">
+                      <span className="block text-[10.5px] font-bold uppercase tracking-wide text-muted mb-1">{T('due')}</span>
+                      <input type="date" value={bzDate} onChange={e => setBzDate(e.target.value)}
+                        className="w-full text-[13.5px] rounded-lg border border-line px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                    </label>
+                  </div>
+
+                  <div>
+                    <span className="block text-[10.5px] font-bold uppercase tracking-wide text-muted mb-1">{T('whoField')}</span>
+                    {crew === null ? (
+                      <p className="text-[12.5px] text-muted inline-flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> …</p>
+                    ) : (
+                      <>
+                        {crew.length > 8 && (
+                          <input value={crewQ} onChange={e => setCrewQ(e.target.value)} placeholder={T('searchPeople')}
+                            className="w-full text-[13px] rounded-lg border border-line px-2.5 py-1.5 mb-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                        )}
+                        <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+                          {crew.filter(c => !crewQ || c.name.toLowerCase().includes(crewQ.toLowerCase())).map(c => {
+                            const on = bzWho.includes(c.id)
+                            return (
+                              <button key={c.id} type="button"
+                                onClick={() => setBzWho(v => on ? v.filter(x => x !== c.id) : [...v, c.id])}
+                                className={'inline-flex items-center gap-1.5 rounded-full border pl-1 pr-2.5 py-0.5 text-[12.5px] ' +
+                                  (on ? 'border-ink bg-ink text-white font-semibold' : 'border-line text-muted hover:text-ink')}>
+                                <span className={'w-5 h-5 rounded-full grid place-items-center text-[8.5px] font-bold ' + (on ? 'bg-white/20' : 'bg-app text-muted')}>{initials(c.name)}</span>
+                                {c.name}
+                              </button>
+                            )
+                          })}
+                        </div>
+                        {!bzWho.length && <p className="text-[11px] text-muted mt-1.5">{T('byName')}</p>}
+                      </>
+                    )}
+                  </div>
+
+                  <label className="block">
+                    <span className="block text-[10.5px] font-bold uppercase tracking-wide text-muted mb-1">{T('extraNote')}</span>
+                    <textarea value={bzNote} onChange={e => setBzNote(e.target.value)} rows={2}
+                      className="w-full text-[13px] rounded-lg border border-line px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                    <span className="block text-[11px] text-muted mt-1">{T('extraHint')}</span>
+                  </label>
+
+                  {bzErr && <p className="text-[12px] text-rose-700">{bzErr}</p>}
+                  <button onClick={() => pushBz(t)} disabled={busyBz}
+                    className="w-full rounded-xl bg-ink text-white text-[13.5px] font-semibold py-2.5 inline-flex items-center justify-center gap-2 disabled:opacity-50">
+                    {busyBz ? <Loader2 size={14} className="animate-spin" /> : <Wrench size={15} />}
+                    {busyBz ? T('pushing') : T('create')}
+                  </button>
+                </div>
+              </div>
+            )
           ) : !t.breezeway && (
             t.requested ? (
               <p className="rounded-xl border border-line bg-app px-3 py-2.5 text-[12.5px] text-muted">

@@ -474,15 +474,43 @@ async function syncBreezeway(S: any[]) {
   const rows = await soft(sb.from('breezeway_tasks_sync').select('id,status,scheduled_date,assignee_name,report_url,finished_at').in('id', sent.map(t => String(t.breezeway_task_id))))
   const by = Object.fromEntries(((rows || []) as any[]).map(r => [String(r.id), r]))
   const finish: string[] = []
+  // EVERY CHANGE OF STATE GETS A LINE (migration 153). The badge says where the job is now; the
+  // thread says how it got there — scheduled on the 14th, started, finished. Written only when
+  // the status actually MOVES, against the last one we saw, so a page refresh is not an event.
+  const moved: { id: string; project_id: string; to: string; when: string | null; who: string | null }[] = []
   for (const t of sent) {
     const r = by[String(t.breezeway_task_id)]
     if (!r) { t.breezeway = { status: 'unknown', tone: 'open' }; continue }
     const done = BZ_DONE.test(String(r.status))
-    t.breezeway = { status: String(r.status || ''), tone: done ? 'done' : BZ_GONE.test(String(r.status)) ? 'bad' : 'open', assignee: r.assignee_name || null, date: r.scheduled_date ? String(r.scheduled_date).slice(0, 10) : null, reportUrl: r.report_url || null }
+    const now = String(r.status || '')
+    t.breezeway = { status: now, tone: done ? 'done' : BZ_GONE.test(String(r.status)) ? 'bad' : 'open', assignee: r.assignee_name || null, date: r.scheduled_date ? String(r.scheduled_date).slice(0, 10) : null, reportUrl: r.report_url || null }
+    if (now && String(t.bz_status || '') !== now) {
+      moved.push({ id: t.id, project_id: String(t.project_id), to: now, when: r.scheduled_date ? String(r.scheduled_date).slice(0, 10) : null, who: r.assignee_name || null })
+      t.bz_status = now
+    }
     if (done && t.status !== 'done') { t.status = 'done'; t.done = true; t.done_by = 'breezeway'; finish.push(t.id) }
   }
   // The board follows the field. done_by 'breezeway' makes the feed honest about who did it.
   if (finish.length) await sb.from('project_steps').update({ status: 'done', done_by: 'breezeway' }).in('id', finish)
+  for (const m of moved) {
+    // Shared, because the whole point is that the owner can see the job moving without asking.
+    await addNote(m.project_id, bzLine(m.to, m.when, m.who), 'Breezeway', 'comment', false, { taskId: m.id, shared: true }).catch(() => {})
+    await sb.from('project_steps').update({ bz_status: m.to, bz_seen_at: new Date().toISOString() }).eq('id', m.id)
+      .then(r => r.error && /column|schema/i.test(r.error.message || '') ? null : r)
+  }
+}
+
+/** One plain line per state, in the words somebody outside Breezeway would use. */
+function bzLine(status: string, when: string | null, who: string | null): string {
+  const s = String(status || '').toLowerCase()
+  const whoBit = who ? ` — ${who}` : ''
+  if (/complete|finish|closed|done/.test(s)) return `Finished in the field${whoBit}.`
+  if (/progress|started|doing|active/.test(s)) return `Work started${whoBit}.`
+  if (/cancel/.test(s)) return 'Cancelled in Breezeway.'
+  if (/created|new|assigned|scheduled|pending|open/.test(s)) {
+    return when ? `Scheduled for ${when}${whoBit}.` : `On the Breezeway board${whoBit}.`
+  }
+  return `Breezeway: ${status}${whoBit}`
 }
 
 /** Resolve a vendor share link. Returns null for unknown, revoked or expired tokens. */
