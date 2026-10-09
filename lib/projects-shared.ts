@@ -419,6 +419,8 @@ export type BoardSettings = {
   moveDone: boolean
   /** What that section is called. Ignored when the board already has one of DONE_NAMES. */
   doneSection: string
+  /** The picture at the top of the shared board — one of the attached units' own photos. */
+  hero: string
 }
 
 // ── MY VIEW OF THIS BOARD ───────────────────────────────────────────────────────────────────────
@@ -586,6 +588,9 @@ export const settingsOf = (raw: any): BoardSettings => ({
   moveDone: raw?.moveDone !== false,
   doneSection: typeof raw?.doneSection === 'string' && raw.doneSection.trim() ? String(raw.doneSection).trim().slice(0, 60) : 'Completed',
   sectionOrder: Array.isArray(raw?.sectionOrder) ? raw.sectionOrder.map(String).slice(0, 50) : [],
+  // THE FACE OF A SHARED BOARD (Jon, 2026-10-09: "I should be able to select the photo"). A URL
+  // picked from the attached units' own Guesty pictures; empty means the first one with a photo.
+  hero: typeof raw?.hero === 'string' && /^https:\/\//.test(raw.hero) ? String(raw.hero).slice(0, 600) : '',
 })
 /** The face of a project: its icon, falling back by kind so an old row still has one. */
 export const iconOf = (p: { settings?: any; kind?: string | null }) => {

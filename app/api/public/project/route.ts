@@ -166,21 +166,24 @@ async function sharedInspections(p: any) {
  * before you read a word. Taken from the first linked unit that actually has a photo on the
  * Guesty mirror, so it is the real unit rather than stock.
  */
-async function heroFor(p: any): Promise<string | null> {
+async function heroFor(p: any): Promise<{ url: string | null; choices: string[] }> {
   try {
+    const picked = str(p.settings?.hero)
     const ids = (p.links || []).filter((l: any) => l.kind === 'listing').map((l: any) => String(l.ref_id)).slice(0, 40)
-    if (!ids.length) return null
+    if (!ids.length) return { url: picked || null, choices: [] }
     const { data } = await supabaseAdmin().from('guesty_listings').select('id,pictures').in('id', ids)
     const by: Record<string, any> = {}
     for (const r of ((data || []) as any[])) by[String(r.id)] = r
-    // In the order the units are attached, so the board's first unit is the board's face.
+    // A few from each unit, in the order the units are attached — enough to choose from without
+    // handing the page four hundred URLs.
+    const choices: string[] = []
     for (const id of ids) {
       const pics = Array.isArray(by[id]?.pictures) ? by[id].pictures : []
-      const url = pics.find((x: any) => typeof x === 'string' && x.startsWith('https://'))
-      if (url) return String(url)
+      for (const x of pics.slice(0, 3)) if (typeof x === 'string' && x.startsWith('https://') && !choices.includes(x)) choices.push(x)
+      if (choices.length >= 36) break
     }
-    return null
-  } catch { return null }
+    return { url: picked || choices[0] || null, choices }
+  } catch { return { url: null, choices: [] } }
 }
 
 /**
@@ -246,7 +249,7 @@ async function staffFor(p: any) {
 /** One read, one shape — GET and every POST return the project the same way. */
 async function viewOf(p: any) {
   const [ins, hero, staff] = await Promise.all([sharedInspections(p), heroFor(p), staffFor(p)])
-  return { ...vendorView({ ...p, sharedInspections: ins, heroUrl: hero }), staff }
+  return { ...vendorView({ ...p, sharedInspections: ins, heroUrl: hero.url }), staff: staff ? { ...staff, heroChoices: hero.choices } : null }
 }
 
 export async function GET(req: NextRequest) {
@@ -459,7 +462,7 @@ export async function POST(req: NextRequest) {
       }
       const names = people.map((m: any) => prettyName(str(m.display) || str(m.email))).join(', ')
       await addNote(p.id, `${who} put “${String((step as any).title || '').slice(0, 100)}” on ${names || 'nobody'}`, who, 'event', true)
-    } else if (action === 'releaseDone' || action === 'releaseInspection' || action === 'applyTitle') {
+    } else if (action === 'releaseDone' || action === 'releaseInspection' || action === 'applyTitle' || action === 'setHero') {
       // STAFF ONLY, AND CHECKED HERE. These decide what leaves the building: which finished work
       // an owner reads, which inspection they can open. The share token is not enough — it is in
       // their hands too. A signed-in editor, or nothing.
@@ -468,7 +471,15 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Sign in to Lighthouse to do that.' }, { status: 403 })
       }
       const me = str(access.email) || 'someone'
-      if (action === 'releaseInspection') {
+      if (action === 'setHero') {
+        // Which of the units' own photos is the board's face. Staff only, and only a URL that
+        // actually came off one of the attached listings — not an address somebody typed.
+        const url = str(b.url)
+        const { choices } = await heroFor(p)
+        if (url && !choices.includes(url)) return NextResponse.json({ error: 'That photo is not on this board.' }, { status: 400 })
+        const { data: cur } = await supabaseAdmin().from('projects').select('settings').eq('id', p.id).maybeSingle()
+        await supabaseAdmin().from('projects').update({ settings: { ...((cur as any)?.settings || {}), hero: url } }).eq('id', p.id)
+      } else if (action === 'releaseInspection') {
         const bz = str(b.bzTaskId)
         if (!bz) return NextResponse.json({ error: 'which inspection?' }, { status: 400 })
         if (b.on) await supabaseAdmin().from('project_inspection_shares')

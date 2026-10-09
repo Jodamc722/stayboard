@@ -13,7 +13,7 @@
 // and a name is asked for the same way so their comments and tasks are signed by a person rather
 // than by "vendor".
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, Check, Loader2, AlertTriangle, Building2, Lock, Plus, X, Wrench, FileText, MessageSquare, ChevronRight, ChevronDown, Paperclip, Layers, Sparkles } from 'lucide-react'
+import { Camera, Check, Loader2, AlertTriangle, Building2, Lock, Plus, X, Wrench, FileText, MessageSquare, ChevronRight, ChevronDown, Paperclip, Layers, Sparkles, ClipboardCheck } from 'lucide-react'
 
 type Step = {
   id: string; title: string; done: boolean; status?: string | null; due_on: string | null
@@ -37,7 +37,7 @@ type V = {
   team?: string[]
   inspections?: { id: string; unit: string; name: string; inspector: string | null; date: string | null; reportUrl: string | null }[]
   boards?: { id: string; label: string; stage: string | null; ref: string | null }[]
-  staff?: { email: string; inspections: { id: string; unit: string; name: string; inspector: string | null; date: string | null; reportUrl: string | null; shared: boolean }[] } | null
+  staff?: { email: string; heroChoices?: string[]; inspections: { id: string; unit: string; name: string; inspector: string | null; date: string | null; reportUrl: string | null; shared: boolean }[] } | null
   hero?: string | null
   canEdit?: boolean
   photos: { id: string; url: string; caption: string | null; phase: string; created_at: string }[]
@@ -157,6 +157,9 @@ const UI: Record<string, { en: string; es: string }> = {
   collapseAll: { en: 'Close all', es: 'Cerrar todo' },
   polish: { en: 'Clean up the wording', es: 'Mejorar la redacción' },
   undo: { en: 'Undo', es: 'Deshacer' },
+  activity: { en: 'Activity', es: 'Actividad' },
+  coverPhoto: { en: 'Cover photo', es: 'Foto de portada' },
+  coverHint: { en: 'Pick the picture at the top of the board.', es: 'Elige la foto que va arriba del tablero.' },
 }
 
 /** Today in New York, which is where the work is. */
@@ -243,6 +246,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   const [naming, setNaming] = useState(false)
   const [openSubs, setOpenSubs] = useState<Set<string>>(new Set())
   const [showDone, setShowDone] = useState(false)
+  const [openReport, setOpenReport] = useState<string | null>(null)
   const [tab, setTab] = useState<'board' | 'team'>('board')
   const [q, setQ] = useState('')
   // Units start folded once there are enough of them to scroll past; with three or four groups
@@ -409,21 +413,18 @@ export default function VendorProjectPage({ params }: { params: { token: string 
       {/* THE HEADER (2026-10-09 look). One dark band carrying the name, the two numbers and the
           language switch — so the page opens on something composed rather than on a stack of
           white cards, and the switch is the first thing a Spanish reader meets. */}
-      <header className="relative bg-ink text-white">
-        {/* THE PLACE ITSELF (Jon, 2026-10-09). The first attached unit's own photo, dimmed hard
-            enough that white type stays readable over any picture — a light kitchen and a dark
-            bedroom both have to work, and the board must never become unreadable because a
-            listing swapped its hero shot. No photo simply leaves the dark band. */}
-        {p.hero && (
-          <>
-            <img src={p.hero} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover" />
-            {/* The photo carries the top of the band and the type sits on solid ink at the
-                bottom — a straight dim over the whole thing made the picture pointless, and no
-                dim at all makes a light kitchen unreadable. */}
-            <div className="absolute inset-0 bg-gradient-to-b from-ink/45 via-ink/75 to-ink" />
-          </>
-        )}
-        <div className={'relative max-w-2xl mx-auto px-4 pb-5 ' + (p.hero ? 'pt-20 sm:pt-28' : 'pt-6')}>
+      {/* THE PLACE ITSELF, BLOCKED IN (Jon, 2026-10-09: "the way the photo looks, where it fills
+          up the whole screen, it looks silly on the desktop. It should just kind of block in").
+          A full-bleed band is a phone pattern; on a wide screen it is a billboard above a list.
+          So the picture is a fixed-height block inside the same column as everything else. */}
+      <header className="bg-ink text-white">
+        <div className="max-w-3xl mx-auto px-4 pt-4 pb-5">
+          {p.hero && (
+            <div className="relative h-28 sm:h-36 rounded-xl overflow-hidden mb-4">
+              <img src={p.hero} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover" />
+              <div className="absolute inset-0 bg-gradient-to-t from-ink/70 to-ink/10" />
+            </div>
+          )}
           <div className="flex items-start gap-3">
             <div className="min-w-0 flex-1">
               {/* THE TWO MARKS (Jon, 2026-10-09). Stay Hospitality is whose board this is;
@@ -468,7 +469,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
           signed-in Lighthouse user gets the board AND the controls for what leaves the building.
           It only renders when the server says so — the client never decides who is staff. */}
       {p.staff && (
-        <div className="max-w-2xl mx-auto px-4 pt-4">
+        <div className="max-w-3xl mx-auto px-4 pt-4">
           <div className="inline-flex rounded-xl border border-line bg-white p-0.5 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
             {(['board', 'team'] as const).map(k => (
               <button key={k} onClick={() => setTab(k)}
@@ -480,7 +481,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
         </div>
       )}
 
-      <div className={'max-w-2xl mx-auto px-4 py-5 space-y-3' + (tab === 'team' ? ' hidden' : '')}>
+      <div className={'max-w-3xl mx-auto px-4 py-5 space-y-3' + (tab === 'team' ? ' hidden' : '')}>
         {err && <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-800">{err}</p>}
 
         {/* WHO ARE YOU is a question asked once, not a permanent field. Answered, it shrinks to
@@ -500,205 +501,134 @@ export default function VendorProjectPage({ params }: { params: { token: string 
           </section>
         ))}
 
-        <div className="rounded-2xl border border-line bg-white overflow-hidden divide-y divide-line shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
-        {(!!p.steps.length || p.canEdit) && (
-          <section className="bg-white">
-            {/* THE BUTTON IS AT THE TOP (Jon, 2026-10-09). At the bottom of fourteen jobs it was
-                a scroll away on a phone and read as the end of the list rather than the way to
-                add to it. */}
-            <div className="flex items-center gap-2 px-3 py-2.5 border-b border-line">
-              <h2 className="text-[12px] font-bold text-ink flex-1">{T('needsDoing')}</h2>
-              {p.canEdit && (
-                <button onClick={() => setAdding(true)}
-                  className="text-[12.5px] font-semibold rounded-lg bg-ink text-white px-2.5 py-1.5 inline-flex items-center gap-1 hover:opacity-90">
-                  <Plus size={14} /> {T('addTask')}
-                </button>
-              )}
-            </div>
-            {/* FINDING ONE JOB AMONG THIRTY-TWO. Grouping by unit stopped being enough the
-                moment a portfolio-wide job put a row under every heading — twenty headings of
-                one line each is a longer page, not a clearer one. So: search, and units that
-                fold. */}
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-line bg-app/40">
-              <input value={q} onChange={e => setQ(e.target.value)} placeholder={T('search')}
-                className="flex-1 min-w-0 text-[13px] bg-transparent py-1 focus:outline-none placeholder:text-muted/70" />
-              {!!groups.length && (
-                <button onClick={() => setFolded(allOpen ? new Set(groups.map(g => g.key)) : new Set())}
-                  className="shrink-0 text-[11.5px] font-semibold text-muted hover:text-ink">
-                  {allOpen ? T('collapseAll') : T('expandAll')}
-                </button>
-              )}
-            </div>
-            <div className="divide-y divide-line">
-              {!groups.length && !!p.steps.length && (
-                <p className="px-3 py-3 text-[13px] text-muted">{q ? T('noMatch') : T('allClear')}</p>
-              )}
-              {groups.map(g => (
-                <div key={g.key}>
-                  {g.name && (() => {
-                    const shut = foldedNow.has(g.key)
-                    const late = g.rows.filter(r => r.due_on && r.due_on < todayISO()).length
-                    return (
-                      <button onClick={() => setFolded(v => { const n = new Set(v ?? foldedNow); n.has(g.key) ? n.delete(g.key) : n.add(g.key); return n })}
-                        className="w-full sticky top-0 z-10 flex items-center gap-2 px-3 py-2 bg-app/95 backdrop-blur border-b border-line/60 hover:bg-app">
-                        <span className="text-muted/70">{shut ? <ChevronRight size={13} /> : <ChevronDown size={13} />}</span>
-                        <h3 className="text-[11.5px] font-bold uppercase tracking-wide text-ink/80">{TX(g.name)}</h3>
-                        {!!late && <span className="rounded-full bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-bold px-1.5">{late}</span>}
-                        <span className="text-[11px] text-muted tabular-nums ml-auto">{g.rows.length}</span>
-                      </button>
-                    )
-                  })()}
-                  <div className={'divide-y divide-line/70' + (g.name && foldedNow.has(g.key) ? ' hidden' : '')}>
-                    {g.rows.map(s => {
-                      const d = dueChip(s.due_on, lang, T)
-                      const owner = (s.assignees || [])[0]
-                      const subs = s.subtasks || []
-                      const open = openSubs.has(s.id)
-                      return (
-                      <div key={s.id}>
-                      <div className={'flex items-start gap-3 pr-3 py-3 text-[14px] border-l-2 pl-[10px] ' +
-                        (s.done ? 'bg-emerald-50/40 border-l-transparent'
-                          : d?.late ? 'border-l-rose-400 hover:bg-app'
-                          : 'border-l-transparent hover:bg-app')}>
-                        {/* Round, like the one in the sheet, and big enough to hit on a phone. */}
-                        <button onClick={() => post({ action: 'stepDone', stepId: s.id, done: !s.done }, 'step' + s.id)} disabled={busy === 'step' + s.id}
-                          aria-label={(s.done ? T('isDone') : T('markDone')) + ': ' + s.title}
-                          className={'shrink-0 mt-0.5 w-5 h-5 rounded-full border-2 grid place-items-center transition disabled:opacity-50 ' +
-                            (s.done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-line text-transparent hover:border-ink')}>
-                          {busy === 'step' + s.id ? <Loader2 size={11} className="animate-spin text-muted" /> : <Check size={12} strokeWidth={3} />}
-                        </button>
-                        {/* THE WHOLE ROW OPENS (Jon, 2026-10-09: "each item should be able to open
-                            up"). The circle stays a circle — ticking a job you can see from the
-                            list should never cost you a trip into a panel and back. */}
-                        <button onClick={() => setOpenTask(s.id)} className="min-w-0 flex-1 text-left group">
-                          <span className={'block leading-snug font-medium ' + (s.done ? 'line-through text-muted font-normal' : 'text-ink group-hover:underline')}>{TX(s.title)}</span>
-                          {s.note && <span className="block text-[12.5px] text-muted/80 mt-1 line-clamp-1 leading-relaxed">{TX(s.note)}</span>}
-                          <Chips s={s} T={T} />
-                        </button>
-                        {!!(s.subtasks || []).length && (
-                          <button onClick={() => setOpenSubs(v => { const n = new Set(v); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n })}
-                            title={T('stepsLabel')}
-                            className="shrink-0 mt-0.5 inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 text-[11px] font-semibold text-muted hover:text-ink hover:bg-app tabular-nums">
-                            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                            {(s.subtasks || []).filter(x => x.done).length}/{(s.subtasks || []).length}
-                          </button>
-                        )}
-                        {/* WHO AND WHEN, in the same place on every row, so the column can be read
-                            straight down without reading a single title. */}
-                        <span className="shrink-0 flex items-center gap-2 pt-0.5">
-                          {d && (
-                            <span className={'rounded-full border px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ' + d.tone}>{d.label}</span>
-                          )}
-                          {/* The faces, not just the first one — a job on two people reads as a
-                              job on two people. Beyond three it counts, so the column holds. */}
-                          {(s.assignees || []).length ? (
-                            <span className="flex -space-x-1.5">
-                              {(s.assignees || []).slice(0, 3).map(n => (
-                                <span key={n} title={n} className="w-6 h-6 rounded-full grid place-items-center text-[9.5px] font-bold bg-ink text-white ring-2 ring-white">{initials(n)}</span>
-                              ))}
-                              {(s.assignees || []).length > 3 && (
-                                <span className="w-6 h-6 rounded-full grid place-items-center text-[9.5px] font-bold bg-app text-muted ring-2 ring-white">+{(s.assignees || []).length - 3}</span>
-                              )}
-                            </span>
-                          ) : (
-                            <span title={T('nobody')} className="w-6 h-6 rounded-full grid place-items-center text-[11px] text-muted/40 border border-dashed border-line">·</span>
-                          )}
-                          <ChevronRight size={14} className="text-muted/40" />
-                        </span>
-                      </div>
-                      {/* THE STEPS, IN PLACE (Jon: "each project can have subtasks"). Folded by
-                          default so fourteen jobs stay fourteen lines, and ticked from the list
-                          when they are open — going into a sheet to tick one step of five is the
-                          kind of trip that stops people keeping a board current. */}
-                      {!!subs.length && open && (
-                        <div className="pl-11 pr-3 pb-2.5 space-y-1">
-                          {subs.map(x => {
-                            const sd = dueChip(x.due_on, lang, T)
-                            return (
-                              <div key={x.id} className="flex items-center gap-2 text-[13px]">
-                                <button onClick={() => post({ action: 'subDone', stepId: x.id, done: !x.done }, 'sub' + x.id)} disabled={busy === 'sub' + x.id}
-                                  aria-label={x.title}
-                                  className={'shrink-0 w-4 h-4 rounded-full border-2 grid place-items-center transition ' +
-                                    (x.done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-line text-transparent hover:border-ink')}>
-                                  <Check size={10} strokeWidth={3} />
-                                </button>
-                                <span className={'min-w-0 flex-1 truncate ' + (x.done ? 'line-through text-muted' : 'text-ink/85')}>{TX(x.title)}</span>
-                                {sd && <span className={'shrink-0 rounded-full border px-1.5 text-[10.5px] font-semibold ' + sd.tone}>{sd.label}</span>}
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )}
-                      </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              ))}
-              {!p.steps.length && <p className="px-3 py-3 text-[13px] text-muted">{T('nothingYet')}</p>}
-              {!!p.steps.length && !p.steps.some(x => !x.done) && (
-                <p className="px-3 py-3 text-[13px] text-muted">{T('allClear')}</p>
-              )}
-            </div>
-
-          </section>
-        )}
-
-        {/* BOARDS HANGING OFF THIS ONE. A project raised here is a line, not a nested board:
-            the work lives on its own board and this one says it exists. */}
-        {!!p.boards?.length && (
-          <section className="bg-white">
-            <h2 className="text-[12px] font-bold text-ink px-3 py-2 border-b border-line">{T('projects')}</h2>
-            <div className="divide-y divide-line">
-              {p.boards.map(bd => (
-                <div key={bd.id} className="flex items-center gap-2.5 px-3 py-2.5">
-                  <Layers size={13} className="text-muted shrink-0" />
-                  <span className="min-w-0 flex-1 text-[13.5px] text-ink truncate">{TX(bd.label)}</span>
-                  {bd.stage && <span className="shrink-0 text-[10.5px] uppercase tracking-wide text-muted">{bd.stage}</span>}
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* COMPLETED, AT THE BOTTOM (Jon, 2026-10-09). Finished work left in the main list makes
-            the board look busier than the job is: fourteen rows, six of them nothing to do. It
-            moves down here instead of disappearing, because an owner wanting to know what we
-            actually did this week is the whole reason to keep a record — newest first, with who
-            and when. Folded, since the point of the page above it is what is still open. */}
-        {(() => {
-          const done = p.steps.filter(x => x.done && (p.staff ? true : x.doneShared))
-            .sort((a, b) => String(b.done_at || '').localeCompare(String(a.done_at || '')))
-          if (!done.length) return null
-          return (
-            <section className="bg-white">
-              <button onClick={() => setShowDone(v => !v)} className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-app">
-                <Check size={13} className="text-emerald-600 shrink-0" />
-                <h2 className="text-[12px] font-bold text-ink">{T('completed')}</h2>
-                <span className="text-[11px] text-muted tabular-nums">{done.length}</span>
-                <span className="ml-auto text-muted">{showDone ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
+        {/* ── THE WORK, IN BLOCKS ──────────────────────────────────────────────────────────
+            Jon: "it looks like just one giant list with one line on them. I think it should be
+            in bubbles or in blocks." A flat list made every job look the same weight and gave a
+            unit no shape at all — you could not tell at a glance that 1404 is a seven-job build
+            week and 2008/1 is one sensor. A card per unit does: its own heading, its own count,
+            its own progress, and on a wide screen two of them side by side instead of a column
+            of one-liners running off the bottom of the page. */}
+        <div className="rounded-2xl border border-line bg-white overflow-hidden shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
+          <div className="flex items-center gap-2 px-3 py-2.5 border-b border-line">
+            <h2 className="text-[12px] font-bold text-ink flex-1">{T('needsDoing')}</h2>
+            {p.canEdit && (
+              <button onClick={() => setAdding(true)}
+                className="text-[12.5px] font-semibold rounded-lg bg-ink text-white px-2.5 py-1.5 inline-flex items-center gap-1 hover:opacity-90">
+                <Plus size={14} /> {T('addTask')}
               </button>
-              {showDone && (
-                <div className="divide-y divide-line/70 border-t border-line">
-                  {done.map(x => (
-                    <button key={x.id} onClick={() => setOpenTask(x.id)}
-                      className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-app">
-                      <Check size={13} className="text-emerald-600 shrink-0 mt-0.5" />
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-[13.5px] text-muted line-through">{TX(x.title)}</span>
-                        <span className="block text-[11px] text-muted/80 mt-0.5">
-                          {[x.section, x.done_by, x.done_at ? day(String(x.done_at).slice(0, 10), lang) : null].filter(Boolean).join(' · ')}
-                        </span>
-                      </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-line bg-app/40">
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder={T('search')}
+              className="flex-1 min-w-0 text-[13px] bg-transparent py-1 focus:outline-none placeholder:text-muted/70" />
+            {!!groups.length && (
+              <button onClick={() => setFolded(allOpen ? new Set(groups.map(g => g.key)) : new Set())}
+                className="shrink-0 text-[11.5px] font-semibold text-muted hover:text-ink">
+                {allOpen ? T('collapseAll') : T('expandAll')}
+              </button>
+            )}
+          </div>
+          {!groups.length && (
+            <p className="px-3 py-4 text-[13px] text-muted">{q ? T('noMatch') : p.steps.length ? T('allClear') : T('nothingYet')}</p>
+          )}
+          {!!groups.length && (
+            <div className="p-3 grid gap-3 sm:grid-cols-2">
+              {groups.map(g => {
+                const shut = foldedNow.has(g.key)
+                const late = g.rows.filter(r => r.due_on && r.due_on < todayISO()).length
+                return (
+                  <section key={g.key} className={'rounded-xl border overflow-hidden ' + (late ? 'border-rose-200' : 'border-line')}>
+                    <button onClick={() => setFolded(v => { const n = new Set(v ?? foldedNow); n.has(g.key) ? n.delete(g.key) : n.add(g.key); return n })}
+                      className="w-full flex items-center gap-2 px-2.5 py-2 bg-app/60 hover:bg-app text-left">
+                      <span className="text-muted/70 shrink-0">{shut ? <ChevronRight size={13} /> : <ChevronDown size={13} />}</span>
+                      <h3 className="min-w-0 flex-1 truncate text-[12.5px] font-bold text-ink">{TX(g.name) || T('everythingElse')}</h3>
+                      {!!late && <span className="shrink-0 rounded-full bg-rose-100 text-rose-700 text-[10px] font-bold px-1.5">{late}</span>}
+                      <span className="shrink-0 text-[11px] text-muted tabular-nums">{g.rows.length}</span>
                     </button>
-                  ))}
-                </div>
-              )}
-            </section>
+                    {!shut && (
+                      <div className="divide-y divide-line/70">
+                        {g.rows.map(s => <JobRow key={s.id} s={s} p={p} busy={busy} T={T} TX={TX} lang={lang}
+                          post={post} onOpen={setOpenTask}
+                          open={openSubs.has(s.id)}
+                          onToggleSubs={() => setOpenSubs(v => { const n = new Set(v); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n })} />)}
+                      </div>
+                    )}
+                  </section>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── THE ACTIVITY LOG ─────────────────────────────────────────────────────────────
+            Jon: "I just want to be able to see the activity. There should be a log that's like
+            completed work ... projects on this board, or inspections or tasks that we show from
+            Breezeway. It'll have the report built into it, so Paco can see the distinctions
+            between the units."
+            So one stream, newest first, two kinds of entry in it: work we finished here, and
+            inspections the field completed in Breezeway. Each carries its unit, so reading down
+            the column tells you which flats have been attended to and which have not — and an
+            inspection opens its report in place rather than sending anyone to another login. */}
+        {(() => {
+          type Entry = { id: string; when: string; unit: string | null; title: string; who: string | null; kind: 'task' | 'inspection'; reportUrl?: string | null }
+          const entries: Entry[] = []
+          for (const x of p.steps) {
+            if (!x.done) continue
+            if (!p.staff && !x.doneShared) continue
+            entries.push({ id: 'T' + x.id, when: String(x.done_at || '').slice(0, 10), unit: x.section || null, title: x.title, who: x.done_by || null, kind: 'task' })
+          }
+          for (const i of (p.inspections || [])) {
+            entries.push({ id: 'I' + i.id, when: String(i.date || '').slice(0, 10), unit: i.unit, title: i.name, who: i.inspector, kind: 'inspection', reportUrl: i.reportUrl })
+          }
+          if (!entries.length) return null
+          entries.sort((a, b) => b.when.localeCompare(a.when))
+          const shown = showDone ? entries : entries.slice(0, 6)
+          return (
+            <div className="rounded-2xl border border-line bg-white overflow-hidden shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
+              <div className="flex items-center gap-2 px-3 py-2.5 border-b border-line">
+                <h2 className="text-[12px] font-bold text-ink flex-1">{T('activity')}</h2>
+                <span className="text-[11px] text-muted tabular-nums">{entries.length}</span>
+              </div>
+              <div className="p-3 space-y-2">
+                {shown.map(e => (
+                  <div key={e.id} className="rounded-xl border border-line overflow-hidden">
+                    <div className="flex items-start gap-2.5 px-3 py-2.5">
+                      <span className={'shrink-0 mt-0.5 w-6 h-6 rounded-full grid place-items-center ' +
+                        (e.kind === 'inspection' ? 'bg-brand-50 text-brand-700' : 'bg-emerald-50 text-emerald-700')}>
+                        {e.kind === 'inspection' ? <ClipboardCheck size={13} /> : <Check size={13} strokeWidth={3} />}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        {e.unit && <p className="text-[11px] font-bold uppercase tracking-wide text-muted">{TX(e.unit)}</p>}
+                        <p className="text-[13.5px] text-ink leading-snug">{TX(e.title)}</p>
+                        <p className="text-[11px] text-muted mt-0.5">
+                          {[e.kind === 'inspection' ? T('inspections') : T('completed'), e.who, e.when ? day(e.when, lang) : null].filter(Boolean).join(' · ')}
+                        </p>
+                      </div>
+                      {e.reportUrl && (
+                        <button onClick={() => setOpenReport(v => v === e.id ? null : e.id)}
+                          className="shrink-0 text-[11.5px] font-semibold text-brand-700 hover:underline">
+                          {openReport === e.id ? T('hideReport') : T('report')}
+                        </button>
+                      )}
+                    </div>
+                    {e.reportUrl && openReport === e.id && (
+                      <div className="border-t border-line p-3">
+                        <iframe src={e.reportUrl} title={e.title} className="w-full h-[55vh] rounded-lg border border-line bg-white" />
+                        <a href={e.reportUrl} target="_blank" rel="noreferrer" className="inline-block mt-2 text-[12px] font-semibold text-brand-700 hover:underline">{T('openReport')}</a>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {entries.length > 6 && (
+                  <button onClick={() => setShowDone(v => !v)} className="w-full text-[12px] font-semibold text-muted hover:text-ink py-1">
+                    {showDone ? T('collapseAll') : `${T('expandAll')} (${entries.length})`}
+                  </button>
+                )}
+              </div>
+            </div>
           )
         })()}
 
-        </div>
 
         <div className="pb-8 pt-2 text-center">
           <img src="/stay-logo.png" alt="Stay Hospitality" className="h-5 w-auto mx-auto opacity-30 mb-2" />
@@ -723,20 +653,6 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   )
 }
 
-/** What is on an item, read at a glance from the list — so nobody has to open seven to find the
- *  one with the report on it. Silent when an item carries nothing. */
-function Chips({ s, T }: { s: Step; T: (k: string) => string }) {
-  const bits: React.ReactNode[] = []
-  const subs = s.subtasks || []
-  if (s.requested) bits.push(<span key="r" className="inline-flex items-center gap-0.5 font-semibold text-brand-700"><Wrench size={9} />{T('pushSentShort')}</span>)
-  if (s.breezeway) bits.push(<span key="b" className={'inline-flex items-center gap-0.5 font-semibold ' + (s.breezeway.tone === 'done' ? 'text-emerald-700' : s.breezeway.tone === 'bad' ? 'text-amber-700' : 'text-brand-700')}><Wrench size={9} />{s.breezeway.status || 'Breezeway'}</span>)
-  if (s.photos?.length) bits.push(<span key="p" className="inline-flex items-center gap-0.5"><Camera size={9} />{s.photos.length}</span>)
-  if (s.invoices?.length) bits.push(<span key="i" className="inline-flex items-center gap-0.5"><FileText size={9} />{s.invoices.length}</span>)
-  if (s.comments?.length) bits.push(<span key="c" className="inline-flex items-center gap-0.5"><MessageSquare size={9} />{s.comments.length}</span>)
-  if ((s.assignees?.length || 0) > 1) bits.push(<span key="a">+{(s.assignees || []).length - 1}</span>)
-  if (!bits.length) return null
-  return <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 mt-1 text-[10.5px] text-muted">{bits}</span>
-}
 
 /**
  * ADDING SOMETHING — one button, then a real form (Jon, 2026-10-09).
@@ -806,7 +722,7 @@ function TeamPanel({ p, staff, busy, T, lang, post, pass, token }: {
   )
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-5 space-y-4">
+    <div className="max-w-3xl mx-auto px-4 py-5 space-y-4">
       <p className="text-[11.5px] text-muted inline-flex items-center gap-1.5">
         <Lock size={11} /> {T('teamOnly')}
       </p>
@@ -869,6 +785,25 @@ function TeamPanel({ p, staff, busy, T, lang, post, pass, token }: {
         </div>
       </Card>
 
+      {/* THE COVER (Jon: "I should be able to select the photo") */}
+      {!!staff.heroChoices?.length && (
+        <Card title={T('coverPhoto')}>
+          <div className="p-3">
+            <p className="text-[12px] text-muted mb-2">{T('coverHint')}</p>
+            <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+              {staff.heroChoices.map(u => (
+                <button key={u} onClick={() => post({ action: 'setHero', url: p.hero === u ? '' : u }, 'hero')}
+                  disabled={busy === 'hero'}
+                  className={'relative block rounded-lg overflow-hidden border-2 transition ' + (p.hero === u ? 'border-ink' : 'border-transparent hover:border-line')}>
+                  <img src={u} alt="" className="w-full h-14 object-cover" />
+                  {p.hero === u && <span className="absolute inset-0 bg-ink/25 grid place-items-center text-white"><Check size={16} strokeWidth={3} /></span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        </Card>
+      )}
+
       {/* THE NAMES */}
       <Card title={T('tidy')}>
         <div className="p-3 space-y-2">
@@ -897,6 +832,80 @@ function TeamPanel({ p, staff, busy, T, lang, post, pass, token }: {
           )}
         </div>
       </Card>
+    </div>
+  )
+}
+
+/** ONE JOB, as a row inside its unit's block. */
+function JobRow({ s, p, busy, T, TX, lang, post, onOpen, open, onToggleSubs }: {
+  s: Step; p: V; busy: string | null
+  T: (k: string) => string
+  TX: (v: string | null | undefined) => string
+  lang: Lang
+  post: (body: any, key: string) => Promise<any>
+  onOpen: (id: string) => void
+  open: boolean
+  onToggleSubs: () => void
+}) {
+  const d = dueChip(s.due_on, lang, T)
+  const subs = s.subtasks || []
+  return (
+    <div>
+      <div className={'flex items-start gap-2.5 px-2.5 py-2.5 text-[13.5px] ' + (s.done ? 'bg-emerald-50/40' : 'hover:bg-app/60')}>
+        <button onClick={() => post({ action: 'stepDone', stepId: s.id, done: !s.done }, 'step' + s.id)} disabled={busy === 'step' + s.id}
+          aria-label={(s.done ? T('isDone') : T('markDone')) + ': ' + s.title}
+          className={'shrink-0 mt-0.5 w-5 h-5 rounded-full border-2 grid place-items-center transition disabled:opacity-50 ' +
+            (s.done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-line text-transparent hover:border-ink')}>
+          {busy === 'step' + s.id ? <Loader2 size={11} className="animate-spin text-muted" /> : <Check size={12} strokeWidth={3} />}
+        </button>
+        <button onClick={() => onOpen(s.id)} className="min-w-0 flex-1 text-left group">
+          <span className={'block leading-snug font-medium ' + (s.done ? 'line-through text-muted font-normal' : 'text-ink group-hover:underline')}>{TX(s.title)}</span>
+          {s.note && <span className="block text-[12px] text-muted/80 mt-1 line-clamp-2 leading-relaxed">{TX(s.note)}</span>}
+          <span className="flex flex-wrap items-center gap-1.5 mt-1.5">
+            {d && <span className={'rounded-full border px-1.5 py-px text-[10.5px] font-semibold ' + d.tone}>{d.label}</span>}
+            {s.requested && <span className="inline-flex items-center gap-0.5 rounded-full border border-brand-200 bg-brand-50 text-brand-700 px-1.5 py-px text-[10.5px] font-semibold"><Wrench size={9} />{T('pushSentShort')}</span>}
+            {s.breezeway && <span className={'inline-flex items-center gap-0.5 rounded-full border px-1.5 py-px text-[10.5px] font-semibold ' + (s.breezeway.tone === 'done' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-brand-200 bg-brand-50 text-brand-700')}><Wrench size={9} />{s.breezeway.status}</span>}
+            {!!s.photos?.length && <span className="inline-flex items-center gap-0.5 text-[10.5px] text-muted"><Camera size={9} />{s.photos.length}</span>}
+            {!!s.comments?.length && <span className="inline-flex items-center gap-0.5 text-[10.5px] text-muted"><MessageSquare size={9} />{s.comments.length}</span>}
+            {s.addedByShare && <span className="text-[10px] uppercase tracking-wide text-muted/70">{T('yours')}</span>}
+          </span>
+        </button>
+        <span className="shrink-0 flex items-center gap-1.5 pt-0.5">
+          {!!subs.length && (
+            <button onClick={onToggleSubs} title={T('stepsLabel')}
+              className="inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 text-[10.5px] font-semibold text-muted hover:text-ink hover:bg-app tabular-nums">
+              {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}{subs.filter(x => x.done).length}/{subs.length}
+            </button>
+          )}
+          {(s.assignees || []).length ? (
+            <span className="flex -space-x-1.5">
+              {(s.assignees || []).slice(0, 2).map(n => (
+                <span key={n} title={n} className="w-5 h-5 rounded-full grid place-items-center text-[8.5px] font-bold bg-ink text-white ring-2 ring-white">{initials(n)}</span>
+              ))}
+              {(s.assignees || []).length > 2 && <span className="w-5 h-5 rounded-full grid place-items-center text-[8.5px] font-bold bg-app text-muted ring-2 ring-white">+{(s.assignees || []).length - 2}</span>}
+            </span>
+          ) : null}
+        </span>
+      </div>
+      {!!subs.length && open && (
+        <div className="pl-9 pr-3 pb-2 space-y-1">
+          {subs.map(x => {
+            const sd = dueChip(x.due_on, lang, T)
+            return (
+              <div key={x.id} className="flex items-center gap-2 text-[12.5px]">
+                <button onClick={() => post({ action: 'subDone', stepId: x.id, done: !x.done }, 'sub' + x.id)} disabled={busy === 'sub' + x.id}
+                  aria-label={x.title}
+                  className={'shrink-0 w-4 h-4 rounded-full border-2 grid place-items-center transition ' +
+                    (x.done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-line text-transparent hover:border-ink')}>
+                  <Check size={9} strokeWidth={3} />
+                </button>
+                <span className={'min-w-0 flex-1 truncate ' + (x.done ? 'line-through text-muted' : 'text-ink/85')}>{TX(x.title)}</span>
+                {sd && <span className={'shrink-0 rounded-full border px-1.5 text-[10px] font-semibold ' + sd.tone}>{sd.label}</span>}
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
