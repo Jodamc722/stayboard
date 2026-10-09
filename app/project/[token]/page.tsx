@@ -151,6 +151,12 @@ const UI: Record<string, { en: string; es: string }> = {
   keep: { en: 'Keep', es: 'Mantener' },
   use: { en: 'Use this', es: 'Usar este' },
   releaseAll: { en: 'Release all', es: 'Publicar todo' },
+  search: { en: 'Search the board…', es: 'Buscar en el tablero…' },
+  noMatch: { en: 'Nothing matches that.', es: 'Nada coincide con eso.' },
+  expandAll: { en: 'Open all', es: 'Abrir todo' },
+  collapseAll: { en: 'Close all', es: 'Cerrar todo' },
+  polish: { en: 'Clean up the wording', es: 'Mejorar la redacción' },
+  undo: { en: 'Undo', es: 'Deshacer' },
 }
 
 /** Today in New York, which is where the work is. */
@@ -199,9 +205,30 @@ function groupSteps(steps: Step[], elseLabel: string) {
 // adding a second job to 1404 files it under the same heading rather than a near-miss spelling.
 function unitNames(p: V) {
   const out: string[] = []
+  const listed = p.units.map(u => String(u.label || '').trim()).filter(Boolean)
+  const skip = combinedListings(listed)
   for (const s of p.steps) { const n = (s.section || '').trim(); if (n && !out.includes(n)) out.push(n) }
-  for (const u of p.units) { const n = (u.label || '').trim(); if (n && !out.includes(n)) out.push(n) }
+  for (const n of listed) if (!skip.has(n) && !out.includes(n)) out.push(n)
   return out
+}
+
+/**
+ * "FULL" IS THE SAME SPACE TWICE (Jon, 2026-10-09: "full means both units. For example, 1418
+ * full is 1418, unit 1 and unit 2, so you don't need to create a task for those units. I prefer
+ * it at the individual unit").
+ *
+ * A combined listing and its two halves are one apartment sold two ways. A job filed against
+ * both is the same job counted twice — and worse, ticked in one place and still open in the
+ * other. So the combined listing is not offered as somewhere to put work; the halves are.
+ *
+ * Found by shape, not by the word "Full": Arya 1705 is the combined of 1705/1 and 1705/2 and
+ * says so nowhere in its name. A listing is combined when its number ALSO appears split.
+ */
+function combinedListings(labels: string[]): Set<string> {
+  const num = (s: string) => (s.match(/(\d{3,4})/) || [])[1] || ''
+  const isHalf = (s: string) => /\d{3,4}\s*[-/]\s*[12]\b/.test(s)
+  const halves = new Set(labels.filter(isHalf).map(num).filter(Boolean))
+  return new Set(labels.filter(l => !isHalf(l) && halves.has(num(l))))
 }
 
 export default function VendorProjectPage({ params }: { params: { token: string } }) {
@@ -217,6 +244,10 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   const [openSubs, setOpenSubs] = useState<Set<string>>(new Set())
   const [showDone, setShowDone] = useState(false)
   const [tab, setTab] = useState<'board' | 'team'>('board')
+  const [q, setQ] = useState('')
+  // Units start folded once there are enough of them to scroll past; with three or four groups
+  // folding is friction, with twenty it is the only way to see the shape of the board.
+  const [folded, setFolded] = useState<Set<string> | null>(null)
   const [openTask, setOpenTask] = useState<string | null>(null)
   const [lang, setLang] = useState<Lang>('en')
   // original → translation, for the language currently chosen. Cleared when the language flips,
@@ -363,6 +394,16 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   const jobs = p.steps.length
   const jobsDone = p.steps.filter(x => x.done).length
 
+  const needle = q.trim().toLowerCase()
+  const groups = groupSteps(
+    p.steps.filter(x => !x.done).filter(x => !needle ||
+      [x.title, x.note, x.section, ...(x.assignees || [])].some(v => String(v || '').toLowerCase().includes(needle))),
+    T('everythingElse'))
+  // Searching opens everything: a hit inside a folded unit that stays folded is a search that
+  // found nothing as far as the person is concerned.
+  const foldedNow = needle ? new Set<string>() : (folded ?? new Set(groups.length > 5 ? groups.map(g => g.key) : []))
+  const allOpen = foldedNow.size === 0
+
   return (
     <main className="min-h-screen bg-app">
       {/* THE HEADER (2026-10-09 look). One dark band carrying the name, the two numbers and the
@@ -439,19 +480,19 @@ export default function VendorProjectPage({ params }: { params: { token: string 
         </div>
       )}
 
-      <div className={'max-w-2xl mx-auto px-4 py-5 space-y-4' + (tab === 'team' ? ' hidden' : '')}>
+      <div className={'max-w-2xl mx-auto px-4 py-5 space-y-3' + (tab === 'team' ? ' hidden' : '')}>
         {err && <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-800">{err}</p>}
 
         {/* WHO ARE YOU is a question asked once, not a permanent field. Answered, it shrinks to
             a line you can click to change — a full card at the top of every visit, repeating a
             question you already answered, is the kind of furniture that makes a page feel long. */}
         {p.canEdit && (who && !naming ? (
-          <button onClick={() => setNaming(true)} className="flex items-center gap-2 px-1 text-[12px] text-muted hover:text-ink">
+          <button onClick={() => setNaming(true)} className="flex items-center gap-2 px-1 pb-1 text-[12px] text-muted hover:text-ink">
             <span className="w-5 h-5 rounded-full bg-ink text-white grid place-items-center text-[9px] font-bold">{initials(who)}</span>
             {who}<span className="text-muted/60">· {lang === 'es' ? 'cambiar' : 'change'}</span>
           </button>
         ) : (
-          <section className="rounded-2xl border border-line bg-white p-3 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
+          <section className="rounded-xl border border-line bg-white p-3">
             <label className="block text-[12px] font-bold text-ink mb-1.5">{T('whoAreYou')}</label>
             <input value={who} autoFocus={naming} onChange={e => saveWho(e.target.value)} onBlur={() => setNaming(false)}
               onKeyDown={e => { if (e.key === 'Enter') setNaming(false) }} placeholder={T('yourName')}
@@ -459,8 +500,9 @@ export default function VendorProjectPage({ params }: { params: { token: string 
           </section>
         ))}
 
+        <div className="rounded-2xl border border-line bg-white overflow-hidden divide-y divide-line shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
         {(!!p.steps.length || p.canEdit) && (
-          <section className="rounded-2xl border border-line bg-white overflow-hidden shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
+          <section className="bg-white">
             {/* THE BUTTON IS AT THE TOP (Jon, 2026-10-09). At the bottom of fourteen jobs it was
                 a scroll away on a phone and read as the end of the list rather than the way to
                 add to it. */}
@@ -473,16 +515,40 @@ export default function VendorProjectPage({ params }: { params: { token: string 
                 </button>
               )}
             </div>
+            {/* FINDING ONE JOB AMONG THIRTY-TWO. Grouping by unit stopped being enough the
+                moment a portfolio-wide job put a row under every heading — twenty headings of
+                one line each is a longer page, not a clearer one. So: search, and units that
+                fold. */}
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-line bg-app/40">
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder={T('search')}
+                className="flex-1 min-w-0 text-[13px] bg-transparent py-1 focus:outline-none placeholder:text-muted/70" />
+              {!!groups.length && (
+                <button onClick={() => setFolded(allOpen ? new Set(groups.map(g => g.key)) : new Set())}
+                  className="shrink-0 text-[11.5px] font-semibold text-muted hover:text-ink">
+                  {allOpen ? T('collapseAll') : T('expandAll')}
+                </button>
+              )}
+            </div>
             <div className="divide-y divide-line">
-              {groupSteps(p.steps.filter(x => !x.done), T('everythingElse')).map(g => (
+              {!groups.length && !!p.steps.length && (
+                <p className="px-3 py-3 text-[13px] text-muted">{q ? T('noMatch') : T('allClear')}</p>
+              )}
+              {groups.map(g => (
                 <div key={g.key}>
-                  {g.name && (
-                    <div className="sticky top-0 z-10 flex items-baseline gap-2 px-3 pt-2.5 pb-1.5 bg-app/95 backdrop-blur border-b border-line/60">
-                      <h3 className="text-[11.5px] font-bold uppercase tracking-wide text-ink/80">{TX(g.name)}</h3>
-                      <span className="text-[11px] text-muted tabular-nums ml-auto">{g.rows.filter(s => s.done).length}/{g.rows.length}</span>
-                    </div>
-                  )}
-                  <div className="divide-y divide-line/70">
+                  {g.name && (() => {
+                    const shut = foldedNow.has(g.key)
+                    const late = g.rows.filter(r => r.due_on && r.due_on < todayISO()).length
+                    return (
+                      <button onClick={() => setFolded(v => { const n = new Set(v ?? foldedNow); n.has(g.key) ? n.delete(g.key) : n.add(g.key); return n })}
+                        className="w-full sticky top-0 z-10 flex items-center gap-2 px-3 py-2 bg-app/95 backdrop-blur border-b border-line/60 hover:bg-app">
+                        <span className="text-muted/70">{shut ? <ChevronRight size={13} /> : <ChevronDown size={13} />}</span>
+                        <h3 className="text-[11.5px] font-bold uppercase tracking-wide text-ink/80">{TX(g.name)}</h3>
+                        {!!late && <span className="rounded-full bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-bold px-1.5">{late}</span>}
+                        <span className="text-[11px] text-muted tabular-nums ml-auto">{g.rows.length}</span>
+                      </button>
+                    )
+                  })()}
+                  <div className={'divide-y divide-line/70' + (g.name && foldedNow.has(g.key) ? ' hidden' : '')}>
                     {g.rows.map(s => {
                       const d = dueChip(s.due_on, lang, T)
                       const owner = (s.assignees || [])[0]
@@ -581,7 +647,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
         {/* BOARDS HANGING OFF THIS ONE. A project raised here is a line, not a nested board:
             the work lives on its own board and this one says it exists. */}
         {!!p.boards?.length && (
-          <section className="rounded-2xl border border-line bg-white overflow-hidden shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
+          <section className="bg-white">
             <h2 className="text-[12px] font-bold text-ink px-3 py-2 border-b border-line">{T('projects')}</h2>
             <div className="divide-y divide-line">
               {p.boards.map(bd => (
@@ -605,7 +671,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
             .sort((a, b) => String(b.done_at || '').localeCompare(String(a.done_at || '')))
           if (!done.length) return null
           return (
-            <section className="rounded-2xl border border-line bg-white overflow-hidden shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
+            <section className="bg-white">
               <button onClick={() => setShowDone(v => !v)} className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-app">
                 <Check size={13} className="text-emerald-600 shrink-0" />
                 <h2 className="text-[12px] font-bold text-ink">{T('completed')}</h2>
@@ -631,6 +697,8 @@ export default function VendorProjectPage({ params }: { params: { token: string 
             </section>
           )
         })()}
+
+        </div>
 
         <div className="pb-8 pt-2 text-center">
           <img src="/stay-logo.png" alt="Stay Hospitality" className="h-5 w-auto mx-auto opacity-30 mb-2" />
@@ -833,6 +901,52 @@ function TeamPanel({ p, staff, busy, T, lang, post, pass, token }: {
   )
 }
 
+/**
+ * CLEAN UP THE WORDING, WHERE THE WORDING IS (Jon: "I don't see the AI ability to enhance or
+ * clean up descriptions and titles").
+ *
+ * A sparkle beside the field, not a feature on another tab. It rewrites what is in the box
+ * through the house rules (/api/ai/polish — which may never add a fact or drop one), puts the
+ * result straight in, and keeps the original one click away. Nothing is saved by this: the field
+ * saves the way it always did, so a rewrite you do not like costs you an Undo, not a correction.
+ */
+function Polish({ value, kind, context, onText, label }: {
+  value: string
+  kind: 'title' | 'task' | 'note'
+  context?: string
+  onText: (v: string) => void
+  label: string
+}) {
+  const [busy, setBusy] = useState(false)
+  const [was, setWas] = useState<string | null>(null)
+  const run = async () => {
+    const text = value.trim()
+    if (!text || busy) return
+    setBusy(true)
+    try {
+      const r = await fetch('/api/ai/polish', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, kind, context: context || '' }),
+      })
+      const j = await r.json()
+      if (j?.ok && j.changed && j.polished) { setWas(text); onText(String(j.polished)) }
+    } catch { /* leave the words alone */ }
+    setBusy(false)
+  }
+  if (was !== null) {
+    return (
+      <button type="button" onClick={() => { onText(was); setWas(null) }}
+        className="shrink-0 text-[11px] font-semibold text-muted hover:text-ink">{label}</button>
+    )
+  }
+  return (
+    <button type="button" onClick={run} disabled={busy || !value.trim()} title={label}
+      className="shrink-0 text-muted/60 hover:text-brand-700 disabled:opacity-30 p-0.5">
+      {busy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+    </button>
+  )
+}
+
 function AddSheet({ p, busy, T, post, upload, onClose }: {
   p: V; busy: string | null; T: (k: string) => string
   post: (body: any, key: string) => Promise<any>
@@ -894,8 +1008,11 @@ function AddSheet({ p, busy, T, post, upload, onClose }: {
         </div>
 
         <div className="p-4 space-y-3.5">
-          <input ref={ref} value={title} onChange={e => setTitle(e.target.value)} placeholder={T('whatNeedsDoing')}
-            className="w-full text-[16px] font-semibold text-ink bg-transparent rounded-lg px-1 -mx-1 py-1 focus:outline-none focus:bg-app placeholder:text-muted/60" />
+          <div className="flex items-start gap-1.5">
+            <input ref={ref} value={title} onChange={e => setTitle(e.target.value)} placeholder={T('whatNeedsDoing')}
+              className="flex-1 min-w-0 text-[16px] font-semibold text-ink bg-transparent rounded-lg px-1 -mx-1 py-1 focus:outline-none focus:bg-app placeholder:text-muted/60" />
+            <span className="pt-1.5"><Polish value={title} kind="title" context={[p.title, unit].filter(Boolean).join(' · ')} onText={setTitle} label={T('undo')} /></span>
+          </div>
 
           <L label={T('unitLabel')}>
             <select value={unit} onChange={e => setUnit(e.target.value)} className={box}>
@@ -904,9 +1021,12 @@ function AddSheet({ p, busy, T, post, upload, onClose }: {
             </select>
           </L>
 
-          <L label={T('detailsLabel')}>
-            <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder={T('details')}
-              className={box + ' text-[13.5px]'} />
+          <L label={T('detailsLabel')} hint={undefined}>
+            <div className="relative">
+              <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} placeholder={T('details')}
+                className={box + ' text-[13.5px] pr-8'} />
+              <span className="absolute top-2 right-2"><Polish value={desc} kind="task" context={[p.title, unit, title].filter(Boolean).join(' · ')} onText={setDesc} label={T('undo')} /></span>
+            </div>
           </L>
 
           {/* THE STEPS, typed as lines (Jon: "add descriptions and tasks to it"). Five steps are
@@ -1043,8 +1163,12 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
           <div className="min-w-0 flex-1">
             {t.section && <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{TX(t.section)}</p>}
             {p.canEdit ? (
-              <input value={draft.title} onChange={e => setDraft({ title: e.target.value })} onBlur={saveEdit}
-                className="w-full text-[15px] font-bold text-ink leading-snug bg-transparent rounded-md -ml-1 px-1 py-0.5 hover:bg-app focus:bg-app focus:outline-none focus:ring-2 focus:ring-brand-200" />
+              <span className="flex items-start gap-1">
+                <input value={draft.title} onChange={e => setDraft({ title: e.target.value })} onBlur={saveEdit}
+                  className="flex-1 min-w-0 text-[15px] font-bold text-ink leading-snug bg-transparent rounded-md -ml-1 px-1 py-0.5 hover:bg-app focus:bg-app focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                <Polish value={draft.title} kind="title" context={[p.title, t.section].filter(Boolean).join(' · ')}
+                  onText={v => { setDraft({ title: v }); post({ action: 'taskEdit', taskId: t.id, title: v }, 'edit' + t.id) }} label={T('undo')} />
+              </span>
             ) : (
               <h2 className="text-[15px] font-bold text-ink leading-snug">{TX(t.title)}</h2>
             )}
@@ -1062,9 +1186,15 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
 
         <div className="p-4 space-y-5">
           {p.canEdit ? (
-            <textarea value={draft.note} onChange={e => setDraft({ note: e.target.value })} onBlur={saveEdit} rows={draft.note ? 3 : 2}
-              placeholder={T('details')}
-              className="w-full text-[13.5px] text-ink/90 leading-relaxed rounded-xl border border-line px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+            <div className="relative">
+              <textarea value={draft.note} onChange={e => setDraft({ note: e.target.value })} onBlur={saveEdit} rows={draft.note ? 3 : 2}
+                placeholder={T('details')}
+                className="w-full text-[13.5px] text-ink/90 leading-relaxed rounded-xl border border-line px-3 py-2 pr-8 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+              <span className="absolute top-2 right-2">
+                <Polish value={draft.note} kind="task" context={[p.title, t.section, t.title].filter(Boolean).join(' · ')}
+                  onText={v => { setDraft({ note: v }); post({ action: 'taskEdit', taskId: t.id, description: v }, 'edit' + t.id) }} label={T('undo')} />
+              </span>
+            </div>
           ) : (
             t.note ? <p className="text-[13.5px] text-ink/90 whitespace-pre-wrap leading-relaxed">{TX(t.note)}</p> : null
           )}
