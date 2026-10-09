@@ -13,12 +13,12 @@
 // and a name is asked for the same way so their comments and tasks are signed by a person rather
 // than by "vendor".
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, Check, Loader2, AlertTriangle, Building2, Lock, Plus, X, Wrench, FileText, MessageSquare, ChevronRight, ChevronDown, Paperclip, Layers } from 'lucide-react'
+import { Camera, Check, Loader2, AlertTriangle, Building2, Lock, Plus, X, Wrench, FileText, MessageSquare, ChevronRight, ChevronDown, Paperclip, Layers, Sparkles } from 'lucide-react'
 
 type Step = {
   id: string; title: string; done: boolean; status?: string | null; due_on: string | null
   section?: string | null; note?: string | null; addedByShare?: boolean
-  done_at?: string | null; done_by?: string | null
+  done_at?: string | null; done_by?: string | null; doneShared?: boolean
   assignees?: string[]
   subtasks?: { id: string; title: string; done: boolean; due_on?: string | null }[]
   breezeway?: { id: string; status: string; tone: string; assignee: string | null; date: string | null; reportUrl: string | null } | null
@@ -37,6 +37,7 @@ type V = {
   team?: string[]
   inspections?: { id: string; unit: string; name: string; inspector: string | null; date: string | null; reportUrl: string | null }[]
   boards?: { id: string; label: string; stage: string | null; ref: string | null }[]
+  staff?: { email: string; inspections: { id: string; unit: string; name: string; inspector: string | null; date: string | null; reportUrl: string | null; shared: boolean }[] } | null
   hero?: string | null
   canEdit?: boolean
   photos: { id: string; url: string; caption: string | null; phase: string; created_at: string }[]
@@ -136,6 +137,20 @@ const UI: Record<string, { en: string; es: string }> = {
   completed: { en: 'Completed', es: 'Completado' },
   nothingDone: { en: 'Nothing finished yet.', es: 'Todavía no se ha terminado nada.' },
   allClear: { en: 'Everything on the board is done.', es: 'Todo en el tablero está hecho.' },
+  tabBoard: { en: 'Board', es: 'Tablero' },
+  tabTeam: { en: 'Team', es: 'Equipo' },
+  teamOnly: { en: 'Only you can see this tab — it is not on the owner\u2019s link.', es: 'Solo tú ves esta pestaña — no está en el enlace del propietario.' },
+  releaseDone: { en: 'Show on the owner\u2019s completed list', es: 'Mostrar en la lista de completados del propietario' },
+  releasedDone: { en: 'The owner can see this one.', es: 'El propietario puede ver esta.' },
+  releaseIns: { en: 'Show on the owner\u2019s link', es: 'Mostrar en el enlace del propietario' },
+  releasedIns: { en: 'The owner can see this one.', es: 'El propietario puede ver esta.' },
+  finished: { en: 'Finished work', es: 'Trabajo terminado' },
+  tidy: { en: 'Tidy up the names', es: 'Ordenar los nombres' },
+  tidying: { en: 'Reading the board…', es: 'Leyendo el tablero…' },
+  tidyNone: { en: 'The names already read well.', es: 'Los nombres ya se leen bien.' },
+  keep: { en: 'Keep', es: 'Mantener' },
+  use: { en: 'Use this', es: 'Usar este' },
+  releaseAll: { en: 'Release all', es: 'Publicar todo' },
 }
 
 /** Today in New York, which is where the work is. */
@@ -202,6 +217,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   const [naming, setNaming] = useState(false)
   const [openSubs, setOpenSubs] = useState<Set<string>>(new Set())
   const [showDone, setShowDone] = useState(false)
+  const [tab, setTab] = useState<'board' | 'team'>('board')
   const [openTask, setOpenTask] = useState<string | null>(null)
   const [lang, setLang] = useState<Lang>('en')
   // original → translation, for the language currently chosen. Cleared when the language flips,
@@ -369,7 +385,16 @@ export default function VendorProjectPage({ params }: { params: { token: string 
         <div className={'relative max-w-2xl mx-auto px-4 pb-5 ' + (p.hero ? 'pt-20 sm:pt-28' : 'pt-6')}>
           <div className="flex items-start gap-3">
             <div className="min-w-0 flex-1">
-              <p className="text-[10.5px] uppercase tracking-[0.14em] font-semibold text-white/55">Stay Hospitality {p.ref ? '· ' + p.ref : ''}</p>
+              {/* THE TWO MARKS (Jon, 2026-10-09). Stay Hospitality is whose board this is;
+                  Lighthouse is what it runs on. Both small, both in the one place a reader
+                  looks first, neither competing with the name of the job. */}
+              <span className="flex items-center gap-2 mb-1.5">
+                <img src="/stay-logo.png" alt="Stay Hospitality" className="h-5 w-auto opacity-95 [filter:brightness(0)_invert(1)]" />
+                <span className="w-px h-3.5 bg-white/25" />
+                <img src="/lighthouse-mark.svg" alt="" aria-hidden className="h-4 w-auto opacity-70" />
+                <span className="text-[10px] uppercase tracking-[0.16em] font-semibold text-white/45">Lighthouse</span>
+                {p.ref && <span className="text-[10px] uppercase tracking-[0.16em] font-semibold text-white/45 ml-auto">{p.ref}</span>}
+              </span>
               <h1 className="text-[22px] font-bold tracking-tight mt-1 leading-tight">{p.title}</h1>
             </div>
             <button onClick={() => switchTo(lang === 'en' ? 'es' : 'en')} disabled={translating}
@@ -398,7 +423,23 @@ export default function VendorProjectPage({ params }: { params: { token: string 
         </div>
       </header>
 
-      <div className="max-w-2xl mx-auto px-4 py-5 space-y-4">
+      {/* THE TEAM TAB (Jon, 2026-10-09). The same URL serves both: an owner gets the board, a
+          signed-in Lighthouse user gets the board AND the controls for what leaves the building.
+          It only renders when the server says so — the client never decides who is staff. */}
+      {p.staff && (
+        <div className="max-w-2xl mx-auto px-4 pt-4">
+          <div className="inline-flex rounded-xl border border-line bg-white p-0.5 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
+            {(['board', 'team'] as const).map(k => (
+              <button key={k} onClick={() => setTab(k)}
+                className={'px-3 py-1.5 text-[12.5px] font-semibold rounded-lg ' + (tab === k ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+                {k === 'board' ? T('tabBoard') : T('tabTeam')}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className={'max-w-2xl mx-auto px-4 py-5 space-y-4' + (tab === 'team' ? ' hidden' : '')}>
         {err && <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] text-rose-800">{err}</p>}
 
         {/* WHO ARE YOU is a question asked once, not a permanent field. Answered, it shrinks to
@@ -560,7 +601,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
             actually did this week is the whole reason to keep a record — newest first, with who
             and when. Folded, since the point of the page above it is what is still open. */}
         {(() => {
-          const done = p.steps.filter(x => x.done)
+          const done = p.steps.filter(x => x.done && (p.staff ? true : x.doneShared))
             .sort((a, b) => String(b.done_at || '').localeCompare(String(a.done_at || '')))
           if (!done.length) return null
           return (
@@ -609,10 +650,15 @@ export default function VendorProjectPage({ params }: { params: { token: string 
           </div>
         </section>
 
-        <p className="text-[11px] text-muted text-center pb-6">
-          {T('linkPrivate')}
-        </p>
+        <div className="pb-8 pt-2 text-center">
+          <img src="/stay-logo.png" alt="Stay Hospitality" className="h-5 w-auto mx-auto opacity-30 mb-2" />
+          <p className="text-[11px] text-muted">{T('linkPrivate')}</p>
+        </div>
       </div>
+
+      {p.staff && tab === 'team' && (
+        <TeamPanel p={p} staff={p.staff} busy={busy} T={T} lang={lang} post={post} pass={pass} token={token} />
+      )}
 
       {adding && (
         <AddSheet p={p} busy={busy} T={T} post={post} upload={upload} onClose={() => setAdding(false)} />
@@ -650,6 +696,161 @@ function Chips({ s, T }: { s: Step; T: (k: string) => string }) {
  * own and shows here as a line — because the alternative, a task that grows six checklists and
  * still is not a project, is how a board stops being readable.
  */
+/**
+ * THE TEAM TAB — what leaves the building, decided here.
+ *
+ * Jon, 2026-10-09: a signed-in user sees "a tab that shows inspections and all the tasks that
+ * were completed that you can push to a completed section for review". Two lists and one switch
+ * each, plus the AI pass over the names. Everything on this tab is invisible on the owner's link
+ * — not hidden by CSS, absent from the payload: the server only builds it for a signed-in
+ * editor, so a curious person reading the page source finds nothing to read.
+ */
+function TeamPanel({ p, staff, busy, T, lang, post, pass, token }: {
+  p: V
+  staff: NonNullable<V['staff']>
+  busy: string | null
+  T: (k: string) => string
+  lang: Lang
+  post: (body: any, key: string) => Promise<any>
+  pass: string
+  token: string
+}) {
+  const [tidy, setTidy] = useState<{ id: string; was: string; now: string }[] | null>(null)
+  const [working, setWorking] = useState(false)
+  const done = p.steps.filter(x => x.done)
+    .sort((a, b) => String(b.done_at || '').localeCompare(String(a.done_at || '')))
+  const open = p.steps.filter(x => !x.done)
+
+  /**
+   * TIDY THE NAMES. Jobs get typed into a phone between two units — "ac filter chnage 1404",
+   * "buy blackout". They read fine to whoever wrote them and badly to an owner. The model
+   * rewrites each title through the house rules (/api/ai/polish, which may never add a fact),
+   * and NOTHING is saved until somebody picks it line by line.
+   */
+  const runTidy = async () => {
+    setWorking(true)
+    const out: { id: string; was: string; now: string }[] = []
+    for (const t of open.slice(0, 25)) {
+      try {
+        const r = await fetch('/api/ai/polish', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: t.title, kind: 'title', context: [p.title, t.section].filter(Boolean).join(' · ') }),
+        })
+        const j = await r.json()
+        const next = j?.changed ? String(j?.polished || '').trim() : ''
+        if (next && next !== t.title) out.push({ id: t.id, was: t.title, now: next })
+      } catch { /* one title failing is not a reason to lose the rest */ }
+    }
+    setTidy(out)
+    setWorking(false)
+  }
+
+  const Card = ({ title, count, children }: { title: string; count?: number; children: any }) => (
+    <section className="rounded-2xl border border-line bg-white overflow-hidden shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
+      <div className="flex items-baseline gap-2 px-3 py-2.5 border-b border-line">
+        <h2 className="text-[12px] font-bold text-ink">{title}</h2>
+        {count != null && <span className="text-[11px] text-muted tabular-nums">{count}</span>}
+      </div>
+      {children}
+    </section>
+  )
+
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-5 space-y-4">
+      <p className="text-[11.5px] text-muted inline-flex items-center gap-1.5">
+        <Lock size={11} /> {T('teamOnly')}
+      </p>
+
+      {/* FINISHED WORK → the owner's completed list */}
+      <Card title={T('finished')} count={done.length}>
+        {!done.length && <p className="px-3 py-3 text-[13px] text-muted">{T('nothingDone')}</p>}
+        {!!done.length && (
+          <>
+            <div className="px-3 py-2 border-b border-line">
+              <button
+                onClick={() => post({ action: 'releaseDone', taskIds: done.filter(x => !x.doneShared).map(x => x.id), on: true }, 'relall')}
+                disabled={busy === 'relall' || done.every(x => x.doneShared)}
+                className="text-[12px] font-semibold rounded-lg border border-line px-2.5 py-1 text-ink disabled:opacity-40 hover:bg-app">
+                {busy === 'relall' ? <Loader2 size={12} className="animate-spin inline" /> : T('releaseAll')}
+              </button>
+            </div>
+            <div className="divide-y divide-line/70">
+              {done.map(x => (
+                <div key={x.id} className="px-3 py-2.5">
+                  <p className="text-[13.5px] text-ink">{x.title}</p>
+                  <p className="text-[11px] text-muted mt-0.5">
+                    {[x.section, x.done_by, x.done_at ? day(String(x.done_at).slice(0, 10), lang) : null].filter(Boolean).join(' · ')}
+                  </p>
+                  <label className="mt-1.5 flex items-center gap-1.5 text-[11.5px] text-muted cursor-pointer select-none">
+                    <input type="checkbox" checked={!!x.doneShared} disabled={busy === 'rel' + x.id} className="w-3.5 h-3.5"
+                      onChange={e => post({ action: 'releaseDone', taskId: x.id, on: e.target.checked }, 'rel' + x.id)} />
+                    <span>{x.doneShared ? T('releasedDone') : T('releaseDone')}</span>
+                  </label>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </Card>
+
+      {/* INSPECTIONS → the owner's link */}
+      <Card title={T('inspections')} count={staff.inspections.length}>
+        {!staff.inspections.length && <p className="px-3 py-3 text-[13px] text-muted">{T('noneYet')}</p>}
+        <div className="divide-y divide-line/70">
+          {staff.inspections.slice(0, 40).map(i => (
+            <div key={i.id} className="px-3 py-2.5">
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13.5px] text-ink font-medium truncate">{i.unit}</p>
+                  <p className="text-[11.5px] text-muted truncate">{[i.name, i.inspector].filter(Boolean).join(' · ')}</p>
+                </div>
+                <div className="shrink-0 text-right">
+                  {i.date && <p className="text-[11px] text-muted tabular-nums">{day(i.date, lang)}</p>}
+                  {i.reportUrl && <a href={i.reportUrl} target="_blank" rel="noreferrer" className="text-[11.5px] font-semibold text-brand-700 hover:underline">{T('report')} ↗</a>}
+                </div>
+              </div>
+              <label className="mt-1.5 flex items-center gap-1.5 text-[11.5px] text-muted cursor-pointer select-none">
+                <input type="checkbox" checked={i.shared} disabled={busy === 'ins' + i.id} className="w-3.5 h-3.5"
+                  onChange={e => post({ action: 'releaseInspection', bzTaskId: i.id, on: e.target.checked }, 'ins' + i.id)} />
+                <span>{i.shared ? T('releasedIns') : T('releaseIns')}</span>
+              </label>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* THE NAMES */}
+      <Card title={T('tidy')}>
+        <div className="p-3 space-y-2">
+          <button onClick={runTidy} disabled={working || !open.length}
+            className="text-[13px] font-semibold rounded-xl border border-line px-3 py-2 text-ink disabled:opacity-40 hover:bg-app inline-flex items-center gap-2">
+            {working ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={14} />}
+            {working ? T('tidying') : T('tidy')}
+          </button>
+          {tidy && !tidy.length && <p className="text-[12.5px] text-muted">{T('tidyNone')}</p>}
+          {!!tidy?.length && (
+            <div className="space-y-2">
+              {tidy.map(row => (
+                <div key={row.id} className="rounded-xl border border-line p-2.5">
+                  <p className="text-[12px] text-muted line-through">{row.was}</p>
+                  <p className="text-[13.5px] text-ink mt-0.5">{row.now}</p>
+                  <div className="flex gap-2 mt-2">
+                    <button onClick={async () => { await post({ action: 'applyTitle', taskId: row.id, title: row.now }, 'ttl' + row.id); setTidy(v => (v || []).filter(x => x.id !== row.id)) }}
+                      disabled={busy === 'ttl' + row.id}
+                      className="text-[12px] font-semibold rounded-lg bg-ink text-white px-2.5 py-1 disabled:opacity-40">{T('use')}</button>
+                    <button onClick={() => setTidy(v => (v || []).filter(x => x.id !== row.id))}
+                      className="text-[12px] text-muted hover:text-ink px-1">{T('keep')}</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Card>
+    </div>
+  )
+}
+
 function AddSheet({ p, busy, T, post, upload, onClose }: {
   p: V; busy: string | null; T: (k: string) => string
   post: (body: any, key: string) => Promise<any>

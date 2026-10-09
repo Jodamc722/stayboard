@@ -1,0 +1,12 @@
+-- WHAT THE OWNER SEES UNDER "COMPLETED" (Jon, 2026-10-09: a signed-in user gets "a tab that
+-- shows inspections and all the tasks that were completed that you can push to a completed
+-- section for review").
+--
+-- Finished is a fact; finished AND ready to be read by the owner is a decision. A job ticked at
+-- 11pm by whoever was in the unit is not automatically a line we want an owner reading before
+-- somebody has looked at it. So the owner's completed list shows only what was pushed there.
+--
+-- DEFAULT FALSE, which means the list starts empty and fills as the team releases work. That is
+-- the right way round: nothing is published by accident, and a board shared today cannot
+-- retroactively show an owner six months of ticks nobody reviewed.
+alter table project_steps add column if not exists done_shared boolean not null default false;

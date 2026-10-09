@@ -15,6 +15,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getProjectByToken, addNote, shareLocked, shareCanEdit } from '@/lib/projects'
 import { onComment } from '@/lib/project-notify'
+import { getAccess } from '@/lib/access'
+import { atLeast } from '@/lib/features'
 
 export const dynamic = 'force-dynamic'
 
@@ -45,6 +47,8 @@ function taskView(t: any, p: any): any {
     // When it was finished and by whom — the completed list is a record, and a record with no
     // date on it is just a shorter version of the same list.
     done_at: t.done_at || null, done_by: t.done_by || null,
+    // Finished is a fact; finished AND released to the owner is a decision (migration 152).
+    doneShared: !!t.done_shared,
     due_on: t.due_on, section: t.section || null, note: t.description || null,
     addedByShare: !!t.via_share,
     assignees: (t.assignees || []).map((a: any) => prettyName(str(a.display) || str(a.email))).filter(Boolean),
@@ -179,10 +183,57 @@ async function heroFor(p: any): Promise<string | null> {
   } catch { return null }
 }
 
+/**
+ * IS A MEMBER OF STAFF READING THIS? (Jon, 2026-10-09: "if you're a user ... you can see a tab".)
+ *
+ * The same URL serves both. An owner gets the board; somebody signed in to Lighthouse gets the
+ * board AND the controls — which inspections to release, which finished work to push to the
+ * owner's completed list. Nothing about the gate changes: a signed-in person still needs the
+ * passcode, because the link is the link.
+ */
+async function staffFor(p: any) {
+  try {
+    const access = await getAccess()
+    if (!access.user || !access.allowed) return null
+    if (!atLeast(access.levels['projects'], 'edit')) return null
+    const units = (p.links || []).filter((l: any) => l.kind === 'listing')
+    const labelOf: Record<string, string> = {}
+    for (const l of units) labelOf[String(l.ref_id)] = str(l.label)
+
+    const [ins, shares] = await Promise.all([
+      units.length ? supabaseAdmin().from('breezeway_tasks_sync')
+        .select('id,reference_property_id,name,status,type_department,scheduled_date,finished_at,assignees,assignee_name,report_url')
+        .in('reference_property_id', units.map((u: any) => String(u.ref_id)).slice(0, 400))
+        .eq('type_department', 'inspection').order('finished_at', { ascending: false }).limit(300)
+        : Promise.resolve({ data: [] as any[] }),
+      supabaseAdmin().from('project_inspection_shares').select('bz_task_id').eq('project_id', p.id),
+    ])
+    const released = new Set(((shares.data || []) as any[]).map(r => String(r.bz_task_id)))
+    const who = (t: any) => {
+      const n = str(t.assignee_name)
+      if (n) return n
+      const a = Array.isArray(t.assignees) ? t.assignees : []
+      return a.map((x: any) => (typeof x === 'string' ? x : str(x?.name) || str(x?.display))).filter(Boolean).join(', ')
+    }
+    const inspections = ((ins.data || []) as any[])
+      .filter(t => /^(completed|closed|finished|done)$/i.test(str(t.status)) || !!t.finished_at)
+      .map(t => ({
+        id: String(t.id),
+        unit: labelOf[String(t.reference_property_id)] || String(t.reference_property_id),
+        name: str(t.name) || 'Inspection',
+        inspector: who(t) || null,
+        date: str(t.finished_at).slice(0, 10) || str(t.scheduled_date).slice(0, 10) || null,
+        reportUrl: t.report_url || null,
+        shared: released.has(String(t.id)),
+      }))
+    return { email: str(access.email), inspections }
+  } catch { return null }
+}
+
 /** One read, one shape — GET and every POST return the project the same way. */
 async function viewOf(p: any) {
-  const [ins, hero] = await Promise.all([sharedInspections(p), heroFor(p)])
-  return vendorView({ ...p, sharedInspections: ins, heroUrl: hero })
+  const [ins, hero, staff] = await Promise.all([sharedInspections(p), heroFor(p), staffFor(p)])
+  return { ...vendorView({ ...p, sharedInspections: ins, heroUrl: hero }), staff }
 }
 
 export async function GET(req: NextRequest) {
@@ -395,6 +446,36 @@ export async function POST(req: NextRequest) {
       }
       const names = people.map((m: any) => prettyName(str(m.display) || str(m.email))).join(', ')
       await addNote(p.id, `${who} put “${String((step as any).title || '').slice(0, 100)}” on ${names || 'nobody'}`, who, 'event', true)
+    } else if (action === 'releaseDone' || action === 'releaseInspection' || action === 'applyTitle') {
+      // STAFF ONLY, AND CHECKED HERE. These decide what leaves the building: which finished work
+      // an owner reads, which inspection they can open. The share token is not enough — it is in
+      // their hands too. A signed-in editor, or nothing.
+      const access = await getAccess()
+      if (!access.user || !access.allowed || !atLeast(access.levels['projects'], 'edit')) {
+        return NextResponse.json({ error: 'Sign in to Lighthouse to do that.' }, { status: 403 })
+      }
+      const me = str(access.email) || 'someone'
+      if (action === 'releaseInspection') {
+        const bz = str(b.bzTaskId)
+        if (!bz) return NextResponse.json({ error: 'which inspection?' }, { status: 400 })
+        if (b.on) await supabaseAdmin().from('project_inspection_shares')
+          .upsert({ project_id: p.id, bz_task_id: bz, approved_by: me, approved_at: new Date().toISOString() }, { onConflict: 'project_id,bz_task_id' })
+        else await supabaseAdmin().from('project_inspection_shares').delete().eq('project_id', p.id).eq('bz_task_id', bz)
+      } else if (action === 'releaseDone') {
+        const ids = (Array.isArray(b.taskIds) ? b.taskIds : [str(b.taskId)]).map((x: any) => str(x)).filter(Boolean).slice(0, 200)
+        if (!ids.length) return NextResponse.json({ error: 'which items?' }, { status: 400 })
+        const { error } = await supabaseAdmin().from('project_steps').update({ done_shared: !!b.on }).in('id', ids).eq('project_id', p.id)
+        if (error && /column|schema/i.test(error.message || '')) return NextResponse.json({ error: 'Not switched on yet — run migration 152.' }, { status: 503 })
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      } else {
+        // A tidied title, accepted one at a time. The model proposes in the browser; this is the
+        // only thing that writes, so nothing is ever rewritten without somebody reading it first.
+        const taskId = str(b.taskId)
+        const title = str(b.title).slice(0, 300)
+        if (!taskId || !title) return NextResponse.json({ error: 'nothing to change' }, { status: 400 })
+        const { error } = await supabaseAdmin().from('project_steps').update({ title }).eq('id', taskId).eq('project_id', p.id)
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      }
     } else if (action === 'subDone') {
       // An action step ticks like the job it sits under.
       const stepId = str(b.stepId)
