@@ -158,6 +158,9 @@ const UI: Record<string, { en: string; es: string }> = {
   collapseAll: { en: 'Close all', es: 'Cerrar todo' },
   polish: { en: 'Clean up the wording', es: 'Mejorar la redacción' },
   undo: { en: 'Undo', es: 'Deshacer' },
+  pushNow: { en: 'Push to Breezeway now', es: 'Enviar a Breezeway ahora' },
+  pushing: { en: 'Creating the field task…', es: 'Creando la tarea…' },
+  needUnit: { en: 'Pick the unit first — a field task has to live somewhere.', es: 'Elige la unidad primero — la tarea necesita una unidad.' },
   activity: { en: 'Activity', es: 'Actividad' },
   coverPhoto: { en: 'Cover photo', es: 'Foto de portada' },
   coverHint: { en: 'Pick the picture at the top of the board.', es: 'Elige la foto que va arriba del tablero.' },
@@ -679,13 +682,20 @@ export default function VendorProjectPage({ params }: { params: { token: string 
           {!rows.length && (
             <p className="px-3 py-4 text-[13px] text-muted">{openAll.length ? T('noMatch') : p.steps.length ? T('allClear') : T('nothingYet')}</p>
           )}
-          {buckets.map(b => (
-            <div key={b.key}>
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-app/60 border-y border-line/60">
-                <h3 className="text-[11px] font-bold uppercase tracking-wide text-ink/70">{b.name}</h3>
-                <span className="text-[11px] text-muted tabular-nums ml-auto">{b.rows.length}</span>
+          {/* ONE UNIT SHOULD LOOK LIKE ONE UNIT (Jon: "need more delineation between units").
+              The groups were separated by a hairline, which is not a separation — thirty-five
+              rows with faint captions in them still reads as one run. Each group now gets real
+              space above it, a heading in ink rather than grey, a count that looks like a
+              count, and a tinted rail down the side of its rows so the block holds together
+              from the first job to the last. */}
+          {buckets.map((b, i) => (
+            <div key={b.key} className={i ? 'border-t-8 border-app' : ''}>
+              <div className="flex items-center gap-2 px-3 pt-3 pb-1.5 bg-white">
+                <span className="w-1 h-4 rounded-full bg-ink/80 shrink-0" />
+                <h3 className="text-[13px] font-bold text-ink tracking-tight">{b.name}</h3>
+                <span className="text-[11px] font-semibold text-muted tabular-nums rounded-full bg-app px-1.5 py-px ml-auto">{b.rows.length}</span>
               </div>
-              <div className="divide-y divide-line/70">
+              <div className="divide-y divide-line/60 border-l-2 border-app ml-3">
                 {b.rows.map(s => <JobRow key={s.id} s={s} p={p} busy={busy} T={T} TX={TX} lang={lang}
                   post={post} onOpen={setOpenTask}
                   showUnit={groupBy !== 'unit'}
@@ -784,7 +794,7 @@ export default function VendorProjectPage({ params }: { params: { token: string 
       {openTask && (() => {
         const t = p.steps.find(x => x.id === openTask)
         return t ? <ItemSheet t={t} p={p} who={who} busy={busy} post={post} upload={upload}
-          T={T} TX={TX} lang={lang} onClose={() => setOpenTask(null)} /> : null
+          T={T} TX={TX} lang={lang} reload={() => load()} onClose={() => setOpenTask(null)} /> : null
       })()}
     </main>
   )
@@ -1258,13 +1268,14 @@ function AddSheet({ p, busy, T, post, upload, onClose }: {
  * both sides can see. Nothing here is a second copy of the data: it is the same task row the
  * board runs on, read through the share's whitelist.
  */
-function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
+function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, reload, onClose }: {
   t: Step; p: V; who: string; busy: string | null
   post: (body: any, key: string) => Promise<any>
   upload: (f: File, taskId?: string) => Promise<void>
   T: (k: string) => string
   TX: (v: string | null | undefined) => string
   lang: Lang
+  reload: () => Promise<void>
   onClose: () => void
 }) {
   const [body, setBody] = useState('')
@@ -1272,6 +1283,31 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
   const [sub, setSub] = useState('')
   const [ask, setAsk] = useState('')
   const [subDue, setSubDue] = useState('')
+  const [busyBz, setBusyBz] = useState(false)
+  const [bzErr, setBzErr] = useState<string | null>(null)
+
+  /** The unit this job belongs to, as Guesty knows it — matched from the job's own section. */
+  const listingFor = (x: Step) => {
+    const k = unitKey(x.section)
+    if (!k) return ''
+    const hit = p.units.find(u => unitKey(u.label) === k)
+    return hit ? hit.ref_id : ''
+  }
+  const pushBz = async (x: Step) => {
+    const listingId = listingFor(x)
+    if (!listingId) { setBzErr(T('needUnit')); return }
+    setBusyBz(true); setBzErr(null)
+    try {
+      const r = await fetch('/api/projects/' + p.id, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'taskToBreezeway', taskId: x.id, listingId, department: 'maintenance', date: x.due_on || undefined }),
+      })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Breezeway said no.')
+      // Re-read through the share so the sheet shows the field task, its status and its report.
+      await reload()
+    } catch (e: any) { setBzErr(String(e.message || e)) } finally { setBusyBz(false) }
+  }
   const [report, setReport] = useState(false)
   // EVERYTHING EDITABLE (Jon, 2026-10-09). The title, the detail, the date and the unit are typed
   // straight into the sheet and saved on blur — no edit mode, no pencil to find. Edits always act
@@ -1496,7 +1532,22 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
           {/* ASKING FOR A TECHNICIAN. Only offered when no field task exists yet — once one does,
               the block above is the answer and a second request would be noise. What comes back
               says "asked for", full stop: whether it is approved, by whom, or declined is ours. */}
-          {!t.breezeway && (
+          {/* A SIGNED-IN USER PUSHES, RIGHT HERE (Jon: "if you are a signed-in user using the
+              shareable link, you can just assign and push the Breezeway task automatically").
+              There is no one to ask — they ARE the approval. It goes through the same endpoint
+              the board uses, so the never-assign guard, the template and the assignee matching
+              all behave identically; the unit comes from the job's own unit, and whoever is on
+              the task is matched into Breezeway by name. An owner still only gets to ask. */}
+          {!t.breezeway && p.staff ? (
+            <div>
+              <button onClick={() => pushBz(t)} disabled={busyBz}
+                className="w-full rounded-xl bg-ink text-white text-[13.5px] font-semibold py-2.5 inline-flex items-center justify-center gap-2 disabled:opacity-50">
+                {busyBz ? <Loader2 size={14} className="animate-spin" /> : <Wrench size={15} />}
+                {busyBz ? T('pushing') : T('pushNow')}
+              </button>
+              {bzErr && <p className="text-[12px] text-rose-700 mt-1.5">{bzErr}</p>}
+            </div>
+          ) : !t.breezeway && (
             t.requested ? (
               <p className="rounded-xl border border-line bg-app px-3 py-2.5 text-[12.5px] text-muted">
                 <Wrench size={12} className="inline mr-1.5 -mt-0.5" />{T('pushSent')}
