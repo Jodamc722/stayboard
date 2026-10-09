@@ -149,12 +149,21 @@ export async function GET(req: NextRequest) {
   // GENERATED links — one per record, minted by their own tabs. Best-effort: a missing table must
   // never take the hub down, so each of these degrades to an empty group. They are read-only here
   // (no passcode of their own; the unguessable code is the key) and shown in the same row shape.
-  const [{ data: reports }, { data: books }, { data: guideRows }, { data: counts }] = await Promise.all([
+  const [{ data: reports }, { data: books }, { data: guideRows }, { data: counts }, boardsRes] = await Promise.all([
     db.from('owner_reports').select('code, title, scope_label, period_start, period_end, status, updated_at').order('updated_at', { ascending: false }).limit(100),
     db.from('guidebooks').select('id, listing_name, title, status, updated_at').order('updated_at', { ascending: false }).limit(100),
     db.from('app_settings').select('key').like('key', 'guide:%').limit(50),
     db.from('inventory_count_links').select('code, label, created_at, revoked_at').is('revoked_at', null).order('created_at', { ascending: false }).limit(50),
+    // Project boards with a live link. share_passcode and share_can_edit arrive with migration
+    // 149, so a hub running ahead of the database falls back rather than losing the whole page.
+    db.from('projects').select('id, ref, title, stage, share_token, share_expires, share_passcode, share_can_edit, created_at, updated_at')
+      .not('share_token', 'is', null).order('updated_at', { ascending: false }).limit(100),
   ])
+  let boards = boardsRes.data as any[] | null
+  if (boardsRes.error && /column|schema/i.test(boardsRes.error.message || '')) {
+    boards = (await db.from('projects').select('id, ref, title, stage, share_token, share_expires, created_at, updated_at')
+      .not('share_token', 'is', null).order('updated_at', { ascending: false }).limit(100)).data as any[] | null
+  }
   const gen = (kind: string, code: string, title: string, sub: string, audience: string, status: string, updated: string) => ({
     id: kind + ':' + code, code, kind, title, audience, scope: {}, hint: null, hasPasscode: false, open: true,
     expires_at: null, revoked_at: null, created_by: null, created_at: updated, last_used_at: null, uses: 0, notes: sub || null,
@@ -166,6 +175,16 @@ export async function GET(req: NextRequest) {
     ((books || []) as any[]).map(b => gen('guidebook', str(b.id), str(b.listing_name) || str(b.title) || 'Guidebook', str(b.title), 'guest', str(b.status), str(b.updated_at))),
     ((guideRows || []) as any[]).map(g => str(g.key).replace(/^guide:/, '')).filter(Boolean).map(slug => gen('guide', slug, slug, 'guest guide page', 'guest', '', '')),
     ((counts || []) as any[]).map(c => gen('count', str(c.code), str(c.label) || 'Inventory count', 'inventory count sheet', 'crew', '', str(c.created_at))),
+    // Project boards shared by link. Audience 'vendor' unless the board grants edit, which is the
+    // owner share — and the padlock is shown from the real passcode, so the hub does not claim a
+    // board is open when it is not.
+    ((boards || []) as any[]).map(b => ({
+      ...gen('project-board', str(b.share_token), str(b.title) || 'Project board',
+        [str(b.ref), b.share_can_edit ? 'owners can edit' : 'read and tick'].filter(Boolean).join(' · '),
+        b.share_can_edit ? 'owner' : 'vendor', str(b.stage), str(b.updated_at) || str(b.created_at)),
+      hasPasscode: !!str(b.share_passcode), open: !str(b.share_passcode),
+      expires_at: b.share_expires || null,
+    })),
   )
 
   const active = ((listings || []) as any[]).filter(l => str(l.status).toLowerCase() !== 'inactive')

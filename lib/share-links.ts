@@ -11,6 +11,10 @@
 export const LINK_KINDS = [
   'vendor-board', 'scheduler', 'field-board', 'parking', 'day-sheet', 'delivery', 'orders-live', 'salato-desk',
   'marketing', 'owner-audit', 'botanica', 'owner-report', 'guidebook', 'guide', 'order-form', 'count', 'custom-page',
+  // A PROJECT BOARD SHARED BY LINK (Jon, 2026-10-09: it "should show on the sharable link tab").
+  // Minted on the project itself, not here — the hub is the one place every live link is listed,
+  // and a board handed to an owner that this page cannot see is exactly the link nobody revokes.
+  'project-board',
 ] as const
 export type LinkKind = typeof LINK_KINDS[number]
 export const AUDIENCES = ['crew', 'vendor', 'owner', 'guest', 'partner', 'internal'] as const
@@ -27,6 +31,7 @@ export const KIND_LABEL: Record<LinkKind, string> = {
   'day-sheet': 'Day sheet', delivery: 'Delivery log', 'orders-live': 'Guest orders — live', 'salato-desk': 'Salato desk board',
   marketing: 'Direct bookings report', 'owner-audit': 'Owner statement audit', botanica: 'Botanica report',
   'owner-report': 'Owner report', guidebook: 'Guidebook', guide: 'Guest guide page', 'order-form': 'Order form', count: 'Inventory count', 'custom-page': 'Custom report',
+  'project-board': 'Project board',
 }
 export const AUDIENCE_LABEL: Record<Audience, string> = {
   crew: 'Our crew', vendor: 'Vendors', owner: 'Owners', guest: 'Guests', partner: 'Partners & front desks', internal: 'Internal / reviewers',
@@ -78,6 +83,7 @@ export function pathFor(kind: string, code: string): string {
     case 'guide': return '/guide/' + code
     case 'order-form': return code === 'new-order' ? '/new-order' : '/owner-orders'
     case 'count': return '/count/' + code
+    case 'project-board': return '/project/' + code
     default: return '/share/' + code
   }
 }
