@@ -19,6 +19,7 @@ type Step = {
   id: string; title: string; done: boolean; status?: string | null; due_on: string | null
   section?: string | null; note?: string | null; addedByShare?: boolean
   done_at?: string | null; done_by?: string | null; doneShared?: boolean
+  priority?: string | null
   assignees?: string[]
   subtasks?: { id: string; title: string; done: boolean; due_on?: string | null }[]
   breezeway?: { id: string; status: string; tone: string; assignee: string | null; date: string | null; reportUrl: string | null } | null
@@ -160,7 +161,37 @@ const UI: Record<string, { en: string; es: string }> = {
   activity: { en: 'Activity', es: 'Actividad' },
   coverPhoto: { en: 'Cover photo', es: 'Foto de portada' },
   coverHint: { en: 'Pick the picture at the top of the board.', es: 'Elige la foto que va arriba del tablero.' },
+  urgent: { en: 'Urgent', es: 'Urgente' },
+  high: { en: 'High', es: 'Alta' },
+  medium: { en: 'Medium', es: 'Media' },
+  low: { en: 'Low', es: 'Baja' },
+  importance: { en: 'Importance', es: 'Importancia' },
+  groupBy: { en: 'Group by', es: 'Agrupar por' },
+  byUnit: { en: 'Unit', es: 'Unidad' },
+  byPriority: { en: 'Importance', es: 'Importancia' },
+  byDue: { en: 'Due date', es: 'Fecha' },
+  byAssignee: { en: 'Who has it', es: 'Quién lo tiene' },
+  anyone: { en: 'Anyone', es: 'Cualquiera' },
+  unassigned: { en: 'Nobody', es: 'Nadie' },
+  thisWeek: { en: 'This week', es: 'Esta semana' },
+  later: { en: 'Later', es: 'Más adelante' },
+  clear: { en: 'Clear', es: 'Limpiar' },
+  showing: { en: 'showing', es: 'mostrando' },
 }
+
+/** Urgent, High, Medium, Low — Jon's four, stored as project_steps.priority. */
+const PRIOS = ['urgent', 'high', 'normal', 'low'] as const
+type Prio = typeof PRIOS[number]
+const PRIO_KEY: Record<string, string> = { urgent: 'urgent', high: 'high', normal: 'medium', low: 'low' }
+const PRIO_CLS: Record<string, string> = {
+  urgent: 'border-rose-300 bg-rose-50 text-rose-800',
+  high: 'border-amber-300 bg-amber-50 text-amber-800',
+  normal: 'border-line bg-app text-muted',
+  low: 'border-line bg-white text-muted/70',
+}
+const PRIO_DOT: Record<string, string> = { urgent: 'bg-rose-500', high: 'bg-amber-500', normal: 'bg-slate-300', low: 'bg-slate-200' }
+const prioOf = (s: Step): Prio => (PRIOS as readonly string[]).includes(String(s.priority)) ? (s.priority as Prio) : 'normal'
+const PRIO_RANK: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 }
 
 /** Today in New York, which is where the work is. */
 const todayISO = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
@@ -266,6 +297,10 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   const [openReport, setOpenReport] = useState<string | null>(null)
   const [tab, setTab] = useState<'board' | 'team'>('board')
   const [q, setQ] = useState('')
+  const [fPrio, setFPrio] = useState('')
+  const [fDue, setFDue] = useState('')
+  const [fWho, setFWho] = useState('')
+  const [groupBy, setGroupBy] = useState<'unit' | 'prio' | 'due' | 'who'>('unit')
   // Units start folded once there are enough of them to scroll past; with three or four groups
   // folding is friction, with twenty it is the only way to see the shape of the board.
   const [folded, setFolded] = useState<Set<string> | null>(null)
@@ -415,15 +450,66 @@ export default function VendorProjectPage({ params }: { params: { token: string 
   const jobs = p.steps.length
   const jobsDone = p.steps.filter(x => x.done).length
 
+  // ── WHAT THE LIST SHOWS ──────────────────────────────────────────────────────────────────
+  // Four filters that narrow, and one choice that organises. Deliberately separate: hiding work
+  // and arranging work are different jobs, and a board that conflates them is the one Jon could
+  // not read.
   const needle = q.trim().toLowerCase()
-  const groups = groupSteps(
-    p.steps.filter(x => !x.done).filter(x => !needle ||
-      [x.title, x.note, x.section, ...(x.assignees || [])].some(v => String(v || '').toLowerCase().includes(needle))),
-    T('everythingElse'))
-  // Searching opens everything: a hit inside a folded unit that stays folded is a search that
-  // found nothing as far as the person is concerned.
-  const foldedNow = needle ? new Set<string>() : (folded ?? new Set(groups.length > 5 ? groups.map(g => g.key) : []))
-  const allOpen = foldedNow.size === 0
+  const openAll = p.steps.filter(x => !x.done)
+  const t0 = todayISO()
+  const weekEnd = new Date(new Date(t0 + 'T12:00:00').getTime() + 6 * 864e5).toLocaleDateString('en-CA')
+  const people = Array.from(new Set(openAll.flatMap(x => x.assignees || []))).concat(
+    openAll.some(x => !(x.assignees || []).length) ? [T('unassigned')] : [])
+  const rows = openAll.filter(x => {
+    if (needle && ![x.title, x.note, x.section, ...(x.assignees || [])].some(v => String(v || '').toLowerCase().includes(needle))) return false
+    if (fPrio && prioOf(x) !== fPrio) return false
+    if (fWho) {
+      const mine = x.assignees || []
+      if (fWho === T('unassigned') ? mine.length > 0 : !mine.includes(fWho)) return false
+    }
+    if (fDue) {
+      const d = x.due_on || ''
+      if (fDue === 'none' && d) return false
+      if (fDue === 'overdue' && !(d && d < t0)) return false
+      if (fDue === 'today' && d !== t0) return false
+      if (fDue === 'week' && !(d && d >= t0 && d <= weekEnd)) return false
+    }
+    return true
+  })
+
+  // THE ORGANISING. Whatever it is grouped by, the groups come out in an order that means
+  // something — importance highest first, dates soonest first, units in the order the work
+  // arrived — and every group is open. Nothing is hidden behind a chevron any more.
+  const buckets = (() => {
+    const by: Record<string, { key: string; name: string; sort: string; rows: Step[] }> = {}
+    const put = (key: string, name: string, sort: string, s: Step) => {
+      if (!by[key]) by[key] = { key, name, sort, rows: [] }
+      by[key].rows.push(s)
+    }
+    for (const s of rows) {
+      if (groupBy === 'prio') { const k = prioOf(s); put(k, T(PRIO_KEY[k]), String(PRIO_RANK[k]), s) }
+      else if (groupBy === 'who') {
+        const who0 = (s.assignees || [])[0] || T('unassigned')
+        put(who0, who0, (s.assignees || []).length ? '1' + who0 : '2', s)
+      } else if (groupBy === 'due') {
+        const d = s.due_on || ''
+        const k = !d ? 'none' : d < t0 ? 'overdue' : d === t0 ? 'today' : d <= weekEnd ? 'week' : 'later'
+        const name = k === 'none' ? T('noDate') : k === 'overdue' ? T('overdue') : k === 'today' ? T('today') : k === 'week' ? T('thisWeek') : T('later')
+        put(k, name, { overdue: '0', today: '1', week: '2', later: '3', none: '4' }[k] as string, s)
+      } else {
+        const k = unitKey(s.section) || '~'
+        put(k, k === '~' ? T('everythingElse') : k, k === '~' ? 'zz' : k, s)
+      }
+    }
+    const list = Object.values(by).sort((a, b) => a.sort.localeCompare(b.sort, undefined, { numeric: true }))
+    // Within a group: most important first, then soonest, so the top of every block is the
+    // thing to do next.
+    for (const g of list) {
+      g.rows.sort((x, y) => (PRIO_RANK[prioOf(x)] - PRIO_RANK[prioOf(y)])
+        || String(x.due_on || '9999').localeCompare(String(y.due_on || '9999')))
+    }
+    return list
+  })()
 
   return (
     <main className="min-h-screen bg-app">
@@ -434,53 +520,57 @@ export default function VendorProjectPage({ params }: { params: { token: string 
           up the whole screen, it looks silly on the desktop. It should just kind of block in").
           A full-bleed band is a phone pattern; on a wide screen it is a billboard above a list.
           So the picture is a fixed-height block inside the same column as everything else. */}
-      <header className="bg-ink text-white">
-        <div className="max-w-3xl mx-auto px-4 pt-4 pb-5">
-          {p.hero && (
-            <div className="relative h-28 sm:h-36 rounded-xl overflow-hidden mb-4">
-              <img src={p.hero} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover" />
-              <div className="absolute inset-0 bg-gradient-to-t from-ink/70 to-ink/10" />
-            </div>
-          )}
+      {/* THE DARK BAND STOPS WHERE THE CONTENT STOPS (Jon: "the top part, the black part,
+          shouldn't extend on"). Edge-to-edge ink behind a centred column leaves two black
+          margins doing nothing but making the page feel like two unrelated halves. It is a
+          card now, the same width as everything under it. */}
+      <div className="max-w-3xl mx-auto px-4 pt-4">
+        {/* LIGHT, NOT BLACK (Jon: "AND DON'T WANT IT BLACK EITHER"). A slab of ink at the top
+            of a white page is a header shouting at a list. White card, dark type, and the photo
+            carries the colour — which is what a photo is for. */}
+        <header className="rounded-2xl border border-line bg-white overflow-hidden shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
+        {p.hero && <img src={p.hero} alt="" aria-hidden className="w-full h-24 sm:h-32 object-cover" />}
+        <div className="px-4 sm:px-5 pt-4 pb-4">
           <div className="flex items-start gap-3">
             <div className="min-w-0 flex-1">
               {/* THE TWO MARKS (Jon, 2026-10-09). Stay Hospitality is whose board this is;
                   Lighthouse is what it runs on. Both small, both in the one place a reader
                   looks first, neither competing with the name of the job. */}
               <span className="flex items-center gap-2 mb-1.5">
-                <img src="/stay-logo.png" alt="Stay Hospitality" className="h-5 w-auto opacity-95 [filter:brightness(0)_invert(1)]" />
-                <span className="w-px h-3.5 bg-white/25" />
-                <img src="/lighthouse-mark.svg" alt="" aria-hidden className="h-4 w-auto opacity-70" />
-                <span className="text-[10px] uppercase tracking-[0.16em] font-semibold text-white/45">Lighthouse</span>
-                {p.ref && <span className="text-[10px] uppercase tracking-[0.16em] font-semibold text-white/45 ml-auto">{p.ref}</span>}
+                <img src="/stay-logo.png" alt="Stay Hospitality" className="h-5 w-auto" />
+                <span className="w-px h-3.5 bg-line" />
+                <img src="/lighthouse-mark.svg" alt="" aria-hidden className="h-4 w-auto opacity-60" />
+                <span className="text-[10px] uppercase tracking-[0.16em] font-semibold text-muted">Lighthouse</span>
+                {p.ref && <span className="text-[10px] uppercase tracking-[0.16em] font-semibold text-muted ml-auto">{p.ref}</span>}
               </span>
-              <h1 className="text-[22px] font-bold tracking-tight mt-1 leading-tight">{p.title}</h1>
+              <h1 className="text-[22px] font-bold tracking-tight mt-1 leading-tight text-ink">{p.title}</h1>
             </div>
             <button onClick={() => switchTo(lang === 'en' ? 'es' : 'en')} disabled={translating}
-              className="shrink-0 rounded-full border border-white/25 px-3 py-1.5 text-[11.5px] font-semibold hover:bg-white/10 disabled:opacity-50 inline-flex items-center gap-1.5">
+              className="shrink-0 rounded-full border border-line px-3 py-1.5 text-[11.5px] font-semibold text-ink hover:bg-app disabled:opacity-50 inline-flex items-center gap-1.5">
               {translating ? <Loader2 size={12} className="animate-spin" /> : null}
               {translating ? T('translating') : lang === 'en' ? 'Español' : 'English'}
             </button>
           </div>
-          {p.summary && <p className="text-[13px] text-white/70 mt-2 leading-relaxed">{TX(p.summary)}</p>}
-          <div className="flex items-center gap-2.5 flex-wrap mt-3 text-[11.5px] text-white/60">
+          {p.summary && <p className="text-[13px] text-muted mt-2 leading-relaxed">{TX(p.summary)}</p>}
+          <div className="flex items-center gap-2.5 flex-wrap mt-3 text-[11.5px] text-muted">
             {p.building && <span className="inline-flex items-center gap-1"><Building2 size={11} />{p.building}</span>}
             {p.due_on && <span>{day(p.due_on, lang)}</span>}
             {p.vendor_name && <span>{p.vendor_name}</span>}
           </div>
           {jobs > 0 && (
             <div className="mt-4">
-              <div className="flex items-baseline justify-between text-[11.5px] text-white/70 mb-1.5">
-                <span className="tabular-nums font-semibold text-white">{jobsDone}/{jobs}</span>
+              <div className="flex items-baseline justify-between text-[11.5px] text-muted mb-1.5">
+                <span className="tabular-nums font-semibold text-ink">{jobsDone}/{jobs}</span>
                 <span className="tabular-nums">{p.progress.total > 0 ? `${p.progress.done}/${p.progress.total} ${T('ofUnitsDone')}` : ''}</span>
               </div>
-              <span className="block h-1.5 rounded-full bg-white/15 overflow-hidden">
-                <span className="block h-full bg-emerald-400 transition-all" style={{ width: (jobs ? Math.round((jobsDone / jobs) * 100) : 0) + '%' }} />
+              <span className="block h-1.5 rounded-full bg-app overflow-hidden">
+                <span className="block h-full bg-emerald-500 transition-all" style={{ width: (jobs ? Math.round((jobsDone / jobs) * 100) : 0) + '%' }} />
               </span>
             </div>
           )}
         </div>
-      </header>
+        </header>
+      </div>
 
       {/* THE TEAM TAB (Jon, 2026-10-09). The same URL serves both: an owner gets the board, a
           signed-in Lighthouse user gets the board AND the controls for what leaves the building.
@@ -518,16 +608,18 @@ export default function VendorProjectPage({ params }: { params: { token: string 
           </section>
         ))}
 
-        {/* ── THE WORK, IN BLOCKS ──────────────────────────────────────────────────────────
-            Jon: "it looks like just one giant list with one line on them. I think it should be
-            in bubbles or in blocks." A flat list made every job look the same weight and gave a
-            unit no shape at all — you could not tell at a glance that 1404 is a seven-job build
-            week and 2008/1 is one sensor. A card per unit does: its own heading, its own count,
-            its own progress, and on a wide screen two of them side by side instead of a column
-            of one-liners running off the bottom of the page. */}
+        {/* ── EVERYTHING, ORGANISED, AND FILTERABLE ───────────────────────────────────────
+            Jon: "I hate the new format. It doesn't make sense. I want to be able to see
+            everything organized, and then I should be able to filter it by due date, assignee,
+            or importance."
+            So: one list, all of it open, nothing folded away. The organising is a CHOICE —
+            group by unit, by importance, by date or by person — and the filters cut the list
+            down rather than hiding it behind a chevron. Every row carries the same four facts
+            in the same four places: how important, what it is, when, and who. */}
         <div className="rounded-2xl border border-line bg-white overflow-hidden shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
           <div className="flex items-center gap-2 px-3 py-2.5 border-b border-line">
             <h2 className="text-[12px] font-bold text-ink flex-1">{T('needsDoing')}</h2>
+            <span className="text-[11px] text-muted tabular-nums">{rows.length === openAll.length ? openAll.length : `${rows.length} ${T('showing')} / ${openAll.length}`}</span>
             {p.canEdit && (
               <button onClick={() => setAdding(true)}
                 className="text-[12.5px] font-semibold rounded-lg bg-ink text-white px-2.5 py-1.5 inline-flex items-center gap-1 hover:opacity-90">
@@ -535,47 +627,75 @@ export default function VendorProjectPage({ params }: { params: { token: string 
               </button>
             )}
           </div>
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-line bg-app/40">
-            <input value={q} onChange={e => setQ(e.target.value)} placeholder={T('search')}
-              className="flex-1 min-w-0 text-[13px] bg-transparent py-1 focus:outline-none placeholder:text-muted/70" />
-            {!!groups.length && (
-              <button onClick={() => setFolded(allOpen ? new Set(groups.map(g => g.key)) : new Set())}
-                className="shrink-0 text-[11.5px] font-semibold text-muted hover:text-ink">
-                {allOpen ? T('collapseAll') : T('expandAll')}
-              </button>
-            )}
-          </div>
-          {!groups.length && (
-            <p className="px-3 py-4 text-[13px] text-muted">{q ? T('noMatch') : p.steps.length ? T('allClear') : T('nothingYet')}</p>
-          )}
-          {!!groups.length && (
-            <div className="p-3 grid gap-3 sm:grid-cols-2">
-              {groups.map(g => {
-                const shut = foldedNow.has(g.key)
-                const late = g.rows.filter(r => r.due_on && r.due_on < todayISO()).length
-                return (
-                  <section key={g.key} className={'rounded-xl border overflow-hidden ' + (late ? 'border-rose-200' : 'border-line')}>
-                    <button onClick={() => setFolded(v => { const n = new Set(v ?? foldedNow); n.has(g.key) ? n.delete(g.key) : n.add(g.key); return n })}
-                      className="w-full flex items-center gap-2 px-2.5 py-2 bg-app/60 hover:bg-app text-left">
-                      <span className="text-muted/70 shrink-0">{shut ? <ChevronRight size={13} /> : <ChevronDown size={13} />}</span>
-                      <h3 className="min-w-0 flex-1 truncate text-[12.5px] font-bold text-ink">{TX(g.name) || T('everythingElse')}</h3>
-                      {!!late && <span className="shrink-0 rounded-full bg-rose-100 text-rose-700 text-[10px] font-bold px-1.5">{late}</span>}
-                      <span className="shrink-0 text-[11px] text-muted tabular-nums">{g.rows.length}</span>
-                    </button>
-                    {!shut && (
-                      <div className="divide-y divide-line/70">
-                        {g.rows.map(s => <JobRow key={s.id} s={s} p={p} busy={busy} T={T} TX={TX} lang={lang}
-                          post={post} onOpen={setOpenTask}
-                          open={openSubs.has(s.id)}
-                          onToggleSubs={() => setOpenSubs(v => { const n = new Set(v); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n })} />)}
-                      </div>
-                    )}
-                  </section>
-                )
-              })}
+
+          {/* THE FILTER BAR. Chips, not a form — on a phone a row of taps beats four dropdowns,
+              and a filter you can see is a filter you remember to turn off. */}
+          <div className="px-3 py-2 border-b border-line bg-app/40 space-y-2">
+            <div className="flex items-center gap-2">
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder={T('search')}
+                className="flex-1 min-w-0 text-[13px] bg-transparent py-1 focus:outline-none placeholder:text-muted/70" />
+              {(q || fPrio || fDue || fWho) && (
+                <button onClick={() => { setQ(''); setFPrio(''); setFDue(''); setFWho('') }}
+                  className="shrink-0 text-[11.5px] font-semibold text-muted hover:text-ink">{T('clear')}</button>
+              )}
             </div>
+            <div className="flex flex-wrap items-center gap-1">
+              {PRIOS.map(k => (
+                <button key={k} onClick={() => setFPrio(fPrio === k ? '' : k)}
+                  className={'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] font-semibold ' +
+                    (fPrio === k ? 'border-ink bg-ink text-white' : PRIO_CLS[k] + ' hover:border-ink/40')}>
+                  <span className={'w-1.5 h-1.5 rounded-full ' + (fPrio === k ? 'bg-white' : PRIO_DOT[k])} />
+                  {T(PRIO_KEY[k])}
+                </button>
+              ))}
+              <span className="w-px h-4 bg-line mx-0.5" />
+              {([['overdue', T('overdue')], ['today', T('today')], ['week', T('thisWeek')], ['none', T('noDate')]] as const).map(([k, lbl]) => (
+                <button key={k} onClick={() => setFDue(fDue === k ? '' : k)}
+                  className={'rounded-full border px-2 py-0.5 text-[11.5px] font-semibold ' +
+                    (fDue === k ? 'border-ink bg-ink text-white' : 'border-line text-muted hover:text-ink')}>{lbl}</button>
+              ))}
+            </div>
+            {!!people.length && (
+              <div className="flex flex-wrap items-center gap-1">
+                {people.map(n => (
+                  <button key={n} onClick={() => setFWho(fWho === n ? '' : n)}
+                    className={'inline-flex items-center gap-1 rounded-full border pl-0.5 pr-2 py-0.5 text-[11.5px] ' +
+                      (fWho === n ? 'border-ink bg-ink text-white font-semibold' : 'border-line text-muted hover:text-ink')}>
+                    <span className={'w-4 h-4 rounded-full grid place-items-center text-[8px] font-bold ' + (fWho === n ? 'bg-white/20' : 'bg-app text-muted')}>{n === T('unassigned') ? '·' : initials(n)}</span>
+                    {n}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-1.5 text-[11.5px]">
+              <span className="text-muted/80">{T('groupBy')}</span>
+              {([['unit', T('byUnit')], ['prio', T('byPriority')], ['due', T('byDue')], ['who', T('byAssignee')]] as const).map(([k, lbl]) => (
+                <button key={k} onClick={() => setGroupBy(k)}
+                  className={'rounded-md px-1.5 py-0.5 font-semibold ' + (groupBy === k ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{lbl}</button>
+              ))}
+            </div>
+          </div>
+
+          {!rows.length && (
+            <p className="px-3 py-4 text-[13px] text-muted">{openAll.length ? T('noMatch') : p.steps.length ? T('allClear') : T('nothingYet')}</p>
           )}
+          {buckets.map(b => (
+            <div key={b.key}>
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-app/60 border-y border-line/60">
+                <h3 className="text-[11px] font-bold uppercase tracking-wide text-ink/70">{b.name}</h3>
+                <span className="text-[11px] text-muted tabular-nums ml-auto">{b.rows.length}</span>
+              </div>
+              <div className="divide-y divide-line/70">
+                {b.rows.map(s => <JobRow key={s.id} s={s} p={p} busy={busy} T={T} TX={TX} lang={lang}
+                  post={post} onOpen={setOpenTask}
+                  showUnit={groupBy !== 'unit'}
+                  open={openSubs.has(s.id)}
+                  onToggleSubs={() => setOpenSubs(v => { const n = new Set(v); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n })} />)}
+              </div>
+            </div>
+          ))}
         </div>
+
 
         {/* ── THE ACTIVITY LOG ─────────────────────────────────────────────────────────────
             Jon: "I just want to be able to see the activity. There should be a log that's like
@@ -854,7 +974,7 @@ function TeamPanel({ p, staff, busy, T, lang, post, pass, token }: {
 }
 
 /** ONE JOB, as a row inside its unit's block. */
-function JobRow({ s, p, busy, T, TX, lang, post, onOpen, open, onToggleSubs }: {
+function JobRow({ s, p, busy, T, TX, lang, post, onOpen, open, onToggleSubs, showUnit }: {
   s: Step; p: V; busy: string | null
   T: (k: string) => string
   TX: (v: string | null | undefined) => string
@@ -863,12 +983,16 @@ function JobRow({ s, p, busy, T, TX, lang, post, onOpen, open, onToggleSubs }: {
   onOpen: (id: string) => void
   open: boolean
   onToggleSubs: () => void
+  /** The unit as a chip on the row — needed whenever the list is not grouped by unit. */
+  showUnit?: boolean
 }) {
+  const prio = prioOf(s)
   const d = dueChip(s.due_on, lang, T)
   const subs = s.subtasks || []
   return (
     <div>
-      <div className={'flex items-start gap-2.5 px-2.5 py-2.5 text-[13.5px] ' + (s.done ? 'bg-emerald-50/40' : 'hover:bg-app/60')}>
+      <div className={'flex items-start gap-2.5 px-3 py-2.5 text-[13.5px] ' + (s.done ? 'bg-emerald-50/40' : 'hover:bg-app/60')}>
+        <span title={T(PRIO_KEY[prio])} className={'shrink-0 mt-2 w-1.5 h-1.5 rounded-full ' + PRIO_DOT[prio]} />
         <button onClick={() => post({ action: 'stepDone', stepId: s.id, done: !s.done }, 'step' + s.id)} disabled={busy === 'step' + s.id}
           aria-label={(s.done ? T('isDone') : T('markDone')) + ': ' + s.title}
           className={'shrink-0 mt-0.5 w-5 h-5 rounded-full border-2 grid place-items-center transition disabled:opacity-50 ' +
@@ -876,10 +1000,12 @@ function JobRow({ s, p, busy, T, TX, lang, post, onOpen, open, onToggleSubs }: {
           {busy === 'step' + s.id ? <Loader2 size={11} className="animate-spin text-muted" /> : <Check size={12} strokeWidth={3} />}
         </button>
         <button onClick={() => onOpen(s.id)} className="min-w-0 flex-1 text-left group">
-          <span className={'block leading-snug font-medium ' + (s.done ? 'line-through text-muted font-normal' : 'text-ink group-hover:underline')}>{TX(s.title)}</span>
+          {showUnit && s.section && <span className="inline-block text-[10.5px] font-bold uppercase tracking-wide text-muted mr-1.5 align-middle">{unitKey(s.section)}</span>}
+          <span className={'leading-snug font-medium ' + (s.done ? 'line-through text-muted font-normal' : 'text-ink group-hover:underline')}>{TX(s.title)}</span>
           {s.note && <span className="block text-[12px] text-muted/80 mt-1 line-clamp-2 leading-relaxed">{TX(s.note)}</span>}
           <span className="flex flex-wrap items-center gap-1.5 mt-1.5">
             {d && <span className={'rounded-full border px-1.5 py-px text-[10.5px] font-semibold ' + d.tone}>{d.label}</span>}
+            {prio !== 'normal' && <span className={'rounded-full border px-1.5 py-px text-[10.5px] font-semibold ' + PRIO_CLS[prio]}>{T(PRIO_KEY[prio])}</span>}
             {s.requested && <span className="inline-flex items-center gap-0.5 rounded-full border border-brand-200 bg-brand-50 text-brand-700 px-1.5 py-px text-[10.5px] font-semibold"><Wrench size={9} />{T('pushSentShort')}</span>}
             {s.breezeway && <span className={'inline-flex items-center gap-0.5 rounded-full border px-1.5 py-px text-[10.5px] font-semibold ' + (s.breezeway.tone === 'done' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-brand-200 bg-brand-50 text-brand-700')}><Wrench size={9} />{s.breezeway.status}</span>}
             {!!s.photos?.length && <span className="inline-flex items-center gap-0.5 text-[10.5px] text-muted"><Camera size={9} />{s.photos.length}</span>}
@@ -986,6 +1112,7 @@ function AddSheet({ p, busy, T, post, upload, onClose }: {
   const [due, setDue] = useState('')
   const [who, setWho] = useState<string[]>([])
   const [photo, setPhoto] = useState<File | null>(null)
+  const [prio, setPrio] = useState<Prio>('normal')
   const [saving, setSaving] = useState(false)
   const ref = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -1004,7 +1131,7 @@ function AddSheet({ p, busy, T, post, upload, onClose }: {
     if (!t || saving) return
     setSaving(true)
     const lines = steps.split('\n').map(x => x.trim()).filter(Boolean)
-    const j = await post({ action: 'addTask', title: t, section: unit || null, description: desc, due_on: due || null, assign: who, steps: lines }, 'addTask')
+    const j = await post({ action: 'addTask', title: t, section: unit || null, description: desc, due_on: due || null, assign: who, steps: lines, priority: prio }, 'addTask')
     // The photo needs the job's id, so it goes up after — the one thing that cannot ride along
     // with the write. If it fails the job is still there, which is the right way round.
     if (j?.taskId && photo) await upload(photo, j.taskId)
@@ -1079,6 +1206,19 @@ function AddSheet({ p, busy, T, post, upload, onClose }: {
               </L>
             </div>
           </div>
+
+          <L label={T('importance')}>
+            <div className="flex flex-wrap gap-1.5">
+              {PRIOS.map(k => (
+                <button key={k} type="button" onClick={() => setPrio(k)}
+                  className={'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12.5px] font-semibold ' +
+                    (prio === k ? 'border-ink bg-ink text-white' : PRIO_CLS[k] + ' hover:border-ink/40')}>
+                  <span className={'w-1.5 h-1.5 rounded-full ' + (prio === k ? 'bg-white' : PRIO_DOT[k])} />
+                  {T(PRIO_KEY[k])}
+                </button>
+              ))}
+            </div>
+          </L>
 
           {!!(p.team || []).length && (
             <L label={T('assignedTo')}>
@@ -1260,6 +1400,20 @@ function ItemSheet({ t, p, who, busy, post, upload, T, TX, lang, onClose }: {
                   <input type="date" value={draft.due} onChange={e => setDraft({ due: e.target.value })} onBlur={saveEdit}
                     className="w-full text-[13.5px] rounded-lg border border-line px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200" />
                 </label>
+                <div className="w-full px-3 py-2.5 border-t border-line">
+                  <span className="block text-[10.5px] font-bold uppercase tracking-wide text-muted mb-1.5">{T('importance')}</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {PRIOS.map(k => (
+                      <button key={k} onClick={() => post({ action: 'taskEdit', taskId: t.id, priority: k }, 'prio' + t.id)}
+                        disabled={busy === 'prio' + t.id}
+                        className={'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12.5px] font-semibold disabled:opacity-50 ' +
+                          (prioOf(t) === k ? 'border-ink bg-ink text-white' : PRIO_CLS[k] + ' hover:border-ink/40')}>
+                        <span className={'w-1.5 h-1.5 rounded-full ' + (prioOf(t) === k ? 'bg-white' : PRIO_DOT[k])} />
+                        {T(PRIO_KEY[k])}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <label className="flex-1 min-w-[150px] px-3 py-2.5">
                   <span className="block text-[10.5px] font-bold uppercase tracking-wide text-muted mb-1">{T('unitLabel')}</span>
                   <select value={draft.section} onChange={e => { setDraft({ section: e.target.value }); setTimeout(saveEdit, 0) }}

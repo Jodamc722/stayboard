@@ -47,6 +47,8 @@ function taskView(t: any, p: any): any {
     // When it was finished and by whom — the completed list is a record, and a record with no
     // date on it is just a shorter version of the same list.
     done_at: t.done_at || null, done_by: t.done_by || null,
+    // urgent | high | normal | medium-by-another-name | low. Already on project_steps since 031.
+    priority: str(t.priority) || 'normal',
     // Finished is a fact; finished AND released to the owner is a decision (migration 152).
     doneShared: !!t.done_shared,
     due_on: t.due_on, section: t.section || null, note: t.description || null,
@@ -312,6 +314,7 @@ export async function POST(req: NextRequest) {
         due_on: /^\d{4}-\d{2}-\d{2}$/.test(str(b.due_on)) ? str(b.due_on) : null,
         section: str(b.section).slice(0, 80) || null,
         description: str(b.description).slice(0, 2000) || null,
+        priority: ['low', 'normal', 'high', 'urgent'].includes(str(b.priority)) ? str(b.priority) : 'normal',
         assignee: who.slice(0, 60), via_share: true, sort: Date.now(),
       }).select('id').maybeSingle()
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -419,6 +422,7 @@ export async function POST(req: NextRequest) {
       if (str(b.title)) patch.title = str(b.title).slice(0, 300)
       if (b.description !== undefined) patch.description = str(b.description).slice(0, 2000) || null
       if (b.section !== undefined) patch.section = str(b.section).slice(0, 80) || null
+      if (b.priority !== undefined && ['low', 'normal', 'high', 'urgent'].includes(str(b.priority))) patch.priority = str(b.priority)
       if (b.due_on !== undefined) patch.due_on = /^\d{4}-\d{2}-\d{2}$/.test(str(b.due_on)) ? str(b.due_on) : null
       if (!Object.keys(patch).length) return NextResponse.json({ error: 'Nothing to change.' }, { status: 400 })
       const { error } = await supabaseAdmin().from('project_steps').update(patch).eq('id', stepId)
