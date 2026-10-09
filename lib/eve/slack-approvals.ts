@@ -71,7 +71,9 @@ export async function flushApprovalDigest(opts: { preview?: boolean } = {}): Pro
   const since = new Date(Date.now() - 3 * 86400_000).toISOString()
   const { data } = await db.from('eve_actions').select('id,payload,status,created_at').eq('kind', 'ask').eq('status', 'proposed').gte('created_at', since).order('created_at', { ascending: true }).limit(200)
   const rows = ((data as any[]) || []).filter(r => r.payload?.type === 'action')
-  const pending = rows.filter(r => r.payload?.slack_pending === true && !r.payload?.slack_ts)
+  // Panel-only watches never reach Slack, including any queued before they were made panel-only.
+  const { PANEL_ONLY_WATCHES } = await import('./agent-mode')
+  const pending = rows.filter(r => r.payload?.slack_pending === true && !r.payload?.slack_ts && !PANEL_ONLY_WATCHES.has(String(r.payload?.watchKey || '')))
   const upkeep = rows.filter(r => r.payload?.slack_skip === 'upkeep').length
   if (!pending.length) return { posted: 0, waiting: 0, upkeep }
   const ch = await getApprovalsChannel()

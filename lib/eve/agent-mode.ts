@@ -655,6 +655,9 @@ export async function proposeAction(p: Proposal): Promise<{ ok: boolean; id?: st
  * then the Slack approvals room; if neither can carry it, the row is marked undeliverable so the
  * panel can shout. Returns which channels took it.
  */
+/** Watches whose proposals never go to Slack — they wait in Agent mode (Eve audit follow-up, 2026-10-09). */
+export const PANEL_ONLY_WATCHES = new Set<string>(['no_show_risk'])
+
 export async function notifyProposal(id: string, settings?: AgentSettings): Promise<{ notified: string[]; error?: string }> {
   const s = settings || await getAgentSettings()
   const notified: string[] = []
@@ -696,8 +699,13 @@ export async function notifyProposal(id: string, settings?: AgentSettings): Prom
   if (s.channels.slack) {
     try {
       const upkeep = String(pl.watchKey || '') === 'pm_recurrence'
-      await supabaseAdmin().from('eve_actions').update({ payload: { ...pl, slack_pending: !upkeep, slack_skip: upkeep ? 'upkeep' : null } }).eq('id', id)
-      notified.push(upkeep ? 'upkeep' : 'slack')
+      // PANEL ONLY (Jon, 2026-10-09: "get rid of this noise too" — "Eve wants to: note on today's task …
+      // arrives today with no welcome call — call them?"). Silent-arrival asks are already on the
+      // Today board and the Calls desk as calls owed; asking about each one in Slack is noise. They
+      // wait in Lighthouse → Eve → Agent mode and are never posted.
+      const panelOnly = upkeep || PANEL_ONLY_WATCHES.has(String(pl.watchKey || ''))
+      await supabaseAdmin().from('eve_actions').update({ payload: { ...pl, slack_pending: !panelOnly, slack_skip: upkeep ? 'upkeep' : panelOnly ? 'panel' : null } }).eq('id', id)
+      notified.push(upkeep ? 'upkeep' : panelOnly ? 'panel' : 'slack')
       if (notified.length === 1) await supabaseAdmin().from('eve_actions').update({ result: { delivery: upkeep ? 'upkeep page' : 'slack digest' } }).eq('id', id)
     } catch (e: any) { errors.push(`Slack: ${String(e?.message || e).slice(0, 80)}`) }
   } else if (!notified.length) errors.push('Slack is switched off')
