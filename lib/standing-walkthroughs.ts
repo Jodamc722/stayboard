@@ -36,7 +36,7 @@ const DESCRIPTION = [
 export type Target = { key: string; label: string; unitRe: RegExp; exteriorRe?: RegExp }
 export const TARGETS: Target[] = [
   { key: '906', label: '906', unitRe: /^906\b/i },
-  { key: 'eden', label: 'Eden Oasis', unitRe: /^eden\b/i, exteriorRe: /eden/i },
+  { key: 'eden', label: 'Eden Oasis', unitRe: /^eden\b/i, exteriorRe: /eden|oasis/i },
   { key: 'hendricks', label: 'Hendricks', unitRe: /^hendricks\b/i },
   { key: '17west', label: '17 West', unitRe: /^17\s*west\b/i },
   { key: '3316', label: '3316', unitRe: /^3316\b/i },
