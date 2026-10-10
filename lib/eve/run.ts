@@ -496,7 +496,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     // APPLICATION TELEMETRY (2026-09-21). Which of the injected memories did this answer actually
     // use? Deterministic word overlap, so it costs nothing and runs on every turn. This is the
     // number that separates "she has 300 memories" from "her memories change her answers".
-    const usedIds = memoryHitsFor(memories, finalText)
+    const usedIds = memoryHitsFor(memories, finalText, lastUser)
     // Which lane each loaded and each used memory came from (lib/eve/memory.ts, three-lane recall,
     // 2026-09-28), so the learning audit can say whether the standing rules, the question-relevant
     // picks or the week's news are the ones that shape answers — and whether the reranker earns

@@ -174,6 +174,21 @@ function rowOf(r: any): ThoughtRow {
   }
 }
 
+/**
+ * A THOUGHT NOBODY READ IN TWO WEEKS IS NOT WAITING, IT IS GONE (Eve audit 2026-10-10): 344 open,
+ * 300 never seen, and a wall of 300 is why nobody opened it. Open thoughts older than 14 days expire
+ * with a note; the tab shows what is current. Called from the nightly flush; cheap.
+ */
+export async function expireStaleThoughts(days = 14): Promise<number> {
+  try {
+    const cutoff = new Date(Date.now() - days * 86400_000).toISOString()
+    const { data } = await supabaseAdmin().from('eve_actions')
+      .update({ status: 'expired', decided_by: 'eve', decided_at: new Date().toISOString(), result: { note: `unseen for ${days} days — expired` } })
+      .eq('kind', 'thought').eq('status', 'open').lt('created_at', cutoff).select('id')
+    return ((data as any[]) || []).length
+  } catch { return 0 }
+}
+
 export async function listThoughts(opts: { since?: string; source?: string; status?: 'open' | 'all'; limit?: number } = {}): Promise<ThoughtRow[]> {
   try {
     let q = supabaseAdmin().from('eve_actions').select('id,payload,why,status,created_by,created_at,decided_by,decided_at,result').eq('kind', 'thought')
@@ -256,6 +271,16 @@ export async function doThought(id: string, by: string): Promise<{ ok: boolean; 
   if (!isAction) return { ok: false, error: 'a review plan, critique or question is decided on the Review tab, not run' }
   if (!t.payload) return { ok: false, error: t.note || 'there is no prepared action to run (the draft was skipped)' }
   const action = t.action as ActionType
+  // THE SAME TIERS AS EVERY OTHER YES (Eve audit 2026-10-10). "Do it" used to run anything for any
+  // admin; an owner-tier action (money, a Guesty write, a door code, a cancellation) takes the
+  // approver list here too. Desk actions take any admin's tap, as before.
+  try {
+    const { getAgentSettings, tierOf } = await import('./agent-mode')
+    const { isSuperadmin } = await import('@/lib/access')
+    const s = await getAgentSettings()
+    const e = String(by || '').toLowerCase()
+    if (tierOf(action, t.payload) === 'owner' && s.approvers.length && !isSuperadmin(e) && !s.approvers.map(x => String(x).toLowerCase()).includes(e)) return { ok: false, error: `only an approver can run this one (${s.approvers.map(a => a.split('@')[0]).join(', ')})` }
+  } catch { /* fail open to the admin gate the route already applied */ }
   const db = supabaseAdmin()
   // Claim it first, so two taps do not create two tasks.
   let claimed = false

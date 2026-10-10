@@ -109,17 +109,29 @@ export function words(s: string): string[] {
  * Deterministic, no model call, so it can run on every turn. Memories with fewer than three
  * distinctive words are skipped — "Eden: 2-beds" would match half of everything.
  */
-export function memoryHitsFor(rows: Array<{ id: string; text: string }>, answer: string): string[] {
+export function memoryHitsFor(rows: Array<{ id: string; text: string }>, answer: string, question = ''): string[] {
   const aWords = new Set(words(answer))
   const aLc = lc(answer)
   if (!aWords.size) return []
+  // A RULE IS USED WHEN IT IS IN PLAY, NOT WHEN IT IS QUOTED (Eve audit 2026-10-10). "Never offer a
+  // refund over $350" was loaded 453 times and counted as used 0 times, because an answer that obeys
+  // it never repeats it. A rule-shaped memory (never / always / only / must / don't) counts as used
+  // when a third of its distinctive words appear in the question OR the answer — the topic was live.
+  const qWords = new Set(words(question))
+  const both = new Set([...Array.from(aWords), ...Array.from(qWords)])
   const used: string[] = []
   for (const r of rows) {
-    const mw = Array.from(new Set(words(String(r.text || ''))))
+    const text = String(r.text || '')
+    const mw = Array.from(new Set(words(text)))
     if (mw.length < 3) continue
     let inter = 0
     for (const w of mw) if (aWords.has(w)) inter++
     if (inter / mw.length >= 0.4) { used.push(r.id); continue }
+    if (/\b(never|always|only|must|do not|don'?t|no longer|not allowed|prohibited|required)\b/i.test(text)) {
+      let both_n = 0
+      for (const w of mw) if (both.has(w)) both_n++
+      if (both_n >= 2 && both_n / mw.length >= 0.34) { used.push(r.id); continue }
+    }
     // A quoted run: any 6-word window of the memory appearing verbatim in the answer.
     const raw = lc(String(r.text || '')).split(/\s+/).filter(Boolean)
     for (let i = 0; i + 6 <= raw.length; i++) {

@@ -98,7 +98,16 @@ export async function checkOutcomes(days = 14): Promise<{ checked: number; updat
       }
     } else if (r.action === 'guest_reply_send') {
       // Did the guest write back after she did? A reply is the only proof the message landed.
-      const convId = str(r.ref)
+      // THE REF IS THE MESSAGE ID, NOT THE THREAD (Eve audit 2026-10-10). The executor records the
+      // Guesty message id it sent; this looked that id up as a conversation and found no replies, so
+      // every sent message graded "silent". Resolve the message to its conversation first.
+      let convId = str(r.ref)
+      if (convId) {
+        try {
+          const { data: m } = await db.from('guesty_messages').select('conversation_id').eq('id', convId).maybeSingle()
+          if ((m as any)?.conversation_id) convId = str((m as any).conversation_id)
+        } catch { /* it may already be a conversation id */ }
+      }
       if (!convId) res = { outcome: 'unverified', note: 'no conversation id was recorded' }
       else {
         const { data: msgs } = await db.from('guesty_messages').select('sender,sent_at')

@@ -75,6 +75,8 @@ export async function GET() {
       maint: cleanEmails(s.maint), techs: cleanTechs(s.techs),
       vendors: { botanica: cleanEmails(s.vendors?.botanica), pt: cleanEmails(s.vendors?.pt), north: cleanEmails(s.vendors?.north) },
       trueup, salato,
+      // The EOD recap lives on this key (Eve audit 2026-10-10): on unless switched off, to the Ops Command list unless a list is set.
+      eod: { enabled: !(s.eod && s.eod.enabled === false), to: cleanEmails(s.eod?.to) },
       lang: { miami: asLang(s.lang?.miami), broward: asLang(s.lang?.broward) },
       laborPlan: { targetMarginPct: Number.isFinite(lpTarget) && lpTarget > 0 ? Math.round(lpTarget) : null },
     },
@@ -94,6 +96,7 @@ export async function PUT(req: NextRequest) {
     maint: cleanEmails(c.maint), techs: cleanTechs(c.techs),
     vendors: { botanica: cleanEmails(c.vendors?.botanica), pt: cleanEmails(c.vendors?.pt), north: cleanEmails(c.vendors?.north) },
     lang: { miami: asLang(c.lang?.miami), broward: asLang(c.lang?.broward) },
+    eod: { enabled: !(c.eod && typeof c.eod === 'object' && c.eod.enabled === false), to: cleanEmails(c.eod?.to) },
   }
   const res = await setSetting(KEY, config, access.email)
   if (!res.ok) return NextResponse.json({ error: res.error || 'Could not save.' }, { status: 500 })

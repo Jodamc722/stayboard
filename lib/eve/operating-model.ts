@@ -322,14 +322,15 @@ export async function askCalibrationQuestions(): Promise<{ asked: number; repeat
     const scope = 'building:' + p.building
     const finding = 'ops-picture:' + p.building
     try {
-      const { data: prior } = await db.from('eve_memory').select('id').eq('source', 'system').is('superseded_by', null)
-        .contains('evidence', { finding }).limit(1)
+      // UPDATE IN PLACE, NEVER SUPERSEDE (Eve audit 2026-10-10). Each night this superseded the
+      // building's picture with a fresh row, so every operating-model memory restarted at zero uses
+      // and zero hits and the table grew a row per building per night. saveMemory already finds the
+      // live system twin by `evidence.finding` and rewrites its text and evidence — counters intact.
       const saved = await saveMemory({
         kind: 'insight', text: describePicture(p, days).slice(0, 900),
         why: `Derived from ${days} days of Breezeway closes matched against the Homebase roster and the ops-presets vendor list. Inferred, not stated — anything Jon says outranks it.`,
         scope, weight: 5, source: 'system', confidence: p.contradiction ? 0.4 : 0.7,
         evidence: { finding, inferred: true, building: p.building, cleaning: p.cleaning, maintenance: p.maintenance, verdict: p.verdict, presetVendor: p.presetVendor, contradiction: p.contradiction, days },
-        supersedes: (prior || [])[0]?.id || null,
       })
       if (saved.ok) derived++
     } catch { /* one building's memory failing must not stop the rest */ }

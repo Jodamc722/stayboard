@@ -340,12 +340,29 @@ async function gradingHitRate(): Promise<{ rate: number | null; graded: number; 
 
 // ---- 6. The score, and a run ----------------------------------------------------------------------
 
-/** Weighted mean of the available components; weights renormalise over what exists, so an empty ledger is not a zero. */
-export function learningScore(c: { retention: number | null; memoryHit: number | null; recurrence: number | null; grading: number | null }): number | null {
-  const parts: Array<[number | null, number]> = [[c.retention, 0.4], [c.memoryHit, 0.2], [c.recurrence == null ? null : 100 - c.recurrence, 0.2], [c.grading, 0.2]]
+/**
+ * Weighted mean of the available components; weights renormalise over what exists, so an empty ledger
+ * is not a zero. A COMPONENT NEEDS A SAMPLE (Eve audit 2026-10-10): the composite fell 64 → 57 while
+ * retention rose 66 → 94, because three graded recommendations (0 of 3 worked) carried a fifth of the
+ * score. Anything resting on fewer than MIN_N observations is left out and named in `thin`.
+ */
+export const MIN_N = 10
+export function learningScore(c: { retention: number | null; memoryHit: number | null; recurrence: number | null; grading: number | null }, n: { retention?: number; memoryHit?: number; recurrence?: number; grading?: number } = {}): number | null {
+  const enough = (k: keyof typeof n) => n[k] == null || Number(n[k]) >= MIN_N
+  const parts: Array<[number | null, number]> = [
+    [enough('retention') ? c.retention : null, 0.4],
+    [enough('memoryHit') ? c.memoryHit : null, 0.2],
+    [enough('recurrence') && c.recurrence != null ? 100 - c.recurrence : null, 0.2],
+    [enough('grading') ? c.grading : null, 0.2],
+  ]
   let sum = 0, w = 0
   for (const [v, weight] of parts) { if (v == null || !Number.isFinite(v)) continue; sum += v * weight; w += weight }
   return w > 0 ? Math.round(sum / w) : null
+}
+export function thinComponents(n: { retention?: number; memoryHit?: number; recurrence?: number; grading?: number }): string[] {
+  const out: string[] = []
+  for (const k of ['retention', 'memoryHit', 'recurrence', 'grading'] as const) if (n[k] != null && Number(n[k]) < MIN_N) out.push(`${k} (n=${n[k]})`)
+  return out
 }
 
 /** Retention over the trailing week of probe results (all memory-backed probes, honesty ones excluded). */
@@ -396,13 +413,17 @@ export async function runLearningAudit(opts: { kind: 'weekly' | 'nightly' | 'man
     const seeded = await seedFromTaughtMemories()
     const probes = await runProbes({ limit: opts.limit })
     const [retention, hits, rec, grading, dead] = await Promise.all([retentionWindow(7), memoryHitRate(7), recurrence(7), gradingHitRate(), neverUsedMemories(10)])
-    const score = learningScore({ retention: retention.rate, memoryHit: hits.rate, recurrence: rec.rate, grading: grading.rate })
+    const counts = { retention: retention.asked, memoryHit: hits.chats, recurrence: rec.thoughts, grading: grading.graded }
+    const score = learningScore({ retention: retention.rate, memoryHit: hits.rate, recurrence: rec.rate, grading: grading.rate }, counts)
+    const thin = thinComponents(counts)
     const model = await modelFor('eve')
     const usage = { ...probes.usage, usd: Math.round(costUsd(model, probes.usage) * 10000) / 10000, model }
     const failed = probes.results.filter(r => !r.pass)
     const detail = {
       by: opts.by || 'cron', ms: Date.now() - t0, seeded,
       retention, memoryHits: hits, recurrence: { rate: rec.rate, thoughts: rec.thoughts, recurring: rec.recurring, shapes: rec.shapes }, grading,
+      // Components left out of the score for want of a sample (MIN_N), so the number is never read as a verdict it is not.
+      thin,
       probeResults: probes.results, failedProbes: failed, neverUsed: dead, probeError: probes.error || null,
     }
     const row: any = {
@@ -511,7 +532,8 @@ export async function myLearning(): Promise<any> {
   return {
     available: true, at: run.at, kind: run.kind,
     learning_score_0_to_100: run.score,
-    how_it_is_scored: '40% retention (taught facts she still knows with no tools), 20% memory hit rate (injected memories that shaped answers), 20% corrections not repeated, 20% recommendation hit rate.',
+    how_it_is_scored: '40% retention (taught facts she still knows with no tools), 20% memory hit rate (injected memories that shaped answers), 20% corrections not repeated, 20% recommendation hit rate. A component with fewer than 10 observations is left out and listed under thin.',
+    thin_components_left_out: d.thin || [],
     retention: d.retention ? { pass_rate_pct: d.retention.rate, asked_7d: d.retention.asked, passed_7d: d.retention.passed, taught_facts_forgotten: d.retention.taughtFailed } : null,
     honesty_check: d.retention?.honesty ? { asked: d.retention.honesty.asked, said_i_dont_know: d.retention.honesty.passed } : null,
     memory_hit_rate_pct: run.memory_hit_rate, memory_hits_detail: d.memoryHits || null,

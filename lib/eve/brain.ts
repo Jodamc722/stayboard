@@ -637,6 +637,11 @@ export async function captureCorrection(input: {
     created_by: input.email || null,
     evidence: { capturedFrom: 'chat', chatId: input.chatId, question: input.question.slice(0, 300), wrong: str(res.wrong).slice(0, 300), weakened: culprits },
   }).catch(() => null)
+  // A CORRECTION IS A LESSON TO BE TESTED (Eve audit 2026-10-10). Probes came only from Teach, answered
+  // questions, declined thoughts and the OTA playbook — never from the moment somebody told her she
+  // was wrong, which is the moment that matters most. The corrected fact gets a retention probe like
+  // anything Jon teaches, so the learning audit can show whether it stuck.
+  if (saved?.ok && saved.id) { try { const { probeForMemory } = await import('./learning-audit'); await probeForMemory(String(saved.id), 'taught') } catch { /* the memory is kept either way */ } }
   return { saved: !!saved?.ok, weakened, id: saved?.id }
 }
 

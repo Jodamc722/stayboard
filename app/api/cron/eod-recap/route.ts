@@ -435,8 +435,16 @@ async function send(req: NextRequest) {
     if (preview) return new NextResponse(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
 
     const cfg = await getSetting<any>('ops_brief', {})
+    // AN OFF SWITCH (Eve audit 2026-10-10): the recap had none — it went to the Ops Command list and the
+    // owner every night regardless. /users → App settings → Morning briefs → eod: false stops it; the
+    // forecast ledger still records and grades below so nothing downstream goes dark.
+    if (!test && cfg.eod && cfg.eod.enabled === false) {
+      const ledger = await within(90_000, nightlyLedger(fc), { timedOut: true } as Record<string, any>)
+      return NextResponse.json({ ok: true, skipped: 'EOD recap is switched off (/users → App settings → Morning briefs)', ledger })
+    }
     const fromEmail = String(cfg.fromEmail || OWNER)
-    const to: string[] = test ? [me as string] : Array.from(new Set([...(cfg.full || []), OWNER].filter(Boolean)))
+    const eodList: string[] = Array.isArray(cfg.eod?.to) && cfg.eod.to.length ? cfg.eod.to : (cfg.full || [])
+    const to: string[] = test ? [me as string] : Array.from(new Set([...eodList, OWNER].filter(Boolean)))
     const cc = test ? [] : STANDING_CC.filter(c => !to.includes(c))
     const r = await sendGmail({ fromEmail, to, cc, subject: (test ? '[TEST] ' : '') + subject, html })
     // After the email, never before it: tonight's forecast into the ledger, and the grades.

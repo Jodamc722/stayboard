@@ -543,7 +543,7 @@ function UserRow({ u, me, isOwner, roles, rolesReady, roleInfo, expanded, onTogg
           <div className="rounded-xl border border-line bg-app/40 p-3">
             <div className="text-[12px] font-bold text-ink mb-2 inline-flex items-center gap-1.5"><Bell size={13} className="text-brand-600" /> Notifications</div>
             <div className="flex flex-wrap gap-1.5">
-              {[['mute_all', 'All notifications'], ['mute_mention', '@Mentions'], ['mute_comment', 'Comments'], ['mute_ops_alert', 'Ops alerts (cleans running behind)']].map(([k, lab]) => {
+              {[['mute_all', 'All notifications'], ['mute_mention', '@Mentions'], ['mute_comment', 'Comments'], ['mute_ops_alert', 'Ops alerts (cleans running behind)'], ['mute_ai_budget', 'AI spend warnings'], ['mute_claim', 'Claims'], ['mute_hk_damage', 'HK damage reports']].map(([k, lab]) => {
                 const mutedNow = prefs[k] === true
                 return (
                   <button key={k} onClick={() => setPref(k, !mutedNow)}

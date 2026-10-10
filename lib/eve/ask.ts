@@ -553,6 +553,7 @@ export async function resolveAsk(binding: AskBinding, reply: string, by: string)
  * Close it, and do not raise that item again.
  */
 export async function expireStaleAsks(): Promise<number> {
+  try { const { expireStaleThoughts } = await import('./thoughts'); await expireStaleThoughts(14) } catch { /* optional */ }
   try {
     const cutoff = new Date(Date.now() - 3 * 86400_000).toISOString()
     // AN EXPIRY IS AN OUTCOME (Eve audit 2026-10-10): 24 asks expired in a week with no trace of why.

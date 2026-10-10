@@ -10,16 +10,17 @@ type Digest = { enabled?: boolean; to?: string[]; fromEmail?: string }
 // The retired maintenance briefs' `maint` block (2026-09-09) is no longer edited on this card.
 // Whatever is stored rides back through `...cfg` unchanged on save, so nothing is lost.
 type TechCfg = { to: string[]; lang?: string }
-type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; maint?: string[]; techs?: Record<string, TechCfg>; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; trueup?: Digest; salato?: Digest; laborPlan?: { targetMarginPct?: number | null }
+type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; maint?: string[]; techs?: Record<string, TechCfg>; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; trueup?: Digest; salato?: Digest; eod?: Digest; laborPlan?: { targetMarginPct?: number | null }
   // THE CREW'S LANGUAGE (Jon, 2026-08-25). Field day sheets only —
   // Ops Command and the GM brief are management documents and stay English.
   lang?: { miami?: string; broward?: string } }
 
 // The two other daily emails, editable on the same card (Jon, 2026-08-17). Each has its own
 // on/off, its own recipient list, and sends from the ops-brief mailbox unless overridden.
-const DIGESTS: { key: 'trueup' | 'salato'; label: string; blurb: string }[] = [
+const DIGESTS: { key: 'trueup' | 'salato' | 'eod'; label: string; blurb: string }[] = [
   { key: 'trueup', label: 'Labor Scorecard · 7:58am ET', blurb: 'Four numbers against their goals, what moved this week, who the numbers cannot see, and whether they can be trusted. The full three tiers live on the Labor board. Goes to the owner until a list is saved; skips the day rather than send on partial payroll.' },
   { key: 'salato', label: 'Salato front desk · 7:16am ET', blurb: 'Reservations only: arriving, departing, in-house, upcoming — hotel-related flags highlighted.' },
+  { key: 'eod', label: 'End-of-day recap · evening', blurb: 'Cleans done, revenue, hours and HK profit for the day, tomorrow in one line, the week so far. Goes to the Ops Command list (and the owner) until a list is saved here. Unchecked = off; the forecast ledger still records.' },
 ]
 
 // Four audiences, deliberately different documents (2026-08-07). The blurb is the promise each
@@ -59,7 +60,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
     miami: (c.miami || []).join(', '), broward: (c.broward || []).join(', '), full: (c.full || []).join(', '), gm: (c.gm || []).join(', '),
     maint: (c.maint || []).join(', '),
     v_botanica: (c.vendors?.botanica || []).join(', '), v_pt: (c.vendors?.pt || []).join(', '), v_north: (c.vendors?.north || []).join(', '),
-    d_trueup: (c.trueup?.to || []).join(', '), d_salato: (c.salato?.to || []).join(', '),
+    d_trueup: (c.trueup?.to || []).join(', '), d_salato: (c.salato?.to || []).join(', '), d_eod: (c.eod?.to || []).join(', '),
     lp_target: c.laborPlan?.targetMarginPct != null ? String(c.laborPlan.targetMarginPct) : '',
   })
   const load = useCallback(async () => {
@@ -68,7 +69,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
       const j = await r.json()
       if (r.ok) {
         const c = j.config || {}
-        setCfg(c); setTechRows(techsFromCfg(c)); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, lg: JSON.stringify([c.lang?.miami, c.lang?.broward]) }))
+        setCfg(c); setTechRows(techsFromCfg(c)); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, de: c.eod?.enabled !== false, lg: JSON.stringify([c.lang?.miami, c.lang?.broward]) }))
       }
     } catch { /* card stays editable with defaults */ }
   }, [])
@@ -85,7 +86,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
     </select>
   )
 
-  const dirty = JSON.stringify({ rw: raw, enabled: cfg.enabled === true, dt: cfg.trueup?.enabled === true, ds: cfg.salato?.enabled === true, lg: langSig }) !== saved
+  const dirty = JSON.stringify({ rw: raw, enabled: cfg.enabled === true, dt: cfg.trueup?.enabled === true, ds: cfg.salato?.enabled === true, de: cfg.eod?.enabled !== false, lg: langSig }) !== saved
   const parse = (v: string) => v.split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x))
 
   async function save() {
@@ -99,6 +100,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
         vendors: { botanica: parse(raw.v_botanica || ''), pt: parse(raw.v_pt || ''), north: parse(raw.v_north || '') },
         trueup: { ...(cfg.trueup || {}), to: parse(raw.d_trueup || '') },
         salato: { ...(cfg.salato || {}), to: parse(raw.d_salato || '') },
+        eod: { enabled: cfg.eod ? cfg.eod.enabled !== false : true, ...(cfg.eod || {}), to: parse(raw.d_eod || '') },
         laborPlan: (() => {
           const t = (raw.lp_target || '').trim()
           const n = Number(t)
@@ -109,7 +111,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
       const r = await fetch('/api/settings/ops-brief', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Could not save.')
       const c = j.config || config
-      setCfg(c); setTechRows(techsFromCfg(c)); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, lg: JSON.stringify([c.lang?.miami, c.lang?.broward]) }))
+      setCfg(c); setTechRows(techsFromCfg(c)); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, de: c.eod?.enabled !== false, lg: JSON.stringify([c.lang?.miami, c.lang?.broward]) }))
       const total = (c.miami || []).length + (c.broward || []).length + (c.full || []).length + (c.gm || []).length + (c.maint || []).length + (Object.values(c.techs || {}) as TechCfg[]).reduce((a: number, t) => a + (t.to || []).length, 0)
         + (c.vendors?.botanica || []).length + (c.vendors?.pt || []).length + (c.vendors?.north || []).length
       setMsg({ tone: 'ok', text: `Saved — ${total} recipient${total === 1 ? '' : 's'} across all lists. Anything that didn't look like an email was dropped.` })
@@ -211,7 +213,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
               <div className="flex items-center gap-2">
                 <span className="text-[12px] font-bold text-ink">{dg.label}</span>
                 <label className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-semibold text-muted cursor-pointer">
-                  <input type="checkbox" disabled={!isOwner} checked={(cfg as any)[dg.key]?.enabled === true}
+                  <input type="checkbox" disabled={!isOwner} checked={dg.key === 'eod' ? (cfg as any).eod?.enabled !== false : (cfg as any)[dg.key]?.enabled === true}
                     onChange={e => setCfg(x => ({ ...x, [dg.key]: { ...((x as any)[dg.key] || {}), enabled: e.target.checked } }))} />
                   sending
                 </label>
