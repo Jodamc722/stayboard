@@ -145,7 +145,7 @@ async function fromThreads(sinceISO: string, seen: Set<string>): Promise<Detecti
     const blob = [str(s.top_issue), str(s.reason), str(s.guest_excerpt), triggers.join(' ')].join(' ')
     // The scan's top issue and triggers are the "named" side; the guest's own words are the context.
     const named = [clean(s.top_issue, 160), ...triggers.map(x => clean(x, 120))].filter(Boolean)
-    const j = judgeIssue(named, [str(s.reason), str(s.guest_excerpt)].join(' '), s.dissatisfied ? 'unhappy' : null, { followUp: true })
+    const j = judgeIssue(named, [str(s.reason), str(s.guest_excerpt)].join(' '), s.dissatisfied ? 'unhappy' : null, { followUp: true, sentimentAlone: true })
     out.push({
       sourceKey: 'thread:' + s.conversation_id,
       kind: 'message',

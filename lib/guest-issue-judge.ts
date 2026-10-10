@@ -27,7 +27,7 @@ const RESOLVED_RE = /\b(was resolved|resolved (?:on|during) the call|got it work
 const STRONG_SAFETY_RE = /\b(afraid|scared|unsafe|not safe|intrud(?:er|ed|ing)?|broke[rn]? in|break[- ]?in|stranger|911|gas leak|carbon monoxide|weapon|gun|assault(?:ed)?|threat(?:en(?:ed|ing)?)?|robbed|burglar|stalk|harass|smoke (?:in|coming|filling)|fire in|flooding|electrical shock|bleeding|ambulance)\b/i
 
 /** One judgement for a call or a thread: how loud, and whether customer care needs telling at all. */
-export function judgeIssue(issues: string[], context: string, sentiment: string | null | undefined, opts: { followUp?: boolean } = {}): { severity: IssueSeverity; quiet: boolean; why: string } {
+export function judgeIssue(issues: string[], context: string, sentiment: string | null | undefined, opts: { followUp?: boolean; sentimentAlone?: boolean } = {}): { severity: IssueSeverity; quiet: boolean; why: string } {
   const named = issues.map(s => str(s)).filter(Boolean)
   const namedText = named.join(' · ')
   // Safety: the named issues, plus the unmistakable words wherever they appear — a guest describing
@@ -39,7 +39,12 @@ export function judgeIssue(issues: string[], context: string, sentiment: string 
   if (!concrete.length && named.every(i => ROUTINE_RE.test(i))) return { severity: 'watch', quiet: false, why: 'routine ask' }
   const settled = RESOLVED_RE.test(str(context)) && opts.followUp !== true
   if (concrete.length) return { severity: 'issue', quiet: settled, why: settled ? 'concrete, settled on the call' : 'concrete' }
-  if (sentiment === 'unhappy' || sentiment === 'negative') return { severity: 'issue', quiet: settled, why: settled ? 'unhappy, settled on the call' : 'unhappy' }
+  // Unhappy with nothing concrete named: a guest who could not get early check-in, could not extend,
+  // did not like the fee. In WRITING (a dissatisfied thread) that is customer care's to answer; on a
+  // CALL customer care already spoke to them, so it is recorded for the Detected tab, not paged
+  // (dry run 2026-10-10: these were a third of what still posted after the routine filter).
+  if ((sentiment === 'unhappy' || sentiment === 'negative') && opts.sentimentAlone) return { severity: 'issue', quiet: settled, why: settled ? 'unhappy, settled on the call' : 'unhappy' }
+  if (sentiment === 'unhappy' || sentiment === 'negative') return { severity: 'watch', quiet: false, why: 'unhappy, nothing concrete' }
   return { severity: 'watch', quiet: false, why: 'nothing concrete' }
 }
 
