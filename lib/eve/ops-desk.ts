@@ -17,6 +17,7 @@
 // SHORT (Jon, 2026-09-23: "when you send a super long brief, that's not really helpful"). Names and
 // counts; the units only where they matter. The full list is one question away (person_tasks).
 // Every post goes through the slack_post rung; the assignment through task_assign.
+import { shortUnit as teamShortUnit } from '@/lib/team-where'
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
@@ -48,7 +49,9 @@ const etDate = (now = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone
 const shift = (ymd: string, d: number) => new Intl.DateTimeFormat('en-CA', { timeZone: ET }).format(new Date(Date.parse(ymd + 'T12:00:00Z') + d * 86400000))
 // THE ROOM NUMBER STAYS (Eve audit 2026-10-10: "17WEST · hot water" named a building of 40 doors). "Eden
 // 2104 - Studio" → "Eden 2104"; "17WEST - 516 - 3BR" → "17WEST 516"; "Arya 1002/1 - Studio" → "Arya 1002/1".
-const shortUnit = (u: any) => { const s = String(u || '').trim(); if (!s) return 'a unit'; const parts = s.split(/\s+-\s+/).filter(Boolean); if (parts.length >= 2 && /^\d+[A-Za-z]?(?:\/\d+)?$/.test(parts[1]) && !/\d/.test(parts[0])) return parts[0] + ' ' + parts[1]; return parts[0] || s }
+// "17WEST - 513 - 2BR" → "17WEST 513" (lib/team-where). The earlier copy here refused a building with a digit in its
+// name, so every 17WEST line lost its room (independent study 2026-10-10, seen live at 8:24pm: "17WEST · AC").
+const shortUnit = (u: any) => teamShortUnit(String(u || '').trim()) || 'a unit'
 const isDone = (t: any) => isTaskDone(t.status, t.finished_at)
 const isGone = (t: any) => /cancel|delet|void/i.test(str(t.status))
 const isRunning = (t: any) => !!t.started_at || /progress|started|running/i.test(str(t.status))

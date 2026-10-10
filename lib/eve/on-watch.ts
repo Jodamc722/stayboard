@@ -38,6 +38,7 @@
 //   - she flags and offers; she does not act. Anyone can tag @Eve in the thread to have her create or
 //     assign the task, and that runs through Agent mode like everything else
 //   - every post goes through the slack_post rung, so Agent mode can hold her to drafts
+import { shortUnit as teamShortUnit } from '@/lib/team-where'
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
@@ -112,7 +113,9 @@ const weekday = (ymd: string) => {
 /** "Botanica 2208 - King Studio - B" → "Botanica 2208". */
 // THE ROOM NUMBER STAYS (Eve audit 2026-10-10: "17WEST · hot water" named a building of 40 doors). "Eden
 // 2104 - Studio" → "Eden 2104"; "17WEST - 516 - 3BR" → "17WEST 516"; "Arya 1002/1 - Studio" → "Arya 1002/1".
-const shortUnit = (u: any) => { const s = String(u || '').trim(); if (!s) return 'a unit'; const parts = s.split(/\s+-\s+/).filter(Boolean); if (parts.length >= 2 && /^\d+[A-Za-z]?(?:\/\d+)?$/.test(parts[1]) && !/\d/.test(parts[0])) return parts[0] + ' ' + parts[1]; return parts[0] || s }
+// "17WEST - 513 - 2BR" → "17WEST 513" (lib/team-where). The earlier copy here refused a building with a digit in its
+// name, so every 17WEST line lost its room (independent study 2026-10-10, seen live at 8:24pm: "17WEST · AC").
+const shortUnit = (u: any) => teamShortUnit(String(u || '').trim()) || 'a unit'
 /** "[Moved to Sep 21] Guest Reported / Glitch - Blinds / Washer" → "Blinds / Washer". */
 const taskTitle = (n: any) => String(n || '').replace(/\s+/g, ' ').replace(/^\[[^\]]*\]\s*/, '')
   .replace(/^guest\s*reported\s*(\/\s*glitch)?\s*[-\/:]?\s*/i, '').replace(/^glitch\s*[-\/:]\s*/i, '').trim().slice(0, 60) || 'guest-reported issue'
