@@ -676,16 +676,21 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   // ---- 5. Urgent today: say it now, in her room — ONE message, however many there are. ---------
   // The first live run found eight and posted eight, back to back. Eight pings for one pass is how
   // a room gets muted; one message with eight lines is something a person reads.
-  if (urgentNew.length) {
-    const lines = urgentNew.slice(0, 12).map(it =>
-      `• ${it.summary.slice(0, 140)}${it.unit ? ` (${it.unit})` : ''}${it.owner_name ? ` · ${it.owner_name}` : ''} — #${it.channel_name}`)
-    const more = urgentNew.length > 12 ? `\n…and ${urgentNew.length - 12} more` : ''
-    const text = `⚠️ *Affects a guest today (${urgentNew.length})*\n${lines.join('\n')}${more}`
+  // ONLY WHAT NOBODY IS ON (Eve audit 2026-10-10). 44 of these in 14 days, 1.3 items each, and most
+  // lines already named the person handling it in the room where it was raised ("· Ernesto Torres —
+  // #Miami HK"). Repeating that into #vr-eve told nobody anything. An urgent item WITH an owner is on
+  // /loops and in the morning brief; the post is for the ones with no name on them, so somebody puts one.
+  const urgentUnowned = urgentNew.filter(it => !it.owner_name)
+  if (urgentUnowned.length) {
+    const lines = urgentUnowned.slice(0, 12).map(it =>
+      `• ${it.summary.slice(0, 140)}${it.unit ? ` (${it.unit})` : ''} — #${it.channel_name} · *nobody on it*`)
+    const more = urgentUnowned.length > 12 ? `\n…and ${urgentUnowned.length - 12} more` : ''
+    const text = `⚠️ *Affects a guest today — needs a name (${urgentUnowned.length})*\n${lines.join('\n')}${more}\n_Reply in the original thread with who has it and I'll track it._`
     const gate = await agentAllowed('slack_post', { ask: true })
-    const r = await stepDown(gate, { action: 'slack_post', summary: `urgent-today post in #vr-eve (${urgentNew.length} items)`, exec: { channel: EVE_CHANNELS.approvals, channel_name: 'vr-eve', text }, by: 'cron:slack-watch' },
+    const r = await stepDown(gate, { action: 'slack_post', summary: `urgent-today post in #vr-eve (${urgentUnowned.length} unowned of ${urgentNew.length})`, exec: { channel: EVE_CHANNELS.approvals, channel_name: 'vr-eve', text }, by: 'cron:slack-watch' },
       async () => { const p = await postToChannel(EVE_CHANNELS.approvals, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
     if (r.mode !== 'act') out.notes.push(`urgent post ${r.mode}: ${gate.reason}`)
-  }
+  } else if (urgentNew.length) out.notes.push(`${urgentNew.length} urgent item${urgentNew.length === 1 ? '' : 's'} already owned — not posted`)
 
   // ---- 6. The morning roll-up, once a day, in her room. ----------------------------------------
   // BUILT IN THE MORNING, NOT AT MIDNIGHT (2026-09-28 audit, F26). The first run on a new ET date is

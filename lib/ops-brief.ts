@@ -91,11 +91,11 @@ export async function gather(variant: BriefVariant) {
 
   // The daysheet does the heavy lifting — same engine as the boards.
   const sheetMarket = (variant === 'full' || variant === 'GM') ? 'all' : variant
-  const [sheet, lRes, tRes, arrRes, actRes, revRes] = await Promise.all([
+  const [sheet, lRes, tRes, arrRes, actRes, revRes, bzProps, adminRows] = await Promise.all([
     buildDaySheet(today, sheetMarket),
     db.from('guesty_listings').select('id,nickname,title,building,address_city,status').limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
     db.from('breezeway_tasks_sync')
-      .select('reference_property_id,name,type_department,status,assignees,started_at,finished_at')
+      .select('reference_property_id,home_id,name,type_department,status,assignees,started_at,finished_at')
       .eq('scheduled_date', today).limit(1000), // deliberate cap: one day of tasks (~90–300)
     // custom_fields carries the two-way reservation note the welcome-call and front-desk boards
     // write into. A supervisor briefing their crew needs it: "guest arriving 11pm, leave the bag
@@ -124,6 +124,13 @@ export async function gather(variant: BriefVariant) {
           .select('listing_id,rating,content,guest_name,channel,has_reply,dismissed,created_at')
           .gte('created_at', monthAgo).order('created_at', { ascending: false }).order('id').range(a, b), 4)
           .then(r => { if (r.truncated) console.error('[ops-brief] the 30-day review read stopped early — reputation figures may be short'); return { data: r.rows } }),
+    // BREEZEWAY-ONLY PROPERTIES (Eve audit 2026-10-10): "Eden Building" and "Rustic Exterior" have no
+    // Guesty listing, so their tasks printed as "Unknown unit". The property's own name is right there.
+    Promise.resolve(db.from('breezeway_properties').select('home_id,name').limit(2000)).then(r => (r.data || []) as any[], () => [] as any[]),
+    // MANAGEMENT RIDES ALONG (Eve audit 2026-10-10). A task shared with the GM or the ops manager was
+    // credited to whichever of them Breezeway listed first, so Jon "owned" the weekly walkthroughs
+    // and they printed under five people. Admins are office for ownership — "with Jon", never the run.
+    Promise.resolve(db.from('app_users').select('email,role,access_role,profile').limit(300)).then(r => (r.data || []) as any[], () => [] as any[]),
   ])
 
   type Meta = { name: string; market: Market; building: string; active: boolean }
@@ -158,6 +165,18 @@ export async function gather(variant: BriefVariant) {
   // along as "with …" and are never the one a clean is credited to.
   let officeNames: string[] = []
   try { officeNames = (await getStaff(true)).filter(r => r.field === false).map(r => r.name) } catch { /* everyone is field */ }
+  try {
+    const { isSuperadmin } = await import('./access')
+    for (const u of (adminRows as any[])) {
+      const nm = str(u?.profile && typeof u.profile === 'object' ? u.profile.name : '').trim()
+      const admin = isSuperadmin(str(u?.email)) || str(u?.role) === 'admin' || str(u?.access_role) === 'admin'
+      if (nm && admin && !officeNames.some(o => nameMatches(o, nm))) officeNames.push(nm)
+    }
+  } catch { /* the Staffing toggle still decides */ }
+  const bzNameOf: Record<string, string> = {}
+  for (const p of (bzProps as any[])) if (p?.home_id != null && p?.name) bzNameOf[String(p.home_id)] = str(p.name)
+  // A task on a Breezeway-only property (a building, an exterior) is named for the property.
+  const unitNameOf = (t: any): string => meta[String(t.reference_property_id)]?.name || bzNameOf[String(t.home_id)] || 'Unknown unit'
   const isOfficeName = (n: string) => officeNames.some(o => nameMatches(o, n))
   const leadOf = (ppl: string[]): string => ppl.find(n => !isOfficeName(n)) || ppl[0] || ''
   type Clean = { unit: string; lid: string; assignee: string; lead: string; state: 'done' | 'running' | 'not_started'; sameDayArrival: boolean }
@@ -169,7 +188,7 @@ export async function gather(variant: BriefVariant) {
     if (kindOfTask(t) !== 'clean') continue
     const lid = String(t.reference_property_id)
     if (!inVariant(lid)) continue
-    const unit = meta[lid] ? meta[lid].name : 'Unknown unit'
+    const unit = unitNameOf(t)
     if (variant !== 'full' && VENDOR.test(unit)) continue
     const ppl = (Array.isArray(t.assignees) ? t.assignees : []).map((a: any) => str(a?.name || a)).filter(Boolean)
     const assignee = ppl.join(', ') || '—  UNASSIGNED'
@@ -212,7 +231,7 @@ export async function gather(variant: BriefVariant) {
       const kind = kindOfTask(t)
       const lid = String(t.reference_property_id)
       if (!inVariant(lid)) continue
-      const unit = meta[lid] ? meta[lid].name : 'Unknown unit'
+      const unit = unitNameOf(t)
       if (variant !== 'full' && VENDOR.test(unit)) continue
       const ppl = (Array.isArray(t.assignees) ? t.assignees : []).map((a: any) => str(a?.name || a)).filter(Boolean)
       // The crew this job belongs to, in the task's own words where it has them, else from the work.
@@ -2028,39 +2047,49 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const occToday = tod.occupancy != null ? tod.occupancy : null
 
   // ── 1. DECIDE TODAY — ranked by dollars at stake ────────────────────────────────────────────
+  // WITH A MEMORY (Eve audit 2026-10-10, lib/gm-decisions). "6 to decide" printed six mornings
+  // running with the same six lines. Now every standing line has a key: the first morning it is
+  // spelled out; from the second it is one short row under "still open" with its day count; Jon can
+  // mark it decided or defer it from the email in one tap, and it comes back on its own only when
+  // the number behind it moves by a fifth. Long-stay arrivals are not decisions — they are FYI below.
   const tbl = (rows: string) => `<table width="100%" cellspacing="0" cellpadding="0">${rows}</table>`
-  const dRow = (tone: 'red' | 'amber' | 'blue', what: string, num: string, act: string) =>
-    `<tr><td style="${S.td}"><span style="${tone === 'red' ? S.red : tone === 'amber' ? S.amber : 'color:#4338ca;font-weight:600'}">●</span>&nbsp; ${what}<br><span style="font-size:12px;color:#9ca3af;padding-left:14px">${act}</span></td>
+  const dRow = (tone: 'red' | 'amber' | 'blue', what: string, num: string, act: string, taps = '') =>
+    `<tr><td style="${S.td}"><span style="${tone === 'red' ? S.red : tone === 'amber' ? S.amber : 'color:#4338ca;font-weight:600'}">●</span>&nbsp; ${what}<br><span style="font-size:12px;color:#9ca3af;padding-left:14px">${act}</span>${taps ? `<br><span style="font-size:11.5px;padding-left:14px">${taps}</span>` : ''}</td>
     <td style="${S.td};text-align:right;white-space:nowrap;vertical-align:top"><b>${num}</b></td></tr>`
-  const decide: string[] = []
+  type Decision = { key: string; tone: 'red' | 'amber' | 'blue'; what: string; num: string; act: string; short: string }
+  const decisions: Decision[] = []
   const liveBlocked = blocked.filter(b => b.live)
   const nights30 = blocked.reduce((a, b) => a + b.nights, 0)
   const adr = Number(rev.adr)
   const blockedAtStake = Number.isFinite(adr) && adr > 0 ? Math.round(nights30 * adr) : null
   if (blocked.length) {
     const openEnded = blocked.filter(b => b.openEnded).length
-    decide.push(dRow('red',
-      `<b>${blocked.length} blocked unit${blocked.length === 1 ? '' : 's'}</b> — ${liveBlocked.length} down now, ${nights30} nights off the calendar in 30d${openEnded ? `, <b>${openEnded}</b> with no end date` : ''}`,
-      blockedAtStake != null ? `≈${money0(blockedAtStake)}` : `${nights30} nights`,
-      'Release what is finished, chase what is not — the full list is below.'))
+    decisions.push({ key: 'blocked', tone: 'red',
+      what: `<b>${blocked.length} blocked unit${blocked.length === 1 ? '' : 's'}</b> — ${liveBlocked.length} down now, ${nights30} nights off the calendar in 30d${openEnded ? `, <b>${openEnded}</b> with no end date` : ''}`,
+      num: blockedAtStake != null ? `≈${money0(blockedAtStake)}` : `${nights30} nights`,
+      act: 'Release what is finished, chase what is not — the full list is below.',
+      short: `${blocked.length} blocked units · ${liveBlocked.length} down now` })
   }
   if (E7 && E7.maintenance.tasksNoCharge > 0) {
-    decide.push(dRow('amber',
-      `<b>${E7.maintenance.tasksNoCharge} maintenance task${E7.maintenance.tasksNoCharge === 1 ? '' : 's'} finished with no charge entered</b> · last 7 days`,
-      'bills $0',
-      'That work invoices nothing until someone types the cost in Breezeway.'))
+    decisions.push({ key: 'nocharge', tone: 'amber',
+      what: `<b>${E7.maintenance.tasksNoCharge} maintenance task${E7.maintenance.tasksNoCharge === 1 ? '' : 's'} finished with no charge entered</b> · last 7 days`,
+      num: 'bills $0',
+      act: 'That work invoices nothing until someone types the cost in Breezeway.',
+      short: `${E7.maintenance.tasksNoCharge} maintenance tasks closed with no charge` })
   }
   if (claimsOpen) {
-    decide.push(dRow('amber',
-      `<b>${claimsOpen} claim${claimsOpen === 1 ? '' : 's'} open</b>${claimsWaiting ? ` · ${claimsWaiting} waiting on a channel` : ''}`,
-      money0(claimsValue),
-      'Windows close fast — the claims board has each deadline.'))
+    decisions.push({ key: 'claims', tone: 'amber',
+      what: `<b>${claimsOpen} claim${claimsOpen === 1 ? '' : 's'} open</b>${claimsWaiting ? ` · ${claimsWaiting} waiting on a channel` : ''}`,
+      num: money0(claimsValue),
+      act: 'Windows close fast — the claims board has each deadline.',
+      short: `${claimsOpen} claims open · ${money0(claimsValue)}` })
   }
   if ((tod.overdueWork || 0) > 0) {
-    decide.push(dRow('red',
-      `<b>${tod.overdueWork} work order${tod.overdueWork === 1 ? '' : 's'} overdue</b> · ${tod.openWork || 0} open in total`,
-      String(tod.overdueWork),
-      'Aging work turns into guest issues — Ops Command carries the list.'))
+    decisions.push({ key: 'overdue', tone: 'red',
+      what: `<b>${tod.overdueWork} work order${tod.overdueWork === 1 ? '' : 's'} overdue</b> · ${tod.openWork || 0} open in total`,
+      num: String(tod.overdueWork),
+      act: 'Aging work turns into guest issues — Ops Command carries the list.',
+      short: `${tod.overdueWork} work orders overdue` })
   }
   // LOOKING AHEAD (audit 2026-09-28): the brief promised "booked-ahead" and printed six trailing
   // numbers. Three forward ones — read AFTER the engine reads above so they never contend with them,
@@ -2078,20 +2107,37 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   const soonShort = staff ? staff.short.filter(x => x.lead <= 3) : []
   if (soonShort.length) {
     const gap = soonShort.reduce((a, x) => a + Math.max(0, x.needed - x.rostered), 0)
-    decide.push(dRow('amber',
-      `<b>${soonShort.length} short day${soonShort.length === 1 ? '' : 's'} in the next 3</b> — ${esc(soonShort.slice(0, 2).map(x => `${x.label} ${x.market}: needs ${x.needed}, ${x.rostered} rostered`).join('; '))}${soonShort.length > 2 ? ` +${soonShort.length - 2}` : ''}`,
-      `${gap} ${gap === 1 ? 'person' : 'people'} short`,
-      'Add a shift or call in the on-call — the Weekly Planner has the day.'))
+    decisions.push({ key: 'short', tone: 'amber',
+      what: `<b>${soonShort.length} short day${soonShort.length === 1 ? '' : 's'} in the next 3</b> — ${esc(soonShort.slice(0, 2).map(x => `${x.label} ${x.market}: needs ${x.needed}, ${x.rostered} rostered`).join('; '))}${soonShort.length > 2 ? ` +${soonShort.length - 2}` : ''}`,
+      num: `${gap} ${gap === 1 ? 'person' : 'people'} short`,
+      act: 'Add a shift or call in the on-call — the Weekly Planner has the day.',
+      short: `${soonShort.length} short days in the next 3 · ${gap} short` })
   }
-  for (const b of (d.bigArrivals || []).slice(0, 3)) {
-    decide.push(dRow('blue',
-      `<b>${esc(b.unit)}</b> · ${esc(b.guest)} · ${b.today ? '<b>lands today</b>' : esc(b.when)}${b.nights ? ` · ${b.nights}n` : ''}`,
-      money0(b.total),
-      'Long stay — extra attention on the clean and the welcome.'))
+  // The memory: what each line said before, and what Jon did about it.
+  const { loadDecisions, saveDecisions, noteSeen, isHidden } = await import('./gm-decisions')
+  const dmap = await loadDecisions().catch(() => ({} as any))
+  const APP = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
+  const taps = (key: string) => `<a href="${APP}/api/brief/decision?key=${key}&do=decided" style="color:#4338ca;text-decoration:none">✓ Decided</a> &nbsp;·&nbsp; <a href="${APP}/api/brief/decision?key=${key}&do=defer&days=7" style="color:#6b7280;text-decoration:none">Defer a week</a>`
+  const fresh: string[] = [], standing: string[] = [], hidden: string[] = []
+  for (const dc of decisions) {
+    const e = noteSeen(dmap, dc.key, dc.num, today)
+    if (isHidden(e, today)) { hidden.push(dc.short + (e.state === 'deferred' ? ` (until ${e.until})` : ' (decided)')); continue }
+    if (e.days <= 1) fresh.push(dRow(dc.tone, dc.what, dc.num, dc.act, taps(dc.key)))
+    else standing.push(`<tr><td style="${S.td};padding-top:4px;padding-bottom:4px"><span style="${dc.tone === 'red' ? S.red : S.amber}">●</span>&nbsp; ${dc.short} <span style="font-size:11.5px;color:#9ca3af">· day ${e.days}</span> <span style="font-size:11.5px">&nbsp; ${taps(dc.key)}</span></td><td style="${S.td};text-align:right;white-space:nowrap;vertical-align:top;padding-top:4px;padding-bottom:4px"><b>${dc.num}</b></td></tr>`)
   }
+  try { await saveDecisions(dmap, 'gm-brief') } catch { /* the brief still sends */ }
+  const decide = [...fresh, ...standing]
+  const decideInner = (fresh.length ? tbl(fresh.join('')) : '')
+    + (standing.length ? `<p style="margin:${fresh.length ? 10 : 6}px 0 2px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;font-weight:700">Still open — one line each until something moves</p>${tbl(standing.join(''))}` : '')
+    + (hidden.length ? `<p style="margin:8px 0 0;font-size:11.5px;color:#9ca3af">Off the list: ${esc(hidden.join(' · '))}</p>` : '')
   const decideCard = decide.length
-    ? card('Decide today', decide.length, tbl(decide.join('')), '#dc2626')
-    : card('Decide today', null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing needs you.</span> <span style="${S.muted}">No blocked revenue, no unpriced work, no claims waiting, nothing overdue.</span></p>`, '#059669')
+    ? card('Decide today', decide.length, decideInner, '#dc2626')
+    : card('Decide today', null, `<p style="font-size:13px;margin:8px 0 2px"><span style="${S.green}">Nothing needs you.</span> <span style="${S.muted}">No blocked revenue, no unpriced work, no claims waiting, nothing overdue.</span>${hidden.length ? `<br><span style="font-size:11.5px;color:#9ca3af">Off the list: ${esc(hidden.join(' · '))}</span>` : ''}</p>`, '#059669')
+  // NOTABLE ARRIVALS — information, not a decision (they used to be "to decide" lines).
+  const fyiArrivals = (d.bigArrivals || []).slice(0, 3)
+  const fyiCard = fyiArrivals.length
+    ? card('Notable arrivals', fyiArrivals.length, tbl(fyiArrivals.map((b: any) => dRow('blue', `<b>${esc(b.unit)}</b> · ${esc(b.guest)} · ${b.today ? '<b>lands today</b>' : esc(b.when)}${b.nights ? ` · ${b.nights}n` : ''}`, money0(b.total), 'Long stay — the team has the clean and the welcome on their sheet.')).join('')), '#4338ca')
+    : ''
 
   // ── 2. SIX TILES — engine numbers only ──────────────────────────────────────────────────────
   const tiles: Tile[] = [
@@ -2193,10 +2239,10 @@ export async function buildGmBrief(): Promise<OpsBrief> {
   // ONE LINE, AND NOT THE TILES AGAIN. Margin and the review score are two of the six tiles that
   // render three centimetres below this; repeating them here was the whole verdict for most days.
   // What belongs here is the thing no tile carries: what needs a decision, and today's shape.
-  const verdict = `<b>${decide.length ? `${decide.length} item${decide.length === 1 ? '' : 's'} on the decision table${blockedAtStake ? ` — the big one is ≈${money0(blockedAtStake)} of blocked inventory` : ''}.` : 'Nothing needs a decision today.'}</b> ` +
+  const verdict = `<b>${decide.length ? `${fresh.length ? `${fresh.length} new` : 'Nothing new'} on the decision table${standing.length ? `, ${standing.length} still open` : ''}${blockedAtStake && !isHidden(dmap['blocked'], today) ? ` — the big one is ≈${money0(blockedAtStake)} of blocked inventory` : ''}.` : 'Nothing needs a decision today.'}</b> ` +
     `${occToday != null ? pct1(occToday) + ' occupied tonight · ' : ''}${tod.arrivals || 0} in / ${tod.departures || 0} out${tod.sameDayTurns ? ` · <span style="${S.red}">${tod.sameDayTurns} same-day turns</span>` : ''}.`
 
-  const subject = `GM Brief ${dateNice}: ${decide.length ? decide.length + ' to decide' : 'nothing to decide'}`
+  const subject = `GM Brief ${dateNice}: ${fresh.length ? fresh.length + ' new to decide' + (standing.length ? ` · ${standing.length} open` : '') : standing.length ? standing.length + ' still open' : 'nothing to decide'}`
     + (H7t && H7t.costPerClean != null ? ` · ${money0(H7t.costPerClean)}/clean` : '')
     + (H7t && H7t.marginPct != null ? ` · ${pct1(H7t.marginPct)} margin 7d` : '')
     + (d.rep.avg != null ? ` · ${d.rep.avg.toFixed(2)}★` : '')
@@ -2213,7 +2259,8 @@ export async function buildGmBrief(): Promise<OpsBrief> {
 
   ${eyebrow('Decide today')}
   ${decideCard}
-  ${blockedCard(blocked, { showMarket: true, limit: 12, linked: blockedLinked, failed: blockedFailed })}
+  ${fyiCard}
+  ${isHidden(dmap['blocked'], today) ? '' : blockedCard(blocked, { showMarket: true, limit: 12, linked: blockedLinked, failed: blockedFailed })}
 
   ${eyebrow('Looking ahead')}
   ${aheadCard}

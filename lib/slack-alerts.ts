@@ -122,26 +122,73 @@ export async function runLateCleanAlert(): Promise<any> {
       checkOutTime: r.checkOutTime,
     }))
     const vendor = !!(bucket.group && bucket.group.vendor)
+    // ACTIONABLE OR SILENT (Eve audit 2026-10-10). This went out two or three times a day per hub
+    // room with @here and three managers tagged, including mornings where the message itself said
+    // "no arrivals waiting on these, so there is room to work". A pulse is worth a room's attention
+    // when a clean has nobody on it or a guest is landing behind one. Otherwise the board has it.
+    const unassignedN = items.filter(i => !i.assignee).length
+    const withArrival = items.filter(i => !!i.arrivingAt)
+    if (!unassignedN && !withArrival.length) { results.push({ area: bucket.label, count: items.length, skipped: 'all assigned, no arrivals waiting' }); continue }
+    // @here only when a guest lands within three hours — that is the one case a whole room needs
+    // to look up from what it is doing. (Supersedes "@here on every clean message", 2026-08-20.)
+    const soon = withArrival.some(i => { const m = minutesUntilET(i.arrivingAt as string); return m != null && m <= 180 })
+    // ONCE A DAY UNLESS THE PICTURE CHANGED: the same doors, the same names, the same arrivals = the
+    // same message, and it does not go twice. A new unassigned door or a new arrival makes it new.
+    const fp = items.map(i => `${i.unit}|${i.assignee ? 'a' : '-'}|${i.arrivingAt || ''}`).sort().join(';')
+    const fpKey = fingerprint8(fp)
+    const prefix = 'late_cleans:' + bucket.key + ':' + b.date + ':'
+    const saidToday = await sentTodayWithPrefix(prefix)
+    if (saidToday.some(x => x.key === prefix + fpKey)) { results.push({ area: bucket.label, count: items.length, skipped: 'already said today, nothing changed' }); continue }
+    // A changed picture still waits an hour after the last pulse — a cleaner swapped twice in twenty
+    // minutes is not two announcements.
+    const lastAt = Math.max(0, ...saidToday.map(x => x.at))
+    if (lastAt && Date.now() - lastAt < 60 * 60_000) { results.push({ area: bucket.label, count: items.length, skipped: 'changed, but the room heard from us under an hour ago' }); continue }
     const audience = audienceFor(rules, bucket.group, items.map(i => i.assigneeSlackId))
-    // @here on EVERY clean message, not just vendor areas (Jon, 2026-08-20: "The slack messages
-    // needs to tag @Here + the housekeeper") — the assigned cleaners are already in `audience`.
     const { body: en, summary } = lateCleansMessage({
-      area: bucket.label, items, audience, date: b.date, here: true,
+      area: bucket.label, items, audience, date: b.date, here: soon,
     })
     // Field crews are Spanish-first (Jon, 2026-08-19). Vendor areas stay English — those are
     // outside companies with their own office staff, not our crews.
     const body = (rules.bilingualFieldChannels && !vendor ? lateCleansSpanish(bucket.label, items) : '') + en
     const res = await draft({
       eventKey: 'late_cleans',
-      groupKey: 'late_cleans:' + bucket.key + ':' + b.date,
+      groupKey: prefix + fpKey,
       building: bucket.label,
       channelId: channelFor(rules, bucket.group, 'housekeeping'),
       body, summary, audience,
       itemCount: items.length,
     }, rules)
-    results.push({ area: bucket.label, count: items.length, ...res })
+    results.push({ area: bucket.label, count: items.length, unassigned: unassignedN, arrivals: withArrival.length, here: soon, ...res })
   }
   return { ok: true, groups: results.length, results }
+}
+
+/** Minutes from now (ET) until a clock time like "4:00 PM" today; null when it does not parse. */
+function minutesUntilET(t: string): number | null {
+  const m = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(String(t || ''))
+  if (!m) return null
+  let h = Number(m[1]) % 12
+  if (/pm/i.test(m[3] || '')) h += 12
+  if (!m[3] && Number(m[1]) === 12) h = 12
+  const at = h * 60 + Number(m[2] || 0)
+  return at - nowMinutesET()
+}
+
+/** A short stable hash for a group key — the picture of an area, not its wording. */
+function fingerprint8(s: string): string {
+  let h = 2166136261
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0 }
+  return h.toString(16).padStart(8, '0')
+}
+
+/** What was already SENT today under `prefix` (slack_outbox): key and when. Fail-open: empty. */
+async function sentTodayWithPrefix(prefix: string): Promise<{ key: string; at: number }[]> {
+  try {
+    const since = new Date(Date.now() - 24 * 3600_000).toISOString()
+    const { data } = await supabaseAdmin().from('slack_outbox').select('group_key,sent_at')
+      .like('group_key', prefix.replace(/[%_]/g, '\\$&') + '%').eq('status', 'sent').gte('sent_at', since).limit(50)
+    return ((data || []) as any[]).map(r => ({ key: String(r.group_key || ''), at: Date.parse(String(r.sent_at || '')) || 0 }))
+  } catch { return [] }
 }
 
 // ── 2. Glitches / guest issues ─────────────────────────────────────────────────────────────────

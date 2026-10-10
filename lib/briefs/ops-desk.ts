@@ -21,7 +21,7 @@
 // inspections already done, no labor tiers (the Labor Scorecard does).
 import 'server-only'
 import { gather, weekCompliance, niceDay } from '@/lib/ops-brief'
-import { getShifts, nameMatches } from '@/lib/homebase'
+import { getShifts, nameMatches, nameMatchesRoster } from '@/lib/homebase'
 import { getSalaried } from '@/lib/salary'
 import { getStaff } from '@/lib/staffing'
 import { buildReviewQueue, niceDate } from '@/lib/review-queue'
@@ -85,7 +85,12 @@ export async function buildOpsDesk(): Promise<Built> {
   const assigned = new Set<string>()
   for (const c of cleans) for (const n of c.assignee.split(',')) assigned.add(n.trim())
   for (const o of other) for (const n of o.assignee.split(',')) assigned.add(n.trim())
-  const idle = onShift.filter(s => !Array.from(assigned).some(a => nameMatches(a, s.name)) && !Array.from(offSched).some(o => nameMatches(o, s.name)))
+  // ROSTER-AWARE (Eve audit 2026-10-10): Breezeway says "Shaany Espinoza", Homebase says "Shaany
+  // Christian" — one person, and the strict match called her idle while listing her six cleans. A
+  // first name that matches exactly one person on the other roster is that person (nameMatchesRoster).
+  const assignedList = Array.from(assigned)
+  const isAssigned = (shiftName: string) => assignedList.some(a => nameMatches(a, shiftName)) || !!nameMatchesRoster(shiftName, assignedList)
+  const idle = onShift.filter(s => !isAssigned(s.name) && !Array.from(offSched).some(o => nameMatches(o, s.name)))
 
   // Short days (next 3) from the staffing forecast.
   const short = ((forecast as any)?.short || []).filter((x: any) => Number(x.lead) <= 3)
@@ -214,7 +219,12 @@ export async function buildOpsDesk(): Promise<Built> {
     .map((a: any) => ({
       tone: (a.bookedToday || a.bookedAfterSync) ? 'amber' as const : 'none' as const,
       html: `<b>${esc(unitShort(str(a.unit)))}</b> ${esc(first(str(a.guest)))} <span style="${T.muted}">${esc(arrTime(a))}${a.nights ? ` · ${a.nights}n` : ''}${a.source ? ` · ${esc(str(a.source))}` : ''}</span>${a.ownerFlag ? ' ' + pill('OWNER', 'blue') : ''}${(a.bookedToday || a.bookedAfterSync) ? ' ' + pill('WALK-IN', 'amber') : ''}`,
-      sub: cleans.some(c => c.lid === str(a.listingId)) ? undefined : 'No clean on the board for this door today.',
+      // ONLY WHEN A CLEAN IS OWED (Eve audit 2026-10-10). A door with no checkout today needs no clean
+      // today, and Botanica is cleaned by the hotel's own crew off Breezeway — eleven "No clean on the
+      // board" lines a morning said nothing anyone could act on. The line now means: someone checks out
+      // of this door today, a guest lands, and there is no clean for it.
+      sub: cleans.some(c => c.lid === str(a.listingId)) || !departures.some((dep: any) => str(dep.listingId) === str(a.listingId)) || mkOfRow(a) === 'North' || /botanica/i.test(str(a.unit))
+        ? undefined : 'Checkout today and no clean on the board for this door.',
     }))
 
   // VACANT — empty tonight, and how long it has been since anyone was inside.
@@ -232,7 +242,7 @@ export async function buildOpsDesk(): Promise<Built> {
   const inspections = other.filter(o => /inspect|quality|audit|unit check/i.test(o.dept + ' ' + o.task))
   const inspectionLines: Line[] = inspections.map(o => ({
     tone: o.state === 'done' ? 'green' as const : 'none' as const,
-    html: `<b>${esc(unitShort(o.unit))}</b> ${esc(cleanTitle(o.task))} <span style="${T.muted}">${/UNASSIGNED/.test(o.assignee) ? 'nobody assigned' : esc(personName(o.lead || o.assignee))}${o.state === 'done' ? ' · done' : o.state === 'running' ? ' · under way' : ''}</span>`,
+    html: `<b>${esc(/^unknown unit$/i.test(o.unit) ? 'Common areas' : unitShort(o.unit))}</b> ${esc(cleanTitle(o.task))} <span style="${T.muted}">${/UNASSIGNED/.test(o.assignee) ? 'nobody assigned' : esc(personName(o.lead || o.assignee))}${o.state === 'done' ? ' · done' : o.state === 'running' ? ' · under way' : ''}</span>`,
   }))
 
   // ---- SUPERVISORS FIRST (Jon, 2026-10-09: "supervisors at the top should show top priorities — big
@@ -268,32 +278,59 @@ export async function buildOpsDesk(): Promise<Built> {
   const add = (n: string, fallback: string): Day => (people[n] = people[n] || { name: n, dept: deptOf(n, fallback), cleans: [], tasks: [] })
   const unCleans = cleans.filter(c => /UNASSIGNED/.test(c.assignee))
   const unTasks = other.filter(o => /UNASSIGNED/.test(o.assignee) && o.state !== 'done')
-  for (const c of cleans) if (!/UNASSIGNED/.test(c.assignee)) for (const n of c.assignee.split(',').map(x => x.trim()).filter(Boolean)) add(n, 'housekeeping').cleans.push(c)
-  for (const o of other) if (!/UNASSIGNED/.test(o.assignee)) for (const n of o.assignee.split(',').map(x => x.trim()).filter(Boolean)) add(n, o.dept === 'maintenance' ? 'maintenance' : 'housekeeping').tasks.push(o)
+  const shiftNames = ((shifts || []) as any[]).filter(x => !x.open).map(x => str(x.name))
+  const shiftLabel = (n: string) => {
+    const hit = ((shifts || []) as any[]).find(x => !x.open && nameMatches(str(x.name), n))
+    if (hit) return str(hit.label || '')
+    // Married/maiden-name drift between Breezeway and Homebase: a unique first name is the person.
+    const r = nameMatchesRoster(n, shiftNames)
+    const sh = r ? ((shifts || []) as any[]).find(x => !x.open && str(x.name) === r) : null
+    return sh ? str(sh.label || '') : ''
+  }
+  // ONE OWNER PER JOB (Jon, 2026-09-07: "show the predominant person assigned") — restored here
+  // 2026-10-10: this card had put a shared job on EVERY assignee's list, so the weekly walkthrough
+  // printed under five people and a vendor's clean under both the company account and the cleaner.
+  // The owner is the first field person on the job who is on the clock today; failing that the
+  // lead; the others ride along as "with …" on the row, so nothing is hidden and nothing is doubled.
+  const namesOn = (assignee: string) => assignee.split(',').map(x => x.trim()).filter(x => x && !/UNASSIGNED/.test(x))
+  const ownerOf = (x: { assignee: string; lead: string }): string => {
+    const names = namesOn(x.assignee)
+    if (!names.length) return ''
+    const lead = str(x.lead)
+    if (lead && shiftLabel(lead)) return lead
+    const onClock = names.find(n => !offSched.has(n) && shiftLabel(n))
+    return onClock || lead || names[0]
+  }
+  const ridersOf = (x: { assignee: string }, me: string) => namesOn(x.assignee).filter(n => !nameMatches(n, me)).map(n => first(personName(n)))
+  for (const c of cleans) { const n = ownerOf(c); if (n) add(n, 'housekeeping').cleans.push(c) }
+  for (const o of other) { const n = ownerOf(o); if (n) add(n, o.dept === 'maintenance' ? 'maintenance' : 'housekeeping').tasks.push(o) }
   // Somebody holding cleans is on the housekeeping card today, whatever their usual crew.
   for (const p of Object.values(people)) if (p.cleans.length) p.dept = 'housekeeping'
-  const shiftLabel = (n: string) => { const sh = ((shifts || []) as any[]).find(x => !x.open && nameMatches(str(x.name), n)); return sh ? str(sh.label || '') : '' }
+  // A vendor's crew (North: Capri, Lucerne, Botanica…) has no Homebase shift by design.
+  const vendorOnly = (p: Day) => [...p.cleans, ...p.tasks].length > 0 && [...p.cleans, ...p.tasks].every(x => mkOf(x) === 'North')
   const stateTxt = (st: string) => st === 'done' ? `<span style="${T.green}">✓ done</span>` : st === 'running' ? `<span style="${T.amber}">in progress</span>` : `<span style="${T.muted}">not started</span>`
-  const cleanRow = (c: typeof cleans[number]) => {
+  const withTxt = (riders: string[]) => riders.length ? ` <span style="${T.muted}">· with ${esc(riders.slice(0, 3).join(', '))}${riders.length > 3 ? ` +${riders.length - 3}` : ''}</span>` : ''
+  const cleanRow = (c: typeof cleans[number], me = '') => {
     const a = arrivals.find(x => str(x.listingId) === c.lid)
     const vip = a ? vipKind(a) : []
-    return `${c.sameDayArrival ? pill('SAME-DAY · lands ' + landsAt(a), 'red') + ' ' : ''}<b>${esc(unitShort(c.unit))}</b>${vip.length ? ' ' + vip.join(' ') : ''} — ${c.sameDayArrival ? 'turn' : 'departure clean'} · ${stateTxt(c.state)}`
+    return `${c.sameDayArrival ? pill('SAME-DAY · lands ' + landsAt(a), 'red') + ' ' : ''}<b>${esc(unitShort(c.unit))}</b>${vip.length ? ' ' + vip.join(' ') : ''} — ${c.sameDayArrival ? 'turn' : 'departure clean'} · ${stateTxt(c.state)}${me ? withTxt(ridersOf(c, me)) : ''}`
   }
-  const taskRow = (o: typeof other[number]) => `<b>${esc(/^unknown unit$/i.test(o.unit) ? 'Common areas' : unitShort(o.unit))}</b> — ${esc(cleanTitle(o.task))} · ${stateTxt(o.state)}`
+  const taskRow = (o: typeof other[number], me = '') => `<b>${esc(/^unknown unit$/i.test(o.unit) ? 'Common areas' : unitShort(o.unit))}</b> — ${esc(cleanTitle(o.task))} · ${stateTxt(o.state)}${me ? withTxt(ridersOf(o, me)) : ''}`
   const card = (dept: 'housekeeping' | 'maintenance'): { html: string; n: number } => {
     const crew = Object.values(people).filter(p => p.dept === dept)
       .sort((a, b) => b.cleans.filter(c => c.sameDayArrival).length - a.cleans.filter(c => c.sameDayArrival).length || (b.cleans.length + b.tasks.length) - (a.cleans.length + a.tasks.length) || a.name.localeCompare(b.name))
     const blocks: string[] = []
     const unC = dept === 'housekeeping' ? unCleans : []
     const unT = unTasks.filter(o => (o.dept === 'maintenance') === (dept === 'maintenance'))
-    if (unC.length || unT.length) blocks.push(person('Nobody assigned', `${unC.length ? unC.length + ' clean' + (unC.length === 1 ? '' : 's') : ''}${unC.length && unT.length ? ' · ' : ''}${unT.length ? unT.length + ' job' + (unT.length === 1 ? '' : 's') : ''} — put a name on these first`, unC.sort((a, b) => Number(b.sameDayArrival) - Number(a.sameDayArrival)).map(cleanRow), unT.map(taskRow), { bulletCap: 6, tone: 'red' }))
+    if (unC.length || unT.length) blocks.push(person('Nobody assigned', `${unC.length ? unC.length + ' clean' + (unC.length === 1 ? '' : 's') : ''}${unC.length && unT.length ? ' · ' : ''}${unT.length ? unT.length + ' job' + (unT.length === 1 ? '' : 's') : ''} — put a name on these first`, unC.sort((a, b) => Number(b.sameDayArrival) - Number(a.sameDayArrival)).map(c => cleanRow(c)), unT.map(o => taskRow(o)), { bulletCap: 6, tone: 'red' }))
     for (const p of crew) {
       const sd = p.cleans.filter(c => c.sameDayArrival)
       const ordered = p.cleans.slice().sort((a, b) => Number(b.sameDayArrival) - Number(a.sameDayArrival) || a.unit.localeCompare(b.unit))
       const sh = shiftLabel(p.name)
-      const meta = [sh ? esc(sh) : '<span style="color:#b45309">not on the schedule</span>', p.cleans.length ? `${p.cleans.length} clean${p.cleans.length === 1 ? '' : 's'}` : '', sd.length ? `<b style="${T.red}">${sd.length} same-day</b>` : '', p.tasks.length ? `${p.tasks.length} other job${p.tasks.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')
-      const numbered = dept === 'housekeeping' ? ordered.slice(0, 10).map(cleanRow) : p.tasks.slice().sort((a, b) => Number(a.state === 'done') - Number(b.state === 'done')).slice(0, 10).map(taskRow)
-      const bullets = dept === 'housekeeping' ? p.tasks.map(taskRow) : []
+      const schedTxt = sh ? esc(sh) : vendorOnly(p) ? `<span style="${T.muted}">vendor crew</span>` : offSched.has(p.name) ? '' : '<span style="color:#b45309">not on the schedule</span>'
+      const meta = [schedTxt, p.cleans.length ? `${p.cleans.length} clean${p.cleans.length === 1 ? '' : 's'}` : '', sd.length ? `<b style="${T.red}">${sd.length} same-day</b>` : '', p.tasks.length ? `${p.tasks.length} other job${p.tasks.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')
+      const numbered = dept === 'housekeeping' ? ordered.slice(0, 10).map(c => cleanRow(c, p.name)) : p.tasks.slice().sort((a, b) => Number(a.state === 'done') - Number(b.state === 'done')).slice(0, 10).map(o => taskRow(o, p.name))
+      const bullets = dept === 'housekeeping' ? p.tasks.map(o => taskRow(o, p.name)) : []
       blocks.push(person(personName(p.name), meta, numbered, bullets, { bulletCap: 4, tone: sd.some(c => c.state === 'not_started') ? 'red' : 'none' }))
     }
     // On the clock with nothing on the board — named once, on the card of their usual crew.

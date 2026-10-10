@@ -12,14 +12,23 @@
 // function. The checks now run on the Daily Labor job's own 30-day result (app/api/cron/labor-trueup).
 import 'server-only'
 import { sendGmail } from './gmail-send'
+import { nameMatches } from './person-name'
+import { getSetting, setSetting } from './app-settings'
 
 export type IntegrityCheck = { key: string; ok: boolean; level: 'red' | 'amber'; what: string; fix: string }
 
 const OWNER = 'jon@stay-hospitality.com'
 
-/** The six checks over one laborEconomics result (the 30-day window, yesterday back). */
-export function integrityChecks(ec: any): IntegrityCheck[] {
+/**
+ * The six checks over one laborEconomics result (the 30-day window, yesterday back).
+ * `ignoreNames`: people the wage check must not name — management and admins who occasionally close
+ * a clean (Jon) are not "$0 payroll" errors (Eve audit 2026-10-10: "Jon McGill — 1 clean with $0
+ * payroll" went out every morning for a week).
+ */
+export function integrityChecks(ec: any, opts: { ignoreNames?: string[] } = {}): IntegrityCheck[] {
   const checks: IntegrityCheck[] = []
+  const ignored = (opts.ignoreNames || []).map(n => String(n || '').trim()).filter(Boolean)
+  const isIgnored = (name: any) => ignored.some(i => nameMatches(i, String(name || '')))
   const push = (key: string, ok: boolean, level: 'red' | 'amber', what: string, fix: string) =>
     checks.push({ key, ok, level, what, fix })
 
@@ -69,8 +78,8 @@ export function integrityChecks(ec: any): IntegrityCheck[] {
   // fixed by anybody. The same people are flagged in the daily labor email, which is the one
   // Roberto reads and the only place the Homebase profile actually gets corrected.
   const q = (ec && ec.pnl && ec.pnl.quality) || {}
-  const oList: any[] = Array.isArray(q.rateOutliers) ? q.rateOutliers : []
-  const nList: any[] = Array.isArray(q.workedNoPay) ? q.workedNoPay : []
+  const oList: any[] = (Array.isArray(q.rateOutliers) ? q.rateOutliers : []).filter((x: any) => !isIgnored(x?.name))
+  const nList: any[] = (Array.isArray(q.workedNoPay) ? q.workedNoPay : []).filter((x: any) => !isIgnored(x?.name))
   const nm = (xs: any[]) => xs.slice(0, 5).map((x: any) => String(x?.name || '?')).join(', ') + (xs.length > 5 ? ` +${xs.length - 5} more` : '')
   const noPayCleans = nList.reduce((a: number, x: any) => a + (Number(x.cleans) || 0), 0)
   push('wages', oList.length + nList.length === 0, nList.length ? 'red' : 'amber',
@@ -80,7 +89,7 @@ export function integrityChecks(ec: any): IntegrityCheck[] {
           oList.length ? `${nm(oList)} — implied rate far under the median` : '',
         ].filter(Boolean).join('; ')
       : 'wage data sane',
-    'Homebase → the person → wage. The engine can only price what Homebase knows.')
+    'Homebase → the person → wage. The engine can only price what Homebase knows. Management and the salaried roster are never listed here.')
 
   return checks
 }
@@ -92,6 +101,47 @@ export function engineFailedCheck(e: any): IntegrityCheck {
     what: 'the labor engine itself failed to run: ' + String((e && e.message) || e).slice(0, 160),
     fix: 'Nothing downstream can be trusted until this runs — check Vercel logs for /api/cron/labor-trueup.',
   }
+}
+
+/** Names the wage check must not flag: Lighthouse admins (the GM, the ops manager) and the salaried roster. */
+export async function integrityIgnoreNames(): Promise<string[]> {
+  const out: string[] = []
+  try {
+    const { supabaseAdmin } = await import('./supabase-admin')
+    const { isSuperadmin } = await import('./access')
+    const { data } = await supabaseAdmin().from('app_users').select('email,role,access_role,profile').limit(300)
+    for (const u of ((data || []) as any[])) {
+      const nm = String(u?.profile && typeof u.profile === 'object' ? u.profile.name : '').trim()
+      if (nm && (isSuperadmin(String(u?.email || '')) || u?.role === 'admin' || u?.access_role === 'admin')) out.push(nm)
+    }
+  } catch { /* nobody ignored */ }
+  try {
+    const { getSalaried } = await import('./salary')
+    for (const r of await getSalaried()) if (r?.name) out.push(String(r.name))
+  } catch { /* nobody ignored */ }
+  return out
+}
+
+const LAST_KEY = 'labor_integrity_last'
+
+/**
+ * SAY IT WHEN IT CHANGES, NOT EVERY MORNING (Eve audit 2026-10-10). The same failing set was emailed
+ * seven days running and nobody acted on it — a daily repeat reads as wallpaper. The email goes out
+ * when a check starts failing, when what it says changes, or once a week as a reminder; otherwise
+ * the morning is silent and the run receipt says why.
+ */
+export async function shouldEmailIntegrity(failed: IntegrityCheck[], today: string): Promise<{ send: boolean; why: string }> {
+  const fp = failed.map(c => c.key + '|' + c.what.replace(/\d[\d,.]*/g, '#')).sort().join(';')
+  const last = await getSetting<any>(LAST_KEY, null).catch(() => null)
+  if (!last || typeof last !== 'object') return { send: true, why: 'first' }
+  if (String(last.fp || '') !== fp) return { send: true, why: 'changed' }
+  const days = (Date.parse(today + 'T12:00:00Z') - Date.parse(String(last.on || '1970-01-01') + 'T12:00:00Z')) / 86400000
+  if (days >= 7) return { send: true, why: 'weekly reminder' }
+  return { send: false, why: `unchanged since ${last.on} — not re-sent` }
+}
+export async function markIntegrityEmailed(failed: IntegrityCheck[], today: string): Promise<void> {
+  const fp = failed.map(c => c.key + '|' + c.what.replace(/\d[\d,.]*/g, '#')).sort().join(';')
+  await setSetting(LAST_KEY, { fp, on: today, keys: failed.map(c => c.key) }, 'labor-integrity').catch(() => null)
 }
 
 /** Email the owner the failing checks. Only ever called with at least one failure. */

@@ -37,7 +37,7 @@ import { getLaborSettings } from '@/lib/labor-settings'
 import { computeYesterdayLabor } from '@/lib/labor-daily'
 import { requireCron, cronAllowed } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
-import { integrityChecks, engineFailedCheck, emailIntegrityFailures } from '@/lib/labor-integrity'
+import { integrityChecks, engineFailedCheck, emailIntegrityFailures, integrityIgnoreNames, shouldEmailIntegrity, markIntegrityEmailed } from '@/lib/labor-integrity'
 import { atEasternHour } from '@/lib/et-clock'
 import { renderLaborScorecard } from '@/lib/briefs/labor-scorecard'
 import { weekCompliance } from '@/lib/ops-brief'
@@ -142,17 +142,24 @@ async function send(req: NextRequest) {
     // THE INTEGRITY CHECKS (2026-09-28). These were /api/cron/labor-integrity, which re-ran this
     // exact 30-day window five hours earlier, cold, in another function. Now they run on this
     // job's own 30-day result, and the owner is emailed ONLY when one fails (lib/labor-integrity).
-    const checks = integrityChecks(ec30)
+    const checks = integrityChecks(ec30, { ignoreNames: await integrityIgnoreNames() })
     if (checksOnly) return NextResponse.json({ ok: checks.every(c => c.ok), window: `${d30}..${yd}`, checks })
 
     // NEVER SEND ON PARTIAL PAYROLL — a snapshot taken while Homebase was rate-limiting would
     // store understated payroll as settled truth and poison every comparison until the next run.
     const badAudit = [ecY.payrollAudit, ec7.payrollAudit, ec30.payrollAudit].find(a => a && !a.complete)
-    const integrity = { checks: checks.length, failed: checks.filter(c => !c.ok).length, emailed: false }
+    const integrity: { checks: number; failed: number; emailed: boolean; note?: string } = { checks: checks.length, failed: checks.filter(c => !c.ok).length, emailed: false }
     if (!preview && !test) {
       // On a partial-payroll morning the "did not send" note below already names the missing weeks.
       const failing = checks.filter(c => !c.ok && !(badAudit && c.key === 'punches-complete'))
-      if (failing.length) integrity.emailed = await emailIntegrityFailures(failing, checks.length, d30, yd)
+      if (failing.length) {
+        const gate = await shouldEmailIntegrity(failing, yd)
+        integrity.note = gate.why
+        if (gate.send) {
+          integrity.emailed = await emailIntegrityFailures(failing, checks.length, d30, yd)
+          if (integrity.emailed) await markIntegrityEmailed(failing, yd)
+        }
+      }
     }
     if (badAudit) {
       const why = 'Homebase did not return timecards for: ' + badAudit.failedWeeks.join(', ')

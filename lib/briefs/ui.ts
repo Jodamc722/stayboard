@@ -116,13 +116,25 @@ export function pill(text: string, tone: 'red' | 'amber' | 'green' | 'blue' | 'g
 }
 
 /** Wrap the body. `optional` sections are dropped from the END until the budget is met. */
+/**
+ * THE SIZE GMAIL SEES (Eve audit 2026-10-10). Ops Command was cut to 90,000 characters and still
+ * arrived at 114,759 bytes — clipped. Gmail measures the encoded message, and every "·" and "—" in
+ * these briefs is two or three UTF-8 bytes that quoted-printable writes as =C2=B7 (six characters).
+ * So a non-ASCII character counts for roughly seven here, which is what it costs on the wire.
+ */
+export function wireSize(html: string): number {
+  let extra = 0
+  for (let i = 0; i < html.length; i++) if (html.charCodeAt(i) > 127) extra += 7
+  return html.length + extra
+}
+
 export function fit(parts: { html: string; optional?: boolean }[], budget = 60_000): { html: string; dropped: number } {
   const wrap = (inner: string) => `<!doctype html><html><body style="${T.body}"><div style="${T.wrap}">${inner}</div></body></html>`
   const live = parts.slice()
   let dropped = 0
   for (;;) {
     const html = wrap(live.map(p => p.html).join('\n'))
-    if (html.length <= budget) return { html, dropped }
+    if (wireSize(html) <= budget) return { html, dropped }
     let i = live.length - 1
     while (i >= 0 && !live[i].optional) i--
     if (i < 0) return { html, dropped }
@@ -152,7 +164,11 @@ export function crewOf(names: string[], lead: string): string {
 
 /** "shaany espinoza" → "Shaany Espinoza"; all-caps names calmed too. */
 export function personName(n: string): string {
-  return String(n || '').trim().split(/\s+/).map(w => (w.length > 1 && (w === w.toLowerCase() || w === w.toUpperCase()) ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w)).join(' ')
+  const words = String(n || '').trim().split(/\s+/).filter(Boolean)
+  // "Opal Works Opal Works" — a vendor account whose first and last name are both the company. Once.
+  const half = words.length >= 2 && words.length % 2 === 0 ? words.length / 2 : 0
+  const base = half && words.slice(0, half).join(' ').toLowerCase() === words.slice(half).join(' ').toLowerCase() ? words.slice(0, half) : words
+  return base.map(w => (w.length > 1 && (w === w.toLowerCase() || w === w.toUpperCase()) ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w)).join(' ')
 }
 /** A reservation note as a crew reads it: the last human/call line, without the Talkroute preamble. */
 export function crewNote(note: string): string {

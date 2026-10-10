@@ -98,8 +98,15 @@ export function nextStep(n: NextItem): string {
 export function decideFrom(day: CommandDay, max = 6): Direction[] {
   const out: Direction[] = []
   const seen = new Set<string>()
+  // A SAME-DAY TURN IS DISPATCH, NOT A DECISION (Eve audit 2026-10-10). At 7am every same-day turn is
+  // "not started", and six of the eight Decide-today lines read "start the clean now — a guest lands
+  // today" for cleans that had a name and a 4pm deadline. The Field Run and the board carry the turns;
+  // a turn earns a line here only when it is at risk — nobody on it, running late — or after noon,
+  // when "not started" means something.
+  const afternoon = etNowMin() >= 12 * 60
   for (const n of day.next) {
     if (n.dismissed || n.severity === 'soon') continue
+    if (n.kind === 'turn' && !afternoon && !/nobody|unassigned|late|at risk|no one/i.test(str(n.why) + ' ' + str(n.title))) continue
     const k = (n.unit || n.key).toLowerCase() + '|' + n.kind
     if (seen.has(k)) continue
     seen.add(k)

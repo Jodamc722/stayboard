@@ -111,10 +111,14 @@ function line(r: any, unit: string, n: number): string {
   if (r.confirmation_code) bits.push(`code ${str(r.confirmation_code)}`)
   return bits.join(' · ')
 }
+// @CHANNEL ONLY WHEN IT IS NEAR (Eve audit 2026-10-10): a booking four months out woke the whole room
+// with @channel. Inside two weeks it needs eyes now; further out it is a line in the room to read later.
+const NEAR_DAYS = 14
+const isNear = (ci: string, today: string) => !!today && !!ci && (Date.parse(ci + 'T12:00:00Z') - Date.parse(today + 'T12:00:00Z')) / 86400000 <= NEAR_DAYS
 const oneNightText = (r: any, unit: string, n: number, why = 'New booking', today = '') => {
   const ci = str(r.check_in).slice(0, 10)
   const now = today && ci <= today
-  return `<!channel> :no_entry: *${why}: 1-night stay at Salato. Not permitted.*\n${line(r, unit, n)}\nSalato has a ${SALATO_MIN_NIGHTS}-night minimum. `
+  return `${isNear(ci, today) ? '<!channel> ' : ''}:no_entry: *${why}: 1-night stay at Salato. Not permitted.*\n${line(r, unit, n)}\nSalato has a ${SALATO_MIN_NIGHTS}-night minimum. `
     + (now ? `Check-in is today, so decide now: cancel, or extend to ${SALATO_MIN_NIGHTS} nights, and tell the front desk before the guest arrives.` : `This reservation must be canceled (or extended to ${SALATO_MIN_NIGHTS} nights).`)
     + ` Reply in this thread when it's handled.`
 }
@@ -182,7 +186,7 @@ export async function runSalatoWatch(opts: { dryRun?: boolean; fromCron?: boolea
       if (firstRun && !isOne) { e.announced = true; e.ts = e.ts || undefined }                    // already on the books
       else if (firstRun && isOne && ci < today) { e.announced = true }                               // already in the past
       else {
-        const text = isOne ? oneNightText(r, unit, n, firstRun ? 'Already booked' : 'New booking', today) : `<!channel> :bell: *New Salato booking*\n${line(r, unit, n)}`
+        const text = isOne ? oneNightText(r, unit, n, firstRun ? 'Already booked' : 'New booking', today) : `${isNear(ci, today) ? '<!channel> ' : ''}:bell: *New Salato booking*${isNear(ci, today) ? '' : ' _(further out — no need to look now)_'}\n${line(r, unit, n)}`
         const ts = await say(isOne ? 'one-night' : 'new', text, undefined, `Salato ${isOne ? '1-night (not permitted)' : 'new booking'}: ${unit} ${ci}→${co}`)
         if (ts || opts.dryRun) {
           e.announced = true; e.ts = real(ts) || e.ts

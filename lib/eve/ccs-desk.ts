@@ -204,17 +204,33 @@ function etDate(now = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now)
 }
 
-export function handoffText(open: AskItem[], now = Date.now()): string {
-  const line = (it: AskItem) => {
-    const kind = ASK_LABEL[(it.evidence?.ask as AskKind) || askKindOf(it.evidence?.text || it.summary)]
-    const m = ageMinutes(it, now)
-    const age = m >= 120 ? `${Math.round(m / 60)}h` : `${Math.round(m)}m`
-    return `• ${it.evidence?.guest ? it.evidence.guest + ' · ' : ''}${kind}${it.unit ? ` · ${it.unit}` : ''} — ${it.summary.slice(0, 110)} · ${it.owner_name || '_nobody_'} · ${age}`
-  }
+/**
+ * NEW VERSUS CARRIED (Eve audit 2026-10-10). The same ask was re-listed in full three times a day for
+ * two days (Pittigliani: 16h → 48h, owner "nobody") until Jon chased it himself. Repetition is not
+ * escalation. An ask is spelled out the first time the room sees it; after that it is one short line
+ * under "still open", and once it has sat through two handoffs with nobody on it, it is called out
+ * for a name at the top — the one thing the room can do about it that nobody has.
+ * `listed` is how many handoffs each ask has already been on (state kept by runHandoff).
+ */
+export function handoffText(open: AskItem[], now = Date.now(), listed: Record<string, number> = {}): string {
+  const kindOf = (it: AskItem) => ASK_LABEL[(it.evidence?.ask as AskKind) || askKindOf(it.evidence?.text || it.summary)]
+  const ageOf = (it: AskItem) => { const m = ageMinutes(it, now); return m >= 120 ? `${Math.round(m / 60)}h` : `${Math.round(m)}m` }
+  const full = (it: AskItem) => `• ${it.evidence?.guest ? it.evidence.guest + ' · ' : ''}${kindOf(it)}${it.unit ? ` · ${it.unit}` : ''} — ${it.summary.slice(0, 110)} · ${it.owner_name || '_nobody_'} · ${ageOf(it)}`
+  const short = (it: AskItem) => `• ${it.evidence?.guest || kindOf(it)}${it.unit ? ` · ${it.unit}` : ''} · ${it.owner_name || '_nobody_'} · ${ageOf(it)}${(listed[it.id] || 0) >= 2 ? ` · ${listed[it.id] + 1}${ordinal(listed[it.id] + 1)} list` : ''}`
   if (!open.length) return `*CCS handoff* — no open guest asks. Clean slate.`
   const sorted = [...open].sort((a, b) => Date.parse(a.first_seen) - Date.parse(b.first_seen))
-  return `*CCS handoff — ${open.length} open guest ask${open.length === 1 ? '' : 's'}* (oldest first)\n${sorted.slice(0, 15).map(line).join('\n')}${open.length > 15 ? `\n…and ${open.length - 15} more` : ''}\nReply "done" in each thread when it is settled and I take it off the list.`
+  const fresh = sorted.filter(it => !(listed[it.id] > 0))
+  const carried = sorted.filter(it => listed[it.id] > 0)
+  const needName = carried.filter(it => !it.owner_name && (listed[it.id] || 0) >= 2)
+  const parts: string[] = [`*CCS handoff — ${open.length} open guest ask${open.length === 1 ? '' : 's'}*`]
+  if (needName.length) parts.push(`:red_circle: *${needName.length} ${needName.length === 1 ? 'has' : 'have'} been on this list ${needName.length === 1 ? 'twice' : 'twice or more'} with nobody on ${needName.length === 1 ? 'it' : 'them'} — reply in the thread with a name:*\n${needName.slice(0, 6).map(short).join('\n')}`)
+  if (fresh.length) parts.push(`*New since the last handoff (${fresh.length})*\n${fresh.slice(0, 12).map(full).join('\n')}${fresh.length > 12 ? `\n…and ${fresh.length - 12} more` : ''}`)
+  const rest = carried.filter(it => !needName.includes(it))
+  if (rest.length) parts.push(`*Still open (${rest.length})*\n${rest.slice(0, 12).map(short).join('\n')}${rest.length > 12 ? `\n…and ${rest.length - 12} more` : ''}`)
+  parts.push(`Reply "done" in each thread when it is settled and I take it off the list.`)
+  return parts.join('\n')
 }
+const ordinal = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th')
 
 /**
  * Post the handoff once per configured hour. Returns what it did, for the run receipt.
@@ -227,15 +243,23 @@ export async function runHandoff(open: AskItem[], cfg: CcsDeskCfg, now = new Dat
   if (st.lastHandoff === slot) return { posted: false }
   // NOTHING TO HAND OFF, NOTHING POSTED (Eve audit 2026-10-07): "CCS handoff — no open guest asks.
   // Clean slate." went out up to three times a day. An empty list is not news; the slot is claimed quietly.
-  if (!open.length) { await setSetting(HANDOFF_STATE_KEY, { ...st, lastHandoff: slot }, 'ccs-desk'); return { posted: false, note: 'nothing open — not posted' } }
-  const text = handoffText(open, now.getTime())
+  if (!open.length) { await setSetting(HANDOFF_STATE_KEY, { ...st, lastHandoff: slot, listed: {} }, 'ccs-desk'); return { posted: false, note: 'nothing open — not posted' } }
+  // How many handoffs each open ask has already been on — pruned to what is still open.
+  const prior: Record<string, number> = st.listed && typeof st.listed === 'object' ? st.listed : {}
+  const listed: Record<string, number> = {}
+  for (const it of open) if (prior[it.id]) listed[it.id] = Number(prior[it.id]) || 0
+  const text = handoffText(open, now.getTime(), listed)
   // AT THE HOUR IT WAS SET FOR (2026-09-28 audit, F27). The 23:00 slot falls in quiet hours, so it
   // was held and posted at 7am next to the fresh 7am handoff — stale on arrival. A handoff runs at
   // the hours in this desk's settings, which are a person's schedule, not Eve's initiative: urgent.
   const gate = await agentAllowed('slack_post', { ask: true, urgent: true })
   const r = await stepDown(gate, { action: 'slack_post', summary: `CCS handoff in #vr-customercareteam (${open.length} open asks)`, exec: { channel: EVE_CHANNELS.ccsJon, channel_name: 'vr-customercareteam', text }, by: 'cron:slack-watch' },
     async () => { const p = await postToChannel(EVE_CHANNELS.ccsJon, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
-  if (r.ok && r.mode !== 'observe') await setSetting(HANDOFF_STATE_KEY, { ...st, lastHandoff: slot }, 'ccs-desk')
+  if (r.ok && r.mode !== 'observe') {
+    const next: Record<string, number> = {}
+    for (const it of open) next[it.id] = (listed[it.id] || 0) + 1
+    await setSetting(HANDOFF_STATE_KEY, { ...st, lastHandoff: slot, listed: next }, 'ccs-desk')
+  }
   return { posted: r.mode === 'act', mode: r.mode, note: r.mode !== 'act' ? gate.reason : undefined }
 }
 

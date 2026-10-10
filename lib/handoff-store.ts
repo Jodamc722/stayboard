@@ -124,8 +124,10 @@ export async function runHandoffs(): Promise<{ fired: number; nagged: number; cl
       a.recipients = await recipientsFor(a)
       a.firedAt = new Date(now).toISOString()
       if (a.channel) {
-        const extra = isQuiet(a) ? '' : (a.slackMentions || []).map(id => '<@' + id + '>').join(' ')
-        const r = await postToChannel(a.channel, slackText(a, isQuiet(a) ? '' : [await mentionsFor(a.recipients), extra].filter(Boolean).join(' ')))
+        // A quiet alert tags nobody — unless it was raised WITH names (a safety matter tags Jon and
+        // Roberto in the one customer-care post rather than getting a second post in #leadership).
+        const extra = (a.slackMentions || []).map(id => '<@' + id + '>').join(' ')
+        const r = await postToChannel(a.channel, slackText(a, isQuiet(a) ? extra : [await mentionsFor(a.recipients), extra].filter(Boolean).join(' ')))
         if (r.ok) { a.slackTs = r.ts || null; a.slackError = null } else { a.slackError = r.error || 'failed'; notes.push(a.title + ': ' + a.slackError) }
       }
       fired++; changed = true
@@ -180,14 +182,16 @@ export async function cancelBriefReminder(alertId: string | null | undefined): P
  * Eve raises an alert (the guest-move watch). One open alert per `dedupe` key — the same conflict
  * found again on the next run does not post again. Fires on the next cron tick.
  */
-export async function raiseEveAlert(input: { title: string; body: string; unit?: string | null; dedupe: string; severity?: 'info' | 'warn' | 'urgent'; channel?: string | null; glitchId?: string | null }): Promise<boolean> {
+export async function raiseEveAlert(input: { title: string; body: string; unit?: string | null; dedupe: string; severity?: 'info' | 'warn' | 'urgent'; channel?: string | null; glitchId?: string | null; mentions?: string[] }): Promise<boolean> {
   const alerts = await readAlerts()
   if (alerts.some(a => a.dedupe === input.dedupe && (!a.closedAt || Date.now() - Date.parse(a.closedAt) < 12 * 3600_000))) return false
   const { EVE_CHANNELS } = await import('./slack-rules')
   // QUIET (Jon, 2026-10-07: "too sensitive … still alert us but not so intrusive"). Everyone can see
   // it in the bell and it is posted once to the customer care room — no pop-up over the page, no
   // "Got it" demanded, no hourly nag, no @-tagging Roberto, Karla and Silvia on every one.
-  const a = makeAlert({ ...input, source: 'eve', quiet: true, audience: { kind: 'everyone' }, slackMentions: [], channel: input.channel === undefined ? EVE_CHANNELS.ccsJon : input.channel }, { name: 'Eve', email: 'eve@lighthouse' }, randomUUID(), new Date().toISOString())
+  // `mentions` is the exception a caller makes on purpose (a safety matter tags Jon and Roberto).
+  const { mentions, ...rest } = input
+  const a = makeAlert({ ...rest, source: 'eve', quiet: true, audience: { kind: 'everyone' }, slackMentions: Array.isArray(mentions) ? mentions.filter(Boolean) : [], channel: input.channel === undefined ? EVE_CHANNELS.ccsJon : input.channel }, { name: 'Eve', email: 'eve@lighthouse' }, randomUUID(), new Date().toISOString())
   if (!a) return false
   alerts.unshift(a)
   await writeAlerts(alerts, 'eve')

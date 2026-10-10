@@ -145,6 +145,12 @@ async function send(req: NextRequest) {
 
   // ---- the real morning send ----
   if (!isCron && !me) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // A SIGNED-IN GET WITH NO PARAMETERS IS NOT A RE-SEND (Eve audit 2026-10-10). Opening this URL in
+  // a browser sent every morning brief to every list again. A person re-sends on purpose: ?send=1
+  // for everything, or ?only=Miami,GM for some. Previews and tests are unchanged.
+  if (!isCron && !sp.get('send') && !sp.get('only')) {
+    return NextResponse.json({ ok: false, error: 'Nothing sent. Add ?send=1 to re-send every brief to its list, or ?only=Miami,Broward,full,GM,maint for some. ?preview=GM shows one on screen; ?test=1 sends them all to you only.' }, { status: 400 })
+  }
   // NO PLAINTEXT PASSCODE AT REST PAST THE FIRST MORNING (2026-09-18). Migration 101 carries a few
   // legacy cleartext passcodes into share_links; the hub hashes them on its first load, but nobody
   // may open /links for days. The daily brief is the one job that runs every morning regardless —

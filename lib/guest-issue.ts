@@ -23,13 +23,15 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { marketOf } from './segments'
+import { judgeIssue, categoryFor, type IssueSeverity } from './guest-issue-judge'
+export { judgeIssue, categoryFor, severityFor } from './guest-issue-judge'
 
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const clean = (s: any, n = 300) => str(s).replace(/\s+/g, ' ').trim().slice(0, n)
 
 /** How loudly this has to land. */
-export type IssueSeverity = 'security' | 'issue' | 'watch' | 'none'
+export type { IssueSeverity }
 
 export type Detection = {
   sourceKey: string                 // 'call:<id>' | 'thread:<conversation id>'
@@ -47,44 +49,9 @@ export type Detection = {
   issues: string[]                  // the specific things that are wrong
   evidence: string                  // the guest's own words, or the call summary
   link: string                      // where to read the whole thing
-}
-
-// ── WHAT MAKES SOMETHING URGENT ─────────────────────────────────────────────────────────────────
-// A safety or security problem is not "a guest issue" in the ordinary sense: it is somebody in a
-// room they are now afraid of. It escalates past customer care to leadership the same minute.
-// These patterns come from the Jenna call and from the categories the team already files under.
-const SECURITY_RE = /\b(lock(?:ing|s|ed)?\s*(?:is|are|not|n't|won'?t|doesn'?t|broken|fail)|won'?t lock|not? lock(?:ing)?|door (?:won'?t|will not|doesn'?t|does not) (?:lock|close)|deadbolt|broke[rn]? in|break[- ]?in|intrud|tried to (?:open|get in|enter)|someone (?:was|is) (?:at|outside|trying)|stranger|unsafe|not safe|afraid|scared|threat|stalk|harass|assault|weapon|gun|robbed|stolen|theft|burglar|police|911|fire|smoke|gas leak|carbon monoxide|flood(?:ing|ed)|electrical (?:fire|shock)|injur|fell|blood|hospital)\b/i
-// Problems that stop the stay working but are not a safety matter.
-const HARD_RE = /\b(no (?:hot )?water|no (?:a\/?c|air|power|electricity|wifi|internet)|not working|doesn'?t work|won'?t turn|broken|leak|flood|mold|roach|bed ?bug|pest|infest|filthy|dirty|unclean|smell|sewage|locked out|lock(?:ed)? out|can'?t get in|couldn'?t get in|no access|code (?:doesn'?t|did not|didn'?t) work|double ?book|wrong unit|cancel)\b/i
-
-/** Category, from the CAT_CHIPS vocabulary the Glitches board already files under. */
-export function categoryFor(text: string): string {
-  const t = text.toLowerCase()
-  if (SECURITY_RE.test(t) || /\block|door|key|fob|entry|access|code\b/.test(t)) {
-    // An access problem that is only "the code did not work" is a building/access matter; a lock
-    // that will not lock, or somebody at the door, is security.
-    if (SECURITY_RE.test(t)) return 'Safety/Security Concern'
-    return 'Maintenance - Building/Common Areas'
-  }
-  if (/\b(a\/?c|air con|heat|hot|cold|temperature|hvac|thermostat)\b/.test(t)) return 'Maintenance - HVAC/Temperature'
-  if (/\b(hot water|water heater|shower.*(cold|no water))\b/.test(t)) return 'Maintenance - Water Heater'
-  if (/\b(dirty|filthy|unclean|clean(?:liness|ing)|stain|trash|dishes|linen|towel)\b/.test(t)) return 'Cleanliness - Inadequate Cleaning'
-  if (/\b(toilet|sink|drain|plumb|leak|water everywhere|clog)\b/.test(t)) return 'Maintenance - Plumbing'
-  if (/\b(fridge|refrigerator|oven|stove|microwave|washer|dryer|dishwasher|appliance|tv|television)\b/.test(t)) return 'Maintenance - Appliances'
-  if (/\b(power|outlet|electric|light|breaker|fuse)\b/.test(t)) return 'Maintenance - Electrical'
-  if (/\b(roach|bug|bed ?bug|ant|rodent|mouse|rat|pest|infest)\b/.test(t)) return 'Pests/Bed Bugs'
-  if (/\b(park|garage|valet|vehicle|car)\b/.test(t)) return 'Parking/Vehicle'
-  if (/\b(elevator|lobby|gym|pool|common|building|hallway|construction|noise)\b/.test(t)) return 'Maintenance - Building/Common Areas'
-  return 'Other'
-}
-
-/** How loud. Security wins; otherwise a concrete fault is an issue and a grumble is a watch. */
-export function severityFor(text: string, sentiment?: string | null): IssueSeverity {
-  const t = text.toLowerCase()
-  if (SECURITY_RE.test(t)) return 'security'
-  if (HARD_RE.test(t)) return 'issue'
-  if (sentiment === 'unhappy' || sentiment === 'negative') return 'issue'
-  return 'watch'
+  /** Settled on the call: file the glitch for the record, tell nobody (judgeIssue). */
+  quiet?: boolean
+  judged?: string                   // why it was judged the way it was — on the Detected tab
 }
 
 export const SEV_LABEL: Record<IssueSeverity, string> = {
@@ -124,6 +91,9 @@ async function fromCalls(sinceISO: string, seen: Set<string>): Promise<Detection
     if (!issues.length && sentiment !== 'unhappy') continue
     const r = resById[str(c.reservation_id)] || null
     const blob = [issues.join(' · '), str(intel.summary)].join(' ')
+    // THE NAMED ISSUES DECIDE, NOT THE SUMMARY (Eve audit 2026-10-10). The summary of a routine call
+    // mentions "the code" and "cancel" often enough that it made ordinary calls into Guest issues.
+    const j = judgeIssue(issues, str(intel.summary), sentiment, { followUp: intel.followUp === true })
     out.push({
       sourceKey: 'call:' + c.id,
       kind: 'call',
@@ -134,8 +104,10 @@ async function fromCalls(sinceISO: string, seen: Set<string>): Promise<Detection
       unit: r ? str(r.listing_name) : '',
       guestName: r ? str(r.guest_name) : '',
       channel: r ? str(r.source) : '',
-      severity: severityFor(blob, sentiment),
-      category: categoryFor(blob),
+      severity: j.severity,
+      quiet: j.quiet,
+      judged: j.why,
+      category: categoryFor(issues.length ? issues.join(' · ') : blob),
       headline: clean(intel.summary || issues[0], 400),
       issues,
       evidence: clean(intel.summary, 600),
@@ -171,6 +143,9 @@ async function fromThreads(sinceISO: string, seen: Set<string>): Promise<Detecti
     // score with a neutral read is left to the Sentiment tab — this board is for things to DO.
     if (!bad) continue
     const blob = [str(s.top_issue), str(s.reason), str(s.guest_excerpt), triggers.join(' ')].join(' ')
+    // The scan's top issue and triggers are the "named" side; the guest's own words are the context.
+    const named = [clean(s.top_issue, 160), ...triggers.map(x => clean(x, 120))].filter(Boolean)
+    const j = judgeIssue(named, [str(s.reason), str(s.guest_excerpt)].join(' '), s.dissatisfied ? 'unhappy' : null, { followUp: true })
     out.push({
       sourceKey: 'thread:' + s.conversation_id,
       kind: 'message',
@@ -181,7 +156,9 @@ async function fromThreads(sinceISO: string, seen: Set<string>): Promise<Detecti
       unit: nameOf[str(s.listing_id)] || '',
       guestName: str(s.guest_name),
       channel: str(s.channel),
-      severity: severityFor(blob, s.dissatisfied ? 'unhappy' : null),
+      severity: j.severity,
+      quiet: j.quiet,
+      judged: j.why,
       category: categoryFor(blob),
       headline: clean(s.top_issue || s.reason, 400),
       issues: [clean(s.top_issue, 160)].filter(Boolean),
@@ -350,11 +327,11 @@ export async function runGuestIssueWatch(opts: { hours?: number; dryRun?: boolea
       out.detections.push({ ...d, verdict: already ? 'handled' : 'pending', glitchId: null, alerted: false })
       continue
     }
-    // A grumble with nothing concrete behind it is recorded and left alone — the Detected tab
-    // shows it, and a person can file it in one click if they disagree.
+    // A grumble with nothing concrete behind it — or a routine ask — is recorded and left alone: the
+    // Detected tab shows it, and a person can file it in one click if they disagree.
     if (d.severity === 'watch') {
       out.skipped++
-      await recordDetection(d, { verdict: 'skipped', glitchId: null, alerted: false, note: 'nothing concrete named — left for a person' })
+      await recordDetection(d, { verdict: 'skipped', glitchId: null, alerted: false, note: (d.judged === 'routine ask' ? 'routine ask' : 'nothing concrete named') + ' — left for a person' })
       continue
     }
     // ONE GUEST, ONE GLITCH, ONE HANDOFF (Eve audit 2026-10-07). Two calls about the same stay — or a
@@ -372,29 +349,52 @@ export async function runGuestIssueWatch(opts: { hours?: number; dryRun?: boolea
     let glitchId: string | null = merged ? merged.id : null
     if (!glitchId) { try { glitchId = await fileGlitch(d) } catch (e: any) { out.error = String(e?.message || e).slice(0, 200) } }
     if (glitchId && !merged) out.filed++
-    // FLAG CUSTOMER CARE, ALWAYS (Jon: "we need to flag the customer service team immediately").
-    // raiseEveAlert is the intrusive pop-up with acknowledgement tracking AND the Slack post to
-    // #vr-customercareteam tagging Roberto, Karla and Silvia — one call does both.
+    // SETTLED ON THE CALL (Eve audit 2026-10-10): the glitch is the record; nobody is paged for it.
+    if (d.quiet && d.severity !== 'security') {
+      await recordDetection(d, { verdict: glitchId ? 'filed' : 'skipped', glitchId, alerted: false, note: 'settled on the call — filed quietly, nobody alerted' })
+      out.detections.push({ ...d, verdict: glitchId ? 'filed' : 'skipped', glitchId, alerted: false })
+      continue
+    }
+    // ONE ALERT PER UNIT PER DAY (Eve audit 2026-10-10). Two different guests, or a stay the mirror
+    // has not matched yet, could still page the room twice about the same door in a morning. The
+    // second report is filed and noted; the room already knows about the unit. A safety matter
+    // always goes out.
+    let alreadyToday = false
+    if (d.severity !== 'security' && d.unit) {
+      try {
+        const { data: prior } = await db.from('guest_issue_detections').select('source_key')
+          .eq('unit', d.unit).eq('alerted', true).gte('detected_at', new Date(Date.now() - 24 * 3600_000).toISOString()).limit(1)
+        alreadyToday = !!(prior && prior.length)
+      } catch { alreadyToday = false }
+    }
+    // FLAG CUSTOMER CARE (Jon: "we need to flag the customer service team immediately"). raiseEveAlert
+    // is the bell entry for everyone AND the one Slack post to #vr-customercareteam. A safety matter
+    // tags Jon and Roberto there too — the same post, not a second one.
     let alerted = false
-    try {
-      const { raiseEveAlert } = await import('./handoff-store')
-      const { title, body } = alertText(d, glitchId)
-      alerted = await raiseEveAlert({
-        title, body, unit: d.unit || null, dedupe: 'guest-issue:' + d.sourceKey, glitchId,
-        severity: d.severity === 'security' ? 'urgent' : 'warn',
-      })
-      if (alerted) out.alerted++
-    } catch { /* the glitch is filed; the alert is best effort and the Detected tab still shows it */ }
-    // A safety matter also goes to leadership — customer care is not the right ceiling for it.
+    if (!alreadyToday) {
+      try {
+        const { raiseEveAlert } = await import('./handoff-store')
+        const { JON_SLACK_ID, ROBERTO_SLACK_ID } = await import('./slack-rules')
+        const { title, body } = alertText(d, glitchId)
+        alerted = await raiseEveAlert({
+          title, body, unit: d.unit || null, dedupe: 'guest-issue:' + d.sourceKey, glitchId,
+          severity: d.severity === 'security' ? 'urgent' : 'warn',
+          mentions: d.severity === 'security' ? [JON_SLACK_ID, ROBERTO_SLACK_ID].filter(Boolean) : [],
+        })
+        if (alerted) out.alerted++
+      } catch { /* the glitch is filed; the alert is best effort and the Detected tab still shows it */ }
+    }
+    // A safety matter also reaches leadership — as ONE LINE with the link, not a second copy of the
+    // whole alert (Eve audit 2026-10-10: Capri 110 landed in two rooms in full).
     if (d.severity === 'security') {
       try {
         const { postToChannel } = await import('./slack')
-        const { EVE_CHANNELS, JON_SLACK_ID, ROBERTO_SLACK_ID } = await import('./slack-rules')
-        const { title, body } = alertText(d, glitchId)
-        await postToChannel(EVE_CHANNELS.leadership, `<@${JON_SLACK_ID}> <@${ROBERTO_SLACK_ID}> *${title}*\n${body}`)
+        const { EVE_CHANNELS } = await import('./slack-rules')
+        const where = d.unit || d.guestName || 'a stay'
+        await postToChannel(EVE_CHANNELS.leadership, `🚨 *Safety — ${where}* · ${clean(d.headline, 140)}${glitchId ? ` → <${APP_URL}/glitches?id=${glitchId}|the glitch>` : ''} · raised in #vr-customercareteam`)
       } catch { /* customer care already has it */ }
     }
-    await recordDetection(d, { verdict: glitchId ? 'filed' : 'skipped', glitchId, alerted, note: glitchId ? null : 'glitch not filed' })
+    await recordDetection(d, { verdict: glitchId ? 'filed' : 'skipped', glitchId, alerted, note: glitchId ? (alreadyToday ? 'customer care already alerted about this unit today' : null) : 'glitch not filed' })
     out.detections.push({ ...d, verdict: glitchId ? 'filed' : 'skipped', glitchId, alerted })
   }
   return out
