@@ -189,10 +189,11 @@ export async function expireStaleThoughts(days = 14): Promise<number> {
   } catch { return 0 }
 }
 
-export async function listThoughts(opts: { since?: string; source?: string; status?: 'open' | 'all'; limit?: number } = {}): Promise<ThoughtRow[]> {
+export async function listThoughts(opts: { since?: string; source?: string; status?: 'open' | 'all' | 'dismissed'; limit?: number } = {}): Promise<ThoughtRow[]> {
   try {
     let q = supabaseAdmin().from('eve_actions').select('id,payload,why,status,created_by,created_at,decided_by,decided_at,result').eq('kind', 'thought')
-    if (opts.status !== 'all') q = q.eq('status', 'open')
+    if (opts.status === 'dismissed') q = q.eq('status', 'dismissed')
+    else if (opts.status !== 'all') q = q.eq('status', 'open')
     if (opts.since) q = q.gte('created_at', opts.since)
     if (opts.source) q = opts.source === 'watch' ? q.like('payload->>source', 'watch:%') : q.filter('payload->>source', 'eq', opts.source)
     const { data } = await q.order('created_at', { ascending: false }).limit(Math.min(Math.max(opts.limit || 200, 1), 500))

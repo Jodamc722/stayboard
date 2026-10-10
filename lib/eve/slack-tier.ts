@@ -196,10 +196,14 @@ async function baseTierFor(access: Access | null, channelId: string): Promise<Ti
     // waits for an approver's yes; money stays out as everywhere in Slack, and door codes go by room
     // (enforceDoorCodes) — the approvals room may itself be #vr-customercareteam.
     const eveRoom = await isEveRoom(channelId)
+    // THE DESK CAN DIRECT HER IN ITS OWN ROOM (independent audit 2026-10-10): desk asks are listed in
+    // #vr-customercareteam and the team can say yes there — so "@Eve create the task" in that room must
+    // not come back "An admin can." The rungs still apply; money and door codes are unchanged.
+    const deskRoom = channelId === EVE_CHANNELS.ccsJon
     // memoryWeightCap 6 (audit 2026-10-05): a recognised colleague's correction in Slack is captured
     // only at cap ≥ 6 (run.ts), and the cap was 5 — so staff corrections were silently dropped and the
     // same lesson had to be taught twice. 6 is what personSource already caps a colleague at.
-    return { tier: 'staff', buildings: [], canMoney: false, canDirect: eveRoom, denyTools: ADMIN_ONLY.concat(LINK_TOOLS, HEAVY_TOOLS), memoryWeightCap: 6, group, eveRoom, vendorRoom: false, doorCodes: 'never' }
+    return { tier: 'staff', buildings: [], canMoney: false, canDirect: eveRoom || deskRoom, denyTools: ADMIN_ONLY.concat(LINK_TOOLS, HEAVY_TOOLS), memoryWeightCap: 6, group, eveRoom, vendorRoom: false, doorCodes: 'never' }
   }
   // Unrecognised, or a vendor room. Still answered — about their own buildings, minus what is ours.
   // (Unrecognised in a Customer Service room is usually a CCS agent with no Lighthouse login: they may

@@ -114,5 +114,7 @@ export async function POST(req: NextRequest) {
   if (r.ok) { try { const { refreshConversationStats } = await import('@/lib/response-times'); await refreshConversationStats(conversationId) } catch { /* the next run catches up */ } }
   if (r.ok) bustDay()   // …and the Command Center's cached day reads the same table
   if (r.ok) await afterAct('guest_reply_send', { ok: true, done: r.summary, ref: r.ref }, { by: str(pl.by || 'chat'), actor: by, summary: r.summary, metric: 'sentiment_negative' })
+  // A "fixed" note sent for a glitch parks that glitch in manager_review (lib/glitch-complete).
+  if (r.ok) { try { const { glitchIdOfDraft, requestGlitchCompletion } = await import('@/lib/glitch-complete'); const gid = glitchIdOfDraft(pl); if (gid) await requestGlitchCompletion(gid, by, `guest told via Eve's note, sent by ${by.split('@')[0]}`) } catch { /* the send stands */ } }
   return NextResponse.json(r.ok ? { ok: true, done: r.summary } : { ok: false, error: r.error || r.summary }, { status: r.ok ? 200 : 502 })
 }

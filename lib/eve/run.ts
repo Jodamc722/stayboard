@@ -407,7 +407,12 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       }
       const baseBody = { max_tokens: noTools ? 600 : 4096, system, ...(toolset.length ? { tools: toolset } : {}), messages }
       let { r, d } = await call(pair.model, baseBody)
-      for (let attempt = 0; !r.ok && (r.status === 429 || r.status === 529 || r.status >= 500) && attempt < 3; attempt++) {
+      // THE BUDGET IS NOT A RATE LIMIT (independent audit 2026-10-10): lib/ai-usage answers a spent cap
+      // with 429 { type: 'budget_exceeded' }; retrying it three times took 8.5 s and then called it
+      // "the Anthropic rate limit". It is said for what it is, at once.
+      const budgetStop = (dd: any) => dd?.error?.type === 'budget_exceeded'
+      if (!r.ok && budgetStop(d)) return { ok: false, status: 503, error: `AI budget: ${String(d?.error?.message || 'the daily or monthly AI cap is spent').slice(0, 200)} (Settings → AI models → caps).` }
+      for (let attempt = 0; !r.ok && !budgetStop(d) && (r.status === 429 || r.status === 529 || r.status >= 500) && attempt < 3; attempt++) {
         if (Date.now() - startedAt > WALL_MS - 20_000) break
         const useFallback = attempt === 2 && !!pair.fallback && pair.fallback !== pair.model
         await new Promise(res => setTimeout(res, useFallback ? 500 : attempt === 0 ? 2000 : 6000))

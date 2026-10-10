@@ -112,7 +112,9 @@ const SYSTEM = [
  * NOT a summary, NOT an answer. Whatever the message asks, this returns the message in the other
  * language and nothing more.
  */
-export async function translate(text: string, hint: Lang | null, to?: Lang, opts?: { useFallbackModel?: boolean }): Promise<string | null> {
+const MAX_ATTEMPTS_PER_TAG = 5
+export async function translate(text: string, hint: Lang | null, to?: Lang, opts?: { useFallbackModel?: boolean; budget?: { n: number } }): Promise<string | null> {
+  const _attempts = opts?.budget || { n: 0 }
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return null
   try {
@@ -130,6 +132,10 @@ export async function translate(text: string, hint: Lang | null, to?: Lang, opts
     // 100% OF THE TIME (Jon, 2026-10-01): a rate limit, an overloaded model or a dropped socket is
     // retried here, with a pause, before anything is given up on — three tries, 20 s each.
     for (let attempt = 0; attempt < 3; attempt++) {
+      // ONE BUDGET FOR THE WHOLE TAG (independent audit 2026-10-10): three retries inside four passes was
+      // twelve model calls for one message on a bad minute — the shape of the $19 day. Five, total.
+      if (_attempts.n >= MAX_ATTEMPTS_PER_TAG) return null
+      _attempts.n++
       if (attempt) await new Promise(r => setTimeout(r, attempt === 1 ? 800 : 2500))
       let r: Awaited<ReturnType<typeof anthropicMessages>>
       try {
@@ -176,10 +182,11 @@ export async function translateChecked(text: string): Promise<{ text: string; fa
   // direction for the forced retries: a short "ya terminé 401" is Spanish, "401 done" is English.
   const guess: Lang = want || (ES_CHARS.test(text) || (text.match(ES_WORDS) || []).length > (text.match(EN_WORDS) || []).length ? 'en' : 'es')
   ES_CHARS.lastIndex = 0
-  let out = await translate(text, src)
-  if (out && (sameLang(out) || hasBoltedOn(text, out))) out = await translate(text, src, want || (detectLang(out) === 'es' ? 'en' : 'es'))
-  if (!out) out = await translate(text, src, guess)
-  if (!out) out = await translate(text, src, guess, { useFallbackModel: true })   // last resort: the bigger model
+  const budget = { n: 0 }
+  let out = await translate(text, src, undefined, { budget })
+  if (out && (sameLang(out) || hasBoltedOn(text, out))) out = await translate(text, src, want || (detectLang(out) === 'es' ? 'en' : 'es'), { budget })
+  if (!out) out = await translate(text, src, guess, { budget })
+  if (!out) out = await translate(text, src, guess, { useFallbackModel: true, budget })   // last resort: the bigger model
   if (out) out = stripBoltedOn(text, out) || null
   if (out) return { text: out, fallback: false }
   return { text: src === 'es' ? 'No pude traducir este mensaje ahora mismo. Etiquétame otra vez en un momento.' : 'I could not translate this one just now. Tag me again in a moment.', fallback: true }

@@ -347,7 +347,10 @@ async function decideDraftDigest(channel: string, root: string, user: string, te
       await db.from('eve_actions').update({ status: r.ok ? 'executed' : 'failed', executed_at: r.ok ? nowISO : null, result: { by, ok: r.ok, done: r.ok ? r.summary : null, error: r.ok ? null : r.error, via: 'slack' } }).eq('id', row.id)
       const { recordAgentAction } = await import('./agent-mode')
       await recordAgentAction('guest_reply_send', { rung: 2, allowed: r.ok, mode: 'act', reason: r.ok ? `sent by ${by} from Slack` : `send by ${by} failed: ${r.error}`, summary: r.summary, ref: r.ref || null, by: 'chat', actor: by, countAs: 'none' })
-      lines.push(r.ok ? `${pk.idx}. sent to ${String(pl.guest || 'the guest')}` : `${pk.idx}. couldn't send: ${String(r.error || r.summary || '').slice(0, 120)}`)
+      // The note said "it's sorted" for a glitch: the glitch goes to the manager to close.
+      let closing = ''
+      if (r.ok) { try { const { glitchIdOfDraft, requestGlitchCompletion } = await import('@/lib/glitch-complete'); const gid = glitchIdOfDraft(pl); if (gid) { const c = await requestGlitchCompletion(gid, by, `guest told via Eve's note, sent from Slack by ${by.split('@')[0]}`); if (c.ok && c.status === 'manager_review') closing = ' · glitch sent to the manager to close' } } catch { /* the send stands */ } }
+      lines.push(r.ok ? `${pk.idx}. sent to ${String(pl.guest || 'the guest')}${closing}` : `${pk.idx}. couldn't send: ${String(r.error || r.summary || '').slice(0, 120)}`)
     } catch (e: any) {
       await db.from('eve_actions').update({ status: 'failed', result: { by, ok: false, error: String(e?.message || e).slice(0, 200) } }).eq('id', row.id)
       lines.push(`${pk.idx}. couldn't send: ${String(e?.message || e).slice(0, 120)}`)

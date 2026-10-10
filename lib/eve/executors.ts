@@ -291,8 +291,15 @@ const guest_reply_draft: Executor = async (p, ctx) => {
   const draft = str(p?.draft || p?.body || p?.text).trim()
   if ((!conversationId && !reviewId) || !draft) return { ok: false, summary: 'need a conversation (or a review) and a draft', error: 'conversationId or reviewId, and draft, required' }
   const db = supabaseAdmin()
-  // One live draft per thread (or review): a newer one supersedes the older.
+  // One live draft per thread (or review): a newer one supersedes the older. The older one's Slack
+  // slot (the post it was listed in) carries over, so the thread's "send" still finds a live draft and
+  // the newer draft is not listed in the room a second time (Eve audit 2026-10-10).
+  let inherited: Record<string, any> = {}
   try {
+    const sel = db.from('eve_actions').select('id,payload').eq('kind', 'guest_draft').eq('status', 'proposed')
+    const { data: olds } = await (conversationId ? sel.filter('payload->>conversationId', 'eq', conversationId) : sel.filter('payload->>reviewId', 'eq', reviewId))
+    const prev = ((olds || []) as any[]).find(r => r?.payload?.slack_ts)
+    if (prev) inherited = { slack_channel: prev.payload.slack_channel, slack_ts: prev.payload.slack_ts, slack_index: prev.payload.slack_index, slack_sent_at: prev.payload.slack_sent_at, slack_pending: false }
     const q = db.from('eve_actions').update({ status: 'expired', result: { note: 'replaced by a newer draft' } }).eq('kind', 'guest_draft').eq('status', 'proposed')
     await (conversationId ? q.filter('payload->>conversationId', 'eq', conversationId) : q.filter('payload->>reviewId', 'eq', reviewId))
   } catch { /* fine */ }
@@ -301,7 +308,7 @@ const guest_reply_draft: Executor = async (p, ctx) => {
     // A draft the WATCH wrote is queued for the desk's Slack list (slack-approvals flushApprovalDigest):
     // the team sees the text in #vr-customercareteam and "1 send" sends it as them. A draft a person
     // asked for ("Draft with Eve" on the thread) is already in front of that person.
-    payload: { conversationId: conversationId || null, reviewId: reviewId || null, draft, guest: str(p?.guest) || null, unit: str(p?.unit) || null, channel: str(p?.channel) || null, by: ctx.by, watchKey: str(p?.watchKey) || null, subject: str(p?.subject) || null, slack_pending: !!(conversationId && (str(p?.watchKey) || /cron|watch/i.test(str(ctx.by)))) },
+    payload: { conversationId: conversationId || null, reviewId: reviewId || null, draft, guest: str(p?.guest) || null, unit: str(p?.unit) || null, channel: str(p?.channel) || null, by: ctx.by, watchKey: str(p?.watchKey) || null, subject: str(p?.subject) || null, slack_pending: p?.slack_pending === false ? false : !!(conversationId && (str(p?.watchKey) || /cron|watch/i.test(str(ctx.by)))), ...inherited },
     why: str(p?.why).slice(0, 400) || 'Eve drafted a reply', status: 'proposed',
     expires_at: new Date(Date.now() + 3 * 86400_000).toISOString(),
   }).select('id').maybeSingle()

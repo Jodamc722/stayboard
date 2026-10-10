@@ -104,7 +104,9 @@ function slackText(a: Alert, who: string): string {
   const b = brief(a.body)
   // QUIET (2026-10-07): Eve's alerts tell the room, they do not ask anyone to confirm anything and
   // they tag nobody. "Resolved" in Lighthouse closes it for everyone and says so in this thread.
-  if (isQuiet(a)) return [head, b, `<${link}|Open in Lighthouse> · FYI, no reply needed`].filter(Boolean).join('\n')
+  // A quiet alert asks for no acknowledgement — but a safety matter is not "FYI" (independent audit
+  // 2026-10-10: "🚨 Safety/security … FYI, no reply needed").
+  if (isQuiet(a)) return [head, b, `<${link}|Open in Lighthouse>${a.severity === 'urgent' ? ' · act on it now and mark it Resolved there' : ' · FYI, no reply needed'}`].filter(Boolean).join('\n')
   return [head, b, `${who ? who + ' · ' : ''}<${link}|Open and confirm>`].filter(Boolean).join('\n')
 }
 

@@ -126,39 +126,48 @@ export async function runLateCleanAlert(): Promise<any> {
     // room with @here and three managers tagged, including mornings where the message itself said
     // "no arrivals waiting on these, so there is room to work". A pulse is worth a room's attention
     // when a clean has nobody on it or a guest is landing behind one. Otherwise the board has it.
-    const unassignedN = items.filter(i => !i.assignee).length
+    const unassigned = items.filter(i => !i.assignee)
     const withArrival = items.filter(i => !!i.arrivingAt)
-    if (!unassignedN && !withArrival.length) { results.push({ area: bucket.label, count: items.length, skipped: 'all assigned, no arrivals waiting' }); continue }
-    // @here only when a guest lands within three hours — that is the one case a whole room needs
-    // to look up from what it is doing. (Supersedes "@here on every clean message", 2026-08-20.)
-    const soon = withArrival.some(i => { const m = minutesUntilET(i.arrivingAt as string); return m != null && m <= 180 })
-    // ONCE A DAY UNLESS THE PICTURE CHANGED: the same doors, the same names, the same arrivals = the
-    // same message, and it does not go twice. A new unassigned door or a new arrival makes it new.
-    const fp = items.map(i => `${i.unit}|${i.assignee ? 'a' : '-'}|${i.arrivingAt || ''}`).sort().join(';')
-    const fpKey = fingerprint8(fp)
+    if (!unassigned.length && !withArrival.length) { results.push({ area: bucket.label, count: items.length, skipped: 'all assigned, no arrivals waiting' }); continue }
+    // AFTER 2:45PM THE 3PM READINESS CHECK OWNS THIS (Eve audit 2026-10-10): a second pulse at 3:19
+    // next to the readiness post was the same doors twice.
+    if (nowMinutesET() >= 14 * 60 + 45) { results.push({ area: bucket.label, count: items.length, skipped: 'after 2:45pm — the readiness check covers it' }); continue }
+    // THE DOORS THAT NEED SOMEONE: unassigned, or a guest landing within three hours behind an
+    // unstarted clean. A room is told about these once; it is told again only when a NEW such door
+    // appears (not when one starts or a name changes). (Supersedes the Aug 20 "@here on every clean".)
+    const actionable = items.filter(i => !i.assignee || (i.arrivingAt && (() => { const m = minutesUntilET(i.arrivingAt as string); return m != null && m <= 180 })()))
+    if (!actionable.length) { results.push({ area: bucket.label, count: items.length, skipped: 'arrivals are hours away and every clean has a name' }); continue }
     const prefix = 'late_cleans:' + bucket.key + ':' + b.date + ':'
     const saidToday = await sentTodayWithPrefix(prefix)
-    if (saidToday.some(x => x.key === prefix + fpKey)) { results.push({ area: bucket.label, count: items.length, skipped: 'already said today, nothing changed' }); continue }
-    // A changed picture still waits an hour after the last pulse — a cleaner swapped twice in twenty
-    // minutes is not two announcements.
-    const lastAt = Math.max(0, ...saidToday.map(x => x.at))
-    if (lastAt && Date.now() - lastAt < 60 * 60_000) { results.push({ area: bucket.label, count: items.length, skipped: 'changed, but the room heard from us under an hour ago' }); continue }
-    const audience = audienceFor(rules, bucket.group, items.map(i => i.assigneeSlackId))
+    const announced = new Set<string>()
+    for (const x of saidToday) for (const u of (x.units || [])) announced.add(u)
+    const fresh = actionable.filter(i => !announced.has(i.unit))
+    if (!fresh.length) { results.push({ area: bucket.label, count: items.length, skipped: 'already said today — no new door needs a name' }); continue }
+    const fpKey = fingerprint8(actionable.map(i => i.unit).sort().join(';'))
+    // @here only when a door has NOBODY on it and a guest lands within two hours. Otherwise the
+    // message tags exactly the people who must act: the cleaners on the at-risk doors, and the
+    // group's supervisors only when a door is unassigned. The management list (Jon, Roberto, Karla) is
+    // never tagged on a routine pulse — they read the board and the brief.
+    const soonUnassigned = unassigned.some(i => i.arrivingAt && (() => { const m = minutesUntilET(i.arrivingAt as string); return m != null && m <= 120 })())
+    const audience: string[] = []
+    for (const i of actionable) if (i.assigneeSlackId && !audience.includes(i.assigneeSlackId)) audience.push(i.assigneeSlackId)
+    if (unassigned.length && bucket.group) for (const sId of bucket.group.supervisors || []) if (sId && !audience.includes(sId)) audience.push(sId)
     const { body: en, summary } = lateCleansMessage({
-      area: bucket.label, items, audience, date: b.date, here: soon,
+      area: bucket.label, items: actionable, audience, date: b.date, here: soonUnassigned,
     })
     // Field crews are Spanish-first (Jon, 2026-08-19). Vendor areas stay English — those are
     // outside companies with their own office staff, not our crews.
     const body = (rules.bilingualFieldChannels && !vendor ? lateCleansSpanish(bucket.label, items) : '') + en
     const res = await draft({
       eventKey: 'late_cleans',
-      groupKey: prefix + fpKey,
+      // The doors named ride in the key so tomorrow's pulse, and the next pass today, can tell what was said.
+      groupKey: prefix + fpKey + ':' + actionable.map(i => i.unit).sort().join('|').slice(0, 120),
       building: bucket.label,
       channelId: channelFor(rules, bucket.group, 'housekeeping'),
       body, summary, audience,
-      itemCount: items.length,
+      itemCount: actionable.length,
     }, rules)
-    results.push({ area: bucket.label, count: items.length, unassigned: unassignedN, arrivals: withArrival.length, here: soon, ...res })
+    results.push({ area: bucket.label, count: items.length, unassigned: unassigned.length, arrivals: withArrival.length, here: soonUnassigned, named: fresh.map(i => i.unit), ...res })
   }
   return { ok: true, groups: results.length, results }
 }
@@ -181,13 +190,17 @@ function fingerprint8(s: string): string {
   return h.toString(16).padStart(8, '0')
 }
 
-/** What was already SENT today under `prefix` (slack_outbox): key and when. Fail-open: empty. */
-async function sentTodayWithPrefix(prefix: string): Promise<{ key: string; at: number }[]> {
+/** What was already SENT today under `prefix` (slack_outbox): key, when, and the doors it named. Fail-open: empty. */
+async function sentTodayWithPrefix(prefix: string): Promise<{ key: string; at: number; units: string[] }[]> {
   try {
     const since = new Date(Date.now() - 24 * 3600_000).toISOString()
     const { data } = await supabaseAdmin().from('slack_outbox').select('group_key,sent_at')
       .like('group_key', prefix.replace(/[%_]/g, '\\$&') + '%').eq('status', 'sent').gte('sent_at', since).limit(50)
-    return ((data || []) as any[]).map(r => ({ key: String(r.group_key || ''), at: Date.parse(String(r.sent_at || '')) || 0 }))
+    return ((data || []) as any[]).map(r => {
+      const key = String(r.group_key || '')
+      const tail = key.slice(prefix.length).split(':')[1] || ''
+      return { key, at: Date.parse(String(r.sent_at || '')) || 0, units: tail ? tail.split('|').filter(Boolean) : [] }
+    })
   } catch { return [] }
 }
 

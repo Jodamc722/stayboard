@@ -727,22 +727,21 @@ export async function runSweep(days = 45): Promise<any> {
   }
 
   // Promote the high-confidence ones into memory (expensive — costs prompt space every turn).
-  // Supersede the previous copy of the same finding so memory does not grow a duplicate each night.
+  // UPDATE IN PLACE, NEVER SUPERSEDE (independent audit 2026-10-10). Passing `supersedes` skipped the
+  // dedupe, so every promoted finding was a NEW row each night: use and hit counters reset, it was
+  // forever "learned this week", never-used detection could not see it and revalidation could not
+  // expire it. saveMemory finds the live system twin by `evidence.finding` and rewrites its text and
+  // evidence — counters intact (the same fix lib/eve/operating-model took).
   let promoted = 0
   const toPromote = all.filter(f => f.promote)
   for (const f of toPromote) {
     try {
-      const { data: prior } = await c.db.from('eve_memory').select('id')
-        .eq('source', 'system').is('superseded_by', null)
-        .contains('evidence', { finding: f.id }).limit(1)
-      const supersedes = (prior || [])[0]?.id || null
       const saved = await saveMemory({
         kind: (f.memoryKind as any) || 'insight',
         text: `${f.title} — ${f.content}`.slice(0, 900),
         why: 'Found by the nightly learning sweep by counting real records.',
         scope: f.scope, weight: f.weight ?? 5, source: 'system',
         confidence: 0.7, evidence: { finding: f.id, evidence_count: f.evidence_count, sweptOn: c.today },
-        supersedes,
       })
       if (saved.ok) promoted++
     } catch { /* one bad promotion must not stop the sweep */ }

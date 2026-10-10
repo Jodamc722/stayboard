@@ -62,6 +62,8 @@ export type Prepared = {
   usd?: number
   /** A flag, not an action: recorded on the Thinking tab and never carried out, whatever the rung. */
   observeOnly?: boolean
+  /** The unit this is about, so a decline is remembered per BUILDING, not per watch (lib/eve/thoughts shapeOf). */
+  unit?: string | null
 }
 
 export type WatchDef = {
@@ -164,7 +166,7 @@ async function guestUnanswered(env: WatchEnv): Promise<Prepared[]> {
     const guest = str(res?.guest_name) || 'the guest'
     const unit = str(res?.listing_name) || ''
     out.push({
-      subject: `thread:${convId}`, action: 'guest_reply_draft', metric: 'sentiment_negative',
+      subject: `thread:${convId}`, action: 'guest_reply_draft', metric: 'sentiment_negative', unit: unit || null,
       ask: `draft a reply to ${guest}${unit ? ` (${unit})` : ''} — waiting ${waited} on ${str(r.channel) || 'their thread'}${arrivesToday ? ', arriving TODAY' : ''}? (it waits on the thread for Send; nothing reaches the guest yet)`,
       why: `The guest has waited ${waited} with no answer — past the reply-by time.`,
       exec: async () => {
@@ -198,7 +200,11 @@ async function guestUnanswered(env: WatchEnv): Promise<Prepared[]> {
 async function cleanLate(env: WatchEnv): Promise<Prepared[]> {
   const cd = await env.commandDay()
   if (!cd) return []
-  const late = cd.tiles.cleans.rows.filter(c => (c.status === 'late' || c.status === 'atRisk') && !str(c.who).trim())
+  // FROM THE MORNING, NOT AT 2PM (independent audit 2026-10-10): a same-day turn with nobody on it was
+  // proposed only once it was already "at risk" (two hours before the guest), so the first ask landed
+  // around 2:20pm for a clean that takes two. An unassigned same-day turn is a gap the moment the day
+  // starts; it is proposed then, to whoever has headroom.
+  const late = cd.tiles.cleans.rows.filter(c => (c.status === 'late' || c.status === 'atRisk' || (c.sameDay && c.status === 'open')) && !str(c.who).trim())
   if (!late.length) return []
   const dp = await env.dayPicture()
   if (!dp) return []
@@ -221,9 +227,9 @@ async function cleanLate(env: WatchEnv): Promise<Prepared[]> {
     if (!fit) continue
     taken[fit.name] = (taken[fit.name] || 0) + 1
     out.push({
-      subject: `task:${c.taskId}`, action: 'task_assign', metric: 'cleans_unassigned',
-      ask: `put ${fit.name} on the ${c.status === 'late' ? 'late' : 'at-risk'} clean at ${c.unit}${c.arrivingAt ? ` (guest lands ${c.arrivingAt})` : ''}?`,
-      why: `${c.unit} is ${c.status === 'late' ? 'late' : 'at risk'} with nobody assigned; ${fit.name} is on shift in ${fit.market || c.market || 'the market'} with room for ${fit.headroom} more clean${fit.headroom === 1 ? '' : 's'}.`,
+      subject: `task:${c.taskId}`, action: 'task_assign', metric: 'cleans_unassigned', unit: c.unit || null,
+      ask: `put ${fit.name} on the ${c.status === 'late' ? 'late' : c.status === 'atRisk' ? 'at-risk' : 'same-day'} clean at ${c.unit}${c.arrivingAt ? ` (guest lands ${c.arrivingAt})` : ''}?`,
+      why: `${c.unit} is ${c.status === 'late' ? 'late' : c.status === 'atRisk' ? 'at risk' : 'a same-day turn'} with nobody assigned; ${fit.name} is on shift in ${fit.market || c.market || 'the market'} with room for ${fit.headroom} more clean${fit.headroom === 1 ? '' : 's'}.`,
       exec: { taskId: c.taskId, person: fit.name },
     })
   }
@@ -248,7 +254,7 @@ async function bigArrivalUninspected(env: WatchEnv): Promise<Prepared[]> {
     const sup = cfg ? (cfg.supervisors[market || 'Miami'] || cfg.supervisors.Miami) : ''
     const assignees = Array.from(new Set([cfg?.assignAlways, sup].filter(Boolean))).filter(n => !never.blocks(n))
     out.push({
-      subject: `res:${a.reservationId}`, action: 'task_create', metric: 'low_reviews',
+      subject: `res:${a.reservationId}`, action: 'task_create', metric: 'low_reviews', unit: a.unit || null,
       ask: `create a pre-arrival inspection on ${a.unit} for ${a.checkIn} (${a.guest}, $${Math.round(a.value).toLocaleString('en-US')}) and give it to ${assignees.join(' + ') || 'the supervisor'}?`,
       why: `A $${Math.round(a.value).toLocaleString('en-US')} arrival ${a.checkIn === env.today ? 'today' : 'on ' + a.checkIn} with no inspection on the books.`,
       exec: {
@@ -382,7 +388,7 @@ async function glitchOverdue(env: WatchEnv): Promise<Prepared[]> {
     const unit = str(g.unit) || 'the unit'
     const daysLate = Math.max(1, Math.round((Date.parse(env.today + 'T12:00:00Z') - Date.parse(str(g.due_date).slice(0, 10) + 'T12:00:00Z')) / 86400_000))
     out.push({
-      subject: `glitch:${g.id}`, action: 'task_create', metric: 'glitches_open',
+      subject: `glitch:${g.id}`, action: 'task_create', metric: 'glitches_open', unit: g.unit || null,
       ask: `create a maintenance task on ${unit} for the glitch "${issue.slice(0, 70)}" — ${daysLate} day${daysLate === 1 ? '' : 's'} past due with no Breezeway task?`,
       why: `Due ${str(g.due_date).slice(0, 10)}${g.assignee ? `, owned by ${str(g.assignee)}` : ''}${g.guest_name ? `, reported by ${str(g.guest_name)}` : ''}; nobody in the field has it.`,
       exec: {
@@ -668,7 +674,11 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
       // A DECLINED SHAPE IS SKIPPED, AND THE SKIP IS ON THE RECORD. Checked on the prepared action
       // before any model draft is built (no spend on something she will not raise), and the reasons
       // Jon gave ride along as evidence so the Thinking tab shows what she consulted.
-      const preShape = shapeOf(f.action, byLabel, typeof f.exec === 'function' ? null : f.exec, f.subject)
+      // THE SHAPE IS THE BUILDING (independent audit 2026-10-10): static watches carried no unit in their
+      // payload, so every late-clean ask collapsed to one shape and one "Not this" muted them all; model
+      // drafts were checked with a null payload and recorded with a full one, so the two never matched.
+      // The unit the watch knows rides on both sides now.
+      const preShape = shapeOf(f.action, byLabel, { ...(typeof f.exec === 'function' ? {} : (f.exec || {})), ...(f.unit ? { unit: f.unit } : {}) }, f.subject)
       const saidNo = declined[preShape]
       if (saidNo && saidNo.reasons.length) {
         rec.modes.skipped_declined = (rec.modes.skipped_declined || 0) + 1
@@ -710,7 +720,7 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
           // Nothing to draft (thread answered meanwhile, model returned nothing): it still counts
           // against this run's cap, so a run can never loop the model over thirty threads.
           if (!exec) { rec.modes.skipped = (rec.modes.skipped || 0) + 1; continue }
-          exec = { ...exec, watchKey: row.key, subject: f.subject }
+          exec = { ...exec, watchKey: row.key, subject: f.subject, ...(f.unit && !exec.unit ? { unit: f.unit } : {}) }
         }
         const evidence = [f.why, ...(exec && typeof exec === 'object' && exec.why ? [String(exec.why)] : [])].filter(Boolean)
         const r = await stepDown(verdict, { action: f.action, summary: f.ask, exec, why: f.why, by: byLabel, watchKey: row.key, subject: f.subject, metric: f.metric || null, usd: f.usd ?? null, evidence, note, thoughtCooldownHours: opts.force ? 0 : row.cooldownHours })

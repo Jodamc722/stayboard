@@ -198,9 +198,23 @@ export async function runProbes(opts: { limit?: number } = {}): Promise<{ result
   let due: any[] = []
   try {
     // Honesty probes ride along last so real retention probes are never crowded out by them.
-    const { data, error } = await db.from('eve_probes').select('*').eq('active', true).lte('due_at', nowISO()).order('due_at').limit(limit * 2)
+    const { data, error } = await db.from('eve_probes').select('*').eq('active', true).lte('due_at', nowISO()).order('due_at').limit(limit * 3)
     if (error) return { results, usage, error: error.message.slice(0, 200) }
-    const rows = (data as any[]) || []
+    let rows = (data as any[]) || []
+    // A PROBE DIES WITH ITS MEMORY (independent audit 2026-10-10). When a memory was superseded (an OTA
+    // cell edited, a rule corrected) or pruned, its probe stayed active with the OLD expected answer and
+    // failed every night — taking a slot and dragging retention for being right. Probes whose source
+    // memory is no longer live are retired here, before anything is asked.
+    const srcIds = Array.from(new Set(rows.map(r => str(r.source_memory_id)).filter(Boolean)))
+    if (srcIds.length) {
+      const { data: mems } = await db.from('eve_memory').select('id,superseded_by,expires_on').in('id', srcIds)
+      const live = new Set<string>()
+      const today = new Date().toISOString().slice(0, 10)
+      for (const m of ((mems || []) as any[])) if (!m.superseded_by && !(m.expires_on && str(m.expires_on) < today)) live.add(str(m.id))
+      const dead = rows.filter(r => r.source_memory_id && !live.has(str(r.source_memory_id)))
+      for (const r of dead) { try { await db.from('eve_probes').update({ active: false, last_why: 'retired — its memory was superseded or expired' }).eq('id', r.id) } catch { /* next run */ } }
+      rows = rows.filter(r => !dead.includes(r))
+    }
     due = rows.filter(r => r.expected !== NO_SIGNAL).concat(rows.filter(r => r.expected === NO_SIGNAL)).slice(0, limit)
   } catch (e: any) { return { results, usage, error: str(e?.message || e).slice(0, 200) } }
 
@@ -223,12 +237,18 @@ export async function runProbes(opts: { limit?: number } = {}): Promise<{ result
     const nextDays = v.pass ? SPACING_DAYS[Math.min(passCount, SPACING_DAYS.length - 1)] : 1
     // Honesty probes are asked weekly whatever happens — they are a calibration, not a lesson.
     const due_at = p.expected === NO_SIGNAL ? plusDays(7) : plusDays(nextDays)
+    // THREE STRAIGHT FAILS IS "FORGOTTEN", NOT "ASK AGAIN TOMORROW FOREVER" (independent audit
+    // 2026-10-10): a probe that keeps failing is re-taught by a person or retired; it does not hold a
+    // nightly slot and a fifth of the score for weeks. It stays visible on the Learning tab as forgotten.
+    const streak = v.pass ? 0 : Number((p as any).fail_streak || 0) + 1
+    const retire = p.expected !== NO_SIGNAL && streak >= 3
     try {
       await db.from('eve_probes').update({
-        last_asked_at: nowISO(), last_answer: clip(answer, 2000), last_pass: v.pass, last_why: v.why,
-        pass_count: passCount, fail_count: failCount, due_at,
+        last_asked_at: nowISO(), last_answer: clip(answer, 2000), last_pass: v.pass, last_why: retire ? `forgotten — failed ${streak} nights running; re-teach it or leave it retired` : v.why,
+        pass_count: passCount, fail_count: failCount, due_at, ...(retire ? { active: false } : {}),
       }).eq('id', p.id)
     } catch { /* the result is still returned and stored on the run */ }
+    try { await db.from('eve_probes').update({ fail_streak: streak }).eq('id', p.id) } catch { /* column optional */ }
     results.push({ id: str(p.id), kind: p.kind, question: p.question, expected: p.expected, answer: clip(answer, 600), pass: v.pass, why: v.why, ms: Date.now() - t0 })
   }
   return { results, usage }
@@ -269,7 +289,11 @@ const SKIPPED_NOTE = 'skipped — Jon declined this shape before'
 export async function declinedShapes(): Promise<Record<string, { reasons: string[]; lastAt: string; firstAt: string }>> {
   const out: Record<string, { reasons: string[]; lastAt: string; firstAt: string }> = {}
   try {
-    const rows = await listThoughts({ status: 'all', limit: 500 })
+    // DISMISSALS, DIRECTLY, SIXTY DAYS BACK (independent audit 2026-10-10): this read the newest 500
+    // thoughts of any status, so a decline silently stopped being honoured once ~10 days of volume had
+    // pushed it past the window. The dismissed ones are read on their own.
+    const since = new Date(Date.now() - 60 * 864e5).toISOString()
+    const rows = await listThoughts({ status: 'dismissed', since, limit: 500 })
     for (const t of rows) {
       if (t.status !== 'dismissed') continue
       const note = str(t.result?.note).trim()

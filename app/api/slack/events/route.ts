@@ -198,7 +198,7 @@ async function say(channel: string, threadTs: string, text: string, opts?: { raw
   // before it posts (lib/eve/redact) — every redaction used to be inbound only. A TRANSLATION is a
   // person's own words repeated in the room they chose, so it goes as written (`raw`).
   let out = text
-  if (!opts || !opts.raw) { try { const { scrubStoredText } = await import('@/lib/eve/redact'); out = scrubStoredText(text, [], undefined, { room: true }) } catch { out = text } }
+  if (!opts || !opts.raw) { try { const { scrubStoredText, UNIT_KEEP_RE } = await import('@/lib/eve/redact'); out = scrubStoredText(text, [], undefined, { room: true, keep: UNIT_KEEP_RE }) } catch { out = text } }
   // SAID ONCE (2026-09-30 audit): the same answer or translation in the same thread twice (a Slack retry
   // that outlived the claim, two instances answering one tag) is dropped here — the registry that every
   // desk shares (lib/eve/said.ts). The check is by the post's own words within the thread; a genuine

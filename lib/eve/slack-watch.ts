@@ -38,7 +38,7 @@ import { saveMemory } from './memory'
 import { askQuestion } from './questions'
 import { aiFetch } from '@/lib/ai-usage'
 import { agentAllowed, stepDown } from './agent-mode'
-import { scrubStoredText } from './redact'
+import { scrubStoredText, UNIT_KEEP_RE } from './redact'
 import { winsFor } from './wins'
 import { checkLoop, resolveUnitInText } from './loop-match'
 import { investigateLoop, MAX_PER_RUN as MAX_INVESTIGATIONS, type Investigation } from './investigate'
@@ -615,7 +615,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
       // code is masked where the item is filed, so no later post can carry it into another room.
       const row = {
         channel: ch.id, channel_name: ch.label, msg_ts: ts, thread_ts: src?.threadTs || ts,
-        kind, summary: scrubStoredText(summary), owner_name: owner, owner_slack: ownerSlack,
+        kind, summary: scrubStoredText(summary, [], undefined, { keep: UNIT_KEEP_RE }), owner_name: owner, owner_slack: ownerSlack,
         unit, building: listing?.building || null, listing_id: listing?.id || null,
         // A guest ask's clock is minutes, not a day (ccs-desk): due = first seen + the desk's nudge window.
         due_at: it?.due && !isNaN(Date.parse(it.due)) ? new Date(it.due).toISOString()
@@ -624,8 +624,8 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
         urgent: !!it?.urgent && kind === 'problem',
         first_seen: src?.at || new Date().toISOString(), last_seen: src?.at || new Date().toISOString(),
         evidence: kind === 'guest_ask'
-          ? { text: src?.text ? scrubStoredText(src.text.slice(0, 300)) : null, who: src?.who || null, guest: clean(it?.guest).slice(0, 80) || null, ask: ['inquiry', 'discount', 'extension', 'callback', 'refund', 'change', 'other'].includes(String(it?.ask)) ? String(it.ask) : askKindOf(src?.text || summary), amount: Number.isFinite(Number(it?.amount)) && Number(it?.amount) > 0 ? Number(it.amount) : null, weight: 'big', expires }
-          : { text: src?.text ? scrubStoredText(src.text.slice(0, 300)) : null, who: src?.who || null, weight, expires },
+          ? { text: src?.text ? scrubStoredText(src.text.slice(0, 300), [], undefined, { keep: UNIT_KEEP_RE }) : null, who: src?.who || null, guest: clean(it?.guest).slice(0, 80) || null, ask: ['inquiry', 'discount', 'extension', 'callback', 'refund', 'change', 'other'].includes(String(it?.ask)) ? String(it.ask) : askKindOf(src?.text || summary), amount: Number.isFinite(Number(it?.amount)) && Number(it?.amount) > 0 ? Number(it.amount) : null, weight: 'big', expires }
+          : { text: src?.text ? scrubStoredText(src.text.slice(0, 300), [], undefined, { keep: UNIT_KEEP_RE }) : null, who: src?.who || null, weight, expires },
       }
       const { data: ins, error } = await db.from('eve_slack_items').upsert(row, { onConflict: 'channel,msg_ts', ignoreDuplicates: true }).select('*').maybeSingle()
       if (error) { out.notes.push(`insert: ${error.message}`); continue }
@@ -673,7 +673,9 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   if (opts?.nudge !== false && hour >= NUDGE_WINDOW_ET.start && hour < NUDGE_WINDOW_ET.end) {
     const now = Date.now()
     for (const it of open) {
-      if (it.status !== 'open' || it.tracked_in || it.kind === 'decision') continue
+      // A question nobody answered in a day is not Eve's to re-ask (independent audit 2026-10-10: "this one
+      // never got an answer. Still needed?" to Karla, in a vendor room). Questions expire on their own.
+      if (it.status !== 'open' || it.tracked_in || it.kind === 'decision' || it.kind === 'question') continue
       // GUEST ASKS RUN ON THE DESK'S CLOCK: a first nudge at nudgeAfterMin, a second at
       // secondNudgeMin, then the handoff list carries it. Everything else nudges once, after a day.
       const isAsk = it.kind === 'guest_ask'
@@ -742,7 +744,12 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   // "Waiting on a person" lines of lib/eve/morning.ts, each said on its first morning and once more if
   // it ages, instead of every morning. With eve_morning off this roll-up runs as before.
   const { morningOn } = await import('./morning')
-  if (opts?.digest && st.lastDigest !== today && hour >= 7 && hour <= 10 && !(await morningOn())) {
+  // RETIRED BY DEFAULT (independent audit 2026-10-10): with the Slack morning post switched off this
+  // legacy roll-up came back as the fallback — "Keeping tabs", "Today —" and "End of day" in #vr-eve,
+  // three posts a day that the Ops Command email already carries. app_settings eve_legacy_rollups
+  // { enabled: true } brings it back on purpose.
+  const legacyOn = !!((await getSetting<any>('eve_legacy_rollups', null))?.enabled)
+  if (opts?.digest && legacyOn && st.lastDigest !== today && hour >= 7 && hour <= 10 && !(await morningOn())) {
     const openNow = open.filter(i => i.status === 'open')
     const { data: closedRows } = await db.from('eve_slack_items').select('summary,closed_reason,unit').eq('status', 'closed').gte('closed_at', new Date(Date.now() - 26 * 3600_000).toISOString()).limit(30)
     const closed = (closedRows || []) as any[]

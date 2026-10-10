@@ -64,6 +64,8 @@ const SLACK_ITEM_AFTER_MIN = 45
 const NO_TASK_AFTER_H = 2
 const SLOW_TASK_AFTER_H = 6
 const ESCALATE_AFTER_H = 3
+// Categories a technician or a cleaner fixes — the only ones where "no Breezeway task" means anything.
+const FIELD_CATEGORY = /maint|clean|pest|bed ?bug|plumb|electric|hvac|temperature|applian|water|safety|security|building|common|noise|smell|mold|leak|lock|door|key|access/i
 const OPEN = (s: any) => !/^(closed|done|resolved)$/i.test(String(s || ''))
 
 type Flag = {
@@ -74,6 +76,8 @@ type Flag = {
   since?: string; guest?: { reservationId?: string; listingId?: string; checkIn?: string }
   /** other flags said in the same line (a second report about the same unit) */
   also?: string[]
+  /** D/F: the draft Eve wrote (eve_actions guest_draft id + text) — the post's thread is its Send slot */
+  draftId?: string | null; draftText?: string | null
 }
 type State = { flags: Record<string, Flag>; seen?: Record<string, string> }
 
@@ -106,7 +110,9 @@ const weekday = (ymd: string) => {
   return ahead < 6 ? day : `${day} ${d.getUTCMonth() + 1}/${d.getUTCDate()}`
 }
 /** "Botanica 2208 - King Studio - B" → "Botanica 2208". */
-const shortUnit = (u: any) => String(u || '').split(' - ')[0].trim() || 'a unit'
+// THE ROOM NUMBER STAYS (Eve audit 2026-10-10: "17WEST · hot water" named a building of 40 doors). "Eden
+// 2104 - Studio" → "Eden 2104"; "17WEST - 516 - 3BR" → "17WEST 516"; "Arya 1002/1 - Studio" → "Arya 1002/1".
+const shortUnit = (u: any) => { const s = String(u || '').trim(); if (!s) return 'a unit'; const parts = s.split(/\s+-\s+/).filter(Boolean); if (parts.length >= 2 && /^\d+[A-Za-z]?(?:\/\d+)?$/.test(parts[1]) && !/\d/.test(parts[0])) return parts[0] + ' ' + parts[1]; return parts[0] || s }
 /** "[Moved to Sep 21] Guest Reported / Glitch - Blinds / Washer" → "Blinds / Washer". */
 const taskTitle = (n: any) => String(n || '').replace(/\s+/g, ' ').replace(/^\[[^\]]*\]\s*/, '')
   .replace(/^guest\s*reported\s*(\/\s*glitch)?\s*[-\/:]?\s*/i, '').replace(/^glitch\s*[-\/:]\s*/i, '').trim().slice(0, 60) || 'guest-reported issue'
@@ -190,6 +196,45 @@ export function fixedNote(firstName: string, what: string, leavingToday: boolean
   const w = KNOWN[String(what || '').trim()]
   const issue = w ? `the ${w} issue you reported` : 'the issue you reported'
   return `${hi} a quick update from the Stay Hospitality team — ${issue} has been taken care of. Thank you for letting us know, and please reach out if anything else needs attention. ${leavingToday ? 'We hope the rest of your stay is smooth before you check out today.' : 'Enjoy the rest of your stay!'}`
+}
+
+/**
+ * Write the "it's sorted" note onto the guest's thread (guest_reply_draft, gated by Agent mode). Returns
+ * the draft row id and text so the room post can carry the words and be the Send slot. The draft is NOT
+ * queued for the hourly drafts list (slack_pending false) — the "fixed" line is its one appearance.
+ */
+async function draftFixed(db: any, gref: GuestRef, p: { guestFirst: string; guestName: any; unit: any; where: string; what: string; leavingToday: boolean; finishedAt: string; subject: string }): Promise<{ state: '' | 'drafted' | 'proposed'; id: string | null; text: string | null }> {
+  const convId = await conversationFor(db, gref)
+  if (!convId) return { state: '', id: null, text: null }
+  const note = fixedNote(p.guestFirst, p.what, p.leavingToday)
+  const exec = { conversationId: convId, draft: note, guest: p.guestName || null, unit: p.unit || null, why: `Fixed ${clock(p.finishedAt)}; the guest has not been told.`, watchKey: 'on_watch_fixed_not_told', subject: p.subject, slack_pending: false }
+  const gate = await agentAllowed('guest_reply_draft', { ask: true })
+  const r = await stepDown(gate, { action: 'guest_reply_draft', summary: `draft a note to ${p.guestFirst || 'the guest'} (${p.where}) that the ${p.what} is fixed`, exec, why: `The fix is done and the guest is still ${p.leavingToday ? 'here until checkout' : 'in the unit'}.`, by: 'cron:on-watch' },
+    async () => { const { runExecutor } = await import('./executors'); const x = await runExecutor('guest_reply_draft', exec, { by: 'cron:on-watch' }); return { ok: x.ok, ref: x.ref || null, error: x.error } })
+  if (r.mode === 'act' && r.ok) return { state: 'drafted', id: r.ref ? String(r.ref) : null, text: note }
+  if (r.mode === 'propose') return { state: 'proposed', id: null, text: null }
+  return { state: '', id: null, text: null }
+}
+
+/** The Slack tag of the supervisor for the building named in a label ("17WEST 516 · hot water"), else Roberto. */
+async function supervisorTagFor(label: string): Promise<string> {
+  try {
+    const { marketOf } = await import('@/lib/segments')
+    const { getStaff } = await import('@/lib/staffing')
+    const { getDirectory } = await import('@/lib/slack')
+    const { nameMatches } = await import('@/lib/person-name')
+    const { ROBERTO_SLACK_ID } = await import('@/lib/slack-rules')
+    const unit = String(label || '').split('·')[0].trim()
+    const mk = String(marketOf(buildingOf(null, unit) || null, null, unit) || '')
+    const staff = await getStaff()
+    const sups = staff.filter((r: any) => r && r.active !== false && /superv/i.test(String(r.dept || r.role || '')) && (!mk || String(r.area || '').toLowerCase().includes(mk.toLowerCase())))
+    const dir: any = await getDirectory()
+    for (const sp of sups) {
+      const hit = (dir?.users || []).find((u: any) => u && !u.deleted && nameMatches(String(u.realName || u.name || ''), String(sp.name)))
+      if (hit?.id) return `<@${hit.id}>`
+    }
+    return ROBERTO_SLACK_ID ? `<@${ROBERTO_SLACK_ID}>` : ''
+  } catch { return '' }
 }
 
 export type OnWatchRun = { ok: boolean; skipped?: string; found: Record<string, number>; posted: Record<string, number>; resolved: number; escalated: number; notes: string[]; preview?: Record<string, string[]> }
@@ -352,8 +397,12 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     const h = hoursSince(g.created_at)
     // B — a glitch with nothing behind it in Breezeway. Refund and manager-review lanes are money
     // decisions, not field work, so an empty Breezeway link there is normal.
-    if (!g.breezeway_task_id && ourFix(g.unit) && h >= NO_TASK_AFTER_H && h <= 7 * 24 && !/refund|manager_review/.test(String(g.status))) {
-      add('B:' + g.id, { kind: 'B', room: 'ops', label, line: `${label} — glitch open ${age(g.created_at)}, no Breezeway task${g.assignee ? `, with ${first(g.assignee)}` : ''}.` })
+    // FIELD WORK ONLY, WITH A GUEST (Eve audit 2026-10-10): "guest called after checkout wanting to
+    // extend — no Breezeway task" is not a gap; a booking question never needed a task. A glitch earns
+    // this line when its category is something a technician or a cleaner fixes and the guest is in the
+    // unit or arriving today.
+    if (!g.breezeway_task_id && ourFix(g.unit) && FIELD_CATEGORY.test(String(g.category || '')) && (inHouse(g) || String(g.check_in || '').slice(0, 10) === today) && h >= NO_TASK_AFTER_H && h <= 7 * 24 && !/refund|manager_review/.test(String(g.status))) {
+      add('B:' + g.id, { kind: 'B', room: 'ops', label, line: `${label} — glitch open ${age(g.created_at)}, no Breezeway task${g.assignee && !/^support$/i.test(String(g.assignee)) ? `, with ${first(g.assignee)}` : ' — nobody in the field has it'}.` })
     }
     // C — the task exists but is dragging, and the guest is living with it.
     if (t && !taskDone(t) && ourFix(g.unit) && h >= SLOW_TASK_AFTER_H && h <= 7 * 24 && inHouse(g)) {
@@ -370,18 +419,11 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
       // warm template with the glitch's own words) and saved on the guest's thread; the desk sees it
       // in the drafts list in #vr-customercareteam and "1 send" sends it as them. Gated by Agent mode
       // for guest_reply_draft exactly like every other draft.
-      let drafted = ''
-      if (!opts.preview && !flags['D:' + g.id]) {
-        const convId = await conversationFor(db, gref)
-        if (convId) {
-          const note = fixedNote(guest, trade(g.category, g.overview), co === today)
-          const gate = await agentAllowed('guest_reply_draft', { ask: true })
-          const r = await stepDown(gate, { action: 'guest_reply_draft', summary: `draft a note to ${guest || 'the guest'} (${unitOf(g)}) that the ${trade(g.category, g.overview)} is fixed`, exec: { conversationId: convId, draft: note, guest: g.guest_name || null, unit: g.unit || null, why: `Fixed ${clock(t.finished_at)}; the guest has not been told.`, watchKey: 'on_watch_fixed_not_told', subject: 'glitch:' + g.id }, why: `The fix is done and the guest is still ${co === today ? 'here until checkout' : 'in the unit'}.`, by: 'cron:on-watch' },
-            async () => { const { runExecutor } = await import('./executors'); const x = await runExecutor('guest_reply_draft', { conversationId: convId, draft: note, guest: g.guest_name || null, unit: g.unit || null, why: `Fixed ${clock(t.finished_at)}; the guest has not been told.`, watchKey: 'on_watch_fixed_not_told', subject: 'glitch:' + g.id }, { by: 'cron:on-watch' }); return { ok: x.ok, ref: x.ref || null, error: x.error } })
-          drafted = r.mode === 'act' && r.ok ? 'drafted' : r.mode === 'propose' ? 'proposed' : ''
-        }
-      }
-      add('D:' + g.id, { kind: 'D', room: 'guest', label, since: t.finished_at, guest: gref, line: `${label} — fixed ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}. ${guest ? guest + ' is' : 'The guest is'} ${co === today ? 'checking out today' : 'in until ' + weekday(co)}. ${drafted === 'drafted' ? 'A note is drafted — it is in the drafts list here and on the thread; reply *send* on it or edit it there.' : drafted === 'proposed' ? 'I have asked to draft the note.' : 'Worth a quick note that it is sorted.'}` })
+      const d = !opts.preview && !flags['D:' + g.id]
+        ? await draftFixed(db, gref, { guestFirst: guest, guestName: g.guest_name, unit: g.unit, where: unitOf(g), what: trade(g.category, g.overview), leavingToday: co === today, finishedAt: t.finished_at, subject: 'glitch:' + g.id })
+        : { state: '', id: null, text: null }
+      add('D:' + g.id, { kind: 'D', room: 'guest', label, since: t.finished_at, guest: gref, draftId: d.id, draftText: d.text,
+        line: `${label} — fixed ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}. ${guest ? guest + ' is' : 'The guest is'} ${co === today ? 'checking out today' : 'in until ' + weekday(co)}.${d.state === 'proposed' ? ' I have asked to draft the note.' : d.state === 'drafted' ? '' : ' Worth a quick note that it is sorted.'}` })
     }
   }
 
@@ -406,7 +448,12 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
       const guest = first(stay.guest)
       const gref: GuestRef = { reservationId: String(t.linked_reservation_id || '') || undefined, listingId: lid, checkIn: today }
       if (!flags['F:' + t.id] && await hostWroteSince(db, gref, t.finished_at)) continue
-      add('F:' + t.id, { kind: 'F', room: 'guest', label, since: t.finished_at, guest: gref, line: `${label} — done ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}. ${guest ? guest + ' is' : 'The guest is'} ${stay.out === today ? 'checking out today' : 'in until ' + weekday(stay.out)}; worth a quick note that it's sorted. I can draft it.` })
+      // The same draft as D (Eve audit 2026-10-10: F still said "I can draft it").
+      const d = !opts.preview && !flags['F:' + t.id]
+        ? await draftFixed(db, gref, { guestFirst: guest, guestName: stay.guest, unit: unitName[lid], where: shortUnit(unitName[lid]), what: taskTitle(t.name), leavingToday: stay.out === today, finishedAt: t.finished_at, subject: 'task:' + t.id })
+        : { state: '', id: null, text: null }
+      add('F:' + t.id, { kind: 'F', room: 'guest', label, since: t.finished_at, guest: gref, draftId: d.id, draftText: d.text,
+        line: `${label} — done ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}. ${guest ? guest + ' is' : 'The guest is'} ${stay.out === today ? 'checking out today' : 'in until ' + weekday(stay.out)}.${d.state === 'proposed' ? ' I have asked to draft the note.' : d.state === 'drafted' ? '' : ' Worth a quick note that it is sorted.'}` })
     }
   }
 
@@ -416,7 +463,22 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     // Only glitch-backed gaps go up to leadership. A Slack problem often closes without anyone
     // saying so in the thread, and paging leadership about one of those is noise.
     if (f.resolved || f.escalated || (f.kind !== 'B' && f.kind !== 'C' && f.kind !== 'E') || !f.ts) continue
-    if (hoursSince(f.at) >= ESCALATE_AFTER_H) escalate.push([key, f])
+    if (hoursSince(f.at) < ESCALATE_AFTER_H) continue
+    // NOBODY MEANS NOBODY (Eve audit 2026-10-10). "Still open after 3h, nobody on it … with Support" went
+    // to #leadership twice a day: Support IS an owner (the desk), and a task with a technician on it
+    // has an owner too. Only a glitch with no named human and a task with nobody assigned escalate.
+    const [, id] = key.split(':')
+    if (f.kind === 'B' || f.kind === 'C') {
+      const g = byId(id)
+      if (!g) continue
+      const named = String(g.assignee || '').trim()
+      const human = named && !/^(support|lighthouse|eve|team|pool)$/i.test(named)
+      const t2 = tasks[String(g.breezeway_task_id || '')]
+      const taskHasPerson = !!(t2 && Array.isArray(t2.assignees) && t2.assignees.length)
+      if (human || (f.kind === 'C' && taskHasPerson)) continue
+    }
+    if (f.kind === 'E') { const t3 = guestTasks.find(x => String(x.id) === id); if (t3 && Array.isArray(t3.assignees) && t3.assignees.length) continue }
+    escalate.push([key, f])
   }
 
   if (opts.preview) {
@@ -438,7 +500,15 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     rows = rows.filter(([k, f]) => { const key = f.line.toLowerCase(); if (byLine[key]) { const prim = rows.find(r => r[0] === byLine[key]); if (prim) (prim[1].also = prim[1].also || []).push(k); return false } byLine[key] = k; return true })
     const shown = rows.slice(0, MAX_LINES)
     const more = rows.length > shown.length ? `\n…and ${rows.length - shown.length} more. Ask me for the list.` : ''
-    const text = `${head}\n${shown.map(([, f]) => `• ${f.line}`).join('\n')}${more}${tail ? '\n' + tail : ''}`
+    // ONE POST PER FIX (Eve audit 2026-10-10): the "fixed, guest not told" line used to be followed an
+    // hour later by a "Replies drafted" list carrying the same note. The fixed line now IS the draft:
+    // numbered, with the words, and this post's thread is where "1 send" sends it as you.
+    const withDrafts = room === 'guest' && shown.some(([, f]) => f.draftId)
+    const body = withDrafts
+      ? shown.map(([, f], i) => `*${i + 1}.* ${f.line}${f.draftText ? `\n      “${f.draftText}”` : ''}`).join('\n')
+      : shown.map(([, f]) => `• ${f.line}`).join('\n')
+    const draftTail = withDrafts ? (shown.length === 1 ? 'Reply *send* here and it goes to the guest as you · *no* drops it · open the thread in Lighthouse to change the wording.' : 'Reply here with `1 send` · `2 no` · `all send` — each goes to the guest as you. Open the thread in Lighthouse to change the wording.') : ''
+    const text = `${head}\n${body}${more}${tail ? '\n' + tail : ''}${draftTail ? '\n' + draftTail : ''}`
     const gate = await agentAllowed('slack_post', { ask: true })
     const r = await stepDown(gate, { action: 'slack_post', summary: `on watch · ${room}: ${rows.length} item${rows.length === 1 ? '' : 's'}`, exec: { channel, text }, by: 'cron:on-watch' },
       async () => { const p = await postToChannel(channel, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
@@ -446,26 +516,53 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     if (r.mode === 'act' && !r.ok) { out.notes.push(`${room}: ${r.error}`); return null }
     if (r.mode === 'observe') return null
     out.posted[room] = (out.posted[room] || 0) + shown.length
-    return { channel, ts: r.mode === 'act' ? (r.ref || null) : null, keys: shown.map(([k]) => k) }
+    const ts = r.mode === 'act' ? (r.ref || null) : null
+    // The post's thread is the Send slot: each draft row remembers this post and its number, exactly
+    // like the drafts digest does (lib/eve/slack-approvals decideDraftDigest finds them by slack_ts).
+    if (withDrafts && ts) {
+      for (let i = 0; i < shown.length; i++) {
+        const f = shown[i][1]
+        if (!f.draftId) continue
+        try {
+          const { data: row } = await db.from('eve_actions').select('payload').eq('id', f.draftId).maybeSingle()
+          const pl = (row as any)?.payload || {}
+          await db.from('eve_actions').update({ payload: { ...pl, slack_pending: false, slack_channel: channel, slack_ts: ts, slack_index: i + 1, slack_sent_at: new Date().toISOString() } }).eq('id', f.draftId)
+        } catch { /* the draft still waits on /messages */ }
+      }
+    }
+    return { channel, ts, keys: shown.map(([k]) => k) }
   }
 
   const freshRows = Object.entries(fresh)
   const t = clock(now)
   for (const [room, head, tail] of [
     ['ops', `*On watch · ${t}*`, ''],
-    ['guest', `*Fixed, guest not told yet · ${t}*`, ''],
+    ['guest', `✍️ *Fixed — a note is ready for the guest · ${t}*`, ''],
   ] as [Room, string, string][]) {
     // Guest in the unit first (E, C), then a glitch with nothing behind it (B), then Slack reports (A).
     const PRI: Record<string, number> = { E: 0, C: 1, B: 2, A: 3, D: 4, F: 5 }
-    const said = await say(room, head, freshRows.filter(([, f]) => f.room === room).sort((a, b) => PRI[a[1].kind] - PRI[b[1].kind]), tail)
+    // TWICE A DAY FOR THE SLOW ONES (independent audit 2026-10-10): a Slack report with no task (A) and a
+    // glitch with no task (B) are not an hourly matter; they are said at 11 and at 15. A guest living
+    // with an open task (C, E) stays hourly.
+    const slowSlot = hour === 11 || hour === 15 || !!opts.force
+    const said = await say(room, head, freshRows.filter(([, f]) => f.room === room && (slowSlot || (f.kind !== 'A' && f.kind !== 'B'))).sort((a, b) => PRI[a[1].kind] - PRI[b[1].kind]), tail)
     if (said) for (const k of said.keys) {
       fresh[k].channel = said.channel; fresh[k].ts = said.ts; flags[k] = fresh[k]
       for (const k2 of fresh[k].also || []) flags[k2] = { ...fresh[k], also: undefined, label: fresh[k].label + ' (same unit)' }
     }
   }
-  // Escalations are a new line in leadership; the flag keeps its original thread for the ✅.
-  const esc = await say('leadership', `*Still open after ${ESCALATE_AFTER_H}h, nobody on it*`, escalate, '')
-  if (esc) for (const k of esc.keys) { flags[k].escalated = true; out.escalated++ }
+  // ESCALATE IN THE THREAD, TO A NAME (Eve audit 2026-10-10) — not a new post in #leadership. The
+  // original #vr-eve line gets one reply tagging the market's supervisor (or Roberto when no supervisor
+  // is known) asking for a name; #leadership hears about it only through the Ops Command brief.
+  for (const [k, f] of escalate) {
+    if (!f.channel || !f.ts) continue
+    const tag = await supervisorTagFor(f.label)
+    const text = `${tag ? tag + ' — ' : ''}open ${Math.round(hoursSince(f.at))}h and nobody has it: ${f.label}. Can you take it or name who does? Reply here.`
+    const gate = await agentAllowed('slack_post', { ask: true })
+    const r = await stepDown(gate, { action: 'slack_post', summary: `escalate in thread: ${f.label.slice(0, 120)}`, exec: { channel: f.channel, thread_ts: f.ts, text }, by: 'cron:on-watch' },
+      async () => { const p = await postThreadReply(f.channel as string, f.ts as string, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
+    if (r.ok && r.mode !== 'observe') { flags[k].escalated = true; out.escalated++ }
+  }
 
   // ── Remember
   for (const [key, f] of Object.entries(flags)) {

@@ -384,16 +384,9 @@ export async function runGuestIssueWatch(opts: { hours?: number; dryRun?: boolea
         if (alerted) out.alerted++
       } catch { /* the glitch is filed; the alert is best effort and the Detected tab still shows it */ }
     }
-    // A safety matter also reaches leadership — as ONE LINE with the link, not a second copy of the
-    // whole alert (Eve audit 2026-10-10: Capri 110 landed in two rooms in full).
-    if (d.severity === 'security') {
-      try {
-        const { postToChannel } = await import('./slack')
-        const { EVE_CHANNELS } = await import('./slack-rules')
-        const where = d.unit || d.guestName || 'a stay'
-        await postToChannel(EVE_CHANNELS.leadership, `🚨 *Safety — ${where}* · ${clean(d.headline, 140)}${glitchId ? ` → <${APP_URL}/glitches?id=${glitchId}|the glitch>` : ''} · raised in #vr-customercareteam`)
-      } catch { /* customer care already has it */ }
-    }
+    // ONE ROOM (independent audit 2026-10-10): the customer-care post already tags Jon and Roberto, and
+    // #leadership is the same people. The second copy — even one line — was the same alarm twice.
+    // Leadership sees safety matters in the Ops Command brief and on the glitch board.
     await recordDetection(d, { verdict: glitchId ? 'filed' : 'skipped', glitchId, alerted, note: glitchId ? (alreadyToday ? 'customer care already alerted about this unit today' : null) : 'glitch not filed' })
     out.detections.push({ ...d, verdict: glitchId ? 'filed' : 'skipped', glitchId, alerted })
   }

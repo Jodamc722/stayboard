@@ -191,7 +191,8 @@ export async function slackGet(method: string, params: Record<string, string>): 
 export type PostOpts = { raw?: boolean }
 async function outbound(text: string, opts?: PostOpts): Promise<string> {
   if (opts && opts.raw) return text
-  try { const { scrubStoredText } = await import('./eve/redact'); return scrubStoredText(text, [], undefined, { room: true }) } catch { return text }
+  // Room numbers survive the scrub (UNIT_KEEP_RE): "Botanica 2205" is a unit, never a door code.
+  try { const { scrubStoredText, UNIT_KEEP_RE } = await import('./eve/redact'); return scrubStoredText(text, [], undefined, { room: true, keep: UNIT_KEEP_RE }) } catch { return text }
 }
 
 export async function postToChannel(channel: string, text: string, blocks?: any[], opts?: PostOpts): Promise<SlackResult> {

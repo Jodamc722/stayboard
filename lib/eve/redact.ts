@@ -261,6 +261,16 @@ const MEM_NEAR = 24
  */
 export type CodeRunOpts = { room?: boolean; keep?: RegExp | null }
 
+/**
+ * THE PORTFOLIO'S OWN ROOM NUMBERS ARE NEVER A CODE (Eve audit 2026-10-10: "the door lock at Botanica
+ * [redacted] is broken" — the unit number was the one thing the room needed). Every building name we
+ * manage followed by a 3–4 digit room (with an optional "/n" sub-unit) is kept wherever this is passed as
+ * `keep`: "Botanica 2205", "17WEST - 516", "Arya 1002/1", "Park Towers 208", "Eden 2104". Bare numbers
+ * and numbers after a lock word with no building stay maskable.
+ */
+const BUILDING_WORDS = ['17\\s?WEST', 'Arya', 'Aria', 'Elser', 'Nomad', 'District\\s?225', 'Park\\s?Towers?', 'PT', 'Miami\\s?House', 'Botanica', 'Eden', 'Rustic', 'Hendricks', 'Oasis', 'Waves', 'Pelican', 'Salato', 'Capri', 'Lucerne', 'Amrit', '906', '3316', '1587', 'Garden']
+export const UNIT_KEEP_RE = new RegExp('\\b(?:' + BUILDING_WORDS.join('|') + ')\\s*[-–—:]?\\s*#?\\d{3,4}[A-Za-z]?(?:\\s*\\/\\s*\\d{1,2})?(?![\\d])', 'gi')
+
 /** The [start, end) of every 4-8 digit run that sits within ~24 characters of a lock word. */
 function codeRuns(raw: string, opts: CodeRunOpts = {}): Array<[number, number]> {
   const out: Array<[number, number]> = []

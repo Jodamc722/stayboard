@@ -108,6 +108,24 @@ export async function decideRecommendation(id: string, status: RecStatus, by: st
  * Grade every accepted recommendation whose measure_on has arrived.
  * Returns what it did, so the cron response is auditable rather than a silent "ok".
  */
+/** The eve_agent_log outcome behind an action-recommendation ("Ref 1721… ." in its detail), as a grade. */
+async function outcomeGradeFor(db: any, rec: any): Promise<{ outcome: Outcome; note: string } | null> {
+  try {
+    const m = String(rec.detail || '').match(/Ref ([^\s.]+)\./)
+    const ref = m ? m[1] : ''
+    if (!ref) return null
+    const { data } = await db.from('eve_agent_log').select('action,outcome,outcome_note,at').eq('ref', ref).order('at', { ascending: false }).limit(1)
+    const row = ((data || []) as any[])[0]
+    if (!row || !row.outcome) return { outcome: 'inconclusive', note: 'The outcome checker has no verdict on this action yet.' }
+    const o = String(row.outcome)
+    const good = o === 'done' || o === 'replied' || (row.action === 'task_cancel' && o === 'gone')
+    const bad = o === 'overdue' || o === 'silent' || o === 'reopened' || (row.action !== 'task_cancel' && o === 'gone')
+    if (good) return { outcome: 'worked', note: `Outcome: ${o}${row.outcome_note ? ' — ' + String(row.outcome_note).slice(0, 160) : ''}.` }
+    if (bad) return { outcome: 'didnt', note: `Outcome: ${o}${row.outcome_note ? ' — ' + String(row.outcome_note).slice(0, 160) : ''}.` }
+    return { outcome: 'inconclusive', note: `Outcome so far: ${o} — not settled.` }
+  } catch { return null }
+}
+
 export async function gradeDue(limit = 40): Promise<{ graded: number; results: any[]; error?: string }> {
   const db = supabaseAdmin()
   const today = todayET()
@@ -144,7 +162,15 @@ export async function gradeDue(limit = 40): Promise<{ graded: number; results: a
     let actual: number | null = null
     let deltaPct: number | null = null
 
-    if (!pts.length) {
+    // AN ACTION IS GRADED BY WHAT HAPPENED TO IT, NOT BY THE WEEK'S WEATHER (independent audit
+    // 2026-10-10). One task Eve created cannot move portfolio tasks-completed; grading it against that
+    // metric made a busy week "worked" and a quiet one "didn't". The outcome checker (lib/eve/outcomes)
+    // already knows whether the task got done, the guest replied, the cancellation held. That verdict is
+    // the grade. The metric path below stays for real recommendations.
+    const actionGrade = rec.kind === 'action' ? await outcomeGradeFor(db, rec) : null
+    if (actionGrade) {
+      outcome = actionGrade.outcome; note = actionGrade.note
+    } else if (!pts.length) {
       note = 'No metric data landed in the measurement window — cannot grade.'
     } else if (baseline == null || (rec.baseline_days || 0) < MIN_BASELINE) {
       actual = round2(pts.reduce((a, p) => a + p.value, 0) / pts.length)

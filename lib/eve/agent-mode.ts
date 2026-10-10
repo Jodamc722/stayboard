@@ -665,7 +665,10 @@ export async function proposeAction(p: Proposal): Promise<{ ok: boolean; id?: st
     notified = n.notified
     reason = notified.length ? `proposed; asked via ${notified.join('+')}` : `proposed; UNDELIVERABLE — ${n.error || 'no approver reachable'}`
   }
-  await recordAgentAction(p.action, { rung: 2, allowed: false, mode: 'propose', reason, summary: p.summary, ref: id, by: p.by, actor: p.actor, usd: p.usd, countAs: notified.length ? 'ask' : 'none' })
+  // AN ASK IS AN INTERRUPTION OF A PERSON (independent audit 2026-10-10). Every queued proposal counted
+  // against the day's asks, so after six the rest were demoted to drafts the Slack list never shows.
+  // Only a Telegram ping — one person's phone buzzing — spends an ask; a line in a Slack list does not.
+  await recordAgentAction(p.action, { rung: 2, allowed: false, mode: 'propose', reason, summary: p.summary, ref: id, by: p.by, actor: p.actor, usd: p.usd, countAs: notified.indexOf('telegram') >= 0 ? 'ask' : 'none' })
   return { ok: true, id, notified }
 }
 
@@ -687,7 +690,10 @@ export async function notifyProposal(id: string, settings?: AgentSettings): Prom
   const summary = String(pl.summary || '').slice(0, 300), why = String(pl.why || '').slice(0, 300), usd = Number(pl.usd) || 0
   const errors: string[] = []
 
-  if (s.channels.telegram) {
+  // ONE DELIVERY PER ASK (independent audit 2026-10-10): a desk ask went to Jon's Telegram AND the Slack
+  // digest. Telegram now carries only owner-tier asks — money, Guesty writes, door codes — the ones
+  // that are his alone; desk asks live in #vr-customercareteam where the team answers them.
+  if (s.channels.telegram && (!s.channels.slack || tierOf(String(pl.action || ''), pl) === 'owner')) {
     try {
       const { sendMessage } = await import('@/lib/telegram')
       const { data } = await supabaseAdmin().from('telegram_contacts').select('email,dm_chat_id,status').eq('status', 'approved').limit(100)
@@ -1008,6 +1014,21 @@ export async function rejectProposal(id: string, by: string, note?: string): Pro
     const recId = ((data as any[]) || [])[0]?.payload?.recommendation_id
     if (recId) { try { const { decideRecommendation } = await import('./recommendations'); await decideRecommendation(String(recId), 'rejected', by, note ? `rejected on Telegram: ${note.slice(0, 200)}` : 'rejected with the proposal') } catch { /* ledger is best-effort */ } }
     await logAgent({ action: 'memory_rule', rung: 0, allowed: false, mode: 'observe', reason: `proposal rejected by ${by}`, ref: id, by: 'chat', actor: by })
+    // A "NO" FROM SLACK OR TELEGRAM IS A DECLINE TOO (independent audit 2026-10-10). Only the Thinking
+    // tab's "Not this" was remembered as a declined shape; a no in a digest thread taught her nothing,
+    // so once rungs sat at propose the recurrence metric went blind. It is recorded the same way now.
+    try {
+      const row = ((data as any[]) || [])[0]
+      const pl = row?.payload || {}
+      const reason = String(note || '').replace(/^\s*(no|n|nope|nah|drop|skip|reject(?:ed)?|deny|\d+[\s,]*)+\s*[:—-]?\s*/i, '').trim()
+      if (pl.action && !/^(yes|no|n|nope|nah)$/i.test(reason || 'no')) {
+        const { recordThought, dismissThought } = await import('./thoughts')
+        // The watch usually recorded this very thought when it proposed (same source + subject within a
+        // day): recordThought hands that one back, and it is the one dismissed.
+        const t = await recordThought({ action: pl.action, payload: pl.exec || null, why: String(pl.why || ''), ask: String(pl.summary || ''), source: pl.watchKey ? `watch:${pl.watchKey}` : String(pl.by || 'chat'), subject: pl.subject || null, rungNow: 2, wouldHaveBeen: 'propose', evidence: [], note: 'declined in a digest thread', by: String(pl.by || 'chat'), cooldownHours: 48 })
+        if (t && (t as any).id) await dismissThought(String((t as any).id), by, reason || undefined)
+      }
+    } catch { /* the rejection stands */ }
     return { ok: true }
   } catch { return { ok: false } }
 }

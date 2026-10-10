@@ -29,6 +29,7 @@
 // STATE lives in app_settings `eve_scheduler_shadow` — 21 days of {plan, score}, small JSON, no
 // migration. A day with no cleans is not scored. An unscored plan keeps its per-clean detail (hub,
 // position, minutes, check-in) so it can be scored fairly; the detail is dropped once it is.
+import { shortUnit } from '@/lib/team-where'
 import 'server-only'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { getOpsPresets } from '@/lib/app-settings'
@@ -199,7 +200,7 @@ function planTimeline(keys: string[], assign: Record<string, string | null>, det
     if (!c || !c.sameDayTurn || !assign[k]) continue
     turns++
     const L = landings[k], due = c.due ?? 960
-    if (L && L.endMin > due) late.push({ unit: String(c.unit).split(' - ')[0], person: L.person, lands: clockOf(L.endMin), due: clockOf(due) })
+    if (L && L.endMin > due) late.push({ unit: shortUnit(String(c.unit)), person: L.person, lands: clockOf(L.endMin), due: clockOf(due) })
   }
   return { turns, late }
 }
@@ -297,7 +298,7 @@ export async function projectDay(date: string, opts: ProjectOpts = {}): Promise<
     if (pid == null) { unassigned++; assign[c.key] = null; continue }
     const p = people.find(x => x.id === pid)
     assign[c.key] = p?.name || null
-    ;(byPerson[p?.name || String(pid)] = byPerson[p?.name || String(pid)] || []).push(String(c.unit).split(' - ')[0])
+    ;(byPerson[p?.name || String(pid)] = byPerson[p?.name || String(pid)] || []).push(shortUnit(String(c.unit)))
     ;(mine[pid] = mine[pid] || []).push(c)
   }
   let work = 0, travel = 0, maxLoad = 0
