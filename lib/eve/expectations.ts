@@ -197,12 +197,21 @@ export async function runExpectationsDesk(opts: { by?: string; days?: number } =
   const { model, fallback } = await modelPairFor('expectations')
   let parsed: any = null, answeredBy = model
   try {
-    const r = await anthropicMessages(key, {
-      model, max_tokens: 8000, system: SYSTEM,
+    // A CUT-OFF ANSWER IS NO ANSWER (the 2026-10-05 Monday run died on "stop: max_tokens; blocks:
+    // tool_use; input keys: none" — twelve notes with five quotes and a paragraph of copy each is
+    // more than 8,000 tokens, and a structured answer that stops mid-array parses as nothing). The
+    // ceiling is doubled, and a run that still hits it is asked once more for the short version.
+    const ask = async (extra: string, max_tokens: number) => anthropicMessages(key, {
+      model, max_tokens, system: SYSTEM,
       tools: [{ name: 'expectation_notes', description: 'Deliver the notes as structured data.', input_schema: SCHEMA }],
       tool_choice: { type: 'tool', name: 'expectation_notes' },
-      messages: [{ role: 'user', content: `DATE: ${pack.today}. WINDOW: ${pack.from} → ${pack.today}.\n\nEVIDENCE, BY BUILDING:\n\n${pack.text}` }],
+      messages: [{ role: 'user', content: `DATE: ${pack.today}. WINDOW: ${pack.from} → ${pack.today}.${extra}\n\nEVIDENCE, BY BUILDING:\n\n${pack.text}` }],
     }, fallback, 'expectations')
+    let r = await ask('', 16000)
+    if (r.ok && str(r.data?.stop_reason) === 'max_tokens') {
+      void usageOf(r.data)
+      r = await ask(' KEEP IT SHORT THIS TIME: at most 6 notes, the 6 that matter most; at most 3 quotes per note, each under 20 words; proposed_copy under 60 words.', 16000)
+    }
     answeredBy = r.model
     if (!r.ok) return { ok: false, error: clip(r.data?.error?.message, 200) || `model call failed (${r.status})`, pack: pack.stats }
     const toolUse = (r.data?.content || []).find((c: any) => c.type === 'tool_use' && c.input && typeof c.input === 'object')
