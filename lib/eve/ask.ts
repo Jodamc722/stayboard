@@ -46,6 +46,7 @@ import { listAudits, decideAudit } from './audit'
 import { saveMemory } from './memory'
 import { pendingDrafts, sendApproved, declineDraft } from './ralph'
 import { agentAllowed, recordAgentAction, saveDraft, deferAction, executeProposal, rejectProposal, getAgentSettings } from './agent-mode'
+import { groupChannelFindings } from './ask-group'
 
 export const ASK_SETTINGS_KEY = 'eve_ask'
 
@@ -103,17 +104,8 @@ export async function askSettings(): Promise<AskSettings> {
 // budget, instead of each feature inventing its own way to interrupt somebody.
 // 'action' is a proposal from agent mode (lib/eve/agent-mode.ts proposeAction) — something Eve
 // wanted to DO and was told to ask first. Same envelope, same reply path: "yes" executes it.
-export type AskType = 'question' | 'finding' | 'ralph' | 'action'
-
-export type AskItem = {
-  type: AskType
-  /** The row this ask is about — a question id or an audit finding id. */
-  ref: string
-  title: string
-  body: string
-  /** Higher goes first. Severity and repetition both raise it. */
-  rank: number
-}
+export type { AskType, AskItem } from './ask-group'
+import type { AskType, AskItem } from './ask-group'
 
 const db = () => supabaseAdmin()
 const nowISO = () => new Date().toISOString()
@@ -127,12 +119,15 @@ async function alreadyAsked(): Promise<Map<string, { id: string; count: number; 
       .order('created_at', { ascending: false }).limit(400)
     for (const r of ((data as any[]) || [])) {
       const key = `${r.payload?.type}:${r.payload?.ref}`
-      if (out.has(key)) continue
-      out.set(key, { id: String(r.id), count: Number(r.payload?.delivery_count || 1), status: String(r.status || '') })
+      const hit = { id: String(r.id), count: Number(r.payload?.delivery_count || 1), status: String(r.status || '') }
+      if (!out.has(key)) out.set(key, hit)
+      // A grouped ask asked each of its members — none of them is asked again on its own.
+      for (const m of (Array.isArray(r.payload?.refs) ? r.payload.refs : [])) { const k = `${r.payload?.type}:${m}`; if (!out.has(k)) out.set(k, hit) }
     }
   } catch { /* an empty map only means she asks something she already asked */ }
   return out
 }
+
 
 /** How many asks went out today. The budget is counted, never assumed. */
 async function sentToday(): Promise<number> {
@@ -170,7 +165,9 @@ export async function buildBatch(limit: number): Promise<AskItem[]> {
 
   if (s.includeFindings) {
     const audits = await listAudits({ status: 'open', limit: 60 }).catch(() => [])
-    for (const a of audits) {
+    const grouped = groupChannelFindings(audits.filter(a => a.severity !== 'info'), fresh)
+    items.push(...grouped.items)
+    for (const a of grouped.rest) {
       if (a.severity === 'info') continue          // info is a log line, not a conversation
       if (!fresh('finding', String(a.id))) continue
       items.push({
@@ -287,7 +284,7 @@ async function deliverOne(to: Recipient, item: AskItem): Promise<boolean> {
   }
   // QUIET HOURS: held until morning and sent then, binding and all — never a proposal nobody sees.
   if (gate.mode === 'deferred') {
-    await deferAction({ action: 'telegram_ask', summary: `${item.type}: ${item.title}`, exec: { chat_id: to.chatId, text, bind: { type: item.type, ref: item.ref, created_by: to.email, title: item.title } }, why: gate.reason, by: 'cron:eve-ask', actor: to.email }, 'action', gate.settings)
+    await deferAction({ action: 'telegram_ask', summary: `${item.type}: ${item.title}`, exec: { chat_id: to.chatId, text, bind: { type: item.type, ref: item.ref, refs: item.refs, created_by: to.email, title: item.title } }, why: gate.reason, by: 'cron:eve-ask', actor: to.email }, 'action', gate.settings)
     return false
   }
   const res = await sendMessage(to.chatId, text)
@@ -300,6 +297,7 @@ async function deliverOne(to: Recipient, item: AskItem): Promise<boolean> {
       kind: 'ask',
       payload: {
         type: item.type, ref: item.ref, chat_id: to.chatId,
+        ...(item.refs && item.refs.length ? { refs: item.refs } : {}),
         message_id: messageId, delivery_count: 1, sent_at: nowISO(),
       },
       why: item.title,
@@ -381,7 +379,7 @@ async function thinkingDigest(to: Recipient | undefined, s: AskSettings): Promis
 
 // ---- The reply -----------------------------------------------------------------------------------
 
-export type AskBinding = { id: string; type: AskType; ref: string; email: string }
+export type AskBinding = { id: string; type: AskType; ref: string; refs?: string[]; email: string }
 
 /**
  * Which ask is this reply answering?
@@ -421,6 +419,7 @@ export async function findAsk(chatId: string | number, replyToMessageId?: number
       id: String(row.id),
       type: (t === 'finding' || t === 'ralph' || t === 'action') ? (t as AskType) : 'question',
       ref: String(row.payload?.ref || ''),
+      refs: Array.isArray(row.payload?.refs) ? row.payload.refs.map((x: any) => String(x)) : undefined,
       email: String(row.created_by || ''),
     }
   } catch { return null }
@@ -520,7 +519,10 @@ export async function resolveAsk(binding: AskBinding, reply: string, by: string)
   }
 
   // A finding. Whatever else the reply is, if it EXPLAINS the thing, that explanation is worth more
-  // than the finding was.
+  // than the finding was. A grouped ask (several listings off one channel) is decided for every
+  // member — one reply, every row.
+  const members = binding.refs && binding.refs.length ? binding.refs : [binding.ref]
+  const several = members.length > 1
   let learned = false
   if (ITS_FINE.test(text) || text.length > 60) {
     const saved = await saveMemory({
@@ -528,24 +530,26 @@ export async function resolveAsk(binding: AskBinding, reply: string, by: string)
       text: `${binding.ref ? '' : ''}${text}`.slice(0, 900),
       why: `Told to me by ${by} on ${new Date().toISOString().slice(0, 10)} when I flagged: ${binding.ref}.`,
       scope: 'portfolio', weight: 8, source: 'jon', confidence: 1,
-      created_by: by, evidence: { audit_id: binding.ref },
+      created_by: by, evidence: several ? { audit_id: binding.ref, audit_ids: members } : { audit_id: binding.ref },
     }).catch(() => ({ ok: false } as any))
     learned = !!saved?.ok
   }
 
   if (ITS_FINE.test(text)) {
-    await decideAudit(binding.ref, 'snooze', by, 30).catch(() => {})
+    for (const id of members) await decideAudit(id, 'snooze', by, 30).catch(() => {})
     await close('rejected', text)
+    const what = several ? `all ${members.length}` : 'it'
     return learned
-      ? `Got it — noted as expected behaviour, and I've remembered why. Snoozed for a month.`
-      : `Got it, snoozed for a month.`
+      ? `Got it — noted as expected behaviour, and I've remembered why. Snoozed ${what} for a month.`
+      : `Got it, snoozed ${what} for a month.`
   }
 
-  await decideAudit(binding.ref, 'ack', by).catch(() => {})
+  for (const id of members) await decideAudit(id, 'ack', by).catch(() => {})
   await close('approved', text)
+  const they = several ? `All ${members.length} stay` : 'It stays'
   return learned
-    ? `Acknowledged, and I've remembered what you said about it. It stays on my list until it clears.`
-    : `Acknowledged — it stays on my list until it clears.`
+    ? `Acknowledged, and I've remembered what you said about it. ${they} on my list until it clears.`
+    : `Acknowledged — ${they.toLowerCase()} on my list until it clears.`
 }
 
 /**

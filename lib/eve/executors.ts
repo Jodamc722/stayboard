@@ -428,7 +428,7 @@ const telegram_ask: Executor = async (p, ctx) => {
     try {
       await supabaseAdmin().from('eve_actions').insert({
         created_by: p.bind.created_by || ctx.by, kind: 'ask',
-        payload: { type: p.bind.type, ref: p.bind.ref, chat_id: str(p.chat_id), message_id: Number((r as any)?.result?.message_id) || null, delivery_count: 1, sent_at: new Date().toISOString() },
+        payload: { type: p.bind.type, ref: p.bind.ref, ...(Array.isArray(p.bind.refs) && p.bind.refs.length ? { refs: p.bind.refs } : {}), chat_id: str(p.chat_id), message_id: Number((r as any)?.result?.message_id) || null, delivery_count: 1, sent_at: new Date().toISOString() },
         why: str(p.bind.title).slice(0, 400), status: 'proposed',
       })
     } catch { /* sent; only the reply binding is lost */ }
