@@ -186,6 +186,13 @@ const redactDigits = (x: string) => (/\d/.test(x) ? '[redacted]' : x)
 // "door code for unit 1102 is 4821": the unit keeps its number, the code does not (N12).
 const UNIT_BEFORE_RE = /\b(?:unit|apt|apartment|suite|ste|room|rm)\.?\s*#?\s*$/i
 
+// THE ROOM NUMBER AFTER THE LOCK WORD (independent study 2026-10-10: "Unit 514 and 505 door codes not
+// working (514, 505) — #17West HK" went out as "([redacted], [redacted]) — [redacted]West HK"). Inside
+// the window a run is left alone when it is glued to letters ("#17West" is a room name, not a code)
+// or when the text already named that same number BEFORE the lock word ("Unit 514 … (514)") — a code
+// is stated once, after its word; a unit is referred to again. The window runs after the other
+// patterns, so a code they already masked cannot vouch for a later copy of itself.
+const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 function scrubWindow(s: string): string {
   WINDOW_RE.lastIndex = 0
   let out = ''
@@ -200,7 +207,14 @@ function scrubWindow(s: string): string {
     // Never cut a number in half: "…use 48213#" at the 40th character lost "4821" and kept "3#".
     while (end < s.length && end > start && /[\d#*]/.test(s[end]) && /[\d#*]/.test(s[end - 1])) end++
     const seg = s.slice(start, end)
-    out += s.slice(last, start) + seg.replace(DIGITS, (d: string, at: number) => (UNIT_BEFORE_RE.test(seg.slice(Math.max(0, at - 14), at)) ? d : redactDigits(d)))
+    const before = s.slice(0, m.index)
+    out += s.slice(last, start) + seg.replace(DIGITS, (d: string, at: number) => {
+      if (UNIT_BEFORE_RE.test(seg.slice(Math.max(0, at - 14), at))) return d
+      if (/[A-Za-z]/.test(s.charAt(start + at + d.length))) return d
+      const digits = d.replace(/[^0-9]/g, '')
+      if (digits.length >= 3 && new RegExp('(?<![0-9])' + esc(digits) + '(?![0-9])').test(before)) return d
+      return redactDigits(d)
+    })
     last = end
     if (WINDOW_RE.lastIndex < end) WINDOW_RE.lastIndex = end
   }
@@ -210,7 +224,7 @@ function scrubWindow(s: string): string {
 function scrubText(s: string): string {
   // Nothing can state a code without three digits in a row (or three with single spaces / dashes).
   if (!s || !/\d(?:[ -]?\d){2}/.test(s)) return s
-  let out = scrubWindow(s)
+  let out = s
   out = out.replace(TIGHT_RE, (m: string, pre: string | undefined, kw: string, digits: string) => {
     if (pre && /^(?:code|c[oó]digo)$/i.test(kw) && NOT_A_DOOR.test(pre.trim())) return m
     // Nine digits or more is a phone or a Booking.com / Expedia confirmation number, not a keypad.
@@ -226,7 +240,7 @@ function scrubText(s: string): string {
   out = out.replace(HASH_RE, '[redacted]')
   out = out.replace(ENTER_RE, (_m: string, verb: string, mid: string) => verb + mid + '[redacted]')
   out = out.replace(USE_RE, (_m: string, verb: string, mid: string) => verb + mid + '[redacted]')
-  return out
+  return scrubWindow(out)
 }
 
 /** Does this text state a door / access code? saveMemory refuses such text (2026-09-28, B-7). */
@@ -458,7 +472,19 @@ export function redactCodeText(s: any): string {
  */
 export function scrubStoredText(text: any, released: string[] = [], mark?: string, opts: CodeRunOpts = {}): string {
   const t = String(text == null ? '' : text)
-  try { return maskCodeNearDigits(redactCodeText(released.length ? scrubReleasedCodes(t, released, mark) : t), opts) } catch { return t }
+  try {
+    const base = released.length ? scrubReleasedCodes(t, released, mark) : t
+    if (!opts.keep) return maskCodeNearDigits(redactCodeText(base), opts)
+    // KEPT NAMES ARE KEPT BY EVERY LAYER (independent study 2026-10-10: "the door code for Arya 1705 is
+    // 4821" came back "Arya [redacted] is [redacted]" — codeRuns honoured `keep`, the text patterns did
+    // not). The kept spans are set aside as letter-only tokens no pattern can read as a code, the text
+    // is scrubbed, and they are put back. A released code is scrubbed first, kept name or not.
+    const kept: string[] = []
+    const token = (i: number) => { let n = i, w = ''; do { w = String.fromCharCode(65 + (n % 26)) + w; n = Math.floor(n / 26) - 1 } while (n >= 0); return '\u2063KEEP' + w + '\u2063' }
+    const aside = base.replace(opts.keep, (m: string) => { kept.push(m); return token(kept.length - 1) })
+    const scrubbed = maskCodeNearDigits(redactCodeText(aside), opts)
+    return scrubbed.replace(/\u2063KEEP([A-Z]+)\u2063/g, (_m: string, w: string) => { let n = 0; for (const ch of w) n = n * 26 + (ch.charCodeAt(0) - 65) + 1; return kept[n - 1] ?? '' })
+  } catch { return t }
 }
 
 /**
