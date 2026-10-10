@@ -1954,7 +1954,7 @@ export async function weekCompliance(): Promise<{
           const words = key.split(/\s+/).filter(Boolean)
           const half = words.length >= 2 && words.length % 2 === 0 ? words.length / 2 : 0
           const base = half && words.slice(0, half).join(' ') === words.slice(half).join(' ') ? words.slice(0, half).join(' ') : key
-          if (seen.has(base)) continue
+          if (seen.has(base) || cleanersNoTimecard.some(n => nameMatches(n, base))) continue   // "Anthony Perry" and "Anthony Perry III" are one person
           seen.add(base)
           cleanersNoTimecard.push(base.replace(/\b\w/g, ch => ch.toUpperCase()))
         }
