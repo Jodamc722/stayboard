@@ -106,6 +106,22 @@ export const ACTIONS: ActionDef[] = [
 ]
 export const ACTION_KEYS = ACTIONS.map(a => a.key)
 
+// TWO TIERS OF YES (Eve audit 2026-10-10). Sixty asks a week went to ONE approver and 65% of them
+// expired — "draft a reply to a guest who has waited 9h", "make the Breezeway task for this glitch".
+// None of those is money, a door code, a cancellation or a write to Guesty; they are the desk's own
+// work, which the desk can say yes to. DESK actions can be approved by anyone on the team with a
+// Lighthouse login (the people in #vr-customercareteam); OWNER actions stay with the approver list.
+// Jon's rule (2026-09-10): "anyone can ask if they need something, only approvals are PTE and door
+// codes… Money is not something Eve should ever share." Settings → Eve → Agent mode → deskApprovals.
+export const DESK_ACTIONS = new Set<ActionType>(['task_note', 'task_create', 'task_assign', 'guest_reply_draft', 'guest_reply_send'])
+export type Tier = 'desk' | 'owner'
+export function tierOf(action: ActionType | string, payload?: any): Tier {
+  if (!DESK_ACTIONS.has(action as ActionType)) return 'owner'
+  // Money attached, or anything that reads as a cancellation/refund, is the owner's whatever the verb.
+  if (payload && (Number(payload.usd) > 0 || /refund|cancel|discount|comp\b|credit/i.test(String(payload.summary || '')))) return 'owner'
+  return 'desk'
+}
+
 export const RUNG_MEANING: Record<Rung, string> = {
   0: 'Observe — she notes it and does nothing.',
   1: 'Draft — she writes it down for a person to pick up.',
@@ -135,6 +151,8 @@ export type AgentSettings = {
   budgets: { asksPerDay: number; actionsPerDay: number; aiUsdPerDay: number; moneyCeilingUsd: number }
   quietHours: { start: string; end: string; tz: string }
   approvers: string[]
+  /** Desk-tier asks (tasks, guest drafts and sends — no money) may be approved by any team member. Default on. */
+  deskApprovals: boolean
   channels: { telegram: boolean; slack: boolean; email: boolean }
   updatedBy?: string | null
   updatedAt?: string | null
@@ -178,6 +196,7 @@ export function normalizeAgentSettings(raw: any): AgentSettings {
     },
     quietHours: { start: hhmm(q.start, DEFAULT_QUIET.start), end: hhmm(q.end, DEFAULT_QUIET.end), tz: String(q.tz || DEFAULT_QUIET.tz) },
     approvers: approvers.length ? approvers : [OWNER],
+    deskApprovals: r.deskApprovals !== false,
     channels: { telegram: ch.telegram !== false, slack: ch.slack !== false, email: ch.email === true },
     updatedBy: r.updatedBy || null,
     updatedAt: r.updatedAt || null,
@@ -944,7 +963,10 @@ export async function executeProposal(id: string, by: string): Promise<{ ok: boo
   // a list set, only those people (and the owner) may; an empty list keeps the old rule.
   const byEmail = String(by || '').toLowerCase().trim()
   const approvers = (s.approvers || []).map((x: any) => String(x).toLowerCase().trim()).filter(Boolean)
-  if (approvers.length && !isSuperadmin(byEmail) && approvers.indexOf(byEmail) < 0) return { ok: false, error: `only an approver can carry this out (${approvers.map(a => a.split('@')[0]).join(', ')})` }
+  // A desk-tier ask (a task, a guest draft or send, no money) takes a yes from any team member with a
+  // Lighthouse login — `by` is always a resolved login here (a session, or a Slack account matched to one).
+  const deskYes = s.deskApprovals && tierOf(action, row.payload) === 'desk' && /@/.test(byEmail)
+  if (approvers.length && !isSuperadmin(byEmail) && approvers.indexOf(byEmail) < 0 && !deskYes) return { ok: false, error: `only an approver can carry this out (${approvers.map(a => a.split('@')[0]).join(', ')})` }
 
   const nowISO = new Date().toISOString()
   // CLAIM FIRST (2026-09-28 audit, F20). A Telegram "yes" and a panel Approve a second apart both

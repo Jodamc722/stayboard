@@ -67,6 +67,25 @@ export function fieldNoteForCrew(note: string): string {
     .slice(-2).join(' · ')
 }
 
+/**
+ * Staffing's office people plus Lighthouse admins (the GM, the ops manager). They ride along on a
+ * shared job as "with …" and never own a run; the wage and timecard checks never name them either.
+ */
+async function managementNames(): Promise<string[]> {
+  const out: string[] = []
+  try { out.push(...(await getStaff(true)).filter(r => r.field === false).map(r => r.name)) } catch { /* everyone is field */ }
+  try {
+    const { isSuperadmin } = await import('./access')
+    const { data } = await supabaseAdmin().from('app_users').select('email,role,access_role,profile').limit(300)
+    for (const u of ((data || []) as any[])) {
+      const nm = str(u?.profile && typeof u.profile === 'object' ? u.profile.name : '').trim()
+      const admin = isSuperadmin(str(u?.email)) || str(u?.role) === 'admin' || str(u?.access_role) === 'admin'
+      if (nm && admin && !out.some(o => nameMatches(o, nm))) out.push(nm)
+    }
+  } catch { /* the Staffing toggle still decides */ }
+  return out
+}
+
 export async function gather(variant: BriefVariant) {
   const db = supabaseAdmin()
   const today = ymdET(new Date())
@@ -91,7 +110,7 @@ export async function gather(variant: BriefVariant) {
 
   // The daysheet does the heavy lifting — same engine as the boards.
   const sheetMarket = (variant === 'full' || variant === 'GM') ? 'all' : variant
-  const [sheet, lRes, tRes, arrRes, actRes, revRes, bzProps, adminRows] = await Promise.all([
+  const [sheet, lRes, tRes, arrRes, actRes, revRes, bzProps, mgmtNames] = await Promise.all([
     buildDaySheet(today, sheetMarket),
     db.from('guesty_listings').select('id,nickname,title,building,address_city,status').limit(1000), // deliberate cap: one row per listing, ~290 in the portfolio
     db.from('breezeway_tasks_sync')
@@ -130,7 +149,7 @@ export async function gather(variant: BriefVariant) {
     // MANAGEMENT RIDES ALONG (Eve audit 2026-10-10). A task shared with the GM or the ops manager was
     // credited to whichever of them Breezeway listed first, so Jon "owned" the weekly walkthroughs
     // and they printed under five people. Admins are office for ownership — "with Jon", never the run.
-    Promise.resolve(db.from('app_users').select('email,role,access_role,profile').limit(300)).then(r => (r.data || []) as any[], () => [] as any[]),
+    managementNames(),
   ])
 
   type Meta = { name: string; market: Market; building: string; active: boolean }
@@ -163,16 +182,7 @@ export async function gather(variant: BriefVariant) {
   // they are not in the field, technically"). Office people come from the Staffing toggle. The
   // PREDOMINANT person on a task is the first assignee who is in the field; office names ride
   // along as "with …" and are never the one a clean is credited to.
-  let officeNames: string[] = []
-  try { officeNames = (await getStaff(true)).filter(r => r.field === false).map(r => r.name) } catch { /* everyone is field */ }
-  try {
-    const { isSuperadmin } = await import('./access')
-    for (const u of (adminRows as any[])) {
-      const nm = str(u?.profile && typeof u.profile === 'object' ? u.profile.name : '').trim()
-      const admin = isSuperadmin(str(u?.email)) || str(u?.role) === 'admin' || str(u?.access_role) === 'admin'
-      if (nm && admin && !officeNames.some(o => nameMatches(o, nm))) officeNames.push(nm)
-    }
-  } catch { /* the Staffing toggle still decides */ }
+  const officeNames: string[] = mgmtNames
   const bzNameOf: Record<string, string> = {}
   for (const p of (bzProps as any[])) if (p?.home_id != null && p?.name) bzNameOf[String(p.home_id)] = str(p.name)
   // A task on a Breezeway-only property (a building, an exterior) is named for the property.
@@ -1929,9 +1939,24 @@ export async function weekCompliance(): Promise<{
     try {
       const tcAudit = await getTimecardsAudited(winFrom, winTo)
       if (tcAudit.complete) {
-        const paidNames = new Set(tcAudit.cards.map((t: any) => str(t.name).trim().toLowerCase()).filter(Boolean))
+        const paidList = Array.from(new Set(tcAudit.cards.map((t: any) => str(t.name).trim()).filter(Boolean))) as string[]
+        const paidNames = new Set(paidList.map(n => n.toLowerCase()))
+        // NAMES, NOT STRINGS (Eve audit 2026-10-10): "Shaany Espinoza" (Breezeway) is "Shaany Christian"
+        // (Homebase); management closes the odd clean with no timecard by design; a vendor account
+        // whose first and last name are both the company prints once. None of them is a mismatch to fix.
+        const { nameMatchesRoster } = await import('./person-name')
+        const mgmt = new Set((await managementNames()).map(n => n.toLowerCase()))
+        const seen = new Set<string>()
         for (const key of Object.keys(didClean)) {
-          if (!paidNames.has(key)) cleanersNoTimecard.push(key.replace(/\b\w/g, ch => ch.toUpperCase()))
+          if (paidNames.has(key)) continue
+          if (nameMatchesRoster(key, paidList)) continue
+          if (Array.from(mgmt).some(m => nameMatches(m, key))) continue
+          const words = key.split(/\s+/).filter(Boolean)
+          const half = words.length >= 2 && words.length % 2 === 0 ? words.length / 2 : 0
+          const base = half && words.slice(0, half).join(' ') === words.slice(half).join(' ') ? words.slice(0, half).join(' ') : key
+          if (seen.has(base)) continue
+          seen.add(base)
+          cleanersNoTimecard.push(base.replace(/\b\w/g, ch => ch.toUpperCase()))
         }
       }
     } catch { /* names list is a bonus, never a blocker */ }
@@ -2113,6 +2138,22 @@ export async function buildGmBrief(): Promise<OpsBrief> {
       act: 'Add a shift or call in the on-call — the Weekly Planner has the day.',
       short: `${soonShort.length} short days in the next 3 · ${gap} short` })
   }
+  // ASKED, NOBODY ANSWERED (Eve audit 2026-10-10): 65% of Eve's asks died unanswered. The desk's own
+  // asks now go to the team (lib/eve/slack-approvals); what still expires is listed here as a number
+  // with examples, so a silent failure has an owner.
+  try {
+    const { data: ex } = await db.from('eve_actions').select('payload,decided_at,created_at').eq('kind', 'ask').eq('status', 'expired')
+      .gte('created_at', new Date(Date.now() - 10 * 86400000).toISOString()).order('created_at', { ascending: false }).limit(60)
+    const rows = ((ex || []) as any[]).filter(r => r.payload?.type === 'action' && Date.parse(String(r.decided_at || r.created_at)) >= Date.now() - 7 * 86400000)
+    if (rows.length >= 3) {
+      const eg = rows.slice(0, 2).map(r => esc(str(r.payload?.summary).replace(/\s+/g, ' ').slice(0, 70))).join('; ')
+      decisions.push({ key: 'unanswered', tone: 'amber',
+        what: `<b>${rows.length} of Eve's asks expired unanswered</b> · last 7 days — e.g. ${eg}`,
+        num: String(rows.length),
+        act: 'Tasks and guest drafts now go to the team in #vr-customercareteam; anything left here needed you. Lighthouse → Eve → Agent mode.',
+        short: `${rows.length} Eve asks expired unanswered` })
+    }
+  } catch { /* the brief still sends */ }
   // The memory: what each line said before, and what Jon did about it.
   const { loadDecisions, saveDecisions, noteSeen, isHidden } = await import('./gm-decisions')
   const dmap = await loadDecisions().catch(() => ({} as any))

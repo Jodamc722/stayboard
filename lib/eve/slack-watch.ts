@@ -84,6 +84,25 @@ const ACK_WORDS = /\b(done|fixed|resolved|completed|complete|handled|sorted|clos
 // yet", "isn't fixed", "todavía no está listo". A negation just before the word means it is still open.
 const ACK_NEGATED = /\b(not|isn'?t|wasn'?t|aren'?t|haven'?t|hasn'?t|didn'?t|never|no|not yet|still not|aun no|aún no|todavia no|todavía no|no está|no esta|sin)\s+(\w+\s+){0,2}(done|fixed|resolved|completed?|handled|sorted|closed|finished|delivered|replaced|listo|hecho|resuelto|terminad[oa]|arreglad[oa]|solucionado|entregado)\b/i
 const ACK = { test: (t: string) => ACK_WORDS.test(t) && !ACK_NEGATED.test(t) }
+/** The Slack tag of the supervisor for the loop's market, from Staffing (crew 'supervision', same area). */
+let _staffCache: any[] | null = null
+async function supervisorTag(it: Pick<Item, 'unit' | 'building'>, n: Record<string, string>): Promise<string | null> {
+  try {
+    if (!_staffCache) { const { getStaff } = await import('@/lib/staffing'); _staffCache = await getStaff() }
+    const { marketOf } = await import('@/lib/segments')
+    const mk = String(marketOf(it.building || null, null, it.unit || null) || '')
+    if (!mk) return null
+    const sups = (_staffCache || []).filter((r: any) => r && r.active !== false && /superv/i.test(String(r.dept || r.role || '')) && String(r.area || '').toLowerCase().includes(mk.toLowerCase()))
+    for (const sp of sups) {
+      const hit = Object.entries(n).find(([, nm]) => nm && nameMatches(String(nm), String(sp.name)))
+      if (hit) return `<@${hit[0]}>`
+    }
+  } catch { /* no supervisor known */ }
+  return null
+}
+
+// "I have it" — the words that make somebody the owner of a loop (step 1).
+const OWN_RE = /\b(on it|i('| a)?m on it|i got it|got it|i'?ll (take|handle|do|check|look|go|call|see)|i can (take|handle|do|check|go)|taking (this|it|care)|mine|leave it (with|to) me|will (do|handle|check|take care)|checking( now)?|heading (there|over)|me encargo|yo (lo|la|me) (hago|tomo|veo|encargo|reviso)|lo (reviso|veo|hago|tomo|checo)|voy (para all[áa]|ahora|a ver)|ya voy|d[eé]jamelo|yo voy)\b/i
 
 function signals(text: string): string[] {
   const t = String(text || '').trim()
@@ -327,7 +346,7 @@ export type WatchRun = {
   ok: boolean; error?: string
   channels: number; read: number; candidates: number; modelCalls: number
   opened: number; closed: number; tracked: number; nudged: number; learned: number; asked: number
-  escalated: number; handoff: boolean
+  escalated: number; handoff: boolean; owned?: number
   digest: boolean; notes: string[]
 }
 
@@ -434,7 +453,25 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
       await db.from('eve_slack_items').update({ status: 'closed', closed_reason: `${ack.who}: "${ack.text.slice(0, 80)}"`, closed_at: ack.at, last_seen: ack.at }).eq('id', it.id)
       it.status = 'closed'; out.closed++
     } else if (rs.length) {
-      await db.from('eve_slack_items').update({ last_seen: rs[rs.length - 1].at }).eq('id', it.id)
+      // WHO HAS IT (Eve audit 2026-10-10): 27 of 27 open loops had no owner, and every repeat went to
+      // the whole room. The thread says who has it: somebody who writes "on it" / "I got it" / "me
+      // encargo" is the owner; failing that, the first person to answer who is not the one who raised
+      // it. Eve's own replies are bot messages and never counted. A named owner is nudged by name and
+      // DM'd on repeats instead of the room being asked again.
+      const patch: any = { last_seen: rs[rs.length - 1].at }
+      if (!it.owner_name) {
+        const poster = String(it.evidence?.who || '').trim()
+        const claim = rs.find(m => OWN_RE.test(m.text) && !/\?\s*$/.test(m.text.trim()))
+        const first = rs.find(m => m.who && (!poster || !nameMatches(m.who, poster)) && !/\?\s*$/.test(m.text.trim()))
+        const pick = claim || first
+        if (pick) {
+          patch.owner_name = pick.who; patch.owner_slack = pick.user || null
+          patch.evidence = { ...(it.evidence || {}), ownerFrom: claim ? `claimed in the thread: "${pick.text.slice(0, 60)}"` : 'first to answer in the thread', ownerAt: pick.at }
+          it.owner_name = pick.who; it.owner_slack = pick.user || null; it.evidence = patch.evidence
+          out.owned = (out.owned || 0) + 1
+        }
+      }
+      await db.from('eve_slack_items').update(patch).eq('id', it.id)
     }
   }
 
@@ -649,8 +686,12 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
         ? Date.parse(it.first_seen) + (it.nudge_count === 0 ? ccs.nudgeAfterMin : ccs.secondNudgeMin) * 60_000
         : (it.due_at ? Date.parse(it.due_at) : Date.parse(it.first_seen) + NUDGE_AFTER_HOURS * 3600_000)
       if (now < due) continue
-      const who = it.owner_slack ? `<@${it.owner_slack}>` : (it.owner_name || null)
-      const text = isAsk ? askNudgeText(it as unknown as AskItem, who, ageMinutes(it, now)) : nudgeText(it, who)
+      // NOBODY ON IT → THE SUPERVISOR IS ASKED BY NAME (Eve audit 2026-10-10). A nudge to a thread with
+      // no owner was addressed to nobody, and nobody answered it. The market's supervisor (Staffing →
+      // crew supervision, same area) is tagged and asked to name someone — or take it.
+      const sup = !it.owner_slack && !it.owner_name && !isAsk ? await supervisorTag(it, n) : null
+      const who = it.owner_slack ? `<@${it.owner_slack}>` : (it.owner_name || sup || null)
+      const text = isAsk ? askNudgeText(it as unknown as AskItem, who, ageMinutes(it, now)) : (sup ? `${sup} — nobody has this yet. Can you take it or name who does? ` + nudgeText(it, null) : nudgeText(it, who))
       // AGENT MODE GATE (slack_post). Below "act" the nudge is proposed or drafted instead.
       const gate = await agentAllowed('slack_post', { ask: true })
       const r = await stepDown(gate, { action: 'slack_post', summary: `nudge in #${it.channel_name}: ${text.slice(0, 160)}`, exec: { channel: it.channel, channel_name: it.channel_name, thread_ts: it.thread_ts || it.msg_ts, text }, why: it.summary.slice(0, 200), by: 'cron:slack-watch' },

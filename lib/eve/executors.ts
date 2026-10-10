@@ -298,7 +298,10 @@ const guest_reply_draft: Executor = async (p, ctx) => {
   } catch { /* fine */ }
   const { data, error } = await db.from('eve_actions').insert({
     created_by: ctx.actor || ctx.by, kind: 'guest_draft',
-    payload: { conversationId: conversationId || null, reviewId: reviewId || null, draft, guest: str(p?.guest) || null, unit: str(p?.unit) || null, channel: str(p?.channel) || null, by: ctx.by, watchKey: str(p?.watchKey) || null, subject: str(p?.subject) || null },
+    // A draft the WATCH wrote is queued for the desk's Slack list (slack-approvals flushApprovalDigest):
+    // the team sees the text in #vr-customercareteam and "1 send" sends it as them. A draft a person
+    // asked for ("Draft with Eve" on the thread) is already in front of that person.
+    payload: { conversationId: conversationId || null, reviewId: reviewId || null, draft, guest: str(p?.guest) || null, unit: str(p?.unit) || null, channel: str(p?.channel) || null, by: ctx.by, watchKey: str(p?.watchKey) || null, subject: str(p?.subject) || null, slack_pending: !!(conversationId && (str(p?.watchKey) || /cron|watch/i.test(str(ctx.by)))) },
     why: str(p?.why).slice(0, 400) || 'Eve drafted a reply', status: 'proposed',
     expires_at: new Date(Date.now() + 3 * 86400_000).toISOString(),
   }).select('id').maybeSingle()

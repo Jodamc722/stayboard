@@ -17,6 +17,7 @@ type Settings = {
   budgets: { asksPerDay: number; actionsPerDay: number; aiUsdPerDay: number; moneyCeilingUsd: number }
   quietHours: { start: string; end: string; tz: string }
   approvers: string[]
+  deskApprovals?: boolean
   channels: { telegram: boolean; slack: boolean; email: boolean }
   updatedBy?: string | null; updatedAt?: string | null
 }
@@ -170,7 +171,7 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
   async function saveParams() {
     if (!s) return
     const approvers = approversText.split(/[,\s]+/).map(e => e.trim().toLowerCase()).filter(e => /@/.test(e))
-    await put({ rungs: s.rungs, budgets: s.budgets, quietHours: s.quietHours, approvers, channels: s.channels }, 'Parameters saved.')
+    await put({ rungs: s.rungs, budgets: s.budgets, quietHours: s.quietHours, approvers, channels: s.channels, deskApprovals: s.deskApprovals !== false }, 'Parameters saved.')
   }
 
   async function decide(id: string, op: 'approve' | 'reject') {
@@ -333,6 +334,10 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
                 <div className="text-[13px] font-bold text-ink mb-2">Approvers</div>
                 <div className="text-[11px] text-muted mb-1">Emails, comma-separated. The first one bound to Telegram gets the asks.</div>
                 <input value={approversText} disabled={!canEdit} className={input} onChange={e => { setApproversText(e.target.value); setDirty(true) }} />
+                <label className="flex items-start gap-2 text-[12.5px] text-ink mt-3">
+                  <input type="checkbox" className="mt-0.5" checked={s.deskApprovals !== false} disabled={!canEdit} onChange={e => edit(d => ({ ...d, deskApprovals: e.target.checked }))} />
+                  <span><b>Desk approvals</b> — tasks, guest drafts and sends (never money or door codes) are listed in #vr-customercareteam and any team member with a Lighthouse login can say yes. Off: only the approvers above.</span>
+                </label>
               </div>
               <div className={`${card} p-4`}>
                 <div className="text-[13px] font-bold text-ink mb-2">Where she asks</div>

@@ -555,8 +555,11 @@ export async function resolveAsk(binding: AskBinding, reply: string, by: string)
 export async function expireStaleAsks(): Promise<number> {
   try {
     const cutoff = new Date(Date.now() - 3 * 86400_000).toISOString()
+    // AN EXPIRY IS AN OUTCOME (Eve audit 2026-10-10): 24 asks expired in a week with no trace of why.
+    // The row now says when and why it died, so the GM Brief can count "asked, nobody answered" and
+    // the learning audit can read it as the signal it is.
     const { data } = await db().from('eve_actions')
-      .update({ status: 'expired' })
+      .update({ status: 'expired', decided_by: 'eve', decided_at: new Date().toISOString(), result: { note: 'expired unanswered after 3 days' } })
       .eq('kind', 'ask').eq('status', 'proposed').lt('created_at', cutoff)
       .select('id')
     return ((data as any[]) || []).length

@@ -192,6 +192,19 @@ export async function buildOpsDesk(): Promise<Built> {
     for (const l of L.unowned.slice(0, 3)) loopLines.push({ tone: 'red', html: `${pill('NO OWNER', 'red')} <b>${esc(unitShort(l.unit || ''))}</b> ${esc(l.summary.slice(0, 100))}`, sub: `Raised in #${esc(l.channel || 'a room')} ${ageTxt(l.ageH)} ago — name someone or close it.` })
     for (const l of L.late.slice(0, 2)) loopLines.push({ tone: 'amber', html: `${pill('PROMISED', 'amber')} ${esc(l.summary.slice(0, 110))}`, sub: `${esc(l.owner || 'Someone')} · ${ageTxt(l.ageH)} ago` })
   }
+  // HK DAMAGE REPORTS NOBODY OPENED (Eve audit 2026-10-10): eight sat 21–74 hours untouched. A report
+  // waiting a day is a claim window closing; it is named here with its age until someone autofills or
+  // closes it on the Claims board.
+  try {
+    const { readHk } = await import('@/lib/hk-damage')
+    const hk = await readHk()
+    const waiting = (hk.reports || []).filter((r: any) => r.status === 'new' && Date.now() - Date.parse(r.postedAt) >= 24 * 3600_000)
+      .sort((a: any, b: any) => Date.parse(a.postedAt) - Date.parse(b.postedAt))
+    if (waiting.length) {
+      const oldest = Math.round((Date.now() - Date.parse(waiting[0].postedAt)) / 3600_000)
+      loopLines.unshift({ tone: 'red', html: `${pill('HK DAMAGE', 'red')} <b>${waiting.length} damage report${waiting.length === 1 ? '' : 's'}</b> from housekeeping waiting ${oldest >= 48 ? Math.round(oldest / 24) + ' days' : oldest + 'h'} — ${waiting.slice(0, 3).map((r: any) => esc(unitShort(String(r.unit || 'unit?')))).join(', ')}${waiting.length > 3 ? ` +${waiting.length - 3}` : ''}`, sub: `Autofill the claim or mark it not claimable — <a href="${APP_URL}/claims" style="color:${A.ink}">Claims board</a>. The filing window is running.` })
+    }
+  } catch { /* the queue is optional here */ }
   const loopsMore = L ? Math.max(0, L.asks.length + L.unowned.length + L.late.length - loopLines.length) : 0
   // Blocked — the units down now, with what Guesty calls the block.
   const downRows = ((bl?.runs || []) as any[]).filter(r => r.live).slice(0, 5)

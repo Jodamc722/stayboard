@@ -163,6 +163,35 @@ async function hostWroteSince(db: any, ref: GuestRef, sinceIso: string): Promise
   } catch { return null }
 }
 
+/** The guest's Guesty conversation for a glitch (by reservation, else by the stay on the listing). */
+async function conversationFor(db: any, ref: GuestRef): Promise<string | null> {
+  try {
+    let resId = String(ref.reservationId || '')
+    if (!resId && ref.listingId) {
+      const day = String(ref.checkIn || etToday()).slice(0, 10)
+      const { data: rs } = await db.from('guesty_reservations').select('id,status,check_in,check_out').eq('listing_id', ref.listingId)
+        .lte('check_in', day).gte('check_out', day).order('check_in', { ascending: false }).limit(5)
+      const r = ((rs as any[]) || []).find(x => !/cancel|declin|inquir|expire/i.test(String(x.status || '')))
+      resId = r ? String(r.id) : ''
+    }
+    if (!resId) return null
+    const { data: convs } = await db.from('guesty_conversations').select('id').eq('reservation_id', resId).limit(1)
+    const c = ((convs as any[]) || [])[0]
+    return c ? String(c.id) : null
+  } catch { return null }
+}
+
+/** The "it's sorted" note — plain and warm, no model, nothing a guest should not read. */
+export function fixedNote(firstName: string, what: string, leavingToday: boolean): string {
+  const hi = firstName ? `Hi ${firstName},` : 'Hello,'
+  // Only a trade word goes into the note ("the AC issue"); an overview snippet ("The guest reported…")
+  // is for the team, not the guest.
+  const KNOWN: Record<string, string> = { 'pest issue': 'pest', plumbing: 'plumbing', AC: 'AC', 'hot water': 'hot water', electrical: 'electrical', appliance: 'appliance', 'cleaning issue': 'cleaning' }
+  const w = KNOWN[String(what || '').trim()]
+  const issue = w ? `the ${w} issue you reported` : 'the issue you reported'
+  return `${hi} a quick update from the Stay Hospitality team — ${issue} has been taken care of. Thank you for letting us know, and please reach out if anything else needs attention. ${leavingToday ? 'We hope the rest of your stay is smooth before you check out today.' : 'Enjoy the rest of your stay!'}`
+}
+
 export type OnWatchRun = { ok: boolean; skipped?: string; found: Record<string, number>; posted: Record<string, number>; resolved: number; escalated: number; notes: string[]; preview?: Record<string, string[]> }
 
 /** preview: find and word everything, post nothing, save nothing — what the next pass would say. */
@@ -336,7 +365,23 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
       const guest = first(g.guest_name)
       const gref: GuestRef = { reservationId: String(g.reservation_id || '') || undefined, listingId: String(g.listing_id || '') || undefined, checkIn: String(g.check_in || '').slice(0, 10) || undefined }
       if (!flags['D:' + g.id] && await hostWroteSince(db, gref, t.finished_at)) continue
-      add('D:' + g.id, { kind: 'D', room: 'guest', label, since: t.finished_at, guest: gref, line: `${label} — fixed ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}. ${guest ? guest + ' is' : 'The guest is'} ${co === today ? 'checking out today' : 'in until ' + weekday(co)}; worth a quick note that it's sorted. I can draft it.` })
+      // DRAFT IT, DON'T OFFER TO (Eve audit 2026-10-10). "I can draft it" went out every day and was
+      // never taken up, then auto-✅'d two days later. The note is written now (no model — a plain,
+      // warm template with the glitch's own words) and saved on the guest's thread; the desk sees it
+      // in the drafts list in #vr-customercareteam and "1 send" sends it as them. Gated by Agent mode
+      // for guest_reply_draft exactly like every other draft.
+      let drafted = ''
+      if (!opts.preview && !flags['D:' + g.id]) {
+        const convId = await conversationFor(db, gref)
+        if (convId) {
+          const note = fixedNote(guest, trade(g.category, g.overview), co === today)
+          const gate = await agentAllowed('guest_reply_draft', { ask: true })
+          const r = await stepDown(gate, { action: 'guest_reply_draft', summary: `draft a note to ${guest || 'the guest'} (${unitOf(g)}) that the ${trade(g.category, g.overview)} is fixed`, exec: { conversationId: convId, draft: note, guest: g.guest_name || null, unit: g.unit || null, why: `Fixed ${clock(t.finished_at)}; the guest has not been told.`, watchKey: 'on_watch_fixed_not_told', subject: 'glitch:' + g.id }, why: `The fix is done and the guest is still ${co === today ? 'here until checkout' : 'in the unit'}.`, by: 'cron:on-watch' },
+            async () => { const { runExecutor } = await import('./executors'); const x = await runExecutor('guest_reply_draft', { conversationId: convId, draft: note, guest: g.guest_name || null, unit: g.unit || null, why: `Fixed ${clock(t.finished_at)}; the guest has not been told.`, watchKey: 'on_watch_fixed_not_told', subject: 'glitch:' + g.id }, { by: 'cron:on-watch' }); return { ok: x.ok, ref: x.ref || null, error: x.error } })
+          drafted = r.mode === 'act' && r.ok ? 'drafted' : r.mode === 'propose' ? 'proposed' : ''
+        }
+      }
+      add('D:' + g.id, { kind: 'D', room: 'guest', label, since: t.finished_at, guest: gref, line: `${label} — fixed ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}. ${guest ? guest + ' is' : 'The guest is'} ${co === today ? 'checking out today' : 'in until ' + weekday(co)}. ${drafted === 'drafted' ? 'A note is drafted — it is in the drafts list here and on the thread; reply *send* on it or edit it there.' : drafted === 'proposed' ? 'I have asked to draft the note.' : 'Worth a quick note that it is sorted.'}` })
     }
   }
 
