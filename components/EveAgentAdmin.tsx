@@ -20,9 +20,13 @@ type Settings = {
   deskApprovals?: boolean
   channels: { telegram: boolean; slack: boolean; email: boolean }
   pilot?: { name: string; enabled: boolean; mode: 'off' | 'sandbox' | 'live'; buildings: string[]; acts: string[] }
+  pilotTwo?: { name: string; mode: 'off' | 'sandbox' | 'live'; buildings: string[]; assignTasks: boolean; assignCleans: boolean }
   updatedBy?: string | null; updatedAt?: string | null
 }
-type PilotRow = { id: number; at: string; action: string; mode: string | null; reason: string | null; summary: string | null; ref: string | null; outcome?: string | null; undone_at?: string | null }
+type PilotRow = { id: number; at: string; action: string; mode: string | null; reason: string | null; summary: string | null; ref: string | null; outcome?: string | null; undone_at?: string | null; pilot?: string }
+type P2Task = { taskId: string; unit: string; building: string; title: string; dept: string; importance: number; because: string; assignee: string | null; reason: string; did?: string; ref?: string | null }
+type P2Plan = { date: string; builtAt: string; pass: string; cleans: { byPerson: Record<string, string[]>; unassigned: number; total: number; peopleUsed: number; shadowReady: boolean } | null; tasks: P2Task[]; people: { name: string; dept: string | null; onShift: boolean; cleans: string[]; tasks: string[]; utilisationPct: number | null }[]; unplaced: { unit: string; title: string; why: string }[]; notes: string[] }
+type P2Report = { days: { date: string; plan: P2Plan; score?: { tasksPlanned: number; tasksAgreed: number; tasksAssignedByPeople: number } }[]; shadow: { ready: boolean; wins: number; scored: number } }
 type PilotReport = { sandbox: PilotRow[]; live: PilotRow[]; byAction: Record<string, { sandbox: number; live: number }> }
 type Today = { date: string; actions: number; asks: number; aiUsd: number; byAction: Record<string, number>; proposed?: number; gradedGood?: number; gradedBad?: number; gradedPending?: number }
 type WatchRow = { key: string; title: string; what: string; action: string; enabled: boolean; cooldownHours: number; rungOverride: number | null; lastFiredAt: string | null; lastRunAt: string | null; firedCount: number; lastResult: any; migrated: boolean }
@@ -90,6 +94,9 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
   const [pilot, setPilot] = useState<PilotReport | null>(null)
   const [pilotAllowed, setPilotAllowed] = useState<string[]>([])
   const [pilotBuildingsText, setPilotBuildingsText] = useState('')
+  const [p2, setP2] = useState<P2Report | null>(null)
+  const [p2BuildingsText, setP2BuildingsText] = useState('')
+  const [p2Day, setP2Day] = useState<string>('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -99,6 +106,7 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
       setS(r.settings); setActions(r.actions || []); setMeanings(r.rungs || {}); setToday(r.today || null)
       setStatus(r.status || null); setRecommended(r.recommended || {})
       setPilot(r.pilot || null); setPilotAllowed(r.pilotAllowed || []); setPilotBuildingsText((r.settings?.pilot?.buildings || []).join(', '))
+      setP2(r.pilotTwo || null); setP2BuildingsText((r.settings?.pilotTwo?.buildings || []).join(', ')); setP2Day(d => d || (r.pilotTwo?.days?.[0]?.date || ''))
       if (r.expiredDigests) setNote(`Cleared ${r.expiredDigests} stale digest proposal${r.expiredDigests === 1 ? '' : 's'} older than a day.`)
       setApproversText((r.settings?.approvers || []).join(', '))
       setDirty(false); setErr('')
@@ -165,6 +173,13 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
     const next = { ...s.pilot, ...patch, buildings: pilotBuildingsText.split(',').map(x => x.trim()).filter(Boolean) }
     if (patch.mode === 'live' && !confirm(`Switch ${s.pilot.name} to LIVE? In ${next.buildings.join(', ') || 'no buildings'} she will ${next.acts.join(', ')} on her own — budgets, quiet hours and undo still apply.`)) return
     await put({ pilot: next }, next.mode === 'live' ? `${s.pilot.name} is LIVE in ${next.buildings.join(', ')}.` : next.mode === 'sandbox' ? `${s.pilot.name} is in the sandbox — she writes down what she would do and does nothing.` : `${s.pilot.name} is off.`)
+  }
+
+  async function savePilotTwo(patch: Partial<NonNullable<Settings['pilotTwo']>>) {
+    if (!s?.pilotTwo) return
+    const next = { ...s.pilotTwo, ...patch, buildings: p2BuildingsText.split(',').map(x => x.trim()).filter(Boolean) }
+    if (patch.mode === 'live' && !confirm(`Switch ${s.pilotTwo.name} to LIVE? In ${next.buildings.join(', ') || 'no buildings'} she will assign open field tasks in Breezeway on her own at 7, 11 and 3 — budgets, quiet hours, never-assign and undo still apply.`)) return
+    await put({ pilotTwo: next }, next.mode === 'live' ? `${s.pilotTwo.name} is LIVE in ${next.buildings.join(', ')}.` : next.mode === 'sandbox' ? `${s.pilotTwo.name} is in the sandbox — the plan is written down four times a day and nothing is assigned.` : `${s.pilotTwo.name} is off.`)
   }
 
   async function toggle() {
@@ -388,10 +403,10 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
                     <div className="text-[12px] font-semibold text-ink mb-1">
                       {s.pilot?.mode === 'live' ? 'What she did' : 'What she would have done'} · last 14 days · {Object.entries(pilot.byAction).map(([k, v]) => `${actions.find(a => a.key === k)?.label || k} ${s.pilot?.mode === 'live' ? v.live : v.sandbox}`).join(' · ') || 'nothing yet'}
                     </div>
-                    {(s.pilot?.mode === 'live' ? pilot.live : pilot.sandbox).length === 0
+                    {(s.pilot?.mode === 'live' ? pilot.live : pilot.sandbox).filter(r => !r.pilot || r.pilot === s.pilot?.name).length === 0
                       ? <div className="text-[11.5px] text-muted">{s.pilot?.mode === 'off' ? 'Switch to Sandbox and the list fills as the desks run (hourly, 11am–7pm ET).' : 'Nothing yet — the desks run hourly.'}</div>
                       : <div className="max-h-72 overflow-auto divide-y divide-line">
-                          {(s.pilot?.mode === 'live' ? pilot.live : pilot.sandbox).slice(0, 80).map(r => (
+                          {(s.pilot?.mode === 'live' ? pilot.live : pilot.sandbox).filter(r => !r.pilot || r.pilot === s.pilot?.name).slice(0, 80).map(r => (
                             <div key={r.id} className="py-1.5 text-[12px] text-ink flex items-start gap-2">
                               <span className="text-muted shrink-0 w-[92px]">{new Date(r.at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
                               <span className="shrink-0 rounded px-1.5 py-0.5 bg-app border border-line text-[10.5px] font-semibold text-muted">{actions.find(a => a.key === r.action)?.label || r.action}</span>
@@ -401,6 +416,72 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
                         </div>}
                   </div>
                 )}
+              </div>
+              <div className={`${card} p-4 md:col-span-2`}>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <div className="text-[13px] font-bold text-ink">{s.pilotTwo?.name || 'Pilot Two'} — the scheduler</div>
+                  <div className="inline-flex rounded-lg border border-line overflow-hidden text-[11.5px] font-semibold">
+                    {(['off', 'sandbox', 'live'] as const).map(m => (
+                      <button key={m} disabled={!canEdit} onClick={() => savePilotTwo({ mode: m })}
+                        className={`px-2.5 py-1 ${s.pilotTwo?.mode === m ? (m === 'live' ? 'bg-[#0F7B52] text-white' : m === 'sandbox' ? 'bg-[#9A6200] text-white' : 'bg-ink text-white') : 'bg-white text-muted hover:text-ink'}`}>{m === 'off' ? 'Off' : m === 'sandbox' ? 'Sandbox' : 'Live'}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="text-[11px] text-muted mb-2">
+                  Four times a day (7, 11, 3 and 6 for tomorrow) she builds the whole day: every departure clean and every open field task, who should hold it and why. Tasks are ranked by <b>importance</b> (safety or a guest in the unit → guest landing today → guest-reported → routine → upkeep) and matched to a <b>team member</b> who is on shift, in the right department, already in that building, in their own market, knows the building, and has the lightest day. <b>Sandbox</b> writes the plan down — leave buildings empty to watch the whole portfolio. <b>Live</b> assigns open tasks in Breezeway inside the buildings below; cleans go live only when ticked <i>and</i> the shadow scheduler is ready ({p2 ? `${p2.shadow.wins} of ${p2.shadow.scored} days won, ${p2.shadow.ready ? 'ready' : 'needs 10 of 14'}` : '…'}). Nothing with a person already on it is touched.
+                </div>
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-[11px] text-muted mb-1">Buildings for Live (empty = sandbox watches everywhere, live stays off)</div>
+                    <input value={p2BuildingsText} disabled={!canEdit} className={input} onChange={e => { setP2BuildingsText(e.target.value); setDirty(true) }} onBlur={() => { if (canEdit && s.pilotTwo) savePilotTwo({}) }} />
+                  </div>
+                  <div className="flex flex-col gap-1 text-[12px] text-ink">
+                    <label className="flex items-center gap-1.5"><input type="checkbox" disabled={!canEdit} checked={s.pilotTwo?.assignTasks !== false} onChange={e => savePilotTwo({ assignTasks: e.target.checked })} /> Field tasks (maintenance, inspections, extras)</label>
+                    <label className="flex items-center gap-1.5"><input type="checkbox" disabled={!canEdit} checked={!!s.pilotTwo?.assignCleans} onChange={e => savePilotTwo({ assignCleans: e.target.checked })} /> Departure cleans (needs the shadow scheduler ready)</label>
+                  </div>
+                </div>
+                {p2 && p2.days.length > 0 && (() => {
+                  const d = p2.days.find(x => x.date === p2Day) || p2.days[0]
+                  const pl = d.plan
+                  return (
+                    <div className="mt-3 border-t border-line pt-3">
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <div className="text-[12px] font-semibold text-ink">The plan · {pl.date} · built {new Date(pl.builtAt).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })} · {pl.tasks.length} task{pl.tasks.length === 1 ? '' : 's'} placed{pl.unplaced.length ? `, ${pl.unplaced.length} nobody fits` : ''}{pl.cleans ? ` · ${pl.cleans.total} cleans → ${pl.cleans.peopleUsed} people${pl.cleans.unassigned ? `, ${pl.cleans.unassigned} unplaced` : ''}` : ''}{d.score ? ` · yesterday people agreed with ${d.score.tasksAgreed} of ${d.score.tasksAssignedByPeople} she planned` : ''}</div>
+                        <div className="inline-flex rounded-lg border border-line overflow-hidden text-[11px]">
+                          {p2.days.map(x => <button key={x.date} onClick={() => setP2Day(x.date)} className={`px-2 py-0.5 ${x.date === pl.date ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink'}`}>{x.date.slice(5)}</button>)}
+                        </div>
+                      </div>
+                      <div className="grid md:grid-cols-2 gap-3">
+                        <div className="max-h-80 overflow-auto divide-y divide-line">
+                          {pl.tasks.map(t => (
+                            <div key={t.taskId} className="py-1.5 text-[12px] text-ink">
+                              <div className="flex items-center gap-2">
+                                <span className={`shrink-0 rounded px-1.5 py-0.5 border text-[10px] font-semibold ${t.importance >= 80 ? 'bg-[#FBE7E4] text-[#A32D1C] border-[#F2C4BD]' : t.importance >= 60 ? 'bg-[#FDF3E0] text-[#9A6200] border-[#F0DAA8]' : 'bg-app text-muted border-line'}`}>{t.importance}</span>
+                                <b>{t.unit}</b> <span className="text-muted truncate">{t.title}</span>
+                                <span className="ml-auto shrink-0 font-semibold">{t.assignee || '—'}</span>
+                                {t.did && t.did !== 'planned' && <span className={`shrink-0 rounded px-1.5 py-0.5 border text-[10px] font-semibold ${t.did === 'assigned' ? OUTCOME_STYLE.done : t.did === 'failed' ? OUTCOME_STYLE.overdue : OUTCOME_STYLE.unverified}`}>{t.did}</span>}
+                              </div>
+                              <div className="text-[11px] text-muted pl-9">{t.because} · {t.reason}</div>
+                            </div>
+                          ))}
+                          {pl.unplaced.map((u, i) => <div key={'u' + i} className="py-1.5 text-[12px] text-[#A32D1C]"><b>{u.unit}</b> <span className="text-muted">{u.title}</span> — {u.why}</div>)}
+                          {!pl.tasks.length && !pl.unplaced.length && <div className="text-[11.5px] text-muted py-1">No open, unowned field tasks that day.</div>}
+                        </div>
+                        <div className="max-h-80 overflow-auto divide-y divide-line">
+                          {pl.people.map(p => (
+                            <div key={p.name} className="py-1.5 text-[12px] text-ink">
+                              <div className="flex items-center gap-2"><b>{p.name}</b><span className="text-muted">{p.dept || ''}{p.utilisationPct != null ? ` · ${p.utilisationPct}%` : ''}{!p.onShift ? ' · no shift on file' : ''}</span></div>
+                              {p.cleans.length > 0 && <div className="text-[11px] text-muted">cleans: {p.cleans.join(', ')}</div>}
+                              {p.tasks.length > 0 && <div className="text-[11px] text-muted">tasks: {p.tasks.join(' · ')}</div>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      {pl.notes.length > 0 && <div className="text-[11px] text-muted mt-1">{pl.notes.join(' · ')}</div>}
+                    </div>
+                  )
+                })()}
+                {p2 && !p2.days.length && <div className="mt-2 text-[11.5px] text-muted">{s.pilotTwo?.mode === 'off' ? 'Switch to Sandbox and the first plan appears at the next pass (7, 11, 3 or 6 ET).' : 'The first plan appears at the next pass.'}</div>}
               </div>
               <div className={`${card} p-4`}>
                 <div className="text-[13px] font-bold text-ink mb-2">Where she asks</div>

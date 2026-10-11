@@ -57,8 +57,10 @@ const isGone = (t: any) => /cancel|delet|void/i.test(str(t.status))
 const isRunning = (t: any) => !!t.started_at || /progress|started|running/i.test(str(t.status))
 const names = (t: any): string[] => (Array.isArray(t.assignees) ? t.assignees : []).map((a: any) => str(a && typeof a === 'object' ? a.name : a).trim()).filter(Boolean)
 
-type Task = { id: string; name: string; dept: 'maintenance' | 'housekeeping' | 'inspection' | 'other'; listing: string; unit: string; building: string; people: string[]; done: boolean; running: boolean; clean: boolean; finished_at: string | null }
-type Day = { today: string; tasks: Task[]; arrivals: Record<string, { guest: string; at: string | null }>; arrivalsTomorrow: Record<string, string> }
+export type OpsTask = { id: string; name: string; dept: 'maintenance' | 'housekeeping' | 'inspection' | 'other'; listing: string; unit: string; building: string; people: string[]; done: boolean; running: boolean; clean: boolean; finished_at: string | null }
+type Task = OpsTask
+type Day = OpsDay
+export type OpsDay = { today: string; tasks: OpsTask[]; arrivals: Record<string, { guest: string; at: string | null }>; arrivalsTomorrow: Record<string, string> }
 
 // "15:00" or "3:00 PM" → "3pm"; "15:30" → "3:30pm". The listing's default check-in time is the
 // same basis the day sheets use; unset means 4pm there too.
@@ -72,6 +74,9 @@ const hm12 = (v: any): string | null => {
   return `${h12}${m[2] === '00' ? '' : ':' + m[2]}${suffix}`
 }
 
+export async function readOpsDay(today: string): Promise<OpsDay> {
+  return readDay(today)
+}
 async function readDay(today: string): Promise<Day> {
   const db = supabaseAdmin()
   // ORDERED (2026-09-28 audit, F32 — ctx.ts rule 2): an unordered read on PostgREST can repeat and

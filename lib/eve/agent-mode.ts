@@ -167,12 +167,19 @@ export type AgentSettings = {
    * still apply to a pilot act, and each one is tagged "Pilot One" on the agent log.
    */
   pilot: { name: string; enabled: boolean; mode: 'off' | 'sandbox' | 'live'; buildings: string[]; acts: ActionType[] }
+  /**
+   * PILOT TWO — the scheduler (Jon, 2026-10-10): cleans and field tasks assigned by importance and team
+   * member (lib/eve/pilot-two.ts). Owns task_assign. Sandbox writes the whole plan down; live assigns in
+   * the pilot buildings. Cleans go live only with assignCleans on AND the shadow scheduler ready.
+   */
+  pilotTwo: { name: string; mode: 'off' | 'sandbox' | 'live'; buildings: string[]; assignTasks: boolean; assignCleans: boolean }
   updatedBy?: string | null
   updatedAt?: string | null
 }
 export const PILOT_DEFAULT: AgentSettings['pilot'] = { name: 'Pilot One', enabled: false, mode: 'off', buildings: ['Rustic'], acts: ['task_note', 'task_create', 'guest_notice_send'] }
 /** Actions a pilot may ever make act: never money, Guesty writes, door codes, cancellations or free-form guest replies. */
-export const PILOT_ALLOWED: ActionType[] = ['task_note', 'task_create', 'task_assign', 'guest_notice_send', 'slack_post', 'email_draft', 'guest_reply_draft']
+export const PILOT_ALLOWED: ActionType[] = ['task_note', 'task_create', 'guest_notice_send', 'slack_post', 'email_draft', 'guest_reply_draft']
+export const PILOT_TWO_DEFAULT: AgentSettings['pilotTwo'] = { name: 'Pilot Two', mode: 'off', buildings: ['Rustic'], assignTasks: true, assignCleans: false }
 
 const DEFAULT_BUDGETS = { asksPerDay: 6, actionsPerDay: 40, aiUsdPerDay: 15, moneyCeilingUsd: 0 }
 const DEFAULT_QUIET = { start: '22:00', end: '07:00', tz: 'America/New_York' }
@@ -223,6 +230,13 @@ export function normalizeAgentSettings(raw: any): AgentSettings {
       const mode: 'off' | 'sandbox' | 'live' = pl.mode === 'live' || pl.mode === 'sandbox' ? pl.mode : (pl.enabled === true ? 'live' : 'off')
       return { name: String(pl.name || PILOT_DEFAULT.name).slice(0, 40), enabled: mode === 'live' && buildings.length > 0, mode: buildings.length ? mode : 'off', buildings, acts }
     })(),
+    pilotTwo: (() => {
+      const pl = r.pilotTwo && typeof r.pilotTwo === 'object' ? r.pilotTwo : {}
+      const buildings = Array.isArray(pl.buildings) ? pl.buildings.map((b: any) => String(b || '').trim()).filter(Boolean).slice(0, 12) : PILOT_TWO_DEFAULT.buildings.slice()
+      const mode: 'off' | 'sandbox' | 'live' = pl.mode === 'live' || pl.mode === 'sandbox' ? pl.mode : 'off'
+      // Live needs a building list; the sandbox may watch the whole portfolio (empty list = everywhere).
+      return { name: String(pl.name || PILOT_TWO_DEFAULT.name).slice(0, 40), mode: mode === 'live' && !buildings.length ? 'off' : mode, buildings, assignTasks: pl.assignTasks !== false, assignCleans: pl.assignCleans === true }
+    })(),
     updatedBy: r.updatedBy || null,
     updatedAt: r.updatedAt || null,
   }
@@ -254,6 +268,7 @@ export async function saveAgentSettings(patch: any, by: string): Promise<{ ok: b
     quietHours: { ...current.quietHours, ...(patch?.quietHours && typeof patch.quietHours === 'object' ? patch.quietHours : {}) },
     channels: { ...current.channels, ...(patch?.channels && typeof patch.channels === 'object' ? patch.channels : {}) },
     pilot: { ...current.pilot, ...(patch?.pilot && typeof patch.pilot === 'object' ? patch.pilot : {}) },
+    pilotTwo: { ...current.pilotTwo, ...(patch?.pilotTwo && typeof patch.pilotTwo === 'object' ? patch.pilotTwo : {}) },
   })
   merged.updatedBy = by
   merged.updatedAt = new Date().toISOString()
@@ -382,11 +397,19 @@ export type AgentVerdict = {
 }
 
 /** Is this unit inside one of the pilot buildings? "Rustic 18 - 1BR", "Rustic 18", "rustic 21 · pest" all match 'Rustic'. */
-export function pilotBuildingOf(s: AgentSettings, unit: any): string | null {
-  if (!s.pilot || s.pilot.mode === 'off') return null
+/** Which pilot governs an action: task_assign is Pilot Two's; everything else Pilot One's. */
+export function pilotFor(s: AgentSettings, action?: ActionType | string | null): { name: string; mode: 'off' | 'sandbox' | 'live'; buildings: string[]; acts: ActionType[] } | null {
+  if (action === 'task_assign') return s.pilotTwo ? { name: s.pilotTwo.name, mode: s.pilotTwo.mode, buildings: s.pilotTwo.buildings, acts: s.pilotTwo.assignTasks ? ['task_assign'] : [] } : null
+  return s.pilot ? { name: s.pilot.name, mode: s.pilot.mode, buildings: s.pilot.buildings, acts: s.pilot.acts } : null
+}
+export function pilotBuildingOf(s: AgentSettings, unit: any, action?: ActionType | string | null): string | null {
+  const cfg = pilotFor(s, action)
+  if (!cfg || cfg.mode === 'off') return null
   const u = String(unit || '').trim()
   if (!u) return null
-  for (const b of s.pilot.buildings) {
+  // Pilot Two's sandbox may watch everywhere: an empty building list means "all" (never for live).
+  if (!cfg.buildings.length) return cfg.mode === 'sandbox' ? 'all' : null
+  for (const b of cfg.buildings) {
     const re = new RegExp('(^|[^A-Za-z])' + b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s*') + '(?![A-Za-z])', 'i')
     if (re.test(u)) return b
   }
@@ -414,10 +437,11 @@ export async function agentAllowed(action: ActionType, opts: { usd?: number; now
   const why: string[] = []
   // PILOT ONE: inside a pilot building, a listed action acts. The cap still holds (a welded action
   // cannot be piloted past propose) and everything below — budgets, quiet hours — still applies.
-  const pilotB = opts.unit !== undefined ? pilotBuildingOf(s, opts.unit) : null
-  const eligible = !!(pilotB && s.pilot.acts.includes(action) && (def ? def.cap : 2) >= 4)
-  const pilot = eligible && s.pilot.mode === 'live' ? s.pilot.name : null
-  const sandbox = eligible && s.pilot.mode === 'sandbox' ? `${s.pilot.name} sandbox (${pilotB})` : null
+  const pcfg = pilotFor(s, action)
+  const pilotB = opts.unit !== undefined ? pilotBuildingOf(s, opts.unit, action) : null
+  const eligible = !!(pcfg && pilotB && pcfg.acts.includes(action) && (def ? def.cap : 2) >= 4)
+  const pilot = eligible && pcfg!.mode === 'live' ? pcfg!.name : null
+  const sandbox = eligible && pcfg!.mode === 'sandbox' ? `${pcfg!.name} sandbox (${pilotB})` : null
   if (pilot) { rung = 4; why.push(`${pilot} (${pilotB}): act`) }
   let mode = modeOf(rung)
   const internal = rung <= 1 && def && def.cap <= 1   // recommendation / memory: never leave the app
@@ -910,9 +934,10 @@ export async function stepDown(verdict: AgentVerdict, p: Proposal, act?: () => P
   // PILOT ONE: most callers ask the fence before they know the unit. When the proposal names one inside
   // a pilot building and the fence was asked without it, ask again with it — the same budgets and quiet
   // hours decide, only the rung changes.
-  if (!verdict.unitChecked && verdict.mode !== 'act' && verdict.settings?.pilot && verdict.settings.pilot.mode !== 'off' && verdict.settings.pilot.acts.includes(p.action)) {
+  const pcfg = verdict.settings ? pilotFor(verdict.settings, p.action) : null
+  if (!verdict.unitChecked && verdict.mode !== 'act' && pcfg && pcfg.mode !== 'off' && pcfg.acts.includes(p.action)) {
     const unit = unitOfProposal(p)
-    if (unit && pilotBuildingOf(verdict.settings, unit)) {
+    if (unit && pilotBuildingOf(verdict.settings, unit, p.action)) {
       try { verdict = await agentAllowed(p.action, { ask: verdict.asked, urgent: verdict.urgent, usd: p.usd == null ? undefined : Number(p.usd), unit }) } catch { /* the first verdict stands */ }
     }
   }
@@ -1175,8 +1200,9 @@ export async function pilotReport(days = 14): Promise<{ sandbox: any[]; live: an
   try {
     const s = await getAgentSettings()
     const since = new Date(Date.now() - days * 86400_000).toISOString()
-    const { data } = await supabaseAdmin().from('eve_agent_log').select('id,at,action,mode,allowed,reason,summary,ref,by,outcome,outcome_note,undone_at').ilike('reason', `${s.pilot.name}%`).gte('at', since).order('at', { ascending: false }).limit(400)
-    for (const r of ((data as any[]) || [])) {
+    const { data } = await supabaseAdmin().from('eve_agent_log').select('id,at,action,mode,allowed,reason,summary,ref,by,outcome,outcome_note,undone_at').or(`reason.ilike.${s.pilot.name}%,reason.ilike.${s.pilotTwo.name}%`).gte('at', since).order('at', { ascending: false }).limit(600)
+    for (const r0 of ((data as any[]) || [])) {
+      const r = { ...r0, pilot: String(r0.reason || '').startsWith(s.pilotTwo.name) ? s.pilotTwo.name : s.pilot.name }
       const sandbox = /sandbox/i.test(String(r.reason || ''))
       const k = String(r.action)
       out.byAction[k] = out.byAction[k] || { sandbox: 0, live: 0 }

@@ -52,8 +52,9 @@ export async function GET(req: NextRequest) {
   // out anything held for quiet hours that is now due, so what the panel shows is what is live.
   const expiredDigests = await expireStaleDigests().catch(() => 0)
   const flushed = await flushDeferred('panel').catch(() => null)
-  const [settings, today, status, pilot] = await Promise.all([getAgentSettings(), agentToday(), queueStatus(), pilotReport()])
-  return NextResponse.json({ ok: true, settings, today, status, expiredDigests, flushed, actions: ACTIONS, rungs: RUNG_MEANING, recommended: recommendedRungs(), recommendedExplicit: RECOMMENDED_RUNGS, pilot, pilotAllowed: PILOT_ALLOWED })
+  const { pilotTwoReport } = await import('@/lib/eve/pilot-two')
+  const [settings, today, status, pilot, pilotTwo] = await Promise.all([getAgentSettings(), agentToday(), queueStatus(), pilotReport(), pilotTwoReport().catch(() => null)])
+  return NextResponse.json({ ok: true, settings, today, status, expiredDigests, flushed, actions: ACTIONS, rungs: RUNG_MEANING, recommended: recommendedRungs(), recommendedExplicit: RECOMMENDED_RUNGS, pilot, pilotAllowed: PILOT_ALLOWED, pilotTwo })
 }
 
 export async function PUT(req: NextRequest) {
