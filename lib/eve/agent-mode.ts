@@ -50,7 +50,7 @@ export const OWNER = 'jon@stay-hospitality.com'
 
 export type ActionType =
   | 'slack_post' | 'telegram_ask' | 'email_draft' | 'email_send'
-  | 'guest_reply_draft' | 'guest_reply_send'
+  | 'guest_reply_draft' | 'guest_reply_send' | 'guest_notice_send'
   | 'task_create' | 'task_assign' | 'task_note' | 'task_cancel'
   | 'door_code_release' | 'guesty_write' | 'calendar_block'
   | 'recommendation' | 'memory_rule'
@@ -89,6 +89,12 @@ export const ACTIONS: ActionDef[] = [
   { key: 'email_send', label: 'Send an email', what: 'An email leaving the company. Permanently propose-only, and the executor is not enabled.', def: 2, cap: 2, wiredAt: [] },
   { key: 'guest_reply_draft', label: 'Draft a guest reply', what: 'A reply saved on the thread (/messages) and in Command Center → Decide with Send / Discard. Not sent.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts guest_reply_draft', 'lib/eve/watches.ts guest_unanswered_1h, bad_review_in'] },
   { key: 'guest_reply_send', label: 'Message a guest', what: 'A message the guest actually receives (Guesty send-message). Permanently propose-only: only a Send button or a Telegram yes runs it.', def: 2, cap: 2, wiredAt: ['lib/eve/executors.ts guest_reply_send', 'app/api/eve/guest-drafts send'] },
+  // PILOT ONE (Jon, 2026-10-10): "ok to send simple guest messages like work completed, requests
+  // permission to enter … never sends code without approval". A NOTICE is a fixed template rendered
+  // from the glitch/task — "the AC issue has been taken care of", "our maintenance team would like to
+  // stop by today" — never model text, never a number that could be a code (lib/eve/guest-notices.ts
+  // refuses the send otherwise). Free-form replies stay guest_reply_send, welded at propose.
+  { key: 'guest_notice_send', label: 'Send a simple guest notice', what: 'A templated note the guest receives — work completed, permission to enter. No free text, no codes. Pilot buildings act; elsewhere it is proposed.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts guest_notice_send', 'lib/eve/on-watch.ts D/F fixed, G entry request'] },
   { key: 'task_create', label: 'Create a task', what: 'A new Breezeway task.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts task_create', 'lib/eve/core.ts propose_action', 'lib/eve/watches.ts big_arrival_uninspected, bad_review_in, glitch_overdue'] },
   { key: 'task_assign', label: 'Assign a task', what: 'Put a task on somebody\'s board.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts task_assign', 'lib/eve/watches.ts clean_late'] },
   { key: 'task_note', label: 'Note on a task', what: 'A comment on an existing Breezeway task.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts task_note', 'lib/eve/watches.ts no_show_risk'] },
@@ -113,7 +119,7 @@ export const ACTION_KEYS = ACTIONS.map(a => a.key)
 // Lighthouse login (the people in #vr-customercareteam); OWNER actions stay with the approver list.
 // Jon's rule (2026-09-10): "anyone can ask if they need something, only approvals are PTE and door
 // codes… Money is not something Eve should ever share." Settings → Eve → Agent mode → deskApprovals.
-export const DESK_ACTIONS = new Set<ActionType>(['task_note', 'task_create', 'task_assign', 'guest_reply_draft', 'guest_reply_send'])
+export const DESK_ACTIONS = new Set<ActionType>(['task_note', 'task_create', 'task_assign', 'guest_reply_draft', 'guest_reply_send', 'guest_notice_send'])
 export type Tier = 'desk' | 'owner'
 export function tierOf(action: ActionType | string, payload?: any): Tier {
   if (!DESK_ACTIONS.has(action as ActionType)) return 'owner'
@@ -154,9 +160,19 @@ export type AgentSettings = {
   /** Desk-tier asks (tasks, guest drafts and sends — no money) may be approved by any team member. Default on. */
   deskApprovals: boolean
   channels: { telegram: boolean; slack: boolean; email: boolean }
+  /**
+   * PILOT ONE (Jon, 2026-10-10: "turn on agentic mode to actually do things but keep a small test —
+   * Rustic only"). Inside the pilot buildings the listed actions ACT (rung 4) instead of asking; every
+   * other building keeps the rungs above. Budgets, quiet hours, the said-registry and the room caps
+   * still apply to a pilot act, and each one is tagged "Pilot One" on the agent log.
+   */
+  pilot: { name: string; enabled: boolean; mode: 'off' | 'sandbox' | 'live'; buildings: string[]; acts: ActionType[] }
   updatedBy?: string | null
   updatedAt?: string | null
 }
+export const PILOT_DEFAULT: AgentSettings['pilot'] = { name: 'Pilot One', enabled: false, mode: 'off', buildings: ['Rustic'], acts: ['task_note', 'task_create', 'guest_notice_send'] }
+/** Actions a pilot may ever make act: never money, Guesty writes, door codes, cancellations or free-form guest replies. */
+export const PILOT_ALLOWED: ActionType[] = ['task_note', 'task_create', 'task_assign', 'guest_notice_send', 'slack_post', 'email_draft', 'guest_reply_draft']
 
 const DEFAULT_BUDGETS = { asksPerDay: 6, actionsPerDay: 40, aiUsdPerDay: 15, moneyCeilingUsd: 0 }
 const DEFAULT_QUIET = { start: '22:00', end: '07:00', tz: 'America/New_York' }
@@ -198,6 +214,15 @@ export function normalizeAgentSettings(raw: any): AgentSettings {
     approvers: approvers.length ? approvers : [OWNER],
     deskApprovals: r.deskApprovals !== false,
     channels: { telegram: ch.telegram !== false, slack: ch.slack !== false, email: ch.email === true },
+    pilot: (() => {
+      const pl = r.pilot && typeof r.pilot === 'object' ? r.pilot : {}
+      const buildings = Array.isArray(pl.buildings) ? pl.buildings.map((b: any) => String(b || '').trim()).filter(Boolean).slice(0, 12) : PILOT_DEFAULT.buildings.slice()
+      const acts = Array.isArray(pl.acts) ? pl.acts.map((a: any) => String(a)).filter((a: string) => (PILOT_ALLOWED as string[]).includes(a)) as ActionType[] : PILOT_DEFAULT.acts.slice()
+      // mode is the switch (Jon, 2026-10-10: "don't turn it on, build a pilot mode so I can turn on, and
+      // maybe a sandbox where it shows everything it would do"). enabled = live.
+      const mode: 'off' | 'sandbox' | 'live' = pl.mode === 'live' || pl.mode === 'sandbox' ? pl.mode : (pl.enabled === true ? 'live' : 'off')
+      return { name: String(pl.name || PILOT_DEFAULT.name).slice(0, 40), enabled: mode === 'live' && buildings.length > 0, mode: buildings.length ? mode : 'off', buildings, acts }
+    })(),
     updatedBy: r.updatedBy || null,
     updatedAt: r.updatedAt || null,
   }
@@ -228,6 +253,7 @@ export async function saveAgentSettings(patch: any, by: string): Promise<{ ok: b
     budgets: { ...current.budgets, ...(patch?.budgets && typeof patch.budgets === 'object' ? patch.budgets : {}) },
     quietHours: { ...current.quietHours, ...(patch?.quietHours && typeof patch.quietHours === 'object' ? patch.quietHours : {}) },
     channels: { ...current.channels, ...(patch?.channels && typeof patch.channels === 'object' ? patch.channels : {}) },
+    pilot: { ...current.pilot, ...(patch?.pilot && typeof patch.pilot === 'object' ? patch.pilot : {}) },
   })
   merged.updatedBy = by
   merged.updatedAt = new Date().toISOString()
@@ -345,6 +371,33 @@ export type AgentVerdict = {
   needsApproval: boolean
   enabled: boolean
   settings: AgentSettings
+  /** The rung came from the pilot (unit inside a pilot building, action on the pilot's list). */
+  pilot?: string | null
+  /** Sandbox: the pilot WOULD have acted here; the verdict itself is the ordinary one. */
+  sandbox?: string | null
+  /** Echo of opts.ask, so stepDown can re-ask the fence with the unit it learns from the proposal. */
+  asked?: boolean
+  /** Set when the caller named a unit, pilot or not — stepDown does not re-ask then. */
+  unitChecked?: boolean
+}
+
+/** Is this unit inside one of the pilot buildings? "Rustic 18 - 1BR", "Rustic 18", "rustic 21 · pest" all match 'Rustic'. */
+export function pilotBuildingOf(s: AgentSettings, unit: any): string | null {
+  if (!s.pilot || s.pilot.mode === 'off') return null
+  const u = String(unit || '').trim()
+  if (!u) return null
+  for (const b of s.pilot.buildings) {
+    const re = new RegExp('(^|[^A-Za-z])' + b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s*') + '(?![A-Za-z])', 'i')
+    if (re.test(u)) return b
+  }
+  return null
+}
+
+/** The unit a proposal is about, from wherever the producer put it. Unknown → '' (and then never pilot). */
+export function unitOfProposal(p: { exec?: any; subject?: string | null; summary?: string }): string {
+  const e = p.exec && typeof p.exec === 'object' ? p.exec : {}
+  for (const k of ['unit', 'unitName', 'unit_name', 'listing_name', 'listingName', 'nickname', 'property_name', 'where']) { const v = e[k]; if (typeof v === 'string' && v.trim()) return v.trim() }
+  return ''
 }
 
 /**
@@ -354,12 +407,19 @@ export type AgentVerdict = {
  * `urgent` means a person asked for this right now (a door code at 2am, Jon's own yes) — quiet
  * hours hold Eve's own initiative, not a human's request.
  */
-export async function agentAllowed(action: ActionType, opts: { usd?: number; now?: Date; ask?: boolean; urgent?: boolean } = {}): Promise<AgentVerdict> {
+export async function agentAllowed(action: ActionType, opts: { usd?: number; now?: Date; ask?: boolean; urgent?: boolean; unit?: string | null } = {}): Promise<AgentVerdict> {
   const s = await getAgentSettings()
   const def = ACTIONS.find(a => a.key === action)
-  const rung = clampRung(s.rungs[action] ?? (def ? def.def : 0), def ? def.cap : 2)
-  let mode = modeOf(rung)
+  let rung = clampRung(s.rungs[action] ?? (def ? def.def : 0), def ? def.cap : 2)
   const why: string[] = []
+  // PILOT ONE: inside a pilot building, a listed action acts. The cap still holds (a welded action
+  // cannot be piloted past propose) and everything below — budgets, quiet hours — still applies.
+  const pilotB = opts.unit !== undefined ? pilotBuildingOf(s, opts.unit) : null
+  const eligible = !!(pilotB && s.pilot.acts.includes(action) && (def ? def.cap : 2) >= 4)
+  const pilot = eligible && s.pilot.mode === 'live' ? s.pilot.name : null
+  const sandbox = eligible && s.pilot.mode === 'sandbox' ? `${s.pilot.name} sandbox (${pilotB})` : null
+  if (pilot) { rung = 4; why.push(`${pilot} (${pilotB}): act`) }
+  let mode = modeOf(rung)
   const internal = rung <= 1 && def && def.cap <= 1   // recommendation / memory: never leave the app
 
   if (!s.enabled && !internal) {
@@ -395,7 +455,7 @@ export async function agentAllowed(action: ActionType, opts: { usd?: number; now
   }
 
   const reason = why.length ? why.join('; ') : (mode === 'act' ? `rung ${rung}: act` : `rung ${rung}: ${mode}`)
-  return { ok: mode === 'act', rung, mode, reason, needsApproval: mode === 'propose', enabled: s.enabled, settings: s, urgent: !!opts.urgent }
+  return { ok: mode === 'act', rung, mode, reason, needsApproval: mode === 'propose', enabled: s.enabled, settings: s, urgent: !!opts.urgent, pilot, sandbox, asked: !!opts.ask, unitChecked: opts.unit !== undefined }
 }
 
 // ---- The log and the counters --------------------------------------------------------------------
@@ -830,7 +890,34 @@ export async function flushDeferred(by = 'cron:flush'): Promise<{ ran: number; f
  */
 export type StepResult = { mode: Mode; ok: boolean; ref?: string | null; error?: string; done?: string; logId?: string | null; undo?: any }
 
+/**
+ * PILOT ONE SANDBOX — "where it shows everything it would do" (Jon, 2026-10-10). A would-have-acted row on
+ * the agent log (mode observe, reason starts with the pilot's name + "sandbox"), once per subject and
+ * action a day. Settings → Eve → Agent mode → Pilot lists them; nothing is executed.
+ */
+export async function recordSandbox(tag: string, p: Proposal, rung: Rung): Promise<void> {
+  const db = supabaseAdmin()
+  const subject = String(p.subject || unitOfProposal(p) || '').slice(0, 120)
+  try {
+    const since = new Date(Date.now() - 24 * 3600_000).toISOString()
+    const { data } = await db.from('eve_agent_log').select('id,summary').eq('action', p.action).ilike('reason', `${tag}%`).gte('at', since).limit(50)
+    if (((data as any[]) || []).some(r => String(r.summary || '').endsWith(` [${subject}]`))) return
+  } catch { /* log it anyway */ }
+  await recordAgentAction(p.action, { rung, allowed: false, mode: 'observe', reason: `${tag}: would act — ${p.why || 'pilot building'}`, summary: `would ${p.summary}${subject ? ` [${subject}]` : ''}`, by: p.by, actor: p.actor, usd: p.usd, countAs: 'none' })
+}
+
 export async function stepDown(verdict: AgentVerdict, p: Proposal, act?: () => Promise<{ ok: boolean; ref?: string | null; error?: string }>): Promise<StepResult> {
+  // PILOT ONE: most callers ask the fence before they know the unit. When the proposal names one inside
+  // a pilot building and the fence was asked without it, ask again with it — the same budgets and quiet
+  // hours decide, only the rung changes.
+  if (!verdict.unitChecked && verdict.mode !== 'act' && verdict.settings?.pilot && verdict.settings.pilot.mode !== 'off' && verdict.settings.pilot.acts.includes(p.action)) {
+    const unit = unitOfProposal(p)
+    if (unit && pilotBuildingOf(verdict.settings, unit)) {
+      try { verdict = await agentAllowed(p.action, { ask: verdict.asked, urgent: verdict.urgent, usd: p.usd == null ? undefined : Number(p.usd), unit }) } catch { /* the first verdict stands */ }
+    }
+  }
+  // SANDBOX: write down what the pilot would have done, then carry on exactly as today.
+  if (verdict.sandbox && verdict.mode !== 'act') await recordSandbox(verdict.sandbox, p, verdict.rung).catch(() => {})
   // SAID ONCE, WHOEVER NOTICED (2026-09-30 audit). Every Slack post from every desk — loop nudges,
   // on-watch flags, digests, no-show alerts, the handoff — passes the one registry (lib/eve/said.ts)
   // before it goes out, is proposed, or is held for quiet hours. The same words in the same thread
@@ -1079,6 +1166,24 @@ export async function queueStatus(): Promise<{ waiting: number; deferred: number
       }
     }
   } catch { /* zeros */ }
+  return out
+}
+
+/** PILOT ONE — what the pilot did (live) and what it would have done (sandbox), last 14 days, newest first. */
+export async function pilotReport(days = 14): Promise<{ sandbox: any[]; live: any[]; byAction: Record<string, { sandbox: number; live: number }> }> {
+  const out = { sandbox: [] as any[], live: [] as any[], byAction: {} as Record<string, { sandbox: number; live: number }> }
+  try {
+    const s = await getAgentSettings()
+    const since = new Date(Date.now() - days * 86400_000).toISOString()
+    const { data } = await supabaseAdmin().from('eve_agent_log').select('id,at,action,mode,allowed,reason,summary,ref,by,outcome,outcome_note,undone_at').ilike('reason', `${s.pilot.name}%`).gte('at', since).order('at', { ascending: false }).limit(400)
+    for (const r of ((data as any[]) || [])) {
+      const sandbox = /sandbox/i.test(String(r.reason || ''))
+      const k = String(r.action)
+      out.byAction[k] = out.byAction[k] || { sandbox: 0, live: 0 }
+      if (sandbox) { out.sandbox.push(r); out.byAction[k].sandbox++ }
+      else if (r.mode === 'act') { out.live.push(r); out.byAction[k].live++ }
+    }
+  } catch { /* an empty report */ }
   return out
 }
 

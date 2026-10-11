@@ -19,8 +19,11 @@ type Settings = {
   approvers: string[]
   deskApprovals?: boolean
   channels: { telegram: boolean; slack: boolean; email: boolean }
+  pilot?: { name: string; enabled: boolean; mode: 'off' | 'sandbox' | 'live'; buildings: string[]; acts: string[] }
   updatedBy?: string | null; updatedAt?: string | null
 }
+type PilotRow = { id: number; at: string; action: string; mode: string | null; reason: string | null; summary: string | null; ref: string | null; outcome?: string | null; undone_at?: string | null }
+type PilotReport = { sandbox: PilotRow[]; live: PilotRow[]; byAction: Record<string, { sandbox: number; live: number }> }
 type Today = { date: string; actions: number; asks: number; aiUsd: number; byAction: Record<string, number>; proposed?: number; gradedGood?: number; gradedBad?: number; gradedPending?: number }
 type WatchRow = { key: string; title: string; what: string; action: string; enabled: boolean; cooldownHours: number; rungOverride: number | null; lastFiredAt: string | null; lastRunAt: string | null; firedCount: number; lastResult: any; migrated: boolean }
 type Undoable = { id: number; at: string; action: string; summary: string | null; by: string; actor: string | null; ref: string | null; undone_at: string | null }
@@ -84,6 +87,9 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
   const [approversText, setApproversText] = useState('')
   const [status, setStatus] = useState<QueueStatus | null>(null)
   const [recommended, setRecommended] = useState<Record<string, Rung>>({})
+  const [pilot, setPilot] = useState<PilotReport | null>(null)
+  const [pilotAllowed, setPilotAllowed] = useState<string[]>([])
+  const [pilotBuildingsText, setPilotBuildingsText] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -92,6 +98,7 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
       if (!r?.ok) { setErr(r?.message || r?.error || 'Could not load agent mode.'); return }
       setS(r.settings); setActions(r.actions || []); setMeanings(r.rungs || {}); setToday(r.today || null)
       setStatus(r.status || null); setRecommended(r.recommended || {})
+      setPilot(r.pilot || null); setPilotAllowed(r.pilotAllowed || []); setPilotBuildingsText((r.settings?.pilot?.buildings || []).join(', '))
       if (r.expiredDigests) setNote(`Cleared ${r.expiredDigests} stale digest proposal${r.expiredDigests === 1 ? '' : 's'} older than a day.`)
       setApproversText((r.settings?.approvers || []).join(', '))
       setDirty(false); setErr('')
@@ -151,6 +158,13 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
       if (!r?.ok) { setErr(r?.message || r?.error || 'Could not save.'); return }
       setS(r.settings); setToday(r.today || today); setApproversText((r.settings?.approvers || []).join(', ')); setDirty(false); setNote(msg)
     } catch (e: any) { setErr(e?.message || String(e)) } finally { setSaving(false) }
+  }
+
+  async function savePilot(patch: Partial<NonNullable<Settings['pilot']>>) {
+    if (!s?.pilot) return
+    const next = { ...s.pilot, ...patch, buildings: pilotBuildingsText.split(',').map(x => x.trim()).filter(Boolean) }
+    if (patch.mode === 'live' && !confirm(`Switch ${s.pilot.name} to LIVE? In ${next.buildings.join(', ') || 'no buildings'} she will ${next.acts.join(', ')} on her own — budgets, quiet hours and undo still apply.`)) return
+    await put({ pilot: next }, next.mode === 'live' ? `${s.pilot.name} is LIVE in ${next.buildings.join(', ')}.` : next.mode === 'sandbox' ? `${s.pilot.name} is in the sandbox — she writes down what she would do and does nothing.` : `${s.pilot.name} is off.`)
   }
 
   async function toggle() {
@@ -338,6 +352,55 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
                   <input type="checkbox" className="mt-0.5" checked={s.deskApprovals !== false} disabled={!canEdit} onChange={e => edit(d => ({ ...d, deskApprovals: e.target.checked }))} />
                   <span><b>Desk approvals</b> — tasks, guest drafts and sends (never money or door codes) are listed in #vr-customercareteam and any team member with a Lighthouse login can say yes. Off: only the approvers above.</span>
                 </label>
+              </div>
+              <div className={`${card} p-4 md:col-span-2`}>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <div className="text-[13px] font-bold text-ink">{s.pilot?.name || 'Pilot One'} — a small test of acting</div>
+                  <div className="inline-flex rounded-lg border border-line overflow-hidden text-[11.5px] font-semibold">
+                    {(['off', 'sandbox', 'live'] as const).map(m => (
+                      <button key={m} disabled={!canEdit} onClick={() => savePilot({ mode: m })}
+                        className={`px-2.5 py-1 ${s.pilot?.mode === m ? (m === 'live' ? 'bg-[#0F7B52] text-white' : m === 'sandbox' ? 'bg-[#9A6200] text-white' : 'bg-ink text-white') : 'bg-white text-muted hover:text-ink'}`}>{m === 'off' ? 'Off' : m === 'sandbox' ? 'Sandbox' : 'Live'}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="text-[11px] text-muted mb-2">
+                  Inside the buildings below the ticked actions <b>act</b> instead of asking; everywhere else the rungs above apply. <b>Sandbox</b> changes nothing — she writes down what she <i>would</i> have done, so you can read the list before switching to Live. Budgets, quiet hours, the said-registry and undo apply to a live pilot act. Door codes, money, Guesty writes and free-form guest replies can never be piloted.
+                </div>
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-[11px] text-muted mb-1">Buildings (comma-separated, matched by name — "Rustic" covers Rustic 8, 14, 18…)</div>
+                    <input value={pilotBuildingsText} disabled={!canEdit} className={input} onChange={e => { setPilotBuildingsText(e.target.value); setDirty(true) }} onBlur={() => { if (canEdit && s.pilot) savePilot({}) }} />
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-muted mb-1">What she may do there</div>
+                    <div className="flex flex-wrap gap-x-3 gap-y-1">
+                      {pilotAllowed.map(k => (
+                        <label key={k} className="flex items-center gap-1.5 text-[12px] text-ink">
+                          <input type="checkbox" disabled={!canEdit} checked={(s.pilot?.acts || []).includes(k)} onChange={e => savePilot({ acts: e.target.checked ? Array.from(new Set([...(s.pilot?.acts || []), k])) : (s.pilot?.acts || []).filter(x => x !== k) })} />
+                          {actions.find(a => a.key === k)?.label || k}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                {pilot && (
+                  <div className="mt-3 border-t border-line pt-3">
+                    <div className="text-[12px] font-semibold text-ink mb-1">
+                      {s.pilot?.mode === 'live' ? 'What she did' : 'What she would have done'} · last 14 days · {Object.entries(pilot.byAction).map(([k, v]) => `${actions.find(a => a.key === k)?.label || k} ${s.pilot?.mode === 'live' ? v.live : v.sandbox}`).join(' · ') || 'nothing yet'}
+                    </div>
+                    {(s.pilot?.mode === 'live' ? pilot.live : pilot.sandbox).length === 0
+                      ? <div className="text-[11.5px] text-muted">{s.pilot?.mode === 'off' ? 'Switch to Sandbox and the list fills as the desks run (hourly, 11am–7pm ET).' : 'Nothing yet — the desks run hourly.'}</div>
+                      : <div className="max-h-72 overflow-auto divide-y divide-line">
+                          {(s.pilot?.mode === 'live' ? pilot.live : pilot.sandbox).slice(0, 80).map(r => (
+                            <div key={r.id} className="py-1.5 text-[12px] text-ink flex items-start gap-2">
+                              <span className="text-muted shrink-0 w-[92px]">{new Date(r.at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                              <span className="shrink-0 rounded px-1.5 py-0.5 bg-app border border-line text-[10.5px] font-semibold text-muted">{actions.find(a => a.key === r.action)?.label || r.action}</span>
+                              <span className="min-w-0">{r.summary || r.reason}{r.outcome ? <span className={`ml-2 rounded px-1.5 py-0.5 border text-[10px] font-semibold ${OUTCOME_STYLE[r.outcome] || OUTCOME_STYLE.unverified}`}>{r.outcome}</span> : null}{r.undone_at ? <span className="ml-2 text-[10px] text-[#A32D1C] font-semibold">undone</span> : null}</span>
+                            </div>
+                          ))}
+                        </div>}
+                  </div>
+                )}
               </div>
               <div className={`${card} p-4`}>
                 <div className="text-[13px] font-bold text-ink mb-2">Where she asks</div>

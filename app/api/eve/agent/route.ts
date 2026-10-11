@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/access'
 import { eveGate } from '../../agent/route'
 import {
-  ACTIONS, RUNG_MEANING, RECOMMENDED_RUNGS, recommendedRungs, getAgentSettings, saveAgentSettings, agentToday, agentLog, listProposals,
+  ACTIONS, RUNG_MEANING, RECOMMENDED_RUNGS, recommendedRungs, getAgentSettings, saveAgentSettings, agentToday, agentLog, listProposals, pilotReport, PILOT_ALLOWED,
   executeProposal, rejectProposal, expireStaleDigests, queueStatus, flushDeferred,
 } from '@/lib/eve/agent-mode'
 
@@ -52,8 +52,8 @@ export async function GET(req: NextRequest) {
   // out anything held for quiet hours that is now due, so what the panel shows is what is live.
   const expiredDigests = await expireStaleDigests().catch(() => 0)
   const flushed = await flushDeferred('panel').catch(() => null)
-  const [settings, today, status] = await Promise.all([getAgentSettings(), agentToday(), queueStatus()])
-  return NextResponse.json({ ok: true, settings, today, status, expiredDigests, flushed, actions: ACTIONS, rungs: RUNG_MEANING, recommended: recommendedRungs(), recommendedExplicit: RECOMMENDED_RUNGS })
+  const [settings, today, status, pilot] = await Promise.all([getAgentSettings(), agentToday(), queueStatus(), pilotReport()])
+  return NextResponse.json({ ok: true, settings, today, status, expiredDigests, flushed, actions: ACTIONS, rungs: RUNG_MEANING, recommended: recommendedRungs(), recommendedExplicit: RECOMMENDED_RUNGS, pilot, pilotAllowed: PILOT_ALLOWED })
 }
 
 export async function PUT(req: NextRequest) {

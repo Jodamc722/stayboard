@@ -357,6 +357,39 @@ const guest_reply_send: Executor = async (p, ctx) => {
   return { ok: true, ref: r.id || conversationId, summary: `sent to the guest via ${r.module}: "${body.slice(0, 80)}"`, undo: null }
 }
 
+/**
+ * guest_notice_send { conversationId, kind: 'work_done' | 'entry_request', guestFirst?, what?, leavingToday?, when?, unit?, subject? }
+ * PILOT ONE: the one guest message Eve may send on her own — a fixed template (lib/eve/guest-notices.ts),
+ * never free text. Refuses an unknown kind, a missing thread, or a rendering that could carry a code.
+ * Mirrored on the thread as Eve, automated, so the desk sees it and the response-time math ignores it.
+ */
+const guest_notice_send: Executor = async (p, ctx) => {
+  const { renderNotice, NOTICE_KINDS } = await import('./guest-notices')
+  const conversationId = str(p?.conversationId || p?.conversation_id).trim()
+  const kind = str(p?.kind).trim()
+  if (!conversationId) return { ok: false, summary: 'need a guest thread', error: 'conversationId required' }
+  if (!(NOTICE_KINDS as string[]).includes(kind)) return { ok: false, summary: `"${kind.slice(0, 30)}" is not a notice she may send`, error: 'kind must be work_done or entry_request' }
+  const r0 = renderNotice(kind, { guestFirst: p?.guestFirst, what: p?.what, leavingToday: !!p?.leavingToday, when: p?.when })
+  if (!r0) return { ok: false, summary: 'the notice could not be rendered safely', error: 'template refused (unknown kind or a number that could be a code)' }
+  // Not twice on one thread: the same notice kind for the same subject within 3 days is a no-op.
+  try {
+    const since = new Date(Date.now() - 3 * 86400_000).toISOString()
+    const { data } = await supabaseAdmin().from('guesty_messages').select('id,raw').eq('conversation_id', conversationId).eq('sender_name', 'Eve').gte('sent_at', since).limit(20)
+    if (((data as any[]) || []).some(m => m?.raw && typeof m.raw === 'object' && m.raw.notice === kind)) return { ok: true, ref: null, summary: `already sent (${kind}) on this thread in the last 3 days`, done: `already told the guest (${kind})`, undo: null }
+  } catch { /* the registry is a courtesy */ }
+  const { sendGuestMessage } = await import('@/lib/guesty')
+  const r = await sendGuestMessage(conversationId, r0.text)
+  if (!r.ok) return { ok: false, summary: 'Guesty did not send the notice', error: str(r.error).slice(0, 300) }
+  try {
+    await supabaseAdmin().from('guesty_messages').upsert({
+      id: r.id || `eve-${Date.now()}`, conversation_id: conversationId, sender: 'host', sender_name: 'Eve', body: r0.text, sent_at: new Date().toISOString(), is_automated: true,
+      raw: { module: r.module, sentByEve: true, notice: kind, by: ctx.actor || ctx.by },
+    }, { onConflict: 'id' })
+  } catch { /* the next messages sync brings it back */ }
+  const who = str(p?.guestFirst).trim() || 'the guest'
+  return { ok: true, ref: r.id || conversationId, summary: `sent ${who} the ${kind === 'work_done' ? 'work-completed' : 'permission-to-enter'} notice${p?.unit ? ` (${str(p.unit)})` : ''}`, done: `told ${who} ${kind === 'work_done' ? 'the work is done' : 'we would like to come by'}${p?.unit ? ` (${str(p.unit)})` : ''}`, undo: null }
+}
+
 const email_draft: Executor = async (p) => {
   const { draftGmail } = await import('@/lib/gmail-send')
   const to = (Array.isArray(p?.to) ? p.to : [p?.to]).map(str).map((s: string) => s.trim()).filter(Boolean)
@@ -455,7 +488,7 @@ const door_code_release: Executor = async () => ({ ok: false, summary: 'door cod
 
 export const EXECUTORS: Record<ActionType, Executor> = {
   slack_post, telegram_ask, email_draft, email_send,
-  guest_reply_draft, guest_reply_send,
+  guest_reply_draft, guest_reply_send, guest_notice_send,
   task_create, task_assign, task_note, task_cancel,
   door_code_release, guesty_write, calendar_block,
   recommendation, memory_rule,

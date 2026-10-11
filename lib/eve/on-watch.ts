@@ -44,7 +44,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { postToChannel, postThreadReply } from '@/lib/slack'
 import { EVE_CHANNELS } from '@/lib/slack-rules'
-import { agentAllowed, stepDown } from './agent-mode'
+import { agentAllowed, stepDown, getAgentSettings, pilotBuildingOf, recordSandbox } from './agent-mode'
 import { getOperatingModel, weDo } from './operating-model'
 import { buildingOf } from '@/lib/segments'
 import { isTaskDone } from '@/lib/task-categories'
@@ -70,7 +70,7 @@ const FIELD_CATEGORY = /maint|clean|pest|bed ?bug|plumb|electric|hvac|temperatur
 const OPEN = (s: any) => !/^(closed|done|resolved)$/i.test(String(s || ''))
 
 type Flag = {
-  kind: 'A' | 'B' | 'C' | 'D' | 'E' | 'F'; room: Room; line: string; label: string
+  kind: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G'; room: Room; line: string; label: string
   channel: string | null; ts: string | null; at: string
   escalated?: boolean; resolved?: string | null; resolvedAt?: string | null
   /** D/F: when the fix finished, and how to find the guest's thread — so "did we tell them" can be checked */
@@ -79,6 +79,8 @@ type Flag = {
   also?: string[]
   /** D/F: the draft Eve wrote (eve_actions guest_draft id + text) — the post's thread is its Send slot */
   draftId?: string | null; draftText?: string | null
+  /** Pilot One: the guest was told by Eve herself (a notice went out) — nothing to send. */
+  sent?: boolean
 }
 type State = { flags: Record<string, Flag>; seen?: Record<string, string> }
 
@@ -219,6 +221,24 @@ async function draftFixed(db: any, gref: GuestRef, p: { guestFirst: string; gues
   return { state: '', id: null, text: null }
 }
 
+/**
+ * PILOT ONE — tell the guest ourselves. In a pilot building the fixed-note and the permission-to-enter
+ * note are SENT (guest_notice_send, a fixed template) instead of drafted for the desk; the fence decides
+ * (budgets, quiet hours), and outside the pilot the same call is a proposal on the desk list.
+ */
+async function sendNotice(db: any, gref: GuestRef, kind: 'work_done' | 'entry_request', p: { guestFirst: string; what: string; leavingToday?: boolean; when?: string; unit: any; where: string; subject: string; why: string }): Promise<{ state: '' | 'sent' | 'proposed' | 'held'; done?: string }> {
+  const convId = await conversationFor(db, gref)
+  if (!convId) return { state: '' }
+  const exec = { conversationId: convId, kind, guestFirst: p.guestFirst, what: p.what, leavingToday: !!p.leavingToday, when: p.when || null, unit: p.unit || null, subject: p.subject }
+  const gate = await agentAllowed('guest_notice_send', { ask: true, unit: String(p.unit || '') })
+  const r = await stepDown(gate, { action: 'guest_notice_send', summary: kind === 'work_done' ? `tell ${p.guestFirst || 'the guest'} (${p.where}) the ${p.what} is sorted` : `ask ${p.guestFirst || 'the guest'} (${p.where}) if we may come in for the ${p.what}`, exec, why: p.why, by: 'cron:on-watch', subject: p.subject },
+    async () => { const { runExecutor } = await import('./executors'); const x = await runExecutor('guest_notice_send', exec, { by: 'cron:on-watch' }); return { ok: x.ok, ref: x.ref || null, error: x.error } })
+  if (r.mode === 'act' && r.ok) return { state: 'sent' }
+  if (r.mode === 'propose') return { state: 'proposed' }
+  if (r.mode === 'deferred') return { state: 'held' }
+  return { state: '' }
+}
+
 /** The Slack tag of the supervisor for the building named in a label ("17WEST 516 · hot water"), else Roberto. */
 async function supervisorTagFor(label: string): Promise<string> {
   try {
@@ -273,6 +293,16 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
   }
   const taskDone = (t: any) => !!t && isTaskDone(t.status, t.finished_at)
   const who = (t: any) => first(t?.finished_by_name) || first(Array.isArray(t?.assignees) ? t.assignees[0]?.name : '')
+  // PILOT ONE (Jon, 2026-10-10): in the pilot buildings she does the thing instead of describing the gap.
+  const agentS = await getAgentSettings().catch(() => null)
+  const pilotHere = (unit: any) => !!(agentS && agentS.pilot.mode === 'live' && pilotBuildingOf(agentS, unit))
+  // Sandbox: the same decision, written down as "would …" on the agent log; the ordinary path then runs.
+  const sandboxHere = (unit: any) => !!(agentS && agentS.pilot.mode === 'sandbox' && pilotBuildingOf(agentS, unit))
+  const wouldDo = async (action: 'task_create' | 'guest_notice_send', summary: string, unit: any, subject: string, why: string) => {
+    if (!agentS || opts.preview) return
+    await recordSandbox(`${agentS.pilot.name} sandbox (${pilotBuildingOf(agentS, unit)})`, { action, summary, exec: { unit: String(unit || '') }, why, by: 'cron:on-watch', subject }, 4).catch(() => {})
+  }
+  const tomorrow = new Date(Date.parse(today + 'T12:00:00Z') + 86400_000).toISOString().slice(0, 10)
   const unitOf = (g: any) => shortUnit(g.unit)
   // Field work only where the field work is ours. Botanica's hotel fixes its own rooms; a Botanica
   // glitch with no Breezeway task is how it is meant to look (lib/eve/operating-model).
@@ -405,7 +435,35 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     // this line when its category is something a technician or a cleaner fixes and the guest is in the
     // unit or arriving today.
     if (!g.breezeway_task_id && ourFix(g.unit) && FIELD_CATEGORY.test(String(g.category || '')) && (inHouse(g) || String(g.check_in || '').slice(0, 10) === today) && h >= NO_TASK_AFTER_H && h <= 7 * 24 && !/refund|manager_review/.test(String(g.status))) {
-      add('B:' + g.id, { kind: 'B', room: 'ops', label, line: `${label} — glitch open ${age(g.created_at)}, no Breezeway task${g.assignee && !/^support$/i.test(String(g.assignee)) ? `, with ${first(g.assignee)}` : ' — nobody in the field has it'}.` })
+      // PILOT ONE: make the Breezeway task from the glitch (the same task the glitch_overdue watch would
+      // propose days later), then say so. Outside the pilot the line stays a line.
+      let made = ''
+      if (sandboxHere(g.unit) && !flags['B:' + g.id]) await wouldDo('task_create', `create the maintenance task on ${unitOf(g)} for "${String(g.overview || g.category || 'guest issue').slice(0, 60)}"`, g.unit, 'glitch:' + g.id, `glitch open ${age(g.created_at)} with no Breezeway task`)
+      if (pilotHere(g.unit) && !opts.preview && !flags['B:' + g.id] && g.listing_id) {
+        const issue = String(g.overview || g.category || 'Guest issue').replace(/\s+/g, ' ').trim()
+        const exec = { listingId: String(g.listing_id), glitchId: String(g.id), unit: String(g.unit || ''), title: `Glitch: ${issue.slice(0, 90)}`, department: 'maintenance', priority: inHouse(g) ? 'high' : 'normal', date: today,
+          description: `From the glitch board (opened ${String(g.created_at).slice(0, 10)}, guest ${inHouse(g) ? 'in the unit' : 'arriving today'}).\n${issue}\n${g.guest_name ? `Reported by ${String(g.guest_name)}.` : ''}`.trim() }
+        const gate = await agentAllowed('task_create', { ask: true, unit: String(g.unit || '') })
+        const r = await stepDown(gate, { action: 'task_create', summary: `create the maintenance task on ${unitOf(g)} for "${issue.slice(0, 60)}"`, exec, why: `Glitch open ${age(g.created_at)} with no Breezeway task; ${inHouse(g) ? 'the guest is in the unit' : 'the guest arrives today'}.`, by: 'cron:on-watch', subject: 'glitch:' + g.id },
+          async () => { const { runExecutor } = await import('./executors'); const x = await runExecutor('task_create', exec, { by: 'cron:on-watch' }); return { ok: x.ok, ref: x.ref || null, error: x.error } })
+        if (r.mode === 'act' && r.ok) made = ` — no Breezeway task, so I created one${r.ref ? ` (#${r.ref})` : ''} for maintenance.`
+        else if (r.mode === 'propose') made = ' — no Breezeway task; I have asked to create it.'
+        else if (r.mode === 'deferred') made = ' — no Breezeway task; I will create it after quiet hours.'
+      }
+      add('B:' + g.id, { kind: 'B', room: 'ops', label, line: made ? `${label}${made}` : `${label} — glitch open ${age(g.created_at)}, no Breezeway task${g.assignee && !/^support$/i.test(String(g.assignee)) ? `, with ${first(g.assignee)}` : ' — nobody in the field has it'}.` })
+    }
+    // G — PILOT ONE: the task exists, the guest is living with it — ask if we may come in. Once per glitch,
+    // only when nobody from the desk has written to the guest since the glitch was raised.
+    if (t && !taskDone(t) && (pilotHere(g.unit) || sandboxHere(g.unit)) && ourFix(g.unit) && FIELD_CATEGORY.test(String(g.category || '')) && inHouse(g) && h <= 72 && !flags['G:' + g.id] && !opts.preview) {
+      const gref: GuestRef = { reservationId: String(g.reservation_id || '') || undefined, listingId: String(g.listing_id || '') || undefined, checkIn: String(g.check_in || '').slice(0, 10) || undefined }
+      if (!(await hostWroteSince(db, gref, g.created_at))) {
+        const sd = String(t.scheduled_date || '').slice(0, 10)
+        const when = sd === tomorrow ? 'tomorrow' : 'today'
+        const guest = first(g.guest_name)
+        if (!pilotHere(g.unit)) { await wouldDo('guest_notice_send', `ask ${guest || 'the guest'} (${unitOf(g)}) if we may come in for the ${trade(g.category, g.overview)} ${when}`, g.unit, 'glitch:' + g.id, 'task open, guest in the unit'); continue }
+        const n = await sendNotice(db, gref, 'entry_request', { guestFirst: guest, what: trade(g.category, g.overview), when, unit: g.unit, where: unitOf(g), subject: 'glitch:' + g.id, why: `A technician task is on for ${when}; the guest is in the unit until ${weekday(String(g.check_out).slice(0, 10))}.` })
+        if (n.state) add('G:' + g.id, { kind: 'G', room: 'guest', label, sent: n.state === 'sent', line: `${label} — technician task on for ${when}; ${n.state === 'sent' ? `I asked ${guest || 'the guest'} if we may come in while they are out.` : n.state === 'proposed' ? 'I have asked to message the guest about entry.' : 'the entry note is held until quiet hours end.'}` })
+      }
     }
     // C — the task exists but is dragging, and the guest is living with it.
     if (t && !taskDone(t) && ourFix(g.unit) && h >= SLOW_TASK_AFTER_H && h <= 7 * 24 && inHouse(g)) {
@@ -422,11 +480,16 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
       // warm template with the glitch's own words) and saved on the guest's thread; the desk sees it
       // in the drafts list in #vr-customercareteam and "1 send" sends it as them. Gated by Agent mode
       // for guest_reply_draft exactly like every other draft.
-      const d = !opts.preview && !flags['D:' + g.id]
+      const fresh_ = !opts.preview && !flags['D:' + g.id]
+      if (fresh_ && sandboxHere(g.unit)) await wouldDo('guest_notice_send', `tell ${guest || 'the guest'} (${unitOf(g)}) the ${trade(g.category, g.overview)} is sorted`, g.unit, 'glitch:' + g.id, `fixed ${clock(t.finished_at)}, guest not told`)
+      const n = fresh_ && pilotHere(g.unit)
+        ? await sendNotice(db, gref, 'work_done', { guestFirst: guest, what: trade(g.category, g.overview), leavingToday: co === today, unit: g.unit, where: unitOf(g), subject: 'glitch:' + g.id, why: `Fixed ${clock(t.finished_at)}; the guest has not been told.` })
+        : { state: '' as const }
+      const d = fresh_ && !n.state
         ? await draftFixed(db, gref, { guestFirst: guest, guestName: g.guest_name, unit: g.unit, where: unitOf(g), what: trade(g.category, g.overview), leavingToday: co === today, finishedAt: t.finished_at, subject: 'glitch:' + g.id })
         : { state: '', id: null, text: null }
-      add('D:' + g.id, { kind: 'D', room: 'guest', label, since: t.finished_at, guest: gref, draftId: d.id, draftText: d.text,
-        line: `${label} — fixed ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}. ${guest ? guest + ' is' : 'The guest is'} ${co === today ? 'checking out today' : 'in until ' + weekday(co)}.${d.state === 'proposed' ? ' I have asked to draft the note.' : d.state === 'drafted' ? '' : ' Worth a quick note that it is sorted.'}` })
+      add('D:' + g.id, { kind: 'D', room: 'guest', label, since: t.finished_at, guest: gref, draftId: d.id, draftText: d.text, sent: n.state === 'sent',
+        line: `${label} — fixed ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}. ${guest ? guest + ' is' : 'The guest is'} ${co === today ? 'checking out today' : 'in until ' + weekday(co)}.${n.state === 'sent' ? ` I told ${guest || 'the guest'} it is sorted.` : n.state === 'proposed' ? ' I have asked to send the note.' : n.state === 'held' ? ' The note goes out after quiet hours.' : d.state === 'proposed' ? ' I have asked to draft the note.' : d.state === 'drafted' ? '' : ' Worth a quick note that it is sorted.'}` })
     }
   }
 
@@ -452,11 +515,16 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
       const gref: GuestRef = { reservationId: String(t.linked_reservation_id || '') || undefined, listingId: lid, checkIn: today }
       if (!flags['F:' + t.id] && await hostWroteSince(db, gref, t.finished_at)) continue
       // The same draft as D (Eve audit 2026-10-10: F still said "I can draft it").
-      const d = !opts.preview && !flags['F:' + t.id]
+      const fresh_ = !opts.preview && !flags['F:' + t.id]
+      if (fresh_ && sandboxHere(unitName[lid])) await wouldDo('guest_notice_send', `tell ${guest || 'the guest'} (${shortUnit(unitName[lid])}) the ${taskTitle(t.name)} is sorted`, unitName[lid], 'task:' + t.id, `done ${clock(t.finished_at)}, guest not told`)
+      const n = fresh_ && pilotHere(unitName[lid])
+        ? await sendNotice(db, gref, 'work_done', { guestFirst: guest, what: taskTitle(t.name), leavingToday: stay.out === today, unit: unitName[lid], where: shortUnit(unitName[lid]), subject: 'task:' + t.id, why: `Done ${clock(t.finished_at)}; the guest has not been told.` })
+        : { state: '' as const }
+      const d = fresh_ && !n.state
         ? await draftFixed(db, gref, { guestFirst: guest, guestName: stay.guest, unit: unitName[lid], where: shortUnit(unitName[lid]), what: taskTitle(t.name), leavingToday: stay.out === today, finishedAt: t.finished_at, subject: 'task:' + t.id })
         : { state: '', id: null, text: null }
-      add('F:' + t.id, { kind: 'F', room: 'guest', label, since: t.finished_at, guest: gref, draftId: d.id, draftText: d.text,
-        line: `${label} — done ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}. ${guest ? guest + ' is' : 'The guest is'} ${stay.out === today ? 'checking out today' : 'in until ' + weekday(stay.out)}.${d.state === 'proposed' ? ' I have asked to draft the note.' : d.state === 'drafted' ? '' : ' Worth a quick note that it is sorted.'}` })
+      add('F:' + t.id, { kind: 'F', room: 'guest', label, since: t.finished_at, guest: gref, draftId: d.id, draftText: d.text, sent: n.state === 'sent',
+        line: `${label} — done ${clock(t.finished_at)}${who(t) ? ' by ' + who(t) : ''}. ${guest ? guest + ' is' : 'The guest is'} ${stay.out === today ? 'checking out today' : 'in until ' + weekday(stay.out)}.${n.state === 'sent' ? ` I told ${guest || 'the guest'} it is sorted.` : n.state === 'proposed' ? ' I have asked to send the note.' : n.state === 'held' ? ' The note goes out after quiet hours.' : d.state === 'proposed' ? ' I have asked to draft the note.' : d.state === 'drafted' ? '' : ' Worth a quick note that it is sorted.'}` })
     }
   }
 
@@ -548,7 +616,10 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     // glitch with no task (B) are not an hourly matter; they are said at 11 and at 15. A guest living
     // with an open task (C, E) stays hourly.
     const slowSlot = hour === 11 || hour === 15 || !!opts.force
-    const said = await say(room, head, freshRows.filter(([, f]) => f.room === room && (slowSlot || (f.kind !== 'A' && f.kind !== 'B'))).sort((a, b) => PRI[a[1].kind] - PRI[b[1].kind]), tail)
+    const rowsHere = freshRows.filter(([, f]) => f.room === room && (slowSlot || (f.kind !== 'A' && f.kind !== 'B'))).sort((a, b) => (PRI[a[1].kind] ?? 6) - (PRI[b[1].kind] ?? 6))
+    // Pilot One: when she told every guest herself there is nothing to send — the head says so.
+    const headHere = room === 'guest' && rowsHere.length && rowsHere.every(([, f]) => f.sent) ? `✅ *${agentS?.pilot?.name || 'Pilot'} — the guest has been told · ${t}*` : head
+    const said = await say(room, headHere, rowsHere, tail)
     if (said) for (const k of said.keys) {
       fresh[k].channel = said.channel; fresh[k].ts = said.ts; flags[k] = fresh[k]
       for (const k2 of fresh[k].also || []) flags[k2] = { ...fresh[k], also: undefined, label: fresh[k].label + ' (same unit)' }
