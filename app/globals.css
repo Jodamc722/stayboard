@@ -330,6 +330,15 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   a, button, [role='button'], summary, label { touch-action: manipulation; }
   /* Icon-only buttons are the worst offenders — they get a square target, not a sliver. */
   button:not(:has(span)):not(:has(p)) { min-width: 36px; }
+  /* A TAB STRIP SCROLLS, IT NEVER STACKS ITS LABELS (Jon's phone, 2026-10-11: the Eve settings tabs
+     read "rniOTA pLaybookMemoVoice DirectionApprovals…"). The explicit min-width above replaces the
+     flex item's automatic minimum, so a nowrap button in a scrolling row could shrink to 36px and
+     its label spilled over its neighbours. Anything clickable inside a horizontal scroller keeps
+     its own width; the row scrolls, as it was built to. */
+  .overflow-x-auto > button, .overflow-x-auto > a, .overflow-x-auto > [role='button'], .overflow-x-auto > label,
+  .lh-actions > button, .lh-actions > a { flex: 0 0 auto; min-width: max-content; }
+  .overflow-x-auto { -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; scrollbar-width: none; }
+  .overflow-x-auto::-webkit-scrollbar { display: none; }
 }
 
 /* ------------------------------------------------------------------------------------------------

@@ -369,7 +369,7 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
                 </label>
               </div>
               <div className={`${card} p-4 md:col-span-2`}>
-                <div className="flex items-center justify-between gap-2 mb-1">
+                <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
                   <div className="text-[13px] font-bold text-ink">{s.pilot?.name || 'Pilot One'} — a small test of acting</div>
                   <div className="inline-flex rounded-lg border border-line overflow-hidden text-[11.5px] font-semibold">
                     {(['off', 'sandbox', 'live'] as const).map(m => (
@@ -418,7 +418,7 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
                 )}
               </div>
               <div className={`${card} p-4 md:col-span-2`}>
-                <div className="flex items-center justify-between gap-2 mb-1">
+                <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
                   <div className="text-[13px] font-bold text-ink">{s.pilotTwo?.name || 'Pilot Two'} — the scheduler</div>
                   <div className="inline-flex rounded-lg border border-line overflow-hidden text-[11.5px] font-semibold">
                     {(['off', 'sandbox', 'live'] as const).map(m => (
@@ -445,7 +445,7 @@ export function EveAgentAdmin({ canEdit }: { canEdit: boolean }) {
                   const pl = d.plan
                   return (
                     <div className="mt-3 border-t border-line pt-3">
-                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
                         <div className="text-[12px] font-semibold text-ink">The plan · {pl.date} · built {new Date(pl.builtAt).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })} · {pl.tasks.length} task{pl.tasks.length === 1 ? '' : 's'} placed{pl.unplaced.length ? `, ${pl.unplaced.length} nobody fits` : ''}{pl.cleans ? ` · ${pl.cleans.total} cleans → ${pl.cleans.peopleUsed} people${pl.cleans.unassigned ? `, ${pl.cleans.unassigned} unplaced` : ''}` : ''}{d.score ? ` · yesterday people agreed with ${d.score.tasksAgreed} of ${d.score.tasksAssignedByPeople} she planned` : ''}</div>
                         <div className="inline-flex rounded-lg border border-line overflow-hidden text-[11px]">
                           {p2.days.map(x => <button key={x.date} onClick={() => setP2Day(x.date)} className={`px-2 py-0.5 ${x.date === pl.date ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink'}`}>{x.date.slice(5)}</button>)}

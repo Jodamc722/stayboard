@@ -59,8 +59,8 @@ export function EveAdmin({ canEdit }: { canEdit: boolean }) {
     <div>
       <div className="flex items-center gap-1 mb-3 border-b border-line overflow-x-auto">
         {tabs.map(([k, label, Icon]) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap ${cur === k ? 'border-brand-600 text-brand-700' : 'border-transparent text-muted hover:text-ink'}`}>
+          <button key={k} onClick={() => setTab(k)} ref={el => { if (el && cur === k) { try { el.scrollIntoView({ block: 'nearest', inline: 'center' }) } catch { /* fine */ } } }}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap shrink-0 ${cur === k ? 'border-brand-600 text-brand-700' : 'border-transparent text-muted hover:text-ink'}`}>
             <Icon size={13} /> {label}
             {k === 'thinking' && thinking && thinking.unseen > 0 && <span className="text-[10px] font-bold text-white bg-brand-600 rounded-full px-1.5 py-0.5">{thinking.unseen}</span>}
           </button>
