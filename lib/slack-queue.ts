@@ -111,13 +111,31 @@ export async function draft(input: DraftInput, rulesIn?: SlackRules): Promise<Dr
     } catch { /* fail-open: better a duplicate than silence */ }
   }
 
+  // LONG-FORM GOES TO THE REPORTS DESK (Jon, 2026-10-12: "Slack should be a place for more day-to-day
+  // operations"). The daily reports among the rule-driven alerts are filed on the Eve tab first;
+  // whether the room gets the full text, one line with a link, or nothing is the routing table's call.
+  let body = String(input.body || '')
+  const REPORT_EVENTS: Record<string, { kind: any; title: string }> = {
+    labor_report: { kind: 'labor_report', title: 'Labor report' }, notable_arrivals: { kind: 'notable_arrivals', title: 'Notable arrivals' },
+    handover: { kind: 'handover', title: 'Shift handover' }, market_brief: { kind: 'market_brief', title: 'Market brief' }, digest: { kind: 'digest', title: 'Hub digest' },
+  }
+  const rep = REPORT_EVENTS[String(input.eventKey)]
+  if (rep) {
+    try {
+      const { routeReport } = await import('./eve/reports')
+      const r = await routeReport({ kind: rep.kind, title: rep.title, text: body, room: input.channelId || null, meta: { eventKey: input.eventKey, groupKey } })
+      if (!r.post) return { ok: false, reason: `filed on the Reports desk (${r.route})` }
+      body = r.text
+    } catch { /* the room gets the full text, as before */ }
+  }
+
   const row = {
     event_key: input.eventKey,
     group_key: groupKey,
     building: input.building || null,
     channel_id: input.channelId || null,
     dm_user_ids: input.dmUserIds && input.dmUserIds.length ? input.dmUserIds : [],
-    body: String(input.body || '').slice(0, 3500) +
+    body: body.slice(0, 3500) +
       (input.threadBody ? THREAD_SEP + String(input.threadBody).slice(0, 3500) : ''),
     summary: (input.summary || '').slice(0, 300) || null,
     audience: input.audience && input.audience.length ? input.audience : [],

@@ -183,7 +183,17 @@ export async function runOpsDesk(opts: { force?: 'plan' | 'recap' | 'chase'; pre
   if (!wantPlan && !wantRecap && !wantChase) return { ...out, skipped: `nothing due at ${h}:00 ET` }
 
   const day = await readDay(today)
-  const post = async (text: string, summary: string) => {
+  const post = async (text0: string, summary: string, kind?: 'ops_plan' | 'ops_recap') => {
+    // The plan and the recap are reports: filed on the Eve tab, Slack per the routing table (Jon, 2026-10-12).
+    let text = text0
+    if (kind) {
+      try {
+        const { routeReport } = await import('./reports')
+        const routed = await routeReport({ kind, title: kind === 'ops_plan' ? `Today — ${today}` : `End of day — ${today}`, text: text0, room: cfg.room })
+        if (!routed.post) { out.notes.push(`${summary}: filed (${routed.route})`); return true }
+        text = routed.text
+      } catch { /* full text, as before */ }
+    }
     const gate = await agentAllowed('slack_post', { ask: true })
     const r = await stepDown(gate, { action: 'slack_post', summary, exec: { channel: cfg.room, channel_name: 'vr-eve', text }, by: 'cron:ops-desk' },
       async () => { const p = await postToChannel(cfg.room, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
@@ -208,7 +218,7 @@ export async function runOpsDesk(opts: { force?: 'plan' | 'recap' | 'chase'; pre
       }
     } catch { /* the plan stands on its own */ }
     out.plan = text
-    if (!opts.preview && await post(text, `ops desk: today's plan (${day.tasks.length} tasks)`)) st.lastPlan = today
+    if (!opts.preview && await post(text, `ops desk: today's plan (${day.tasks.length} tasks)`, 'ops_plan')) st.lastPlan = today
   }
   if (wantChase && !opts.preview) {
     const targets = day.tasks.filter(t => !t.done && !t.people.length && !t.clean && !proposed[t.id]).slice(0, 8)
@@ -240,7 +250,7 @@ export async function runOpsDesk(opts: { force?: 'plan' | 'recap' | 'chase'; pre
   if (wantRecap) {
     const text = recapText(day)
     out.recap = text
-    if (!opts.preview && await post(text, `ops desk: end-of-day recap (${day.tasks.filter(t => !t.done).length} open)`)) st.lastRecap = today
+    if (!opts.preview && await post(text, `ops desk: end-of-day recap (${day.tasks.filter(t => !t.done).length} open)`, 'ops_recap')) st.lastRecap = today
   }
   if (!opts.preview) await setSetting(STATE_KEY, { lastPlan: st.lastPlan, lastRecap: st.lastRecap, proposed }, 'ops-desk').catch(() => {})
   return out

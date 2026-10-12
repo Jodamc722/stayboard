@@ -22,6 +22,7 @@ import { LeanHead, LeanTabs, LeanList, LeanRow, LeanSection, LeanEmpty, Tag, Pil
 import { OpenLoops } from '@/components/OpenLoops'
 import { openEve } from '@/components/EveFloat'
 import { NeedsTab, IssuesTab, DayTab, DesksTab } from '@/components/EveBrain'
+import { EveReports } from '@/components/EveReports'
 
 // WHAT EACH TAB IS, IN ONE LINE (Jon, 2026-09-30: "We need to better understand what each of those
 // things means in the tabs"). Shown under the tabs so nobody has to guess.
@@ -33,9 +34,10 @@ const TAB_BLURB: Record<string, string> = {
   day: 'Everything she did, asked for, drafted or only noticed today — repeats folded together.',
   expectations: 'What guests keep being surprised by (parking, fees, check-in…) and the listing or message copy that would fix it.',
   desks: 'Her desks and night shift — whether each is on, and when it last actually ran.',
+  reports: 'The long reads — Ops Command, the shared-boards digest, the Monday quality audit, the Sunday scorecard, the plans. Filed here so Slack stays for the day-to-day.',
 }
 
-type TabKey = 'overview' | 'issues' | 'loops' | 'questions' | 'day' | 'expectations' | 'desks'
+type TabKey = 'overview' | 'issues' | 'loops' | 'questions' | 'day' | 'expectations' | 'desks' | 'reports'
 type HotLoop = { id: string; kind: string; summary: string; unit: string | null; building: string | null; owner: string | null; urgent: boolean; late: boolean; hours: number; link: string; channel: string | null }
 
 type Overview = {
@@ -65,6 +67,7 @@ const ago = (iso: string | null | undefined): string => {
 
 export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: boolean; loopsLevel: string; initialTab?: TabKey; isAdmin?: boolean }) {
   const [tab, setTab] = useState<TabKey>(initialTab || 'overview')
+  const [reportId, setReportId] = useState<string | null>(null)
   const [ov, setOv] = useState<Overview | null>(null)
   const [err, setErr] = useState('')
   const [qCount, setQCount] = useState<number | null>(null)
@@ -88,7 +91,8 @@ export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: 
     try {
       const sp = new URLSearchParams(window.location.search)
       const t = sp.get('tab')
-      if (t === 'loops' || t === 'questions' || t === 'overview' || t === 'expectations' || t === 'issues' || t === 'day' || t === 'desks') setTab(t)
+      if (t === 'loops' || t === 'questions' || t === 'overview' || t === 'expectations' || t === 'issues' || t === 'day' || t === 'desks' || t === 'reports') setTab(t)
+      setReportId(sp.get('id'))
     } catch { /* server */ }
   }, [])
   const pick = (t: TabKey) => {
@@ -106,6 +110,7 @@ export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: 
     { key: 'questions' as TabKey, label: 'Questions', n: qCount || null },
     { key: 'day' as TabKey, label: 'Her day', n: null as number | null },
     { key: 'expectations' as TabKey, label: 'Expectations', n: xCount || null },
+    { key: 'reports' as TabKey, label: 'Reports', n: null as number | null },
     { key: 'desks' as TabKey, label: 'How she runs', n: null as number | null },
   ]), [needsYou, iCount, ov, qCount, xCount])
 
@@ -138,6 +143,7 @@ export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: 
       {tab === 'issues' && <IssuesTab onCount={setICount} />}
       {tab === 'day' && <DayTab ov={ov} />}
       {tab === 'desks' && <DesksTab ov={ov} />}
+      {tab === 'reports' && <EveReports initialId={reportId} />}
       {tab === 'loops' && (loopsLevel === 'off'
         ? <LeanEmpty>Open loops are switched off for your role. Ask Jon to turn them on in Users → Roles.</LeanEmpty>
         : <OpenLoops canEdit={loopsLevel === 'edit' || loopsLevel === 'full'} embedded />)}

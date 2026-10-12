@@ -202,10 +202,15 @@ export async function runQualityAudit(opts: { by?: string; post?: boolean } = {}
   let posted = 'skipped'
   if (opts.post !== false && findings.length) {
     const text = `*Quality this week* — ${clip(parsed.headline, 200)}\n` + findings.map((f: any, i: number) => `${i + 1}. *${f.title}* — ${f.root_cause} → ${f.action} (${f.owner}; watch ${lc(f.metric).replace(/_/g, ' ')} ${f.expect_direction})`).join('\n') + `\nFull evidence in Users & admin → Settings → Eve → Direction. Accept or reject each there; I grade them in 3 weeks.`
+    // The full audit lives on the Eve tab → Reports; #leadership gets what the routing table says
+    // (Jon, 2026-10-12: long posts out of Slack).
+    const { routeReport } = await import('./reports')
+    const routed = await routeReport({ kind: 'quality_week', title: 'Quality this week', text, room: EVE_CHANNELS.leadership, pointer: `${findings.length} finding${findings.length === 1 ? '' : 's'} — ${clip(parsed.headline, 140)}` })
+    const say = routed.text
     const gate = await agentAllowed('slack_post', { ask: true })
-    const r = await stepDown(gate, { action: 'slack_post', summary: `quality audit in #leadership (${findings.length} findings)`, exec: { channel: EVE_CHANNELS.leadership, channel_name: 'leadership', text }, by: opts.by || 'cron:quality-audit' },
-      async () => { const p = await postToChannel(EVE_CHANNELS.leadership, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
-    posted = r.mode + (r.ok ? '' : ` (${r.error || gate.reason})`)
+    const r = !routed.post ? { mode: 'observe' as const, ok: true, ref: null, error: undefined } : await stepDown(gate, { action: 'slack_post', summary: `quality audit in #leadership (${findings.length} findings)`, exec: { channel: EVE_CHANNELS.leadership, channel_name: 'leadership', text: say }, by: opts.by || 'cron:quality-audit' },
+      async () => { const p = await postToChannel(EVE_CHANNELS.leadership, say); return { ok: p.ok, ref: p.ts || null, error: p.error } })
+    posted = (!routed.post ? `filed (${routed.route})` : r.mode) + (r.ok ? '' : ` (${r.error || gate.reason})`)
   }
   return { ok: true, headline: clip(parsed.headline, 200), findings, noSignal: (Array.isArray(parsed.no_signal) ? parsed.no_signal : []).map((s: any) => clip(s, 80)), filed, posted, model: answeredBy, pack: pack.stats }
 }

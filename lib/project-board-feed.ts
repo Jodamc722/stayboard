@@ -98,7 +98,11 @@ export async function eveningRecap(opts: { dry?: boolean } = {}): Promise<{ post
   if (opts.dry) return { posted: false, boards: parts.length, lines, text }
   const channel = EVE_CHANNELS.leadership
   if (!channel) return { posted: false, boards: parts.length, lines, text }
-  try { await postToChannel(channel, text) } catch { return { posted: false, boards: parts.length, lines, text } }
+  // Filed on the Eve tab → Reports; the room gets what the routing table says (Jon, 2026-10-12).
+  const { routeReport } = await import('./eve/reports')
+  const routed = await routeReport({ kind: 'shared_boards', title: 'Shared boards today', text, room: channel, pointer: `${parts.length} board${parts.length === 1 ? '' : 's'} changed` })
+  if (!routed.post) return { posted: false, boards: parts.length, lines, text }
+  try { await postToChannel(channel, routed.text) } catch { return { posted: false, boards: parts.length, lines, text } }
   return { posted: true, boards: parts.length, lines, text }
 }
 
@@ -149,6 +153,13 @@ export async function morningIndex(opts: { dry?: boolean } = {}): Promise<{ post
   if (opts.dry) return { posted: false, text, counts }
   const channel = EVE_CHANNELS.leadership
   if (!channel) return { posted: false, text, counts }
-  try { await postToChannel(channel, text) } catch { return { posted: false, text, counts } }
+  // Filed on the Eve tab → Reports. Overdue work on a shared board is still day-to-day: when anything is
+  // overdue the room gets the one-line pointer whatever the routing says; a quiet morning says nothing.
+  const { routeReport } = await import('./eve/reports')
+  const overdue = Number((counts as any)?.overdue || 0)
+  const routed = await routeReport({ kind: 'shared_boards', title: 'Shared boards — what is waiting', text, room: channel, pointer: overdue ? `${overdue} overdue` : 'nothing overdue' })
+  const say = routed.post ? routed.text : (overdue && routed.url ? `📄 *Shared boards* — ${overdue} overdue · <${routed.url}|read it on the Eve tab>` : '')
+  if (!say) return { posted: false, text, counts }
+  try { await postToChannel(channel, say) } catch { return { posted: false, text, counts } }
   return { posted: true, text, counts }
 }

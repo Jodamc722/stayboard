@@ -126,8 +126,12 @@ export async function runMorning(opts: { force?: boolean; preview?: boolean } = 
   const picked = pickLoops(all, seen, 5)
   const text = morningText(d, picked)
   if (opts.preview) return { posted: false, text }
+  // Filed on the Eve tab → Reports every morning, whatever Slack does (Jon, 2026-10-12).
+  const { routeReport } = await import('./reports')
+  const routed = await routeReport({ kind: 'ops_command', title: `Ops Command · ${today}`, text, room: cfg.channel || EVE_CHANNELS.approvals, pointer: `${d.decide.length} to decide, ${picked.say.length} waiting` })
   // Email only, unless somebody has switched the Slack post back on.
   if (!opts.force && !(await morningSlackOn())) return { posted: false, skipped: 'email only — Ops Command goes out as the brief', text }
+  if (!routed.post && !opts.force) return { posted: false, skipped: `filed on the Reports desk (${routed.route})`, text }
 
   const channel = cfg.channel || EVE_CHANNELS.approvals
   // A person's schedule, not Eve's initiative — urgent, so the room cap and quiet hours never hold it.

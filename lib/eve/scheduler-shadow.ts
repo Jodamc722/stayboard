@@ -430,11 +430,17 @@ export async function runSchedulerShadow(opts: { force?: boolean; preview?: bool
       const text = `*Shadow scheduler — week's scorecard*\nMy plan beat the real schedule on ${recent.filter(d => d.score!.win).length} of ${recent.length} days this week (${r.wins} of the last ${r.scored} overall; ${r.needed} of ${r.window} makes me ready to propose).\n` +
         recent.map(d => `• ${d.plan.date}: ${d.score!.win ? '✓' : '✗'} ${d.score!.why}`).join('\n') +
         (r.ready ? `\n*Ready.* From tomorrow the 7am plan carries my suggested assignments for the unowned cleans; nothing is assigned without a ✅.` : `\nStill learning — no assignments proposed yet.`)
-      const gate = await agentAllowed('slack_post', { ask: true })
-      const rr = await stepDown(gate, { action: 'slack_post', summary: `shadow scheduler weekly readout (${r.wins}/${r.scored})`, exec: { channel: EVE_CHANNELS.approvals, channel_name: 'vr-eve', text }, by: 'cron:scheduler-shadow' },
-        async () => { const p = await postToChannel(EVE_CHANNELS.approvals, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
-      if (rr.ok && rr.mode !== 'observe') { st.lastReadout = today; out.readout = rr.mode }
-      else out.notes.push(`readout: ${rr.error || gate.reason}`)
+      // The scorecard lives on the Eve tab → Reports (Jon, 2026-10-12); #vr-eve gets what the routing says.
+      const { routeReport } = await import('./reports')
+      const routed = await routeReport({ kind: 'shadow_scorecard', title: 'Shadow scheduler — week\'s scorecard', text, room: EVE_CHANNELS.approvals, pointer: `${r.wins} of ${r.scored} days won${r.ready ? ' — ready' : ''}` })
+      if (!routed.post) { st.lastReadout = today; out.readout = `filed (${routed.route})` }
+      else {
+        const gate = await agentAllowed('slack_post', { ask: true })
+        const rr = await stepDown(gate, { action: 'slack_post', summary: `shadow scheduler weekly readout (${r.wins}/${r.scored})`, exec: { channel: EVE_CHANNELS.approvals, channel_name: 'vr-eve', text: routed.text }, by: 'cron:scheduler-shadow' },
+          async () => { const p = await postToChannel(EVE_CHANNELS.approvals, routed.text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
+        if (rr.ok && rr.mode !== 'observe') { st.lastReadout = today; out.readout = rr.mode }
+        else out.notes.push(`readout: ${rr.error || gate.reason}`)
+      }
     }
   } catch (e: any) { out.ok = false; out.notes.push(String(e?.message || e).slice(0, 160)) }
   if (!opts.preview) await setSetting(SHADOW_KEY, st, 'scheduler-shadow').catch(() => {})

@@ -279,6 +279,19 @@ export async function runPilotTwo(opts: { force?: boolean; date?: string; previe
   }
   st.days[date] = { plan, score: st.days[date]?.score }
   await setSetting(PILOT_TWO_KEY, { days: st.days }, 'pilot-two').catch(() => {})
+  // The plan is a report too — on the Eve tab → Reports with the rest, never in Slack.
+  try {
+    const { fileReport } = await import('./reports')
+    const lines = [
+      `*${cfg.name} — plan for ${date}* (${pass}, ${cfg.mode})`,
+      plan.cleans ? `${plan.cleans.total} cleans → ${plan.cleans.peopleUsed} people${plan.cleans.unassigned ? `, ${plan.cleans.unassigned} unplaced` : ''}` : 'no clean plan',
+      ...plan.tasks.map(t => `• ${t.importance} · ${t.unit} · ${t.title} → *${t.assignee}* — ${t.because}; ${t.reason}${t.did && t.did !== 'planned' ? ` (${t.did})` : ''}`),
+      ...plan.unplaced.map(u => `• ⚠️ ${u.unit} · ${u.title} — ${u.why}`),
+      '',
+      ...plan.people.map(p => `• *${p.name}*${p.dept ? ` (${p.dept})` : ''}: ${[p.cleans.length ? `cleans ${p.cleans.join(', ')}` : '', p.tasks.length ? `tasks ${p.tasks.join(' · ')}` : ''].filter(Boolean).join(' · ') || 'nothing planned'}`),
+    ]
+    await fileReport({ kind: 'pilot_two_plan', title: `${cfg.name} — ${date} ${pass}`, text: lines.join('\n'), meta: { date, pass, mode: cfg.mode } })
+  } catch { /* the card still shows it */ }
   out.acted = acted; out.sandboxed = sandboxed; out.notes.push(...plan.notes)
   return out
 }
