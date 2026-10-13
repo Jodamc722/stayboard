@@ -97,6 +97,11 @@ export const AI_TASKS: AiTask[] = [
   { key: 'eve-vision', title: 'Eve — reading photos', group: 'Eve', def: 'sonnet',
     what: 'Looks at unit photos and describes condition, damage, staging.',
     matters: 'Feeds inspection notes; a wrong read sends a cleaner back for nothing.' },
+  // DIRECT BOOKING ID CHECK (Jon, 2026-10-13). One call per booking attempt on /book: reads the ID and
+  // the selfie and says retake / pass / desk-review. Never decides on face similarity alone.
+  { key: 'direct-booking-id', title: 'Direct booking — ID + selfie check', group: 'Guests', def: 'sonnet',
+    what: 'On the public booking page, looks at the guest\'s ID photo and selfie: is it a real, unexpired government ID, does the name match the booking, is there a live face in the selfie.',
+    matters: 'Too strict loses a booking; too loose lets an unverified guest in. Face resemblance is only ever a flag for the desk.' },
   { key: 'learn', title: 'Eve — nightly learning pass', group: 'Background', def: 'sonnet', background: true,
     what: 'Summarises 30 days of guest messages and reviews into FAQs and complaint themes.',
     matters: 'Shapes what Eve knows tomorrow. Runs once a night.' },

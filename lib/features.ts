@@ -197,7 +197,7 @@ export function extraPermChoices(key: string): string[] | null {
 // next.config.mjs) fails the build if a page route is not covered by FEATURES or one of these
 // lists — so every new tab is a forced, conscious decision about user settings before it ships.
 // Public/share routes (no login). Mirrors middleware.ts isOpenPath — middleware imports from here.
-export const OPEN_EXACT = ['/no-access', '/day', '/manifest.json', '/robots.txt']
+export const OPEN_EXACT = ['/no-access', '/day', '/manifest.json', '/robots.txt', '/book']
 // NOTE: no apostrophes anywhere in this array. scripts/check-tabs.mjs parses it as text by
 // matching single-quoted strings, so one stray apostrophe in a comment swallows every entry after
 // it and the build fails claiming a page is unregistered.
@@ -209,6 +209,9 @@ export const OPEN_PREFIXES = [
   '/order/', '/orders-live',
   // OWNER JOB LINKS (Jon, 2026-10-07). /job/<token> shows an owner one job with its photos and charge.
   '/job/',
+  // DIRECT BOOKING (Jon, 2026-10-13). /book is the public booking page: search, price, ID + selfie, pay
+  // through Guesty. Its API is /api/public/book, which checks everything server-side.
+  '/book/',
   // ONBOARDING INVENTORY (Jon, 2026-09-02). /onboard/<code> is a capability link like /walk and
   // /audit: the code resolves to one onboarding unit, the API checks it on every call.
   '/onboard/',
