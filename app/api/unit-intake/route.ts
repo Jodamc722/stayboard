@@ -6,6 +6,9 @@
 // POST { action:'push',   id }                  → create in Guesty, then fill it in
 // POST { action:'channel', id, channel, done }  → record the manual publish step
 // POST { action:'golive', id }                  → isListed true on the channels it is connected to
+// POST { action:'write',  id }                  → PROPOSE listing copy from the answered facts
+// POST { action:'photos', id }                  → send the uploaded photos to the Guesty listing
+// POST { action:'photoEdit', id, index, caption?, move?, remove? }
 // POST { action:'delete', id }
 //
 // THE PUSH IS TWO CALLS, NOT ONE. POST /listings takes only nickname, address.full and the base
@@ -16,7 +19,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
 import { getToken } from '@/lib/guesty'
-import { gate, progress, createPayload, updatePayload, PUBLISH_CHANNELS, type Intake } from '@/lib/unit-intake'
+import { gate, progress, createPayload, updatePayload, photosPayload, facts, COPY_KEYS, PUBLISH_CHANNELS, type Intake } from '@/lib/unit-intake'
+import { anthropicMessages } from '@/lib/anthropic-call'
+import { modelFor } from '@/lib/ai-models'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
@@ -35,6 +40,14 @@ async function guesty(path: string, method: 'POST' | 'PUT', body: any) {
   const text = await r.text().catch(() => '')
   if (!r.ok) throw new Error(`Guesty ${method} ${path} ${r.status}: ${text.slice(0, 300)}`)
   try { return JSON.parse(text) } catch { return {} }
+}
+
+/** Photos go up in one call; Guesty fetches each URL itself. */
+async function pushPhotos(data: Record<string, any>, listingId: string): Promise<number> {
+  const pics = photosPayload(data)
+  if (!pics.length) return 0
+  await guesty(`/properties-api/property-photos/property-photos/${encodeURIComponent(listingId)}`, 'POST', pics)
+  return pics.length
 }
 
 const view = (row: any) => {
@@ -109,6 +122,86 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, row: view(out) })
   }
 
+  if (action === 'photoEdit') {
+    const photos: any[] = Array.isArray(cur.data.photos) ? [...cur.data.photos] : []
+    const i = Number(body.index)
+    if (!Number.isInteger(i) || i < 0 || i >= photos.length) return NextResponse.json({ error: 'No such photo.' }, { status: 400 })
+    if (body.remove) photos.splice(i, 1)
+    else if (body.move === 'up' || body.move === 'down') {
+      const j = body.move === 'up' ? i - 1 : i + 1
+      if (j >= 0 && j < photos.length) { const t = photos[i]; photos[i] = photos[j]; photos[j] = t }
+    } else if (typeof body.caption === 'string') {
+      photos[i] = { ...photos[i], caption: body.caption.slice(0, 200) }
+    }
+    const data = { ...cur.data, photos }
+    const { data: out, error } = await sb.from('unit_intake').update({ data, updated_at: new Date().toISOString() }).eq('id', id).select('*').single()
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, row: view(out) })
+  }
+
+  if (action === 'photos') {
+    if (!cur.listing_id) return NextResponse.json({ error: 'Not in Guesty yet.' }, { status: 400 })
+    try {
+      const n = await pushPhotos(cur.data, cur.listing_id)
+      if (!n) return NextResponse.json({ error: 'No photos to send.' }, { status: 400 })
+      return NextResponse.json({ ok: true, sent: n })
+    } catch (e: any) {
+      return NextResponse.json({ error: String(e?.message || e) }, { status: 502 })
+    }
+  }
+
+  // WRITE THE COPY. Proposes only — nothing is saved until somebody accepts it, because a model
+  // that writes straight into a live listing is a model nobody checks. The facts come from the
+  // intake and ONLY from the intake: the prompt forbids adding anything that is not in them, which
+  // is what stops a studio in Brickell acquiring a rooftop pool it does not have.
+  if (action === 'write') {
+    const key = process.env.ANTHROPIC_API_KEY
+    if (!key) return NextResponse.json({ error: 'No Anthropic key configured.' }, { status: 503 })
+    const known = facts(cur.data)
+    if (known.split('\n').filter(Boolean).length < 5) {
+      return NextResponse.json({ error: 'Answer more of the unit, rates and access questions first — there is not enough here to write from.' }, { status: 400 })
+    }
+    const prompt = `You are writing the listing copy for a short-term rental managed by Stay Hospitality in South Florida.
+
+RULES THAT NEVER BEND:
+- Use ONLY the facts below. Never add an amenity, a view, a walking distance, a landmark or a number that is not stated. If you do not know it, do not say it.
+- No superlatives you cannot support, no "stunning", no "nestled", no exclamation marks, no emoji, no em dashes.
+- Plain, concrete, specific. A guest is deciding between this and four others.
+- The title is a HARD maximum of 50 characters.
+- House rules: state the real ones implied by the facts (check-in and check-out times, occupancy, pets if a pet fee exists, minimum stay). Do not invent policies.
+
+FACTS:
+${known}
+
+Reply with strict minified JSON only, no prose:
+{"title":"","summary":"","space":"","access":"","neighborhood":"","rules":""}
+summary: 2-3 sentences, what it is and who it suits.
+space: the layout and what is in it.
+access: what the guest can use, in the unit and in the building.
+neighborhood: only what the city and address support. If you know nothing specific, keep it to one honest line.
+rules: short lines, one per rule.`
+    try {
+      const r = await anthropicMessages(key, {
+        model: await modelFor('listing-copy'),
+        max_tokens: 2000,
+        temperature: 0.3,
+        messages: [{ role: 'user', content: prompt }],
+      }, undefined, 'unit-intake-copy')
+      if (!r.ok) return NextResponse.json({ error: `Model said ${r.status}.` }, { status: 502 })
+      const text = (r.data?.content || []).filter((c: any) => c?.type === 'text').map((c: any) => String(c.text || '')).join('').trim()
+      const m = text.match(/\{[\s\S]*\}/)
+      if (!m) return NextResponse.json({ error: 'The model did not return usable copy.' }, { status: 502 })
+      const parsed = JSON.parse(m[0])
+      const draft: Record<string, string> = {}
+      for (const k of COPY_KEYS) if (typeof parsed[k] === 'string' && parsed[k].trim()) draft[k] = parsed[k].trim()
+      if (draft.title && draft.title.length > 50) draft.title = draft.title.slice(0, 50).trim()
+      if (!Object.keys(draft).length) return NextResponse.json({ error: 'The model returned nothing usable.' }, { status: 502 })
+      return NextResponse.json({ ok: true, draft })
+    } catch (e: any) {
+      return NextResponse.json({ error: String(e?.message || e) }, { status: 502 })
+    }
+  }
+
   if (action === 'push') {
     if (cur.listing_id) return NextResponse.json({ error: 'Already in Guesty.' }, { status: 400 })
     const { blockers } = gate(cur.data)
@@ -126,14 +219,22 @@ export async function POST(req: NextRequest) {
     // listing in Guesty that nothing here knows about.
     await sb.from('unit_intake').update({ listing_id: listingId, status: 'pushed', pushed_at: new Date().toISOString(), push_error: null, updated_at: new Date().toISOString() }).eq('id', id)
     let fillError: string | null = null
+    let photosSent = 0
     try {
       await guesty(`/listings/${encodeURIComponent(listingId)}`, 'PUT', updatePayload(cur.data))
     } catch (e: any) {
       fillError = String(e?.message || e)
-      await sb.from('unit_intake').update({ push_error: fillError, updated_at: new Date().toISOString() }).eq('id', id)
     }
+    // Photos are their own call and their own failure: a listing with text and no photos is worth
+    // more than no listing at all, so one failing does not roll back the other.
+    try {
+      photosSent = await pushPhotos(cur.data, listingId)
+    } catch (e: any) {
+      fillError = [fillError, `photos: ${String(e?.message || e)}`].filter(Boolean).join(' · ')
+    }
+    if (fillError) await sb.from('unit_intake').update({ push_error: fillError, updated_at: new Date().toISOString() }).eq('id', id)
     const { data: out } = await sb.from('unit_intake').select('*').eq('id', id).maybeSingle()
-    return NextResponse.json({ ok: true, listingId, fillError, row: out ? view(out) : null })
+    return NextResponse.json({ ok: true, listingId, fillError, photosSent, row: out ? view(out) : null })
   }
 
   if (action === 'fill') {

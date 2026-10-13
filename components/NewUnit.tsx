@@ -10,8 +10,8 @@
 // should look half-filled at a glance. Hiding work and arranging work are different jobs.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Tag, LeanEmpty } from '@/components/lean'
-import { FIELDS, GROUPS, FIELD_BY_KEY, PUBLISH_CHANNELS, type GroupKey } from '@/lib/unit-intake'
-import { Plus, RefreshCw, Rocket, Check, AlertTriangle, ExternalLink, Trash2 } from 'lucide-react'
+import { FIELDS, GROUPS, FIELD_BY_KEY, PUBLISH_CHANNELS, COPY_KEYS, type GroupKey } from '@/lib/unit-intake'
+import { Plus, RefreshCw, Rocket, Check, AlertTriangle, ExternalLink, Trash2, Sparkles, Upload, ChevronUp, ChevronDown, X } from 'lucide-react'
 
 type Row = {
   id: string; nickname: string; building: string | null
@@ -146,6 +146,68 @@ function IntakePanel({ row, post, busy, setNote }: {
   const set = (k: string, v: any) => { setDraft(d => ({ ...d, [k]: v })); setDirty(true) }
   const save = async () => { await post({ action: 'save', id: row.id, data: draft }); setDirty(false) }
 
+  // The copy writer proposes; nothing lands in a field until somebody takes it.
+  const [proposal, setProposal] = useState<Record<string, string> | null>(null)
+  const [writing, setWriting] = useState(false)
+  const write = async () => {
+    if (dirty) await save()
+    setWriting(true)
+    const j = await post({ action: 'write', id: row.id })
+    setWriting(false)
+    if (j?.draft) setProposal(j.draft)
+  }
+  const take = (k: string) => {
+    if (!proposal?.[k]) return
+    set(k, proposal[k])
+    setProposal(p => { const n = { ...(p || {}) }; delete n[k]; return Object.keys(n).length ? n : null })
+  }
+  const takeAll = () => {
+    if (!proposal) return
+    setDraft(d => ({ ...d, ...proposal })); setDirty(true); setProposal(null)
+  }
+
+  // Polish rewrites one field in place — the same endpoint every other text box in the app uses,
+  // which forbids adding a fact. Writing from nothing is the button above; this is tightening.
+  const [polishing, setPolishing] = useState<string | null>(null)
+  const polish = async (k: string) => {
+    const text = String(draft[k] || '').trim()
+    if (!text) return
+    setPolishing(k)
+    try {
+      const r = await fetch('/api/ai/polish', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, kind: k === 'title' ? 'title' : 'note', context: `${draft.nickname || ''} ${draft.building || ''} ${draft.city || ''}`.trim() }),
+      })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Polish failed')
+      if (!j.polished) throw new Error('Nothing came back.')
+      if (!j.changed) setNote('Already as tight as it gets.')
+      else set(k, j.polished)
+    } catch (e: any) { setNote(String(e?.message || e)) }
+    finally { setPolishing(null) }
+  }
+
+  const photos: any[] = Array.isArray(row.data.photos) ? row.data.photos : []
+  const [uploading, setUploading] = useState(false)
+  const upload = async (files: FileList | null) => {
+    if (!files || !files.length) return
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('id', row.id)
+      Array.from(files).forEach(f => fd.append('file', f))
+      const r = await fetch('/api/unit-intake/photo', { method: 'POST', body: fd })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Upload failed')
+      if (j.failed?.length) setNote(`Uploaded ${j.added}. Skipped: ${j.failed.join(' · ')}`)
+      // Saves whatever is typed and re-reads the row with its new photos in one call, so an
+      // upload never costs somebody the paragraph they were halfway through.
+      await post({ action: 'save', id: row.id, data: draft })
+      setDirty(false)
+    } catch (e: any) { setNote(String(e?.message || e)) }
+    finally { setUploading(false) }
+  }
+
   const byGroup = useMemo(() => {
     const m: Record<GroupKey, typeof FIELDS> = { unit: [], money: [], access: [], content: [], ops: [] }
     for (const f of FIELDS) m[f.group].push(f)
@@ -191,15 +253,90 @@ function IntakePanel({ row, post, busy, setNote }: {
       {/* The questions. Open, grouped, nothing hidden. */}
       {GROUPS.map(g => (
         <section key={g.key}>
-          <div className="flex items-baseline gap-2 mb-1.5">
+          <div className="flex items-baseline gap-2 mb-1.5 flex-wrap">
             <h3 className="text-[12.5px] font-bold text-ink">{g.label}</h3>
             <p className="text-[11.5px] text-muted">{g.blurb}</p>
+            {g.key === 'content' && (
+              <button onClick={write} disabled={busy || writing}
+                title="Write the listing copy from the answers above. It proposes — nothing lands in a field until you take it."
+                className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-brand-600 text-brand-700 px-2.5 py-1.5 text-[12.5px] font-semibold disabled:opacity-40">
+                <Sparkles size={13} /> {writing ? 'Writing…' : 'Write the copy'}
+              </button>
+            )}
           </div>
+
+          {/* The proposal sits above the fields, each line taken or left on its own. */}
+          {g.key === 'content' && proposal && (
+            <div className="rounded-lg border border-brand-200 bg-brand-50/60 p-2.5 mb-2.5 space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[12px] font-semibold text-brand-700">Proposed copy — written from your answers, nothing added</span>
+                <button onClick={takeAll} className="ml-auto rounded-lg bg-brand-600 text-white px-2.5 py-1 text-[12px] font-semibold">Use all</button>
+                <button onClick={() => setProposal(null)} className="text-[12px] text-muted hover:text-ink">Discard</button>
+              </div>
+              {COPY_KEYS.filter(k => proposal[k]).map(k => (
+                <div key={k} className="rounded-lg bg-white border border-line p-2">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[11px] font-semibold text-muted">{FIELD_BY_KEY[k]?.label || k}</span>
+                    {k === 'title' && <span className="text-[10.5px] text-muted tabular-nums">{proposal[k].length}/50</span>}
+                    <button onClick={() => take(k)} className="ml-auto text-[11.5px] font-semibold text-brand-700 hover:underline">Use this</button>
+                  </div>
+                  <p className="text-[12.5px] text-ink whitespace-pre-wrap leading-snug">{proposal[k]}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-            {byGroup[g.key].map(f => <FieldInput key={f.key} fieldKey={f.key} value={draft[f.key]} onChange={v => set(f.key, v)} />)}
+            {byGroup[g.key].map(f => (
+              <FieldInput key={f.key} fieldKey={f.key} value={draft[f.key]} onChange={v => set(f.key, v)}
+                polish={g.key === 'content' ? () => polish(f.key) : undefined} polishing={polishing === f.key} />
+            ))}
           </div>
         </section>
       ))}
+
+      {/* Photos. Files, not a tickbox — they ride along on the push. */}
+      <section>
+        <div className="flex items-baseline gap-2 mb-1.5 flex-wrap">
+          <h3 className="text-[12.5px] font-bold text-ink">Photos</h3>
+          <p className="text-[11.5px] text-muted">They go up with the listing. Five is the bar; the first one is the cover.</p>
+          <label className={`ml-auto inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] font-semibold cursor-pointer ${uploading ? 'opacity-50' : 'text-muted hover:text-ink'}`}>
+            <Upload size={13} /> {uploading ? 'Uploading…' : 'Add photos'}
+            <input type="file" accept="image/*" multiple hidden disabled={uploading} onChange={e => { upload(e.target.files); e.currentTarget.value = '' }} />
+          </label>
+          {row.listing_id && photos.length > 0 && (
+            <button onClick={async () => { const j = await post({ action: 'photos', id: row.id }); if (j?.ok) setNote(`${j.sent} photos sent to Guesty.`) }} disabled={busy}
+              className="rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] font-semibold text-muted hover:text-ink disabled:opacity-40">
+              Send photos to Guesty
+            </button>
+          )}
+        </div>
+        {!photos.length ? (
+          <p className="text-[12.5px] text-muted rounded-lg border border-dashed border-line px-3 py-4 text-center">No photos yet. A listing cannot go up without them.</p>
+        ) : (
+          <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
+            {photos.map((p: any, i: number) => (
+              <div key={p.url + i} className="rounded-lg border border-line overflow-hidden bg-white">
+                <div className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={p.url} alt={p.caption || `Photo ${i + 1}`} className="w-full h-28 object-cover" />
+                  {i === 0 && <span className="absolute top-1 left-1 rounded-md bg-brand-600 text-white text-[10px] font-semibold px-1.5 py-[2px]">Cover</span>}
+                  <button onClick={() => post({ action: 'photoEdit', id: row.id, index: i, remove: true })} disabled={busy}
+                    title="Remove" className="absolute top-1 right-1 rounded-md bg-white/90 text-slate-600 hover:text-rose-600 p-1"><X size={12} /></button>
+                </div>
+                <div className="flex items-center gap-1 p-1">
+                  <input defaultValue={p.caption || ''} placeholder="Caption" onBlur={e => { if (e.target.value !== (p.caption || '')) post({ action: 'photoEdit', id: row.id, index: i, caption: e.target.value }) }}
+                    className="flex-1 min-w-0 text-[11.5px] px-1.5 py-1 rounded border border-line" />
+                  <button onClick={() => post({ action: 'photoEdit', id: row.id, index: i, move: 'up' })} disabled={busy || i === 0} title="Move earlier"
+                    className="text-muted hover:text-ink disabled:opacity-25"><ChevronUp size={13} /></button>
+                  <button onClick={() => post({ action: 'photoEdit', id: row.id, index: i, move: 'down' })} disabled={busy || i === photos.length - 1} title="Move later"
+                    className="text-muted hover:text-ink disabled:opacity-25"><ChevronDown size={13} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* What Guesty cannot do, kept honest: these are ticks, not pushes. */}
       <section>
@@ -275,14 +412,22 @@ function Step({ done, label, manual }: { done: boolean; label: string; manual?: 
   )
 }
 
-function FieldInput({ fieldKey, value, onChange }: { fieldKey: string; value: any; onChange: (v: any) => void }) {
+function FieldInput({ fieldKey, value, onChange, polish, polishing }: {
+  fieldKey: string; value: any; onChange: (v: any) => void; polish?: () => void; polishing?: boolean
+}) {
   const f = FIELD_BY_KEY[fieldKey]
   if (!f) return null
   const base = 'w-full rounded-lg border border-line px-2.5 py-1.5 text-[13px]'
   const label = (
-    <span className="block text-[11px] font-semibold text-muted mb-1">
-      {f.label}
-      {f.need === 'blocker' && <span className="text-rose-500" title="Required before this can go to Guesty"> *</span>}
+    <span className="flex items-center gap-1.5 text-[11px] font-semibold text-muted mb-1">
+      <span>{f.label}{f.need === 'blocker' && <span className="text-rose-500" title="Required before this can go to Guesty"> *</span>}</span>
+      {polish && (
+        <button type="button" onClick={polish} disabled={polishing || !String(value || '').trim()}
+          title="Tighten this wording. It rewrites what is there and never adds a fact."
+          className="ml-auto inline-flex items-center gap-1 text-[10.5px] font-semibold text-brand-700 disabled:opacity-30 hover:underline">
+          <Sparkles size={11} /> {polishing ? '…' : 'Polish'}
+        </button>
+      )}
     </span>
   )
   const over = f.max && String(value || '').length > f.max

@@ -94,8 +94,6 @@ export const FIELDS: Field[] = [
   { key: 'access',      label: 'Guest access',    group: 'content', type: 'area', need: 'warn' },
   { key: 'neighborhood', label: 'Neighborhood',   group: 'content', type: 'area', need: 'warn' },
   { key: 'rules',       label: 'House rules',     group: 'content', type: 'area', need: 'blocker' },
-  { key: 'photosReady', label: 'Photos shot and loaded', group: 'content', type: 'bool', need: 'blocker',
-    help: 'Photos go up through the photo organizer once the listing exists. Tick this when they are done.' },
 
   // Operations
   { key: 'market',      label: 'Market',          group: 'ops', type: 'select', need: 'blocker', options: ['Miami', 'Broward'] },
@@ -149,6 +147,13 @@ export function gate(data: Record<string, any>): { blockers: string[]; warnings:
   }
   const title = String(data.title || '')
   if (title.length > 50) blockers.push('Listing title is over Guesty’s 50-character limit')
+
+  // Photos are files on the row now, not a tickbox: one is the floor, five is the bar. A listing
+  // that goes up with two photos converts like a listing with two photos, so thinness is said out
+  // loud while it can still be fixed rather than discovered after it is live.
+  const photoCount = Array.isArray(data.photos) ? data.photos.length : 0
+  if (photoCount === 0) blockers.push('Photos')
+  else if (photoCount < 5) warnings.push(`Only ${photoCount} photo${photoCount === 1 ? '' : 's'}`)
 
   // The door-code rule, enforced rather than documented. A per-stay building with a listing code
   // filled in is exactly the mistake that hands a guest someone else's working code.
@@ -233,11 +238,43 @@ export function updatePayload(data: Record<string, any>) {
 export function progress(data: Record<string, any>): number {
   const asked = FIELDS.filter(f => f.need)
   if (!asked.length) return 0
-  const done = asked.filter(f => {
+  // +1 for photos, which are files rather than a field but are just as required.
+  const photoDone = Array.isArray(data.photos) && data.photos.length > 0 ? 1 : 0
+  const done = photoDone + asked.filter(f => {
     const v = data[f.key]
     return f.type === 'number' || f.type === 'money'
       ? v !== undefined && v !== null && v !== '' && Number.isFinite(Number(v))
       : has(v)
   }).length
-  return Math.round((done / asked.length) * 100)
+  return Math.round((done / (asked.length + 1)) * 100)
 }
+
+/** Guesty fetches these URLs itself, so they must stay publicly reachable. */
+export function photosPayload(data: Record<string, any>): { url: string; caption?: string }[] {
+  const photos = Array.isArray(data.photos) ? data.photos : []
+  return photos
+    .map((p: any) => ({ url: String(p?.url || '').trim(), caption: String(p?.caption || '').trim() || undefined }))
+    .filter(p => /^https?:\/\//.test(p.url))
+}
+
+/**
+ * The answered facts, as a block a model can read. ONLY what somebody typed — this is the whole
+ * guard against a description that invents a rooftop pool. The wifi password and the door code are
+ * held back on purpose: a secret has no business in a prompt, and none in listing copy.
+ */
+export function facts(data: Record<string, any>): string {
+  const lines: string[] = []
+  for (const f of FIELDS) {
+    if (f.group === 'content') continue                          // the copy is the output, not the input
+    if (f.key === 'wifiPass' || f.key === 'doorCode') continue   // never goes near a model
+    const v = data[f.key]
+    if (v === undefined || v === null || String(v).trim() === '') continue
+    lines.push(`${f.label}: ${String(v).trim()}`)
+  }
+  const n = Array.isArray(data.photos) ? data.photos.length : 0
+  if (n) lines.push(`Photos on file: ${n}`)
+  return lines.join('\n')
+}
+
+/** The content fields the writer produces, in the order they are shown. */
+export const COPY_KEYS = ['title', 'summary', 'space', 'access', 'neighborhood', 'rules'] as const
