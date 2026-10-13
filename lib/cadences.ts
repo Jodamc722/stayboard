@@ -104,6 +104,32 @@ export type CadenceDef = {
    * excluded from a specific rule and counted, never assumed.
    */
   equipment?: 'any' | 'central' | 'mini-split' | 'window' | 'non-central'
+  /**
+   * APPROVAL BEFORE IT IS BOOKED (Jon, 2026-10-07: "some of it should be approved so that we can
+   * coordinate properly, and some of it should be automated"). Emails; any ONE of them approves a
+   * request on the Upkeep page (admins always can). A cadence with approvers never auto-creates —
+   * due → requested → approved → task. Empty = no approval step.
+   */
+  approvers?: string[]
+  /**
+   * RIDES THE DEPARTURE (Jon, 2026-10-07: "filter changes ride on departure cleans. No approval
+   * needed; the task is created against the departure"). A due job is booked for the unit's next
+   * checkout day, so the tech is there when the cleaner is, and the guest is not.
+   */
+  ridesDeparture?: boolean
+  /**
+   * THE FOLLOW-ON (Jon, 2026-10-07: "once the A/C is cleaned there has to be a touch-up clean by
+   * housekeeping afterwards"). When a task matching this cadence is completed, this second task is
+   * created `offsetDays` later for the department named.
+   */
+  followOn?: { label: string; dept: 'maintenance' | 'housekeeping' | 'inspection'; offsetDays: number; minutes: number }
+  /**
+   * WHAT THE OWNER IS BILLED (Jon, 2026-10-07): 'cleaning_fee' = the unit's Guesty cleaning fee once
+   * more (a deep clean on a $125 unit bills $125 extra — the departure clean is already charged);
+   * 'flat' = a fixed amount. Salato is +$300 flat (flatByBuilding). Printed on the task so the person
+   * doing it and the person billing it read the same number.
+   */
+  billing?: { kind: 'cleaning_fee' | 'flat' | 'none'; times?: number; flat?: number; flatByBuilding?: Record<string, number> }
 }
 
 export type CadenceCfg = {
@@ -131,6 +157,9 @@ export type CadenceCfg = {
 // ── THE SHIPPED CADENCES ────────────────────────────────────────────────────────────────────────
 // Intervals Jon named directly are commented as such; the rest are ordinary trade practice and are
 // meant to be argued with in settings, which is where they can now be changed.
+// Jon, 2026-10-07: "Approvers: Carlo, Alberto, Jon, Guillermo, or Yoslenis. Any one of them." Names
+// are matched to Lighthouse users by first name when no email is listed (Settings → Cadences).
+export const DEEP_CLEAN_APPROVERS = ['jon@stay-hospitality.com', 'carlo', 'alberto', 'guillermo', 'yoslenis']
 export const DEFAULT_CADENCES: CadenceDef[] = [
   {
     // Jon, 2026-08-26: "Ac deep cleans should be every 6 months." Split in two on 2026-10-03 (Jon:
@@ -140,11 +169,14 @@ export const DEFAULT_CADENCES: CadenceDef[] = [
     key: 'ac_deep', label: 'Central A/C coil clean', everyDays: 182, dept: 'maintenance', equipment: 'central',
     match: '(a\\/?c|air ?con|hvac|air ?handler).*(deep|coil|blower|sanit)|deep clean.*(a\\/?c|hvac)|coil clean',
     needsVacant: true, needsDays: 1, minutes: 120, mode: 'suggest', seedIfNever: true,
+    // Jon, 2026-10-07: approval, because the touch-up clean afterwards has to be coordinated.
+    approvers: DEEP_CLEAN_APPROVERS, followOn: { label: 'Touch-up clean after A/C deep clean', dept: 'housekeeping', offsetDays: 0, minutes: 60 },
   },
   {
     key: 'ac_split_clean', label: 'Mini-split / wall unit deep clean', everyDays: 182, dept: 'maintenance', equipment: 'non-central',
     match: '(mini ?split|wall unit|ptac|window unit|ductless|split).*(deep|clean|sanit|coil)|deep clean.*(split|wall unit|ptac)',
     needsVacant: true, needsDays: 1, minutes: 90, mode: 'suggest', seedIfNever: true,
+    approvers: DEEP_CLEAN_APPROVERS, followOn: { label: 'Touch-up clean after A/C deep clean', dept: 'housekeeping', offsetDays: 0, minutes: 60 },
   },
   {
     // MONTHLY, AND CENTRAL SYSTEMS ONLY (Jon, 2026-08-27: "AC Filter change is for units only with
@@ -179,7 +211,8 @@ export const DEFAULT_CADENCES: CadenceDef[] = [
     equipment: 'central', scopeBuildings: [], scopeUnits: [],
     // A filter is fifteen minutes and a step stool. It does not need an empty unit, but it is far
     // less awkward in one, so it is ranked below the jobs that genuinely need the window.
-    needsVacant: false, needsDays: 0, minutes: 15, mode: 'suggest', seedIfNever: true,
+    // AUTOMATED, ON THE DEPARTURE (Jon, 2026-10-07): booked for the unit's next checkout, no approval.
+    needsVacant: false, needsDays: 0, minutes: 15, mode: 'auto', seedIfNever: true, ridesDeparture: true,
   },
   {
     // Jon, 2026-09-28: "Door lock batteries" (and the smoke detectors while the ladder is out).
@@ -193,6 +226,8 @@ export const DEFAULT_CADENCES: CadenceDef[] = [
     // Deliberately NOT matching 'departure clean' — the turnover is not a deep clean.
     match: '(deep|detail|spring) clean',
     needsVacant: true, needsDays: 2, minutes: 240, mode: 'suggest', seedIfNever: true,
+    // Jon, 2026-10-07: approval first; billed at the unit's cleaning fee once more; Salato +$300 at a departure.
+    approvers: DEEP_CLEAN_APPROVERS, billing: { kind: 'cleaning_fee', times: 1, flatByBuilding: { Salato: 300 } },
   },
   // ── JON'S LIST, 2026-09-28 ──────────────────────────────────────────────────────────────────
   // "Deep cleans, PM audits, deep clean of AC, filter changes / coil clean, door lock batteries,
@@ -374,6 +409,14 @@ export function resolveCadences(raw: any): CadenceCfg {
       successor: o?.successor == null ? (base.successor !== false) : o.successor === true,
       leadDays: num(o?.leadDays, base.leadDays ?? 14, 0, 120),
       perBuilding: o?.perBuilding == null ? !!base.perBuilding : o.perBuilding === true,
+      approvers: Array.isArray(o?.approvers) ? strList(o.approvers, base.approvers) : base.approvers,
+      ridesDeparture: o?.ridesDeparture == null ? !!base.ridesDeparture : o.ridesDeparture === true,
+      followOn: isObj(o?.followOn) && typeof o.followOn.label === 'string' && o.followOn.label.trim()
+        ? { label: txt(o.followOn.label, '', 80), dept: /housekeep|clean/.test(String(o.followOn.dept || '')) ? 'housekeeping' : /inspect/.test(String(o.followOn.dept || '')) ? 'inspection' : 'maintenance', offsetDays: num(o.followOn.offsetDays, 0, 0, 30), minutes: num(o.followOn.minutes, 60, 5, 600) }
+        : (o?.followOn === null ? undefined : base.followOn),
+      billing: isObj(o?.billing) && ['cleaning_fee', 'flat', 'none'].includes(String(o.billing.kind))
+        ? { kind: o.billing.kind, times: num(o.billing.times, 1, 0, 5), flat: num(o.billing.flat, 0, 0, 100000), flatByBuilding: isObj(o.billing.flatByBuilding) ? o.billing.flatByBuilding : base.billing?.flatByBuilding }
+        : base.billing,
       equipment: superseded(base.key, 'equipment', o?.equipment) ? (base.equipment || 'any') : ['any', 'central', 'mini-split', 'window', 'non-central'].includes(String(o?.equipment)) ? o.equipment : (base.equipment || 'any'),
     }
   }

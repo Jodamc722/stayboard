@@ -14,10 +14,13 @@
 //   → programs[]: per program — late, due soon (14 days), on track, booked, no record — and rows.
 import { NextRequest, NextResponse } from 'next/server'
 import { buildDueCalendar, type DueItem } from '@/lib/pm-calendar'
-import { CADENCE_KEY, resolveCadences } from '@/lib/cadences'
+import { CADENCE_KEY, resolveCadences, type CadenceDef } from '@/lib/cadences'
 import { getSetting } from '@/lib/app-settings'
 import { requireLevel } from '@/lib/access'
 import { atLeast } from '@/lib/features'
+import { buildingOf, marketOf } from '@/lib/segments'
+import { getOperatingModel, weDo } from '@/lib/eve/operating-model'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -32,6 +35,12 @@ export type UpkeepRow = {
   state: UpkeepState
   task: { id: string; date: string } | null
   dept: DueItem['dept']; minutes: number; label: string
+  /** Where last-done came from: a completed task, or a person's record on the ledger. */
+  source?: 'task' | 'recorded' | null
+  /** Approval cadences: waiting on an approver (due and nobody has said yes), or declined recently. */
+  approval?: { waiting: boolean; declined?: string | null; by?: string | null } | null
+  /** What the owner is billed when this is done, in words — printed on the task when it is approved. */
+  bill?: string | null
 }
 export type UpkeepProgram = {
   key: string; label: string; everyDays: number; dept: string; equipment: string
@@ -40,16 +49,43 @@ export type UpkeepProgram = {
   inert: string | null
   units: number
   late: number; soon: number; ok: number; booked: number; none: number
+  /** Late, split by how late: ≤30 days, 31–90, over 90. The over-90 number is the one that means neglect. */
+  late30: number; late90: number; late90plus: number
   /** How many are current: (ok + booked + soon) over everything with a record. 0–100. */
   healthPct: number
+  /** The rule on this program, in words: how it gets booked and who says yes. */
+  how: string
+  needsApproval: boolean
+  awaiting: number
   rows: UpkeepRow[]
 }
 export type Upkeep = {
   ok: true; today: string; market: string; soonDays: number
   markets: string[]; buildings: string[]
   programs: UpkeepProgram[]
-  totals: { late: number; soon: number; ok: number; booked: number; none: number; lateUnits: number }
-  degraded: string[]; enabled: boolean; canEdit: boolean
+  totals: { late: number; soon: number; ok: number; booked: number; none: number; lateUnits: number; late90plus: number; awaiting: number }
+  degraded: string[]; enabled: boolean; canEdit: boolean; canApprove: string[]; me: string
+}
+
+/** The duty the operating model has to say is ours for a cadence's department. */
+const DUTY_OF: Record<string, any> = { housekeeping: 'cleaning', maintenance: 'maintenance', inspection: 'inspections' }
+/** Does this person count as an approver for the cadence? Email match, or a first-name entry matching their profile name. */
+export function isApprover(c: CadenceDef, email: string, name: string): boolean {
+  const list = (c.approvers || []).map(a => String(a || '').trim().toLowerCase()).filter(Boolean)
+  if (!list.length) return false
+  const e = String(email || '').toLowerCase(), first = String(name || '').trim().split(/\s+/)[0].toLowerCase()
+  return list.some(a => a === e || (!a.includes('@') && first && a === first) || (!a.includes('@') && e.startsWith(a + '@')))
+}
+/** The billing line for a deep-clean-type program on a unit, from the Guesty cleaning fee. */
+export function billLine(c: CadenceDef, building: string, cleaningFee: number | null): string | null {
+  const b = c.billing
+  if (!b || b.kind === 'none') return null
+  const flatB = b.flatByBuilding && Object.entries(b.flatByBuilding).find(([k]) => k.toLowerCase() === String(building || '').toLowerCase())
+  if (flatB) return `Bill the owner $${flatB[1]} (${building} rate), done at a departure`
+  if (b.kind === 'flat') return b.flat ? `Bill the owner $${b.flat}` : null
+  const times = b.times ?? 1
+  if (cleaningFee == null) return `Bill the owner ${times === 1 ? 'the unit\'s cleaning fee' : times + '× the cleaning fee'} once more (fee not on the Guesty listing — check before billing)`
+  return `Bill the owner $${Math.round(cleaningFee * times)} (${times === 1 ? 'the unit\'s $' + cleaningFee + ' cleaning fee once more' : times + '× the $' + cleaningFee + ' cleaning fee'}; the departure clean is billed separately)`
 }
 
 const GROUP_OF: Record<string, UpkeepProgram['group']> = {
@@ -68,31 +104,72 @@ export async function GET(req: NextRequest) {
   const market = String(req.nextUrl.searchParams.get('market') || 'all')
   const today = ymd(new Date())
   try {
-    const [cal, raw] = await Promise.all([
+    const db = supabaseAdmin()
+    const [cal, raw, om, ledgerRes, feeRes] = await Promise.all([
       buildDueCalendar(today, { market, horizonDays: 400 }),
       getSetting<any>(CADENCE_KEY, null).catch(() => null),
+      getOperatingModel().catch(() => null),
+      db.from('pm_schedule').select('listing_id,cadence_key,status,note,updated_at').limit(3000),
+      db.from('guesty_listings').select('id,fee:raw->prices->>cleaningFee').limit(1000),
     ])
     const cfg = resolveCadences(raw)
+    const cadBy = new Map(cfg.cadences.map(c => [c.key, c]))
+    const ledger = new Map<string, any>()
+    for (const r of ((ledgerRes.data as any[]) || [])) ledger.set(`${r.listing_id}|${r.cadence_key}`, r)
+    const fee = new Map<string, number | null>()
+    for (const r of ((feeRes.data as any[]) || [])) { const n = Number(r.fee); fee.set(String(r.id), Number.isFinite(n) && n > 0 ? n : null) }
+    const me = String(gate.access.email || '').toLowerCase()
+    const myName = String(gate.access.profile?.name || gate.access.profile?.full_name || '')
+    const isAdmin = gate.access.role === 'admin'
     const inertWhy = new Map(cal.inert.map(i => [i.key, i.why]))
     const byKey = new Map<string, UpkeepProgram>()
+    const howOf = (c: CadenceDef) => {
+      const bits: string[] = []
+      if (c.approvers && c.approvers.length) bits.push(`approved first by ${c.approvers.map(a => a.includes('@') ? a.split('@')[0] : a).map(a => a[0].toUpperCase() + a.slice(1)).join(', ')} — any one of them`)
+      else if (c.ridesDeparture) bits.push('automatic — booked on the unit\'s next checkout, with the departure clean')
+      else if (c.mode === 'auto') bits.push('automatic — booked when due')
+      else if (c.mode === 'suggest') bits.push('Eve proposes it when due; a yes books it')
+      else bits.push('off')
+      if (c.followOn) bits.push(`then ${c.followOn.label.toLowerCase()} is booked for ${c.followOn.dept}`)
+      if (c.billing && c.billing.kind !== 'none') bits.push(c.billing.kind === 'cleaning_fee' ? 'billed at the unit\'s cleaning fee once more' + (c.billing.flatByBuilding ? ` (${Object.entries(c.billing.flatByBuilding).map(([k, v]) => `${k} $${v}`).join(', ')})` : '') : `billed $${c.billing.flat}`)
+      return bits.join(' · ')
+    }
     for (const c of cfg.cadences) {
       byKey.set(c.key, {
         key: c.key, label: c.label, everyDays: c.everyDays, dept: c.dept, equipment: c.equipment || 'any',
         group: GROUP_OF[c.key] || 'other', inert: inertWhy.get(c.key) || null,
-        units: 0, late: 0, soon: 0, ok: 0, booked: 0, none: 0, healthPct: 0, rows: [],
+        units: 0, late: 0, soon: 0, ok: 0, booked: 0, none: 0, late30: 0, late90: 0, late90plus: 0, healthPct: 0, rows: [],
+        how: howOf(c), needsApproval: !!(c.approvers && c.approvers.length), awaiting: 0,
       })
     }
     const markets = new Set<string>(), buildings = new Set<string>()
+    const canApprove = new Set<string>()
     for (const b of cal.buildings) {
       for (const it of b.items) {
-        const p = byKey.get(it.cadenceKey); if (!p) continue
+        const p = byKey.get(it.cadenceKey); const c = cadBy.get(it.cadenceKey); if (!p || !c) continue
+        // ONE BUILDING NAME (2026-10-13 audit: "Botanica 1101", "Arya 1002 Full", "Oasis Bamboo" each
+        // read as a building). The rollup the rest of the app uses, else what the listing says.
+        const building = buildingOf(it.unit) || buildingOf(it.building || '') || it.building || b.building
+        // NOT OURS, NOT HERE: the operating model says who does what in each building (Botanica's own
+        // staff do its maintenance; North's vendor does its housekeeping). Those rows are nobody's to chase.
+        if (om && !weDo(om, building, DUTY_OF[c.dept] || 'maintenance')) continue
         const state: UpkeepState = it.scheduled ? 'booked' : it.band === 'unknown' ? 'none' : it.daysOver > 0 ? 'late' : it.daysOver >= -SOON_DAYS ? 'soon' : 'ok'
         p[state]++
+        if (state === 'late') { if (it.daysOver <= 30) p.late30++; else if (it.daysOver <= 90) p.late90++; else p.late90plus++ }
+        const lr = ledger.get(`${it.listingId}|${it.cadenceKey}`)
+        const note = String(lr?.note || '')
+        const declined = /^declined /.test(note) && lr?.updated_at && Date.parse(lr.updated_at) > Date.now() - 30 * 86400_000 ? note : null
+        const waiting = p.needsApproval && !it.scheduled && (state === 'late' || state === 'soon' || state === 'none') && !declined
+        if (waiting) p.awaiting++
+        if (p.needsApproval && (isAdmin || isApprover(c, me, myName))) canApprove.add(c.key)
         p.rows.push({
-          id: it.id, listingId: it.listingId, unit: it.unit, building: it.building || b.building, market: it.market,
+          id: it.id, listingId: it.listingId, unit: it.unit, building, market: it.market,
           lastDone: it.lastDone, dueOn: it.dueOn, daysOver: it.daysOver, state, task: it.scheduled ? { id: it.scheduled.taskId, date: it.scheduled.date } : null, dept: it.dept, minutes: it.minutes, label: it.label,
+          source: it.lastDone ? (/^recorded /.test(note) && String(lr?.last_done || '') === it.lastDone ? 'recorded' : 'task') : null,
+          approval: p.needsApproval ? { waiting, declined: declined ? declined.slice(0, 80) : null } : null,
+          bill: billLine(c, building, fee.get(it.listingId) ?? null),
         })
-        markets.add(it.market); buildings.add(it.building || b.building)
+        markets.add(it.market); buildings.add(building)
       }
     }
     const rank: Record<UpkeepState, number> = { late: 0, soon: 1, none: 2, booked: 3, ok: 4 }
@@ -111,11 +188,94 @@ export async function GET(req: NextRequest) {
       ok: true, today, market, soonDays: SOON_DAYS,
       markets: Array.from(markets).sort(), buildings: Array.from(buildings).sort(),
       programs,
-      totals: { late: sum('late'), soon: sum('soon'), ok: sum('ok'), booked: sum('booked'), none: sum('none'), lateUnits },
-      degraded: cal.degraded, enabled: cal.enabled, canEdit,
+      totals: { late: sum('late'), soon: sum('soon'), ok: sum('ok'), booked: sum('booked'), none: sum('none'), lateUnits, late90plus: programs.reduce((n, p) => n + p.late90plus, 0), awaiting: programs.reduce((n, p) => n + p.awaiting, 0) },
+      degraded: cal.degraded, enabled: cal.enabled, canEdit, canApprove: Array.from(canApprove), me,
     }
     return NextResponse.json(out)
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
+}
+
+// ── Actions (2026-10-13) ───────────────────────────────────────────────────────────────────────────
+//   POST { op: 'record',  listingId, cadenceKey, lastDone: 'YYYY-MM-DD', note? }  → a person records when it was last done
+//   POST { op: 'approve', listingId, cadenceKey, date? }                           → an approver books it (task in Breezeway, billing on the task)
+//   POST { op: 'decline', listingId, cadenceKey, reason? }                         → not now; it comes back in 30 days
+import { workableDays } from '@/lib/unit-windows'
+import { getTaskAutomation } from '@/lib/auto-inspections'
+
+const shiftDay = (y: string, n: number) => ymd(new Date(Date.parse(y + 'T12:00:00Z') + n * 86400000))
+
+export async function POST(req: NextRequest) {
+  const gate = await requireLevel('upkeep', 'edit')
+  if (!gate.ok) return gate.res
+  const body = await req.json().catch(() => ({} as any))
+  const op = String(body?.op || '')
+  const listingId = String(body?.listingId || '').trim()
+  const cadenceKey = String(body?.cadenceKey || '').trim()
+  if (!listingId || !cadenceKey) return NextResponse.json({ error: 'listingId and cadenceKey required' }, { status: 400 })
+  const cfg = resolveCadences(await getSetting<any>(CADENCE_KEY, null).catch(() => null))
+  const c = cfg.cadences.find(x => x.key === cadenceKey)
+  if (!c) return NextResponse.json({ error: 'unknown program' }, { status: 404 })
+  const db = supabaseAdmin()
+  const me = String(gate.access.email || '').toLowerCase()
+  const myName = String(gate.access.profile?.name || gate.access.profile?.full_name || '')
+  const today = ymd(new Date())
+  const { data: l } = await db.from('guesty_listings').select('id,nickname,title,building,fee:raw->prices->>cleaningFee').eq('id', listingId).maybeSingle()
+  if (!l) return NextResponse.json({ error: 'unit not found' }, { status: 404 })
+  const unit = String((l as any).nickname || (l as any).title || 'Unit')
+  const building = buildingOf(unit) || String((l as any).building || '') || unit
+  const now = new Date().toISOString()
+
+  if (op === 'record') {
+    const lastDone = String(body?.lastDone || '').slice(0, 10)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(lastDone) || lastDone > today) return NextResponse.json({ error: 'lastDone must be a past date (YYYY-MM-DD)' }, { status: 400 })
+    const note = `recorded ${today} by ${me}${body?.note ? ' — ' + String(body.note).slice(0, 120) : ''}`
+    const { error } = await db.from('pm_schedule').upsert({ listing_id: listingId, cadence_key: cadenceKey, unit_name: unit, building, last_done: lastDone, last_task_id: null, next_due: shiftDay(lastDone, c.everyDays), task_id: null, task_date: null, status: 'scheduled', moved: 0, note, updated_at: now }, { onConflict: 'listing_id,cadence_key' })
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, lastDone, nextDue: shiftDay(lastDone, c.everyDays) })
+  }
+
+  if (op === 'decline') {
+    if (!(gate.access.role === 'admin' || isApprover(c, me, myName))) return NextResponse.json({ error: 'only an approver can decline' }, { status: 403 })
+    const note = `declined ${today} by ${me}${body?.reason ? ' — ' + String(body.reason).slice(0, 120) : ''}`
+    const { error } = await db.from('pm_schedule').upsert({ listing_id: listingId, cadence_key: cadenceKey, unit_name: unit, building, next_due: shiftDay(today, 30), status: 'scheduled', note, updated_at: now }, { onConflict: 'listing_id,cadence_key' })
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true })
+  }
+
+  if (op === 'approve') {
+    if (c.approvers && c.approvers.length && !(gate.access.role === 'admin' || isApprover(c, me, myName))) return NextResponse.json({ error: `only ${c.approvers.join(', ')} can approve this` }, { status: 403 })
+    // When: a date the approver picked, else the unit's next empty day (needsVacant) or next checkout
+    // (Salato deep cleans happen at a departure), else today.
+    let date = /^\d{4}-\d{2}-\d{2}$/.test(String(body?.date || '')) && String(body.date) >= today ? String(body.date) : ''
+    let why = date ? 'on the day the approver picked' : ''
+    if (!date && (c.ridesDeparture || /salato/i.test(building))) {
+      const { data: res } = await db.from('guesty_reservations').select('check_out').eq('listing_id', listingId).gte('check_out', today).in('status', ['confirmed', 'reserved', 'checked_in']).order('check_out').limit(1)
+      const co = String((res as any[])?.[0]?.check_out || '').slice(0, 10)
+      if (co) { date = co; why = 'at the next departure' }
+    }
+    if (!date && c.needsVacant) {
+      try { const w = await workableDays([listingId], today, 30); const best = w[listingId]?.best?.date; if (best) { date = best; why = 'the next empty day' } } catch { /* fall through */ }
+    }
+    if (!date) { date = today; why = c.needsVacant ? 'no empty day inside 30 days — booked today so it is on the board; move it to suit' : 'today' }
+    const feeN = Number((l as any).fee); const bill = billLine(c, building, Number.isFinite(feeN) && feeN > 0 ? feeN : null)
+    const automation = await getTaskAutomation().catch(() => null)
+    const market = String(marketOf(building, null, unit) || 'Broward')
+    const sup = automation ? (automation.supervisors[market] || automation.supervisors.Miami) : ''
+    const assignees = c.dept === 'housekeeping' ? [] : Array.from(new Set([automation?.assignAlways, sup].filter(Boolean))) as string[]
+    const title = `${c.label} — ${unit}`
+    const description = [
+      `${c.label} on ${unit}, every ${c.everyDays} days. Approved by ${me} on ${today}; booked ${why}.`,
+      bill ? `BILLING: ${bill}.` : '',
+      c.followOn ? `When this is completed, Lighthouse books "${c.followOn.label}" for ${c.followOn.dept}.` : '',
+      `(Cadence "${c.label}", Users & admin → Settings → Cadences.)`,
+    ].filter(Boolean).join('\n')
+    const { runExecutor } = await import('@/lib/eve/executors')
+    const r = await runExecutor('task_create', { listingId, unit, title, department: c.dept, priority: 'normal', date, description, assignees }, { by: 'upkeep', actor: me, human: true })
+    if (!r.ok) return NextResponse.json({ error: r.error || r.summary }, { status: 502 })
+    await db.from('pm_schedule').upsert({ listing_id: listingId, cadence_key: cadenceKey, unit_name: unit, building, next_due: today, status: 'created', task_id: String(r.ref || ''), task_date: date, note: `approved ${today} by ${me}`, updated_at: now }, { onConflict: 'listing_id,cadence_key' }).then(() => {}, () => {})
+    return NextResponse.json({ ok: true, taskId: r.ref, date, bill, why })
+  }
+  return NextResponse.json({ error: 'unknown op' }, { status: 400 })
 }

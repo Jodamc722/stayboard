@@ -53,6 +53,37 @@ export function UpkeepBoard() {
   const [busy, setBusy] = useState('')
   const [filed, setFiled] = useState<Record<string, string>>({})
   const [err, setErr] = useState('')
+  const [recording, setRecording] = useState<string>('')      // row id with the date box open
+  const [recDate, setRecDate] = useState<string>('')
+  const [done, setDone] = useState<Record<string, string>>({})  // row id → what happened ("recorded Oct 1", "approved — Oct 15")
+
+  // A PERSON RECORDS THE LAST TIME (2026-10-13: "no record" was two thirds of the ledger). The date
+  // lands on the ledger and the clock starts from it — no task is created.
+  const record = async (r: UpkeepRow) => {
+    if (!recDate || busy) return
+    setBusy(r.id); setErr('')
+    try {
+      const res = await fetch('/api/upkeep', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'record', listingId: r.listingId, cadenceKey: prog?.key, lastDone: recDate }) })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok || !j?.ok) throw new Error(j?.error || 'could not record it')
+      setDone(d => ({ ...d, [r.id]: 'recorded ' + nice(j.lastDone) + ' · next ' + nice(j.nextDue) })); setRecording('')
+      invalidateCache(url(market))
+    } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy('') }
+  }
+  // AN APPROVER SAYS YES (Jon, 2026-10-07): the task is booked — next empty day, or the next departure
+  // for Salato — with the billing line on it. Decline parks it for 30 days.
+  const decide = async (r: UpkeepRow, op: 'approve' | 'decline') => {
+    if (busy) return
+    setBusy(r.id); setErr('')
+    try {
+      const res = await fetch('/api/upkeep', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, listingId: r.listingId, cadenceKey: prog?.key }) })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok || !j?.ok) throw new Error(j?.error || 'could not ' + op)
+      if (op === 'approve') { setFiled(f => ({ ...f, [r.id]: String(j.taskId || '') })); setDone(d => ({ ...d, [r.id]: 'booked ' + nice(j.date) + (j.why ? ' — ' + j.why : '') })) }
+      else setDone(d => ({ ...d, [r.id]: 'declined — back in 30 days' }))
+      invalidateCache(url(market))
+    } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy('') }
+  }
   const pickMarket = (m: string) => { setMarket(m); try { localStorage.setItem('upkeep.market', m) } catch { /* fine */ } }
   const reload = () => { invalidateCache(url(market)); refresh() }
 
@@ -93,8 +124,9 @@ export function UpkeepBoard() {
   const head = (
     <LeanHead title="Upkeep" sub={data ? `${new Set(programs.flatMap(p => p.rows.map(r => r.listingId))).size} units · ${programs.filter(p => !p.inert).length} programs · as of ${nice(data.today)}` : 'Recurring programs, every unit, on their clocks'}>
       {t ? <>
-        <Pill tone={t.late ? 'roseSolid' : 'emerald'} title="Jobs past their due date">{t.late} late{t.lateUnits ? ' · ' + t.lateUnits + ' units' : ''}</Pill>
+        <Pill tone={t.late ? 'roseSolid' : 'emerald'} title="Jobs past their due date">{t.late} late{t.lateUnits ? ' · ' + t.lateUnits + ' units' : ''}{t.late90plus ? ' · ' + t.late90plus + ' over 90d' : ''}</Pill>
         <Pill tone="amber" title={'Due in the next ' + (data?.soonDays || 14) + ' days'}>{t.soon} due soon</Pill>
+        {t.awaiting ? <Pill tone="amber" title="Due on a program that needs an approver's yes before it is booked">{t.awaiting} to approve</Pill> : null}
         <Pill tone="sky" title="Already on the board in Breezeway">{t.booked} booked</Pill>
         <Pill tone="slate" title="Never recorded on this unit — a data gap more often than neglect">{t.none} no record</Pill>
       </> : null}
@@ -158,6 +190,7 @@ export function UpkeepBoard() {
               <button onClick={() => setView(v => v === 'list' ? 'grid' : 'list')} title={view === 'list' ? 'Every unit against every program' : 'Back to the list'} className="h-7 px-2 rounded-md border border-line bg-white text-muted hover:text-ink inline-flex items-center gap-1 text-[11.5px] font-semibold">{view === 'list' ? <><LayoutGrid size={12} /> Grid</> : <><List size={12} /> List</>}</button>
             </span>
           </header>
+          {prog ? <p className="px-3 py-1.5 text-[11.5px] text-muted border-b border-line bg-app/40">{prog.how}{prog.awaiting ? ` · ${prog.awaiting} waiting on an approver` : ''}{prog.late90plus ? ` · ${prog.late90plus} over 90 days late` : ''}</p> : null}
           {err ? <p className="px-3 py-1.5 text-[12px] text-rose-700 bg-rose-50 border-b border-rose-200">{err}</p> : null}
           {view === 'grid' ? (
             <Matrix programs={programs} building={building} market={market} q={q} />
@@ -173,11 +206,30 @@ export function UpkeepBoard() {
                     <span className={'w-2 h-2 rounded-full shrink-0 ' + STATE[st].dot} />
                     <span className="text-[13px] font-semibold text-ink min-w-[7rem]">{r.unit}</span>
                     <span className="text-[11.5px] text-muted">{r.building}{r.market && market === 'all' ? ' · ' + r.market : ''}</span>
-                    <Tag tone={STATE[st].tone}>{STATE[st].label}</Tag>
+                    <Tag tone={st === 'late' && r.daysOver > 90 ? 'roseSolid' : STATE[st].tone}>{st === 'late' && r.daysOver > 90 ? 'Late 90+' : STATE[st].label}</Tag>
+                    {r.approval?.waiting && !filed[r.id] ? <Tag tone="amber">Needs approval</Tag> : null}
+                    {r.approval?.declined ? <Tag tone="slate" title={r.approval.declined}>Declined</Tag> : null}
+                    {r.source === 'recorded' ? <Tag tone="slate" title="A person recorded this date on the Upkeep page">recorded</Tag> : null}
+                    {done[r.id] ? <span className="text-[11.5px] text-emerald-700 font-semibold">{done[r.id]}</span> : null}
                     <span className={'text-[11.5px] tabular-nums ' + (r.state === 'late' ? 'text-rose-700 font-semibold' : 'text-muted')}>{r.state === 'none' ? 'never recorded' : 'last ' + nice(r.lastDone) + ' · due ' + nice(r.dueOn) + ' · ' + whenWord(r)}</span>
-                    <span className="ml-auto inline-flex items-center gap-1.5">
+                    <span className="ml-auto inline-flex items-center gap-1.5 flex-wrap">
+                      {data.canEdit && !taskId && recording === r.id ? (
+                        <span className="inline-flex items-center gap-1">
+                          <input type="date" value={recDate} max={data.today} onChange={e => setRecDate(e.target.value)} className="h-7 rounded-md border border-line px-1.5 text-[11.5px]" />
+                          <button onClick={() => record(r)} disabled={!recDate || !!busy} className="text-[11.5px] font-semibold px-2 h-7 rounded-md bg-ink text-white disabled:opacity-50">Save</button>
+                          <button onClick={() => setRecording('')} className="text-[11.5px] text-muted px-1">✕</button>
+                        </span>
+                      ) : data.canEdit && !taskId && !done[r.id] ? (
+                        <button onClick={() => { setRecording(r.id); setRecDate(r.lastDone || '') }} title="Record when this was last done — the clock starts from that day; no task is created" className="text-[11.5px] font-semibold px-2 h-7 rounded-md border border-line bg-white text-muted hover:text-ink">{r.state === 'none' ? 'Record last done' : 'Fix date'}</button>
+                      ) : null}
+                      {!taskId && !done[r.id] && r.approval?.waiting && prog && data.canApprove.includes(prog.key) ? (
+                        <>
+                          <button onClick={() => decide(r, 'approve')} disabled={!!busy} title={(r.bill ? r.bill + '. ' : '') + 'Books the task — next empty day, or the next departure for Salato.'} className="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2 h-7 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">Approve</button>
+                          <button onClick={() => decide(r, 'decline')} disabled={!!busy} className="text-[11.5px] font-semibold px-2 h-7 rounded-md border border-line bg-white text-muted hover:text-ink disabled:opacity-50">Not now</button>
+                        </>
+                      ) : null}
                       {taskId ? <a href={bzTask(taskId)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-sky-700 hover:underline"><ExternalLink size={11} /> {r.task?.date ? 'Task ' + nice(r.task.date) : 'Task filed'}</a>
-                        : data.canEdit ? <button onClick={() => addTask(r)} disabled={!!busy} className="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2 h-7 rounded-md border border-line bg-white text-ink hover:border-ink/40 disabled:opacity-40">{busy === r.id ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />} Add task</button> : null}
+                        : data.canEdit && !(prog?.needsApproval) ? <button onClick={() => addTask(r)} disabled={!!busy} className="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2 h-7 rounded-md border border-line bg-white text-ink hover:border-ink/40 disabled:opacity-40">{busy === r.id ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />} Add task</button> : null}
                     </span>
                   </li>
                 )
@@ -209,8 +261,9 @@ function ProgramTile({ p, on, onClick }: { p: UpkeepProgram; on: boolean; onClic
       ) : (
         <div className="flex items-baseline gap-1.5">
           <span className={'text-[22px] leading-none font-bold tabular-nums ' + tone}>{p.late}</span>
-          <span className="text-[11px] text-muted">late</span>
+          <span className="text-[11px] text-muted">late{p.late90plus ? <span className="text-rose-700 font-semibold"> · {p.late90plus} over 90d</span> : null}</span>
           {p.soon ? <span className="text-[11px] text-amber-700 font-semibold ml-1">{p.soon} due soon</span> : null}
+          {p.awaiting ? <span className="text-[11px] text-amber-700 font-semibold ml-1">{p.awaiting} to approve</span> : null}
         </div>
       )}
       <div className="w-full h-1.5 rounded-full bg-line overflow-hidden flex" aria-hidden>

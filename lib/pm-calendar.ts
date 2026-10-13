@@ -230,6 +230,19 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
       }
     } catch { /* no FF&E table yet */ }
   }
+  // RECORDED BY A PERSON (Upkeep page, 2026-10-13: "no record" was 1,033 of 1,618 rows — most of them
+  // jobs that were done before the task names were sensible, or done by a vendor). A supervisor can
+  // record "last done on <day>" on the Upkeep page; it lands on the ledger with a "recorded …" note
+  // and counts here exactly like a completed task. The newer of the two wins.
+  try {
+    const { data: rec } = await db.from('pm_schedule').select('listing_id,cadence_key,last_done,note').ilike('note', 'recorded %').not('last_done', 'is', null).limit(2000)
+    for (const r of ((rec || []) as any[])) {
+      const lid = String(r.listing_id), day = dOf(r.last_done), key = String(r.cadence_key)
+      if (!day || !key) continue
+      const cur = (lastDone[lid] = lastDone[lid] || {})
+      if (!cur[key] || day > cur[key]) cur[key] = day
+    }
+  } catch { /* no ledger yet */ }
   const scheduledAhead: Record<string, Record<string, { taskId: string; date: string }>> = {}
   for (const t of openPaged.rows as any[]) {
     if (isTaskGone(t.status) || isTaskDone(t.status, t.finished_at)) continue

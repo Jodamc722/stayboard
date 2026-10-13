@@ -99,9 +99,14 @@ export async function runPmRecurrence(opts: { dryRun?: boolean; force?: boolean 
   const rows: Record<string, any> = {}
   for (const r of ((rowsRes || []) as any[])) rows[`${r.listing_id}|${r.cadence_key}`] = r
   const upserts: any[] = []
+  const followOns: { it: DueItem; c: CadenceDef }[] = []
   for (const it of items) {
     const k = `${it.listingId}|${it.cadenceKey}`
     const r = rows[k]
+    // THE FOLLOW-ON (Jon, 2026-10-07): a completion that moved last_done forward on a cadence with a
+    // follow-on — the A/C deep clean — books the touch-up clean. Once per completion (the note says so).
+    const cfo = byKey[it.cadenceKey]
+    if (cfo?.followOn && r && r.last_done && it.lastDone && it.lastDone > str(r.last_done) && str(r.note) !== `followon ${it.lastDone}`) followOns.push({ it, c: cfo })
     const patch: any = { listing_id: it.listingId, cadence_key: it.cadenceKey, unit_name: it.unit, building: it.building, last_done: it.lastDone, next_due: it.dueOn, updated_at: new Date().toISOString() }
     if (it.scheduled) { patch.task_id = it.scheduled.taskId; patch.task_date = it.scheduled.date; patch.status = 'created' }
     else if (!r || r.last_done !== it.lastDone) { patch.task_id = null; patch.task_date = null; patch.status = 'scheduled'; patch.moved = 0; patch.note = null }
@@ -122,6 +127,43 @@ export async function runPmRecurrence(opts: { dryRun?: boolean; force?: boolean 
   }
   out.ledger = upserts.length
 
+  const automation0 = await getTaskAutomation().catch(() => null)
+  const { runExecutor: runExec0 } = await import('./eve/executors')
+  const { recordAgentAction: recordAct0 } = await import('./eve/agent-mode')
+  // ── 1b. follow-ons ─────────────────────────────────────────────────────────────
+  for (const { it, c } of followOns.slice(0, 10)) {
+    const fo = c.followOn!
+    const date = (() => { const d = shift(it.lastDone!, fo.offsetDays); return d < today ? today : d })()
+    const title = `${fo.label} — ${it.unit}`
+    if (opts.dryRun) { out.lines.push(`would create follow-on: ${title} on ${date}`); continue }
+    const r = await runExec0('task_create', { listingId: it.listingId, unit: it.unit, title, department: fo.dept, priority: 'normal', date, description: `Follow-on to the ${c.label.toLowerCase()} completed ${it.lastDone} on ${it.unit} (cadence "${c.label}": ${fo.label.toLowerCase()} afterwards).`, assignees: [] }, { by: 'cron:pm-recurrence', human: false })
+    await recordAct0('task_create', { rung: 4, allowed: r.ok, mode: 'act', reason: r.ok ? `follow-on of "${c.label}"` : `create failed: ${r.error || 'unknown'}`, summary: r.summary, ref: r.ref || null, by: 'cron:pm-recurrence', countAs: r.ok ? 'action' : 'none' })
+    if (r.ok) { await db.from('pm_schedule').update({ note: `followon ${it.lastDone}`, updated_at: new Date().toISOString() }).eq('listing_id', it.listingId).eq('cadence_key', it.cadenceKey); out.created++; out.lines.push(`follow-on ${title} on ${date}`) }
+    else out.lines.push(`follow-on failed ${title}: ${r.error || 'unknown'}`)
+  }
+
+  // ── 1c. rides the departure (Jon, 2026-10-07: A/C filters) ─────────────────────────
+  // A due job on a cadence that rides departures is booked for the unit's next checkout inside 14
+  // days — automated, no rung, no approval, capped at 15 a run. No checkout coming: it waits.
+  const riders = items.filter(it => { const c = byKey[it.cadenceKey]; const r = rows[`${it.listingId}|${it.cadenceKey}`]; return c?.ridesDeparture && c.mode !== 'off' && r && r.status === 'scheduled' && !it.scheduled && it.dueOn <= shift(today, 7) }).sort((a, b) => b.daysOver - a.daysOver).slice(0, 15)
+  if (riders.length) {
+    const { data: res } = await db.from('guesty_reservations').select('listing_id,check_out,status').in('listing_id', Array.from(new Set(riders.map(r => r.listingId)))).gte('check_out', today).lte('check_out', shift(today, 14)).in('status', ['confirmed', 'reserved', 'checked_in']).order('check_out').limit(500)
+    const nextOut: Record<string, string> = {}
+    for (const r of ((res || []) as any[])) { const lid = str(r.listing_id), co = str(r.check_out).slice(0, 10); if (!nextOut[lid] || co < nextOut[lid]) nextOut[lid] = co }
+    for (const it of riders) {
+      const c = byKey[it.cadenceKey]
+      const date = nextOut[it.listingId]
+      if (!date) { if (!opts.dryRun) await db.from('pm_schedule').update({ note: 'waiting for a checkout', updated_at: new Date().toISOString() }).eq('listing_id', it.listingId).eq('cadence_key', it.cadenceKey); out.waiting++; continue }
+      const title = `${c.label} — ${it.unit}`
+      if (opts.dryRun) { out.lines.push(`would ride the departure: ${title} on ${date}`); continue }
+      const sup = automation0 ? (automation0.supervisors[it.market] || automation0.supervisors.Miami) : ''
+      const r = await runExec0('task_create', { listingId: it.listingId, unit: it.unit, title, department: c.dept, priority: it.daysOver > 30 ? 'high' : 'normal', date, description: `${c.label} on ${it.unit}, every ${c.everyDays} days — rides the departure clean on ${date} (guest out, cleaner in). Last done ${it.lastDone || 'never recorded'}; due ${it.dueOn}.`, assignees: Array.from(new Set([automation0?.assignAlways, sup].filter(Boolean))) }, { by: 'cron:pm-recurrence', human: false })
+      await recordAct0('task_create', { rung: 4, allowed: r.ok, mode: 'act', reason: r.ok ? `cadence "${c.label}" rides the departure` : `create failed: ${r.error || 'unknown'}`, summary: r.summary, ref: r.ref || null, by: 'cron:pm-recurrence', countAs: r.ok ? 'action' : 'none' })
+      if (r.ok && r.ref) { await db.from('pm_schedule').update({ status: 'created', task_id: str(r.ref), task_date: date, note: `created ${today} (departure)`, updated_at: new Date().toISOString() }).eq('listing_id', it.listingId).eq('cadence_key', it.cadenceKey); rows[`${it.listingId}|${it.cadenceKey}`].status = 'created'; out.created++; out.lines.push(`rides ${title} on ${date}`) }
+      else { out.skipped++; out.lines.push(`ride failed ${title}: ${r.error || 'unknown'}`) }
+    }
+  }
+
   // ── 2. the successor ───────────────────────────────────────────────────────────────────────────
   // ONE PER BUILDING (perBuilding cadences): of a building's due units, only the first creates a
   // task; the rest ride on it. An open task on any unit of the building counts as the building's.
@@ -138,6 +180,8 @@ export async function runPmRecurrence(opts: { dryRun?: boolean; force?: boolean 
     const c = byKey[it.cadenceKey]
     const r = rows[`${it.listingId}|${it.cadenceKey}`]
     if (!r || r.status !== 'scheduled' || it.scheduled) return false
+    if (c.ridesDeparture) return false                       // booked by the departure pass above
+    if (c.approvers && c.approvers.length) return false      // waits for an approver on the Upkeep page
     if (it.dueOn > shift(today, c.leadDays ?? 14)) return false
     // A proposal already out this week: do not ask again.
     if (r.note && /^proposed /.test(str(r.note)) && r.updated_at && Date.parse(r.updated_at) > Date.now() - REPROPOSE_AFTER_DAYS * 86400000 && !opts.force) return false
@@ -172,7 +216,7 @@ export async function runPmRecurrence(opts: { dryRun?: boolean; force?: boolean 
     const description = `Preventative ${c.label.toLowerCase()} on ${it.unit}, every ${c.everyDays} days. Last done ${it.lastDone}; due ${it.dueOn}${it.daysOver > 0 ? ` (${it.daysOver} days over)` : ''}.` +
       (c.needsVacant ? ` Scheduled on an empty day; if it slips, Lighthouse moves it to the next one.` : '') +
       `\n\nWhen this is completed, the next one is booked automatically for ${shift(date, c.everyDays)}. (Cadence "${c.label}", Users & admin → Settings → Cadences.)`
-    const payload = { listingId: it.listingId, title, department: c.dept, priority: it.daysOver > 30 ? 'high' : 'normal', date, description, assignees }
+    const payload = { listingId: it.listingId, unit: it.unit, title, department: c.dept, priority: it.daysOver > 30 ? 'high' : 'normal', date, description, assignees }
     if (opts.dryRun) { spent++; out.lines.push(`${c.mode === 'auto' ? 'would create' : 'would propose'}: ${title} on ${date}`); continue }
 
     if (c.mode === 'auto') {
