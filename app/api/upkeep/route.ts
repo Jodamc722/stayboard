@@ -36,7 +36,9 @@ export type UpkeepRow = {
   task: { id: string; date: string } | null
   dept: DueItem['dept']; minutes: number; label: string
   /** Where last-done came from: a completed task, or a person's record on the ledger. */
-  source?: 'task' | 'recorded' | null
+  source?: 'task' | 'recorded' | 'new' | null
+  /** source 'new': the unit went live on this day and the clock started there (no record yet). */
+  goLive?: string | null
   /** Approval cadences: waiting on an approver (due and nobody has said yes), or declined recently. */
   approval?: { waiting: boolean; declined?: string | null; by?: string | null } | null
   /** What the owner is billed when this is done, in words — printed on the task when it is approved. */
@@ -165,7 +167,8 @@ export async function GET(req: NextRequest) {
         p.rows.push({
           id: it.id, listingId: it.listingId, unit: it.unit, building, market: it.market,
           lastDone: it.lastDone, dueOn: it.dueOn, daysOver: it.daysOver, state, task: it.scheduled ? { id: it.scheduled.taskId, date: it.scheduled.date } : null, dept: it.dept, minutes: it.minutes, label: it.label,
-          source: it.lastDone ? (/^recorded /.test(note) && String(lr?.last_done || '') === it.lastDone ? 'recorded' : 'task') : null,
+          source: it.newUnit ? 'new' : it.lastDone ? (/^recorded /.test(note) && String(lr?.last_done || '') === it.lastDone ? 'recorded' : 'task') : null,
+          goLive: it.newUnit?.goLive || null,
           approval: p.needsApproval ? { waiting, declined: declined ? declined.slice(0, 80) : null } : null,
           bill: billLine(c, building, fee.get(it.listingId) ?? null),
         })

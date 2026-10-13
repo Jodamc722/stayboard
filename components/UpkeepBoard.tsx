@@ -210,8 +210,9 @@ export function UpkeepBoard() {
                     {r.approval?.waiting && !filed[r.id] ? <Tag tone="amber">Needs approval</Tag> : null}
                     {r.approval?.declined ? <Tag tone="slate" title={r.approval.declined}>Declined</Tag> : null}
                     {r.source === 'recorded' ? <Tag tone="slate" title="A person recorded this date on the Upkeep page">recorded</Tag> : null}
+                    {r.source === 'new' ? <Tag tone="slate" title="No record yet, and the unit went live more recently than this program's interval — the clock started the day it went live">new unit · live {nice(r.goLive || r.lastDone)}</Tag> : null}
                     {done[r.id] ? <span className="text-[11.5px] text-emerald-700 font-semibold">{done[r.id]}</span> : null}
-                    <span className={'text-[11.5px] tabular-nums ' + (r.state === 'late' ? 'text-rose-700 font-semibold' : 'text-muted')}>{r.state === 'none' ? 'never recorded' : 'last ' + nice(r.lastDone) + ' · due ' + nice(r.dueOn) + ' · ' + whenWord(r)}</span>
+                    <span className={'text-[11.5px] tabular-nums ' + (r.state === 'late' ? 'text-rose-700 font-semibold' : 'text-muted')}>{r.state === 'none' ? 'never recorded' : (r.source === 'new' ? 'live since ' : 'last ') + nice(r.lastDone) + ' · due ' + nice(r.dueOn) + ' · ' + whenWord(r)}</span>
                     <span className="ml-auto inline-flex items-center gap-1.5 flex-wrap">
                       {data.canEdit && !taskId && recording === r.id ? (
                         <span className="inline-flex items-center gap-1">

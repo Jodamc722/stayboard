@@ -53,6 +53,10 @@ export type DueItem = {
   vendor: boolean
   /** null when there is no record of it ever being done. */
   lastDone: string | null
+  /** The unit went live more recently than this cadence's interval and has no record: the clock
+      started the day it went live (lastDone = goLive). Jon, 2026-10-13: "Salato and some with no
+      record could be a new unit." */
+  newUnit?: { goLive: string } | null
   /** The day it comes due (last done + interval). For a never-recorded job, today. */
   dueOn: string
   /** Negative = not due yet; 0 = today; positive = days past due. */
@@ -121,9 +125,9 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
 
   // ── the units ────────────────────────────────────────────────────────────────────────────────
   const { data: lRes, error: lErr } = await db.from('guesty_listings')
-    .select('id,nickname,title,building,address_city,status')
+    .select('id,nickname,title,building,address_city,status,created:raw->>createdAt')
   if (lErr) throw new Error('could not read listings — ' + String(lErr.message).slice(0, 120))
-  type Meta = { name: string; building: string | null; bucket: string; market: string; market2: string | null; vendor: boolean }
+  type Meta = { name: string; building: string | null; bucket: string; market: string; market2: string | null; vendor: boolean; created: string | null }
   const meta: Record<string, Meta> = {}
   const ids: string[] = []
   const rows = ((lRes || []) as any[]).filter(l => str(l.status).trim().toLowerCase() === 'active')
@@ -143,7 +147,7 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
     const mk2 = vendor && !geoHasOwn.has(geo) ? geo : null
     if (market !== 'all' && mk !== market && mk2 !== market) continue
     const building = str(l.building) || null
-    meta[String(l.id)] = { name, building, bucket: (building || buildingOf(name) || name).toLowerCase(), market: mk, market2: mk2, vendor }
+    meta[String(l.id)] = { name, building, bucket: (building || buildingOf(name) || name).toLowerCase(), market: mk, market2: mk2, vendor, created: dOf(l.created) || null }
     ids.push(String(l.id))
   }
   if (!ids.length) {
@@ -243,6 +247,32 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
       if (!cur[key] || day > cur[key]) cur[key] = day
     }
   } catch { /* no ledger yet */ }
+  // ── NEW UNITS (Jon, 2026-10-13: "Salato and some with no record could be a new unit") ─────────
+  // A unit listed in September cannot owe a deep clean from "never". When a unit went live more
+  // recently than a cadence's interval and nothing has been recorded, the clock starts the day it
+  // went live. Go-live is the first non-cancelled check-in, else the day Guesty created the
+  // listing; a unit whose listing predates the longest interval is simply not new.
+  const goLive: Record<string, string> = {}
+  {
+    const young = ids.filter(id => meta[id].created && meta[id].created! >= since)
+    for (const id of young) goLive[id] = meta[id].created!
+    if (young.length) {
+      try {
+        const { data: rs } = await db.from('guesty_reservations').select('listing_id,check_in,status')
+          .in('listing_id', young.slice(0, 200)).order('check_in', { ascending: true }).limit(2000)
+        const first: Record<string, string> = {}
+        for (const r of ((rs || []) as any[])) {
+          const st = str(r.status).toLowerCase()
+          if (st === 'canceled' || st === 'cancelled' || st === 'declined' || st === 'expired') continue
+          const lid = String(r.listing_id), day = dOf(r.check_in)
+          if (day && (!first[lid] || day < first[lid])) first[lid] = day
+        }
+        // The first stay is the truth either way: later than the listing date means it sat unlisted
+        // a while; earlier means the listing was re-created and the unit is older than it looks.
+        for (const id of young) if (first[id]) goLive[id] = first[id]
+      } catch { /* the listing date stands */ }
+    }
+  }
   const scheduledAhead: Record<string, Record<string, { taskId: string; date: string }>> = {}
   for (const t of openPaged.rows as any[]) {
     if (isTaskGone(t.status) || isTaskDone(t.status, t.finished_at)) continue
@@ -288,6 +318,10 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
       // heater flush are not owed simply because nobody has logged one. The engine drops these;
       // without the same rule here, "Add all" would file two tasks against every unit in the
       // portfolio, which is precisely what the cap exists to prevent.
+      // New unit, no record: the clock starts the day it went live (see goLive above).
+      let newUnit: DueItem['newUnit'] = null
+      const gl = goLive[lid]
+      if (!ld && gl && daysBetween(gl, today) < c.everyDays) { ld = gl; newUnit = { goLive: gl } }
       if (!ld && !c.seedIfNever) continue
       // A never-recorded job is due today by definition — but it is stated as "no record", never as
       // "365 days overdue", because a missing record is far more often a data gap than neglect.
@@ -307,7 +341,7 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
         id: `${today}|${lid}|${c.key}`,
         cadenceKey: c.key, label: c.label, dept: c.dept, minutes: c.minutes,
         listingId: lid, unit: m.name, building: m.building, market: m.market, vendor: m.vendor,
-        market2: m.market2, lastDone: ld, dueOn, daysOver, scheduled: sched, band,
+        market2: m.market2, lastDone: ld, newUnit, dueOn, daysOver, scheduled: sched, band,
       })
     }
   }
