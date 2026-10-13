@@ -28,7 +28,7 @@ import { HealthBoard } from '@/components/HealthBoard'
 import { unitRevenue, REV_WINDOWS, windowFor, windowRange, DEFAULT_BASIS } from '@/lib/unit-revenue'
 import { BASES, BASIS_SHORT, BASIS_NOTE, type Basis } from '@/lib/basis'
 import { LeanHead, Pill, LeanEmpty } from '@/components/lean'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, Plus } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
@@ -226,6 +226,8 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
   // The Health view keeps the `health` permission key it had as a page: anyone who could open
   // /health sees the tab here, anyone who could not is shown Buildings instead of a blank.
   const canHealth = atLeast(access.levels['health'], 'view')
+  // Adding a unit is a Properties action, not an optimizer one — its own key, its own level.
+  const canAddUnit = atLeast(access.levels['buildings'], 'edit')
   if (view === 'health' && !canHealth) view = 'buildings'
   if (view === 'copy' && !canEdit) view = 'buildings'
 
@@ -277,6 +279,12 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
   return (
     <Shell>
       <LeanHead title="Properties">
+        {canAddUnit && (
+          <Link href="/buildings/new" prefetch={false} title="Start a new unit: the go-live questions, the push to Guesty, and the channel checklist"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-2.5 py-1 text-[12.5px] font-semibold">
+            <Plus size={14} /> New unit
+          </Link>
+        )}
         <Pill title={`${buildings.length} buildings · ${totalUnits} units`}>{totalUnits} units</Pill>
         {portfolioAvg != null && <Pill tone="brand" title="Portfolio Optimize Score: average of every active unit (all time)">Score {portfolioAvg}</Pill>}
         {portfolioRating != null && <Pill tone="amber" title={`Guest rating, all time · ${portfolioReviews} reviews`}>{portfolioRating.toFixed(2)}★ all</Pill>}
