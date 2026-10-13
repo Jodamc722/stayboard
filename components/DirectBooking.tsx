@@ -145,7 +145,7 @@ function Search({ checkIn, checkOut, guests, setCheckIn, setCheckOut, setGuests,
         <button type="submit" disabled={busy} className="h-11 rounded-xl bg-[#1c1b19] text-white px-6 font-semibold text-[15px] disabled:opacity-60">{busy ? 'Searching…' : 'Search'}</button>
       </form>
       {err && <p className="mt-3 text-[13px] text-rose-700">{err}</p>}
-      <p className="mt-4 text-[13px] text-black/60">{rows == null ? 'Loading homes…' : checkIn && checkOut ? `${rows.length}${next ? '+' : ''} homes free ${nice(checkIn)} – ${nice(checkOut)} · ${n} night${n === 1 ? '' : 's'}` : `${rows.length}${next ? '+' : ''} homes — add dates to see prices for your stay`}</p>
+      {!(err && rows == null) && <p className="mt-4 text-[13px] text-black/60">{rows == null ? 'Loading homes…' : checkIn && checkOut ? `${rows.length}${next ? '+' : ''} homes free ${nice(checkIn)} – ${nice(checkOut)} · ${n} night${n === 1 ? '' : 's'}` : `${rows.length}${next ? '+' : ''} homes — add dates to see prices for your stay`}</p>}
       <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {(rows || []).map(c => (
           <button key={c.id} onClick={() => { onOpen(c.id); window.scrollTo(0, 0) }} className="text-left bg-white rounded-2xl overflow-hidden border border-black/5 shadow-sm hover:shadow-md transition-shadow">
