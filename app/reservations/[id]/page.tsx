@@ -9,6 +9,7 @@ import { ReservationOrders } from '@/components/ReservationOrders'
 import { ContactHistory } from '@/components/ContactHistory'
 import { loadContactHistory } from '@/lib/reservation-contact'
 import { StayPanel } from '@/components/StayPanel'
+import { GuestProfilePanel } from '@/components/GuestProfilePanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -122,6 +123,13 @@ export default async function ReservationDetail({ params }: { params: { id: stri
       {/* THE FULL PICTURE (2026-09-22) — guest history, calls, messages + sentiment, issues, claims,
           reviews and field work for this booking, from the same loader every page uses. */}
       <div className="mb-6"><StayPanel reservationId={params.id} /></div>
+
+      {/* WHO IS ARRIVING (Jon, 2026-10-14) — the understanding log, the tags it derives, and the
+          brief that goes to the field. Above the fold because it is the thing a manager opening a
+          booking the morning of arrival actually wants. */}
+      <section className="mb-6 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+        <GuestProfilePanel reservationId={params.id} />
+      </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <section className="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">

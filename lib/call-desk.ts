@@ -658,6 +658,10 @@ export type WelcomeRow = {
   proof: PhoneProof
   phoneCheck: PhoneCheck
   sensitive: boolean
+  // How many stays this person has had with us, 0 when we have never learned anything about them
+  // (Jon, 2026-10-14: "Repeat guest should also be flagged on the reservation"). Knowing before
+  // you dial changes the first sentence of the call.
+  repeat?: number
   due: boolean; dueToday: boolean; lastChance: boolean; closed: boolean; incomplete: boolean
   prio: number
   recovery: RecoveryUnit | null
@@ -861,6 +865,21 @@ export async function loadCallsDesk(sb: any, today: string, viewDate?: string): 
   // short-circuits it. Read here, not in the component, so the close-out and the page agree.
   let talkroute = !!String(process.env.TALKROUTE_API_KEY || '').trim()
   if (!talkroute) { try { const { talkrouteConfigured } = await import('./talkroute'); talkroute = await talkrouteConfigured() } catch { talkroute = false } }
+  // RETURNING GUESTS, IN ONE QUERY. Per-row lookups would be sixty round trips on a full board, so
+  // the whole page's keys go up once and the stay counts come back together. A profile we have
+  // never built simply leaves the row unflagged, which is the honest answer.
+  try {
+    const { guestKey } = await import('@/lib/guest-profile')
+    const { supabaseAdmin } = await import('@/lib/supabase-admin')
+    const keyed = rows.map((r: any) => ({ r, k: guestKey({ guest_id: r.guestId, guest_phone: r.phone, guest_name: r.guest }) })).filter(x => x.k)
+    const keys = Array.from(new Set(keyed.map(x => x.k)))
+    if (keys.length) {
+      const { data: profs } = await supabaseAdmin().from('guest_profiles').select('guest_key,stays').in('guest_key', keys)
+      const byKey = new Map((profs || []).map((p: any) => [String(p.guest_key), Number(p.stays) || 0]))
+      for (const { r, k } of keyed) { const n = byKey.get(k); if (n) r.repeat = n }
+    }
+  } catch { /* a flag that fails to load is a missing chip, never a missing board */ }
+
   return { today, talkroute, callers, rows, outRows, recoveryFailed: rec.failed, kpis }
 }
 

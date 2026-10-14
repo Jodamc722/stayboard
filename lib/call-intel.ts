@@ -11,6 +11,7 @@
 import 'server-only'
 import { anthropicMessages } from './anthropic-call'
 import { modelPairFor } from './ai-models'
+import { cleanUnderstanding, type Understanding } from './guest-profile'
 
 export type CallIntel = {
   summary: string                 // 1-2 sentences — this is the note that goes to Guesty
@@ -24,6 +25,10 @@ export type CallIntel = {
   // can print names instead of "Speaker 0 / Speaker 1"; the language the call was held in.
   staffSpeaker?: number | null
   language?: string
+  // WHO IS ARRIVING (Jon, 2026-10-14). Read in the SAME call as the note, not a second pass: the
+  // model is already holding the transcript, and a second request would double the bill on the
+  // highest-volume AI job in the app for facts that are right there in the first read.
+  understanding?: Understanding
 }
 
 const SYSTEM = `You read one recorded phone call between a short-term-rental management team (Stay Hospitality, South Florida) and a guest, and you write the note that goes on the booking.
@@ -40,10 +45,27 @@ Return ONLY a JSON object:
   "followUp": true if anyone on our side still owes the guest something,
   "whoAnswered": "guest" | "someone else" | "unclear",
   "staffSpeaker": the speaker NUMBER (0, 1, …) that is the Stay team member, or null if you cannot tell,
-  "language": the language the call was mostly held in, one word in English ("English", "Spanish", "Portuguese"…)
+  "language": the language the call was mostly held in, one word in English ("English", "Spanish", "Portuguese"…),
+  "understanding": {
+    "story": "one plain sentence: what brings them down. Their words where you have them.",
+    "purpose": one of "Work" | "Family" | "Celebration" | "Vacation" | "Relocating" | "Event" | "Medical", or omit,
+    "occasion": "birthday / anniversary / graduation — ONLY if one was mentioned",
+    "adults": number of adults coming,
+    "kids": number of children coming,
+    "kidAges": "ages as said, e.g. '2 and 6'",
+    "pets": "what and how many, e.g. 'one small dog'. Write 'None' ONLY if they were asked and said no",
+    "cars": how many cars they are bringing,
+    "parking": "what they asked about parking and what they were told",
+    "arrivalNote": "late flight, early bag drop, who arrives first",
+    "needs": ["crib", "high chair", "extra towels", "accessible shower"],
+    "preferences": ["things they liked or asked for that are worth repeating"],
+    "watchOut": ["a sensitivity or a past problem they raised"]
+  }
 }
 
 The summary, asked, promised and issues are ALWAYS written in English, whatever language the call was in.
+
+UNDERSTANDING IS THE STRICTEST PART OF THIS JOB. Omit every field that was not actually discussed. Do not infer a family from a two-bedroom booking, do not infer a car from a parking question, do not turn "we might bring the dog" into a dog. An omitted field means we still do not know, which is a true and useful answer; a guessed field becomes a crib in a room with no baby. If the call never got past logistics, return "understanding": {}.
 
 Rules. Be specific and short: "asked for a 2pm early check-in, told it depends on the clean" beats "discussed check-in". Quote a number when one was said (a time, a door code reference, a dollar amount) but NEVER write out an actual door code or card number. If the call is a wrong number, a voicemail greeting, or nobody really spoke, say so in summary and leave the arrays empty. Do not invent anything that was not said. No preamble, no markdown, JSON only.`
 
@@ -78,7 +100,7 @@ export async function readCall(script: string, context: {
   ].filter(Boolean).join(' ')
   try {
     const r = await anthropicMessages(key, {
-      model, max_tokens: 900, system: SYSTEM,
+      model, max_tokens: 1400, system: SYSTEM,
       // A very long call is trimmed from the MIDDLE: the opening says why we called and the ending
       // carries the promises, which are the two parts a note must not lose.
       messages: [{ role: 'user', content: `${head}\n\nTRANSCRIPT\n${trim(text, 24000)}` }],
@@ -98,11 +120,22 @@ export async function readCall(script: string, context: {
         sentiment, followUp: !!p.followUp, whoAnswered: who,
         staffSpeaker: Number.isInteger(Number(p.staffSpeaker)) && p.staffSpeaker !== null && p.staffSpeaker !== '' ? Number(p.staffSpeaker) : null,
         language: String(p.language || '').replace(/[^A-Za-z ]/g, '').trim().slice(0, 24),
+        // Everything a model read off a transcript is marked 'read', never 'said'. A person who
+        // types it into the panel after the call marks it 'said'. The difference is the whole
+        // point: one of them is evidence.
+        understanding: stamp(cleanUnderstanding(p.understanding)),
       },
     }
   } catch (e: any) {
     return { ok: false, intel: EMPTY_INTEL, model, error: String(e?.message || e).slice(0, 200) }
   }
+}
+
+/** Mark every field the model filled as read-from-a-transcript, not heard-from-the-guest. */
+function stamp(u: Understanding): Understanding {
+  const heard: Record<string, 'said' | 'read'> = {}
+  for (const k of Object.keys(u)) if (k !== 'heard' && k !== 'updatedAt') heard[k] = 'read'
+  return Object.keys(heard).length ? { ...u, heard, updatedAt: new Date().toISOString() } : u
 }
 
 function trim(s: string, max: number): string {

@@ -31,10 +31,23 @@ export async function GET(req: NextRequest) {
       const cfg = await getSetting<any>('guest_issue_watch', null)
       if (!cfg || cfg.on !== false) heard = await runGuestIssueWatch({ hours: 12, by: 'cron:call-notes' })
     } catch (e: any) { heard = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+
+    // WHO IS ARRIVING (Jon, 2026-10-14). Rides this cron rather than taking one of its own: the
+    // understanding a call just produced is the main reason a brief changes, so pushing right
+    // behind the read means the cleaner's task carries it within the half hour. It scans the next
+    // seven days of arrivals either way, so a hand-typed profile and a quiet phone day are covered
+    // too, and an unchanged brief is never re-sent — on a quiet day this touches Breezeway zero
+    // times. Best effort: a Breezeway wobble must not cost us the notes this pass already pushed.
+    let briefs: any = null
+    try {
+      const { pushGuestBriefs } = await import('@/lib/guest-brief-push')
+      briefs = await pushGuestBriefs({ days: 7, deadline: t0 + 110_000 })
+    } catch (e: any) { briefs = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+
     try {
       await supabaseAdmin().from('automation_runs').insert({ name: 'call-notes', ok: r.errors.length === 0, item_count: r.transcribed + r.notesPushed, detail: r, ms: Date.now() - t0 })
     } catch { /* ledger best-effort */ }
-    return NextResponse.json({ ok: true, ...r, guestIssues: heard, ms: Date.now() - t0 })
+    return NextResponse.json({ ok: true, ...r, guestIssues: heard, guestBriefs: briefs, ms: Date.now() - t0 })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }

@@ -162,7 +162,7 @@ export async function processCallIntel(sb: any, opts: { deadline?: number; limit
       // ── 3. Read it. ───────────────────────────────────────────────────────────────────────
       let intel: CallIntel | null = (c.intel && typeof c.intel === 'object') ? c.intel as CallIntel : null
       if (c.transcript && !intel && !over()) {
-        const { data: res } = await sb.from('guesty_reservations').select('guest_name,listing_name,check_in,check_out').eq('id', c.reservation_id).maybeSingle()
+        const { data: res } = await sb.from('guesty_reservations').select('guest_id,guest_name,guest_phone,listing_id,listing_name,check_in,check_out').eq('id', c.reservation_id).maybeSingle()
         const r = await readCall(String(c.transcript), {
           guest: res?.guest_name || c.external_name || '', unit: res?.listing_name || '',
           checkIn: res?.check_in || '', checkOut: res?.check_out || '',
@@ -171,6 +171,21 @@ export async function processCallIntel(sb: any, opts: { deadline?: number; limit
         if (r.ok) {
           intel = r.intel; rep.summarised++
           await mark(sb, c.id, { intel, summary: r.intel.summary, summary_at: new Date().toISOString() })
+          // WHO IS ARRIVING (Jon, 2026-10-14). The same read already produced it; this just files
+          // it on the reservation and rolls it into the person. Best-effort on purpose — a guest
+          // profile that fails to save must never cost us the call note, which is the job here.
+          if (r.intel.understanding && Object.keys(r.intel.understanding).length && res) {
+            try {
+              const { recordUnderstanding } = await import('./guest-store')
+              const { guestKey } = await import('./guest-profile')
+              const key = guestKey(res)
+              if (key) await recordUnderstanding({
+                reservationId: String(c.reservation_id), guestKey: key,
+                listingId: res.listing_id || null, checkIn: res.check_in || null,
+                u: r.intel.understanding, source: 'call', callId: String(c.id),
+              })
+            } catch { /* the note is the job; the profile is the bonus */ }
+          }
         } else if (r.error) rep.errors.push(`read ${c.id}: ${r.error}`)
       }
 
