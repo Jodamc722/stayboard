@@ -24,6 +24,7 @@ import { pullReservationsByIds } from '@/lib/guesty'
 import { syncOwners, syncOwnerStatements, syncLedgerMonth } from '@/lib/guesty-owner-sync'
 import { MONTH_LABEL } from '@/lib/owner-statements'
 import { auditMonths, buildAudit, defaultAuditMonth, saveAuditRules, AuditStatus, WRITABLE_STATUSES, SIGNOFF_KEY, PREP_PREFIX, PREP_OWNER } from '@/lib/owner-audit'
+import { tagAndNotify } from '@/lib/mentions'
 
 export const dynamic = 'force-dynamic'
 // 300s: the 'sync' action sweeps a whole month of statement line items out of Guesty.
@@ -294,6 +295,10 @@ export async function POST(req: NextRequest) {
     const { error } = await db.from('owner_audit_reviews')
       .upsert(row, { onConflict: 'month,owner_id,item_key' })
     if (error) throw new Error(error.message)
+    if (commentBody && who.internal) {
+      const followers = comments.map(c => String(c?.author || '').toLowerCase()).filter(a => a.includes('@'))
+      tagAndNotify({ text: commentBody, by: who.email, title: 'Owner audit · ' + month + ' · ' + itemKey.slice(0, 40), link: '/owner-audit?month=' + month + '&owner=' + encodeURIComponent(ownerId), followers }).catch(() => {})
+    }
 
     return NextResponse.json({ ok: true, status: row.status, note: row.note, comments, updatedBy: by, updatedAt: row.updated_at })
   } catch (e: any) {

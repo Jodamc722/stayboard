@@ -3,7 +3,9 @@
 // UI or typed as @name in the text) get a notification; on glitches the creator does too.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { notify } from '@/lib/notify'
+import { tagAndNotify, roster, rosterForPicker } from '@/lib/mentions'
+import { parseMentions } from '@/lib/mentions-parse'
+import { buildingOf } from '@/lib/segments'
 import { breezewayConfigured, retrieveBreezewayTask, updateBreezewayTask, listBreezewayComments, createBreezewayComment, matchBreezewayPerson, breezewayPeopleLite, breezewayPersonName, breezewayMention } from '@/lib/breezeway'
 import { importTaskComments } from '@/lib/breezeway-comment-sync'
 import { getSetting, setSetting } from '@/lib/app-settings'
@@ -83,6 +85,9 @@ async function resolveCommentPerson(db: any, me: string): Promise<{ id: number |
   return { id, name: id ? await breezewayPersonName(id) : null }
 }
 
+async function displayName(db: any, email: string): Promise<string | null> {
+  try { const { data } = await db.from('app_users').select('profile').eq('email', email).maybeSingle(); return str(data?.profile?.name) || null } catch { return null }
+}
 async function teamEmails(db: any): Promise<string[]> {
   const { data } = await db.from('app_users').select('email,status')
   return ((data || []) as any[])
@@ -144,7 +149,7 @@ export async function GET(req: NextRequest) {
     .eq('entity_type', type).eq('entity_id', id)
     .order('created_at', { ascending: true }).limit(100)
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true, comments: data || [], team: await teamEmails(db), breezeway, guesty, bzPeople, bzMe })
+  return NextResponse.json({ ok: true, comments: data || [], team: await teamEmails(db), people: await rosterForPicker(), breezeway, guesty, bzPeople, bzMe })
 }
 
 // "That is me in Breezeway." Saved once per user and reused for every comment afterwards, so a
@@ -176,37 +181,38 @@ export async function POST(req: NextRequest) {
   if (!type || !id || !body) return NextResponse.json({ ok: false, error: 'type, id and body are required.' }, { status: 400 })
   const db = supabaseAdmin()
   const team = await teamEmails(db)
-  // mentions: explicit picks + @tokens in the text matched against team email prefixes
-  const picked = (Array.isArray(b.mentions) ? b.mentions : []).map((x: any) => str(x).toLowerCase()).filter((x: string) => team.includes(x))
-  const tokens = Array.from(body.matchAll(/@([a-z0-9._-]+)/gi)).map(m => (m as any)[1].toLowerCase())
-  const fromText = team.filter(t => tokens.some(tok => t.split('@')[0] === tok || t === tok))
-  const mentions: string[] = Array.from(new Set<string>(picked.concat(fromText)))
+  // ONE TAG RULE (lib/mentions, 2026-10-14): @first, @First Last, @email, @housekeeping, @everyone —
+  // the same parser every note box uses. Tagged people get the bell + the pop-up + a Slack DM; with
+  // toSlack the whole note also goes to the area's Slack room ("clean running late" reaches the crew).
+  const parsedFirst = parseMentions(body, await roster(), (Array.isArray(b.mentions) ? b.mentions : []).map((x: any) => str(x).toLowerCase()))
+  const mentions: string[] = parsedFirst.emails.filter(e => e !== me)
   const { data: row, error } = await db.from('app_comments')
     .insert({ entity_type: type, entity_id: id, author_email: me, body: body.slice(0, 2000), mentions })
     .select('id,author_email,body,mentions,created_at').single()
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-  // notifications: mentioned teammates always; on glitches the creator hears about every comment
   const actorName = me.split('@')[0]
   const label = str(b.label) || type
-  const link = type === 'glitch' ? '/glitches' : (str(b.link) || (type === 'task' ? '/plan' : null))
-  if (mentions.length) await notify(mentions, { kind: 'mention', title: actorName + ' tagged you: ' + label, body, link: link || undefined, actor: me })
-  // THREAD FOLLOWERS: anyone who already commented here hears about the reply, so a comment
-  // left on a task comes back as a notification without re-opening the board.
+  const link = type === 'glitch' ? '/glitches?id=' + encodeURIComponent(id) : (str(b.link) || (type === 'task' ? '/plan' : null))
+  // THREAD FOLLOWERS: anyone who already commented here hears about the reply; on glitches the
+  // creator hears about every comment.
+  const followers: string[] = []
   try {
     const { data: prior } = await db.from('app_comments').select('author_email').eq('entity_type', type).eq('entity_id', id).limit(200)
-    const followers = Array.from(new Set(((prior || []) as any[]).map(r => str(r.author_email).toLowerCase())))
-      .filter(e => e && e !== me && !mentions.includes(e) && team.includes(e))
-    if (followers.length) await notify(followers, { kind: 'comment', title: actorName + ' replied: ' + label, body, link: link || undefined, actor: me })
-  } catch { /* best effort */ }
-  if (type === 'glitch') {
-    try {
+    for (const r of ((prior || []) as any[])) { const e = str(r.author_email).toLowerCase(); if (e && team.includes(e)) followers.push(e) }
+    if (type === 'glitch') {
       const { data: g } = await db.from('glitches').select('created_by').eq('id', id).maybeSingle()
       const creator = str(g && g.created_by).toLowerCase()
-      if (creator && creator !== me && !mentions.includes(creator) && team.includes(creator)) {
-        await notify([creator], { kind: 'comment', title: actorName + ' commented: ' + label, body, link: link || undefined, actor: me })
-      }
-    } catch { /* best effort */ }
-  }
+      if (creator && team.includes(creator)) followers.push(creator)
+    }
+  } catch { /* best effort */ }
+  const tagged = await tagAndNotify({
+    text: body, by: me, byName: await displayName(db, me), title: label, link, picked: mentions,
+    // The Slack room: the building named by the caller, else the one the label's unit rolls up to.
+    building: str(b.building) || buildingOf(null, label) || null,
+    dept: /maint|inspect/i.test(str(b.dept)) || type === 'glitch' ? 'maintenance' : 'housekeeping',
+    toSlack: b.toSlack === true || b.toSlack === 'channel' ? 'channel' : b.toSlack === false ? false : 'dm',
+    followers, followerTitle: actorName + ' replied: ' + label,
+  })
   // Optional: mirror the comment onto the BREEZEWAY task so the field crew sees it in their app.
   // Best effort - never fails the comment itself.
   let breezeway: boolean | undefined = undefined
@@ -293,5 +299,5 @@ export async function POST(req: NextRequest) {
       }
     } catch { guesty = false }
   }
-  return NextResponse.json({ ok: true, comment: row, notified: mentions, breezeway, breezewayNote, bzError, bzWho, bzTagged, guesty, bzDebug })
+  return NextResponse.json({ ok: true, comment: row, notified: mentions, tagged: { names: tagged.names, summary: tagged.summary, unknown: tagged.mentions.unknown, slack: tagged.slack }, breezeway, breezewayNote, bzError, bzWho, bzTagged, guesty, bzDebug })
 }

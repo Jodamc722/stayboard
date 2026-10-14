@@ -107,7 +107,7 @@ export function NoteThread({ noteKey }: { noteKey: string }) {
     <div className="mt-1.5 pl-3.5 space-y-1.5">
       {notes.length > 0 && <ul className="space-y-1">{notes.slice(0, 8).map(n => <li key={n.id} className="text-[12px] text-ink"><span className="text-muted">{String(n.by).split(/[\s@]/)[0]} · {when(n.at)} — </span>{n.text}</li>)}</ul>}
       <div className="flex items-start gap-1.5">
-        <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') save() }} placeholder="Add a note — what was done, who you spoke to, what is next" className="flex-1 text-[12px] bg-app border border-line rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+        <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') save() }} placeholder="Add a note — @name tags a teammate (pop-up + Slack DM); @housekeeping, @everyone work too" className="flex-1 text-[12px] bg-app border border-line rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-brand-200" />
         <button onClick={save} disabled={busy || !text.trim()} className={DARK} title="Saves with your name and the time">{busy ? <Loader2 size={12} className="animate-spin" /> : 'Save'}</button>
       </div>
       {err && <p className="text-[11.5px] text-rose-700">{err}</p>}

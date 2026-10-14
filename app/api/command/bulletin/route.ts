@@ -18,6 +18,7 @@ import {
   type Board, type Post, boardPosts, haveToPosts, etDay, makePost, editPost, toggleReaction, prune, MAX_REPLIES,
   monthDay, upcomingBirthdays, fallbackQuote,
 } from '@/lib/bulletin'
+import { tagAndNotify } from '@/lib/mentions'
 
 export const dynamic = 'force-dynamic'
 const KEY = 'bulletin_board'
@@ -140,6 +141,8 @@ export async function POST(req: NextRequest) {
     const p = makePost(b?.post, { name: nameOf(a), email: me }, today, randomUUID(), nowIso)
     if (!p) return deny('Say something first.', 400)
     board.posts.unshift(p)
+    // @tags in a post tell the people (bell + pop-up + Slack DM) — lib/mentions, 2026-10-14.
+    tagAndNotify({ text: [p.title, p.body].filter(Boolean).join('\n'), by: me, byName: nameOf(a), title: 'Bulletin board', link: '/command?tab=bulletin' }).catch(() => {})
   } else {
     if (!post) return deny('That post is gone.', 404)
     if (action === 'edit') { if (!leader) return deny('Only leaders can edit posts.'); put(editPost(post, b?.post || {})) }
@@ -151,6 +154,8 @@ export async function POST(req: NextRequest) {
       const text = String(b?.text || '').trim().slice(0, 500)
       if (!text) return deny('Write something first.', 400)
       put({ ...post, replies: [...(post.replies || []), { id: randomUUID(), by: nameOf(a), text, at: nowIso }].slice(-MAX_REPLIES) })
+      // The poster hears about replies; anyone @tagged in the reply is told too.
+      tagAndNotify({ text, by: me, byName: nameOf(a), title: 'Bulletin · ' + String(post.title || post.body || '').slice(0, 60), link: '/command?tab=bulletin', followers: post.byEmail ? [post.byEmail] : [] }).catch(() => {})
     } else if (action === 'unreply') {
       const r = (post.replies || []).find(x => x.id === String(b?.replyId || ''))
       if (!r) return deny('That reply is gone.', 404)

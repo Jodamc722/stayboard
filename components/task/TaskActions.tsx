@@ -125,7 +125,7 @@ export function useTaskActions(p: TaskActionsProps) {
       {panel === 'assign' && <InlineAssign taskId={p.taskId} dept={p.dept} roster={p.roster} onDone={() => { setPanel(null); p.onChanged() }} />}
       {panel === 'comments' && (
         <div className="mt-1.5 pl-3.5">
-          <CommentThread type="task" id={p.taskId} taskId={p.taskId} reservationId={p.reservationId || undefined} label={p.label} link={p.link || '/command'} onCount={setCount} />
+          <CommentThread type="task" id={p.taskId} taskId={p.taskId} reservationId={p.reservationId || undefined} label={p.label} link={p.link || '/command'} dept={/maint|inspect/i.test(p.dept) ? 'maintenance' : 'housekeeping'} onCount={setCount} />
         </div>
       )}
     </>

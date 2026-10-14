@@ -23,6 +23,7 @@ import { supabaseAdmin } from './supabase-admin'
 import { sendGmail } from './gmail-send'
 import { getSetting } from './app-settings'
 import { parseMentions, prefsOf, todayISO, type Person, type Member, type NotifyType, type NotifyPrefs } from './projects-shared'
+import { tagAndNotify } from './mentions'
 
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
 const DEFAULT_FROM = 'jon@stay-hospitality.com'
@@ -110,6 +111,12 @@ export async function onComment(opts: {
       title: `${who} commented on ${where}`, body: note.body, url })
   }
   await put(rows)
+  // ONE BELL (2026-10-14): a project @mention also lands in the system-wide bell, the pop-up on the
+  // page, and a Slack DM — same as a tag anywhere else in Lighthouse. The project bell + email above
+  // stay as they were.
+  if (mentioned.length) {
+    try { await tagAndNotify({ text: note.body, by: actor, byName: who, title: `Project · ${task ? task.title : opts.projectTitle}`.slice(0, 80), link: url, picked: mentioned.map(m => lower(m.email || '')).filter(Boolean) }) } catch { /* best effort */ }
+  }
   return mentioned
 }
 

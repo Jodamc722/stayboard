@@ -451,3 +451,6 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
 /* The alerts bell (components/HandoffAlerts) gives a small shake when something needs confirming. */
 @keyframes wiggle { 0%, 100% { transform: rotate(0); } 15% { transform: rotate(-14deg); } 30% { transform: rotate(12deg); } 45% { transform: rotate(-8deg); } 60% { transform: rotate(5deg); } 75% { transform: rotate(0); } }
+
+/* Mention pop-ups (components/MentionPopups) slide in rather than appear. */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }

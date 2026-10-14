@@ -1,5 +1,6 @@
 'use client'
 import { HandoffFloater } from '@/components/HandoffAlerts'
+import { MentionPopups } from '@/components/MentionPopups'
 import { applyTheme, isThemeKey } from '@/lib/theme'
 import { LighthouseMark } from '@/components/ui/LighthouseMark'
 import Link from 'next/link'
@@ -566,6 +567,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
         {business === 'garden' ? <AdamFloat /> : (canSee('/eve') && <EveFloat />)}
         {/* HANDOFF ALERTS (Jon, 2026-10-07): a small floater, top right of every page — the bell, and a card for anything you still have to confirm. */}
         {business !== 'garden' && <HandoffFloater />}
+        <MentionPopups />
 
         {/* One mount for the whole app; openAddTask() from anywhere raises it. */}
         {canSee('/plan') && <AddTaskHost />}

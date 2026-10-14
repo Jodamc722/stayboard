@@ -7,11 +7,14 @@
 // One box, pick where it goes, and see everything that is already written in each place.
 import { useEffect, useState } from 'react'
 
-type Props = { type: string; id: string; label?: string; link?: string; taskId?: string; reservationId?: string; onCount?: (n: number) => void }
+type Props = { type: string; id: string; label?: string; link?: string; taskId?: string; reservationId?: string; building?: string; dept?: 'housekeeping' | 'maintenance'; onCount?: (n: number) => void }
 
-export default function CommentThread({ type, id, label, link, taskId, reservationId, onCount }: Props) {
+export default function CommentThread({ type, id, label, link, taskId, reservationId, building, dept, onCount }: Props) {
   const [items, setItems] = useState<any[]>([])
   const [team, setTeam] = useState<string[]>([])
+  const [people, setPeople] = useState<{ email: string; name: string }[]>([])
+  // SLACK THE TEAM (Jon, 2026-10-14): the note also goes to the area's Slack room with real @tags.
+  const [toSlack, setToSlack] = useState(false)
   const [bz, setBz] = useState<any>(null)
   const [gz, setGz] = useState<any>(null)
   const [body, setBody] = useState('')
@@ -40,7 +43,7 @@ export default function CommentThread({ type, id, label, link, taskId, reservati
       .then(r => r.json()).then(j => {
         if (!alive || !j || !j.ok) return
         const list = Array.isArray(j.comments) ? j.comments : []
-        setItems(list); setTeam(Array.isArray(j.team) ? j.team : [])
+        setItems(list); setTeam(Array.isArray(j.team) ? j.team : []); setPeople(Array.isArray(j.people) ? j.people : [])
         setBz(j.breezeway || null); setGz(j.guesty || null); setLoaded(true)
         setBzPeople(Array.isArray(j.bzPeople) ? j.bzPeople : [])
         if (j.bzMe) setBzMe(j.bzMe)
@@ -68,6 +71,7 @@ export default function CommentThread({ type, id, label, link, taskId, reservati
           taskId: taskId || (type === 'task' ? id : ''), toBreezeway: toBz,
           bzMentions: bzTags.map(p => ({ id: p.id, name: p.name })),
           toGuesty: toGz, reservationId: reservationId || (gz && gz.reservationId) || '',
+          toSlack: toSlack ? 'channel' : 'dm', building: building || '', dept: dept || '',
         })
       })
       const j = await r.json()
@@ -77,7 +81,10 @@ export default function CommentThread({ type, id, label, link, taskId, reservati
         if (j.bzWho) setBzMe(j.bzWho)
         const n = Array.isArray(j.notified) ? j.notified.length : 0
         const bits: string[] = []
-        bits.push(n ? 'Notified ' + n + (n === 1 ? ' teammate' : ' teammates') : 'Posted in the app')
+        bits.push(n ? 'Tagged ' + (j.tagged?.summary || n + (n === 1 ? ' teammate' : ' teammates')) + (j.tagged?.slack?.dm ? ' (Slack DM sent)' : '') : 'Posted in the app')
+        if (j.tagged?.slack?.channel === true) bits.push('posted to the team\u2019s Slack room')
+        else if (j.tagged?.slack?.channel === false) bits.push('Slack room post FAILED' + (j.tagged?.slack?.error ? ' (' + j.tagged.slack.error + ')' : ''))
+        if (Array.isArray(j.tagged?.unknown) && j.tagged.unknown.length) bits.push('nobody called @' + j.tagged.unknown.join(', @'))
         // Say exactly what happened in Breezeway. "Added" now means it was READ BACK from the
         // crew's thread — the description fallback is called what it is.
         if (j.breezeway === true) bits.push('in the Breezeway thread' + (Array.isArray(j.bzTagged) && j.bzTagged.length ? ', tagged ' + j.bzTagged.join(', ') : ''))
@@ -108,8 +115,9 @@ export default function CommentThread({ type, id, label, link, taskId, reservati
     setBzQ('')
   }
 
-  const addTag = (v: string) => { const e2 = v.trim().toLowerCase(); if (e2 && team.indexOf(e2) >= 0 && tags.indexOf(e2) < 0) setTags(prev => prev.concat([e2])); setTagQ('') }
-  const who = (e2: string) => String(e2 || '').split('@')[0]
+  const emailOfPick = (v: string) => { const k = v.trim().toLowerCase(); if (team.indexOf(k) >= 0) return k; const p = people.find(x => x.name.toLowerCase() === k || (x.name + ' (' + x.email + ')').toLowerCase() === k); return p ? p.email : '' }
+  const addTag = (v: string) => { const e2 = emailOfPick(v); if (e2 && tags.indexOf(e2) < 0) setTags(prev => prev.concat([e2])); if (e2) setTagQ('') }
+  const who = (e2: string) => people.find(x => x.email === e2)?.name || String(e2 || '').split('@')[0]
   const when = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) }
   const uid = type + '-' + id
   const lines = (s: string) => String(s || '').split('\n').map(x => x.trim()).filter(Boolean)
@@ -172,10 +180,11 @@ export default function CommentThread({ type, id, label, link, taskId, reservati
       </div>
 
       <div className="mt-1.5 space-y-1">
-        <textarea value={body} onChange={e => setBody(e.target.value)} placeholder={'Add a note… (@name in the text also tags)'} rows={2} className="w-full text-xs border border-line rounded-md px-2 py-1.5 bg-white" />
+        <textarea value={body} onChange={e => setBody(e.target.value)} placeholder={'Add a note… @name tags them (bell + pop-up + Slack DM); @housekeeping, @everyone work too'} rows={2} className="w-full text-xs border border-line rounded-md px-2 py-1.5 bg-white" />
         <div className="flex items-center gap-1.5 flex-wrap">
-          <input list={'cmt-team-' + uid} value={tagQ} onChange={e => { setTagQ(e.target.value); if (team.indexOf(e.target.value.trim().toLowerCase()) >= 0) addTag(e.target.value) }} placeholder={'Tag teammate…'} className="text-[11px] border border-line rounded-md px-2 py-1 bg-white w-40" />
-          <datalist id={'cmt-team-' + uid}>{team.map(t => <option key={t} value={t} />)}</datalist>
+          <input list={'cmt-team-' + uid} value={tagQ} onChange={e => { setTagQ(e.target.value); addTag(e.target.value) }} placeholder={'Tag teammate…'} title="Or type @name in the note — @carlo, @Maria Gomez, @housekeeping, @everyone" className="text-[11px] border border-line rounded-md px-2 py-1 bg-white w-40" />
+          <datalist id={'cmt-team-' + uid}>{(people.length ? people.map(p => p.name) : team).map(t => <option key={t} value={t} />)}</datalist>
+          <label className="text-[10px] font-medium text-violet-700 inline-flex items-center gap-1 cursor-pointer" title="Also post this note to the team's Slack room for this building (housekeeping or maintenance), with real @tags. Tagged people get a Slack DM either way."><input type="checkbox" checked={toSlack} onChange={e => setToSlack(e.target.checked)} className="accent-violet-600" />Slack team</label>
           {tags.map(t2 => <span key={t2} className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200 inline-flex items-center gap-1">@{who(t2)}<button onClick={() => setTags(prev => prev.filter(x => x !== t2))} className="hover:text-rose-600">{'×'}</button></span>)}
           {(taskId || type === 'task') && <label className="text-[10px] font-medium text-brand-700 inline-flex items-center gap-1 cursor-pointer" title="Post this as a comment on the Breezeway task - the field crew sees it in their app and can reply, and their reply comes back here"><input type="checkbox" checked={toBz} onChange={e => setToBz(e.target.checked)} className="accent-brand-600" />Breezeway</label>}
           {toBz && bzPeople.length > 0 && (

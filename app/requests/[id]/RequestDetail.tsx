@@ -136,7 +136,7 @@ export function RequestDetail({
               value={newComment}
               onChange={e => setNewComment(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addComment() } }}
-              placeholder="Add a comment…"
+              placeholder="Add a comment… @name tags a teammate"
               className="flex-1 px-3 py-2 rounded-lg border border-line bg-white text-sm focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none"
             />
             <button onClick={addComment} disabled={!newComment.trim()} title="Send comment"

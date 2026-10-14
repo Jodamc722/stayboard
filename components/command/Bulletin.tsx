@@ -503,7 +503,7 @@ function PostView({ p, me, canPost, act, onClose }: { p: Post; me: string; canPo
                 {canPost && <button onClick={() => act({ action: 'unreply', id: p.id, replyId: r.id })} aria-label="Remove reply" className="opacity-0 group-hover:opacity-100 text-muted hover:text-rose-600"><X size={11} /></button>}</div>
             ))}
             <div className="flex gap-1.5 pt-1">
-              <input value={reply} onChange={e => setReply(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') doReply() }} placeholder={p.kind === 'eotm' || p.kind === 'shoutout' ? 'Say congrats…' : 'Write a reply…'} className="flex-1 min-w-0 text-[12.5px] rounded-lg border border-line px-2.5 py-1.5" />
+              <input value={reply} onChange={e => setReply(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') doReply() }} placeholder={p.kind === 'eotm' || p.kind === 'shoutout' ? 'Say congrats…' : 'Write a reply… @name tags them'} className="flex-1 min-w-0 text-[12.5px] rounded-lg border border-line px-2.5 py-1.5" />
               <button onClick={doReply} disabled={busy || !reply.trim()} className="rounded-lg px-3 text-[12px] font-semibold bg-ink text-white disabled:opacity-40">{busy ? <Loader2 size={12} className="animate-spin" /> : 'Send'}</button>
             </div>
           </div>

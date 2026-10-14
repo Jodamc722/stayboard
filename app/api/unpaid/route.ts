@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { loadUnpaid, updateTracking, type UnpaidStatus } from '@/lib/unpaid'
+import { tagAndNotify } from '@/lib/mentions'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -25,5 +26,6 @@ export async function POST(req: NextRequest) {
   if (!id) return NextResponse.json({ ok: false, error: 'reservationId required' }, { status: 400 })
   const by = String(gate.access.profile?.name || gate.access.profile?.full_name || gate.access.email || 'someone')
   const r = await updateTracking(id, by, { status: body?.status as UnpaidStatus | undefined, note: body?.note })
+  if (r.ok && body?.note && /@/.test(String(body.note))) tagAndNotify({ text: String(body.note), by: String(gate.access.email || ''), byName: by, title: 'Unpaid balance · ' + id.slice(0, 12), link: '/unpaid' }).catch(() => {})
   return NextResponse.json(r, { status: r.ok ? 200 : 400 })
 }

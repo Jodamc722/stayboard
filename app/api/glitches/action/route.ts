@@ -12,6 +12,8 @@ import { canDelete, trashRecord } from '@/lib/trash'
 import { requireLevel } from '@/lib/access'
 import { bustDay } from '@/lib/bust'
 import { pageRows } from '@/lib/db-page'
+import { tagAndNotify } from '@/lib/mentions'
+import { buildingOf } from '@/lib/segments'
 
 export const dynamic = 'force-dynamic'
 
@@ -283,7 +285,17 @@ export async function POST(req: NextRequest) {
   // to record it afterwards.
   if (b.guestTone !== undefined) patch.guest_tone = ['understanding','frustrated','angry','fishing'].includes(String(b.guestTone).toLowerCase()) ? String(b.guestTone).toLowerCase() : null
   if (b.reportedVia !== undefined) patch.reported_via = ['message','call','in_person','at_checkout','review','other'].includes(String(b.reportedVia).toLowerCase()) ? String(b.reportedVia).toLowerCase() : null
-  if (b.details !== undefined) patch.details = str(b.details).slice(0, 4000) || null
+  if (b.details !== undefined) {
+    patch.details = str(b.details).slice(0, 4000) || null
+    // @tags in the work notes tell the people (lib/mentions, 2026-10-14) — only the NEW text, so a
+    // saved note is not re-announced every time the box blurs.
+    try {
+      const { data: before } = await db.from('glitches').select('details,unit').eq('id', id).maybeSingle()
+      const prev = str((before as any)?.details), next = str(b.details)
+      const added = next.startsWith(prev) ? next.slice(prev.length) : next.split('\n').filter(l => !prev.includes(l)).join('\n')
+      if (/@/.test(added)) await tagAndNotify({ text: added.trim(), by: String(user.email || '').toLowerCase(), title: 'Glitch · ' + str((before as any)?.unit || id).slice(0, 40), link: '/glitches?id=' + encodeURIComponent(id), building: buildingOf(null, str((before as any)?.unit)) || null, dept: 'maintenance' })
+    } catch { /* best effort */ }
+  }
       if (b.progress !== undefined) { const pr = Number(b.progress); patch.progress = (Number.isFinite(pr) && pr >= 0 && pr <= 100) ? Math.round(pr) : null }
       patch.history = stamp('updated', patch.refund_needs_approval !== undefined ? { refund: patch.refund_approved, needsApproval: patch.refund_needs_approval } : undefined)
       patch.updated_at = new Date().toISOString()

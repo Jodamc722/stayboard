@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireVrUser } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { tagAndNotify } from '@/lib/mentions'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,6 +38,7 @@ export async function POST(req: NextRequest) {
   try {
     const { data, error } = await supabaseAdmin().from('day_notes').insert({ key, text, by }).select('id,key,text,by,created_at').single()
     if (error) throw error
-    return NextResponse.json({ ok: true, note: { id: String(data.id), key, text, by, at: String(data.created_at) } })
+    const tagged = await tagAndNotify({ text, by: String(gate.access.email || ''), byName: gate.access.profile?.name || null, title: 'Today · ' + key.replace(/^[a-z]+:/, '').slice(0, 60), link: '/command' }).catch(() => null)
+    return NextResponse.json({ ok: true, note: { id: String(data.id), key, text, by, at: String(data.created_at) }, tagged: tagged ? tagged.summary : '' })
   } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 }) }
 }

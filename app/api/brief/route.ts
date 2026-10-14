@@ -11,6 +11,7 @@ import { requireVrUser } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { setSetting } from '@/lib/app-settings'
 import { teamDirectory, scheduleBriefReminder, cancelBriefReminder } from '@/lib/handoff-store'
+import { tagAndNotify } from '@/lib/mentions'
 import {
   type BriefStore, type BriefItem, newItem, mineOf, poolOf, tick, pass, claim, addNote, openOf, closeoutOf, pruneBrief,
   dueIso, cleanLink, setDue,
@@ -121,7 +122,10 @@ export async function POST(req: NextRequest) {
       next.alertId = due && remind && next.owner ? await armReminder(next, me) : null
       s.items[idx] = next
     }
-    else if (action === 'note') { const n = String(b?.note || '').trim(); if (!n) return deny('Write a note.'); s.items[idx] = addNote(it, me.name, n, now) }
+    else if (action === 'note') {
+      const n = String(b?.note || '').trim(); if (!n) return deny('Write a note.'); s.items[idx] = addNote(it, me.name, n, now)
+      tagAndNotify({ text: n, by: me.email, byName: me.name, title: 'Shift brief · ' + String(it.text || '').slice(0, 60), link: '/command', followers: it.owner ? [it.owner] : [] }).catch(() => {})
+    }
     else if (action === 'claim') {
       if (it.owner) return deny('Someone already has it.', 409)
       const c = claim(it, me, now)

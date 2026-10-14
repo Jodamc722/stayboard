@@ -555,7 +555,7 @@ function WorkNotes({ g, onDone }: { g: Glitch; onDone: () => void }) {
         {saved ? <span className="text-[11.5px] text-emerald-700">Saved</span> : null}
       </div>
       <textarea value={v} onChange={e => setV(e.target.value)} onBlur={save} rows={v ? 3 : 1}
-        placeholder="What's been tried, parts ordered, what the guest was told…"
+        placeholder="What's been tried, parts ordered, what the guest was told… @name tags a teammate"
         className="mt-1 w-full text-[13px] border border-line rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
     </div>
   )

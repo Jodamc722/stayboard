@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
 import { bustDay } from '@/lib/bust'
+import { tagAndNotify } from '@/lib/mentions'
 
 export const dynamic = 'force-dynamic'
 
@@ -89,6 +90,15 @@ export async function POST(req: NextRequest) {
       const { data, error } = await db.from('field_request_comments')
         .insert({ request_id: id, author_email: email, body: text }).select().single()
       if (error) throw error
+      // Tagged people + everyone already on the thread + the requester hear about it (lib/mentions).
+      try {
+        const [{ data: prior }, { data: fr }] = await Promise.all([
+          db.from('field_request_comments').select('author_email').eq('request_id', id).limit(200),
+          db.from('field_requests').select('title,created_by,requested_by').eq('id', id).maybeSingle(),
+        ])
+        const followers = ((prior || []) as any[]).map(r => String(r.author_email || '').toLowerCase()).concat([String((fr as any)?.created_by || (fr as any)?.requested_by || '').toLowerCase()])
+        await tagAndNotify({ text, by: String(email || ''), title: 'Request · ' + String((fr as any)?.title || id).slice(0, 60), link: '/requests/' + id, followers })
+      } catch { /* best effort */ }
       return NextResponse.json({ ok: true, comment: data })
     }
 
