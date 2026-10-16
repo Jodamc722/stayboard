@@ -34,6 +34,7 @@ export type UpkeepPlan = {
 
 const tradeOk = (rowDept: string, taskDept: string) => {
   const t = norm(taskDept)
+  if (rowDept === 'any') return /maint|inspect|housekeep|clean/.test(t)
   if (/housekeep/.test(rowDept)) return /housekeep|clean/.test(t)
   if (/inspect/.test(rowDept)) return /inspect|maint/.test(t)
   return /maint/.test(t)

@@ -36,14 +36,16 @@ const plus = (d: string, n: number) => new Date(Date.parse(d + 'T12:00:00Z') + n
 const str = (v: any) => String(v ?? '').trim()
 
 export type CalKind = 'open' | 'out' | 'in' | 'turn' | 'stay' | 'block' | 'hold'
-export type CalCell = { d: string; k: CalKind; label?: string | null; team: { name: string; atUnit: boolean; jobs: number }[] }
+export type CalCell = { d: string; k: CalKind; label?: string | null; team: { name: string; atUnit: boolean; jobs: number; trade: string }[] }
 export type CalUnit = { listingId: string; unit: string; building: string; cells: CalCell[] }
 export type UpkeepCalendar = {
   ok: true; today: string; days: string[]; units: CalUnit[]
   /** Everybody of the trade with work on the books in the window, with their jobs per day — for "assign someone else". */
-  people: { name: string; perDay: Record<string, number> }[]
+  people: { name: string; trade: string; perDay: Record<string, number> }[]
   unsure: string[]
 }
+
+const tradeWord = (ds: string[]) => { const j = ds.join(' ').toLowerCase(); return /maint/.test(j) ? 'maintenance' : /inspect/.test(j) ? 'inspection' : /housekeep|clean/.test(j) ? 'housekeeping' : (ds[0] || '') }
 
 export async function GET(req: NextRequest) {
   const gate = await requireLevel('upkeep', 'view')
@@ -101,17 +103,17 @@ export async function GET(req: NextRequest) {
         if ((k === 'open' || k === 'out') && bl) { k = bl.occupied ? 'block' : k === 'open' ? 'hold' : 'out'; label = 'Guesty: ' + bl.label }
         const team = Object.values(tv.visits[b]?.[d] || {})
           .filter(s => Array.from(s.depts).some(x => tradeOk(dept, x)))
-          .map(s => ({ name: s.name, atUnit: s.units.has(lid), jobs: s.jobs }))
+          .map(s => ({ name: s.name, atUnit: s.units.has(lid), jobs: s.jobs, trade: tradeWord(Array.from(s.depts)) }))
           .sort((x, y) => Number(y.atUnit) - Number(x.atUnit) || y.jobs - x.jobs)
         return { d, k, label, team }
       })
       return { listingId: lid, unit, building: b, cells }
     })
 
-    const ppl: Record<string, { name: string; perDay: Record<string, number> }> = {}
+    const ppl: Record<string, { name: string; trade: string; perDay: Record<string, number> }> = {}
     for (const byDay of Object.values(tv.visits)) for (const [d, who] of Object.entries(byDay)) for (const s of Object.values(who)) {
       if (!Array.from(s.depts).some(x => tradeOk(dept, x))) continue
-      const p = (ppl[s.name.toLowerCase()] = ppl[s.name.toLowerCase()] || { name: s.name, perDay: {} })
+      const p = (ppl[s.name.toLowerCase()] = ppl[s.name.toLowerCase()] || { name: s.name, trade: tradeWord(Array.from(s.depts)), perDay: {} })
       p.perDay[d] = (p.perDay[d] || 0) + s.jobs
     }
     const people = Object.values(ppl).sort((a, b) => a.name.localeCompare(b.name))

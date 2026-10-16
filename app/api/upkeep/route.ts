@@ -318,6 +318,7 @@ export async function POST(req: NextRequest) {
     const title = `${c.label} — ${unit}`
     const description = [
       `${c.label} on ${unit}, every ${c.everyDays} days. Approved by ${me} on ${today}; booked ${why}.`,
+      body?.note ? `NOTE FROM ${me.split('@')[0].toUpperCase()}: ${String(body.note).slice(0, 500)}` : '',
       ...infoLines(unitInfo, GROUP_OF[c.key] === 'ac' || c.equipment === 'central'),
       bill ? `BILLING: ${bill}.` : '',
       c.followOn ? `When this is completed, Lighthouse books "${c.followOn.label}" for ${c.followOn.dept}.` : '',

@@ -139,6 +139,7 @@ export function UpkeepBoard() {
           need to be done in a particular period of time, so there should be a settings where we can
           build that into") — Settings → Preventative cadences: name, every N days, trade, what counts
           as done, which equipment / buildings, whether the next one is filed automatically. */}
+      <button onClick={() => { setOpen(open === '__all' ? '' : '__all'); setQ('') }} aria-pressed={open === '__all'} title="Every unit with upkeep due, every program, on one calendar — click a day to book" className={'h-8 px-2.5 rounded-lg border text-[12px] font-semibold inline-flex items-center gap-1 ' + (open === '__all' ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line hover:border-ink/40')}><CalendarDays size={12} /> Plan calendar</button>
       <Link href="/users?tab=settings&panel=cadences" className="h-8 px-2.5 rounded-lg bg-ink text-white text-[12px] font-semibold inline-flex items-center gap-1"><Plus size={12} /> Program</Link>
     </LeanHead>
   )
@@ -197,8 +198,8 @@ export function UpkeepBoard() {
           {view === 'grid' ? (
             <Matrix programs={programs} building={building} market={market} q={q} />
           ) : view === 'cal' && prog ? (
-            <UpkeepCalendar prog={prog} rows={rows} canBook={!!data?.canEdit && (!prog.needsApproval || !!data?.canApprove.includes(prog.key))}
-              onBooked={(id, msg, taskId) => { setDone(d => ({ ...d, [id]: msg })); setFiled(f => ({ ...f, [id]: taskId })); invalidateCache(url(market)) }} />
+            <UpkeepCalendar programs={programs} prog={prog} rows={rows} building={building} q={q} canEdit={!!data?.canEdit} canApprove={data?.canApprove || []} info={data?.info || {}}
+              onBooked={(id, msg, taskId) => { setDone(d => ({ ...d, [id]: msg })); setFiled(f => ({ ...f, [id]: taskId })) }} />
           ) : rows.length === 0 ? (
             <p className="px-3 py-4 text-[12.5px] text-muted">{state === 'all' ? 'Nothing needs attention here — every unit is on track or booked.' : 'Nothing in this state.'}</p>
           ) : (
@@ -267,6 +268,22 @@ export function UpkeepBoard() {
               {rows.length > 400 ? <li className="px-3 py-2 text-[11.5px] text-muted">{rows.length - 400} more — narrow by building.</li> : null}
             </ul>
           )}
+        </section>
+      ) : open === '__all' && data ? (
+        <section className="rounded-2xl border border-brand-200 bg-white overflow-hidden">
+          <header className="px-3 py-2 border-b border-line flex items-center gap-2 flex-wrap">
+            <span className="text-[13px] font-semibold text-ink">Plan calendar · every program</span>
+            <span className="text-[11.5px] text-muted">units with something late or due soon — click a day to see everything the unit owes and book it</span>
+            <span className="ml-auto inline-flex items-center gap-1.5">
+              <select value={building} onChange={e => setBuilding(e.target.value)} className="h-7 rounded-md border border-line bg-white px-1.5 text-[11.5px] font-semibold text-ink max-w-[11rem]" aria-label="Building">
+                <option value="">All buildings</option>
+                {data.buildings.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+              <label className="h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white px-1.5 text-[11.5px]"><Search size={11} className="text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="unit" className="w-16 bg-transparent outline-none text-ink" /></label>
+            </span>
+          </header>
+          <UpkeepCalendar programs={programs} prog={null} rows={[]} building={building} q={q} canEdit={!!data.canEdit} canApprove={data.canApprove || []} info={data.info || {}}
+            onBooked={(id, msg, taskId) => { setDone(d => ({ ...d, [id]: msg })); setFiled(f => ({ ...f, [id]: taskId })) }} />
         </section>
       ) : (
         <p className="text-[12px] text-muted">Open a tile to see its units. A program's clock restarts whenever a Breezeway task matching it is completed (or, for FF&E, a finished walk in /ffe). To add an activity on a period — what it is called, every how many days, which trade, which equipment or buildings, what counts as done — use <Link href="/users?tab=settings&panel=cadences" className="font-semibold text-brand-700 hover:underline">+ Program</Link>; it shows here the moment it is saved.</p>
