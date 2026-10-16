@@ -188,7 +188,8 @@ export async function GET(req: NextRequest) {
     // trade is already going to that building. One read of the next three weeks for all of them.
     const degradedPlan: string[] = []
     try {
-      const want = Array.from(byKey.values()).flatMap(p => p.rows.filter(r => (r.state === 'late' || r.state === 'soon' || r.state === 'none') && !r.task)
+      // Programs that ride the departure clean (and Salato) are booked on the next checkout instead.
+      const want = Array.from(byKey.values()).filter(p => !cadBy.get(p.key)?.ridesDeparture).flatMap(p => p.rows.filter(r => (r.state === 'late' || r.state === 'soon' || r.state === 'none') && !r.task && !/salato/i.test(r.building))
         .map(r => ({ id: r.id, listingId: r.listingId, building: r.building, dept: r.dept, dueOn: r.dueOn, late: r.state === 'late', needsVacant: !!cadBy.get(p.key)?.needsVacant })))
       const plans = await planUpkeep(want, today)
       for (const p of Array.from(byKey.values())) for (const r of p.rows) if (r.id in plans) r.plan = plans[r.id]
