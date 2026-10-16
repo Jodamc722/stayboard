@@ -874,7 +874,7 @@ export async function loadCallsDesk(sb: any, today: string, viewDate?: string): 
     const keyed = rows.map((r: any) => ({ r, k: guestKey({ guest_id: r.guestId, guest_phone: r.phone, guest_name: r.guest }) })).filter(x => x.k)
     const keys = Array.from(new Set(keyed.map(x => x.k)))
     if (keys.length) {
-      const { data: profs } = await supabaseAdmin().from('guest_profiles').select('guest_key,stays').in('guest_key', keys)
+      const { data: profs } = await supabaseAdmin().from('guest_understanding_profiles').select('guest_key,stays').in('guest_key', keys)
       const byKey = new Map((profs || []).map((p: any) => [String(p.guest_key), Number(p.stays) || 0]))
       for (const { r, k } of keyed) { const n = byKey.get(k); if (n) r.repeat = n }
     }

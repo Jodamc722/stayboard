@@ -145,7 +145,7 @@ export async function rebuildProfile(key: string): Promise<GuestProfile | null> 
     last_seen: newest?.check_in || null,
     updated_at: new Date().toISOString(),
   }
-  const { error } = await db.from('guest_profiles').upsert(row, { onConflict: 'guest_key' })
+  const { error } = await db.from('guest_understanding_profiles').upsert(row, { onConflict: 'guest_key' })
   if (error) return null
   return row as GuestProfile
 }
@@ -153,7 +153,7 @@ export async function rebuildProfile(key: string): Promise<GuestProfile | null> 
 /** The profile as stored. Null when we have never learned anything about this person. */
 export async function profileFor(key: string): Promise<GuestProfile | null> {
   if (!key) return null
-  const { data } = await sb().from('guest_profiles').select('*').eq('guest_key', key).maybeSingle()
+  const { data } = await sb().from('guest_understanding_profiles').select('*').eq('guest_key', key).maybeSingle()
   if (!data) return null
   return {
     ...data,
