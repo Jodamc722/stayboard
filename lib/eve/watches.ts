@@ -18,6 +18,7 @@
 // eve_watches (migration 045, undriven until migration 102) holds the switch, the cooldown, the
 // receipts and an optional rung override per watch; the trigger functions live here, keyed by
 // `key`. If migration 102 has not run the runner does nothing and says so.
+import { dutyIsOurs } from './operating-model'
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { agentAllowed, stepDown, getAgentSettings, logAgent, OWNER, type ActionType, type AgentSettings, type AgentVerdict, type Mode } from './agent-mode'
@@ -248,8 +249,10 @@ async function bigArrivalUninspected(env: WatchEnv): Promise<Prepared[]> {
   // with the master switch and big arrivals on, the cron creates and assigns it — nothing to ask.
   if (cfg && cfg.enabled && cfg.bigArrivals) return []
   const never = await neverAssign()
+  const oursInsp = await dutyIsOurs('inspections')
   const out: Prepared[] = []
   for (const a of rows) {
+    if (!oursInsp(null, a.unit)) continue   // Botanica & co. run their own inspections (Jon, 2026-10-16)
     const market = cd.tiles.cleans.rows.find(c => c.unit === a.unit)?.market || null
     const sup = cfg ? (cfg.supervisors[market || 'Miami'] || cfg.supervisors.Miami) : ''
     const assignees = Array.from(new Set([cfg?.assignAlways, sup].filter(Boolean))).filter(n => !never.blocks(n))
@@ -322,9 +325,11 @@ async function badReviewIn(env: WatchEnv): Promise<Prepared[]> {
     try { const { lowReviewRuleCovers } = await import('@/lib/auto-inspections'); covers = (rating, at) => lowReviewRuleCovers(cfg, rating, at) } catch { /* ask as before */ }
   }
   const never = await neverAssign()
+  const oursInspLow = await dutyIsOurs('inspections')
   const out: Prepared[] = []
   for (const r of low) {
     const lid = str(r.listing_id), unit = nameOf[lid] || 'the unit', rating = Math.round(norm(r.rating) * 10) / 10
+    if (!oursInspLow(null, unit)) continue
     const quote = str(r.content).replace(/\s+/g, ' ').trim().slice(0, 300)
     const date = nextOut[lid] || env.today
     const sup = cfg ? (cfg.supervisors?.[marketOfLid[lid]] || cfg.supervisors?.Miami) : ''

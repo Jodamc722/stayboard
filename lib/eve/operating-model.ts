@@ -139,6 +139,22 @@ export async function getOperatingModel(): Promise<OperatingModel> {
   return { buildings, updatedAt: stored?.updatedAt || null }
 }
 
+/**
+ * A predicate for one duty, from the live model — "do WE do <duty> at this unit?". Matches on the
+ * building name or on the unit's rollup (lib/segments buildingOf), so "Botanica 204" reads as
+ * Botanica. Jon, 2026-10-16: "remove automations of inspection for Botanica — we do not assign or
+ * manage inspections." Every automation that files or assigns a duty asks this first.
+ */
+export async function dutyIsOurs(duty: Duty): Promise<(building?: string | null, unit?: string | null) => boolean> {
+  const m = await getOperatingModel()
+  const { buildingOf } = await import('@/lib/segments')
+  return (building, unit) => {
+    const b = String(building || '').trim() || buildingOf(null, String(unit || '')) || ''
+    const roll = buildingOf(b, String(unit || '')) || b
+    return weDo(m, roll, duty) && weDo(m, b, duty)
+  }
+}
+
 export function weDo(m: OperatingModel, building: string | null | undefined, duty: Duty): boolean {
   const b = m.buildings.find(x => x.building === String(building || ''))
   return b ? b.we.includes(duty) : true   // an unknown building is assumed ours; the sweep will ask

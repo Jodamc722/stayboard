@@ -58,6 +58,7 @@ import { pageRows } from './db-page'
 import { buildOpsDay } from './ops-day'
 import { buildDayPicture, type DayPicture, type PersonTask, type PersonClock } from './capacity-day'
 import { getTaskAutomation } from './auto-inspections'
+import { dutyIsOurs } from './eve/operating-model'
 // The feedback rule is shared with the automation that files these inspections (lib/review-feedback).
 import { keywordsOf, worstFeedbackReview } from './review-feedback'
 import { getOpsPresets } from './app-settings'
@@ -404,7 +405,10 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   const nameOf = (id: any) => (meta[str(id)] || {}).name || ''
   const marketOfId = (id: any) => (meta[str(id)] || {}).market || null
   const noBzRe = noBreezewayRegex(presets.vendorBuildings)
-  const canFile = (lid: string) => { const m = meta[lid]; return !!m && !noBzRe.test((m.building || '') + ' ' + m.name) }
+  // A building whose inspections are not ours (operating model: Botanica, Opal's three) never shows
+  // "no inspection" — there is nothing for us to file (Jon, 2026-10-16).
+  const oursInsp = await dutyIsOurs('inspections').catch(() => () => true)
+  const canFile = (lid: string) => { const m = meta[lid]; return !!m && !noBzRe.test((m.building || '') + ' ' + m.name) && oursInsp(m.building, m.name) }
 
   const openTasks = guard<any[]>('open tasks', openTasksP as any, [])
   const openByListing: Record<string, any[]> = {}

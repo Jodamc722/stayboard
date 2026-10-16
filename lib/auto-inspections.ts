@@ -25,6 +25,7 @@ import { createBreezewayTask, updateBreezewayTask, cancelBreezewayTask, matchBre
 import { marketOf } from './segments'
 import { getSetting, setSetting, getOpsPresets } from './app-settings'
 import { noBreezewayRegex } from './ops-presets'
+import { dutyIsOurs } from './eve/operating-model'
 import { worstFeedbackReview, keywordsOf } from './review-feedback'
 import { ratingDisplay } from './review-scale'
 import { pageRows } from './db-page'
@@ -284,6 +285,7 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
 
   // Why each reservation fires — first match wins, in the order Jon listed them.
   const candidates: any[] = []
+  const oursInsp = await dutyIsOurs('inspections')
   for (const r of resRows || []) {
     const rid = str((r as any).id)
     if (done.has(rid)) continue
@@ -301,6 +303,9 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
           : ''
     if (!reason) continue
     const meta = lmeta[lid] || {}
+    // NOT OUR INSPECTIONS (Jon, 2026-10-16): a hotel or vendor building (Botanica, Opal's three) files
+    // and assigns its own — the operating model says so, and nothing is created or asked.
+    if (!oursInsp(meta.building, meta.nickname || meta.title)) continue
     const market = marketOf(meta.building, meta.address_city, meta.nickname || meta.title)
     candidates.push({
       reservation_id: rid, listing_id: lid || null,
@@ -659,7 +664,8 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
   const lids = Array.from(new Set(lowRows.map(r => str(r.listing_id)).filter(Boolean)))
   const nextOut = await nextCheckouts(db, lids, today)
 
-  const candidates = lowRows.map(r => {
+  const oursInspLow = await dutyIsOurs('inspections')
+  const candidates = lowRows.filter(r => { const m = lmeta[str(r.listing_id)] || {}; return oursInspLow(m.building, m.nickname || m.title) }).map(r => {
     const lid = str(r.listing_id)
     const meta = lmeta[lid] || {}
     return {
@@ -836,6 +842,7 @@ export async function runArrivalFeedbackInspections(opts: { dryRun?: boolean } =
   const homeOf: Record<string, number> = {}
   for (const p of bzProps || []) homeOf[str((p as any).reference_property_id)] = Number((p as any).home_id)
   const noBzRe = noBreezewayRegex((presets && presets.vendorBuildings) || [])
+  const oursInspArr = await dutyIsOurs('inspections')
   const lids = Array.from(new Set(arrivals.map(r => str(r.listing_id))))
 
   // The units' reviews (newest first, the Command Center's own read) and their open inspections.
@@ -884,6 +891,7 @@ export async function runArrivalFeedbackInspections(opts: { dryRun?: boolean } =
     const meta = lmeta[lid] || {}
     const unit = str(meta.nickname || meta.title || r.listing_name) || 'Unit'
     if (noBzRe.test(str(meta.building) + ' ' + unit)) continue
+    if (!oursInspArr(meta.building, unit)) continue
     if (walked.has(str(w.id)) || filed.has(REV_KEY(str(w.id))) || openOn.has(lid)) { covered++; continue }
     const quote = str(w.content).replace(/\s+/g, ' ').trim().slice(0, 220)
     const rating = Number(w.rating)
