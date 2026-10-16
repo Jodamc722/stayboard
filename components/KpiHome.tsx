@@ -287,7 +287,7 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
           <Big label="Open work" value={count(t.openWork)} Icon={AlertTriangle} href="/glitches"
             sub={t.openGlitches != null ? t.openGlitches + ' glitches · ' + count(t.openTasks) + ' unfinished tasks' : 'nothing open'}
             tone={t.openGlitches > 0 ? 'alert' : undefined} />
-          <Big label="Unhappy guests" value={count(t.openUnhappy)} Icon={MessageSquare} href="/messages"
+          <Big label="Unhappy guests" value={count(t.openUnhappy)} Icon={MessageSquare} href="/inbox"
             sub={t.awaitingReply ? t.awaitingReply + ' awaiting a reply' : 'open threads'} tone={t.openUnhappy > 0 ? 'alert' : undefined} />
           <Big label="Booked next 7d" value={canSeeMoney ? money(t.booked7) : '—'} Icon={DollarSign} href="/revenue" sub="value of arrivals" />
         </div>
@@ -397,7 +397,7 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
                 : undefined}
               delta={wc.pct != null && wc.pctPrev != null ? <Delta v={Math.round((wc.pct - wc.pctPrev) * 10) / 10} suffix=" pts" /> : undefined}
               alert={wc.pct != null && wc.pct < 80} />
-            <Tile label="Guest sentiment" value={s.happyPct != null ? pct(s.happyPct, 1) : '—'} Icon={Sparkles} href="/messages"
+            <Tile label="Guest sentiment" value={s.happyPct != null ? pct(s.happyPct, 1) : '—'} Icon={Sparkles} href="/inbox"
               sub={s.scanned != null ? count(s.unhappy) + ' unhappy of ' + count(s.scanned) + ' scanned threads' : undefined}
               delta={s.happyPct != null && s.happyPctPrev != null ? <Delta v={Math.round((s.happyPct - s.happyPctPrev) * 10) / 10} suffix=" pts" /> : undefined}
               alert={s.happyPct != null && s.happyPct < 90} />

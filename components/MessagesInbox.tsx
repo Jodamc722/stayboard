@@ -2,7 +2,7 @@
 // THE MESSAGES INBOX (lean pass, 2026-09-22 — Jon: "clean, one liners and tags").
 //
 // One line per thread: guest, unit, tags (channel, needs reply, unread, sentiment), the last message
-// clamped to one line, and when. The conversation itself is on open (/messages/[id] or the phone
+// clamped to one line, and when. The conversation itself is on open (/inbox/[id] or the phone
 // thread). Guesty threads and Talkroute phone threads are one list, newest first — the page merges
 // and sorts them on the server and hands the result here.
 //
@@ -203,7 +203,7 @@ function ConvoLine({ c, unit, wait, now, lastBy, sentiment, onOpen, active, flas
   const who = !l ? (wait ? guest.split(' ')[0] : (lastBy || 'Last')) : l.who === 'guest' ? guest.split(' ')[0] : l.who === 'auto' ? 'Auto' : l.who === 'note' ? 'Note' : (l.name ? l.name.split(' ')[0] : 'Team')
   const tone: 'guest' | 'team' | 'auto' | 'note' = !l ? (wait ? 'guest' : 'team') : l.who
   return (
-    <Line href={`/messages/${c.id}`} name={guest} unit={unit} urgent={!!wait} onOpen={onOpen} active={active} flash={flash}
+    <Line href={`/inbox/${c.id}`} name={guest} unit={unit} urgent={!!wait} onOpen={onOpen} active={active} flash={flash}
       who={who} whoTone={tone}
       preview={l?.text || c.last_message_preview || ''} bold={unread > 0 || !!wait}
       at={c.last_message_at}
@@ -227,7 +227,7 @@ function PhoneLine({ t, unit, onOpen, active, flash }: { t: PhoneThreadSummary; 
     t.counts.calls ? `${t.counts.calls} call${t.counts.calls === 1 ? '' : 's'}` : '',
   ].filter(Boolean).join(' · ')
   return (
-    <Line href={`/messages/phone/${t.number}`} name={t.guestName || t.display} unit={unit} urgent={t.awaiting} onOpen={onOpen} active={active} flash={flash}
+    <Line href={`/inbox/phone/${t.number}`} name={t.guestName || t.display} unit={unit} urgent={t.awaiting} onOpen={onOpen} active={active} flash={flash}
       who={t.lastKind === 'call' ? 'Call' : t.lastKind === 'voicemail' ? 'Voicemail' : (t.awaiting ? (t.guestName ? t.guestName.split(' ')[0] : 'Guest') : 'Text')} whoTone={t.awaiting ? 'guest' : 'note'}
       preview={t.preview || ''} bold={t.unread || t.awaiting}
       at={t.lastAt || null}

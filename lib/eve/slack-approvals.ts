@@ -315,7 +315,7 @@ async function decideDigest(channel: string, root: string, user: string, text: s
 
 /**
  * A reply under the drafts list: "1 send" sends draft 1 to the guest AS THE PERSON WHO SAID SO — the
- * same path as the Send button on /messages (guest_reply_send, human:true), so the thread shows their
+ * same path as the Send button on /inbox (guest_reply_send, human:true), so the thread shows their
  * name and the response clock counts them. "2 no" discards. Any team member with a Lighthouse login.
  */
 async function decideDraftDigest(channel: string, root: string, user: string, text: string, rows: any[]): Promise<boolean> {

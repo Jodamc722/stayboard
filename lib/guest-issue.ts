@@ -163,7 +163,7 @@ async function fromThreads(sinceISO: string, seen: Set<string>): Promise<Detecti
       headline: clean(s.top_issue || s.reason, 400),
       issues: [clean(s.top_issue, 160)].filter(Boolean),
       evidence: clean(s.guest_excerpt || s.reason, 600),
-      link: APP_URL + '/messages?c=' + encodeURIComponent(str(s.conversation_id)),
+      link: APP_URL + '/inbox?c=' + encodeURIComponent(str(s.conversation_id)),
     })
   }
   return out

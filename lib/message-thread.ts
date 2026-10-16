@@ -2,7 +2,7 @@
 // a unified inbox … the left-hand column shows the inbox, the right shows the full message thread
 // when you open it, with details about the booking").
 //
-// /messages/[id] and /messages/phone/[number] used to assemble their thread inline. The unified inbox
+// /inbox/[id] and /inbox/phone/[number] used to assemble their thread inline. The unified inbox
 // opens the same thread in a pane without leaving the list, through /api/messages/thread — so the
 // assembly moved here and both read it. Access is the caller's job (Messages 'view'); money is masked
 // here by the same app-wide rule the pages used (canSeeMoney).

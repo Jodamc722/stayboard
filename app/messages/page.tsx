@@ -1,26 +1,30 @@
+// MESSAGES — internal (Jon, 2026-10-16: "call it messages, not inbox; inbox is guest messages").
+// Everyone has it — it is where what teammates say to you lands.
 import { redirect } from 'next/navigation'
 import { Shell } from '@/components/Shell'
+import { InboxPage } from '@/components/InboxPage'
 import { getAccess } from '@/lib/access'
-import { atLeast } from '@/lib/features'
-import { loadInbox } from '@/lib/inbox-data'
-import { LiveInbox } from '@/components/LiveInbox'
 
 export const dynamic = 'force-dynamic'
 
-// THE MESSAGES PAGE. The inbox itself is computed in lib/inbox-data (shared with /api/messages/live,
-// which the open page polls so it stays live — Jon, 2026-10-06), and drawn by components/LiveInbox.
-export default async function MessagesPage() {
-  // MESSAGES ACCESS, NOT JUST A SESSION (2026-09-28 audit, D16). Guest words, phone numbers and
-  // complaints are read with the service role, so a signed-in account is not enough: the person
-  // must hold at least view on Messages — the same bar /api/eve/guest-drafts already sets.
+export default async function MessagesPage({ searchParams }: { searchParams?: Record<string, string | undefined> }) {
+  // ROUTES SWAPPED 2026-10-16: /messages used to be the guest inbox. Every old guest link carried a
+  // query (?tab=sentiment, ?reservation=, ?q=, ?id=) — anything that is not one of our three tabs
+  // goes to /inbox with the query intact. Threads (/messages/<id>, /messages/phone/<n>) have their
+  // own redirect stubs beside this file.
+  const sp = searchParams || {}
+  const internalTab = sp.tab === 'open' || sp.tab === 'snoozed' || sp.tab === 'done'
+  const keys = Object.keys(sp).filter(k => sp[k] !== undefined)
+  if (keys.length && !(keys.length === 1 && internalTab)) {
+    const q = new URLSearchParams(); for (const k of keys) q.set(k, String(sp[k]))
+    redirect('/inbox?' + q.toString())
+  }
   const access = await getAccess()
   if (!access.user) redirect('/login')
-  if (!access.allowed) redirect('/no-access')
-  if (!atLeast(access.levels['messages'], 'view')) redirect(access.landing || '/no-access')
-  const data = await loadInbox()
+  const tab = sp.tab === 'snoozed' || sp.tab === 'done' ? sp.tab : 'open'
   return (
     <Shell>
-      <LiveInbox initial={data} />
+      <InboxPage initialTab={tab} />
     </Shell>
   )
 }

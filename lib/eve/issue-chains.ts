@@ -178,7 +178,7 @@ export async function loadIssueChains(): Promise<{ issues: IssueChain[]; partial
     const links: NeedLink[] = [{ label: 'Glitch', href: '/glitches?q=' + encodeURIComponent(unit || str(g.guest_name)), kind: 'glitch' }]
     if (rid) links.push({ label: 'Booking', href: '/reservations/' + rid, kind: 'booking' })
     if (tid) links.push({ label: 'Breezeway task', href: 'https://app.breezeway.io/task/' + tid, kind: 'task' })
-    if (conv) links.push({ label: 'Guest thread', href: '/messages/' + conv, kind: 'thread' })
+    if (conv) links.push({ label: 'Guest thread', href: '/inbox/' + conv, kind: 'thread' })
     const base = { id: 'g:' + str(g.id), source: 'glitch' as const, title: str(g.overview) || str(g.category) || 'Guest issue', unit, guest: str(g.guest_name) || st.guest || null, reportedAt: created, inHouse: st.inHouse, arriving: st.arriving, severe: SEVERE.test(str(g.overview) + ' ' + str(g.category)), steps, links, reservationId: rid, assignees: ts.assignees }
     out.push({ ...base, ...judge(base, (now - Date.parse(created)) / 3600000, closed) })
   }
@@ -198,7 +198,7 @@ export async function loadIssueChains(): Promise<{ issues: IssueChain[]; partial
     const links: NeedLink[] = [{ label: 'Slack thread', kind: 'slack', href: `https://slack.com/archives/${l.channel}/p${str(l.msg_ts).replace('.', '')}${l.thread_ts && l.thread_ts !== l.msg_ts ? `?thread_ts=${l.thread_ts}&cid=${l.channel}` : ''}` }]
     if (rid) links.push({ label: 'Booking', href: '/reservations/' + rid, kind: 'booking' })
     if (tid) links.push({ label: 'Breezeway task', href: 'https://app.breezeway.io/task/' + tid, kind: 'task' })
-    if (conv) links.push({ label: 'Guest thread', href: '/messages/' + conv, kind: 'thread' })
+    if (conv) links.push({ label: 'Guest thread', href: '/inbox/' + conv, kind: 'thread' })
     const iv = ev.investigation || null
     if (iv && !tid && iv.taskId) steps[2] = { ...steps[2], detail: 'possible: task ' + str(iv.taskId) + ' (' + Math.round((Number(iv.confidence) || 0) * 100) + '% sure — confirm)' }
     const investigation = iv ? { method: str(iv.method), confidence: Number(iv.confidence) || 0, reasoning: str(iv.reasoning), taskId: iv.taskId || null, glitchId: iv.glitchId || null, stillOpen: iv.stillOpen || null, nextStep: iv.nextStep || null, unit: iv.unit || null, pinned: !!ev.taskId } : null
@@ -216,9 +216,9 @@ export async function loadIssueChains(): Promise<{ issues: IssueChain[]; partial
       { key: 'task', label: 'Breezeway task', state: 'na', detail: '' },
       { key: 'told', label: 'Guest told', state: told ? 'done' : 'missing', detail: told ? 'replied ' + told.at.slice(5, 16).replace('T', ' ') : 'no reply since' },
     ]
-    const links: NeedLink[] = [{ label: 'Guest thread', href: '/messages/' + str(s.conversation_id), kind: 'thread' }]
+    const links: NeedLink[] = [{ label: 'Guest thread', href: '/inbox/' + str(s.conversation_id), kind: 'thread' }]
     if (rid) links.push({ label: 'Booking', href: '/reservations/' + rid, kind: 'booking' })
-    links.push({ label: 'Sentiment board', href: '/messages?tab=sentiment', kind: 'page' })
+    links.push({ label: 'Sentiment board', href: '/inbox?tab=sentiment', kind: 'page' })
     const unit = names[str(s.listing_id)] || (rid && res[rid] ? names[str(res[rid].listing_id)] : '') || null
     const base = { id: 'm:' + str(s.conversation_id), source: 'sentiment' as const, title: str(s.top_issue || s.reason) || 'Guest unhappy in messages', unit, guest: st.guest || str(s.guest_name) || null, reportedAt: at, inHouse: st.inHouse, arriving: st.arriving, severe: SEVERE.test(str(s.top_issue) + ' ' + str(s.reason)), steps, links, reservationId: rid, assignees: [] }
     out.push({ ...base, ...judge(base, (now - Date.parse(at)) / 3600000, false) })

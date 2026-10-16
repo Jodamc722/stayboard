@@ -356,7 +356,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
       .eq('has_reply', false).eq('excluded_from_score', false).gte('created_at', back60 + 'T00:00:00Z')
       .order('created_at', { ascending: false }).limit(80),
     // WHO IS WAITING ON US — THE ONE RULE (lib/response-times awaitingSet, 2026-09-28 audit D3–D5):
-    // the set the /messages "N waiting" pill, its Needs-reply tab and Eve read. This counted Guesty's
+    // the set the /inbox "N waiting" pill, its Needs-reply tab and Eve read. This counted Guesty's
     // unread flag, which says whether somebody opened the thread, not whether anybody answered it.
     // A failed read degrades (no rows, named below); it never takes the day down.
     awaitingSet({ db }).catch((e: any): AwaitingSet => ({ rows: [], ids: [], overdue: 0, slaKnown: false, truncated: false, error: String(e?.message || e) })),
@@ -881,7 +881,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     if (s) tags.push({ label: 'Unhappy', tone: 'rose', title: 'The sentiment scan read this guest as unhappy' })
     if (reply) tags.push({ label: reply.label, tone: reply.late ? 'rose' : 'amber', title: 'Waiting on our reply — ' + SLA_RULE_TEXT })
     const hot = !!s || (!!reply && reply.late)
-    const href = '/messages/' + encodeURIComponent(cid)
+    const href = '/inbox/' + encodeURIComponent(cid)
     push({
       key: 'guest:' + cid, kind: 'guest', severity: hot ? 'now' : 'today', rank: hot ? 2 : 5, owner: 'desk',
       due: reply ? reply.label : 'within the hour',
@@ -908,7 +908,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   for (const w of waitingFirst.slice(0, 8)) {
     const c = threadBy[w.conversation_id] || {}
     const channel = str(w.channel || c.channel)
-    deskRows.push({ key: 'msg:' + w.conversation_id, kind: 'message', who: str(c.guest_name) || 'Guest', unit: nameOf(w.listing_id || c.listing_id), text: str(c.last_message_preview).slice(0, 140), meta: replyOf[w.conversation_id].label + (channel ? ' · ' + channel : ''), href: '/messages/' + encodeURIComponent(w.conversation_id) })
+    deskRows.push({ key: 'msg:' + w.conversation_id, kind: 'message', who: str(c.guest_name) || 'Guest', unit: nameOf(w.listing_id || c.listing_id), text: str(c.last_message_preview).slice(0, 140), meta: replyOf[w.conversation_id].label + (channel ? ' · ' + channel : ''), href: '/inbox/' + encodeURIComponent(w.conversation_id) })
   }
   for (const a of welcomeDue.slice(0, 8)) deskRows.push({ key: 'wc:' + a.reservationId, kind: 'welcome', who: a.guest, unit: a.unit, text: 'Welcome call due today', meta: a.nights + ' nt · ' + money(a.value), href: '/welcome-calls' })
   for (const a of approvals.slice(0, 6)) deskRows.push({ key: 'ap:' + str(a.id), kind: 'approval', who: str(a.vendor) || str(a.type), unit: [str(a.building), str(a.unit)].filter(Boolean).join(' '), text: str(a.title), meta: a.amount_usd != null ? money(Number(a.amount_usd)) : str(a.priority), href: '/requests' })

@@ -39,7 +39,7 @@ export function UnifiedInbox(props: { items: InboxItem[]; unitById: Record<strin
   const select = useCallback((key: string) => {
     const u = new URLSearchParams(Array.from(sp.entries()))
     if (key) u.set('open', key); else u.delete('open')
-    router.replace('/messages' + (u.toString() ? '?' + u.toString() : ''), { scroll: false })
+    router.replace('/inbox' + (u.toString() ? '?' + u.toString() : ''), { scroll: false })
   }, [router, sp])
 
   // On a wide screen, start on the first thread waiting on us — the inbox should open on the work.
@@ -164,8 +164,8 @@ function BookingPane({ thread, item }: { thread: Thread; item: InboxItem | null 
         <div className="mt-3 flex items-center gap-1.5 flex-wrap">
           {r?.id && <Link href={'/reservations/' + encodeURIComponent(r.id)} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1">Reservation</Link>}
           {thread.kind === 'guesty' && <a href={thread.guestyUrl} target="_blank" rel="noreferrer" className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1">Guesty <ExternalLink size={11} /></a>}
-          {thread.kind === 'guesty' ? <Link href={'/messages/' + thread.conversationId} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1"><MessageSquare size={11} /> Full page</Link>
-            : <Link href={'/messages/phone/' + thread.number} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1"><Phone size={11} /> Full page</Link>}
+          {thread.kind === 'guesty' ? <Link href={'/inbox/' + thread.conversationId} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1"><MessageSquare size={11} /> Full page</Link>
+            : <Link href={'/inbox/phone/' + thread.number} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1"><Phone size={11} /> Full page</Link>}
         </div>
       </section>
       {/* The whole stay: issues, calls, prior stays, reviews — the same panel the full page shows. */}

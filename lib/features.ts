@@ -19,8 +19,10 @@ export const GROUP_ORDER = ['Today', 'Eve', 'Operations', 'Guest Experience', 'R
 export const FEATURES: Feature[] = [
   { key: 'command',       label: 'Today (everyone)',  path: '/command', group: 'Today' },
   // Messages (Jon, 2026-10-16): INTERNAL — what teammates say to you: tags, replies, assignments,
-  // alerts. "Inbox" is the guest one (/messages). Key and route stay 'inbox' for permissions and links.
-  { key: 'inbox',         label: 'Messages — internal (everyone)',  path: '/inbox', group: 'Today' },
+  // alerts. "Inbox" is the guest one (/inbox). The KEYS are the other way round ('inbox' gates
+  // /messages, 'messages' gates /inbox) because keys are what per-role permissions are stored
+  // against; renaming them would silently reset everyone's access.
+  { key: 'inbox',         label: 'Messages — internal (everyone)',  path: '/messages', group: 'Today' },
   // Open loops (Jon, 2026-09-28): the page behind Eve's 'Keeping tabs' — guest asks, problems,
   // promises, unanswered questions, decisions — with Done / Not a loop. Replaces the long roll-up.
   { key: 'loops',         label: 'Open loops (Eve tab)', path: '/loops', group: 'Eve' },
@@ -35,7 +37,7 @@ export const FEATURES: Feature[] = [
   { key: 'eve',           label: 'Eve',               path: '/eve', group: 'Eve' },
   { key: 'reservations',  label: 'Reservations',      path: '/reservations', group: 'Guest Experience' },
   { key: 'reservation-emails', label: 'Front-Desk Notices', path: '/reservation-emails', group: 'Guest Experience' },
-  { key: 'messages',      label: 'Messages',          path: '/messages', group: 'Guest Experience' },
+  { key: 'messages',      label: 'Inbox — guest threads', path: '/inbox', group: 'Guest Experience' },
   { key: 'reviews',       label: 'Reviews',           path: '/reviews', group: 'Reviews' },
   // The Calls desk since 2026-09-08 — pre-arrival, bad-review recovery and post-checkout calls on
   // one page. The KEY is unchanged, so every role's existing permission still applies.

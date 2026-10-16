@@ -50,7 +50,7 @@ export const DESKS: Desk[] = [
     blurb: 'The day on one page: what to decide, fix and clear across every desk, and what is yours.',
     views: [
       { to: '/command', label: 'Today', hint: 'The day on one page: decide, fix, clear, and what is yours' },
-      { to: '/inbox', label: 'Messages', hint: 'Internal — what teammates said to you: tags, replies, assignments, alerts — open until you deal with it' },
+      { to: '/messages', label: 'Messages', hint: 'Internal — what teammates said to you: tags, replies, assignments, alerts — open until you deal with it' },
     ],
   },
   {
@@ -81,7 +81,7 @@ export const DESKS: Desk[] = [
     key: 'guests', label: 'Guest Experience',
     blurb: 'Every guest touch: the inbox, calls, glitches, claims, reservations, guest orders and guidebooks.',
     views: [
-      { to: '/messages', label: 'Inbox', hint: 'Guest inbox — Guesty and Talkroute threads, who is waiting on a reply, and sentiment' },
+      { to: '/inbox', label: 'Inbox', hint: 'Guest inbox — Guesty and Talkroute threads, who is waiting on a reply, and sentiment' },
       { to: '/welcome-calls', label: 'Calls', hint: 'Calls owed today: welcome, recovery and post-checkout' },
       { to: '/glitches', label: 'Glitches', hint: 'Guest-reported problems: fix, refund advice, vendor, history and patterns', match: ['/refunds'] },
       { to: '/claims', label: 'Claims', hint: 'Damage claims with the filing countdown per channel' },

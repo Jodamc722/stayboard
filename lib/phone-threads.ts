@@ -4,7 +4,7 @@
 // by conversation; the phone is keyed by NUMBER. One guest number carries texts, voicemails and
 // calls, so a phone thread is everything Talkroute has seen for that number, in time order, with
 // the booking it matched. The Messages list shows phone threads beside Guesty threads; the thread
-// page at /messages/phone/<number> shows the whole history and lets the team text back.
+// page at /inbox/phone/<number> shows the whole history and lets the team text back.
 import 'server-only'
 import { pageRows } from './db-page'
 import { formatPhone, phoneDigits } from './talkroute'

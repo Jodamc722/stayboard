@@ -99,7 +99,7 @@ export function StayPanel({ reservationId, compact, hide = [] }: { reservationId
               <Line>{s.messages.count} messages{s.messages.unread ? <> · <span className="text-amber-700 font-semibold">{s.messages.unread} unread</span></> : ''}{s.messages.awaitingReply ? <> · <span className="text-amber-700 font-semibold">awaiting our reply</span></> : ''}</Line>
               {s.messages.sentiment && <Line><span className={s.messages.sentiment.dissatisfied ? 'text-rose-700 font-semibold' : 'text-muted'}>Sentiment: {s.messages.sentiment.band || (s.messages.sentiment.score ?? '—')}</span>{s.messages.sentiment.topIssue ? <span className="text-muted"> · {s.messages.sentiment.topIssue}</span> : null}</Line>}
               <Line muted>{s.messages.firstResponseMin != null ? 'First reply ' + s.messages.firstResponseMin + ' min' : ''}{s.messages.lastMessageAt ? (s.messages.firstResponseMin != null ? ' · ' : '') + 'last ' + day(s.messages.lastMessageAt) : ''}</Line>
-              <a href={'/messages/' + s.messages.conversationId} className="text-[12px] font-semibold text-brand-600 hover:underline">Open thread →</a>
+              <a href={'/inbox/' + s.messages.conversationId} className="text-[12px] font-semibold text-brand-600 hover:underline">Open thread →</a>
             </> : <Line muted>No conversation linked.</Line>}
           </Box>}
           {show('issues') && <Box icon={<AlertTriangle size={12} />} title="Issues & claims">

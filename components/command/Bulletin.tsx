@@ -274,7 +274,7 @@ function haveToRows(d: CommandDay): Must[] {
   const add = (key: string, n: number, one: string, many: string, href: string, hot: boolean) => { if (n) out.push({ key, n, text: n === 1 ? one : many, href, hot }) }
   add('claims', t.claims.dueSoon, 'claim to file before its deadline', 'claims to file before their deadline', '/claims', true)
   add('glitches', t.glitches.overdue, 'guest issue past due', 'guest issues past due', '/glitches', true)
-  add('msgs', t.guestDesk.messages, 'guest waiting on a reply', 'guests waiting on a reply', '/messages', false)
+  add('msgs', t.guestDesk.messages, 'guest waiting on a reply', 'guests waiting on a reply', '/inbox', false)
   add('welcome', t.guestDesk.welcome, 'welcome call to make', 'welcome calls to make', '/welcome-calls', false)
   add('unowned', t.tasks.unassigned, 'task with nobody on it', 'tasks with nobody on it', '/maintenance', false)
   return out

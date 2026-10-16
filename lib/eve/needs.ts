@@ -181,7 +181,7 @@ export async function loadNeeds(): Promise<{ needs: Need[]; partial: boolean }> 
       const h = hoursIn(why) ?? hoursIn(summary)
       urgency = e.reviewId ? 'today' : (h != null && h >= 1 ? 'now' : 'today')
       urgencyWhy = e.reviewId ? 'a public review is waiting for an answer' : (h != null ? `guest has waited ${h}h` : 'a guest is waiting')
-      if (conv) links.push({ label: 'Guest thread', href: '/messages/' + conv, kind: 'thread' })
+      if (conv) links.push({ label: 'Guest thread', href: '/inbox/' + conv, kind: 'thread' })
       if (e.reviewId || e.review_id) links.push({ label: 'Review', href: '/reviews', kind: 'review' })
     } else if (action === 'task_create') {
       title = str(e.title || e.name) || title
@@ -272,7 +272,7 @@ export async function loadNeeds(): Promise<{ needs: Need[]; partial: boolean }> 
       links.push({ label: 'Glitch', href: '/glitches?q=' + encodeURIComponent(l.unit || (g ? g.overview : '')), kind: 'glitch' })
       if (g) { what.push({ label: 'Glitch', text: `${g.overview} — ${g.status || 'open'}` }); reservationId = reservationId || g.reservationId; listingId = listingId || g.listingId || null }
     }
-    if (ev.conversationId) links.push({ label: 'Guest thread', href: '/messages/' + str(ev.conversationId), kind: 'thread' })
+    if (ev.conversationId) links.push({ label: 'Guest thread', href: '/inbox/' + str(ev.conversationId), kind: 'thread' })
     if (ev.guestTold) what.push({ label: 'Guest told', text: 'We replied to the guest' + (ev.guestToldBy ? ' — ' + str(ev.guestToldBy) : '') + ' ' + str(ev.guestTold).slice(0, 16).replace('T', ' ') })
     if (ev.matchedBy) what.push({ label: 'How the task was matched', text: str(ev.matchedBy) })
     if (reservationId) links.unshift({ label: 'Booking', href: '/reservations/' + reservationId, kind: 'booking' })

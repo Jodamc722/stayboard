@@ -159,7 +159,7 @@ async function scan() {
             const q = qc[r.id]
             return (
               <LeanRow key={r.id}
-                lead={<Link href={`/messages/${r.id}`} className="shrink-0 inline-flex items-center rounded-full bg-brand-600 text-white px-3 h-8 text-[12px] font-semibold hover:bg-brand-700">Open</Link>}
+                lead={<Link href={`/inbox/${r.id}`} className="shrink-0 inline-flex items-center rounded-full bg-brand-600 text-white px-3 h-8 text-[12px] font-semibold hover:bg-brand-700">Open</Link>}
                 name={r.guest}
                 meta={[r.topIssue || r.building || r.listingName, ago(r.lastMessageAt)].filter(Boolean).join(' · ')}
                 tags={<>

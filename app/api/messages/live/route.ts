@@ -1,4 +1,4 @@
-// THE LIVE INBOX (Jon, 2026-10-06: "more live and more real raw data"). The open /messages page
+// THE LIVE INBOX (Jon, 2026-10-06: "more live and more real raw data"). The open /inbox page
 // polls this every 30 seconds while it is visible: pull from Guesty (lib/inbox-live — at most once per
 // 20s across every viewer), then hand back the same inbox the page renders (lib/inbox-data).
 //   GET /api/messages/live            pull if due, then the inbox

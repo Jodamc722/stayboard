@@ -314,7 +314,7 @@ const guest_reply_draft: Executor = async (p, ctx) => {
   }).select('id').maybeSingle()
   if (error || !(data as any)?.id) return { ok: false, summary: 'could not save the draft', error: str(error?.message || 'insert failed').slice(0, 160) }
   const id = str((data as any).id)
-  const where = conversationId ? `waiting for Send on /messages/${conversationId}` : 'waiting on /reviews (copy it into the reply box)'
+  const where = conversationId ? `waiting for Send on /inbox/${conversationId}` : 'waiting on /reviews (copy it into the reply box)'
   return { ok: true, ref: id, summary: `drafted a ${conversationId ? 'reply' : 'review reply'} to ${str(p?.guest) || 'the guest'}${p?.unit ? ` (${str(p.unit)})` : ''} — ${where}`, undo: { kind: 'draft_discard', id } }
 }
 

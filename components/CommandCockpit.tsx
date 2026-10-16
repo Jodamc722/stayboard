@@ -272,7 +272,7 @@ export function TilePanel({ k, d, roster, onChanged }: { k: TileKey; d: CommandD
       ))}
       <div className="px-4 py-2 flex gap-3 flex-wrap text-[12px] font-semibold text-brand-700 items-center">
         {t.guestDesk.total > t.guestDesk.shown && <span className="text-muted font-normal">Showing {t.guestDesk.shown} of {t.guestDesk.total} —</span>}
-        <Link href="/messages">Messages →</Link><Link href="/welcome-calls">Calls →</Link><Link href="/requests">Approvals →</Link><Link href="/reviews">Reviews →</Link>
+        <Link href="/inbox">Messages →</Link><Link href="/welcome-calls">Calls →</Link><Link href="/requests">Approvals →</Link><Link href="/reviews">Reviews →</Link>
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-// REPLY TO A GUEST FROM THE THREAD (2026-09-28 audit, D1). The reply box on /messages/[id].
+// REPLY TO A GUEST FROM THE THREAD (2026-09-28 audit, D1). The reply box on /inbox/[id].
 //
 // Airbnb, Booking and VRBO threads — most of the guest traffic — could only be answered by leaving
 // the app for Guesty; the one in-app send was an Eve draft. A person now types (or has Eve draft)

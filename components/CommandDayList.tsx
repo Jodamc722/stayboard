@@ -440,7 +440,7 @@ function EveDraftRow({ d, act, busy }: { d: EveDraft; act: (id: string, op: 'sen
       {open && (
         <div className="mt-2 ml-3.5">
           <textarea value={text} onChange={e => setText(e.target.value)} rows={4} aria-label="Eve's draft" className="w-full rounded-xl border border-line bg-white px-3 py-2 text-[13px] text-ink leading-relaxed focus:outline-none focus:ring-2 focus:ring-brand-200" />
-          <div className="mt-1 text-[11px] text-muted">{isReview ? 'Edit it here, then Send — it posts publicly on the channel.' : d.conversationId ? <>Edit it here, then Send. <Link href={'/messages/' + d.conversationId} className="text-brand-700 hover:underline">Open the thread</Link>.</> : null}</div>
+          <div className="mt-1 text-[11px] text-muted">{isReview ? 'Edit it here, then Send — it posts publicly on the channel.' : d.conversationId ? <>Edit it here, then Send. <Link href={'/inbox/' + d.conversationId} className="text-brand-700 hover:underline">Open the thread</Link>.</> : null}</div>
         </div>
       )}
     </Row>

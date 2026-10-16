@@ -1,4 +1,4 @@
-// Send an SMS through Talkroute from a /messages thread. Needs edit on 'messages' (the same gate as
+// Send an SMS through Talkroute from a /inbox thread. Needs edit on 'messages' (the same gate as
 // Eve's guest-reply Send) and a bulk-texting-enabled Talkroute plan; Talkroute's error is passed
 // through verbatim when the plan says no. The sent message is mirrored locally at once.
 import { NextRequest, NextResponse } from 'next/server'

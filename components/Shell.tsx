@@ -48,7 +48,7 @@ const DESK_ICONS: Record<string, any> = {
 const PHONE_BAR: { to: string; label: string; Icon: any }[] = [
   { to: '/command', label: 'Today', Icon: Gauge },
   { to: '/schedule', label: 'Schedule', Icon: CalendarDays },
-  { to: '/messages', label: 'Inbox', Icon: MessageSquare },
+  { to: '/inbox', label: 'Inbox', Icon: MessageSquare },
   { to: '/eve', label: 'Eve', Icon: Sparkles },
 ]
 
@@ -706,7 +706,7 @@ function NotificationsBell() {
   }, [])
   return (
     <div className="border-t border-line px-2 py-1.5">
-      <a href="/inbox" className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-muted hover:bg-app hover:text-ink transition-all" title={'Internal messages — tags, replies, assignments, alerts' + (open ? ' · ' + open + ' open' : '')}>
+      <a href="/messages" className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-muted hover:bg-app hover:text-ink transition-all" title={'Internal messages — tags, replies, assignments, alerts' + (open ? ' · ' + open + ' open' : '')}>
         <Bell size={16} />
         Messages
         {unread > 0 ? <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-600 text-white">{unread}</span>

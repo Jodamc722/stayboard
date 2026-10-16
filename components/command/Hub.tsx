@@ -47,7 +47,7 @@ export type Area = 'ops' | 'guests' | 'reviews' | 'admin'
 export type HubItem = { key: string; area: Area; sub: string; score: number; node: ReactNode }
 const AREA: Record<Area, { label: string; short: string; Icon: any; href: string; hrefLabel: string; blurb: string }> = {
   ops: { label: 'Operations', short: 'Ops', Icon: ListChecks, href: '/plan', hrefLabel: 'Today board', blurb: 'Departure cleans and pending units, today’s inspections, and the team’s hours' },
-  guests: { label: 'Guests', short: 'Guests', Icon: MessageSquare, href: '/messages', hrefLabel: 'Inbox', blurb: 'Welcome calls, guests waiting or unhappy, and open guest issues' },
+  guests: { label: 'Guests', short: 'Guests', Icon: MessageSquare, href: '/inbox', hrefLabel: 'Inbox', blurb: 'Welcome calls, guests waiting or unhappy, and open guest issues' },
   reviews: { label: 'Reviews', short: 'Reviews', Icon: Star, href: '/reviews', hrefLabel: 'Reviews', blurb: 'Reviews waiting on a public reply — low scores first' },
   admin: { label: 'Admin', short: 'Admin', Icon: FileText, href: '/buildings', hrefLabel: 'Properties', blurb: 'What needs your decision, unpaid balances to collect, the checklist, your tasks and today’s recommended listing work' },
 }
@@ -257,7 +257,7 @@ function InboxRow({ i, onCleared, lane }: { i: NextItem; onCleared: (k: string) 
       tags={<>{(i.tags || []).map(t => <Tag key={t.label} tone={t.tone} title={t.title}>{t.label}</Tag>)}</>}
       meta={i.why}
       actions={<>
-        <Link href={i.href || '/messages'} prefetch={false} className={DARK} title={unhappy ? 'Open the thread — read what upset them and reply' : 'Open the thread — reply, or send Eve’s draft'}>Reply</Link>
+        <Link href={i.href || '/inbox'} prefetch={false} className={DARK} title={unhappy ? 'Open the thread — read what upset them and reply' : 'Open the thread — reply, or send Eve’s draft'}>Reply</Link>
         <button onClick={close} disabled={busy} className={GHOST} title="No action needed — clears this row for today, for everyone">{busy ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}</button>
       </>} />
   )

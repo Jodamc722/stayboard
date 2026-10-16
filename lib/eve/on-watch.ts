@@ -598,7 +598,7 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
           const { data: row } = await db.from('eve_actions').select('payload').eq('id', f.draftId).maybeSingle()
           const pl = (row as any)?.payload || {}
           await db.from('eve_actions').update({ payload: { ...pl, slack_pending: false, slack_channel: channel, slack_ts: ts, slack_index: i + 1, slack_sent_at: new Date().toISOString() } }).eq('id', f.draftId)
-        } catch { /* the draft still waits on /messages */ }
+        } catch { /* the draft still waits on /inbox */ }
       }
     }
     return { channel, ts, keys: shown.map(([k]) => k) }

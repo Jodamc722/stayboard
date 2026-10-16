@@ -87,7 +87,7 @@ export const ACTIONS: ActionDef[] = [
     wiredAt: ['lib/eve/ask.ts deliverOne', 'lib/eve/ralph.ts sendApproved', 'lib/eve/agent-mode.ts proposeAction'] },
   { key: 'email_draft', label: 'Draft an email', what: 'A Gmail draft in a connected mailbox. Nobody receives it until a person sends it.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts email_draft', 'lib/eve/watches.ts channel_broken, stock_low'] },
   { key: 'email_send', label: 'Send an email', what: 'An email leaving the company. Permanently propose-only, and the executor is not enabled.', def: 2, cap: 2, wiredAt: [] },
-  { key: 'guest_reply_draft', label: 'Draft a guest reply', what: 'A reply saved on the thread (/messages) and in Command Center → Decide with Send / Discard. Not sent.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts guest_reply_draft', 'lib/eve/watches.ts guest_unanswered_1h, bad_review_in'] },
+  { key: 'guest_reply_draft', label: 'Draft a guest reply', what: 'A reply saved on the thread (/inbox) and in Command Center → Decide with Send / Discard. Not sent.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts guest_reply_draft', 'lib/eve/watches.ts guest_unanswered_1h, bad_review_in'] },
   { key: 'guest_reply_send', label: 'Message a guest', what: 'A message the guest actually receives (Guesty send-message). Permanently propose-only: only a Send button or a Telegram yes runs it.', def: 2, cap: 2, wiredAt: ['lib/eve/executors.ts guest_reply_send', 'app/api/eve/guest-drafts send'] },
   // PILOT ONE (Jon, 2026-10-10): "ok to send simple guest messages like work completed, requests
   // permission to enter … never sends code without approval". A NOTICE is a fixed template rendered

@@ -231,7 +231,7 @@ export default async function ReservationDetail({ params }: { params: { id: stri
         <section className="lg:col-span-3 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <h2 className="text-sm font-semibold text-slate-900">Calls &amp; texts</h2>
-            {contact.phone && <Link href={`/messages/phone/${contact.phone.length === 10 ? '1' + contact.phone : contact.phone}`} className="text-xs text-brand-600 hover:underline">Open the phone thread →</Link>}
+            {contact.phone && <Link href={`/inbox/phone/${contact.phone.length === 10 ? '1' + contact.phone : contact.phone}`} className="text-xs text-brand-600 hover:underline">Open the phone thread →</Link>}
           </div>
           <ContactHistory h={contact} />
         </section>
@@ -240,7 +240,7 @@ export default async function ReservationDetail({ params }: { params: { id: stri
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-slate-900">Conversation</h2>
             {r.conversation_id && (
-              <Link href={`/messages/${r.conversation_id}`} className="text-xs text-brand-600 hover:underline">Open full thread →</Link>
+              <Link href={`/inbox/${r.conversation_id}`} className="text-xs text-brand-600 hover:underline">Open full thread →</Link>
             )}
           </div>
           {messages.length === 0 ? (

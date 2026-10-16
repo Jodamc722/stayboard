@@ -34,7 +34,7 @@
 //     message starts a fresh run (a stale "thanks!" is not the question being asked today).
 //   · SLA_DUE_AT — a reply is due 60 minutes later when the message came in between 08:00 and
 //     22:00 ET, or on the guest's arrival day at any hour; overnight messages are due at 08:00 ET.
-// awaitingSet() below is the one reader: the /messages pills and Needs-reply tab use it, and the
+// awaitingSet() below is the one reader: the /inbox pills and Needs-reply tab use it, and the
 // Command Center and Eve are meant to (see the build report).
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
