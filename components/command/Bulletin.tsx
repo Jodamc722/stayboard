@@ -21,23 +21,15 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import Link from 'next/link'
 import { Plus, Trash2, X, Check, Loader2, ChevronLeft, ChevronRight, Pin, ImagePlus, Crop } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
-import { SCOREBOARD_URL } from '@/components/command/Scoreboard'
-import { useHealth } from '@/components/command/health-bus'
-import type { OpsHealth } from '@/lib/ops-health'
 import type { CommandDay } from '@/lib/command-day'
 import { KINDS, REACTIONS, MAX_PHOTOS, DEFAULT_FRAME, dueState, type Frame, type Post, type PostKind, type ReviewRef } from '@/lib/bulletin'
 
 export const BULLETIN_URL = '/api/command/bulletin'
-const STATS_URL = '/api/command/bulletin/stats'
-const PLANS_URL = '/api/eve/review?n=1'   // same key the Decide band reads — one fetch for both
 
 type BoardRes = { ok: boolean; error?: string; today: string; me: string; canPost: boolean; posts: Post[]; haveTo: Post[]; reviews?: ReviewRef[]; people?: string[]; quote?: { q: string; a: string; src: string }; celebrations?: { name: string; md: string; inDays: number }[]; birthdays?: Record<string, string> }
-type Fact = { key: string; label: string; value: string; sub: string; href?: string; tone?: 'emerald' | 'amber' | 'slate' | 'sky'; kpi?: boolean }
-type Plan = { id: string; title: string; detail: string | null; area: string | null }
 type Slide = { key: string; label: string; secs: number; node: ReactNode }
 
 const KIND_LABEL: Record<PostKind, string> = { eotm: 'Employee of the month', quote: 'Quote of the day', reminder: 'Reminder', announcement: 'Announcement', review: 'Five-star review', shoutout: 'Shout-out' }
-const TONE_TEXT = { emerald: 'text-emerald-700', amber: 'text-amber-700', rose: 'text-rose-700', slate: 'text-ink', sky: 'text-sky-700' } as const
 
 async function send(body: any): Promise<BoardRes> {
   const r = await fetch(BULLETIN_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -69,15 +61,10 @@ async function uploadPhoto(file: File): Promise<string | null> {
   } catch { return null }
 }
 /** Words that make a recommendation read as blame or bad news about people. */
-const NEGATIVE = /accountab|blame|fault|dirty|redo|re-do|absorb|complain|late\b|missed|slow|sloppy|poor|bad review|failing|failed|negligen|warn|discipline|write[- ]?up|fire\b|lazy|careless|mistake|stop treating|not doing/i
 const cap = (s: string) => s ? s[0].toUpperCase() + s.slice(1) : s
 
 export function BulletinBoard({ d }: { d: CommandDay }) {
   const q = useCachedFetch<BoardRes>(BULLETIN_URL, { ttl: 60_000 })
-  const stats = useCachedFetch<{ facts?: Fact[]; asOf?: string }>(STATS_URL, { ttl: 5 * 60_000 })
-  const week = useCachedFetch<{ tiles?: { key: string; value: string; sub: string }[] }>(SCOREBOARD_URL, { ttl: 5 * 60_000 })
-  const plans = useCachedFetch<{ open?: { plans?: Plan[] } }>(PLANS_URL, { ttl: 300_000 })
-  const { health, open: openTile } = useHealth()
   const [local, setLocal] = useState<BoardRes | null>(null)
   const data = local || q.data
   const [composing, setComposing] = useState<PostKind | null>(null)
@@ -95,10 +82,16 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
     const me = data?.me || ''
     const canPost = !!data?.canPost
     const out: Slide[] = []
-    if (health) out.push({ key: 'health', label: 'Ops health', secs: 8, node: <HealthSlide h={health} open={openTile} /> })
-    const must = haveToRows(d)
-    const rem = data?.haveTo || []
-    if (must.length || rem.length) out.push({ key: 'haveto', label: 'Have to', secs: 9, node: <HaveToSlide must={must} rem={rem} today={data?.today || ''} canPost={canPost} act={act} /> })
+    // WHAT THIS CARD IS NOW (Jon, 2026-10-16: "the biggest issue is the bulletin. I don't love it").
+    // It used to carry four jobs: the day's health, the must-dos, Eve's recommendations and six
+    // stat slides. Three of those were WORK or NUMBERS, and work behind a nine-second timer is how
+    // a must-do gets missed — while the stats were already sitting as tiles two hundred pixels
+    // below, the same fact in two shapes.
+    //
+    // So those moved out: health and the stats to the tiles that already carried them, the
+    // reminders and Eve's plans into the work list where they can be ticked and decided. What is
+    // left is the only thing a rotating card genuinely suits — what nobody has to act on: the
+    // quote, the birthdays, employee of the month, shout-outs and five-star reviews.
 
     const posts = data?.posts || []
     const quote = posts.find(p => p.kind === 'quote')
@@ -106,43 +99,14 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
     // NOTHING NEGATIVE ABOUT THE TEAM (Jon, 2026-10-06). The board is the team's page: a recommendation
     // worded as blame stays in Decide where a leader acts on it, and a stat only shows when it is good
     // news — an amber number (a low call rate, a slow close time) belongs in the tiles, not up here.
-    const recs = ((plans.data?.open?.plans || []) as Plan[]).filter(r => !NEGATIVE.test(r.title + ' ' + String(r.detail || '').slice(0, 300))).slice(0, 4)
-    // Business KPIs always show, good or bad (Jon, 2026-10-09: "a better indication of what's happening in ops"); only team facts keep the no-amber rule.
-    const facts: Fact[] = (stats.data?.facts || []).filter(f => f.kpi || f.tone !== 'amber')
-    for (const t of week.data?.tiles || []) {
-      if (t.key === 'billable' && /\$/.test(t.value)) facts.push({ key: 'billable', label: 'Billable this week', value: t.value, sub: t.sub, href: '/billing', tone: 'emerald' })
-      if (t.key === 'claims' && /\$[\d,]+ back/.test(t.sub)) facts.push({ key: 'claimsBack', label: 'Claims recovered this month', value: (t.sub.match(/\$[\d,]+/) || [''])[0], sub: t.value + ' still open', href: '/claims', tone: 'emerald' })
-    }
-    // Pair the stats two to a slide so the strip stays short.
-    const statSlides: Slide[] = []
-    for (let i = 0; i < facts.length; i += 2) {
-      const pair = facts.slice(i, i + 2)
-      statSlides.push({ key: 'stats:' + pair.map(f => f.key).join('+'), label: 'By the numbers', secs: 7, node: <StatsSlide facts={pair} asOf={stats.data?.asOf} /> })
-    }
-    // Interleave so no two of a kind run back to back: quote, then post / rec / stats round-robin.
     // A quote every day: a leader's wins; otherwise the day's quote from the internet (or our list).
     if (quote) out.push({ key: 'post:' + quote.id, label: KIND_LABEL.quote, secs: 10, node: <PostSlide p={quote} me={me} canPost={canPost} act={act} onFrame={setFraming} onOpen={x => setViewing(x.id)} /> })
     else if (data?.quote?.q) out.push({ key: 'quote:auto', label: KIND_LABEL.quote, secs: 10, node: <AutoQuote q={data.quote} /> })
     const cel = data?.celebrations || []
     if (cel.length) out.push({ key: 'bday:' + cel.map(c => c.name).join('+'), label: cel.some(c => !c.inDays) ? 'Birthday' : 'Birthdays this week', secs: 9, node: <BirthdaySlide cel={cel} today={data?.today || ''} /> })
-    const lanes: Slide[][] = [
-      others.map(p => ({ key: 'post:' + p.id, label: KIND_LABEL[p.kind], secs: p.kind === 'review' ? 10 : 8, node: <PostSlide p={p} me={me} canPost={canPost} act={act} onFrame={setFraming} onOpen={x => setViewing(x.id)} /> })),
-      recs.map((r, i) => ({ key: 'rec:' + r.id, label: 'Eve recommends', secs: 9, node: <RecSlide r={r} n={i + 1} of={recs.length} /> })),
-    ]
-    for (let i = 0; lanes.some(l => i < l.length); i++) for (const l of lanes) if (l[i]) out.push(l[i])
-    // The stats are spread evenly between everything else, so two never run back to back while there
-    // is something else to show (they used to bunch up at the end of the loop).
-    if (!statSlides.length) return out
-    const mixed: Slide[] = []
-    const gap = out.length / statSlides.length
-    let next = gap > 1 ? gap : 1, si = 0
-    out.forEach((sl, i) => {
-      mixed.push(sl)
-      while (si < statSlides.length && i + 1 >= next) { mixed.push(statSlides[si++]); next += gap }
-    })
-    while (si < statSlides.length) mixed.push(statSlides[si++])
-    return mixed
-  }, [health, openTile, d, data, plans.data, stats.data, week.data, act])
+    for (const p of others) out.push({ key: 'post:' + p.id, label: KIND_LABEL[p.kind], secs: p.kind === 'review' ? 10 : 8, node: <PostSlide p={p} me={me} canPost={canPost} act={act} onFrame={setFraming} onOpen={x => setViewing(x.id)} /> })
+    return out
+  }, [data, act])
 
   // ── ONE CLOCK FOR EVERYONE (Jon, 2026-10-07: "it flows weird when you land … keep it where everyone
   // is seeing the same thing at the same time unless they move it forward — set on a timer vs on
@@ -165,7 +129,9 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
   }, [])
   const [waited, setWaited] = useState(false)
   useEffect(() => { const t = setTimeout(() => setWaited(true), 4000); return () => clearTimeout(t) }, [])
-  const ready = !!data && ((!stats.loading && !plans.loading && !!health) || waited)
+  // One source feeds the card now, so ready is simply: the posts are in, or four seconds passed.
+  // Waiting on three other fetches is what made it flicker on landing.
+  const ready = !!data || waited
   const [manual, setManual] = useState<{ key: string; until: number } | null>(null)
   const [held, setHeld] = useState<string | null>(null)
   const N = slides.length
@@ -239,108 +205,6 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
 }
 
 // ── SLIDES ──────────────────────────────────────────────────────────────────────────────────────
-function HealthSlide({ h, open }: { h: OpsHealth; open: ((tile: string) => void) | null }) {
-  const tone = h.band === 'smooth' ? { ring: '#059669', text: 'text-emerald-700' } : h.band === 'watch' ? { ring: '#d97706', text: 'text-amber-700' } : { ring: '#e11d48', text: 'text-rose-700' }
-  const r = 24, c = 2 * Math.PI * r
-  const weak = h.dims.slice().sort((a, b) => a.score - b.score).slice(0, 4)
-  return (
-    <div className="flex items-center gap-4 flex-wrap">
-      <div className="flex items-center gap-3 shrink-0">
-        <svg width="60" height="60" viewBox="0 0 60 60" aria-hidden>
-          <circle cx="30" cy="30" r={r} fill="none" stroke="rgba(15,23,42,.08)" strokeWidth="5" />
-          <circle cx="30" cy="30" r={r} fill="none" stroke={tone.ring} strokeWidth="5" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - h.score / 100)} transform="rotate(-90 30 30)" />
-        </svg>
-        <button onClick={() => document.getElementById('day-kpis')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="text-left rounded-lg hover:bg-slate-50 -mx-1.5 px-1.5" title="See the tiles behind this score">
-          <div className="flex items-baseline gap-2"><span className={'lh-display text-[40px] leading-none tabular-nums ' + tone.text}>{h.score}</span><span className={'text-[14px] font-semibold ' + tone.text}>{h.label}</span></div>
-          <p className="text-[12.5px] text-muted max-w-[30rem] line-clamp-2">{h.headline}</p>
-        </button>
-      </div>
-      <div className="hidden sm:flex flex-wrap gap-1.5 flex-1 min-w-[200px]">
-        {weak.map(dm => (
-          <button key={dm.key} onClick={() => open?.(dm.tile)} title={dm.why || dm.label}
-            className={'rounded-lg border px-2 py-1 text-left hover:border-ink/40 ' + (dm.score >= 85 ? 'border-emerald-200' : dm.score >= 65 ? 'border-amber-200' : 'border-rose-200')}>
-            <span className="block text-[11px] text-muted leading-tight">{dm.label}</span>
-            <span className={'block text-[15px] font-semibold tabular-nums leading-tight ' + (dm.score >= 85 ? 'text-emerald-700' : dm.score >= 65 ? 'text-amber-700' : 'text-rose-700')}>{dm.score}</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-type Must = { key: string; n: number; text: string; href: string; hot: boolean }
-function haveToRows(d: CommandDay): Must[] {
-  const t = d.tiles, out: Must[] = []
-  const add = (key: string, n: number, one: string, many: string, href: string, hot: boolean) => { if (n) out.push({ key, n, text: n === 1 ? one : many, href, hot }) }
-  add('claims', t.claims.dueSoon, 'claim to file before its deadline', 'claims to file before their deadline', '/claims', true)
-  add('glitches', t.glitches.overdue, 'guest issue past due', 'guest issues past due', '/glitches', true)
-  add('msgs', t.guestDesk.messages, 'guest waiting on a reply', 'guests waiting on a reply', '/inbox', false)
-  add('welcome', t.guestDesk.welcome, 'welcome call to make', 'welcome calls to make', '/welcome-calls', false)
-  add('unowned', t.tasks.unassigned, 'task with nobody on it', 'tasks with nobody on it', '/maintenance', false)
-  return out
-}
-function HaveToSlide({ must, rem, today, canPost, act }: { must: Must[]; rem: Post[]; today: string; canPost: boolean; act: (b: any) => Promise<void> }) {
-  return (
-    <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-1">
-      {must.slice(0, rem.length ? 2 : 4).map(m => (
-        <li key={m.key}>
-          <Link href={m.href} className="flex items-baseline gap-2 rounded-md py-0.5 hover:underline">
-            <span className={'lh-display text-[22px] leading-none tabular-nums w-8 text-right ' + (m.hot ? 'text-rose-700' : 'text-amber-700')}>{m.n}</span>
-            <span className="text-[13px] text-ink">{m.text}</span>
-          </Link>
-        </li>
-      ))}
-      {rem.slice(0, 4 - Math.min(must.length, rem.length ? 2 : 4)).map(p => {
-        const st = dueState(p, today), done = st === 'done'
-        return (
-          <li key={p.id} className="flex items-center gap-2 py-0.5 group">
-            <button onClick={() => act({ action: done ? 'undone' : 'done', id: p.id })} aria-label={done ? 'Mark not done' : 'Mark done'}
-              className={'w-[18px] h-[18px] ml-[14px] shrink-0 rounded-full border-2 flex items-center justify-center ' + (done ? 'border-emerald-600 bg-emerald-600' : 'border-slate-300 hover:border-ink')}>
-              {done && <Check size={11} className="text-white" strokeWidth={3} />}
-            </button>
-            <span className={'text-[13px] truncate ' + (done ? 'line-through text-muted' : 'text-ink')}>{p.title || p.body}</span>
-            {!done && st === 'overdue' && <span className="text-[11px] font-semibold text-rose-700 shrink-0">overdue</span>}
-            {!done && st === 'today' && <span className="text-[11px] font-semibold text-amber-700 shrink-0">today</span>}
-            {!done && (st === 'soon' || st === 'later') && <span className="text-[11px] text-muted shrink-0">by {shortDay(p.due)}</span>}
-            {p.owner && <span className="text-[11px] text-muted shrink-0">{p.owner}</span>}
-            {canPost && <button onClick={() => act({ action: 'delete', id: p.id })} aria-label="Remove" className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-muted hover:text-rose-600"><Trash2 size={12} /></button>}
-          </li>
-        )
-      })}
-    </ul>
-  )
-}
-
-function RecSlide({ r, n, of }: { r: Plan; n: number; of: number }) {
-  const first = (String(r.detail || '').match(/FIRST STEP:\s*([^\n]+)/) || [])[1] || ''
-  return (
-    <button onClick={() => { const el = document.getElementById('decide'); el?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }} className="block w-full text-left min-w-0 rounded-lg hover:bg-slate-50 -mx-1.5 px-1.5" title="Open it in Decide to accept or pass">
-      <div className="text-[11.5px] text-muted">Priority {n} of {of}{r.area ? ' · ' + cap(r.area) : ''}</div>
-      <div className="lh-display text-[22px] leading-[1.2] text-ink mt-0.5 line-clamp-2">{r.title}</div>
-      {first && <div className="text-[12.5px] text-ink/75 mt-1 line-clamp-1"><span className="font-semibold text-ink">First step:</span> {first}</div>}
-    </button>
-  )
-}
-
-function StatsSlide({ facts, asOf }: { facts: Fact[]; asOf?: string }) {
-  const at = asOf ? new Date(asOf).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }) : ''
-  return (
-    <div className="relative grid grid-cols-2 gap-4">
-      {at ? <span className="absolute -top-1 right-0 text-[10.5px] text-muted/80" title="These numbers refresh every 5 minutes">Updated {at}</span> : null}
-      {facts.map(f => {
-        const inner = (
-          <div className="min-w-0">
-            <div className="text-[12px] text-muted truncate">{f.label}</div>
-            <div className={'lh-display leading-[1.05] tabular-nums ' + (f.value.length > 9 ? 'text-[26px] ' : 'text-[34px] ') + TONE_TEXT[f.tone || 'slate']}>{f.value}</div>
-            <div className="text-[12px] text-muted line-clamp-2">{f.sub}</div>
-          </div>
-        )
-        return f.href ? <Link key={f.key} href={f.href} className="block rounded-lg hover:bg-slate-50 -mx-1.5 px-1.5">{inner}</Link> : <div key={f.key}>{inner}</div>
-      })}
-    </div>
-  )
-}
-
 // A post with photos: the photos on the left (they cross-fade every few seconds when there are
 // several — nothing on the board sits still), the words on the right. Tap a photo to open it full size.
 function PostSlide(props: { p: Post; me: string; canPost: boolean; act: (b: any) => Promise<void>; onFrame?: (p: Post) => void; onOpen?: (p: Post) => void }) {

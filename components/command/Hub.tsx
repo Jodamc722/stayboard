@@ -735,7 +735,11 @@ export function UnpaidRow({ r, canEdit, onChanged, lane }: { r: UnpaidHubRow; ca
 }
 
 // ── a lane ──────────────────────────────────────────────────────────────────────────────────────
-function Lane({ area, items, focused, empty, right }: { area: Area; items: HubItem[]; focused: boolean; empty: string; right?: ReactNode }) {
+// `hide` is the set of keys the Now list is already showing (Jon, 2026-10-16: the Now list and the
+// lanes were printing the same five guest issues word for word). The lane's COUNTS still come from
+// the full set — there really are 25 glitches — but a row is drawn once per screen, and a line at
+// the bottom says where the rest of them went, so nothing reads as missing.
+function Lane({ area, items, focused, empty, right, hide }: { area: Area; items: HubItem[]; focused: boolean; empty: string; right?: ReactNode; hide?: Set<string> }) {
   const A = AREA[area]
   const [sub, setSub] = useState<string | null>(null)
   const [all, setAll] = useState(false)
@@ -746,7 +750,9 @@ function Lane({ area, items, focused, empty, right }: { area: Area; items: HubIt
     return Object.keys(n).sort((a, b) => SUB_ORDER.indexOf(a) - SUB_ORDER.indexOf(b)).map(k => ({ key: k, n: n[k] }))
   }, [items])
   const pick = sub && subs.some(s => s.key === sub) ? sub : null
-  const list = (pick ? items.filter(i => i.sub === pick) : items.filter(i => i.key !== 'team:where')).slice().sort((a, b) => b.score - a.score)
+  const base = pick ? items.filter(i => i.sub === pick) : items.filter(i => i.key !== 'team:where')
+  const upTop = hide ? base.filter(i => hide.has(i.key)).length : 0
+  const list = (hide ? base.filter(i => !hide.has(i.key)) : base).slice().sort((a, b) => b.score - a.score)
   const shown = all ? list : list.slice(0, LANE_ROWS)
   const hidden = list.length - shown.length
   return (
@@ -764,10 +770,12 @@ function Lane({ area, items, focused, empty, right }: { area: Area; items: HubIt
             className={'lh-tab text-[11px] font-semibold px-2 py-0.5 rounded-full border tabular-nums ' + (pick === s.key ? 'lh-tab-on bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>{s.key} {s.n}</button>)}
         </div>
       )}
+      {list.length === 0 && upTop > 0 && <p className="px-1 text-[11.5px] text-muted">All {upTop} {upTop === 1 ? 'is' : 'are'} at the top, under Now.</p>}
       {list.length > 0 && (
         <div className={LIST}>
           {shown.map(i => <div key={i.key}>{i.node}</div>)}
           {hidden > 0 && <button onClick={() => setAll(true)} className="w-full text-left px-3 py-2 text-[12px] font-semibold text-brand-700 hover:bg-app inline-flex items-center gap-1"><ChevronDown size={13} /> {hidden} more</button>}
+          {upTop > 0 && <p className="px-3 py-2 text-[11.5px] text-muted">{upTop} more {upTop === 1 ? 'is' : 'are'} at the top, under Now.</p>}
           {all && list.length > LANE_ROWS && !focused && <button onClick={() => setAll(false)} className="w-full text-left px-3 py-2 text-[12px] font-semibold text-muted hover:bg-app inline-flex items-center gap-1"><ChevronUp size={13} /> Show fewer</button>}
         </div>
       )}
@@ -924,6 +932,9 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   // NOW: the top of everything, across areas — but only rows that clear the bar.
   const nowAll = items.filter(i => i.score >= NOW_MIN).sort((a, b) => b.score - a.score)
   const now = nowOpen ? nowAll : nowAll.slice(0, NOW_MAX)
+  // What Now is actually drawing right now. In focus mode Now is not rendered at all, so nothing
+  // is held back from the lane.
+  const shownInNow = new Set(now.map(i => i.key))
 
   // ── the KPIs ──
   const free = t.team.rows.reduce((a, r) => a + Math.max(0, (r.capacityMinutes || 0) - (r.loadMinutes || 0)), 0)
@@ -986,7 +997,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
         <div className="grid gap-5 lg:grid-cols-2 items-start">
           {[['ops', 'reviews'], ['guests', 'admin']].map((col, ci) => (
             <div key={ci} className="space-y-5 min-w-0">
-              {(col as Area[]).map(a => <Lane key={a} area={a} items={items.filter(i => i.area === a)} focused={false} empty={EMPTY[a]} right={laneStat(a)} />)}
+              {(col as Area[]).map(a => <Lane key={a} area={a} items={items.filter(i => i.area === a)} focused={false} empty={EMPTY[a]} right={laneStat(a)} hide={shownInNow} />)}
             </div>
           ))}
         </div>

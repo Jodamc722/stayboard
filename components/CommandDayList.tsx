@@ -50,6 +50,8 @@ import {
 import { useSlackQueue, EVENT_LABEL, expiresIn, type Pending as SlackPending } from '@/components/SlackQueueCard'
 import { AvailabilityAlert } from '@/components/AvailabilityAlert'
 import { BulletinBoard } from '@/components/command/Bulletin'
+import { BULLETIN_URL } from '@/components/command/Bulletin'
+import { dueState, type Post as BoardPost } from '@/lib/bulletin'
 import { ThoughtCard, useThoughts } from '@/components/EveThoughts'
 import { CommandHub, ApprovalRow } from '@/components/command/Hub'
 
@@ -68,6 +70,8 @@ function useTick(ms = 30_000): number { const [t, setT] = useState(0); useEffect
 const ago = (iso: string, tick: number) => { void tick; const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000)); return s < 60 ? 'just now' : s < 3600 ? Math.round(s / 60) + 'm ago' : Math.round(s / 3600) + 'h ago' }
 const plural = (n: number, one: string, many?: string) => n + ' ' + (n === 1 ? one : (many || one + 's'))
 const PRIMARY = BTN + ' bg-ink text-white whitespace-nowrap'
+/** Already done — the button is still there to undo it, but it stops shouting. */
+const SECONDARY = BTN + ' border border-line text-muted hover:text-ink whitespace-nowrap'
 /** A band's list. No overflow-hidden (unlike CARD): it would clip the hover labels on the top row. */
 const LIST = 'rounded-2xl border border-line bg-white divide-y divide-line'
 
@@ -301,11 +305,51 @@ function Row({ sev, title, meta, tags, primary, secondary, onTap, expanded, chil
 }
 
 // ── 1. DECIDE ───────────────────────────────────────────────────────────────────────────────────
+// REMINDERS MOVED OUT OF THE BULLETIN (Jon, 2026-10-16). They used to live on a cycling slide,
+// which meant a thing somebody had to DO was visible for nine seconds in every ninety. A reminder
+// is work, so it sits in the work list and you tick it here.
+//
+// It reads the same URL the bulletin card already fetched, so the shared cache serves it and the
+// page makes no extra request for this.
+function useReminders() {
+  const { data } = useCachedFetch<{ today?: string; canPost?: boolean; haveTo?: BoardPost[] }>(BULLETIN_URL, { ttl: 60_000 })
+  const [busy, setBusy] = useState('')
+  const [local, setLocal] = useState<Record<string, boolean>>({})
+  const rows = (data?.haveTo || []).filter(p => dueState(p, data?.today || '') !== 'done' || local[p.id] !== undefined)
+  const tick = async (id: string, done: boolean) => {
+    setBusy(id)
+    setLocal(l => ({ ...l, [id]: done }))          // the tick lands before the round trip
+    try {
+      await fetch(BULLETIN_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: done ? 'done' : 'undone', id }) })
+      invalidateCache(BULLETIN_URL)
+    } catch { setLocal(l => ({ ...l, [id]: !done })) }   // it did not land — put the tick back
+    finally { setBusy('') }
+  }
+  return { rows, today: data?.today || '', busy, local, tick }
+}
+
+function ReminderRow({ p, today, done, busy, tick }: { p: BoardPost; today: string; done: boolean; busy: boolean; tick: (id: string, done: boolean) => void }) {
+  const st = dueState(p, today)
+  const meta = [p.owner || '', st === 'overdue' ? 'overdue' : st === 'today' ? 'due today' : p.due ? 'by ' + p.due : ''].filter(Boolean).join(' · ')
+  return (
+    <Row sev={done ? null : st === 'overdue' ? 'now' : st === 'today' ? 'today' : null}
+      title={<span className={done ? 'line-through text-muted' : ''}>{p.title || p.body}</span>} meta={meta}
+      tags={<Tag tone="amber" title="A reminder somebody posted on the board">Have to</Tag>}
+      primary={
+        <button onClick={() => tick(p.id, !done)} disabled={busy}
+          className={done ? SECONDARY : PRIMARY} title={done ? 'Mark not done' : 'Mark done'}>
+          {busy ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} {done ? 'Undo' : 'Done'}
+        </button>
+      } />
+  )
+}
+
 function DecideBand({ d, claims, links, approvals, onCleared, onChanged }: { d: CommandDay; claims: NextItem[]; links: NextItem[]; approvals: GuestDeskRow[]; onCleared: (key: string) => void; onChanged: () => void }) {
   const eve = useEveQuestions()
   const plans = useEvePlans()
   const drafts = useEveDrafts()
   const slack = useSlackQueue()
+  const reminders = useReminders()
   const [allEve, setAllEve] = useState(false)
   const slackLive = slack.live || []
   // Questions cut from one template ("Who does what at Amrit?", "…at Lucerne?", …) are ONE row that
@@ -315,15 +359,27 @@ function DecideBand({ d, claims, links, approvals, onCleared, onChanged }: { d: 
   const eveMore = eveGroups.slice(eveShown.length).reduce((a, g) => a + g.qs.length, 0)
   const eveCount = eve.rows.length || (eve.loaded ? 0 : eve.count)
   const approvalsHidden = Math.max(0, d.tiles.guestDesk.approvals - d.tiles.guestDesk.rows.filter(r => r.kind === 'approval').length)
-  const count = slackLive.length + approvals.length + claims.length + links.length + eveCount + plans.rows.length + drafts.rows.length
+  const count = reminders.rows.length + slackLive.length + approvals.length + claims.length + links.length + eveCount + plans.rows.length + drafts.rows.length
 
   const rows: Ranked[] = []
+  // Reminders first: somebody wrote these down because they must happen today.
+  for (const p of reminders.rows) {
+    const done = reminders.local[p.id] ?? (dueState(p, reminders.today) === 'done')
+    rows.push({ key: 'rem:' + p.id, sev: done ? 'today' : 'now', rank: -1, node: <ReminderRow p={p} today={reminders.today} done={done} busy={reminders.busy === p.id} tick={reminders.tick} /> })
+  }
   for (const it of slackLive) rows.push({ key: 'slack:' + it.id, sev: 'now', rank: 0, node: <SlackRow item={it} q={slack} /> })
   for (const c of claims) rows.push({ key: c.key, sev: c.severity, rank: c.rank, node: <ClaimRow item={c} onCleared={onCleared} /> })
   for (const l of links) rows.push({ key: l.key, sev: l.severity, rank: l.rank, node: <DecideLinkRow item={l} onCleared={onCleared} /> })
   for (const a of approvals) rows.push({ key: a.key, sev: 'today', rank: 3, node: <ApprovalRow row={a} onCleared={onCleared} onChanged={onChanged} /> })
   if (approvalsHidden > 0) rows.push({ key: 'ap:more', sev: 'today', rank: 3.5, node: <Row sev={null} title={plural(approvalsHidden, 'more approval') + ' waiting'} primary={<Link href="/requests" className={PRIMARY}>Approvals</Link>} /> })
-  for (const dr of drafts.rows) rows.push({ key: 'draft:' + dr.id, sev: 'today', rank: 2.5, node: <EveDraftRow d={dr} act={drafts.act} busy={drafts.busy === dr.id} /> })
+  // ONE DECISION, NOT TWENTY-FOUR (Jon, 2026-10-16: the drafts arrived as a wall of near-identical
+  // rows). Drafts cut from the same template collapse into one row with Send all; the ones that
+  // are genuinely their own case stay their own row, because those are the ones worth reading.
+  for (const g of groupDrafts(drafts.rows)) {
+    rows.push(g.drafts.length === 1
+      ? { key: 'draft:' + g.drafts[0].id, sev: 'today', rank: 2.5, node: <EveDraftRow d={g.drafts[0]} act={drafts.act} busy={drafts.busy === g.drafts[0].id} /> }
+      : { key: 'draftgroup:' + g.key, sev: 'today', rank: 2.5, node: <EveDraftGroupRow g={g} act={drafts.act} busy={drafts.busy} /> })
+  }
   for (const p of plans.rows) rows.push({ key: 'plan:' + p.id, sev: 'today', rank: 8, node: <EvePlanRow p={p} act={plans.decide} busy={plans.busy === p.id} /> })
   for (const g of eveShown) rows.push({ key: 'eve:' + g.key, sev: 'today', rank: 9, node: g.qs.length > 1 ? <EveGroupRow g={g} act={eve.act} busy={eve.busy} /> : <EveRow q={g.qs[0]} act={eve.act} busy={eve.busy === g.qs[0].id} /> })
   if (!eve.loaded && eve.count > 0) rows.push({ key: 'eve:loading', sev: 'today', rank: 9, node: <Row sev={null} title={'Eve is asking you ' + eve.count} meta={<span className="inline-flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> getting them</span>} /> })
@@ -441,6 +497,83 @@ function EveDraftRow({ d, act, busy }: { d: EveDraft; act: (id: string, op: 'sen
         <div className="mt-2 ml-3.5">
           <textarea value={text} onChange={e => setText(e.target.value)} rows={4} aria-label="Eve's draft" className="w-full rounded-xl border border-line bg-white px-3 py-2 text-[13px] text-ink leading-relaxed focus:outline-none focus:ring-2 focus:ring-brand-200" />
           <div className="mt-1 text-[11px] text-muted">{isReview ? 'Edit it here, then Send — it posts publicly on the channel.' : d.conversationId ? <>Edit it here, then Send. <Link href={'/inbox/' + d.conversationId} className="text-brand-700 hover:underline">Open the thread</Link>.</> : null}</div>
+        </div>
+      )}
+    </Row>
+  )
+}
+
+// GROUPING THE DRAFTS. Eve writes one reply per guest, but she writes them from a handful of
+// reasons — "we fixed it and nobody told them", "the guest has been waiting". Twenty-four rows of
+// the first reason is one decision rendered twenty-four times, and a wall like that gets scrolled
+// past rather than cleared. So the reason is the key: same reason, one row, Send all.
+//
+// Dropping the time is the whole trick — "Fixed 6:59am" and "Fixed 1:16pm" are the same sentence.
+type DraftGroup = { key: string; title: string; why: string; drafts: EveDraft[] }
+
+function draftTemplate(why: string): string {
+  return String(why || '')
+    .replace(/\b\d{1,2}:\d{2}\s*(am|pm)?/gi, '')      // 6:59am
+    .replace(/\b\d+\s*(h|hr|hrs|hours|d|days|m|min|mins)\b/gi, '')  // 26h, 3 days
+    .replace(/^[a-z0-9_.-]+\s*·\s*/i, '')               // the channel prefix (airbnb2 · …)
+    .replace(/\s+/g, ' ').replace(/\s*;\s*/g, '; ').trim().toLowerCase().slice(0, 60)
+}
+
+export function groupDrafts(rows: EveDraft[]): DraftGroup[] {
+  const by: Record<string, DraftGroup> = {}
+  const order: string[] = []
+  for (const d of rows) {
+    const key = draftTemplate(d.why) || d.id
+    if (!by[key]) { by[key] = { key, title: '', why: d.why || '', drafts: [] }; order.push(key) }
+    by[key].drafts.push(d)
+  }
+  return order.map(k => {
+    const g = by[k]
+    if (g.drafts.length === 1) return g
+    // Said as the job it is, not as the sentence the model wrote: "Tell 24 guests their issue is
+    // fixed" is a thing you decide; "fixed; the guest has not been told ×24" is a log line.
+    const n = g.drafts.length
+    const t = k
+    g.title = /not been told/.test(t) ? `Tell ${n} guests their issue is fixed`
+      : /waited|no answer/.test(t) ? `Reply to ${n} guests who are still waiting`
+      : `${plural(n, 'reply', 'replies')} — ${g.why.replace(/^[a-z0-9_.-]+\s*·\s*/i, '')}`
+    return g
+  })
+}
+
+function EveDraftGroupRow({ g, act, busy }: { g: DraftGroup; act: (id: string, op: 'send' | 'discard', body?: string) => Promise<DraftOutcome>; busy: string }) {
+  const [open, setOpen] = useState(false)
+  const [running, setRunning] = useState(0)
+  const [err, setErr] = useState('')
+  const [note, setNote] = useState('')
+
+  // SEQUENTIAL, AND IT SAYS WHERE IT GOT TO. Twenty-four sends fired at once is a rate limit and a
+  // half-sent batch nobody can account for; one at a time with a count means a failure halfway
+  // leaves a number you can read.
+  const sendAll = async () => {
+    if (running) return
+    if (!confirm(`Send all ${g.drafts.length} replies now? Each goes to its own guest.`)) return
+    setErr(''); setNote('')
+    let sent = 0, failed = 0
+    for (const d of g.drafts) {
+      setRunning(sent + failed + 1)
+      const r = await act(d.id, 'send', d.draft)
+      if (r.err) failed++; else sent++
+    }
+    setRunning(0)
+    setNote(failed ? `${sent} sent, ${failed} did not go — open the group to retry those.` : `${sent} sent.`)
+  }
+
+  const units = g.drafts.map(d => d.unit).filter(Boolean)
+  const meta = [plural(g.drafts.length, 'guest'), units.slice(0, 3).join(', ') + (units.length > 3 ? ' +' + (units.length - 3) : '')].filter(Boolean).join(' · ')
+  return (
+    <Row sev="today" title={g.title} meta={meta} onTap={() => setOpen(o => !o)} expanded={open} err={err} note={note}
+      tags={<Tag tone="violet" title="Eve drafted one reply per guest from the same reason">Eve · {g.drafts.length}</Tag>}
+      primary={<button onClick={sendAll} disabled={!!running || !!note} className={PRIMARY}>{running ? <><Loader2 size={11} className="animate-spin" /> {running}/{g.drafts.length}</> : <><Send size={11} /> Send all</>}</button>}
+      secondary={<IconBtn title={open ? 'Hide the replies' : 'Read each one first'} onClick={() => setOpen(o => !o)}>{open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</IconBtn>}>
+      {open && (
+        <div className="mt-1.5 ml-3.5 border-l-2 border-line divide-y divide-line/70">
+          {g.drafts.map(d => <EveDraftRow key={d.id} d={d} act={act} busy={busy === d.id} />)}
         </div>
       )}
     </Row>
