@@ -222,6 +222,9 @@ function DayPanel({ unit, listingId, date, today, cells, people, items, focus, c
 
   // Who to suggest for an item on a day: the right trade already in the unit, then in the building.
   const suggest = (it: Item, d: string): string => {
+    // The same person the "Best day" line names: right trade, in this unit first, then the lightest day.
+    const i = cells.findIndex(c => c.d === d)
+    if (i >= 0) { const p = pickFor(cells, i, { dept: it.prog.dept, needsVacant: !!it.prog.needsVacant, needsDays: it.prog.needsDays || 1 }); if (p.who) return p.who }
     const team = cellOf(d)?.team || []
     const want = it.prog.dept
     const ok = (t: { trade: string }) => want === 'housekeeping' ? t.trade === 'housekeeping' : want === 'inspection' ? t.trade !== 'housekeeping' : t.trade === 'maintenance' || t.trade === 'inspection'
