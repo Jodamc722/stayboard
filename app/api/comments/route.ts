@@ -212,6 +212,7 @@ export async function POST(req: NextRequest) {
     dept: /maint|inspect/i.test(str(b.dept)) || type === 'glitch' ? 'maintenance' : 'housekeeping',
     toSlack: b.toSlack === true || b.toSlack === 'channel' ? 'channel' : b.toSlack === false ? false : 'dm',
     followers, followerTitle: actorName + ' replied: ' + label,
+    entity: { type, id },
   })
   // Optional: mirror the comment onto the BREEZEWAY task so the field crew sees it in their app.
   // Best effort - never fails the comment itself.

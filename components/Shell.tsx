@@ -690,42 +690,28 @@ function JumpPalette({ sections, onClose }: { sections: { title: string; items: 
   )
 }
 
-// SYSTEM-WIDE notifications bell — polls /api/notifications (comments, @mentions, and any
-// feature that calls lib/notify). Lives in the sidebar so it's visible on every page.
+// THE INBOX LINK (Jon, 2026-10-16: "an inbox system / process for managing all this"). The bell's
+// popover is gone — one place, /inbox, with Reply / Done / Snooze. The badge is what is OPEN and
+// not yet seen, from /api/inbox (tags, replies, assignments, project notes, handoff alerts).
 function NotificationsBell() {
-  const [open, setOpen] = useState(false)
   const [unread, setUnread] = useState(0)
-  const [items, setItems] = useState<any[]>([])
-  const loadN = () => { fetch('/api/notifications', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j && j.ok) { setUnread(j.unread || 0); setItems(Array.isArray(j.notifications) ? j.notifications : []) } }).catch(() => {}) }
-  useEffect(() => { loadN(); const t = setInterval(() => { if (document.visibilityState === 'visible') loadN() }, 60000); return () => clearInterval(t) }, [])
-  const markAll = async () => { try { await fetch('/api/notifications', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'readAll' }) }) } catch {} loadN() }
-  const openOne = async (n: any) => { try { await fetch('/api/notifications', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'read', ids: [n.id] }) }) } catch {} if (n.link) { window.location.href = n.link } else { loadN() } }
-  const when = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) }
+  const [open, setOpen] = useState(0)
+  const loadN = () => { fetch('/api/inbox?tab=snoozed', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j && j.ok) { setUnread(j.counts?.unread || 0); setOpen(j.counts?.open || 0) } }).catch(() => {}) }
+  useEffect(() => {
+    loadN()
+    const t = setInterval(() => { if (document.visibilityState === 'visible') loadN() }, 60000)
+    const onBump = () => loadN()
+    window.addEventListener('lh:inbox', onBump)
+    return () => { clearInterval(t); window.removeEventListener('lh:inbox', onBump) }
+  }, [])
   return (
-    <div className="border-t border-line px-2 py-1.5 relative">
-      <button onClick={() => { const next = !open; setOpen(next); if (next) loadN() }} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-muted hover:bg-app hover:text-ink transition-all">
+    <div className="border-t border-line px-2 py-1.5">
+      <a href="/inbox" className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-muted hover:bg-app hover:text-ink transition-all" title={open ? open + ' open' : 'Nothing waiting on you'}>
         <Bell size={16} />
-        Notifications
-        {unread > 0 && <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-600 text-white">{unread}</span>}
-      </button>
-      {open && (
-        <div className="absolute bottom-12 left-2 w-80 max-h-96 overflow-y-auto rounded-xl border border-line bg-white shadow-lg z-50">
-          <div className="flex items-center px-3 py-2 border-b border-line sticky top-0 bg-white">
-            <span className="text-sm font-semibold text-ink">Notifications</span>
-            {unread > 0 && <button onClick={markAll} className="ml-auto text-[11px] font-medium text-brand-700 hover:underline">Mark all read</button>}
-          </div>
-          {items.length === 0 && <div className="px-3 py-6 text-sm text-muted text-center">Nothing yet.</div>}
-          <div className="divide-y divide-line">
-            {items.map(n => (
-              <button key={n.id} onClick={() => openOne(n)} className={'w-full text-left px-3 py-2 hover:bg-app/60 ' + (n.read ? 'opacity-60' : '')}>
-                <div className="text-[12px] font-medium text-ink">{n.title}</div>
-                {n.body && <div className="text-[11px] text-muted line-clamp-2">{n.body}</div>}
-                <div className="text-[10px] text-muted mt-0.5">{when(n.created_at)}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+        Inbox
+        {unread > 0 ? <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-600 text-white">{unread}</span>
+          : open > 0 ? <span className="ml-auto text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-app text-muted">{open}</span> : null}
+      </a>
     </div>
   )
 }

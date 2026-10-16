@@ -7,9 +7,10 @@
 //
 // What a tag can be:
 //   @carlo  @Carlo  @carlo.perez  @carlo@stay-hospitality.com  @"Carlo Perez"  @Carlo Perez
-//   @everyone @team @all   → everyone on the roster
-//   @housekeeping @hk @maintenance @supervisors @admins → everyone with that role
-// A bare first name that two people share is NOT a tag (we never guess); "@Carlo Perez" is.
+// ONLY REAL LIGHTHOUSE USERS (Jon, 2026-10-16: "we should only be able to tag actual users"). There
+// are no group tags — @everyone / @housekeeping resolve to nobody and come back as unknown, so a
+// note can never fan out to people who were not named. A bare first name that two people share is
+// NOT a tag either (we never guess); "@Carlo Perez" is.
 
 export type RosterPerson = {
   email: string
@@ -22,28 +23,12 @@ export type RosterPerson = {
 export type ParsedMentions = {
   /** Emails of the people tagged, deduped, roster-cased (lower). */
   emails: string[]
-  /** Group words that were used, so the caller can say "@housekeeping (6 people)". */
+  /** Always empty now — kept so callers compiled against the group era still type-check. */
   groups: string[]
   /** Tokens that looked like a tag but matched nobody — the UI can say "nobody called X". */
   unknown: string[]
 }
 
-const GROUP_WORDS: Record<string, string> = {
-  everyone: 'everyone', team: 'everyone', all: 'everyone', channel: 'everyone', here: 'everyone',
-  housekeeping: 'housekeeping', hk: 'housekeeping', cleaners: 'housekeeping', cleaning: 'housekeeping',
-  maintenance: 'maintenance', maint: 'maintenance', tech: 'maintenance', techs: 'maintenance',
-  supervisors: 'supervisor', supervisor: 'supervisor', leads: 'supervisor',
-  admins: 'admin', admin: 'admin', management: 'admin', managers: 'admin',
-  ccs: 'ccs', support: 'ccs', frontdesk: 'ccs',
-}
-const ROLE_OF_GROUP: Record<string, (role: string) => boolean> = {
-  everyone: () => true,
-  housekeeping: r => /house|clean|hk/.test(r),
-  maintenance: r => /maint|tech|repair/.test(r),
-  supervisor: r => /super|lead/.test(r),
-  admin: r => /admin|owner|manager|gm/.test(r),
-  ccs: r => /ccs|support|desk|care/.test(r),
-}
 
 const fold = (s: string) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
 const words = (s: string) => fold(s).split(/[^a-z0-9]+/).filter(Boolean)
@@ -80,15 +65,6 @@ export function parseMentions(text: string, roster: RosterPerson[], picked: stri
     }
     const raw = (quoted || loose || '').trim()
     if (!raw) continue
-    // Group word?
-    const g = GROUP_WORDS[fold(raw.split(/\s+/)[0])]
-    if (g) {
-      // "@everyone Meeting at 9" — the group word stands on its own; what follows is the sentence.
-      groups.add(g)
-      const test = ROLE_OF_GROUP[g]
-      for (const p of people) if (test(fold(p.role || ''))) out.add(p.email)
-      continue
-    }
     const hit = resolveName(raw, people)
     if (hit) { out.add(hit); continue }
     // "@Carlo Perez" may really be "@Carlo" followed by a sentence starting with a capital — try the
@@ -137,7 +113,6 @@ export function namesFor(emails: string[], roster: RosterPerson[]): string[] {
 /** Human line for the result — "Carlo, Alberto and 4 in housekeeping". */
 export function describeMentions(p: ParsedMentions, roster: RosterPerson[]): string {
   if (!p.emails.length) return ''
-  if (p.groups.length) return `${p.emails.length} people (@${p.groups.join(', @')})`
   const n = namesFor(p.emails, roster).map(x => x.split(' ')[0])
   return n.length <= 3 ? n.join(', ') : `${n.slice(0, 2).join(', ')} and ${n.length - 2} more`
 }

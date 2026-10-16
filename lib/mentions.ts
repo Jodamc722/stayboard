@@ -60,6 +60,8 @@ export type TagInput = {
   /** Extra people to tell as plain 'comment' notifications (thread followers, the glitch creator). */
   followers?: string[]
   followerTitle?: string
+  /** The app_comments thread this came from — lets the Inbox reply in place. */
+  entity?: { type: string; id: string } | null
 }
 
 export type TagResult = {
@@ -84,14 +86,14 @@ export async function tagAndNotify(inp: TagInput): Promise<TagResult> {
   // 1. The bell + the pop-up.
   if (mentions.emails.length) {
     try {
-      const r = await notify(mentions.emails, { kind: 'mention', title: `${actor} tagged you · ${inp.title}`.slice(0, 200), body, link: inp.link || undefined, actor: me })
+      const r = await notify(mentions.emails, { kind: 'mention', title: `${actor} tagged you · ${inp.title}`.slice(0, 200), body, link: inp.link || undefined, actor: me, entity: inp.entity || null })
       if (r.ok) out.notified = mentions.emails.slice()
     } catch { /* best effort */ }
   }
   // Followers hear about the reply, never twice.
   const followers = Array.from(new Set((inp.followers || []).map(e => str(e).toLowerCase()))).filter(e => e && e !== me && !mentions.emails.includes(e) && people.some(p => p.email === e))
   if (followers.length) {
-    try { await notify(followers, { kind: 'comment', title: (inp.followerTitle || `${actor} replied · ${inp.title}`).slice(0, 200), body, link: inp.link || undefined, actor: me }) } catch { /* best effort */ }
+    try { await notify(followers, { kind: 'comment', title: (inp.followerTitle || `${actor} replied · ${inp.title}`).slice(0, 200), body, link: inp.link || undefined, actor: me, entity: inp.entity || null }) } catch { /* best effort */ }
   }
 
   // 2. Slack.

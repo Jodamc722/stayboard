@@ -18,6 +18,8 @@ export const GROUP_ORDER = ['Today', 'Eve', 'Operations', 'Guest Experience', 'R
 
 export const FEATURES: Feature[] = [
   { key: 'command',       label: 'Today (everyone)',  path: '/command', group: 'Today' },
+  // The Inbox (Jon, 2026-10-16): what people say to you — tags, replies, assignments, alerts.
+  { key: 'inbox',         label: 'Inbox (everyone)',  path: '/inbox', group: 'Today' },
   // Open loops (Jon, 2026-09-28): the page behind Eve's 'Keeping tabs' — guest asks, problems,
   // promises, unanswered questions, decisions — with Done / Not a loop. Replaces the long roll-up.
   { key: 'loops',         label: 'Open loops (Eve tab)', path: '/loops', group: 'Eve' },
@@ -336,7 +338,7 @@ export const HAND_PICKED: string[] = ['garden']
 // can only raise the level, never switch it off. The one way to turn it off is per person: the
 // "Today page" switch in Users → person → Edit (features.command = 'off'). Each section on Today is
 // still gated by its own API (money, Eve, approvals), so opening the page grants nothing else.
-export const EVERYONE_PAGES: string[] = ['command']
+export const EVERYONE_PAGES: string[] = ['command', 'inbox']
 /** A role's level for an everyone-page is never below full (Today's own buttons each check their own tab). */
 export function everyoneFloor(key: string, lv: Level): Level { return EVERYONE_PAGES.includes(key) && lv === 'off' ? 'full' : lv }
 export function applyHandPicked(levels: Record<string, Level>, features?: Record<string, any> | null): Record<string, Level> {

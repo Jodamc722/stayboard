@@ -50,6 +50,7 @@ export const DESKS: Desk[] = [
     blurb: 'The day on one page: what to decide, fix and clear across every desk, and what is yours.',
     views: [
       { to: '/command', label: 'Today', hint: 'The day on one page: decide, fix, clear, and what is yours' },
+      { to: '/inbox', label: 'Inbox', hint: 'What people said to you — tags, replies, assignments, alerts — open until you deal with it' },
     ],
   },
   {

@@ -9,7 +9,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 const DAILY_CAP = 4
 const UNCAPPED = new Set(['mention', 'comment'])
 
-export async function notify(recipients: string[], n: { kind: string; title: string; body?: string; link?: string; actor?: string }) {
+export type NotifyEntity = { type: string; id: string }
+export async function notify(recipients: string[], n: { kind: string; title: string; body?: string; link?: string; actor?: string; entity?: NotifyEntity | null }) {
   const db = supabaseAdmin()
   let emails = Array.from(new Set(recipients.map(r => String(r || '').trim().toLowerCase()).filter(Boolean)))
     .filter(r => r !== String(n.actor || '').toLowerCase())
@@ -36,8 +37,12 @@ export async function notify(recipients: string[], n: { kind: string; title: str
       emails = emails.filter(e => (count[e] || 0) < DAILY_CAP)
     } catch { /* fail-open: send */ }
   }
-  const rows = emails.map(user_email => ({ user_email, actor_email: n.actor || null, kind: n.kind, title: n.title.slice(0, 200), body: (n.body || '').slice(0, 500) || null, link: n.link || null }))
-  if (!rows.length) return { ok: true, sent: 0 }
-  const { error } = await db.from('app_notifications').insert(rows)
+  const base = emails.map(user_email => ({ user_email, actor_email: n.actor || null, kind: n.kind, title: n.title.slice(0, 200), body: (n.body || '').slice(0, 500) || null, link: n.link || null }))
+  if (!base.length) return { ok: true, sent: 0 }
+  // THE INBOX COLUMNS (migration 155): the thread the row came from, so Inbox can reply in place.
+  // Until the migration runs the insert is retried without them — a bell row beats no row.
+  const rows = n.entity ? base.map(r => ({ ...r, entity_type: String(n.entity!.type).slice(0, 40), entity_id: String(n.entity!.id).slice(0, 120) })) : base
+  let { error } = await db.from('app_notifications').insert(rows)
+  if (error && n.entity && /entity_type|entity_id|schema cache/i.test(error.message)) ({ error } = await db.from('app_notifications').insert(base))
   return { ok: !error, sent: rows.length, error: error ? error.message : undefined }
 }
