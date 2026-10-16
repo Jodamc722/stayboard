@@ -60,6 +60,36 @@ export async function setOverride(listingId: string, ac: AcType | null, by: stri
   await setSetting(EQUIP_KEY, { ...(cur || {}), ac: acMap }, by)
 }
 
+// ── UNIT INFO FOR THE JOB (Jon, 2026-10-16: "should add info, like AC filter sizes etc") ────────
+// What the person sent to do the upkeep needs to bring and find: the filter size and how many, where
+// the filter is, and anything else about the unit's equipment. Kept beside the A/C type in the same
+// setting; printed on every upkeep task booked for the unit, and shown on the Upkeep page.
+export type UnitInfo = { filterSize?: string; filterQty?: number | null; filterLocation?: string; notes?: string; by?: string; at?: string }
+export async function getUnitInfo(): Promise<Record<string, UnitInfo>> {
+  const v = await getSetting<any>(EQUIP_KEY, null).catch(() => null)
+  return v && typeof v === 'object' && v.info && typeof v.info === 'object' ? v.info : {}
+}
+export async function setUnitInfo(listingId: string, info: UnitInfo, by: string): Promise<UnitInfo | null> {
+  const cur = await getSetting<any>(EQUIP_KEY, null).catch(() => null)
+  const map = { ...((cur && cur.info) || {}) }
+  const clean: UnitInfo = {
+    filterSize: str(info.filterSize).slice(0, 40), filterLocation: str(info.filterLocation).slice(0, 120), notes: str(info.notes).slice(0, 400),
+    filterQty: Number.isFinite(Number(info.filterQty)) && Number(info.filterQty) > 0 ? Math.min(20, Math.round(Number(info.filterQty))) : null,
+  }
+  const empty = !clean.filterSize && !clean.filterLocation && !clean.notes && !clean.filterQty
+  if (empty) delete map[listingId]; else map[listingId] = { ...clean, by, at: new Date().toISOString() }
+  await setSetting(EQUIP_KEY, { ...(cur || {}), info: map }, by)
+  return empty ? null : map[listingId]
+}
+/** The lines a task carries: the filter for A/C jobs, the notes for every job. */
+export function infoLines(info: UnitInfo | null | undefined, acJob: boolean): string[] {
+  if (!info) return []
+  const out: string[] = []
+  if (acJob && (info.filterSize || info.filterLocation)) out.push(`FILTER: ${info.filterSize || 'size not recorded'}${info.filterQty ? ' × ' + info.filterQty : ''}${info.filterLocation ? ' — ' + info.filterLocation : ''}`)
+  if (info.notes) out.push(`UNIT NOTES: ${info.notes}`)
+  return out
+}
+
 /** Infer every active unit's A/C type, with evidence. One pass, four reads. */
 export async function inferAc(): Promise<AcInference[]> {
   const db = supabaseAdmin()

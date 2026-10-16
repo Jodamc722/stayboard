@@ -55,6 +55,8 @@ export function UpkeepBoard() {
   const [err, setErr] = useState('')
   const [recording, setRecording] = useState<string>('')      // row id with the date box open
   const [recDate, setRecDate] = useState<string>('')
+  const [infoEdit, setInfoEdit] = useState<{ listingId: string; filterSize: string; filterQty: string; filterLocation: string; notes: string } | null>(null)
+  const [infoLocal, setInfoLocal] = useState<Record<string, any>>({})
   const [done, setDone] = useState<Record<string, string>>({})  // row id → what happened ("recorded Oct 1", "approved — Oct 15")
 
   // A PERSON RECORDS THE LAST TIME (2026-10-13: "no record" was two thirds of the ledger). The date
@@ -76,11 +78,25 @@ export function UpkeepBoard() {
     if (busy) return
     setBusy(r.id); setErr('')
     try {
-      const res = await fetch('/api/upkeep', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, listingId: r.listingId, cadenceKey: prog?.key }) })
+      const res = await fetch('/api/upkeep', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, listingId: r.listingId, cadenceKey: prog?.key, dueOn: r.dueOn }) })
       const j = await res.json().catch(() => ({}))
       if (!res.ok || !j?.ok) throw new Error(j?.error || 'could not ' + op)
-      if (op === 'approve') { setFiled(f => ({ ...f, [r.id]: String(j.taskId || '') })); setDone(d => ({ ...d, [r.id]: 'booked ' + nice(j.date) + (j.why ? ' — ' + j.why : '') })) }
+      if (op === 'approve') { setFiled(f => ({ ...f, [r.id]: String(j.taskId || '') })); setDone(d => ({ ...d, [r.id]: 'booked ' + nice(j.date) + (Array.isArray(j.assignees) && j.assignees.length ? ' · ' + j.assignees.join(', ') : '') + (j.why ? ' — ' + j.why : '') })) }
       else setDone(d => ({ ...d, [r.id]: 'declined — back in 30 days' }))
+      invalidateCache(url(market))
+    } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy('') }
+  }
+  // UNIT INFO (Jon, 2026-10-16: "should add info, like AC filter sizes etc"): saved per unit, printed
+  // on every upkeep task booked for it.
+  const infoOf = (lid: string): any => (lid in infoLocal ? infoLocal[lid] : data?.info?.[lid]) || null
+  const saveInfo = async () => {
+    if (!infoEdit || busy) return
+    setBusy('info'); setErr('')
+    try {
+      const res = await fetch('/api/upkeep', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'info', cadenceKey: prog?.key, ...infoEdit, filterQty: Number(infoEdit.filterQty) || null }) })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok || !j?.ok) throw new Error(j?.error || 'could not save the unit info')
+      setInfoLocal(m => ({ ...m, [infoEdit.listingId]: j.info || null })); setInfoEdit(null)
       invalidateCache(url(market))
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy('') }
   }
@@ -100,26 +116,6 @@ export function UpkeepBoard() {
 
   // One row → one Breezeway task, through the route the Add sheet uses. The description says why
   // it exists, so whoever opens it in the field app is not guessing.
-  const addTask = async (r: UpkeepRow) => {
-    if (busy) return
-    setBusy(r.id); setErr('')
-    try {
-      const res = await fetch('/api/ops-today/add-task', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          listingId: r.listingId, title: r.label + ' — ' + r.unit, department: r.dept,
-          priority: r.daysOver > 60 ? 'high' : 'normal',
-          date: r.dueOn > (data?.today || '') ? r.dueOn : (data?.today || undefined),
-          description: 'Recurring upkeep, on the cadence.\n' + (r.lastDone ? 'Last done ' + nice(r.lastDone) + ' — ' + whenWord(r) + '.' : 'No task in our history matches this job for this unit.') + '\nAbout ' + r.minutes + ' minutes.\n\nFiled from Lighthouse → Upkeep.',
-        }),
-      })
-      const j = await res.json().catch(() => ({}))
-      if (!res.ok || !j.ok) throw new Error(j?.error || 'Breezeway would not take it')
-      setFiled(f => ({ ...f, [r.id]: String(j.taskId) }))
-    } catch (e: any) { setErr(r.unit + ' — ' + String(e?.message || e)) }
-    setBusy('')
-  }
-
   const t = data?.totals
   const head = (
     <LeanHead title="Upkeep" sub={data ? `${new Set(programs.flatMap(p => p.rows.map(r => r.listingId))).size} units · ${programs.filter(p => !p.inert).length} programs · as of ${nice(data.today)}` : 'Recurring programs, every unit, on their clocks'}>
@@ -215,6 +211,28 @@ export function UpkeepBoard() {
                     {r.source === 'new' ? <Tag tone="slate" title="No record yet, and the unit went live more recently than this program's interval — the clock started the day it went live">new unit · live {nice(r.goLive || r.lastDone)}</Tag> : null}
                     {done[r.id] ? <span className="text-[11.5px] text-emerald-700 font-semibold">{done[r.id]}</span> : null}
                     <span className={'text-[11.5px] tabular-nums ' + (r.state === 'late' ? 'text-rose-700 font-semibold' : 'text-muted')}>{r.state === 'none' ? 'never recorded' : r.source === 'clock' ? 'first due ' + nice(r.dueOn) + ' · ' + whenWord(r) : (r.source === 'new' ? 'live since ' : 'last ') + nice(r.lastDone) + ' · due ' + nice(r.dueOn) + ' · ' + whenWord(r)}</span>
+                    {!taskId && !done[r.id] && (r.state === 'late' || r.state === 'soon' || r.state === 'none') ? (
+                      r.plan ? <span className="text-[11.5px] text-sky-800" title="Smart booking: the day somebody of this trade is already going there. Approve / Add task books it on this day, with this person.">→ {r.plan.why}</span>
+                        : r.plan === null ? <span className="text-[11.5px] text-faint" title="Nobody of this trade has work in this building in the next 3 weeks">nobody going there in 3 weeks</span> : null
+                    ) : null}
+                    {(() => {
+                      const inf = infoOf(r.listingId), ac = prog?.group === 'ac'
+                      const label = inf ? [inf.filterSize ? 'Filter ' + inf.filterSize + (inf.filterQty ? ' ×' + inf.filterQty : '') : '', inf.filterLocation || '', inf.notes ? 'notes' : ''].filter(Boolean).join(' · ') : ''
+                      if (!label && !(ac && data.canEdit)) return null
+                      return data.canEdit
+                        ? <button onClick={() => setInfoEdit({ listingId: r.listingId, filterSize: inf?.filterSize || '', filterQty: inf?.filterQty ? String(inf.filterQty) : '', filterLocation: inf?.filterLocation || '', notes: inf?.notes || '' })} title={(inf?.notes ? inf.notes + '\n\n' : '') + 'Unit info — printed on every upkeep task for this unit. Click to edit.'} className={'text-[11px] px-1.5 h-6 rounded-md border ' + (label ? 'border-line bg-white text-ink' : 'border-amber-300 bg-amber-50 text-amber-800')}>{label || '+ filter size'}</button>
+                        : <Tag tone="slate" title={inf?.notes || ''}>{label}</Tag>
+                    })()}
+                    {infoEdit && infoEdit.listingId === r.listingId ? (
+                      <span className="basis-full flex items-center gap-1.5 flex-wrap pl-4 pt-1">
+                        <input value={infoEdit.filterSize} onChange={e => setInfoEdit({ ...infoEdit, filterSize: e.target.value })} placeholder="Filter size (20x25x1)" className="h-7 w-36 rounded-md border border-line px-1.5 text-[11.5px]" />
+                        <input value={infoEdit.filterQty} onChange={e => setInfoEdit({ ...infoEdit, filterQty: e.target.value.replace(/[^0-9]/g, '') })} placeholder="Qty" className="h-7 w-12 rounded-md border border-line px-1.5 text-[11.5px]" />
+                        <input value={infoEdit.filterLocation} onChange={e => setInfoEdit({ ...infoEdit, filterLocation: e.target.value })} placeholder="Where (hall ceiling, closet…)" className="h-7 w-48 rounded-md border border-line px-1.5 text-[11.5px]" />
+                        <input value={infoEdit.notes} onChange={e => setInfoEdit({ ...infoEdit, notes: e.target.value })} placeholder="Notes (bring a ladder, breaker #12…)" className="h-7 flex-1 min-w-[10rem] rounded-md border border-line px-1.5 text-[11.5px]" />
+                        <button onClick={saveInfo} disabled={busy === 'info'} className="text-[11.5px] font-semibold px-2 h-7 rounded-md bg-ink text-white disabled:opacity-50">Save</button>
+                        <button onClick={() => setInfoEdit(null)} className="text-[11.5px] text-muted px-1">✕</button>
+                      </span>
+                    ) : null}
                     <span className="ml-auto inline-flex items-center gap-1.5 flex-wrap">
                       {data.canEdit && !taskId && recording === r.id ? (
                         <span className="inline-flex items-center gap-1">
@@ -232,7 +250,7 @@ export function UpkeepBoard() {
                         </>
                       ) : null}
                       {taskId ? <a href={bzTask(taskId)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-sky-700 hover:underline"><ExternalLink size={11} /> {r.task?.date ? 'Task ' + nice(r.task.date) : 'Task filed'}</a>
-                        : data.canEdit && !(prog?.needsApproval) ? <button onClick={() => addTask(r)} disabled={!!busy} className="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2 h-7 rounded-md border border-line bg-white text-ink hover:border-ink/40 disabled:opacity-40">{busy === r.id ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />} Add task</button> : null}
+                        : data.canEdit && !(prog?.needsApproval) ? <button onClick={() => decide(r, 'approve')} title={r.plan ? 'Books it ' + r.plan.why : 'Books it on the next empty day'} disabled={!!busy} className="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2 h-7 rounded-md border border-line bg-white text-ink hover:border-ink/40 disabled:opacity-40">{busy === r.id ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />} Add task</button> : null}
                     </span>
                   </li>
                 )

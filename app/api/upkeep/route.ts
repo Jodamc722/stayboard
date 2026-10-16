@@ -21,6 +21,8 @@ import { atLeast } from '@/lib/features'
 import { buildingOf, marketOf } from '@/lib/segments'
 import { getOperatingModel, weDo } from '@/lib/eve/operating-model'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { planUpkeep, type UpkeepPlan } from '@/lib/upkeep-plan'
+import { getUnitInfo, setUnitInfo, infoLines, type UnitInfo } from '@/lib/unit-equipment'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -45,6 +47,8 @@ export type UpkeepRow = {
   approval?: { waiting: boolean; declined?: string | null; by?: string | null } | null
   /** What the owner is billed when this is done, in words — printed on the task when it is approved. */
   bill?: string | null
+  /** Smart booking: the day somebody of the trade is already going there, and who (lib/upkeep-plan). */
+  plan?: UpkeepPlan | null
 }
 export type UpkeepProgram = {
   key: string; label: string; everyDays: number; dept: string; equipment: string
@@ -69,6 +73,8 @@ export type Upkeep = {
   programs: UpkeepProgram[]
   totals: { late: number; soon: number; ok: number; booked: number; none: number; lateUnits: number; late90plus: number; awaiting: number }
   degraded: string[]; enabled: boolean; canEdit: boolean; canApprove: string[]; me: string
+  /** Per unit: filter size, quantity, location, notes — what the person sent needs to know. */
+  info: Record<string, UnitInfo>
 }
 
 /** The duty the operating model has to say is ours for a cadence's department. */
@@ -178,6 +184,16 @@ export async function GET(req: NextRequest) {
         markets.add(it.market); buildings.add(building)
       }
     }
+    // SMART BOOKING: for everything late or coming due and not yet booked, the day somebody of the
+    // trade is already going to that building. One read of the next three weeks for all of them.
+    const degradedPlan: string[] = []
+    try {
+      const want = Array.from(byKey.values()).flatMap(p => p.rows.filter(r => (r.state === 'late' || r.state === 'soon' || r.state === 'none') && !r.task)
+        .map(r => ({ id: r.id, listingId: r.listingId, building: r.building, dept: r.dept, dueOn: r.dueOn, late: r.state === 'late', needsVacant: !!cadBy.get(p.key)?.needsVacant })))
+      const plans = await planUpkeep(want, today)
+      for (const p of Array.from(byKey.values())) for (const r of p.rows) if (r.id in plans) r.plan = plans[r.id]
+    } catch { degradedPlan.push('smart booking (who is going where)') }
+    const info = await getUnitInfo().catch(() => ({} as Record<string, UnitInfo>))
     const rank: Record<UpkeepState, number> = { late: 0, soon: 1, none: 2, booked: 3, ok: 4 }
     for (const p of Array.from(byKey.values())) {
       p.units = new Set(p.rows.map(r => r.listingId)).size
@@ -195,7 +211,8 @@ export async function GET(req: NextRequest) {
       markets: Array.from(markets).sort(), buildings: Array.from(buildings).sort(),
       programs,
       totals: { late: sum('late'), soon: sum('soon'), ok: sum('ok'), booked: sum('booked'), none: sum('none'), lateUnits, late90plus: programs.reduce((n, p) => n + p.late90plus, 0), awaiting: programs.reduce((n, p) => n + p.awaiting, 0) },
-      degraded: cal.degraded, enabled: cal.enabled, canEdit, canApprove: Array.from(canApprove), me,
+      degraded: [...cal.degraded, ...degradedPlan], enabled: cal.enabled, canEdit, canApprove: Array.from(canApprove), me,
+      info,
     }
     return NextResponse.json(out)
   } catch (e: any) {
@@ -242,6 +259,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, lastDone, nextDue: shiftDay(lastDone, c.everyDays) })
   }
 
+  if (op === 'info') {
+    // Unit info (filter size etc.) — not tied to a program; cadenceKey is whichever row it was edited from.
+    try {
+      const saved = await setUnitInfo(listingId, { filterSize: body?.filterSize, filterQty: body?.filterQty, filterLocation: body?.filterLocation, notes: body?.notes }, me)
+      return NextResponse.json({ ok: true, info: saved })
+    } catch (e: any) { return NextResponse.json({ error: String(e?.message || e).slice(0, 200) }, { status: 500 }) }
+  }
+
   if (op === 'decline') {
     if (!(gate.access.role === 'admin' || isApprover(c, me, myName))) return NextResponse.json({ error: 'only an approver can decline' }, { status: 403 })
     const note = `declined ${today} by ${me}${body?.reason ? ' — ' + String(body.reason).slice(0, 120) : ''}`
@@ -256,6 +281,20 @@ export async function POST(req: NextRequest) {
     // (Salato deep cleans happen at a departure), else today.
     let date = /^\d{4}-\d{2}-\d{2}$/.test(String(body?.date || '')) && String(body.date) >= today ? String(body.date) : ''
     let why = date ? 'on the day the approver picked' : ''
+    // SMART BOOKING FIRST: the day somebody of this trade is already going there (lib/upkeep-plan).
+    let plan: UpkeepPlan | null = null
+    if (!date && !(c.ridesDeparture || /salato/i.test(building))) {
+      try {
+        const lastDoneOrToday = String(body?.dueOn || '').slice(0, 10)
+        const dueOn = /^\d{4}-\d{2}-\d{2}$/.test(lastDoneOrToday) ? lastDoneOrToday : today
+        const ps = await planUpkeep([{ id: 'x', listingId, building, dept: c.dept, dueOn, late: dueOn < today, needsVacant: !!c.needsVacant }], today)
+        plan = ps.x || null
+        if (plan) { date = plan.date; why = plan.why }
+      } catch { /* fall back to the old rule */ }
+    }
+    // Not due yet and nobody going there: book it on its due date rather than today.
+    const dueAsked = String(body?.dueOn || '').slice(0, 10)
+    if (!date && !c.needsVacant && !(c.ridesDeparture || /salato/i.test(building)) && /^\d{4}-\d{2}-\d{2}$/.test(dueAsked) && dueAsked > today) { date = dueAsked; why = 'on its due date (nobody of the trade is going there sooner)' }
     if (!date && (c.ridesDeparture || /salato/i.test(building))) {
       const { data: res } = await db.from('guesty_reservations').select('check_out').eq('listing_id', listingId).gte('check_out', today).in('status', ['confirmed', 'reserved', 'checked_in']).order('check_out').limit(1)
       const co = String((res as any[])?.[0]?.check_out || '').slice(0, 10)
@@ -269,10 +308,14 @@ export async function POST(req: NextRequest) {
     const automation = await getTaskAutomation().catch(() => null)
     const market = String(marketOf(building, null, unit) || 'Broward')
     const sup = automation ? (automation.supervisors[market] || automation.supervisors.Miami) : ''
-    const assignees = c.dept === 'housekeeping' ? [] : Array.from(new Set([automation?.assignAlways, sup].filter(Boolean))) as string[]
+    // The person already going there, when there is one; else the market supervisor (maintenance).
+    const assignees = plan ? Array.from(new Set([plan.person, c.dept === 'housekeeping' ? '' : automation?.assignAlways].filter(Boolean))) as string[]
+      : c.dept === 'housekeeping' ? [] : Array.from(new Set([automation?.assignAlways, sup].filter(Boolean))) as string[]
+    const unitInfo = (await getUnitInfo().catch(() => ({} as Record<string, UnitInfo>)))[listingId]
     const title = `${c.label} — ${unit}`
     const description = [
       `${c.label} on ${unit}, every ${c.everyDays} days. Approved by ${me} on ${today}; booked ${why}.`,
+      ...infoLines(unitInfo, GROUP_OF[c.key] === 'ac' || c.equipment === 'central'),
       bill ? `BILLING: ${bill}.` : '',
       c.followOn ? `When this is completed, Lighthouse books "${c.followOn.label}" for ${c.followOn.dept}.` : '',
       `(Cadence "${c.label}", Users & admin → Settings → Cadences.)`,
@@ -281,7 +324,7 @@ export async function POST(req: NextRequest) {
     const r = await runExecutor('task_create', { listingId, unit, title, department: c.dept, priority: 'normal', date, description, assignees }, { by: 'upkeep', actor: me, human: true })
     if (!r.ok) return NextResponse.json({ error: r.error || r.summary }, { status: 502 })
     await db.from('pm_schedule').upsert({ listing_id: listingId, cadence_key: cadenceKey, unit_name: unit, building, next_due: today, status: 'created', task_id: String(r.ref || ''), task_date: date, note: `approved ${today} by ${me}`, updated_at: now }, { onConflict: 'listing_id,cadence_key' }).then(() => {}, () => {})
-    return NextResponse.json({ ok: true, taskId: r.ref, date, bill, why })
+    return NextResponse.json({ ok: true, taskId: r.ref, date, bill, why, assignees })
   }
   return NextResponse.json({ error: 'unknown op' }, { status: 400 })
 }
