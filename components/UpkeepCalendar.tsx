@@ -14,13 +14,13 @@
 // who is in the building, and EVERY pending upkeep item for that unit (all programs). Each item gets
 // its own person, date and note; tick what to book and it is filed in Breezeway, one task each,
 // with the unit info and the billing line on it. The unit info (filter size…) is edited right there.
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Check, ExternalLink, AlertTriangle } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { Sheet } from '@/components/Sheet'
 import type { UpkeepRow, UpkeepProgram } from '@/app/api/upkeep/route'
 import type { UpkeepCalendar as CalData, CalCell, CalKind } from '@/app/api/upkeep/calendar/route'
-import { bestDay, fitsDay, pickFor } from '@/lib/upkeep-schedule'
+import { bestDay, fitsDay, pickFor, tradeFits } from '@/lib/upkeep-schedule'
 import type { UnitDay } from '@/app/api/upkeep/unit-day/route'
 
 const dow = (d: string) => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'narrow', timeZone: 'UTC' })
@@ -227,7 +227,7 @@ function DayPanel({ unit, listingId, date, today, cells, people, items, focus, c
     const ok = (t: { trade: string }) => want === 'housekeeping' ? t.trade === 'housekeeping' : want === 'inspection' ? t.trade !== 'housekeeping' : t.trade === 'maintenance' || t.trade === 'inspection'
     const pick = team.filter(ok).sort((a, b) => Number(b.atUnit) - Number(a.atUnit))[0]
     if (pick) return pick.name
-    if (it.row.plan && it.row.plan.date === d) return it.row.plan.person
+    if (it.row.plan && it.row.plan.date === d && people.some(p => p.name === it.row.plan!.person && tradeFits(want, p.trade))) return it.row.plan.person
     return ''
   }
   const idxOf = (d: string) => cells.findIndex(c => c.d === d)
@@ -244,8 +244,11 @@ function DayPanel({ unit, listingId, date, today, cells, people, items, focus, c
     return o
   })
   // When the coordinator moves the panel's day, unbooked lines follow it (and re-suggest a person).
+  // (Not on first open — the initial lines already chose the clicked day or each job's smart day.)
+  const firstRun = useRef(true)
   useEffect(() => {
-    setLines(ls => { const o = { ...ls }; for (const it of items) { const l = o[it.row.id]; if (l && l.state !== 'done') o[it.row.id] = { ...l, date, who: suggest(it, date) || l.who } } return o })
+    if (firstRun.current) { firstRun.current = false; return }
+    setLines(ls => { const o = { ...ls }; for (const it of items) { const l = o[it.row.id]; if (l && l.state !== 'done') { const d = fitsHere(it, date) ? date : l.date; o[it.row.id] = { ...l, date: d, who: suggest(it, d) || l.who } } } return o })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date])
   const set = (id: string, patch: Partial<Line>) => setLines(ls => ({ ...ls, [id]: { ...ls[id], ...patch } }))
@@ -356,9 +359,11 @@ function DayPanel({ unit, listingId, date, today, cells, people, items, focus, c
               const bad = !!lc && !fits
               const b = best(it)
               const here = li >= 0 ? pickFor(cells, li, optsOf(it)) : null
+              // Right trade first, in the building before elsewhere; the wrong trade last but never hidden.
+              const fitT = (tr: string) => tradeFits(it.prog.dept, tr) ? 0 : 1
               const options = [
-                ...(lc?.team || []).map(t => ({ name: t.name, sub: `${t.atUnit ? 'in this unit' : 'in the building'} · ${t.trade} · ${t.jobs} job${t.jobs === 1 ? '' : 's'}` })),
-                ...people.filter(p => !(lc?.team || []).some(t => t.name.toLowerCase() === p.name.toLowerCase())).map(p => ({ name: p.name, sub: `${p.trade} · ${p.perDay[l.date] ? p.perDay[l.date] + ' jobs elsewhere' : 'nothing that day'}` })),
+                ...(lc?.team || []).slice().sort((x, y) => fitT(x.trade) - fitT(y.trade) || Number(y.atUnit) - Number(x.atUnit)).map(t => ({ name: t.name, sub: `${t.atUnit ? 'in this unit' : 'in the building'} · ${t.trade} · ${t.jobs} job${t.jobs === 1 ? '' : 's'}` })),
+                ...people.filter(p => !(lc?.team || []).some(t => t.name.toLowerCase() === p.name.toLowerCase())).sort((x, y) => fitT(x.trade) - fitT(y.trade) || x.name.localeCompare(y.name)).map(p => ({ name: p.name, sub: `${p.trade} · ${p.perDay[l.date] ? p.perDay[l.date] + ' jobs elsewhere' : 'nothing that day'}` })),
               ]
               if (l.who && !options.some(o => o.name === l.who)) options.unshift({ name: l.who, sub: 'suggested' })
               return (

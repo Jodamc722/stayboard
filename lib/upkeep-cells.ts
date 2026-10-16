@@ -70,12 +70,17 @@ export async function buildUnitCells(ids: string[], dept: string, today: string,
     return { listingId: lid, unit, building: b, cells }
   })
 
-  const ppl: Record<string, { name: string; trade: string; perDay: Record<string, number> }> = {}
+  // A person's trade is what most of their work is (a tech who also carries a linen drop is still a tech).
+  const ppl: Record<string, { name: string; trade: string; perDay: Record<string, number>; tally: Record<string, number> }> = {}
   for (const byDay of Object.values(tv.visits)) for (const [d, who] of Object.entries(byDay)) for (const s of Object.values(who)) {
     if (!Array.from(s.depts).some(x => tradeOk(dept, x))) continue
-    const p = (ppl[s.name.toLowerCase()] = ppl[s.name.toLowerCase()] || { name: s.name, trade: tradeWord(Array.from(s.depts)), perDay: {} })
+    const p = (ppl[s.name.toLowerCase()] = ppl[s.name.toLowerCase()] || { name: s.name, trade: '', perDay: {}, tally: {} })
     p.perDay[d] = (p.perDay[d] || 0) + s.jobs
+    for (const x of Array.from(s.depts)) { const t = tradeWord([x]); if (t) p.tally[t] = (p.tally[t] || 0) + 1 }
   }
-  const people = Object.values(ppl).sort((a, b) => a.name.localeCompare(b.name))
+  const people = Object.values(ppl).map(p => ({ name: p.name, perDay: p.perDay, trade: Object.entries(p.tally).sort((a, b) => b[1] - a[1])[0]?.[0] || '' })).sort((a, b) => a.name.localeCompare(b.name))
+  // The same majority trade on the day chips, so one person never reads as two trades.
+  const tradeOfName = new Map(people.map(p => [p.name.toLowerCase(), p.trade]))
+  for (const u of units) for (const c of u.cells) for (const t of c.team) { const tr = tradeOfName.get(t.name.toLowerCase()); if (tr) t.trade = tr }
   return { today, days, units, people, unsure }
 }
