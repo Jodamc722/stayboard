@@ -214,7 +214,7 @@ export function UpkeepBoard() {
                     {!taskId && !done[r.id] && (r.state === 'late' || r.state === 'soon' || r.state === 'none') ? (
                       r.plan ? <span className="text-[11.5px] text-sky-800" title="Smart booking: the day somebody of this trade is already going there. Approve / Add task books it on this day, with this person.">→ {r.plan.why}</span>
                         : r.plan === null ? <span className="text-[11.5px] text-faint" title="Nobody of this trade has work in this building in the next 3 weeks — Add task books the next empty day">nobody going there in 3 weeks</span>
-                        : <span className="text-[11.5px] text-faint">→ with the next departure clean</span>
+                        : (/departure/.test(prog?.how || '') || /salato/i.test(r.building)) ? <span className="text-[11.5px] text-faint">→ with the next departure clean</span> : null
                     ) : null}
                     {(() => {
                       const inf = infoOf(r.listingId), ac = prog?.group === 'ac'
