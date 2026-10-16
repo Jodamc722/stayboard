@@ -18,8 +18,9 @@ export const GROUP_ORDER = ['Today', 'Eve', 'Operations', 'Guest Experience', 'R
 
 export const FEATURES: Feature[] = [
   { key: 'command',       label: 'Today (everyone)',  path: '/command', group: 'Today' },
-  // The Inbox (Jon, 2026-10-16): what people say to you — tags, replies, assignments, alerts.
-  { key: 'inbox',         label: 'Inbox (everyone)',  path: '/inbox', group: 'Today' },
+  // Messages (Jon, 2026-10-16): INTERNAL — what teammates say to you: tags, replies, assignments,
+  // alerts. "Inbox" is the guest one (/messages). Key and route stay 'inbox' for permissions and links.
+  { key: 'inbox',         label: 'Messages — internal (everyone)',  path: '/inbox', group: 'Today' },
   // Open loops (Jon, 2026-09-28): the page behind Eve's 'Keeping tabs' — guest asks, problems,
   // promises, unanswered questions, decisions — with Done / Not a loop. Replaces the long roll-up.
   { key: 'loops',         label: 'Open loops (Eve tab)', path: '/loops', group: 'Eve' },

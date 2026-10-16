@@ -95,8 +95,8 @@ export function InboxPage({ initialTab }: { initialTab?: Tab }) {
     <div className="max-w-3xl">
       <div className="flex items-center gap-2 mb-1">
         <InboxIcon size={18} className="text-brand-600" />
-        <h1 className="text-[17px] font-bold text-ink">Inbox</h1>
-        <span className="text-[12px] text-muted">everything addressed to you — tags, replies, assignments, alerts</span>
+        <h1 className="text-[17px] font-bold text-ink">Messages</h1>
+        <span className="text-[12px] text-muted">internal — what teammates said to you: tags, replies, assignments, alerts</span>
       </div>
       <div className="flex items-center gap-1.5 flex-wrap mb-3 mt-2 overflow-x-auto">
         <TabBtn t="open" label="Open" n={counts.open} />

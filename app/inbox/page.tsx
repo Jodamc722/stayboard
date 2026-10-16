@@ -1,4 +1,5 @@
-// THE INBOX (Jon, 2026-10-16). Everyone has it — it is where what people say to you lands.
+// MESSAGES — internal (Jon, 2026-10-16: "call it messages, not inbox; inbox is guest messages").
+// Everyone has it — it is where what teammates say to you lands. Route stays /inbox.
 import { redirect } from 'next/navigation'
 import { Shell } from '@/components/Shell'
 import { InboxPage } from '@/components/InboxPage'

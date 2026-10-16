@@ -706,9 +706,9 @@ function NotificationsBell() {
   }, [])
   return (
     <div className="border-t border-line px-2 py-1.5">
-      <a href="/inbox" className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-muted hover:bg-app hover:text-ink transition-all" title={open ? open + ' open' : 'Nothing waiting on you'}>
+      <a href="/inbox" className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-muted hover:bg-app hover:text-ink transition-all" title={'Internal messages — tags, replies, assignments, alerts' + (open ? ' · ' + open + ' open' : '')}>
         <Bell size={16} />
-        Inbox
+        Messages
         {unread > 0 ? <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-600 text-white">{unread}</span>
           : open > 0 ? <span className="ml-auto text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-app text-muted">{open}</span> : null}
       </a>

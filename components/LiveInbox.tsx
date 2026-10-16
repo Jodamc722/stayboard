@@ -68,7 +68,7 @@ export function LiveInbox({ initial }: { initial: InboxData }) {
   const h = data.header
   return (
     <>
-      <LeanHead title="Messages">
+      <LeanHead title="Inbox">
         <Pill tone={h.reply.tone} title={h.reply.title}>{h.reply.label}</Pill>
         <Pill tone={h.within1h.tone} title={h.within1h.title}>{h.within1h.label}</Pill>
         <Pill tone={h.waiting.tone} title={h.waiting.title}>{h.waiting.label}</Pill>
