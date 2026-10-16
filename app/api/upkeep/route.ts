@@ -22,6 +22,10 @@ import { buildingOf, marketOf } from '@/lib/segments'
 import { getOperatingModel, weDo } from '@/lib/eve/operating-model'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { planUpkeep, type UpkeepPlan } from '@/lib/upkeep-plan'
+import { buildUnitCells } from '@/lib/upkeep-cells'
+import { bestDay, type DayPick } from '@/lib/upkeep-schedule'
+import { blockListingNights } from '@/lib/guesty'
+import { isLiveStay } from '@/lib/stay-status'
 import { getUnitInfo, setUnitInfo, infoLines, type UnitInfo } from '@/lib/unit-equipment'
 
 export const dynamic = 'force-dynamic'
@@ -65,6 +69,8 @@ export type UpkeepProgram = {
   how: string
   needsApproval: boolean
   awaiting: number
+  /** The job needs the unit empty, and for how many nights (smart scheduling + Guesty block). */
+  needsVacant: boolean; needsDays: number
   rows: UpkeepRow[]
 }
 export type Upkeep = {
@@ -150,6 +156,7 @@ export async function GET(req: NextRequest) {
         group: GROUP_OF[c.key] || 'other', inert: inertWhy.get(c.key) || null,
         units: 0, late: 0, soon: 0, ok: 0, booked: 0, none: 0, late30: 0, late90: 0, late90plus: 0, healthPct: 0, rows: [],
         how: howOf(c), needsApproval: !!(c.approvers && c.approvers.length), awaiting: 0,
+        needsVacant: !!c.needsVacant, needsDays: Math.max(1, c.needsDays || 1),
       })
     }
     const markets = new Set<string>(), buildings = new Set<string>()
@@ -284,13 +291,23 @@ export async function POST(req: NextRequest) {
     let why = date ? (typeof body?.assignee === 'string' && body.assignee ? `on the day picked on the calendar, with ${String(body.assignee).split(/\s+/)[0]}` : 'on the day picked on the calendar') : ''
     // SMART BOOKING FIRST: the day somebody of this trade is already going there (lib/upkeep-plan).
     let plan: UpkeepPlan | null = null
+    let dayPick: DayPick | null = null
     if (!date && !(c.ridesDeparture || /salato/i.test(building))) {
       try {
         const lastDoneOrToday = String(body?.dueOn || '').slice(0, 10)
         const dueOn = /^\d{4}-\d{2}-\d{2}$/.test(lastDoneOrToday) ? lastDoneOrToday : today
-        const ps = await planUpkeep([{ id: 'x', listingId, building, dept: c.dept, dueOn, late: dueOn < today, needsVacant: !!c.needsVacant }], today)
-        plan = ps.x || null
-        if (plan) { date = plan.date; why = plan.why }
+        // The same rule the calendar panel shows (lib/upkeep-schedule): the checkout day first, the
+        // unit empty for every night the job takes, the trade already there, near the due date.
+        const uc = await buildUnitCells([listingId], c.dept, today, 21)
+        const pick = bestDay(uc.units[0]?.cells || [], { today, dueOn, late: dueOn < today, dept: c.dept, needsVacant: !!c.needsVacant, needsDays: c.needsDays || 1 })
+        if (pick) {
+          date = pick.date; why = pick.why; dayPick = pick
+          plan = pick.who ? { date: pick.date, person: pick.who, atUnit: pick.atUnit, jobs: 0, vacant: true, why: pick.why } : null
+        } else {
+          const ps = await planUpkeep([{ id: 'x', listingId, building, dept: c.dept, dueOn, late: dueOn < today, needsVacant: !!c.needsVacant }], today)
+          plan = ps.x || null
+          if (plan) { date = plan.date; why = plan.why }
+        }
       } catch { /* fall back to the old rule */ }
     }
     // Not due yet and nobody going there: book it on its due date rather than today.
@@ -328,7 +345,20 @@ export async function POST(req: NextRequest) {
     const r = await runExecutor('task_create', { listingId, unit, title, department: c.dept, priority: 'normal', date, description, assignees }, { by: 'upkeep', actor: me, human: true })
     if (!r.ok) return NextResponse.json({ error: r.error || r.summary }, { status: 502 })
     await db.from('pm_schedule').upsert({ listing_id: listingId, cadence_key: cadenceKey, unit_name: unit, building, next_due: today, status: 'created', task_id: String(r.ref || ''), task_date: date, note: `approved ${today} by ${me}`, updated_at: now }, { onConflict: 'listing_id,cadence_key' }).then(() => {}, () => {})
-    return NextResponse.json({ ok: true, taskId: r.ref, date, bill, why, assignees })
+    // BLOCK THE NIGHTS (a person ticked it): only nights no live stay covers, re-read just now.
+    let blocked: { from: string; to: string } | null = null, blockError: string | null = null
+    if (body?.block && c.needsVacant) {
+      const n = Math.max(1, c.needsDays || 1)
+      const from = date, to = shiftDay(date, n - 1)
+      try {
+        const { data: rs } = await db.from('guesty_reservations').select('check_in,check_out,status').eq('listing_id', listingId).lte('check_in', to).gt('check_out', from).limit(20)
+        const clash = ((rs || []) as any[]).filter(x => isLiveStay(x.status))
+        if (clash.length) blockError = 'a guest is booked on those nights — not blocked'
+        else { await blockListingNights(listingId, from, to, `${c.label} — booked from Lighthouse Upkeep by ${me.split('@')[0]} (task ${r.ref || ''})`); blocked = { from, to } }
+      } catch (e: any) { blockError = String(e?.message || e).slice(0, 160) }
+    }
+    const blockAdvice = !body?.block && c.needsVacant && dayPick?.recommendBlock ? `No arrival booked — block ${dayPick.nights.length === 1 ? 'the night of ' + dayPick.nights[0] : dayPick.nights[0] + ' to ' + dayPick.nights[dayPick.nights.length - 1]} in Guesty so it cannot be booked over (Plan calendar → the unit's day).` : null
+    return NextResponse.json({ ok: true, taskId: r.ref, date, bill, why, assignees, blocked, blockError, blockAdvice })
   }
   return NextResponse.json({ error: 'unknown op' }, { status: 400 })
 }

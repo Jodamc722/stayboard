@@ -82,7 +82,7 @@ export function UpkeepBoard() {
       const res = await fetch('/api/upkeep', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, listingId: r.listingId, cadenceKey: prog?.key, dueOn: r.dueOn }) })
       const j = await res.json().catch(() => ({}))
       if (!res.ok || !j?.ok) throw new Error(j?.error || 'could not ' + op)
-      if (op === 'approve') { setFiled(f => ({ ...f, [r.id]: String(j.taskId || '') })); setDone(d => ({ ...d, [r.id]: 'booked ' + nice(j.date) + (Array.isArray(j.assignees) && j.assignees.length ? ' · ' + j.assignees.join(', ') : '') + (j.why ? ' — ' + j.why : '') })) }
+      if (op === 'approve') { setFiled(f => ({ ...f, [r.id]: String(j.taskId || '') })); setDone(d => ({ ...d, [r.id]: 'booked ' + nice(j.date) + (Array.isArray(j.assignees) && j.assignees.length ? ' · ' + j.assignees.join(', ') : '') + (j.why ? ' — ' + j.why : '') + (j.blockAdvice ? ' · ' + j.blockAdvice : '') })) }
       else setDone(d => ({ ...d, [r.id]: 'declined — back in 30 days' }))
       invalidateCache(url(market))
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy('') }

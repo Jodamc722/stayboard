@@ -20,6 +20,7 @@ import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { Sheet } from '@/components/Sheet'
 import type { UpkeepRow, UpkeepProgram } from '@/app/api/upkeep/route'
 import type { UpkeepCalendar as CalData, CalCell, CalKind } from '@/app/api/upkeep/calendar/route'
+import { bestDay, fitsDay, pickFor } from '@/lib/upkeep-schedule'
 import type { UnitDay } from '@/app/api/upkeep/unit-day/route'
 
 const dow = (d: string) => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'narrow', timeZone: 'UTC' })
@@ -137,6 +138,8 @@ export function UpkeepCalendar({ programs, prog, rows, building, q, canEdit, can
             {calRows.map(r => {
               const u = byUnit.get(r.listingId)
               const isOpen = panel?.row.key === r.key
+              // The smart day (checkout first, unit empty for every night the job needs) — the earliest across what the row owes.
+              const bestD = u ? r.items.map(i => bestDay(u.cells, { today: data.today, dueOn: i.row.dueOn, late: i.row.state === 'late', dept: i.prog.dept, needsVacant: !!i.prog.needsVacant, needsDays: i.prog.needsDays || 1 })?.date).filter(Boolean).sort()[0] || null : null
               const doneHere = r.items.filter(i => booked[i.row.id]).length
               return (
                 <tr key={r.key} className={isOpen ? 'bg-sky-50/60' : ''}>
@@ -156,7 +159,7 @@ export function UpkeepCalendar({ programs, prog, rows, building, q, canEdit, can
                     if (!c) return <td key={d} className="border-b border-l border-white bg-white" />
                     const K = KIND[c.k]
                     const due = r.dueOn === d || (r.daysOver > 0 && d === data.today)
-                    const sug = r.planDate === d && K.workable
+                    const sug = (bestD || r.planDate) === d && K.workable
                     const sel = isOpen && panel?.date === d
                     const lead = c.team[0]
                     const title = `${r.unit} · ${nice(d)} — ${c.label || K.hint}` + (c.team.length ? '\n' + c.team.map(t => `${t.name}${t.atUnit ? ' (in this unit)' : ''} · ${t.trade} · ${t.jobs} job${t.jobs === 1 ? '' : 's'}`).join('\n') : '\nNobody in the building') + '\nClick to open the day'
@@ -199,7 +202,7 @@ export function UpkeepCalendar({ programs, prog, rows, building, q, canEdit, can
 }
 
 // ── the unit-day panel ─────────────────────────────────────────────────────────────────────────────
-type Line = { on: boolean; who: string; date: string; note: string; state?: 'busy' | 'done' | 'err'; msg?: string; taskId?: string }
+type Line = { on: boolean; who: string; date: string; note: string; block: boolean; state?: 'busy' | 'done' | 'err'; msg?: string; taskId?: string }
 
 function DayPanel({ unit, listingId, date, today, cells, people, items, focus, canEdit, canApprove, info, onInfo, onBooked, onDate, onClose }: {
   unit: string; listingId: string; date: string; today: string
@@ -227,9 +230,17 @@ function DayPanel({ unit, listingId, date, today, cells, people, items, focus, c
     if (it.row.plan && it.row.plan.date === d) return it.row.plan.person
     return ''
   }
+  const idxOf = (d: string) => cells.findIndex(c => c.d === d)
+  const optsOf = (it: Item) => ({ dept: it.prog.dept, needsVacant: !!it.prog.needsVacant, needsDays: it.prog.needsDays || 1 })
+  const fitsHere = (it: Item, d: string) => { const i = idxOf(d); return i >= 0 && fitsDay(cells, i, !!it.prog.needsVacant, it.prog.needsDays || 1) }
+  const best = (it: Item) => bestDay(cells, { today, dueOn: it.row.dueOn, late: it.row.state === 'late', ...optsOf(it) })
   const [lines, setLines] = useState<Record<string, Line>>(() => {
     const o: Record<string, Line> = {}
-    for (const it of items) o[it.row.id] = { on: canBookItem(it) && (focus.has(it.row.id) || it.row.state === 'late' || it.row.state === 'soon') && !!K?.workable, who: suggest(it, date), date, note: '' }
+    for (const it of items) {
+      // The clicked day when the job fits it; else the smart day (checkout first, unit empty for every night it needs).
+      const d = fitsHere(it, date) ? date : (best(it)?.date || date)
+      o[it.row.id] = { on: canBookItem(it) && (focus.has(it.row.id) || it.row.state === 'late' || it.row.state === 'soon') && fitsHere(it, d), who: suggest(it, d), date: d, note: '', block: true }
+    }
     return o
   })
   // When the coordinator moves the panel's day, unbooked lines follow it (and re-suggest a person).
@@ -248,10 +259,12 @@ function DayPanel({ unit, listingId, date, today, cells, people, items, focus, c
       const l = lines[it.row.id]
       set(it.row.id, { state: 'busy', msg: '' })
       try {
-        const res = await fetch('/api/upkeep', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'approve', listingId, cadenceKey: it.prog.key, dueOn: it.row.dueOn, date: l.date, assignee: l.who, note: l.note.trim() || undefined }) })
+        const i = idxOf(l.date)
+        const wantBlock = !!it.prog.needsVacant && l.block && i >= 0 && pickFor(cells, i, optsOf(it)).recommendBlock
+        const res = await fetch('/api/upkeep', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'approve', listingId, cadenceKey: it.prog.key, dueOn: it.row.dueOn, date: l.date, assignee: l.who, note: l.note.trim() || undefined, block: wantBlock || undefined }) })
         const j = await res.json().catch(() => ({}))
         if (!res.ok || !j?.ok) throw new Error(j?.error || 'Breezeway would not take it')
-        const msg = nice(j.date) + (l.who ? ' · ' + first(l.who) : ' · unassigned')
+        const msg = nice(j.date) + (l.who ? ' · ' + first(l.who) : ' · unassigned') + (j.blocked ? ` · blocked in Guesty ${short(j.blocked.from)}${j.blocked.to !== j.blocked.from ? '–' + short(j.blocked.to) : ''}` : '') + (j.blockError ? ` · NOT blocked: ${j.blockError}` : '')
         set(it.row.id, { state: 'done', msg, taskId: String(j.taskId || '') })
         onBooked(it.row.id, 'booked ' + msg, String(j.taskId || ''))
       } catch (e: any) { set(it.row.id, { state: 'err', msg: String(e?.message || e) }) }
@@ -338,7 +351,11 @@ function DayPanel({ unit, listingId, date, today, cells, people, items, focus, c
               const l = lines[it.row.id] || { on: false, who: '', date, note: '' }
               const can = canBookItem(it)
               const lc = cellOf(l.date)
-              const bad = lc && !KIND[lc.k].workable
+              const li = idxOf(l.date)
+              const fits = fitsHere(it, l.date)
+              const bad = !!lc && !fits
+              const b = best(it)
+              const here = li >= 0 ? pickFor(cells, li, optsOf(it)) : null
               const options = [
                 ...(lc?.team || []).map(t => ({ name: t.name, sub: `${t.atUnit ? 'in this unit' : 'in the building'} · ${t.trade} · ${t.jobs} job${t.jobs === 1 ? '' : 's'}` })),
                 ...people.filter(p => !(lc?.team || []).some(t => t.name.toLowerCase() === p.name.toLowerCase())).map(p => ({ name: p.name, sub: `${p.trade} · ${p.perDay[l.date] ? p.perDay[l.date] + ' jobs elsewhere' : 'nothing that day'}` })),
@@ -363,7 +380,19 @@ function DayPanel({ unit, listingId, date, today, cells, people, items, focus, c
                       </select>
                       <input type="date" value={l.date} min={today} onChange={e => set(it.row.id, { date: e.target.value, on: true })} disabled={running} className="h-8 rounded-md border border-line px-1.5 text-[12px]" />
                       <input value={l.note} onChange={e => set(it.row.id, { note: e.target.value })} disabled={running} placeholder="Note on the task (optional) — e.g. ask the front desk for the key" className="h-8 rounded-md border border-line px-2 text-[12px] sm:col-span-2" />
-                      {bad ? <p className="sm:col-span-2 text-[11.5px] text-amber-800 inline-flex items-center gap-1"><AlertTriangle size={12} /> {KIND[lc!.k].hint} on {nice(l.date)} — pick another day unless this job can be done around the guest.</p> : null}
+                      <div className="sm:col-span-2 flex items-center gap-2 flex-wrap text-[11.5px]">
+                        {b ? (b.date === l.date
+                          ? <span className="text-emerald-800 inline-flex items-center gap-1"><Check size={12} /> Best day · {b.why}</span>
+                          : <span className="text-sky-800">Best day: {b.why} <button onClick={() => set(it.row.id, { date: b.date, who: b.who || l.who, on: true })} className="ml-1 font-semibold underline">Use it</button></span>)
+                          : <span className="text-muted">No day in the next 3 weeks fits{it.prog.needsVacant ? ` (needs the unit empty ${it.prog.needsDays || 1} night${(it.prog.needsDays || 1) === 1 ? '' : 's'})` : ''}.</span>}
+                      </div>
+                      {bad ? <p className="sm:col-span-2 text-[11.5px] text-amber-800 inline-flex items-center gap-1"><AlertTriangle size={12} /> {it.prog.needsVacant ? `Needs the unit empty ${it.prog.needsDays || 1} night${(it.prog.needsDays || 1) === 1 ? '' : 's'} from ${nice(l.date)} — ${KIND[lc!.k].hint.toLowerCase()} or a guest arrives inside that window.` : `${KIND[lc!.k].hint} on ${nice(l.date)}.`} Pick another day unless it can be done around the guest.</p> : null}
+                      {it.prog.needsVacant && fits && here?.recommendBlock ? (
+                        <label className="sm:col-span-2 inline-flex items-center gap-1.5 text-[11.5px] text-ink">
+                          <input type="checkbox" checked={l.block} onChange={e => set(it.row.id, { block: e.target.checked })} disabled={running} />
+                          Block {here.nights.length === 1 ? `the night of ${short(here.nights[0])}` : `${short(here.nights[0])}–${short(here.nights[here.nights.length - 1])}`} in Guesty (Maintenance) — no arrival is booked, so it can't be sold over the work
+                        </label>
+                      ) : it.prog.needsVacant && fits && lc?.k === 'hold' ? <p className="sm:col-span-2 text-[11.5px] text-muted">Already held in Guesty that night.</p> : null}
                       {l.state === 'err' ? <p className="sm:col-span-2 text-[11.5px] text-rose-700">{l.msg}</p> : null}
                       {it.row.bill ? <p className="sm:col-span-2 text-[11px] text-amber-800">{it.row.bill}</p> : null}
                     </div>

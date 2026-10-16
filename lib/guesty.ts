@@ -202,6 +202,21 @@ export async function getMultiCalendar(listingIds: string[], startDate: string, 
   return out
 }
 
+/**
+ * Block nights in Guesty so nothing can be booked over upkeep work (Jon, 2026-10-16: "if PM task,
+ * recommend blocking the unit if no arrival"). `startDate`..`endDate` are the NIGHTS blocked,
+ * inclusive (Guesty's endDate is the last blocked night). Reason "Maintenance", with a note saying
+ * what and who, so anyone in Guesty sees why. Only ever called on a person's click.
+ * Docs: PUT /availability-pricing/api/calendar/listings/{id} { startDate, endDate, status, blockReason, note }.
+ */
+export async function blockListingNights(listingId: string, startDate: string, endDate: string, note: string): Promise<void> {
+  await api<any>(`/availability-pricing/api/calendar/listings/${encodeURIComponent(listingId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startDate, endDate, status: 'unavailable', blockReason: 'Maintenance', note: note.slice(0, 300) }),
+  })
+}
+
 // A day the OPS team needs to know about: the unit cannot be sold and it is not because a guest
 // booked it. Guesty flags reservation days on the same `unavailable` status as an owner block or a
 // maintenance hold, so the reservation markers have to be excluded explicitly or every occupied
