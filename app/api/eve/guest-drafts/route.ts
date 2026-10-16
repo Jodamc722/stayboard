@@ -44,6 +44,34 @@ export async function GET(req: NextRequest) {
       draft: str(r.payload?.draft), guest: r.payload?.guest || null, unit: r.payload?.unit || null, channel: r.payload?.channel || null,
       why: str(r.why), by: r.payload?.by || r.created_by || 'eve', createdAt: r.created_at,
     }))
+
+    // DID WE ALREADY FOLLOW UP? (Jon, 2026-10-16: "needs to be smart enough to know if we followed
+    // up".) Eve's reason — "fixed at 1:16pm; the guest has not been told" — was true when she wrote
+    // it. By the time anyone reads the list somebody may have answered that thread from Messages,
+    // from their phone, or from Guesty itself. Sending on a stale reason tells a guest a second
+    // time, which reads as nobody here talking to each other.
+    //
+    // So: one query for every thread in the list, and any draft with an outgoing message newer than
+    // the draft is marked answered. It is marked, not deleted — the row still says what Eve
+    // proposed and the page can show "already answered" rather than the draft quietly vanishing.
+    const convIds = drafts.map(d => d.conversationId).filter(Boolean) as string[]
+    if (convIds.length) {
+      const { data: sent } = await supabaseAdmin()
+        .from('guesty_messages').select('conversation_id,sent_at,sender_name,sender')
+        .in('conversation_id', convIds).eq('sender', 'host')
+        .order('sent_at', { ascending: false }).limit(400)
+      const lastHost = new Map<string, { at: string; by: string }>()
+      for (const m of (sent as any[]) || []) {
+        const k = str(m.conversation_id)
+        if (!lastHost.has(k)) lastHost.set(k, { at: str(m.sent_at), by: str(m.sender_name) })
+      }
+      for (const d of drafts as any[]) {
+        const last = d.conversationId ? lastHost.get(str(d.conversationId)) : null
+        if (last && Date.parse(last.at) > Date.parse(d.createdAt)) {
+          d.followedUp = { at: last.at, by: last.by || null }
+        }
+      }
+    }
     return NextResponse.json({ ok: true, drafts })
   } catch { return NextResponse.json({ ok: true, drafts: [] }) }
 }

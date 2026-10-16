@@ -359,7 +359,9 @@ function DecideBand({ d, claims, links, approvals, onCleared, onChanged }: { d: 
   const eveMore = eveGroups.slice(eveShown.length).reduce((a, g) => a + g.qs.length, 0)
   const eveCount = eve.rows.length || (eve.loaded ? 0 : eve.count)
   const approvalsHidden = Math.max(0, d.tiles.guestDesk.approvals - d.tiles.guestDesk.rows.filter(r => r.kind === 'approval').length)
-  const count = reminders.rows.length + slackLive.length + approvals.length + claims.length + links.length + eveCount + plans.rows.length + drafts.rows.length
+  // The band's count is what is WAITING on somebody — an already-answered draft is not.
+  const liveDrafts = drafts.rows.filter(x => !x.followedUp).length
+  const count = reminders.rows.length + slackLive.length + approvals.length + claims.length + links.length + eveCount + plans.rows.length + liveDrafts
 
   const rows: Ranked[] = []
   // Reminders first: somebody wrote these down because they must happen today.
@@ -379,6 +381,12 @@ function DecideBand({ d, claims, links, approvals, onCleared, onChanged }: { d: 
     rows.push(g.drafts.length === 1
       ? { key: 'draft:' + g.drafts[0].id, sev: 'today', rank: 2.5, node: <EveDraftRow d={g.drafts[0]} act={drafts.act} busy={drafts.busy === g.drafts[0].id} /> }
       : { key: 'draftgroup:' + g.key, sev: 'today', rank: 2.5, node: <EveDraftGroupRow g={g} act={drafts.act} busy={drafts.busy} /> })
+  }
+  // Drafts somebody already answered keep their row, at the bottom and without a Send button. They
+  // are not work any more, but they are not nothing either: seeing "answered by Yoslenis" is how
+  // you learn the loop closed without you.
+  for (const dr of drafts.rows.filter(x => x.followedUp)) {
+    rows.push({ key: 'draftdone:' + dr.id, sev: 'today', rank: 9.8, node: <EveDraftRow d={dr} act={drafts.act} busy={drafts.busy === dr.id} /> })
   }
   for (const p of plans.rows) rows.push({ key: 'plan:' + p.id, sev: 'today', rank: 8, node: <EvePlanRow p={p} act={plans.decide} busy={plans.busy === p.id} /> })
   for (const g of eveShown) rows.push({ key: 'eve:' + g.key, sev: 'today', rank: 9, node: g.qs.length > 1 ? <EveGroupRow g={g} act={eve.act} busy={eve.busy} /> : <EveRow q={g.qs[0]} act={eve.act} busy={eve.busy === g.qs[0].id} /> })
@@ -440,7 +448,10 @@ function EvePlanRow({ p, act, busy }: { p: EvePlan; act: (id: string, s: 'accept
 // waits here with Send / Discard. Send runs guest_reply_send as a human yes — the guest hears
 // nothing until a person presses it. A review draft sends too (2026-09-28 audit, D17): Send posts it
 // as the public reply on the channel — the Reviews page's own path — after a confirm.
-type EveDraft = { id: string; conversationId: string | null; reviewId: string | null; draft: string; guest: string | null; unit: string | null; channel: string | null; why: string; by: string; createdAt: string }
+type EveDraft = { id: string; conversationId: string | null; reviewId: string | null; draft: string; guest: string | null; unit: string | null; channel: string | null; why: string; by: string; createdAt: string
+  // Set by the API when somebody answered that thread after Eve wrote the draft — see
+  // /api/eve/guest-drafts. A draft with this is history, not work.
+  followedUp?: { at: string; by: string | null } | null }
 const EVE_DRAFTS_URL = '/api/eve/guest-drafts'
 
 function useEveDrafts() {
@@ -488,10 +499,18 @@ function EveDraftRow({ d, act, busy }: { d: EveDraft; act: (id: string, op: 'sen
     if (r.note) setNote(r.note)
   }
   const who = (d.guest || 'Guest') + (d.unit ? ' · ' + d.unit : '')
-  const meta = [d.channel || '', d.why].filter(Boolean).join(' · ')
+  const answered = d.followedUp
+  const meta = answered
+    ? 'Already answered' + (answered.by ? ' by ' + answered.by : '') + ' — Eve wrote this before that'
+    : [d.channel || '', d.why].filter(Boolean).join(' · ')
   return (
-    <Row sev="today" title={(isReview ? 'Reply to review from ' : 'Reply to ') + who} tags={<Tag tone="violet" title={isReview ? 'Eve drafted a public review reply' : 'Eve drafted a reply'}>{isReview ? 'Eve · review' : 'Eve draft'}</Tag>} meta={meta} onTap={() => setOpen(o => !o)} expanded={open} err={err} note={note}
-      primary={<button onClick={() => go('send')} disabled={busy || !!note || !text.trim()} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Send</button>}
+    <Row sev={answered ? null : 'today'} title={(isReview ? 'Reply to review from ' : 'Reply to ') + who} meta={meta} onTap={() => setOpen(o => !o)} expanded={open} err={err} note={note}
+      tags={answered
+        ? <Tag tone="slate" title="Somebody replied on this thread after Eve drafted it">answered</Tag>
+        : <Tag tone="violet" title={isReview ? 'Eve drafted a public review reply' : 'Eve drafted a reply'}>{isReview ? 'Eve · review' : 'Eve draft'}</Tag>}
+      primary={answered
+        ? <button onClick={() => go('discard')} disabled={busy} className={SECONDARY} title="Nothing more to say — close the draft">{busy ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Clear</button>
+        : <button onClick={() => go('send')} disabled={busy || !!note || !text.trim()} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Send</button>}
       secondary={<IconBtn title="Discard — do not send" onClick={() => go('discard')} disabled={busy || !!note}><X size={14} /></IconBtn>}>
       {open && (
         <div className="mt-2 ml-3.5">
@@ -523,6 +542,9 @@ export function groupDrafts(rows: EveDraft[]): DraftGroup[] {
   const by: Record<string, DraftGroup> = {}
   const order: string[] = []
   for (const d of rows) {
+    // ALREADY ANSWERED NEVER JOINS A BATCH. Send all must not be able to tell a guest a second
+    // time because the list was built before somebody replied from their phone.
+    if (d.followedUp) continue
     const key = draftTemplate(d.why) || d.id
     if (!by[key]) { by[key] = { key, title: '', why: d.why || '', drafts: [] }; order.push(key) }
     by[key].drafts.push(d)
