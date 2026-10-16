@@ -42,7 +42,29 @@ export async function notify(recipients: string[], n: { kind: string; title: str
   // THE INBOX COLUMNS (migration 155): the thread the row came from, so Inbox can reply in place.
   // Until the migration runs the insert is retried without them — a bell row beats no row.
   const rows = n.entity ? base.map(r => ({ ...r, entity_type: String(n.entity!.type).slice(0, 40), entity_id: String(n.entity!.id).slice(0, 120) })) : base
-  let { error } = await db.from('app_notifications').insert(rows)
-  if (error && n.entity && /entity_type|entity_id|schema cache/i.test(error.message)) ({ error } = await db.from('app_notifications').insert(base))
+  // ONE ITEM PER THREAD PER PERSON, AND A REPLY REOPENS IT (Jon, 2026-10-16: "if someone responds it
+  // reopens"). When the row carries a thread, a person who already has an item for that thread gets
+  // that item brought back to the top — open, unread, new title and body — instead of a second row
+  // under it. Completed is where things rest; a new word on the thread is a reason to come back.
+  let pending = rows
+  if (n.entity) {
+    try {
+      const et = String(n.entity.type).slice(0, 40), eid = String(n.entity.id).slice(0, 120)
+      const { data: have, error: hErr } = await db.from('app_notifications').select('id,user_email').eq('entity_type', et).eq('entity_id', eid).in('user_email', emails)
+      if (!hErr && Array.isArray(have) && have.length) {
+        const now = new Date().toISOString()
+        const byUser: Record<string, string> = {}
+        for (const h of have as any[]) byUser[String(h.user_email).toLowerCase()] = String(h.id)
+        const reopen = rows.filter(r => byUser[r.user_email])
+        for (const r of reopen) {
+          await db.from('app_notifications').update({ actor_email: r.actor_email, kind: r.kind, title: r.title, body: r.body, link: r.link, read: false, status: 'open', snoozed_until: null, done_at: null, created_at: now }).eq('id', byUser[r.user_email])
+        }
+        pending = rows.filter(r => !byUser[r.user_email])
+      }
+    } catch { /* fall through to a plain insert */ }
+  }
+  if (!pending.length) return { ok: true, sent: rows.length }
+  let { error } = await db.from('app_notifications').insert(pending)
+  if (error && n.entity && /entity_type|entity_id|schema cache/i.test(error.message)) ({ error } = await db.from('app_notifications').insert(base.filter(b => pending.some(p => p.user_email === b.user_email))))
   return { ok: !error, sent: rows.length, error: error ? error.message : undefined }
 }

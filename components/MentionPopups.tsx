@@ -31,7 +31,8 @@ export function MentionPopups() {
       if (!alive.current || !j?.ok) return
       const s = seen()
       const list = (Array.isArray(j.notifications) ? j.notifications : []) as N[]
-      setItems(list.filter(n => n.kind === 'mention' && !n.read && !s[n.id] && Date.now() - Date.parse(n.created_at) < MAX_AGE_MS).slice(0, 3))
+      // The key carries created_at: a thread that was completed and then REOPENED by a reply pops up again.
+      setItems(list.filter(n => n.kind === 'mention' && !n.read && !s[n.id + '@' + n.created_at] && Date.now() - Date.parse(n.created_at) < MAX_AGE_MS).slice(0, 3))
     } catch { /* next tick */ }
   }
   useEffect(() => {
@@ -43,7 +44,7 @@ export function MentionPopups() {
     return () => { alive.current = false; clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
   }, [])
   const dismiss = async (n: N, go: boolean) => {
-    markSeen(n.id)
+    markSeen(n.id + '@' + n.created_at)
     setItems(x => x.filter(y => y.id !== n.id))
     try { await fetch('/api/notifications', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'read', ids: [n.id] }) }) } catch { /* fine */ }
     if (go && n.link) window.location.href = n.link

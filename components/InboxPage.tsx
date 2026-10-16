@@ -2,7 +2,8 @@
 // THE INBOX (Jon, 2026-10-16: "we should have an inbox system / process for managing all this.
 // Almost like an inbox"). Everything addressed to you — tags, replies on your threads,
 // assignments, project-board notes, handoff alerts — in one list. An item stays OPEN until you
-// deal with it: Reply (in place, into the same thread), Done, or Snooze. The sidebar count is the
+// deal with it: Reply (in place, into the same thread), Complete (→ Completed; a reply on the thread
+// reopens it), or Snooze (1 h · 3 h · this evening · tomorrow · Monday · next week · a date). The sidebar count is the
 // number of open items you have not seen yet.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AtSign, MessageSquare, UserPlus, Bell, Clock, Check, RotateCcw, ExternalLink, Loader2, Inbox as InboxIcon, Send, PenSquare } from 'lucide-react'
@@ -131,7 +132,21 @@ export function InboxPage({ initialTab }: { initialTab?: Tab }) {
       </div>
     </div>
   ) : null
-  const tomorrow8 = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(8, 0, 0, 0); return d.toISOString() }
+  // SNOOZE OPTIONS (Jon, 2026-10-16: "also have snooze options"). All in the viewer's local clock.
+  const at = (days: number, hour: number) => { const d = new Date(); d.setDate(d.getDate() + days); d.setHours(hour, 0, 0, 0); return d }
+  const snoozeOptions = (): { label: string; until: string }[] => {
+    const now = new Date(); const out: { label: string; until: string }[] = []
+    out.push({ label: '1 hour', until: new Date(now.getTime() + 3600_000).toISOString() })
+    out.push({ label: '3 hours', until: new Date(now.getTime() + 3 * 3600_000).toISOString() })
+    if (now.getHours() < 17) out.push({ label: 'This evening · 6pm', until: at(0, 18).toISOString() })
+    out.push({ label: 'Tomorrow · 8am', until: at(1, 8).toISOString() })
+    const toMon = ((8 - now.getDay()) % 7) || 7
+    out.push({ label: 'Monday · 8am', until: at(toMon, 8).toISOString() })
+    out.push({ label: 'Next week', until: at(7, 8).toISOString() })
+    return out
+  }
+  const [snoozeFor, setSnoozeFor] = useState<string | null>(null)
+  const [snoozePick, setSnoozePick] = useState('')
 
   const kinds = useMemo(() => { const m: Record<string, number> = {}; for (const i of items) m[i.kind] = (m[i.kind] || 0) + 1; return m }, [items])
   const shown = useMemo(() => items.filter(i => !kind || i.kind === kind), [items, kind])
@@ -153,17 +168,17 @@ export function InboxPage({ initialTab }: { initialTab?: Tab }) {
       <div className="flex items-center gap-1.5 flex-wrap mb-3 mt-2 overflow-x-auto">
         <TabBtn t="open" label="Open" n={counts.open} />
         <TabBtn t="snoozed" label="Snoozed" n={counts.snoozed} />
-        <TabBtn t="done" label="Done" n={counts.done} />
+        <TabBtn t="done" label="Completed" n={counts.done} />
         <span className="mx-1 h-4 w-px bg-line" />
         {Object.entries(kinds).map(([k, n]) => (
           <button key={k} onClick={() => setKind(kind === k ? '' : k)} className={`rounded-full px-2.5 py-1 text-[11.5px] font-semibold border ${kind === k ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{kindOf(k).label} · {n}</button>
         ))}
-        {tab === 'open' && items.length > 0 && <button onClick={() => act(items.map(i => i.id), 'done')} className="ml-auto text-[12px] font-semibold text-brand-700 hover:underline">All done</button>}
+        {tab === 'open' && items.length > 0 && <button onClick={() => act(items.map(i => i.id), 'done')} className="ml-auto text-[12px] font-semibold text-brand-700 hover:underline">Complete all</button>}
       </div>
-      {degraded && <div className="mb-3 text-[11.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Snooze and reply-in-place switch on once migration <code>155_inbox.sql</code> is run in Supabase. Until then Done = read.</div>}
+      {degraded && <div className="mb-3 text-[11.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Snooze and reply-in-place need migration <code>155_inbox.sql</code> in Supabase. Until then Complete = read.</div>}
       {err && <div className="mb-3 text-[12px] text-rose-700">{err}</div>}
       {loading && !items.length ? <div className="text-[12px] text-muted inline-flex items-center gap-1"><Loader2 size={13} className="animate-spin" /> Loading…</div>
-        : !shown.length ? <LeanEmpty>{tab === 'open' ? 'Nothing waiting on you. When someone tags you, replies on your thread, assigns you something or sends you an alert, it lands here.' : tab === 'snoozed' ? 'Nothing snoozed.' : 'Nothing done yet.'}</LeanEmpty>
+        : !shown.length ? <LeanEmpty>{tab === 'open' ? 'Nothing waiting on you. When someone tags you, replies on your thread, assigns you something or sends you an alert, it lands here.' : tab === 'snoozed' ? 'Nothing snoozed.' : 'Nothing completed yet. Complete moves an item here; a reply on its thread brings it back to Open.'}</LeanEmpty>
         : Object.entries(byDay).map(([day, list]) => (
           <div key={day} className="mb-4">
             <div className="text-[11px] font-bold uppercase tracking-wide text-muted mb-1.5 px-1">{day}</div>
@@ -206,12 +221,20 @@ export function InboxPage({ initialTab }: { initialTab?: Tab }) {
                             {it.link && <a href={it.link} className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white text-ink hover:bg-app"><ExternalLink size={12} /> Open</a>}
                             <button onClick={() => startCompose(it)} title="Turn this into a message to a teammate — it goes with the title and link" className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md border border-violet-200 bg-white text-violet-700 hover:bg-violet-50"><Send size={12} /> Message…</button>
                             {it.entity && it.status !== 'done' && <button onClick={() => { setReplyTo(it.id); setReply('') }} className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white text-ink hover:bg-app"><MessageSquare size={12} /> Reply</button>}
-                            {it.status !== 'done' && <button onClick={() => act([it.id], 'done')} disabled={busy === it.id} className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"><Check size={12} /> Done</button>}
+                            {it.status !== 'done' && <button onClick={() => act([it.id], 'done')} disabled={busy === it.id} className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"><Check size={12} /> Complete</button>}
                             {it.status === 'open' && it.source === 'app' && !degraded && (
-                              <>
-                                <button onClick={() => act([it.id], 'snooze', new Date(Date.now() + 3600_000).toISOString())} className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white text-muted hover:text-ink"><Clock size={12} /> 1 h</button>
-                                <button onClick={() => act([it.id], 'snooze', tomorrow8())} className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white text-muted hover:text-ink"><Clock size={12} /> Tomorrow</button>
-                              </>
+                              <span className="relative inline-flex">
+                                <button onClick={() => { setSnoozeFor(snoozeFor === it.id ? null : it.id); setSnoozePick('') }} className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white text-muted hover:text-ink"><Clock size={12} /> Snooze</button>
+                                {snoozeFor === it.id && (
+                                  <div className="absolute z-20 top-8 left-0 w-56 rounded-xl border border-line bg-white shadow-lg p-1.5">
+                                    {snoozeOptions().map(o => <button key={o.label} onClick={() => { setSnoozeFor(null); act([it.id], 'snooze', o.until) }} className="w-full text-left text-[12px] px-2 py-1.5 rounded-md hover:bg-app text-ink">{o.label}</button>)}
+                                    <div className="border-t border-line mt-1 pt-1.5 px-2 pb-1 flex items-center gap-1.5">
+                                      <input type="datetime-local" value={snoozePick} onChange={e => setSnoozePick(e.target.value)} className="text-[11.5px] border border-line rounded-md px-1.5 h-7 flex-1 min-w-0" />
+                                      <button disabled={!snoozePick} onClick={() => { const d = new Date(snoozePick); if (!isNaN(d.getTime())) { setSnoozeFor(null); act([it.id], 'snooze', d.toISOString()) } }} className="text-[11.5px] font-semibold px-2 h-7 rounded-md bg-ink text-white disabled:opacity-40">Set</button>
+                                    </div>
+                                  </div>
+                                )}
+                              </span>
                             )}
                             {it.status !== 'open' && it.source !== 'handoff' && <button onClick={() => act([it.id], 'open')} className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white text-muted hover:text-ink"><RotateCcw size={12} /> Reopen</button>}
                           </div>
