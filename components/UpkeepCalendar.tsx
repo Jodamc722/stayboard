@@ -23,12 +23,13 @@ const first = (n: string) => String(n || '').trim().split(/\s+/)[0] || n
 const initials = (n: string) => String(n || '').trim().split(/\s+/).map(x => x[0]).join('').slice(0, 2).toUpperCase()
 
 const KIND: Record<CalKind, { label: string; cls: string; workable: boolean; hint: string }> = {
-  open:  { label: 'Open',        cls: 'bg-emerald-50',                                                workable: true,  hint: 'Empty all day' },
-  out:   { label: 'Checkout',    cls: 'bg-[linear-gradient(90deg,#e2e8f0_0_45%,#ecfdf5_45%)]',       workable: true,  hint: 'Guest leaves ~11am — workable after' },
-  in:    { label: 'Check-in',    cls: 'bg-[linear-gradient(90deg,#ecfdf5_0_55%,#e2e8f0_55%)]',       workable: true,  hint: 'Guest arrives ~4pm — workable in the morning' },
-  turn:  { label: 'Turn',        cls: 'bg-amber-100',                                                 workable: false, hint: 'Guest out and guest in the same day — housekeeping owns it' },
-  stay:  { label: 'Guest in',    cls: 'bg-slate-200',                                                 workable: false, hint: 'A guest is in the unit all day' },
-  block: { label: 'Guesty block', cls: 'bg-[repeating-linear-gradient(135deg,#f1f5f9_0_4px,#e2e8f0_4px_8px)]', workable: false, hint: 'Blocked in Guesty' },
+  open:  { label: 'Open',        cls: 'bg-emerald-100',                                               workable: true,  hint: 'Empty all day' },
+  out:   { label: 'Checkout',    cls: 'bg-[linear-gradient(90deg,#cbd5e1_0_40%,#d1fae5_40%)]',       workable: true,  hint: 'Guest leaves ~11am — workable after' },
+  in:    { label: 'Check-in',    cls: 'bg-[linear-gradient(90deg,#d1fae5_0_60%,#cbd5e1_60%)]',       workable: true,  hint: 'Guest arrives ~4pm — workable in the morning' },
+  hold:  { label: 'Hold',        cls: 'bg-[repeating-linear-gradient(135deg,#d1fae5_0_4px,#ecfdf5_4px_8px)]', workable: true, hint: 'Blocked in Guesty but nobody staying — workable' },
+  turn:  { label: 'Turn',        cls: 'bg-amber-200',                                                 workable: false, hint: 'Guest out and guest in the same day — housekeeping owns it' },
+  stay:  { label: 'Guest in',    cls: 'bg-slate-300',                                                 workable: false, hint: 'A guest is in the unit all day' },
+  block: { label: 'Owner / block', cls: 'bg-[repeating-linear-gradient(135deg,#cbd5e1_0_4px,#e2e8f0_4px_8px)]', workable: false, hint: 'Owner or someone staying (Guesty block)' },
 }
 
 export function UpkeepCalendar({ prog, rows, canBook, onBooked }: {
@@ -72,7 +73,7 @@ export function UpkeepCalendar({ prog, rows, canBook, onBooked }: {
   return (
     <div>
       <div className="px-3 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap border-b border-line text-[11px] text-muted">
-        {(['open', 'out', 'in', 'turn', 'stay', 'block'] as CalKind[]).map(k => (
+        {(['open', 'out', 'in', 'hold', 'turn', 'stay', 'block'] as CalKind[]).map(k => (
           <span key={k} className="inline-flex items-center gap-1" title={KIND[k].hint}><span className={'w-3.5 h-3.5 rounded-sm border border-line ' + KIND[k].cls} />{KIND[k].label}</span>
         ))}
         <span className="inline-flex items-center gap-1"><span className="w-4 h-4 rounded-full bg-sky-600 text-white text-[8px] font-bold grid place-items-center">AB</span>in this unit</span>
@@ -87,12 +88,12 @@ export function UpkeepCalendar({ prog, rows, canBook, onBooked }: {
       {err ? <p className="px-3 py-1.5 text-[12px] text-rose-700 bg-rose-50 border-b border-rose-200">{err}</p> : null}
 
       <div className="overflow-x-auto max-h-[62vh] overflow-y-auto">
-        <table className="border-separate border-spacing-0 text-[11px]">
+        <table className="w-full border-separate border-spacing-0 text-[11px] table-fixed">
           <thead className="sticky top-0 z-20 bg-white">
             <tr>
-              <th className="sticky left-0 z-30 bg-white text-left font-semibold text-muted px-3 py-1.5 border-b border-line min-w-[13rem]">Unit</th>
+              <th className="sticky left-0 z-30 bg-white text-left font-semibold text-muted px-3 py-1.5 border-b border-line w-[13rem]">Unit</th>
               {days.map(d => (
-                <th key={d} className={'px-0 py-1 border-b border-line w-9 min-w-[2.25rem] text-center font-semibold ' + (d === data.today ? 'text-ink' : 'text-muted')}>
+                <th key={d} className={'px-0 py-1 border-b border-line min-w-[2.25rem] text-center font-semibold ' + (d === data.today ? 'text-ink' : 'text-muted') + (/^S/.test(dow(d)) ? ' bg-app/60' : '')}>
                   <div className="text-[9.5px] leading-none">{dow(d)}</div>
                   <div className={'text-[11px] leading-tight ' + (d === data.today ? 'inline-block px-1 rounded bg-ink text-white' : '')}>{dnum(d)}</div>
                 </th>
@@ -114,20 +115,20 @@ export function UpkeepCalendar({ prog, rows, canBook, onBooked }: {
                   </td>
                   {days.map(d => {
                     const c = u?.cells.find(x => x.d === d)
-                    if (!c) return <td key={d} className="border-b border-l border-line/60 bg-white" />
+                    if (!c) return <td key={d} className="border-b border-l border-white bg-white" />
                     const K = KIND[c.k]
                     const due = r.dueOn === d || (r.daysOver > 0 && d === data.today)
-                    const sug = r.plan?.date === d
+                    const sug = r.plan?.date === d && K.workable
                     const sel = isPick && pick?.cell.d === d
                     const lead = c.team[0]
                     const title = `${r.unit} · ${nice(d)} — ${c.label || K.hint}` + (c.team.length ? '\n' + c.team.map(t => `${t.name}${t.atUnit ? ' (in this unit)' : ''} · ${t.jobs} job${t.jobs === 1 ? '' : 's'}`).join('\n') : '\nNobody of this trade in the building')
                     return (
-                      <td key={d} className="p-0 border-b border-l border-line/60">
+                      <td key={d} className="p-0 border-b border-l border-white">
                         <button
                           disabled={!K.workable || !canBook || !!booked[r.id]}
                           onClick={() => setPick(sel ? null : { row: r, cell: c })}
                           title={title}
-                          className={'relative w-9 h-9 grid place-items-center ' + K.cls + (K.workable && canBook ? ' hover:brightness-95 cursor-pointer' : ' cursor-default') + (sug ? ' ring-2 ring-inset ring-sky-500' : '') + (sel ? ' outline outline-2 outline-ink -outline-offset-2' : '')}
+                          className={'relative w-full h-9 grid place-items-center ' + K.cls + (K.workable && canBook ? ' hover:brightness-95 cursor-pointer' : ' cursor-default') + (sug ? ' ring-2 ring-inset ring-sky-500' : '') + (sel ? ' outline outline-2 outline-ink -outline-offset-2' : '')}
                         >
                           {lead ? (
                             <span className={'w-5 h-5 rounded-full text-[8.5px] font-bold grid place-items-center ' + (lead.atUnit ? 'bg-sky-600 text-white' : 'ring-1 ring-sky-600 text-sky-700 bg-white/80')}>{initials(lead.name)}</span>

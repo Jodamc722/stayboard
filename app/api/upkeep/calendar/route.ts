@@ -18,7 +18,8 @@
 //   in     a guest arrives that day and the night before was empty — workable in the morning
 //   turn   a guest leaves AND another arrives — housekeeping owns the day; not for upkeep
 //   stay   a guest is in all day
-//   block  a Guesty block that is not a reservation (label in `label`)
+//   block  a Guesty block for an owner or someone staying (owner block, or a label that says so) — not workable
+//   hold   any other Guesty block (maintenance hold, "Other"…) — nobody is in, so it is workable; label shown
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -34,7 +35,7 @@ const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/N
 const plus = (d: string, n: number) => new Date(Date.parse(d + 'T12:00:00Z') + n * 86400000).toISOString().slice(0, 10)
 const str = (v: any) => String(v ?? '').trim()
 
-export type CalKind = 'open' | 'out' | 'in' | 'turn' | 'stay' | 'block'
+export type CalKind = 'open' | 'out' | 'in' | 'turn' | 'stay' | 'block' | 'hold'
 export type CalCell = { d: string; k: CalKind; label?: string | null; team: { name: string; atUnit: boolean; jobs: number }[] }
 export type CalUnit = { listingId: string; unit: string; building: string; cells: CalCell[] }
 export type UpkeepCalendar = {
@@ -74,11 +75,15 @@ export async function GET(req: NextRequest) {
       const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
       if (ci && co) (byUnit[str(r.listing_id)] = byUnit[str(r.listing_id)] || []).push({ ci, co })
     }
-    const blockOf: Record<string, string> = {}
+    const blockOf: Record<string, { label: string; occupied: boolean }> = {}
     for (const d of (cal || [])) {
       if (!isOpsBlock(d)) continue
       const ref = d.refs?.[0]
-      blockOf[d.listingId + '|' + d.date] = (ref?.reason || ref?.note || d.note || 'Blocked in Guesty').slice(0, 60)
+      const label = (ref?.reason || ref?.note || d.note || 'Blocked in Guesty').slice(0, 60)
+      const keys = Object.keys(d.blocks || {}).filter(k => (d.blocks as any)[k]).map(k => k.toLowerCase())
+      // Somebody is (or may be) in the unit: an owner block, or a label/note that says a person is staying.
+      const occupied = keys.includes('o') || String(ref?.type || '').toLowerCase() === 'o' || /owner|stay|guest|family|friend|tenant|personal use/i.test(label + ' ' + (ref?.note || ''))
+      blockOf[d.listingId + '|' + d.date] = { label, occupied }
     }
 
     const units: CalUnit[] = ids.map(lid => {
@@ -92,7 +97,8 @@ export async function GET(req: NextRequest) {
         let k: CalKind = inAllDay ? 'stay' : leaves && arrives ? 'turn' : leaves ? 'out' : arrives ? 'in' : 'open'
         let label: string | null = null
         // A Guesty block on an otherwise empty day (owner stay, hold) — the night of d.
-        if ((k === 'open' || k === 'out') && blockOf[lid + '|' + d]) { k = 'block'; label = blockOf[lid + '|' + d] }
+        const bl = blockOf[lid + '|' + d]
+        if ((k === 'open' || k === 'out') && bl) { k = bl.occupied ? 'block' : k === 'open' ? 'hold' : 'out'; label = 'Guesty: ' + bl.label }
         const team = Object.values(tv.visits[b]?.[d] || {})
           .filter(s => Array.from(s.depts).some(x => tradeOk(dept, x)))
           .map(s => ({ name: s.name, atUnit: s.units.has(lid), jobs: s.jobs }))
