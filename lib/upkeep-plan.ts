@@ -41,27 +41,27 @@ const tradeOk = (rowDept: string, taskDept: string) => {
 const day = (d: string) => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
 
 /** The plan for each row (keyed by row id); null where nobody of the trade is going there in the window. */
-export async function planUpkeep(rows: PlanInput[], today: string, horizon = 21): Promise<Record<string, UpkeepPlan | null>> {
-  const out: Record<string, UpkeepPlan | null> = {}
-  if (!rows.length) return out
+export type Stop = { units: Set<string>; depts: Set<string>; jobs: number; name: string }
+export type Visits = { visits: Record<string, Record<string, Record<string, Stop>>>; bOf: Record<string, string>; nameOf: Record<string, string>; truncated: boolean }
+
+/** Who already has work where, per building and day, for the next `horizon` days (open Breezeway tasks). */
+export async function teamVisits(today: string, horizon = 21): Promise<Visits> {
   const db = supabaseAdmin()
   const last = plus(today, horizon)
-  const [tasks, listings, windows] = await Promise.all([
+  const [tasks, listings] = await Promise.all([
     pageRows<any>((a, b) => db.from('breezeway_tasks_sync')
       .select('id,reference_property_id,scheduled_date,status,finished_at,assignees,type_department')
       .gte('scheduled_date', today).lte('scheduled_date', last)
       .order('scheduled_date', { ascending: true }).order('id').range(a, b), 10),
     db.from('guesty_listings').select('id,nickname,title,building').limit(3000),
-    workableDays(Array.from(new Set(rows.filter(r => r.needsVacant).map(r => r.listingId))), today, horizon).catch(() => ({} as Record<string, any>)),
   ])
-  const bOf: Record<string, string> = {}
+  const bOf: Record<string, string> = {}, nameOf: Record<string, string> = {}
   for (const l of ((listings.data || []) as any[])) {
     const name = str(l.nickname || l.title)
-    bOf[str(l.id)] = norm(buildingOf(name) || buildingOf(str(l.building)) || str(l.building) || name)
+    nameOf[str(l.id)] = name
+    bOf[str(l.id)] = buildingKey(name, str(l.building))
   }
-  // building → date → person → { units, depts, jobs }
-  type Stop = { units: Set<string>; depts: Set<string>; jobs: number; name: string }
-  const visits: Record<string, Record<string, Record<string, Stop>>> = {}
+  const visits: Visits['visits'] = {}
   for (const t of (tasks.rows as any[])) {
     if (t.finished_at || /cancel|delet|void|complete|approved|finished/i.test(str(t.status))) continue
     const lid = str(t.reference_property_id), d = str(t.scheduled_date).slice(0, 10), b = bOf[lid]
@@ -73,6 +73,21 @@ export async function planUpkeep(rows: PlanInput[], today: string, horizon = 21)
       s.units.add(lid); s.depts.add(str(t.type_department)); s.jobs++
     }
   }
+  return { visits, bOf, nameOf, truncated: !!tasks.truncated }
+}
+/** The one building key both sides use: "Elser 1615 - Studio" → "elser". */
+export const buildingKey = (name: string, building?: string | null) => norm(buildingOf(name) || buildingOf(str(building)) || str(building) || name)
+export { tradeOk }
+
+/** The plan for each row (keyed by row id); null where nobody of the trade is going there in the window. */
+export async function planUpkeep(rows: PlanInput[], today: string, horizon = 21, pre?: Visits): Promise<Record<string, UpkeepPlan | null>> {
+  const out: Record<string, UpkeepPlan | null> = {}
+  if (!rows.length) return out
+  const [tv, windows] = await Promise.all([
+    pre ? Promise.resolve(pre) : teamVisits(today, horizon),
+    workableDays(Array.from(new Set(rows.filter(r => r.needsVacant).map(r => r.listingId))), today, horizon).catch(() => ({} as Record<string, any>)),
+  ])
+  const visits = tv.visits
   for (const r of rows) {
     const b = norm(r.building)
     const byDay = visits[b] || {}

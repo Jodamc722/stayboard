@@ -15,10 +15,11 @@
 // unit nobody has logged the job on — not "late", because it is far more often a data gap.
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Loader2, RefreshCw, Plus, ExternalLink, Search, LayoutGrid, List, Wrench, Sparkles, Fan, ClipboardCheck } from 'lucide-react'
+import { Loader2, RefreshCw, Plus, ExternalLink, Search, LayoutGrid, List, CalendarDays, Wrench, Sparkles, Fan, ClipboardCheck } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { LeanHead, Pill, Tag, LeanEmpty, type Tone } from '@/components/lean'
 import type { Upkeep, UpkeepProgram, UpkeepRow, UpkeepState } from '@/app/api/upkeep/route'
+import { UpkeepCalendar } from '@/components/UpkeepCalendar'
 
 const url = (market: string) => '/api/upkeep?market=' + encodeURIComponent(market)
 const bzTask = (id: string) => 'https://app.breezeway.io/task/' + encodeURIComponent(id)
@@ -49,7 +50,7 @@ export function UpkeepBoard() {
   const [state, setState] = useState<UpkeepState | 'all'>('all')
   const [building, setBuilding] = useState('')
   const [q, setQ] = useState('')
-  const [view, setView] = useState<'list' | 'grid'>('list')
+  const [view, setView] = useState<'list' | 'grid' | 'cal'>('list')
   const [busy, setBusy] = useState('')
   const [filed, setFiled] = useState<Record<string, string>>({})
   const [err, setErr] = useState('')
@@ -184,13 +185,20 @@ export function UpkeepBoard() {
                 {Array.from(new Set(prog.rows.map(r => r.building))).sort().map(b => <option key={b} value={b}>{b}</option>)}
               </select>
               <label className="h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white px-1.5 text-[11.5px]"><Search size={11} className="text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="unit" className="w-16 bg-transparent outline-none text-ink" /></label>
-              <button onClick={() => setView(v => v === 'list' ? 'grid' : 'list')} title={view === 'list' ? 'Every unit against every program' : 'Back to the list'} className="h-7 px-2 rounded-md border border-line bg-white text-muted hover:text-ink inline-flex items-center gap-1 text-[11.5px] font-semibold">{view === 'list' ? <><LayoutGrid size={12} /> Grid</> : <><List size={12} /> List</>}</button>
+              <span className="inline-flex rounded-md border border-line overflow-hidden">
+                {([['list', 'List', List, 'One row per unit'], ['cal', 'Calendar', CalendarDays, 'Open days, who is there — click a day to book'], ['grid', 'Grid', LayoutGrid, 'Every unit against every program']] as const).map(([k, label, Icon, tip]) => (
+                  <button key={k} onClick={() => setView(k)} aria-pressed={view === k} title={tip} className={'h-7 px-2 inline-flex items-center gap-1 text-[11.5px] font-semibold ' + (view === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}><Icon size={12} /> {label}</button>
+                ))}
+              </span>
             </span>
           </header>
           {prog ? <p className="px-3 py-1.5 text-[11.5px] text-muted border-b border-line bg-app/40">{prog.how}{prog.awaiting ? ` · ${prog.awaiting} waiting on an approver` : ''}{prog.late90plus ? ` · ${prog.late90plus} over 90 days late` : ''}</p> : null}
           {err ? <p className="px-3 py-1.5 text-[12px] text-rose-700 bg-rose-50 border-b border-rose-200">{err}</p> : null}
           {view === 'grid' ? (
             <Matrix programs={programs} building={building} market={market} q={q} />
+          ) : view === 'cal' && prog ? (
+            <UpkeepCalendar prog={prog} rows={rows} canBook={!!data?.canEdit && (!prog.needsApproval || !!data?.canApprove.includes(prog.key))}
+              onBooked={(id, msg, taskId) => { setDone(d => ({ ...d, [id]: msg })); setFiled(f => ({ ...f, [id]: taskId })); invalidateCache(url(market)) }} />
           ) : rows.length === 0 ? (
             <p className="px-3 py-4 text-[12.5px] text-muted">{state === 'all' ? 'Nothing needs attention here — every unit is on track or booked.' : 'Nothing in this state.'}</p>
           ) : (

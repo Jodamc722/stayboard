@@ -281,7 +281,7 @@ export async function POST(req: NextRequest) {
     // When: a date the approver picked, else the unit's next empty day (needsVacant) or next checkout
     // (Salato deep cleans happen at a departure), else today.
     let date = /^\d{4}-\d{2}-\d{2}$/.test(String(body?.date || '')) && String(body.date) >= today ? String(body.date) : ''
-    let why = date ? 'on the day the approver picked' : ''
+    let why = date ? (typeof body?.assignee === 'string' && body.assignee ? `on the day picked on the calendar, with ${String(body.assignee).split(/\s+/)[0]}` : 'on the day picked on the calendar') : ''
     // SMART BOOKING FIRST: the day somebody of this trade is already going there (lib/upkeep-plan).
     let plan: UpkeepPlan | null = null
     if (!date && !(c.ridesDeparture || /salato/i.test(building))) {
@@ -310,7 +310,9 @@ export async function POST(req: NextRequest) {
     const market = String(marketOf(building, null, unit) || 'Broward')
     const sup = automation ? (automation.supervisors[market] || automation.supervisors.Miami) : ''
     // The person already going there, when there is one; else the market supervisor (maintenance).
-    const assignees = plan ? Array.from(new Set([plan.person, c.dept === 'housekeeping' ? '' : automation?.assignAlways].filter(Boolean))) as string[]
+    // The coordinator's own pick from the calendar wins outright ('' = book it unassigned).
+    const picked = typeof body?.assignee === 'string' ? String(body.assignee).trim().slice(0, 80) : null
+    const assignees = picked !== null ? (picked ? [picked] : []) : plan ? Array.from(new Set([plan.person, c.dept === 'housekeeping' ? '' : automation?.assignAlways].filter(Boolean))) as string[]
       : c.dept === 'housekeeping' ? [] : Array.from(new Set([automation?.assignAlways, sup].filter(Boolean))) as string[]
     const unitInfo = (await getUnitInfo().catch(() => ({} as Record<string, UnitInfo>)))[listingId]
     const title = `${c.label} — ${unit}`
