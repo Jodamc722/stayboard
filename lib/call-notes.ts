@@ -89,6 +89,16 @@ export function noteLineFor(call: any, intel: CallIntel | null): string {
   return `${head} — ${body}${promised}${issues}${link}`.slice(0, 900)
 }
 
+/** One short line for a call that did not connect — "we called — no answer (4:59 PM) · Roberto". */
+export function attemptLineFor(call: any): string {
+  const at = call.call_at ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }).format(new Date(call.call_at)) : ''
+  const by = call.caller_name ? ` · ${call.caller_name}` : ''
+  const what = call.direction === 'inbound'
+    ? (String(call.result || '').toLowerCase() === 'hangup' ? 'guest called in — hung up before we answered' : 'guest called in — missed')
+    : 'we called — no answer'
+  return `${what}${at ? ` (${at})` : ''}${by}`
+}
+
 /**
  * The queue worker. Walks recorded calls that are matched to a booking, transcribes, reads, and
  * pushes the note. Time-boxed like the rest of the Talkroute sync: it stops cleanly and the next
@@ -116,9 +126,13 @@ export async function processCallIntel(sb: any, opts: { deadline?: number; limit
     .not('reservation_id', 'is', null)
     // Outbound calls carry no `result` at all (2026-09-21) — requiring 'answered' here excluded
     // every welcome call from transcription. Connectedness is decided by callConnected below.
-    .or('result.eq.answered,result.is.null')
+    // Missed and hung-up INBOUND calls ride along too (Jon, 2026-10-16): they are never transcribed,
+    // but they do leave their one line on the booking below.
+    .or('result.eq.answered,result.is.null,result.eq.missed,result.eq.hangup')
     .gte('call_at', fromIso)
-    .or('transcript_status.is.null,transcript_status.eq.pending')
+    // Unconnected calls from the last two days that never got their line (the rule changed
+    // 2026-10-16) come back once so today's attempts are on the booking too.
+    .or(`transcript_status.is.null,transcript_status.eq.pending,and(transcript_status.eq.none,note_pushed_at.is.null,call_at.gte.${new Date(Date.now() - 48 * 3600_000).toISOString()})`)
     .order('call_at', { ascending: false })
     .limit(opts.limit || 40)
 
@@ -128,7 +142,19 @@ export async function processCallIntel(sb: any, opts: { deadline?: number; limit
     const seconds = Number(c.duration) || 0
     try {
       // ── 1. Should this call be transcribed at all? ──────────────────────────────────────────
-      if (callConnected(c) !== 'answered') { await mark(sb, c.id, { transcript_status: 'none' }); rep.skipped++ }
+      if (callConnected(c) !== 'answered') {
+        await mark(sb, c.id, { transcript_status: 'none' }); rep.skipped++
+        // EVERY ATTEMPT IS A LINE (Jon, 2026-10-16, looking at a thread of no-answers and a missed
+        // call-back: "add this info to the reservation notes, helpful for the team to see"). This
+        // replaces the 2026-09-21 rule of one summary line at close — the team reads the booking
+        // in Guesty during the stay, not after it. Short, timed, one per attempt.
+        if (!c.note_pushed_at && !over()) {
+          const line = attemptLineFor(c)
+          const r = await pushNote(sb, String(c.reservation_id), MATCH_LABEL[String(c.match_kind || '')] || 'Guest call', line)
+          if (r.ok) { await mark(sb, c.id, { note_line: line, note_pushed_at: new Date().toISOString(), note_error: null }); rep.notesPushed++ }
+          else { await mark(sb, c.id, { note_error: r.error || 'note push failed' }); rep.errors.push(`attempt ${c.id}: ${r.error}`) }
+        }
+      }
       else if (!c.recorded) { await mark(sb, c.id, { transcript_status: 'none' }); rep.skipped++ }
       else if (seconds < minSeconds) { await mark(sb, c.id, { transcript_status: 'skipped', transcript_error: `Under ${minSeconds}s` }); rep.skipped++ }
       else if (!ready) { rep.skipped++; continue }          // no key: leave it pending for later
