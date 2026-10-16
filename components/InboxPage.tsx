@@ -5,7 +5,7 @@
 // deal with it: Reply (in place, into the same thread), Done, or Snooze. The sidebar count is the
 // number of open items you have not seen yet.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AtSign, MessageSquare, UserPlus, Bell, Clock, Check, RotateCcw, ExternalLink, Loader2, Inbox as InboxIcon } from 'lucide-react'
+import { AtSign, MessageSquare, UserPlus, Bell, Clock, Check, RotateCcw, ExternalLink, Loader2, Inbox as InboxIcon, Send, PenSquare } from 'lucide-react'
 import { LeanEmpty, Tag, type Tone } from '@/components/lean'
 import type { InboxItem } from '@/app/api/inbox/route'
 
@@ -18,6 +18,7 @@ const KIND: Record<string, { label: string; tone: Tone; Icon: any }> = {
   assignment: { label: 'Assigned', tone: 'brand', Icon: UserPlus },
   assigned: { label: 'Assigned', tone: 'brand', Icon: UserPlus },
   alert: { label: 'Alert', tone: 'amber', Icon: Bell },
+  sent: { label: 'Sent', tone: 'slate', Icon: Send },
   due_soon: { label: 'Due soon', tone: 'amber', Icon: Clock },
   overdue: { label: 'Overdue', tone: 'rose', Icon: Clock },
 }
@@ -40,13 +41,18 @@ export function InboxPage({ initialTab }: { initialTab?: Tab }) {
   const [reply, setReply] = useState('')
   const [busy, setBusy] = useState('')
   const [note, setNote] = useState<Record<string, string>>({})
+  // COMPOSE (Jon, 2026-10-16: "notifications that you can turn into a message"). A new message to a
+  // teammate, or one ABOUT an item on the list — the item's title and link ride along so the
+  // recipient's Open lands on the thing itself.
+  const [people, setPeople] = useState<{ email: string; name: string; role: string | null }[]>([])
+  const [compose, setCompose] = useState<{ forId: string | null; about: { title: string; link: string | null } | null; to: string[]; text: string; q: string } | null>(null)
 
   const load = useCallback(async (t: Tab = tab) => {
     setLoading(true)
     try {
       const j = await fetch('/api/inbox?tab=' + t, { cache: 'no-store' }).then(r => r.json())
       if (!j?.ok) { setErr(j?.error || 'Could not load the inbox.'); return }
-      setItems(j.items || []); setCounts(j.counts || counts); setDegraded(!!j.degraded); setErr('')
+      setItems(j.items || []); setCounts(j.counts || counts); setDegraded(!!j.degraded); setErr(''); if (Array.isArray(j.people)) setPeople(j.people)
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])
@@ -81,6 +87,50 @@ export function InboxPage({ initialTab }: { initialTab?: Tab }) {
       await act([it.id], 'done')
     } finally { setBusy('') }
   }
+  const startCompose = (it: InboxItem | null) => {
+    if (!it) { setCompose({ forId: null, about: null, to: [], text: '', q: '' }); return }
+    const [, what] = splitTitle(it.title)
+    const quoted = [what || it.title, it.body || ''].filter(Boolean).join('\n').split('\n').map(l => '> ' + l).join('\n')
+    setCompose({ forId: it.id, about: { title: what || it.title, link: it.link || null }, to: [], text: quoted + '\n\n', q: '' })
+  }
+  const pickPerson = (v: string) => {
+    if (!compose) return
+    const k = v.trim().toLowerCase()
+    const p = people.find(x => x.name.toLowerCase() === k || x.email === k)
+    if (p && !compose.to.includes(p.email)) setCompose({ ...compose, to: compose.to.concat([p.email]), q: '' })
+    else setCompose({ ...compose, q: v })
+  }
+  const sendMessage = async () => {
+    if (!compose || !compose.to.length || !compose.text.trim()) return
+    setBusy('compose')
+    try {
+      const j = await fetch('/api/inbox', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'message', to: compose.to, text: compose.text.trim(), about: compose.about }) }).then(r => r.json())
+      if (!j?.ok) { setErr(j?.error || 'Could not send.'); return }
+      const line = 'Sent to ' + (j.sentTo || []).join(', ') + (j.slackDm ? ' · Slack DM too' : '')
+      if (compose.forId) setNote(n => ({ ...n, [compose.forId!]: line })); else setErr('')
+      setCompose(null)
+      load(tab)
+    } finally { setBusy('') }
+  }
+  const nameOf = (e: string) => people.find(p => p.email === e)?.name || e.split('@')[0]
+  // Rendered as a plain function call, not a component: a component defined inside render remounts
+  // on every keystroke and the textarea loses focus.
+  const composeBox = (inline?: boolean) => compose ? (
+    <div className={(inline ? 'mt-2 ' : 'mb-3 ') + 'bg-white border border-violet-200 rounded-2xl shadow-soft p-3 space-y-2'}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[11.5px] font-semibold text-muted">To</span>
+        {compose.to.map(e => <span key={e} className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200 inline-flex items-center gap-1">{nameOf(e)}<button onClick={() => setCompose({ ...compose, to: compose.to.filter(x => x !== e) })} className="hover:text-rose-600">×</button></span>)}
+        <input list="msg-people" value={compose.q} onChange={e => pickPerson(e.target.value)} placeholder={compose.to.length ? 'Add another…' : 'Teammate…'} className="text-[12px] border border-line rounded-md px-2 py-1 bg-white w-44" autoFocus={!inline} />
+        <datalist id="msg-people">{people.map(p => <option key={p.email} value={p.name} />)}</datalist>
+        {compose.about && <span className="text-[11px] text-muted truncate">about: {compose.about.title}</span>}
+      </div>
+      <textarea value={compose.text} onChange={e => setCompose({ ...compose, text: e.target.value })} rows={4} placeholder="Write the message… they get it here, as a pop-up, and as a Slack DM; they can reply in place." className="w-full text-[12.5px] border border-line rounded-lg px-2.5 py-1.5 bg-white" />
+      <div className="flex items-center gap-2">
+        <button onClick={sendMessage} disabled={!compose.to.length || !compose.text.trim() || busy === 'compose'} className="text-[11.5px] font-semibold px-3 h-7 inline-flex items-center gap-1 rounded-md bg-ink text-white disabled:opacity-40"><Send size={12} /> {busy === 'compose' ? 'Sending…' : 'Send'}</button>
+        <button onClick={() => setCompose(null)} className="text-[11.5px] text-muted px-1">Cancel</button>
+      </div>
+    </div>
+  ) : null
   const tomorrow8 = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(8, 0, 0, 0); return d.toISOString() }
 
   const kinds = useMemo(() => { const m: Record<string, number> = {}; for (const i of items) m[i.kind] = (m[i.kind] || 0) + 1; return m }, [items])
@@ -97,7 +147,9 @@ export function InboxPage({ initialTab }: { initialTab?: Tab }) {
         <InboxIcon size={18} className="text-brand-600" />
         <h1 className="text-[17px] font-bold text-ink">Messages</h1>
         <span className="text-[12px] text-muted">internal — what teammates said to you: tags, replies, assignments, alerts</span>
+        <button onClick={() => startCompose(null)} className="ml-auto text-[12px] font-semibold px-3 h-8 inline-flex items-center gap-1 rounded-lg bg-ink text-white"><PenSquare size={13} /> New message</button>
       </div>
+      {compose && !compose.forId ? composeBox(false) : null}
       <div className="flex items-center gap-1.5 flex-wrap mb-3 mt-2 overflow-x-auto">
         <TabBtn t="open" label="Open" n={counts.open} />
         <TabBtn t="snoozed" label="Snoozed" n={counts.snoozed} />
@@ -139,6 +191,7 @@ export function InboxPage({ initialTab }: { initialTab?: Tab }) {
                         )}
                         {it.snoozedUntil && it.status === 'snoozed' && <div className="text-[11px] text-amber-700 mt-1">back {new Date(it.snoozedUntil).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit' })}</div>}
                         {note[it.id] && <div className="text-[11.5px] text-emerald-700 font-semibold mt-1">{note[it.id]}</div>}
+                        {compose && compose.forId === it.id ? composeBox(true) : null}
                         {replying && (
                           <div className="mt-2 space-y-1">
                             <textarea autoFocus value={reply} onChange={e => setReply(e.target.value)} rows={2} placeholder={'Reply to ' + firstOf(it.actor) + '… they are tagged; @name tags others'} className="w-full text-[12.5px] border border-line rounded-lg px-2.5 py-1.5 bg-white" />
@@ -151,6 +204,7 @@ export function InboxPage({ initialTab }: { initialTab?: Tab }) {
                         {!replying && (
                           <div className="flex items-center gap-1.5 flex-wrap mt-2 lh-actions">
                             {it.link && <a href={it.link} className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white text-ink hover:bg-app"><ExternalLink size={12} /> Open</a>}
+                            <button onClick={() => startCompose(it)} title="Turn this into a message to a teammate — it goes with the title and link" className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md border border-violet-200 bg-white text-violet-700 hover:bg-violet-50"><Send size={12} /> Message…</button>
                             {it.entity && it.status !== 'done' && <button onClick={() => { setReplyTo(it.id); setReply('') }} className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white text-ink hover:bg-app"><MessageSquare size={12} /> Reply</button>}
                             {it.status !== 'done' && <button onClick={() => act([it.id], 'done')} disabled={busy === it.id} className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"><Check size={12} /> Done</button>}
                             {it.status === 'open' && it.source === 'app' && !degraded && (

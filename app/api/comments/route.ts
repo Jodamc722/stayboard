@@ -6,6 +6,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { tagAndNotify, roster, rosterForPicker } from '@/lib/mentions'
 import { parseMentions } from '@/lib/mentions-parse'
 import { buildingOf } from '@/lib/segments'
+import { nameMatches } from '@/lib/person-name'
 import { breezewayConfigured, retrieveBreezewayTask, updateBreezewayTask, listBreezewayComments, createBreezewayComment, matchBreezewayPerson, breezewayPeopleLite, breezewayPersonName, breezewayMention } from '@/lib/breezeway'
 import { importTaskComments } from '@/lib/breezeway-comment-sync'
 import { getSetting, setSetting } from '@/lib/app-settings'
@@ -85,6 +86,15 @@ async function resolveCommentPerson(db: any, me: string): Promise<{ id: number |
   return { id, name: id ? await breezewayPersonName(id) : null }
 }
 
+/** Breezeway / glitch assignee names → Lighthouse emails, by the same fuzzy name match the staffing check uses. */
+async function emailsForNames(names: string[]): Promise<string[]> {
+  const want = names.map(n => str(n).trim()).filter(Boolean)
+  if (!want.length) return []
+  const people = await roster()
+  const out: string[] = []
+  for (const n of want) { const hit = people.find(p => nameMatches(p.name, n)); if (hit && !out.includes(hit.email)) out.push(hit.email) }
+  return out
+}
 async function displayName(db: any, email: string): Promise<string | null> {
   try { const { data } = await db.from('app_users').select('profile').eq('email', email).maybeSingle(); return str(data?.profile?.name) || null } catch { return null }
 }
@@ -172,12 +182,14 @@ export async function PATCH(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   // Comments are posted from Glitches, Today in Ops, Command and Maintenance — edit on any of them.
-  const gate = await requireAnyLevel(['plan', 'glitches', 'command', 'maintenance'], 'edit')
+  const b = await req.json().catch(() => ({} as any))
+  const type = str(b.type); const id = str(b.id); const body = str(b.body).trim()
+  // A direct MESSAGE thread (type 'message', Messages page) is people talking to people — any
+  // Lighthouse login can reply. Comments on work still need edit on one of the work tabs.
+  const gate = type === 'message' ? await requireVrUser() : await requireAnyLevel(['plan', 'glitches', 'command', 'maintenance'], 'edit')
   if (!gate.ok) return gate.res
   const user = gate.access.user
   const me = user.email.toLowerCase()
-  const b = await req.json().catch(() => ({} as any))
-  const type = str(b.type); const id = str(b.id); const body = str(b.body).trim()
   if (!type || !id || !body) return NextResponse.json({ ok: false, error: 'type, id and body are required.' }, { status: 400 })
   const db = supabaseAdmin()
   const team = await teamEmails(db)
@@ -192,7 +204,7 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   const actorName = me.split('@')[0]
   const label = str(b.label) || type
-  const link = type === 'glitch' ? '/glitches?id=' + encodeURIComponent(id) : (str(b.link) || (type === 'task' ? '/plan' : null))
+  const link = type === 'glitch' ? '/glitches?id=' + encodeURIComponent(id) : type === 'message' ? '/messages' : (str(b.link) || (type === 'task' ? '/plan' : null))
   // THREAD FOLLOWERS: anyone who already commented here hears about the reply; on glitches the
   // creator hears about every comment.
   const followers: string[] = []
@@ -200,9 +212,19 @@ export async function POST(req: NextRequest) {
     const { data: prior } = await db.from('app_comments').select('author_email').eq('entity_type', type).eq('entity_id', id).limit(200)
     for (const r of ((prior || []) as any[])) { const e = str(r.author_email).toLowerCase(); if (e && team.includes(e)) followers.push(e) }
     if (type === 'glitch') {
-      const { data: g } = await db.from('glitches').select('created_by').eq('id', id).maybeSingle()
+      const { data: g } = await db.from('glitches').select('created_by,assignee').eq('id', id).maybeSingle()
       const creator = str(g && g.created_by).toLowerCase()
       if (creator && team.includes(creator)) followers.push(creator)
+      const asg = str(g && (g as any).assignee)
+      if (asg) for (const e of await emailsForNames([asg])) followers.push(e)
+    }
+    // TASK COMMENTS ARE MESSAGES (Jon, 2026-10-16: "all task comments in Lighthouse are messages and
+    // show in Messages and in the task"). The people ON the task — its Breezeway assignees, matched
+    // to Lighthouse logins by name — hear every comment, tagged or not.
+    if (type === 'task') {
+      const { data: t } = await db.from('breezeway_tasks_sync').select('assignees,assignee_name').eq('id', id).maybeSingle()
+      const names = (Array.isArray((t as any)?.assignees) ? (t as any).assignees : []).map((a: any) => str(a && typeof a === 'object' ? a.name : a)).concat([str((t as any)?.assignee_name)]).filter(Boolean)
+      for (const e of await emailsForNames(names)) followers.push(e)
     }
   } catch { /* best effort */ }
   const tagged = await tagAndNotify({

@@ -7,6 +7,9 @@
 //   h:<id>  handoff alerts       — the ones addressed to me that are still open
 // GET  ?tab=open|snoozed|done   → { items, counts }
 // POST { action: 'done'|'open'|'snooze'|'readAll', ids: [...], until? }
+// POST { action: 'message', to: [emails], text, about?: { title, link } }  → a direct message thread
+//      (app_comments type 'message'); the recipients get it here with Reply in place. Turning a
+//      notification into a message passes `about` so Open still lands on the thing it was about.
 // A reply is not here: the page posts to /api/comments with the item's entity, exactly as a
 // comment box would, so the thread, Breezeway and Guesty rules are the same ones.
 import { NextRequest, NextResponse } from 'next/server'
@@ -14,6 +17,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireUser } from '@/lib/access'
 import { readAlerts } from '@/lib/handoff-store'
 import { isOpen, isFor, hasFired } from '@/lib/handoff'
+import { rosterForPicker, tagAndNotify } from '@/lib/mentions'
+import { randomUUID } from 'node:crypto'
 
 export const dynamic = 'force-dynamic'
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
@@ -115,7 +120,7 @@ export async function GET(req: NextRequest) {
   const counts = { open: 0, unread: 0, snoozed: 0, done: 0 }
   for (const i of items) { counts[i.status]++; if (i.status === 'open' && !i.read) counts.unread++ }
   const shown = items.filter(i => i.status === tab).slice(0, tab === 'done' ? 100 : 200)
-  return NextResponse.json({ ok: true, me, tab, items: shown, counts, degraded })
+  return NextResponse.json({ ok: true, me, tab, items: shown, counts, degraded, people: (await rosterForPicker()).filter(p => p.email !== me) })
 }
 
 export async function POST(req: NextRequest) {
@@ -137,6 +142,23 @@ export async function POST(req: NextRequest) {
       await soft(db.from('app_notifications').update({ read: true }).eq('user_email', me).eq('read', false))
       await db.from('project_notifications').update({ read_at: now }).eq('email', me).is('read_at', null)
       return NextResponse.json({ ok: true })
+    }
+    if (action === 'message') {
+      const text = str(b.text).trim().slice(0, 2000)
+      const to: string[] = Array.from(new Set((Array.isArray(b.to) ? b.to : []).map((e: any) => str(e).toLowerCase()).filter((e: string) => e && e !== me)))
+      if (!text) return NextResponse.json({ ok: false, error: 'Write something first.' }, { status: 400 })
+      if (!to.length) return NextResponse.json({ ok: false, error: 'Pick who it is for.' }, { status: 400 })
+      const threadId = randomUUID()
+      const about = b.about && typeof b.about === 'object' ? { title: str(b.about.title).slice(0, 140), link: str(b.about.link) || null } : null
+      const { error } = await db.from('app_comments').insert({ entity_type: 'message', entity_id: threadId, author_email: me, body: text, mentions: to })
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+      const name = str(gate.access.profile?.name) || me.split('@')[0]
+      const r = await tagAndNotify({ text, by: me, byName: name, title: about?.title ? 'About: ' + about.title : 'Message', link: about?.link || '/messages', picked: to, entity: { type: 'message', id: threadId } })
+      // What I sent, visible to me as done — so the thread can be found again under Done.
+      const sent = { user_email: me, actor_email: me, kind: 'sent', title: `You → ${r.names.join(', ') || to.join(', ')} · ${about?.title || 'Message'}`.slice(0, 200), body: text.slice(0, 500), link: about?.link || '/messages', read: true }
+      const ins = await db.from('app_notifications').insert({ ...sent, status: 'done', done_at: now, entity_type: 'message', entity_id: threadId })
+      if (ins.error) await db.from('app_notifications').insert(sent)
+      return NextResponse.json({ ok: true, threadId, sentTo: r.names, slackDm: r.slack.dm })
     }
     if (!ids.length) return NextResponse.json({ ok: false, error: 'ids required' }, { status: 400 })
     if (action === 'read') {
