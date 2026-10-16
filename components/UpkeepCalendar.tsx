@@ -159,7 +159,7 @@ export function UpkeepCalendar({ prog, rows, canBook, onBooked }: {
           </button>
         )
         return (
-          <div className="sticky bottom-0 border-t border-line bg-white px-3 py-2.5 shadow-[0_-6px_16px_-10px_rgba(0,0,0,.25)]">
+          <div className="fixed z-50 bottom-4 left-1/2 -translate-x-1/2 w-[min(56rem,calc(100vw-2rem))] max-h-[45vh] overflow-y-auto rounded-xl border border-line bg-white px-3 py-2.5 shadow-2xl">
             <div className="flex items-center gap-2 flex-wrap mb-2">
               <span className="text-[12.5px] font-semibold text-ink">Book {prog.label.toLowerCase()} · {r.unit} · {nice(c.d)}</span>
               <span className="text-[11px] text-muted">{KIND[c.k].hint}</span>
