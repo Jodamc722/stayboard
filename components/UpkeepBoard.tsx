@@ -128,7 +128,8 @@ export function UpkeepBoard() {
         <Pill tone="amber" title={'Due in the next ' + (data?.soonDays || 14) + ' days'}>{t.soon} due soon</Pill>
         {t.awaiting ? <Pill tone="amber" title="Due on a program that needs an approver's yes before it is booked">{t.awaiting} to approve</Pill> : null}
         <Pill tone="sky" title="Already on the board in Breezeway">{t.booked} booked</Pill>
-        <Pill tone="slate" title="Never recorded on this unit — a data gap more often than neglect">{t.none} no record</Pill>
+        {(() => { const n = programs.reduce((k, p) => k + p.rows.filter(r => r.source === 'clock').length, 0); return n ? <Pill tone="slate" title="Never recorded, so the clock was started — first rounds are spread over one interval. Record a real date to replace one.">{n} on a new clock</Pill> : null })()}
+        {t.none ? <Pill tone="slate" title="Never recorded on this unit — a data gap more often than neglect">{t.none} no record</Pill> : null}
       </> : null}
       {data && data.markets.length > 1 ? (
         <select value={market} onChange={e => pickMarket(e.target.value)} className="h-8 rounded-lg border border-line bg-white px-2 text-[12px] font-semibold text-ink" aria-label="Area">
@@ -210,9 +211,10 @@ export function UpkeepBoard() {
                     {r.approval?.waiting && !filed[r.id] ? <Tag tone="amber">Needs approval</Tag> : null}
                     {r.approval?.declined ? <Tag tone="slate" title={r.approval.declined}>Declined</Tag> : null}
                     {r.source === 'recorded' ? <Tag tone="slate" title="A person recorded this date on the Upkeep page">recorded</Tag> : null}
+                    {r.source === 'clock' ? <Tag tone="slate" title="Nothing was ever recorded for this, so the clock was started that day. The first round is spread out so a whole program does not land on one day. Record the real date if you know it.">clock started {nice(r.clockStarted || null)}</Tag> : null}
                     {r.source === 'new' ? <Tag tone="slate" title="No record yet, and the unit went live more recently than this program's interval — the clock started the day it went live">new unit · live {nice(r.goLive || r.lastDone)}</Tag> : null}
                     {done[r.id] ? <span className="text-[11.5px] text-emerald-700 font-semibold">{done[r.id]}</span> : null}
-                    <span className={'text-[11.5px] tabular-nums ' + (r.state === 'late' ? 'text-rose-700 font-semibold' : 'text-muted')}>{r.state === 'none' ? 'never recorded' : (r.source === 'new' ? 'live since ' : 'last ') + nice(r.lastDone) + ' · due ' + nice(r.dueOn) + ' · ' + whenWord(r)}</span>
+                    <span className={'text-[11.5px] tabular-nums ' + (r.state === 'late' ? 'text-rose-700 font-semibold' : 'text-muted')}>{r.state === 'none' ? 'never recorded' : r.source === 'clock' ? 'first due ' + nice(r.dueOn) + ' · ' + whenWord(r) : (r.source === 'new' ? 'live since ' : 'last ') + nice(r.lastDone) + ' · due ' + nice(r.dueOn) + ' · ' + whenWord(r)}</span>
                     <span className="ml-auto inline-flex items-center gap-1.5 flex-wrap">
                       {data.canEdit && !taskId && recording === r.id ? (
                         <span className="inline-flex items-center gap-1">
@@ -221,7 +223,7 @@ export function UpkeepBoard() {
                           <button onClick={() => setRecording('')} className="text-[11.5px] text-muted px-1">✕</button>
                         </span>
                       ) : data.canEdit && !taskId && !done[r.id] ? (
-                        <button onClick={() => { setRecording(r.id); setRecDate(r.lastDone || '') }} title="Record when this was last done — the clock starts from that day; no task is created" className="text-[11.5px] font-semibold px-2 h-7 rounded-md border border-line bg-white text-muted hover:text-ink">{r.state === 'none' ? 'Record last done' : 'Fix date'}</button>
+                        <button onClick={() => { setRecording(r.id); setRecDate(r.lastDone || '') }} title="Record when this was last done — the clock starts from that day; no task is created" className="text-[11.5px] font-semibold px-2 h-7 rounded-md border border-line bg-white text-muted hover:text-ink">{r.state === 'none' || r.source === 'clock' ? 'Record last done' : 'Fix date'}</button>
                       ) : null}
                       {!taskId && !done[r.id] && r.approval?.waiting && prog && data.canApprove.includes(prog.key) ? (
                         <>
@@ -304,7 +306,7 @@ function Matrix({ programs, building, market, q }: { programs: UpkeepProgram[]; 
               {ps.map(p => {
                 const r = u.cells[p.key]
                 return <td key={p.key} className="px-1.5 py-1 text-center">
-                  {r ? <span className={'inline-block w-3.5 h-3.5 rounded-full ' + STATE[r.state].dot} title={p.label + ': ' + STATE[r.state].label + (r.state !== 'none' ? ' · last ' + nice(r.lastDone) + ' · ' + whenWord(r) : '')} /> : <span className="text-faint" title="Not on this unit">·</span>}
+                  {r ? <span className={'inline-block w-3.5 h-3.5 rounded-full ' + STATE[r.state].dot} title={p.label + ': ' + STATE[r.state].label + (r.state !== 'none' ? (r.source === 'clock' ? ' · clock started ' + nice(r.clockStarted || null) : ' · last ' + nice(r.lastDone)) + ' · ' + whenWord(r) : '')} /> : <span className="text-faint" title="Not on this unit">·</span>}
                 </td>
               })}
             </tr>

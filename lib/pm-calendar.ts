@@ -25,7 +25,7 @@ import { marketOf, buildingOf } from './segments'
 import { vendorRegex } from './ops-presets'
 import { getOpsPresets } from './app-settings'
 import { CADENCE_KEY, resolveCadences, cadenceRe, daysBetween, type CadenceDef } from './cadences'
-import { getSetting } from './app-settings'
+import { getSetting, setSetting } from './app-settings'
 import { isTaskDone, isTaskGone } from './task-categories'
 import { linkedSets } from './linked-units'
 import { acTypeMap, equipmentMatches } from './unit-equipment'
@@ -57,6 +57,11 @@ export type DueItem = {
       started the day it went live (lastDone = goLive). Jon, 2026-10-13: "Salato and some with no
       record could be a new unit." */
   newUnit?: { goLive: string } | null
+  /** No record and not a new unit: the clock was started on `started` (Jon, 2026-10-16: "if there's
+      no task recorded, start the ticker for that unit, unless it's a brand-new property"). The first
+      round is spread over one interval so 76 filter changes do not all land on the same day; after
+      that, a real completion takes over and the normal interval applies. lastDone stays null. */
+  clock?: { started: string; firstDue: string } | null
   /** The day it comes due (last done + interval). For a never-recorded job, today. */
   dueOn: string
   /** Negative = not due yet; 0 = today; positive = days past due. */
@@ -288,6 +293,12 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
   const links = linkedSets(ids.map(id => ({ listingId: id, unit: meta[id].name, building: meta[id].bucket })))
   const parentsOf: Record<string, string[]> = links.parentsOf || {}
 
+  // The tickers already started (see DueItem.clock). One app_settings row, read once.
+  // A failed read must never be written back as "no clocks" — that would restart every ticker.
+  const stored = await readClocks()
+  const clocks: Record<string, { s: string; d: string }> = { ...(stored || {}) }
+  let clocksDirty = false
+
   const weekEnd = shift(today, 7)
   const items: DueItem[] = []
   for (const lid of ids) {
@@ -314,15 +325,26 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
         const pld = lastDone[pid]?.[c.key] || null
         if (pld && (!ld || pld > ld)) ld = pld
       }
-      // `seedIfNever: false` means "no record is not a reason to do it" — a dryer vent and a water
-      // heater flush are not owed simply because nobody has logged one. The engine drops these;
-      // without the same rule here, "Add all" would file two tasks against every unit in the
-      // portfolio, which is precisely what the cap exists to prevent.
+      // No record is never "due today" any more (2026-10-16): the ticker below gives it a real first
+      // due date, spread over one interval, so nothing piles into "Add all" on day one.
       // New unit, no record: the clock starts the day it went live (see goLive above).
       let newUnit: DueItem['newUnit'] = null
       const gl = goLive[lid]
-      if (!ld && gl && daysBetween(gl, today) < c.everyDays) { ld = gl; newUnit = { goLive: gl } }
-      if (!ld && !c.seedIfNever) continue
+      // A BRAND-NEW unit (live within BRAND_NEW_DAYS, e.g. Salato) counts from go-live for every
+      // program — a 35-day filter on a unit live 39 days really is due. An older unit counts from
+      // go-live only while that is still inside one interval.
+      if (!ld && gl && (daysBetween(gl, today) < c.everyDays || daysBetween(gl, today) <= BRAND_NEW_DAYS)) { ld = gl; newUnit = { goLive: gl } }
+      // Still nothing: start (or keep) the ticker for this unit × program.
+      let clock: DueItem['clock'] = null
+      if (!ld) {
+        const ck = `${lid}|${c.key}`
+        const have = clocks[ck]
+        if (have && have.s && have.d) clock = { started: have.s, firstDue: have.d }
+        else {
+          clock = { started: today, firstDue: shift(today, staggerDays(ck, c.everyDays)) }
+          clocks[ck] = { s: clock.started, d: clock.firstDue }; clocksDirty = true
+        }
+      }
       // A never-recorded job is due today by definition — but it is stated as "no record", never as
       // "365 days overdue", because a missing record is far more often a data gap than neglect.
       // ── "NO RECORD" IS NOT "DUE TODAY" ──────────────────────────────────────────────────────
@@ -332,18 +354,25 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
       // mixing it into "due this week" buries the four jobs that genuinely are. A never-recorded
       // job gets its own band: counted, visible, addable one building at a time, and never swept
       // into a schedule number or into "Add all".
-      const dueOn = ld ? shift(ld, c.everyDays) : today
-      const daysOver = ld ? daysBetween(dueOn, today) : 0
-      if (ld && daysOver < -horizon) continue               // beyond the horizon: not this view's business
+      const dueOn = ld ? shift(ld, c.everyDays) : clock ? clock.firstDue : today
+      const timed = !!(ld || clock)
+      const daysOver = timed ? daysBetween(dueOn, today) : 0
+      if (timed && daysOver < -horizon) continue            // beyond the horizon: not this view's business
       const sched = scheduledAhead[lid]?.[c.key] || null
-      const band: DueItem['band'] = !ld ? 'unknown' : daysOver > 0 ? 'late' : (dueOn <= weekEnd ? 'week' : 'later')
+      const band: DueItem['band'] = !timed ? 'unknown' : daysOver > 0 ? 'late' : (dueOn <= weekEnd ? 'week' : 'later')
       items.push({
         id: `${today}|${lid}|${c.key}`,
         cadenceKey: c.key, label: c.label, dept: c.dept, minutes: c.minutes,
         listingId: lid, unit: m.name, building: m.building, market: m.market, vendor: m.vendor,
-        market2: m.market2, lastDone: ld, newUnit, dueOn, daysOver, scheduled: sched, band,
+        market2: m.market2, lastDone: ld, newUnit, clock, dueOn, daysOver, scheduled: sched, band,
       })
     }
+  }
+
+  if (clocksDirty && stored) {
+    // Merge with whatever another request wrote meanwhile — theirs stands where both have a key.
+    const cur = await readClocks()
+    if (cur) await setSetting(CLOCK_KEY, { ...clocks, ...cur }, 'upkeep-clock').catch(() => null)
   }
 
   // ── group by building ────────────────────────────────────────────────────────────────────────
@@ -385,6 +414,29 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
     },
     buildings, degraded,
   }
+}
+
+/** Where the started tickers live: { "<listingId>|<cadenceKey>": { s: started, d: first due } }. */
+export const CLOCK_KEY = 'upkeep_clocks'
+/** The started tickers, straight from the table (no cache). null = the read failed. */
+async function readClocks(): Promise<Record<string, { s: string; d: string }> | null> {
+  try {
+    const { data, error } = await supabaseAdmin().from('app_settings').select('value').eq('key', CLOCK_KEY).limit(1)
+    if (error) return null
+    const raw = (data as any[])?.[0]?.value
+    if (!raw) return {}
+    const v = typeof raw === 'string' ? JSON.parse(raw) : raw
+    return v && typeof v === 'object' ? v : {}
+  } catch { return null }
+}
+/** A unit live this recently is brand new: every program counts from its go-live, not from a ticker. */
+const BRAND_NEW_DAYS = 120
+/** The first round, spread: due somewhere between two weeks and one full interval out, fixed per unit × program. */
+function staggerDays(key: string, every: number): number {
+  let h = 2166136261
+  for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619) }
+  const lo = Math.min(14, every), span = Math.max(0, every - lo)
+  return lo + ((h >>> 0) % (span + 1))
 }
 
 /** The saved cadence config, with the shipped one as the floor. */
