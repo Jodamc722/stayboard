@@ -1256,13 +1256,21 @@ export async function backfillInspectionTemplates(opts: { dryRun?: boolean; max?
   if (state && state.attachFailsToLand) return { ...out, verified: false, stopped: 'an earlier run found that template_id on update does not attach the checklist — see app_settings template_backfill' }
 
   const { data: rows, error } = await db.from('breezeway_tasks_sync')
-    .select('id, name, type_department, scheduled_date, status, finished_at')
+    .select('id, reference_property_id, name, type_department, scheduled_date, status, finished_at')
     .is('finished_at', null).gte('scheduled_date', from)
     .or('name.ilike.Pre-arrival inspection%,name.ilike.Quality inspection%,name.ilike.Deep clean%,name.ilike.%coil clean%,name.ilike.%deep clean%')
     .order('scheduled_date').limit(400)
   if (error) return { ...out, ok: false, error: error.message }
-  const cand = ((rows || []) as any[])
-    .filter(t => !isTaskGone(t.status) && !isTaskDone(t.status, t.finished_at))
+  // NOT OUR INSPECTIONS (the operating model): a hotel or vendor building runs its own walks — an
+  // old open "Quality inspection" on a Botanica unit is theirs to shape, not ours to re-template.
+  const open = ((rows || []) as any[]).filter(t => !isTaskGone(t.status) && !isTaskDone(t.status, t.finished_at))
+  const lids = Array.from(new Set(open.map(t => str(t.reference_property_id)).filter(Boolean)))
+  const { data: listings } = lids.length ? await db.from('guesty_listings').select('id, nickname, title, building').in('id', lids.slice(0, 300)) : { data: [] as any[] }
+  const lmeta: Record<string, any> = {}
+  for (const l of listings || []) lmeta[str((l as any).id)] = l
+  const oursInsp = await dutyIsOurs('inspections')
+  const cand = open
+    .filter(t => { const m = lmeta[str(t.reference_property_id)]; return !m || oursInsp(m.building, m.nickname || m.title) })
     .map(t => ({ id: str(t.id), name: str(t.name), dept: str(t.type_department), templateId: templateForTask(t.name, t.type_department) }))
     .filter(t => t.templateId && !done[t.id])
   out.scanned = cand.length
