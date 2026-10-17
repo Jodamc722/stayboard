@@ -19,6 +19,7 @@
 // receipts and an optional rung override per watch; the trigger functions live here, keyed by
 // `key`. If migration 102 has not run the runner does nothing and says so.
 import { dutyIsOurs } from './operating-model'
+import { complaintGist } from '@/lib/auto-inspections'
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { agentAllowed, stepDown, getAgentSettings, logAgent, OWNER, type ActionType, type AgentSettings, type AgentVerdict, type Mode } from './agent-mode'
@@ -341,7 +342,8 @@ async function badReviewIn(env: WatchEnv): Promise<Prepared[]> {
       ask: `create a quality inspection on ${unit} for ${date} after ${str(r.guest_name) || 'a guest'}'s ${rating}★ ${str(r.channel)} review?`,
       why: quote ? `"${quote.slice(0, 160)}"` : `A ${rating}★ review with no written comment.`,
       exec: {
-        listingId: lid, title: `Quality inspection — ${unit} (${rating}★ review)`, department: 'inspection', priority: 'high', date, assignees,
+        // The complaint rides the title (Jon, 2026-10-16) so the crew sees it in every list.
+        listingId: lid, title: `Quality inspection — ${unit} (${rating}★${quote ? ' ' + complaintGist(quote, [], 80) : ' review'})`.slice(0, 140), department: 'inspection', priority: 'high', date, assignees,
         autoInspectionKey: 'rev:' + str(r.id), autoInspectionReason: 'low review ' + rating + '★', guest: str(r.guest_name) || null,
         description: `From a ${rating}/5 review on ${str(r.channel)} (${str(r.created_at).slice(0, 10)}).\n\nWHAT THE GUEST SAID\n${quote ? `"${quote}"\n— ${str(r.guest_name) || 'Guest'}` : 'No written comment — the score is the signal.'}\n\nWalk the unit as a first-time guest and find what earned ${rating}/5. Photograph everything, good and bad. Anything that needs a trade becomes a work order today.`,
       },

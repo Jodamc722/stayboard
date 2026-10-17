@@ -8,7 +8,7 @@
 // lib/auto-inspections.ts for the rules (big arrival / VIP / owner stay / arrival into a unit with a
 // bad review / a new low review) and who gets assigned.
 import { NextRequest, NextResponse } from 'next/server'
-import { runAutoInspections, runArrivalFeedbackInspections, runLowReviewInspections, retireArrivalInspections, runDeepCleanInspections } from '@/lib/auto-inspections'
+import { runAutoInspections, runArrivalFeedbackInspections, runLowReviewInspections, retireArrivalInspections, runDeepCleanInspections, backfillInspectionTemplates } from '@/lib/auto-inspections'
 import { runPmRecurrence, pmRecurrenceRanWithin } from '@/lib/pm-recurrence'
 import { requireCron } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
@@ -56,6 +56,11 @@ async function run(req: NextRequest) {
     // Inspection 1.0 checklist. Own try — reads the task mirror, not the reservations.
     let deepCleans: any = null
     try { deepCleans = await runDeepCleanInspections({ dryRun: preview }) } catch (e: any) { deepCleans = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+    // THE 1.0 TEMPLATES ON THE TASKS ALREADY OPEN (Jon, 2026-10-16: "start using big arrival
+    // inspection immediately"): open inspections and deep cleans created before the templates
+    // existed get theirs attached in place. Exactly once per task; verified on the first attach.
+    let templates: any = null
+    try { templates = await backfillInspectionTemplates({ dryRun: preview }) } catch (e: any) { templates = { ok: false, error: String(e?.message || e).slice(0, 200) } }
     // PM RECURRENCE rides this line too (Jon, 2026-09-28: a completed cadence task books the next
     // one). Heavier than the rest — it reads a year of task history — so at most every six hours,
     // and never on a preview. Own try.
@@ -71,10 +76,11 @@ async function run(req: NextRequest) {
         lowReviews: lowReviews ? { ok: lowReviews.ok, created: lowReviews.created, movedForward: lowReviews.movedForward, alreadyCovered: lowReviews.alreadyCovered, waitingForCheckout: lowReviews.waitingForCheckout, failed: lowReviews.failed } : null,
         retiredArrivalInspections: retired ? { ok: retired.ok, found: retired.found, retired: (retired.retired || []).length, failed: (retired.failed || []).length } : null,
         deepCleanInspections: deepCleans ? { ok: deepCleans.ok, enabled: deepCleans.enabled, scanned: deepCleans.scanned, created: deepCleans.created, failed: deepCleans.failed, alreadyFiled: deepCleans.alreadyFiled, notOurs: deepCleans.notOurs, error: deepCleans.error } : null,
+        templateBackfill: templates ? { ok: templates.ok, scanned: templates.scanned, attached: (templates.attached || []).length, alreadyTemplated: templates.alreadyTemplated, failed: (templates.failed || []).length, verified: templates.verified, stopped: templates.stopped, error: templates.error } : null,
         pmRecurrence: pm ? { ok: pm.ok, skipped: pm.skipped, created: pm.created, proposed: pm.proposed, moved: pm.moved, error: pm.error } : null,
       })
     }
-    return NextResponse.json({ ...out, arrivalFeedback, lowReviews, retiredArrivalInspections: retired, deepCleanInspections: deepCleans, pmRecurrence: pm })
+    return NextResponse.json({ ...out, arrivalFeedback, lowReviews, retiredArrivalInspections: retired, deepCleanInspections: deepCleans, templateBackfill: templates, pmRecurrence: pm })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }

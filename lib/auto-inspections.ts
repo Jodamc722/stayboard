@@ -486,6 +486,25 @@ function themesIn(text: string): string[] {
 }
 
 /**
+ * THE COMPLAINT IN THE TITLE (Jon, 2026-10-16: "fill out field of guest complaint so team can see
+ * it"). Breezeway's API cannot pre-fill a checklist answer, so the guest's words go where the crew
+ * cannot miss them: the task NAME, which every list and the top of the task shows, in front of the
+ * description that carries the full quote. Theme labels first (CLEANLINESS, A/C …), then the
+ * guest's own words, cut to fit — "2★ cleanliness, A/C: "hair in the shower and the AC barely…"".
+ */
+export function complaintGist(quote: string, themeChecks: string[], max = 90): string {
+  const labels = themeChecks.map(c => str(c).split(' \u2014 ')[0].trim().toLowerCase()).filter(Boolean).slice(0, 3)
+  const q = str(quote).replace(/[\s"\u201c\u201d]+/g, ' ').trim()
+  let out = labels.join(', ')
+  if (q) {
+    const room = Math.max(24, max - out.length - (out ? 2 : 0))
+    const cut = q.length > room ? q.slice(0, room - 1).replace(/\s+\S*$/, '') + '\u2026' : q
+    out = (out ? out + ': ' : '') + '"' + cut + '"'
+  }
+  return out.slice(0, max + 4)
+}
+
+/**
  * EVERYTHING ELSE WE ALREADY KNOW ABOUT THIS UNIT. An inspector standing in the room should not
  * have to remember that the same unit drew two other bad reviews this quarter and has an open
  * A/C ticket — the task carries it. One batched read per source.
@@ -718,12 +737,15 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
     const assigneeIds = wanted.map(n => idOf[n]).filter((n): n is number => Number.isFinite(n as any))
     const assignedNames = wanted.filter(n => Number.isFinite(idOf[n] as any))
 
-    const name = `Quality inspection — ${c.unit_name} (${c.rating}★ review)`
     // A SPECIFIC BRIEF, NOT A REMINDER (Jon, 2026-08-25). Four blocks: what the guest said,
     // what that means to check, what else we already know is wrong with this unit, and the
     // baseline everyone walks anyway.
     const cx = ctx[str(c.listing_id)] || { glitches: [], maint: [], priorLow: [] }
     const themes = themesIn(c.quote + ' ' + c.unit_name)
+    // The complaint rides the title (Jon, 2026-10-16) — "Quality inspection — " stays in front for
+    // lib/task-audit's REVIEW_RULE and the briefs.
+    const gist = complaintGist(c.quote, themes)
+    const name = `Quality inspection — ${c.unit_name} (${c.rating}★${gist ? ' ' + gist : ' review'})`.slice(0, 140)
     const notes: string[] = []
     if (cx.priorLow.length) {
       notes.push('REPEAT: ' + cx.priorLow.length + ' other review' + (cx.priorLow.length === 1 ? '' : 's') +
@@ -930,7 +952,9 @@ export async function runArrivalFeedbackInspections(opts: { dryRun?: boolean } =
     const assigneeIds = wanted.map(n => idOf[n]).filter((n): n is number => Number.isFinite(n as any))
     const assignedNames = wanted.filter(n => Number.isFinite(idOf[n] as any))
     const kw: string[] = c.keywords
-    const name = `Quality inspection — ${c.unit_name}${kw.length ? ` (${kw[0]})` : ''}`
+    // The complaint rides the title (Jon, 2026-10-16): the keywords the review named, then the quote.
+    const gist = complaintGist(c.quote, [], 70)
+    const name = `Quality inspection — ${c.unit_name} (${[kw.slice(0, 3).join(', '), gist].filter(Boolean).join(': ') || c.stars})`.slice(0, 140)
     const description =
       `AUTO-CREATED: quality inspection before ${c.guest_name} arrives ${c.check_in}.\n\n` +
       `Look specifically at${kw.length ? ': ' + kw.join(', ') : ' the areas the guest named'}.\n` +
@@ -1197,4 +1221,85 @@ export async function runDeepCleanInspections(opts: { dryRun?: boolean } = {}): 
     }
   }
   return { ok: true, scanned: cleans.length, candidates, created, failed, alreadyFiled, notOurs }
+}
+
+// ── THE TEMPLATES, ON THE TASKS ALREADY ON THE BOARD (Jon, 2026-10-16: "start using big arrival
+// inspection immediately") ───────────────────────────────────────────────────────────────────────
+//
+// createBreezewayTask infers the 1.0 template from the task name (lib/breezeway templateForTask),
+// which covers everything created from now on. The inspections and deep cleans ALREADY open were
+// created before the templates existed, so the crew would open a bare title on tomorrow's big
+// arrival. Breezeway's update call takes template_id, so this pass walks the open tasks whose
+// names the rule recognises, asks Breezeway whether each already carries a template, and attaches
+// the right one where it does not. The task keeps its id, date, assignees and comments.
+//
+// VERIFIED, NOT ASSUMED: whether an update actually copies the template's checklist onto a live
+// task is something the docs do not say. After the first attach of a run the pass reads the task's
+// requirements back; if none appeared, it records that and stops attaching — a template that does
+// not land on update is a finding for a person, not something to repeat forty times.
+//
+// Exactly once per task (receipt in app_settings template_backfill), capped per run, open tasks
+// only, scheduled yesterday or later.
+const TEMPLATE_BACKFILL_KEY = 'template_backfill'
+export async function backfillInspectionTemplates(opts: { dryRun?: boolean; max?: number } = {}): Promise<{
+  ok: boolean; scanned: number; alreadyTemplated: number; attached: { taskId: string; name: string; templateId: number }[]
+  skipped: number; failed: { taskId: string; error: string }[]; verified: boolean | null; stopped?: string; error?: string
+}> {
+  const { templateForTask, retrieveBreezewayTask, updateBreezewayTask, bzApi } = await import('./breezeway')
+  const out = { ok: true, scanned: 0, alreadyTemplated: 0, attached: [] as { taskId: string; name: string; templateId: number }[], skipped: 0, failed: [] as { taskId: string; error: string }[], verified: null as boolean | null }
+  if (!breezewayConfigured()) return { ...out, ok: false, error: 'Breezeway not configured' }
+  const db = supabaseAdmin()
+  const today = ymdET(new Date())
+  const from = ymdET(new Date(Date.now() - 86400000))
+  const state = await getSetting<any>(TEMPLATE_BACKFILL_KEY, null).catch(() => null)
+  const done: Record<string, number | string> = state && typeof state.done === 'object' && state.done ? { ...state.done } : {}
+  if (state && state.attachFailsToLand) return { ...out, verified: false, stopped: 'an earlier run found that template_id on update does not attach the checklist — see app_settings template_backfill' }
+
+  const { data: rows, error } = await db.from('breezeway_tasks_sync')
+    .select('id, name, type_department, scheduled_date, status, finished_at')
+    .is('finished_at', null).gte('scheduled_date', from)
+    .or('name.ilike.Pre-arrival inspection%,name.ilike.Quality inspection%,name.ilike.Deep clean%,name.ilike.%coil clean%,name.ilike.%deep clean%')
+    .order('scheduled_date').limit(400)
+  if (error) return { ...out, ok: false, error: error.message }
+  const cand = ((rows || []) as any[])
+    .filter(t => !isTaskGone(t.status) && !isTaskDone(t.status, t.finished_at))
+    .map(t => ({ id: str(t.id), name: str(t.name), dept: str(t.type_department), templateId: templateForTask(t.name, t.type_department) }))
+    .filter(t => t.templateId && !done[t.id])
+  out.scanned = cand.length
+  const max = Math.max(1, Math.min(opts.max ?? 40, 80))
+  let verifiedThisRun: boolean | null = state && state.verifiedAt ? true : null
+  let changed = false
+  for (const t of cand) {
+    if (out.attached.length >= max) { out.skipped++; continue }
+    try {
+      const cur = await retrieveBreezewayTask(t.id)
+      if (!cur.ok) throw new Error('read ' + cur.status)
+      const has = Number(cur.data?.template_id) > 0
+      if (has) { out.alreadyTemplated++; done[t.id] = 'had ' + Number(cur.data.template_id); changed = true; continue }
+      if (opts.dryRun) { out.attached.push({ taskId: t.id, name: t.name, templateId: t.templateId! }); continue }
+      // `name` is required on update by Breezeway's schema — send the one it already has.
+      const r = await updateBreezewayTask(t.id, { name: str(cur.data?.name || t.name), template_id: t.templateId })
+      if (!r.ok) throw new Error('update ' + r.status + ' ' + str(r.text).slice(0, 120))
+      out.attached.push({ taskId: t.id, name: t.name, templateId: t.templateId! })
+      done[t.id] = t.templateId!
+      changed = true
+      // The first attach of the run (ever, until verified once) is read back: did a checklist land?
+      if (verifiedThisRun == null) {
+        const req = await bzApi('/task/' + encodeURIComponent(t.id) + '/requirements')
+        const n = Array.isArray(req.data) ? req.data.length : Array.isArray(req.data?.results) ? req.data.results.length : Array.isArray(req.data?.data) ? req.data.data.length : 0
+        verifiedThisRun = req.ok && n > 0
+        if (!verifiedThisRun) {
+          await setSetting(TEMPLATE_BACKFILL_KEY, { ...(state || {}), done, attachFailsToLand: true, firstTask: t.id, firstStatus: req.status, checkedAt: new Date().toISOString() }, 'cron:auto-inspections').catch(() => {})
+          return { ...out, verified: false, stopped: `attached template ${t.templateId} to task ${t.id} but it carries no requirements (GET requirements ${req.status}, ${n}) — stopped before touching the rest` }
+        }
+      }
+    } catch (e: any) {
+      out.failed.push({ taskId: t.id, error: String(e?.message || e).slice(0, 140) })
+    }
+  }
+  out.verified = verifiedThisRun
+  if (changed && !opts.dryRun) {
+    await setSetting(TEMPLATE_BACKFILL_KEY, { ...(state || {}), done, verifiedAt: verifiedThisRun ? (state?.verifiedAt || new Date().toISOString()) : state?.verifiedAt || null, lastRun: today }, 'cron:auto-inspections').catch(() => {})
+  }
+  return out
 }

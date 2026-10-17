@@ -57,7 +57,7 @@ import { DAY_TAG, tooOld } from './bust'
 import { pageRows } from './db-page'
 import { buildOpsDay } from './ops-day'
 import { buildDayPicture, type DayPicture, type PersonTask, type PersonClock } from './capacity-day'
-import { getTaskAutomation } from './auto-inspections'
+import { getTaskAutomation, complaintGist } from './auto-inspections'
 import { dutyIsOurs } from './eve/operating-model'
 // The feedback rule is shared with the automation that files these inspections (lib/review-feedback).
 import { keywordsOf, worstFeedbackReview } from './review-feedback'
@@ -654,7 +654,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
             ? { type: 'open', href: bz(str(openInsp.id)), label: 'Open inspection', external: true }
             : !canFile(lid) ? null
             : { type: 'create_task', label: 'Create inspection', payload: {
-                listingId: lid, title: 'Quality inspection — ' + unit + (kw.length ? ' (' + kw[0] + ')' : ''), department: 'inspection', priority: 'high', date: today,
+                listingId: lid, title: ('Quality inspection — ' + unit + ' (' + ([kw.slice(0, 3).join(', '), complaintGist(quote, [], 70)].filter(Boolean).join(': ') || 'guest feedback') + ')').slice(0, 140), department: 'inspection', priority: 'high', date: today,
                 description: 'Quality inspection before ' + str(r.guest_name || 'Guest') + ' arrives ' + checkIn + '.\n\nLook specifically at' + (kw.length ? ': ' + kw.join(', ') : ' the areas the guest named') + '.\nRecent guest feedback (' + starsText(worst.rating, worst.channel) + ', ' + str(worst.channel) + ', ' + str(worst.created_at).slice(0, 10) + '): “' + quote + '”\n\nProposed by Lighthouse Command Center (guest feedback).',
               } },
           bzTaskId: openInsp ? str(openInsp.id) : null,
