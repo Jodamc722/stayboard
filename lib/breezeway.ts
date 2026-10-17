@@ -150,9 +150,73 @@ export async function createBreezewayTask(body: Record<string, any>): Promise<{ 
     const kept = await withoutNeverAssign(body.assignments)
     if (kept.dropped) { body = { ...body }; if (kept.ids.length) body.assignments = kept.ids; else delete body.assignments }
   }
-  const r = await bzApi('/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  // THE CHECKLIST RIDES THE NAME (Jon, 2026-10-16: the 1.0 templates). A caller that names a task
+  // the way the automation does — "Quality inspection — …", "Pre-arrival inspection — …", "Deep
+  // clean — …" — gets the matching Breezeway template whether or not it thought to pass one, so the
+  // crew opens a checklist with photo requirements instead of a bare title. An explicit template_id
+  // always wins; `template_id: null` means "none, on purpose".
+  if (!('template_id' in body)) {
+    const inferred = templateForTask(body?.name, body?.type_department)
+    if (inferred) body = { ...body, template_id: inferred }
+  } else if (!(Number(body.template_id) > 0)) { body = { ...body }; delete body.template_id }
+  let r = await bzApi('/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  // A template Breezeway will not take on create (deleted there, or an API version that rejects the
+  // field) must not cost us the task: retry bare, and say so in the log. The glitch route did this
+  // on its own before; now every caller gets it.
+  if (!r.ok && body.template_id != null && r.status >= 400 && r.status < 500) {
+    console.warn('breezeway create-task: retrying without template_id', body.template_id, r.status, String(r.text || '').slice(0, 160))
+    const bare = { ...body }; delete bare.template_id
+    r = await bzApi('/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bare) })
+  }
   if (landed(r)) bustBoards()
   return r
+}
+
+// ── OUR TEMPLATES (built in Breezeway → Settings → Tasks → Templates on 2026-10-16) ─────────────
+// The ids are the account's; a template edited in Breezeway changes what the crew sees with no
+// deploy, because only the id is passed. A template DELETED there makes the create fall back to a
+// bare task (above), so a stale id is a warning in the log, never a failure on the board.
+export const BZ_TEMPLATES = {
+  /** Deep Clean 1.0 — Cleaning / Deep Clean Projects, 17 photos + damage yes/no + owner notes. Owner billable. */
+  deepClean: 909171,
+  /** Bad Review Inspection 1.0 — Inspection, High: the review's complaints, as-found photos, the usual suspects, cause and fix. */
+  badReviewInspection: 909474,
+  /** Big Arrival Inspection 1.0 — Inspection, High: pre-arrival walk for a big group, VIP or owner stay, built for the headcount. */
+  bigArrivalInspection: 909475,
+  /** Deep Clean AC 1.0 — Maintenance: coil / mini-split deep clean, before-and-after photos. Owner billable. */
+  acDeepClean: 909476,
+  /** Deep Clean Inspection 1.0 — Inspection, supervisors only: pass/fail of every deep-clean area before the owner is billed. */
+  deepCleanInspection: 909477,
+} as const
+
+/**
+ * Which of our templates a task should carry, from its name and department — the same naming the
+ * automation, Eve, the Upkeep page and the review boards already use. Order matters: the A/C deep
+ * clean is tested before the housekeeping deep clean because both say "deep clean", and the deep
+ * clean INSPECTION before both because it says "deep clean" too.
+ *
+ *   "Deep clean inspection — 17WEST 505"            → Deep Clean Inspection 1.0
+ *   "Central A/C coil clean — …", "… deep clean (A/C)" → Deep Clean AC 1.0      (maintenance)
+ *   "Deep clean — …", "Deep Clean 1.0 …"            → Deep Clean 1.0           (housekeeping)
+ *   "Quality inspection — …"                        → Bad Review Inspection 1.0 (inspection)
+ *   "Pre-arrival inspection — …"                    → Big Arrival Inspection 1.0 (inspection)
+ *
+ * "Touch-up clean after A/C deep clean" is housekeeping but does not START with "deep clean", so it
+ * stays a plain task — the touch-up is not a billable deep clean.
+ */
+export function templateForTask(name: any, department: any): number | null {
+  const n = String(name || '').trim()
+  if (!n) return null
+  const d = String(department || '').toLowerCase()
+  const dept = /housekeep|clean/.test(d) ? 'housekeeping' : /maint/.test(d) ? 'maintenance' : /inspect/.test(d) ? 'inspection' : ''
+  if (/^deep[ -]?clean(ing)?\s+inspection\b/i.test(n)) return dept && dept !== 'inspection' ? null : BZ_TEMPLATES.deepCleanInspection
+  const isAc = /(a\/?c\b|hvac|air ?con|air ?handler|mini ?split|wall unit|ptac|ductless|coil)/i.test(n)
+  if (isAc && /(deep[ -]?clean|coil clean|deep[ -]?sanit)/i.test(n)) return dept === 'housekeeping' ? null : BZ_TEMPLATES.acDeepClean
+  if (/^deep[ -]?clean(ing)?\b/i.test(n) && !/touch[ -]?up/i.test(n)) return dept && dept !== 'housekeeping' ? null : BZ_TEMPLATES.deepClean
+  if (dept && dept !== 'inspection') return null
+  if (/^quality inspection\b/i.test(n) || /^bad[ -]review inspection\b/i.test(n)) return BZ_TEMPLATES.badReviewInspection
+  if (/^pre-?arrival inspection\b/i.test(n) || /^big[ -]arrival inspection\b/i.test(n)) return BZ_TEMPLATES.bigArrivalInspection
+  return null
 }
 
 /**

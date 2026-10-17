@@ -30,6 +30,7 @@ import { worstFeedbackReview, keywordsOf } from './review-feedback'
 import { ratingDisplay } from './review-scale'
 import { pageRows } from './db-page'
 import { neverAssignGuard } from './never-assign'
+import { isTaskDone, isTaskGone } from './task-categories'
 
 const str = (v: any) => typeof v === 'string' ? v : (v == null ? '' : String(v))
 function ymdET(d: Date): string {
@@ -63,6 +64,11 @@ export type TaskAutomationCfg = {
   // recent review named a defect. With this on (and the master switch), the cron files it instead:
   // same rule as that row (lib/review-feedback), same assignees, and nobody is asked.
   arrivalFeedback: boolean
+  // ── EVERY DEEP CLEAN GETS A SUPERVISOR INSPECTION (Jon, 2026-10-16) ─────────────────────────────
+  // "Deep clean inspection completed by Supervisor only — this should be auto created post deep
+  // clean, all deep cleans need inspection." A finished deep clean files "Deep clean inspection —
+  // <unit>" for the market supervisor the same day (runDeepCleanInspections). Own switch, same roof.
+  deepCleanInspections: boolean
   // ── TRIP CONSOLIDATION (Jon, 2026-08-27) ──────────────────────────────────────────────────────
   // "If maintenance is going into a unit, automatically push all of the pending maintenance tasks
   // in that unit to that date." Built and running; these are the knobs it was hardcoding.
@@ -110,6 +116,7 @@ export const TASK_AUTOMATION_DEFAULTS: TaskAutomationCfg = {
   noticeDrafts: { enabled: false, fromEmail: 'support@stay-hospitality.com', slackChannel: 'G01TT278P2L' },
   lowReviews: true, lowReviewMax: 3,
   arrivalFeedback: true,
+  deepCleanInspections: true,
   tripSweep: { enabled: true, lookBackDays: 30, maxFutureDays: 21, sameDeptOnly: true },
   // OFF until somebody turns it on. This one CLOSES records, and an automation that closes things
   // has to be switched on deliberately by a person who understands what it will do.
@@ -153,6 +160,7 @@ export async function getTaskAutomation(): Promise<TaskAutomationCfg> {
     lowReviewMax: Number.isFinite(Number(s.lowReviewMax)) && Number(s.lowReviewMax) >= 1 && Number(s.lowReviewMax) <= 4
       ? Number(s.lowReviewMax) : d.lowReviewMax,
     arrivalFeedback: s.arrivalFeedback !== false,
+    deepCleanInspections: s.deepCleanInspections !== false,
     tripSweep: {
       enabled: s.tripSweep?.enabled !== false,
       lookBackDays: numIn(s.tripSweep?.lookBackDays, d.tripSweep.lookBackDays, 1, 365),
@@ -229,7 +237,9 @@ export async function upcomingAutoInspections(days = 2): Promise<(AutoInspection
   const db = supabaseAdmin()
   const today = ymdET(new Date())
   const until = ymdET(new Date(Date.now() + days * 86400000))
-  const { data } = await db.from('auto_inspections').select('*').gte('check_in', today).lte('check_in', until).order('check_in')
+  // Arrival rows only: the deep clean inspections (dc: keys) are not tied to an arrival and read
+  // like one on the brief's arrival card ("… lands at 4pm"); they show as ordinary open inspections.
+  const { data } = await db.from('auto_inspections').select('*').gte('check_in', today).lte('check_in', until).not('reservation_id', 'like', 'dc:%').order('check_in')
   const rows = (data || []) as any[]
   if (!rows.length) return []
   const ids = rows.map(r => str(r.task_id)).filter(Boolean)
@@ -991,6 +1001,9 @@ export async function retireArrivalInspections(opts: { dryRun?: boolean } = {}):
     .select('reservation_id, listing_id, unit_name, reason, check_in, task_id')
     .not('task_id', 'is', null).gte('check_in', from).lt('check_in', today)
     .not('reservation_id', 'like', 'rev:%')
+    // The deep clean inspection (dc: rows, runDeepCleanInspections) is not tied to an arrival either:
+    // it stays open until a supervisor walks it, because the owner is not billed until it passes.
+    .not('reservation_id', 'like', 'dc:%')
     .limit(500)
   const cand = ((rows || []) as any[]).filter(r => r.task_id)
   if (!cand.length) return out
@@ -1021,4 +1034,167 @@ export async function retireArrivalInspections(opts: { dryRun?: boolean } = {}):
     }
   }
   return out
+}
+
+// ── EVERY DEEP CLEAN GETS A SUPERVISOR INSPECTION (Jon, 2026-10-16) ─────────────────────────────
+//
+//   "Deep clean inspection completed by Supervisor only — this should be auto created post deep
+//    clean, all deep cleans need inspection."
+//
+// A deep clean that FINISHES — the Breezeway mirror says so, by webhook or sync — files a
+// "Deep clean inspection — <unit>" the same day for the market supervisor (plus the ops lead),
+// carrying the Deep Clean Inspection 1.0 template (lib/breezeway BZ_TEMPLATES, inferred from the
+// name): pass or fail of every deep-clean area with the supervisor's own photo, then PASS → OK to
+// bill the owner. Exactly once per deep clean: the receipt is an auto_inspections row keyed
+// dc:<deep clean task id>, so a re-synced or re-opened clean never files twice.
+//
+// NOT a cadence follow-on, on purpose. The cadence engine (lib/pm-recurrence) only runs when the
+// cadences switch is on and only knows units in a program's scope; this rule is "all deep cleans",
+// including one somebody booked by hand in Breezeway, so it reads the mirror directly and rides the
+// hourly auto-inspections cron.
+//
+// WHAT COUNTS AS A DEEP CLEAN: a housekeeping task whose name STARTS "deep clean" (the Upkeep page
+// books "Deep clean — <unit>"; a hand-made "Deep Clean 1.0 …" counts too), finished inside the last
+// 14 days. Not the A/C deep clean (maintenance — its follow-on is housekeeping's touch-up), not that
+// touch-up, not a departure clean, not an inspection. A building whose inspections are not ours
+// (the operating model: a hotel or vendor runs it) files nothing.
+//
+// NEVER RETIRED (retireArrivalInspections skips dc: rows): a deep clean inspection is not tied to an
+// arrival. It stays open until a supervisor walks it, because the owner is not billed until it passes.
+const DC_KEY = (taskId: string) => 'dc:' + taskId
+const DEEP_CLEAN_NAME = /^deep[ -]?clean(ing)?\b/i
+const DEEP_CLEAN_NOT = /(inspection|touch[ -]?up|a\/?c\b|hvac|air ?con|air ?handler|mini ?split|wall unit|ptac|ductless|coil|departure|turnover)/i
+export async function runDeepCleanInspections(opts: { dryRun?: boolean } = {}): Promise<{
+  ok: boolean; enabled?: boolean; scanned: number; candidates: any[]; created: number; failed: number; alreadyFiled: number; notOurs: number; error?: string
+}> {
+  const cfg = await getTaskAutomation()
+  const none = { ok: true, scanned: 0, candidates: [] as any[], created: 0, failed: 0, alreadyFiled: 0, notOurs: 0 }
+  if ((!cfg.enabled || !cfg.deepCleanInspections) && !opts.dryRun) return { ...none, enabled: false }
+  const db = supabaseAdmin()
+  const today = ymdET(new Date())
+  const since = new Date(Date.now() - 14 * 86400000).toISOString()
+
+  // Finished deep cleans, newest first. The name test is done here too — ilike is only the coarse cut.
+  const { data: doneRows, error } = await db.from('breezeway_tasks_sync')
+    .select('id, reference_property_id, name, status, scheduled_date, finished_at, type_department, assignees, raw')
+    .ilike('name', 'deep%clean%').not('finished_at', 'is', null).gte('finished_at', since)
+    .order('finished_at', { ascending: false }).limit(300)
+  if (error) return { ...none, ok: false, error: error.message }
+  const cleans = ((doneRows || []) as any[]).filter(t => {
+    const n = str(t.name)
+    if (!DEEP_CLEAN_NAME.test(n) || DEEP_CLEAN_NOT.test(n)) return false
+    const d = str(t.type_department).toLowerCase()
+    if (d && !/housekeep|clean/.test(d)) return false
+    return isTaskDone(t.status, t.finished_at) && !isTaskGone(t.status)
+  })
+  if (!cleans.length) return none
+
+  const lids = Array.from(new Set(cleans.map(t => str(t.reference_property_id)).filter(Boolean)))
+  const [{ data: filed }, { data: listings }, { data: bzProps }, { data: openInsp }] = await Promise.all([
+    db.from('auto_inspections').select('reservation_id, task_id').like('reservation_id', 'dc:%').limit(2000),
+    db.from('guesty_listings').select('id, nickname, title, building, address_city').in('id', lids.slice(0, 300)),
+    db.from('breezeway_properties').select('reference_property_id, home_id').in('reference_property_id', lids.slice(0, 300)),
+    // An open deep clean inspection already on the unit covers a clean that finished before it was
+    // scheduled — somebody filed it by hand, or an earlier run did and the receipt was lost.
+    db.from('breezeway_tasks_sync').select('id, reference_property_id, name, scheduled_date, finished_at, status')
+      .ilike('name', 'deep%clean%inspection%').in('reference_property_id', lids.slice(0, 300)).is('finished_at', null).limit(300),
+  ])
+  const done = new Set(((filed || []) as any[]).map(r => str(r.reservation_id)))
+  const lmeta: Record<string, any> = {}
+  for (const l of listings || []) lmeta[str((l as any).id)] = l
+  const homeOf: Record<string, number> = {}
+  for (const p of bzProps || []) homeOf[str((p as any).reference_property_id)] = Number((p as any).home_id)
+  const openOn: Record<string, any[]> = {}
+  for (const t of ((openInsp || []) as any[])) { if (isTaskGone(t.status)) continue; (openOn[str(t.reference_property_id)] = openOn[str(t.reference_property_id)] || []).push(t) }
+  const oursInsp = await dutyIsOurs('inspections')
+
+  const candidates: any[] = []
+  let alreadyFiled = 0, notOurs = 0
+  const seenUnit = new Set<string>()
+  for (const t of cleans) {
+    const taskId = str(t.id)
+    if (done.has(DC_KEY(taskId))) { alreadyFiled++; continue }
+    const lid = str(t.reference_property_id)
+    const meta = lmeta[lid] || {}
+    if (!oursInsp(meta.building, meta.nickname || meta.title)) { notOurs++; continue }
+    // Two deep cleans on one unit inside the window (a redo after a fail): one inspection, the newest.
+    if (seenUnit.has(lid)) { continue }
+    seenUnit.add(lid)
+    const finishedDay = str(t.finished_at).slice(0, 10) || str(t.scheduled_date).slice(0, 10)
+    const who = (() => {
+      const fb = t?.raw?.finished_by?.name
+      if (fb) return str(fb)
+      const a = Array.isArray(t.assignees) ? t.assignees : []
+      return a.map((p: any) => str(p && typeof p === 'object' ? p.name : p)).filter(Boolean).join(', ')
+    })()
+    const market = marketOf(meta.building, meta.address_city, meta.nickname || meta.title)
+    const unit = str(meta.nickname || meta.title || lid)
+    const covering = (openOn[lid] || []).find(o => str(o.scheduled_date).slice(0, 10) >= finishedDay)
+    candidates.push({
+      deepCleanTaskId: taskId, listing_id: lid, unit_name: unit, building: str(meta.building), market,
+      finishedDay, cleanedBy: who, hasBreezeway: Number.isFinite(homeOf[lid]), coveredBy: covering ? str(covering.id) : null,
+    })
+  }
+
+  if (opts.dryRun || !breezewayConfigured()) return { ...none, scanned: cleans.length, candidates, alreadyFiled, notOurs }
+
+  const idOf = await resolveAssignees(cfg)
+  let created = 0, failed = 0
+  for (const c of candidates) {
+    if (!c.hasBreezeway) continue
+    const sup = cfg.supervisors[c.market] || cfg.supervisors.Miami
+    const wanted = Array.from(new Set([cfg.assignAlways, sup].filter(Boolean)))
+    const assigneeIds = wanted.map(n => idOf[n]).filter((n): n is number => Number.isFinite(n as any))
+    const assignedNames = wanted.filter(n => Number.isFinite(idOf[n] as any))
+    // Already covered by an open deep clean inspection: take the receipt, create nothing.
+    if (c.coveredBy) {
+      try {
+        await db.from('auto_inspections').upsert({
+          reservation_id: DC_KEY(c.deepCleanTaskId), listing_id: c.listing_id, unit_name: c.unit_name,
+          guest_name: c.cleanedBy ? 'Deep clean by ' + c.cleanedBy : 'Deep clean', check_in: today,
+          reason: 'deep clean inspection — already open (#' + c.coveredBy + ')', market: c.market, task_id: c.coveredBy, assignees: assignedNames,
+        }, { onConflict: 'reservation_id' })
+      } catch { /* the next run sees the open task again */ }
+      alreadyFiled++
+      continue
+    }
+    const name = `Deep clean inspection — ${c.unit_name}`
+    const scheduled = c.finishedDay >= today ? c.finishedDay : today
+    const description =
+      `SUPERVISORS ONLY. AUTO-CREATED: a deep clean finished on ${c.unit_name} on ${c.finishedDay}` +
+      ` (Breezeway task #${c.deepCleanTaskId}${c.cleanedBy ? ', by ' + c.cleanedBy : ''}). Every deep clean is inspected before the owner is billed.\n\n` +
+      `Walk the unit against the cleaner's deep clean photos (open task #${c.deepCleanTaskId}) and check each area yourself: ` +
+      `oven, fridge inside and behind, stove and hood, cabinets; grout and fixtures; closets, under furniture, mattresses; ` +
+      `windows and blinds, baseboards and high surfaces, walls and switches; laundry and balcony if the unit has them. ` +
+      `Pass or fail each one with your own photo. A fail sends the cleaner back today — the owner is not billed until this passes.\n\n` +
+      `Created automatically by Lighthouse (deep clean rule — every deep clean gets a supervisor inspection; Users & admin → Task automation).`
+    try {
+      const r = await createBreezewayTask({
+        name, type_department: 'inspection', type_priority: 'high',
+        scheduled_date: scheduled, description, home_id: homeOf[c.listing_id],
+      })
+      if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
+      const taskId = str(r.data.id)
+      if (assigneeIds.length) { try { await updateBreezewayTask(taskId, { assignments: assigneeIds }) } catch { /* shows unassigned; humans see it in the brief */ } }
+      try {
+        await db.from('breezeway_tasks_sync').upsert({
+          id: taskId, reference_property_id: c.listing_id, name, status: 'created',
+          scheduled_date: scheduled, type_department: 'inspection', assignees: assignedNames,
+          raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString(),
+        }, { onConflict: 'id' })
+      } catch { /* sync catches up */ }
+      await db.from('auto_inspections').upsert({
+        reservation_id: DC_KEY(c.deepCleanTaskId), listing_id: c.listing_id, unit_name: c.unit_name,
+        guest_name: c.cleanedBy ? 'Deep clean by ' + c.cleanedBy : 'Deep clean', check_in: scheduled,
+        reason: 'deep clean inspection (deep clean #' + c.deepCleanTaskId + ' finished ' + c.finishedDay + ')',
+        market: c.market, task_id: taskId, assignees: assignedNames,
+      }, { onConflict: 'reservation_id' })
+      created++
+    } catch (e) {
+      // No receipt on failure: the next run finds the same finished deep clean and tries again.
+      failed++
+      console.error('deep clean inspections: create failed for deep clean', c.deepCleanTaskId, e)
+    }
+  }
+  return { ok: true, scanned: cleans.length, candidates, created, failed, alreadyFiled, notOurs }
 }

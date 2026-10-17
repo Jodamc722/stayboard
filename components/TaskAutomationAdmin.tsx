@@ -18,6 +18,7 @@ type Cfg = {
   vip: boolean; ownerStays: boolean; daysAhead: number
   lowReviews: boolean; lowReviewMax: number
   arrivalFeedback: boolean
+  deepCleanInspections: boolean
   assignAlways: string
   supervisors: { Miami: string; Broward: string; North: string }
   noticeDrafts: { enabled: boolean; fromEmail: string; slackChannel: string }
@@ -191,6 +192,8 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
           {check('arrivalFeedback', 'Arrivals into a bad-review unit', 'a quality inspection before the guest lands',
             'An arrival into a unit whose recent review is 2\u2605 or less, or 3\u2605 naming a defect, and not walked since \u2014 the same rule Today used to ask about. One per review; unwalked, it moves to the next checkout.')}
           {check('lowReviews', 'Bad reviews', 'a NEW low review fires a quality inspection on the unit\u2019s next checkout')}
+          {check('deepCleanInspections', 'Deep cleans', 'every finished deep clean files a supervisor inspection the same day',
+            'Supervisors only. A housekeeping deep clean that finishes in Breezeway creates \u201cDeep clean inspection \u2014 unit\u201d for the market supervisor, carrying the Deep Clean Inspection 1.0 checklist (pass or fail each area with their own photo). Not retired, never twice per deep clean; the owner is billed once it passes.')}
           <div className="flex items-center gap-2 pl-6">
             <span className="text-[11.5px] text-muted">rating</span>
             <input type="number" min={1} max={4} step={0.5} value={cfg.lowReviewMax} onChange={e => set({ lowReviewMax: Number(e.target.value) })} className={box + ' max-w-[64px]'} disabled={!isOwner || !cfg.lowReviews} />

@@ -45,6 +45,8 @@ export async function PUT(req: NextRequest) {
     lowReviewMax: num(c.lowReviewMax, d.lowReviewMax, 1, 4),
     // Named for the same reason as the two above: forget it here and the box unticks itself on Save.
     arrivalFeedback: c.arrivalFeedback !== false,
+    // Same again (2026-10-16): the deep-clean → supervisor inspection switch has to be named here.
+    deepCleanInspections: c.deepCleanInspections !== false,
     assignAlways: nm(c.assignAlways, d.assignAlways),
     supervisors: {
       Miami: nm(c.supervisors?.Miami, d.supervisors.Miami),

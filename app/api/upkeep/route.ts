@@ -147,6 +147,9 @@ export async function GET(req: NextRequest) {
       else if (c.mode === 'suggest') bits.push('Eve proposes it when due; a yes books it')
       else bits.push('off')
       if (c.followOn) bits.push(`then ${c.followOn.label.toLowerCase()} is booked for ${c.followOn.dept}`)
+      // Jon, 2026-10-16: every finished deep clean gets a supervisor inspection (lib/auto-inspections
+      // runDeepCleanInspections) — it is a rule on the task mirror, not a cadence follow-on.
+      if (c.key === 'deep_clean') bits.push('then a deep clean inspection is booked for the market supervisor — billed once it passes')
       if (c.billing && c.billing.kind !== 'none') bits.push(c.billing.kind === 'cleaning_fee' ? 'billed at the unit\'s cleaning fee once more' + (c.billing.flatByBuilding ? ` (${Object.entries(c.billing.flatByBuilding).map(([k, v]) => `${k} $${v}`).join(', ')})` : '') : `billed $${c.billing.flat}`)
       return bits.join(' · ')
     }
@@ -339,6 +342,7 @@ export async function POST(req: NextRequest) {
       ...infoLines(unitInfo, GROUP_OF[c.key] === 'ac' || c.equipment === 'central'),
       bill ? `BILLING: ${bill}.` : '',
       c.followOn ? `When this is completed, Lighthouse books "${c.followOn.label}" for ${c.followOn.dept}.` : '',
+      c.key === 'deep_clean' ? 'When this is completed, Lighthouse books "Deep clean inspection" for the market supervisor (supervisors only) — the owner is billed once it passes.' : '',
       `(Cadence "${c.label}", Users & admin → Settings → Cadences.)`,
     ].filter(Boolean).join('\n')
     const { runExecutor } = await import('@/lib/eve/executors')

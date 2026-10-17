@@ -141,6 +141,10 @@ const task_create: Executor = async (p) => {
   const description = (str(p?.description).trim().slice(0, 1200) + '\n\nCreated by Eve (Lighthouse agent mode).').trim()
   const body: Record<string, any> = { name: title, type_department: department, type_priority: priority, scheduled_date: date, description }
   if (home.homeId != null) body.home_id = home.homeId; else body.reference_property_id = home.listingId
+  // A caller may name one of OUR Breezeway templates (lib/breezeway BZ_TEMPLATES) so the task opens
+  // with its checklist; left out, createBreezewayTask infers it from the title and department.
+  const templateId = Number(p?.templateId ?? p?.template_id)
+  if (Number.isFinite(templateId) && templateId > 0) body.template_id = templateId
   const r = await createBreezewayTask(body)
   if (!r.ok || !r.data?.id) return { ok: false, summary: `Breezeway refused the task (${r.status})`, error: `Breezeway ${r.status}: ${str(r.text).slice(0, 160)}` }
   const taskId = str(r.data.id)
