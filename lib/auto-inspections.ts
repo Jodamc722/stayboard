@@ -1233,10 +1233,12 @@ export async function runDeepCleanInspections(opts: { dryRun?: boolean } = {}): 
 // names the rule recognises, asks Breezeway whether each already carries a template, and attaches
 // the right one where it does not. The task keeps its id, date, assignees and comments.
 //
-// VERIFIED, NOT ASSUMED: whether an update actually copies the template's checklist onto a live
-// task is something the docs do not say. After the first attach of a run the pass reads the task's
-// requirements back; if none appeared, it records that and stops attaching — a template that does
-// not land on update is a finding for a person, not something to repeat forty times.
+// WHAT AN UPDATE DOES AND DOES NOT DO (measured 2026-10-16 on task 170070746): PATCH template_id
+// links the task to the template but copies NO requirements — the checklist stayed empty. What
+// fills it is Breezeway itself: Settings → Tasks → Templates → the template → Edit → Save →
+// "New and existing tasks that use this template". So this pass does the linking, and a person
+// (or the next template edit) does the push — one click per template, not one per task. The read-
+// back after the first attach is kept as information (`verified`), never as a reason to stop.
 //
 // Exactly once per task (receipt in app_settings template_backfill), capped per run, open tasks
 // only, scheduled yesterday or later.
@@ -1246,14 +1248,14 @@ export async function backfillInspectionTemplates(opts: { dryRun?: boolean; max?
   skipped: number; failed: { taskId: string; error: string }[]; verified: boolean | null; stopped?: string; error?: string
 }> {
   const { templateForTask, retrieveBreezewayTask, updateBreezewayTask, bzApi } = await import('./breezeway')
-  const out = { ok: true, scanned: 0, alreadyTemplated: 0, attached: [] as { taskId: string; name: string; templateId: number }[], skipped: 0, failed: [] as { taskId: string; error: string }[], verified: null as boolean | null }
+  const out: { ok: boolean; scanned: number; alreadyTemplated: number; attached: { taskId: string; name: string; templateId: number }[]; skipped: number; failed: { taskId: string; error: string }[]; verified: boolean | null; stopped?: string } =
+    { ok: true, scanned: 0, alreadyTemplated: 0, attached: [], skipped: 0, failed: [], verified: null }
   if (!breezewayConfigured()) return { ...out, ok: false, error: 'Breezeway not configured' }
   const db = supabaseAdmin()
   const today = ymdET(new Date())
   const from = ymdET(new Date(Date.now() - 86400000))
   const state = await getSetting<any>(TEMPLATE_BACKFILL_KEY, null).catch(() => null)
   const done: Record<string, number | string> = state && typeof state.done === 'object' && state.done ? { ...state.done } : {}
-  if (state && state.attachFailsToLand) return { ...out, verified: false, stopped: 'an earlier run found that template_id on update does not attach the checklist — see app_settings template_backfill' }
 
   const { data: rows, error } = await db.from('breezeway_tasks_sync')
     .select('id, reference_property_id, name, type_department, scheduled_date, status, finished_at')
@@ -1291,23 +1293,23 @@ export async function backfillInspectionTemplates(opts: { dryRun?: boolean; max?
       out.attached.push({ taskId: t.id, name: t.name, templateId: t.templateId! })
       done[t.id] = t.templateId!
       changed = true
-      // The first attach of the run (ever, until verified once) is read back: did a checklist land?
+      // The first attach of the run is read back, for the record: did a checklist land on its own?
       if (verifiedThisRun == null) {
         const req = await bzApi('/task/' + encodeURIComponent(t.id) + '/requirements')
         const n = Array.isArray(req.data) ? req.data.length : Array.isArray(req.data?.results) ? req.data.results.length : Array.isArray(req.data?.data) ? req.data.data.length : 0
         verifiedThisRun = req.ok && n > 0
-        if (!verifiedThisRun) {
-          await setSetting(TEMPLATE_BACKFILL_KEY, { ...(state || {}), done, attachFailsToLand: true, firstTask: t.id, firstStatus: req.status, checkedAt: new Date().toISOString() }, 'cron:auto-inspections').catch(() => {})
-          return { ...out, verified: false, stopped: `attached template ${t.templateId} to task ${t.id} but it carries no requirements (GET requirements ${req.status}, ${n}) — stopped before touching the rest` }
-        }
       }
     } catch (e: any) {
       out.failed.push({ taskId: t.id, error: String(e?.message || e).slice(0, 140) })
     }
   }
   out.verified = verifiedThisRun
+  if (out.attached.length && !opts.dryRun && verifiedThisRun === false) {
+    out.stopped = `linked ${out.attached.length} task(s) to their template; the checklist lands when the template is saved in Breezeway with "New and existing tasks" (Settings → Tasks → Templates)`
+  }
   if (changed && !opts.dryRun) {
-    await setSetting(TEMPLATE_BACKFILL_KEY, { ...(state || {}), done, verifiedAt: verifiedThisRun ? (state?.verifiedAt || new Date().toISOString()) : state?.verifiedAt || null, lastRun: today }, 'cron:auto-inspections').catch(() => {})
+    const { attachFailsToLand: _drop, ...rest } = (state || {}) as any
+    await setSetting(TEMPLATE_BACKFILL_KEY, { ...rest, done, verifiedAt: verifiedThisRun ? (state?.verifiedAt || new Date().toISOString()) : state?.verifiedAt || null, lastRun: today, pendingTemplateSave: verifiedThisRun === false ? Array.from(new Set(out.attached.map(a => a.templateId))) : [] }, 'cron:auto-inspections').catch(() => {})
   }
   return out
 }
