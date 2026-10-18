@@ -187,6 +187,8 @@ export const BZ_TEMPLATES = {
   acDeepClean: 909476,
   /** Deep Clean Inspection 1.0 — Inspection, supervisors only: pass/fail of every deep-clean area before the owner is billed. */
   deepCleanInspection: 909477,
+  /** Departure Clean 1.0 — Cleaning / HK (2026-10-18): the turnover, 21 ticks + 10 photos + 2 yes/no + door code. Replaces "Departure Clean Checklist" (203344). */
+  departureClean: 910139,
 } as const
 
 /**
@@ -198,11 +200,17 @@ export const BZ_TEMPLATES = {
  *   "Deep clean inspection — 17WEST 505"            → Deep Clean Inspection 1.0
  *   "Central A/C coil clean — …", "… deep clean (A/C)" → Deep Clean AC 1.0      (maintenance)
  *   "Deep clean — …", "Deep Clean 1.0 …"            → Deep Clean 1.0           (housekeeping)
+ *   "Departure Clean", "Departure clean — …"        → Departure Clean 1.0      (housekeeping)
  *   "Quality inspection — …"                        → Bad Review Inspection 1.0 (inspection)
  *   "Pre-arrival inspection — …"                    → Big Arrival Inspection 1.0 (inspection)
  *
  * "Touch-up clean after A/C deep clean" is housekeeping but does not START with "deep clean", so it
  * stays a plain task — the touch-up is not a billable deep clean.
+ *
+ * The departure rule is for cleans WE create (the board's "add clean", Eve, the scheduler's
+ * missing-clean fix): until 2026-10-18 those went out as bare tasks with no checklist at all, while
+ * the ones Breezeway's own workflow files carried the old 33-line "Departure Clean Checklist". The
+ * same turnover words lib/task-categories and isDepartureCleanName use.
  */
 export function templateForTask(name: any, department: any): number | null {
   const n = String(name || '').trim()
@@ -213,6 +221,7 @@ export function templateForTask(name: any, department: any): number | null {
   const isAc = /(a\/?c\b|hvac|air ?con|air ?handler|mini ?split|wall unit|ptac|ductless|coil)/i.test(n)
   if (isAc && /(deep[ -]?clean|coil clean|deep[ -]?sanit)/i.test(n)) return dept === 'housekeeping' ? null : BZ_TEMPLATES.acDeepClean
   if (/^deep[ -]?clean(ing)?\b/i.test(n) && !/touch[ -]?up/i.test(n)) return dept && dept !== 'housekeeping' ? null : BZ_TEMPLATES.deepClean
+  if (/^(departure|turnover|check-?out|move-?out)[ -]?clean(ing)?\b/i.test(n) || /^limpieza de salida\b/i.test(n)) return dept && dept !== 'housekeeping' ? null : BZ_TEMPLATES.departureClean
   if (dept && dept !== 'inspection') return null
   if (/^quality inspection\b/i.test(n) || /^bad[ -]review inspection\b/i.test(n)) return BZ_TEMPLATES.badReviewInspection
   if (/^pre-?arrival inspection\b/i.test(n) || /^big[ -]arrival inspection\b/i.test(n)) return BZ_TEMPLATES.bigArrivalInspection
