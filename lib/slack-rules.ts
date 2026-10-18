@@ -37,6 +37,8 @@ export type EventKey =
   | 'eve_audit' | 'notice_drafts'
   // Channel connections (2026-09-18): a listing dropped off Airbnb / Booking.com / Vrbo / Expedia.
   | 'channel_health'
+  // Owner arriving today: did they get everything? Morning + 3:45pm (Jon, 2026-10-17).
+  | 'owner_arrivals'
 
 export const EVENT_LABELS: Record<EventKey, string> = {
   late_cleans: 'Cleans running behind',
@@ -58,6 +60,7 @@ export const EVENT_LABELS: Record<EventKey, string> = {
   eve_audit: 'Eve audit findings (system health)',
   notice_drafts: 'Front-desk notice drafts',
   channel_health: 'Listing dropped off a channel',
+  owner_arrivals: 'Owner arriving today — did they get everything? (morning + 3:45pm)',
 }
 
 /** The two rooms every area has. Safety issues ride with maintenance — there is no third channel. */
@@ -315,6 +318,9 @@ export const DEFAULT_RULES: SlackRules = {
     labor_report: { enabled: true, approval: false, quietStart: 17 * 60, quietEnd: 18 * 60, cooldownMin: 20 * 60 },
     // A heads-up, so it goes out with the morning rather than interrupting the day.
     notable_arrivals: { enabled: true, approval: false, quietStart: 8 * 60, quietEnd: 11 * 60, cooldownMin: 20 * 60 },
+    // OWNER ARRIVALS. The morning of the arrival and 3:45pm, no approval — a reminder that waits for a
+    // click is too late at 3:45. Each post has its own group key (date + slot), so no cooldown needed.
+    owner_arrivals: { enabled: true, approval: false, quietStart: 7 * 60 + 30, quietEnd: 16 * 60, cooldownMin: 6 * 60 },
     // THE WEEK AHEAD FOR THE CREW. Sunday evening, so people can plan before Monday. Starts OFF and
     // behind approval on purpose: market_brief taught us that the first auto-sent version of a new
     // format goes out before anyone can stop it. Read one, then flip approval off in settings.
@@ -415,8 +421,10 @@ function mergeRule(stored: any, dflt: EventRule): EventRule {
  * Replies are not updates: a door-code approval, Eve answering a question, a thread response to
  * something a person sent us. Those do not come through here and are not affected.
  */
+/** Follow-ups Jon asked for by name: they speak through the master mute (each can still be switched off with its own toggle). */
+const ASKED_FOR = new Set<EventKey>(['owner_arrivals'])
 export function broadcastAllowed(rules: SlackRules, key: EventKey): boolean {
-  if (rules.onlyEvents && !rules.onlyEvents.includes(key)) return false
+  if (rules.onlyEvents && !rules.onlyEvents.includes(key) && !ASKED_FOR.has(key)) return false
   const rule = rules.events[key]
   return !!rule && rule.enabled
 }

@@ -163,6 +163,14 @@
     {
       "path": "/api/cron/walkthroughs",
       "schedule": "52 10,11 * * *"
+    },
+    {
+      "path": "/api/cron/owner-arrivals",
+      "schedule": "15 12,13 * * *"
+    },
+    {
+      "path": "/api/cron/owner-arrivals",
+      "schedule": "45 19,20 * * *"
     }
   ]
 }
