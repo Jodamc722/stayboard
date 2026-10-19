@@ -105,7 +105,14 @@ function descFor(c: Clean): string {
   return parts.join(' | ')
 }
 
-export function ScheduleBoard() {
+// EMBEDDED (Open & Close, 2026-10-19): the same board — same table, same cleaner picker, same
+// Staged → Pushed, same bulk assign and push — drawn inside another page for ONE day, filtered to
+// the cleans that need a person. Jon: "assigning a clean should look like the scheduler." It does,
+// because it IS the scheduler: none of the chrome (week strip, roster rail, day sheet) and nothing
+// that reads the URL, but every row and every write is this component's own.
+export type ScheduleEmbed = { date: string; only: 'needs-person' | 'nobody' | 'active' | 'all'; market?: 'all' | 'Miami' | 'Broward' | 'North' | 'vendor' }
+
+export function ScheduleBoard({ embedded }: { embedded?: ScheduleEmbed } = {}) {
   const presets = useOpsPresets()
   const NON_CLEANERS = presets.roster.nonCleaners
   const DEFAULT_RATE = presets.roster.rate
@@ -259,7 +266,12 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
     const t = setInterval(() => { if (document.visibilityState === 'visible') load(view, date) }, 5 * 60 * 1000)
     return () => clearInterval(t)
   }, [view, date])
-  useEffect(() => { const _sp = new URLSearchParams(window.location.search); const _d = _sp.get('date') || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()); const _t = _sp.get('tab'); if (_t === 'weekly' || _t === 'planner') setTab('planner'); setView('day'); setDate(_d); load('day', _d) }, [])
+  useEffect(() => {
+    if (embedded) { setView('day'); setDate(embedded.date); load('day', embedded.date); return }
+    const _sp = new URLSearchParams(window.location.search); const _d = _sp.get('date') || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()); const _t = _sp.get('tab'); if (_t === 'weekly' || _t === 'planner') setTab('planner'); setView('day'); setDate(_d); load('day', _d)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded?.date])
+  useEffect(() => { if (embedded && embedded.market) setMarket(embedded.market) }, [embedded?.market])
 
   async function sync() {
     setSyncing(true); setError(null)
@@ -307,7 +319,23 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   const dayCleans = useMemo(() => { const all: Clean[] = []; const _seen = new Set<string>(); visibleMarkets.forEach(m => (data?.days?.[0]?.markets[m] || []).forEach(c => { const _k = keyOf(c); if (_seen.has(_k)) return; _seen.add(_k); all.push(c) })); return market === 'vendor' ? all.filter((c) => c.vendor) : (market === 'all' ? all : all.filter((c) => !c.vendor)) }, [data, market])
 
   const rows = useMemo(() => {
-    const a = [...dayCleans]
+    // The embedded board shows only what the gate is about. 'needs-person' = nobody on it, Guesty-only,
+    // staged-not-pushed, or a guest still in the unit; 'nobody' and 'active' split that in two.
+    const only = embedded ? embedded.only : 'all'
+    const keep = (c: Clean): boolean => {
+      if (only === 'all') return true
+      if (c.vendor) return false
+      const e = effective(c)
+      const nobody = e.ids.length === 0 || c.syncStatus === 'guesty-only' || !!c.guestyOnly
+      const staged = !!overrides[keyOf(c)] || (c as any).staged === true
+      const live = c.taskStatus === 'in_progress'
+      const flagged = !!c.walkInRisk || !!c.extended || !!c.movedTo
+      if (c.taskStatus === 'completed') return false
+      if (only === 'nobody') return nobody && !staged
+      if (only === 'active') return (staged || live) && !nobody
+      return nobody || staged || flagged
+    }
+    const a = dayCleans.filter(keep)
     const byUnit = (x: Clean, y: Clean) => x.unit.localeCompare(y.unit)
     const byBuilding = (x: Clean, y: Clean) => (x.vendor ? 1 : 0) - (y.vendor ? 1 : 0) || x.hub.localeCompare(y.hub) || byUnit(x, y)
     switch (sortBy) {
@@ -319,7 +347,7 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
       default: return a.sort(byBuilding)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dayCleans, sortBy, overrides, cleared])
+  }, [dayCleans, sortBy, overrides, cleared, embedded?.only])
 
   function statusRing(c: Clean) {
     const st = String(c.taskStatus || '')
@@ -607,10 +635,10 @@ async function pushBlocks() {
   )
 
   return (
-    <div className="space-y-4">
-      {tabsBar('hidden sm:inline-flex')}
+    <div className={embedded ? 'space-y-2' : 'space-y-4'}>
+      {!embedded && tabsBar('hidden sm:inline-flex')}
       {opsFor && <ListingOpsPanel listingId={opsFor.listingId} unitName={opsFor.unit} date={opsFor.date} onClose={() => setOpsFor(null)} />}
-      <div className="flex items-center gap-2 flex-wrap">
+      {!embedded && <div className="flex items-center gap-2 flex-wrap">
         {/* THREE BANDS OF CHROME BECOME ONE (Jon, 2026-08-22). Day board/Weekly planner sat on its
             own line, Day/Week on the next, and the pager and label wrapped below that. Under 640px
             all four ride in a single swipeable strip; `sm:contents` dissolves the wrapper from sm:
@@ -639,9 +667,9 @@ async function pushBlocks() {
 {data && view === 'day' && (<div className="relative"><button onClick={() => setMoreOpen(o => !o)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="More actions">More ▾</button>{moreOpen && (<><div className="fixed inset-0 z-20" onClick={() => setMoreOpen(false)} /><div className="absolute right-0 mt-1 z-30 min-w-[180px] rounded-xl border border-line bg-white shadow-lg p-1 flex flex-col">{data.breezeway && <button onClick={() => { setMoreOpen(false); loadSuggestions() }} className="text-left text-[12px] font-medium px-2.5 py-2 rounded-lg hover:bg-violet-50 text-violet-700">Audit ideas</button>}<button onClick={() => { setMoreOpen(false); exportCsv() }} className="text-left text-[12px] font-medium px-2.5 py-2 rounded-lg hover:bg-app text-ink inline-flex items-center gap-1.5"><Download size={13} />Export CSV{sheetMkt === 'all' ? '' : ' · ' + sheetMkt}</button></div></>)}</div>)}
           <button onClick={sync} disabled={syncing || loading} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app disabled:opacity-50" title="Re-pull from reservations + Breezeway"><RefreshCw size={13} className={syncing || loading ? 'animate-spin' : ''} /> Sync</button>
         </div>
-      </div>
+      </div>}
 
-      {view === 'day' && data && stripDays.length > 0 && (
+      {!embedded && view === 'day' && data && stripDays.length > 0 && (
 <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-7 gap-1.5">
 {stripDays.map(d => { const sel = d.date === ((data && data.weekStart) || date); const bk = market === 'vendor' ? vendorOn(d) : bookedOn(d); const pj = projOn(d); const nd = needOn(d); const wk = workingOn(d.date); const short = nd > 0 && wk < nd; const past = !!d.isPast && !d.isToday; return (
 <button key={d.date} onClick={() => load('day', d.date)} title={market === 'vendor' ? undefined : bk + ' booked · ' + pj + ' projected'} className={'rounded-xl px-2.5 py-1.5 text-left bg-white transition ' + (sel ? 'border-2 border-neutral-900' : 'border border-line hover:border-neutral-400') + (past && !sel ? ' opacity-50' : '')}>
@@ -659,7 +687,7 @@ async function pushBlocks() {
 </div>
 )}
 
-{view === 'day' && sug !== null && (
+{!embedded && view === 'day' && sug !== null && (
 <div className="rounded-xl border border-violet-200 bg-violet-50/50 px-3.5 py-2.5">
 <div className="flex items-center justify-between gap-2 mb-1.5"><span className="text-[12px] font-bold text-violet-800" title="Low-review units with a checkout or vacancy this day; units with an open audit are skipped">Audit ideas from reviews</span><button onClick={() => setSug(null)} className="text-[11px] text-muted hover:text-ink">Close</button></div>
 {sug.length === 0 ? <div className="text-[12px] text-muted">No low-review units free this day.</div> : (
@@ -680,7 +708,7 @@ async function pushBlocks() {
 )}
 
 {/* Five market chips carrying counts and dollars wrapped to three rows on a phone. */}
-<div className="lh-actions flex items-center gap-2 flex-wrap">
+{!embedded && <div className="lh-actions flex items-center gap-2 flex-wrap">
         {(['all', ...MARKETS, 'vendor'] as const).map(m => (
           <button key={m} onClick={() => setMarket(m)} className={`lh-tab text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${market === m ? 'lh-tab-on bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{m === 'all' ? 'All markets' : m === 'vendor' ? 'Vendor' : m}{data && m !== 'all' && m !== 'vendor' ? (() => { const _e = data.totals.byMarket.find(x => x.market === m); return ' · ' + (_e?.count ?? 0) + (_e?.fee ? ' · $' + Math.round(_e.fee).toLocaleString() : '') })() : ''}</button>
         ))}
@@ -698,7 +726,7 @@ async function pushBlocks() {
             </select>
           </label>
         )}
-      </div>
+      </div>}
 
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
       {data && !data.breezeway && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-800">Breezeway not connected — assignment is off; checkouts still show.</div>}
@@ -706,11 +734,12 @@ async function pushBlocks() {
       {loading && !data ? (
         <div className="rounded-2xl border border-line bg-white px-4 py-16 text-center text-sm text-muted">Loading the schedule&hellip;</div>
       ) : data && view === 'day' ? (
-        <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-3 items-start pb-16">
+        <div className={embedded ? 'pb-2' : 'grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-3 items-start pb-16'}>
           {/* THE ROSTER, THEN THE SHEET (Jon, 2026-09-15: "can we add this right below the second
               photo"). The day sheet belonged under the Working card, not at the foot of the page:
               you send the crew the picture straight after you have settled who is on today, and at
               the bottom it sat below a hundred rows of cleans where nobody scrolled to it. */}
+          {!embedded && (
           <div className="space-y-3 order-2 lg:order-1">
             <WorkingRail rosters={rosters} date={data.weekStart || date} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(data.weekStart || date)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} need={(() => { const d0 = stripDays.find(x => x.date === (data.weekStart || date)); return d0 ? needOn(d0) : 0 })()} working={workingOn(data.weekStart || date)} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
 
@@ -739,6 +768,7 @@ async function pushBlocks() {
               </div>
             </div>
           </div>
+          )}
           {/* On a phone the roster rail is a 480px-tall scroller sitting between you and the cleans.
               The cleans are why you opened the page, so they come first; desktop keeps the rail left. */}
           <div className="space-y-2 min-w-0 order-1 lg:order-2">
@@ -751,7 +781,7 @@ async function pushBlocks() {
           {guestyOnlyCount > 0 && (
             <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-amber-700"><AlertTriangle size={12} /> {guestyOnlyCount} clean{guestyOnlyCount === 1 ? '' : 's'} in Guesty not yet in Breezeway</div>
           )}
-          {rows.length === 0 ? <div className="rounded-xl border border-line bg-white px-3 py-8 text-center text-[12px] text-muted">No checkouts for this day.</div> : (
+          {rows.length === 0 ? <div className="rounded-xl border border-line bg-white px-3 py-8 text-center text-[12px] text-muted">{embedded && embedded.only !== 'all' ? 'Every clean this day has a person on it.' : 'No checkouts for this day.'}</div> : (
             <div className="overflow-x-auto rounded-xl border border-line bg-white shadow-sm">
               {/* PHONE: one clean row is a checkbox, a cleaner picker, the unit with its badge
                   stack, the guest and a menu — five columns that cannot survive 375px, and this

@@ -63,7 +63,7 @@ export const DESKS: Desk[] = [
   },
   {
     key: 'operations', label: 'Operations',
-    blurb: 'The field: today’s board, the cleaning schedule, the daily checklist, maintenance and projects.',
+    blurb: 'The field: today’s board, the cleaning schedule, Open & Close, maintenance and projects.',
     views: [
       { to: '/plan', label: 'Today board', hint: 'Every unit’s work today against the 4pm deadline; assign and add tasks' },
       // Upkeep (Jon, 2026-10-03): the recurring programs — PM, deep cleans, A/C filters and coils, batteries, inspections, FF&E — late / due soon / on track, per unit.
@@ -71,7 +71,8 @@ export const DESKS: Desk[] = [
       { to: '/schedule', label: 'Schedule', hint: 'Turnovers by day: stage, assign and push to Breezeway' },
       // Scheduling sits together (Jon, 2026-09-30: "Scheduler — all the scheduling features").
       { to: '/team', label: 'Week plan', hint: 'Who works which day, by trade and market, with the 14-day forecast' },
-      { to: '/checklist', label: 'Checklist', hint: 'The standing daily list, ticked by whoever does it' },
+      // Open & Close (Jon, 2026-10-19): the opening and closing roadmap — gates with their real rows, carry-over, handover, print sheet.
+      { to: '/checklist', label: 'Open & Close', hint: 'Opening and closing roadmap: who is in, every clean has a person, extensions, arrivals, glitches — sign off, carry to tomorrow, print' },
       { to: '/maintenance', label: 'Maintenance', hint: 'Work orders, open Breezeway maintenance and glitches in one aged list', match: ['/requests'] },
       { to: '/projects', label: 'Projects', hint: 'Work that is bigger than a task: renovations, rollouts, building onboarding', match: ['/projects/plan'] },
       { to: '/blocked', label: 'Blocked units', hint: 'Units off the calendar right now, longest first, with the block note', more: true },

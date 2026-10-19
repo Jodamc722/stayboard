@@ -85,7 +85,7 @@ export const FEATURES: Feature[] = [
   // THE DAILY CHECKLIST (Jon, 2026-09-15): "a time-sensitive checklist that we build based on
   // things that have to happen every single day". Edit rights tick an item; full rights change what
   // is on the list, so the standing list is agreed once and then worked by everybody.
-  { key: 'checklist',     label: 'Daily Checklist',   path: '/checklist', group: 'Operations' },
+  { key: 'checklist',     label: 'Open & Close',      path: '/checklist', group: 'Operations' },
   { key: 'projects',      label: 'Projects',          path: '/projects', group: 'Operations' },
   // FF&E Audit (2026-08-10, Jon): one phone link per unit, room by room, EN/ES. A furniture
   // PURCHASING list — deliberately not wired to Breezeway, maintenance or billing.
