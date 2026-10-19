@@ -41,6 +41,8 @@ const KIND: Record<CalKind, { label: string; cls: string; workable: boolean; hin
   stay:  { label: 'Guest in',    cls: 'bg-slate-300',                                                 workable: false, hint: 'A guest is in the unit all day' },
   block: { label: 'Owner / block', cls: 'bg-[repeating-linear-gradient(135deg,#cbd5e1_0_4px,#e2e8f0_4px_8px)]', workable: false, hint: 'Owner or someone staying (Guesty block)' },
 }
+/** A program in two or three words, for the chips on a row. */
+const SHORT = (label: string) => label.replace(/ \(.*\)$/, '').replace(/^Central /, '').replace(/Mini-split \/ wall unit deep clean/i, 'Split A/C clean').replace(/Door lock & smoke batteries/i, 'Batteries').replace(/A\/C filter change/i, 'Filter').replace(/Unit inspection/i, 'Inspection').replace(/Pest control/i, 'Pest')
 const RANK: Record<string, number> = { late: 0, soon: 1, none: 2, ok: 3, booked: 4 }
 
 type Item = { row: UpkeepRow; prog: UpkeepProgram }
@@ -106,26 +108,30 @@ export function UpkeepCalendar({ programs, prog, rows, building, q, canEdit, can
 
   return (
     <div>
-      <div className="px-3 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap border-b border-line text-[11px] text-muted">
-        {(['open', 'out', 'in', 'hold', 'turn', 'stay', 'block'] as CalKind[]).map(k => (
-          <span key={k} className="inline-flex items-center gap-1" title={KIND[k].hint}><span className={'w-3.5 h-3.5 rounded-sm border border-line ' + KIND[k].cls} />{KIND[k].label}</span>
-        ))}
-        <span className="inline-flex items-center gap-1"><span className="w-4 h-4 rounded-full bg-sky-600 text-white text-[8px] font-bold grid place-items-center">AB</span>in this unit</span>
-        <span className="inline-flex items-center gap-1"><span className="w-4 h-4 rounded-full ring-1 ring-sky-600 text-sky-700 text-[8px] font-bold grid place-items-center">AB</span>in the building</span>
-        <span className="inline-flex items-center gap-1"><span className="w-3.5 h-0.5 bg-rose-500" />due</span>
-        <span className="inline-flex items-center gap-1"><span className="w-3.5 h-3.5 rounded-sm ring-2 ring-sky-500" />suggested</span>
-        <span className="ml-auto inline-flex rounded-md border border-line overflow-hidden">
+      <div className="px-3 py-2 flex items-center gap-x-4 gap-y-1.5 flex-wrap border-b border-line text-[11.5px] text-ink">
+        <span className="inline-flex items-center gap-1.5"><span className="font-semibold text-emerald-800">Can get in:</span>
+          {(['open', 'out', 'in', 'hold'] as CalKind[]).map(k => <span key={k} className="inline-flex items-center gap-1" title={KIND[k].hint}><span className={'w-4 h-4 rounded border border-line ' + KIND[k].cls} />{KIND[k].label}</span>)}
+        </span>
+        <span className="inline-flex items-center gap-1.5"><span className="font-semibold text-slate-700">Can't:</span>
+          {(['stay', 'turn', 'block'] as CalKind[]).map(k => <span key={k} className="inline-flex items-center gap-1" title={KIND[k].hint}><span className={'w-4 h-4 rounded border border-line ' + KIND[k].cls} />{KIND[k].label}</span>)}
+        </span>
+        <span className="inline-flex items-center gap-1.5 text-muted">
+          <span className="w-5 h-5 rounded-full bg-sky-600 text-white text-[8px] font-bold grid place-items-center">AB</span>team in this unit
+          <span className="w-5 h-5 rounded-full ring-1 ring-sky-600 text-sky-700 text-[8px] font-bold grid place-items-center ml-1">AB</span>in the building
+          <span className="w-2.5 h-2.5 rounded-full bg-rose-500 ml-2" />due
+          <span className="w-4 h-4 rounded ring-2 ring-sky-500 ml-2" />best day
+        </span>
+        <span className="ml-auto inline-flex rounded-md border border-line overflow-hidden text-[11px]">
           {[14, 21].map(n => <button key={n} onClick={() => setSpan(n as 14 | 21)} aria-pressed={span === n} className={'px-2 h-6 font-semibold ' + (span === n ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{n} days</button>)}
         </span>
       </div>
-      <p className="px-3 py-1 text-[11px] text-muted border-b border-line">Click any day on a unit to see everything it owes, who is around, and book each job with its own person, date and note.</p>
       {data.unsure.length ? <p className="px-3 py-1.5 text-[11.5px] text-amber-800 bg-amber-50 border-b border-amber-200">Partial read: {data.unsure.join(' · ')}.</p> : null}
 
       <div className="overflow-x-auto max-h-[64vh] overflow-y-auto">
         <table className="w-full border-separate border-spacing-0 text-[11px] table-fixed">
           <thead className="sticky top-0 z-20 bg-white">
             <tr>
-              <th className="sticky left-0 z-30 bg-white text-left font-semibold text-muted px-3 py-1.5 border-b border-line w-[14rem]">Unit</th>
+              <th className="sticky left-0 z-30 bg-white text-left font-semibold text-muted px-3 py-1.5 border-b border-line w-[15rem]">Unit · what it owes</th>
               {days.map(d => (
                 <th key={d} className={'px-0 py-1 border-b border-line min-w-[2.25rem] text-center font-semibold ' + (d === data.today ? 'text-ink' : 'text-muted') + (/^S/.test(dow(d)) ? ' bg-app/60' : '')}>
                   <div className="text-[9.5px] leading-none">{dow(d)}</div>
@@ -149,9 +155,15 @@ export function UpkeepCalendar({ programs, prog, rows, building, q, canEdit, can
                       <span className="font-semibold text-ink truncate max-w-[9.5rem]" title={r.unit}>{r.unit}</span>
                       {!prog ? <span className="text-[10px] font-bold px-1 rounded bg-slate-100 text-slate-700" title={r.items.map(i => i.prog.label).join(', ')}>{r.items.length}</span> : null}
                     </div>
-                    <div className={'pl-3.5 text-[10.5px] truncate ' + (r.worst === 'late' ? 'text-rose-700' : 'text-muted')}>
+                    {!prog && !doneHere ? (
+                      <div className="pl-3.5 mt-0.5 flex flex-wrap gap-0.5">
+                        {r.items.slice(0, 4).map(i => <span key={i.row.id} title={i.prog.label + ' — ' + when(i.row)} className={'text-[9.5px] font-semibold px-1 rounded ' + (i.row.state === 'late' ? 'bg-rose-100 text-rose-800' : i.row.state === 'soon' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700')}>{SHORT(i.prog.label)}</span>)}
+                        {r.items.length > 4 ? <span className="text-[9.5px] text-muted">+{r.items.length - 4}</span> : null}
+                      </div>
+                    ) : null}
+                    <div className={'pl-3.5 text-[10.5px] truncate ' + (r.worst === 'late' ? 'text-rose-700' : 'text-muted') + (!prog && !doneHere ? ' hidden' : '')}>
                       {doneHere ? <span className="text-emerald-700 font-semibold inline-flex items-center gap-0.5"><Check size={10} /> {doneHere} booked</span>
-                        : prog ? when(r.items[0].row) : r.items.slice(0, 3).map(i => i.prog.label.replace(/ \(.*\)$/, '')).join(' · ')}
+                        : prog ? when(r.items[0].row) : null}
                     </div>
                   </td>
                   {days.map(d => {
@@ -166,10 +178,11 @@ export function UpkeepCalendar({ programs, prog, rows, building, q, canEdit, can
                     return (
                       <td key={d} className="p-0 border-b border-l border-white">
                         <button onClick={() => setPanel({ row: r, date: d })} title={title}
-                          className={'relative w-full h-9 grid place-items-center hover:brightness-95 ' + K.cls + (sug ? ' ring-2 ring-inset ring-sky-500' : '') + (sel ? ' outline outline-2 outline-ink -outline-offset-2' : '')}>
+                          className={'relative w-full h-11 grid place-items-center hover:brightness-95 ' + K.cls + (sug ? ' ring-2 ring-inset ring-sky-500' : '') + (sel ? ' outline outline-2 outline-ink -outline-offset-2' : '')}>
                           {lead ? <span className={'w-5 h-5 rounded-full text-[8.5px] font-bold grid place-items-center ' + (lead.atUnit ? 'bg-sky-600 text-white' : 'ring-1 ring-sky-600 text-sky-700 bg-white/80')}>{initials(lead.name)}</span> : null}
                           {c.team.length > 1 ? <span className="absolute top-0 right-0.5 text-[8px] font-bold text-sky-700">+{c.team.length - 1}</span> : null}
-                          {due ? <span className="absolute bottom-0 left-1 right-1 h-0.5 bg-rose-500" /> : null}
+                          {due ? <span className="absolute top-1 left-1 w-2 h-2 rounded-full bg-rose-500 ring-1 ring-white" /> : null}
+                          {!lead && (c.k === 'out' || c.k === 'in' || c.k === 'turn' || c.k === 'block') ? <span className="text-[8.5px] font-semibold uppercase tracking-wide text-slate-600">{c.k === 'out' ? 'out' : c.k === 'in' ? 'in' : c.k === 'turn' ? 'turn' : 'owner'}</span> : null}
                         </button>
                       </td>
                     )

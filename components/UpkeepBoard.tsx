@@ -50,7 +50,12 @@ export function UpkeepBoard() {
   const [state, setState] = useState<UpkeepState | 'all'>('all')
   const [building, setBuilding] = useState('')
   const [q, setQ] = useState('')
-  const [view, setView] = useState<'list' | 'grid' | 'cal'>('list')
+  const [view, setView] = useState<'list' | 'grid'>('list')
+  // TWO TABS (Jon, 2026-10-19: "make a tab for calendar view instead of at the bottom"): the programs
+  // (tiles + list) and the calendar, which gets the whole width and its own program filter.
+  const [tab, setTabState] = useState<'programs' | 'calendar'>(() => { try { return localStorage.getItem('upkeep.tab') === 'calendar' ? 'calendar' : 'programs' } catch { return 'programs' } })
+  const setTab = (t: 'programs' | 'calendar') => { setTabState(t); try { localStorage.setItem('upkeep.tab', t) } catch { /* fine */ } }
+  const [calProg, setCalProg] = useState<string>('')
   const [busy, setBusy] = useState('')
   const [filed, setFiled] = useState<Record<string, string>>({})
   const [err, setErr] = useState('')
@@ -139,7 +144,6 @@ export function UpkeepBoard() {
           need to be done in a particular period of time, so there should be a settings where we can
           build that into") — Settings → Preventative cadences: name, every N days, trade, what counts
           as done, which equipment / buildings, whether the next one is filed automatically. */}
-      <button onClick={() => { setOpen(open === '__all' ? '' : '__all'); setQ('') }} aria-pressed={open === '__all'} title="Every unit with upkeep due, every program, on one calendar — click a day to book" className={'h-8 px-2.5 rounded-lg border text-[12px] font-semibold inline-flex items-center gap-1 ' + (open === '__all' ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line hover:border-ink/40')}><CalendarDays size={12} /> Plan calendar</button>
       <Link href="/users?tab=settings&panel=cadences" className="h-8 px-2.5 rounded-lg bg-ink text-white text-[12px] font-semibold inline-flex items-center gap-1"><Plus size={12} /> Program</Link>
     </LeanHead>
   )
@@ -153,6 +157,44 @@ export function UpkeepBoard() {
       {!data.enabled && <p className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">The cadence engine is switched off in Settings → Cadences, so nothing is being proposed or created automatically. This page still reads the ledger.</p>}
       {data.degraded.length ? <p className="text-[12px] text-amber-800">{data.degraded.join(' · ')}</p> : null}
 
+      {/* ── THE TABS ── */}
+      <div className="flex items-center gap-1 border-b border-line">
+        {([['programs', 'Programs', LayoutGrid], ['calendar', 'Calendar', CalendarDays]] as const).map(([k, label, Icon]) => (
+          <button key={k} onClick={() => setTab(k)} aria-pressed={tab === k}
+            className={'h-9 px-3 -mb-px inline-flex items-center gap-1.5 text-[13px] font-semibold border-b-2 ' + (tab === k ? 'border-ink text-ink' : 'border-transparent text-muted hover:text-ink')}>
+            <Icon size={14} /> {label}
+          </button>
+        ))}
+        {tab === 'calendar' ? <span className="ml-2 text-[12px] text-muted hidden sm:inline">Green = you can get in · grey = guest in · click any day on a unit to book its work</span> : null}
+      </div>
+
+      {tab === 'calendar' ? (
+        <section className="rounded-2xl border border-line bg-white overflow-hidden">
+          <header className="px-3 py-2 border-b border-line flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1 flex-wrap">
+              <button onClick={() => setCalProg('')} aria-pressed={!calProg} className={'text-[11.5px] font-semibold px-2.5 h-7 rounded-full border ' + (!calProg ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line hover:border-ink/40')}>Everything due</button>
+              {programs.filter(p => !p.inert && (p.late + p.soon + p.none) > 0).map(p => (
+                <button key={p.key} onClick={() => setCalProg(p.key)} aria-pressed={calProg === p.key} className={'text-[11.5px] font-semibold px-2.5 h-7 rounded-full border inline-flex items-center gap-1 ' + (calProg === p.key ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line hover:border-ink/40')}>
+                  {p.label.replace(/ \(.*\)$/, '')}<span className={'text-[10.5px] font-bold px-1 rounded ' + (calProg === p.key ? 'bg-white/20' : p.late ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800')}>{p.late + p.soon + p.none}</span>
+                </button>
+              ))}
+            </span>
+            <span className="ml-auto inline-flex items-center gap-1.5">
+              <select value={building} onChange={e => setBuilding(e.target.value)} className="h-7 rounded-md border border-line bg-white px-1.5 text-[11.5px] font-semibold text-ink max-w-[11rem]" aria-label="Building">
+                <option value="">All buildings</option>
+                {data.buildings.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+              <label className="h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white px-1.5 text-[11.5px]"><Search size={11} className="text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="unit" className="w-16 bg-transparent outline-none text-ink" /></label>
+            </span>
+          </header>
+          {(() => {
+            const cp = programs.find(p => p.key === calProg) || null
+            return <UpkeepCalendar key={calProg || 'all'} programs={programs} prog={cp} rows={cp ? cp.rows.filter(r => r.state !== 'ok') : []} building={building} q={q}
+              canEdit={!!data.canEdit} canApprove={data.canApprove || []} info={data.info || {}}
+              onBooked={(id, msg, taskId) => { setDone(d => ({ ...d, [id]: msg })); setFiled(f => ({ ...f, [id]: taskId })) }} />
+          })()}
+        </section>
+      ) : (<>
       {/* ── THE TILES, BY TRADE ── */}
       {GROUPS.map(g => {
         const ps = programs.filter(p => p.group === g.key)
@@ -187,9 +229,10 @@ export function UpkeepBoard() {
               </select>
               <label className="h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white px-1.5 text-[11.5px]"><Search size={11} className="text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="unit" className="w-16 bg-transparent outline-none text-ink" /></label>
               <span className="inline-flex rounded-md border border-line overflow-hidden">
-                {([['list', 'List', List, 'One row per unit'], ['cal', 'Calendar', CalendarDays, 'Open days, who is there — click a day to book'], ['grid', 'Grid', LayoutGrid, 'Every unit against every program']] as const).map(([k, label, Icon, tip]) => (
+                {([['list', 'List', List, 'One row per unit'], ['grid', 'Grid', LayoutGrid, 'Every unit against every program']] as const).map(([k, label, Icon, tip]) => (
                   <button key={k} onClick={() => setView(k)} aria-pressed={view === k} title={tip} className={'h-7 px-2 inline-flex items-center gap-1 text-[11.5px] font-semibold ' + (view === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}><Icon size={12} /> {label}</button>
                 ))}
+                <button onClick={() => { setCalProg(prog.key); setTab('calendar') }} title="This program on the calendar — open days, who is there, click a day to book" className="h-7 px-2 inline-flex items-center gap-1 text-[11.5px] font-semibold bg-white text-muted hover:text-ink"><CalendarDays size={12} /> Calendar</button>
               </span>
             </span>
           </header>
@@ -197,9 +240,6 @@ export function UpkeepBoard() {
           {err ? <p className="px-3 py-1.5 text-[12px] text-rose-700 bg-rose-50 border-b border-rose-200">{err}</p> : null}
           {view === 'grid' ? (
             <Matrix programs={programs} building={building} market={market} q={q} />
-          ) : view === 'cal' && prog ? (
-            <UpkeepCalendar programs={programs} prog={prog} rows={rows} building={building} q={q} canEdit={!!data?.canEdit} canApprove={data?.canApprove || []} info={data?.info || {}}
-              onBooked={(id, msg, taskId) => { setDone(d => ({ ...d, [id]: msg })); setFiled(f => ({ ...f, [id]: taskId })) }} />
           ) : rows.length === 0 ? (
             <p className="px-3 py-4 text-[12.5px] text-muted">{state === 'all' ? 'Nothing needs attention here — every unit is on track or booked.' : 'Nothing in this state.'}</p>
           ) : (
@@ -269,25 +309,10 @@ export function UpkeepBoard() {
             </ul>
           )}
         </section>
-      ) : open === '__all' && data ? (
-        <section className="rounded-2xl border border-brand-200 bg-white overflow-hidden">
-          <header className="px-3 py-2 border-b border-line flex items-center gap-2 flex-wrap">
-            <span className="text-[13px] font-semibold text-ink">Plan calendar · every program</span>
-            <span className="text-[11.5px] text-muted">units with something late or due soon — click a day to see everything the unit owes and book it</span>
-            <span className="ml-auto inline-flex items-center gap-1.5">
-              <select value={building} onChange={e => setBuilding(e.target.value)} className="h-7 rounded-md border border-line bg-white px-1.5 text-[11.5px] font-semibold text-ink max-w-[11rem]" aria-label="Building">
-                <option value="">All buildings</option>
-                {data.buildings.map(b => <option key={b} value={b}>{b}</option>)}
-              </select>
-              <label className="h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white px-1.5 text-[11.5px]"><Search size={11} className="text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="unit" className="w-16 bg-transparent outline-none text-ink" /></label>
-            </span>
-          </header>
-          <UpkeepCalendar programs={programs} prog={null} rows={[]} building={building} q={q} canEdit={!!data.canEdit} canApprove={data.canApprove || []} info={data.info || {}}
-            onBooked={(id, msg, taskId) => { setDone(d => ({ ...d, [id]: msg })); setFiled(f => ({ ...f, [id]: taskId })) }} />
-        </section>
       ) : (
         <p className="text-[12px] text-muted">Open a tile to see its units. A program's clock restarts whenever a Breezeway task matching it is completed (or, for FF&E, a finished walk in /ffe). To add an activity on a period — what it is called, every how many days, which trade, which equipment or buildings, what counts as done — use <Link href="/users?tab=settings&panel=cadences" className="font-semibold text-brand-700 hover:underline">+ Program</Link>; it shows here the moment it is saved.</p>
       )}
+      </>)}
     </div>
   )
 }
