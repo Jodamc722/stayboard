@@ -433,7 +433,14 @@ function teamRows(opts: { people: TeamRow[]; shifts: Shift[]; roster: RosterCell
     if (off && total > 0) { tags.push({ label: 'OFF but assigned', tone: 'amber', title: 'The roster says OFF; Breezeway has work on this person' }); state = 'pending' }
     if (working && total === 0 && (isToday ? nowMin > 10 * 60 : true)) { tags.push({ label: 'working, nothing assigned', tone: 'amber', title: 'Rostered to work with no Breezeway task' }); state = 'pending' }
     if (projected != null && projected >= otRisk) { tags.push({ label: 'overtime risk · ' + hrs(projected), tone: 'rose', title: hrs(weekHrs || 0) + ' so far this week + ' + hrs(shiftHrs) + ' shift' }); state = 'pending' }
-    if (load.cleans >= 5 || (p && p.utilisationPct >= 115 && total > 0)) { tags.push({ label: 'over · ' + (load.cleans >= 5 ? load.cleans + ' cleans' : total + ' tasks'), tone: 'amber', title: (p ? p.utilisationPct + '% of the shift at the usual pace' : 'More than fits the shift at the usual pace') }); if (state === 'active') state = 'pending' }
+    // OVER is a flag, not an alarm (first live read, 2026-10-19: 115% marked 14 of 20 people pending).
+    // The tag shows from 130% of the shift; it only makes the row PENDING when the day is plainly
+    // too big — six cleans, or half again what the shift holds.
+    const util = p ? p.utilisationPct : 0
+    if (load.cleans >= 6 || (util >= 130 && total > 0)) {
+      tags.push({ label: 'over · ' + (load.cleans >= 5 ? load.cleans + ' cleans' : total + ' tasks'), tone: 'amber', title: (p ? util + '% of the shift at the usual pace' : 'More than fits the shift at the usual pace') })
+      if (state === 'active' && (load.cleans >= 6 || util >= 150)) state = 'pending'
+    }
     else if (p && p.field && /housekeep/i.test(str(p.dept)) && load.cleans <= 1 && clockedIn) tags.push({ label: 'light · ' + load.cleans + ' clean' + (load.cleans === 1 ? '' : 's'), tone: 'emerald', title: 'Room to take a clean from somebody who is over' })
     if (ros && !off && !working) tags.push({ label: ros, tone: 'slate' })
     const deptTxt = str(p && p.dept ? p.dept : (s && s.department) || '').replace(/dept\.?\s*not\s*set/i, '')
