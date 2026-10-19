@@ -25,6 +25,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
 import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
+import { parseJson, salvageKeys } from '@/lib/json-repair'
 import { SECTION_KEYS, TITLE_MAX, sectionRules, type SectionKey, type ListingAi, bannedRule, examplesRule } from '@/lib/listing-ai'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
@@ -344,8 +345,15 @@ ${JSON.stringify(currentDraft || (current as any)[sk] || '')}`
       const d: any = await r.json()
       if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })
       const text = Array.isArray(d?.content) ? d.content.map((c: any) => c?.text || '').join('').trim() : ''
-      const parsed = parseJson(text)
-      if (!parsed || typeof parsed.text !== 'string') return NextResponse.json({ error: 'Model returned an unparseable response.' }, { status: 502 })
+      const parsed = parseJson(text) || salvageKeys(text, ['text', 'rationale'])
+      if (!parsed || typeof parsed.text !== 'string' || !parsed.text.trim()) {
+        return NextResponse.json({
+          error: d?.stop_reason === 'max_tokens'
+            ? 'The model ran out of room on this section — try it again.'
+            : 'Model returned an unparseable response.',
+          truncated: d?.stop_reason === 'max_tokens',
+        }, { status: 502 })
+      }
       const value = String(parsed.text).trim()
       const warnings = warnFor(sk, value, cfg, location.streetAddress)
       return NextResponse.json({ listingId, section: sk, text: value, titleMax: cfg.sections.title.hardCap || TITLE_MAX, rationale: String(parsed.rationale || '').trim(), warnings, photosUsed: sel.photos.length, photosLabelled: sel.labelled })
@@ -400,14 +408,32 @@ ${JSON.stringify(current)}`
       signal: ac.signal,
       // The whole system prompt is listing-independent (voice, rules, section spec), so it is one
       // cached block: a run over several units in a sitting pays list price for it once.
-      body: JSON.stringify({ model: await modelFor('listing-copy'), max_tokens: 3200, system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: [{ type: 'text', text: USER }, ...photoBlocks] }] }),
+      // 8000, not 3200 (2026-10-19). Six sections plus a title on a well-photographed unit ran past the
+      // old cap and the reply was cut mid-sentence, which is what "unparseable" actually meant.
+      // Output tokens bill for what is used, so a cap nobody reaches costs nothing.
+      body: JSON.stringify({ model: await modelFor('listing-copy'), max_tokens: 8000, system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: [{ type: 'text', text: USER }, ...photoBlocks] }] }),
     })
     const d: any = await r.json()
     if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })
 
     const text = Array.isArray(d?.content) ? d.content.map((c: any) => c?.text || '').join('').trim() : ''
-    const parsed = parseJson(text)
-    if (!parsed) return NextResponse.json({ error: 'Model returned an unparseable response.', raw: text.slice(0, 400) }, { status: 502 })
+    const cut = d?.stop_reason === 'max_tokens'
+    let parsed = parseJson(text)
+    // Even a reply that cannot be made into valid JSON usually contains finished sections. Five
+    // good ones you can approve beat an error message, and the per-section Regenerate button
+    // already covers the one that was cut.
+    if (!parsed) {
+      const salvaged = salvageKeys(text, ['title', ...SECTION_KEYS.filter(k => k !== 'title')])
+      if (Object.keys(salvaged).length) parsed = salvaged
+    }
+    if (!parsed) {
+      return NextResponse.json({
+        error: cut
+          ? 'The model ran out of room before it finished — nothing usable came back. Try again, or generate the long sections one at a time.'
+          : 'Model returned an unparseable response.',
+        truncated: cut, raw: text.slice(0, 400),
+      }, { status: 502 })
+    }
 
     // A disabled section is left exactly as it is today rather than blanked.
     const proposed: Record<string, string> = { title: String(parsed.title || '').trim() }
@@ -492,14 +518,4 @@ function forbiddenIn(s: string): string[] {
   return out
 }
 
-function parseJson(raw: string): any | null {
-  if (!raw) return null
-  const tryParse = (s: string) => { try { return JSON.parse(s) } catch { return null } }
-  let obj = tryParse(raw)
-  if (!obj) obj = tryParse(raw.replace(/```(?:json)?/gi, '').trim())
-  if (!obj) {
-    const a = raw.indexOf('{'), b = raw.lastIndexOf('}')
-    if (a !== -1 && b > a) obj = tryParse(raw.slice(a, b + 1))
-  }
-  return obj && typeof obj === 'object' ? obj : null
-}
+
