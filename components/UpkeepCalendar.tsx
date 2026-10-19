@@ -42,7 +42,7 @@ const KIND: Record<CalKind, { label: string; cls: string; workable: boolean; hin
   block: { label: 'Owner / block', cls: 'bg-[repeating-linear-gradient(135deg,#cbd5e1_0_4px,#e2e8f0_4px_8px)]', workable: false, hint: 'Owner or someone staying (Guesty block)' },
 }
 /** A program in two or three words, for the chips on a row. */
-const SHORT = (label: string) => label.replace(/ \(.*\)$/, '').replace(/^Central /, '').replace(/Mini-split \/ wall unit deep clean/i, 'Split A/C clean').replace(/Door lock & smoke batteries/i, 'Batteries').replace(/A\/C filter change/i, 'Filter').replace(/Unit inspection/i, 'Inspection').replace(/Pest control/i, 'Pest')
+const SHORT = (label: string) => label.replace(/ \(.*\)$/, '').replace(/^Central /, '').replace(/Mini-split \/ wall unit deep clean/i, 'Split A/C clean').replace(/(Door )?lock & smoke batteries/i, 'Batteries').replace(/Dryer vent clean/i, 'Dryer vent').replace(/Deep clean/i, 'Deep clean').replace(/A\/C filter change/i, 'Filter').replace(/Unit inspection/i, 'Inspection').replace(/Pest control/i, 'Pest')
 const RANK: Record<string, number> = { late: 0, soon: 1, none: 2, ok: 3, booked: 4 }
 
 type Item = { row: UpkeepRow; prog: UpkeepProgram }
@@ -157,8 +157,8 @@ export function UpkeepCalendar({ programs, prog, rows, building, q, canEdit, can
                     </div>
                     {!prog && !doneHere ? (
                       <div className="pl-3.5 mt-0.5 flex flex-wrap gap-0.5">
-                        {r.items.slice(0, 4).map(i => <span key={i.row.id} title={i.prog.label + ' — ' + when(i.row)} className={'text-[9.5px] font-semibold px-1 rounded ' + (i.row.state === 'late' ? 'bg-rose-100 text-rose-800' : i.row.state === 'soon' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700')}>{SHORT(i.prog.label)}</span>)}
-                        {r.items.length > 4 ? <span className="text-[9.5px] text-muted">+{r.items.length - 4}</span> : null}
+                        {r.items.slice(0, 3).map(i => <span key={i.row.id} title={i.prog.label + ' — ' + when(i.row)} className={'text-[9.5px] font-semibold px-1 rounded ' + (i.row.state === 'late' ? 'bg-rose-100 text-rose-800' : i.row.state === 'soon' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700')}>{SHORT(i.prog.label)}</span>)}
+                        {r.items.length > 3 ? <span className="text-[9.5px] text-muted">+{r.items.length - 3}</span> : null}
                       </div>
                     ) : null}
                     <div className={'pl-3.5 text-[10.5px] truncate ' + (r.worst === 'late' ? 'text-rose-700' : 'text-muted') + (!prog && !doneHere ? ' hidden' : '')}>
@@ -176,9 +176,9 @@ export function UpkeepCalendar({ programs, prog, rows, building, q, canEdit, can
                     const lead = c.team[0]
                     const title = `${r.unit} · ${nice(d)} — ${c.label || K.hint}` + (c.team.length ? '\n' + c.team.map(t => `${t.name}${t.atUnit ? ' (in this unit)' : ''} · ${t.trade} · ${t.jobs} job${t.jobs === 1 ? '' : 's'}`).join('\n') : '\nNobody in the building') + '\nClick to open the day'
                     return (
-                      <td key={d} className="p-0 border-b border-l border-white">
+                      <td key={d} className="p-0 border-b border-l border-white h-px">
                         <button onClick={() => setPanel({ row: r, date: d })} title={title}
-                          className={'relative w-full h-11 grid place-items-center hover:brightness-95 ' + K.cls + (sug ? ' ring-2 ring-inset ring-sky-500' : '') + (sel ? ' outline outline-2 outline-ink -outline-offset-2' : '')}>
+                          className={'relative w-full h-full min-h-[2.75rem] grid place-items-center hover:brightness-95 ' + K.cls + (sug ? ' ring-2 ring-inset ring-sky-500' : '') + (sel ? ' outline outline-2 outline-ink -outline-offset-2' : '')}>
                           {lead ? <span className={'w-5 h-5 rounded-full text-[8.5px] font-bold grid place-items-center ' + (lead.atUnit ? 'bg-sky-600 text-white' : 'ring-1 ring-sky-600 text-sky-700 bg-white/80')}>{initials(lead.name)}</span> : null}
                           {c.team.length > 1 ? <span className="absolute top-0 right-0.5 text-[8px] font-bold text-sky-700">+{c.team.length - 1}</span> : null}
                           {due ? <span className="absolute top-1 left-1 w-2 h-2 rounded-full bg-rose-500 ring-1 ring-white" /> : null}
