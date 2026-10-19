@@ -53,8 +53,8 @@ export function UpkeepBoard() {
   const [view, setView] = useState<'list' | 'grid'>('list')
   // TWO TABS (Jon, 2026-10-19: "make a tab for calendar view instead of at the bottom"): the programs
   // (tiles + list) and the calendar, which gets the whole width and its own program filter.
-  const [tab, setTabState] = useState<'programs' | 'calendar'>(() => { try { return localStorage.getItem('upkeep.tab') === 'calendar' ? 'calendar' : 'programs' } catch { return 'programs' } })
-  const setTab = (t: 'programs' | 'calendar') => { setTabState(t); try { localStorage.setItem('upkeep.tab', t) } catch { /* fine */ } }
+  // Always opens on Programs (Jon, 2026-10-19); the calendar is one click away.
+  const [tab, setTab] = useState<'programs' | 'calendar'>('programs')
   const [calProg, setCalProg] = useState<string>('')
   const [busy, setBusy] = useState('')
   const [filed, setFiled] = useState<Record<string, string>>({})
@@ -165,7 +165,7 @@ export function UpkeepBoard() {
             <Icon size={14} /> {label}
           </button>
         ))}
-        {tab === 'calendar' ? <span className="ml-2 text-[12px] text-muted hidden sm:inline">Green = you can get in · grey = guest in · click any day on a unit to book its work</span> : null}
+        {tab === 'calendar' ? <span className="ml-2 text-[12px] text-muted hidden sm:inline">Green = you can get in · grey = guest in · coloured bars = reservations · click any day to book or block</span> : null}
       </div>
 
       {tab === 'calendar' ? (

@@ -41,6 +41,17 @@ const KIND: Record<CalKind, { label: string; cls: string; workable: boolean; hin
   stay:  { label: 'Guest in',    cls: 'bg-slate-300',                                                 workable: false, hint: 'A guest is in the unit all day' },
   block: { label: 'Owner / block', cls: 'bg-[repeating-linear-gradient(135deg,#cbd5e1_0_4px,#e2e8f0_4px_8px)]', workable: false, hint: 'Owner or someone staying (Guesty block)' },
 }
+/** Day backgrounds: green = someone can get in, grey = they can't. The bars say who is there. */
+const BG: Record<CalKind, string> = {
+  open: 'bg-emerald-50', out: 'bg-emerald-50', in: 'bg-emerald-50', hold: 'bg-[repeating-linear-gradient(135deg,#ecfdf5_0_4px,#d1fae5_4px_8px)]',
+  stay: 'bg-slate-100', turn: 'bg-amber-50', block: 'bg-[repeating-linear-gradient(135deg,#e2e8f0_0_4px,#f1f5f9_4px_8px)]',
+}
+/** Reservation bar colour by channel, so a row reads at a glance. */
+const srcColor = (st: { source: string | null; owner: boolean }) => {
+  const x = String(st.source || '').toLowerCase()
+  return st.owner ? 'bg-violet-500' : /airbnb/.test(x) ? 'bg-rose-500' : /booking/.test(x) ? 'bg-blue-600' : /vrbo|homeaway|expedia/.test(x) ? 'bg-indigo-500' : /direct|website|manual|book/.test(x) ? 'bg-emerald-600' : 'bg-slate-500'
+}
+const guestShort = (n: string) => { const p = String(n || 'Guest').trim().split(/\s+/); return p.length > 1 ? p[0] + ' ' + p[p.length - 1][0] + '.' : p[0] }
 /** A program in two or three words, for the chips on a row. */
 const SHORT = (label: string) => label.replace(/ \(.*\)$/, '').replace(/^Central /, '').replace(/Mini-split \/ wall unit deep clean/i, 'Split A/C clean').replace(/(Door )?lock & smoke batteries/i, 'Batteries').replace(/Dryer vent clean/i, 'Dryer vent').replace(/Deep clean/i, 'Deep clean').replace(/A\/C filter change/i, 'Filter').replace(/Unit inspection/i, 'Inspection').replace(/Pest control/i, 'Pest')
 const RANK: Record<string, number> = { late: 0, soon: 1, none: 2, ok: 3, booked: 4 }
@@ -109,11 +120,12 @@ export function UpkeepCalendar({ programs, prog, rows, building, q, canEdit, can
   return (
     <div>
       <div className="px-3 py-2 flex items-center gap-x-4 gap-y-1.5 flex-wrap border-b border-line text-[11.5px] text-ink">
-        <span className="inline-flex items-center gap-1.5"><span className="font-semibold text-emerald-800">Can get in:</span>
-          {(['open', 'out', 'in', 'hold'] as CalKind[]).map(k => <span key={k} className="inline-flex items-center gap-1" title={KIND[k].hint}><span className={'w-4 h-4 rounded border border-line ' + KIND[k].cls} />{KIND[k].label}</span>)}
-        </span>
-        <span className="inline-flex items-center gap-1.5"><span className="font-semibold text-slate-700">Can't:</span>
-          {(['stay', 'turn', 'block'] as CalKind[]).map(k => <span key={k} className="inline-flex items-center gap-1" title={KIND[k].hint}><span className={'w-4 h-4 rounded border border-line ' + KIND[k].cls} />{KIND[k].label}</span>)}
+        <span className="inline-flex items-center gap-1"><span className="w-4 h-4 rounded border border-line bg-emerald-50" /><b className="text-emerald-800">Can get in</b></span>
+        <span className="inline-flex items-center gap-1"><span className="w-4 h-4 rounded border border-line bg-slate-100" /><b className="text-slate-700">Guest in</b></span>
+        <span className="inline-flex items-center gap-1"><span className="w-4 h-4 rounded border border-line bg-[repeating-linear-gradient(135deg,#e2e8f0_0_4px,#f1f5f9_4px_8px)]" />Owner / Guesty block</span>
+        <span className="inline-flex items-center gap-1.5 text-muted">Stays:
+          {[['Airbnb', 'bg-rose-500'], ['Booking', 'bg-blue-600'], ['Vrbo', 'bg-indigo-500'], ['Direct', 'bg-emerald-600'], ['Owner', 'bg-violet-500'], ['Other', 'bg-slate-500']].map(([l, c]) => <span key={l} className="inline-flex items-center gap-0.5"><span className={'w-4 h-2.5 rounded-sm ' + c} />{l}</span>)}
+          <span className="ml-1">· bar starts at check-in (4pm), ends at checkout (11am)</span>
         </span>
         <span className="inline-flex items-center gap-1.5 text-muted">
           <span className="w-5 h-5 rounded-full bg-sky-600 text-white text-[8px] font-bold grid place-items-center">AB</span>team in this unit
@@ -174,15 +186,34 @@ export function UpkeepCalendar({ programs, prog, rows, building, q, canEdit, can
                     const sug = (bestD || r.planDate) === d && K.workable
                     const sel = isOpen && panel?.date === d
                     const lead = c.team[0]
-                    const title = `${r.unit} · ${nice(d)} — ${c.label || K.hint}` + (c.team.length ? '\n' + c.team.map(t => `${t.name}${t.atUnit ? ' (in this unit)' : ''} · ${t.trade} · ${t.jobs} job${t.jobs === 1 ? '' : 's'}`).join('\n') : '\nNobody in the building') + '\nClick to open the day'
+                    const here = (u?.stays || []).filter(st => st.checkIn <= d && d <= st.checkOut)
+                    const title = `${r.unit} · ${nice(d)} — ${c.label || K.hint}`
+                      + (here.length ? '\n' + here.map(st => `${st.owner ? 'OWNER · ' : ''}${st.guest} · in ${short(st.checkIn)} → out ${short(st.checkOut)}${st.nights ? ' · ' + st.nights + ' nights' : ''}${st.source ? ' · ' + st.source : ''}`).join('\n') : '')
+                      + (c.team.length ? '\n' + c.team.map(t => `${t.name}${t.atUnit ? ' (in this unit)' : ''} · ${t.trade} · ${t.jobs} job${t.jobs === 1 ? '' : 's'}`).join('\n') : '')
+                      + '\nClick to open the day'
                     return (
                       <td key={d} className="p-0 border-b border-l border-white h-px">
                         <button onClick={() => setPanel({ row: r, date: d })} title={title}
-                          className={'relative w-full h-full min-h-[2.75rem] grid place-items-center hover:brightness-95 ' + K.cls + (sug ? ' ring-2 ring-inset ring-sky-500' : '') + (sel ? ' outline outline-2 outline-ink -outline-offset-2' : '')}>
-                          {lead ? <span className={'w-5 h-5 rounded-full text-[8.5px] font-bold grid place-items-center ' + (lead.atUnit ? 'bg-sky-600 text-white' : 'ring-1 ring-sky-600 text-sky-700 bg-white/80')}>{initials(lead.name)}</span> : null}
-                          {c.team.length > 1 ? <span className="absolute top-0 right-0.5 text-[8px] font-bold text-sky-700">+{c.team.length - 1}</span> : null}
-                          {due ? <span className="absolute top-1 left-1 w-2 h-2 rounded-full bg-rose-500 ring-1 ring-white" /> : null}
-                          {!lead && (c.k === 'out' || c.k === 'in' || c.k === 'turn' || c.k === 'block') ? <span className="text-[8.5px] font-semibold uppercase tracking-wide text-slate-600">{c.k === 'out' ? 'out' : c.k === 'in' ? 'in' : c.k === 'turn' ? 'turn' : 'owner'}</span> : null}
+                          className={'relative w-full h-full min-h-[3.5rem] hover:brightness-95 ' + BG[c.k] + (sug ? ' ring-2 ring-inset ring-sky-500' : '') + (sel ? ' outline outline-2 outline-ink -outline-offset-2' : '')}>
+                          {/* RESERVATION BARS — start mid-cell on check-in (4pm), end mid-cell on checkout (11am) */}
+                          {here.map(st => {
+                            const isIn = d === st.checkIn, isOut = d === st.checkOut
+                            const first = isIn || d === days[0]
+                            const pos = isIn && isOut ? 'left-[55%] right-[55%]' : isIn ? 'left-[55%] right-0 rounded-l-md' : isOut ? 'left-0 right-[55%] rounded-r-md' : 'left-0 right-0'
+                            return (
+                              <span key={st.id} className={'absolute top-1.5 h-[18px] ' + pos + ' ' + srcColor(st)}>
+                                {first && !isOut ? (
+                                  <span className="absolute left-1 top-0 h-[18px] leading-[18px] z-10 whitespace-nowrap text-[10px] font-semibold text-white pointer-events-none" style={{ textShadow: '0 1px 1px rgba(0,0,0,.25)' }}>
+                                    {st.owner ? 'OWNER · ' : ''}{guestShort(st.guest)} · {st.nights || '?'}n · out {short(st.checkOut)}
+                                  </span>
+                                ) : null}
+                              </span>
+                            )
+                          })}
+                          {lead ? <span className={'absolute bottom-1 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full text-[8.5px] font-bold grid place-items-center ' + (lead.atUnit ? 'bg-sky-600 text-white' : 'ring-1 ring-sky-600 text-sky-700 bg-white')}>{initials(lead.name)}</span> : null}
+                          {c.team.length > 1 ? <span className="absolute bottom-1 right-0.5 text-[8px] font-bold text-sky-700">+{c.team.length - 1}</span> : null}
+                          {due ? <span className="absolute bottom-1.5 left-1 w-2 h-2 rounded-full bg-rose-500 ring-1 ring-white" /> : null}
+                          {c.k === 'block' && !here.length ? <span className="absolute top-1.5 left-1 text-[8.5px] font-semibold uppercase text-slate-600">owner</span> : null}
                         </button>
                       </td>
                     )
@@ -306,6 +337,22 @@ function DayPanel({ unit, listingId, date, today, cells, people, items, focus, c
     } catch (e: any) { setInfMsg(String(e?.message || e)) } finally { setInfBusy(false) }
   }
 
+  // BLOCK FROM HERE (Jon, 2026-10-19: "will I be able to block the units from here?").
+  const [blk, setBlk] = useState({ from: date >= today ? date : today, nights: '1', reason: 'Maintenance', note: '' })
+  const [blkBusy, setBlkBusy] = useState(false)
+  const [blkMsg, setBlkMsg] = useState('')
+  const doBlock = async () => {
+    if (blkBusy || !items[0] && !listingId) return
+    const n = Math.max(1, Math.min(30, Number(blk.nights) || 1))
+    if (!window.confirm(`Block ${unit} in Guesty for ${n} night${n === 1 ? '' : 's'} from ${nice(blk.from)}? It can't be booked on those nights.`)) return
+    setBlkBusy(true); setBlkMsg('')
+    try {
+      const res = await fetch('/api/upkeep', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'block', listingId, cadenceKey: items[0]?.prog.key || 'pm_audit', from: blk.from, nights: n, reason: blk.reason, note: blk.note }) })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok || !j?.ok) throw new Error(j?.error || 'not blocked')
+      setBlkMsg(`Blocked in Guesty: ${nice(j.from)}${j.to !== j.from ? ' → ' + nice(j.to) : ''} (${j.reason}). It shows on the calendar after a refresh.`)
+    } catch (e: any) { setBlkMsg('Not blocked — ' + String(e?.message || e)) } finally { setBlkBusy(false) }
+  }
   const team = cell?.team || []
   const nextDays = cells.filter(c => c.d >= today).slice(0, 21)
   const relWord: Record<string, string> = { leaving: 'leaves today', arriving: 'arrives today', 'in-house': 'in-house', next: 'next stay', previous: 'last stay' }
@@ -423,6 +470,25 @@ function DayPanel({ unit, listingId, date, today, cells, people, items, focus, c
             })}</ul>
           )}
         </section>
+
+        {canEdit ? (
+          <section className="rounded-lg border border-line p-2.5">
+            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Block in Guesty</h4>
+            <div className="flex items-center gap-1.5 flex-wrap text-[12px]">
+              <span>From the night of</span>
+              <input type="date" value={blk.from} min={today} onChange={e => setBlk({ ...blk, from: e.target.value })} className="h-8 rounded-md border border-line px-1.5" />
+              <span>for</span>
+              <input type="number" min={1} max={30} value={blk.nights} onChange={e => setBlk({ ...blk, nights: e.target.value })} className="h-8 w-14 rounded-md border border-line px-1.5" />
+              <span>night(s) ·</span>
+              <select value={blk.reason} onChange={e => setBlk({ ...blk, reason: e.target.value })} className="h-8 rounded-md border border-line px-1.5 bg-white">
+                <option>Maintenance</option><option>Owner block</option><option>Other</option>
+              </select>
+              <input value={blk.note} onChange={e => setBlk({ ...blk, note: e.target.value })} placeholder="Note (shows in Guesty)" className="h-8 flex-1 min-w-[10rem] rounded-md border border-line px-2" />
+              <button onClick={doBlock} disabled={blkBusy || !blk.from} className="h-8 px-3 rounded-md bg-ink text-white font-semibold disabled:opacity-40">{blkBusy ? 'Blocking…' : 'Block'}</button>
+            </div>
+            <p className="mt-1 text-[11px] text-muted">{blkMsg || 'Only nights with no booking can be blocked — Lighthouse checks the reservations again before it touches Guesty.'}</p>
+          </section>
+        ) : null}
 
         <section>
           <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1">Unit info — printed on every upkeep task</h4>

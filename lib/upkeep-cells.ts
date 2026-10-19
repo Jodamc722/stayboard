@@ -11,7 +11,9 @@ const str = (v: any) => String(v ?? '').trim()
 const plus = (d: string, n: number) => new Date(Date.parse(d + 'T12:00:00Z') + n * 86400000).toISOString().slice(0, 10)
 const tradeWord = (ds: string[]) => { const j = ds.join(' ').toLowerCase(); return /maint/.test(j) ? 'maintenance' : /inspect/.test(j) ? 'inspection' : /housekeep|clean/.test(j) ? 'housekeeping' : (ds[0] || '') }
 
-export type CalUnit = { listingId: string; unit: string; building: string; cells: CalCell[] }
+/** A stay touching the window, for the reservation bars on the calendar (Jon, 2026-10-19). */
+export type CalStay = { id: string; guest: string; checkIn: string; checkOut: string; nights: number | null; source: string | null; owner: boolean }
+export type CalUnit = { listingId: string; unit: string; building: string; cells: CalCell[]; stays: CalStay[] }
 export type UnitCells = { today: string; days: string[]; units: CalUnit[]; people: { name: string; trade: string; perDay: Record<string, number> }[]; unsure: string[] }
 
 export async function buildUnitCells(ids: string[], dept: string, today: string, n: number): Promise<UnitCells> {
@@ -22,7 +24,7 @@ export async function buildUnitCells(ids: string[], dept: string, today: string,
   const db = supabaseAdmin()
   const [stays, tv, cal] = await Promise.all([
     // Any stay touching the window: it ends on/after today and starts on/before the last day.
-    pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status')
+    pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,check_out,status,guest_name,nights,source')
       .in('listing_id', ids).gte('check_out', today).lte('check_in', last).order('id').range(a, b), 10),
     teamVisits(today, n),
     getMultiCalendar(ids, today, last).catch(() => null),
@@ -31,11 +33,11 @@ export async function buildUnitCells(ids: string[], dept: string, today: string,
   if (!cal) unsure.push('Guesty blocks (owner stays and holds may be missing)')
   if (tv.truncated) unsure.push('team schedule')
 
-  const byUnit: Record<string, { ci: string; co: string }[]> = {}
+  const byUnit: Record<string, { ci: string; co: string; id: string; guest: string; nights: number | null; source: string | null }[]> = {}
   for (const r of (stays.rows as any[])) {
     if (!isLiveStay(r.status)) continue
     const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
-    if (ci && co) (byUnit[str(r.listing_id)] = byUnit[str(r.listing_id)] || []).push({ ci, co })
+    if (ci && co) (byUnit[str(r.listing_id)] = byUnit[str(r.listing_id)] || []).push({ ci, co, id: str(r.id), guest: str(r.guest_name) || 'Guest', nights: r.nights != null ? Number(r.nights) : null, source: r.source ? str(r.source) : null })
   }
   const blockOf: Record<string, { label: string; occupied: boolean }> = {}
   for (const d of (cal || [])) {
@@ -67,7 +69,9 @@ export async function buildUnitCells(ids: string[], dept: string, today: string,
         .sort((x, y) => Number(y.atUnit) - Number(x.atUnit) || y.jobs - x.jobs)
       return { d, k, label, team }
     })
-    return { listingId: lid, unit, building: b, cells }
+    const stays: CalStay[] = ss.slice().sort((x, y) => x.ci.localeCompare(y.ci))
+      .map(x => ({ id: x.id, guest: x.guest, checkIn: x.ci, checkOut: x.co, nights: x.nights, source: x.source, owner: /^owner/i.test(x.source || '') }))
+    return { listingId: lid, unit, building: b, cells, stays }
   })
 
   // A person's trade is what most of their work is (a tech who also carries a linen drop is still a tech).

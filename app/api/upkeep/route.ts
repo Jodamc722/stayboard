@@ -278,6 +278,22 @@ export async function POST(req: NextRequest) {
     } catch (e: any) { return NextResponse.json({ error: String(e?.message || e).slice(0, 200) }, { status: 500 }) }
   }
 
+  if (op === 'block') {
+    // BLOCK NIGHTS IN GUESTY from the calendar (Jon, 2026-10-19: "will I be able to block the units
+    // from here?"). Only nights no live stay covers — re-read now, never from the page's copy.
+    const from = String(body?.from || '').slice(0, 10)
+    const nights = Math.max(1, Math.min(30, Math.round(Number(body?.nights) || 1)))
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || from < today) return NextResponse.json({ error: 'pick a start night from today on' }, { status: 400 })
+    const to = shiftDay(from, nights - 1)
+    const reason = body?.reason === 'Owner block' ? 'Owner block' : body?.reason === 'Other' ? 'Other' : 'Maintenance'
+    const { data: rs } = await db.from('guesty_reservations').select('check_in,check_out,status,guest_name').eq('listing_id', listingId).lte('check_in', to).gt('check_out', from).limit(20)
+    const clash = ((rs || []) as any[]).filter(x => isLiveStay(x.status))
+    if (clash.length) return NextResponse.json({ error: `${clash[0].guest_name || 'A guest'} is booked ${String(clash[0].check_in).slice(0, 10)} → ${String(clash[0].check_out).slice(0, 10)} — not blocked` }, { status: 409 })
+    const note = `${String(body?.note || '').trim().slice(0, 200) || reason} — blocked from Lighthouse Upkeep by ${me.split('@')[0]}`
+    try { await blockListingNights(listingId, from, to, note, reason) } catch (e: any) { return NextResponse.json({ error: 'Guesty refused: ' + String(e?.message || e).slice(0, 160) }, { status: 502 }) }
+    return NextResponse.json({ ok: true, from, to, nights, reason })
+  }
+
   if (op === 'decline') {
     if (!(gate.access.role === 'admin' || isApprover(c, me, myName))) return NextResponse.json({ error: 'only an approver can decline' }, { status: 403 })
     const note = `declined ${today} by ${me}${body?.reason ? ' — ' + String(body.reason).slice(0, 120) : ''}`

@@ -209,11 +209,11 @@ export async function getMultiCalendar(listingIds: string[], startDate: string, 
  * what and who, so anyone in Guesty sees why. Only ever called on a person's click.
  * Docs: PUT /availability-pricing/api/calendar/listings/{id} { startDate, endDate, status, blockReason, note }.
  */
-export async function blockListingNights(listingId: string, startDate: string, endDate: string, note: string): Promise<void> {
+export async function blockListingNights(listingId: string, startDate: string, endDate: string, note: string, blockReason: 'Maintenance' | 'Owner block' | 'Other' = 'Maintenance'): Promise<void> {
   await api<any>(`/availability-pricing/api/calendar/listings/${encodeURIComponent(listingId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ startDate, endDate, status: 'unavailable', blockReason: 'Maintenance', note: note.slice(0, 300) }),
+    body: JSON.stringify({ startDate, endDate, status: 'unavailable', blockReason, note: note.slice(0, 300) }),
   })
 }
 
