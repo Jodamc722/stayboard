@@ -54,6 +54,7 @@ const minOfIso = (iso: string | null | undefined): number | null => {
   const t = d.toLocaleTimeString('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false })
   return minutesOf(t)
 }
+const t12 = (t: string | null | undefined, dflt: string): string => { const s = str(t); if (!s) return dflt; const m = /^(\d{1,2}):(\d{2})/.exec(s); if (!m) return s; return clockLabel(m[1].padStart(2, '0') + ':' + m[2]) || s }
 const clock12 = (iso: string | null | undefined): string => { const m = minOfIso(iso); return m == null ? '' : (clockLabel(String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0')) || '') }
 
 // ── the model ──────────────────────────────────────────────────────────────────────────────────
@@ -242,26 +243,26 @@ async function readWeekHours(sunday: string, today: string): Promise<{ hours: (n
 type BzTask = { id: string; name: string; status: string; started_at: string | null; finished_at: string | null; assignees: string[]; listingId: string; dept: string; priority: string | null; scheduled_date: string | null; report_url: string | null }
 async function readTasks(date: string): Promise<BzTask[]> {
   const { data, error } = await supabaseAdmin().from('breezeway_tasks_sync')
-    .select('id,name,status,started_at,finished_at,assignees,reference_property_id,type_department,type_priority,scheduled_date,report_url')
+    .select('id,name,status,started_at,finished_at,assignees,reference_property_id,type_department,prio:raw->>type_priority,scheduled_date,report_url')
     .eq('scheduled_date', date).limit(1500)
   if (error) throw new Error(error.message)
   return ((data || []) as any[]).filter(t => !isTaskGone(t.status)).map(t => ({
     id: str(t.id), name: str(t.name), status: str(t.status), started_at: t.started_at ?? null, finished_at: t.finished_at ?? null,
     assignees: Array.isArray(t.assignees) ? t.assignees.map((a: any) => str(a && a.name)).filter(Boolean) : [],
-    listingId: str(t.reference_property_id), dept: str(t.type_department), priority: t.type_priority ?? null, scheduled_date: t.scheduled_date ? str(t.scheduled_date).slice(0, 10) : null, report_url: t.report_url ?? null,
+    listingId: str(t.reference_property_id), dept: str(t.type_department), priority: t.prio ?? null, scheduled_date: t.scheduled_date ? str(t.scheduled_date).slice(0, 10) : null, report_url: t.report_url ?? null,
   }))
 }
 async function readTasksById(ids: string[]): Promise<Record<string, BzTask>> {
   const out: Record<string, BzTask> = {}
   if (!ids.length) return out
   const { data } = await supabaseAdmin().from('breezeway_tasks_sync')
-    .select('id,name,status,started_at,finished_at,assignees,reference_property_id,type_department,type_priority,scheduled_date,report_url')
+    .select('id,name,status,started_at,finished_at,assignees,reference_property_id,type_department,prio:raw->>type_priority,scheduled_date,report_url')
     .in('id', ids.slice(0, 300)).limit(300)
   for (const t of (data || []) as any[]) {
     out[str(t.id)] = {
       id: str(t.id), name: str(t.name), status: str(t.status), started_at: t.started_at ?? null, finished_at: t.finished_at ?? null,
       assignees: Array.isArray(t.assignees) ? t.assignees.map((a: any) => str(a && a.name)).filter(Boolean) : [],
-      listingId: str(t.reference_property_id), dept: str(t.type_department), priority: t.type_priority ?? null, scheduled_date: t.scheduled_date ? str(t.scheduled_date).slice(0, 10) : null, report_url: t.report_url ?? null,
+      listingId: str(t.reference_property_id), dept: str(t.type_department), priority: t.prio ?? null, scheduled_date: t.scheduled_date ? str(t.scheduled_date).slice(0, 10) : null, report_url: t.report_url ?? null,
     }
   }
   return out
@@ -270,12 +271,12 @@ async function readTasksById(ids: string[]): Promise<Record<string, BzTask>> {
 type Glitch = { id: string; unit: string; guest_name: string | null; overview: string | null; status: string; glitch_type: string | null; category: string | null; created_at: string; assignee: string | null; breezeway_task_id: string | null; task_status: string | null; due_date: string | null; priority: string | null; check_in: string | null; check_out: string | null }
 async function readGlitches(): Promise<Glitch[]> {
   const { data, error } = await supabaseAdmin().from('glitches')
-    .select('id,unit,guest_name,overview,status,glitch_type,category,created_at,assignee,breezeway_task_id,task_status,due_date,priority,check_in,check_out')
+    .select('id,unit,guest_name,overview,status,glitch_type,category,created_at,assignee,breezeway_task_id,due_date,priority,check_in,check_out')
     .not('status', 'in', '("done","resolved","closed")').order('created_at', { ascending: true }).limit(300)
   if (error) throw new Error(error.message)
   return ((data || []) as any[]).map(g => ({
     id: str(g.id), unit: str(g.unit) || 'No unit', guest_name: g.guest_name ?? null, overview: g.overview ?? null, status: str(g.status), glitch_type: g.glitch_type ?? null, category: g.category ?? null,
-    created_at: str(g.created_at), assignee: g.assignee ?? null, breezeway_task_id: g.breezeway_task_id ? str(g.breezeway_task_id) : null, task_status: g.task_status ?? null, due_date: g.due_date ?? null, priority: g.priority ?? null,
+    created_at: str(g.created_at), assignee: g.assignee ?? null, breezeway_task_id: g.breezeway_task_id ? str(g.breezeway_task_id) : null, task_status: null, due_date: g.due_date ?? null, priority: g.priority ?? null,
     check_in: g.check_in ?? null, check_out: g.check_out ?? null,
   }))
 }
@@ -358,6 +359,8 @@ async function readDays(days: string[]): Promise<Record<string, OcDayRec>> {
 }
 
 // ── row builders ───────────────────────────────────────────────────────────────────────────────
+// "Every clean has a person": pending = nobody on it (or no Breezeway task yet), active = a cleaner
+// picked but not pushed, done = pushed with a person. A clean in progress has a person by definition.
 function cleanState(c: SchedClean): OcState {
   if (c.vendor) return 'done'
   if (c.taskStatus === 'completed') return 'done'
@@ -365,7 +368,6 @@ function cleanState(c: SchedClean): OcState {
   if (c.syncStatus === 'guesty-only' || c.guestyOnly) return 'pending'
   if (nobody) return 'pending'
   if (c.staged) return 'active'
-  if (c.taskStatus === 'in_progress') return 'active'
   return 'done'
 }
 function cleanRows(list: SchedClean[], asks: Set<string>, nextNightOpen: (listingId: string, date: string) => boolean, long: number): OcRow[] {
@@ -386,7 +388,7 @@ function cleanRows(list: SchedClean[], asks: Set<string>, nextNightOpen: (listin
     const who = (c.assignedNames || []).join(', ')
     out.push({
       key: 'clean:' + c.listingId + ':' + c.date, kind: 'clean', unit: c.unit, state,
-      meta: [c.guestOut ? 'out ' + (c.checkOutTime || '11:00') : '', c.nextArrival ? 'guest in ' + (c.checkInTime || '4:00 PM') : '', c.cleaningFee ? '$' + Math.round(num(c.cleaningFee)) : '', who, c.market].filter(Boolean).join(' · '),
+      meta: [c.guestOut ? 'out ' + t12(c.checkOutTime, '11:00 AM') : '', c.nextArrival ? 'guest in ' + t12(c.checkInTime, '4:00 PM') : '', c.cleaningFee ? '$' + Math.round(num(c.cleaningFee)) : '', who, c.market].filter(Boolean).join(' · '),
       tags, href: '/schedule?date=' + c.date, taskId: c.breezewayTaskId || null, dept: 'housekeeping', who: who || null, reservationId: c.reservationId || null,
       running: c.taskStatus === 'in_progress', done: c.taskStatus === 'completed', market: c.market || null,
     })
@@ -431,10 +433,11 @@ function teamRows(opts: { people: TeamRow[]; shifts: Shift[]; roster: RosterCell
     if (off && total > 0) { tags.push({ label: 'OFF but assigned', tone: 'amber', title: 'The roster says OFF; Breezeway has work on this person' }); state = 'pending' }
     if (working && total === 0 && (isToday ? nowMin > 10 * 60 : true)) { tags.push({ label: 'working, nothing assigned', tone: 'amber', title: 'Rostered to work with no Breezeway task' }); state = 'pending' }
     if (projected != null && projected >= otRisk) { tags.push({ label: 'overtime risk · ' + hrs(projected), tone: 'rose', title: hrs(weekHrs || 0) + ' so far this week + ' + hrs(shiftHrs) + ' shift' }); state = 'pending' }
-    if (load.cleans >= 5 || (p && p.utilisationPct >= 115)) { tags.push({ label: 'over · ' + load.cleans + ' cleans', tone: 'amber', title: 'More than fits the shift at the usual pace' }); if (state === 'active') state = 'pending' }
+    if (load.cleans >= 5 || (p && p.utilisationPct >= 115 && total > 0)) { tags.push({ label: 'over · ' + (load.cleans >= 5 ? load.cleans + ' cleans' : total + ' tasks'), tone: 'amber', title: (p ? p.utilisationPct + '% of the shift at the usual pace' : 'More than fits the shift at the usual pace') }); if (state === 'active') state = 'pending' }
     else if (p && p.field && /housekeep/i.test(str(p.dept)) && load.cleans <= 1 && clockedIn) tags.push({ label: 'light · ' + load.cleans + ' clean' + (load.cleans === 1 ? '' : 's'), tone: 'emerald', title: 'Room to take a clean from somebody who is over' })
     if (ros && !off && !working) tags.push({ label: ros, tone: 'slate' })
-    const meta = [p && p.dept ? p.dept : (s && s.department) || '', s ? s.label : (startMin != null && endMin != null ? clockLabel(String(Math.floor(startMin / 60)).padStart(2, '0') + ':' + String(startMin % 60).padStart(2, '0')) + ' – ' + clockLabel(String(Math.floor(endMin / 60)).padStart(2, '0') + ':' + String(endMin % 60).padStart(2, '0')) : ''),
+    const deptTxt = str(p && p.dept ? p.dept : (s && s.department) || '').replace(/dept\.?\s*not\s*set/i, '')
+    const meta = [deptTxt, s ? s.label : (startMin != null && endMin != null ? clockLabel(String(Math.floor(startMin / 60)).padStart(2, '0') + ':' + String(startMin % 60).padStart(2, '0')) + ' – ' + clockLabel(String(Math.floor(endMin / 60)).padStart(2, '0') + ':' + String(endMin % 60).padStart(2, '0')) : ''),
       clockedIn ? 'in ' + clock12(p!.clock!.in) : (isToday ? '' : ''), load.cleans + ' clean' + (load.cleans === 1 ? '' : 's') + (load.other ? ' · ' + load.other + ' task' + (load.other === 1 ? '' : 's') : ''),
       weekHrs != null ? hrs(weekHrs) + ' this week' : ''].filter(Boolean).join(' · ')
     out.push({ key: 'team:' + day + ':' + name, kind: 'team', unit: name, meta, state, tags, href: '/team' })
@@ -585,7 +588,7 @@ export async function buildOpenClose(opts: { mode: OcMode; date?: string | null;
         if (!why) continue
         const who = (c.assignedNames || []).join(', ')
         rows.push({ key: 'ext:' + c.listingId + ':' + c.date, kind: 'extension', unit: c.unit, state: why === 'may extend' ? 'pending' : (c.movedTo ? 'active' : 'pending'), tags,
-          meta: [c.guestOut || '', 'out ' + (c.checkOutTime || '11:00'), c.nextArrival ? 'guest in ' + (c.checkInTime || '4:00 PM') : 'no arrival after', who ? 'cleaner ' + who : 'nobody assigned', c.market].filter(Boolean).join(' · '),
+          meta: [c.guestOut || '', 'out ' + t12(c.checkOutTime, '11:00 AM'), c.nextArrival ? 'guest in ' + t12(c.checkInTime, '4:00 PM') : 'no arrival after', who ? 'cleaner ' + who : 'nobody assigned', c.market].filter(Boolean).join(' · '),
           href: '/schedule?date=' + c.date, taskId: c.breezewayTaskId || null, dept: 'housekeeping', who: who || null, reservationId: c.reservationId || null, market: c.market || null })
       }
       gates.push(mk(OPEN_GATES[4], rows, sched ? null : 'Could not build the schedule', openNights ? openNights + ' more departure' + (openNights === 1 ? ' has' : 's have') + ' an open night after them — short stays, nothing asked' : null))

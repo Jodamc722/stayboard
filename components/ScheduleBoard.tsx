@@ -328,11 +328,10 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
       const e = effective(c)
       const nobody = e.ids.length === 0 || c.syncStatus === 'guesty-only' || !!c.guestyOnly
       const staged = !!overrides[keyOf(c)] || (c as any).staged === true
-      const live = c.taskStatus === 'in_progress'
       const flagged = !!c.walkInRisk || !!c.extended || !!c.movedTo
       if (c.taskStatus === 'completed') return false
       if (only === 'nobody') return nobody && !staged
-      if (only === 'active') return (staged || live) && !nobody
+      if (only === 'active') return staged && !nobody
       return nobody || staged || flagged
     }
     const a = dayCleans.filter(keep)

@@ -54,7 +54,9 @@ async function post(body: any): Promise<any> {
 
 export function OpenClose() {
   const acc = useAccess()
-  const [mode, setMode] = useState<OcMode>('open')
+  // The mode is decided before the first read (null until then): a read started for one mode must
+  // never paint under the other, and the shared fetch hook lets an older key's answer land.
+  const [mode, setMode] = useState<OcMode | null>(null)
   const [status, setStatus] = useState<Status>('todo')
   const [market, setMarket] = useState<Market>('all')
   const [tab, setTab] = useState<Record<'field' | 'guests', string | null>>({ field: null, guests: null })
@@ -66,21 +68,24 @@ export function OpenClose() {
     const h = Number(new Date().toLocaleTimeString('en-GB', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }))
     setMode(h >= 15 ? 'close' : 'open')
   }, [])
-  const url = '/api/open-close?mode=' + mode
-  const { data, loading, error, refresh } = useCachedFetch<Data>(url, { ttl: 60_000 })
+  const url = mode ? '/api/open-close?mode=' + mode : null
+  const q = useCachedFetch<Data>(url, { ttl: 60_000 })
+  const data = q.data && mode && q.data.mode === mode ? q.data : undefined
+  const loading = q.loading || (!!q.data && !data)
+  const { error, refresh } = q
   const rosterQ = useCachedFetch<{ people: Roster[] }>(data ? '/api/breezeway/people' : null, { ttl: 10 * 60_000 })
   const roster = useMemo(() => (Array.isArray(rosterQ.data?.people) ? rosterQ.data!.people : []), [rosterQ.data])
-  const reload = () => { invalidateCache(url); refresh() }
+  const reload = () => { if (url) invalidateCache(url); refresh() }
   const canSign = data?.canSign !== false && acc.atLeast('checklist', 'edit')
 
   const field = useMemo(() => (data?.gates || []).filter(g => g.section === 'field'), [data])
   const guests = useMemo(() => (data?.gates || []).filter(g => g.section === 'guests'), [data])
 
-  if (!data && loading) return <div className="py-16 text-center text-[13px] text-muted inline-flex items-center gap-2 w-full justify-center"><Loader2 size={14} className="animate-spin" /> Reading the day…</div>
+  if (!data && (loading || !mode)) return <div className="py-16 text-center text-[13px] text-muted inline-flex items-center gap-2 w-full justify-center"><Loader2 size={14} className="animate-spin" /> Reading the day…</div>
   if (!data) return <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {error || 'Could not read the day.'} <button onClick={reload} className={GHOST + ' ml-auto'}>Retry</button></div>
 
   const s = data.summary
-  const opening = mode === 'open'
+  const opening = data.mode === 'open'
   const rec = data.today
   const facts = [
     dayLabel(data.day),
