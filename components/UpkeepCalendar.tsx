@@ -202,9 +202,10 @@ export function UpkeepCalendar({ programs, prog, rows, building, q, canEdit, can
                             const pos = isIn && isOut ? 'left-[55%] right-[55%]' : isIn ? 'left-[55%] right-0 rounded-l-md' : isOut ? 'left-0 right-[55%] rounded-r-md' : 'left-0 right-0'
                             return (
                               <span key={st.id} className={'absolute top-1.5 h-[18px] ' + pos + ' ' + srcColor(st)}>
-                                {first && !isOut ? (
-                                  <span className="absolute left-1 top-0 h-[18px] leading-[18px] z-10 whitespace-nowrap text-[10px] font-semibold text-white pointer-events-none" style={{ textShadow: '0 1px 1px rgba(0,0,0,.25)' }}>
-                                    {st.owner ? 'OWNER · ' : ''}{guestShort(st.guest)} · {st.nights || '?'}n · out {short(st.checkOut)}
+                                {first && (!isOut || d === days[0]) ? (
+                                  // The label is its own pill in the bar's colour, so a short stay's text stays readable past the bar's end.
+                                  <span className={'absolute left-0 top-0 h-[18px] leading-[18px] z-10 whitespace-nowrap text-[10px] font-semibold text-white pointer-events-none px-1.5 rounded-md ' + srcColor(st)}>
+                                    {st.owner ? 'OWNER · ' : ''}{guestShort(st.guest)} · {st.nights || '?'}n · {isOut ? 'out today' : 'out ' + short(st.checkOut)}
                                   </span>
                                 ) : null}
                               </span>
