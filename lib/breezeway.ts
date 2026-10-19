@@ -187,8 +187,15 @@ export const BZ_TEMPLATES = {
   acDeepClean: 909476,
   /** Deep Clean Inspection 1.0 — Inspection, supervisors only: pass/fail of every deep-clean area before the owner is billed. */
   deepCleanInspection: 909477,
-  /** Departure Clean 1.0 — Cleaning / HK (2026-10-18): the turnover, 21 ticks + 10 photos + 2 yes/no + door code. Replaces "Departure Clean Checklist" (203344). */
-  departureClean: 910139,
+  /**
+   * Departure Clean Checklist — Cleaning / HK. The template Breezeway's own "Departure Clean" workflow
+   * files on every checkout, rewritten in place on 2026-10-19 (Jon: "so nothing gets missed, not a
+   * walkthrough — training covers that"): before photos + a 4-tick works-check + 2 yes/no at the door,
+   * then photo proof (AC, TV on WiFi, kitchen open, bed, under bed, closet, bathroom wide, unit from
+   * the door) + a 5-tick quick list + lost & found / sofa bed at the end. A 1BR/1BA = 15 lines. The
+   * interim "Departure Clean 1.0" copy (910139) was retired the same day — one template, one truth.
+   */
+  departureClean: 203344,
 } as const
 
 /**
