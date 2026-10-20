@@ -6154,7 +6154,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       {/* SINCE THE LAST ONE. Only ever present when an earlier live report for
                           this scope and this month exists to be measured against — delete that
                           report and these quietly stop appearing (lib/report-delta). */}
-                      {delta && delta.rows.length ? (
+                      {delta && delta.rows.length && !hid('delta') ? (
                         <div style={{ marginTop: 18 }}>
                           <div className="flex flex-wrap" style={{ gap: 7 }}>
                             {delta.rows.slice(0, 4).map((d: Any) => (
@@ -6173,7 +6173,19 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           <p style={{ fontSize: 11.5, color: tint(0.45), margin: '9px 0 0' }}>
                             {'Since the review of ' + String(delta.since) + (delta.days ? ' · ' + delta.days + ' day' + (delta.days === 1 ? '' : 's') + ' ago' : '')}
                           </p>
+                          {edit ? (
+                            <button className="sb-noprint" onClick={() => toggleSection('delta')}
+                              style={{ marginTop: 10, fontSize: 11, fontWeight: 600, padding: '5px 11px', borderRadius: 999, background: tint(0.07), color: tint(0.62) }}>
+                              Remove the change since the last review
+                            </button>
+                          ) : null}
                         </div>
+                      ) : null}
+                      {delta && delta.rows.length && hid('delta') && edit ? (
+                        <button className="sb-noprint" onClick={() => toggleSection('delta')}
+                          style={{ marginTop: 18, fontSize: 11, fontWeight: 600, padding: '5px 11px', borderRadius: 999, background: tint(0.07), color: tint(0.62), alignSelf: 'flex-start' }}>
+                          Show the change since the last review
+                        </button>
                       ) : null}
                     </div>
                     <div style={{ flex: 1, minWidth: 0, display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))' }}>
