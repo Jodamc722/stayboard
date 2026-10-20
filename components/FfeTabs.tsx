@@ -9,7 +9,8 @@
 // units, pricing it and sending it to the owner in one sitting. The tab lives in the URL hash so a
 // link to "the orders tab" is a link somebody can actually send.
 import { useEffect, useState } from 'react'
-import { Link2, ListChecks, Package, ShoppingCart, Wrench } from 'lucide-react'
+import Link from 'next/link'
+import { BookOpenCheck, Link2, ListChecks, Package, ShoppingCart, Wrench } from 'lucide-react'
 import { FfeIndex } from '@/components/FfeIndex'
 import { FfeChecklistEditor } from '@/components/FfeChecklistEditor'
 import { FfeCatalog } from '@/components/FfeCatalog'
@@ -47,6 +48,10 @@ export function FfeTabs() {
             <t.Icon className="w-3.5 h-3.5" /> {t.label}
           </button>
         ))}
+        {/* 17 WEST CATALOG (Jon, 2026-10-20): its own page, not a panel — it is long, and a link to it gets sent around. */}
+        <Link href="/ffe/17-west" className="px-4 py-2 text-[12.5px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap text-muted hover:text-ink border-l border-line">
+          <BookOpenCheck className="w-3.5 h-3.5" /> 17 West catalog
+        </Link>
       </div>
       {tab === 'links' ? <FfeIndex />
         : tab === 'checklist' ? <FfeChecklistEditor />
