@@ -7074,6 +7074,24 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           //            from the same gallery the rest of the deck draws on, each with a caption.
           //   notes  — a page for whatever was said in the room. Ruled, so it reads as notes
           //            rather than as another block of report copy.
+          // EVERY ADDED SLIDE CAN BE REMOVED (Jon, 2026-10-20: could not delete a Work completed
+          // slide from the 17West owner review). Only 'composed' slides had this strip, so a
+          // photos / notes / text slide added to a REVIEW DECK had no delete control anywhere:
+          // the other remove path, the "Remove section" button further down, is gated off for
+          // review decks. Added by hand, undeletable. One helper for all four kinds now, so the
+          // next kind added cannot quietly arrive without it.
+          const slideTools = (atIdx: number, withRebuild: boolean) => edit ? (
+            <div className="sb-noprint flex items-center justify-end" style={{ gap: 6, marginBottom: 8 }}>
+              {([] as Any[])
+                .concat(withRebuild ? [['Rebuild', () => openCompose(atIdx)]] : [])
+                .concat([['Earlier', () => moveCustom(atIdx, -1)], ['Later', () => moveCustom(atIdx, 1)],
+                         ['Delete', () => { if (confirm('Remove this slide from the report?')) mutate((d: Any) => { d.custom.splice(atIdx, 1) }) }]])
+                .map(([l, f]: Any) => (
+                  <button key={l} onClick={f} style={{ fontSize: 11, fontWeight: 600, borderRadius: 999, padding: '5px 11px', background: 'rgba(255,255,255,0.9)', border: '1px solid rgba(0,0,0,0.12)', color: l === 'Delete' ? t.accent : '#333' }}>{l}</button>
+                ))}
+            </div>
+          ) : null
+
           customSecs.forEach((cs: Any, ci: number) => {
             const n = next()
             const kind = String(cs.kind || 'text')
@@ -7089,6 +7107,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               const cols = shown.length <= 2 ? shown.length : shown.length <= 4 ? 2 : 3
               slides.push({ key: 'custom', node: (
                 <Frame nav={String(cs.title || 'Photos')} sec={String(cs.eyebrow || 'Property')} subj={String(cs.title || 'Photos')} tone={tone} n={n}>
+                  {slideTools(at, false)}
                   <div className="flex items-end justify-between" style={{ gap: 24, flex: '0 0 auto' }}>
                     <div><Tick /><H2 w="22ch"><Ed v={String(cs.title || 'The property')} set={v => setCs('title', v)} edit={edit} /></H2></div>
                     {edit && pics.length < 6 ? (
@@ -7132,11 +7151,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             if (kind === 'composed') {
               slides.push({ key: 'custom', node: (
                 <Frame nav={String(cs.title || 'Slide')} sec={String(cs.eyebrow || 'Note')} subj={String(cs.title || '')} tone={tone} n={n}>
-                  {edit ? <div className="sb-noprint flex items-center justify-end" style={{ gap: 6, marginBottom: 8 }}>
-                        {[['Rebuild', () => openCompose(at)], ['Earlier', () => moveCustom(at, -1)], ['Later', () => moveCustom(at, 1)], ['Delete', () => mutate((d: Any) => { d.custom.splice(at, 1) })]].map(([l, f]: Any) => (
-                          <button key={l} onClick={f} style={{ fontSize: 11, fontWeight: 600, borderRadius: 999, padding: '5px 11px', background: 'rgba(255,255,255,0.9)', border: '1px solid rgba(0,0,0,0.12)', color: l === 'Delete' ? t.accent : '#333' }}>{l}</button>
-                        ))}
-                      </div> : null}
+                  {slideTools(at, true)}
                   <ComposedSlide cs={cs} edit={edit} set={setCs} Ed={Ed as Any} ink={t.ink} accent={t.accent} serif={SERIF} tint={tint} noEyebrow
                     heading={(node: React.ReactNode) => <><Tick /><H2 w="22ch">{node}</H2></>}
                     pick={(j: number) => { setPhotoUrl(''); setPhotoPick({ title: 'Photo for this slide', cur: String((cs.photos || [])[j] || ''), set: (u: string) => setCs('photos.' + j, u) }) }} />
@@ -7148,6 +7163,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             if (kind === 'notes') {
               slides.push({ key: 'custom', node: (
                 <Frame nav={String(cs.title || 'Notes')} sec={String(cs.eyebrow || 'Notes')} subj={String(cs.title || 'Notes')} tone={tone} n={n}>
+                  {slideTools(at, false)}
                   <Tick />
                   <H2 w="22ch"><Ed v={String(cs.title || 'Notes from this review')} set={v => setCs('title', v)} edit={edit} /></H2>
                   <div style={{ flex: '1 1 auto', minHeight: 0, marginTop: 20, overflowY: 'auto', paddingRight: 8 }} className="sb-scrollpane">
@@ -7164,6 +7180,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
 
             slides.push({ key: 'custom', node: (
               <Frame nav={String(cs.title || 'Note')} sec={String(cs.eyebrow || 'Note')} subj={String(cs.title || '')} tone={tone} n={n}>
+                {slideTools(at, false)}
                 <Tick />
                 <H2 w="22ch"><Ed v={String(cs.title || '')} set={v => setCs('title', v)} edit={edit} /></H2>
                 <p style={{ fontSize: 18, lineHeight: 1.62, color: tint(0.62), margin: '20px 0 0', maxWidth: '62ch', whiteSpace: 'pre-wrap' }}>
