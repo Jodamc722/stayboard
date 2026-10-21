@@ -114,7 +114,7 @@ const shortName = (n: string) => { const p = String(n || '').trim().split(/\s+/)
 const COLS: { k: string; label: string; w: number; align?: string; full?: string }[] = [
   { k: 'person', label: 'HK Team', w: 118 },
   { k: 'hub', label: 'HUB', w: 96 },
-  { k: 'taskType', label: 'Type', w: 104, full: 'What kind of work — checkout, inspection, PM, glitch\u2026' },
+  { k: 'taskType', label: 'Type', w: 118, full: 'What kind of work — checkout, inspection, PM, glitch\u2026' },
   { k: 'activity', label: 'Activities', w: 230, full: 'The task line, as Breezeway words it' },
   { k: 'listing', label: 'LISTING', w: 164 },
   { k: 'beds', label: 'BR', w: 48, align: 'text-center', full: 'Bedrooms \u2014 how big the clean is' },
@@ -337,7 +337,9 @@ export default function GeLog({ date }: { date: string }) {
         <td className={TD + ' p-[3px]'}>{pill(r.taskType || 'Task')}</td>
         <td className={TD + ' truncate text-ink/85'} title={r.activity}>{r.activity}</td>
         <td className={TD + ' text-center font-semibold text-ink truncate'} title={r.listing}>{r.listing}</td>
-        <td className={TD + ' text-center tabular-nums text-ink/70'}>{r.beds ?? ''}</td>
+        <td className={TD + ' text-center tabular-nums text-ink/70'} title={r.beds == null ? '' : r.beds === 0 ? 'Studio' : r.beds + ' bedroom' + (r.beds === 1 ? '' : 's')}>
+          {r.beds == null ? '' : r.beds === 0 ? 'S' : r.beds}
+        </td>
         <td className={TD + ' text-center font-semibold truncate text-ink'} title={r.reservation || (vacant ? 'Vacant' : '')}>
           {r.reservation || (vacant
             ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">Vacant</span>
