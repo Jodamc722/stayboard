@@ -64,6 +64,19 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams
   const days = Math.max(1, Math.min(60, Number(sp.get('days') || 7) || 7))
   const today = dayET(), to = addDays(today, days)
+  // ?peek=<reservationId> (admins): the booking's payments as Guesty holds them — amounts, statuses
+  // and flags only, never card details — to see what a deposit hold looks like on a live booking.
+  if (sp.get('peek') && g.access.role === 'admin') {
+    const { data: r } = await db.from('guesty_reservations').select('id,guest_name,source,custom_fields,money:raw->money').eq('id', str(sp.get('peek'))).maybeSingle()
+    if (!r) return NextResponse.json({ ok: false, error: 'No such reservation in the mirror.' }, { status: 404 })
+    const money: any = (r as any).money || {}
+    const payments = (Array.isArray(money.payments) ? money.payments : []).map((p: any) => ({
+      amount: p?.amount, currency: p?.currency, status: p?.status, isAuthorizationHold: p?.isAuthorizationHold, authorizationHoldCaptured: p?.authorizationHoldCaptured,
+      type: p?.type, paymentType: p?.paymentType, note: p?.note, createdAt: p?.createdAt, paidAt: p?.paidAt, keys: Object.keys(p || {}),
+    }))
+    const vfid = await verifiedFieldId()
+    return NextResponse.json({ ok: true, guest: (r as any).guest_name, source: (r as any).source, moneyKeys: Object.keys(money), payments, hold: depositFromMoney(money), guestyVerified: guestyVerifiedFlag((r as any).custom_fields, vfid), verifiedField: !!vfid })
+  }
   try {
     const RES_COLS = 'id,listing_id,guest_name,listing_name,check_in,check_out,status,source,custom_fields,payments:raw->money->payments'
     const [rules, amounts, vfid] = await Promise.all([loadGuestCheckRules(), loadBuildingAmounts(), verifiedFieldId()])

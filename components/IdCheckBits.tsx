@@ -89,7 +89,7 @@ export function ByHandStrip({ r, busy, ghost, dark, field, onPatch, onClose }: {
       <span className="text-[12px] font-semibold text-ink">How was the ID verified?</span>
       <button onClick={() => go('manual', 'ID marked verified — seen in person.')} disabled={busy} className={dark} title="You saw the ID yourself"><UserCheck size={12} /> Seen in person</button>
       <button onClick={() => go('message', 'ID marked verified — received on the booking thread.')} disabled={busy} className={ghost} title="The guest sent a photo of the ID on the booking thread or by text"><MessageSquare size={12} /> On the thread</button>
-      <button onClick={() => go('platform', 'ID marked verified — on the platform.')} disabled={busy} className={ghost} title={'Verified on ' + r.channel + ' (the platform\'s own ID check)'}><Globe size={12} /> On {r.channel}</button>
+      {r.channel !== 'Direct' && <button onClick={() => go('platform', 'ID marked verified — on the platform.')} disabled={busy} className={ghost} title={'Verified on ' + r.channel + ' (the platform\'s own ID check)'}><Globe size={12} /> On {r.channel}</button>}
       <input value={name} onChange={e => setName(e.target.value)} placeholder="Name as it reads on the ID" className={field + ' w-56 py-1 text-[12px]'} title="Optional — the name as it reads on the ID" />
       <button onClick={onClose} className={ghost} title="Close"><X size={12} /></button>
       <span className="text-[11px] text-muted">Also ticks “verified” on the booking in Guesty.</span>
