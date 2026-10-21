@@ -64,15 +64,19 @@ const DEPT_LABEL: Record<string, string> = {
 const deptKey = (d: string) => { const k = String(d || '').toLowerCase(); return DEPT_ORDER.indexOf(k) >= 0 ? k : 'other' }
 const deptRank = (d: string) => { const i = DEPT_ORDER.indexOf(deptKey(d)); return i < 0 ? 99 : i }
 
-// A STABLE COLOUR PER VALUE, the way the sheet's fills work: the same person is the same colour
-// every day, so the eye finds their band without reading. Hashed rather than assigned, because the
-// roster changes and a hand-kept map would be wrong within a month.
+// A STABLE COLOUR PER VALUE: the same person and the same building are the same colour every day,
+// so the eye finds their band without reading it. Hashed rather than assigned, because the roster
+// changes and a hand-kept map would be wrong within a month.
+//
+// LIGHTHOUSE'S TAGS, NOT EXCEL'S FILLS (Jon, 2026-10-21: "should look like the doc i shared but in
+// our formating and color schemes"). The sheet gets its structure from saturated cell fills; this
+// app gets its from the 50-level tag with a 200-level hairline that every other board already
+// uses. Same job — tell the bands apart at a glance — done in the house's voice.
 const PALETTE = [
-  'bg-blue-100 text-blue-800 border-blue-200', 'bg-violet-100 text-violet-800 border-violet-200',
-  'bg-amber-100 text-amber-800 border-amber-200', 'bg-emerald-100 text-emerald-800 border-emerald-200',
-  'bg-sky-100 text-sky-800 border-sky-200', 'bg-rose-100 text-rose-800 border-rose-200',
-  'bg-teal-100 text-teal-800 border-teal-200', 'bg-orange-100 text-orange-800 border-orange-200',
-  'bg-indigo-100 text-indigo-800 border-indigo-200', 'bg-lime-100 text-lime-800 border-lime-200',
+  'bg-sky-50 text-sky-700 border-sky-200', 'bg-violet-50 text-violet-700 border-violet-200',
+  'bg-amber-50 text-amber-800 border-amber-200', 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  'bg-rose-50 text-rose-600 border-rose-200', 'bg-teal-50 text-teal-700 border-teal-200',
+  'bg-indigo-50 text-indigo-700 border-indigo-200', 'bg-slate-100 text-slate-600 border-slate-200',
 ]
 const tintCache = new Map<string, string>()
 function tint(v: string): string {
@@ -238,7 +242,9 @@ export default function GeLog({ date }: { date: string }) {
     setTimeout(() => URL.revokeObjectURL(url), 4000)
   }
 
-  const TD = 'border border-[color:var(--ge-line)] px-2 py-[5px] align-middle'
+  // The house tables rule BETWEEN rows and never box every cell — a twelve-column grid in cell
+  // borders reads as a spreadsheet screenshot rather than as this app.
+  const TD = 'px-2 py-[5px] align-middle'
   const pill = (v: string, extra = '') =>
     <span className={'inline-block w-full text-center text-[10.5px] font-semibold rounded-full border px-2 py-[2px] truncate ' + tint(v) + ' ' + extra} title={v}>{v}</span>
 
@@ -259,8 +265,10 @@ export default function GeLog({ date }: { date: string }) {
         <td className={TD + ' p-[3px]'}>{pill(r.hub)}</td>
         <td className={TD + ' p-[3px]'}>{pill(r.activity)}</td>
         <td className={TD + ' text-center font-semibold text-ink truncate'} title={r.listing}>{r.listing}</td>
-        <td className={TD + ' text-center font-semibold truncate ' + (vacant ? 'bg-yellow-200 text-ink' : 'text-ink')} title={r.reservation || (vacant ? 'Vacant' : '')}>
-          {r.reservation || (vacant ? 'Vacant' : '')}
+        <td className={TD + ' text-center font-semibold truncate text-ink'} title={r.reservation || (vacant ? 'Vacant' : '')}>
+          {r.reservation || (vacant
+            ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">Vacant</span>
+            : '')}
         </td>
         <td className={TD + ' text-center tabular-nums text-ink/85'}>{cell(r.checkIn)}</td>
         <td className={TD + ' text-center tabular-nums text-ink/85'}>{cell(r.checkOut)}</td>
@@ -299,7 +307,7 @@ export default function GeLog({ date }: { date: string }) {
       if (band.dept !== lastDept) {
         lastDept = band.dept; lastMarket = ''
         body.push(
-          <tr key={'d' + band.dept}><td colSpan={COLS.length} className="bg-ink/[0.06] border border-[color:var(--ge-line)] px-2 py-[5px] text-[10px] uppercase tracking-wider font-bold text-ink">
+          <tr key={'d' + band.dept}><td colSpan={COLS.length} className="bg-ink/[0.04] border-y border-line px-2.5 py-1.5 text-[10px] uppercase tracking-wider font-bold text-ink">
             {DEPT_LABEL[band.dept] || band.dept}
           </td></tr>
         )
@@ -307,7 +315,7 @@ export default function GeLog({ date }: { date: string }) {
       if (band.market && band.market !== lastMarket) {
         lastMarket = band.market
         body.push(
-          <tr key={'m' + band.dept + band.market}><td colSpan={COLS.length} className="bg-app border border-[color:var(--ge-line)] px-2 py-[3px] text-[9.5px] uppercase tracking-wide font-bold text-muted">
+          <tr key={'m' + band.dept + band.market}><td colSpan={COLS.length} className="bg-app border-b border-line px-2.5 py-1 text-[9.5px] uppercase tracking-wide font-bold text-muted">
             {band.market}
           </td></tr>
         )
@@ -316,8 +324,8 @@ export default function GeLog({ date }: { date: string }) {
     if (!band.rows.length) {
       body.push(
         <tr key={'e' + (band.person || 'none')} className="bg-white">
-          <td className="border border-[color:var(--ge-line)] p-[3px]">{pill(shortName(band.person) || '—', 'opacity-60')}</td>
-          <td colSpan={COLS.length - 1} className="border border-[color:var(--ge-line)] px-2 py-[5px] text-[11px] text-muted italic">
+          <td className="p-[3px]">{pill(shortName(band.person) || '—', 'opacity-60')}</td>
+          <td colSpan={COLS.length - 1} className="px-2 py-[5px] text-[11px] text-muted italic">
             nothing on their day
             {band.status ? <span className={'ml-2 not-italic text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full border ' + statusTone(band.status)}>{band.status}</span> : null}
           </td>
@@ -327,14 +335,15 @@ export default function GeLog({ date }: { date: string }) {
     }
     band.rows.forEach((r, i) => {
       body.push(
-        <tr key={r.key} className={(i % 2 ? 'bg-[color:var(--ge-zebra)]' : 'bg-white') + (r.status === 'done' ? ' opacity-70' : '')}>
+        <tr key={r.key} className={'border-t border-line transition hover:brightness-[0.97] '
+          + (r.status === 'done' ? 'bg-emerald-50/40' : !band.person ? 'bg-amber-50/40' : i % 2 ? 'bg-app/40' : 'bg-white')}>
           <Cells r={r} person={band.person} />
         </tr>
       )
       if (noteFor === r.key) {
         body.push(
           <tr key={r.key + ':n'} className="bg-app/60">
-            <td colSpan={COLS.length} className="border border-[color:var(--ge-line)] px-2 py-2">
+            <td colSpan={COLS.length} className="border-t border-line px-2 py-2">
               {!r.taskId && <p className="text-[10.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mb-2">No Breezeway task on this row{r.flag ? ' — ' + r.flag : ''}. The note is kept in Lighthouse against {r.listing}.</p>}
               <CommentThread type={r.taskId ? 'task' : r.glitchId ? 'glitch' : 'clean'}
                 id={r.taskId || String(r.glitchId || r.key)} taskId={r.taskId || undefined}
@@ -348,7 +357,7 @@ export default function GeLog({ date }: { date: string }) {
   }
 
   return (
-    <section className="space-y-2" style={{ ['--ge-line' as any]: 'rgba(15,23,42,0.14)', ['--ge-zebra' as any]: 'rgba(219,234,254,0.35)' }}>
+    <section className="space-y-2">
       {/* THE DAY IN ONE LINE. Deliberately not six big tiles: whoever opens this already knows what
           day it is and wants to find their people. */}
       <div className="rounded-xl border border-line bg-white px-3 py-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px]">
@@ -387,12 +396,13 @@ export default function GeLog({ date }: { date: string }) {
         <div className="overflow-auto rounded-xl border border-line bg-white max-h-[76vh]">
           <table className="text-[11px] border-collapse" style={{ minWidth: 1180 }}>
             <colgroup>{COLS.map(c => <col key={c.k} style={{ width: c.w }} />)}</colgroup>
-            {/* The sheet's blue header, and it STAYS — twelve columns are unreadable the moment
-                the labels scroll off. */}
+            {/* The day board's own table head — neutral ground, muted small caps, one rule under
+                it — and it STICKS, because twelve columns are unreadable the moment the labels
+                scroll off. */}
             <thead className="sticky top-0 z-10">
-              <tr>
+              <tr className="bg-neutral-50 text-neutral-500 text-[10px] uppercase tracking-wider font-semibold border-b border-line">
                 {COLS.map(c => (
-                  <th key={c.k} className="bg-[#4472c4] text-white border border-[#2f528f] px-2 py-1.5 text-[10.5px] font-bold text-center leading-tight">
+                  <th key={c.k} className={'bg-neutral-50 border-b border-line px-2 py-2 font-semibold leading-tight whitespace-nowrap ' + (c.align || 'text-left')}>
                     {c.label}
                   </th>
                 ))}

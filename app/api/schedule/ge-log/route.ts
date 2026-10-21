@@ -212,29 +212,52 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // ── GLITCHES & PENDING FIELD ACTIVITY ─────────────────────────────────────────────────────
-    // Open guest issues. One with an owner files under that owner's department like any other
-    // row; one without sits under the empty-person heading, which is where a decision is needed.
+    // ── GLITCHES THAT ARE FIELD WORK ──────────────────────────────────────────────────────────
+    // Jon, 2026-10-21: "the glitches should only show if its a task in feild."
+    //
+    // The first cut listed every open glitch, and on a normal day that is fifty-odd rows of which
+    // forty-odd say "no task yet" — a guest issue sitting in the pool, in manager review or
+    // waiting on a refund decision. None of that is work anybody is doing in a unit today, and on
+    // a board whose whole job is "what is each of my people doing" it buried the work that is.
+    // A glitch earns a row here the moment it has been pushed to Breezeway and become a task
+    // somebody can be sent to; before that it belongs on the glitch board, which is built for it.
+    //
+    // AND IT IS NOT LISTED TWICE. A pushed glitch assigned to one of our people is already coming
+    // through the task pass above under their name. When that is so, the existing row is labelled
+    // as the glitch it came from rather than a second row being added beside it.
     const glitchRows: GeRow[] = []
     try {
       const { data } = await supabaseAdmin()
         .from('glitches')
         .select('id,unit,status,priority,overview,category,glitch_type,assignee,assignee_person_id,breezeway_task_id,due_date,created_at')
         .neq('status', 'closed')
+        .not('breezeway_task_id', 'is', null)
         .order('created_at', { ascending: false })
         .limit(300)
+      const byTask = new Map(rows.filter(r => r.taskId).map(r => [r.taskId as string, r]))
       for (const g of ((data || []) as any[])) {
+        const tid = str(g.breezeway_task_id)
+        if (!tid) continue
+        const summary = str(g.overview).replace(/\s+/g, ' ').slice(0, 120)
+        const already = byTask.get(tid)
+        if (already) {
+          already.activity = 'Glitch'
+          if (!already.reservation) already.reservation = summary
+          already.glitchId = g.id
+          if (!already.flag && str(g.priority)) already.flag = str(g.priority)
+          continue
+        }
         const who = canonical(str(g.assignee))
         const place = placeOf(who)
         glitchRows.push({
           key: 'g:' + str(g.id), kind: 'glitch',
-          taskId: g.breezeway_task_id ? str(g.breezeway_task_id) : null,
+          taskId: tid,
           listingId: null,
           person: who, dept: who ? place.dept : 'maintenance', market: place.market,
           hub: '—',
-          activity: str(g.glitch_type) || str(g.category) || 'Glitch',
+          activity: 'Glitch',
           listing: str(g.unit) || '—',
-          reservation: str(g.overview).replace(/\s+/g, ' ').slice(0, 120),
+          reservation: summary,
           checkIn: null, checkOut: g.due_date ? ymd(g.due_date) : null,
           sameDay: false, nights: null, fee: null, cleanHours: null, payout: null,
           status: str(g.status).replace(/_/g, ' ') || 'pool',
