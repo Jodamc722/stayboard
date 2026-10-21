@@ -16,6 +16,8 @@ import CommentThread from './CommentThread'
 import RowMenu, { type RowAction } from './RowMenu'
 import ListingOpsPanel from './ListingOpsPanel'
 import { ForecastBoard } from './ForecastBoard'
+import CleanerPicker from './CleanerPicker'
+import GeLog from './GeLog'
 
 // Order cleans by LOCATION: group by city, then nearest-neighbour within each city (lat/lng).
 function schedDist2(a: Clean, b: Clean) { const dx = Number(a.lat) - Number(b.lat); const dy = Number(a.lng) - Number(b.lng); return dx * dx + dy * dy }
@@ -127,7 +129,7 @@ export function ScheduleBoard({ embedded }: { embedded?: ScheduleEmbed } = {}) {
   const [market, setMarket] = useState<'all' | 'vendor' | typeof MARKETS[number]>('all')
   const [sortBy, setSortBy] = useState<'building' | 'area' | 'unit' | 'checkout' | 'nights' | 'cleaner'>('building')
   const [overrides, setOverrides] = useState<Record<string, Person>>({})
-  const [tab, setTab] = useState<'board' | 'planner'>('board')
+  const [tab, setTab] = useState<'board' | 'gelog' | 'planner'>('board')
   const [fc, setFc] = useState<Fc | null>(null)
   const [teamDocs, setTeamDocs] = useState<Record<string, TeamDoc>>({})
   const [rosters, setRosters] = useState<Record<string, Roster>>({})
@@ -268,7 +270,7 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   }, [view, date])
   useEffect(() => {
     if (embedded) { setView('day'); setDate(embedded.date); load('day', embedded.date); return }
-    const _sp = new URLSearchParams(window.location.search); const _d = _sp.get('date') || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()); const _t = _sp.get('tab'); if (_t === 'weekly' || _t === 'planner') setTab('planner'); setView('day'); setDate(_d); load('day', _d)
+    const _sp = new URLSearchParams(window.location.search); const _d = _sp.get('date') || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()); const _t = _sp.get('tab'); if (_t === 'weekly' || _t === 'planner') setTab('planner'); else if (_t === 'gelog' || _t === 'ge') setTab('gelog'); setView('day'); setDate(_d); load('day', _d)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [embedded?.date])
   useEffect(() => { if (embedded && embedded.market) setMarket(embedded.market) }, [embedded?.market])
@@ -622,9 +624,40 @@ async function pushBlocks() {
   const tabsBar = (show: string) => (
     <div className={show + ' items-center gap-1 border border-line rounded-xl p-1 bg-white'}>
       <button onClick={() => setTab('board')} className={'lh-tab px-3 py-1.5 rounded-lg text-xs font-semibold ' + (tab === 'board' ? 'lh-tab-on bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>Day board</button>
+      <button onClick={() => setTab('gelog')} className={'lh-tab px-3 py-1.5 rounded-lg text-xs font-semibold ' + (tab === 'gelog' ? 'lh-tab-on bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>GE Log</button>
       <button onClick={() => setTab('planner')} className={'lh-tab px-3 py-1.5 rounded-lg text-xs font-semibold ' + (tab === 'planner' ? 'lh-tab-on bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>Weekly planner</button>
     </div>
   )
+  // ── THE GE LOG ────────────────────────────────────────────────────────────────────────────
+  // Same day, same cleans, same staging as the board — pivoted onto the team. Nothing is fetched
+  // or stored for it: `allDayCleans` is every market plus vendor from the day already loaded, and
+  // the picker writes through setPerson, so a change made here is staged on the board and goes out
+  // on the SAME push. See components/GeLog.tsx for why the view exists at all.
+  // ── THE GE LOG ────────────────────────────────────────────────────────────────────────────
+  // The day read as the team rather than as a list of units: every Breezeway task of every
+  // department, under the person holding it, plus the glitches nobody owns yet. It loads its own
+  // day (lib/team-schedule + the glitch board) because the board's payload is departure cleans
+  // only. See components/GeLog.tsx for the whole argument.
+  if (tab === 'gelog') {
+    const step = (n: number) => { const d = new Date((date || '') + 'T12:00:00'); d.setDate(d.getDate() + n); const v = d.toISOString().slice(0, 10); setDate(v); load('day', v) }
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          {tabsBar('inline-flex')}
+          <div className="inline-flex items-center gap-1 border border-line rounded-xl bg-white p-1">
+            <button aria-label="Previous day" onClick={() => step(-1)} className="px-1.5 py-1 rounded-lg hover:bg-neutral-100"><ChevronLeft size={14} /></button>
+            <input type="date" value={date} onChange={e => { setDate(e.target.value); load('day', e.target.value) }} className="text-[12px] font-semibold text-ink bg-transparent outline-none px-1" />
+            <button aria-label="Next day" onClick={() => step(1)} className="px-1.5 py-1 rounded-lg hover:bg-neutral-100"><ChevronRight size={14} /></button>
+          </div>
+          {data?.today && date !== data.today && <button onClick={() => { setDate(data.today); load('day', data.today) }} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:bg-neutral-50">Today</button>}
+          {/* Said once, here, rather than on every row: this tab writes straight through. */}
+          <span className="text-[11px] text-muted">Assignments here go straight to Breezeway.</span>
+        </div>
+        {date ? <GeLog date={date} /> : null}
+      </div>
+    )
+  }
+
   if (tab === 'planner') return (
     <div className="space-y-4">
       {tabsBar('inline-flex')}
@@ -1008,50 +1041,3 @@ function WorkingRail({ date, dayLabel, docs, rosters, need, working, markets, sa
     </div>
   )
 }
-
-function CleanerPicker({ people, value, existing, onChange, disabled, placeholder }: { people: Person[]; value: Person | null; existing?: string; onChange: (p: Person | null) => void; disabled?: boolean; placeholder?: string }) {
-  const [open, setOpen] = useState(false)
-  const [q, setQ] = useState('')
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
-  const ref = useRef<HTMLDivElement>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
-  function place() { const b = btnRef.current; if (!b) return; const r = b.getBoundingClientRect(); const PH = 260; const top = (r.bottom + PH > window.innerHeight && r.top > PH) ? Math.max(4, r.top - PH - 4) : r.bottom + 4; const left = Math.max(4, Math.min(r.left, window.innerWidth - 232)); setPos({ top, left }) }
-  useEffect(() => { if (!open) return; let raf = 0; const h = () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; place() }) }; window.addEventListener('scroll', h, true); window.addEventListener('resize', h); return () => { if (raf) cancelAnimationFrame(raf); window.removeEventListener('scroll', h, true); window.removeEventListener('resize', h) } }, [open])
-  useEffect(() => {
-    function onDoc(e: MouseEvent) { const t = e.target as Node; if ((ref.current && ref.current.contains(t)) || (panelRef.current && panelRef.current.contains(t))) return; setOpen(false) }
-    document.addEventListener('mousedown', onDoc); return () => document.removeEventListener('mousedown', onDoc)
-  }, [])
-  const filtered = useMemo(() => { const s = q.trim().toLowerCase(); const base = s ? people.filter(p => p.name.toLowerCase().includes(s) || String(p.region || '').toLowerCase().includes(s)) : people; return base.slice(0, 50) }, [people, q])
-  if (disabled) return <div className="text-[10px] text-muted italic">{existing || 'Assign in Breezeway'}</div>
-  const label = value ? value.name : (existing || '')
-  const _lp = label ? label.split(', ') : []
-  const _sn = (n: string) => { const p = (n || '').trim().split(/\s+/).filter(Boolean); return p.length > 1 ? p[0] + ' ' + p[p.length - 1][0] + '.' : (p[0] || '') }
-  const shortLabel = _lp.length > 1 ? _sn(_lp[0]) + ' +' + (_lp.length - 1) : _sn(label)
-  const shownAsExisting = !value && !!existing
-  return (
-    <div className="relative max-w-[240px]" ref={ref}>
-      <button title={label || ''} ref={btnRef} onClick={() => { if (!open) place(); setOpen(o => !o) }} className={`w-full inline-flex items-center gap-1 text-[11px] rounded-md border px-1.5 py-1 ${value ? 'border-brand-300 bg-brand-50 text-brand-800 font-semibold' : (shownAsExisting ? 'border-emerald-200 bg-emerald-50 text-emerald-800 font-medium' : 'border-line bg-app text-muted hover:text-ink')}`}>
-        <User size={11} className="shrink-0" />
-        <span className="truncate flex-1 text-left min-w-0">{shortLabel || (placeholder || 'Assign cleaner…')}</span>
-        {value ? <span onClick={e => { e.stopPropagation(); onChange(null) }} className="text-muted hover:text-rose-600 px-0.5">&times;</span> : null}
-      </button>
-      {open && pos && createPortal((
-        <div ref={panelRef} className="fixed z-50 w-56 max-w-[80vw] rounded-lg border border-line bg-white shadow-lg p-1" style={{ top: pos.top, left: pos.left }}>
-          <div className="flex items-center gap-1 px-1.5 py-1 border-b border-line">
-            <Search size={12} className="text-muted" />
-            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search cleaners…" className="w-full text-[12px] outline-none bg-transparent" />
-          </div>
-          <div className="max-h-52 overflow-auto py-1">
-            {filtered.length === 0 ? <div className="text-[11px] text-muted px-2 py-2">No matches.</div> : filtered.map(p => (
-              <button key={p.id} onClick={() => { onChange(p); setOpen(false); setQ('') }} className="w-full text-left text-[12px] px-2.5 py-1.5 rounded hover:bg-app flex items-center justify-between gap-2">
-                <span className="text-ink truncate">{p.name}</span>{p.region && <span className="text-[10px] text-muted shrink-0">{p.region}</span>}
-              </button>
-            ))}
-          </div>
-        </div>
-      ), document.body)}
-    </div>
-  )
-}
-
