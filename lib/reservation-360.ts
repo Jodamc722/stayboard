@@ -47,6 +47,8 @@ export type Stay360 = {
   guest: {
     name: string; email: string | null; phone: string | null; key: string
     vip: boolean; tags: string[]; teamNotes: string | null
+    /** Matched against the Banned profiles on the Guests tab (lib/banned-guests). strong=false is a name-only match. */
+    banned?: { how: string; strong: boolean; profile: string; reason: string } | null
     /** every stay this guest has had with us (this one included), newest first */
     stays: number; nights: number; lifetimeValue: number | null
     repeat: boolean
@@ -175,11 +177,21 @@ export async function loadReservation360(db: any, reservationId: string, opts: {
     customFields = filledCustomFields(r.custom_fields, await customFieldNameMap())
   } catch { /* a booking without resolved field names is still a booking */ }
 
+  // BANNED (2026-10-21): checked against every Banned profile, not just this booking's own key —
+  // a banned guest rebooking under a new email still matches on phone or Guesty id.
+  let bannedHit: Stay360['guest']['banned'] = null
+  try {
+    const { loadBanned, matchBanned } = await import('./banned-guests')
+    const h = matchBanned(r, await loadBanned(db))
+    if (h) bannedHit = { how: h.how, strong: h.strong, profile: h.profile.name || h.profile.key, reason: h.profile.reason }
+  } catch { /* a booking without the ban check is still a booking */ }
+
   const s: Stay360 = {
     id: str(r.id), confirmationCode: r.confirmation_code || null, status: str(r.status), channel: str(r.source),
     guest: {
       name: str(r.guest_name) || 'Guest', email: r.guest_email || null, phone: r.guest_phone || null, key: gKey,
       vip: !!profile?.vip, tags: Array.isArray(profile?.tags) ? profile.tags : [], teamNotes: profile?.notes || null,
+      banned: bannedHit,
       stays: liveHist.length || 1, nights: liveHist.reduce((a, h) => a + (Number(h.nights) || 0), 0),
       lifetimeValue: ltv || null, repeat: liveHist.length > 1,
       history: history.slice(0, 20).map(h => ({ id: str(h.id), unit: names[str(h.listing_id)] || str(h.listing_id), checkIn: str(h.check_in).slice(0, 10), checkOut: str(h.check_out).slice(0, 10), status: str(h.status), value: num(h.money_total) })),
@@ -228,6 +240,8 @@ export async function loadReservation360(db: any, reservationId: string, opts: {
 /** The tags a row shows for this booking — the "one line" version of the whole picture. */
 export function flagsOf(s: Stay360): Stay360['flags'] {
   const f: Stay360['flags'] = []
+  const b = s.guest.banned
+  if (b) f.push({ key: 'banned', label: b.strong ? 'BANNED guest' : 'Possible banned guest', tone: 'rose', why: (b.strong ? 'Matches banned profile ' : 'Same name as banned profile ') + '"' + b.profile + '" by ' + b.how + (b.reason ? ' — ' + b.reason : '') })
   const openGl = s.glitches.filter(g => !/closed|resolved|done/i.test(g.status))
   if (openGl.length) f.push({ key: 'glitch', label: openGl.length + ' open issue' + (openGl.length === 1 ? '' : 's'), tone: 'rose', why: openGl.map(g => g.overview).join(' · ') })
   else if (s.glitches.length) f.push({ key: 'glitch', label: s.glitches.length + ' past issue' + (s.glitches.length === 1 ? '' : 's'), tone: 'slate', why: s.glitches.map(g => g.overview).join(' · ') })

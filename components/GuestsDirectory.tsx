@@ -5,7 +5,7 @@
 // before the first booking exists, because the whole point of a profile is knowing something
 // about a person Guesty doesn't.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, Search, Star, Plus, Check, X, Phone, Mail } from 'lucide-react'
+import { Loader2, Search, Star, Plus, Check, X, Phone, Mail, Ban } from 'lucide-react'
 import { LeanHead, Pill, Tag, LeanList, LeanRow, LeanEmpty } from '@/components/lean'
 
 type Guest = {
@@ -16,6 +16,10 @@ type Guest = {
   history: { unit: string; checkIn: string; checkOut: string; nights: number; value: number; source: string }[]
   profile: { vip: boolean; tags: string[]; notes: string } | null
 }
+
+// BANNED (2026-10-21) is the tag "Banned" on the profile; a booking by that person rings the ops bell (lib/banned-guests).
+const isBan = (t: string) => /^\s*banned\s*$/i.test(t)
+const bannedOf = (g: Guest | null) => !!g?.profile?.tags?.some(isBan)
 
 const usd = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
 
@@ -56,6 +60,7 @@ export function GuestsDirectory() {
       <Pill title="Guests with more than one stay">{t.repeat ?? 0} repeat</Pill>
       <Pill tone="amber" title="VIP guests get an automatic pre-arrival inspection">{t.vip ?? 0} VIP</Pill>
       <Pill tone="emerald" title="Staying with us right now">{t.inHouse ?? 0} in house</Pill>
+      {t.banned ? <Pill tone="rose" title="Marked Banned — a new booking by them notifies the ops team. Search 'banned' to list them." onClick={() => { setQ('banned'); setShown(50) }}>{t.banned} banned</Pill> : null}
     </LeanHead>
   )
   if (err) return <div>{head}<div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-700">{err}</div></div>
@@ -87,12 +92,13 @@ export function GuestsDirectory() {
                 name={g.name}
                 meta={[units, g.lastStay ? 'last ' + g.lastStay : ''].filter(Boolean).join(' · ')}
                 tags={<>
+                  {bannedOf(g) ? <Tag tone="rose" title={g.profile?.notes || 'Banned — a new booking notifies the ops team'}>⛔ Banned</Tag> : null}
                   {g.profile?.vip ? <Tag tone="amber" title="Auto-inspection before every arrival">VIP</Tag> : null}
                   {g.inHouse ? <Tag tone="emerald">In house</Tag> : null}
                   {g.nextStay ? <Tag tone="emerald" title="Next arrival">Returns {g.nextStay}</Tag> : null}
                   <Tag title={`${g.stays} stay${g.stays === 1 ? '' : 's'}, ${g.nights} nights`}>{g.stays}× · {g.nights}n</Tag>
                   <Tag tone="brand" title="Lifetime value">{usd(g.value)}</Tag>
-                  {(g.profile?.tags || []).slice(0, 3).map(tag => <Tag key={tag}>{tag}</Tag>)}
+                  {(g.profile?.tags || []).filter(tag => !isBan(tag)).slice(0, 3).map(tag => <Tag key={tag}>{tag}</Tag>)}
                 </>}>
                 <div className="grid md:grid-cols-2 gap-4 pt-1">
                   <div>
@@ -135,23 +141,30 @@ function ProfileEditor({ guest, onDone, onCancel, inline }: { guest: Guest | nul
   const [email, setEmail] = useState(guest?.email || '')
   const [phone, setPhone] = useState(guest?.phone || '')
   const [vip, setVip] = useState(!!guest?.profile?.vip)
-  const [tags, setTags] = useState((guest?.profile?.tags || []).join(', '))
+  const [tags, setTags] = useState((guest?.profile?.tags || []).filter(t => !isBan(t)).join(', '))
+  const [banned, setBanned] = useState(bannedOf(guest))
+  const [msg, setMsg] = useState('')
   const [notes, setNotes] = useState(guest?.profile?.notes || '')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
   const save = async () => {
-    setBusy(true); setErr('')
+    setBusy(true); setErr(''); setMsg('')
+    // A ban without a reason is a mystery to the next person who reads it — ask for one.
+    if (banned && !notes.trim()) { setErr('Add the reason for the ban in the notes, so whoever gets the alert knows why.'); setBusy(false); return }
+    if (banned && !guest && !email.trim() && !phone.trim()) { setErr('Add an email or phone — a name alone can only flag a possible match.'); setBusy(false); return }
     try {
       const r = await fetch('/api/guests', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           guestKey: guest?.key, name, email, phone, vip, notes,
-          tags: tags.split(',').map(s => s.trim()).filter(Boolean),
+          tags: [...(banned ? ['Banned'] : []), ...tags.split(',').map(s => s.trim()).filter(t => t && !isBan(t))],
         }),
       })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.message || j?.error || 'Could not save.')
+      const n = j?.bannedCheck?.notified || 0
+      if (n) setMsg(`Saved — ${n} upcoming booking${n === 1 ? '' : 's'} by this guest found; the ops team has been notified.`)
       onDone()
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
@@ -172,13 +185,19 @@ function ProfileEditor({ guest, onDone, onCancel, inline }: { guest: Guest | nul
           <input type="checkbox" checked={vip} onChange={e => setVip(e.target.checked)} />
           <Star size={12} className="text-amber-500" /> VIP <span className="font-normal text-muted">(auto-inspection)</span>
         </label>
+        <label className={`flex items-center gap-1.5 cursor-pointer text-[12.5px] font-bold ${banned ? 'text-rose-700' : 'text-ink'}`}
+          title="A new booking by this guest (same Guesty id, email or phone — or the same name, as a possible match) notifies the ops team in the app">
+          <input type="checkbox" checked={banned} onChange={e => setBanned(e.target.checked)} />
+          <Ban size={12} className="text-rose-600" /> Banned <span className="font-normal text-muted">(alert on any booking)</span>
+        </label>
         <input value={tags} onChange={e => setTags(e.target.value)} placeholder="Tags, comma separated — e.g. long-stay, corporate"
           className="flex-1 min-w-[200px] rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
       </div>
       <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
-        placeholder="What the team should know — preferences, history, how they like the AC…"
+        placeholder={banned ? 'Why they are banned — this goes in the alert' : 'What the team should know — preferences, history, how they like the AC…'}
         className="w-full rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
       {err ? <p className="text-[12px] text-rose-600 font-semibold mt-1">{err}</p> : null}
+      {msg ? <p className="text-[12px] text-rose-700 font-semibold mt-1">{msg}</p> : null}
       <div className="flex items-center gap-2 mt-2">
         <button onClick={save} disabled={busy}
           className="rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-bold disabled:opacity-40 inline-flex items-center gap-1">

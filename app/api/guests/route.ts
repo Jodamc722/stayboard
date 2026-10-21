@@ -122,6 +122,7 @@ export async function GET(req: NextRequest) {
       guests: guests.length,
       repeat: guests.filter((g: any) => g.stays >= 2).length,
       vip: guests.filter((g: any) => g.profile?.vip).length,
+      banned: guests.filter((g: any) => (g.profile?.tags || []).some((t: any) => /^\s*banned\s*$/i.test(String(t)))).length,
       inHouse: guests.filter((g: any) => g.inHouse).length,
     },
   })
@@ -149,5 +150,11 @@ export async function POST(req: NextRequest) {
   }
   const { error } = await db.from('guest_profiles').upsert(patch, { onConflict: 'guest_key' })
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true, guestKey: key })
+  // MARKED BANNED → CHECK THE BOOKS NOW (2026-10-21), so a stay this person already holds is raised
+  // today rather than never (the 5-minute watch only adds what it has not raised before).
+  let bannedCheck: any = null
+  if (patch.tags.some((t: string) => /^\s*banned\s*$/i.test(t))) {
+    try { const { runBannedWatch } = await import('@/lib/banned-guests'); const b = await runBannedWatch(); bannedCheck = { hits: b.hits, notified: b.notified } } catch (e: any) { bannedCheck = { error: String(e?.message || e).slice(0, 120) } }
+  }
+  return NextResponse.json({ ok: true, guestKey: key, bannedCheck })
 }

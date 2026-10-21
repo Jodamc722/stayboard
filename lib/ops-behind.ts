@@ -169,7 +169,7 @@ export async function loadBehind(): Promise<Behind & { date: string; nowMin: num
 }
 
 /** Everyone who runs the day: the ops workspace, plus GM/admin. */
-async function opsRecipients(): Promise<string[]> {
+export async function opsRecipients(): Promise<string[]> {
   const db = supabaseAdmin()
   const out = new Set<string>([SUPERADMIN])
   try {

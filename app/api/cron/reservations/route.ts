@@ -57,7 +57,11 @@ async function run(req: NextRequest) {
     // otherwise never see it. Own try: a Guesty hiccup here never fails the booking feed.
     let folios: any = null
     try { const { refreshOpenFolios } = await import('@/lib/folio-refresh'); folios = await refreshOpenFolios({ minMinutes: 55, source: 'cron' }) } catch (e: any) { folios = { error: String(e?.message || e).slice(0, 120) } }
-    return NextResponse.json({ ranAt: new Date().toISOString(), mode, reservations: n, salato, folios, elapsed_ms: Date.now() - started })
+    // BANNED GUESTS (Jon, 2026-10-21): a booking by anyone marked Banned on the Guests tab rings the
+    // ops team's bell within minutes. Own try, like the two above. See lib/banned-guests.ts.
+    let banned: any = null
+    try { const { runBannedWatch } = await import('@/lib/banned-guests'); const b = await runBannedWatch(); banned = { hits: b.hits, notified: b.notified, skipped: b.skipped } } catch (e: any) { banned = { error: String(e?.message || e).slice(0, 120) } }
+    return NextResponse.json({ ranAt: new Date().toISOString(), mode, reservations: n, salato, folios, banned, elapsed_ms: Date.now() - started })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
