@@ -8,7 +8,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 
 const DAILY_CAP = 4
 // banned_guest (2026-10-21): a banned person booking is never the fifth thing of the day to drop.
-const UNCAPPED = new Set(['mention', 'comment', 'banned_guest'])
+const UNCAPPED = new Set(['mention', 'comment', 'banned_guest', 'claim_review'])
 
 export type NotifyEntity = { type: string; id: string }
 export async function notify(recipients: string[], n: { kind: string; title: string; body?: string; link?: string; actor?: string; entity?: NotifyEntity | null }) {

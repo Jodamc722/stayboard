@@ -18,7 +18,7 @@ import CommentThread from '@/components/CommentThread'
 import { DeleteButton } from '@/components/DeleteControl'
 import {
   STAGES, OUTCOMES, WAITING, CHANNELS, CONDITIONS, money, num, itemsTotal, daysUntil, gatesFor,
-  claimTitle, urgencyOf, type Claim, type ClaimItem, type ChannelPolicy,
+  claimTitle, urgencyOf, reviewerOf, type Claim, type ClaimItem, type ChannelPolicy,
 } from '@/lib/claims'
 
 /**
@@ -83,6 +83,10 @@ export function ClaimDesk({ id, embedded, onClose, onChanged }: Props) {
   const [busy, setBusy] = useState(false)
   const [blocked, setBlocked] = useState<{ key: string; label: string; detail?: string }[] | null>(null)
   const [flash, setFlash] = useState('')
+  // THE APPROVERS for "Recommend to file" (2026-10-21) and the inline picker the stage rail opens.
+  const [reviewers, setReviewers] = useState<Reviewer[]>([])
+  const [pickReview, setPickReview] = useState(false)
+  useEffect(() => { fetch('/api/claims/reviewers', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j?.ok) setReviewers(j.reviewers || []) }).catch(() => {}) }, [])
 
   const load = useCallback(async () => {
     try {
@@ -126,6 +130,24 @@ export function ClaimDesk({ id, embedded, onClose, onChanged }: Props) {
   const hardD = daysUntil(claim.deadline_on)
   const u = urgencyOf(claim)
   const stageIndex = STAGES.findIndex(s => s.key === claim.stage)
+  const waitingOn = reviewerOf(claim)
+
+  // MOVE IT ANYWHERE (Jon, 2026-10-21: "allow user to move the claim once created through the
+  // process"). Every stage on the rail is a button — forward, back, or a skip. Recommending to file
+  // asks who should approve; filing with evidence missing asks first and is recorded as an override.
+  const moveTo = async (to: string) => {
+    if (busy || to === claim.stage) return
+    if (to === 'review') { setPickReview(true); return }
+    setPickReview(false)
+    const label = (STAGES.find(s => s.key === to) || { label: to }).label
+    const filing = to === 'ready' || to === 'submitted'
+    if (filing && failing.length) {
+      if (!window.confirm('Move to "' + label + '" with ' + failing.length + ' evidence item(s) still missing? It is recorded that the checklist was overridden.')) return
+      await patch({ stage: to, force: true }); return
+    }
+    if (!window.confirm('Move this claim to "' + label + '"?')) return
+    await patch({ stage: to })
+  }
 
   return (
     <>
@@ -208,18 +230,33 @@ export function ClaimDesk({ id, embedded, onClose, onChanged }: Props) {
       {/* Stage stepper */}
       <div className="lh-actions flex items-center gap-1 flex-wrap mb-5">
         {STAGES.map((s, i) => (
-          <span key={s.key} className={'text-[11px] font-semibold px-2 py-1 rounded-lg border ' + (i === stageIndex ? 'bg-ink text-white border-ink' : i < stageIndex ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-white text-muted border-line')}>
+          <button key={s.key} type="button" onClick={() => moveTo(s.key)} disabled={busy || i === stageIndex}
+            title={i === stageIndex ? 'Where it is now' : 'Move the claim to ' + s.label + ' — ' + s.blurb}
+            className={'text-[11px] font-semibold px-2 py-1 rounded-lg border transition ' + (i === stageIndex ? 'bg-ink text-white border-ink cursor-default' : i < stageIndex ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:border-emerald-400' : 'bg-white text-muted border-line hover:border-ink/40 hover:text-ink')}>
             {i < stageIndex ? '✓ ' : ''}{s.label}
-          </span>
+          </button>
         ))}
+        <span className="text-[11px] text-muted ml-1">Tap a stage to move it.</span>
       </div>
+      {waitingOn && (
+        <div className="-mt-3 mb-4 text-[12.5px] font-semibold text-rose-800 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 inline-flex items-center gap-2">
+          🚩 Recommended to file — waiting on <b>{waitingOn.name}</b> to approve{waitingOn.by ? <span className="font-normal text-rose-700">· sent by {waitingOn.by.split('@')[0]}</span> : null}
+        </div>
+      )}
+      {pickReview && claim.stage !== 'review' && (
+        <div className="-mt-3 mb-4 rounded-lg border border-line bg-white px-3 py-2">
+          <ReviewerPicker reviewers={reviewers} busy={busy} label="Recommend to file"
+            onSend={async (email) => { const ok = await patch({ stage: 'review', reviewer_email: email }); if (ok) setPickReview(false) }}
+            onCancel={() => setPickReview(false)} />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="lg:col-span-2 space-y-4">
           <StepStay claim={claim} policy={policy} patch={patch} busy={busy} />
           <StepItems claimId={id} items={items} onItems={(next: ClaimItem[]) => setClaim(c => c ? { ...c, items: next } : c)} setErr={setErr} />
           <StepWriteUp claim={claim} items={items} patch={patch} busy={busy} />
-          <StepFile claim={claim} gates={gates} failing={failing} blocked={blocked} patch={patch} busy={busy} />
+          <StepFile claim={claim} gates={gates} failing={failing} blocked={blocked} patch={patch} busy={busy} reviewers={reviewers} />
           {(claim.stage === 'submitted' || claim.stage === 'decided' || claim.stage === 'settle' || claim.stage === 'closed') && (
             <StepOutcome claim={claim} patch={patch} busy={busy} />
           )}
@@ -540,12 +577,39 @@ function StepWriteUp({ claim, items, patch, busy }: { claim: Claim; items: Claim
 }
 
 // ── step 4: file it ────────────────────────────────────────────────────────
-function StepFile({ claim, gates, failing, blocked, patch, busy }: {
+type Reviewer = { email: string; name: string }
+
+/** "Recommend to file": pick who approves, then send. They get a flagged notification in the app. */
+function ReviewerPicker({ reviewers, current, busy, label, onSend, onCancel }: {
+  reviewers: Reviewer[]; current?: string; busy: boolean; label: string
+  onSend: (email: string) => void; onCancel?: () => void
+}) {
+  const [who, setWho] = useState(current || '')
+  useEffect(() => { setWho(current || '') }, [current])
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <select value={who} onChange={e => setWho(e.target.value)} disabled={busy}
+        className="text-sm border border-line rounded-lg px-2 py-2 bg-white min-w-[12rem]">
+        <option value="">Who should approve it?</option>
+        {reviewers.map(r => <option key={r.email} value={r.email}>{r.name}</option>)}
+      </select>
+      <button onClick={() => who && onSend(who)} disabled={busy || !who || who === current}
+        className="text-sm font-semibold px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40 inline-flex items-center gap-1.5">
+        🚩 {label}
+      </button>
+      {onCancel && <button onClick={onCancel} className="text-[12px] text-muted hover:text-ink">Cancel</button>}
+      <span className="text-[11.5px] text-muted">They get a flagged notification in the app.</span>
+    </div>
+  )
+}
+
+function StepFile({ claim, gates, failing, blocked, patch, busy, reviewers }: {
   claim: Claim; gates: { key: string; label: string; ok: boolean; detail?: string }[]
   failing: { key: string; label: string; ok: boolean; detail?: string }[]
   blocked: { key: string; label: string; detail?: string }[] | null
-  patch: (b: any) => Promise<boolean>; busy: boolean
+  patch: (b: any) => Promise<boolean>; busy: boolean; reviewers: Reviewer[]
 }) {
+  const waitingOn = reviewerOf(claim)
   const [caseId, setCaseId] = useState(claim.channel_case_id || '')
   useEffect(() => { setCaseId(claim.channel_case_id || '') }, [claim.channel_case_id])
   const stage = claim.stage
@@ -573,11 +637,13 @@ function StepFile({ claim, gates, failing, blocked, patch, busy }: {
 
       <div className="mt-4 flex items-center gap-2 flex-wrap">
         {stage === 'draft' && (
-          <button onClick={() => patch({ stage: 'review' })} disabled={busy} className="text-sm font-semibold px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">
-            Send for review
-          </button>
+          <ReviewerPicker reviewers={reviewers} busy={busy} label="Recommend to file" onSend={email => patch({ stage: 'review', reviewer_email: email })} />
         )}
         {stage === 'review' && (<>
+          <div className="w-full flex items-center gap-2 flex-wrap mb-1">
+            <span className="text-[12px] font-semibold text-rose-800">{waitingOn ? '🚩 Waiting on ' + waitingOn.name : 'No approver picked —'}</span>
+            <ReviewerPicker reviewers={reviewers} current={waitingOn?.email} busy={busy} label={waitingOn ? 'Change approver' : 'Pick approver'} onSend={email => patch({ reviewer_email: email })} />
+          </div>
           <button onClick={() => patch({ stage: 'ready' })} disabled={busy || failing.length > 0} className="text-sm font-semibold px-3 py-2 rounded-lg bg-emerald-600 text-white disabled:opacity-40">
             Approve to file
           </button>

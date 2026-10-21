@@ -6,7 +6,7 @@ export type Stage = 'draft' | 'review' | 'ready' | 'submitted' | 'decided' | 'se
 
 export const STAGES: { key: Stage; label: string; blurb: string }[] = [
   { key: 'draft',     label: 'Draft',          blurb: 'Being built — evidence still going in' },
-  { key: 'review',    label: "Jon's review",   blurb: 'Complete, waiting on approval to file' },
+  { key: 'review',    label: 'Recommended to file', blurb: 'Complete — waiting on the chosen approver to OK filing' },
   { key: 'ready',     label: 'Ready to file',  blurb: 'Approved — file it before the clock runs out' },
   { key: 'submitted', label: 'Submitted',      blurb: 'With the channel' },
   { key: 'decided',   label: 'Decided',        blurb: 'They answered — won, partial or denied' },
@@ -375,4 +375,21 @@ export function claimTitle(c: Claim): string {
   const bits = [c.property, c.unit_no, c.guest_name, c.confirmation_code]
     .map(x => String(x || '').trim()).filter(Boolean)
   return bits.length ? bits.join(', ') : 'Untitled claim'
+}
+
+/**
+ * WHO THE CLAIM IS WAITING ON (2026-10-21). When a claim is recommended to file, the person sending
+ * it picks the approver from a dropdown; that choice is written into the claim's history (no new
+ * column, no migration). The current approver is the latest one named since the claim last moved
+ * into 'review'. Null outside review, or when nobody was picked (the old "all admins" path).
+ */
+export function reviewerOf(claim: { stage?: string; history?: any[] | null }): { email: string; name: string; by: string; at: string } | null {
+  if (String(claim?.stage || '') !== 'review') return null
+  const h = Array.isArray(claim?.history) ? claim.history : []
+  for (let i = h.length - 1; i >= 0; i--) {
+    const e = h[i] || {}
+    if (e.reviewer) return { email: String(e.reviewer), name: String(e.reviewer_name || e.reviewer), by: String(e.by || ''), at: String(e.at || '') }
+    if (e.action === 'stage' && e.to === 'review') return null
+  }
+  return null
 }

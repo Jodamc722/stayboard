@@ -15,7 +15,7 @@ import {
 import { DeleteButton, UndoBar, TrashDrawer } from '@/components/DeleteControl'
 import { Tag, Pill, LeanHead, LeanTabs, IconBtn, Tip, LeanList, LeanEmpty, type Tone } from '@/components/lean'
 import {
-  STAGE_LABEL, OUTCOMES, money, itemsTotal, num, daysUntil, urgencyOf, hardDeadlineBiting, gatesFor, claimTitle,
+  STAGES, STAGE_LABEL, OUTCOMES, reviewerOf, money, itemsTotal, num, daysUntil, urgencyOf, hardDeadlineBiting, gatesFor, claimTitle,
   type Claim,
 } from '@/lib/claims'
 import { ClaimPolicyPanel } from '@/components/ClaimPolicy'
@@ -247,11 +247,11 @@ export function ClaimsBoard() {
       {data && all.length > 0 && (
         <div className="space-y-5">
           <Section title="New" blurb="Started, nobody has worked it yet" rows={sec.new}
-            empty="Nothing new." onDelete={removeClaim} onOpen={setOpenId} />
+            empty="Nothing new." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} />
           <Section title="Pending" blurb="On our desk — waiting on approval, or approved and waiting to be filed" rows={sec.pending}
-            empty="Nothing waiting on us." onDelete={removeClaim} onOpen={setOpenId} />
+            empty="Nothing waiting on us." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} />
           <Section title="Submitted" blurb="With the channel — filed, answered, or waiting on the money" rows={sec.submitted}
-            empty="Nothing with a channel right now." onDelete={removeClaim} onOpen={setOpenId} />
+            empty="Nothing with a channel right now." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} />
 
           {/* CLOSED — the one section behind tabs, and the tabs are how it ended. */}
           <section>
@@ -274,7 +274,7 @@ export function ClaimsBoard() {
                   <>
                     <LeanList>
                       {(showAllClosed ? closedRows : closedRows.slice(0, 12)).map(c =>
-                        <ClaimRow key={c.id} claim={c} showStage={false} onDelete={() => removeClaim(c.id)} onOpen={() => setOpenId(c.id)} />)}
+                        <ClaimRow key={c.id} claim={c} showStage={false} onDelete={() => removeClaim(c.id)} onOpen={() => setOpenId(c.id)} onMoved={load} />)}
                     </LeanList>
                     {!showAllClosed && closedRows.length > 12 && (
                       <button onClick={() => setShowAllClosed(true)} className="mt-1.5 text-[12px] font-semibold text-muted hover:text-ink px-1">
@@ -304,9 +304,9 @@ export function ClaimsBoard() {
  * the difference between whose move it is. An empty section still prints, because a board that
  * hides its empty lanes makes you wonder whether you filtered them away.
  */
-function Section({ title, blurb, rows, empty, onDelete, onOpen }: {
+function Section({ title, blurb, rows, empty, onDelete, onOpen, onMoved }: {
   title: string; blurb: string; rows: Claim[]; empty: string
-  onDelete: (id: string) => Promise<string | null>; onOpen: (id: string) => void
+  onDelete: (id: string) => Promise<string | null>; onOpen: (id: string) => void; onMoved: () => void
 }) {
   const sought = rows.reduce((t, c) => t + (num(c.amount_sought) || itemsTotal(c.items)), 0)
   return (
@@ -318,7 +318,7 @@ function Section({ title, blurb, rows, empty, onDelete, onOpen }: {
       </div>
       {rows.length === 0 ? <LeanEmpty>{empty}</LeanEmpty> : (
         <LeanList>
-          {rows.map(c => <ClaimRow key={c.id} claim={c} showStage onDelete={() => onDelete(c.id)} onOpen={() => onOpen(c.id)} />)}
+          {rows.map(c => <ClaimRow key={c.id} claim={c} showStage onDelete={() => onDelete(c.id)} onOpen={() => onOpen(c.id)} onMoved={onMoved} />)}
         </LeanList>
       )}
     </section>
@@ -365,7 +365,28 @@ function ClaimDrawer({ id, onClose, onChanged }: { id: string; onClose: () => vo
   )
 }
 
-function ClaimRow({ claim, showStage, onDelete, onOpen }: { claim: Claim; showStage: boolean; onDelete: () => Promise<string | null>; onOpen: () => void }) {
+function ClaimRow({ claim, showStage, onDelete, onOpen, onMoved }: { claim: Claim; showStage: boolean; onDelete: () => Promise<string | null>; onOpen: () => void; onMoved: () => void }) {
+  const [moving, setMoving] = useState(false)
+  const [moveErr, setMoveErr] = useState('')
+  const rev = reviewerOf(claim)
+  // MOVE FROM THE BOARD (Jon, 2026-10-21): any stage, any direction. "Recommended to file" opens the
+  // claim instead, because it needs an approver picked; filing with evidence missing asks first.
+  const move = async (to: string) => {
+    if (to === String(claim.stage || 'draft')) return
+    if (to === 'review') { onOpen(); return }
+    setMoving(true); setMoveErr('')
+    try {
+      const send = (force: boolean) => fetch('/api/claims/' + claim.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(force ? { stage: to, force: true } : { stage: to }) })
+      let r = await send(false); let j = await r.json().catch(() => ({}))
+      if (r.status === 409 && Array.isArray(j.gates)) {
+        if (!window.confirm('Missing for filing: ' + j.gates.map((g: any) => g.label).join(', ') + '.\n\nMove it anyway? The override is recorded on the claim.')) { setMoving(false); return }
+        r = await send(true); j = await r.json().catch(() => ({}))
+      }
+      if (!r.ok || j.ok === false) setMoveErr(j.error || 'Could not move it.')
+      else onMoved()
+    } catch (e: any) { setMoveErr(String(e?.message || e)) }
+    setMoving(false)
+  }
   const items = claim.items || []
   const gates = gatesFor(claim, items)
   const done = gates.filter(g => g.ok).length
@@ -379,6 +400,9 @@ function ClaimRow({ claim, showStage, onDelete, onOpen }: { claim: Claim; showSt
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[13.5px] font-semibold text-ink truncate max-w-[18rem]">{claimTitle(claim)}</span>
             {showStage && <Tag tone="brand">{STAGE_LABEL[stage] || stage}</Tag>}
+            {rev && <Tag tone="rose" title={'Recommended to file' + (rev.by ? ' by ' + rev.by : '') + ' — waiting on ' + rev.name + ' to approve'}>🚩 Needs approval · {rev.name}</Tag>}
+            {stage === 'review' && !rev && <Tag tone="amber" title="Recommended to file, but no approver was picked — open it to pick one">🚩 Pick an approver</Tag>}
+            {moveErr && <Tag tone="rose">{moveErr}</Tag>}
             <DeadlineChip claim={claim} />
             <HardChip claim={claim} />
             <TurnoverChip claim={claim} />
@@ -394,6 +418,10 @@ function ClaimRow({ claim, showStage, onDelete, onOpen }: { claim: Claim; showSt
           </div>
         </button>
         {amount > 0 && <span className="text-[13px] font-bold text-ink tabular-nums shrink-0">{money(amount)}</span>}
+        <select value={stage} onChange={e => move(e.target.value)} disabled={moving} title="Move this claim to another stage"
+          className="shrink-0 text-[11.5px] font-semibold border border-line rounded-md bg-white px-1.5 py-1 max-w-[9.5rem] disabled:opacity-50">
+          {STAGES.map(s2 => <option key={s2.key} value={s2.key}>{s2.key === stage ? '● ' : 'Move to: '}{s2.label}</option>)}
+        </select>
         {/* On a mouse the delete appears on hover; a touch screen has no hover, so on a phone it is
             always there. It sits outside the open button, so it can never open the claim. */}
         <span className="shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100 transition">

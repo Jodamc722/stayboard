@@ -15,6 +15,7 @@ import { nextCheckInFor } from '@/lib/claim-turnover'
 import { requireLevel } from '@/lib/access'
 import { requireVrUser } from '@/lib/vr-gate'
 import { bustDay } from '@/lib/bust'
+import { claimReviewers } from '@/lib/claim-reviewers'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -135,8 +136,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       patch.amount_sought = itemsTotal(items)
     }
 
+    // THE APPROVER (2026-10-21): "Recommend to file" names who should approve, from a dropdown of the
+    // people who can (lib/claim-reviewers). Recorded on the history entry; lib/claims reviewerOf reads it.
+    let reviewer: { email: string; name: string } | null = null
+    const wantRev = str(b.reviewer_email).trim().toLowerCase()
+    if (wantRev && (moved === 'review' || (!moved && before.stage === 'review'))) {
+      const list = await claimReviewers(db)
+      reviewer = list.find(r => r.email === wantRev) || null
+      if (!reviewer) return NextResponse.json({ ok: false, error: 'That person cannot approve claims.' }, { status: 400 })
+    }
     const hist = Array.isArray((before as any).history) ? (before as any).history.slice(-99) : []
-    if (moved) hist.push({ at: new Date().toISOString(), by: me, action: 'stage', from: before.stage, to: moved, forced: b.force === true })
+    const revBits = reviewer ? { reviewer: reviewer.email, reviewer_name: reviewer.name } : {}
+    if (moved) hist.push({ at: new Date().toISOString(), by: me, action: 'stage', from: before.stage, to: moved, forced: b.force === true, ...revBits })
+    else if (reviewer) hist.push({ at: new Date().toISOString(), by: me, action: 'reviewer', ...revBits })
     else hist.push({ at: new Date().toISOString(), by: me, action: 'edit' })
     patch.history = hist
 
@@ -171,7 +183,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
     // Somebody has to look at it next. Tell them.
     try {
-      if (moved === 'review') {
+      if (reviewer) {
+        await notify([reviewer.email], { kind: 'claim_review', title: '🚩 Recommended to file — your approval: ' + claimTitle(after), body: 'Sent by ' + me + (after.deadline_on ? ' · file by ' + str(after.deadline_on) : ''), link: '/claims/' + params.id, actor: me, entity: { type: 'claim_review', id: params.id } })
+      } else if (moved === 'review') {
         const { data: admins } = await db.from('app_users').select('email').eq('role', 'admin').eq('status', 'active')
         const to = ((admins || []) as any[]).map(a => str(a.email).toLowerCase()).filter(Boolean)
         if (to.length) await notify(to, { kind: 'claim', title: 'Claim needs review: ' + claimTitle(after), body: 'Deadline ' + str(after.deadline_on), link: '/claims/' + params.id, actor: me })
