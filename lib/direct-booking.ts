@@ -22,7 +22,10 @@ import { modelFor } from './ai-models'
 export const BUCKET = 'guest-verify'
 const KEY = (id: string) => 'dbk:' + id
 
-export type IdCheck = { verdict: 'pass' | 'retake' | 'review'; reasons: string[]; nameOnId: string | null; expires: string | null; isId: boolean; face: boolean; resembles: 'yes' | 'no' | 'unsure'; checkedAt: string }
+export type IdCheck = { verdict: 'pass' | 'retake' | 'review'; reasons: string[]; nameOnId: string | null; expires: string | null; isId: boolean; face: boolean; resembles: 'yes' | 'no' | 'unsure'; checkedAt: string
+  /** What the model read, untouched by the verdict rules — the guest-verify link decides from this (lib/guest-id-match). null when the check did not run. */
+  read: IdRead | null }
+export type IdRead = { isId: boolean; readable: boolean; expired: boolean; face: boolean; screen: boolean; nameOnId: string | null; resembles: 'yes' | 'no' | 'unsure' }
 export type Draft = {
   id: string; createdAt: string; ip: string | null
   listingId: string; listingTitle: string; checkIn: string; checkOut: string; guests: number
@@ -95,17 +98,17 @@ selfieIsPhotoOfScreenOrPrint: the selfie looks like a photo of a screen or of a 
 resembles: whether the selfie face plausibly matches the ID photo — say "unsure" whenever in doubt; this is a hint for a human, never a decision.
 notes: one short sentence a front-desk person would find useful. Never repeat ID numbers or addresses.`
 
-export async function checkId(idImg: { mime: string; b64: string }, selfie: { mime: string; b64: string }, first: string, last: string): Promise<IdCheck> {
+export async function checkId(idImg: { mime: string; b64: string }, selfie: { mime: string; b64: string }, first: string, last: string, task = 'direct-booking-id'): Promise<IdCheck> {
   const now = new Date().toISOString()
   const key = process.env.ANTHROPIC_API_KEY || ''
   // No model available: the photos are still captured; the desk reviews them by hand.
-  if (!key) return { verdict: 'review', reasons: ['automatic check unavailable — the desk will review the photos'], nameOnId: null, expires: null, isId: true, face: true, resembles: 'unsure', checkedAt: now }
+  if (!key) return { verdict: 'review', reasons: ['automatic check unavailable — the desk will review the photos'], nameOnId: null, expires: null, isId: true, face: true, resembles: 'unsure', checkedAt: now, read: null }
   try {
-    const r = await aiFetch('direct-booking-id', {
+    const r = await aiFetch(task, {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: await modelFor('direct-booking-id'), max_tokens: 400, system: SYSTEM,
+        model: await modelFor(task), max_tokens: 400, system: SYSTEM,
         messages: [{ role: 'user', content: [
           { type: 'text', text: 'Photo 1 — the ID:' }, { type: 'image', source: { type: 'base64', media_type: idImg.mime, data: idImg.b64 } },
           { type: 'text', text: 'Photo 2 — the selfie:' }, { type: 'image', source: { type: 'base64', media_type: selfie.mime, data: selfie.b64 } },
@@ -130,10 +133,12 @@ export async function checkId(idImg: { mime: string; b64: string }, selfie: { mi
     if (verdict === 'pass' && nameOnId && !nameMatches(nameOnId, first, last)) retake(`The name on the ID ("${nameOnId}") must match the name on the booking. Fix the name above, or use the ID of the person booking.`)
     if (verdict === 'pass' && j.resembles === 'no') { verdict = 'review'; reasons.push('selfie may not match the ID photo — desk to review') }
     if (verdict === 'pass' && !nameOnId) { verdict = 'review'; reasons.push('name on the ID was not read — desk to review') }
-    return { verdict, reasons, nameOnId, expires: j.expires ? String(j.expires).slice(0, 10) : null, isId: !!j.isId, face: !!j.faceInSelfie, resembles: j.resembles === 'yes' || j.resembles === 'no' ? j.resembles : 'unsure', checkedAt: now }
+    const resembles: IdRead['resembles'] = j.resembles === 'yes' || j.resembles === 'no' ? j.resembles : 'unsure'
+    const read: IdRead = { isId: !!j.isId, readable: !!j.readable, expired: !!j.expired, face: !!j.faceInSelfie, screen: !!j.selfieIsPhotoOfScreenOrPrint, nameOnId, resembles }
+    return { verdict, reasons, nameOnId, expires: j.expires ? String(j.expires).slice(0, 10) : null, isId: !!j.isId, face: !!j.faceInSelfie, resembles, checkedAt: now, read }
   } catch {
     // The model failed, not the guest. Let them through and put the photos in front of a person.
-    return { verdict: 'review', reasons: ['automatic check did not complete — the desk will review the photos'], nameOnId: null, expires: null, isId: true, face: true, resembles: 'unsure', checkedAt: now }
+    return { verdict: 'review', reasons: ['automatic check did not complete — the desk will review the photos'], nameOnId: null, expires: null, isId: true, face: true, resembles: 'unsure', checkedAt: now, read: null }
   }
 }
 
@@ -147,10 +152,14 @@ export async function attachToReservation(d: Draft, reservationId: string): Prom
   const now = new Date().toISOString()
   const name = d.check?.nameOnId || [d.guest?.firstName, d.guest?.lastName].filter(Boolean).join(' ')
   try {
-    await db.from('guest_checks').upsert({
-      reservation_id: reservationId, id_status: d.check?.verdict === 'review' ? 'pending' : 'verified', id_method: 'direct', id_captured_at: now,
+    const { upsertGuestCheck } = await import('./guest-checks-write')
+    await upsertGuestCheck(db, {
+      // 'check', not 'pending', when the model could not vouch for it (2026-10-21): the photos ARE
+      // on file and a person has to look — a blank row read as "nothing received".
+      reservation_id: reservationId, id_status: d.check?.verdict === 'review' ? 'check' : 'verified', id_method: 'direct', id_captured_at: now,
       id_name: name, id_path: d.idPath || null, selfie_path: d.selfiePath || null, updated_at: now, updated_by: 'guest:direct-booking',
-    }, { onConflict: 'reservation_id' })
+      ...(d.check ? { id_check: { verdict: d.check.verdict, reasons: d.check.reasons, nameOnId: d.check.nameOnId, checkedAt: d.check.checkedAt, read: d.check.read, source: 'direct-booking' }, id_match: d.check.nameOnId ? (d.check.verdict === 'pass' ? 'match' : 'mismatch') : 'unread', id_read_name: d.check.nameOnId } : {}),
+    })
   } catch { /* the booking stands; the desk can attach by hand */ }
   try {
     const flag = d.check?.verdict === 'review' ? ` — needs a look: ${d.check.reasons.join('; ')}` : ''

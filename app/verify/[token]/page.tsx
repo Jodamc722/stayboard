@@ -38,6 +38,10 @@ export default function GuestVerifyPage({ params }: { params: { token: string } 
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [done, setDone] = useState<string | null>(null)
+  // 'received' = the photos are in and a person at the desk confirms them (2026-10-21); the guest is
+  // never told why — a mismatch is the desk's conversation to have, not a form's.
+  const [outcome, setOutcome] = useState<'verified' | 'received'>('verified')
+  const [redo, setRedo] = useState(false)
 
   useEffect(() => {
     fetch('/api/public/guest-verify?token=' + encodeURIComponent(token), { cache: 'no-store' }).then(r => r.json()).then((j: Load) => { setLoad(j); if (j.guestName) setName(j.guestName) }).catch(() => setLoad({ ok: false, error: 'Could not load this link.' }))
@@ -54,6 +58,7 @@ export default function GuestVerifyPage({ params }: { params: { token: string } 
       const r = await fetch('/api/public/guest-verify', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token, name: name.trim(), idPhoto, selfie, agree }) })
       const j = await r.json().catch(() => ({}))
       if (!r.ok || !j.ok) throw new Error(j.error || 'Could not submit — please try again.')
+      setOutcome(j.status === 'received' ? 'received' : 'verified')
       setDone(j.verifiedAt || new Date().toISOString())
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy(false)
@@ -85,12 +90,14 @@ export default function GuestVerifyPage({ params }: { params: { token: string } 
 
   if (!load) return <Shell><p className="mt-10 text-center text-[14px]" style={{ color: c.mute }}>Loading…</p></Shell>
   if (!load.ok) return <Shell><div className="mt-8 rounded-2xl p-5" style={{ background: c.card, border: '1px solid ' + c.line }}><p className="text-[18px] font-medium" style={{ fontFamily: SERIF }}>{load.expired ? 'This link has expired' : 'This link is not valid'}</p><p className="mt-2 text-[14px]" style={{ color: c.mute }}>{load.error || 'Please message us and we will send a fresh one.'}</p></div></Shell>
-  if (done || load.status === 'verified') return (
+  const received = done ? outcome === 'received' : load.status === 'received'
+  if (done || load.status === 'verified' || (load.status === 'received' && !redo)) return (
     <Shell>
       <div className="mt-8 rounded-2xl p-6 text-center" style={{ background: c.card, border: '1px solid ' + c.line }}>
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full text-[26px]" style={{ background: '#e7f3ec', color: '#1f7a4d' }}>✓</div>
-        <p className="mt-4 text-[24px] font-medium leading-tight" style={{ fontFamily: SERIF }}>You're verified{load.guestFirst ? ', ' + load.guestFirst : ''}</p>
-        <p className="mt-2 text-[14px]" style={{ color: c.mute }}>Thank you — nothing else to do. We'll see you {fmtDate(load.checkIn)} at {load.unit}.</p>
+        <p className="mt-4 text-[24px] font-medium leading-tight" style={{ fontFamily: SERIF }}>{received ? 'Received' : "You're verified"}{load.guestFirst ? ', ' + load.guestFirst : ''}</p>
+        <p className="mt-2 text-[14px]" style={{ color: c.mute }}>{received ? 'Thank you — our team confirms it before you arrive, and will message you only if anything is needed.' : 'Thank you — nothing else to do.'} We'll see you {fmtDate(load.checkIn)} at {load.unit}.</p>
+        {received && !done && <button type="button" onClick={() => setRedo(true)} className="mt-4 text-[13px] font-semibold underline" style={{ color: c.accent }}>Sent a blurry photo? Send new ones</button>}
       </div>
     </Shell>
   )

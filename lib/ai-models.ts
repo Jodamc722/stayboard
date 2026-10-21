@@ -102,6 +102,12 @@ export const AI_TASKS: AiTask[] = [
   { key: 'direct-booking-id', title: 'Direct booking — ID + selfie check', group: 'Guests', def: 'sonnet',
     what: 'On the public booking page, looks at the guest\'s ID photo and selfie: is it a real, unexpired government ID, does the name match the booking, is there a live face in the selfie.',
     matters: 'Too strict loses a booking; too loose lets an unverified guest in. Face resemblance is only ever a flag for the desk.' },
+  // THE ID LINK READS THE ID (Jon, 2026-10-21: "verifying that it matches the reservation name … if
+  // photo added but unsure flag to check"). Same check as the booking page, on the link a Vrbo /
+  // Direct / Google guest gets before arrival; one call per submission, one per desk re-check.
+  { key: 'guest-id-link', title: 'ID link — read the ID against the booking', group: 'Guests', def: 'sonnet', inherit: 'direct-booking-id',
+    what: 'Reads the ID photo and selfie a guest sends through the verification link: real current ID, the name on it against the booking, a live face. Verified only when they agree; otherwise flagged for the desk.',
+    matters: 'A wrong pass lets the wrong person into a unit; a wrong flag costs the desk thirty seconds. It errs toward the flag.' },
   { key: 'learn', title: 'Eve — nightly learning pass', group: 'Background', def: 'sonnet', background: true,
     what: 'Summarises 30 days of guest messages and reviews into FAQs and complaint themes.',
     matters: 'Shapes what Eve knows tomorrow. Runs once a night.' },

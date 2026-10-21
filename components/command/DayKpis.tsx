@@ -35,6 +35,7 @@ import { publishHealth } from '@/components/command/health-bus'
 import { Check } from 'lucide-react'
 import { NudgeBtn } from '@/components/command/Nudge'
 import { CallNoteBtn, CallNoteStrip, CallNoteText } from '@/components/CallNote'
+import { IdTag, IdCheckWhy, IdActions, ByHandStrip } from '@/components/IdCheckBits'
 import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, type TaskState } from '@/components/task/TaskActions'
 import type { DayCalls, DayCallRow } from '@/app/api/command/calls/route'
 import { whereNow, shiftStatus } from '@/lib/team-where'
@@ -323,13 +324,24 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   }
 
   // ── guest checks (ID verified, deposit captured), blocked units, channels not connected (Jon, 2026-10-02) ──
-  const gcQ = useCachedFetch<{ ok?: boolean; rows?: GuestCheckRow[]; needed?: number; done?: number; canEdit?: boolean; error?: string }>(CHECKS_URL, { ttl: 120_000 })
+  const gcQ = useCachedFetch<{ ok?: boolean; rows?: GuestCheckRow[]; needed?: number; done?: number; toCheck?: number; toRead?: number; canEdit?: boolean; error?: string }>(CHECKS_URL, { ttl: 120_000 })
   const gcRows = gcQ.data?.rows || []
   const gcNeeded = gcQ.data?.needed || 0, gcDone = gcQ.data?.done || 0
-  const gcTodayOpen = gcRows.filter(r => r.today && ((r.needId && r.idStatus === 'pending') || (r.needDeposit && r.depositStatus === 'pending'))).length
-  const gcIdOpen = gcRows.filter(r => r.needId && r.idStatus === 'pending').length
+  // A flagged ID photo ('check') is still open: a person has to look (Jon, 2026-10-21).
+  const gcIdOpenOf = (r: GuestCheckRow) => r.needId && (r.idStatus === 'pending' || r.idStatus === 'check')
+  const gcTodayOpen = gcRows.filter(r => r.today && (gcIdOpenOf(r) || (r.needDeposit && r.depositStatus === 'pending'))).length
+  const gcIdOpen = gcRows.filter(gcIdOpenOf).length
+  const gcToCheck = gcRows.filter(r => r.needId && r.idStatus === 'check').length
   const gcDepOpen = gcRows.filter(r => r.needDeposit && r.depositStatus === 'pending').length
   const [gcBusy, setGcBusy] = useState('')
+  const [gcByHand, setGcByHand] = useState('')
+  // Photos nothing has read yet get read when the tile has them (three per pass, once per page).
+  useEffect(() => {
+    if (!gcQ.data?.ok || !gcQ.data.toRead || !gcQ.data.canEdit || (window as any).__gcSwept) return
+    ;(window as any).__gcSwept = true
+    fetch(CHECKS_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sweep: true }) }).then(r => r.json()).then(j => { if (j?.ok && j.checked) { invalidateCache(CHECKS_URL); gcQ.refresh() } }).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gcQ.data])
   const viewCheckPhoto = async (rid: string, which: 'id' | 'selfie') => { try { const j = await fetch(CHECKS_URL + '/photo?rid=' + encodeURIComponent(rid) + '&which=' + which, { cache: 'no-store' }).then(r => r.json()); if (j.ok && j.url) window.open(j.url, '_blank', 'noopener') } catch { /* nothing to show */ } }
   const sendCheckLink = async (rid: string) => { setGcBusy(rid + ':link'); try { const j = await fetch(CHECKS_URL + '/send-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: rid }) }).then(r => r.json()); if (!j.ok && j.url) { try { await navigator.clipboard.writeText(j.url) } catch {} ; window.alert('No message thread for this booking yet — the link is copied; send it by text or email.') } else if (!j.ok) window.alert(j.error || 'Could not send.'); invalidateCache(CHECKS_URL); gcQ.refresh() } finally { setGcBusy('') } }
   const setCheck = async (rid: string, patch: Record<string, any>) => { setGcBusy(rid + JSON.stringify(patch)); try { await fetch(CHECKS_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: rid, ...patch }) }); invalidateCache(CHECKS_URL); gcQ.refresh() } finally { setGcBusy('') } }
@@ -442,9 +454,9 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     { key: 'notices', label: 'Front-desk notices', done: ntC.sentToday, needed: ntToday.length, loading: !ntQ.data && ntQ.loading, title: 'Arrival notices the buildings need today (Elser’s registration form first): sent against to send, late ones first',
       segs: [{ label: 'sent', n: ntC.sentToday, cls: 'bg-emerald-500', tone: 'emerald', filter: 'sent' }, { label: 'late', n: ntC.late, cls: 'bg-rose-500', tone: 'rose', filter: 'late' }, { label: 'due', n: ntC.due, cls: 'bg-amber-400', tone: 'amber', filter: 'due' }, { label: 'to send', n: Math.max(0, ntC.toSend - ntC.late - ntC.due), cls: 'bg-slate-300', tone: 'slate', filter: 'open' }],
       sub: ntQ.error ? 'could not read the notices' : ntToday.length ? [ntC.toSend ? ntC.toSend + ' to send' : 'all sent', ntC.late ? ntC.late + ' late' : '', ntC.blocked ? ntC.blocked + ' with no recipient' : ''].filter(Boolean).join(' · ') : 'none needed today' },
-    { key: 'checks', label: 'ID & deposits', done: gcDone, needed: gcNeeded, loading: !gcQ.data && gcQ.loading, title: 'Arrivals in the next 7 days whose channel asks us to verify ID (Vrbo, Direct, Google) or collect a security deposit (Expedia): checks done against checks owed, today first',
-      segs: [{ label: 'done', n: gcDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'ID to verify', n: gcIdOpen, cls: 'bg-amber-400', tone: 'amber', filter: 'id' }, { label: 'deposit to take', n: gcDepOpen, cls: 'bg-rose-500', tone: 'rose', filter: 'deposit' }],
-      sub: gcQ.error ? (/migration/.test(gcQ.error) ? 'needs migration 145' : 'could not read') : gcNeeded ? [gcTodayOpen ? gcTodayOpen + ' arriving today still open' : 'today’s arrivals covered', gcIdOpen ? gcIdOpen + ' ID' : '', gcDepOpen ? gcDepOpen + ' deposit' : ''].filter(Boolean).join(' · ') : 'nothing owed this week' },
+    { key: 'checks', label: 'ID & deposits', done: gcDone, needed: gcNeeded, loading: !gcQ.data && gcQ.loading, title: 'Arrivals in the next 7 days whose channel asks us to verify ID (Vrbo, Direct, Google) or collect a security deposit (Expedia): checks done against checks owed, today first. An ID is verified when its photo reads as the booking\'s guest, when the desk closes it by hand, or when “verified” is ticked on the booking in Guesty; a photo that does not read as the guest is flagged to check',
+      segs: [{ label: 'done', n: gcDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'ID photo to check', n: gcToCheck, cls: 'bg-rose-600', tone: 'rose', filter: 'check' }, { label: 'ID to verify', n: gcIdOpen - gcToCheck, cls: 'bg-amber-400', tone: 'amber', filter: 'id' }, { label: 'deposit to take', n: gcDepOpen, cls: 'bg-rose-500', tone: 'rose', filter: 'deposit' }],
+      sub: gcQ.error ? (/migration/.test(gcQ.error) ? 'needs migration 145' : 'could not read') : gcNeeded ? [gcToCheck ? gcToCheck + ' ID photo' + (gcToCheck === 1 ? '' : 's') + ' to check' : '', gcTodayOpen ? gcTodayOpen + ' arriving today still open' : 'today’s arrivals covered', gcIdOpen - gcToCheck ? (gcIdOpen - gcToCheck) + ' ID' : '', gcDepOpen ? gcDepOpen + ' deposit' : ''].filter(Boolean).join(' · ') : 'nothing owed this week' },
     { key: 'blocked', label: 'Blocked units', done: 0, needed: blRuns.length, loading: !blQ.data && blQ.loading, title: 'Units out of service on the calendar: off right now, starting within a week, and later — with the block note',
       big: { value: String(blLive), unit: blLive === 1 ? 'off today' : 'off today', tone: blLive ? 'text-rose-700' : 'text-emerald-700' },
       segs: [{ label: 'off now', n: blLive, cls: 'bg-rose-500', tone: 'rose', filter: 'live' }, { label: 'within 7 days', n: blSoon, cls: 'bg-amber-400', tone: 'amber', filter: 'soon' }, { label: 'later', n: blLater, cls: 'bg-slate-300', tone: 'slate', filter: 'later' }],
@@ -479,23 +491,29 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     if (open === 'reviews') for (const r of rvAll) { const f = fiveStar(r.rating, r.channel); const low = f != null && f <= 3; const done = r.hasReply || r.dismissed; out.push({ key: 'rv:' + r.id, state: done ? 'done' : low ? 'low' : 'wait', sort: done ? 9 : low ? 0 : 2, node: <Row dot={!done && low ? 'rose' : null} title={(r.guest || 'Guest') + (r.listing_name ? ' · ' + r.listing_name : '')} tags={<>{f != null && <Tag tone={low ? 'rose' : f >= 4.5 ? 'emerald' : 'slate'}>{f}★</Tag>}<Tag>{String(r.channel || '').replace(/airbnb2?/i, 'Airbnb').replace(/bookingcom/i, 'Booking')}</Tag>{done ? <Tag tone="emerald">{r.hasReply ? 'responded' : 'set aside'}</Tag> : <Tag tone="amber">waiting</Tag>}</>} meta={new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' })} actions={!done ? <Link href="/reviews" prefetch={false} className={DARK}>Reply</Link> : null} /> }) }
     if (open === 'notices') for (const n of ntToday) out.push({ key: 'nt:' + n.id, state: n.sent_at ? 'sent' : n.urgency === 'late' ? 'late' : n.urgency === 'due' ? 'due' : 'open', sort: n.sent_at ? 9 : n.urgency === 'late' ? 0 : n.urgency === 'due' ? 1 : 3, node: <Row dot={!n.sent_at && n.urgency === 'late' ? 'rose' : null} title={n.guest_name} tags={<>{n.propertyName && <Tag tone="violet">{n.propertyName}</Tag>}{n.sent_at ? <Tag tone="emerald">sent{n.sent_by ? ' · ' + n.sent_by : ''}</Tag> : n.urgency === 'late' ? <Tag tone="rose">late</Tag> : n.urgency === 'due' ? <Tag tone="amber">due now</Tag> : null}{!n.sent_at && n.hasRecipient === false && <Tag tone="amber">no recipient</Tag>}</>} meta={'Unit ' + n.unit_no + ' · arrives ' + String(n.arrival_date).slice(5)} actions={<>{!n.sent_at && <Link href="/reservation-emails" prefetch={false} className={GHOST}>Open</Link>}{!n.sent_at && <button onClick={() => sendNotice(n.id)} disabled={ntBusy === n.id} className={DARK}>{ntBusy === n.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Sent</button>}</>} /> })
     if (open === 'checks') for (const r of gcRows) {
-      const idOpen = r.needId && r.idStatus === 'pending', depOpen = r.needDeposit && r.depositStatus === 'pending'
+      const idOpen = gcIdOpenOf(r), depOpen = r.needDeposit && r.depositStatus === 'pending'
       const relDue = r.depositStatus === 'captured' && !!r.depositReleaseDue && r.depositReleaseDue <= d.today
       const at = (s?: string | null) => s ? new Date(s).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }) : ''
-      out.push({ key: 'gc:' + r.reservationId, state: !idOpen && !depOpen && !relDue ? 'done' : depOpen || relDue ? 'deposit' : 'id', sort: (!idOpen && !depOpen && !relDue ? 9 : r.today || relDue ? 0 : 2) + (r.checkIn > d.today ? 0.5 : 0), node: <Row dot={((idOpen || depOpen) && r.today) || relDue ? 'rose' : null} title={r.guest + ' · ' + r.unit}
+      const canEdit = !!gcQ.data?.canEdit
+      const b = gcBusy.startsWith(r.reservationId)
+      out.push({ key: 'gc:' + r.reservationId, state: !idOpen && !depOpen && !relDue ? 'done' : r.idStatus === 'check' ? 'check' : depOpen || relDue ? 'deposit' : 'id', sort: (!idOpen && !depOpen && !relDue ? 9 : r.idStatus === 'check' ? 0 : r.today || relDue ? 0 : 2) + (r.checkIn > d.today ? 0.5 : 0), node: <Row dot={((idOpen || depOpen) && r.today) || relDue || r.idStatus === 'check' ? 'rose' : null} title={r.guest + ' · ' + r.unit}
         tags={<><Tag>{r.channel}</Tag><Tag tone={r.today ? 'amber' : 'slate'}>{r.today ? 'arrives today' : r.inHouse ? 'in-house' : 'arrives ' + r.checkIn.slice(5)}</Tag>
-          {r.needId && <Tag tone={r.idStatus === 'pending' ? 'amber' : 'emerald'} title={r.idCapturedAt ? 'Captured ' + at(r.idCapturedAt) : undefined}>{r.idStatus === 'verified' ? 'ID verified · ' + (r.idMethod === 'link' ? 'guest link' : r.idMethod === 'salato' ? 'Salato' : 'desk') + (r.idCapturedAt ? ' · ' + at(r.idCapturedAt) : '') : r.idStatus === 'waived' ? 'ID waived' : r.idLinkSentAt ? 'link sent ' + at(r.idLinkSentAt) + ' · waiting' : 'ID to verify'}</Tag>}
-          {r.needDeposit && <Tag tone={r.depositStatus === 'pending' ? 'amber' : relDue ? 'rose' : 'emerald'}>{r.depositStatus === 'captured' ? 'deposit ' + (r.depositAmount != null ? '$' + Math.round(r.depositAmount).toLocaleString() : 'held') + (r.depositCapturedAt ? ' · ' + at(r.depositCapturedAt) : '') + (relDue ? ' · RELEASE DUE' : '') : r.depositStatus === 'released' ? 'deposit released' : r.depositStatus === 'claimed' ? 'deposit claimed' : r.depositStatus === 'waived' ? 'deposit waived' : 'deposit to collect' + (r.depositDue ? ' · $' + r.depositDue : '')}</Tag>}</>}
+          <IdTag r={r} />
+          {r.needDeposit && <Tag tone={r.depositStatus === 'pending' ? 'amber' : relDue ? 'rose' : 'emerald'} title={r.depositAuto ? 'A card hold on the booking in Guesty' : undefined}>{r.depositStatus === 'captured' ? 'deposit ' + (r.depositAmount != null ? '$' + Math.round(r.depositAmount).toLocaleString() : 'held') + (r.depositAuto ? ' · Guesty hold' : '') + (r.depositCapturedAt ? ' · ' + at(r.depositCapturedAt) : '') + (relDue ? ' · RELEASE DUE' : '') : r.depositStatus === 'released' ? 'deposit released' : r.depositStatus === 'claimed' ? 'deposit claimed' : r.depositStatus === 'waived' ? 'deposit waived' : 'deposit to collect' + (r.depositDue ? ' · $' + r.depositDue : '')}</Tag>}</>}
         meta={[r.idName ? 'ID: ' + r.idName : '', r.note, r.by ? 'by ' + String(r.by).split('@')[0] : ''].filter(Boolean).join(' · ')}
         actions={<>
-          {r.hasIdPhoto && <button onClick={() => viewCheckPhoto(r.reservationId, 'id')} className={GHOST} title="Opens a 10-minute link; the view is logged"><Eye size={12} /> ID</button>}
-          {r.hasSelfie && <button onClick={() => viewCheckPhoto(r.reservationId, 'selfie')} className={GHOST} title="Opens a 10-minute link; the view is logged"><Eye size={12} /> Selfie</button>}
-          {gcQ.data?.canEdit && idOpen && <button onClick={() => sendCheckLink(r.reservationId)} disabled={!!gcBusy} className={DARK} title="Message the guest the ID link on their booking thread">{gcBusy.startsWith(r.reservationId) ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />} {r.idLinkSentAt ? 'Send again' : 'Send ID link'}</button>}
-          {gcQ.data?.canEdit && depOpen && <Link href="/welcome-calls?tab=checks" className={DARK}><Check size={12} /> Deposit…</Link>}
-          {gcQ.data?.canEdit && relDue && <button onClick={() => setCheck(r.reservationId, { deposit_status: 'released' })} disabled={!!gcBusy} className={DARK}><Check size={12} /> Released</button>}
-          {gcQ.data?.canEdit && (idOpen || depOpen) && <button onClick={() => setCheck(r.reservationId, idOpen ? { id_status: 'waived' } : { deposit_status: 'waived' })} disabled={!!gcBusy} className={GHOST} title={idOpen ? 'Not needed for this stay' : 'No deposit for this stay'}>Waive</button>}
+          <IdActions r={r} canEdit={canEdit} busy={b} ghost={GHOST} dark={DARK}
+            onPatch={(patch) => setCheck(r.reservationId, patch)} onSendLink={() => sendCheckLink(r.reservationId)}
+            onView={which => viewCheckPhoto(r.reservationId, which)} onRecheck={() => setCheck(r.reservationId, { recheck: true })}
+            byHand={gcByHand === r.reservationId} setByHand={v => setGcByHand(v ? r.reservationId : '')} />
+          {canEdit && depOpen && <Link href="/welcome-calls?tab=checks" className={DARK}><Check size={12} /> Deposit…</Link>}
+          {canEdit && relDue && <button onClick={() => setCheck(r.reservationId, { deposit_status: 'released' })} disabled={!!gcBusy} className={DARK}><Check size={12} /> Released</button>}
+          {canEdit && depOpen && <button onClick={() => setCheck(r.reservationId, { deposit_status: 'waived' })} disabled={!!gcBusy} className={GHOST} title="No deposit for this stay">Waive deposit</button>}
           <Link href="/welcome-calls?tab=checks" className={GHOST} title="The ID & deposits desk">Desk</Link>
-        </>} /> })
+        </>}>
+        <IdCheckWhy r={r} />
+        {gcByHand === r.reservationId && canEdit && <ByHandStrip r={r} busy={b} ghost={GHOST} dark={DARK} field="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-brand-400" onClose={() => setGcByHand('')} onPatch={async (patch) => { await setCheck(r.reservationId, patch); setGcByHand('') }} />}
+      </Row> })
     }
     if (open === 'blocked') for (const r of blRuns) out.push({ key: 'bl:' + r.listingId + r.from, state: r.live ? 'live' : r.startsInDays <= 7 ? 'soon' : 'later', sort: r.live ? 0 : r.startsInDays, node: <Row dot={r.live ? 'rose' : null} title={r.unit} tags={<><Tag>{r.building}</Tag><Tag tone={r.live ? 'rose' : r.startsInDays <= 7 ? 'amber' : 'slate'}>{r.live ? 'off now' : 'in ' + r.startsInDays + 'd'}</Tag><Tag>{r.nights}{r.openEnded ? '+' : ''} night{r.nights === 1 ? '' : 's'}</Tag></>} meta={[r.from.slice(5) + ' → ' + (r.openEnded ? (r.blockEnd ? r.blockEnd.slice(5) + ' (Guesty)' : '?') : r.to.slice(5)), r.guestyLabel ? 'Guesty: ' + r.guestyLabel : r.reason, r.note].filter(Boolean).join(' · ')} actions={<Link href="/blocked" prefetch={false} className={GHOST}>Manage</Link>} /> })
     if (open === 'channels') for (const l of chBad) out.push({ key: 'ch:' + l.id, state: l.verdict === 'missing' ? 'missing' : 'hard', sort: l.verdict === 'missing' ? 2 : 0, node: <Row dot={l.verdict !== 'missing' ? 'rose' : null} title={l.name} tags={<><Tag>{l.building}</Tag><Tag tone={l.verdict === 'missing' ? 'amber' : 'rose'}>{l.verdict}</Tag>{l.missingMajor.map(k => <Tag key={k}>not on {k.replace(/airbnb2?/i, 'Airbnb').replace(/bookingcom/i, 'Booking.com')}</Tag>)}</>} meta={Object.entries(l.cells || {}).filter(([, c]) => c.verdict !== 'live').map(([k, c]) => k + ': ' + (c.status || c.verdict)).join(' · ')} actions={<Link href="/channels" prefetch={false} className={GHOST}>Channels</Link>} /> })
