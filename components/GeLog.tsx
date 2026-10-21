@@ -56,9 +56,10 @@ type Row = {
 type RosterRow = { name: string; dept: string; market: string; status: string; clash: string; unrostered: boolean }
 type Payload = { ok: boolean; date: string; money: boolean; rows: Row[]; roster: RosterRow[]; partial?: boolean; error?: string }
 
-// Department order and labels mirror lib/crew.ts — housekeeping is the bulk of the day so it
-// leads; 'other' is last, being the bucket for anyone nobody has filed yet.
-const DEPT_ORDER = ['housekeeping', 'supervision', 'inspection', 'maintenance', 'ccs', 'other']
+// Department order and labels mirror lib/crew.ts. Jon, 2026-10-21: "need to break out tbales ny
+// Hk, By Maintaicne and Supervisors" — his three lead, in the order he says them. Inspections and
+// CCS follow; 'other' is last, being the bucket for anyone nobody has filed yet.
+const DEPT_ORDER = ['housekeeping', 'maintenance', 'supervision', 'inspection', 'ccs', 'other']
 const DEPT_LABEL: Record<string, string> = {
   housekeeping: 'Housekeeping', supervision: 'Supervisors', inspection: 'Inspections',
   maintenance: 'Maintenance', ccs: 'CCS team', other: 'Other',

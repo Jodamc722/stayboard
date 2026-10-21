@@ -108,7 +108,22 @@ export async function GET(req: NextRequest) {
     for (const mb of ((team as any)?.markets || [])) {
       for (const p of (mb.people || [])) {
         const name = str(p.name); if (!name) continue
-        const dept = str(p.dept) || 'other'
+        // A PERSON'S DEPARTMENT IS WHO THEY ARE, NOT WHAT THEY TOUCHED THIS MORNING.
+        //
+        // Jon, 2026-10-21: "need to break out tbales ny Hk, By Maintaicne and Supervisors." Only
+        // two tables could ever appear, and this is why: lib/team-schedule derives a person's
+        // dept from the Breezeway TASK's type_department, which is only ever Housekeeping or
+        // Maintenance. So a supervisor whose day is inspections and quality walks filed under
+        // Housekeeping — and on a day when he happened to pick up a repair, under Maintenance.
+        // The same person, a different table, depending on the morning.
+        //
+        // lib/crew is the thing that actually knows, and resolves in a documented order (the
+        // staff record, then an override, then the declared list, then the role text, then
+        // Homebase). It leads now, with team-schedule's answer kept only as the fallback for
+        // somebody crew has never heard of. Supervisors, inspections and CCS get their own
+        // tables because their PEOPLE are theirs, whatever today's tasks were tagged.
+        const fromTasks = (str(p.dept) || '').toLowerCase()
+        const dept = (crew ? crew.deptOf(name, str(p.role) || null, (fromTasks as any) || null) : fromTasks) || 'other'
         if (!deptByName.has(name.toLowerCase())) deptByName.set(name.toLowerCase(), { dept, market: str(mb.market) })
         roster.push({
           name, dept, market: str(mb.market),
@@ -263,7 +278,10 @@ export async function GET(req: NextRequest) {
           haveTask.add(id)
           rows.push({
             key: 't:' + id, kind: 'task', taskId: id, listingId: str(j.listingId) || null,
-            person: who, dept: str(p.dept) || 'other', market: str(mb.market) || str(j.market),
+            // Same rule as the cleans above: the PERSON's department (via placeOf -> lib/crew),
+            // not the one team-schedule inferred from this particular Breezeway task. Otherwise a
+            // supervisor's inspections file under Housekeeping and his repairs under Maintenance.
+            person: who, dept: placeOf(who).dept || 'other', market: str(mb.market) || str(j.market),
             hub: str(j.market) || '—',
             taskType: typeOf(str(j.task), str(p.dept)),
             activity: str(j.task) || 'Task',
