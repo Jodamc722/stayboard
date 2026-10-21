@@ -32,13 +32,19 @@ export type UnpaidRow = {
   bucket: 'in_house' | 'today' | 'week' | 'later'
   guestyUrl: string
   tracking: { status: UnpaidStatus; notes: UnpaidNote[]; updatedAt: string | null; updatedBy: string | null }
+  /** THE 48-HOUR RULE (Jon, 2026-10-21: "guests have 48 hours to pay, assuming it's more than 3 days
+   *  away"). Booked more than 3 days before arrival: payment is due 48h after booking — until then the
+   *  row is in grace, not overdue. Booked within 3 days of arrival: due at once. */
+  bookedAt: string | null
+  payBy: string | null
+  inGrace: boolean
   /** What the guest thread shows (Jon, 2026-10-21: "it should read threads to see if we followed up"). */
   thread?: { askedAt: string | null; askedBy: string | null; automated: boolean; snippet: string | null; guestRepliedAt: string | null; guestSnippet: string | null } | null
 }
 export type UnpaidReport = {
   from: string; to: string; today: string
   rows: UnpaidRow[]
-  summary: { count: number; balance: number; inHouse: number; today: number; week: number; later: number; channelPays: number; chased: number }
+  summary: { count: number; inGrace: number; balance: number; inHouse: number; today: number; week: number; later: number; channelPays: number; chased: number }
 }
 
 // The channels WE collect for. Everything else is paid by the channel and never listed.
@@ -56,7 +62,7 @@ export async function loadUnpaid(opts: { from?: string; to?: string } = {}): Pro
   // Stays touching the window: arriving inside it, or already in house during it.
   const { data: res } = await db.from('guesty_reservations')
     // Sub-fields only (2026-10-01, load time): the full raw blob for 3,000 stays was ~1.5s of the read.
-    .select('id, listing_id, listing_name, guest_name, guest_email, guest_phone, check_in, check_out, nights, status, source, confirmation_code, money_total, money_paid, money_balance, money_currency, custom_fields, money:raw->money, tags:raw->tags')
+    .select('id, listing_id, listing_name, guest_name, guest_email, guest_phone, check_in, check_out, nights, status, source, confirmation_code, created_at, money_total, money_paid, money_balance, money_currency, custom_fields, money:raw->money, tags:raw->tags')
     .lte('check_in', to).gte('check_out', from)
     // Only the channels we collect for (WE_COLLECT, as a database filter): a few dozen rows, not every stay.
     .or('source.ilike.manual%,source.ilike.direct%,source.ilike.website%,source.ilike.be-api%,source.ilike.beapi%,source.ilike.booking_engine%,source.ilike.booking-engine%,source.ilike.booking engine%,source.ilike.guesty%,source.ilike.%vrbo%,source.ilike.%homeaway%,source.ilike.%google%')
@@ -95,13 +101,17 @@ export async function loadUnpaid(opts: { from?: string; to?: string } = {}): Pro
     const bucket: UnpaidRow['bucket'] = inHouse ? 'in_house' : daysUntil <= 0 ? 'today' : daysUntil <= 7 ? 'week' : 'later'
     const t = tracking[str(r.id)]
     const li = names[str(r.listing_id)]
+    const bookedAt = r.created_at ? new Date(str(r.created_at)).toISOString() : null
+    const bookedDaysAhead = bookedAt ? Math.round((Date.parse(ci + 'T16:00:00') - Date.parse(bookedAt)) / 86400000) : null
+    const payBy = bookedAt ? (bookedDaysAhead != null && bookedDaysAhead > 3 ? new Date(Date.parse(bookedAt) + 48 * 3600_000).toISOString() : bookedAt) : null
+    const inGrace = !!payBy && Date.now() < Date.parse(payBy) && daysUntil > 0
     out.push({
       id: str(r.id), unit: li?.name || str(r.listing_name) || 'Unit', listingId: r.listing_id ? str(r.listing_id) : null, building: li?.building || '',
       guest: str(r.guest_name) || 'Guest', phone: r.guest_phone ? str(r.guest_phone) : null, email: r.guest_email ? str(r.guest_email) : null,
       checkIn: ci, checkOut: co, nights: num(r.nights), status: str(r.status),
       source: str(r.source), channelPays: channelPaysFor(str(r.source), raw),
       total: Math.round(total * 100) / 100, paid: Math.round(paid * 100) / 100, balance: Math.round(balance * 100) / 100, currency: str(r.money_currency) || 'USD',
-      daysUntil, bucket,
+      daysUntil, bucket, bookedAt, payBy, inGrace,
       guestyUrl: `https://app.guesty.com/reservations/${encodeURIComponent(str(r.id))}`,
       tracking: { status: (UNPAID_STATUSES as string[]).includes(str(t?.status)) ? t.status : 'open', notes: Array.isArray(t?.notes) ? t.notes : [], updatedAt: t?.updated_at ? str(t.updated_at) : null, updatedBy: t?.updated_by ? str(t.updated_by) : null },
     })
@@ -119,7 +129,7 @@ export async function loadUnpaid(opts: { from?: string; to?: string } = {}): Pro
   return {
     from, to, today, rows: out,
     summary: {
-      count: out.length, balance: Math.round(out.reduce((a, r) => a + r.balance, 0)),
+      count: out.length, balance: Math.round(out.reduce((a, r) => a + r.balance, 0)), inGrace: out.filter(r => r.inGrace).length,
       inHouse: sum(r => r.bucket === 'in_house'), today: sum(r => r.bucket === 'today'), week: sum(r => r.bucket === 'week'), later: sum(r => r.bucket === 'later'),
       channelPays: sum(r => r.channelPays), chased: sum(r => r.tracking.status !== 'open'),
     },
@@ -172,7 +182,7 @@ async function readThreads(rows: UnpaidRow[]): Promise<void> {
 
 /** The checklist number: unpaid stays in house, arriving today or in the next 7 days, that the guest (not a channel) owes. */
 export async function countUnpaidDue(): Promise<number | null> {
-  try { const rep = await loadUnpaid(); return rep.rows.filter(r => r.bucket !== 'later' && r.tracking.status !== 'waived').length } catch { return null }
+  try { const rep = await loadUnpaid(); return rep.rows.filter(r => r.bucket !== 'later' && !r.inGrace && r.tracking.status !== 'waived').length } catch { return null }
 }
 
 export async function updateTracking(reservationId: string, by: string, patch: { status?: UnpaidStatus; note?: string }): Promise<{ ok: boolean; error?: string; tracking?: any }> {

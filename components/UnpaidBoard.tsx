@@ -18,6 +18,8 @@ export type UnpaidRowT = {
   checkIn: string; checkOut: string; nights: number; status: string; source: string; channelPays: boolean
   total: number; paid: number; balance: number; currency: string; daysUntil: number
   bucket: 'in_house' | 'today' | 'week' | 'later'; guestyUrl: string
+  /** 48-hour rule: booked > 3 days out → due 48h after booking; inside that window it is grace, not overdue. */
+  bookedAt?: string | null; payBy?: string | null; inGrace?: boolean
   tracking: { status: string; notes: Note[]; updatedAt: string | null; updatedBy: string | null }
 }
 type Row = UnpaidRowT
@@ -190,6 +192,8 @@ export function UnpaidRow({ r, today, canEdit, onPatch, simple = false }: { r: R
       meta={simple ? <>{r.unit} · {day(r.checkIn)} → {day(r.checkOut)}</> : <>{r.unit} · {whenTxt} · {r.nights}n</>}
       tags={<>
         {simple && <Tag tone={dueYmd === today ? 'rose' : 'amber'} title={r.bucket === 'in_house' ? 'The guest is inside — collect before checkout' : 'Collect before the door code goes out'}>{dueTxt}</Tag>}
+        {r.inGrace && r.payBy ? <Tag tone="slate" title={'Guests booked more than 3 days out have 48 hours to pay. Booked ' + when(r.bookedAt || r.payBy)}>48h grace · pay by {new Date(r.payBy).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</Tag>
+          : r.payBy && !r.inGrace && r.bookedAt ? <Tag tone="rose" title={'Payment was due ' + when(r.payBy)}>past the 48h</Tag> : null}
         <Tag>{channel(r.source)}</Tag>
         <Tag tone={st.tone}>{st.label}</Tag>
         {r.tracking.notes.length > 0 && <Tag tone="sky" title={lastNote ? `${first(lastNote.by)} · ${when(lastNote.at)}` : ''}><MessageSquare size={10} className="inline -mt-px mr-0.5" />{r.tracking.notes.length}</Tag>}
