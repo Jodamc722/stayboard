@@ -106,21 +106,22 @@ const isOn = (v: string) => /work|on\s*call/i.test(String(v || ''))
 const shortName = (n: string) => { const p = String(n || '').trim().split(/\s+/); return p.length > 1 ? p[0] + ' ' + p[p.length - 1][0] + '.' : (p[0] || '') }
 
 // The sheet's own columns, in the sheet's order. `w` keeps the grid from reflowing as cells fill.
-const COLS: { k: string; label: string; w: string; align?: string }[] = [
-  { k: 'person', label: 'HK Team', w: '112px' },
-  { k: 'hub', label: 'HUB', w: '104px' },
-  { k: 'activity', label: 'Activities', w: '104px' },
-  { k: 'listing', label: 'LISTING', w: '150px' },
-  { k: 'reservation', label: 'RESERVATION NAME', w: '180px' },
-  { k: 'checkIn', label: 'CHECK-IN DATE', w: '130px' },
-  { k: 'checkOut', label: 'CHECK-OUT DATE', w: '130px' },
-  { k: 'sameDay', label: 'Same Day Checkout', w: '92px' },
-  { k: 'nights', label: 'NO. OF NIGHTS', w: '84px', align: 'text-center' },
-  { k: 'fee', label: 'Cleaning fee', w: '92px', align: 'text-right' },
-  { k: 'cleanHours', label: 'Cleaning time', w: '82px', align: 'text-center' },
-  { k: 'payout', label: 'Total Payout', w: '100px', align: 'text-right' },
-  { k: 'act', label: '', w: '74px', align: 'text-right' },
+const COLS: { k: string; label: string; w: number; align?: string }[] = [
+  { k: 'person', label: 'HK Team', w: 118 },
+  { k: 'hub', label: 'HUB', w: 96 },
+  { k: 'activity', label: 'Activities', w: 210 },
+  { k: 'listing', label: 'LISTING', w: 164 },
+  { k: 'reservation', label: 'RESERVATION NAME', w: 190 },
+  { k: 'checkIn', label: 'CHECK-IN DATE', w: 118 },
+  { k: 'checkOut', label: 'CHECK-OUT DATE', w: 118 },
+  { k: 'sameDay', label: 'Same Day Checkout', w: 86, align: 'text-center' },
+  { k: 'nights', label: 'NO. OF NIGHTS', w: 64, align: 'text-center' },
+  { k: 'fee', label: 'Cleaning fee', w: 86, align: 'text-right' },
+  { k: 'cleanHours', label: 'Cleaning time', w: 74, align: 'text-center' },
+  { k: 'payout', label: 'Total Payout', w: 94, align: 'text-right' },
+  { k: 'act', label: '', w: 72, align: 'text-right' },
 ]
+const GRID_W = COLS.reduce((n, c) => n + c.w, 0)
 
 export default function GeLog({ date }: { date: string }) {
   const [data, setData] = useState<Payload | null>(null)
@@ -246,7 +247,7 @@ export default function GeLog({ date }: { date: string }) {
   // borders reads as a spreadsheet screenshot rather than as this app.
   const TD = 'px-2 py-[5px] align-middle'
   const pill = (v: string, extra = '') =>
-    <span className={'inline-block w-full text-center text-[10.5px] font-semibold rounded-full border px-2 py-[2px] truncate ' + tint(v) + ' ' + extra} title={v}>{v}</span>
+    <span className={'block text-center text-[10.5px] font-semibold rounded-full border px-2 py-[2px] truncate ' + tint(v) + ' ' + extra} title={v}>{v}</span>
 
   function Cells({ r, person }: { r: Row; person: string }) {
     const b = !!busy[r.key]
@@ -263,7 +264,12 @@ export default function GeLog({ date }: { date: string }) {
           </div>
         </td>
         <td className={TD + ' p-[3px]'}>{pill(r.hub)}</td>
-        <td className={TD + ' p-[3px]'}>{pill(r.activity)}</td>
+        {/* The sheet's Activities cell holds one word, so it is a tag. Ours also holds real task
+            names ("[Moved to Oct 18] A/C filter change — 7071 SW - 3BR"), and a 90-character tag
+            is not a tag. Short values keep the pill; long ones are plain text that truncates. */}
+        <td className={TD + (r.activity.length <= 16 ? ' p-[3px]' : ' truncate text-ink/85')} title={r.activity}>
+          {r.activity.length <= 16 ? pill(r.activity) : r.activity}
+        </td>
         <td className={TD + ' text-center font-semibold text-ink truncate'} title={r.listing}>{r.listing}</td>
         <td className={TD + ' text-center font-semibold truncate text-ink'} title={r.reservation || (vacant ? 'Vacant' : '')}>
           {r.reservation || (vacant
@@ -394,7 +400,9 @@ export default function GeLog({ date }: { date: string }) {
 
       {shown.length > 0 && (
         <div className="overflow-auto rounded-xl border border-line bg-white max-h-[76vh]">
-          <table className="text-[11px] border-collapse" style={{ minWidth: 1180 }}>
+          {/* FIXED layout, or the colgroup is only a suggestion: one 90-character task name then
+              stretches Activities across the screen and pushes the money columns out of sight. */}
+          <table className="text-[11px] border-collapse" style={{ tableLayout: 'fixed', width: GRID_W }}>
             <colgroup>{COLS.map(c => <col key={c.k} style={{ width: c.w }} />)}</colgroup>
             {/* The day board's own table head — neutral ground, muted small caps, one rule under
                 it — and it STICKS, because twelve columns are unreadable the moment the labels

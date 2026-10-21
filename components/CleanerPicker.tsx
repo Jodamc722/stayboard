@@ -53,7 +53,11 @@ export default function CleanerPicker({ people, value, existing, onChange, disab
     for (const p of base) (names.some(n => sameRosterPerson(n, p.name)) ? on : off).push(p)
     return [on, off.slice(0, 60)]
   }, [people, q, scheduled])
-  if (disabled) return <div className="text-[10px] text-muted italic">{existing || 'Assign in Breezeway'}</div>
+  // Disabled means there is nothing of ours to assign — a vendor building, or a row with no
+  // Breezeway task behind it. In a wide form "Assign in Breezeway" is useful guidance; in a
+  // 118px grid cell it is two wrapped lines of noise where a dash would do, so a caller that
+  // passes a placeholder gets the placeholder.
+  if (disabled) return <div className="text-[10px] text-muted italic truncate" title={existing || 'Nothing of ours to assign on this one'}>{existing || placeholder || 'Assign in Breezeway'}</div>
   const label = value ? value.name : (existing || '')
   const _lp = label ? label.split(', ') : []
   const _sn = (n: string) => { const p = (n || '').trim().split(/\s+/).filter(Boolean); return p.length > 1 ? p[0] + ' ' + p[p.length - 1][0] + '.' : (p[0] || '') }
