@@ -161,6 +161,15 @@ const SECTIONS: { key: Status; title: string; blurb: string; collapsed: boolean 
   { key: 'clear', title: 'No issues found', blurb: 'nothing flagged — no decision needed', collapsed: true },
 ]
 
+// A CANCELLATION FEE (Jon, 2026-10-21: "we need to filter also for cancellation fees"): a canceled
+// booking that still left money on the statement this month — the fee the owner keeps (or that went
+// to commission) — or any line item that names itself one. A canceled booking whose lines net to
+// nothing is "Canceled", not a fee.
+const CANCEL_FEE_LINE = /cancel+ation|cancel+ed?\s*fee|cancel+\s*(charge|penalty)/i
+const isCancelFee = (it: Item) =>
+  (it.statusTag === 'canceled' && (Math.abs(it.rental) > 0.005 || Math.abs(it.net) > 0.005 || Math.abs(it.commission) > 0.005))
+  || it.lines.some(l => CANCEL_FEE_LINE.test(l.label) && Math.abs(l.amount) > 0.005)
+
 const fmt = (n: number) => {
   const sign = n < 0 ? '-' : ''
   return sign + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -305,7 +314,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [fFlag, setFFlag] = useState<'' | 'flagged' | FlagType>('')
   const [fOwner, setFOwner] = useState('')
   const [fSource, setFSource] = useState('')                                 // channel filter (label)
-  const [fTag, setFTag] = useState<'' | 'canceled' | 'inquiry' | 'declined' | 'expired' | 'owner' | 'owner_guest' | 'ff'>('')
+  const [fTag, setFTag] = useState<'' | 'canceled' | 'cancel_fee' | 'inquiry' | 'declined' | 'expired' | 'owner' | 'owner_guest' | 'ff'>('')
   // The weekly lens: only rows whose line items moved in the last 7 days. This is what makes the
   // board a Monday-morning tool instead of a statement-day scramble — the team reviews what
   // CHANGED since last week, and by generation day there is nothing left to discover.
@@ -735,6 +744,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       if (fFlag && fFlag !== 'flagged' && !it.flags.some(f => f.type === fFlag)) return false
       if (fSource && sourceLabel(it.source) !== fSource) return false
       if (fTag === 'owner' || fTag === 'owner_guest' || fTag === 'ff') { if (it.stayTag !== fTag) return false }
+      else if (fTag === 'cancel_fee') { if (!isCancelFee(it)) return false }
       else if (fTag) { if (it.statusTag !== fTag) return false }
       if (needle) {
         const hay = (it.guest + ' ' + it.resCode + ' ' + it.unit + ' ' + (ownerName[it.ownerId] || '') + ' ' + it.note).toLowerCase()
@@ -751,6 +761,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     for (const it of (data?.items || [])) {
       if (it.statusTag) t[it.statusTag] = (t[it.statusTag] || 0) + 1
       if (it.stayTag) t[it.stayTag] = (t[it.stayTag] || 0) + 1
+      if (isCancelFee(it)) t.cancel_fee = (t.cancel_fee || 0) + 1
       const s = sourceLabel(it.source)
       if (s) src[s] = (src[s] || 0) + 1
     }
@@ -788,7 +799,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       const o = data.owners.find(x => x.ownerId === it.ownerId)
       return [
         ownerName[it.ownerId] || it.ownerId, it.unit, it.guest, it.resCode || it.key,
-        sourceLabel(it.source), it.statusTag ? it.statusTag.charAt(0).toUpperCase() + it.statusTag.slice(1) : it.stayTag ? STAY_LABEL[it.stayTag] : '',
+        sourceLabel(it.source), (it.statusTag ? it.statusTag.charAt(0).toUpperCase() + it.statusTag.slice(1) : it.stayTag ? STAY_LABEL[it.stayTag] : '') + (isCancelFee(it) ? (it.statusTag ? ' · ' : '') + 'Cancellation fee' : ''),
         it.checkIn, it.checkOut, it.monthNights,
         it.rental.toFixed(2), it.rate == null ? '' : it.rate.toFixed(2), it.avgRate == null ? '' : it.avgRate.toFixed(2),
         it.benchRate == null ? '' : it.benchRate.toFixed(2), it.benchPct == null ? '' : it.benchPct + '%',
@@ -840,6 +851,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               {it.splitMonth && <Tag title={it.monthNights + ' of the stay’s ' + it.totalNights + ' nights fall in this month'}>split</Tag>}
               {it.lastPosted && it.lastPosted >= freshCut && <Tag tone="sky" title={'Line items posted ' + dateShort(it.lastPosted) + ' — new activity since last week'}>posted {dateShort(it.lastPosted)}</Tag>}
               {it.statusTag === 'canceled' && <Tag>Canceled</Tag>}
+              {isCancelFee(it) && <Tag tone="amber" title="Money on the statement for a canceled booking — a cancellation fee">Cancellation fee</Tag>}
               {it.statusTag === 'inquiry' && <Tag tone="violet" title="Never a confirmed booking — worth checking why it carries statement line items">Inquiry</Tag>}
               {it.statusTag === 'declined' && <Tag>Declined</Tag>}
               {it.statusTag === 'expired' && <Tag>Expired</Tag>}
@@ -1831,12 +1843,13 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   </button>
                 ))}
                 <span className="w-px h-5 bg-line mx-1" />
-                {([['canceled', 'Canceled'], ['inquiry', 'Inquiry'], ['declined', 'Declined'], ['expired', 'Expired'], ['owner', 'Owner stay'], ['owner_guest', 'Owner’s guest'], ['ff', 'Friends & family']] as [typeof fTag, string][])
+                {([['canceled', 'Canceled'], ['cancel_fee', 'Cancellation fee'], ['inquiry', 'Inquiry'], ['declined', 'Declined'], ['expired', 'Expired'], ['owner', 'Owner stay'], ['owner_guest', 'Owner’s guest'], ['ff', 'Friends & family']] as [typeof fTag, string][])
                   .filter(([k]) => tagCounts.t[k as string])
                   .map(([k, label]) => (
                     <button key={k} onClick={() => setFTag(fTag === k ? '' : k)}
+                      title={k === 'cancel_fee' ? 'Canceled bookings that still left money on the statement this month — the cancellation fee — plus any line item named as one' : k === 'canceled' ? 'Every canceled booking with line items this month, fee or not' : undefined}
                       className={'text-xs font-medium px-2.5 py-1 rounded-full ring-1 ring-inset transition '
-                        + (k === 'owner' || k === 'owner_guest' || k === 'ff' ? 'bg-violet-50 text-violet-700 ring-violet-200' : k === 'inquiry' ? 'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200' : 'bg-neutral-100 text-neutral-600 ring-neutral-300')
+                        + (k === 'owner' || k === 'owner_guest' || k === 'ff' ? 'bg-violet-50 text-violet-700 ring-violet-200' : k === 'inquiry' ? 'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200' : k === 'cancel_fee' ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-neutral-100 text-neutral-600 ring-neutral-300')
                         + (fTag === k ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
                       {label} {tagCounts.t[k as string]}
                     </button>
