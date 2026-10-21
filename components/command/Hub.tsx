@@ -995,7 +995,9 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
         <Lane area={focus} items={items.filter(i => i.area === focus)} focused empty={EMPTY[focus]} right={laneStat(focus)} />
       ) : (
         <div className="grid gap-5 lg:grid-cols-2 items-start">
-          {[['ops', 'reviews'], ['guests', 'admin']].map((col, ci) => (
+          {/* The Reviews lane is gone (2026-10-21 audit): reviews ride in the Guests lane (its Reviews tab),
+              so the lane was always empty and read "nothing waiting on a reply" while 14 waited. */}
+          {[['ops'], ['guests', 'admin']].map((col, ci) => (
             <div key={ci} className="space-y-5 min-w-0">
               {(col as Area[]).map(a => <Lane key={a} area={a} items={items.filter(i => i.area === a)} focused={false} empty={EMPTY[a]} right={laneStat(a)} hide={shownInNow} />)}
             </div>

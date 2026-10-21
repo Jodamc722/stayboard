@@ -15,8 +15,14 @@
 //
 // Inquiries are NOT bookings — an unconverted inquiry must never hold a unit off the vacant list.
 
-/** Statuses that do NOT hold the unit: nothing to walk in on. */
-export const DEAD_STAY = /cancel|declin|expire|denied|inquir|unavailable/i
+/** Statuses that do NOT hold the unit: nothing to walk in on.
+ *
+ *  CLOSED IS DEAD (2026-10-21 Today audit). Guesty: "Closed is an inactive status for a request that
+ *  never became a confirmed booking … this status removes the reservation block in the calendar." An
+ *  abandoned booking-engine checkout lands as `closed` with nothing paid — the audit found two of them
+ *  for 17WEST 507 (Oct 25–29) sitting on Today's Unpaid tile as $1,819 owed, and every occupancy
+ *  read treated the unit as taken. The KPI revenue reads (lib/kpi, lib/projections) keep their own list. */
+export const DEAD_STAY = /cancel|declin|expire|denied|inquir|unavailable|^\s*closed\s*$/i
 
 /** True when this reservation should be treated as holding the unit. */
 export function isLiveStay(status: any): boolean {

@@ -32,6 +32,8 @@ export type UnpaidRow = {
   bucket: 'in_house' | 'today' | 'week' | 'later'
   guestyUrl: string
   tracking: { status: UnpaidStatus; notes: UnpaidNote[]; updatedAt: string | null; updatedBy: string | null }
+  /** What the guest thread shows (Jon, 2026-10-21: "it should read threads to see if we followed up"). */
+  thread?: { askedAt: string | null; askedBy: string | null; automated: boolean; snippet: string | null; guestRepliedAt: string | null; guestSnippet: string | null } | null
 }
 export type UnpaidReport = {
   from: string; to: string; today: string
@@ -102,6 +104,13 @@ export async function loadUnpaid(opts: { from?: string; to?: string } = {}): Pro
       tracking: { status: (UNPAID_STATUSES as string[]).includes(str(t?.status)) ? t.status : 'open', notes: Array.isArray(t?.notes) ? t.notes : [], updatedAt: t?.updated_at ? str(t.updated_at) : null, updatedBy: t?.updated_by ? str(t.updated_by) : null },
     })
   }
+  // ── DID WE ASK IN THE THREAD? ────────────────────────────────────────────────────────────────
+  // Until 2026-10-21 "contacted" only meant someone pressed a button here, so a balance chased in the
+  // Guesty inbox (by a person or by an automated payment reminder) still read "not contacted". Now
+  // the thread is read: our latest message about the money, and whether the guest answered after it.
+  // A row nobody marked is shown as contacted when the thread proves it — the note says so.
+  try { await readThreads(out) } catch { /* the board still stands on the manual tracking */ }
+
   const ORDER: Record<UnpaidRow['bucket'], number> = { in_house: 0, today: 1, week: 2, later: 3 }
   out.sort((a, b) => ORDER[a.bucket] - ORDER[b.bucket] || a.checkIn.localeCompare(b.checkIn) || b.balance - a.balance)
   const sum = (f: (r: UnpaidRow) => boolean) => out.filter(f).length
@@ -112,6 +121,47 @@ export async function loadUnpaid(opts: { from?: string; to?: string } = {}): Pro
       inHouse: sum(r => r.bucket === 'in_house'), today: sum(r => r.bucket === 'today'), week: sum(r => r.bucket === 'week'), later: sum(r => r.bucket === 'later'),
       channelPays: sum(r => r.channelPays), chased: sum(r => r.tracking.status !== 'open'),
     },
+  }
+}
+
+const PAY_RE = /\b(pay|paid|payment|balance|deposit|card|invoice|charge|outstanding|amount due|remaining|link to (pay|complete)|complete (your|the) (booking|reservation)|security deposit|pago|saldo|tarjeta)\b/i
+
+async function readThreads(rows: UnpaidRow[]): Promise<void> {
+  if (!rows.length) return
+  const db = supabaseAdmin()
+  const ids = rows.map(r => r.id)
+  const { data: convs } = await db.from('guesty_conversations').select('id,reservation_id').in('reservation_id', ids).limit(400)
+  const convOf: Record<string, string[]> = {}
+  for (const c of ((convs || []) as any[])) (convOf[str(c.reservation_id)] = convOf[str(c.reservation_id)] || []).push(str(c.id))
+  const convIds = Object.values(convOf).flat()
+  if (!convIds.length) return
+  const since = new Date(Date.now() - 45 * 86400_000).toISOString()
+  const { data: msgs } = await db.from('guesty_messages').select('conversation_id,sender,sender_name,body,sent_at,is_automated')
+    .in('conversation_id', convIds).gte('sent_at', since).order('sent_at', { ascending: true }).limit(4000)
+  const byConv: Record<string, any[]> = {}
+  for (const m of ((msgs || []) as any[])) (byConv[str(m.conversation_id)] = byConv[str(m.conversation_id)] || []).push(m)
+  const clip = (t: string) => str(t).replace(/\s+/g, ' ').trim().slice(0, 140)
+  const day = (iso: string) => new Date(iso).toLocaleDateString('en-US', { timeZone: TZ, month: 'short', day: 'numeric' })
+  for (const r of rows) {
+    const ms = (convOf[r.id] || []).flatMap(id => byConv[id] || []).sort((a, b) => str(a.sent_at).localeCompare(str(b.sent_at)))
+    const asks = ms.filter(m => m.sender === 'host' && PAY_RE.test(str(m.body)))
+    const ask = asks[asks.length - 1] || null
+    const reply = ask ? ms.find(m => m.sender === 'guest' && str(m.sent_at) > str(ask.sent_at)) || null : null
+    r.thread = ask ? {
+      askedAt: str(ask.sent_at), askedBy: ask.is_automated ? 'automated message' : (str(ask.sender_name) || 'us'), automated: ask.is_automated === true,
+      snippet: clip(ask.body), guestRepliedAt: reply ? str(reply.sent_at) : null, guestSnippet: reply ? clip(reply.body) : null,
+    } : null
+    // A PERSON asking flips the row to contacted. An automated template (welcome, policy text) that
+    // merely mentions a deposit is shown as a note but does not count as a follow-up.
+    if (ask) {
+      const note = { at: str(ask.sent_at), by: r.thread!.askedBy || 'thread', text: `${ask.is_automated ? 'Automated message in the thread' : 'Asked in the guest thread'} ${day(str(ask.sent_at))}: "${r.thread!.snippet}"${reply ? ` — guest replied ${day(str(reply.sent_at))}: "${r.thread!.guestSnippet}"` : ' — no reply yet'}` }
+      r.tracking = { ...r.tracking, notes: [...r.tracking.notes, note] }
+    }
+    if (ask && !ask.is_automated && r.tracking.status === 'open') {
+      r.tracking = {
+        ...r.tracking, status: 'contacted',
+      }
+    }
   }
 }
 
