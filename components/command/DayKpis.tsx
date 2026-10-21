@@ -520,6 +520,44 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     unpaid: { open: uOpen, today: unpaidRows.filter(r => r.tracking.status === 'open' && (r.bucket === 'in_house' || r.bucket === 'today')).length },
   })
 
+  // ── THE TODAY PLAN (Jon, 2026-10-21: "I like individual tabs, but ok to have a single area where you
+  // can see it" the way it was laid out): the same numbers as the tiles, read as one list in four
+  // parts — right now, reach out today (future guests too), office, and the standing background.
+  // Each line opens its tile below. A line at zero reads as done instead of disappearing.
+  const [view, setViewState] = useState<'tiles' | 'plan'>(() => { try { return localStorage.getItem('today.view') === 'plan' ? 'plan' : 'tiles' } catch { return 'tiles' } })
+  const setView = (v: 'tiles' | 'plan') => { setViewState(v); try { localStorage.setItem('today.view', v) } catch { /* fine */ } }
+  type PlanLine = { key: Key; n: number; text: string; done: string; tone: 'rose' | 'amber' | 'slate' }
+  const plan: { title: string; hint: string; lines: PlanLine[]; quiet?: boolean }[] = [
+    { title: 'Right now', hint: 'on site, before 4pm', lines: [
+      { key: 'cleans', n: cTrouble, text: 'cleans late or at risk for 4pm', done: 'no clean at risk', tone: 'rose' },
+      { key: 'cleans', n: cNobody, text: 'cleans with nobody on them', done: 'every clean has a person', tone: 'rose' },
+      { key: 'insp', n: iMissing + iNobody, text: 'inspections missing or unassigned', done: 'inspections covered', tone: 'amber' },
+      { key: 'team', n: shCount('late'), text: 'on the schedule but not clocked in', done: 'everyone scheduled is in', tone: 'amber' },
+      { key: 'notices', n: ntC.late, text: 'front-desk notices late', done: 'no notice late', tone: 'rose' },
+    ] },
+    { title: 'Reach out today', hint: 'guests — today and coming up', lines: [
+      { key: 'welcome', n: wOwedToday, text: 'welcome calls still owed for today’s arrivals', done: 'today’s welcome calls done', tone: 'rose' },
+      { key: 'welcome', n: wLater, text: 'welcome calls due in the next 3 days', done: 'next 3 days called', tone: 'slate' },
+      { key: 'recovery', n: Math.max(0, rcToday.length - rcTodayDone), text: 'recovery calls today', done: 'recovery calls done', tone: 'amber' },
+      { key: 'unpaid', n: uOpen, text: 'unpaid balances to chase (next 30 days)' + (uGrace ? ` · ${uGrace} still in 48h grace` : ''), done: 'no balance to chase' + (uGrace ? ` · ${uGrace} in 48h grace` : ''), tone: 'rose' },
+      { key: 'checks', n: gcIdOpen + gcDepOpen, text: 'ID checks / deposits open for upcoming arrivals', done: 'IDs and deposits done', tone: 'amber' },
+      { key: 'notices', n: Math.max(0, ntC.toSend - ntC.late), text: 'front-desk notices to send', done: 'notices sent', tone: 'amber' },
+      { key: 'reviews', n: rvWait.length, text: 'reviews waiting on a reply' + (rvLow.length ? ` (${rvLow.length} at 3★ or under)` : ''), done: 'every review answered', tone: rvLow.length ? 'rose' : 'amber' },
+    ] },
+    { title: 'Office', hint: 'deadlines and follow-ups', lines: [
+      { key: 'claims', n: cl.dueSoon, text: 'claims due within 3 days', done: 'no claim deadline close', tone: 'rose' },
+      { key: 'glitches', n: gl.overdue, text: 'glitches overdue', done: 'no glitch overdue', tone: 'rose' },
+      { key: 'glitches', n: gl.noTask, text: 'glitches with no task', done: 'every glitch has a task', tone: 'amber' },
+      { key: 'checklist', n: ckLate + ckSoon, text: 'checklist items late or due within the hour', done: 'checklist on time', tone: 'amber' },
+    ] },
+    { title: 'Background', hint: 'standing — not today’s to-do', quiet: true, lines: [
+      { key: 'blocked', n: blLive, text: 'units blocked right now' + (blSoon ? ` · ${blSoon} starting this week` : ''), done: 'nothing blocked', tone: 'slate' },
+      { key: 'channels', n: chHard, text: 'listings suspended / failed / disconnected', done: 'channels connected', tone: 'slate' },
+      { key: 'maint', n: mUrgent, text: 'urgent / high maintenance open', done: 'no urgent maintenance', tone: 'slate' },
+    ] },
+  ]
+  const openTile = (k: Key) => { setView('tiles'); setOpen(k); setTimeout(() => document.getElementById('day-kpis-tiles')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60) }
+
   useEffect(() => { publishHealth(health, k => { toggle(k as Key); setTimeout(() => document.getElementById('day-kpis')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50) }) })
 
   return (
@@ -528,7 +566,43 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
       {/* BY TEAM (Jon, 2026-10-02: "clear visibility … for all teams and staff"; "clunky, noisy"). Three
           labelled rows instead of one wall of fourteen tiles: what housekeeping and maintenance own,
           what the guest team owns, what the office owns. A tile is still one click to its full list. */}
-      <div className="space-y-2">
+      <div className="flex items-center gap-1 mb-2">
+        <span className="inline-flex rounded-lg border border-line bg-white overflow-hidden">
+          {([['tiles', 'By team'], ['plan', 'Today plan']] as const).map(([k, label]) => (
+            <button key={k} onClick={() => setView(k)} aria-pressed={view === k} className={'h-8 px-3 text-[12px] font-semibold ' + (view === k ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{label}</button>
+          ))}
+        </span>
+        <span className="ml-2 text-[11.5px] text-muted hidden sm:inline">{view === 'plan' ? 'Everything that needs doing today in one list — click a line to open it' : 'One tile per area — click a tile for its list'}</span>
+      </div>
+      {view === 'plan' ? (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4 mb-2">
+          {plan.map(sec => {
+            const live = sec.lines.filter(l => l.n > 0).length
+            return (
+              <div key={sec.title} className={'rounded-2xl border p-3 ' + (sec.quiet ? 'border-line bg-app/40' : 'border-line bg-white')}>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <h3 className={'text-[13px] font-bold ' + (sec.quiet ? 'text-muted' : 'text-ink')}>{sec.title}</h3>
+                  <span className="text-[11px] text-muted">{sec.hint}</span>
+                  {!sec.quiet ? <span className={'ml-auto text-[11px] font-bold px-1.5 rounded ' + (live ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800')}>{live ? live + ' open' : 'clear'}</span> : null}
+                </div>
+                <ul className="space-y-1">
+                  {sec.lines.map((l, i) => (
+                    <li key={i}>
+                      <button onClick={() => openTile(l.key)} className="w-full text-left flex items-start gap-2 rounded-lg px-1.5 py-1 hover:bg-app/60">
+                        {l.n > 0
+                          ? <span className={'shrink-0 min-w-[1.75rem] text-center text-[12px] font-bold rounded-md px-1 tabular-nums ' + (sec.quiet ? 'bg-slate-100 text-slate-600' : l.tone === 'rose' ? 'bg-rose-600 text-white' : l.tone === 'amber' ? 'bg-amber-100 text-amber-900' : 'bg-slate-100 text-slate-700')}>{l.n}</span>
+                          : <span className="shrink-0 min-w-[1.75rem] text-center text-emerald-600"><Check size={13} className="inline" /></span>}
+                        <span className={'text-[12.5px] leading-snug ' + (l.n > 0 ? (sec.quiet ? 'text-muted' : 'text-ink') : 'text-muted')}>{l.n > 0 ? l.text : l.done}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
+      <div id="day-kpis-tiles" className={'space-y-2' + (view === 'plan' ? ' hidden' : '')}>
         {GROUPS.map(g => {
           const mine = tiles.filter(x => g.keys.includes(x.key))
           if (!mine.length) return null
