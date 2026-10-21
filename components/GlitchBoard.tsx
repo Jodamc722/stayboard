@@ -595,6 +595,42 @@ function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, canApprove
   onDeleted: (trashId: string, label: string) => void
 }) {
   const [panel, setPanel] = useState<'' | 'edit' | 'push'>('')
+  // EDITABLE AFTER THE FACT (Jon, 2026-10-21: "need to be able to edit the glitch if created, change
+  // reservation, add more photos even after it's created"). The booking row carries Change / Link /
+  // Unlink and opens the same reservation picker the new-glitch form uses; the photo strip takes new
+  // photos straight onto the card. Both save at once — no Save button to forget.
+  const acc = useAccess()
+  const canEdit = !acc.loading && acc.atLeast('glitches', 'edit')
+  const [resOpen, setResOpen] = useState(false)
+  const [resBusy, setResBusy] = useState(false)
+  const [resMsg, setResMsg] = useState('')
+  const linkRes = async (m: ResMatch | null) => {
+    setResBusy(true); setResMsg('')
+    try {
+      const body: Record<string, any> = m
+        ? { reservationId: m.reservationId, listingId: m.listingId, unit: m.unit, market: m.market, guestName: m.guestName, guestPhone: m.guestPhone, guestEmail: m.guestEmail, channel: m.channel, checkIn: m.checkIn, checkOut: m.checkOut, reservationTotal: m.total, reservationNotes: m.notes, sentiment: m.sentiment }
+        : { reservationId: null }
+      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', id: g.id, ...body }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Could not change the booking.')
+      setResMsg(m ? ('Linked to ' + m.guestName + ' · ' + m.unit + (j.taskStays ? ' — the Breezeway task stays on the old unit; re-create it if the work moved too.' : '')) : 'Booking unlinked — the typed guest and unit stay.')
+      setResOpen(false); onChanged()
+    } catch (e: any) { setResMsg(String(e?.message || e)) }
+    setResBusy(false)
+  }
+  // Photos added on the card land at once; a removed one is saved as the shorter list.
+  const [photoMsg, setPhotoMsg] = useState('')
+  const savePhotos = async (next: string[]) => {
+    const have = (g.photos || []).filter(x => typeof x === 'string')
+    const added = next.filter(x => have.indexOf(x) < 0)
+    setPhotoMsg('')
+    try {
+      const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', id: g.id, ...(added.length && next.length >= have.length ? { addPhotos: added } : { photos: next }) }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Could not save the photo.')
+      onChanged()
+    } catch (e: any) { setPhotoMsg(String(e?.message || e)) }
+  }
   // FIXING A TYPO SHOULD START WHERE THE TYPO IS (Sulaman, 2026-09-17). The editor opens beside
   // the description and scrolls into view.
   const editRef = useRef<HTMLElement | null>(null)
@@ -740,13 +776,25 @@ function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, canApprove
           {g.guest_tone && g.guest_tone !== 'understanding' ? <span className="text-amber-800 font-semibold"> · {g.guest_tone}</span> : null}
           {g.sentiment && g.sentiment.dissatisfied ? <span className="text-rose-700 font-semibold"> · unhappy in messages</span> : null}
         </FieldRow>
-        {g.reservation_id ? (
-          <FieldRow label="Booking">
-            {[g.channel ? String(g.channel).replace(/\d+$/, '').replace(/^./, c => c.toUpperCase()) : '', g.reservation_total ? money(g.reservation_total) : ''].filter(Boolean).join(' · ') || 'Linked'}
-            <a href={'https://app.guesty.com/reservations/' + g.reservation_id + '/summary'} target="_blank" rel="noreferrer"
-              className="ml-2 font-semibold text-brand-700 hover:underline">Guesty ↗</a>
-          </FieldRow>
-        ) : null}
+        <FieldRow label="Booking">
+          {g.reservation_id ? (
+            <>
+              {[g.channel ? String(g.channel).replace(/\d+$/, '').replace(/^./, c => c.toUpperCase()) : '', g.reservation_total ? money(g.reservation_total) : ''].filter(Boolean).join(' · ') || 'Linked'}
+              <a href={'https://app.guesty.com/reservations/' + g.reservation_id + '/summary'} target="_blank" rel="noreferrer"
+                className="ml-2 font-semibold text-brand-700 hover:underline">Guesty ↗</a>
+            </>
+          ) : <span className="text-muted">No reservation linked</span>}
+          {canEdit && !closed ? (
+            <span className="ml-2 inline-flex items-center gap-1.5">
+              <button onClick={() => setResOpen(o => !o)} disabled={resBusy} className="text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1" title={g.reservation_id ? 'Attach this glitch to a different booking — unit, guest, dates and value follow' : 'Attach this glitch to a booking — unit, guest, dates and value fill in from it'}>
+                <Pencil size={11} /> {resOpen ? 'Cancel' : g.reservation_id ? 'Change' : 'Link a booking'}
+              </button>
+              {g.reservation_id ? <button onClick={() => linkRes(null)} disabled={resBusy} className="text-[12px] font-semibold text-muted hover:text-rose-700" title="Detach the booking; the typed guest and unit stay as they are">Unlink</button> : null}
+            </span>
+          ) : null}
+        </FieldRow>
+        {resOpen && canEdit ? <ResPicker busy={resBusy} onPick={m => linkRes(m)} initialQuery={g.guest_name || ''} /> : null}
+        {resMsg ? <p className="text-[12px] text-muted pl-1">{resMsg}</p> : null}
         <FieldRow label="Breezeway">
           {g.breezeway_task_id ? (
             <span className="inline-flex items-center gap-2 flex-wrap">
@@ -790,10 +838,17 @@ function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, canApprove
         {(g.photos || []).length > 0 ? (
           <div className="flex gap-1.5 flex-wrap mt-3">
             {(g.photos || []).map((u, i) => (
-              <a key={i} href={glitchPhotoSrc(u)} target="_blank" rel="noreferrer">
+              <a key={i} href={glitchPhotoSrc(u)} target="_blank" rel="noreferrer" title="Open full size">
                 <img src={glitchPhotoSrc(u)} alt="" className="w-24 h-24 object-cover rounded-lg border border-line" />
               </a>
             ))}
+          </div>
+        ) : null}
+        {canEdit && !closed && panel !== 'edit' ? (
+          <div className="mt-2">
+            <ImageDrop items={(g.photos || []).filter(x => typeof x === 'string')} onChange={savePhotos} endpoint="/api/glitches/photo" extra={{ glitchId: g.id }} srcFor={glitchPhotoSrc} max={20}
+              label={(g.photos || []).length ? 'Add another photo or screenshot' : 'Add a photo or screenshot'} />
+            {photoMsg ? <p className="text-[11.5px] text-rose-700 mt-1">{photoMsg}</p> : null}
           </div>
         ) : null}
         <WorkNotes g={g} onDone={onChanged} />
@@ -831,7 +886,7 @@ function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, canApprove
                   <li key={i} className="text-[12px] text-muted">
                     <span className="text-ink font-medium">{String(h.by || 'team').split('@')[0]}</span>{' '}
                     {String(h.action || '').replace(/_/g, ' ')}
-                    {h.to ? ' → ' + (LANES.find(l => l.statuses.indexOf(String(h.to)) >= 0)?.label || h.to) : ''}
+                    {h.action === 'reservation_changed' ? ' → ' + (h.to ? ([h.guest, h.unit].filter(Boolean).join(' · ') || 'another booking') : 'no booking') + (h.taskStays ? ' (Breezeway task left on the old unit)' : '') : h.to ? ' → ' + (LANES.find(l => l.statuses.indexOf(String(h.to)) >= 0)?.label || h.to) : ''}
                     {h.amount != null ? ' · $' + h.amount : ''}
                     {h.note ? <span className="text-ink/80"> — “{String(h.note).slice(0, 160)}”</span> : null}
                     <span className="text-faint"> · {fmtStamp(h.at)}</span>
@@ -1321,6 +1376,63 @@ function GlitchCard({ g, onOpen }: { g: Glitch; onOpen: () => void }) {
 // The three steps follow the phone call, not the database: WHO is calling, WHAT went wrong, then
 // the bookkeeping nobody has at minute one. Step 1 auto-fills unit, market, channel, dates, phone,
 // email, reservation total and the guest's current sentiment, so step 2 is the only real typing.
+/**
+ * THE RESERVATION PICKER ON A CARD (Jon, 2026-10-21: "change reservation … even after it's
+ * created"). The same search the new-glitch form runs — in-house first, all stays on request,
+ * inquiries and canceled never — handing back the booking with everything the card copies from it.
+ */
+function ResPicker({ busy, onPick, initialQuery }: { busy: boolean; onPick: (m: ResMatch) => void; initialQuery?: string }) {
+  const [q, setQ] = useState(initialQuery || '')
+  const [scope, setScope] = useState<'active' | 'all'>('all')
+  const [matches, setMatches] = useState<ResMatch[]>([])
+  const [searching, setSearching] = useState(false)
+  const [searched, setSearched] = useState(false)
+  const [err, setErr] = useState('')
+  const search = async (sc?: 'active' | 'all') => {
+    if (!q.trim()) return
+    const useScope = sc || scope
+    if (sc) setScope(sc)
+    setSearching(true); setErr('')
+    try {
+      const r = await fetch('/api/glitches?guest=' + encodeURIComponent(q.trim()) + '&scope=' + useScope, { cache: 'no-store' })
+      const j = await r.json()
+      if (!r.ok || !j.ok) setErr(j.error || 'Search failed'); else { setMatches(j.matches || []); setSearched(true) }
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setSearching(false)
+  }
+  const today = todayET()
+  const stayTag = (m: ResMatch) => m.checkIn && m.checkIn <= today && m.checkOut && m.checkOut >= today ? 'In-house' : m.checkIn && m.checkIn > today ? 'Upcoming' : 'Past stay'
+  return (
+    <div className="rounded-xl border border-line bg-app/50 p-2.5 space-y-2">
+      <div className="flex gap-2">
+        <span className="relative flex-1">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+          <input value={q} autoFocus onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') search() }} placeholder="Guest name…"
+            className="w-full text-[13px] border border-line rounded-lg pl-8 pr-2.5 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
+        </span>
+        <button type="button" onClick={() => search()} disabled={searching || !q.trim() || busy} className="text-[12px] font-bold px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40 shrink-0">{searching ? 'Searching…' : 'Find'}</button>
+        <button type="button" onClick={() => search(scope === 'all' ? 'active' : 'all')} className="text-[12px] font-semibold px-2.5 py-2 rounded-lg border border-line bg-white text-muted hover:text-ink shrink-0" title="Switch between every booked stay and guests in-house right now">{scope === 'all' ? 'All stays' : 'In-house now'}</button>
+      </div>
+      {matches.length > 0 ? (
+        <div className="space-y-1">
+          {matches.map(m => (
+            <button type="button" key={m.reservationId} disabled={busy} onClick={() => onPick(m)}
+              className="w-full text-left border border-line rounded-lg px-2.5 py-2 bg-white hover:border-ink/30 hover:bg-app/50 disabled:opacity-50">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[13px] font-bold text-ink">{m.guestName}</span>
+                <span className="text-[9.5px] font-bold uppercase px-1.5 py-0.5 rounded border border-line text-muted">{stayTag(m)}</span>
+                <SentimentChip s={m.sentiment} />
+              </div>
+              <div className="text-[11.5px] text-muted mt-0.5">{m.unit} · {fmtShort(m.checkIn)} &rarr; {fmtShort(m.checkOut)}{m.channel ? ' · ' + m.channel : ''}{m.total ? ' · ' + money(m.total) : ''}</div>
+            </button>
+          ))}
+        </div>
+      ) : searched && !searching ? <p className="text-[12px] text-muted">No booked stay matches &ldquo;{q.trim()}&rdquo;{scope === 'active' ? ' in-house now — try All stays' : ''}. Inquiries and canceled bookings never show.</p> : null}
+      {err ? <p className="text-[12px] text-rose-700">{err}</p> : null}
+    </div>
+  )
+}
+
 function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
   const [step, setStep] = useState(0)
   const [furthest, setFurthest] = useState(0)
@@ -1765,8 +1877,9 @@ function PushPanel({ g, people, onDone, act }: { g: Glitch; people: { id: number
  * Sulaman could not fix.
  *
  * PHOTOS ARE REMOVE-ONLY HERE, and deliberately: attaching the wrong picture is the mistake worth
- * undoing, and adding one belongs with the camera on the main card rather than buried in a
- * corrections form.
+ * undoing, and adding one belongs with the camera on the main card (the drop zone under the
+ * description, since 2026-10-21) rather than buried in a corrections form. The booking is changed
+ * from the Booking row on the card, for the same reason.
  */
 function EditGlitch({ g, onDone }: { g: Glitch; onDone: () => void }) {
   const [f, setF] = useState({

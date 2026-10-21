@@ -249,6 +249,33 @@ export async function POST(req: NextRequest) {
       if (b.guestPhone !== undefined) patch.guest_phone = str(b.guestPhone) || null
       if (b.channel !== undefined) patch.channel = str(b.channel) || null
       if (Array.isArray(b.photos)) patch.photos = b.photos.filter((x: any) => typeof x === 'string').slice(0, 20)
+      // MORE PHOTOS, LATER (Jon, 2026-10-21: "add more photos even after it's created"): `addPhotos`
+      // appends to what is on the card — a second person's upload never overwrites the first's.
+      if (Array.isArray(b.addPhotos) && b.addPhotos.length) {
+        const have: string[] = Array.isArray(patch.photos) ? patch.photos : (Array.isArray(g.photos) ? g.photos.filter((x: any) => typeof x === 'string') : [])
+        const add = b.addPhotos.filter((x: any) => typeof x === 'string' && x && have.indexOf(x) < 0)
+        patch.photos = have.concat(add).slice(0, 20)
+      }
+      // CHANGE THE RESERVATION (Jon, 2026-10-21: "change reservation … even after it's created").
+      // The picker hands over the booking the way the new-glitch form does; everything the booking
+      // carries moves with it (unit, market, guest, channel, dates, value, notes, sentiment). A
+      // `null` unlinks the stay and leaves the typed facts as they are. The card's Breezeway task,
+      // if any, stays on the unit it was pushed to — the history line says so.
+      let resChanged: any = null
+      if (b.reservationId !== undefined) {
+        const to = str(b.reservationId) || null
+        if (to !== (g.reservation_id || null)) {
+          patch.reservation_id = to
+          if (b.listingId !== undefined) patch.listing_id = str(b.listingId) || null
+          if (b.market !== undefined) patch.market = str(b.market) || null
+          if (b.checkIn !== undefined) patch.check_in = str(b.checkIn) || null
+          if (b.checkOut !== undefined) patch.check_out = str(b.checkOut) || null
+          if (b.reservationTotal !== undefined) patch.reservation_total = num(b.reservationTotal)
+          if (b.reservationNotes !== undefined) patch.reservation_notes = str(b.reservationNotes) || null
+          if (b.sentiment !== undefined) patch.sentiment = (b.sentiment && typeof b.sentiment === 'object') ? b.sentiment : null
+          resChanged = { from: g.reservation_id || null, to, guest: str(b.guestName) || str(g.guest_name) || null, unit: str(b.unit) || str(g.unit) || null, taskStays: !!g.breezeway_task_id && !!patch.listing_id && str(patch.listing_id) !== str(g.listing_id) }
+        }
+      }
       // Ownership + scheduling: who is on it, when it is due, extra detail, and how far along.
       // dueDate may sit in the FUTURE - a glitch raised for an upcoming stay is planned work.
       if (b.dueDate !== undefined) patch.due_date = /^\d{4}-\d{2}-\d{2}$/.test(str(b.dueDate)) ? str(b.dueDate) : null
@@ -295,7 +322,7 @@ export async function POST(req: NextRequest) {
     } catch { /* best effort */ }
   }
       if (b.progress !== undefined) { const pr = Number(b.progress); patch.progress = (Number.isFinite(pr) && pr >= 0 && pr <= 100) ? Math.round(pr) : null }
-      patch.history = stamp('updated', patch.refund_needs_approval !== undefined ? { refund: patch.refund_approved, needsApproval: patch.refund_needs_approval } : undefined)
+      patch.history = resChanged ? stamp('reservation_changed', resChanged) : stamp('updated', patch.refund_needs_approval !== undefined ? { refund: patch.refund_approved, needsApproval: patch.refund_needs_approval } : undefined)
       patch.updated_at = new Date().toISOString()
       let { error } = await db.from('glitches').update(patch).eq('id', id)
       // The approval columns arrive with migration 085; an edit must still save without them.
@@ -305,7 +332,7 @@ export async function POST(req: NextRequest) {
       }
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
       bustDay()
-      return NextResponse.json({ ok: true })
+      return NextResponse.json({ ok: true, photos: patch.photos, taskStays: !!(resChanged && resChanged.taskStays) })
     }
 
     // TELL THE TEAM A VENDOR IS COMING (2026-09-25). Posts one line to the building's maintenance
