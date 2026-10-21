@@ -94,14 +94,17 @@ export async function refreshOpenFolios(opts: { minMinutes?: number; force?: boo
   const months = openMonths()
   const minMs = Math.max(0, (opts.minMinutes ?? 55) * 60_000)
   if (!opts.force && minMs) {
-    const last = await getSetting<string>(FOLIO_REFRESH_AT_KEY, '')
-    const lastMs = last ? Date.parse(String(last)) : NaN
+    // An OBJECT, not a bare string: getSetting hands back only JSON objects (a bare string parses
+    // to a string and falls through to the default), which is how the first cut of this throttle
+    // never throttled — every open of the desk re-pulled all 133 folios two minutes after the feed had.
+    const last = await getSetting<{ at?: string }>(FOLIO_REFRESH_AT_KEY, {})
+    const lastMs = last && last.at ? Date.parse(String(last.at)) : NaN
     if (Number.isFinite(lastMs) && Date.now() - lastMs < minMs) {
       return { ran: false, reason: 'checked ' + Math.round((Date.now() - lastMs) / 60_000) + ' min ago', months, candidates: 0, pulled: 0, fixed: 0, ms: Date.now() - t0 }
     }
   }
   // Claim the slot before the pull so two instances do not both spend the budget.
-  await setSetting(FOLIO_REFRESH_AT_KEY, new Date().toISOString(), null)
+  await setSetting(FOLIO_REFRESH_AT_KEY, { at: new Date().toISOString() }, null)
   try {
     const before = await openFolios(months)
     const ids = Object.keys(before).filter(id => !before[id]).slice(0, MAX_IDS)
