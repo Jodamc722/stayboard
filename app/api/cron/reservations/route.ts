@@ -51,7 +51,13 @@ async function run(req: NextRequest) {
     // Right after the sync, so the post is minutes behind Guesty. See lib/salato-watch.ts.
     let salato: any = null
     try { const { runSalatoWatch } = await import('@/lib/salato-watch'); const w = await runSalatoWatch({ fromCron: true }); salato = { announced: w.announced, oneNight: w.oneNight, nudged: w.nudged, resolved: w.resolved, error: w.error, skipped: w.skipped } } catch (e: any) { salato = { error: String(e?.message || e).slice(0, 120) } }
-    return NextResponse.json({ ranAt: new Date().toISOString(), mode, reservations: n, salato, elapsed_ms: Date.now() - started })
+    // OPEN FOLIOS, HOURLY (Jon, 2026-10-21: "if we fix the folio it should update the report"). The
+    // Expedia fee breakouts the Statements desk is waiting on are re-pulled from Guesty once an hour,
+    // because a folio edit does not reliably move a reservation's lastUpdatedAt and this feed would
+    // otherwise never see it. Own try: a Guesty hiccup here never fails the booking feed.
+    let folios: any = null
+    try { const { refreshOpenFolios } = await import('@/lib/folio-refresh'); folios = await refreshOpenFolios({ minMinutes: 55, source: 'cron' }) } catch (e: any) { folios = { error: String(e?.message || e).slice(0, 120) } }
+    return NextResponse.json({ ranAt: new Date().toISOString(), mode, reservations: n, salato, folios, elapsed_ms: Date.now() - started })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }

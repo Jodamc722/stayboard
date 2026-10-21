@@ -16,7 +16,7 @@
 // that is the per-statement audit trail. Audit notes can be stamped onto the booking's Guesty
 // "Reservation Notes" field (same field and safe-merge writer as the Claims board), and each
 // row shows what is already written on the reservation in Guesty.
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, Download,
   ExternalLink, FileText, Lock, MessageSquare, RefreshCw, Scissors, Search,
@@ -370,6 +370,37 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
 
   useEffect(() => { load() }, [load])
 
+  // FOLIO FIXES SHOW UP ON THEIR OWN (Jon, 2026-10-21: "if we fix the folio it should update the
+  // report"). Once per open of the desk, after the first load, the open Expedia folios are re-pulled
+  // from Guesty in the background (server-throttled to every ten minutes); if any came back fixed,
+  // the month is reloaded so the row clears without anyone pressing Re-check.
+  const autoChecked = useRef(false)
+  useEffect(() => {
+    if (!data || !internal || share || autoChecked.current) return
+    if (!data.prep.some(p => !prepResolved(p))) return
+    autoChecked.current = true
+    ;(async () => {
+      try {
+        const r = await fetch('/api/owner-audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'prep-recheck', auto: true }) })
+        const j = await r.json().catch(() => ({}))
+        if (!r.ok || !j.ok || !j.ran) return
+        if (j.fixed > 0) {
+          setFlash(j.fixed + ' folio' + (j.fixed === 1 ? ' was' : 's were') + ' fixed in Guesty since the last check — updating.')
+          setTimeout(() => setFlash(''), 4000)
+          await load(data.month)
+        }
+      } catch { /* the hourly feed catches it */ }
+    })()
+  }, [data, internal, share, load])
+
+  // A FILTER CHANGE STARTS FRESH (Jon, 2026-10-21: "the filters when I click don't always populate").
+  // Owner cards and status sections remember being clicked shut, and that memory used to beat the
+  // filter: an owner collapsed by hand stayed collapsed when a chip was clicked, and the Approved /
+  // No-issues sections are shut by default, so the Approved chip opened every owner onto a shut
+  // section with the count on it and no rows. Any change to the filters clears those overrides.
+  const filterKey = [q.trim(), fStatus, fFlag, fOwner, fSource, fTag, fFresh ? '1' : ''].join('|')
+  useEffect(() => { setExpandedOwners({}); setOpenSections({}); setShowAllRows({}) }, [filterKey])
+
   const unlock = async () => {
     setPwBusy(true); setPwErr('')
     try {
@@ -698,7 +729,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       if (fFresh && !(it.lastPosted && it.lastPosted >= weekAgo)) return false
       if (fOwner && it.ownerId !== fOwner) return false
       if (fStatus && it.status !== fStatus) return false
-      if (fFlag === 'flagged' && !it.flags.some(f => f.severity !== 'info')) return false
+      // "Flagged" is the open flagged work — the number on the chip. Approved rows keep their flags
+      // for the paper trail and are found under the Approved chip, not here.
+      if (fFlag === 'flagged' && (it.status === 'done' || !it.flags.some(f => f.severity !== 'info'))) return false
       if (fFlag && fFlag !== 'flagged' && !it.flags.some(f => f.type === fFlag)) return false
       if (fSource && sourceLabel(it.source) !== fSource) return false
       if (fTag === 'owner' || fTag === 'owner_guest' || fTag === 'ff') { if (it.stayTag !== fTag) return false }
@@ -1885,7 +1918,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                       <div className="border-t border-line">
                         {buckets.map(b => {
                           const secKey = o.ownerId + '::' + b.key
-                          const shown = openSections[secKey] !== undefined ? openSections[secKey] : !b.collapsed
+                          // A filter opens whatever it lands rows in — the Approved and No-issues sections are
+                          // shut by default only when nothing was asked for.
+                          const shown = openSections[secKey] !== undefined ? openSections[secKey] : (filterActive || !b.collapsed)
                           return (
                             <div key={b.key} className="border-b border-line last:border-b-0">
                               <button onClick={() => setOpenSections(prev => ({ ...prev, [secKey]: !shown }))}

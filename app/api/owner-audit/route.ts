@@ -130,6 +130,18 @@ export async function POST(req: NextRequest) {
     // to 120 at a time — and it was the one action with no internal check, so a share-link reviewer
     // could run the account's rate limit down from a page they only have a password for.
     if (!who.internal) return NextResponse.json({ ok: false, error: 'Re-checking against Guesty is for signed-in staff.' }, { status: 403 })
+    // AUTOMATIC, ON OPEN (Jon, 2026-10-21): the desk asks for this as it loads, and every open folio
+    // in the open months is re-pulled — throttled to once every ten minutes across everyone, so a
+    // busy morning on the desk cannot run the Guesty budget down. Same engine as the hourly feed.
+    if (body.auto === true) {
+      try {
+        const { refreshOpenFolios } = await import('@/lib/folio-refresh')
+        const r = await refreshOpenFolios({ minMinutes: 10, source: 'desk' })
+        return NextResponse.json({ ok: true, auto: true, ran: r.ran, pulled: r.pulled, fixed: r.fixed, reason: r.reason || null })
+      } catch (e: any) {
+        return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 502 })
+      }
+    }
     const ids = Array.isArray(body.reservationIds) ? body.reservationIds.map((x: any) => String(x || '')).filter(Boolean).slice(0, 120) : []
     if (!ids.length) return NextResponse.json({ ok: false, error: 'reservationIds required' }, { status: 400 })
     try {
