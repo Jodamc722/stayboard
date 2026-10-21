@@ -124,7 +124,10 @@ export async function loadUnpaid(opts: { from?: string; to?: string } = {}): Pro
   }
 }
 
-const PAY_RE = /\b(pay|paid|payment|balance|deposit|card|invoice|charge|outstanding|amount due|remaining|link to (pay|complete)|complete (your|the) (booking|reservation)|security deposit|pago|saldo|tarjeta)\b/i
+// Asking for money we are owed — not a confirmation that mentions "payment", not house rules that
+// mention a deposit. Matched against the plain text (HTML emails stripped first).
+const PAY_RE = /\b(balance (due|remaining|of|is)|remaining balance|outstanding( balance)?|amount due|(complete|make|finish|process) (the |your )?payment|payment (link|is (still )?(due|pending|outstanding)|failed|was declined|did not go through|reminder)|(card|payment) (was )?declined|update (your|the) (card|payment)|pay (the|your) (balance|remaining)|still (owe|owed|unpaid|pending)|unpaid|saldo pendiente|pago pendiente)\b/i
+const plain = (t: any) => str(t).replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim()
 
 async function readThreads(rows: UnpaidRow[]): Promise<void> {
   if (!rows.length) return
@@ -140,24 +143,24 @@ async function readThreads(rows: UnpaidRow[]): Promise<void> {
     .in('conversation_id', convIds).gte('sent_at', since).order('sent_at', { ascending: true }).limit(4000)
   const byConv: Record<string, any[]> = {}
   for (const m of ((msgs || []) as any[])) (byConv[str(m.conversation_id)] = byConv[str(m.conversation_id)] || []).push(m)
-  const clip = (t: string) => str(t).replace(/\s+/g, ' ').trim().slice(0, 140)
+  const clip = (t: string) => plain(t).slice(0, 140)
   const day = (iso: string) => new Date(iso).toLocaleDateString('en-US', { timeZone: TZ, month: 'short', day: 'numeric' })
   for (const r of rows) {
     const ms = (convOf[r.id] || []).flatMap(id => byConv[id] || []).sort((a, b) => str(a.sent_at).localeCompare(str(b.sent_at)))
-    const asks = ms.filter(m => m.sender === 'host' && PAY_RE.test(str(m.body)))
+    const asks = ms.filter(m => m.sender === 'host' && PAY_RE.test(plain(m.body)))
     const ask = asks[asks.length - 1] || null
     const reply = ask ? ms.find(m => m.sender === 'guest' && str(m.sent_at) > str(ask.sent_at)) || null : null
     r.thread = ask ? {
-      askedAt: str(ask.sent_at), askedBy: ask.is_automated ? 'automated message' : (str(ask.sender_name) || 'us'), automated: ask.is_automated === true,
+      askedAt: str(ask.sent_at), askedBy: ask.is_automated === false ? (str(ask.sender_name) || 'us') : 'automated message', automated: ask.is_automated !== false,
       snippet: clip(ask.body), guestRepliedAt: reply ? str(reply.sent_at) : null, guestSnippet: reply ? clip(reply.body) : null,
     } : null
     // A PERSON asking flips the row to contacted. An automated template (welcome, policy text) that
     // merely mentions a deposit is shown as a note but does not count as a follow-up.
     if (ask) {
-      const note = { at: str(ask.sent_at), by: r.thread!.askedBy || 'thread', text: `${ask.is_automated ? 'Automated message in the thread' : 'Asked in the guest thread'} ${day(str(ask.sent_at))}: "${r.thread!.snippet}"${reply ? ` — guest replied ${day(str(reply.sent_at))}: "${r.thread!.guestSnippet}"` : ' — no reply yet'}` }
+      const note = { at: str(ask.sent_at), by: r.thread!.askedBy || 'thread', text: `${ask.is_automated === false ? 'Asked in the guest thread' : 'Automated message in the thread'} ${day(str(ask.sent_at))}: "${r.thread!.snippet}"${reply ? ` — guest replied ${day(str(reply.sent_at))}: "${r.thread!.guestSnippet}"` : ' — no reply yet'}` }
       r.tracking = { ...r.tracking, notes: [...r.tracking.notes, note] }
     }
-    if (ask && !ask.is_automated && r.tracking.status === 'open') {
+    if (ask && ask.is_automated === false && r.tracking.status === 'open') {
       r.tracking = {
         ...r.tracking, status: 'contacted',
       }
