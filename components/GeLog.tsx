@@ -45,9 +45,11 @@ import CommentThread from './CommentThread'
 
 type Row = {
   key: string; kind: 'clean' | 'task' | 'glitch'; taskId: string | null; listingId: string | null
-  person: string; dept: string; market: string; hub: string; activity: string
+  person: string; dept: string; market: string; hub: string; taskType: string; activity: string
   listing: string; reservation: string; checkIn: string | null; checkOut: string | null
-  sameDay: boolean; nights: number | null; fee: number | null; cleanHours: number | null
+  sameDay: boolean; notes: { label: string; tone: string }[]
+  nights: number | null; beds: number | null
+  fee: number | null; feeEst: boolean; cleanHours: number | null
   payout: number | null; status: string; vendor: string | null; flag: string | null
   url: string | null; glitchId: string | number | null
 }
@@ -112,19 +114,30 @@ const shortName = (n: string) => { const p = String(n || '').trim().split(/\s+/)
 const COLS: { k: string; label: string; w: number; align?: string; full?: string }[] = [
   { k: 'person', label: 'HK Team', w: 118 },
   { k: 'hub', label: 'HUB', w: 96 },
-  { k: 'activity', label: 'Activities', w: 210 },
+  { k: 'taskType', label: 'Type', w: 104, full: 'What kind of work — checkout, inspection, PM, glitch\u2026' },
+  { k: 'activity', label: 'Activities', w: 230, full: 'The task line, as Breezeway words it' },
   { k: 'listing', label: 'LISTING', w: 164 },
-  { k: 'reservation', label: 'Reservation', w: 190, full: 'RESERVATION NAME' },
-  { k: 'checkIn', label: 'Check-in', w: 118, full: 'CHECK-IN DATE' },
-  { k: 'checkOut', label: 'Check-out', w: 118, full: 'CHECK-OUT DATE' },
-  { k: 'sameDay', label: 'Same day', w: 86, align: 'text-center', full: 'Same Day Checkout' },
+  { k: 'beds', label: 'BR', w: 48, align: 'text-center', full: 'Bedrooms \u2014 how big the clean is' },
+  { k: 'reservation', label: 'Reservation', w: 178, full: 'RESERVATION NAME' },
+  { k: 'checkIn', label: 'Check-in', w: 114, full: 'CHECK-IN DATE' },
+  { k: 'checkOut', label: 'Check-out', w: 114, full: 'CHECK-OUT DATE' },
+  { k: 'notes', label: 'Notes', w: 210, full: 'Same-day turn, long stay, moved, guest in-house \u2014 the scheduler\u2019s own notes' },
   { k: 'nights', label: 'Nights', w: 64, align: 'text-center', full: 'NO. OF NIGHTS' },
-  { k: 'fee', label: 'Fee', w: 86, align: 'text-right', full: 'Cleaning fee' },
+  { k: 'fee', label: 'Cleaning', w: 92, align: 'text-right', full: 'Cleaning revenue on the checkout \u2014 the guest\u2019s fee, or the listing\u2019s where the channel bundled it (est.)' },
   { k: 'cleanHours', label: 'Hours', w: 74, align: 'text-center', full: 'Cleaning time' },
   { k: 'payout', label: 'Payout', w: 94, align: 'text-right', full: 'Total Payout' },
   { k: 'act', label: '', w: 72, align: 'text-right' },
 ]
 const GRID_W = COLS.reduce((n, c) => n + c.w, 0)
+
+const NOTE_TONES: Record<string, string> = {
+  rose: 'bg-rose-50 text-rose-700 border-rose-200',
+  violet: 'bg-violet-50 text-violet-700 border-violet-200',
+  amber: 'bg-amber-50 text-amber-800 border-amber-200',
+  slate: 'bg-slate-100 text-slate-600 border-slate-200',
+  emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+}
+const noteTone = (t: string) => NOTE_TONES[t] || NOTE_TONES.slate
 
 export default function GeLog({ date }: { date: string }) {
   const [data, setData] = useState<Payload | null>(null)
@@ -204,19 +217,40 @@ export default function GeLog({ date }: { date: string }) {
     return b
   }, [bands, showEmpty, market])
 
-  // ONE TABLE PER DEPARTMENT (Jon, 2026-10-21: "need to be tables for each department"). The first
-  // cut ran every department through a single table with full-width heading rows between them, so
-  // that one table carried housekeeping, maintenance and the unassigned pool at once — one
-  // scrollbar, one sticky header, and no way to look at maintenance without the other two moving
-  // under it. Housekeeping and maintenance are different people doing different work read by
-  // different supervisors; they get their own tables, each with its own header.
+  // ONE TABLE PER DEPARTMENT **AND MARKET** — Jon, 2026-10-21: "need to be tables for each
+  // department", then "it should be in a completely separate table, not one combined unless we
+  // say all". Which is his original brief read back to us: "separated by departments and then
+  // each market area".
+  //
+  // Two earlier cuts got this wrong in the same way. First everything was one table with
+  // full-width heading rows between the departments; then each department got a table but the
+  // markets inside it were still only a band row. A heading row looks like a division and isn't
+  // one: Broward and Miami share a scrollbar and a sticky header, so you cannot read one without
+  // the other moving under it. Nobody runs both markets in the same breath. Housekeeping/Broward
+  // and Housekeeping/Miami are now separate tables with their own headers and their own scroll.
+  //
+  // "Unless we say all" is the market switch: All markets stacks every one of those tables,
+  // picking a market leaves only its own.
   const sections = useMemo(() => {
     if (view === 'person') return [{ key: 'all', label: '', bands: shown }]
     const m = new Map<string, typeof shown>()
-    for (const b of shown) { const a = m.get(b.dept) || []; a.push(b); m.set(b.dept, a) }
+    for (const b of shown) { const k = b.dept + '\u0000' + b.market; const a = m.get(k) || []; a.push(b); m.set(k, a) }
     return Array.from(m.keys())
-      .sort((a, b) => deptRank(a) - deptRank(b))
-      .map(k => ({ key: k, label: DEPT_LABEL[k] || k, bands: m.get(k) as typeof shown }))
+      .sort((a, b) => {
+        const [da, ma] = a.split('\u0000'), [db, mb] = b.split('\u0000')
+        // A market with no name is the pool — people holding work who are on no roster. It sorts
+        // last inside its department rather than leading it.
+        return deptRank(da) - deptRank(db) || (!ma !== !mb ? (ma ? -1 : 1) : ma.localeCompare(mb))
+      })
+      .map(k => {
+        const [dept, market] = k.split('\u0000')
+        return {
+          key: k,
+          label: DEPT_LABEL[dept] || dept,
+          market: market || 'No market set',
+          bands: m.get(k) as typeof shown,
+        }
+      })
   }, [shown, view])
 
   const totals = useMemo(() => {
@@ -262,8 +296,10 @@ export default function GeLog({ date }: { date: string }) {
     const lines = [head.join(',')]
     const esc = (v: any) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s }
     for (const b of shown) for (const r of b.rows) {
-      lines.push([b.person, r.hub, r.activity, r.listing, r.reservation, cell(r.checkIn), cell(r.checkOut),
-        r.sameDay ? 'TRUE' : 'FALSE', r.nights ?? '', r.fee == null ? '' : r.fee.toFixed(2),
+      lines.push([b.person, r.hub, r.taskType, r.activity, r.listing, r.beds ?? '', r.reservation,
+        cell(r.checkIn), cell(r.checkOut),
+        (r.notes || []).map(n => n.label).join(' \u00b7 '), r.nights ?? '',
+        r.fee == null ? '' : r.fee.toFixed(2) + (r.feeEst ? ' (est)' : ''),
         r.cleanHours ?? '', r.payout == null ? '' : r.payout.toFixed(2)].map(esc).join(','))
     }
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
@@ -295,13 +331,13 @@ export default function GeLog({ date }: { date: string }) {
           </div>
         </td>
         <td className={TD + ' p-[3px]'}>{pill(r.hub)}</td>
-        {/* The sheet's Activities cell holds one word, so it is a tag. Ours also holds real task
-            names ("[Moved to Oct 18] A/C filter change — 7071 SW - 3BR"), and a 90-character tag
-            is not a tag. Short values keep the pill; long ones are plain text that truncates. */}
-        <td className={TD + (r.activity.length <= 16 ? ' p-[3px]' : ' truncate text-ink/85')} title={r.activity}>
-          {r.activity.length <= 16 ? pill(r.activity) : r.activity}
-        </td>
+        {/* TYPE then LINE. The type is a tag from a short closed set you can scan down a column
+            to see what sort of day somebody is having; the line beside it is Breezeway's own
+            wording, plain text, because a 90-character tag is not a tag. */}
+        <td className={TD + ' p-[3px]'}>{pill(r.taskType || 'Task')}</td>
+        <td className={TD + ' truncate text-ink/85'} title={r.activity}>{r.activity}</td>
         <td className={TD + ' text-center font-semibold text-ink truncate'} title={r.listing}>{r.listing}</td>
+        <td className={TD + ' text-center tabular-nums text-ink/70'}>{r.beds ?? ''}</td>
         <td className={TD + ' text-center font-semibold truncate text-ink'} title={r.reservation || (vacant ? 'Vacant' : '')}>
           {r.reservation || (vacant
             ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">Vacant</span>
@@ -309,11 +345,28 @@ export default function GeLog({ date }: { date: string }) {
         </td>
         <td className={TD + ' text-center tabular-nums text-ink/85'}>{cell(r.checkIn)}</td>
         <td className={TD + ' text-center tabular-nums text-ink/85'}>{cell(r.checkOut)}</td>
-        <td className={TD + ' text-center tabular-nums text-[10.5px] ' + (r.sameDay ? 'font-bold text-rose-700' : 'text-muted')}>
-          {r.kind === 'clean' ? (r.sameDay ? 'TRUE' : 'FALSE') : ''}
+        {/* THE SCHEDULER'S OWN NOTES, not a TRUE/FALSE. Same-day turn is only one of the things
+            that decide whether a clean can wait until the afternoon: a long checkout is a deep
+            clean, a moved one is not today's problem, one moved TO today is, and a guest still
+            in-house cannot be cleaned at all. A boolean column could carry exactly one of them. */}
+        <td className={TD + ' truncate'} title={(r.notes || []).map(n => n.label).join(' \u00b7 ')}>
+          {(r.notes || []).length ? (
+            <span className="inline-flex items-center gap-1">
+              {(r.notes || []).slice(0, 2).map((n, i) => (
+                <span key={i} className={'text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full border whitespace-nowrap ' + noteTone(n.tone)}>{n.label}</span>
+              ))}
+              {(r.notes || []).length > 2 ? <span className="text-[9.5px] text-muted">+{(r.notes || []).length - 2}</span> : null}
+            </span>
+          ) : null}
         </td>
         <td className={TD + ' text-center tabular-nums text-ink'}>{r.nights ?? ''}</td>
-        <td className={TD + ' text-right tabular-nums text-ink'}>{money(r.fee)}</td>
+        {/* Cleaning revenue. Where the channel bundled the fee into the fare we fall back to the
+            listing's own figure — useful, but it is an estimate and says so rather than being
+            quietly totalled as though it were booked. */}
+        <td className={TD + ' text-right tabular-nums text-ink'}
+          title={r.fee == null ? '' : r.feeEst ? 'Estimated from the listing \u2014 the channel bundled the cleaning fee into the fare' : 'The guest\u2019s own cleaning fee on this checkout'}>
+          {money(r.fee)}{r.fee != null && r.feeEst ? <span className="text-[9px] text-muted ml-0.5">est</span> : null}
+        </td>
         <td className={TD + ' text-center tabular-nums text-ink'}>{r.cleanHours ?? ''}</td>
         <td className={TD + ' text-right tabular-nums text-ink'}>{money(r.payout)}</td>
         <td className={TD + ' text-right whitespace-nowrap'}>
@@ -339,17 +392,10 @@ export default function GeLog({ date }: { date: string }) {
   // than inside it, so the only band row left is the market — and that one disappears too the
   // moment a market is picked, because then every row below is that market.
   function rowsFor(bandsIn: typeof shown): JSX.Element[] {
-    let lastMarket = ''
     const body: JSX.Element[] = []
     for (const band of bandsIn) {
-    if (view === 'dept' && !market && band.market && band.market !== lastMarket) {
-      lastMarket = band.market
-      body.push(
-        <tr key={'m' + band.dept + band.market}><td colSpan={COLS.length} className="bg-app border-y border-line px-2.5 py-1 text-[9.5px] uppercase tracking-wide font-bold text-muted">
-          {band.market}
-        </td></tr>
-      )
-    }
+    // No market band row any more: the table itself is one department in one market, and its
+    // heading says so.
     if (!band.rows.length) {
       body.push(
         <tr key={'e' + (band.person || 'none')} className="bg-white">
@@ -435,12 +481,15 @@ export default function GeLog({ date }: { date: string }) {
 
       {sections.map(sec => {
         const n = sec.bands.reduce((t, b) => t + b.rows.length, 0)
+        const rev = sec.bands.reduce((t, b) => t + b.rows.reduce((u, r) => u + (r.fee || 0), 0), 0)
         return (
         <div key={sec.key} className="space-y-1">
           {sec.label ? (
             <div className="flex items-baseline gap-2 px-1 pt-1">
               <h3 className="text-[11px] uppercase tracking-wider font-bold text-ink">{sec.label}</h3>
+              <span className="text-[10.5px] uppercase tracking-wide font-semibold text-muted">{(sec as any).market}</span>
               <span className="text-[10.5px] text-muted tabular-nums">{n} row{n === 1 ? '' : 's'} · {sec.bands.filter(b => b.person).length} on it</span>
+              {rev > 0 ? <span className="text-[10.5px] text-emerald-700 font-semibold tabular-nums" title="Cleaning revenue on this table's checkouts">{money(rev)} cleaning</span> : null}
             </div>
           ) : null}
           <div className="overflow-auto rounded-xl border border-line bg-white max-h-[70vh]">
