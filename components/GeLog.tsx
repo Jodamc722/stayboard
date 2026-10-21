@@ -290,6 +290,23 @@ export default function GeLog({ date }: { date: string }) {
     } catch (e: any) { setErr(e.message || String(e)) } finally { setBusy(b => ({ ...b, [k]: false })) }
   }
 
+  /** MOVE A TASK TO ANOTHER DAY — Jon, 2026-10-21: "Should be able to update the breezeway task."
+   *  The one edit a supervisor makes constantly that Lighthouse could previously only REPORT: the
+   *  day board shows "Moved → 10-18" but had no way to do it. Live, like the assign beside it. */
+  async function moveTask(r: Row, to: string) {
+    if (!r.taskId || !to) return
+    setBusy(b => ({ ...b, [r.key]: true })); setErr('')
+    try {
+      const res = await fetch('/api/breezeway/move', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId: r.taskId, date: to }),
+      })
+      const j = await res.json().catch(() => null)
+      if (!res.ok) throw new Error((j && j.error) || 'Breezeway would not take that date.')
+      setNoteFor(''); setTick(t => t + 1)
+    } catch (e: any) { setErr(e.message || String(e)) } finally { setBusy(b => ({ ...b, [r.key]: false })) }
+  }
+
   /** The grid as the office would paste it into the sheet it is replacing. */
   function exportCsv() {
     const head = COLS.filter(c => c.k !== 'act').map(c => c.full || c.label)
@@ -422,6 +439,17 @@ export default function GeLog({ date }: { date: string }) {
           <tr key={r.key + ':n'} className="bg-app/60">
             <td colSpan={COLS.length} className="border-t border-line px-2 py-2">
               {!r.taskId && <p className="text-[10.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mb-2">No Breezeway task on this row{r.flag ? ' — ' + r.flag : ''}. The note is kept in Lighthouse against {r.listing}.</p>}
+              {r.taskId && r.status !== 'done' && (
+                <div className="flex flex-wrap items-center gap-2 mb-2 text-[11px]">
+                  <span className="font-semibold text-ink">Move this task to</span>
+                  <input type="date" defaultValue={date} id={'mv-' + r.key}
+                    className="border border-line rounded-md px-2 py-1 text-[11px] bg-white" />
+                  <button
+                    onClick={() => { const el = document.getElementById('mv-' + r.key) as HTMLInputElement | null; if (el?.value) moveTask(r, el.value) }}
+                    className="text-[11px] font-semibold px-2 py-1 rounded-md bg-neutral-900 text-white hover:bg-neutral-800">Move</button>
+                  <span className="text-[10.5px] text-muted">Writes straight to Breezeway — the crew sees the new day.</span>
+                </div>
+              )}
               <CommentThread type={r.taskId ? 'task' : r.glitchId ? 'glitch' : 'clean'}
                 id={r.taskId || String(r.glitchId || r.key)} taskId={r.taskId || undefined}
                 label={r.listing + ' — ' + r.activity} link="/schedule"
