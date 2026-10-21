@@ -12,6 +12,7 @@ import { Tag } from '@/components/lean'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import type { FdArrival, FdData } from '@/app/api/front-desk/route'
 import { Row, LIST, GHOST, DARK } from '@/components/command/Hub'
+import { CallNoteBtn, CallNoteStrip } from '@/components/CallNote'
 
 type CallOutcome = 'reached' | 'voicemail' | 'no_answer' | 'claim'
 const URL = '/api/front-desk'
@@ -26,6 +27,10 @@ export function ArrivalsLane() {
   const [all, setAll] = useState(false)
   const [initials, setInitials] = useState('')
   useEffect(() => { try { setInitials(localStorage.getItem('frontdesk.initials') || '') } catch { /* fine */ } }, [])
+  // NOTES ON EVERY CALL (Jon, 2026-10-21): a sticky note on every arrival that owes or had a call;
+  // a mark opens it on its own. Saved on the call's log and on the booking in Guesty.
+  const [noteFor, setNoteFor] = useState('')
+  const [noted, setNoted] = useState<Record<string, string>>({})
 
   const post = (u: string, body: any) => fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   const act = async (key: string, fn: () => Promise<Response>) => {
@@ -34,7 +39,10 @@ export function ArrivalsLane() {
     catch (e: any) { setErr(String(e?.message || e)) }
     setBusy('')
   }
-  const call = (a: FdArrival, outcome: CallOutcome) => act('call:' + a.reservationId, () => post('/api/welcome-call', { reservationId: a.reservationId, outcome, tier: a.tier || 'standard' }))
+  const call = async (a: FdArrival, outcome: CallOutcome) => {
+    await act('call:' + a.reservationId, () => post('/api/welcome-call', { reservationId: a.reservationId, outcome, tier: a.tier || 'standard' }))
+    if (outcome !== 'claim') setNoteFor(a.reservationId)
+  }
   const markSent = (a: FdArrival) => {
     if (!a.notice) return
     let ini = initials
@@ -78,14 +86,17 @@ export function ArrivalsLane() {
                   {a.ready && <Tag tone="emerald" title="Notice sent and call made">ready</Tag>}
                 </>}
                 meta={`${shortUnit(a.unit)} · ${CH(a.channel)}${a.nights ? ` · ${a.nights} night${a.nights === 1 ? '' : 's'}` : ''}${a.phone ? ' · ' + a.phone : ''}`}
-                actions={a.ready ? null : <>
-                  {noticeOpen && data?.canSend && <button onClick={() => markSent(a)} disabled={!!busy} className={GHOST} title="The building has its notice — record who sent it">{b ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Sent</button>}
-                  {callOpen && data?.canCall && <>
+                actions={<>
+                  {!a.ready && noticeOpen && data?.canSend && <button onClick={() => markSent(a)} disabled={!!busy} className={GHOST} title="The building has its notice — record who sent it">{b ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Sent</button>}
+                  {!a.ready && callOpen && data?.canCall && <>
                     <button onClick={() => call(a, 'no_answer')} disabled={!!busy} className={GHOST} title="No answer — try again later"><PhoneOff size={12} /></button>
                     <button onClick={() => call(a, 'voicemail')} disabled={!!busy} className={GHOST} title="Left a voicemail"><Voicemail size={12} /></button>
                     <button onClick={() => call(a, 'reached')} disabled={!!busy} className={DARK} title="Reached the guest">{b ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Reached</button>
                   </>}
-                </>} />
+                  {(callOpen || a.call.done) && data?.canCall && <CallNoteBtn chip={GHOST} note={noted[a.reservationId]} open={noteFor === a.reservationId} onToggle={() => setNoteFor(n => n === a.reservationId ? '' : a.reservationId)} />}
+                </>}>
+                {noteFor === a.reservationId && <div className="mt-1.5 pl-3.5"><CallNoteStrip kind="welcome" reservationId={a.reservationId} prior={noted[a.reservationId]} placeholder="What did they say? — saved on the call and on the booking in Guesty" onSaved={j => { setNoted(n => ({ ...n, [a.reservationId]: j.callNote || n[a.reservationId] || '' })); setNoteFor('') }} onClose={() => setNoteFor('')} /></div>}
+              </Row>
             )
           })}
         </div>

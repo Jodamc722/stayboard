@@ -2,6 +2,8 @@
 // to Guesty, then mirrors locally so the app reflects it immediately.
 //   GET  ?probe=<reservationId>  -> diagnostic: returns the reservation's raw customFields shape
 //   POST { reservationId, done }  -> set the welcome_call field in Guesty + local mirror
+//   POST { reservationId, outcome, note? }      -> log an outcome (see OUTCOMES below)
+//   POST { reservationId, noteOnly: true, note } -> a note on the call: its log + the booking in Guesty
 // Logged-in users only (the ops team marks calls).
 import { NextRequest, NextResponse } from 'next/server'
 import { signedInName } from '@/lib/caller-name'
@@ -167,6 +169,15 @@ export async function POST(req: NextRequest) {
 
   const sb = supabaseAdmin()
 
+  // ── NOTE ONLY (Jon, 2026-10-21: "add notes to all calls"). Onto the call's log when it has one
+  // and onto the booking in Guesty; the Welcome Call field is not touched. lib/guest-call-note.
+  if (noteOnly) {
+    const { addCallNote } = await import('@/lib/guest-call-note')
+    const r = await addCallNote(sb, { reservationId: String(reservationId), kind: 'welcome', note, by })
+    if (!r.ok) return NextResponse.json({ error: r.error || 'Could not save the note.' }, { status: 502 })
+    return NextResponse.json({ ok: true, noteOnly: true, by: r.by, at: r.at, notes: r.notes, callNote: r.callNote, noteSynced: r.noteSynced, loggedOnCall: r.loggedOnCall })
+  }
+
   // ── LOG-ONLY OUTCOMES: no Guesty write. A claim and a no-answer are facts about the desk, not
   // about the reservation, so they live in guest_calls and nowhere else. ──
   if (outcome === 'claim' || outcome === 'no_answer') {
@@ -230,19 +241,6 @@ export async function POST(req: NextRequest) {
     const prior = existingNotes && typeof existingNotes.value === 'string' ? existingNotes.value : ''
     const line = `[${stamp}] ${label} by ${by}${note ? ': ' + note : ''}`
     return { notesId, newNotes: prior ? `${prior}\n${line}` : line }
-  }
-
-  // --- NOTE-ONLY: append the team's call note to Reservation Notes; do NOT touch the Welcome Call field. ---
-  if (noteOnly) {
-    const { notesId, newNotes } = await appendNote('Call note')
-    if (!notesId) return NextResponse.json({ error: 'Could not resolve the Reservation Notes custom field id in Guesty.' }, { status: 422 })
-    const wr = await writeCustomFields(reservationId, token, [{ fieldId: notesId, value: newNotes }])
-    if (!wr.ok) return NextResponse.json({ error: wr.rateLimited ? String(wr.note) : 'Guesty: ' + String(wr.note || 'write failed').slice(0, 240) }, { status: wr.rateLimited ? 429 : 502 })
-    try {
-      const cf = Array.isArray(wr.fields) ? wr.fields : []
-      await sb.from('guesty_reservations').update({ custom_fields: cf, raw: { ...raw, customFields: cf } }).eq('id', reservationId)
-    } catch { /* mirror best-effort */ }
-    return NextResponse.json({ ok: true, noteOnly: true, by, at, notes: newNotes })
   }
 
   // --- MARK / UNMARK the welcome call (resolve the Welcome Call field id from reservation / defs / live). ---

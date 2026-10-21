@@ -22,6 +22,7 @@ import { useRouter } from 'next/navigation'
 import { RefreshCw, PhoneCall, Check, AlertTriangle, Loader2, Copy, StickyNote, MapPin, KeyRound, ChevronDown, CreditCard, CalendarDays, Globe, Car, Star, Wrench, HeartHandshake, PhoneOff, MessageSquareWarning, Crown, Gem, Hand, Voicemail, UserCheck, FileText, X } from 'lucide-react'
 import { channelOf, channelPolicy, buildingGuideFor } from '@/lib/welcome-call-guide'
 import { IconBtn, Tip } from '@/components/lean'
+import { CallNoteBtn, CallNoteStrip, CallNoteText, saveCallNote, type CallNoteSaved } from '@/components/CallNote'
 import { StayPanel } from '@/components/StayPanel'
 import { GuestChecksDesk } from '@/components/GuestChecksDesk'
 import type { Channel, ChannelRule } from '@/lib/welcome-call-guide'
@@ -46,6 +47,8 @@ type Row = {
   tier: Tier; mandatory: boolean
   done: boolean; outcome: string; attempts: number
   callValue: string; calledBy: string; calledAt: string
+  /** What people typed on this call (guest_calls.note), one dated line per note. */
+  callNote: string
   claimedBy: string; claimedAt: string
   proof: Proof
   phoneCheck?: PhoneCheck
@@ -448,7 +451,17 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   // THE NOTE AFTER A MARK (Jon, 2026-09-22: "if you mark it should show or allow you to add notes").
   // A marked welcome call leaves the To-call list at once, so the note box cannot live on its row —
   // it sits at the top of the list, names the guest, and writes to Guesty on Save.
-  const [noteAfter, setNoteAfter] = useState<{ id: string; guest: string; label: string } | null>(null)
+  const [noteAfter, setNoteAfter] = useState<{ id: string; kind: 'welcome' | 'post'; guest: string; label: string } | null>(null)
+  // NOTES ON EVERY CALL (Jon, 2026-10-21: "add notes to all calls, welcome and recovery calls").
+  // Which row has its note strip open: welcome, follow-up or done, live or closed — every row has
+  // the sticky-note button, and the strip saves on the call's log and on the booking in Guesty.
+  const [noteFor, setNoteFor] = useState<{ kind: 'welcome' | 'post'; id: string } | null>(null)
+  const toggleNote = (kind: 'welcome' | 'post', id: string) => setNoteFor(n => n && n.kind === kind && n.id === id ? null : { kind, id })
+  // A saved note lands on the row at once (its log note and the booking's notes), no reload.
+  const noteSaved = (kind: 'welcome' | 'post', id: string, j: CallNoteSaved) => {
+    if (kind === 'welcome') setRows(prev => prev.map(x => x.id === id ? { ...x, callNote: j.callNote || x.callNote, notes: j.notes || x.notes } : x))
+    else setOutRows(prev => prev.map(x => x.id === id ? { ...x, callNote: j.callNote || x.callNote, notes: j.notes || x.notes } : x))
+  }
 
   // ── REFRESH (Jon, 2026-09-23: "also need a refresh button on call desk, new reservation came in").
   // The desk is a server-rendered page off the Guesty mirror, so a booking made ten minutes ago is
@@ -492,19 +505,22 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
       }))
       if (outcome !== 'claim') setDraft(d => ({ ...d, [id]: '' }))
       if (outcome === 'reached' || outcome === 'voicemail' || outcome === 'no_answer') {
-        setNoteAfter({ id, guest: row.guest || 'Guest', label: outcome === 'reached' ? 'Reached' : outcome === 'voicemail' ? 'Voicemail left' : 'No answer' })
+        setNoteAfter({ id, kind: 'welcome', guest: row.guest || 'Guest', label: outcome === 'reached' ? 'Reached' : outcome === 'voicemail' ? 'Voicemail left' : 'No answer' })
       }
     } catch (e: any) { setError(e.message || String(e)); setFailedId(id) } finally { setBusy(null) }
   }
-  async function saveNote(id: string) {
+  // The script panels' note boxes and the after-a-mark strip save through the same route as the
+  // row buttons (components/CallNote): the call's log + the booking in Guesty. `kind` picks the
+  // call — a follow-up note must never be filed as a welcome-call note on the same booking.
+  async function saveNote(id: string, kind: 'welcome' | 'post' = 'welcome') {
     const note = (draft[id] || '').trim(); if (!note) return
     setSaving(id); setError(null); setFailedId(null)
     try {
-      const r = await fetch('/api/welcome-call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: id, noteOnly: true, note }) })
-      const j = await readReply(r); if (!r.ok) throw new Error(j?.error || 'Failed to save note.')
-      setRows(prev => prev.map(x => x.id === id ? { ...x, notes: j.notes || x.notes } : x))
+      const j = await saveCallNote(kind === 'post' ? 'post_checkout' : 'welcome', id, note)
+      noteSaved(kind, id, j)
       setDraft(d => ({ ...d, [id]: '' })); setSaved(id); setTimeout(() => setSaved(s => s === id ? null : s), 1800)
       setNoteAfter(n => n && n.id === id ? null : n)
+      if (!j.noteSynced) setError('Note saved on the call. Guesty did not take it — add it there by hand if it matters.')
     } catch (e: any) { setError(e.message || String(e)); setFailedId(id) } finally { setSaving(null) }
   }
 
@@ -525,7 +541,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
       if (outcome !== 'claim') setDraft(d => ({ ...d, [id]: '' }))
       if (outcome === 'happy' || outcome === 'issue' || outcome === 'no_answer') {
         const g = outRows.find(x => x.id === id)
-        setNoteAfter({ id, guest: (g && g.guest) || 'Guest', label: outcome === 'happy' ? 'All good' : outcome === 'issue' ? 'Issue raised' : 'No answer' })
+        setNoteAfter({ id, kind: 'post', guest: (g && g.guest) || 'Guest', label: outcome === 'happy' ? 'All good' : outcome === 'issue' ? 'Issue raised' : 'No answer' })
       }
       if (j.noteSynced === false) setError('Call logged. The note could not be written to Guesty — add it there by hand if it matters.')
     } catch (e: any) { setError(e.message || String(e)); setFailedId(id) } finally { setBusy(null) }
@@ -591,11 +607,11 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   // proof of work for the day, and where a note gets re-read after the card has left the board.
   const doneCalls = rows.filter(r => r.done).map(r => ({
     id: r.id, guest: r.guest, listing: r.listing, building: r.building, kind: 'welcome' as const, when: r.calledAt || r.check_in,
-    outcome: r.outcome, by: r.calledBy, note: r.proof.note, attempts: r.attempts, proof: r.proof, ref: r.check_in,
+    outcome: r.outcome, by: r.calledBy, note: r.proof.note, callNote: r.callNote, attempts: r.attempts, proof: r.proof, ref: r.check_in,
     checkIn: r.check_in, checkOut: r.status?.checkOut || '', nights: r.status?.nights || 0, phone: r.phone, source: r.source, value: r.value, tier: r.tier, notes: r.notes,
   })).concat(outRows.filter(r => r.done).map(r => ({
     id: r.id, guest: r.guest, listing: r.listing, building: r.building, kind: 'post' as const, when: r.calledAt || r.check_out,
-    outcome: r.outcome, by: r.calledBy, note: r.callNote || r.proof.note, attempts: r.attempts, proof: r.proof, ref: r.check_out,
+    outcome: r.outcome, by: r.calledBy, note: r.proof.note, callNote: r.callNote, attempts: r.attempts, proof: r.proof, ref: r.check_out,
     checkIn: r.check_in, checkOut: r.check_out, nights: r.nights || 0, phone: r.phone, source: r.source, value: r.value, tier: '', notes: r.notes, reasons: r.reasons, glitches: r.glitches,
   })) as any[]).sort((a, b) => String(b.when).localeCompare(String(a.when)))
 
@@ -613,7 +629,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   const mTot = kpis.mandatoryDoneToday + kpis.mandatoryOpen
   const oDone = Math.max(0, kpis.calledToday - kpis.mandatoryDoneToday)
   const oTot = oDone + Math.max(0, kpis.dueNow - kpis.mandatoryOpen) + kpis.postDue
-  const listProps = { today, openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }
+  const listProps = { today, openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error, noteFor, toggleNote, noteSaved }
 
   return (
     <div className="space-y-3">
@@ -665,16 +681,16 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
           <Check size={14} className="text-emerald-700 shrink-0" />
           <span className="text-[12.5px] text-ink"><b>{noteAfter.label}</b> · {noteAfter.guest} <span className="text-muted">— by {myName}</span></span>
           <input autoFocus value={draft[noteAfter.id] || ''} onChange={e => { const v = e.target.value; const id = noteAfter.id; setDraft(d => ({ ...d, [id]: v })) }}
-            onKeyDown={e => { if (e.key === 'Enter') saveNote(noteAfter.id); if (e.key === 'Escape') setNoteAfter(null) }}
+            onKeyDown={e => { if (e.key === 'Enter') saveNote(noteAfter.id, noteAfter.kind); if (e.key === 'Escape') setNoteAfter(null) }}
             placeholder="Add a note — goes to the reservation in Guesty"
             className="flex-1 min-w-[180px] rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px] text-ink focus:outline-none focus:border-brand-600" />
-          <button onClick={() => saveNote(noteAfter.id)} disabled={saving === noteAfter.id || !(draft[noteAfter.id] || '').trim()}
+          <button onClick={() => saveNote(noteAfter.id, noteAfter.kind)} disabled={saving === noteAfter.id || !(draft[noteAfter.id] || '').trim()}
             className="inline-flex items-center gap-1 rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-semibold disabled:opacity-40">{saving === noteAfter.id ? <Loader2 size={12} className="animate-spin" /> : <StickyNote size={12} />} Save note</button>
           <IconBtn title="No note — close" onClick={() => setNoteAfter(null)}><X size={14} /></IconBtn>
         </div>
       )}
 
-      {tab === 'done' && <CompletedList rows={doneCalls} today={today} copied={copied} copyPhone={copyPhone} />}
+      {tab === 'done' && <CompletedList rows={doneCalls} today={today} copied={copied} copyPhone={copyPhone} noteFor={noteFor} toggleNote={toggleNote} noteSaved={noteSaved} />}
       {tab === 'checks' && <GuestChecksDesk />}
 
       {tab === 'board' && (
@@ -691,6 +707,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
       {tab === 'post' && (
         <PostCheckoutList rows={shownOut} openId={openId} setOpenId={setOpenId} draft={draft} setDraft={setDraft}
           busy={busy} onAct={post} copied={copied} copyPhone={copyPhone} today={today}
+          saveNote={id => saveNote(id, 'post')} saving={saving} saved={saved} noteFor={noteFor} toggleNote={toggleNote} noteSaved={noteSaved}
           empty={mode === 'day' ? `No follow-up calls for ${dateLabel === 'Today' ? 'today' : dateLabel} — nobody checked out of a recovery unit that day.` : undefined} />
       )}
 
@@ -741,7 +758,7 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
  * line each, because this is a register to scan and audit rather than a worklist to act on. The
  * note from the recording sits underneath when there is one.
  */
-function CompletedList({ rows, today, copied, copyPhone }: { rows: any[]; today: string; copied: string | null; copyPhone: (id: string, p: string) => void }) {
+function CompletedList({ rows, today, copied, copyPhone, noteFor, toggleNote, noteSaved }: NoteProps & { rows: any[]; today: string; copied: string | null; copyPhone: (id: string, p: string) => void }) {
   // Jon, 2026-09-25: "in the done, be able to click in to see details." Each row opens to the same
   // facts the live card carries — stay, phone, channel, outcome, who and when, the recording note,
   // promises and issues, the reservation notes — plus the transcript link when there is one.
@@ -759,12 +776,13 @@ function CompletedList({ rows, today, copied, copyPhone }: { rows: any[]; today:
         const open = openId === key
         const vm = r.outcome === 'voicemail'
         const oc = OUTCOME[r.outcome] || { label: r.outcome || 'Done', cls: 'bg-slate-100 text-slate-600' }
+        const noteOpen = noteOpenFor(noteFor, r.kind, r.id)
         return (
           <li key={key} className="px-3 sm:px-4 py-2">
-            <button onClick={() => setOpenId(open ? null : key)} className="w-full text-left">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <DateBlock d={r.kind === 'welcome' ? r.checkIn : r.checkOut} today={today} label={r.kind === 'welcome' ? 'Arrives' : 'Checked out'} />
-                <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <DateBlock d={r.kind === 'welcome' ? r.checkIn : r.checkOut} today={today} label={r.kind === 'welcome' ? 'Arrives' : 'Checked out'} />
+              <button onClick={() => setOpenId(open ? null : key)} className="flex-1 min-w-0 text-left">
+                <div className="min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     {vm ? <Voicemail size={13} className="text-amber-600 shrink-0" /> : <Check size={13} className="text-emerald-600 shrink-0" />}
                     <span className="text-[13.5px] font-semibold text-ink truncate max-w-[14rem]">{r.guest || 'Guest'}</span>
@@ -775,14 +793,17 @@ function CompletedList({ rows, today, copied, copyPhone }: { rows: any[]; today:
                     <Badge cls={oc.cls}>{oc.label}</Badge>
                     {r.proof && <ProofTags p={r.proof} done by={r.by} />}
                     {r.proof?.note && <Tag tone={r.proof.sentiment === 'unhappy' ? 'rose' : 'slate'}>Call notes</Tag>}
+                    {r.callNote && <Tag tone="amber" title={r.callNote}>Note</Tag>}
                   </div>
                   <div className="text-[11.5px] text-muted mt-0.5">
                     {r.when ? day(r.when) : ''}{r.attempts > 1 ? ` · ${r.attempts} attempts` : ''}
                   </div>
                 </div>
-                <ChevronDown size={15} className={'shrink-0 text-muted ' + (open ? 'rotate-180 transition' : 'transition')} />
-              </div>
-            </button>
+              </button>
+              <CallNoteBtn note={r.callNote} open={noteOpen} onToggle={() => toggleNote(r.kind, r.id)} />
+              <Tip label={open ? 'Close' : 'Details'}><button onClick={() => setOpenId(open ? null : key)} className="shrink-0 text-muted hover:text-ink p-1"><ChevronDown size={15} className={open ? 'rotate-180 transition' : 'transition'} /></button></Tip>
+            </div>
+            {noteOpen && <div className="pt-2 pl-0 sm:pl-[58px]"><CallNoteStrip kind={r.kind === 'post' ? 'post_checkout' : 'welcome'} reservationId={r.id} prior={r.callNote} onSaved={j => noteSaved(r.kind, r.id, j)} onClose={() => toggleNote(r.kind, r.id)} /></div>}
             {open && (
               <div className="pb-2 pt-2 pl-0 sm:pl-[58px] space-y-2 text-[12.5px]">
                 <RowTools id={r.id} phone={r.phone} copied={copied} copyPhone={copyPhone} />
@@ -800,7 +821,8 @@ function CompletedList({ rows, today, copied, copyPhone }: { rows: any[]; today:
                     {r.proof.issues?.length ? <p><b className="text-rose-700">Issues:</b> {r.proof.issues.join(' · ')}</p> : null}
                     {r.proof.callId && <a href={`/welcome-calls/call/${r.proof.callId}`} className="text-brand-600 hover:underline font-semibold">Open the transcript →</a>}
                   </div>
-                ) : <p className="text-muted">No note from this call.</p>}
+                ) : !r.callNote ? <p className="text-muted">No note from this call — the sticky note on the row adds one.</p> : null}
+                {r.callNote && !noteOpen && <CallNoteText note={r.callNote} className="border-l-2 border-amber-200 pl-2" />}
                 {Array.isArray(r.glitches) && r.glitches.length > 0 && (
                   <p className="text-muted"><b className="text-ink">Issues during the stay:</b> {r.glitches.map((g: any) => g.overview).filter(Boolean).join(' · ')}</p>
                 )}
@@ -871,7 +893,15 @@ function RowTools({ id, phone, copied, copyPhone, children }: { id: string; phon
   )
 }
 
-function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error }: {
+/** The note strip plumbing every list shares (Jon, 2026-10-21: "add notes to all calls"). */
+type NoteProps = {
+  noteFor: { kind: 'welcome' | 'post'; id: string } | null
+  toggleNote: (kind: 'welcome' | 'post', id: string) => void
+  noteSaved: (kind: 'welcome' | 'post', id: string, j: CallNoteSaved) => void
+}
+const noteOpenFor = (n: NoteProps['noteFor'], kind: 'welcome' | 'post', id: string) => !!n && n.kind === kind && n.id === id
+
+function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, copied, copyPhone, welcome, saveNote, saving, saved, myName, failedId, error, noteFor, toggleNote, noteSaved }: NoteProps & {
   rows: Row[]; today: string; openId: string | null; setOpenId: (v: string | null) => void
   draft: Record<string, string>; setDraft: (f: (d: Record<string, string>) => Record<string, string>) => void
   busy: string | null; copied: string | null; copyPhone: (id: string, p: string) => void
@@ -890,6 +920,7 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
         const mine = !!r.claimedBy && !!myName && r.claimedBy.toLowerCase() === myName.toLowerCase()
         const isBusy = busy === r.id
         const owes = !pol.merchantOfRecord && !r.status.paidFull && r.status.balance > 0
+        const noteOpen = noteOpenFor(noteFor, 'welcome', r.id)
         return (
           <li key={r.id} className={r.done ? 'bg-emerald-50/30' : ''}>
             <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
@@ -919,6 +950,7 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
                   {live && r.claimedBy && <Tag tone="amber">{mine ? 'You have it' : `Taken · ${r.claimedBy}`}</Tag>}
                   {r.closed && !r.done && <Tag>Closed · missed</Tag>}
                   {r.proof.note && <Tag tone={r.proof.sentiment === 'unhappy' ? 'rose' : 'slate'} title={r.proof.note}>Call notes</Tag>}
+                  {r.callNote && <Tag tone="amber" title={r.callNote}>Note</Tag>}
                 </div>
               </button>
               {live && (
@@ -928,8 +960,10 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
                   <IconBtn title={`No answer${r.attempts ? ` (${r.attempts} so far)` : ''} — stays on the list to try again`} disabled={isBusy} onClick={() => welcome(r.id, 'no_answer')}><PhoneOff size={14} /></IconBtn>
                 </div>
               )}
+              <CallNoteBtn note={r.callNote} open={noteOpen} onToggle={() => toggleNote('welcome', r.id)} />
               <Tip label={open ? 'Close' : 'Script, notes & details'}><button onClick={() => setOpenId(open ? null : r.id)} className="shrink-0 text-muted hover:text-ink p-1"><ChevronDown size={15} className={open ? 'rotate-180 transition' : 'transition'} /></button></Tip>
             </div>
+            {noteOpen && <div className="px-3 sm:px-4 pb-2.5"><CallNoteStrip kind="welcome" reservationId={r.id} prior={r.callNote} onSaved={j => noteSaved('welcome', r.id, j)} onClose={() => toggleNote('welcome', r.id)} /></div>}
             {failedId === r.id && error && !open && <p className="px-4 pb-2 text-[12px] text-rose-700 flex items-start gap-1.5"><AlertTriangle size={12} className="mt-0.5 shrink-0" /> {error}</p>}
             {open && (
               <div className="px-3 sm:px-4 pb-3 space-y-2">
@@ -939,6 +973,7 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
                 </RowTools>
                 <ProofLine p={r.proof} done={r.done} kind="welcome" />
                 <CallNote p={r.proof} />
+                {r.callNote && !noteOpen && <CallNoteText note={r.callNote} className="border-l-2 border-amber-200 pl-2" />}
                 <StayPanel reservationId={r.id} compact />
                 {r.recovery && !r.done && <RecoveryNote rec={r.recovery} unit={r.listing} />}
                 <WelcomeScript r={r} draft={draft} setDraft={setDraft} onSaveNote={() => saveNote(r.id)} saving={saving === r.id} saved={saved === r.id} myName={myName} />
@@ -961,12 +996,13 @@ const REASON_TAG: Record<string, { label: string; tone: string }> = {
   direct: { label: 'Direct', tone: 'brand' },
   value: { label: 'High value', tone: 'emerald' },
 }
-function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAct, copied, copyPhone, empty, today }: {
+function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAct, copied, copyPhone, empty, today, saveNote, saving, saved, noteFor, toggleNote, noteSaved }: NoteProps & {
   empty?: string; today: string
   rows: OutRow[]; openId: string | null; setOpenId: (v: string | null) => void
   draft: Record<string, string>; setDraft: (f: (d: Record<string, string>) => Record<string, string>) => void
   busy: string | null; onAct: (id: string, o: 'happy' | 'issue' | 'no_answer' | 'claim' | 'undo') => void
   copied: string | null; copyPhone: (id: string, p: string) => void
+  saveNote: (id: string) => void; saving: string | null; saved: string | null
 }) {
   if (rows.length === 0) return <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-sm text-muted">{empty || 'Nobody checked out of a recovery unit in the last 48 hours.'}</div>
   return (
@@ -975,6 +1011,7 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
         const open = openId === r.id
         const live = !r.done && !r.closed
         const isBusy = busy === r.id
+        const noteOpen = noteOpenFor(noteFor, 'post', r.id)
         return (
           <li key={r.id} className={r.done ? 'bg-emerald-50/30' : ''}>
             <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
@@ -996,6 +1033,7 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
                   {live && r.claimedBy && <Tag tone="amber">Taken · {r.claimedBy}</Tag>}
                   {r.closed && !r.done && <Tag>Closed · missed</Tag>}
                   {r.proof.note && <Tag tone={r.proof.sentiment === 'unhappy' ? 'rose' : 'slate'} title={r.proof.note}>Call notes</Tag>}
+                  {r.callNote && <Tag tone="amber" title={r.callNote}>Note</Tag>}
                 </div>
               </button>
               {live && (
@@ -1005,8 +1043,10 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
                   <IconBtn title={`No answer${r.attempts ? ` (${r.attempts} so far)` : ''} — try again later`} disabled={isBusy} onClick={() => onAct(r.id, 'no_answer')}><PhoneOff size={14} /></IconBtn>
                 </div>
               )}
+              <CallNoteBtn note={r.callNote} open={noteOpen} onToggle={() => toggleNote('post', r.id)} />
               <Tip label={open ? 'Close' : 'Script, notes & details'}><button onClick={() => setOpenId(open ? null : r.id)} className="shrink-0 text-muted hover:text-ink p-1"><ChevronDown size={15} className={open ? 'rotate-180 transition' : 'transition'} /></button></Tip>
             </div>
+            {noteOpen && <div className="px-3 sm:px-4 pb-2.5"><CallNoteStrip kind="post_checkout" reservationId={r.id} prior={r.callNote} onSaved={j => noteSaved('post', r.id, j)} onClose={() => toggleNote('post', r.id)} /></div>}
             {open && (
               <div className="px-3 sm:px-4 pb-3 space-y-2">
                 <RowTools id={r.id} phone={r.phone} copied={copied} copyPhone={copyPhone}>
@@ -1016,6 +1056,7 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
                 </RowTools>
                 <ProofLine p={r.proof} done={r.done} kind="post" />
                 <CallNote p={r.proof} />
+                {r.callNote && !noteOpen && <CallNoteText note={r.callNote} className="border-l-2 border-amber-200 pl-2" />}
                 <StayPanel reservationId={r.id} compact />
                 {r.glitches.length > 0 && (
                   <div className="text-[12px] text-rose-800"><b>Logged during stay:</b> {r.glitches.map(g => `${shortDay(g.at)} ${g.overview || 'Issue'} (${g.status || 'open'})`).join(' · ')}</div>
@@ -1031,8 +1072,8 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
                     <li>Happy: ask for a review. Close: &ldquo;Book with us directly next time.&rdquo;</li>
                   </ol>
                 </div>
-                <NoteBox id={r.id} prior={r.notes} draft={draft} setDraft={setDraft} saving={false} saved={false}
-                  placeholder="What they said — saved to Guesty when you pick an outcome." />
+                <NoteBox id={r.id} prior={r.notes} draft={draft} setDraft={setDraft} onSave={() => saveNote(r.id)} saving={saving === r.id} saved={saved === r.id}
+                  placeholder="What they said — Save note keeps it on the call and in Guesty; picking an outcome saves it too." />
               </div>
             )}
           </li>

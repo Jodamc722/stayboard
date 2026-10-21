@@ -34,6 +34,7 @@ import { opsHealth } from '@/lib/ops-health'
 import { publishHealth } from '@/components/command/health-bus'
 import { Check } from 'lucide-react'
 import { NudgeBtn } from '@/components/command/Nudge'
+import { CallNoteBtn, CallNoteStrip, CallNoteText } from '@/components/CallNote'
 import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, type TaskState } from '@/components/task/TaskActions'
 import type { DayCalls, DayCallRow } from '@/app/api/command/calls/route'
 import { whereNow, shiftStatus } from '@/lib/team-where'
@@ -125,7 +126,14 @@ function DayCallRowView({ r, canLog, callers, onChanged }: { r: DayCallRow; canL
   const [done, setDone] = useState('')
   const [credited, setCredited] = useState('')
   const [err, setErr] = useState('')
+  // NOTES ON EVERY CALL (Jon, 2026-10-21): the sticky note on every row, open or done, welcome or
+  // recovery. A mark opens it on its own — "what did they say?" is the moment to write it down.
+  const [noteOpen, setNoteOpen] = useState(false)
+  const [logNote, setLogNote] = useState(r.logNote || '')
   const isPost = r.kind === 'post'
+  const noteKind = isPost ? 'post_checkout' : 'welcome'
+  const noteBtn = canLog ? <CallNoteBtn chip={GHOST} note={logNote} open={noteOpen} onToggle={() => setNoteOpen(o => !o)} /> : null
+  const noteStrip = noteOpen ? <div className="mt-1.5 pl-3.5"><CallNoteStrip kind={noteKind} reservationId={r.id} prior={logNote} onSaved={j => { setLogNote(j.callNote || logNote); onChanged() }} onClose={() => setNoteOpen(false)} /></div> : null
   const credit = async (name: string) => {
     setBusy('credit'); setErr('')
     try {
@@ -139,7 +147,7 @@ function DayCallRowView({ r, canLog, callers, onChanged }: { r: DayCallRow; canL
     try {
       if (isPost) await post('/api/post-checkout-call', { reservationId: r.id, outcome })
       else await post('/api/welcome-call', { reservationId: r.id, outcome })
-      setDone(outcome); onChanged()
+      setDone(outcome); setNoteOpen(true); onChanged()
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy('')
   }
@@ -157,30 +165,34 @@ function DayCallRowView({ r, canLog, callers, onChanged }: { r: DayCallRow; canL
     const lbl = shown === 'no_answer' ? 'no answer — try again' : shown === 'voicemail' ? 'voicemail left' : shown === 'issue' ? 'reached — issue raised' : shown === 'happy' ? 'reached — happy' : shown === 'reached' ? 'reached' : 'called'
     const viaTitle = r.via === 'talkroute' ? 'Talkroute saw this call' + (r.lastResult ? ' · ' + r.lastResult : '') + (r.talkSeconds ? ' · talked ' + mins(r.talkSeconds) : '') : r.via === 'manual' ? 'Logged by hand in Lighthouse' : 'Welcome Call field ticked in Guesty'
     const by = credited || (r.calledBy && r.calledBy.toLowerCase() !== 'talkroute' ? r.calledBy : '')
-    const hasNotes = !!(r.note || r.promised?.length || r.issues?.length)
+    // The transcript write-up when there is one; the typed notes are listed under it (both can exist).
+    const typed = logNote && logNote !== r.note ? logNote : ''
+    const hasNotes = !!(r.note || r.promised?.length || r.issues?.length || typed)
     return (
       <Row title={r.guest}
         tags={<>
           <Tag tone={shown === 'no_answer' ? 'amber' : 'emerald'} title={by ? 'By ' + by : ''}>{lbl}</Tag>
           {r.via === 'talkroute' && <Tag tone="brand" title={viaTitle}><PhoneCall size={10} /> Talkroute{r.talkSeconds ? ' · ' + mins(r.talkSeconds) : ''}</Tag>}
           {r.via !== 'talkroute' && <Tag tone="slate" title={viaTitle}>{r.via === 'manual' ? 'logged by hand' : 'ticked in Guesty'}</Tag>}
-          {hasNotes && <Tag tone={r.issues?.length ? 'rose' : 'slate'} title="There are notes from this call">notes</Tag>}
+          {hasNotes && <Tag tone={r.issues?.length ? 'rose' : 'slate'} title="There are notes from this call — open the sticky note to read or add">notes</Tag>}
           {r.verify === 'none' && <Tag tone="rose" title="Marked done by hand, but Talkroute has no call to this guest's number in the last two weeks — was it made from a personal phone, or not made?"><PhoneOff size={10} /> no Talkroute call</Tag>}
           {r.verify === 'attempted' && <Tag tone="amber" title="Talkroute has calls to this number, but none that connected — the completion may be a voicemail or a WhatsApp follow-up">Talkroute: tried, not connected</Tag>}
           {r.intl && <Tag tone="slate" title="International number — calls go over WhatsApp, which Talkroute cannot see, so this one is taken on the caller's word">intl · WhatsApp</Tag>}
           {recTag}
         </>}
         meta={[r.unit, when, by ? 'by ' + by : (r.uncredited && !credited ? 'nobody credited yet' : ''), r.calledAt ? 'at ' + hhmm(r.calledAt) : ''].filter(Boolean).join(' · ')}
-        actions={r.uncredited && !credited && canLog ? <CreditPicker callers={callers} onPick={credit} busy={busy === 'credit'} /> : undefined}
+        actions={<>{r.uncredited && !credited && canLog ? <CreditPicker callers={callers} onPick={credit} busy={busy === 'credit'} /> : null}{noteBtn}</>}
         err={err}>
-        {hasNotes && (
+        {hasNotes && !noteOpen && (
           <div className="text-[12px] text-ink/80 space-y-0.5 mt-1">
             {r.note && <p>{r.note}{r.noteBy ? <span className="text-muted"> — {r.noteBy}</span> : null}</p>}
+            {typed && <CallNoteText note={typed} className="border-l-2 border-amber-200 pl-2" />}
             {r.promised?.length ? <p><b>We promised:</b> {r.promised.join(' · ')}</p> : null}
             {r.issues?.length ? <p><b className="text-rose-700">Issues:</b> {r.issues.join(' · ')}</p> : null}
             {r.callId && <Link href={'/welcome-calls/call/' + r.callId} className="text-brand-600 hover:underline font-semibold">Open the transcript →</Link>}
           </div>
         )}
+        {noteStrip}
       </Row>
     )
   }
@@ -200,11 +212,16 @@ function DayCallRowView({ r, canLog, callers, onChanged }: { r: DayCallRow; canL
         {B('happy', 'Happy', 'Spoke to the guest — all good', true)}
         {B('issue', 'Issue', 'Spoke to the guest — something to fix or make right')}
         {B('no_answer', 'No answer', 'No answer — stays on the list')}
+        {noteBtn}
       </> : <>
         {B('reached', 'Reached', 'Spoke to the guest — logs the call on the booking and in Guesty', true)}
         {B('voicemail', 'Voicemail', 'Left a voicemail — counts as called')}
         {B('no_answer', 'No answer', 'No answer — stays on the list for another try')}
-      </>) : <Link href="/welcome-calls" className={GHOST}><Phone size={12} /> Open</Link>} />
+        {noteBtn}
+      </>) : <Link href="/welcome-calls" className={GHOST}><Phone size={12} /> Open</Link>}>
+      {logNote && !noteOpen && <CallNoteText note={logNote} className="mt-1 pl-3.5 border-l-2 border-amber-200" />}
+      {noteStrip}
+    </Row>
   )
 }
 

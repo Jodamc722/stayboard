@@ -36,6 +36,7 @@ type PersonTaskGroup = PersonTask['group']
 import { InlineAssign, BTN, MINE_URL, type Roster, type Mine, type MineItem } from '@/components/CommandCockpit'
 import { SCOREBOARD_URL } from '@/components/command/Scoreboard'
 import { NudgeBtn } from '@/components/command/Nudge'
+import { CallNoteStrip } from '@/components/CallNote'
 import { DayKpis } from '@/components/command/DayKpis'
 import { ArrivalsLane } from '@/components/command/ArrivalsLane'
 import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, type TaskState } from '@/components/task/TaskActions'
@@ -225,12 +226,24 @@ export function CallRow({ a, canLog, onChanged, lane }: { a: ArrivalRow; canLog:
   const [busy, setBusy] = useState('')
   const [done, setDone] = useState('')
   const [err, setErr] = useState('')
+  // NOTES ON EVERY CALL (Jon, 2026-10-21): the mark opens a note box under the row — what the guest
+  // said goes on the call's log and on the booking in Guesty (components/CallNote). The row's own
+  // sticky note (noteKey) stays what it is: a Today note for the team.
+  const [noteOpen, setNoteOpen] = useState(false)
+  const [noted, setNoted] = useState('')
   const log = async (outcome: 'reached' | 'voicemail' | 'no_answer') => {
     setBusy(outcome); setErr('')
-    try { await post('/api/welcome-call', { reservationId: a.reservationId, outcome }); setDone(outcome); onChanged() } catch (e: any) { setErr(String(e?.message || e)) }
+    try { await post('/api/welcome-call', { reservationId: a.reservationId, outcome }); setDone(outcome); setNoteOpen(true); onChanged() } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy('')
   }
-  if (done) return <Row lane={lane} noteKey={'call:' + a.reservationId} title={a.guest} tags={<Tag tone="emerald" title="Logged on the booking and in Guesty">{done === 'no_answer' ? 'no answer — try again later' : 'called'}</Tag>} meta={a.unit} />
+  if (done) return (
+    <Row lane={lane} noteKey={'call:' + a.reservationId} title={a.guest}
+      tags={<><Tag tone="emerald" title="Logged on the booking and in Guesty">{done === 'no_answer' ? 'no answer — try again later' : 'called'}</Tag>{noted && <Tag tone="amber" title={noted}>note added</Tag>}</>}
+      meta={a.unit}
+      actions={!noteOpen ? <button onClick={() => setNoteOpen(true)} className={GHOST} title="Add a note to this call — saved on the call and on the booking in Guesty"><StickyNote size={12} /> Call note</button> : undefined}>
+      {noteOpen && <div className="mt-1.5 pl-3.5"><CallNoteStrip kind="welcome" reservationId={a.reservationId} prior={noted} placeholder="What did they say? — saved on the call and on the booking in Guesty" onSaved={j => { setNoted(j.callNote || noted); setNoteOpen(false) }} onClose={() => setNoteOpen(false)} /></div>}
+    </Row>
+  )
   const B = (o: 'reached' | 'voicemail' | 'no_answer', label: string, title: string) => (
     <button onClick={() => log(o)} disabled={!!busy} className={o === 'reached' ? DARK : GHOST} title={title}>{busy === o ? <Loader2 size={12} className="animate-spin" /> : null}{label}</button>
   )

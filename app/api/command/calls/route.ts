@@ -35,6 +35,8 @@ export type DayCallRow = {
   talkSeconds: number; lastResult: string
   /** The written-up call: the transcript summary when there is one, else the note typed on the log. */
   note: string; noteBy: string; promised: string[]; issues: string[]; callId: string
+  /** What people typed on the call's log (guest_calls.note) — shown beside the transcript when both exist. */
+  logNote: string
   /** No person is credited yet (Talkroute saw the call but names nobody) — offer the credit picker. */
   uncredited: boolean
   /**
@@ -67,6 +69,7 @@ const said = (r: WelcomeRow | PostRow, logNote: string) => {
   return {
     via, talkSeconds: p.talkSeconds || 0, lastResult: p.lastResult || '',
     note: p.note || logNote || '', noteBy: p.note ? (p.noteBy || '') : (logNote ? r.calledBy : ''), promised: p.promised || [], issues: p.issues || [], callId: p.callId || '',
+    logNote: logNote || '',
     uncredited: r.done && NOBODY(r.calledBy),
     verify: !r.done ? 'open' : r.phoneCheck.intl ? 'intl' : (via === 'talkroute' || r.phoneCheck.connected) ? 'proven' : r.phoneCheck.calls > 0 ? 'attempted' : 'none',
     intl: r.phoneCheck.intl,
@@ -86,7 +89,7 @@ export async function GET() {
       id: r.id, kind: r.recovery ? 'pre' : 'welcome', guest: r.guest, unit: r.listing, building: r.building, listingId: r.listingId,
       date: r.check_in, today: r.check_in === today, tier: r.tier, mandatory: r.mandatory,
       done: r.done, outcome: r.outcome, attempts: r.attempts, calledBy: r.calledBy, calledAt: r.calledAt, claimedBy: r.claimedBy,
-      value: r.value, nights: r.status?.nights || 0, recovery: rec(r), reasons: [], ...said(r, ''),
+      value: r.value, nights: r.status?.nights || 0, recovery: rec(r), reasons: [], ...said(r, r.callNote),
     }))
     const post = d.outRows.filter(r => !r.closed)
     const postRows: DayCallRow[] = post.map(r => ({

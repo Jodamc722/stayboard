@@ -654,6 +654,9 @@ export type WelcomeRow = {
   tier: Tier; mandatory: boolean
   done: boolean; outcome: string; attempts: number
   callValue: string; calledBy: string; calledAt: string
+  /** What people typed about this call (guest_calls.note): the note on the mark, plus every note
+   *  added since, one dated line each (Jon, 2026-10-21: "add notes to all calls"). */
+  callNote: string
   claimedBy: string; claimedAt: string
   proof: PhoneProof
   phoneCheck: PhoneCheck
@@ -781,6 +784,7 @@ export async function loadCallsDesk(sb: any, today: string, viewDate?: string): 
       callValue: typeof w.value === 'string' ? w.value : '',
       calledBy: (lg && isCompleted(lg.outcome) && lg.called_by) ? String(lg.called_by) : (w._by || ''),
       calledAt: (lg && isCompleted(lg.outcome) && lg.called_at) ? String(lg.called_at) : (w._at || ''),
+      callNote: lg ? String(lg.note || '') : '',
       claimedBy: (lg && lg.outcome === 'in_progress') ? String(lg.called_by || '') : '',
       claimedAt: (lg && lg.outcome === 'in_progress') ? String(lg.called_at || '') : '',
       proof: proofOf(lg, notes.get(String(r.id))),

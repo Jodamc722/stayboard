@@ -12,6 +12,7 @@
 //
 //   POST { reservationId, outcome, note, by }  -> log the call
 //   POST { reservationId, undo: true }         -> remove the log (mis-click)
+//   POST { reservationId, noteOnly: true, note } -> a note on the call, no outcome (2026-10-21)
 import { NextRequest, NextResponse } from 'next/server'
 import { signedInName } from '@/lib/caller-name'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -50,6 +51,19 @@ export async function POST(req: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     bustDay()
     return NextResponse.json({ ok: true, undone: true })
+  }
+
+  // ── NOTE ONLY (Jon, 2026-10-21: "add notes to all calls, welcome and recovery calls"). A note
+  // without an outcome: onto the call's log when it has one and onto the booking in Guesty, the
+  // outcome and the attempt count untouched. lib/guest-call-note.
+  if (body?.noteOnly === true) {
+    const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 1000) : ''
+    if (!note) return NextResponse.json({ error: 'Type a note first.' }, { status: 400 })
+    const by = await signedInName(supabaseAdmin(), String(user.email || ''))
+    const { addCallNote } = await import('@/lib/guest-call-note')
+    const r = await addCallNote(sb, { reservationId, kind: 'post_checkout', note, by })
+    if (!r.ok) return NextResponse.json({ error: r.error || 'Could not save the note.' }, { status: 502 })
+    return NextResponse.json({ ok: true, noteOnly: true, by: r.by, at: r.at, notes: r.notes, callNote: r.callNote, noteSynced: r.noteSynced, loggedOnCall: r.loggedOnCall })
   }
 
   const outcome: Outcome = (OUTCOMES as readonly string[]).includes(String(body?.outcome)) ? body.outcome : 'happy'
