@@ -106,19 +106,22 @@ const isOn = (v: string) => /work|on\s*call/i.test(String(v || ''))
 const shortName = (n: string) => { const p = String(n || '').trim().split(/\s+/); return p.length > 1 ? p[0] + ' ' + p[p.length - 1][0] + '.' : (p[0] || '') }
 
 // The sheet's own columns, in the sheet's order. `w` keeps the grid from reflowing as cells fill.
-const COLS: { k: string; label: string; w: number; align?: string }[] = [
+// SHORT LABELS, FULL WORDING ON HOVER. The sheet writes "Same Day Checkout" and "NO. OF NIGHTS"
+// because a spreadsheet column stretches to fit its title. A fixed 64px column does not: those
+// titles overlapped their neighbours and the right-hand end of the header was unreadable.
+const COLS: { k: string; label: string; w: number; align?: string; full?: string }[] = [
   { k: 'person', label: 'HK Team', w: 118 },
   { k: 'hub', label: 'HUB', w: 96 },
   { k: 'activity', label: 'Activities', w: 210 },
   { k: 'listing', label: 'LISTING', w: 164 },
-  { k: 'reservation', label: 'RESERVATION NAME', w: 190 },
-  { k: 'checkIn', label: 'CHECK-IN DATE', w: 118 },
-  { k: 'checkOut', label: 'CHECK-OUT DATE', w: 118 },
-  { k: 'sameDay', label: 'Same Day Checkout', w: 86, align: 'text-center' },
-  { k: 'nights', label: 'NO. OF NIGHTS', w: 64, align: 'text-center' },
-  { k: 'fee', label: 'Cleaning fee', w: 86, align: 'text-right' },
-  { k: 'cleanHours', label: 'Cleaning time', w: 74, align: 'text-center' },
-  { k: 'payout', label: 'Total Payout', w: 94, align: 'text-right' },
+  { k: 'reservation', label: 'Reservation', w: 190, full: 'RESERVATION NAME' },
+  { k: 'checkIn', label: 'Check-in', w: 118, full: 'CHECK-IN DATE' },
+  { k: 'checkOut', label: 'Check-out', w: 118, full: 'CHECK-OUT DATE' },
+  { k: 'sameDay', label: 'Same day', w: 86, align: 'text-center', full: 'Same Day Checkout' },
+  { k: 'nights', label: 'Nights', w: 64, align: 'text-center', full: 'NO. OF NIGHTS' },
+  { k: 'fee', label: 'Fee', w: 86, align: 'text-right', full: 'Cleaning fee' },
+  { k: 'cleanHours', label: 'Hours', w: 74, align: 'text-center', full: 'Cleaning time' },
+  { k: 'payout', label: 'Payout', w: 94, align: 'text-right', full: 'Total Payout' },
   { k: 'act', label: '', w: 72, align: 'text-right' },
 ]
 const GRID_W = COLS.reduce((n, c) => n + c.w, 0)
@@ -255,7 +258,7 @@ export default function GeLog({ date }: { date: string }) {
 
   /** The grid as the office would paste it into the sheet it is replacing. */
   function exportCsv() {
-    const head = COLS.filter(c => c.k !== 'act').map(c => c.label)
+    const head = COLS.filter(c => c.k !== 'act').map(c => c.full || c.label)
     const lines = [head.join(',')]
     const esc = (v: any) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s }
     for (const b of shown) for (const r of b.rows) {
@@ -451,7 +454,8 @@ export default function GeLog({ date }: { date: string }) {
               <thead className="sticky top-0 z-10">
                 <tr className="bg-neutral-50 text-neutral-500 text-[10px] uppercase tracking-wider font-semibold">
                   {COLS.map(c => (
-                    <th key={c.k} className={'bg-neutral-50 border-b border-line px-2 py-2 font-semibold leading-tight whitespace-nowrap ' + (c.align || 'text-left')}>
+                    <th key={c.k} title={c.full || undefined}
+                      className={'bg-neutral-50 border-b border-line px-2 py-2 font-semibold leading-tight ' + (c.align || 'text-left')}>
                       {c.label}
                     </th>
                   ))}
