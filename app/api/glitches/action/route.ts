@@ -64,8 +64,11 @@ function deptFor(category: string): string {
 export async function POST(req: NextRequest) {
   // Roles+levels write gate (2026-08-04): below-edit access on 'glitches' is rejected here,
   // whatever the UI shows. requireLevel also covers the signed-out 401.
-  const __gate = await requireLevel('glitches', 'edit')
+  // ANYONE CAN CLOSE (Jon, 2026-10-21: "make sure we allow all users to move glitches to closed").
+  // Everyone who can see the glitch board may close a card; every other action still needs edit.
+  const __gate = await requireLevel('glitches', 'view')
   if (!__gate.ok) return __gate.res
+  const __canEdit = (await requireLevel('glitches', 'edit')).ok
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -75,6 +78,7 @@ export async function POST(req: NextRequest) {
     const action = str(b.action)
     const db = supabaseAdmin()
     if (!id || !action) return NextResponse.json({ ok: false, error: 'id and action required.' }, { status: 400 })
+    if (!__canEdit && !(action === 'move' && str(b.status) === 'closed')) return NextResponse.json({ ok: false, error: 'You can close glitches; other changes need edit access on Glitches.' }, { status: 403 })
     const { data: g, error: ge } = await db.from('glitches').select('*').eq('id', id).maybeSingle()
     if (ge || !g) return NextResponse.json({ ok: false, error: 'Glitch not found.' }, { status: 404 })
     const hist = Array.isArray(g.history) ? g.history : []
@@ -90,13 +94,7 @@ export async function POST(req: NextRequest) {
     if (action === 'move') {
       let status = str(b.status)
       if (STATUSES.indexOf(status) < 0) return NextResponse.json({ ok: false, error: 'Bad status.' }, { status: 400 })
-      if (status === 'closed' && !isManager && String(g.status) !== 'closed') {
-        const patch: Record<string, any> = { status: 'manager_review', history: stamp('completion_requested', { note: str(b.note) || undefined }), updated_at: new Date().toISOString() }
-        const upd = await db.from('glitches').update(patch).eq('id', id)
-        if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 })
-        bustDay()
-        return NextResponse.json({ ok: true, status: 'manager_review', awaitingApproval: true })
-      }
+      // Closing no longer waits for a manager (2026-10-21) — anyone closes, stamped with who did it.
       if (status === 'closed' && isManager && String(g.status) === 'manager_review') status = 'closed'
       // STAMP THE CLOSE (Jon, 2026-09-15: "track time of created, to glitch closed ... a KPI").
       // Until migration 085 there was no closure time at all — closing a card only bumped

@@ -299,7 +299,7 @@ export function GlitchRow({ g, canEdit, canApprove, onChanged, lane }: { g: Glit
           <button onClick={() => run({ action: 'approveClose' }, () => setGone(true))} disabled={!!busy} className={DARK} title="Approve — the card closes with your name on it">{busy === 'approveClose' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Approve</button>
           <button onClick={() => setAsking(true)} disabled={!!busy} className={GHOST} title="Not done yet — back to ops with a reason">Send back</button>
         </>) : null}
-        {!awaiting && canEdit && <button onClick={() => run({ action: 'move', status: 'closed' }, () => setGone(true))} disabled={!!busy} className={GHOST} title={canApprove ? 'Resolved — close the card' : 'Resolved — sends it to a manager to approve the close'}>{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {canApprove ? 'Close' : 'Complete'}</button>}
+        {!awaiting && <button onClick={() => run({ action: 'move', status: 'closed' }, () => setGone(true))} disabled={!!busy} className={GHOST} title="Resolved — close the card (your name is stamped on it)">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Close</button>}
       </>} />
   )
 }

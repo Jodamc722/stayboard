@@ -661,16 +661,16 @@ function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, canApprove
         {/* MANAGER APPROVAL (Jon, 2026-10-02). The team marks a card complete; it waits here for a
             manager (full access on Glitches) to approve the close or send it back with a reason.
             A manager's own "Mark complete" closes at once. */}
-        {awaiting ? (
-          canApprove
-            ? <CloseSignOff g={g} onDone={onChanged} />
-            : <span className={chip + ' bg-violet-50 text-violet-800 ring-violet-200 h-8'} title="Waiting on a manager to approve the close">Awaiting manager approval</span>
+        {/* 2026-10-21: anyone can close (Jon: "allow all users to move glitches to closed"). A card still
+            parked in manager review from before can be closed by anyone; a manager keeps the sign-off. */}
+        {awaiting && canApprove ? (
+          <CloseSignOff g={g} onDone={onChanged} />
         ) : (
           <button onClick={() => act(g.id, { action: 'move', status: closed ? 'ops' : 'closed' })}
-            title={closed ? 'Reopen the card' : canApprove ? 'Close the card' : 'Send to a manager to approve the close'}
+            title={closed ? 'Reopen the card' : 'Close the card — your name is stamped on it'}
             className={'inline-flex items-center gap-1.5 text-[12.5px] font-semibold px-3 h-8 rounded-xl border transition ' +
               (closed ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-ink border-line hover:border-emerald-500 hover:text-emerald-700')}>
-            <Check size={14} /> {closed ? 'Completed — reopen' : canApprove ? 'Mark complete' : 'Mark complete → manager'}
+            <Check size={14} /> {closed ? 'Completed — reopen' : 'Mark complete'}
           </button>
         )}
         {awaiting && !canApprove ? (
