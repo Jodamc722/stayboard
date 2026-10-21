@@ -48,8 +48,10 @@ export type GuestCheckRow = {
   idLinkSentAt: string | null; idLinkSentVia: string | null; verifyUrl: string | null; salatoVerified: boolean
   depositStatus: 'pending' | 'captured' | 'waived' | 'released' | 'claimed'; depositAmount: number | null; depositMethod: string | null; depositRef: string | null
   depositCapturedAt: string | null; depositCapturedBy: string | null; hasDepositProof: boolean; depositReleaseDue: string | null; depositReleasedAt: string | null
-  /** The deposit was read off the booking's payments in Guesty (an authorization hold), not typed here. */
+  /** The deposit was read off the booking's payments in Guesty (a security deposit / card hold), not typed here. */
   depositAuto: boolean
+  /** Guesty has the hold scheduled but not placed yet (it places it a day or two before arrival): amount and when. Nothing to do unless it fails. */
+  depositScheduled: { amount: number; due: string | null } | null
   note: string | null; by: string | null; updatedAt: string | null
 }
 const str = (v: any) => (v == null ? '' : String(v))
@@ -128,7 +130,8 @@ export async function GET(req: NextRequest) {
       const chk: any = c.id_check && typeof c.id_check === 'object' ? c.id_check : null
       // THE DEPOSIT: what this desk holds first; else a hold on the booking's payments in Guesty.
       const hold = (!c.deposit_status || c.deposit_status === 'pending') ? depositFromMoney({ payments: r.payments }) : null
-      const autoDep = hold && hold.status !== 'failed' ? hold : null
+      const autoDep = hold && (hold.status === 'held' || hold.status === 'captured' || hold.status === 'released') ? hold : null
+      const scheduled = hold && hold.status === 'scheduled' ? { amount: hold.amount, due: hold.due } : null
       const depositStatus = (autoDep ? (autoDep.status === 'held' ? 'captured' : autoDep.status === 'captured' ? 'claimed' : 'released') : (c.deposit_status || 'pending')) as GuestCheckRow['depositStatus']
       return {
         reservationId: str(r.id), guest: str(r.guest_name) || 'Guest', unit: str(r.listing_name), listingId: str(r.listing_id), checkIn: ci, checkOut: co, channel: ch, today: ci === today, inHouse: ci <= today && co > today,
@@ -142,13 +145,14 @@ export async function GET(req: NextRequest) {
         depositStatus, depositAmount: autoDep ? autoDep.amount : (c.deposit_amount == null ? null : Number(c.deposit_amount)), depositMethod: autoDep ? 'guesty_hold' : (c.deposit_method || null), depositRef: autoDep ? (autoDep.ref || null) : (c.deposit_ref || null),
         depositCapturedAt: autoDep ? (autoDep.at || null) : (c.deposit_captured_at || null), depositCapturedBy: autoDep ? 'Guesty' : (c.deposit_captured_by || null), hasDepositProof: !!c.deposit_proof_path,
         depositReleaseDue: c.deposit_release_due || (autoDep && autoDep.status === 'held' ? addDays(co, p.rule.releaseDays || 0) : null), depositReleasedAt: c.deposit_released_at || null,
-        depositAuto: !!autoDep,
+        depositAuto: !!autoDep, depositScheduled: scheduled,
         note: c.note || null, by: c.updated_by || null, updatedAt: c.updated_at || null,
       }
     }).sort((a, b) => a.checkIn.localeCompare(b.checkIn) || a.unit.localeCompare(b.unit))
     const needed = rows.reduce((a, r) => a + (r.needId ? 1 : 0) + (r.needDeposit ? 1 : 0), 0)
     // A flagged ID is not done: a person still has to look.
-    const done = rows.reduce((a, r) => a + (r.needId && (r.idStatus === 'verified' || r.idStatus === 'waived') ? 1 : 0) + (r.needDeposit && r.depositStatus !== 'pending' ? 1 : 0), 0)
+    // A hold Guesty has scheduled counts as done: nothing for a person to do until it fails (then it is pending again).
+    const done = rows.reduce((a, r) => a + (r.needId && (r.idStatus === 'verified' || r.idStatus === 'waived') ? 1 : 0) + (r.needDeposit && (r.depositStatus !== 'pending' || r.depositScheduled) ? 1 : 0), 0)
     const toCheck = rows.filter(r => r.needId && r.idStatus === 'check').length
     const toRead = rows.filter(r => r.idNeedsRead).length
     const releaseDue = rows.filter(r => r.depositStatus === 'captured' && r.depositReleaseDue && r.depositReleaseDue <= today).length

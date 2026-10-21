@@ -109,40 +109,52 @@ export function decideLink(read: IdRead | null, typed: string, booking: string):
 }
 
 // ── THE DEPOSIT, READ OFF THE BOOKING (same ask: "that it's been added") ─────────────────────────
-// A card hold placed in Guesty shows up on the reservation's money.payments as an authorization
-// hold. When the team holds the deposit there, the desk should not ask them to type it in again.
-export type GuestyHold = { amount: number; currency: string; status: 'held' | 'captured' | 'released' | 'failed'; at: string | null; ref: string | null; note: string }
+// A security deposit placed through Guesty shows up on the reservation's money.payments. On the
+// live bookings (peeked 2026-10-21) it reads: `isSecurityDeposit: true` and a status of
+// SECURITY_DEPOSIT_SUCCEEDED once the hold is on the card, with paidAt; a hold Guesty has not placed
+// yet is `isAuthorizationHold: true` with status PENDING and a shouldBePaidAt (it places it a day or
+// two before arrival). When the team arranged the deposit there, the desk must not ask them to type
+// it in again.
+export type GuestyHold = {
+  amount: number; currency: string
+  /** held = on the card now · scheduled = Guesty will place it (shouldBePaidAt) · captured = taken · released = let go · failed */
+  status: 'held' | 'scheduled' | 'captured' | 'released' | 'failed'
+  at: string | null; due: string | null; ref: string | null; note: string
+}
 
 function holdStatus(p: any): GuestyHold['status'] | null {
   const s = String(p?.status || '').toUpperCase()
-  if (p?.authorizationHoldCaptured === true || p?.isCaptured === true || /CAPTURED/.test(s)) return 'captured'
+  if (p?.authorizationHoldCaptured === true || p?.isCaptured === true || /CAPTURED|CHARGED/.test(s)) return 'captured'
   if (/CANCEL|VOID|RELEASE|EXPIRE|REFUND/.test(s) || p?.releasedAt || p?.canceledAt || p?.cancelledAt) return 'released'
   if (/FAIL|DECLIN|ERROR/.test(s)) return 'failed'
+  if (/PENDING|SCHEDUL/.test(s)) return 'scheduled'
   if (/SUCCE|AUTHORI|PAID|HELD|HOLD|APPROV/.test(s) || !s) return 'held'
-  return null   // PENDING and the unknown: not a deposit we can vouch for
+  return null   // the unknown: not a deposit we can vouch for
 }
-/** Every deposit-shaped payment on the booking: an authorization hold, or a payment Guesty labels a deposit. */
+/** Every deposit-shaped payment on the booking: a security deposit, an authorization hold, or a payment Guesty labels a deposit. */
 export function depositHoldsFromMoney(money: any): GuestyHold[] {
   const payments: any[] = Array.isArray(money?.payments) ? money.payments : []
   const out: GuestyHold[] = []
   for (const p of payments) {
     const note = String(p?.note || p?.description || p?.paymentType || p?.type || '')
-    const isHold = p?.isAuthorizationHold === true || /\bhold\b|deposit|security/i.test(note) || /HOLD|DEPOSIT/.test(String(p?.type || p?.paymentType || '').toUpperCase())
+    const st = String(p?.status || '').toUpperCase()
+    const isHold = p?.isSecurityDeposit === true || p?.isAuthorizationHold === true || /SECURITY_DEPOSIT|AUTH_HOLD|AUTHORIZATION/.test(st)
+      || /\bhold\b|deposit|security/i.test(note) || /HOLD|DEPOSIT/.test(String(p?.type || p?.paymentType || '').toUpperCase())
     if (!isHold) continue
     const amount = Number(p?.amount) || Number(p?.authorizationHold?.amount) || 0
     if (!(amount > 0)) continue
-    const st = holdStatus(p)
-    if (!st) continue
-    out.push({ amount, currency: String(p?.currency || money?.currency || 'USD'), status: st, at: p?.paidAt || p?.createdAt || p?.authorizationHold?.authorizedAt || null, ref: p?._id ? String(p._id) : null, note })
+    const status = holdStatus(p)
+    if (!status) continue
+    out.push({ amount, currency: String(p?.currency || money?.currency || 'USD'), status, at: p?.paidAt || (status === 'scheduled' ? null : p?.createdAt) || null, due: p?.shouldBePaidAt || null, ref: p?._id ? String(p._id) : null, note })
   }
   return out
 }
-/** The hold that speaks for the deposit now: a live one first, then captured, then the newest released. */
+/** The hold that speaks for the deposit now: on the card first, then scheduled, captured, the newest released, failed last. */
 export function depositFromMoney(money: any): GuestyHold | null {
   const holds = depositHoldsFromMoney(money)
   if (!holds.length) return null
-  const rank: Record<GuestyHold['status'], number> = { held: 0, captured: 1, released: 2, failed: 3 }
-  return holds.slice().sort((a, b) => rank[a.status] - rank[b.status] || String(b.at || '').localeCompare(String(a.at || '')))[0]
+  const rank: Record<GuestyHold['status'], number> = { held: 0, scheduled: 1, captured: 2, released: 3, failed: 4 }
+  return holds.slice().sort((a, b) => rank[a.status] - rank[b.status] || String(b.at || b.due || '').localeCompare(String(a.at || a.due || '')))[0]
 }
 
 /** The Guesty "verified" custom field on a reservation, found by its definition id (the reservation's own entries carry no name). */

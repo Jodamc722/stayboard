@@ -105,7 +105,7 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
   const rows = data?.rows || []
   const today = data?.today || ''
   // A flagged photo is open work: a person still has to look (Jon: "flag to check").
-  const isOpen = (r: GuestCheckRow) => (r.needId && (r.idStatus === 'pending' || r.idStatus === 'check')) || (r.needDeposit && r.depositStatus === 'pending')
+  const isOpen = (r: GuestCheckRow) => (r.needId && (r.idStatus === 'pending' || r.idStatus === 'check')) || (r.needDeposit && r.depositStatus === 'pending' && !r.depositScheduled)
   const releaseDue = (r: GuestCheckRow) => r.depositStatus === 'captured' && !!r.depositReleaseDue && r.depositReleaseDue <= today
   const shown = useMemo(() => rows.filter(r => only === 'all' ? true : only === 'release' ? releaseDue(r) || (r.depositStatus === 'captured' && r.checkOut <= today) : isOpen(r) || releaseDue(r)), [rows, only, today])
   const nOpen = rows.filter(isOpen).length, nRelease = rows.filter(releaseDue).length
@@ -137,7 +137,7 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
       {shown.length > 0 && (
         <div className="rounded-2xl border border-line bg-white divide-y divide-line overflow-hidden">
           {shown.map(r => {
-            const idOpen = r.needId && (r.idStatus === 'pending' || r.idStatus === 'check'), depOpen = r.needDeposit && r.depositStatus === 'pending'
+            const idOpen = r.needId && (r.idStatus === 'pending' || r.idStatus === 'check'), depOpen = r.needDeposit && r.depositStatus === 'pending' && !r.depositScheduled
             const b = busy === r.reservationId
             return (
               <div key={r.reservationId} className={'px-3 sm:px-4 py-3 ' + ((idOpen || depOpen) && r.today ? 'bg-rose-50/40' : '')}>
@@ -149,10 +149,11 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
                       <Tag tone={r.today ? 'amber' : r.inHouse ? 'sky' : 'slate'}>{r.today ? 'arrives today' : r.inHouse ? 'in-house · out ' + fmtDay(r.checkOut) : r.checkIn < today ? 'left ' + fmtDay(r.checkOut) : 'arrives ' + fmtDay(r.checkIn)}</Tag>
                       <IdTag r={r} />
                       {r.needDeposit && (r.depositStatus === 'captured'
-                        ? <Tag tone={releaseDue(r) ? 'rose' : 'emerald'} title={(r.depositAuto ? 'A card hold on the booking in Guesty' : 'Captured ' + fmtAt(r.depositCapturedAt) + (r.depositCapturedBy ? ' by ' + r.depositCapturedBy.split('@')[0] : ''))}>deposit {money(r.depositAmount) || 'held'}{r.depositAuto ? ' · Guesty hold' : r.depositMethod ? ' · ' + methodLabel(r.depositMethod) : ''} · {fmtAt(r.depositCapturedAt)}{r.depositReleaseDue ? (releaseDue(r) ? ' · RELEASE DUE ' : ' · release ') + fmtDay(r.depositReleaseDue) : ''}</Tag>
+                        ? <Tag tone={releaseDue(r) ? 'rose' : 'emerald'} title={(r.depositAuto ? 'A security deposit on the booking in Guesty — read off the booking, not typed here' : 'Captured ' + fmtAt(r.depositCapturedAt) + (r.depositCapturedBy ? ' by ' + r.depositCapturedBy.split('@')[0] : ''))}>deposit {money(r.depositAmount) || 'held'}{r.depositAuto ? ' · Guesty' : r.depositMethod ? ' · ' + methodLabel(r.depositMethod) : ''} · {fmtAt(r.depositCapturedAt)}{r.depositReleaseDue ? (releaseDue(r) ? ' · RELEASE DUE ' : ' · release ') + fmtDay(r.depositReleaseDue) : ''}</Tag>
                         : r.depositStatus === 'released' ? <Tag tone="slate">deposit released {fmtAt(r.depositReleasedAt)}</Tag>
                         : r.depositStatus === 'claimed' ? <Tag tone="violet">deposit claimed</Tag>
                         : r.depositStatus === 'waived' ? <Tag>deposit waived</Tag>
+                        : r.depositScheduled ? <Tag tone="sky" title={'Guesty places the hold on the card' + (r.depositScheduled.due ? ' on ' + fmtAt(r.depositScheduled.due) : ' before arrival') + ' — nothing to do unless it fails'}>deposit scheduled in Guesty · {money(r.depositScheduled.amount)}{r.depositScheduled.due ? ' · ' + fmtDay(r.depositScheduled.due.slice(0, 10)) : ''}</Tag>
                         : <Tag tone="amber">deposit to collect{r.depositDue ? ' · ' + money(r.depositDue) : ''}{r.rule.depositMethod ? ' · ' + methodLabel(r.rule.depositMethod) : ''}</Tag>)}
                     </div>
                     {(r.note || r.depositRef || r.idName) && <div className="mt-1 text-[11.5px] text-muted truncate">{[r.idName ? 'ID: ' + r.idName : '', r.depositRef && !r.depositAuto ? 'ref ' + r.depositRef : '', r.note].filter(Boolean).join(' · ')}</div>}
