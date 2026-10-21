@@ -132,6 +132,7 @@ export default function GeLog({ date }: { date: string }) {
   const [view, setView] = useState<'dept' | 'person'>('dept')
   const [noteFor, setNoteFor] = useState('')
   const [showEmpty, setShowEmpty] = useState(true)
+  const [market, setMarket] = useState('')   // '' = every market
   const [tick, setTick] = useState(0)
 
   useEffect(() => {
@@ -186,7 +187,34 @@ export default function GeLog({ date }: { date: string }) {
     })
   }, [rows, roster, rosterOf, view])
 
-  const shown = useMemo(() => showEmpty ? bands : bands.filter(b => b.rows.length), [bands, showEmpty])
+  // THE MARKETS ACTUALLY IN FRONT OF US, not a hard-coded pair: a day with only Broward work
+  // should not offer a Miami tab that leads to an empty grid.
+  const markets = useMemo(() => {
+    const s = new Set<string>()
+    for (const b of bands) if (b.market) s.add(b.market)
+    return Array.from(s).sort()
+  }, [bands])
+
+  const shown = useMemo(() => {
+    let b = showEmpty ? bands : bands.filter(x => x.rows.length)
+    if (market) b = b.filter(x => x.market === market)
+    return b
+  }, [bands, showEmpty, market])
+
+  // ONE TABLE PER DEPARTMENT (Jon, 2026-10-21: "need to be tables for each department"). The first
+  // cut ran every department through a single table with full-width heading rows between them, so
+  // that one table carried housekeeping, maintenance and the unassigned pool at once — one
+  // scrollbar, one sticky header, and no way to look at maintenance without the other two moving
+  // under it. Housekeeping and maintenance are different people doing different work read by
+  // different supervisors; they get their own tables, each with its own header.
+  const sections = useMemo(() => {
+    if (view === 'person') return [{ key: 'all', label: '', bands: shown }]
+    const m = new Map<string, typeof shown>()
+    for (const b of shown) { const a = m.get(b.dept) || []; a.push(b); m.set(b.dept, a) }
+    return Array.from(m.keys())
+      .sort((a, b) => deptRank(a) - deptRank(b))
+      .map(k => ({ key: k, label: DEPT_LABEL[k] || k, bands: m.get(k) as typeof shown }))
+  }, [shown, view])
 
   const totals = useMemo(() => {
     let fee = 0, hrs = 0, pay = 0, done = 0, nobody = 0, gl = 0
@@ -304,28 +332,20 @@ export default function GeLog({ date }: { date: string }) {
     )
   }
 
-  let lastDept = '', lastMarket = ''
-  const body: JSX.Element[] = []
-  for (const band of shown) {
-    // BAND HEADINGS, not panels. A full-width row inside the same table, so every column below it
-    // still lines up with the one header at the top — which is the whole point of a grid.
-    if (view === 'dept') {
-      if (band.dept !== lastDept) {
-        lastDept = band.dept; lastMarket = ''
-        body.push(
-          <tr key={'d' + band.dept}><td colSpan={COLS.length} className="bg-ink/[0.04] border-y border-line px-2.5 py-1.5 text-[10px] uppercase tracking-wider font-bold text-ink">
-            {DEPT_LABEL[band.dept] || band.dept}
-          </td></tr>
-        )
-      }
-      if (band.market && band.market !== lastMarket) {
-        lastMarket = band.market
-        body.push(
-          <tr key={'m' + band.dept + band.market}><td colSpan={COLS.length} className="bg-app border-b border-line px-2.5 py-1 text-[9.5px] uppercase tracking-wide font-bold text-muted">
-            {band.market}
-          </td></tr>
-        )
-      }
+  // The rows of ONE department's table. The department heading now sits above the table rather
+  // than inside it, so the only band row left is the market — and that one disappears too the
+  // moment a market is picked, because then every row below is that market.
+  function rowsFor(bandsIn: typeof shown): JSX.Element[] {
+    let lastMarket = ''
+    const body: JSX.Element[] = []
+    for (const band of bandsIn) {
+    if (view === 'dept' && !market && band.market && band.market !== lastMarket) {
+      lastMarket = band.market
+      body.push(
+        <tr key={'m' + band.dept + band.market}><td colSpan={COLS.length} className="bg-app border-y border-line px-2.5 py-1 text-[9.5px] uppercase tracking-wide font-bold text-muted">
+          {band.market}
+        </td></tr>
+      )
     }
     if (!band.rows.length) {
       body.push(
@@ -360,6 +380,8 @@ export default function GeLog({ date }: { date: string }) {
         )
       }
     })
+    }
+    return body
   }
 
   return (
@@ -376,6 +398,16 @@ export default function GeLog({ date }: { date: string }) {
         {totals.fee ? <span className="text-emerald-700 font-semibold tabular-nums">{money(totals.fee)} fees</span> : null}
         {totals.hrs ? <span className="text-muted tabular-nums">{totals.hrs.toFixed(2).replace(/\.?0+$/, '')} h</span> : null}
         <div className="ml-auto flex items-center gap-2">
+          {/* MARKET FIRST. Nobody runs Miami and Broward in the same breath — the supervisor
+              opening this is looking at one of them, and until now had to scroll past the other. */}
+          {markets.length > 1 && (
+            <div className="inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 bg-white">
+              {([['', 'All markets'] as const] as [string, string][]).concat(markets.map(m => [m, m] as [string, string])).map(([v, l]) => (
+                <button key={v || 'all'} onClick={() => setMarket(v)}
+                  className={'text-[11px] font-semibold px-2 py-1 rounded-md ' + (market === v ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>{l}</button>
+              ))}
+            </div>
+          )}
           <div className="inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 bg-white">
             {([['dept', 'By department'], ['person', 'By team member']] as const).map(([v, l]) => (
               <button key={v} onClick={() => setView(v)} className={'text-[11px] font-semibold px-2 py-1 rounded-md ' + (view === v ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>{l}</button>
@@ -398,28 +430,38 @@ export default function GeLog({ date }: { date: string }) {
         </p>
       )}
 
-      {shown.length > 0 && (
-        <div className="overflow-auto rounded-xl border border-line bg-white max-h-[76vh]">
-          {/* FIXED layout, or the colgroup is only a suggestion: one 90-character task name then
-              stretches Activities across the screen and pushes the money columns out of sight. */}
-          <table className="text-[11px] border-collapse" style={{ tableLayout: 'fixed', width: GRID_W }}>
-            <colgroup>{COLS.map(c => <col key={c.k} style={{ width: c.w }} />)}</colgroup>
-            {/* The day board's own table head — neutral ground, muted small caps, one rule under
-                it — and it STICKS, because twelve columns are unreadable the moment the labels
-                scroll off. */}
-            <thead className="sticky top-0 z-10">
-              <tr className="bg-neutral-50 text-neutral-500 text-[10px] uppercase tracking-wider font-semibold border-b border-line">
-                {COLS.map(c => (
-                  <th key={c.k} className={'bg-neutral-50 border-b border-line px-2 py-2 font-semibold leading-tight whitespace-nowrap ' + (c.align || 'text-left')}>
-                    {c.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>{body}</tbody>
-          </table>
+      {sections.map(sec => {
+        const n = sec.bands.reduce((t, b) => t + b.rows.length, 0)
+        return (
+        <div key={sec.key} className="space-y-1">
+          {sec.label ? (
+            <div className="flex items-baseline gap-2 px-1 pt-1">
+              <h3 className="text-[11px] uppercase tracking-wider font-bold text-ink">{sec.label}</h3>
+              <span className="text-[10.5px] text-muted tabular-nums">{n} row{n === 1 ? '' : 's'} · {sec.bands.filter(b => b.person).length} on it</span>
+            </div>
+          ) : null}
+          <div className="overflow-auto rounded-xl border border-line bg-white max-h-[70vh]">
+            {/* FIXED layout, or the colgroup is only a suggestion: one 90-character task name then
+                stretches Activities across the screen and pushes the money columns out of sight. */}
+            <table className="text-[11px] border-collapse" style={{ tableLayout: 'fixed', width: GRID_W }}>
+              <colgroup>{COLS.map(c => <col key={c.k} style={{ width: c.w }} />)}</colgroup>
+              {/* The day board's own table head — neutral ground, muted small caps, one rule under
+                  it — and it STICKS per table, because twelve columns are unreadable the moment
+                  the labels scroll off. */}
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-neutral-50 text-neutral-500 text-[10px] uppercase tracking-wider font-semibold">
+                  {COLS.map(c => (
+                    <th key={c.k} className={'bg-neutral-50 border-b border-line px-2 py-2 font-semibold leading-tight whitespace-nowrap ' + (c.align || 'text-left')}>
+                      {c.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>{rowsFor(sec.bands)}</tbody>
+            </table>
+          </div>
         </div>
-      )}
+      )})}
     </section>
   )
 }
