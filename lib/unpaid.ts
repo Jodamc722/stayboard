@@ -50,7 +50,9 @@ export async function loadUnpaid(opts: { from?: string; to?: string } = {}): Pro
   const db = supabaseAdmin()
   const today = ymdET(new Date())
   const from = /^\d{4}-\d{2}-\d{2}$/.test(str(opts.from)) ? str(opts.from) : today
-  const to = /^\d{4}-\d{2}-\d{2}$/.test(str(opts.to)) ? str(opts.to) : shiftDay(today, 7)
+  // LOOK AHEAD 30 DAYS (Jon, 2026-10-21: "unpaid should look ahead"). Chasing a balance a month out
+  // is today's work too; the buckets keep the near ones on top.
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(str(opts.to)) ? str(opts.to) : shiftDay(today, 30)
   // Stays touching the window: arriving inside it, or already in house during it.
   const { data: res } = await db.from('guesty_reservations')
     // Sub-fields only (2026-10-01, load time): the full raw blob for 3,000 stays was ~1.5s of the read.

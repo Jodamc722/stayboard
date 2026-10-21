@@ -59,7 +59,7 @@ type NoticeT = { id: string; guest_name: string; unit_no: string; propertyName?:
 const fiveStar = (r: number | null, ch: string) => r == null ? null : /booking/i.test(ch) && r > 5 ? Math.round((r / 2) * 10) / 10 : r
 const CK_URL = '/api/daily-checklist'
 type CkRowT = { id: string; title: string; by_time: string | null; owner_role: string | null; link: string | null; done: boolean; late: boolean; in_minutes: number | null; done_by: string | null }
-const UNPAID_URL = '/api/unpaid'   // today → +7 days, direct / VRBO / Google only
+const UNPAID_URL = '/api/unpaid'   // today → +30 days, direct / VRBO / Google only
 type Seg = { label: string; n: number; cls: string; tone: Tone; filter: string }
 type Item = { key: string; state: string; taskId?: string; who?: string; node: ReactNode; sort: number }
 
@@ -255,6 +255,8 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const unpaidRows = (unpaidQ.data?.rows || []).map(r => unpaidPatch[r.id] ? { ...r, tracking: unpaidPatch[r.id] } : r).filter(r => r.tracking.status !== 'waived')
   const uOwed = unpaidRows.reduce((a, r) => a + r.balance, 0)
   const uToday = unpaidRows.filter(r => r.bucket === 'in_house' || r.bucket === 'today').length
+  const uWeek = unpaidRows.filter(r => r.bucket === 'week').length
+  const uLater = unpaidRows.filter(r => r.bucket === 'later').length
   const uOpen = unpaidRows.filter(r => r.tracking.status === 'open').length
   const uContacted = unpaidRows.filter(r => r.tracking.status === 'contacted').length
   const uPromised = unpaidRows.filter(r => r.tracking.status === 'promised').length
@@ -401,9 +403,9 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
       sub: [mUrgent ? mUrgent + ' urgent/high' : '', mNobody ? mNobody + ' unassigned' : '', mRun ? mRun + ' in progress' : ''].filter(Boolean).join(' · ') || (maint.length ? 'all closed' : 'nothing on the board') },
     { key: 'unpaid', label: 'Unpaid', done: unpaidRows.length - uOpen, needed: unpaidRows.length, loading: !unpaidQ.data && unpaidQ.loading,
       big: { value: unpaidQ.data ? money(uOwed) : '—', unit: unpaidRows.length ? 'owed · ' + unpaidRows.length + (unpaidRows.length === 1 ? ' stay' : ' stays') : 'nothing owed', tone: uToday ? 'text-rose-700' : unpaidRows.length ? 'text-ink' : 'text-emerald-700' },
-      title: 'Money still owed by direct, VRBO and Google guests in house, arriving today or in the next 7 days — every other channel pays us itself. The bar is how far the chase has got',
+      title: 'Money still owed by direct, VRBO and Google guests in house or arriving in the next 30 days (nearest first) — every other channel pays us itself. The bar is how far the chase has got',
       segs: [{ label: 'promised', n: uPromised, cls: 'bg-emerald-500', tone: 'emerald', filter: 'promised' }, { label: 'contacted', n: uContacted, cls: 'bg-sky-400', tone: 'sky', filter: 'contacted' }, { label: 'disputed', n: uDisputed, cls: 'bg-rose-500', tone: 'rose', filter: 'disputed' }, { label: 'not contacted', n: uOpen, cls: 'bg-slate-300', tone: 'slate', filter: 'open' }],
-      sub: unpaidQ.error ? 'could not read the folios' : unpaidRows.length ? [uToday ? uToday + ' to collect today' : '', uOpen ? uOpen + ' not contacted' : 'everyone contacted'].filter(Boolean).join(' · ') : 'direct, VRBO and Google all paid' },
+      sub: unpaidQ.error ? 'could not read the folios' : unpaidRows.length ? [uToday ? uToday + ' to collect today' : '', uWeek ? uWeek + ' arrive ≤7d' : '', uLater ? uLater + ' within 30d' : '', uOpen ? uOpen + ' not chased' : 'all chased'].filter(Boolean).join(' · ') : 'direct, VRBO and Google all paid (30 days)' },
     { key: 'glitches', label: 'Glitches', done: glCovered, needed: gl.open, title: 'Open guest issues: past due, with no Breezeway task yet, and the ones with a task and an owner',
       big: { value: String(gl.open), unit: gl.open === 1 ? 'open' : 'open', tone: gl.overdue ? 'text-rose-700' : gl.open ? 'text-ink' : 'text-emerald-700' },
       segs: [{ label: 'on it', n: glCovered, cls: 'bg-emerald-500', tone: 'emerald', filter: 'covered' }, { label: 'no task', n: gl.noTask, cls: 'bg-amber-400', tone: 'amber', filter: 'notask' }, { label: 'overdue', n: gl.overdue, cls: 'bg-rose-500', tone: 'rose', filter: 'overdue' }],

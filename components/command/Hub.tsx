@@ -52,7 +52,7 @@ const AREA: Record<Area, { label: string; short: string; Icon: any; href: string
   admin: { label: 'Admin', short: 'Admin', Icon: FileText, href: '/buildings', hrefLabel: 'Properties', blurb: 'What needs your decision, unpaid balances to collect, the checklist, your tasks and today’s recommended listing work' },
 }
 const SUB_ORDER = ['Cleans', 'Inspections', 'Tasks', 'Team', 'Calls', 'Inbox', 'Glitches', 'Reviews', 'Queue', 'Needs you', 'Yours', 'Optimize', 'Fixes']
-const UNPAID_URL = '/api/unpaid'   // today → +7: in house, arriving today, next seven days (direct / VRBO / Google only)
+const UNPAID_URL = '/api/unpaid'   // today → +30: in house, today, next 7, then the rest of the month (direct / VRBO / Google only)
 const NOW_MIN = 65     // a row needs this score to make the Now list
 const NOW_MAX = 6
 const LANE_ROWS = 5
