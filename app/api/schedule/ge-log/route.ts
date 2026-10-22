@@ -26,6 +26,7 @@ import { getCrew } from '@/lib/crew'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireVrUser } from '@/lib/vr-gate'
 import { canSeeMoney, getAccess } from '@/lib/access'
+import { entriesFor } from '@/lib/ge-log-entries'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -37,7 +38,11 @@ const addDays = (iso: string, n: number) => { const d = new Date(iso + 'T12:00:0
 
 export type GeRow = {
   key: string
-  kind: 'clean' | 'task' | 'glitch'
+  /** 'log' = a line written straight onto the log (lib/ge-log-entries), not a Breezeway task. */
+  kind: 'clean' | 'task' | 'glitch' | 'log'
+  /** The log line's id, on 'log' rows (and on a task row that started life as one). */
+  entryId?: string | null
+  entryNote?: string | null
   taskId: string | null
   listingId: string | null
   /** The person the row sits under. '' means nobody is on it yet. */
@@ -356,9 +361,36 @@ export async function GET(req: NextRequest) {
       }
     } catch { /* the grid still renders without them */ }
 
+    // ── LINES WRITTEN ON THE LOG (Jon, 2026-10-22) ─────────────────────────────────────────────
+    // A line sent to Breezeway is already drawn above as its task, so it only lends that row its
+    // note; otherwise it draws a row of its own under the person it was given to.
+    const logRows: GeRow[] = []
+    try {
+      const byTask = new Map(rows.concat(glitchRows).filter(r => r.taskId).map(r => [r.taskId as string, r]))
+      for (const e of await entriesFor(date)) {
+        const t = e.taskId ? byTask.get(e.taskId) : null
+        if (t) { t.entryId = e.id; continue }
+        const who = e.person ? canonical(e.person) : ''
+        const place = placeOf(who)
+        logRows.push({
+          key: 'l:' + e.id, kind: 'log', entryId: e.id, entryNote: e.note || null,
+          taskId: e.taskId || null, listingId: e.listingId,
+          person: who, dept: who ? place.dept : (e.dept || 'housekeeping'), market: place.market,
+          hub: e.hub || '', taskType: 'Log', activity: e.title,
+          listing: e.unit || '', reservation: '',
+          checkIn: null, checkOut: null, sameDay: false,
+          notes: e.note ? [{ label: e.note.slice(0, 40), tone: 'slate' }] : [],
+          nights: null, beds: e.listingId ? (bedsBy.get(e.listingId) ?? null) : null,
+          fee: null, feeEst: false, cleanHours: null, payout: null,
+          status: e.done ? 'done' : 'open', vendor: null,
+          flag: null, url: null, glitchId: null,
+        })
+      }
+    } catch { /* the grid renders without them */ }
+
     return NextResponse.json({
       ok: true, date, money,
-      rows: rows.concat(glitchRows),
+      rows: rows.concat(glitchRows, logRows),
       roster,
       partial: !!(team as any)?.partial || !board,
       boardOk: !!board, teamOk: !!team,

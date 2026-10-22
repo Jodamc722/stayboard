@@ -138,7 +138,8 @@ export function AddTaskHost() {
   if (!open) return null
   // Keyed on the seed so opening it again for a DIFFERENT unit remounts with that unit, rather
   // than reopening on whatever the last one left behind.
-  return <AddTaskSheet key={JSON.stringify(seed)} seed={seed} onClose={() => setOpen(false)} onDone={() => setOpen(false)} />
+  // 'task:added' lets a board that opened the sheet (the GE Log) reload when the task lands.
+  return <AddTaskSheet key={JSON.stringify(seed)} seed={seed} onClose={() => setOpen(false)} onDone={() => { setOpen(false); try { window.dispatchEvent(new CustomEvent('task:added')) } catch { /* SSR */ } }} />
 }
 
 export function AddTaskSheet({

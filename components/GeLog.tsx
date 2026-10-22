@@ -39,12 +39,14 @@
 // "the GE log is where we can document that": the exception is the thing most worth writing down,
 // and it is the one case the sheet handled and the board did not.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { MessageSquare, ExternalLink, AlertTriangle, RefreshCw, Download } from 'lucide-react'
+import { MessageSquare, ExternalLink, AlertTriangle, RefreshCw, Download, Plus, Check, Trash2, Send } from 'lucide-react'
+import { openAddTask } from './AddTaskSheet'
 import CleanerPicker, { sameRosterPerson, type Person } from './CleanerPicker'
 import CommentThread from './CommentThread'
 
 type Row = {
-  key: string; kind: 'clean' | 'task' | 'glitch'; taskId: string | null; listingId: string | null
+  key: string; kind: 'clean' | 'task' | 'glitch' | 'log'; taskId: string | null; listingId: string | null
+  entryId?: string | null; entryNote?: string | null
   person: string; dept: string; market: string; hub: string; taskType: string; activity: string
   listing: string; reservation: string; checkIn: string | null; checkOut: string | null
   sameDay: boolean; notes: { label: string; tone: string }[]
@@ -97,6 +99,14 @@ function cell(dt: string | null): string {
   if (!m) return dt
   return Number(m[2]) + '/' + Number(m[3]) + '/' + m[1] + (m[4] ? ' ' + m[4] : '')
 }
+/** The grid's own date: "10/22 11:00" on one line. The year is the date picker's job, and the
+ *  four-digit year was what pushed every date cell onto two lines (cleanup, 2026-10-22). */
+function short(dt: string | null): string {
+  if (!dt) return ''
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}:\d{2}))?/.exec(dt)
+  if (!m) return dt
+  return Number(m[2]) + '/' + Number(m[3]) + (m[4] ? ' ' + m[4] : '')
+}
 const statusTone = (v: string) => {
   const s = String(v || '').toLowerCase()
   if (/req\s*off/.test(s)) return 'bg-rose-50 text-rose-700 border-rose-200'
@@ -112,22 +122,25 @@ const shortName = (n: string) => { const p = String(n || '').trim().split(/\s+/)
 // SHORT LABELS, FULL WORDING ON HOVER. The sheet writes "Same Day Checkout" and "NO. OF NIGHTS"
 // because a spreadsheet column stretches to fit its title. A fixed 64px column does not: those
 // titles overlapped their neighbours and the right-hand end of the header was unreadable.
+// CLEANUP (2026-10-22): the grid was 1,786px wide, so on a laptop Nights, Cleaning, Hours and Payout
+// sat off the right edge of every table behind its own scrollbar. Tighter columns, one-line dates
+// and a year-less date format bring the whole row onto a normal screen.
 const COLS: { k: string; label: string; w: number; align?: string; full?: string }[] = [
-  { k: 'person', label: 'HK Team', w: 118 },
-  { k: 'hub', label: 'HUB', w: 96 },
-  { k: 'taskType', label: 'Type', w: 118, full: 'What kind of work — checkout, inspection, PM, glitch\u2026' },
-  { k: 'activity', label: 'Activities', w: 230, full: 'The task line, as Breezeway words it' },
-  { k: 'listing', label: 'LISTING', w: 164 },
-  { k: 'beds', label: 'BR', w: 48, align: 'text-center', full: 'Bedrooms \u2014 how big the clean is' },
-  { k: 'reservation', label: 'Reservation', w: 178, full: 'RESERVATION NAME' },
-  { k: 'checkIn', label: 'Check-in', w: 114, full: 'CHECK-IN DATE' },
-  { k: 'checkOut', label: 'Check-out', w: 114, full: 'CHECK-OUT DATE' },
-  { k: 'notes', label: 'Notes', w: 210, full: 'Same-day turn, long stay, moved, guest in-house \u2014 the scheduler\u2019s own notes' },
-  { k: 'nights', label: 'Nights', w: 64, align: 'text-center', full: 'NO. OF NIGHTS' },
-  { k: 'fee', label: 'Cleaning', w: 92, align: 'text-right', full: 'Cleaning revenue on the checkout \u2014 the guest\u2019s fee, or the listing\u2019s where the channel bundled it (est.)' },
-  { k: 'cleanHours', label: 'Hours', w: 74, align: 'text-center', full: 'Cleaning time' },
-  { k: 'payout', label: 'Payout', w: 94, align: 'text-right', full: 'Total Payout' },
-  { k: 'act', label: '', w: 72, align: 'text-right' },
+  { k: 'person', label: 'Team', w: 112, full: 'HK TEAM — who it is on; click to assign' },
+  { k: 'hub', label: 'Hub', w: 84 },
+  { k: 'taskType', label: 'Type', w: 92, full: 'What kind of work — checkout, inspection, PM, glitch, log line\u2026' },
+  { k: 'activity', label: 'Activities', w: 210, full: 'The task line, as Breezeway words it' },
+  { k: 'listing', label: 'Listing', w: 150 },
+  { k: 'beds', label: 'BR', w: 36, align: 'text-center', full: 'Bedrooms \u2014 how big the clean is' },
+  { k: 'reservation', label: 'Reservation', w: 140, full: 'RESERVATION NAME' },
+  { k: 'checkIn', label: 'In', w: 82, align: 'text-center', full: 'CHECK-IN DATE' },
+  { k: 'checkOut', label: 'Out', w: 82, align: 'text-center', full: 'CHECK-OUT DATE' },
+  { k: 'notes', label: 'Notes', w: 140, full: 'Same-day turn, long stay, moved, guest in-house \u2014 the scheduler\u2019s own notes' },
+  { k: 'nights', label: 'Nts', w: 44, align: 'text-center', full: 'NO. OF NIGHTS' },
+  { k: 'fee', label: 'Cleaning', w: 78, align: 'text-right', full: 'Cleaning revenue on the checkout \u2014 the guest\u2019s fee, or the listing\u2019s where the channel bundled it (est.)' },
+  { k: 'cleanHours', label: 'Hrs', w: 44, align: 'text-center', full: 'Cleaning time' },
+  { k: 'payout', label: 'Payout', w: 80, align: 'text-right', full: 'Total Payout' },
+  { k: 'act', label: '', w: 84, align: 'text-right' },
 ]
 const GRID_W = COLS.reduce((n, c) => n + c.w, 0)
 
@@ -151,6 +164,16 @@ export default function GeLog({ date }: { date: string }) {
   const [showEmpty, setShowEmpty] = useState(true)
   const [market, setMarket] = useState('')   // '' = every market
   const [tick, setTick] = useState(0)
+  const [units, setUnits] = useState<Unit[]>([])
+  const [addFor, setAddFor] = useState<{ person: string; dept: string } | null>(null)
+  useEffect(() => {
+    fetch('/api/listings?slim=1', { cache: 'no-store' }).then(r => r.json()).then(j => {
+      const list = (j && Array.isArray(j.results) ? j.results : []) as any[]
+      setUnits(list.filter(l => !/inactive|archiv/i.test(String(l.status || ''))).map(l => ({ id: String(l.id), name: String(l.nickname || l.title || l.id), building: String(l.building || '') })))
+    }).catch(() => {})
+  }, [])
+  // A task made in the full Add-task sheet (More options) lands here too.
+  useEffect(() => { const on = () => setTick(t => t + 1); window.addEventListener('task:added', on); return () => window.removeEventListener('task:added', on) }, [])
 
   useEffect(() => {
     if (!date) return
@@ -255,21 +278,24 @@ export default function GeLog({ date }: { date: string }) {
   }, [shown, view])
 
   const totals = useMemo(() => {
-    let fee = 0, hrs = 0, pay = 0, done = 0, nobody = 0, gl = 0
+    let fee = 0, hrs = 0, pay = 0, done = 0, nobody = 0, gl = 0, logs = 0
     for (const r of rows) {
+      if (r.kind === 'log') logs++
       fee += r.fee || 0; hrs += r.cleanHours || 0; pay += r.payout || 0
       if (r.status === 'done') done++
       if (!r.person) nobody++
       if (r.kind === 'glitch') gl++
     }
-    return { fee, hrs, pay, done, nobody, gl, n: rows.length }
+    return { fee, hrs, pay, done, nobody, gl, logs, n: rows.length }
   }, [rows])
 
   async function assign(r: Row, p: Person | null) {
     const k = r.key
     setBusy(b => ({ ...b, [k]: true })); setErr('')
     try {
-      if (r.kind === 'glitch') {
+      if (r.kind === 'log' && r.entryId) {
+        await entryOp({ op: 'update', id: r.entryId, person: p ? p.name : '', personId: p ? p.id : null })
+      } else if (r.kind === 'glitch') {
         const res = await fetch('/api/glitches/action', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'update', id: r.glitchId, assignee: p ? p.name : '', assigneePersonId: p ? p.id : null }),
@@ -305,6 +331,36 @@ export default function GeLog({ date }: { date: string }) {
       const j = await res.json().catch(() => null)
       if (!res.ok) throw new Error((j && j.error) || 'Breezeway would not take that date.')
       setNoteFor(''); setTick(t => t + 1)
+    } catch (e: any) { setErr(e.message || String(e)) } finally { setBusy(b => ({ ...b, [r.key]: false })) }
+  }
+
+  async function entryOp(body: Record<string, any>) {
+    const res = await fetch('/api/schedule/ge-log/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date, ...body }) })
+    const j = await res.json().catch(() => null)
+    if (!res.ok || !j?.ok) throw new Error((j && j.error) || 'Could not save that line.')
+    return j
+  }
+  async function logAction(r: Row, what: 'done' | 'undo' | 'delete' | 'push') {
+    if (!r.entryId) return
+    if (what === 'delete' && !window.confirm('Remove "' + r.activity + '" from the log?')) return
+    setBusy(b => ({ ...b, [r.key]: true })); setErr('')
+    try {
+      if (what === 'push') {
+        if (!r.listingId) throw new Error('Pick a unit for this line first — Breezeway needs one. Remove it and add it again with a unit.')
+        const who = crew.find(p => sameRosterPerson(p.name, r.person))
+        const res = await fetch('/api/ops-today/add-task', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ listingId: r.listingId, title: r.activity, department: bzDept(r.dept), date, description: r.entryNote || '', assigneeIds: who ? [who.id] : [] }),
+        })
+        const j = await res.json().catch(() => null)
+        if (!res.ok || !j?.ok) throw new Error((j && j.error) || 'Breezeway would not take it.')
+        await entryOp({ op: 'update', id: r.entryId, taskId: String(j.taskId) })
+      } else if (what === 'delete') {
+        await entryOp({ op: 'delete', id: r.entryId })
+      } else {
+        await entryOp({ op: 'update', id: r.entryId, done: what === 'done' })
+      }
+      setTick(t => t + 1)
     } catch (e: any) { setErr(e.message || String(e)) } finally { setBusy(b => ({ ...b, [r.key]: false })) }
   }
 
@@ -348,12 +404,14 @@ export default function GeLog({ date }: { date: string }) {
               onChange={p => assign(r, p)} placeholder="—" disabled={r.kind === 'clean' && !r.taskId && !r.glitchId} />
           </div>
         </td>
-        <td className={TD + ' p-[3px]'}>{pill(r.hub)}</td>
+        <td className={TD + ' p-[3px]'}>{r.hub && r.hub !== '\u2014' ? pill(r.hub) : null}</td>
         {/* TYPE then LINE. The type is a tag from a short closed set you can scan down a column
             to see what sort of day somebody is having; the line beside it is Breezeway's own
             wording, plain text, because a 90-character tag is not a tag. */}
-        <td className={TD + ' p-[3px]'}>{pill(r.taskType || 'Task')}</td>
-        <td className={TD + ' truncate text-ink/85'} title={r.activity}>{r.activity}</td>
+        <td className={TD + ' p-[3px]'}>{r.kind === 'log'
+          ? <span className="block text-center text-[10.5px] font-semibold rounded-full border px-2 py-[2px] bg-neutral-900 text-white border-neutral-900" title="A line written on the log — Lighthouse only, not a Breezeway task">Log</span>
+          : pill(r.taskType || 'Task')}</td>
+        <td className={TD + ' truncate ' + (r.status === 'done' && r.kind === 'log' ? 'text-muted line-through' : 'text-ink/85')} title={r.activity + (r.entryNote ? ' \u2014 ' + r.entryNote : '')}>{r.activity}</td>
         <td className={TD + ' text-center font-semibold text-ink truncate'} title={r.listing}>{r.listing}</td>
         <td className={TD + ' text-center tabular-nums text-ink/70'} title={r.beds == null ? '' : r.beds === 0 ? 'Studio' : r.beds + ' bedroom' + (r.beds === 1 ? '' : 's')}>
           {r.beds == null ? '' : r.beds === 0 ? 'S' : r.beds}
@@ -363,8 +421,8 @@ export default function GeLog({ date }: { date: string }) {
             ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">Vacant</span>
             : '')}
         </td>
-        <td className={TD + ' text-center tabular-nums text-ink/85'}>{cell(r.checkIn)}</td>
-        <td className={TD + ' text-center tabular-nums text-ink/85'}>{cell(r.checkOut)}</td>
+        <td className={TD + ' text-center tabular-nums text-ink/85 whitespace-nowrap'} title={cell(r.checkIn)}>{short(r.checkIn)}</td>
+        <td className={TD + ' text-center tabular-nums text-ink/85 whitespace-nowrap'} title={cell(r.checkOut)}>{short(r.checkOut)}</td>
         {/* THE SCHEDULER'S OWN NOTES, not a TRUE/FALSE. Same-day turn is only one of the things
             that decide whether a clean can wait until the afternoon: a long checkout is a deep
             clean, a moved one is not today's problem, one moved TO today is, and a guest still
@@ -391,12 +449,23 @@ export default function GeLog({ date }: { date: string }) {
         <td className={TD + ' text-right tabular-nums text-ink'}>{money(r.payout)}</td>
         <td className={TD + ' text-right whitespace-nowrap'}>
           <span className="inline-flex items-center gap-1">
-            {r.flag ? <span title={r.flag} className="text-[9px] font-bold px-1 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">!</span> : null}
-            <button onClick={() => setNoteFor(open ? '' : r.key)}
+            {r.kind === 'log' ? (<>
+              <button onClick={() => logAction(r, r.status === 'done' ? 'undo' : 'done')} disabled={b}
+                title={r.status === 'done' ? 'Mark not done' : 'Mark done'}
+                className={'text-[11px] px-1 py-0.5 rounded border inline-flex items-center ' + (r.status === 'done' ? 'bg-emerald-600 text-white border-emerald-600' : 'border-line bg-white text-muted hover:text-ink')}><Check size={10} /></button>
+              {r.listingId && !r.taskId ? (
+                <button onClick={() => logAction(r, 'push')} disabled={b} title="Create this as a Breezeway task (same person, same day)"
+                  className="text-[11px] px-1 py-0.5 rounded border border-line bg-white text-muted hover:text-ink inline-flex items-center"><Send size={10} /></button>
+              ) : null}
+              <button onClick={() => logAction(r, 'delete')} disabled={b} title="Remove from the log"
+                className="text-[11px] px-1 py-0.5 rounded border border-line bg-white text-muted hover:text-rose-700 inline-flex items-center"><Trash2 size={10} /></button>
+            </>) : null}
+            {r.kind !== 'log' && r.flag ? <span title={r.flag} className="text-[9px] font-bold px-1 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">!</span> : null}
+            {r.kind !== 'log' && <button onClick={() => setNoteFor(open ? '' : r.key)}
               title={r.taskId ? 'Note — posts as a comment on the Breezeway task the crew reads' : 'Note — kept in Lighthouse; there is no Breezeway task on this row'}
               className={'text-[11px] px-1 py-0.5 rounded border inline-flex items-center ' + (open ? 'bg-ink text-white border-ink' : r.taskId ? 'border-line bg-white text-muted hover:text-ink' : 'border-dashed border-line bg-white text-muted hover:text-ink')}>
               <MessageSquare size={10} />
-            </button>
+            </button>}
             {r.url || r.glitchId ? (
               <a href={r.glitchId ? '/glitches?id=' + r.glitchId : String(r.url)} target={r.glitchId ? undefined : '_blank'} rel="noreferrer"
                 title={r.glitchId ? 'Open the glitch' : 'Open in Breezeway'}
@@ -413,21 +482,12 @@ export default function GeLog({ date }: { date: string }) {
   // moment a market is picked, because then every row below is that market.
   function rowsFor(bandsIn: typeof shown): JSX.Element[] {
     const body: JSX.Element[] = []
+    // CLEANUP (2026-10-22): the people with nothing on their day used to be full-width rows mixed in
+    // among the work, one each. They are one line at the foot of the table now — still visible
+    // (an empty day is the thing a scheduler is looking for), no longer breaking up the grid.
+    const idle = bandsIn.filter(b => !b.rows.length && b.person)
     for (const band of bandsIn) {
-    // No market band row any more: the table itself is one department in one market, and its
-    // heading says so.
-    if (!band.rows.length) {
-      body.push(
-        <tr key={'e' + (band.person || 'none')} className="bg-white">
-          <td className="p-[3px]">{pill(shortName(band.person) || '—', 'opacity-60')}</td>
-          <td colSpan={COLS.length - 1} className="px-2 py-[5px] text-[11px] text-muted italic">
-            nothing on their day
-            {band.status ? <span className={'ml-2 not-italic text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full border ' + statusTone(band.status)}>{band.status}</span> : null}
-          </td>
-        </tr>
-      )
-      continue
-    }
+    if (!band.rows.length) continue
     band.rows.forEach((r, i) => {
       body.push(
         <tr key={r.key} className={'border-t border-line transition hover:brightness-[0.97] '
@@ -461,25 +521,48 @@ export default function GeLog({ date }: { date: string }) {
       }
     })
     }
+    if (idle.length) {
+      body.push(
+        <tr key="idle" className="border-t border-line bg-neutral-50/70">
+          <td colSpan={COLS.length} className="px-2 py-1.5 text-[11px] text-muted">
+            <span className="font-semibold text-ink/70 mr-1.5">Nothing on their day:</span>
+            {idle.map((b, i) => (
+              <span key={b.person} className="inline-flex items-center gap-1 mr-2">
+                <button onClick={() => setAddFor({ person: b.person, dept: b.dept })} title={'Add a task for ' + b.person}
+                  className="font-semibold text-ink/80 hover:text-ink hover:underline">{shortName(b.person)}</button>
+                {b.status ? <span className={'text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full border ' + statusTone(b.status)}>{b.status}</span> : null}
+                {i < idle.length - 1 ? <span className="text-line">·</span> : null}
+              </span>
+            ))}
+          </td>
+        </tr>
+      )
+    }
     return body
   }
 
   return (
     <section className="space-y-2">
-      {/* THE DAY IN ONE LINE. Deliberately not six big tiles: whoever opens this already knows what
-          day it is and wants to find their people. */}
-      <div className="rounded-xl border border-line bg-white px-3 py-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px]">
-        <span className="font-bold text-ink text-[12.5px]">{prettyDate(date)}</span>
-        <span className="text-muted tabular-nums">{totals.n} row{totals.n === 1 ? '' : 's'}</span>
-        {totals.done ? <span className="text-emerald-700 tabular-nums">{totals.done} done</span> : null}
-        {totals.nobody ? <span className="text-rose-700 font-semibold tabular-nums">{totals.nobody} with nobody on them</span> : null}
-        {totals.gl ? <span className="text-rose-700 tabular-nums">{totals.gl} glitch{totals.gl === 1 ? '' : 'es'}</span> : null}
-        <span className="text-muted tabular-nums">{scheduledToday.size} of {roster.length} on today</span>
-        {totals.fee ? <span className="text-emerald-700 font-semibold tabular-nums">{money(totals.fee)} fees</span> : null}
-        {totals.hrs ? <span className="text-muted tabular-nums">{totals.hrs.toFixed(2).replace(/\.?0+$/, '')} h</span> : null}
-        <div className="ml-auto flex items-center gap-2">
-          {/* MARKET FIRST. Nobody runs Miami and Broward in the same breath — the supervisor
-              opening this is looking at one of them, and until now had to scroll past the other. */}
+      {/* THE DAY, THEN THE CONTROLS (cleanup 2026-10-22). Two short lines instead of one crowded
+          one: what the day is on the left, how you are looking at it on the right. */}
+      <div className="rounded-xl border border-line bg-white">
+        <div className="px-3 py-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px]">
+          <span className="font-bold text-ink text-[13px]">{prettyDate(date)}</span>
+          <span className="text-muted tabular-nums">{totals.n} row{totals.n === 1 ? '' : 's'}</span>
+          {totals.done ? <span className="text-emerald-700 tabular-nums">{totals.done} done</span> : null}
+          {totals.nobody ? <span className="text-rose-700 font-semibold tabular-nums">{totals.nobody} unassigned</span> : null}
+          {totals.gl ? <span className="text-rose-700 tabular-nums">{totals.gl} glitch{totals.gl === 1 ? '' : 'es'}</span> : null}
+          {totals.logs ? <span className="text-ink tabular-nums">{totals.logs} log line{totals.logs === 1 ? '' : 's'}</span> : null}
+          <span className="text-muted tabular-nums">{scheduledToday.size} of {roster.length} on today</span>
+          {totals.fee ? <span className="text-emerald-700 font-semibold tabular-nums">{money(totals.fee)} cleaning</span> : null}
+          {totals.hrs ? <span className="text-muted tabular-nums">{totals.hrs.toFixed(2).replace(/\.?0+$/, '')} h</span> : null}
+          <button onClick={() => setAddFor(a => a ? null : { person: '', dept: 'housekeeping' })}
+            className={'ml-auto text-[12px] font-bold px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1 ' + (addFor ? 'bg-neutral-100 text-ink' : 'bg-neutral-900 text-white hover:bg-neutral-800')}>
+            <Plus size={13} /> Add task
+          </button>
+        </div>
+        <div className="px-3 py-1.5 border-t border-line flex flex-wrap items-center gap-2">
+          {/* MARKET FIRST. Nobody runs Miami and Broward in the same breath. */}
           {markets.length > 1 && (
             <div className="inline-flex items-center gap-0.5 border border-line rounded-lg p-0.5 bg-white">
               {([['', 'All markets'] as const] as [string, string][]).concat(markets.map(m => [m, m] as [string, string])).map(([v, l]) => (
@@ -493,10 +576,17 @@ export default function GeLog({ date }: { date: string }) {
               <button key={v} onClick={() => setView(v)} className={'text-[11px] font-semibold px-2 py-1 rounded-md ' + (view === v ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>{l}</button>
             ))}
           </div>
-          <button onClick={() => setShowEmpty(s => !s)} className="text-[11px] font-semibold text-brand-700 hover:underline">{showEmpty ? 'Hide empty days' : 'Show everyone'}</button>
-          <button onClick={exportCsv} title="Download the grid as a CSV" className="text-muted hover:text-ink"><Download size={13} /></button>
-          <button onClick={() => setTick(t => t + 1)} title="Reload the day" className="text-muted hover:text-ink"><RefreshCw size={13} className={loading ? 'animate-spin' : ''} /></button>
+          <div className="ml-auto flex items-center gap-3">
+            <button onClick={() => setShowEmpty(s => !s)} className="text-[11px] font-semibold text-muted hover:text-ink">{showEmpty ? 'Hide people with nothing on' : 'Show everyone'}</button>
+            <button onClick={exportCsv} title="Download the grid as a CSV" className="text-muted hover:text-ink"><Download size={13} /></button>
+            <button onClick={() => setTick(t => t + 1)} title="Reload the day" className="text-muted hover:text-ink"><RefreshCw size={13} className={loading ? 'animate-spin' : ''} /></button>
+          </div>
         </div>
+        {addFor && (
+          <AddBar key={addFor.person + '|' + addFor.dept} date={date} units={units} crew={crew} scheduled={scheduledToday}
+            seedPerson={addFor.person} seedDept={addFor.dept}
+            onClose={() => setAddFor(null)} onAdded={() => setTick(t => t + 1)} />
+        )}
       </div>
 
       {err && <p className="text-[12px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{err}</p>}
@@ -521,12 +611,14 @@ export default function GeLog({ date }: { date: string }) {
               <span className="text-[10.5px] uppercase tracking-wide font-semibold text-muted">{(sec as any).market}</span>
               <span className="text-[10.5px] text-muted tabular-nums">{n} row{n === 1 ? '' : 's'} · {sec.bands.filter(b => b.person).length} on it</span>
               {rev > 0 ? <span className="text-[10.5px] text-emerald-700 font-semibold tabular-nums" title="Cleaning revenue on this table's checkouts">{money(rev)} cleaning</span> : null}
+              <button onClick={() => setAddFor({ person: '', dept: String(sec.key).split('\u0000')[0] || 'housekeeping' })}
+                className="ml-auto text-[10.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-0.5"><Plus size={11} /> Add here</button>
             </div>
           ) : null}
-          <div className="overflow-auto rounded-xl border border-line bg-white max-h-[70vh]">
+          <div className="overflow-x-auto rounded-xl border border-line bg-white">
             {/* FIXED layout, or the colgroup is only a suggestion: one 90-character task name then
                 stretches Activities across the screen and pushes the money columns out of sight. */}
-            <table className="text-[11px] border-collapse" style={{ tableLayout: 'fixed', width: GRID_W }}>
+            <table className="text-[11px] border-collapse w-full" style={{ tableLayout: 'fixed', minWidth: GRID_W }}>
               <colgroup>{COLS.map(c => <col key={c.k} style={{ width: c.w }} />)}</colgroup>
               {/* The day board's own table head — neutral ground, muted small caps, one rule under
                   it — and it STICKS per table, because twelve columns are unreadable the moment
@@ -547,5 +639,105 @@ export default function GeLog({ date }: { date: string }) {
         </div>
       )})}
     </section>
+  )
+}
+
+type Unit = { id: string; name: string; building: string }
+
+/** Breezeway knows four departments; our tables know six. Supervisors and CCS file inspections. */
+function bzDept(d: string): string {
+  const k = String(d || '').toLowerCase()
+  if (/maint/.test(k)) return 'maintenance'
+  if (/inspect|supervis|ccs/.test(k)) return 'inspection'
+  return 'housekeeping'
+}
+
+/**
+ * ADD TO THE LOG (Jon, 2026-10-22: "need a space to be able to add task to the GE log, where we can
+ * also create a breezeway task"). One line: what, where, who, which team — then either keep it as a
+ * log line (Lighthouse only) or tick Breezeway and it is filed as a real task, assigned, on this day.
+ * "More options" opens the full Add-task sheet (templates, priority, description) seeded with the
+ * same answers, for the task that needs a checklist.
+ */
+function AddBar({ date, units, crew, scheduled, seedPerson, seedDept, onClose, onAdded }: {
+  date: string; units: Unit[]; crew: Person[]; scheduled: Set<string>
+  seedPerson: string; seedDept: string; onClose: () => void; onAdded: () => void
+}) {
+  const [title, setTitle] = useState('')
+  const [unitText, setUnitText] = useState('')
+  const [who, setWho] = useState<Person | null>(() => (seedPerson ? crew.find(p => sameRosterPerson(p.name, seedPerson)) || null : null))
+  const [dept, setDept] = useState(DEPT_ORDER.indexOf(seedDept) >= 0 && seedDept !== 'other' ? seedDept : 'housekeeping')
+  const [toBz, setToBz] = useState(false)
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [ok, setOk] = useState('')
+  const unit = useMemo(() => {
+    const t = unitText.trim().toLowerCase()
+    return t ? units.find(u => u.name.toLowerCase() === t) || null : null
+  }, [unitText, units])
+
+  const missing = !title.trim() ? 'Give it a title' : toBz && !unit ? 'Breezeway needs a unit from the list' : ''
+
+  async function add() {
+    if (missing || busy) return
+    setBusy(true); setErr(''); setOk('')
+    try {
+      if (toBz) {
+        const res = await fetch('/api/ops-today/add-task', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ listingId: unit!.id, title: title.trim(), department: bzDept(dept), date, description: note.trim(), assigneeIds: who ? [who.id] : [] }),
+        })
+        const j = await res.json().catch(() => null)
+        if (!res.ok || !j?.ok) throw new Error((j && j.error) || 'Breezeway would not take it.')
+        setOk('Created in Breezeway' + (who ? ' for ' + who.name : '') + '.')
+      } else {
+        const res = await fetch('/api/schedule/ge-log/entries', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ op: 'add', date, title: title.trim(), listingId: unit?.id || null, unit: unit?.name || unitText.trim(), hub: unit?.building || '', person: who?.name || '', personId: who?.id || null, dept, note: note.trim() }),
+        })
+        const j = await res.json().catch(() => null)
+        if (!res.ok || !j?.ok) throw new Error((j && j.error) || 'Could not add it.')
+        setOk('Added to the log.')
+      }
+      setTitle(''); setNote('')
+      onAdded()
+    } catch (e: any) { setErr(e.message || String(e)) } finally { setBusy(false) }
+  }
+
+  const fld = 'border border-line rounded-lg px-2 py-1.5 text-[12px] bg-white'
+  return (
+    <div className="border-t border-line bg-neutral-50/70 px-3 py-2.5 space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <input autoFocus value={title} onChange={e => setTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add() }}
+          placeholder="What needs doing — e.g. Drop keys at front desk, Check A/C noise" className={fld + ' flex-1 min-w-[220px]'} />
+        <input value={unitText} onChange={e => setUnitText(e.target.value)} list="ge-units" placeholder={toBz ? 'Unit (required)' : 'Unit (optional)'}
+          className={fld + ' w-[190px] ' + (unitText && !unit ? 'border-amber-300' : '')} />
+        <datalist id="ge-units">{units.map(u => <option key={u.id} value={u.name}>{u.building}</option>)}</datalist>
+        <div className="w-[150px]">
+          <CleanerPicker people={crew} scheduled={scheduled} value={who} onChange={setWho} placeholder="Who (optional)" />
+        </div>
+        <select value={dept} onChange={e => setDept(e.target.value)} className={fld}>
+          {DEPT_ORDER.filter(d => d !== 'other').map(d => <option key={d} value={d}>{DEPT_LABEL[d]}</option>)}
+        </select>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input value={note} onChange={e => setNote(e.target.value)} placeholder={toBz ? 'Description for the crew (optional)' : 'Note (optional)'} className={fld + ' flex-1 min-w-[220px]'} />
+        <label className={'inline-flex items-center gap-1.5 text-[12px] font-semibold cursor-pointer px-2 py-1.5 rounded-lg border ' + (toBz ? 'bg-sky-50 border-sky-200 text-sky-800' : 'bg-white border-line text-ink')}
+          title="Tick to create a real Breezeway task (assigned, on this day) instead of a Lighthouse-only log line">
+          <input type="checkbox" checked={toBz} onChange={e => setToBz(e.target.checked)} /> Create in Breezeway
+        </label>
+        <button onClick={add} disabled={busy || !!missing} title={missing || undefined}
+          className="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-neutral-900 text-white disabled:opacity-40 inline-flex items-center gap-1">
+          <Plus size={12} /> {busy ? 'Adding\u2026' : toBz ? 'Create task' : 'Add to log'}
+        </button>
+        <button onClick={() => openAddTask({ unit: unit?.name || unitText || undefined, listingId: unit?.id, title: title.trim() || undefined, date, assigneeName: who?.name, dept: bzDept(dept), desc: note.trim() || undefined })}
+          className="text-[11.5px] font-semibold text-brand-700 hover:underline" title="The full Add-task sheet: Breezeway templates, priority, the unit brief">More options (template)\u2026</button>
+        <button onClick={onClose} className="text-[11.5px] text-muted hover:text-ink ml-auto">Close</button>
+      </div>
+      {missing && (title || unitText) ? <p className="text-[11px] text-amber-800">{missing}.</p> : null}
+      {err ? <p className="text-[11.5px] text-rose-700 font-semibold">{err}</p> : null}
+      {ok ? <p className="text-[11.5px] text-emerald-700 font-semibold">{ok}</p> : null}
+    </div>
   )
 }
