@@ -126,21 +126,21 @@ const shortName = (n: string) => { const p = String(n || '').trim().split(/\s+/)
 // sat off the right edge of every table behind its own scrollbar. Tighter columns, one-line dates
 // and a year-less date format bring the whole row onto a normal screen.
 const COLS: { k: string; label: string; w: number; align?: string; full?: string }[] = [
-  { k: 'person', label: 'Team', w: 112, full: 'HK TEAM — who it is on; click to assign' },
-  { k: 'hub', label: 'Hub', w: 84 },
-  { k: 'taskType', label: 'Type', w: 92, full: 'What kind of work — checkout, inspection, PM, glitch, log line\u2026' },
-  { k: 'activity', label: 'Activities', w: 210, full: 'The task line, as Breezeway words it' },
-  { k: 'listing', label: 'Listing', w: 150 },
-  { k: 'beds', label: 'BR', w: 36, align: 'text-center', full: 'Bedrooms \u2014 how big the clean is' },
-  { k: 'reservation', label: 'Reservation', w: 140, full: 'RESERVATION NAME' },
-  { k: 'checkIn', label: 'In', w: 82, align: 'text-center', full: 'CHECK-IN DATE' },
-  { k: 'checkOut', label: 'Out', w: 82, align: 'text-center', full: 'CHECK-OUT DATE' },
-  { k: 'notes', label: 'Notes', w: 140, full: 'Same-day turn, long stay, moved, guest in-house \u2014 the scheduler\u2019s own notes' },
-  { k: 'nights', label: 'Nts', w: 44, align: 'text-center', full: 'NO. OF NIGHTS' },
-  { k: 'fee', label: 'Cleaning', w: 78, align: 'text-right', full: 'Cleaning revenue on the checkout \u2014 the guest\u2019s fee, or the listing\u2019s where the channel bundled it (est.)' },
-  { k: 'cleanHours', label: 'Hrs', w: 44, align: 'text-center', full: 'Cleaning time' },
-  { k: 'payout', label: 'Payout', w: 80, align: 'text-right', full: 'Total Payout' },
-  { k: 'act', label: '', w: 84, align: 'text-right' },
+  { k: 'person', label: 'Team', w: 100, full: 'HK TEAM — who it is on; click to assign' },
+  { k: 'hub', label: 'Hub', w: 72 },
+  { k: 'taskType', label: 'Type', w: 96, full: 'What kind of work — checkout, inspection, PM, glitch, log line\u2026' },
+  { k: 'activity', label: 'Activities', w: 160, full: 'The task line, as Breezeway words it' },
+  { k: 'listing', label: 'Listing', w: 130 },
+  { k: 'beds', label: 'BR', w: 32, align: 'text-center', full: 'Bedrooms \u2014 how big the clean is' },
+  { k: 'reservation', label: 'Reservation', w: 118, full: 'RESERVATION NAME' },
+  { k: 'checkIn', label: 'In', w: 78, align: 'text-center', full: 'CHECK-IN DATE' },
+  { k: 'checkOut', label: 'Out', w: 78, align: 'text-center', full: 'CHECK-OUT DATE' },
+  { k: 'notes', label: 'Notes', w: 110, full: 'Same-day turn, long stay, moved, guest in-house \u2014 the scheduler\u2019s own notes' },
+  { k: 'nights', label: 'Nts', w: 38, align: 'text-center', full: 'NO. OF NIGHTS' },
+  { k: 'fee', label: 'Cleaning', w: 70, align: 'text-right', full: 'Cleaning revenue on the checkout \u2014 the guest\u2019s fee, or the listing\u2019s where the channel bundled it (est.)' },
+  { k: 'cleanHours', label: 'Hrs', w: 38, align: 'text-center', full: 'Cleaning time' },
+  { k: 'payout', label: 'Payout', w: 74, align: 'text-right', full: 'Total Payout' },
+  { k: 'act', label: '', w: 72, align: 'text-right' },
 ]
 const GRID_W = COLS.reduce((n, c) => n + c.w, 0)
 
@@ -202,18 +202,23 @@ export default function GeLog({ date }: { date: string }) {
    *  what this view is for and it is invisible on every other screen. */
   const bands = useMemo(() => {
     const byPerson = new Map<string, Row[]>()
-    for (const r of rows) { const k = r.person || ''; const a = byPerson.get(k) || []; a.push(r); byPerson.set(k, a) }
+    // UNASSIGNED WORK GROUPS BY ITS OWN DEPARTMENT AND MARKET (cleanup 2026-10-22). It used to be
+    // one band keyed on the empty name, so every unassigned row of the day — Broward cleans, Miami
+    // repairs, a log line — landed in whichever table the first one belonged to.
+    const NOBODY = '\u0001'
+    for (const r of rows) { const k = r.person || (NOBODY + deptKey(r.dept) + NOBODY + (r.market || '')); const a = byPerson.get(k) || []; a.push(r); byPerson.set(k, a) }
     for (const p of roster) if (!byPerson.has(p.name)) byPerson.set(p.name, [])
     const out: { person: string; dept: string; market: string; status: string; clash: string; unrostered: boolean; rows: Row[] }[] = []
     for (const person of Array.from(byPerson.keys())) {
       const rs = byPerson.get(person) as Row[]
-      const ros = person ? rosterOf(person) : null
+      const nobody = person.charAt(0) === NOBODY
+      const ros = person && !nobody ? rosterOf(person) : null
       const first = rs[0]
       out.push({
-        person,
+        person: nobody ? '' : person,
         dept: deptKey(ros?.dept || first?.dept || 'housekeeping'),
         market: ros?.market || first?.market || '',
-        status: ros ? ros.status : '', clash: ros ? ros.clash : '', unrostered: ros ? ros.unrostered : !!person,
+        status: ros ? ros.status : '', clash: ros ? ros.clash : '', unrostered: ros ? ros.unrostered : (!!person && !nobody),
         // Inside a band the sheet reads by building, then unit.
         rows: rs.sort((a: Row, b: Row) => a.hub.localeCompare(b.hub) || a.listing.localeCompare(b.listing)),
       })
@@ -729,10 +734,10 @@ function AddBar({ date, units, crew, scheduled, seedPerson, seedDept, onClose, o
         </label>
         <button onClick={add} disabled={busy || !!missing} title={missing || undefined}
           className="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-neutral-900 text-white disabled:opacity-40 inline-flex items-center gap-1">
-          <Plus size={12} /> {busy ? 'Adding\u2026' : toBz ? 'Create task' : 'Add to log'}
+          <Plus size={12} /> {busy ? 'Adding…' : toBz ? 'Create task' : 'Add to log'}
         </button>
         <button onClick={() => openAddTask({ unit: unit?.name || unitText || undefined, listingId: unit?.id, title: title.trim() || undefined, date, assigneeName: who?.name, dept: bzDept(dept), desc: note.trim() || undefined })}
-          className="text-[11.5px] font-semibold text-brand-700 hover:underline" title="The full Add-task sheet: Breezeway templates, priority, the unit brief">More options (template)\u2026</button>
+          className="text-[11.5px] font-semibold text-brand-700 hover:underline" title="The full Add-task sheet: Breezeway templates, priority, the unit brief">More options (template)…</button>
         <button onClick={onClose} className="text-[11.5px] text-muted hover:text-ink ml-auto">Close</button>
       </div>
       {missing && (title || unitText) ? <p className="text-[11px] text-amber-800">{missing}.</p> : null}
