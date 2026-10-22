@@ -74,15 +74,23 @@ export type BoardStats = {
   open: number; byLocation: Record<string, number>; overdue: number; today: number
   waitingVendor: number; waitingApproval: number; followUp: number; completed: number
 }
+/** The words that say a task is waiting on an approval, when the board has no column for it. */
+const APPROVAL_WORDS = /approv|sign[- ]?off/i
+
 /**
  * The summary cards. Counted over top-level tasks only: a checklist item under a job is not a
- * second job. A task counts as "waiting for vendor" by the column it sits in (Vendor contact,
- * Scheduled, Waiting for parts, Waiting for quote) or by carrying a vendor while open and not
- * yet in progress; "waiting for approval" by its column name. Overdue and due today read the
- * follow-up date (the task's due date).
+ * second job. Each number is EXACTLY what its tile's filter shows, so the rule follows the board:
+ * on a board with vendor columns (Vendor contact, Scheduled, Waiting for parts / quote) "waiting
+ * for vendor" is the tasks in those columns; on a board without them it is the open tasks that
+ * carry a vendor. "Waiting for approval" is the approval column when there is one, else the open
+ * tasks that say approval in their title, next action or column. Overdue and due today read the
+ * follow-up date (the task's due date). `sections` is every column on the board, empty ones too.
  */
-export function boardStats(tasks: { id: string; status: string; due_on: string | null; section: string | null; parent_id?: string | null; vendor_name?: string | null; location?: string | null; place?: Place | null }[], links: PlacedLink[], today: string): BoardStats {
+export function boardStats(tasks: { id: string; status: string; due_on: string | null; section: string | null; parent_id?: string | null; vendor_name?: string | null; location?: string | null; place?: Place | null; title?: string | null; next_action?: string | null }[], links: PlacedLink[], today: string, sections?: string[]): BoardStats {
   const out: BoardStats = { open: 0, byLocation: {}, overdue: 0, today: 0, waitingVendor: 0, waitingApproval: 0, followUp: 0, completed: 0 }
+  const cols = sections && sections.length ? sections : Array.from(new Set(tasks.map(t => String(t.section || '')).filter(Boolean)))
+  const vendorCols = cols.filter(c => WAIT_VENDOR_RE.test(c) && !WAIT_APPROVAL_RE.test(c))
+  const approvalCols = cols.filter(c => WAIT_APPROVAL_RE.test(c))
   for (const t of tasks) {
     if (t.parent_id) continue
     if (t.status === 'done') { out.completed++; continue }
@@ -92,8 +100,8 @@ export function boardStats(tasks: { id: string; status: string; due_on: string |
     if (t.due_on && t.due_on < today) out.overdue++
     if (t.due_on === today) out.today++
     const sec = String(t.section || '')
-    if (WAIT_APPROVAL_RE.test(sec)) out.waitingApproval++
-    else if (WAIT_VENDOR_RE.test(sec) || (t.vendor_name && !/progress|doing|complete|done/i.test(sec))) out.waitingVendor++
+    if (vendorCols.length ? vendorCols.includes(sec) : !!t.vendor_name) out.waitingVendor++
+    if (approvalCols.length ? approvalCols.includes(sec) : APPROVAL_WORDS.test(String(t.title || '') + ' ' + String(t.next_action || '') + ' ' + sec)) out.waitingApproval++
     if (FOLLOW_UP_RE.test(sec)) out.followUp++
   }
   return out

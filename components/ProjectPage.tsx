@@ -314,7 +314,7 @@ type TileKey = 'open' | 'Miami' | 'Broward' | 'overdue' | 'today' | 'vendor' | '
 function BoardStatsStrip({ tasks, links, sections, prefs, setPrefs }: {
   tasks: Task[]; links: any[]; sections: string[]; prefs: ViewPrefs; setPrefs: (patch: Partial<ViewPrefs>) => void
 }) {
-  const st = useMemo(() => boardStats(tasks, links, today()), [tasks, links])
+  const st = useMemo(() => boardStats(tasks, links, today(), sections), [tasks, links, sections])
   const vendorCols = sections.filter(sn => WAIT_VENDOR_RE.test(sn) && !WAIT_APPROVAL_RE.test(sn))
   const approvalCols = sections.filter(sn => WAIT_APPROVAL_RE.test(sn))
   const presets: Record<TileKey, { filters: TaskFilters; hideDone: boolean }> = {
@@ -338,8 +338,8 @@ function BoardStatsStrip({ tasks, links, sections, prefs, setPrefs }: {
     { key: 'Broward', label: 'Broward', n: st.byLocation.Broward || 0, tone: 'sky', title: 'Open tasks at Broward units' },
     { key: 'overdue', label: 'Overdue follow-ups', n: st.overdue, tone: st.overdue ? 'rose' : 'ink', title: 'Open tasks whose follow-up date has passed' },
     { key: 'today', label: 'Due today', n: st.today, tone: st.today ? 'amber' : 'ink', title: 'Open tasks whose follow-up is today' },
-    { key: 'vendor', label: 'Waiting for vendor', n: st.waitingVendor, tone: 'ink', title: 'In a vendor column (contact, scheduled, parts, quote), or carrying a vendor while not yet in progress' },
-    { key: 'approval', label: 'Waiting for approval', n: st.waitingApproval, tone: st.waitingApproval ? 'amber' : 'ink', title: 'In an approval column' },
+    { key: 'vendor', label: 'Waiting for vendor', n: st.waitingVendor, tone: 'ink', title: vendorCols.length ? 'In a vendor column: ' + vendorCols.join(', ') : 'Open tasks that have a vendor on them' },
+    { key: 'approval', label: 'Waiting for approval', n: st.waitingApproval, tone: st.waitingApproval ? 'amber' : 'ink', title: approvalCols.length ? 'In ' + approvalCols.join(', ') : 'Open tasks that mention an approval' },
     { key: 'completed', label: 'Completed', n: st.completed, tone: 'emerald', title: 'Finished tasks on this board' },
   ]
   const TONE: Record<string, string> = { ink: 'text-ink', rose: 'text-rose-700', amber: 'text-amber-800', emerald: 'text-emerald-700', sky: 'text-sky-800' }
@@ -425,14 +425,18 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
    * cannot edit a single task still gets to decide whether they read this as a list or a board.
    * Applied locally first so the tab switches on click rather than after a round trip.
    */
+  // Two quick clicks (a tile, then another) are two saves in flight; only the NEWEST save's answer
+  // may replace what is on screen, or the older answer lands last and undoes the second click.
+  const prefsSeq = useRef(0)
   const setPrefs = useCallback(async (patch: Partial<ViewPrefs>) => {
     setPrefsRaw((cur: any) => ({ ...(cur || {}), ...patch }))
+    const seq = ++prefsSeq.current
     try {
       const r = await fetch('/api/projects/' + p.id + '/view', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prefs: patch }),
       })
       const j = await r.json().catch(() => ({}))
-      if (j?.viewPrefs) setPrefsRaw(j.viewPrefs)
+      if (j?.viewPrefs && seq === prefsSeq.current) setPrefsRaw(j.viewPrefs)
     } catch { /* it is applied locally; a failed save is not worth an error banner over a layout */ }
   }, [p.id])
 
