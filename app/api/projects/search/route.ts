@@ -72,6 +72,17 @@ export async function GET(req: NextRequest) {
     const needle = q.toLowerCase()
     const listings = ((lRes.data || []) as any[]).filter(l => !/inactive|archived/i.test(String(l.status || '')))
     const nameOf = (l: any) => String(l.nickname || l.title || 'Unit')
+    // A unit is found the way people type it (Jon, 2026-10-22: the maintenance board's "Unit" field):
+    // "17WEST 511", "17 West 511", "eden 2204", "511" all land on "17WEST - 511 - 2BR". Every word
+    // of the query has to be in the listing's name or building, letters-and-digits only, so the
+    // spaces and dashes in either are free.
+    const squash = (v: any) => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '')
+    const words = needle.split(/[^a-z0-9]+/).filter(Boolean)
+    const unitMatch = (l: any) => {
+      const hay = squash(nameOf(l)) + ' ' + squash(l.building)
+      const whole = squash(nameOf(l) + ' ' + str(l.building))
+      return words.length > 0 && (words.every(w => hay.includes(w)) || whole.includes(squash(needle)))
+    }
 
     // Buildings: group active listings by building, match on the building name.
     const byBuilding: Record<string, string[]> = {}
@@ -81,13 +92,14 @@ export async function GET(req: NextRequest) {
       ;(byBuilding[b] = byBuilding[b] || []).push(String(l.id))
     }
     const buildings: Hit[] = Object.keys(byBuilding)
-      .filter(b => b.toLowerCase().includes(needle))
+      .filter(b => b.toLowerCase().includes(needle) || squash(b).includes(squash(needle)))
       .sort((a, b) => byBuilding[b].length - byBuilding[a].length)
       .slice(0, 6)
       .map(b => ({ kind: 'building', id: b, label: b, sub: `${byBuilding[b].length} unit${byBuilding[b].length === 1 ? '' : 's'}`, unitIds: byBuilding[b] }))
 
     const units: Hit[] = listings
-      .filter(l => nameOf(l).toLowerCase().includes(needle))
+      .filter(unitMatch)
+      .sort((a, b) => (squash(nameOf(a)).indexOf(squash(needle)) === 0 ? 0 : 1) - (squash(nameOf(b)).indexOf(squash(needle)) === 0 ? 0 : 1) || nameOf(a).localeCompare(nameOf(b)))
       .slice(0, 12)
       .map(l => ({ kind: 'listing', id: String(l.id), label: nameOf(l), sub: str(l.building) || 'No building', building: str(l.building) || null }))
 
