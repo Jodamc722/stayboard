@@ -8,6 +8,8 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { pageRows } from './db-page'
 import { TASK_DONE_RE } from './task-categories'
+import { marketOf } from './segments'
+import { taskPlace, unitOf } from './task-place'
 export * from './projects-shared'
 import {
   type Project, type ProjectFull, type Member, type Person, type Viewer, type EventType,
@@ -131,6 +133,18 @@ export async function getProject(id: string): Promise<ProjectFull | null> {
     ;(bucket[a.task_id] = bucket[a.task_id] || []).push(who)
   }
   const [, , invoices] = await Promise.all([enrichLinks(L), syncBreezeway(S), getInvoices(id)])
+  // WHERE EACH TASK IS, and its LAST UPDATE (2026-10-22). Place is resolved once here, from the
+  // attached unit, so the board, the filters and the summary cards read the same answer; the last
+  // update is the newest comment on the task — the notes are newest-first already.
+  const lastUpdate: Record<string, { body: string; at: string; by: string | null }> = {}
+  for (const n of ((notes.data || []) as any[])) {
+    if (n.kind !== 'comment' || !n.task_id || lastUpdate[String(n.task_id)]) continue
+    lastUpdate[String(n.task_id)] = { body: String(n.body || '').slice(0, 300), at: String(n.created_at || ''), by: n.author || null }
+  }
+  for (const t of S) {
+    t.place = taskPlace({ id: String(t.id), location: t.location }, L)
+    t.last_update = lastUpdate[String(t.id)] || null
+  }
   const files = await signFiles(photos.data || [])
   // The invoice carries its own paperwork so the panel never has to hunt the files list for it.
   const byFile: Record<string, any> = {}
@@ -444,7 +458,7 @@ const BZ_GONE = /cancel/i
 async function enrichLinks(L: any[]) {
   const sb = supabaseAdmin()
   const ids = (k: string) => L.filter(l => l.kind === k).map(l => String(l.ref_id))
-  const [claims, glitches, tasks, stays, boards] = await Promise.all([
+  const [claims, glitches, tasks, stays, boards, units] = await Promise.all([
     ids('claim').length ? soft(sb.from('claims').select('id,stage,outcome,amount_sought,amount_paid,guest_name,unit_no').in('id', ids('claim'))) : null,
     ids('glitch').length ? soft(sb.from('glitches').select('id,status,category,unit,breezeway_task_id,guest_name').in('id', ids('glitch'))) : null,
     ids('task').length ? soft(sb.from('breezeway_tasks_sync').select('id,status,name,scheduled_date,assignee_name,report_url,finished_at').in('id', ids('task'))) : null,
@@ -452,10 +466,20 @@ async function enrichLinks(L: any[]) {
     // A BOARD INSIDE A BOARD (2026-10-09). The line shows the child's real stage and its own ref,
     // so "Arya — 1404 build" reads as a project rather than as a title somebody typed once.
     ids('project').length ? soft(sb.from('projects').select('id,ref,title,stage,due_on').in('id', ids('project'))) : null,
+    // WHERE A UNIT IS (2026-10-22): building and market off the listing, so a task attached to
+    // "17WEST - 511" reads MIAMI | 17 West | 511 on the maintenance board without anyone typing it.
+    ids('listing').length ? soft(sb.from('guesty_listings').select('id,nickname,title,building,address_city').in('id', ids('listing'))) : null,
   ])
   const by = (rows: any[] | null) => Object.fromEntries(((rows || []) as any[]).map(r => [String(r.id), r]))
-  const C = by(claims), G = by(glitches), T = by(tasks), R = by(stays), P = by(boards)
+  const C = by(claims), G = by(glitches), T = by(tasks), R = by(stays), P = by(boards), U = by(units)
   for (const l of L) {
+    if (l.kind === 'listing') {
+      const u = U[l.ref_id]
+      const name = String((u && (u.nickname || u.title)) || l.label || '')
+      const building = u && u.building ? String(u.building) : null
+      l.place = { building, market: u ? marketOf(building, u.address_city, name) : null, unit: unitOf(name, building) }
+      continue
+    }
     const r = l.kind === 'claim' ? C[l.ref_id] : l.kind === 'glitch' ? G[l.ref_id] : l.kind === 'task' ? T[l.ref_id] : l.kind === 'reservation' ? R[l.ref_id] : l.kind === 'project' ? P[l.ref_id] : null
     if (!r) continue
     if (l.kind === 'claim') l.state = { label: String(r.stage || ''), tone: r.stage === 'closed' ? 'done' : r.outcome === 'denied' ? 'bad' : r.stage === 'submitted' ? 'wait' : 'open', detail: r.amount_paid ? `$${Number(r.amount_paid).toLocaleString('en-US', { maximumFractionDigits: 0 })} paid` : r.amount_sought ? `$${Number(r.amount_sought).toLocaleString('en-US', { maximumFractionDigits: 0 })} sought` : null, href: `/claims?open=${l.ref_id}` }

@@ -13,11 +13,12 @@ import {
   getProject, logEvent, gateProject, ownerApprovalEmail, toCents, LINK_KINDS, canSee, canEdit, toPerson,
   TASK_STATUSES, TASK_STATUS_LABEL, MEMBER_ROLES, FILES_BUCKET, prefsOf, settingsOf, describeRecurrence, type Viewer, type Member,
   recountInvoiced, INVOICE_STATUSES, INVOICE_STATUS_LABEL, approvalCeiling, rollRecurringVendorJob, fileCompletedTask,
-  nextOccurrence, todayISO, estLabel, shortDate, vendorApprovalEmail,
+  nextOccurrence, todayISO, estLabel, shortDate, vendorApprovalEmail, isDoneSection,
 } from '@/lib/projects'
 import { saveVendor } from '@/lib/project-vendors'
 import { onAssigned, onAdded, onComment } from '@/lib/project-notify'
 import { bustBoards } from '@/lib/bust'
+import { LOCATIONS, dollarsToCents } from '@/lib/task-place'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -155,16 +156,33 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         v.est_minutes = Number.isFinite(n) && n > 0 ? Math.min(60 * 24 * 30, Math.round(n)) : null
       }
       if (b.recurs !== undefined) v.recurs = normaliseRecurs(b.recurs)
+      // THE MAINTENANCE BOARD'S FIELDS (Jon, 2026-10-22; migration 159): where, what next, when the
+      // vendor was last reached, what they quoted. Only keys the caller sent, same rule as above.
+      if (b.location !== undefined) v.location = (LOCATIONS as readonly string[]).includes(str(b.location)) ? str(b.location) : null
+      if (b.next_action !== undefined) v.next_action = str(b.next_action).slice(0, 500) || null
+      if (b.last_contact_on !== undefined) v.last_contact_on = ymd(b.last_contact_on)
+      if (b.quote !== undefined) v.quote_cents = dollarsToCents(b.quote)
+      if (b.quote_cents !== undefined) { const n = Number(b.quote_cents); v.quote_cents = Number.isFinite(n) && n >= 0 ? Math.round(n) : null }
       return v
     }
-    // Until 088 runs these columns are not there. A vendor job saved on the old schema keeps its
-    // title, unit and people — it simply has no vendor on it yet — rather than the whole save
-    // failing on a column nobody has added. Returns what could not be written, so the caller can say so.
+    const MAINT_COLS = ['location', 'next_action', 'last_contact_on', 'quote_cents']
+    // Until 088 / 159 run these columns are not there. A job saved on the old schema keeps its
+    // title, unit and people — it simply has no vendor or place on it yet — rather than the whole
+    // save failing on a column nobody has added. The 159 fields are dropped first and the rest
+    // retried, so a board running ahead of its database loses the least it can. Returns what could
+    // not be written, so the caller can say so.
     const applyVendor = async (taskId: string, patch: Record<string, any>): Promise<string | null> => {
       if (!Object.keys(patch).length) return null
       const { error } = await sb.from('project_steps').update(patch).eq('id', taskId)
       if (!error) return null
       if (!/column|schema/i.test(error.message)) return error.message
+      const slim: Record<string, any> = {}
+      for (const k of Object.keys(patch)) if (MAINT_COLS.indexOf(k) < 0) slim[k] = patch[k]
+      if (Object.keys(slim).length < Object.keys(patch).length) {
+        const second = Object.keys(slim).length ? await sb.from('project_steps').update(slim).eq('id', taskId) : { error: null }
+        if (!second.error) return 'the location, next action, last contact and quote (run migration 159 in Supabase and they will save)'
+        if (!/column|schema/i.test(second.error.message)) return second.error.message
+      }
       return 'the vendor, visit date and estimate (run migration 088 in Supabase and they will save)'
     }
 
@@ -249,6 +267,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
         const vErr = await applyVendor(taskId, vendorPatch(b))
         if (vErr) partial.push(vErr)
+
+        // THE UNIT, PICKED ON THE FORM (2026-10-22). One listing attached to the task at birth, so
+        // the card reads LOCATION | PROPERTY | UNIT from the first second. Same row the Attach
+        // control writes later; a label the form did not send is looked up.
+        if (str(b.listingId)) {
+          let label = str(b.listingLabel)
+          if (!label) {
+            const { data: l } = await sb.from('guesty_listings').select('nickname,title').eq('id', str(b.listingId)).maybeSingle()
+            label = String((l as any)?.nickname || (l as any)?.title || '')
+          }
+          const { error: eL } = await sb.from('project_links').upsert({ project_id: id, kind: 'listing', ref_id: str(b.listingId), label: label || null, task_id: taskId }, { onConflict: 'project_id,kind,ref_id' })
+          if (eL) partial.push('attaching the unit (' + eL.message + ')')
+        }
 
         const A = await writePeople(taskId, b.assignees, 'assignee')
         if (A.error) partial.push('the people it is assigned to (' + A.error + ')')
@@ -1019,7 +1050,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           const patch = tid === taskId ? { sort: (i + 1) * 10, section } : { sort: (i + 1) * 10 }
           return isHome ? sb.from('project_task_homes').update(patch).eq('task_id', tid).eq('project_id', id) : sb.from('project_steps').update(patch).eq('id', tid)
         }))
-        if ((moving.section || null) !== section) await logEvent(id, me, 'task_moved', `moved to ${section || 'no section'}`, { task_id: taskId, task_title: moving.title, from: moving.section, to: section })
+        if ((moving.section || null) !== section) {
+          await logEvent(id, me, 'task_moved', `moved to ${section || 'no section'}`, { task_id: taskId, task_title: moving.title, from: moving.section, to: section })
+          // THE COLUMN IS THE STATE (Jon, 2026-10-22: a card dragged into Completed is completed).
+          // Into the finished column = done; out of it = open again. Only for the board's own
+          // tasks: a homed task's status belongs to its home board.
+          if (!moving.homed) {
+            if (isDoneSection(section) && moving.status !== 'done') {
+              const { error: eD } = await sb.from('project_steps').update({ status: 'done', done_by: me, section_before_done: moving.section || null }).eq('id', taskId)
+              if (!eD) await logEvent(id, me, 'task_status', 'marked done', { task_id: taskId, task_title: moving.title, from: moving.status, to: 'done' })
+            } else if (isDoneSection(moving.section) && !isDoneSection(section) && moving.status === 'done') {
+              const { error: eR } = await sb.from('project_steps').update({ status: 'todo', done_by: null }).eq('id', taskId)
+              if (!eR) await logEvent(id, me, 'task_status', 'reopened', { task_id: taskId, task_title: moving.title, from: 'done', to: 'todo' })
+            }
+          }
+        }
         break
       }
       case 'sectionRename': {

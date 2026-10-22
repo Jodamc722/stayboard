@@ -58,5 +58,21 @@ export function taskInView(t: Task, f: TaskFilters, me: string, today: string): 
     const have = t.assignees.flatMap(a => [lc(a.email), lc(a.person_key), lc(a.display)]).filter(Boolean)
     if (!want.some(w => have.includes(w))) return false
   }
+  // THE MAINTENANCE BOARD'S AXES (2026-10-22). Place comes resolved from the server (task.place),
+  // so Miami / Broward and the property read the attached unit, not a typed word.
+  const loc = f.location || [], bld = f.building || [], sec = f.section || [], ven = f.vendor || []
+  if (loc.length && !loc.some(x => lc(x) === lc(t.place?.location || t.location))) return false
+  if (bld.length && !bld.some(x => lc(x) === lc(t.place?.building))) return false
+  if (sec.length && !sec.some(x => lc(x) === lc(t.section))) return false
+  if (ven.length) {
+    const has = !!(t.vendor_name || t.vendor_key)
+    const ok = ven.some(v => v === 'any' ? has : v === 'none' ? !has : (lc(v) === lc(t.vendor_name) || lc(v) === lc(t.vendor_key)))
+    if (!ok) return false
+  }
+  const q = lc(f.q)
+  if (q) {
+    const hay = [t.title, t.description, t.vendor_name, t.next_action, t.place?.building, t.place?.unit, t.place?.location, t.section, ...t.assignees.map(a => a.display)].map(lc).join(' ')
+    if (!q.split(/\s+/).filter(Boolean).every(w => hay.includes(w))) return false
+  }
   return true
 }

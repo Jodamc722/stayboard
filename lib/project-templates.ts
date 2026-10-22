@@ -107,6 +107,31 @@ export const BUILT_IN: Template[] = [
     ],
   },
   {
+    // THE MAINTENANCE & VENDORS BOARD (Jon, 2026-10-22). Pending maintenance, vendor communication,
+    // repairs, quotes and follow-ups across Miami and Broward. The columns are the brief's, in its
+    // order; each card carries the unit (→ location), the vendor, the next action, the last contact,
+    // the follow-up date, the quote and the PDFs. The summary cards at the top are switched on.
+    key: 'maintenance', label: 'Maintenance & vendors', kind: 'project', category: 'vendor', builtIn: true, icon: '🔧', accent: 'amber',
+    blurb: 'Pending repairs and vendor follow-ups across Miami and Broward: who we are waiting on, what the next move is, when to chase.',
+    summary: 'Maintenance issues, vendor communication, quotes and follow-ups. A card is one issue at one unit; its column says what we are waiting for.',
+    settings: { view: 'board', accent: 'amber', icon: '🔧', stats: true, moveDone: true, doneSection: 'Completed' },
+    sections: [
+      { name: 'New', tasks: [
+        T('EXAMPLE — Balcony door repair', {
+          description: 'This is an example card, not a real issue — delete it once the board is live.\n\nIssue: balcony door needs inspection and possible repairs.\nAttach the unit (17 West · 511) under ATTACHED so the card reads MIAMI | 17 West | 511; pick the vendor; write the next action; set the follow-up date.',
+          priority: 'high',
+        }),
+      ] },
+      { name: 'Vendor Contact', tasks: [] },
+      { name: 'Scheduled', tasks: [] },
+      { name: 'Waiting for Quote / Approval', tasks: [] },
+      { name: 'Waiting for Parts', tasks: [] },
+      { name: 'Follow-Up Needed', tasks: [] },
+      { name: 'In Progress', tasks: [] },
+      { name: 'Completed', tasks: [] },
+    ],
+  },
+  {
     key: 'personal', label: 'My board', kind: 'personal', category: 'internal', builtIn: true, icon: '🔒', accent: 'emerald',
     blurb: 'A private board only you can see. Arrange it however you like.',
     summary: null as any,

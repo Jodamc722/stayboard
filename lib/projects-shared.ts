@@ -115,6 +115,18 @@ export type Task = {
   visit_on?: string | null; visit_window?: string | null; est_minutes?: number | null
   team_notified_at?: string | null; team_notified_for?: string | null
   recurs?: Recurrence | null; recurred_from?: string | null
+  // ── THE MAINTENANCE & VENDORS BOARD (Jon, 2026-10-22; migration 159) ─────────────────────────
+  // Where it is (the attached unit decides; `location` is the by-hand answer for building-level
+  // work), what the next move is, when the vendor was last reached, what they quoted. The
+  // follow-up date is due_on — one date drives Late / Today / My tasks everywhere.
+  location?: string | null
+  next_action?: string | null
+  last_contact_on?: string | null
+  quote_cents?: number | null
+  /** Read-time: location / building / unit resolved from the attached listing (lib/task-place). */
+  place?: { location: string | null; building: string | null; unit: string | null } | null
+  /** Read-time: the newest comment on this task — "last update" on the card. */
+  last_update?: { body: string; at: string; by: string | null } | null
   /** Set when this task was sent to Breezeway; `breezeway` is the field task's live state (read-time). */
   breezeway_task_id?: string | null
   /** Raised from the share link: somebody holding it asked for a technician (migration 151). */
@@ -421,6 +433,12 @@ export type BoardSettings = {
   doneSection: string
   /** The picture at the top of the shared board — one of the attached units' own photos. */
   hero: string
+  /**
+   * THE SUMMARY CARDS at the top (Jon, 2026-10-22: open · Miami · Broward · overdue · due today ·
+   * waiting for vendor · waiting for approval · completed). null = decide from the board: shown
+   * once any task carries a location, a vendor or a quote; true / false = the owner's say-so.
+   */
+  stats: boolean | null
 }
 
 // ── MY VIEW OF THIS BOARD ───────────────────────────────────────────────────────────────────────
@@ -468,29 +486,50 @@ export type TaskFilters = {
   people: string[]
   status: ('todo' | 'doing' | 'blocked' | 'done')[]
   priority: ('urgent' | 'high' | 'normal' | 'low')[]
-  /** Due window. 'none' = no due date. */
+  /** Due (follow-up) window. 'none' = no due date. */
   due: ('late' | 'today' | 'week' | 'later' | 'none')[]
+  // THE MAINTENANCE BOARD'S AXES (Jon, 2026-10-22): Miami / Broward, the property, the workflow
+  // column, the vendor ('any' = has a vendor, 'none' = has none), and a search box.
+  location: string[]
+  building: string[]
+  section: string[]
+  vendor: string[]
+  q: string
 }
-export const EMPTY_FILTERS: TaskFilters = { people: [], status: [], priority: [], due: [] }
+export const EMPTY_FILTERS: TaskFilters = { people: [], status: [], priority: [], due: [], location: [], building: [], section: [], vendor: [], q: '' }
 export const filtersActive = (f: TaskFilters | null | undefined) =>
-  !!f && (f.people.length + f.status.length + f.priority.length + f.due.length) > 0
+  !!f && (f.people.length + f.status.length + f.priority.length + f.due.length + (f.location || []).length + (f.building || []).length + (f.section || []).length + (f.vendor || []).length) > 0 || !!(f && String(f.q || '').trim())
 
 export type SavedView = { name: string; filters: TaskFilters; hideDone: boolean }
 
-/** The three views every board starts with. They are not stored — a person can add their own beside them. */
+const V = (f: Partial<TaskFilters>): TaskFilters => ({ ...EMPTY_FILTERS, ...f })
+/**
+ * The views every board starts with. They are not stored — a person can add their own beside them.
+ * The maintenance brief (2026-10-22) named its quick views: Overdue, Due today, Urgent, Vendor
+ * follow-ups, Completed — and My week is how everyone starts their day.
+ */
 export const BUILTIN_VIEWS: SavedView[] = [
-  { name: 'My week', filters: { people: ['me'], status: [], priority: [], due: ['late', 'today', 'week'] }, hideDone: true },
-  { name: 'Late', filters: { people: [], status: [], priority: [], due: ['late'] }, hideDone: true },
-  { name: 'Urgent', filters: { people: [], status: [], priority: ['urgent', 'high'], due: [] }, hideDone: true },
+  { name: 'My week', filters: V({ people: ['me'], due: ['late', 'today', 'week'] }), hideDone: true },
+  { name: 'Overdue', filters: V({ due: ['late'] }), hideDone: true },
+  { name: 'Due today', filters: V({ due: ['today'] }), hideDone: true },
+  { name: 'Urgent', filters: V({ priority: ['urgent', 'high'] }), hideDone: true },
+  { name: 'Vendor follow-ups', filters: V({ vendor: ['any'] }), hideDone: true },
+  { name: 'Completed', filters: V({ status: ['done'] }), hideDone: false },
 ]
 
 const pickStr = <T extends string>(v: any, allowed: readonly T[]): T[] =>
   Array.isArray(v) ? (v as any[]).map(String).filter((x): x is T => (allowed as readonly string[]).includes(x)) : []
+const strList = (v: any, max = 40) => Array.isArray(v) ? (v as any[]).map(x => String(x).slice(0, 80)).filter(Boolean).slice(0, max) : []
 export const filtersOf = (raw: any): TaskFilters => ({
-  people: Array.isArray(raw?.people) ? (raw.people as any[]).map(String).filter(Boolean).slice(0, 40) : [],
+  people: strList(raw?.people),
   status: pickStr(raw?.status, ['todo', 'doing', 'blocked', 'done'] as const),
   priority: pickStr(raw?.priority, ['urgent', 'high', 'normal', 'low'] as const),
   due: pickStr(raw?.due, ['late', 'today', 'week', 'later', 'none'] as const),
+  location: strList(raw?.location, 4),
+  building: strList(raw?.building),
+  section: strList(raw?.section),
+  vendor: strList(raw?.vendor),
+  q: typeof raw?.q === 'string' ? raw.q.slice(0, 80) : '',
 })
 
 /** The cards down the right-hand side. Named so a preference can point at one. */
@@ -591,6 +630,7 @@ export const settingsOf = (raw: any): BoardSettings => ({
   // THE FACE OF A SHARED BOARD (Jon, 2026-10-09: "I should be able to select the photo"). A URL
   // picked from the attached units' own Guesty pictures; empty means the first one with a photo.
   hero: typeof raw?.hero === 'string' && /^https:\/\//.test(raw.hero) ? String(raw.hero).slice(0, 600) : '',
+  stats: raw?.stats === true ? true : raw?.stats === false ? false : null,
 })
 /** The face of a project: its icon, falling back by kind so an old row still has one. */
 export const iconOf = (p: { settings?: any; kind?: string | null }) => {

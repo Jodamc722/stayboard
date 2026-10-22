@@ -22,13 +22,14 @@ import {
   Home, CalendarDays, UserRound, Loader2, Lock, Unlock, Search, Trash2, CornerDownRight, Archive,
   MessageSquare, Paperclip, FileText, Send, Pencil, Download, Activity, Repeat, SlidersHorizontal, LayoutTemplate, LayoutList, Columns3, ArrowUp, ArrowDown, MoreHorizontal, Save,
   CalendarRange, ChevronLeft, GripVertical, ShieldAlert, Bug, Wrench, ExternalLink, ArrowRightCircle,
-  Truck, Megaphone, Clock, BadgeCheck, Copy, EyeOff, PanelRightClose, PanelRightOpen, FolderInput,
+  Truck, Megaphone, Clock, BadgeCheck, Copy, EyeOff, PanelRightClose, PanelRightOpen, FolderInput, MapPin, PhoneCall, DollarSign, ArrowRight, RefreshCw,
 } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 import type { ProjectFull, Task, Member, Person, Note, ProjectFile } from '@/lib/projects-shared'
 import { VendorName, VendorField, VendorPicker, useVendorDirectory, blankVendorDraft, type VendorHit } from '@/components/VendorCard'
 import { STAGE_LABEL, TASK_STATUS_LABEL, isImage, fmtBytes, ago, prefsOf, settingsOf, describeRecurrence, WEEKDAYS, ACCENT_CLS, ACCENTS, ICONS, iconOf, INVOICE_STATUSES, INVOICE_STATUS_LABEL, invoiceTotals, estLabel, visitState, needsTelling, upcomingVisits, shortDate, RECUR_LABEL, doneSectionName, viewPrefsFor, RAIL_PANELS, RAIL_LABEL, LIST_COLUMNS, COLUMN_LABEL, columnTemplate, type ViewPrefs, type RailPanel, type ListColumn, type BoardSettings, type Recurrence, type Accent, type Invoice, type TaskFilters, type SavedView, EMPTY_FILTERS, BUILTIN_VIEWS, filtersActive } from '@/lib/projects-shared'
 import { taskTag, taskInView } from '@/lib/task-view'
+import { LOCATIONS, WAIT_VENDOR_RE, WAIT_APPROVAL_RE, boardStats, placePrefix, centsToDollars, type Place } from '@/lib/task-place'
 
 type Roster = { display: string; email: string | null; notifiable: boolean }[]
 type Hit =
@@ -200,13 +201,27 @@ function RowTag({ t }: { t: Task }) {
  * / "Late, Today") so the bar is the state and there is nothing else to look at. Everything here
  * writes to my view prefs, so it is remembered per board, per person, on every device.
  */
-const DUE_LABEL: Record<string, string> = { late: 'Late', today: 'Today', week: 'This week', later: 'Later', none: 'No date' }
-function FilterBar({ filters, setFilters, hideDone, setHideDone, roster, members, me }: {
+const DUE_LABEL: Record<string, string> = { late: 'Overdue', today: 'Today', week: 'This week', later: 'Later', none: 'No date' }
+function FilterBar({ filters, setFilters, hideDone, setHideDone, roster, members, me, tasks, sections }: {
   filters: TaskFilters; setFilters: (f: TaskFilters) => void
   hideDone: boolean; setHideDone: (v: boolean) => void
   roster: Roster; members: Member[]; me: string
+  /** The board's tasks and column names — what the place, vendor and column chips offer. */
+  tasks: Task[]; sections: string[]
 }) {
-  const [open, setOpen] = useState<null | 'people' | 'status' | 'priority' | 'due'>(null)
+  const [open, setOpen] = useState<null | 'people' | 'status' | 'priority' | 'due' | 'location' | 'building' | 'section' | 'vendor'>(null)
+  // THE MAINTENANCE AXES (Jon, 2026-10-22): the properties and vendors are whatever this board's
+  // tasks actually carry, so the chips never offer a building the board has nothing at.
+  const buildings = useMemo(() => Array.from(new Set(tasks.map(t => t.place?.building || '').filter(Boolean))).sort(), [tasks])
+  const vendorsOn = useMemo(() => Array.from(new Set(tasks.map(t => t.vendor_name || '').filter(Boolean))).sort(), [tasks])
+  const [q, setQ] = useState(filters.q || '')
+  useEffect(() => { setQ(filters.q || '') }, [filters.q])
+  useEffect(() => {
+    if ((filters.q || '') === q) return
+    const h = setTimeout(() => setFilters({ ...filters, q }), 250)
+    return () => clearTimeout(h)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q])
   // People: everyone on the board first, then the roster. 'me' is always first and always means
   // whoever is looking, so a saved view travels.
   const people = useMemo(() => {
@@ -216,8 +231,8 @@ function FilterBar({ filters, setFilters, hideDone, setHideDone, roster, members
     for (const r of roster) push(r.email || r.display, r.display)
     return out
   }, [members, roster])
-  const toggle = <K extends keyof TaskFilters>(k: K, v: string) => {
-    const cur = filters[k] as string[]
+  const toggle = (k: Exclude<keyof TaskFilters, 'q'>, v: string) => {
+    const cur = (filters[k] || []) as string[]
     const next = cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v]
     setFilters({ ...filters, [k]: next } as TaskFilters)
   }
@@ -238,6 +253,25 @@ function FilterBar({ filters, setFilters, hideDone, setHideDone, roster, members
   const any = filtersActive(filters)
   return (
     <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+      <span className="relative inline-flex">
+        <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, issue, vendor…"
+          className="w-48 rounded-lg border border-line bg-white pl-6 pr-6 py-1 text-[11.5px] focus:outline-none focus:ring-2 focus:ring-brand-200" />
+        {q && <button onClick={() => setQ('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted hover:text-ink" title="Clear the search"><X size={10} /></button>}
+      </span>
+      <Chip k="location" label="Location" count={(filters.location || []).length}>
+        {LOCATIONS.map(l => <Opt key={l} on={(filters.location || []).includes(l)} onClick={() => toggle('location', l)}><MapPin size={10} className="text-muted" />{l}</Opt>)}
+      </Chip>
+      {buildings.length > 0 && (
+        <Chip k="building" label="Property" count={(filters.building || []).length}>
+          {buildings.map(b => <Opt key={b} on={(filters.building || []).includes(b)} onClick={() => toggle('building', b)}>{b}</Opt>)}
+        </Chip>
+      )}
+      {sections.filter(Boolean).length > 1 && (
+        <Chip k="section" label="Column" count={(filters.section || []).length}>
+          {sections.filter(Boolean).map(sn => <Opt key={sn} on={(filters.section || []).includes(sn)} onClick={() => toggle('section', sn)}>{sn}</Opt>)}
+        </Chip>
+      )}
       <Chip k="people" label="Person" count={filters.people.length}>
         {people.map(pp => <Opt key={pp.key} on={filters.people.includes(pp.key)} onClick={() => toggle('people', pp.key)}>{pp.label}</Opt>)}
       </Chip>
@@ -247,8 +281,14 @@ function FilterBar({ filters, setFilters, hideDone, setHideDone, roster, members
       <Chip k="priority" label="Priority" count={filters.priority.length}>
         {(['urgent', 'high', 'normal', 'low'] as const).map(pr => <Opt key={pr} on={filters.priority.includes(pr)} onClick={() => toggle('priority', pr)}><span className={'w-2 h-2 rounded-full ' + PRIORITY_DOT[pr]} />{PRIORITY_LABEL[pr]}</Opt>)}
       </Chip>
-      <Chip k="due" label="Due" count={filters.due.length}>
+      <Chip k="due" label="Follow-up" count={filters.due.length}>
         {(['late', 'today', 'week', 'later', 'none'] as const).map(d => <Opt key={d} on={filters.due.includes(d)} onClick={() => toggle('due', d)}>{DUE_LABEL[d]}</Opt>)}
+      </Chip>
+      <Chip k="vendor" label="Vendor" count={(filters.vendor || []).length}>
+        <Opt on={(filters.vendor || []).includes('any')} onClick={() => toggle('vendor', 'any')}>Has a vendor</Opt>
+        <Opt on={(filters.vendor || []).includes('none')} onClick={() => toggle('vendor', 'none')}>No vendor</Opt>
+        {vendorsOn.length > 0 && <div className="my-1 border-t border-line" />}
+        {vendorsOn.map(v => <Opt key={v} on={(filters.vendor || []).includes(v)} onClick={() => toggle('vendor', v)}><Truck size={10} className="text-muted" />{v}</Opt>)}
       </Chip>
       <button onClick={() => setHideDone(!hideDone)}
         className={'inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11.5px] font-semibold whitespace-nowrap ' + (hideDone ? 'border-ink bg-ink text-white' : 'border-line bg-white text-muted hover:text-ink')}
@@ -256,6 +296,62 @@ function FilterBar({ filters, setFilters, hideDone, setHideDone, roster, members
         <EyeOff size={11} /> {hideDone ? 'Done hidden' : 'Hide done'}
       </button>
       {any && <button onClick={() => setFilters(EMPTY_FILTERS)} className="inline-flex items-center gap-1 px-2 py-1 text-[11.5px] font-semibold text-muted hover:text-ink" title="Clear every filter"><X size={11} /> Clear</button>}
+    </div>
+  )
+}
+
+/**
+ * THE SUMMARY CARDS (Jon, 2026-10-22: "display summary cards for Total Open Tasks, Miami Tasks,
+ * Broward Tasks, Overdue Follow-Ups, Follow-Ups Due Today, Waiting for Vendor, Waiting for
+ * Approval, Completed Tasks. All totals must update automatically").
+ *
+ * Counted from the same tasks the columns show (lib/task-place boardStats), so they move the
+ * moment a card does. Each card is a filter: click it and the board shows exactly the rows it
+ * counted; click again to clear. Rendered only on a board that asked for them, or on one whose
+ * tasks carry a place, a vendor or a quote — a one-on-one never grows eight zeros.
+ */
+type TileKey = 'open' | 'Miami' | 'Broward' | 'overdue' | 'today' | 'vendor' | 'approval' | 'completed'
+function BoardStatsStrip({ tasks, links, sections, prefs, setPrefs }: {
+  tasks: Task[]; links: any[]; sections: string[]; prefs: ViewPrefs; setPrefs: (patch: Partial<ViewPrefs>) => void
+}) {
+  const st = useMemo(() => boardStats(tasks, links, today()), [tasks, links])
+  const vendorCols = sections.filter(sn => WAIT_VENDOR_RE.test(sn) && !WAIT_APPROVAL_RE.test(sn))
+  const approvalCols = sections.filter(sn => WAIT_APPROVAL_RE.test(sn))
+  const presets: Record<TileKey, { filters: TaskFilters; hideDone: boolean }> = {
+    open: { filters: EMPTY_FILTERS, hideDone: true },
+    Miami: { filters: { ...EMPTY_FILTERS, location: ['Miami'] }, hideDone: true },
+    Broward: { filters: { ...EMPTY_FILTERS, location: ['Broward'] }, hideDone: true },
+    overdue: { filters: { ...EMPTY_FILTERS, due: ['late'] }, hideDone: true },
+    today: { filters: { ...EMPTY_FILTERS, due: ['today'] }, hideDone: true },
+    vendor: { filters: vendorCols.length ? { ...EMPTY_FILTERS, section: vendorCols } : { ...EMPTY_FILTERS, vendor: ['any'] }, hideDone: true },
+    approval: { filters: approvalCols.length ? { ...EMPTY_FILTERS, section: approvalCols } : { ...EMPTY_FILTERS, q: 'approval' }, hideDone: true },
+    completed: { filters: { ...EMPTY_FILTERS, status: ['done'] }, hideDone: false },
+  }
+  const active = (prefs.activeView || '').startsWith('tile:') ? (prefs.activeView || '').slice(5) as TileKey : null
+  const pick = (k: TileKey) => {
+    if (active === k) { setPrefs({ activeView: null, filters: EMPTY_FILTERS }); return }
+    setPrefs({ activeView: 'tile:' + k, filters: presets[k].filters, hideDone: presets[k].hideDone })
+  }
+  const tiles: { key: TileKey; label: string; n: number; tone: 'ink' | 'rose' | 'amber' | 'emerald' | 'sky'; title: string }[] = [
+    { key: 'open', label: 'Open', n: st.open, tone: 'ink', title: 'Every task not yet completed' },
+    { key: 'Miami', label: 'Miami', n: st.byLocation.Miami || 0, tone: 'sky', title: 'Open tasks at Miami units — from the unit attached, or the location set on the task' },
+    { key: 'Broward', label: 'Broward', n: st.byLocation.Broward || 0, tone: 'sky', title: 'Open tasks at Broward units' },
+    { key: 'overdue', label: 'Overdue follow-ups', n: st.overdue, tone: st.overdue ? 'rose' : 'ink', title: 'Open tasks whose follow-up date has passed' },
+    { key: 'today', label: 'Due today', n: st.today, tone: st.today ? 'amber' : 'ink', title: 'Open tasks whose follow-up is today' },
+    { key: 'vendor', label: 'Waiting for vendor', n: st.waitingVendor, tone: 'ink', title: 'In a vendor column (contact, scheduled, parts, quote), or carrying a vendor while not yet in progress' },
+    { key: 'approval', label: 'Waiting for approval', n: st.waitingApproval, tone: st.waitingApproval ? 'amber' : 'ink', title: 'In an approval column' },
+    { key: 'completed', label: 'Completed', n: st.completed, tone: 'emerald', title: 'Finished tasks on this board' },
+  ]
+  const TONE: Record<string, string> = { ink: 'text-ink', rose: 'text-rose-700', amber: 'text-amber-800', emerald: 'text-emerald-700', sky: 'text-sky-800' }
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-1.5">
+      {tiles.map(t => (
+        <button key={t.key} onClick={() => pick(t.key)} title={t.title + (active === t.key ? ' — click to clear' : ' — click to show only these')} aria-pressed={active === t.key}
+          className={'text-left rounded-xl border bg-white px-2.5 py-2 min-w-0 transition ' + (active === t.key ? 'border-ink ring-2 ring-brand-100' : 'border-line hover:border-ink/30')}>
+          <span className={'block text-[20px] leading-none font-bold tabular-nums ' + (t.n === 0 && t.tone !== 'emerald' ? 'text-muted/60' : TONE[t.tone])}>{t.n}</span>
+          <span className="block mt-1 text-[10.5px] font-semibold uppercase tracking-wide text-muted truncate">{t.label}</span>
+        </button>
+      ))}
     </div>
   )
 }
@@ -499,6 +595,16 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
   const total = p.tasks.length
   const overdue = p.tasks.filter(t => t.status !== 'done' && t.due_on && t.due_on < today()).length
   const current = openTask ? findTask(p.tasks, openTask) : null
+  // Every column the board has, filters or not — what the Column chip and the summary cards offer.
+  const allSectionNames = useMemo(() => {
+    const names: string[] = []
+    for (const k of settings.sectionOrder) if (k && !names.includes(k)) names.push(k)
+    for (const t of p.tasks) if (t.section && !names.includes(t.section)) names.push(t.section)
+    return names
+  }, [settings.sectionOrder, p.tasks])
+  // THE SUMMARY CARDS show where the board asked for them, or where the work carries a place, a
+  // vendor or a quote (lib/task-place). Off is off.
+  const showStats = settings.stats === true || (settings.stats === null && p.tasks.some(t => t.place?.location || t.location || t.vendor_name || t.quote_cents != null))
 
   return (
     <DoneCtx.Provider value={guard}><FoldCtx.Provider value={foldApi}>
@@ -596,7 +702,8 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
             <button onClick={saveCurrentView} className="ml-1 inline-flex items-center gap-1 px-2 py-1 text-[11.5px] font-semibold text-brand-700 hover:text-ink whitespace-nowrap" title="Keep these filters as a named view"><Save size={11} /> Save view</button>
           )}
         </div>
-        <FilterBar filters={prefs.filters} setFilters={setFilters} hideDone={prefs.hideDone} setHideDone={(v: boolean) => setPrefs({ hideDone: v })} roster={roster} members={p.members} me={me} />
+        <FilterBar filters={prefs.filters} setFilters={setFilters} hideDone={prefs.hideDone} setHideDone={(v: boolean) => setPrefs({ hideDone: v })} roster={roster} members={p.members} me={me}
+          tasks={p.tasks} sections={allSectionNames} />
         {err && <p className="mt-2 text-[12.5px] text-rose-700">{err}</p>}
       </div>
 
@@ -610,6 +717,7 @@ export function ProjectPage({ initial, me, canEdit, canFull, superadmin, viewPre
         <div className="space-y-3 min-w-0">
           {/* WHO IS AT OUR BUILDINGS THIS WEEK. Renders only when vendor visits are actually
               booked, so every other kind of board is untouched by it. */}
+          {showStats && <BoardStatsStrip tasks={p.tasks} links={p.links} sections={allSectionNames} prefs={prefs} setPrefs={setPrefs} />}
           <ArrivalsStrip p={p} tasks={p.tasks} busy={busy} act={act} onOpen={setOpenTask} canEdit={canEdit} />
           {view === 'calendar' ? (
             <CalendarView tasks={p.tasks} onOpen={setOpenTask} accent={accent} hideDone={prefs.hideDone} />
@@ -918,7 +1026,10 @@ function BoardCard({ t, name, canEdit, busy, openId, onOpen, act, counts, dragId
   // THE CARD IS THE ROW, STACKED (Jon, 2026-09-24). Line one: circle, title, the one tag. Line
   // two, quiet: owner, due, subtasks, Breezeway — and only when there is something to show.
   const quiet: any[] = []
-  if (t.due_on) quiet.push(<span key="due" className="inline-flex items-center gap-0.5 tabular-nums"><CalendarDays size={9} />{dueText(t.due_on)}</span>)
+  if (t.due_on) quiet.push(<span key="due" className="inline-flex items-center gap-0.5 tabular-nums" title="Follow-up / due date"><CalendarDays size={9} />{dueText(t.due_on)}</span>)
+  // THE MAINTENANCE FIELDS (2026-10-22): the quote, when the vendor was last reached, the PDFs.
+  if (t.quote_cents != null) quiet.push(<span key="q" className="inline-flex items-center gap-0.5 tabular-nums font-semibold text-ink" title="Quote">{centsToDollars(t.quote_cents)}</span>)
+  if (t.last_contact_on) quiet.push(<span key="lc" className="inline-flex items-center gap-0.5 tabular-nums" title="Last contact with the vendor"><PhoneCall size={9} />{dueText(t.last_contact_on)}</span>)
   if (t.subtasks.length > 0) quiet.push(<span key="sub" className="tabular-nums">{subDone}/{t.subtasks.length}</span>)
   if (c && c.comments > 0) quiet.push(<span key="cm" className="inline-flex items-center gap-0.5"><MessageSquare size={9} />{c.comments}</span>)
   if (c && c.files > 0) quiet.push(<span key="fl" className="inline-flex items-center gap-0.5"><Paperclip size={9} />{c.files}</span>)
@@ -933,7 +1044,11 @@ function BoardCard({ t, name, canEdit, busy, openId, onOpen, act, counts, dragId
           + (openId === t.id ? 'border-ink' : 'border-line hover:border-ink/40') + (dragId === t.id ? ' opacity-40' : '') + (done ? ' opacity-60' : '')}>
         <div className="flex items-start gap-2">
           <span className="mt-[1px]"><DoneCircle t={t} canEdit={canEdit} busy={busy} act={act} size={16} /></span>
-          <span className={'text-[13px] leading-snug flex-1 min-w-0 ' + (done ? 'text-muted line-through' : 'text-ink')}>{t.title || <span className="text-muted/60 italic">Untitled</span>}</span>
+          <span className={'text-[13px] leading-snug flex-1 min-w-0 ' + (done ? 'text-muted line-through' : 'text-ink')}>
+            {/* LOCATION | PROPERTY | UNIT | ISSUE (2026-10-22) — the place reads from the attached unit. */}
+            {placePrefix(t.place || { location: t.location || null, building: null, unit: null }) && <span className="text-[11px] font-semibold text-muted tracking-wide">{placePrefix(t.place || { location: t.location || null, building: null, unit: null })} | </span>}
+            {t.title || <span className="text-muted/60 italic">Untitled</span>}
+          </span>
           <RowTag t={t} />
         </div>
         {(quiet.length > 0 || t.assignees.length > 0 || t.vendor_name || t.visit_on) && (
@@ -943,6 +1058,10 @@ function BoardCard({ t, name, canEdit, busy, openId, onOpen, act, counts, dragId
             {t.assignees.length > 0 && <span className="ml-auto"><Avatars people={t.assignees} size={18} /></span>}
             {!t.breezeway_task_id && canEdit && onPush && !t.assignees.length && <button onClick={() => onPush(t.id)} className="ml-auto text-muted/60 hover:text-ink" title="Push to Breezeway"><Wrench size={11} /></button>}
           </div>
+        )}
+        {/* THE NEXT MOVE, on the card (2026-10-22: "it should be immediately clear what the team is waiting for"). */}
+        {t.next_action && !done && (
+          <p className="mt-1 pl-6 text-[11px] text-ink/85 leading-snug line-clamp-2" title={'Next action: ' + t.next_action}><ArrowRight size={9} className="inline -mt-px mr-0.5 text-muted" />{t.next_action}</p>
         )}
       </div>
     </div>
@@ -1113,7 +1232,15 @@ function Customize({ settings, prefs, sections, canEdit, act, setPrefs, busy }: 
               <input type="checkbox" checked={settings.moveDone} onChange={e => set({ moveDone: e.target.checked })} disabled={busy} className="mt-0.5" />
               <span>
                 Move finished work to <span className="font-semibold">{doneSectionName(sections, settings)}</span>
-                <span className="block text-[11px] text-muted">Reopening a task puts it back where it was.</span>
+                <span className="block text-[11px] text-muted">Reopening a task puts it back where it was. Dragging a card into that column completes it.</span>
+              </span>
+            </label>
+            {/* THE SUMMARY CARDS (2026-10-22). Three states: on, off, or let the board decide. */}
+            <label className="flex items-start gap-2 text-[12.5px] text-ink">
+              <input type="checkbox" checked={settings.stats !== false} onChange={e => set({ stats: e.target.checked } as any)} disabled={busy} className="mt-0.5" />
+              <span>
+                Summary cards at the top
+                <span className="block text-[11px] text-muted">Open · Miami · Broward · overdue · due today · waiting for vendor · for approval · completed. Each one is a filter.</span>
               </span>
             </label>
             {order.length > 1 && (
@@ -1287,6 +1414,7 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, cols, dra
           ) : (
             <span onDoubleClick={e => { if (canEdit) { e.stopPropagation(); setRename(t.title) } }}
               className={'min-w-0 flex-1 text-[13px] truncate ' + (done ? 'text-muted line-through' : 'text-ink')} title={canEdit ? t.title + ' — double-click to rename' : t.title}>
+              {placePrefix(t.place || { location: t.location || null, building: null, unit: null }) && <span className="text-[11px] font-semibold text-muted tracking-wide">{placePrefix(t.place || { location: t.location || null, building: null, unit: null })} | </span>}
               {t.title || <span className="text-muted/60 italic">Untitled</span>}
             </span>
           )}
@@ -1371,6 +1499,9 @@ function TaskRow({ t, depth, canEdit, busy, open, onOpen, act, counts, cols, dra
           ) : t.due_on ? <span key="due" className="inline-flex items-center gap-1 tabular-nums"><CalendarDays size={10} />{dueText(t.due_on)}</span> : null,
         )
         if (t.priority !== 'normal' && !done) bits.push(<span key="pri" className="inline-flex items-center gap-1"><span className={'w-1.5 h-1.5 rounded-full ' + PRIORITY_DOT[t.priority]} />{PRIORITY_LABEL[t.priority]}</span>)
+        if (t.quote_cents != null) bits.push(<span key="q" className="font-semibold text-ink tabular-nums" title="Quote">{centsToDollars(t.quote_cents)}</span>)
+        if (t.last_contact_on) bits.push(<span key="lc" className="inline-flex items-center gap-0.5 tabular-nums" title="Last contact with the vendor"><PhoneCall size={10} />{dueText(t.last_contact_on)}</span>)
+        if (t.next_action && !done) bits.push(<span key="na" className="inline-flex items-center gap-0.5 text-ink/80 truncate max-w-[40ch]" title={'Next action: ' + t.next_action}><ArrowRight size={10} className="text-muted shrink-0" />{t.next_action}</span>)
         if (c && c.comments > 0) bits.push(<span key="cm" className="inline-flex items-center gap-0.5" title={`${c.comments} comments`}><MessageSquare size={10} />{c.comments}</span>)
         if (c && c.files > 0) bits.push(<span key="fl" className="inline-flex items-center gap-0.5" title={`${c.files} files`}><Paperclip size={10} />{c.files}</span>)
         // A request from the share link has to be visible without opening anything, or it waits.
@@ -1551,6 +1682,23 @@ function NewTaskModal({ section, sections, roster, busy, act, onClose, onDone, s
   const [err, setErr] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const titleRef = useRef<HTMLInputElement | null>(null)
+  // THE UNIT AND THE PLACE, ON THE FORM (Jon, 2026-10-22: LOCATION | PROPERTY | UNIT | ISSUE).
+  // Pick the unit and the card knows its building and market from the first second; the location
+  // buttons are for building-level work, or to overrule the unit.
+  const [unitQ, setUnitQ] = useState('')
+  const [unitHits, setUnitHits] = useState<Hit[]>([])
+  const [unit, setUnit] = useState<{ id: string; label: string; building: string | null } | null>(null)
+  const [location, setLocation] = useState('')
+  const [nextAction, setNextAction] = useState('')
+  const [lastContact, setLastContact] = useState('')
+  const [quote, setQuote] = useState('')
+  useEffect(() => {
+    if (unitQ.trim().length < 2) { setUnitHits([]); return }
+    const h = setTimeout(async () => {
+      try { const r = await fetch('/api/projects/search?q=' + encodeURIComponent(unitQ.trim()), { cache: 'no-store' }); const j = await r.json(); setUnitHits(((j?.hits || []) as Hit[]).filter(x => x.kind === 'listing').slice(0, 8)) } catch { setUnitHits([]) }
+    }, 220)
+    return () => clearTimeout(h)
+  }, [unitQ])
 
   useEffect(() => { titleRef.current?.focus() }, [])
   // CONNECTED BOARDS (Jon: "projects can be connected to other boards"). Only boards this person
@@ -1574,6 +1722,9 @@ function NewTaskModal({ section, sections, roster, busy, act, onClose, onDone, s
       vendorName: vendorKey ? (vendors.find(v => v.key === vendorKey)?.label || undefined) : undefined,
       visit_on: visitOn || undefined, visit_window: visitWindow || undefined,
       est_minutes: estMinutes ?? undefined,
+      listingId: unit ? unit.id : undefined, listingLabel: unit ? unit.label : undefined,
+      location: location || undefined, next_action: nextAction.trim() || undefined,
+      last_contact_on: lastContact || undefined, quote: quote.trim() || undefined,
     })
     if (!r) { setSaving(false); return }        // act() already showed why
     // Files go up after the task exists, because they need its id. This is the one thing that
@@ -1621,9 +1772,45 @@ function NewTaskModal({ section, sections, roster, busy, act, onClose, onDone, s
               <PeoplePicker value={collaborators} onChange={setCollaborators} roster={roster} tone="soft" placeholder="Anyone else who should see it…" />
             </Row>
 
+            {/* WHERE. The unit first — it fills the building and the market — then the location
+                buttons for work with no unit. */}
+            <Row label="Unit" hint={unit ? undefined : 'Type the unit — 17WEST 511, Eden 2204 — and pick it. The building and Miami / Broward come with it.'}>
+              {unit ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-ink bg-ink text-white px-2.5 py-1 text-[11.5px] font-semibold"><Home size={11} />{unit.label}</span>
+                  {unit.building && <span className="text-[11.5px] text-muted">{unit.building}</span>}
+                  <button type="button" onClick={() => { setUnit(null); setUnitQ('') }} className="text-[11.5px] text-muted hover:text-ink">change</button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+                  <input value={unitQ} onChange={e => setUnitQ(e.target.value)} placeholder="Unit…" className="w-full rounded-lg border border-line bg-white pl-7 pr-2 py-1.5 text-[12.5px]" />
+                  {unitHits.length > 0 && (
+                    <div className="absolute z-10 left-0 right-0 mt-1 rounded-lg border border-line bg-white shadow-lg divide-y divide-line max-h-[200px] overflow-y-auto">
+                      {unitHits.map(h => (
+                        <button type="button" key={h.id} onClick={() => { setUnit({ id: h.id, label: h.label, building: (h as any).building || null }); setUnitHits([]); setUnitQ('') }}
+                          className="w-full text-left px-2.5 py-1.5 hover:bg-app flex items-center gap-2">
+                          <Home size={12} className="text-muted shrink-0" />
+                          <span className="min-w-0"><span className="block text-[12.5px] text-ink truncate">{h.label}</span><span className="block text-[10.5px] text-muted truncate">{h.sub}</span></span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </Row>
+            <Row label="Location" hint={unit && !location ? 'From the unit. Pick one to overrule it.' : undefined}>
+              <div className="flex items-center gap-1.5">
+                {LOCATIONS.map(l => (
+                  <button key={l} type="button" onClick={() => setLocation(location === l ? '' : l)}
+                    className={'rounded-md border px-2.5 py-1 text-[11.5px] font-semibold ' + (location === l ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>{l}</button>
+                ))}
+              </div>
+            </Row>
+
             <div className="grid grid-cols-2 gap-3">
-              <Row label="Due">
-                <input type="date" value={due} onChange={e => setDue(e.target.value)}
+              <Row label="Follow-up">
+                <input type="date" value={due} onChange={e => setDue(e.target.value)} title="The follow-up / due date"
                   className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]" />
               </Row>
               <Row label="Priority">
@@ -1680,11 +1867,26 @@ function NewTaskModal({ section, sections, roster, busy, act, onClose, onDone, s
               </div>
             </Row>
 
-            <Row label="Description">
+            <Row label="Issue">
               <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3}
-                placeholder="What this is, what done looks like, anything the person doing it needs to know."
+                placeholder="What is wrong, what done looks like, anything the person doing it needs to know."
                 className="w-full rounded-lg border border-line bg-white px-2.5 py-2 text-[13px] leading-relaxed focus:outline-none focus:border-ink" />
             </Row>
+
+            <Row label="Next action">
+              <input value={nextAction} onChange={e => setNextAction(e.target.value)} placeholder="e.g. follow up with the vendor to confirm the inspection time"
+                className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]" />
+            </Row>
+            <div className="grid grid-cols-2 gap-3">
+              <Row label="Last contact">
+                <input type="date" value={lastContact} onChange={e => setLastContact(e.target.value)} title="When the vendor was last reached"
+                  className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]" />
+              </Row>
+              <Row label="Quote $">
+                <input value={quote} onChange={e => setQuote(e.target.value)} inputMode="decimal" placeholder="0"
+                  className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px] tabular-nums" />
+              </Row>
+            </div>
 
             <Row label="Subtasks" hint={lines.length ? lines.length + ' subtask' + (lines.length === 1 ? '' : 's') : 'One per line.'}>
               <textarea value={subtasks} onChange={e => setSubtasks(e.target.value)} rows={3}
@@ -1692,7 +1894,7 @@ function NewTaskModal({ section, sections, roster, busy, act, onClose, onDone, s
                 className="w-full rounded-lg border border-line bg-white px-2.5 py-2 text-[13px] leading-relaxed focus:outline-none focus:border-ink" />
             </Row>
 
-            <Row label="Photos & files" hint={files.length ? files.map(f => f.name).join(', ') : 'Quotes, before photos, a floor plan.'}>
+            <Row label="PDFs & files" hint={files.length ? files.map(f => f.name).join(', ') : 'Quotes, invoices, inspection reports, receipts, warranties, work orders, photos.'}>
               <div className="flex items-center gap-2">
                 <label className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-muted hover:text-ink cursor-pointer">
                   <Paperclip size={12} /> Attach
@@ -1828,11 +2030,47 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, onOpe
               )}
             </div>
 
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">Due</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5" title="The follow-up date is the task's due date — it drives Late / Today and My tasks">Follow-up</span>
             <div className="flex items-center gap-2">
               <input type="date" value={task.due_on || ''} disabled={!canEdit || busy} onChange={e => set({ due_on: e.target.value || null })}
                 className={'rounded-lg border px-2 py-1 text-[12.5px] bg-white ' + (late ? 'border-rose-300 text-rose-700' : 'border-line')} />
               {late && <span className="text-[11px] font-bold text-rose-600">Overdue</span>}
+            </div>
+
+            {/* WHERE (2026-10-22). The attached unit decides; the buttons are for building-level
+                work with no unit, or to overrule what the unit says. */}
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">Location</span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {LOCATIONS.map(l => (
+                <button key={l} type="button" disabled={!canEdit || busy} onClick={() => set({ location: task.location === l ? null : l })}
+                  title={task.location === l ? l + ' — set by hand; click to go back to what the unit says' : 'Set ' + l + ' by hand'}
+                  className={'rounded-md border px-2 py-0.5 text-[11.5px] font-semibold ' + ((task.location || task.place?.location) === l ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>{l}</button>
+              ))}
+              <span className="text-[11px] text-muted">
+                {task.place?.building ? [task.place.building, task.place.unit ? 'Unit ' + task.place.unit : ''].filter(Boolean).join(' · ') + (task.location ? '' : ' (from the unit)') : 'No unit attached — attach one under Attached below'}
+              </span>
+            </div>
+
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">Next action</span>
+            <input defaultValue={task.next_action || ''} key={task.id + ':na:' + (task.next_action || '')} disabled={!canEdit} placeholder="The next move — e.g. follow up with the vendor to confirm the inspection time"
+              onBlur={e => { if ((e.target.value.trim() || null) !== (task.next_action || null)) set({ next_action: e.target.value.trim() }) }}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+              className="rounded-lg border border-line bg-white px-2 py-1 text-[12.5px]" />
+
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">Last contact</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input type="date" value={task.last_contact_on || ''} disabled={!canEdit || busy} onChange={e => set({ last_contact_on: e.target.value || null })}
+                className="rounded-lg border border-line px-2 py-1 text-[12.5px] bg-white" title="When the vendor (or owner) was last reached" />
+              {canEdit && task.last_contact_on !== today() && <button type="button" disabled={busy} onClick={() => set({ last_contact_on: today() })} className="text-[11px] font-semibold text-muted hover:text-ink">Today</button>}
+            </div>
+
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">Quote</span>
+            <div className="flex items-center gap-1">
+              <span className="text-[12.5px] text-muted">$</span>
+              <input defaultValue={task.quote_cents != null ? String(task.quote_cents / 100) : ''} key={task.id + ':q:' + String(task.quote_cents ?? '')} disabled={!canEdit} inputMode="decimal" placeholder="0"
+                onBlur={e => { const v = e.target.value.trim(); const cur = task.quote_cents != null ? String(task.quote_cents / 100) : ''; if (v !== cur) set({ quote: v }) }}
+                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                className="rounded-lg border border-line bg-white px-2 py-1 text-[12.5px] w-28 tabular-nums" title="What the vendor quoted" />
             </div>
 
             <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">Priority</span>
@@ -1852,10 +2090,16 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, onOpe
           </div>
 
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted mb-1">Notes</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted mb-1">Issue / notes</p>
             <textarea value={desc} onChange={e => setDesc(e.target.value)} onBlur={() => { if (desc !== (task.description || '')) set({ description: desc }) }}
               disabled={!canEdit} rows={5} placeholder="What this is, what done looks like, anything the person doing it needs to know."
               className="w-full rounded-lg border border-line bg-white px-2.5 py-2 text-[13px] leading-relaxed focus:outline-none focus:border-ink" />
+            {/* THE LAST UPDATE is the newest comment — the box at the bottom is where updates go. */}
+            {task.last_update && (
+              <p className="mt-1.5 text-[12px] text-ink/85 rounded-lg border border-line bg-app/50 px-2.5 py-1.5">
+                <span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">Last update</span> · <span className="text-muted">{nameOf(task.last_update.by)} · {ago(task.last_update.at)}</span><br />{task.last_update.body}
+              </p>
+            )}
           </div>
 
           {/* what this task is about — the stay, the owner, the unit, the claim */}
@@ -1918,13 +2162,14 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, onOpe
             <BreezewayBox key={task.id + (bzFocus ? ':bz' : '')} task={task} p={p} canEdit={canEdit} busy={busy} act={act} startOpen={!!bzFocus} />
           )}
 
-          {/* files on this task */}
+          {/* files on this task — the PDFs: quotes, invoices, reports, receipts, warranties, work orders */}
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted flex-1">Files <span className="normal-case font-normal tabular-nums">{files.length || ''}</span></p>
-              {canEdit && <UploadButton busy={busy} onPick={fl => upload(fl, task.id)} />}
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted flex-1">PDFs & files <span className="normal-case font-normal tabular-nums">{files.length || ''}</span></p>
+              {canEdit && <UploadButton busy={busy} onPick={fl => upload(fl, task.id)} label="Upload" />}
             </div>
-            <FileList files={files} canEdit={canEdit} busy={busy} onRemove={f => act({ action: 'fileDelete', fileId: f.id })} compact />
+            <FileList files={files} canEdit={canEdit} busy={busy} onRemove={f => act({ action: 'fileDelete', fileId: f.id })} compact
+              onReplace={async (f, nf) => { const ok = await upload([nf], task.id); if (ok) await act({ action: 'fileDelete', fileId: f.id }) }} />
           </div>
 
           <p className="text-[11px] text-muted">
@@ -2357,10 +2602,12 @@ function UploadButton({ onPick, busy, label }: { onPick: (files: FileList) => vo
 
 // Photos are a grid you can see at a glance; documents are rows you can read the name of. Both
 // open in a new tab — the signed URL is the download.
-function FileList({ files, canEdit, busy, onRemove, compact, onOpen }: {
+function FileList({ files, canEdit, busy, onRemove, onReplace, compact, onOpen }: {
   files: ProjectFile[]; canEdit: boolean; busy: boolean; onRemove: (f: ProjectFile) => void; compact?: boolean; onOpen?: (taskId: string) => void
+  /** Swap a document for a newer file (2026-10-22: "replace or delete attachments"): the new one goes up, then the old one goes. */
+  onReplace?: (f: ProjectFile, next: File) => void
 }) {
-  if (!files.length) return <p className="text-[12px] text-muted py-1">{canEdit ? 'Nothing attached. Photos, PDFs, spreadsheets — up to 25MB each.' : 'Nothing attached.'}</p>
+  if (!files.length) return <p className="text-[12px] text-muted py-1">{canEdit ? 'Nothing attached. PDFs (quotes, invoices, reports, receipts, warranties, work orders), photos, spreadsheets — up to 25MB each.' : 'Nothing attached.'}</p>
   const pics = files.filter(isImage), docs = files.filter(f => !isImage(f))
   return (
     <div className="space-y-2">
@@ -2389,6 +2636,12 @@ function FileList({ files, canEdit, busy, onRemove, compact, onOpen }: {
                 <span className="block text-[10.5px] text-muted">{fmtBytes(f.bytes)}{f.uploaded_by ? ` · ${first(f.uploaded_by)}` : ''} · {ago(f.created_at)}</span>
               </a>
               <a href={f.url} target="_blank" rel="noreferrer" download={f.name || undefined} className="text-muted hover:text-ink" title="Download"><Download size={12} /></a>
+              {canEdit && onReplace && (
+                <label className="text-muted hover:text-ink cursor-pointer" title={'Replace ' + (f.name || 'this file') + ' with a newer version'}>
+                  <RefreshCw size={12} />
+                  <input type="file" className="hidden" disabled={busy} onChange={e => { const nf = e.target.files?.[0]; e.target.value = ''; if (nf) onReplace(f, nf) }} />
+                </label>
+              )}
               {canEdit && <button onClick={() => { if (confirm('Remove ' + (f.name || 'this file') + '?')) onRemove(f) }} disabled={busy} className="text-muted hover:text-rose-600" title="Remove"><X size={12} /></button>}
             </div>
           ))}
