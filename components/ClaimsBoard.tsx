@@ -80,15 +80,21 @@ export function ClaimsBoard() {
   const [channel, setChannel] = useState('all')
   const [newOpen, setNewOpen] = useState(false)
   const [showTrash, setShowTrash] = useState(false)
-  // ONE PAGE, FOUR SECTIONS (Jon, 2026-09-23: "I would like it just to be: New / Pending /
+  // ONE PAGE, FIVE SECTIONS (Jon, 2026-09-23: "I would like it just to be: New / Pending /
   // Submitted / Closed … I want to see it all on one page, not a bunch of different tabs. The only
-  // one that we can see in tabs is maybe the closed section").
+  // one that we can see in tabs is maybe the closed section"; the CCS team, 2026-10-22: "once a claim
+  // is approved it moves to Money & Owner but still appears in Submitted — can we create a separate
+  // section for Money & Owner so approved claims can be moved there and then closed once this final
+  // step is completed?").
   //
   // The seven DB stages stay exactly as they are — the desk's gates, the notes it writes and every
   // API check are built on them, and collapsing them in the database would be a migration to win an
-  // argument about layout. What changes is that the board stops making you hunt: the four sections
-  // stack down one page, each row still says which stage it is in, and the only thing behind a tab
-  // is Closed, where the question is no longer "what do I do" but "how did it end".
+  // argument about layout. What changes is that the board stops making you hunt: the sections stack
+  // down one page, each row still says which stage it is in, and the only thing behind a tab is
+  // Closed, where the question is no longer "what do I do" but "how did it end". MONEY & OWNER is its
+  // own section because it is a different job from Submitted: Submitted is waiting on the channel,
+  // Money & owner is waiting on US — verify the money landed, adjust the owner, close. Its rows carry
+  // those two toggles and the Close button, so the last step never needs the claim opened.
   const [closedTab, setClosedTab] = useState<string>('all')
   const [showAllClosed, setShowAllClosed] = useState(false)
   // THE CLAIM OPENS IN A POP-UP, NOT A PAGE (Jon, 2026-09-16), the way the glitch board works. The
@@ -185,8 +191,11 @@ export function ClaimsBoard() {
       // Ours to move: finished and waiting on Jon, or approved and waiting to be filed. Both are a
       // claim sitting on OUR desk with a clock running, which is why they read as one section.
       pending: pick('review', 'ready'),
-      // Out of our hands and into the channel's — filed, answered, or waiting on the money.
-      submitted: pick('submitted', 'decided', 'settle'),
+      // Out of our hands and into the channel's — filed, waiting on their answer.
+      submitted: pick('submitted'),
+      // They answered. Won or partial: verify the payment landed, adjust the owner, close. Denied,
+      // withdrawn, duplicate: close. 'decided' and 'settle' are both this desk's last step.
+      settle: pick('decided', 'settle'),
       closed: newestFirst(rows.filter(c => String(c.stage || 'draft') === 'closed')),
     }
   }, [rows, urgentFirst, newestFirst])
@@ -250,8 +259,10 @@ export function ClaimsBoard() {
             empty="Nothing new." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} />
           <Section title="Pending" blurb="On our desk — waiting on approval, or approved and waiting to be filed" rows={sec.pending}
             empty="Nothing waiting on us." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} />
-          <Section title="Submitted" blurb="With the channel — filed, answered, or waiting on the money" rows={sec.submitted}
+          <Section title="Submitted" blurb="With the channel — filed, waiting on their answer" rows={sec.submitted}
             empty="Nothing with a channel right now." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} />
+          <Section title="Money & owner" blurb="They answered — verify the payment landed, adjust the owner, then close" rows={sec.settle} moneyOf="paid"
+            empty="Nothing waiting on money or the owner." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} />
 
           {/* CLOSED — the one section behind tabs, and the tabs are how it ended. */}
           <section>
@@ -304,17 +315,23 @@ export function ClaimsBoard() {
  * the difference between whose move it is. An empty section still prints, because a board that
  * hides its empty lanes makes you wonder whether you filtered them away.
  */
-function Section({ title, blurb, rows, empty, onDelete, onOpen, onMoved }: {
+function Section({ title, blurb, rows, empty, onDelete, onOpen, onMoved, moneyOf = 'sought' }: {
   title: string; blurb: string; rows: Claim[]; empty: string
   onDelete: (id: string) => Promise<string | null>; onOpen: (id: string) => void; onMoved: () => void
+  /** Which money the section's pill adds up: what we asked for, or (Money & owner) what was actually awarded. */
+  moneyOf?: 'sought' | 'paid'
 }) {
   const sought = rows.reduce((t, c) => t + (num(c.amount_sought) || itemsTotal(c.items)), 0)
+  const paid = rows.reduce((t, c) => t + (num(c.amount_paid) || 0), 0)
+  const settling = moneyOf === 'paid' ? rows.filter(c => c.payment_verified !== true || c.owner_adjusted !== true).length : 0
   return (
     <section>
       <div className="flex items-baseline gap-2 flex-wrap px-1 mb-1.5">
         <h2 className="text-[13px] font-bold text-ink">{title}</h2>
         <span className="text-[12px] text-muted">{rows.length ? rows.length + ' claim' + (rows.length === 1 ? '' : 's') + ' · ' + blurb : blurb}</span>
-        {sought > 0 && <Pill tone="amber" title="Total sought in this section">{money(sought)}</Pill>}
+        {moneyOf === 'sought' && sought > 0 && <Pill tone="amber" title="Total sought in this section">{money(sought)}</Pill>}
+        {moneyOf === 'paid' && paid > 0 && <Pill tone="emerald" title="Awarded across this section — amount actually paid, as recorded on each claim">{money(paid)} awarded</Pill>}
+        {moneyOf === 'paid' && settling > 0 && <Pill tone="amber" title="Claims with a step still open: payment not yet verified in the account, or the owner statement not yet adjusted">{settling} to finish</Pill>}
       </div>
       {rows.length === 0 ? <LeanEmpty>{empty}</LeanEmpty> : (
         <LeanList>
@@ -387,12 +404,31 @@ function ClaimRow({ claim, showStage, onDelete, onOpen, onMoved }: { claim: Clai
     } catch (e: any) { setMoveErr(String(e?.message || e)) }
     setMoving(false)
   }
+  // THE LAST STEP, ON THE ROW (CCS team, 2026-10-22). A claim in Money & owner has two boxes to tick
+  // — the money landed, the owner's statement reflects it — and then it closes. Both toggles and
+  // the Close button sit on the row, so the person working the section never opens each claim.
+  const [quickBusy, setQuickBusy] = useState('')
+  const quick = async (patch: Record<string, any>, key: string) => {
+    setQuickBusy(key); setMoveErr('')
+    try {
+      const r = await fetch('/api/claims/' + claim.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || j.ok === false) setMoveErr(j.error || 'Could not save.')
+      else onMoved()
+    } catch (e: any) { setMoveErr(String(e?.message || e)) }
+    setQuickBusy('')
+  }
   const items = claim.items || []
   const gates = gatesFor(claim, items)
   const done = gates.filter(g => g.ok).length
   const amount = num(claim.amount_sought) || itemsTotal(items)
   const u = urgencyOf(claim)
   const stage = String(claim.stage || 'draft')
+  const settling = stage === 'settle' || stage === 'decided'
+  // Denied, withdrawn or duplicate: no money to verify and nothing to put on the owner's books — just close.
+  const moneyDue = settling && (!claim.outcome || claim.outcome === 'won' || claim.outcome === 'partial')
+  const bothDone = claim.payment_verified === true && claim.owner_adjusted === true
+  const chip = 'shrink-0 inline-flex items-center gap-1 text-[11.5px] font-semibold rounded-md border px-2 py-1 disabled:opacity-50 '
   return (
     <li className={'group ' + (u === 'expired' ? 'bg-rose-50/60' : u === 'critical' ? 'bg-rose-50/30' : '')}>
       <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
@@ -418,6 +454,25 @@ function ClaimRow({ claim, showStage, onDelete, onOpen, onMoved }: { claim: Clai
           </div>
         </button>
         {amount > 0 && <span className="text-[13px] font-bold text-ink tabular-nums shrink-0">{money(amount)}</span>}
+        {settling && (
+          <span className="hidden sm:inline-flex items-center gap-1 shrink-0">
+            {moneyDue && <button onClick={() => quick({ payment_verified: !claim.payment_verified }, 'pay')} disabled={!!quickBusy || moving}
+              title={claim.payment_verified ? 'Payment verified in the account — click to undo' : 'Tick when the money has actually landed in the account, not just been approved'}
+              className={chip + (claim.payment_verified ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-line bg-white text-muted hover:text-ink')}>
+              {quickBusy === 'pay' ? <Loader2 size={11} className="animate-spin" /> : claim.payment_verified ? <CheckCircle2 size={11} /> : null} Money in
+            </button>}
+            {moneyDue && <button onClick={() => quick({ owner_adjusted: !claim.owner_adjusted }, 'own')} disabled={!!quickBusy || moving}
+              title={claim.owner_adjusted ? 'Owner / PMC statement adjusted — click to undo' : 'Tick when the recovery is reflected on the owner\'s statement'}
+              className={chip + (claim.owner_adjusted ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-line bg-white text-muted hover:text-ink')}>
+              {quickBusy === 'own' ? <Loader2 size={11} className="animate-spin" /> : claim.owner_adjusted ? <CheckCircle2 size={11} /> : null} Owner adjusted
+            </button>}
+            <button onClick={() => move('closed')} disabled={moving || !!quickBusy}
+              title={!moneyDue ? 'Nothing to collect — close the claim' : bothDone ? 'Both steps done — close the claim' : 'Close the claim now (a step is still open — it stays recorded as not done)'}
+              className={chip + (!moneyDue || bothDone ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-line bg-white text-muted hover:text-ink')}>
+              {moving ? <Loader2 size={11} className="animate-spin" /> : null} Close
+            </button>
+          </span>
+        )}
         <select value={stage} onChange={e => move(e.target.value)} disabled={moving} title="Move this claim to another stage"
           className="shrink-0 text-[11.5px] font-semibold border border-line rounded-md bg-white px-1.5 py-1 max-w-[9.5rem] disabled:opacity-50">
           {STAGES.map(s2 => <option key={s2.key} value={s2.key}>{s2.key === stage ? '● ' : 'Move to: '}{s2.label}</option>)}
