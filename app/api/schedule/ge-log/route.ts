@@ -27,6 +27,10 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireVrUser } from '@/lib/vr-gate'
 import { canSeeMoney, getAccess } from '@/lib/access'
 import { entriesFor } from '@/lib/ge-log-entries'
+import { marketOf } from '@/lib/segments'
+import { getOpsPresets } from '@/lib/app-settings'
+import { vendorNameOf } from '@/lib/ops-presets'
+import { isDepartureCleanName } from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -301,6 +305,75 @@ export async function GET(req: NextRequest) {
         }
       }
     }
+
+    // ── EVERY TASK ON THE DAY, PRIMARY ASSIGNEE ONLY (Jon, 2026-10-23) ─────────────────────────
+    // "All of their tasks should populate there. If they're assigned to things that are
+    // non-departure cleans, it should show, and it should only show the primary assignee, meaning
+    // the person that's first assigned."
+    //
+    // The pass above reads lib/team-schedule, which is built for a planner about PEOPLE: it drops
+    // a task nobody is on, and files a two-person task under BOTH people — so here it landed under
+    // whichever of them happened to be read first. This sweep reads the day's Breezeway tasks
+    // directly: a task already drawn moves under its FIRST assignee, and anything the planner left
+    // out (unassigned work, a task whose person is on no roster) gets its row.
+    try {
+      const db = supabaseAdmin()
+      const presets = await getOpsPresets().catch(() => null)
+      const vendorList = (presets as any)?.vendorBuildings || []
+      const { data: lRows } = await db.from('guesty_listings').select('id,nickname,title,building,address_city,status').limit(1000) // deliberate cap: one row per listing
+      const unitOf = new Map<string, { name: string; market: string; vendor: string | null; building: string }>()
+      for (const l of (lRows || []) as any[]) {
+        const name = str(l.nickname || l.title) || 'Unit'
+        unitOf.set(str(l.id), { name, market: marketOf(l.building, l.address_city, name), vendor: vendorNameOf(vendorList, str(l.building)) || vendorNameOf(vendorList, name) || null, building: str(l.building) })
+      }
+      const { data: tRows } = await db.from('breezeway_tasks_sync')
+        .select('id,reference_property_id,name,status,scheduled_date,assignees,type_department,finished_at,report_url')
+        .eq('scheduled_date', date).limit(2000)
+      const firstOf = (t: any): string => {
+        for (const x of (Array.isArray(t.assignees) ? t.assignees : [])) {
+          const n = str(x && typeof x === 'object' ? (x.name || [x.first_name, x.last_name].filter(Boolean).join(' ')) : x).trim()
+          if (n) return n
+        }
+        return ''
+      }
+      const byId = new Map(rows.filter(r => r.taskId).map(r => [r.taskId as string, r]))
+      const cleanAt = new Set(rows.filter(r => r.kind === 'clean' && r.listingId).map(r => r.listingId as string))
+      for (const t of (tRows || []) as any[]) {
+        const st = str(t.status).toLowerCase()
+        if (st === 'deleted' || /cancel/.test(st)) continue
+        const id = str(t.id)
+        const primary = firstOf(t) ? canonical(firstOf(t)) : ''
+        const have = byId.get(id)
+        if (have) {
+          if (primary && !same(have.person, primary)) { have.person = primary; const pl = placeOf(primary); if (have.kind !== 'clean') have.dept = pl.dept || have.dept; if (pl.market) have.market = pl.market }
+          continue
+        }
+        const li = str(t.reference_property_id)
+        const u = unitOf.get(li)
+        // A departure clean on a unit the board already drew is that clean, not a second row.
+        if (isDepartureCleanName(t.name) && cleanAt.has(li)) continue
+        const place = placeOf(primary)
+        const tdept = str(t.type_department).toLowerCase()
+        const done = /complet|finish|close|approv/.test(st) || !!t.finished_at
+        rows.push({
+          key: 't:' + id, kind: 'task', taskId: id, listingId: li || null,
+          person: primary,
+          dept: primary ? (place.dept || 'other') : (/maint/.test(tdept) ? 'maintenance' : /inspect/.test(tdept) ? 'inspection' : 'housekeeping'),
+          market: (primary && place.market) || (u ? u.market : ''),
+          hub: u ? (u.building || u.market) : '',
+          taskType: typeOf(str(t.name), /maint/.test(tdept) ? 'Maintenance' : 'Housekeeping'),
+          activity: str(t.name) || 'Task',
+          listing: u ? u.name : li, reservation: '',
+          checkIn: null, checkOut: null, sameDay: false, notes: [], nights: null,
+          beds: bedsBy.get(li) ?? null,
+          fee: null, feeEst: false, cleanHours: null, payout: null,
+          status: done ? 'done' : /progress|start/.test(st) ? 'in progress' : 'scheduled',
+          vendor: u ? u.vendor : null,
+          flag: null, url: str(t.report_url) || ('https://app.breezeway.io/task/' + id), glitchId: null,
+        })
+        byId.set(id, rows[rows.length - 1])
+      }
+    } catch (e) { console.error('[ge-log] task sweep', e) }
 
     // ── GLITCHES THAT ARE FIELD WORK ──────────────────────────────────────────────────────────
     // Jon, 2026-10-21: "the glitches should only show if its a task in feild."

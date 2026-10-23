@@ -61,10 +61,10 @@ type Payload = { ok: boolean; date: string; money: boolean; rows: Row[]; roster:
 // Department order and labels mirror lib/crew.ts. Jon, 2026-10-21: "need to break out tbales ny
 // Hk, By Maintaicne and Supervisors" — his three lead, in the order he says them. Inspections and
 // CCS follow; 'other' is last, being the bucket for anyone nobody has filed yet.
-const DEPT_ORDER = ['housekeeping', 'maintenance', 'supervision', 'inspection', 'ccs', 'other']
+const DEPT_ORDER = ['housekeeping', 'maintenance', 'supervision', 'inspection', 'ccs', 'vendor', 'other']
 const DEPT_LABEL: Record<string, string> = {
   housekeeping: 'Housekeeping', supervision: 'Supervisors', inspection: 'Inspections',
-  maintenance: 'Maintenance', ccs: 'CCS team', other: 'Other',
+  maintenance: 'Maintenance', ccs: 'CCS team', vendor: 'Vendor cleans', other: 'Other',
 }
 const deptKey = (d: string) => { const k = String(d || '').toLowerCase(); return DEPT_ORDER.indexOf(k) >= 0 ? k : 'other' }
 const deptRank = (d: string) => { const i = DEPT_ORDER.indexOf(deptKey(d)); return i < 0 ? 99 : i }
@@ -90,6 +90,7 @@ function tint(v: string): string {
   let h = 0; for (let i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) >>> 0
   const cls = PALETTE[h % PALETTE.length]; tintCache.set(k, cls); return cls
 }
+const marketBar = (m: string) => /miami/i.test(m) ? 'border-sky-400' : /broward/i.test(m) ? 'border-violet-400' : /north/i.test(m) ? 'border-emerald-400' : 'border-neutral-300'
 const money = (n: number | null) => n == null ? '' : '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 const prettyDate = (iso: string) => iso ? new Date(iso + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC' }) : ''
 /** "2026-10-03 16:00" → "10/3/2026 16:00", the sheet's own format. */
@@ -166,6 +167,8 @@ export default function GeLog({ date }: { date: string }) {
   const [tick, setTick] = useState(0)
   const [units, setUnits] = useState<Unit[]>([])
   const [addFor, setAddFor] = useState<{ person: string; dept: string } | null>(null)
+  const [team, setTeamRaw] = useState<string>(() => { try { return localStorage.getItem('gelog.team') || 'housekeeping' } catch { return 'housekeeping' } })
+  const setTeam = (t: string) => { setTeamRaw(t); try { localStorage.setItem('gelog.team', t) } catch { /* fine */ } }
   useEffect(() => {
     fetch('/api/listings?slim=1', { cache: 'no-store' }).then(r => r.json()).then(j => {
       const list = (j && Array.isArray(j.results) ? j.results : []) as any[]
@@ -206,11 +209,25 @@ export default function GeLog({ date }: { date: string }) {
     // one band keyed on the empty name, so every unassigned row of the day — Broward cleans, Miami
     // repairs, a log line — landed in whichever table the first one belonged to.
     const NOBODY = '\u0001'
-    for (const r of rows) { const k = r.person || (NOBODY + deptKey(r.dept) + NOBODY + (r.market || '')); const a = byPerson.get(k) || []; a.push(r); byPerson.set(k, a) }
+    // VENDOR CLEANS ARE THEIR OWN SECTION (Jon, 2026-10-23: "if it's a vendor clean, that should have
+    // its own section"). A clean or task on a vendor-serviced unit groups under the vendor, by
+    // market, whoever Breezeway lists on it — it is not our crew's day.
+    const VENDOR = '\u0002'
+    for (const r of rows) {
+      const k = r.vendor ? (VENDOR + r.vendor + VENDOR + (r.market || ''))
+        : r.person || (NOBODY + deptKey(r.dept) + NOBODY + (r.market || ''))
+      const a = byPerson.get(k) || []; a.push(r); byPerson.set(k, a)
+    }
     for (const p of roster) if (!byPerson.has(p.name)) byPerson.set(p.name, [])
-    const out: { person: string; dept: string; market: string; status: string; clash: string; unrostered: boolean; rows: Row[] }[] = []
+    const out: { person: string; dept: string; market: string; status: string; clash: string; unrostered: boolean; rows: Row[]; vendor?: string }[] = []
     for (const person of Array.from(byPerson.keys())) {
       const rs = byPerson.get(person) as Row[]
+      if (person.charAt(0) === VENDOR) {
+        const [, vname, vmk] = person.split(VENDOR)
+        out.push({ person: '', vendor: vname, dept: 'vendor', market: vmk || '', status: '', clash: '', unrostered: false,
+          rows: rs.sort((a: Row, b: Row) => a.hub.localeCompare(b.hub) || a.listing.localeCompare(b.listing)) })
+        continue
+      }
       const nobody = person.charAt(0) === NOBODY
       const ros = person && !nobody ? rosterOf(person) : null
       const first = rs[0]
@@ -240,11 +257,19 @@ export default function GeLog({ date }: { date: string }) {
     return Array.from(s).sort()
   }, [bands])
 
+  // THE TEAM TABS (Jon, 2026-10-23: "better organized by housekeeping team … maybe we can go to a
+  // tab"). One team at a time, Housekeeping first; All stacks every table as before.
+  const deptCounts = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const b of bands) m[b.dept] = (m[b.dept] || 0) + b.rows.length
+    return m
+  }, [bands])
   const shown = useMemo(() => {
     let b = showEmpty ? bands : bands.filter(x => x.rows.length)
     if (market) b = b.filter(x => x.market === market)
+    if (team !== 'all' && view === 'dept') b = b.filter(x => x.dept === team)
     return b
-  }, [bands, showEmpty, market])
+  }, [bands, showEmpty, market, team, view])
 
   // ONE TABLE PER DEPARTMENT **AND MARKET** — Jon, 2026-10-21: "need to be tables for each
   // department", then "it should be in a completely separate table, not one combined unless we
@@ -493,6 +518,28 @@ export default function GeLog({ date }: { date: string }) {
     const idle = bandsIn.filter(b => !b.rows.length && b.person)
     for (const band of bandsIn) {
     if (!band.rows.length) continue
+    // THE PERSON (or vendor) HEADS THEIR OWN WORK (2026-10-23: "better organized by housekeeping
+    // team"): name, roster status, how much is on them, and a ＋ to add to their day.
+    if (view === 'dept') {
+      const hrs = band.rows.reduce((t, r) => t + (r.cleanHours || 0), 0)
+      const cleans = band.rows.filter(r => r.kind === 'clean').length
+      const left = band.rows.filter(r => r.status !== 'done').length
+      const label = band.vendor ? band.vendor : band.person ? band.person : 'Not assigned yet'
+      body.push(
+        <tr key={'h:' + (band.vendor || band.person || band.dept + band.market)} className={'border-t-2 ' + (band.person || band.vendor ? 'border-line bg-neutral-50' : 'border-amber-200 bg-amber-50/70')}>
+          <td colSpan={COLS.length} className="px-2.5 py-1.5">
+            <span className="inline-flex items-center gap-2 flex-wrap text-[11.5px]">
+              <span className={'font-bold ' + (band.person || band.vendor ? 'text-ink' : 'text-amber-900')}>{label}</span>
+              {band.vendor ? <span className="text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full border bg-sky-50 text-sky-700 border-sky-200">Vendor</span> : null}
+              {band.status ? <span className={'text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full border ' + statusTone(band.status)}>{band.status}</span> : null}
+              {band.person && !band.status && band.unrostered ? <span className="text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full border bg-white text-muted border-line" title="Not on this week's roster">not rostered</span> : null}
+              <span className="text-muted tabular-nums">{band.rows.length} task{band.rows.length === 1 ? '' : 's'}{cleans ? ' · ' + cleans + ' clean' + (cleans === 1 ? '' : 's') : ''}{hrs ? ' · ' + hrs.toFixed(2).replace(/\.?0+$/, '') + ' h' : ''}{left && left !== band.rows.length ? ' · ' + left + ' left' : ''}</span>
+              {!band.vendor ? <button onClick={() => setAddFor({ person: band.person, dept: band.dept })} className="text-[10.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-0.5"><Plus size={10} /> Add{band.person ? ' for ' + shortName(band.person) : ''}</button> : null}
+            </span>
+          </td>
+        </tr>
+      )
+    }
     band.rows.forEach((r, i) => {
       body.push(
         <tr key={r.key} className={'border-t border-line transition hover:brightness-[0.97] '
@@ -605,15 +652,35 @@ export default function GeLog({ date }: { date: string }) {
         </p>
       )}
 
+      {/* TEAM TABS */}
+      {view === 'dept' && (
+        <div className="flex items-center gap-1 flex-wrap border-b border-line">
+          {(['housekeeping', 'maintenance', 'supervision', 'inspection', 'ccs', 'vendor', 'other', 'all'] as string[])
+            .filter(k => k === 'all' || k === 'housekeeping' || k === team || (deptCounts[k] || 0) > 0)
+            .map(k => {
+              const n = k === 'all' ? rows.length : (deptCounts[k] || 0)
+              return (
+                <button key={k} onClick={() => setTeam(k)}
+                  className={'text-[12px] font-semibold px-3 py-1.5 -mb-px border-b-2 ' + (team === k ? 'border-ink text-ink' : 'border-transparent text-muted hover:text-ink')}>
+                  {k === 'all' ? 'All teams' : DEPT_LABEL[k]} <span className="tabular-nums text-[10.5px] text-muted">{n}</span>
+                </button>
+              )
+            })}
+        </div>
+      )}
+      {view === 'dept' && !sections.length && !loading ? <p className="rounded-xl border border-line bg-white px-3 py-6 text-center text-[12px] text-muted">Nothing for {DEPT_LABEL[team] || 'this team'} on this day{market ? ' in ' + market : ''}.</p> : null}
+
       {sections.map(sec => {
         const n = sec.bands.reduce((t, b) => t + b.rows.length, 0)
         const rev = sec.bands.reduce((t, b) => t + b.rows.reduce((u, r) => u + (r.fee || 0), 0), 0)
         return (
         <div key={sec.key} className="space-y-1">
           {sec.label ? (
-            <div className="flex items-baseline gap-2 px-1 pt-1">
-              <h3 className="text-[11px] uppercase tracking-wider font-bold text-ink">{sec.label}</h3>
-              <span className="text-[10.5px] uppercase tracking-wide font-semibold text-muted">{(sec as any).market}</span>
+            <div className={'flex items-baseline gap-2 pl-2.5 pr-1 pt-2 pb-1 mt-2 border-l-4 ' + marketBar((sec as any).market)}>
+              {/* MARKET FIRST, IN BIG LETTERS (Jon, 2026-10-23: "a better separation between Miami
+                  and Broward"). The team is the tab above; the market is what this table is. */}
+              <h3 className="text-[14px] font-bold text-ink">{(sec as any).market}</h3>
+              {team === 'all' ? <span className="text-[10.5px] uppercase tracking-wider font-semibold text-muted">{sec.label}</span> : null}
               <span className="text-[10.5px] text-muted tabular-nums">{n} row{n === 1 ? '' : 's'} · {sec.bands.filter(b => b.person).length} on it</span>
               {rev > 0 ? <span className="text-[10.5px] text-emerald-700 font-semibold tabular-nums" title="Cleaning revenue on this table's checkouts">{money(rev)} cleaning</span> : null}
               <button onClick={() => setAddFor({ person: '', dept: String(sec.key).split('\u0000')[0] || 'housekeeping' })}
