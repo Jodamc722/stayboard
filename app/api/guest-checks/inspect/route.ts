@@ -35,6 +35,22 @@ export async function GET(req: NextRequest) {
   const g = await requireLevel('welcome-calls', 'view')
   if (!g.ok) return g.res
   if (g.access.role !== 'admin') return NextResponse.json({ ok: false, error: 'Admins only.' }, { status: 403 })
+  // ?attachments=1 — the last 30 days of GUEST messages that carry attachments (which booking, what
+  // kind of file, the words beside it), to see how IDs and selfies actually arrive.
+  if (req.nextUrl.searchParams.get('attachments') === '1') {
+    const db = supabaseAdmin()
+    const since = new Date(Date.now() - 30 * 86400_000).toISOString()
+    const { data: ms } = await db.from('guesty_messages').select('conversation_id,sender,sent_at,body,attachments,module').not('attachments', 'is', null).gte('sent_at', since).order('sent_at', { ascending: false }).limit(300)
+    const withAtt = ((ms || []) as any[]).filter(m => Array.isArray(m.attachments) && m.attachments.length)
+    const cids = Array.from(new Set(withAtt.map(m => String(m.conversation_id))))
+    const { data: cv } = cids.length ? await db.from('guesty_conversations').select('id,reservation_id').in('id', cids) : { data: [] as any[] }
+    const rOf: Record<string, string> = {}; for (const c of (cv || []) as any[]) rOf[String(c.id)] = String(c.reservation_id || '')
+    return NextResponse.json({ ok: true, n: withAtt.length, rows: withAtt.slice(0, 80).map(m => ({
+      res: rOf[String(m.conversation_id)] || null, from: m.sender, at: m.sent_at, module: m.module,
+      text: String(m.body || '').replace(/<[^>]+>/g, ' ').replace(/https?:\/\/\S+/g, '<url>').replace(/\s+/g, ' ').slice(0, 100),
+      att: m.attachments.map((a: any) => ({ keys: Object.keys(a || {}).slice(0, 12), type: a?.type || a?.mimeType || a?.contentType || null, name: a?.name || a?.fileName || a?.filename || null })),
+    })) })
+  }
   const id = String(req.nextUrl.searchParams.get('id') || '').trim()
   if (!id) return NextResponse.json({ ok: false, error: 'id is required' }, { status: 400 })
   const out: any = { ok: true, id }
