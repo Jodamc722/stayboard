@@ -127,6 +127,8 @@ export async function GET(req: NextRequest) {
           keys: Object.keys(m || {}).slice(0, 25), type: m?.type, module: m?.module?.type || m?.module, sentBy: m?.sentBy?.type || m?.sentBy, at: m?.createdAt,
           text: String(m?.plainTextBody || m?.body || m?.text || '').replace(/<[^>]+>/g, ' ').replace(/https?:\/\/\S+/g, '<url>').replace(/\s+/g, ' ').slice(0, req.nextUrl.searchParams.get('full') === '1' ? 1500 : 120),
           att: Array.isArray(m?.attachments) ? m.attachments.map((a: any) => ({ keys: Object.keys(a || {}).slice(0, 12), type: a?.type || a?.mimeType || a?.contentType || null, name: a?.name || a?.fileName || a?.filename || null })) : null,
+          // Which services the message links to (host + first path segment only — never the token).
+          hosts: Array.from(new Set((String(m?.plainTextBody || m?.body || '').match(/https?:\/\/[^\s"'<>)\]]+/g) || []).map(u => { try { const x = new URL(u); return x.hostname + '/' + (x.pathname.split('/')[1] || '') } catch { return '' } }).filter(Boolean))),
         }))
       } catch (e: any) { out.livePostsError = String(e?.message || e).slice(0, 160) }
     } else out.thread = []
