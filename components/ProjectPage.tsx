@@ -68,6 +68,32 @@ const ACCENT = Object.fromEntries((Object.keys(ACCENT_CLS) as Accent[]).map(k =>
 const PRIORITY_EDGE: Record<string, string> = { urgent: 'border-l-rose-500', high: 'border-l-amber-400', normal: 'border-l-transparent', low: 'border-l-transparent' }
 const PRIORITY_LABEL: Record<string, string> = { urgent: 'Urgent', high: 'High', normal: 'Normal', low: 'Low' }
 const PRIORITY_DOT: Record<string, string> = { urgent: 'bg-rose-500', high: 'bg-amber-400', normal: 'bg-slate-300', low: 'bg-slate-200' }
+// ONE ROW OF BUTTONS, NOT A DROP-DOWN (Jon, 2026-10-22: "hate the drop downs"). Every choice is
+// visible, the current one is dark, one click changes it. Used for status, priority, column,
+// vendor, repeat — anywhere a card used to hide its options behind a select.
+function Pick<T extends string>({ value, options, onPick, disabled, title, size = 'md' }: {
+  value: T | '' | null | undefined; options: { v: T; label: string; dot?: string; on?: string; title?: string }[]
+  onPick: (v: T) => void; disabled?: boolean; title?: string; size?: 'sm' | 'md'
+}) {
+  const pad = size === 'sm' ? 'px-1.5 py-0.5 text-[11px]' : 'px-2 py-1 text-[11.5px]'
+  return (
+    <div className="flex items-center gap-1 flex-wrap" role="radiogroup" title={title}>
+      {options.map(o => {
+        const on = value === o.v
+        return (
+          <button key={o.v} type="button" role="radio" aria-checked={on} disabled={disabled} onClick={() => { if (!on) onPick(o.v) }} title={o.title}
+            className={'inline-flex items-center gap-1.5 rounded-md border font-semibold disabled:opacity-60 ' + pad + ' ' + (on ? (o.on || 'bg-ink text-white border-ink') : 'bg-white border-line text-muted hover:text-ink hover:border-ink/40')}>
+            {o.dot && <span className={'w-2 h-2 rounded-full ' + (on ? 'bg-white/80' : o.dot)} />}{o.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+const STATUS_ON: Record<string, string> = { todo: 'bg-ink text-white border-ink', doing: 'bg-amber-500 text-white border-amber-500', blocked: 'bg-rose-500 text-white border-rose-500', done: 'bg-emerald-500 text-white border-emerald-500' }
+const STATUS_OPTIONS = (['todo', 'doing', 'blocked', 'done'] as const).map(v => ({ v, label: TASK_STATUS_LABEL[v], on: STATUS_ON[v] }))
+const PRIORITY_ON: Record<string, string> = { urgent: 'bg-rose-600 text-white border-rose-600', high: 'bg-amber-500 text-white border-amber-500', normal: 'bg-ink text-white border-ink', low: 'bg-slate-500 text-white border-slate-500' }
+const PRIORITY_OPTIONS = (['low', 'normal', 'high', 'urgent'] as const).map(v => ({ v, label: PRIORITY_LABEL[v], dot: PRIORITY_DOT[v], on: PRIORITY_ON[v] }))
 const AVATAR_PALETTE = ['bg-indigo-100 text-indigo-800', 'bg-emerald-100 text-emerald-800', 'bg-amber-100 text-amber-800', 'bg-sky-100 text-sky-800', 'bg-rose-100 text-rose-800', 'bg-violet-100 text-violet-800', 'bg-teal-100 text-teal-800', 'bg-orange-100 text-orange-800']
 const avatarCls = (name: string) => { let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0; return AVATAR_PALETTE[Math.abs(h) % AVATAR_PALETTE.length] }
 const initials = (name: string) => { const parts = String(name || '').replace(/@.*$/, '').split(/[\s._-]+/).filter(Boolean); return ((parts[0] || '?')[0] + (parts[1] ? parts[1][0] : '')).toUpperCase() }
@@ -1297,9 +1323,10 @@ function RecurChip({ p, canEdit, act, busy }: { p: ProjectFull; canEdit: boolean
             ))}
           </div>
           {every !== 'month' ? (
-            <select value={weekday} onChange={e => setWeekday(Number(e.target.value))} className="rounded-lg border border-line px-2 py-1 bg-white">{WEEKDAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}</select>
+            <Pick value={String(weekday)} size="sm" onPick={v => setWeekday(Number(v))} options={WEEKDAYS.map((d, i) => ({ v: String(i), label: d.slice(0, 3) }))} />
           ) : (
-            <select value={day} onChange={e => setDay(Number(e.target.value))} className="rounded-lg border border-line px-2 py-1 bg-white">{Array.from({ length: 28 }, (_, i) => i + 1).map(d => <option key={d} value={d}>on the {d}</option>)}</select>
+            <div className="flex items-center gap-1.5 text-[12px]"><span className="text-muted">on the</span>
+              <input type="number" min={1} max={28} value={day} onChange={e => setDay(Math.min(28, Math.max(1, Number(e.target.value) || 1)))} className="w-14 rounded-lg border border-line px-2 py-1 bg-white tabular-nums" title="Day of the month, 1–28" /></div>
           )}
           <label className="flex items-center gap-2"><input type="checkbox" checked={carry} onChange={e => setCarry(e.target.checked)} /> Open items roll into the next one</label>
           <p className="text-[11px] text-muted">Each morning it is due, a fresh copy is made from the template and this one is closed.</p>
@@ -1818,32 +1845,21 @@ function NewTaskModal({ section, sections, roster, busy, act, onClose, onDone, s
                   className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]" />
               </Row>
               <Row label="Priority">
-                <select value={priority} onChange={e => setPriority(e.target.value)}
-                  className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]">
-                  {['low', 'normal', 'high', 'urgent'].map(x => <option key={x} value={x}>{x[0].toUpperCase() + x.slice(1)}</option>)}
-                </select>
+                <Pick value={priority} options={PRIORITY_OPTIONS} onPick={v => setPriority(v)} />
               </Row>
             </div>
 
-            <Row label="Section">
-              <select value={sec} onChange={e => setSec(e.target.value)}
-                className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]">
-                <option value="">No section</option>
-                {sections.filter(Boolean).map(x => <option key={x} value={x}>{x}</option>)}
-              </select>
+            <Row label="Column">
+              <Pick value={sec} onPick={v => setSec(v === '—' ? '' : v)}
+                options={[{ v: '—', label: 'None' }, ...sections.filter(Boolean).map(x => ({ v: x, label: x }))]} />
             </Row>
 
             {/* NEEDS A VENDOR. Collapsed to one line until it is used, so a board that never
                 touches vendors is not made heavier by a field it will never fill in. */}
             <Row label="Vendor" hint={vendorKey ? 'Our team cannot close this one — the vendor is doing it.' : 'Only if our own team cannot do this job.'}>
               <div className="space-y-2">
-                <select value={vendorKey} onChange={e => setVendorKey(e.target.value)}
-                  className="w-full rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]">
-                  <option value="">Our team is doing it</option>
-                  {vendors.map(v => (
-                    <option key={v.key} value={v.key}>{v.label}{v.trade ? ' — ' + v.trade : ''}</option>
-                  ))}
-                </select>
+                <Pick value={vendorKey || '—'} onPick={v => setVendorKey(v === '—' ? '' : v)}
+                  options={[{ v: '—', label: 'Our team' }, ...vendors.map(v => ({ v: v.key, label: v.label, title: v.trade || undefined }))]} />
                 {vendorKey && (
                   <div className="grid grid-cols-[1fr_1fr] gap-2">
                     <label className="block">
@@ -1970,6 +1986,12 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, onOpe
 }) {
   const files = useMemo(() => p.photos.filter(f => f.task_id === task.id), [p.photos, task.id])
   const parentTask = useMemo(() => (task.parent_id ? findTask(p.tasks, String(task.parent_id)) : null), [p.tasks, task.parent_id])
+  const columnNames = useMemo(() => {
+    const names: string[] = []
+    for (const k of settingsOf((p as any).settings).sectionOrder) if (k && !names.includes(k)) names.push(k)
+    for (const t of p.tasks) if (t.section && !names.includes(t.section)) names.push(t.section)
+    return names
+  }, [p, p.tasks])
   const feed = useMemo(() => p.notes.filter(n => n.task_id === task.id).slice().reverse(), [p.notes, task.id])
   const [title, setTitle] = useState(task.title)
   const [desc, setDesc] = useState(task.description || '')
@@ -1993,10 +2015,7 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, onOpe
       <div className="fixed z-50 inset-x-0 bottom-0 lg:inset-y-0 lg:right-0 lg:left-auto lg:w-[460px] max-h-[88vh] lg:max-h-none
                       bg-white border-t lg:border-t-0 lg:border-l border-line shadow-2xl rounded-t-2xl lg:rounded-none flex flex-col">
         <div className="px-4 py-3 border-b border-line flex items-center gap-2">
-          <select value={task.status} disabled={!canEdit || busy} onChange={e => set({ status: e.target.value })}
-            className={'rounded-lg border px-2 py-1 text-[12px] font-bold ' + STATUS_CLS[task.status]}>
-            {Object.entries(TASK_STATUS_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
+          <Pick value={task.status} options={STATUS_OPTIONS} disabled={!canEdit || busy} onPick={v => set({ status: v })} size="sm" title="Status — one click" />
           {/* A subtask says what it is part of, and that is a way back. Opening one from My Tasks
               lands you here with no other context — "Which unit" tells you nothing on its own. */}
           <span className="text-[11px] text-muted truncate flex-1">
@@ -2078,16 +2097,19 @@ function TaskDrawer({ task, p, roster, me, nameOf, canEdit, busy, onClose, onOpe
             </div>
 
             <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">Priority</span>
-            <select value={task.priority} disabled={!canEdit || busy} onChange={e => set({ priority: e.target.value })}
-              className="rounded-lg border border-line bg-white px-2 py-1 text-[12.5px] w-fit">
-              {['low', 'normal', 'high', 'urgent'].map(x => <option key={x} value={x}>{x[0].toUpperCase() + x.slice(1)}</option>)}
-            </select>
+            <Pick value={task.priority} options={PRIORITY_OPTIONS} disabled={!canEdit || busy} onPick={v => set({ priority: v })} />
 
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">Section</span>
-            <input defaultValue={task.section || ''} key={task.id + ':' + (task.section || '')} disabled={!canEdit} placeholder="None"
-              onBlur={e => { if ((e.target.value || null) !== (task.section || null)) set({ section: e.target.value }) }}
-              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-              className="rounded-lg border border-line bg-white px-2 py-1 text-[12.5px]" />
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">Column</span>
+            {columnNames.length ? (
+              /* The board's columns as buttons — moving a card here is the same move as dragging it. */
+              <Pick value={task.section || '—'} disabled={!canEdit || busy} onPick={v => act({ action: 'taskMove', taskId: task.id, section: v === '—' ? '' : v, sort: 0 })}
+                options={[...columnNames.map(x => ({ v: x, label: x })), ...(task.section && !columnNames.includes(task.section) ? [{ v: task.section, label: task.section }] : []), { v: '—', label: 'None' }]} />
+            ) : (
+              <input defaultValue={task.section || ''} key={task.id + ':' + (task.section || '')} disabled={!canEdit} placeholder="None"
+                onBlur={e => { if ((e.target.value || null) !== (task.section || null)) set({ section: e.target.value }) }}
+                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                className="rounded-lg border border-line bg-white px-2 py-1 text-[12.5px]" />
+            )}
 
             <span className="text-[11px] font-semibold uppercase tracking-wider text-muted pt-1.5">Projects</span>
             <TaskProjects task={task} p={p} canEdit={canEdit} busy={busy} act={act} />
@@ -2231,11 +2253,11 @@ function TaskProjects({ task, p, canEdit, busy, act }: { task: Task; p: ProjectF
       ))}
       {canEdit && !open && <button onClick={() => setOpen(true)} className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-muted hover:text-ink"><Plus size={11} /> Add to project</button>}
       {canEdit && open && (
-        <select autoFocus onChange={async e => { if (e.target.value) { await act({ action: 'taskAddToProject', taskId: task.id, projectId: e.target.value }); setOpen(false); load() } }} onBlur={() => setOpen(false)} disabled={busy}
-          className="rounded-lg border border-line bg-white px-2 py-1 text-[12px]">
-          <option value="">Add to…</option>
-          {options.map(o => <option key={o.id} value={o.id}>{o.kind === 'personal' ? '🔒 ' : ''}{o.title}</option>)}
-        </select>
+        <span className="inline-flex items-center gap-1 flex-wrap">
+          <Pick value="" size="sm" disabled={busy} onPick={async v => { await act({ action: 'taskAddToProject', taskId: task.id, projectId: v }); setOpen(false); load() }}
+            options={options.map(o => ({ v: String(o.id), label: (o.kind === 'personal' ? '🔒 ' : '') + o.title }))} />
+          <button onClick={() => setOpen(false)} className="text-muted hover:text-ink" title="Close"><X size={11} /></button>
+        </span>
       )}
     </div>
   )
@@ -2427,15 +2449,15 @@ function BreezewayBox({ task, p, canEdit, busy, act, startOpen }: { task: Task; 
       ) : (
         <>
           <div className="grid grid-cols-2 gap-2">
-            <label className="block"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted">Unit</span>
+            <div className="block col-span-2"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted mb-0.5">Unit</span>
               {units.length ? (
-                <select value={listingId} onChange={e => setListingId(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1">{units.map(u => <option key={u.ref_id} value={u.ref_id}>{u.label || u.ref_id}{u.task_id ? ' (this task)' : ''}</option>)}</select>
+                <Pick value={listingId} size="sm" onPick={v => setListingId(v)} options={units.map(u => ({ v: String(u.ref_id), label: (u.label || u.ref_id) + (u.task_id ? ' (this task)' : '') }))} />
               ) : <span className="block text-[12px] text-muted py-1">From the attached reservation</span>}
-            </label>
-            <label className="block"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted">Department</span>
-              <select value={department} onChange={e => setDepartment(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1">{['maintenance', 'housekeeping', 'inspection', 'safety'].map(d => <option key={d} value={d}>{d[0].toUpperCase() + d.slice(1)}</option>)}</select></label>
-            <label className="block"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted">Priority</span>
-              <select value={priority} onChange={e => setPriority(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1">{['urgent', 'high', 'normal', 'low'].map(d => <option key={d} value={d}>{d[0].toUpperCase() + d.slice(1)}</option>)}</select></label>
+            </div>
+            <div className="block col-span-2"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted mb-0.5">Department</span>
+              <Pick value={department} size="sm" onPick={v => setDepartment(v)} options={['maintenance', 'housekeeping', 'inspection', 'safety'].map(d => ({ v: d, label: d[0].toUpperCase() + d.slice(1) }))} /></div>
+            <div className="block"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted mb-0.5">Priority</span>
+              <Pick value={priority} size="sm" onPick={v => setPriority(v)} options={PRIORITY_OPTIONS} /></div>
             <label className="block"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted">Date</span>
               <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full rounded-lg border border-line bg-white px-2 py-1" /></label>
             <label className="block col-span-2"><span className="block text-[10.5px] font-semibold uppercase tracking-wider text-muted">Checklist (Breezeway template)</span>
@@ -2910,18 +2932,16 @@ function VendorBox({ task, canEdit, busy, act, vendors }: {
           <Repeat size={11} className="text-muted" />
           <span className="text-[11px] text-muted">{r ? describeRecurrence(r) : 'Does not repeat'}</span>
           {canEdit && (
-            <select value={r?.every || ''} disabled={busy}
-              onChange={e => {
-                const every = e.target.value
-                if (!every) return set({ recurs: null })
-                const from = task.visit_on || today()
-                const d = new Date(from + 'T12:00:00Z')
-                set({ recurs: { every, day: d.getUTCDate(), weekday: d.getUTCDay(), month: d.getUTCMonth() + 1, from } })
-              }}
-              className="ml-auto rounded-md border border-line bg-white px-1.5 py-0.5 text-[11.5px]">
-              <option value="">One-off</option>
-              {(['week', '2weeks', 'month', 'quarter', 'year'] as const).map(x => <option key={x} value={x}>{RECUR_LABEL[x]}</option>)}
-            </select>
+            <div className="ml-auto">
+              <Pick value={r?.every || '—'} disabled={busy} size="sm"
+                options={[{ v: '—', label: 'One-off' }, ...(['week', '2weeks', 'month', 'quarter', 'year'] as const).map(x => ({ v: x as string, label: RECUR_LABEL[x] }))]}
+                onPick={every => {
+                  if (every === '—') return set({ recurs: null })
+                  const from = task.visit_on || today()
+                  const d = new Date(from + 'T12:00:00Z')
+                  set({ recurs: { every, day: d.getUTCDate(), weekday: d.getUTCDay(), month: d.getUTCMonth() + 1, from } })
+                }} />
+            </div>
           )}
         </div>
         {r && <p className="text-[11px] text-muted mt-1">The next visit is booked when you mark this one done — never before, so an unfinished visit cannot pile up.</p>}
@@ -3003,9 +3023,7 @@ function AddInvoice({ taskId, act, busy, vendors, onSaved, onClose, files }: {
           className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px]" />
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <select value={status} onChange={e => setStatus(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px]">
-          {INVOICE_STATUSES.filter(x => x !== 'void').map(x => <option key={x} value={x}>{INVOICE_STATUS_LABEL[x]}</option>)}
-        </select>
+        <Pick value={status} size="sm" onPick={v => setStatus(v)} options={INVOICE_STATUSES.filter(x => x !== 'void').map(x => ({ v: x as string, label: INVOICE_STATUS_LABEL[x] }))} />
         <label className="inline-flex items-center gap-1.5 text-[11.5px] text-muted">
           <span className="shrink-0">Due</span>
           <input type="date" value={dueOn} onChange={e => setDueOn(e.target.value)} className="flex-1 min-w-0 rounded-lg border border-line bg-white px-2 py-1.5 text-[12px]" />
@@ -3276,12 +3294,8 @@ function MembersPanel({ p, roster, me, canEdit, superadmin, act, busy, onHide }:
                 until you ask for more. */}
             {canEdit && editing === m.person_key ? (
               <>
-                <select autoFocus value={m.role} disabled={busy}
-                  onChange={e => { act({ action: 'memberRole', personKey: m.person_key, role: e.target.value }); setEditing(null) }}
-                  onBlur={() => setEditing(null)}
-                  className="text-[11px] rounded border border-line bg-white px-1 py-0.5">
-                  <option value="owner">Owner</option><option value="editor">Editor</option><option value="viewer">Viewer</option>
-                </select>
+                <Pick value={m.role} size="sm" disabled={busy} onPick={v => { act({ action: 'memberRole', personKey: m.person_key, role: v }); setEditing(null) }}
+                  options={[{ v: 'owner', label: 'Owner' }, { v: 'editor', label: 'Editor' }, { v: 'viewer', label: 'Viewer' }]} />
                 {!isMe(m) && (
                   <button onClick={() => act({ action: 'memberRemove', personKey: m.person_key })} disabled={busy} className="text-muted hover:text-rose-600" title="Remove from this project"><X size={12} /></button>
                 )}
