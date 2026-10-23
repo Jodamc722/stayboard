@@ -532,7 +532,7 @@ export default function GeLog({ date }: { date: string }) {
               <span className={'font-bold ' + (band.person || band.vendor ? 'text-ink' : 'text-amber-900')}>{label}</span>
               {band.vendor ? <span className="text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full border bg-sky-50 text-sky-700 border-sky-200">Vendor</span> : null}
               {band.status ? <span className={'text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full border ' + statusTone(band.status)}>{band.status}</span> : null}
-              {band.person && !band.status && band.unrostered ? <span className="text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full border bg-white text-muted border-line" title="Not on this week's roster">not rostered</span> : null}
+              {band.person && !band.status && band.unrostered && scheduledToday.size > 0 ? <span className="text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full border bg-white text-muted border-line" title="Not on this week's roster">not rostered</span> : null}
               <span className="text-muted tabular-nums">{band.rows.length} task{band.rows.length === 1 ? '' : 's'}{cleans ? ' · ' + cleans + ' clean' + (cleans === 1 ? '' : 's') : ''}{hrs ? ' · ' + hrs.toFixed(2).replace(/\.?0+$/, '') + ' h' : ''}{left && left !== band.rows.length ? ' · ' + left + ' left' : ''}</span>
               {!band.vendor ? <button onClick={() => setAddFor({ person: band.person, dept: band.dept })} className="text-[10.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-0.5"><Plus size={10} /> Add{band.person ? ' for ' + shortName(band.person) : ''}</button> : null}
             </span>
