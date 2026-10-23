@@ -53,6 +53,14 @@ export type GuestCheckRow = {
   /** Guesty has the hold scheduled but not placed yet (it places it a day or two before arrival): amount and when. Nothing to do unless it fails. */
   depositScheduled: { amount: number; due: string | null } | null
   note: string | null; by: string | null; updatedAt: string | null
+  /** Photos the GUEST sent on the booking's message thread — the selfie-holding-ID our booking email
+   *  asks them to reply with. Guesty-hosted links (edit access only). */
+  threadPhotos: { url: string | null; at: string; type: string }[]
+  /** THE THREE THINGS (Jon, 2026-10-23: "making sure that we collected the ID, the selfie, and the
+   *  $350 deposit"). Each says whether we have it and where it came from; `complete` is all three
+   *  that this booking's channel asks for. Anything short of that is "To verify". */
+  checklist: { id: { ok: boolean; how: string }; selfie: { ok: boolean; how: string }; deposit: { ok: boolean; how: string }; complete: boolean }
+  guestyUrl: string
 }
 const str = (v: any) => (v == null ? '' : String(v))
 const dayET = (d = new Date()) => d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
@@ -101,6 +109,27 @@ export async function GET(req: NextRequest) {
       if (error && MISSING(error.message)) return NextResponse.json({ ok: false, error: 'Guest checks need migrations 145 + 146 (guest_checks) — run them in Supabase and reload.' }, { status: 500 })
       for (const c of (data || []) as any[]) checks[str(c.reservation_id)] = c
     }
+    // THE THREAD PHOTOS: images the guest sent on the booking's conversation (mirror; the desk's
+    // thread sweep refreshes the threads of the next few arrivals from Guesty live).
+    const photosBy: Record<string, { url: string | null; at: string; type: string }[]> = {}
+    try {
+      const { data: convs } = ids.length ? await db.from('guesty_conversations').select('id,reservation_id').in('reservation_id', ids.slice(0, 500)) : { data: [] as any[] }
+      const rOf: Record<string, string> = {}; for (const c of (convs || []) as any[]) rOf[str(c.id)] = str(c.reservation_id)
+      const cids = Object.keys(rOf)
+      for (let i = 0; i < cids.length; i += 200) {
+        const { data: ms } = await db.from('guesty_messages').select('conversation_id,sender,sent_at,attachments').in('conversation_id', cids.slice(i, i + 200)).not('attachments', 'is', null).limit(2000)
+        for (const m of (ms || []) as any[]) {
+          if (str(m.sender) === 'host' || !Array.isArray(m.attachments)) continue
+          for (const a of m.attachments) {
+            const t = str(a?.type || a?.mimeType || a?.contentType || a?.origFileName || '').toLowerCase()
+            if (!/png|jpe?g|heic|heif|webp|gif|image|pdf/.test(t)) continue
+            const rid = rOf[str(m.conversation_id)]
+            ;(photosBy[rid] = photosBy[rid] || []).push({ url: str(a?.attachmentUrl || a?.url || '') || null, at: str(m.sent_at), type: t.replace(/^.*\//, '').slice(0, 8) })
+          }
+        }
+      }
+    } catch { /* the row still renders without them */ }
+
     // Migration 158 adds the reading columns. Before it runs, nothing can be remembered about a read,
     // so nothing is queued to be read (else every load would pay for the same three photos again).
     const checkRows = Object.values(checks)
@@ -117,7 +146,7 @@ export async function GET(req: NextRequest) {
     if (lids.length) { const { data: ls } = await db.from('guesty_listings').select('id,nickname,title,building').in('id', lids.slice(0, 500)); for (const l of (ls || []) as any[]) bld[str(l.id)] = { building: str(l.building), l } }
     const salatoUnit: Record<string, boolean> = {}
     for (const lid of lids) { try { salatoUnit[lid] = await isSalatoListing(db, lid, bld[lid]?.l) } catch { salatoUnit[lid] = false } }
-    const rows: GuestCheckRow[] = needs.map(({ r, ch, p }) => {
+    const rows: GuestCheckRow[] = needs.map(({ r, ch, p }): GuestCheckRow => {
       const c = checks[str(r.id)] || {}
       const sal = salato[str(r.id)]
       const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
@@ -147,16 +176,38 @@ export async function GET(req: NextRequest) {
         depositReleaseDue: c.deposit_release_due || (autoDep && autoDep.status === 'held' ? addDays(co, p.rule.releaseDays || 0) : null), depositReleasedAt: c.deposit_released_at || null,
         depositAuto: !!autoDep, depositScheduled: scheduled,
         note: c.note || null, by: c.updated_by || null, updatedAt: c.updated_at || null,
+        threadPhotos: [] as GuestCheckRow['threadPhotos'], checklist: null as any, guestyUrl: 'https://app.guesty.com/reservations/' + encodeURIComponent(str(r.id)) + '/summary',
       }
+    }).map(row => {
+      const tp = (photosBy[row.reservationId] || []).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 6)
+      row.threadPhotos = canEdit ? tp : tp.map(p => ({ ...p, url: null }))
+      const vByHand = row.idStatus === 'verified' && row.idMethod && ['manual', 'message', 'platform'].indexOf(String(row.idMethod)) >= 0
+      const how = (photo: boolean): string =>
+        photo ? 'Lighthouse link' : tp.length ? 'photo on the thread' : row.salatoVerified ? 'Salato iPad'
+          : row.idStatus === 'waived' ? 'waived' : vByHand ? 'verified by hand' : row.guestyVerified || row.idMethod === 'guesty' ? 'ticked Verified in Guesty' : ''
+      const idHow = how(row.hasIdPhoto), selfieHow = how(row.hasSelfie)
+      const dep = row.depositStatus
+      const depHow = row.depositAuto ? 'Guesty security deposit' : dep === 'captured' || dep === 'claimed' || dep === 'released' ? (row.depositMethod ? 'captured · ' + row.depositMethod : 'captured') : dep === 'waived' ? 'waived' : row.depositScheduled ? 'scheduled in Guesty, not held yet' : ''
+      const depOk = dep !== 'pending'
+      const idOk = !row.needId || (!!idHow && row.idStatus !== 'check')
+      const selfieOk = !row.needId || (!!selfieHow && row.idStatus !== 'check')
+      row.checklist = {
+        id: { ok: idOk, how: idHow || 'not received' },
+        selfie: { ok: selfieOk, how: selfieHow || 'not received' },
+        deposit: { ok: !row.needDeposit || depOk, how: depHow || 'not collected' },
+        complete: idOk && selfieOk && (!row.needDeposit || depOk),
+      }
+      return row
     }).sort((a, b) => a.checkIn.localeCompare(b.checkIn) || a.unit.localeCompare(b.unit))
     const needed = rows.reduce((a, r) => a + (r.needId ? 1 : 0) + (r.needDeposit ? 1 : 0), 0)
     // A flagged ID is not done: a person still has to look.
     // A hold Guesty has scheduled counts as done: nothing for a person to do until it fails (then it is pending again).
     const done = rows.reduce((a, r) => a + (r.needId && (r.idStatus === 'verified' || r.idStatus === 'waived') ? 1 : 0) + (r.needDeposit && (r.depositStatus !== 'pending' || r.depositScheduled) ? 1 : 0), 0)
     const toCheck = rows.filter(r => r.needId && r.idStatus === 'check').length
+    const toVerify = rows.filter(r => !r.checklist.complete).length
     const toRead = rows.filter(r => r.idNeedsRead).length
     const releaseDue = rows.filter(r => r.depositStatus === 'captured' && r.depositReleaseDue && r.depositReleaseDue <= today).length
-    return NextResponse.json({ ok: true, today, days, rows, needed, done, toCheck, toRead, releaseDue, canEdit, isAdmin: g.access.role === 'admin', rules, buildingAmounts: amounts, guestyVerifiedField: !!vfid, schema158: has158 })
+    return NextResponse.json({ ok: true, today, days, rows, needed, done, toCheck, toVerify, toRead, releaseDue, canEdit, isAdmin: g.access.role === 'admin', rules, buildingAmounts: amounts, guestyVerifiedField: !!vfid, schema158: has158 })
   } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 }) }
 }
 
@@ -175,6 +226,19 @@ export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => ({} as any))
   const me = String(g.access.email || '')
   const db = supabaseAdmin()
+
+  // THE THREAD SWEEP (2026-10-23): our booking email asks the guest to REPLY with a selfie holding
+  // their ID. A guest's reply only reaches the mirror when its thread is refreshed, so the desk asks
+  // for the threads of the next arrivals still missing their photos to be pulled from Guesty live.
+  //   { threadSweep: true, ids: [...] } → up to 8 · { reservationId, pullThread: true } → that one
+  if (b.threadSweep === true || b.pullThread === true) {
+    const want: string[] = (b.pullThread === true ? [str(b.reservationId)] : (Array.isArray(b.ids) ? b.ids : []).map(str)).filter(Boolean).slice(0, 8)
+    const { data: convs } = want.length ? await db.from('guesty_conversations').select('id,reservation_id').in('reservation_id', want) : { data: [] as any[] }
+    const { syncMessages } = await import('@/lib/guesty')
+    let pulled = 0, failed = 0
+    for (const c of (convs || []) as any[]) { try { await syncMessages(str(c.id)); pulled++ } catch { failed++ } }
+    return NextResponse.json({ ok: true, pulled, failed, noThread: want.length - ((convs || []) as any[]).length })
+  }
 
   // THE SWEEP: rows verified before anything read their photos get read now, three at a time, so
   // the desk never pays more than a few seconds for it and no row is green on nobody's say-so.

@@ -6,7 +6,8 @@
 // themselves, editable per channel by an admin ("allow us to customize the rules").
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Check, ExternalLink, Eye, Loader2, Shield, Upload, X, Undo2, Settings2, RefreshCw } from 'lucide-react'
+import { Check, ExternalLink, Eye, Loader2, Shield, Upload, X, Undo2, Settings2, RefreshCw, ChevronDown, Image as ImageIcon } from 'lucide-react'
+import { StayPanel } from '@/components/StayPanel'
 import { Tag, Pill } from '@/components/lean'
 import type { GuestCheckRow } from '@/app/api/guest-checks/route'
 import { CHANNELS, DEPOSIT_METHODS, type Channel, type ChannelRule } from '@/lib/welcome-call-guide'
@@ -21,7 +22,7 @@ const field = 'rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] 
 
 export function GuestChecksDesk({ embed }: { embed?: boolean }) {
   const [days, setDays] = useState(7)
-  const [data, setData] = useState<{ ok?: boolean; today?: string; rows?: GuestCheckRow[]; needed?: number; done?: number; toCheck?: number; toRead?: number; releaseDue?: number; canEdit?: boolean; isAdmin?: boolean; rules?: Record<Channel, ChannelRule>; buildingAmounts?: Record<string, number>; error?: string; schema158?: boolean } | null>(null)
+  const [data, setData] = useState<{ ok?: boolean; today?: string; rows?: GuestCheckRow[]; needed?: number; done?: number; toCheck?: number; toVerify?: number; toRead?: number; releaseDue?: number; canEdit?: boolean; isAdmin?: boolean; rules?: Record<Channel, ChannelRule>; buildingAmounts?: Record<string, number>; error?: string; schema158?: boolean } | null>(null)
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
@@ -30,6 +31,7 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
   const [depFor, setDepFor] = useState<string | null>(null)
   const [byHandFor, setByHandFor] = useState<string | null>(null)
   const [viewer, setViewer] = useState<{ url: string; title: string; isPdf?: boolean } | null>(null)
+  const [detailsFor, setDetailsFor] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try { const j = await fetch(API + '?days=' + days, { cache: 'no-store' }).then(r => r.json()); setData(j); if (!j.ok) setErr(j.error || 'Could not load.') } catch (e: any) { setErr(String(e?.message || e)) }
@@ -45,6 +47,28 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
       .then(j => { if (j?.ok && j.checked) { setMsg(`Read ${j.checked} ID photo${j.checked === 1 ? '' : 's'} against the booking name` + (j.flagged ? ` — ${j.flagged} flagged to check` : ' — all match') + '.'); load() } })
       .catch(() => {})
   }, [data, load])
+
+  // THE THREAD SWEEP (2026-10-23): pull the Guesty threads of the next arrivals still missing their
+  // ID / selfie, so a guest who replied to the booking email with their photo shows up here. Once per open.
+  const threaded = useRef(false)
+  useEffect(() => {
+    if (!data?.ok || threaded.current || !data.canEdit) return
+    threaded.current = true
+    const soon = (data.rows || []).filter(r => r.needId && !r.checklist?.complete && !r.threadPhotos?.length && !r.hasIdPhoto && r.checkIn <= addDaysYmd(data.today || '', 3)).map(r => r.reservationId).slice(0, 8)
+    if (!soon.length) return
+    fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ threadSweep: true, ids: soon }) }).then(r => r.json())
+      .then(j => { if (j?.ok && j.pulled) load() }).catch(() => {})
+  }, [data, load])
+  const pullThread = async (r: GuestCheckRow) => {
+    setBusy(r.reservationId); setErr(''); setMsg('')
+    try {
+      const j = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: r.reservationId, pullThread: true }) }).then(x => x.json())
+      if (!j.ok) throw new Error(j.error || 'Could not read the thread.')
+      setMsg(j.noThread ? 'No message thread for this booking in Guesty yet.' : 'Read ' + r.guest + '\'s thread from Guesty.')
+      await load()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy('')
+  }
 
   const post = async (rid: string, patch: Record<string, any>, ok?: string) => {
     setBusy(rid); setErr(''); setMsg('')
@@ -105,7 +129,8 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
   const rows = data?.rows || []
   const today = data?.today || ''
   // A flagged photo is open work: a person still has to look (Jon: "flag to check").
-  const isOpen = (r: GuestCheckRow) => (r.needId && (r.idStatus === 'pending' || r.idStatus === 'check')) || (r.needDeposit && r.depositStatus === 'pending' && !r.depositScheduled)
+  // OPEN = TO VERIFY: anything short of the ID, the selfie and the deposit this channel asks for.
+  const isOpen = (r: GuestCheckRow) => r.checklist ? !r.checklist.complete : ((r.needId && (r.idStatus === 'pending' || r.idStatus === 'check')) || (r.needDeposit && r.depositStatus === 'pending' && !r.depositScheduled))
   const releaseDue = (r: GuestCheckRow) => r.depositStatus === 'captured' && !!r.depositReleaseDue && r.depositReleaseDue <= today
   const shown = useMemo(() => rows.filter(r => only === 'all' ? true : only === 'release' ? releaseDue(r) || (r.depositStatus === 'captured' && r.checkOut <= today) : isOpen(r) || releaseDue(r)), [rows, only, today])
   const nOpen = rows.filter(isOpen).length, nRelease = rows.filter(releaseDue).length
@@ -114,7 +139,7 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <Pill tone={nOpen ? 'amber' : 'emerald'} title="ID checks and deposits still owed on arrivals in the window">{nOpen} open</Pill>
+        <Pill tone={nOpen ? 'amber' : 'emerald'} title="Arrivals still missing the ID, the selfie or the deposit their channel asks for">{nOpen} to verify</Pill>
         {!!data?.toCheck && <Pill tone="rose" title="ID photos on file that a person has to look at — the name did not match the booking, or could not be read">{data.toCheck} to check</Pill>}
         <Pill tone={nRelease ? 'rose' : 'slate'} title="Deposits held past their release date">{nRelease} to release</Pill>
         <Pill title="Checks done against checks owed">{data?.done ?? 0} of {data?.needed ?? 0} done</Pill>
@@ -147,6 +172,7 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
                     <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                       <Tag>{r.channel}</Tag>
                       <Tag tone={r.today ? 'amber' : r.inHouse ? 'sky' : 'slate'}>{r.today ? 'arrives today' : r.inHouse ? 'in-house · out ' + fmtDay(r.checkOut) : r.checkIn < today ? 'left ' + fmtDay(r.checkOut) : 'arrives ' + fmtDay(r.checkIn)}</Tag>
+                      <Checklist r={r} />
                       <IdTag r={r} />
                       {r.needDeposit && (r.depositStatus === 'captured'
                         ? <Tag tone={releaseDue(r) ? 'rose' : 'emerald'} title={(r.depositAuto ? 'A security deposit on the booking in Guesty — read off the booking, not typed here' : 'Captured ' + fmtAt(r.depositCapturedAt) + (r.depositCapturedBy ? ' by ' + r.depositCapturedBy.split('@')[0] : ''))}>deposit {money(r.depositAmount) || 'held'}{r.depositAuto ? ' · Guesty' : r.depositMethod ? ' · ' + methodLabel(r.depositMethod) : ''} · {fmtAt(r.depositCapturedAt)}{r.depositReleaseDue ? (releaseDue(r) ? ' · RELEASE DUE ' : ' · release ') + fmtDay(r.depositReleaseDue) : ''}</Tag>
@@ -158,6 +184,14 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
                     </div>
                     {(r.note || r.depositRef || r.idName) && <div className="mt-1 text-[11.5px] text-muted truncate">{[r.idName ? 'ID: ' + r.idName : '', r.depositRef && !r.depositAuto ? 'ref ' + r.depositRef : '', r.note].filter(Boolean).join(' · ')}</div>}
                     <IdCheckWhy r={r} />
+                    {r.threadPhotos?.length ? (
+                      <div className="mt-1.5 flex items-center gap-1.5 flex-wrap text-[11.5px]">
+                        <span className="text-muted">On the thread:</span>
+                        {r.threadPhotos.map((p, i) => p.url
+                          ? <button key={i} onClick={() => setViewer({ url: p.url as string, title: r.guest + ' — photo sent ' + fmtAt(p.at), isPdf: /pdf/.test(p.type) })} className={TASK_GHOST}><ImageIcon size={12} /> {p.type || 'photo'} · {fmtAt(p.at)}</button>
+                          : <Tag key={i}>{p.type || 'photo'} · {fmtAt(p.at)}</Tag>)}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <IdActions r={r} canEdit={can} busy={b} ghost={TASK_GHOST} dark={TASK_DARK}
@@ -173,9 +207,20 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
                       <label className={TASK_GHOST + ' cursor-pointer'} title="Attach the hold / authorization screenshot or receipt"><Upload size={12} /><input type="file" accept="image/*,application/pdf" className="hidden" onChange={e => { uploadProof(r.reservationId, e.target.files?.[0]); e.target.value = '' }} /></label>
                     )}
                     {can && depOpen && <button onClick={() => post(r.reservationId, { deposit_status: 'waived' }, 'Deposit waived for this stay.')} disabled={b} className={TASK_GHOST} title="No deposit for this stay">Waive deposit</button>}
-                    <Link href={'/reservations/' + encodeURIComponent(r.reservationId)} prefetch={false} className={TASK_GHOST} title="Open the booking"><ExternalLink size={12} /></Link>
+                    {can && r.needId && !r.checklist?.complete && <button onClick={() => pullThread(r)} disabled={b} className={TASK_GHOST} title="Read this booking's message thread from Guesty now — picks up a selfie or ID the guest replied with"><RefreshCw size={12} /> Thread</button>}
+                    <button onClick={() => setDetailsFor(detailsFor === r.reservationId ? null : r.reservationId)} className={TASK_GHOST + (detailsFor === r.reservationId ? ' !bg-ink !text-white' : '')} title="The whole booking — guest, money, payments, calls, messages, tasks"><ChevronDown size={12} className={detailsFor === r.reservationId ? 'rotate-180' : ''} /> Details</button>
+                    <a href={r.guestyUrl} target="_blank" rel="noreferrer" className={TASK_GHOST} title="Open this reservation in Guesty"><ExternalLink size={12} /> Guesty</a>
                   </div>
                 </div>
+                {detailsFor === r.reservationId && (
+                  <div className="mt-2.5 flex flex-col gap-2">
+                    <StayPanel reservationId={r.reservationId} />
+                    <div className="flex items-center gap-2 text-[12px]">
+                      <Link href={'/reservations/' + encodeURIComponent(r.reservationId)} prefetch={false} className={TASK_GHOST}><ExternalLink size={12} /> Full booking page</Link>
+                      <a href={r.guestyUrl} target="_blank" rel="noreferrer" className={TASK_GHOST}><ExternalLink size={12} /> Open in Guesty</a>
+                    </div>
+                  </div>
+                )}
                 {byHandFor === r.reservationId && can && (
                   <ByHandStrip r={r} busy={b} ghost={TASK_GHOST} dark={TASK_DARK} field={field} onClose={() => setByHandFor(null)}
                     onPatch={async (patch, ok) => { await post(r.reservationId, patch, ok); setByHandFor(null) }} />
@@ -283,5 +328,29 @@ function RulesPanel({ rules, buildings, onSaved }: { rules: Record<Channel, Chan
         </div>
       </div>
     </div>
+  )
+}
+
+function addDaysYmd(ymd: string, n: number): string {
+  if (!ymd) return '9999-12-31'
+  const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10)
+}
+
+/** ID · Selfie · Deposit — what we hold for each and where it came from; "To verify" until all are in. */
+function Checklist({ r }: { r: GuestCheckRow }) {
+  const c = r.checklist
+  if (!c) return null
+  const item = (label: string, it: { ok: boolean; how: string }, need: boolean) => !need ? null : (
+    <span title={label + ': ' + it.how} className={'inline-flex items-center gap-0.5 text-[10.5px] font-semibold px-1.5 py-[3px] rounded-md ' + (it.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700')}>
+      {it.ok ? <Check size={10} /> : <X size={10} />}{label}
+    </span>
+  )
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className={'text-[10.5px] font-bold px-1.5 py-[3px] rounded-md ' + (c.complete ? 'bg-emerald-600 text-white' : 'bg-amber-100 text-amber-900')}>{c.complete ? 'Verified' : 'To verify'}</span>
+      {item('ID', c.id, r.needId)}
+      {item('Selfie', c.selfie, r.needId)}
+      {item(r.depositDue ? '$' + r.depositDue : 'Deposit', c.deposit, r.needDeposit)}
+    </span>
   )
 }
