@@ -201,6 +201,18 @@ export function GlitchBoard() {
   // vendor visits and the Command Center — opens that card; ?q=<unit or words> narrows the board to
   // it. Both used to land on the whole unfiltered board (q only ever reached the History tab).
   const [q, setQ] = useState('')
+  const [prop, setProp] = useState('')
+  const [dFrom, setDFrom] = useState('')
+  const [dTo, setDTo] = useState('')
+  const [dateBy, setDateBy] = useState<'reported' | 'incident'>('reported')
+  const [bldgOf, setBldgOf] = useState<Record<string, string>>({})
+  useEffect(() => {
+    fetch('/api/listings?slim=1', { cache: 'no-store' }).then(r => r.json()).then(j => {
+      const m: Record<string, string> = {}
+      for (const l of (Array.isArray(j?.results) ? j.results : []) as any[]) if (l?.id && l?.building) m[String(l.id)] = String(l.building)
+      setBldgOf(m)
+    }).catch(() => {})
+  }, [])
   const linked = useRef('')
   useEffect(() => {
     try {
@@ -248,9 +260,19 @@ export function GlitchBoard() {
     } catch (e: any) { setErr(String(e?.message || e)) }
   }
 
+  // FILTERS (Suleman, via Jon 2026-10-23: "add filters for glitches so we can find glitches reported
+  // for a specific property on a specific date"). Property is the building from the listing (the
+  // unit's first word when the listing is unknown); the date is the day it was reported (Eastern),
+  // or the incident date when that is what you are looking for. From/to, so one day or a range.
   const needle = q.trim().toLowerCase()
+  const propOf = (g: Glitch) => (g.listing_id && bldgOf[g.listing_id]) || String(g.unit || '').trim().split(/[\s\-–#/]+/)[0] || ''
+  const props = useMemo(() => Array.from(new Set(glitches.map(propOf).filter(Boolean))).sort((a, b) => a.localeCompare(b)), [glitches, bldgOf])
+  const dayOf = (g: Glitch) => dateBy === 'incident' ? String(g.incident_date || '').slice(0, 10) : etDay(g.created_at)
   const rows = (market === 'all' ? glitches : glitches.filter(g => g.market === market))
-    .filter(g => !needle || [g.unit, g.overview, g.guest_name].some(v => String(v || '').toLowerCase().indexOf(needle) >= 0))
+    .filter(g => !needle || [g.unit, g.overview, g.guest_name, g.guest_email, g.guest_phone, g.reservation_id, g.reported_by, g.category, g.assignee].some(v => String(v || '').toLowerCase().indexOf(needle) >= 0))
+    .filter(g => !prop || propOf(g) === prop)
+    .filter(g => { if (!dFrom && !dTo) return true; const d = dayOf(g); if (!d) return false; return (!dFrom || d >= dFrom) && (!dTo || d <= dTo) })
+  const filtering = !!(needle || prop || dFrom || dTo)
   const markets = ['all', 'Miami', 'Broward', 'North', 'Vendor']
   // The open card is looked up from the live list, not copied into state, so an edit or a refund
   // refreshes what the sheet is showing without anyone having to close and reopen it.
@@ -272,10 +294,28 @@ export function GlitchBoard() {
         <select value={market} onChange={e => setMarket(e.target.value)} title="Market" className="text-[12px] py-1 pl-2 pr-6 rounded-lg border border-line bg-white">
           {markets.map(m => <option key={m} value={m}>{m === 'all' ? 'All markets' : m}</option>)}
         </select>
-        {q ? (
-          <button onClick={() => setQ('')} title={'Showing only cards that mention “' + q + '” — click to show the whole board'}
+        <span className="relative">
+          <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, reservation…"
+            className="text-[12px] py-1 pl-6 pr-2 rounded-lg border border-line bg-white w-[160px]" />
+        </span>
+        <select value={prop} onChange={e => setProp(e.target.value)} title="Property" className={'text-[12px] py-1 pl-2 pr-6 rounded-lg border bg-white ' + (prop ? 'border-brand-300 text-brand-800 font-semibold' : 'border-line')}>
+          <option value="">All properties</option>
+          {props.map(p => <option key={p} value={p}>{p}</option>)}
+        </select>
+        <span className={'inline-flex items-center gap-1 text-[12px] rounded-lg border bg-white px-1.5 py-0.5 ' + (dFrom || dTo ? 'border-brand-300' : 'border-line')}>
+          <select value={dateBy} onChange={e => setDateBy(e.target.value as any)} title="Which date to filter on" className="text-[12px] bg-transparent pr-1">
+            <option value="reported">Reported</option>
+            <option value="incident">Incident</option>
+          </select>
+          <input type="date" value={dFrom} onChange={e => { setDFrom(e.target.value); if (!dTo || e.target.value > dTo) setDTo(e.target.value) }} title="From" className="text-[12px] bg-transparent" />
+          <span className="text-muted">–</span>
+          <input type="date" value={dTo} min={dFrom || undefined} onChange={e => setDTo(e.target.value)} title="To" className="text-[12px] bg-transparent" />
+        </span>
+        {filtering ? (
+          <button onClick={() => { setQ(''); setProp(''); setDFrom(''); setDTo('') }}
             className="inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1 rounded-lg bg-brand-50 text-brand-700 hover:bg-brand-100">
-            <Search size={11} /> {q} <X size={11} />
+            {rows.length} match{rows.length === 1 ? '' : 'es'} <X size={11} />
           </button>
         ) : null}
         <GlitchKpis rows={rows} />
@@ -2090,4 +2130,11 @@ function RefundLogger({ id, total, onDone }: { id: string; total: number | null;
       {err && <div className="text-[11px] text-rose-700">{err}</div>}
     </div>
   )
+}
+
+/** The Eastern calendar day a timestamp falls on — a glitch filed at 9pm is that day's, not tomorrow's. */
+function etDay(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 }

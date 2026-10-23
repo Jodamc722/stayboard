@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Shell } from '@/components/Shell'
 import { GlitchBoard } from '@/components/GlitchBoard'
 import { BuildingPatterns } from '@/components/BuildingPatterns'
+import { GlitchReport } from '@/components/GlitchReport'
 import { RefreshCw, Search, ExternalLink, FileText, X } from 'lucide-react'
 import { LeanHead, LeanTabs, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty } from '@/components/lean'
 
@@ -17,7 +18,7 @@ function adminUrl(id: string) { return 'https://app.breezeway.io/task/' + id }
 function fmtShort(iso: string | null) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); if (isNaN(d.getTime())) return iso; return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }) }
 
 export default function GlitchesPage() {
-  const [tab, setTab] = useState<'board' | 'history' | 'patterns' | 'trends'>('board')
+  const [tab, setTab] = useState<'board' | 'report' | 'history' | 'patterns' | 'trends'>('board')
   const [data, setData] = useState<Data | null>(null)
   const [people, setPeople] = useState<Person[]>([])
   const [loading, setLoading] = useState(true)
@@ -32,7 +33,7 @@ export default function GlitchesPage() {
   const load = useCallback(async () => {
     try {
       setErr('')
-      if (tab === 'board') { setLoading(false); return }
+      if (tab === 'board' || tab === 'report') { setLoading(false); return }
       const r = await fetch('/api/ops-today/glitches?history=1', { cache: 'no-store' })
       const j: Data = await r.json()
       if (!r.ok || j.ok === false) { setErr(j.error || 'Failed to load'); setLoading(false); return }
@@ -92,6 +93,7 @@ export default function GlitchesPage() {
       <LeanTabs value={tab} onChange={setTab}
         tabs={[
           { key: 'board', label: 'Board', n: inPlay || null },
+          { key: 'report', label: 'Report' },
           { key: 'history', label: 'History', n: data ? all.length : null },
           { key: 'patterns', label: 'Patterns' },
           { key: 'trends', label: 'Trends' },
@@ -108,7 +110,8 @@ export default function GlitchesPage() {
         </>) : null} />
 
       {tab === 'board' && <GlitchBoard />}
-      {tab !== 'board' && tab !== 'patterns' && loading && !data && <LeanEmpty>Loading glitches…</LeanEmpty>}
+      {tab === 'report' && <GlitchReport initialQ={q} />}
+      {tab !== 'board' && tab !== 'report' && tab !== 'patterns' && loading && !data && <LeanEmpty>Loading glitches…</LeanEmpty>}
       {err && <div className="text-[12.5px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
 
       {/* Nav diet 2026-08-11 (Jon): Building Patterns folded in from /patterns. Lean pass: the

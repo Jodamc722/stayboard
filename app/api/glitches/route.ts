@@ -82,6 +82,36 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, scope, today, matches })
     }
 
+    // ?report=1&from=YYYY-MM-DD&to=YYYY-MM-DD — THE REPORT (Jon, 2026-10-23: "have a report too,
+    // where we can pull, show trends, recurring issues … search by name, date, reservation"). Every
+    // glitch reported in the window, not the board's newest 500, with the heavy columns (photos,
+    // history, AI text) left behind. Dates are Eastern days on created_at.
+    if (str(req.nextUrl.searchParams.get('report')) === '1') {
+      const ymd = (v: any) => { const x = str(v).slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(x) ? x : '' }
+      const from = ymd(req.nextUrl.searchParams.get('from')) || new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10)
+      const to = ymd(req.nextUrl.searchParams.get('to')) || new Date().toISOString().slice(0, 10)
+      // Eastern midnight is 04:00 or 05:00 UTC; take the wider edge and trim exactly below.
+      const lo = from + 'T03:00:00Z'
+      const hiD = new Date(to + 'T12:00:00Z'); hiD.setUTCDate(hiD.getUTCDate() + 1)
+      const hi = hiD.toISOString().slice(0, 10) + 'T06:00:00Z'
+      const cols = 'id,status,glitch_type,category,listing_id,unit,market,reservation_id,guest_name,guest_phone,guest_email,channel,check_in,check_out,reservation_total,incident_date,overview,refund_approved,reported_by,assignee,breezeway_task_id,priority,reported_via,closed_at,created_at'
+      const etDay = (iso: string) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(iso))
+      const read = (c: string) => pageRows<any>((a, b) => db.from('glitches').select(c).gte('created_at', lo).lt('created_at', hi).order('created_at', { ascending: false }).range(a, b), 10)
+      let { rows: got, truncated } = await read(cols)
+      // A column this database does not have yet (an unrun migration) fails the narrow read; the
+      // wide one always works.
+      if (truncated && !got.length) ({ rows: got, truncated } = await read('*'))
+      const list = got.filter(g => { const d = etDay(str(g.created_at)); return d >= from && d <= to })
+      let building: Record<string, string> = {}
+      const lids = Array.from(new Set(list.map(g => str(g.listing_id)).filter(Boolean)))
+      if (lids.length) {
+        const { data: ls } = await db.from('guesty_listings').select('id,building').in('id', lids.slice(0, 1000))
+        for (const l of (ls || []) as any[]) if (l.building) building[str(l.id)] = str(l.building)
+      }
+      for (const g of list) (g as any).building = building[str(g.listing_id)] || null
+      return NextResponse.json({ ok: true, from, to, glitches: list, ...(truncated ? { partial: true } : {}) })
+    }
+
     const { data: rows, error } = await db.from('glitches').select('*').order('created_at', { ascending: false }).limit(500)
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
     // live Breezeway status per pushed glitch, from the task mirror (webhooks keep it fresh) —
