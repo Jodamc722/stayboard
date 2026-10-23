@@ -51,6 +51,22 @@ export async function GET(req: NextRequest) {
       att: m.attachments.map((a: any) => ({ keys: Object.keys(a || {}).slice(0, 12), type: a?.type || a?.mimeType || a?.contentType || null, name: a?.name || a?.fileName || a?.filename || null })),
     })) })
   }
+  // ?stays=1 — what Guesty's check-in form ("guestStay") looks like across recent bookings: the
+  // statuses it takes, and a few bookings per status to inspect.
+  if (req.nextUrl.searchParams.get('stays') === '1') {
+    const db = supabaseAdmin()
+    const from = new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10)
+    const { data: rs } = await db.from('guesty_reservations').select('id,source,check_in,gs:raw->guestStay').gte('check_in', from).limit(1000)
+    const by: Record<string, { n: number; ids: string[]; keys: string[] }> = {}
+    for (const r of (rs || []) as any[]) {
+      const gs = r.gs || null
+      const st = gs ? String(gs.status || 'no-status') : 'absent'
+      const b = by[st] = by[st] || { n: 0, ids: [], keys: [] }
+      b.n++; if (b.ids.length < 6) b.ids.push(String(r.id) + ':' + String(r.source || '') + ':' + String(r.check_in || '').slice(0, 10))
+      if (gs && typeof gs === 'object') for (const k of Object.keys(gs)) if (b.keys.indexOf(k) < 0) b.keys.push(k)
+    }
+    return NextResponse.json({ ok: true, by })
+  }
   const id = String(req.nextUrl.searchParams.get('id') || '').trim()
   if (!id) return NextResponse.json({ ok: false, error: 'id is required' }, { status: 400 })
   const out: any = { ok: true, id }
@@ -72,7 +88,7 @@ export async function GET(req: NextRequest) {
       const nm: Record<string, string> = {}; for (const c of (cf || []) as any[]) nm[String(c.id)] = String(c.name)
       out.customFieldsNamed = (Array.isArray(live?.customFields) ? live.customFields : []).map((c: any) => ({ id: String(c.fieldId), name: nm[String(c.fieldId)] || null, value: String(c.value ?? '').slice(0, 80) }))
     } catch { /* names are a nicety */ }
-    out.liveBits = { guestStay: pick(live?.guestStay), plannedArrival: pick(live?.plannedArrival), reasonForVisit: pick(live?.reasonForVisit), transportation: pick(live?.transportation), customFields: pick(live?.customFields), integration: pick(live?.integration && { platform: live.integration.platform }), guest: pick(live?.guest && { picture: live.guest.picture, verifications: live.guest.verifications, keys: Object.keys(live.guest) }), log: pick(Array.isArray(live?.log) ? live.log.slice(-25).map((l: any) => ({ e: l?.event || l?.type || l?.action, by: l?.by?.fullName || l?.byName, at: l?.createdAt || l?.at, keys: Object.keys(l || {}).slice(0, 8) })) : null) }
+    out.liveBits = { guestStay: pick(live?.guestStay), guestStayFull: live?.guestStay ? JSON.stringify(live.guestStay).replace(/https?:\/\/[^"\s]+/g, '<url>').slice(0, 4000) : null, plannedArrival: pick(live?.plannedArrival), reasonForVisit: pick(live?.reasonForVisit), transportation: pick(live?.transportation), customFields: pick(live?.customFields), integration: pick(live?.integration && { platform: live.integration.platform }), guest: pick(live?.guest && { picture: live.guest.picture, verifications: live.guest.verifications, keys: Object.keys(live.guest) }), log: pick(Array.isArray(live?.log) ? live.log.slice(-25).map((l: any) => ({ e: l?.event || l?.type || l?.action, by: l?.by?.fullName || l?.byName, at: l?.createdAt || l?.at, keys: Object.keys(l || {}).slice(0, 8) })) : null) }
     guestId = String(live?.guestId || live?.guest?._id || '')
   } catch (e: any) { out.liveError = String(e?.message || e).slice(0, 200) }
   if (guestId) {
