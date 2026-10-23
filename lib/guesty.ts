@@ -922,6 +922,10 @@ function mapReview(v: any) {
 // now a runaway guard rather than a policy, and an elapsed-time budget stops the caller being
 // killed mid-loop with no record of why. Upsert is idempotent (onConflict id) and never deletes.
 /** Are Guesty credentials present at all? Used by the health screen before it tries to call out. */
+/** A plain authenticated GET against the Open API, for admin diagnostics (e.g. what a booking's guest
+ *  verification looks like on the live record). Throws on a non-2xx like every other call here. */
+export async function guestyGet<T = any>(path: string): Promise<T> { return api<T>(path) }
+
 export function guestyConfigured(): boolean {
   return !!(process.env.GUESTY_CLIENT_ID && process.env.GUESTY_CLIENT_SECRET)
 }
