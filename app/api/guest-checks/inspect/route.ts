@@ -49,6 +49,8 @@ export async function GET(req: NextRequest) {
     const live: any = await guestyGet('/reservations/' + encodeURIComponent(id))
     out.liveKeys = Object.keys(live || {})
     out.live = scan(live)
+    const pick = (o: any) => o == null ? null : JSON.stringify(o).slice(0, 1500)
+    out.liveBits = { guestStay: pick(live?.guestStay), plannedArrival: pick(live?.plannedArrival), reasonForVisit: pick(live?.reasonForVisit), transportation: pick(live?.transportation), customFields: pick(live?.customFields), integration: pick(live?.integration && { platform: live.integration.platform }), guest: pick(live?.guest && { picture: live.guest.picture, verifications: live.guest.verifications, keys: Object.keys(live.guest) }), log: pick(Array.isArray(live?.log) ? live.log.slice(-25).map((l: any) => ({ e: l?.event || l?.type || l?.action, by: l?.by?.fullName || l?.byName, at: l?.createdAt || l?.at, keys: Object.keys(l || {}).slice(0, 8) })) : null) }
     guestId = String(live?.guestId || live?.guest?._id || '')
   } catch (e: any) { out.liveError = String(e?.message || e).slice(0, 200) }
   if (guestId) {
@@ -58,8 +60,11 @@ export async function GET(req: NextRequest) {
       ['guestDocs', '/guests-crud/' + guestId + '/documents'],
       ['guestVerification', '/guests/' + guestId + '/verification'],
       ['resVerification', '/reservations/' + encodeURIComponent(id) + '/guest-verification'],
+      ['guestApp', '/guest-app/reservations/' + encodeURIComponent(id)],
+      ['resDocs', '/reservations/' + encodeURIComponent(id) + '/documents'],
+      ['guestFiles', '/guests-crud/' + guestId + '/files'],
     ] as [string, string][]) {
-      try { const v: any = await guestyGet(path); out[k + 'Keys'] = v && typeof v === 'object' ? Object.keys(v) : typeof v; out[k] = scan(v) } catch (e: any) { out[k + 'Error'] = String(e?.message || e).slice(0, 160) }
+      try { const v: any = await guestyGet(path); out[k + 'Keys'] = v && typeof v === 'object' ? Object.keys(v) : typeof v; out[k] = scan(v); if (k === 'guest') out.guestBits = JSON.stringify({ verifications: v?.verifications, pictures: v?.pictures, picture: v?.picture, policy: v?.policy, tags: v?.tags, confirmed: v?.confirmed }).slice(0, 2000) } catch (e: any) { out[k + 'Error'] = String(e?.message || e).slice(0, 160) }
     }
   }
   return NextResponse.json(out)
