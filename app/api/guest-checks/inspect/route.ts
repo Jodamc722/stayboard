@@ -50,6 +50,12 @@ export async function GET(req: NextRequest) {
     out.liveKeys = Object.keys(live || {})
     out.live = scan(live)
     const pick = (o: any) => o == null ? null : JSON.stringify(o).slice(0, 1500)
+    try {
+      const ids = (Array.isArray(live?.customFields) ? live.customFields : []).map((c: any) => String(c.fieldId))
+      const { data: cf } = await supabaseAdmin().from('guesty_custom_fields').select('id,name').in('id', ids.length ? ids : ['-'])
+      const nm: Record<string, string> = {}; for (const c of (cf || []) as any[]) nm[String(c.id)] = String(c.name)
+      out.customFieldsNamed = (Array.isArray(live?.customFields) ? live.customFields : []).map((c: any) => ({ id: String(c.fieldId), name: nm[String(c.fieldId)] || null, value: String(c.value ?? '').slice(0, 80) }))
+    } catch { /* names are a nicety */ }
     out.liveBits = { guestStay: pick(live?.guestStay), plannedArrival: pick(live?.plannedArrival), reasonForVisit: pick(live?.reasonForVisit), transportation: pick(live?.transportation), customFields: pick(live?.customFields), integration: pick(live?.integration && { platform: live.integration.platform }), guest: pick(live?.guest && { picture: live.guest.picture, verifications: live.guest.verifications, keys: Object.keys(live.guest) }), log: pick(Array.isArray(live?.log) ? live.log.slice(-25).map((l: any) => ({ e: l?.event || l?.type || l?.action, by: l?.by?.fullName || l?.byName, at: l?.createdAt || l?.at, keys: Object.keys(l || {}).slice(0, 8) })) : null) }
     guestId = String(live?.guestId || live?.guest?._id || '')
   } catch (e: any) { out.liveError = String(e?.message || e).slice(0, 200) }
