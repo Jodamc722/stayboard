@@ -85,6 +85,18 @@ export async function GET(req: NextRequest) {
         text: String(m.body || '').replace(/<[^>]+>/g, ' ').replace(/https?:\/\/\S+/g, '<url>').replace(/\s+/g, ' ').slice(0, 140),
         att: Array.isArray(m.attachments) ? m.attachments.map((a: any) => ({ keys: Object.keys(a || {}).slice(0, 10), type: a?.type || a?.mimeType || a?.contentType || null, name: a?.name || a?.fileName || a?.filename || null })) : null,
       }))
+      // And the LIVE posts — the mirror only refreshes a thread when it moves, and a guest's emailed
+      // reply with a photo is exactly the post we need to see.
+      try {
+        const live: any = await guestyGet('/communication/conversations/' + encodeURIComponent(cids[0]) + '/posts?limit=200')
+        const dd = live?.data
+        const arr: any[] = Array.isArray(dd) ? dd : (dd?.results ?? dd?.posts ?? live?.results ?? live?.posts ?? [])
+        out.livePosts = arr.map((m: any) => ({
+          keys: Object.keys(m || {}).slice(0, 25), type: m?.type, module: m?.module?.type || m?.module, sentBy: m?.sentBy?.type || m?.sentBy, at: m?.createdAt,
+          text: String(m?.body || m?.text || '').replace(/<[^>]+>/g, ' ').replace(/https?:\/\/\S+/g, '<url>').replace(/\s+/g, ' ').slice(0, 120),
+          att: Array.isArray(m?.attachments) ? m.attachments.map((a: any) => ({ keys: Object.keys(a || {}).slice(0, 12), type: a?.type || a?.mimeType || a?.contentType || null, name: a?.name || a?.fileName || a?.filename || null })) : null,
+        }))
+      } catch (e: any) { out.livePostsError = String(e?.message || e).slice(0, 160) }
     } else out.thread = []
   } catch (e: any) { out.threadError = String(e?.message || e).slice(0, 160) }
   return NextResponse.json(out)
