@@ -109,7 +109,7 @@ export async function GET(req: NextRequest) {
         const arr: any[] = Array.isArray(dd) ? dd : (dd?.results ?? dd?.posts ?? live?.results ?? live?.posts ?? [])
         out.livePosts = arr.map((m: any) => ({
           keys: Object.keys(m || {}).slice(0, 25), type: m?.type, module: m?.module?.type || m?.module, sentBy: m?.sentBy?.type || m?.sentBy, at: m?.createdAt,
-          text: String(m?.body || m?.text || '').replace(/<[^>]+>/g, ' ').replace(/https?:\/\/\S+/g, '<url>').replace(/\s+/g, ' ').slice(0, 120),
+          text: String(m?.plainTextBody || m?.body || m?.text || '').replace(/<[^>]+>/g, ' ').replace(/https?:\/\/\S+/g, '<url>').replace(/\s+/g, ' ').slice(0, req.nextUrl.searchParams.get('full') === '1' ? 1500 : 120),
           att: Array.isArray(m?.attachments) ? m.attachments.map((a: any) => ({ keys: Object.keys(a || {}).slice(0, 12), type: a?.type || a?.mimeType || a?.contentType || null, name: a?.name || a?.fileName || a?.filename || null })) : null,
         }))
       } catch (e: any) { out.livePostsError = String(e?.message || e).slice(0, 160) }
