@@ -73,5 +73,19 @@ export async function GET(req: NextRequest) {
       try { const v: any = await guestyGet(path); out[k + 'Keys'] = v && typeof v === 'object' ? Object.keys(v) : typeof v; out[k] = scan(v); if (k === 'guest') out.guestBits = JSON.stringify({ verifications: v?.verifications, pictures: v?.pictures, picture: v?.picture, policy: v?.policy, tags: v?.tags, confirmed: v?.confirmed }).slice(0, 2000) } catch (e: any) { out[k + 'Error'] = String(e?.message || e).slice(0, 160) }
     }
   }
+  // THE THREAD: guests often send the ID and selfie as photos on the Guesty conversation.
+  try {
+    const db = supabaseAdmin()
+    const { data: convs } = await db.from('guesty_conversations').select('id').eq('reservation_id', id).limit(5)
+    const cids = ((convs || []) as any[]).map(c => String(c.id))
+    if (cids.length) {
+      const { data: ms } = await db.from('guesty_messages').select('sender,sent_at,body,attachments,module').in('conversation_id', cids).order('sent_at', { ascending: true }).limit(200)
+      out.thread = ((ms || []) as any[]).map(m => ({
+        from: m.sender, at: m.sent_at, module: m.module,
+        text: String(m.body || '').replace(/<[^>]+>/g, ' ').replace(/https?:\/\/\S+/g, '<url>').replace(/\s+/g, ' ').slice(0, 140),
+        att: Array.isArray(m.attachments) ? m.attachments.map((a: any) => ({ keys: Object.keys(a || {}).slice(0, 10), type: a?.type || a?.mimeType || a?.contentType || null, name: a?.name || a?.fileName || a?.filename || null })) : null,
+      }))
+    } else out.thread = []
+  } catch (e: any) { out.threadError = String(e?.message || e).slice(0, 160) }
   return NextResponse.json(out)
 }
