@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Check, ExternalLink, Eye, Loader2, Shield, Upload, X, Undo2, Settings2, RefreshCw, ChevronDown, Image as ImageIcon } from 'lucide-react'
-import { StayPanel } from '@/components/StayPanel'
+import { Checklist, ThreadThumbs, CheckDetails, cifSweepIds } from '@/components/CheckPhotos'
 import { Tag, Pill } from '@/components/lean'
 import type { GuestCheckRow } from '@/app/api/guest-checks/route'
 import { CHANNELS, DEPOSIT_METHODS, type Channel, type ChannelRule } from '@/lib/welcome-call-guide'
@@ -54,6 +54,9 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
   useEffect(() => {
     if (!data?.ok || threaded.current || !data.canEdit) return
     threaded.current = true
+    const cifIds = cifSweepIds(data.rows || [])
+    if (cifIds.length) fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cifSweep: true, ids: cifIds }) }).then(r => r.json())
+      .then(j => { if (j?.ok && j.checked) load() }).catch(() => {})
     const soon = (data.rows || []).filter(r => r.needId && !r.checklist?.complete && !r.threadPhotos?.length && !r.hasIdPhoto && r.checkIn <= addDaysYmd(data.today || '', 3)).map(r => r.reservationId).slice(0, 8)
     if (!soon.length) return
     fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ threadSweep: true, ids: soon }) }).then(r => r.json())
@@ -168,7 +171,7 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
               <div key={r.reservationId} className={'px-3 sm:px-4 py-3 ' + ((idOpen || depOpen) && r.today ? 'bg-rose-50/40' : '')}>
                 <div className="flex items-start gap-2 flex-wrap">
                   <div className="min-w-0 grow basis-56">
-                    <div className="text-[13.5px] font-bold text-ink truncate">{r.guest} <span className="font-semibold text-muted">· {r.unit}</span></div>
+                    <button onClick={() => setDetailsFor(detailsFor === r.reservationId ? null : r.reservationId)} title="Show the booking, the ID, selfie and check-in form" className="block max-w-full text-left text-[13.5px] font-bold text-ink truncate hover:text-brand-700 hover:underline">{r.guest} <span className="font-semibold text-muted">· {r.unit}</span></button>
                     <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                       <Tag>{r.channel}</Tag>
                       <Tag tone={r.today ? 'amber' : r.inHouse ? 'sky' : 'slate'}>{r.today ? 'arrives today' : r.inHouse ? 'in-house · out ' + fmtDay(r.checkOut) : r.checkIn < today ? 'left ' + fmtDay(r.checkOut) : 'arrives ' + fmtDay(r.checkIn)}</Tag>
@@ -184,14 +187,7 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
                     </div>
                     {(r.note || r.depositRef || r.idName) && <div className="mt-1 text-[11.5px] text-muted truncate">{[r.idName ? 'ID: ' + r.idName : '', r.depositRef && !r.depositAuto ? 'ref ' + r.depositRef : '', r.note].filter(Boolean).join(' · ')}</div>}
                     <IdCheckWhy r={r} />
-                    {r.threadPhotos?.length ? (
-                      <div className="mt-1.5 flex items-center gap-1.5 flex-wrap text-[11.5px]">
-                        <span className="text-muted">On the thread:</span>
-                        {r.threadPhotos.map((p, i) => p.url
-                          ? <button key={i} onClick={() => setViewer({ url: p.url as string, title: r.guest + ' — photo sent ' + fmtAt(p.at), isPdf: /pdf/.test(p.type) })} className={TASK_GHOST}><ImageIcon size={12} /> {p.type || 'photo'} · {fmtAt(p.at)}</button>
-                          : <Tag key={i}>{p.type || 'photo'} · {fmtAt(p.at)}</Tag>)}
-                      </div>
-                    ) : null}
+                    <ThreadThumbs r={r} onOpen={(url, title, isPdf) => setViewer({ url, title, isPdf })} />
                   </div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <IdActions r={r} canEdit={can} busy={b} ghost={TASK_GHOST} dark={TASK_DARK}
@@ -212,15 +208,7 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
                     <a href={r.guestyUrl} target="_blank" rel="noreferrer" className={TASK_GHOST} title="Open this reservation in Guesty"><ExternalLink size={12} /> Guesty</a>
                   </div>
                 </div>
-                {detailsFor === r.reservationId && (
-                  <div className="mt-2.5 flex flex-col gap-2">
-                    <StayPanel reservationId={r.reservationId} />
-                    <div className="flex items-center gap-2 text-[12px]">
-                      <Link href={'/reservations/' + encodeURIComponent(r.reservationId)} prefetch={false} className={TASK_GHOST}><ExternalLink size={12} /> Full booking page</Link>
-                      <a href={r.guestyUrl} target="_blank" rel="noreferrer" className={TASK_GHOST}><ExternalLink size={12} /> Open in Guesty</a>
-                    </div>
-                  </div>
-                )}
+                {detailsFor === r.reservationId && <CheckDetails r={r} onOpen={(url, title, isPdf) => setViewer({ url, title, isPdf })} />}
                 {byHandFor === r.reservationId && can && (
                   <ByHandStrip r={r} busy={b} ghost={TASK_GHOST} dark={TASK_DARK} field={field} onClose={() => setByHandFor(null)}
                     onPatch={async (patch, ok) => { await post(r.reservationId, patch, ok); setByHandFor(null) }} />
@@ -334,23 +322,4 @@ function RulesPanel({ rules, buildings, onSaved }: { rules: Record<Channel, Chan
 function addDaysYmd(ymd: string, n: number): string {
   if (!ymd) return '9999-12-31'
   const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10)
-}
-
-/** ID · Selfie · Deposit — what we hold for each and where it came from; "To verify" until all are in. */
-function Checklist({ r }: { r: GuestCheckRow }) {
-  const c = r.checklist
-  if (!c) return null
-  const item = (label: string, it: { ok: boolean; how: string }, need: boolean) => !need ? null : (
-    <span title={label + ': ' + it.how} className={'inline-flex items-center gap-0.5 text-[10.5px] font-semibold px-1.5 py-[3px] rounded-md ' + (it.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700')}>
-      {it.ok ? <Check size={10} /> : <X size={10} />}{label}
-    </span>
-  )
-  return (
-    <span className="inline-flex items-center gap-1">
-      <span className={'text-[10.5px] font-bold px-1.5 py-[3px] rounded-md ' + (c.complete ? 'bg-emerald-600 text-white' : 'bg-amber-100 text-amber-900')}>{c.complete ? 'Verified' : 'To verify'}</span>
-      {item('ID', c.id, r.needId)}
-      {item('Selfie', c.selfie, r.needId)}
-      {item(r.depositDue ? '$' + r.depositDue : 'Deposit', c.deposit, r.needDeposit)}
-    </span>
-  )
 }

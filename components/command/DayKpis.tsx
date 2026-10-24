@@ -36,6 +36,7 @@ import { Check } from 'lucide-react'
 import { NudgeBtn } from '@/components/command/Nudge'
 import { CallNoteBtn, CallNoteStrip, CallNoteText } from '@/components/CallNote'
 import { IdTag, IdCheckWhy, IdActions, ByHandStrip } from '@/components/IdCheckBits'
+import { Checklist, ThreadThumbs, CheckDetails } from '@/components/CheckPhotos'
 import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, type TaskState } from '@/components/task/TaskActions'
 import type { DayCalls, DayCallRow } from '@/app/api/command/calls/route'
 import { whereNow, shiftStatus } from '@/lib/team-where'
@@ -336,6 +337,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const gcDepOpen = gcRows.filter(gcDepOpenOf).length
   const [gcBusy, setGcBusy] = useState('')
   const [gcByHand, setGcByHand] = useState('')
+  const [gcOpen, setGcOpen] = useState('')
   // Photos nothing has read yet get read when the tile has them (three per pass, once per page).
   useEffect(() => {
     if (!gcQ.data?.ok || !gcQ.data.toRead || !gcQ.data.canEdit || (window as any).__gcSwept) return
@@ -493,13 +495,17 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     if (open === 'notices') for (const n of ntToday) out.push({ key: 'nt:' + n.id, state: n.sent_at ? 'sent' : n.urgency === 'late' ? 'late' : n.urgency === 'due' ? 'due' : 'open', sort: n.sent_at ? 9 : n.urgency === 'late' ? 0 : n.urgency === 'due' ? 1 : 3, node: <Row dot={!n.sent_at && n.urgency === 'late' ? 'rose' : null} title={n.guest_name} tags={<>{n.propertyName && <Tag tone="violet">{n.propertyName}</Tag>}{n.sent_at ? <Tag tone="emerald">sent{n.sent_by ? ' · ' + n.sent_by : ''}</Tag> : n.urgency === 'late' ? <Tag tone="rose">late</Tag> : n.urgency === 'due' ? <Tag tone="amber">due now</Tag> : null}{!n.sent_at && n.hasRecipient === false && <Tag tone="amber">no recipient</Tag>}</>} meta={'Unit ' + n.unit_no + ' · arrives ' + String(n.arrival_date).slice(5)} actions={<>{!n.sent_at && <Link href="/reservation-emails" prefetch={false} className={GHOST}>Open</Link>}{!n.sent_at && <button onClick={() => sendNotice(n.id)} disabled={ntBusy === n.id} className={DARK}>{ntBusy === n.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Sent</button>}</>} /> })
     if (open === 'checks') for (const r of gcRows) {
       const idOpen = gcIdOpenOf(r), depOpen = gcDepOpenOf(r)
+      // To verify until the ID, the selfie and the deposit are all in (2026-10-24).
+      const short = r.checklist ? !r.checklist.complete : (idOpen || depOpen)
+      const openUrl = (url: string) => { try { window.open(url, '_blank', 'noopener') } catch { /* blocked */ } }
       const relDue = r.depositStatus === 'captured' && !!r.depositReleaseDue && r.depositReleaseDue <= d.today
       const at = (s?: string | null) => s ? new Date(s).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }) : ''
       const canEdit = !!gcQ.data?.canEdit
       const b = gcBusy.startsWith(r.reservationId)
-      out.push({ key: 'gc:' + r.reservationId, state: !idOpen && !depOpen && !relDue ? 'done' : r.idStatus === 'check' ? 'check' : depOpen || relDue ? 'deposit' : 'id', sort: (!idOpen && !depOpen && !relDue ? 9 : r.idStatus === 'check' ? 0 : r.today || relDue ? 0 : 2) + (r.checkIn > d.today ? 0.5 : 0), node: <Row dot={((idOpen || depOpen) && r.today) || relDue || r.idStatus === 'check' ? 'rose' : null} title={r.guest + ' · ' + r.unit}
+      out.push({ key: 'gc:' + r.reservationId, state: !short && !relDue ? 'done' : r.idStatus === 'check' ? 'check' : depOpen || relDue ? 'deposit' : 'id', sort: (!short && !relDue ? 9 : r.idStatus === 'check' ? 0 : r.today || relDue ? 0 : 2) + (r.checkIn > d.today ? 0.5 : 0), node: <Row dot={(short && r.today) || relDue || r.idStatus === 'check' ? 'rose' : null} title={<button onClick={() => setGcOpen(gcOpen === r.reservationId ? '' : r.reservationId)} className="text-left hover:text-brand-700 hover:underline" title="Show the booking, the ID, selfie and check-in form">{r.guest + ' · ' + r.unit}</button>}
         tags={<><Tag>{r.channel}</Tag><Tag tone={r.today ? 'amber' : 'slate'}>{r.today ? 'arrives today' : r.inHouse ? 'in-house' : 'arrives ' + r.checkIn.slice(5)}</Tag>
-          <IdTag r={r} />
+          <Checklist r={r} />
+          {r.idStatus !== 'pending' && <IdTag r={r} />}
           {r.needDeposit && <Tag tone={r.depositStatus === 'pending' ? (r.depositScheduled ? 'sky' : 'amber') : relDue ? 'rose' : 'emerald'} title={r.depositAuto ? 'A security deposit on the booking in Guesty' : r.depositScheduled ? 'Guesty places the hold' + (r.depositScheduled.due ? ' on ' + at(r.depositScheduled.due) : ' before arrival') + ' — nothing to do unless it fails' : undefined}>{r.depositStatus === 'captured' ? 'deposit ' + (r.depositAmount != null ? '$' + Math.round(r.depositAmount).toLocaleString() : 'held') + (r.depositAuto ? ' · Guesty' : '') + (r.depositCapturedAt ? ' · ' + at(r.depositCapturedAt) : '') + (relDue ? ' · RELEASE DUE' : '') : r.depositStatus === 'released' ? 'deposit released' : r.depositStatus === 'claimed' ? 'deposit claimed' : r.depositStatus === 'waived' ? 'deposit waived' : r.depositScheduled ? 'deposit scheduled in Guesty · $' + Math.round(r.depositScheduled.amount).toLocaleString() : 'deposit to collect' + (r.depositDue ? ' · $' + r.depositDue : '')}</Tag>}</>}
         meta={[r.idName ? 'ID: ' + r.idName : '', r.note, r.by ? 'by ' + String(r.by).split('@')[0] : ''].filter(Boolean).join(' · ')}
         actions={<>
@@ -510,9 +516,13 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
           {canEdit && depOpen && <Link href="/welcome-calls?tab=checks" className={DARK}><Check size={12} /> Deposit…</Link>}
           {canEdit && relDue && <button onClick={() => setCheck(r.reservationId, { deposit_status: 'released' })} disabled={!!gcBusy} className={DARK}><Check size={12} /> Released</button>}
           {canEdit && depOpen && <button onClick={() => setCheck(r.reservationId, { deposit_status: 'waived' })} disabled={!!gcBusy} className={GHOST} title="No deposit for this stay">Waive deposit</button>}
+          <button onClick={() => setGcOpen(gcOpen === r.reservationId ? '' : r.reservationId)} className={gcOpen === r.reservationId ? DARK : GHOST} title="The booking, the ID, selfie and check-in form">Details</button>
+          <a href={r.guestyUrl} target="_blank" rel="noreferrer" className={GHOST} title="Open this reservation in Guesty">Guesty</a>
           <Link href="/welcome-calls?tab=checks" className={GHOST} title="The ID & deposits desk">Desk</Link>
         </>}>
         <IdCheckWhy r={r} />
+        <ThreadThumbs r={r} onOpen={openUrl} />
+        {gcOpen === r.reservationId && <CheckDetails r={r} onOpen={openUrl} />}
         {gcByHand === r.reservationId && canEdit && <ByHandStrip r={r} busy={b} ghost={GHOST} dark={DARK} field="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-brand-400" onClose={() => setGcByHand('')} onPatch={async (patch) => { await setCheck(r.reservationId, patch); setGcByHand('') }} />}
       </Row> })
     }
@@ -522,7 +532,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     if (open === 'recovery' && rc) for (const r of rc.rows.filter(x => x.today)) out.push({ key: r.kind + r.id, state: r.done ? 'done' : 'open', sort: r.done ? 9 : r.today ? 0 : 2, node: <DayCallRowView r={r} canLog={can.calls || !!calls?.canEdit} callers={calls?.callers || []} onChanged={changed} /> })
     return out.sort((a, b) => a.sort - b.sort)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, d, teamRead.length, calls, roster, can.assign, can.plan, can.calls, unpaidQ.data, unpaidPatch, ckQ.data, ckBusy, rvQ.data, ntQ.data, ntBusy, gcQ.data, gcBusy, blQ.data, chQ.data])
+  }, [open, d, teamRead.length, calls, roster, can.assign, can.plan, can.calls, unpaidQ.data, unpaidPatch, ckQ.data, ckBusy, rvQ.data, ntQ.data, ntBusy, gcQ.data, gcBusy, gcOpen, gcByHand, blQ.data, chQ.data])
 
   const tile = tiles.find(x => x.key === open) || null
   const chips = tile ? tile.segs.filter(s => s.n > 0) : []

@@ -29,6 +29,7 @@ import { guestVerifyUrl } from '@/lib/guest-verify-token'
 import { atLeast } from '@/lib/features'
 import { depositFromMoney, guestyVerifiedFlag, type NameMatch } from '@/lib/guest-id-match'
 import { verifiedFieldId, syncGuestyVerified, recheckRow, upsertGuestCheck } from '@/lib/guest-id-check'
+import { readCif, sweepCif, cifSummary } from '@/lib/guest-cif'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
@@ -60,6 +61,8 @@ export type GuestCheckRow = {
    *  $350 deposit"). Each says whether we have it and where it came from; `complete` is all three
    *  that this booking's channel asks for. Anything short of that is "To verify". */
   checklist: { id: { ok: boolean; how: string }; selfie: { ok: boolean; how: string }; deposit: { ok: boolean; how: string }; complete: boolean }
+  /** Guesty's Guest App check-in form: found = completed (its summary file can be opened); null = not asked yet. */
+  checkInForm: { found: boolean; at: string; filename: string | null } | null
   guestyUrl: string
 }
 const str = (v: any) => (v == null ? '' : String(v))
@@ -130,6 +133,8 @@ export async function GET(req: NextRequest) {
       }
     } catch { /* the row still renders without them */ }
 
+    const cif = await readCif().catch(() => ({} as Record<string, any>))
+
     // Migration 158 adds the reading columns. Before it runs, nothing can be remembered about a read,
     // so nothing is queued to be read (else every load would pay for the same three photos again).
     const checkRows = Object.values(checks)
@@ -176,14 +181,16 @@ export async function GET(req: NextRequest) {
         depositReleaseDue: c.deposit_release_due || (autoDep && autoDep.status === 'held' ? addDays(co, p.rule.releaseDays || 0) : null), depositReleasedAt: c.deposit_released_at || null,
         depositAuto: !!autoDep, depositScheduled: scheduled,
         note: c.note || null, by: c.updated_by || null, updatedAt: c.updated_at || null,
-        threadPhotos: [] as GuestCheckRow['threadPhotos'], checklist: null as any, guestyUrl: 'https://app.guesty.com/reservations/' + encodeURIComponent(str(r.id)) + '/summary',
+        threadPhotos: [] as GuestCheckRow['threadPhotos'], checklist: null as any, checkInForm: null, guestyUrl: 'https://app.guesty.com/reservations/' + encodeURIComponent(str(r.id)) + '/summary',
       }
     }).map(row => {
+      const cf = (cif as any)[row.reservationId]
+      row.checkInForm = cf ? { found: !!cf.found, at: str(cf.at), filename: cf.filename || null } : null
       const tp = (photosBy[row.reservationId] || []).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 6)
       row.threadPhotos = canEdit ? tp : tp.map(p => ({ ...p, url: null }))
       const vByHand = row.idStatus === 'verified' && row.idMethod && ['manual', 'message', 'platform'].indexOf(String(row.idMethod)) >= 0
       const how = (photo: boolean): string =>
-        photo ? 'Lighthouse link' : tp.length ? 'photo on the thread' : row.salatoVerified ? 'Salato iPad'
+        photo ? 'Lighthouse link' : row.checkInForm?.found ? 'Guesty check-in form' : tp.length ? 'photo on the thread' : row.salatoVerified ? 'Salato iPad'
           : row.idStatus === 'waived' ? 'waived' : vByHand ? 'verified by hand' : row.guestyVerified || row.idMethod === 'guesty' ? 'ticked Verified in Guesty' : ''
       const idHow = how(row.hasIdPhoto), selfieHow = how(row.hasSelfie)
       const dep = row.depositStatus
@@ -231,6 +238,22 @@ export async function POST(req: NextRequest) {
   // their ID. A guest's reply only reaches the mirror when its thread is refreshed, so the desk asks
   // for the threads of the next arrivals still missing their photos to be pulled from Guesty live.
   //   { threadSweep: true, ids: [...] } → up to 8 · { reservationId, pullThread: true } → that one
+  // THE CHECK-IN FORM: { cifSweep: true, ids: [{id, checkOut}] } checks up to 10 bookings' Guest App
+  // forms; { reservationId, cifView: true } returns a fresh link to the completed form (logged).
+  if (b.cifSweep === true) {
+    const ids = (Array.isArray(b.ids) ? b.ids : []).map((x: any) => typeof x === 'string' ? { id: x } : { id: str(x?.id), checkOut: str(x?.checkOut) || null }).filter((x: any) => x.id)
+    try { return NextResponse.json({ ok: true, ...(await sweepCif(ids, 10)) }) } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 }) }
+  }
+  if (b.cifView === true) {
+    const rid0 = str(b.reservationId)
+    try {
+      const r = await cifSummary(rid0)
+      if (!r.found || !r.url) return NextResponse.json({ ok: false, error: 'The guest has not completed the check-in form yet.' }, { status: 404 })
+      try { const { logAccess } = await import('@/lib/vault'); await logAccess({ email: me, action: 'guest_id_view', detail: 'check-in form · reservation ' + rid0, ip: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null }) } catch { /* the view still works */ }
+      return NextResponse.json({ ok: true, url: r.url, filename: r.filename })
+    } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 }) }
+  }
+
   if (b.threadSweep === true || b.pullThread === true) {
     const want: string[] = (b.pullThread === true ? [str(b.reservationId)] : (Array.isArray(b.ids) ? b.ids : []).map(str)).filter(Boolean).slice(0, 8)
     const { data: convs } = want.length ? await db.from('guesty_conversations').select('id,reservation_id').in('reservation_id', want) : { data: [] as any[] }
