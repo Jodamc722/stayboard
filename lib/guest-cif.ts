@@ -11,9 +11,10 @@
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guestyGet } from '@/lib/guesty'
+import { createHash } from 'crypto'
 
 // v2 (2026-10-24): v1 counted any answer as a completed form; only a summary FILE counts now.
-export const CIF_KEY = 'cif_state_v4'
+export const CIF_KEY = 'cif_state_v5'
 export const CIF_RECHECK_HOURS = 3
 export type CifState = Record<string, { found: boolean; at: string; filename?: string | null; checkOut?: string | null; photos?: number }>
 
@@ -68,8 +69,15 @@ export function jpegSize(b: Buffer): { w: number; h: number } | null {
   return null
 }
 
-/** The form's own artwork is a wide banner (the STAY logo); a guest's photo is a photo shape. */
-const isArtwork = (j: Buffer) => { const d = jpegSize(j); return !!d && d.h > 0 && (d.w / d.h > 2.2 || d.h / d.w > 3) }
+/**
+ * The form's own artwork, which is a JPEG too: the STAY logo at the top of every form (the same bytes
+ * in every booking's PDF — first 16 hex of its SHA-256 below, seen 2026-10-24). Plus any banner shape.
+ */
+const ARTWORK = new Set(['46682246455cc98b'])
+const isArtwork = (j: Buffer) => {
+  if (ARTWORK.has(createHash('sha256').update(j).digest('hex').slice(0, 16))) return true
+  const d = jpegSize(j); return !!d && d.h > 0 && (d.w / d.h > 2.2 || d.h / d.w > 3)
+}
 
 export function extractJpegs(buf: Buffer): Buffer[] {
   const t = buf.toString('latin1')
