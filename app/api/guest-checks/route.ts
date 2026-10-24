@@ -248,9 +248,9 @@ export async function POST(req: NextRequest) {
     const rid0 = str(b.reservationId)
     try {
       const r = await cifSummary(rid0)
-      if (!r.found || !r.url) return NextResponse.json({ ok: false, error: 'The guest has not completed the check-in form yet.' }, { status: 404 })
+      if (!r.found || !r.url) return NextResponse.json({ ok: false, error: 'The guest has not completed the check-in form yet.', shape: r.shape || null }, { status: 404 })
       try { const { logAccess } = await import('@/lib/vault'); await logAccess({ email: me, action: 'guest_id_view', detail: 'check-in form · reservation ' + rid0, ip: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null }) } catch { /* the view still works */ }
-      return NextResponse.json({ ok: true, url: r.url, filename: r.filename })
+      return NextResponse.json({ ok: true, url: r.url, filename: r.filename, shape: r.shape || null })
     } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 }) }
   }
 

@@ -12,7 +12,8 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guestyGet } from '@/lib/guesty'
 
-export const CIF_KEY = 'cif_state'
+// v2 (2026-10-24): v1 counted any answer as a completed form; only a summary FILE counts now.
+export const CIF_KEY = 'cif_state_v2'
 export const CIF_RECHECK_HOURS = 3
 export type CifState = Record<string, { found: boolean; at: string; filename?: string | null; checkOut?: string | null }>
 
@@ -35,12 +36,14 @@ async function writeCif(s: CifState): Promise<void> {
 }
 
 /** Ask Guesty for the completed form. found=false on a 404 (not completed); throws on anything else. */
-export async function cifSummary(reservationId: string): Promise<{ found: boolean; url: string | null; filename: string | null }> {
+export async function cifSummary(reservationId: string): Promise<{ found: boolean; url: string | null; filename: string | null; shape?: string }> {
   try {
     const v: any = await guestyGet('/guest-app-api/guest-app-runtime/' + encodeURIComponent(reservationId) + '/module/check_in/summary')
     const d = v?.data && typeof v.data === 'object' ? v.data : v
     const url = str(d?.url || d?.fileUrl || d?.link || d?.summaryUrl) || null
-    return { found: !!(url || d), url, filename: str(d?.filename || d?.fileName || d?.name) || null }
+    // A completed form is a FILE. An answer with no link (an empty or unfinished form) is not one.
+    const shape = d && typeof d === 'object' ? JSON.stringify(Object.fromEntries(Object.entries(d).map(([k, v]) => [k, typeof v === 'string' ? (/^https?:/.test(v) ? '<url>' : v.slice(0, 60)) : typeof v]))).slice(0, 400) : typeof d
+    return { found: !!url, url, filename: str(d?.filename || d?.fileName || d?.name) || null, shape }
   } catch (e: any) {
     if (/\b404\b|not ?found/i.test(String(e?.message || e))) return { found: false, url: null, filename: null }
     throw e
