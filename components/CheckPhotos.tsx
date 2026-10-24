@@ -44,7 +44,7 @@ export function ThreadThumbs({ r, onOpen, size = 44 }: { r: GuestCheckRow; onOpe
       {fp ? <span className="text-[11px] text-muted">Check-in form:</span> : null}
       {Array.from({ length: fp }).map((_, i) => {
         const src = API + '/form?rid=' + encodeURIComponent(r.reservationId) + '&img=' + i
-        return <button key={'f' + i} onClick={() => onOpen(src, r.guest + ' — check-in form ' + (i === 0 ? 'ID' : i === 1 ? 'selfie' : 'photo ' + (i + 1)))} title={i === 0 ? 'ID' : i === 1 ? 'Selfie' : 'Photo'} className="rounded-lg overflow-hidden border border-line hover:ring-2 hover:ring-brand-300"><img src={src} alt="" style={{ width: size, height: size }} className="object-cover block" loading="lazy" /></button>
+        return <button key={'f' + i} onClick={() => onOpen(src, r.guest + ' — check-in form photo ' + (i + 1))} title={'Check-in form photo ' + (i + 1)} className="rounded-lg overflow-hidden border border-line hover:ring-2 hover:ring-brand-300"><img src={src} alt="" style={{ width: size, height: size }} className="object-cover block" loading="lazy" /></button>
       })}
       {ps.length ? null : null}
       {ps.length ? <span className="text-[11px] text-muted">Sent on the thread:</span> : null}
@@ -101,7 +101,7 @@ export function CheckDetails({ r, onOpen }: { r: GuestCheckRow; onOpen: (url: st
         <div className="flex items-start gap-3 flex-wrap">
           {Array.from({ length: Math.min(r.checkInForm.photos, 4) }).map((_, i) => {
             const src = API + '/form?rid=' + encodeURIComponent(r.reservationId) + '&img=' + i
-            const label = 'Check-in form · ' + (i === 0 ? 'ID' : i === 1 ? 'Selfie' : 'Photo ' + (i + 1))
+            const label = 'Check-in form · photo ' + (i + 1)
             return (
               <figure key={i} className="flex flex-col gap-1">
                 <figcaption className="text-[10.5px] font-bold uppercase tracking-wider text-muted">{label}</figcaption>

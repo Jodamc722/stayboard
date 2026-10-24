@@ -189,7 +189,7 @@ export async function GET(req: NextRequest) {
       const tp = (photosBy[row.reservationId] || []).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 6)
       row.threadPhotos = canEdit ? tp : tp.map(p => ({ ...p, url: null }))
       const vByHand = row.idStatus === 'verified' && row.idMethod && ['manual', 'message', 'platform'].indexOf(String(row.idMethod)) >= 0
-      // The form counts only for the photos actually in it: the first upload is the ID, the second the selfie.
+      // The form counts only for the photos actually in it: one photo covers the ID; two cover the ID and the selfie (the order the guest uploads them in varies).
       const formPhotos = row.checkInForm?.found ? row.checkInForm.photos : 0
       const how = (photo: boolean, nth: number): string =>
         photo ? 'Lighthouse link' : formPhotos >= nth ? 'Guesty check-in form (photo)' : tp.length ? 'photo on the thread' : row.salatoVerified ? 'Salato iPad'

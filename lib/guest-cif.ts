@@ -13,7 +13,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guestyGet } from '@/lib/guesty'
 
 // v2 (2026-10-24): v1 counted any answer as a completed form; only a summary FILE counts now.
-export const CIF_KEY = 'cif_state_v3'
+export const CIF_KEY = 'cif_state_v4'
 export const CIF_RECHECK_HOURS = 3
 export type CifState = Record<string, { found: boolean; at: string; filename?: string | null; checkOut?: string | null; photos?: number }>
 
@@ -55,6 +55,22 @@ export async function cifSummary(reservationId: string): Promise<{ found: boolea
  * as JPEG streams (/DCTDecode); the form's own artwork (header, logo, signature box) is not JPEG.
  * A DCT stream's bytes ARE the JPEG file, so they are cut out as-is: no PDF library, no re-encoding.
  */
+/** Width × height off a JPEG's frame header (SOF0–SOF15, not DHT/JPG/DAC). */
+export function jpegSize(b: Buffer): { w: number; h: number } | null {
+  let i = 2
+  while (i + 9 < b.length) {
+    if (b[i] !== 0xff) { i++; continue }
+    const m = b[i + 1]
+    if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) }
+    if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue }
+    i += 2 + b.readUInt16BE(i + 2)
+  }
+  return null
+}
+
+/** The form's own artwork is a wide banner (the STAY logo); a guest's photo is a photo shape. */
+const isArtwork = (j: Buffer) => { const d = jpegSize(j); return !!d && d.h > 0 && (d.w / d.h > 2.2 || d.h / d.w > 3) }
+
 export function extractJpegs(buf: Buffer): Buffer[] {
   const t = buf.toString('latin1')
   const out: Buffer[] = []
@@ -71,7 +87,7 @@ export function extractJpegs(buf: Buffer): Buffer[] {
     let z = e
     while (z > a && (t[z - 1] === '\n' || t[z - 1] === '\r')) z--
     const jpg = buf.subarray(a, z)
-    if (jpg.length > 2000 && jpg[0] === 0xff && jpg[1] === 0xd8) out.push(Buffer.from(jpg))
+    if (jpg.length > 2000 && jpg[0] === 0xff && jpg[1] === 0xd8 && !isArtwork(jpg)) out.push(Buffer.from(jpg))
     re.lastIndex = e
   }
   return out
