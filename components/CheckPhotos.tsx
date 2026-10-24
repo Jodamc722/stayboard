@@ -43,7 +43,7 @@ export function ThreadThumbs({ r, onOpen, size = 44 }: { r: GuestCheckRow; onOpe
     <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
       {fp ? <span className="text-[11px] text-muted">Check-in form:</span> : null}
       {Array.from({ length: fp }).map((_, i) => {
-        const src = API + '/form?rid=' + encodeURIComponent(r.reservationId) + '&img=' + i
+        const src = API + '/form?rid=' + encodeURIComponent(r.reservationId) + '&img=' + i + '&v=' + encodeURIComponent(r.checkInForm?.at || '')
         return <button key={'f' + i} onClick={() => onOpen(src, r.guest + ' — check-in form photo ' + (i + 1))} title={'Check-in form photo ' + (i + 1)} className="rounded-lg overflow-hidden border border-line hover:ring-2 hover:ring-brand-300"><img src={src} alt="" style={{ width: size, height: size }} className="object-cover block" loading="lazy" /></button>
       })}
       {ps.length ? null : null}
@@ -100,7 +100,7 @@ export function CheckDetails({ r, onOpen }: { r: GuestCheckRow; onOpen: (url: st
       {r.checkInForm?.found && r.checkInForm.photos > 0 ? (
         <div className="flex items-start gap-3 flex-wrap">
           {Array.from({ length: Math.min(r.checkInForm.photos, 4) }).map((_, i) => {
-            const src = API + '/form?rid=' + encodeURIComponent(r.reservationId) + '&img=' + i
+            const src = API + '/form?rid=' + encodeURIComponent(r.reservationId) + '&img=' + i + '&v=' + encodeURIComponent(r.checkInForm?.at || '')
             const label = 'Check-in form · photo ' + (i + 1)
             return (
               <figure key={i} className="flex flex-col gap-1">

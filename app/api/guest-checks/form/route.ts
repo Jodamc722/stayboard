@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
       const jpg = f.jpegs[n]
       if (!jpg) return NextResponse.json({ ok: false, error: 'No photo ' + (n + 1) + ' in this form.' }, { status: 404 })
       try { await logAccess({ email: String(g.access.email || ''), action: 'guest_id_view', detail: 'check-in form photo ' + (n + 1) + ' · reservation ' + rid, ip }) } catch { /* the view still works */ }
-      return new NextResponse(new Uint8Array(jpg), { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=600' } })
+      return new NextResponse(new Uint8Array(jpg), { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, no-store' } })
     }
     try { await logAccess({ email: String(g.access.email || ''), action: 'guest_id_view', detail: 'check-in form · reservation ' + rid, ip }) } catch { /* the view still works */ }
     const name = (f.filename || 'check-in-form.pdf').replace(/[^\w.\- $]/g, '_')
