@@ -71,18 +71,10 @@ function SignedPhoto({ rid, which, label, onOpen }: { rid: string; which: 'id' |
 }
 
 export function CheckDetails({ r, onOpen }: { r: GuestCheckRow; onOpen: (url: string, title: string, isPdf?: boolean) => void }) {
+  // The form is served through Lighthouse as an inline PDF (Guesty's link is a download a frame can't show).
   const [form, setForm] = useState<{ url: string; filename: string | null } | null>(null)
-  const [formErr, setFormErr] = useState('')
-  const [formBusy, setFormBusy] = useState(false)
-  const openForm = async () => {
-    setFormBusy(true); setFormErr('')
-    try {
-      const j = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId: r.reservationId, cifView: true }) }).then(x => x.json())
-      if (!j.ok) throw new Error(j.error || 'No form.')
-      setForm({ url: j.url, filename: j.filename || null })
-    } catch (e: any) { setFormErr(String(e?.message || e)) }
-    setFormBusy(false)
-  }
+  const formErr = '', formBusy = false
+  const openForm = () => setForm({ url: API + '/form?rid=' + encodeURIComponent(r.reservationId) + '&t=' + Date.now(), filename: null })
   // A completed form opens by itself — it is usually where the ID and selfie are.
   useEffect(() => { if (r.checkInForm?.found) openForm() }, [r.reservationId]) // eslint-disable-line react-hooks/exhaustive-deps
   const big = (r.threadPhotos || []).filter(p => p.url && !/pdf/.test(p.type))
