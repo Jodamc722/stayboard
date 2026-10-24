@@ -62,7 +62,7 @@ export type GuestCheckRow = {
    *  that this booking's channel asks for. Anything short of that is "To verify". */
   checklist: { id: { ok: boolean; how: string }; selfie: { ok: boolean; how: string }; deposit: { ok: boolean; how: string }; complete: boolean }
   /** Guesty's Guest App check-in form: found = completed (its summary file can be opened); null = not asked yet. */
-  checkInForm: { found: boolean; at: string; filename: string | null } | null
+  checkInForm: { found: boolean; at: string; filename: string | null; photos: number } | null
   guestyUrl: string
 }
 const str = (v: any) => (v == null ? '' : String(v))
@@ -185,14 +185,16 @@ export async function GET(req: NextRequest) {
       }
     }).map(row => {
       const cf = (cif as any)[row.reservationId]
-      row.checkInForm = cf ? { found: !!cf.found, at: str(cf.at), filename: cf.filename || null } : null
+      row.checkInForm = cf ? { found: !!cf.found, at: str(cf.at), filename: cf.filename || null, photos: Number(cf.photos) || 0 } : null
       const tp = (photosBy[row.reservationId] || []).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 6)
       row.threadPhotos = canEdit ? tp : tp.map(p => ({ ...p, url: null }))
       const vByHand = row.idStatus === 'verified' && row.idMethod && ['manual', 'message', 'platform'].indexOf(String(row.idMethod)) >= 0
-      const how = (photo: boolean): string =>
-        photo ? 'Lighthouse link' : row.checkInForm?.found ? 'Guesty check-in form' : tp.length ? 'photo on the thread' : row.salatoVerified ? 'Salato iPad'
+      // The form counts only for the photos actually in it: the first upload is the ID, the second the selfie.
+      const formPhotos = row.checkInForm?.found ? row.checkInForm.photos : 0
+      const how = (photo: boolean, nth: number): string =>
+        photo ? 'Lighthouse link' : formPhotos >= nth ? 'Guesty check-in form (photo)' : tp.length ? 'photo on the thread' : row.salatoVerified ? 'Salato iPad'
           : row.idStatus === 'waived' ? 'waived' : vByHand ? 'verified by hand' : row.guestyVerified || row.idMethod === 'guesty' ? 'ticked Verified in Guesty' : ''
-      const idHow = how(row.hasIdPhoto), selfieHow = how(row.hasSelfie)
+      const idHow = how(row.hasIdPhoto, 1), selfieHow = how(row.hasSelfie, 2)
       const dep = row.depositStatus
       const depHow = row.depositAuto ? 'Guesty security deposit' : dep === 'captured' || dep === 'claimed' || dep === 'released' ? (row.depositMethod ? 'captured · ' + row.depositMethod : 'captured') : dep === 'waived' ? 'waived' : row.depositScheduled ? 'scheduled in Guesty, not held yet' : ''
       const depOk = dep !== 'pending'

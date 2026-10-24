@@ -13,9 +13,9 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guestyGet } from '@/lib/guesty'
 
 // v2 (2026-10-24): v1 counted any answer as a completed form; only a summary FILE counts now.
-export const CIF_KEY = 'cif_state_v2'
+export const CIF_KEY = 'cif_state_v3'
 export const CIF_RECHECK_HOURS = 3
-export type CifState = Record<string, { found: boolean; at: string; filename?: string | null; checkOut?: string | null }>
+export type CifState = Record<string, { found: boolean; at: string; filename?: string | null; checkOut?: string | null; photos?: number }>
 
 const str = (v: any) => (v == null ? '' : String(v))
 
@@ -50,17 +50,54 @@ export async function cifSummary(reservationId: string): Promise<{ found: boolea
   }
 }
 
+/**
+ * THE PHOTOS INSIDE THE FORM. The summary PDF embeds what the guest uploaded — the ID and the selfie —
+ * as JPEG streams (/DCTDecode); the form's own artwork (header, logo, signature box) is not JPEG.
+ * A DCT stream's bytes ARE the JPEG file, so they are cut out as-is: no PDF library, no re-encoding.
+ */
+export function extractJpegs(buf: Buffer): Buffer[] {
+  const t = buf.toString('latin1')
+  const out: Buffer[] = []
+  const re = /\/Filter\s*(?:\[\s*)?\/DCTDecode/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(t)) && out.length < 12) {
+    const st = t.indexOf('stream', m.index)
+    if (st < 0) break
+    let a = st + 6
+    if (t[a] === '\r') a++
+    if (t[a] === '\n') a++
+    const e = t.indexOf('endstream', a)
+    if (e < 0) break
+    let z = e
+    while (z > a && (t[z - 1] === '\n' || t[z - 1] === '\r')) z--
+    const jpg = buf.subarray(a, z)
+    if (jpg.length > 2000 && jpg[0] === 0xff && jpg[1] === 0xd8) out.push(Buffer.from(jpg))
+    re.lastIndex = e
+  }
+  return out
+}
+
+/** The completed form's PDF and the photos in it. null = no completed form. */
+export async function cifFetch(reservationId: string): Promise<{ pdf: Buffer; jpegs: Buffer[]; filename: string | null } | null> {
+  const s = await cifSummary(reservationId)
+  if (!s.found || !s.url) return null
+  const r = await fetch(s.url, { cache: 'no-store' })
+  if (!r.ok) throw new Error('Guesty would not hand over the form (' + r.status + ').')
+  const pdf = Buffer.from(await r.arrayBuffer())
+  return { pdf, jpegs: extractJpegs(pdf), filename: s.filename }
+}
+
 /** Check up to `max` bookings' forms (skipping ones found, or asked recently) and remember the answers. */
-export async function sweepCif(ids: { id: string; checkOut?: string | null }[], max = 10): Promise<{ checked: number; found: number; errors: number }> {
+export async function sweepCif(ids: { id: string; checkOut?: string | null }[], max = 8): Promise<{ checked: number; found: number; errors: number }> {
   const s = await readCif()
   const fresh = Date.now() - CIF_RECHECK_HOURS * 3600_000
   const todo = ids.filter(x => { const v = s[x.id]; return !v || (!v.found && Date.parse(v.at) < fresh) }).slice(0, max)
   let found = 0, errors = 0
   for (const x of todo) {
     try {
-      const r = await cifSummary(x.id)
-      s[x.id] = { found: r.found, at: new Date().toISOString(), filename: r.filename, checkOut: x.checkOut || null }
-      if (r.found) found++
+      const f = await cifFetch(x.id)
+      s[x.id] = { found: !!f, at: new Date().toISOString(), filename: f?.filename || null, checkOut: x.checkOut || null, photos: f ? f.jpegs.length : 0 }
+      if (f) found++
     } catch { errors++ }
   }
   if (todo.length) await writeCif(s)

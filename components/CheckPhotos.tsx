@@ -30,17 +30,24 @@ export function Checklist({ r }: { r: GuestCheckRow }) {
       {item('ID', c.id, r.needId)}
       {item('Selfie', c.selfie, r.needId)}
       {item(r.depositDue ? '$' + r.depositDue : 'Deposit', c.deposit, r.needDeposit)}
-      {r.checkInForm?.found ? <span title={'Guesty check-in form completed' + (r.checkInForm.filename ? ' — ' + r.checkInForm.filename : '')} className="inline-flex items-center gap-0.5 text-[10.5px] font-semibold px-1.5 py-[3px] rounded-md bg-sky-50 text-sky-700"><FileText size={10} />Form</span> : null}
+      {r.checkInForm?.found ? <span title={'Guesty check-in form completed · ' + (r.checkInForm.photos || 0) + ' photo(s) in it' + (r.checkInForm.filename ? ' — ' + r.checkInForm.filename : '')} className="inline-flex items-center gap-0.5 text-[10.5px] font-semibold px-1.5 py-[3px] rounded-md bg-sky-50 text-sky-700"><FileText size={10} />Form</span> : null}
     </span>
   )
 }
 
 export function ThreadThumbs({ r, onOpen, size = 44 }: { r: GuestCheckRow; onOpen: (url: string, title: string, isPdf?: boolean) => void; size?: number }) {
   const ps = (r.threadPhotos || []).filter(p => p.url)
-  if (!ps.length) return null
+  const fp = r.checkInForm?.found ? Math.min(r.checkInForm.photos || 0, 4) : 0
+  if (!ps.length && !fp) return null
   return (
     <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-      <span className="text-[11px] text-muted">Sent on the thread:</span>
+      {fp ? <span className="text-[11px] text-muted">Check-in form:</span> : null}
+      {Array.from({ length: fp }).map((_, i) => {
+        const src = API + '/form?rid=' + encodeURIComponent(r.reservationId) + '&img=' + i
+        return <button key={'f' + i} onClick={() => onOpen(src, r.guest + ' — check-in form ' + (i === 0 ? 'ID' : i === 1 ? 'selfie' : 'photo ' + (i + 1)))} title={i === 0 ? 'ID' : i === 1 ? 'Selfie' : 'Photo'} className="rounded-lg overflow-hidden border border-line hover:ring-2 hover:ring-brand-300"><img src={src} alt="" style={{ width: size, height: size }} className="object-cover block" loading="lazy" /></button>
+      })}
+      {ps.length ? null : null}
+      {ps.length ? <span className="text-[11px] text-muted">Sent on the thread:</span> : null}
       {ps.map((p, i) => /pdf/.test(p.type)
         ? <button key={i} onClick={() => onOpen(p.url as string, r.guest + ' — file sent ' + at(p.at), true)} className={BTN}><FileText size={12} /> PDF · {at(p.at)}</button>
         : <button key={i} onClick={() => onOpen(p.url as string, r.guest + ' — photo sent ' + at(p.at))} title={'Sent ' + at(p.at)} className="rounded-lg overflow-hidden border border-line hover:ring-2 hover:ring-brand-300">
@@ -90,6 +97,20 @@ export function CheckDetails({ r, onOpen }: { r: GuestCheckRow; onOpen: (url: st
           ))}
         </div>
       )}
+      {r.checkInForm?.found && r.checkInForm.photos > 0 ? (
+        <div className="flex items-start gap-3 flex-wrap">
+          {Array.from({ length: Math.min(r.checkInForm.photos, 4) }).map((_, i) => {
+            const src = API + '/form?rid=' + encodeURIComponent(r.reservationId) + '&img=' + i
+            const label = 'Check-in form · ' + (i === 0 ? 'ID' : i === 1 ? 'Selfie' : 'Photo ' + (i + 1))
+            return (
+              <figure key={i} className="flex flex-col gap-1">
+                <figcaption className="text-[10.5px] font-bold uppercase tracking-wider text-muted">{label}</figcaption>
+                <button onClick={() => onOpen(src, r.guest + ' — ' + label)} className="rounded-xl overflow-hidden border border-line hover:ring-2 hover:ring-brand-300"><img src={src} alt="" className="h-48 w-auto object-cover block" /></button>
+              </figure>
+            )
+          })}
+        </div>
+      ) : null}
       {(r.hasIdPhoto || r.hasSelfie || big.length) ? (
         <div className="flex items-start gap-3 flex-wrap">
           {r.hasIdPhoto && <SignedPhoto rid={r.reservationId} which="id" label="ID (Lighthouse link)" onOpen={onOpen} />}
@@ -101,7 +122,7 @@ export function CheckDetails({ r, onOpen }: { r: GuestCheckRow; onOpen: (url: st
             </figure>
           ))}
         </div>
-      ) : <p className="text-[12px] text-muted">No ID or selfie photo has come in — not through our link, and nothing on the message thread.</p>}
+      ) : !(r.checkInForm?.found && r.checkInForm.photos) ? <p className="text-[12px] text-muted">No ID or selfie photo has come in — not on the check-in form, not through our link, and nothing on the message thread.</p> : null}
 
       <div>
         <div className="flex items-center gap-2 flex-wrap">
