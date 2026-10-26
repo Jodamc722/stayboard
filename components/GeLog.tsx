@@ -366,7 +366,11 @@ export default function GeLog({ date }: { date: string }) {
       if (r.kind === 'log') logs++
       fee += r.fee || 0; hrs += r.cleanHours || 0; pay += r.payout || 0
       if (r.status === 'done') done++
-      if (!r.person) nobody++
+      // A VENDOR CLEAN HAS NOBODY OF OURS ON IT BY DESIGN — the building's own staff do it, and
+      // there is no decision for anyone here to make. Counting it as "unassigned" put a red number
+      // in the header that the Unassigned section below could not account for, because that
+      // section rightly leaves vendor work out. The count and the section now mean one thing.
+      if (!r.person && !r.vendor) nobody++
       if (r.kind === 'glitch') gl++
     }
     return { fee, hrs, pay, done, nobody, gl, logs, n: rows.length }
