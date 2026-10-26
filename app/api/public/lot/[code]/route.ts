@@ -20,7 +20,8 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 const bad = (error: string, status = 400) => NextResponse.json({ ok: false, error }, { status })
-const passOk = (lot: { passcode: string | null }, given: string) => !lot.passcode || String(given || '').trim() === String(lot.passcode).trim()
+// Case-insensitive on purpose: phones capitalise the first letter, and "Eden!" typed as "EDEN!" is the same person.
+const passOk = (lot: { passcode: string | null }, given: string) => !lot.passcode || String(given || '').trim().toLowerCase() === String(lot.passcode).trim().toLowerCase()
 // The staff name travels with every write, so the record says who stood in the lot.
 const byOf = (name: any) => (String(name || '').replace(/\s+/g, ' ').trim().slice(0, 60) || 'staff') + ' (lot link)'
 

@@ -86,7 +86,7 @@ export function LotSweep({ code }: { code: string }) {
   if (needsPass) return (
     <Frame title={label}>
       <p className="text-[15px] text-neutral-700 mb-3">This lot link has a passcode.</p>
-      <input autoFocus type="password" inputMode="numeric" value={pass} onChange={e => setPass(e.target.value)} onKeyDown={e => e.key === 'Enter' && load(pass)} placeholder="Passcode" className={field} />
+      <input autoFocus type="password" autoCapitalize="none" autoCorrect="off" value={pass} onChange={e => setPass(e.target.value)} onKeyDown={e => e.key === 'Enter' && load(pass)} placeholder="Passcode" className={field} />
       <button onClick={() => load(pass)} className={big() + ' w-full mt-3'}>Open</button>
       {err && <p className="mt-2 text-[13px] text-rose-700">{err}</p>}
     </Frame>
