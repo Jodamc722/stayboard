@@ -152,8 +152,11 @@ export const DESKS: Desk[] = [
   },
   {
     key: 'admin', label: 'Admin',
-    blurb: 'People and roles, settings, system health, share links, the vault and API keys.',
+    blurb: 'The admin desk — listings, channels, reviews, photos and blocks that need an administrator — plus people and roles, settings, system health, share links, the vault and API keys.',
     views: [
+      // The administrator's working page comes first (Jon, 2026-10-26: "a full admin dashboard page
+      // that directs our administrator").
+      { to: '/admin', label: 'Admin desk', hint: 'What needs an administrator today: listings not for sale or not connected, reply owed, optimization and photo work, blocked units — and the review report' },
       { to: '/users', label: 'Users & admin', hint: 'People, roles and every setting' },
       { to: '/system-health', label: 'Health', hint: 'Is everything working: syncs, feeds and the daily self-audit' },
       { to: '/links', label: 'Share links', hint: 'Every share link and passcode in one list' },

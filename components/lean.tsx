@@ -105,6 +105,30 @@ export function Tip({ label, children }: { label: string; children: ReactNode })
   )
 }
 
+/**
+ * ONE ROW OF BUTTONS, NOT A DROP-DOWN (Jon, 2026-10-22: "hate the drop downs"). Every choice visible,
+ * the current one dark, one click changes it. `on` overrides the dark style for the picked one.
+ */
+export function LeanPick<T extends string>({ value, options, onPick, disabled, size = 'md', title }: {
+  value: T | '' | null | undefined; options: { v: T; label: ReactNode; title?: string; on?: string }[]
+  onPick: (v: T) => void; disabled?: boolean; size?: 'sm' | 'md'; title?: string
+}) {
+  const pad = size === 'sm' ? 'px-1.5 py-0.5 text-[11px]' : 'px-2 py-1 text-[11.5px]'
+  return (
+    <div className="flex items-center gap-1 flex-wrap" role="radiogroup" title={title}>
+      {options.map(o => {
+        const on = value === o.v
+        return (
+          <button key={String(o.v)} type="button" role="radio" aria-checked={on} disabled={disabled} onClick={() => { if (!on) onPick(o.v) }} title={o.title}
+            className={`inline-flex items-center gap-1.5 rounded-md border font-semibold disabled:opacity-60 ${pad} ${on ? (o.on || 'bg-ink text-white border-ink') : 'bg-white border-line text-muted hover:text-ink hover:border-ink/40'}`}>
+            {o.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 /** A list container for LeanRows. */
 export function LeanList({ children }: { children: ReactNode }) {
   return <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 [&>li:first-child]:rounded-t-2xl [&>li:last-child]:rounded-b-2xl">{children}</ul>

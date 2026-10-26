@@ -94,6 +94,10 @@ export const FEATURES: Feature[] = [
   // inventory + room photos — before the unit exists in Guesty; assigned to the listing when it
   // goes live. /onboard/<code> is the phone side and stays public (OPEN_PREFIXES).
   { key: 'onboarding',    label: 'Onboarding',        path: '/onboarding', group: 'Owners' },
+  // THE ADMIN DESK (Jon, 2026-10-26): the administrator's own page — listings not for sale or not
+  // connected per channel, offline in Guesty, reply owed, optimization and photo work, blocked units,
+  // the per-listing board and the review report. View reads it; edit may rebuild its cache.
+  { key: 'admin-desk',    label: 'Admin desk',        path: '/admin', group: 'Admin' },
   { key: 'vault',         label: 'Vault',             path: '/vault', group: 'Admin' },
   // Share Links hub (2026-08-18, Jon): "a place where I can create those links based on
   // properties, units, owners and customize them to show different information." Carries live
