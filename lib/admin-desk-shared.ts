@@ -15,8 +15,9 @@ import type { CellVerdict } from './channel-types'
 
 // ── The thresholds, in one place and on the page's hover text ───────────────────────────────────
 export const RULES = {
-  /** A listing optimized longer ago than this is due again. */
-  staleOptimizeDays: 180,
+  /** EVERY THREE MONTHS (Jon, 2026-10-26: "we should optimize and rearrange every 3 months"): a
+   *  listing optimized longer ago than this is due again. */
+  staleOptimizeDays: 90,
   /** An optimize score under this is work whatever the date says. */
   lowScore: 60,
   /** Fewer photos than this and guests cannot verify the home. */
@@ -24,8 +25,17 @@ export const RULES = {
   /** Captions missing on at least this many photos, or this share of them, is a captions job. */
   captionGapMin: 5,
   captionGapShare: 0.3,
-  /** Photo analysis older than this (or never run) is due. */
-  staleAnalysisDays: 180,
+  /** The photo analysis — and with it the order and the cover — older than this (or never run) is due. */
+  staleAnalysisDays: 90,
+  /** UNDERPERFORMING (Jon, 2026-10-26: "if a unit is performing poorly, recommend a refresh, new
+   *  cover photo, etc."): RevPAR over the last 90 days at or under this share of its building's
+   *  median (2+ earning peers needed) is poor; under `watchRevparIndex` is worth watching. */
+  poorRevparIndex: 0.7,
+  watchRevparIndex: 0.85,
+  /** A cover photo under this quality (the photo analysis's 0–100) should be replaced. */
+  coverMinQuality: 65,
+  /** On an underperformer, a cover under this is still worth trying to beat. */
+  coverTryQuality: 80,
   /** Channels close replies after about a month; a review older than this is no longer owed. */
   replyWindowDays: 30,
   /** A low review in this window is a flag on the unit. */
@@ -63,11 +73,16 @@ export type AdminRow = {
   lastOptimized: string | null
   photos: { count: number; noCaption: number; analyzedAt: string | null; photoScore: number | null }
   reviews: { avg: number | null; count: number; owed: number; owedLow: number; low30: number; last: string | null }
+  /** The last 90 days against the building: bookings made, occupancy, RevPAR as a share of the
+   *  building's median over its earning units (`peers`), null when there is nothing to index against. */
+  perf?: { bookings90: number; occ90: number | null; revparIndex: number | null; peers: number } | null
+  /** The cover (first photo) as the photo analysis saw it; null when the analysis has not seen it. */
+  cover?: { quality: number | null; kind: string | null; shotType: string | null; category: string | null } | null
   /** Filled in by the page from /api/blocked-units; null until then or when the unit is open. */
   blocked?: { nights: number; reason: string; openEnded: boolean; from: string; linked: boolean } | null
 }
 
-export type WorkKind = 'channel' | 'reply' | 'optimize' | 'photos' | 'blocked'
+export type WorkKind = 'channel' | 'reply' | 'refresh' | 'optimize' | 'photos' | 'blocked'
 export type WorkItem = {
   kind: WorkKind
   severity: Severity
@@ -84,11 +99,14 @@ export type WorkItem = {
   href: string
   /** For a channel item: which channel. */
   channel?: string
+  /** For a refresh: the steps, in order. */
+  steps?: string[]
 }
 
 export const PROBLEM: CellVerdict[] = ['suspended', 'failed', 'disconnected', 'missing']
 export const NOT_FOR_SALE: CellVerdict[] = ['suspended', 'failed', 'disconnected']
 const MAJORS = ['airbnb2', 'bookingCom', 'homeaway2', 'expedia']
+const plural = (n: number, w: string) => n + ' ' + w + (n === 1 ? '' : 's')
 const LABEL: Record<string, string> = { airbnb2: 'Airbnb', bookingCom: 'Booking.com', homeaway2: 'Vrbo', expedia: 'Expedia', googleVacationRentals: 'Google VR', hopper: 'Hopper', bluegroundNestpick: 'Blueground', whimstay: 'Whimstay', homesVillasByMarriott: 'Marriott HVMI' }
 const VERDICT_WORD: Record<string, string> = { suspended: 'suspended', failed: 'failed', disconnected: 'disconnected', missing: 'not connected', unknown: 'unknown', stale: 'no bookings', live: 'live' }
 export const channelLabel = (k: string) => LABEL[k] || k
@@ -133,8 +151,52 @@ export function photoFlags(p: AdminRow['photos'], today: string): PhotoFlag[] {
   return out
 }
 
+/** How the unit is doing against its building over the last 90 days. */
+export type PerfState = 'poor' | 'watch' | 'ok' | 'unknown'
+export function performance(r: Pick<AdminRow, 'active' | 'perf'>): { state: PerfState; why: string } {
+  const p = r.perf
+  if (!r.active || !p || p.revparIndex == null || p.peers < 2) return { state: 'unknown', why: p && p.peers < 2 ? 'No building peers to compare with' : 'No 90-day numbers yet' }
+  const pct = Math.round((1 - p.revparIndex) * 100)
+  const occ = p.occ90 != null ? ' · occupancy ' + Math.round(p.occ90 * 100) + '%' : ''
+  if (p.revparIndex <= RULES.poorRevparIndex) return { state: 'poor', why: 'RevPAR ' + pct + '% under its building peers over 90 days (' + p.peers + ' earning units)' + occ }
+  if (p.revparIndex <= RULES.watchRevparIndex) return { state: 'watch', why: 'RevPAR ' + pct + '% under its building peers over 90 days' + occ }
+  return { state: 'ok', why: 'RevPAR ' + (pct <= 0 ? Math.abs(pct) + '% over' : pct + '% under') + ' its building peers over 90 days' + occ }
+}
+const WEAK_COVER_CATEGORIES = ['bathroom', 'exterior', 'detail', 'other', 'amenity']
+/** Is the cover photo weak — too low a quality, stock, a close-up, or a room no guest clicks on? */
+export function coverVerdict(c: AdminRow['cover']): { weak: boolean; why: string } {
+  if (!c) return { weak: false, why: 'cover not analyzed yet' }
+  const why: string[] = []
+  if (c.quality != null && c.quality < RULES.coverMinQuality) why.push('quality ' + c.quality)
+  if (c.kind === 'stock') why.push('stock photo')
+  if (c.shotType === 'detail') why.push('a close-up')
+  if (c.category && WEAK_COVER_CATEGORIES.indexOf(c.category) >= 0) why.push(c.category + ' as the cover')
+  return { weak: why.length > 0, why: why.length ? why.join(', ') : 'quality ' + (c.quality ?? '?') + (c.category ? ' · ' + c.category : '') }
+}
+/**
+ * THE REFRESH (Jon, 2026-10-26): what to do on a unit that is performing poorly, in the order it
+ * pays — the cover decides the click, the first five decide the open, the copy and price decide the
+ * booking. Each step is one line a person can act on.
+ */
+export function refreshSteps(r: AdminRow, today: string): string[] {
+  const out: string[] = []
+  const cv = coverVerdict(r.cover)
+  if (!r.cover) out.push('Run the photo analysis and pick the cover it rates highest (the current cover has not been analyzed)')
+  else if (cv.weak) out.push('New cover photo — the current one reads ' + cv.why)
+  else if (r.cover.quality != null && r.cover.quality < RULES.coverTryQuality) out.push('Try a new cover — the current one is ' + r.cover.quality + '/100 and the search card is the click')
+  const pf = photoFlags(r.photos, today)
+  if (pf.indexOf('unanalyzed') >= 0 || pf.indexOf('stale-analysis') >= 0) out.push('Re-run the photo analysis and re-order the first five' + (r.photos.analyzedAt ? ' (last ' + agoShort(r.photos.analyzedAt, today) + ' ago)' : ''))
+  if (pf.indexOf('few') >= 0) out.push('Shoot more photos — ' + r.photos.count + ' is not enough to verify the home')
+  if (pf.indexOf('captions') >= 0) out.push('Caption the ' + r.photos.noCaption + ' photos with no caption')
+  const os = optimizeState(r, today)
+  if (os !== 'ok') out.push('Re-optimize the title and description (' + (os === 'never' ? 'never optimized' : os === 'low' ? 'score ' + r.score : 'last pass ' + agoShort(r.lastOptimized, today) + ' ago') + ')')
+  if (r.reviews.low30 > 0) out.push('Read the ' + plural(r.reviews.low30, 'low review') + ' from the last ' + RULES.lowReviewDays + ' days and fix what they name first')
+  out.push('Check the rate against its building peers in the Revenue App')
+  return out
+}
+
 // ── The tiles. Each key is a rule; rowInTile() is the ONLY test, used both to count and to filter. ─
-export type TileKey = 'all' | 'liveAll' | 'notForSale' | 'notConnected' | 'offline' | 'replyOwed' | 'lowReviews' | 'neverOptimized' | 'staleOptimized' | 'captions' | 'unanalyzed' | 'blocked'
+export type TileKey = 'all' | 'liveAll' | 'notForSale' | 'notConnected' | 'offline' | 'replyOwed' | 'lowReviews' | 'refresh' | 'neverOptimized' | 'staleOptimized' | 'captions' | 'unanalyzed' | 'blocked'
 export const TILES: { key: TileKey; label: string; hint: string }[] = [
   { key: 'liveAll', label: 'Live everywhere', hint: 'Active in Guesty and live (or simply quiet) on every major channel: Airbnb, Booking.com, Vrbo, Expedia' },
   { key: 'notForSale', label: 'Not for sale', hint: 'Active in Guesty but suspended, failed or disconnected on a major channel — the listing exists there and is not selling' },
@@ -143,9 +205,10 @@ export const TILES: { key: TileKey; label: string; hint: string }[] = [
   { key: 'replyOwed', label: 'Reply owed', hint: `Reviews from the last ${RULES.replyWindowDays} days with no reply and not dismissed` },
   { key: 'lowReviews', label: 'Low reviews', hint: `A low review in the last ${RULES.lowReviewDays} days (Airbnb/Vrbo 3★ or under, Booking 7/10 or under)` },
   { key: 'neverOptimized', label: 'Never optimized', hint: 'The optimizer has never written this listing' },
-  { key: 'staleOptimized', label: 'Optimize again', hint: `Optimized more than ${RULES.staleOptimizeDays} days ago, or an optimize score under ${RULES.lowScore}` },
+  { key: 'refresh', label: 'Refresh recommended', hint: `Performing poorly: RevPAR ${Math.round((1 - RULES.poorRevparIndex) * 100)}%+ under its building peers over the last 90 days — new cover photo, re-order, re-optimize` },
+  { key: 'staleOptimized', label: 'Optimize again', hint: `Every 3 months: optimized more than ${RULES.staleOptimizeDays} days ago, or an optimize score under ${RULES.lowScore}` },
   { key: 'captions', label: 'Captions missing', hint: `${RULES.captionGapMin}+ photos (or ${Math.round(RULES.captionGapShare * 100)}%) with no real caption — blank, a file name, a camera number` },
-  { key: 'unanalyzed', label: 'Photos to analyze', hint: `Photo analysis never run, or older than ${RULES.staleAnalysisDays} days` },
+  { key: 'unanalyzed', label: 'Photos to re-order', hint: `Every 3 months: photo analysis (order, cover, captions) never run or older than ${RULES.staleAnalysisDays} days` },
   { key: 'blocked', label: 'Blocked now', hint: 'Out of service today on the Guesty calendar (not auto-blocked by a sibling booking)' },
 ]
 export function rowInTile(r: AdminRow, tile: TileKey, today: string): boolean {
@@ -157,6 +220,7 @@ export function rowInTile(r: AdminRow, tile: TileKey, today: string): boolean {
     case 'offline': return !r.active
     case 'replyOwed': return r.active && r.reviews.owed > 0
     case 'lowReviews': return r.active && r.reviews.low30 > 0
+    case 'refresh': return r.active && performance(r).state === 'poor'
     case 'neverOptimized': return r.active && optimizeState(r, today) === 'never'
     case 'staleOptimized': { const s = optimizeState(r, today); return r.active && (s === 'stale' || s === 'low') }
     case 'captions': return r.active && photoFlags(r.photos, today).indexOf('captions') >= 0
@@ -167,7 +231,7 @@ export function rowInTile(r: AdminRow, tile: TileKey, today: string): boolean {
 }
 export function tileCounts(rows: AdminRow[], today: string): Record<TileKey, number> {
   const out = {} as Record<TileKey, number>
-  const keys: TileKey[] = ['all', 'liveAll', 'notForSale', 'notConnected', 'offline', 'replyOwed', 'lowReviews', 'neverOptimized', 'staleOptimized', 'captions', 'unanalyzed', 'blocked']
+  const keys: TileKey[] = ['all', 'liveAll', 'notForSale', 'notConnected', 'offline', 'replyOwed', 'lowReviews', 'refresh', 'neverOptimized', 'staleOptimized', 'captions', 'unanalyzed', 'blocked']
   for (const k of keys) out[k] = rows.filter(r => rowInTile(r, k, today)).length
   return out
 }
@@ -188,9 +252,8 @@ export function channelCounts(rows: AdminRow[], keys: string[]): ChannelCount[] 
 
 // ── Do now ──────────────────────────────────────────────────────────────────────────────────────
 const SEV_RANK: Record<Severity, number> = { high: 0, medium: 1, low: 2 }
-/** Within one severity: money first (a listing not for sale), then the reply clock, then the rest. */
-const KIND_RANK: Record<WorkKind, number> = { channel: 0, reply: 1, blocked: 2, optimize: 3, photos: 4 }
-const plural = (n: number, w: string) => n + ' ' + w + (n === 1 ? '' : 's')
+/** Within one severity: money first (a listing not for sale), then the reply clock, then the refresh, then the rest. */
+const KIND_RANK: Record<WorkKind, number> = { channel: 0, reply: 1, refresh: 2, blocked: 3, optimize: 4, photos: 5 }
 
 /**
  * Every line the administrator should act on, worst first. Channel trouble leads (a listing that is
@@ -241,6 +304,19 @@ export function worklist(rows: AdminRow[], today: string): WorkItem[] {
         verb: 'Reply', href: '/listings/' + encodeURIComponent(r.id) + '#reviews',
       })
     }
+    const perf = performance(r)
+    if (perf.state === 'poor') {
+      const steps = refreshSteps(r, today)
+      const cv = coverVerdict(r.cover)
+      out.push({
+        ...base, kind: 'refresh',
+        severity: cv.weak || !r.cover || optimizeState(r, today) !== 'ok' ? 'high' : 'medium',
+        title: 'Underperforming — ' + perf.why.split(' (')[0].replace(/ over 90 days$/, '') + ' · refresh',
+        why: perf.why + '. ' + steps.length + ' steps: ' + steps.map(x => x.replace(/ [—(].*$/, '')).join(' · '),
+        steps,
+        verb: 'Refresh', href: '/listings/' + encodeURIComponent(r.id) + '#photos',
+      })
+    }
     if (r.blocked && !r.blocked.linked && r.blocked.nights >= RULES.longBlockNights) {
       out.push({
         ...base, kind: 'blocked', severity: 'medium',
@@ -257,7 +333,7 @@ export function worklist(rows: AdminRow[], today: string): WorkItem[] {
         title: os === 'never' ? 'Never optimized' : os === 'low' ? 'Optimize score ' + r.score : 'Optimized ' + agoShort(r.lastOptimized, today) + ' ago',
         why: os === 'never' ? 'The optimizer has never written this listing' + (r.score != null ? ' · score ' + r.score : '')
           : os === 'low' ? 'Under ' + RULES.lowScore + ' — title, description, photos, amenities or settings are costing visibility'
-          : 'More than ' + RULES.staleOptimizeDays + ' days since the last pass' + (r.score != null ? ' · score ' + r.score : ''),
+          : 'Every 3 months: more than ' + RULES.staleOptimizeDays + ' days since the last pass' + (r.score != null ? ' · score ' + r.score : ''),
         verb: 'Optimize', href: '/listings/' + encodeURIComponent(r.id) + '#content',
       })
     }
@@ -272,7 +348,7 @@ export function worklist(rows: AdminRow[], today: string): WorkItem[] {
         ...base, kind: 'photos',
         severity: pf.indexOf('few') >= 0 ? 'medium' : 'low',
         title: 'Photos — ' + bits.join(', '),
-        why: 'Guests verify the home in the photos: ' + RULES.minPhotos + '+ real shots, every one captioned, the order and cover checked by the analysis',
+        why: 'Guests verify the home in the photos: ' + RULES.minPhotos + '+ real shots, every one captioned, the order and cover re-checked by the analysis every 3 months',
         verb: 'Photos', href: '/listings/' + encodeURIComponent(r.id) + '#photos',
       })
     }
@@ -286,6 +362,8 @@ export function rowWeight(r: AdminRow, today: string): number {
   if (!r.active) return -1
   for (const k of MAJORS) { const c = r.channels[k]; if (!c) continue; if (NOT_FOR_SALE.indexOf(c.verdict) >= 0) w += 100; else if (c.verdict === 'missing') w += 40 }
   w += r.reviews.owedLow * 60 + r.reviews.owed * 25 + r.reviews.low30 * 10
+  const ps = performance(r).state
+  w += ps === 'poor' ? 50 : ps === 'watch' ? 12 : 0
   if (r.blocked && !r.blocked.linked) w += 30
   const os = optimizeState(r, today)
   w += os === 'never' ? 20 : os === 'low' ? 18 : os === 'stale' ? 8 : 0

@@ -68,7 +68,7 @@ async function assemble(): Promise<AdminDesk> {
   const listings: any[] = []
   for (let from = 0; from < 5000; from += 1000) {
     const { data, error } = await sb.from('guesty_listings')
-      .select('id, title, nickname, building, unit, status, address_city, amenities, pictures, last_optimized, photo_score, lastOpt:raw->>_lastOptimized, pics:raw->pictures, rawPub:raw->publicDescription, rawPubs:raw->publicDescriptions, rawTerms:raw->terms, rawPrices:raw->prices, rawInts:raw->integrations, rawIb:raw->instantBookable, rawIb2:raw->instantBook, rawCi:raw->>defaultCheckInTime, rawCi2:raw->>checkInTime, rawCo:raw->>defaultCheckOutTime, rawCo2:raw->>checkOutTime, rawPs:raw->_photoScore, rawCp:raw->>cancellationPolicy, rawAirbnb:raw->airbnb, rawBcom:raw->bookingcom, rawTitle:raw->>title, rawMinN:raw->defaultListingMinNights, rawAmen:raw->amenities')
+      .select('id, title, nickname, building, unit, status, address_city, amenities, pictures, last_optimized, photo_score, lastOpt:raw->>_lastOptimized, pics:raw->pictures, pidx:raw->_photoIndex, rawPub:raw->publicDescription, rawPubs:raw->publicDescriptions, rawTerms:raw->terms, rawPrices:raw->prices, rawInts:raw->integrations, rawIb:raw->instantBookable, rawIb2:raw->instantBook, rawCi:raw->>defaultCheckInTime, rawCi2:raw->>checkInTime, rawCo:raw->>defaultCheckOutTime, rawCo2:raw->>checkOutTime, rawPs:raw->_photoScore, rawCp:raw->>cancellationPolicy, rawAirbnb:raw->airbnb, rawBcom:raw->bookingcom, rawTitle:raw->>title, rawMinN:raw->defaultListingMinNights, rawAmen:raw->amenities')
       .order('id').range(from, from + 999)
     if (error) throw new Error('guesty_listings: ' + error.message)
     listings.push(...(data || []))
@@ -114,6 +114,50 @@ async function assemble(): Promise<AdminDesk> {
       if (parts.length >= 3) since[parts[1] + ':' + parts.slice(2).join(':')] = str(a.first_seen_at)
     }
   } catch { /* no audit table yet: no since dates */ }
+
+  // PERFORMANCE (Jon, 2026-10-26: "if a unit is performing poorly, recommend a refresh"). The last
+  // 90 settled days, the same way /buildings scores the revenue pillar: nights and value prorated
+  // into the window, RevPAR per available night, indexed against the building's median over its
+  // earning units. Bookings made are counted by created_at so a unit that just went live reads
+  // "no numbers yet" rather than "poor".
+  const occDays = 90
+  const occStart = ymd(new Date(Date.now() - occDays * 86400000))
+  const occNights: Record<string, number> = {}
+  const occRev: Record<string, number> = {}
+  const made90: Record<string, number> = {}
+  {
+    const winStart = new Date(occStart + 'T00:00:00Z').getTime(), winEnd = new Date(today + 'T00:00:00Z').getTime()
+    const { rows: stays } = await pageRows<any>((a, b) => sb.from('guesty_reservations')
+      .select('id, listing_id, check_in, check_out, status, money_total, nights, created_at')
+      .in('status', ['confirmed', 'checked_in', 'checked_out'])
+      .gte('check_out', occStart).lte('check_in', today)
+      .order('id').range(a, b), 40)
+    for (const r of stays) {
+      const id = str(r.listing_id); if (!id) continue
+      const ci = new Date(String(r.check_in).slice(0, 10) + 'T00:00:00Z').getTime()
+      const co = new Date(String(r.check_out).slice(0, 10) + 'T00:00:00Z').getTime()
+      if (isNaN(ci) || isNaN(co)) continue
+      const nights = Math.round((Math.min(co, winEnd) - Math.max(ci, winStart)) / 86400000)
+      if (nights > 0) {
+        occNights[id] = (occNights[id] || 0) + nights
+        const total = Number(r.money_total) || 0, stayNights = Number(r.nights) || 0
+        occRev[id] = (occRev[id] || 0) + (stayNights > 0 ? total * (nights / stayNights) : total)
+      }
+      if (str(r.created_at).slice(0, 10) >= occStart) made90[id] = (made90[id] || 0) + 1
+    }
+  }
+  const median = (nums: number[]): number | null => { const a = nums.filter(n => n > 0).slice().sort((x, y) => x - y); if (a.length < 2) return null; const m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2 }
+  const revparBy: Record<string, number> = {}
+  const peersBy: Record<string, number[]> = {}
+  for (const l of listings) {
+    const id = str(l.id); if (str(l.status).toLowerCase() !== 'active') continue
+    const b = rollupBuilding(l.building, str(l.nickname) || str(l.title) || id)
+    const rp = (occRev[id] || 0) / occDays
+    revparBy[id] = rp
+    if (rp > 0) (peersBy[b] = peersBy[b] || []).push(rp)
+  }
+  const medianBy: Record<string, number | null> = {}
+  for (const b of Object.keys(peersBy)) medianBy[b] = median(peersBy[b])
 
   const [health, snap] = await Promise.all([cachedChannels(), readSnapshot()])
   const healthById = new Map<string, any>()
@@ -182,6 +226,19 @@ async function assemble(): Promise<AdminDesk> {
       lastOptimized: lastOptimizedOf(slim).at,
       photos: { count: caps.count || (Array.isArray(l.pictures) ? l.pictures.length : 0), noCaption: caps.noCaption, analyzedAt: ps && ps.at ? str(ps.at) : null, photoScore: ps && Number.isFinite(Number(ps.score)) ? Number(ps.score) : null },
       reviews: { avg, count: rv ? rv.n : 0, owed: rv ? rv.owed : 0, owedLow: rv ? rv.owedLow : 0, low30: rv ? rv.low30 : 0, last: rv ? rv.last : null },
+      perf: active ? (() => {
+        const peers = (peersBy[building] || []).length
+        const med = medianBy[building]
+        const rp = revparBy[id] || 0
+        return { bookings90: made90[id] || 0, occ90: Math.min(1, (occNights[id] || 0) / occDays), revparIndex: med && med > 0 ? Math.round((rp / med) * 100) / 100 : null, peers }
+      })() : null,
+      cover: (() => {
+        const pics: any[] = Array.isArray(l.pics) ? l.pics : []
+        const first = pics[0] && typeof pics[0] === 'object' ? pics[0] : null
+        const idx = l.pidx && typeof l.pidx === 'object' ? l.pidx : null
+        const e = first && idx ? idx[str(first._id)] : null
+        return e ? { quality: Number.isFinite(Number(e.quality)) ? Number(e.quality) : null, kind: e.kind ? str(e.kind) : null, shotType: e.shotType ? str(e.shotType) : null, category: e.category ? str(e.category) : null } : null
+      })(),
       blocked: null,
     }
   }).sort((a, b) => a.building.localeCompare(b.building) || a.name.localeCompare(b.name))

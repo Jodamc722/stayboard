@@ -17,10 +17,10 @@
 // every icon explains itself on hover (lib/lean rules).
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { ExternalLink, Home, Images, MessageSquareText, Radio, RefreshCw, Search, Wrench, ArrowUpRight, ArrowDownRight, Minus } from 'lucide-react'
+import { ExternalLink, Home, Images, MessageSquareText, Radio, RefreshCw, Search, Wrench, ArrowUpRight, ArrowDownRight, Minus, Sparkles } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { LeanHead, Pill, Tag, LeanTabs, LeanSection, LeanList, LeanRow, LeanEmpty, IconBtn, LeanPick, Tip, type Tone } from '@/components/lean'
-import { TILES, tileCounts, rowInTile, worklist, channelCounts, rowWeight, optimizeState, photoFlags, agoShort, RULES, channelLabel, type AdminRow, type TileKey, type WorkItem, type Severity } from '@/lib/admin-desk-shared'
+import { TILES, tileCounts, rowInTile, worklist, channelCounts, rowWeight, optimizeState, photoFlags, performance, coverVerdict, agoShort, RULES, channelLabel, type AdminRow, type TileKey, type WorkItem, type Severity } from '@/lib/admin-desk-shared'
 import { VERDICT_LABEL, type CellVerdict } from '@/lib/channel-types'
 
 type DeskRes = { ok: boolean; error?: string; at: string; today: string; rows: AdminRow[]; channels: { key: string; label: string; major: boolean }[]; channelCheckedAt: string | null; read: { listings: number; reviews: number } }
@@ -32,7 +32,9 @@ const SEV_TONE: Record<Severity, Tone> = { high: 'rose', medium: 'amber', low: '
 const SEV_WORD: Record<Severity, string> = { high: 'Now', medium: 'This week', low: 'When you can' }
 const VERDICT_TONE: Record<CellVerdict, Tone> = { suspended: 'roseSolid', failed: 'rose', disconnected: 'rose', missing: 'amber', unknown: 'amber', stale: 'sky', live: 'emerald' }
 const CH_SHORT: Record<string, string> = { airbnb2: 'A', bookingCom: 'B', homeaway2: 'V', expedia: 'E', googleVacationRentals: 'G', hopper: 'H', bluegroundNestpick: 'Bg', whimstay: 'W', homesVillasByMarriott: 'M' }
-const KIND_ICON: Record<WorkItem['kind'], any> = { channel: Radio, reply: MessageSquareText, optimize: Wrench, photos: Images, blocked: Home }
+const KIND_ICON: Record<WorkItem['kind'], any> = { channel: Radio, reply: MessageSquareText, refresh: Sparkles, optimize: Wrench, photos: Images, blocked: Home }
+const KIND_WORD: Record<WorkItem['kind'], string> = { channel: 'Channel', reply: 'Reviews', refresh: 'Refresh', optimize: 'Optimize', photos: 'Photos', blocked: 'Blocked' }
+const KIND_HINT: Record<WorkItem['kind'], string> = { channel: 'A channel problem', reply: 'A review to answer', refresh: 'Performing poorly against its building — new cover, re-order, re-optimize', optimize: 'Listing copy, settings or score', photos: 'Photos, captions or the analysis', blocked: 'The Guesty calendar' }
 const ADMIN_PROJECT_CATEGORIES = ['onboarding', 'offboarding', 'rollout']
 const todayET = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
 const agoText = (iso?: string | null) => { if (!iso) return ''; const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? 'just now' : m < 60 ? m + 'm ago' : Math.round(m / 60) + 'h ago' }
@@ -121,7 +123,7 @@ function DeskTab({ work, counts, strip, offline, projects, projectsLoading, load
           {TILES.map(t => {
             const n = counts[t.key]
             const pending = t.key === 'blocked' && blockedState !== 'ok'
-            const tone = n === 0 ? 'text-muted/60' : t.key === 'notForSale' ? 'text-rose-700' : t.key === 'liveAll' ? 'text-emerald-700' : (t.key === 'notConnected' || t.key === 'replyOwed' || t.key === 'lowReviews') ? 'text-amber-800' : 'text-ink'
+            const tone = n === 0 ? 'text-muted/60' : t.key === 'notForSale' ? 'text-rose-700' : t.key === 'liveAll' ? 'text-emerald-700' : (t.key === 'notConnected' || t.key === 'replyOwed' || t.key === 'lowReviews' || t.key === 'refresh') ? 'text-amber-800' : 'text-ink'
             return (
               <button key={t.key} onClick={() => onTile(t.key)} title={t.hint + (pending ? (blockedState === 'error' ? ' — the calendar could not be read' : ' — reading the calendar…') : '') + ' — click to see these listings'}
                 className="text-left rounded-xl border border-line bg-white px-2.5 py-2 min-w-0 hover:border-ink/30 transition">
@@ -147,9 +149,11 @@ function DeskTab({ work, counts, strip, offline, projects, projectsLoading, load
                 <LeanRow key={w.kind + ':' + w.listingId + ':' + (w.channel || '') + ':' + i}
                   lead={<Link href={w.href} className={btn} title={w.why}>{w.verb}</Link>}
                   name={w.name} meta={<>{w.building ? w.building + ' · ' : ''}{w.title}</>}
-                  tags={<><Tag tone={SEV_TONE[w.severity]} title={w.why}>{SEV_WORD[w.severity]}</Tag><Tag title={w.kind === 'channel' ? 'A channel problem' : w.kind === 'reply' ? 'A review to answer' : w.kind === 'optimize' ? 'Listing copy, settings or score' : w.kind === 'photos' ? 'Photos, captions or the analysis' : 'The Guesty calendar'}><I size={11} className="inline -mt-0.5 mr-1" />{w.kind === 'channel' ? channelLabel(w.channel || '') : w.kind === 'reply' ? 'Reviews' : w.kind === 'optimize' ? 'Optimize' : w.kind === 'photos' ? 'Photos' : 'Blocked'}</Tag></>}
+                  tags={<><Tag tone={SEV_TONE[w.severity]} title={w.why}>{SEV_WORD[w.severity]}</Tag><Tag title={KIND_HINT[w.kind]}><I size={11} className="inline -mt-0.5 mr-1" />{w.kind === 'channel' ? channelLabel(w.channel || '') : KIND_WORD[w.kind]}</Tag></>}
                   actions={w.listingId ? <IconBtn title="Open the unit page" href={'/listings/' + encodeURIComponent(w.listingId)}><Home size={14} /></IconBtn> : undefined}>
-                  <p className="text-[12.5px] text-ink/85">{w.why}</p>
+                  {w.steps && w.steps.length ? (
+                    <ol className="list-decimal pl-5 space-y-0.5 text-[12.5px] text-ink/85">{w.steps.map((st, j) => <li key={j}>{st}</li>)}</ol>
+                  ) : <p className="text-[12.5px] text-ink/85">{w.why}</p>}
                 </LeanRow>
               )
             })}
@@ -278,6 +282,8 @@ function ListingsTab({ rows, today, tile, setTile, counts, channels, loading }: 
 function ListingRow({ r, today, channels }: { r: AdminRow; today: string; channels: { key: string; label: string; major: boolean }[] }) {
   const os = optimizeState(r, today)
   const pf = photoFlags(r.photos, today)
+  const perf = performance(r)
+  const cover = coverVerdict(r.cover)
   const items = useMemo(() => worklist([r], today), [r, today])
   const unitHref = '/listings/' + encodeURIComponent(r.id)
   return (
@@ -298,6 +304,9 @@ function ListingRow({ r, today, channels }: { r: AdminRow; today: string; channe
         {r.active && <Tag tone={os === 'ok' ? 'slate' : os === 'stale' ? 'slate' : 'amber'} title={r.lastOptimized ? 'Last optimized ' + String(r.lastOptimized).slice(0, 10) : 'The optimizer has never written this listing'}>{os === 'never' ? 'never optimized' : 'opt ' + agoShort(r.lastOptimized, today)}</Tag>}
         {r.active && <Tag tone={pf.length ? 'amber' : 'slate'} title={r.photos.count + ' photos · ' + r.photos.noCaption + ' without a real caption · ' + (r.photos.analyzedAt ? 'analyzed ' + String(r.photos.analyzedAt).slice(0, 10) + (r.photos.photoScore != null ? ' (quality ' + r.photos.photoScore + ')' : '') : 'never analyzed')}>{r.photos.count} photos{r.photos.noCaption ? ' · ' + r.photos.noCaption + ' no caption' : ''}{pf.indexOf('unanalyzed') >= 0 ? ' · not analyzed' : ''}</Tag>}
         {r.active && (r.reviews.count > 0 || r.reviews.owed > 0) && <Tag tone={r.reviews.owedLow ? 'rose' : r.reviews.owed ? 'amber' : 'slate'} title={r.reviews.count + ' reviews in 12 months' + (r.reviews.avg != null ? ' · average ' + r.reviews.avg : '') + ' · ' + r.reviews.owed + ' waiting for a reply · ' + r.reviews.low30 + ' low in ' + RULES.lowReviewDays + ' days' + (r.reviews.last ? ' · newest ' + r.reviews.last : '')}>{r.reviews.avg != null ? '★ ' + r.reviews.avg : 'no rating'}{r.reviews.owed ? ' · ' + r.reviews.owed + ' owed' : ''}{r.reviews.low30 ? ' · ' + r.reviews.low30 + ' low' : ''}</Tag>}
+        {r.active && perf.state === 'poor' && <Tag tone="rose" title={perf.why + ' — refresh recommended: ' + (r.cover ? 'cover ' + cover.why : 'cover not analyzed')}>−{Math.round((1 - (r.perf?.revparIndex ?? 1)) * 100)}% RevPAR · refresh</Tag>}
+        {r.active && perf.state === 'watch' && <Tag tone="amber" title={perf.why}>−{Math.round((1 - (r.perf?.revparIndex ?? 1)) * 100)}% RevPAR</Tag>}
+        {r.active && r.cover && cover.weak && <Tag tone="amber" title={'Weak cover photo: ' + cover.why + ' — the cover decides the click in search'}>cover {cover.why}</Tag>}
         {r.blocked && !r.blocked.linked && <Tag tone="rose" title={'Out of service since ' + r.blocked.from + (r.blocked.openEnded ? ' with no end date' : ' for ' + r.blocked.nights + ' nights') + ' — ' + r.blocked.reason}>blocked{r.blocked.nights ? ' ' + r.blocked.nights + 'n' : ''}</Tag>}
         {r.blocked && r.blocked.linked && <Tag tone="slate" title="Closed by Guesty because a linked listing on the same room sold — not a fault">sibling booked</Tag>}
       </>}
@@ -309,9 +318,10 @@ function ListingRow({ r, today, channels }: { r: AdminRow; today: string; channe
       </>}>
       {items.length ? (
         <ul className="space-y-1">
-          {items.map((w, i) => <li key={i} className="text-[12.5px] text-ink/85 flex items-start gap-2"><Tag tone={SEV_TONE[w.severity]}>{SEV_WORD[w.severity]}</Tag><span><b>{w.title}</b> — {w.why} <Link href={w.href} className="font-semibold text-ink hover:underline">{w.verb} →</Link></span></li>)}
+          {items.map((w, i) => <li key={i} className="text-[12.5px] text-ink/85 flex items-start gap-2"><Tag tone={SEV_TONE[w.severity]}>{SEV_WORD[w.severity]}</Tag><span><b>{w.title}</b> — {w.steps && w.steps.length ? <>{w.why.split('. ')[0]}.<ol className="list-decimal pl-5 mt-0.5 space-y-0.5">{w.steps.map((st, j) => <li key={j}>{st}</li>)}</ol></> : w.why} <Link href={w.href} className="font-semibold text-ink hover:underline">{w.verb} →</Link></span></li>)}
         </ul>
       ) : <p className="text-[12.5px] text-muted">{r.active ? 'Nothing needs an administrator on this listing.' : 'Offline in Guesty — turn it back on there when it should sell again.'}</p>}
+      {r.active && r.perf && <p className="text-[11.5px] text-muted">{perf.why}{r.perf.bookings90 ? ' · ' + r.perf.bookings90 + ' booking' + (r.perf.bookings90 === 1 ? '' : 's') + ' made in 90 days' : ' · no booking made in 90 days'}{r.cover ? ' · cover ' + cover.why : ' · cover not analyzed'}</p>}
       {r.active && (
         <div className="flex items-center gap-1.5 flex-wrap pt-1">
           {channels.map(c => { const cell = r.channels[c.key]; return cell && cell.url ? <a key={c.key} href={cell.url} target="_blank" rel="noopener noreferrer" className={ghost} title={'Open the live ' + c.label + ' page'}><ExternalLink size={11} /> {c.label}</a> : null })}
