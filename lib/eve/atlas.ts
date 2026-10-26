@@ -63,6 +63,7 @@ const PAGE_NOTES: Record<string, string> = {
   labor: 'labor from Homebase punches against departure cleans — cost per clean, people, days and data health',
   'labor-dashboard': 'the day/week/month labor dashboard behind the daily labor email (the Dashboard switch on Labor)',
   cleaners: 'each cleaner\'s last 90 days of departure cleans — pace, same-day rate and quality tier',
+  training: 'the training library — how-to videos and FAQs in English and Spanish (Breezeway first), who each one is assigned to and who finished; field staff without a login get a personal /learn/<code> page',
   // FINANCIALS
   revenue: 'Revenue — revenue, occupancy, ADR and RevPAR by building and unit, pacing and the $-ranked checks',
   marketing: 'direct bookings tracked by the date they were made',

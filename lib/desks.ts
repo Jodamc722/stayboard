@@ -130,10 +130,12 @@ export const DESKS: Desk[] = [
   },
   {
     key: 'team', label: 'Team',
-    blurb: 'Team management: hours and labor, and each cleaner’s record.',
+    blurb: 'Team management: hours and labor, each cleaner’s record, and training.',
     views: [
       { to: '/labor', label: 'Labor', hint: 'Payroll against cleans: cost per clean, people, days and the dashboard' },
       { to: '/cleaners', label: 'Cleaners', hint: 'Each cleaner’s last 90 days: pace, same-day rate and quality' },
+      // Training (Jon, 2026-10-26): how-to videos and FAQs, English and Spanish, assigned to people.
+      { to: '/training', label: 'Training', hint: 'How-to videos and FAQs for the team, in English and Spanish — assign them, see who finished' },
     ],
   },
   {

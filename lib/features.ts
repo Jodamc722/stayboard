@@ -143,6 +143,11 @@ export const FEATURES: Feature[] = [
   { key: 'team-schedule', label: 'Weekly Planner',    path: '/team', group: 'Operations' },
   { key: 'cleaners',      label: 'Cleaners',          path: '/cleaners', group: 'Team' },
   { key: 'labor',         label: 'Labor',             path: '/labor', group: 'Team' },
+  // TRAINING (Jon, 2026-10-26): "a training tab — how-to videos for the team, a video + FAQ library we
+  // can assign to team." View = watch and finish your own; edit = add items, upload videos, assign;
+  // full = archive. The personal links (/learn/<code>) are public by design — the field team has no
+  // login — and are listed in OPEN_PREFIXES.
+  { key: 'training',      label: 'Training',          path: '/training', group: 'Team' },
   // Labor Dashboard (2026-08-10, Jon): the live click-into view behind the daily labor email —
   // day / week / month, per person, with the exceptions leading.
   { key: 'labor-dashboard', label: 'Labor Dashboard',  path: '/labor/dashboard', group: 'Team' },
@@ -256,6 +261,10 @@ export const OPEN_PREFIXES = [
   // should not be there. No Lighthouse account — the code is the capability, the optional passcode
   // is checked server-side in /api/public/lot, and everything is scoped to that one lot.
   '/lot/',
+  // A PERSON'S TRAINING (Jon, 2026-10-26): /learn/<code> lists one person's assigned videos and FAQs
+  // on their phone, English or Spanish, with a Done button. No Lighthouse account — housekeepers and
+  // technicians do not have one — so the code is the capability, checked in /api/public/training.
+  '/learn/',
   // The did-it-work confirmation after a door-code release. Open on purpose: the people who know
   // whether a code worked are field techs without logins, and a question only answerable by people
   // who were not at the door is a question that never gets a true answer. The token is the auth.
