@@ -28,7 +28,7 @@ import { marketOf } from './segments'
 import { isLowReview } from './review-scale'
 import { isJunkCaption } from './photo-order'
 import { pageRows } from './db-page'
-import { RULES, type AdminRow, type ChannelCellLite } from './admin-desk-shared'
+import { RULES, isCombined, unitToken, type AdminRow, type ChannelCellLite } from './admin-desk-shared'
 
 export const ADMIN_DESK_CACHE_TAG = 'admin-desk'
 
@@ -147,6 +147,12 @@ async function assemble(): Promise<AdminDesk> {
     }
   }
   const median = (nums: number[]): number | null => { const a = nums.filter(n => n > 0).slice().sort((x, y) => x - y); if (a.length < 2) return null; const m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2 }
+  // Combined listings (the whole apartment sold alongside its halves) are judged by their halves,
+  // never by their own calendar — and they do not set the building's median either.
+  const tokensBy: Record<string, string[]> = {}
+  for (const l of listings) { const b = rollupBuilding(l.building, str(l.nickname) || str(l.title) || str(l.id)); (tokensBy[b] = tokensBy[b] || []).push(unitToken(str(l.nickname) || str(l.title) || str(l.id))) }
+  const combinedIds = new Set<string>()
+  for (const l of listings) { const nm = str(l.nickname) || str(l.title) || str(l.id); const b = rollupBuilding(l.building, nm); if (isCombined(nm, tokensBy[b] || [])) combinedIds.add(str(l.id)) }
   const revparBy: Record<string, number> = {}
   const peersBy: Record<string, number[]> = {}
   for (const l of listings) {
@@ -154,7 +160,7 @@ async function assemble(): Promise<AdminDesk> {
     const b = rollupBuilding(l.building, str(l.nickname) || str(l.title) || id)
     const rp = (occRev[id] || 0) / occDays
     revparBy[id] = rp
-    if (rp > 0) (peersBy[b] = peersBy[b] || []).push(rp)
+    if (rp > 0 && !combinedIds.has(id)) (peersBy[b] = peersBy[b] || []).push(rp)
   }
   const medianBy: Record<string, number | null> = {}
   for (const b of Object.keys(peersBy)) medianBy[b] = median(peersBy[b])
@@ -230,7 +236,7 @@ async function assemble(): Promise<AdminDesk> {
         const peers = (peersBy[building] || []).length
         const med = medianBy[building]
         const rp = revparBy[id] || 0
-        return { bookings90: made90[id] || 0, occ90: Math.min(1, (occNights[id] || 0) / occDays), revparIndex: med && med > 0 ? Math.round((rp / med) * 100) / 100 : null, peers }
+        return { bookings90: made90[id] || 0, occ90: Math.min(1, (occNights[id] || 0) / occDays), revparIndex: med && med > 0 ? Math.round((rp / med) * 100) / 100 : null, peers, ...(combinedIds.has(id) ? { combined: true } : {}) }
       })() : null,
       cover: (() => {
         const pics: any[] = Array.isArray(l.pics) ? l.pics : []

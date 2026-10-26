@@ -75,7 +75,7 @@ export type AdminRow = {
   reviews: { avg: number | null; count: number; owed: number; owedLow: number; low30: number; last: string | null }
   /** The last 90 days against the building: bookings made, occupancy, RevPAR as a share of the
    *  building's median over its earning units (`peers`), null when there is nothing to index against. */
-  perf?: { bookings90: number; occ90: number | null; revparIndex: number | null; peers: number } | null
+  perf?: { bookings90: number; occ90: number | null; revparIndex: number | null; peers: number; combined?: boolean } | null
   /** The cover (first photo) as the photo analysis saw it; null when the analysis has not seen it. */
   cover?: { quality: number | null; kind: string | null; shotType: string | null; category: string | null } | null
   /** Filled in by the page from /api/blocked-units; null until then or when the unit is open. */
@@ -151,10 +151,26 @@ export function photoFlags(p: AdminRow['photos'], today: string): PhotoFlag[] {
   return out
 }
 
+/**
+ * A COMBINED listing is the whole apartment sold alongside its halves ("1418 Full" = 1418/1 + 1418/2;
+ * "Arya 1705" is the combined of 1705/1 and 1705/2 without saying Full). Its calendar closes whenever
+ * a half sells, so its own RevPAR is structurally low and must never read as "performing poorly".
+ * `unit` is the name's first segment ("Arya 1705", "3316 Full"); `others` the other units' first
+ * segments in the same building.
+ */
+export function unitToken(name: string): string { return String(name || '').split(/\s+[-–—]\s+/)[0].trim() }
+export function isCombined(name: string, others: string[]): boolean {
+  const u = unitToken(name)
+  if (/\bfull\b/i.test(u)) return true
+  const halves = others.filter(o => o !== u && o.toLowerCase().indexOf(u.toLowerCase() + '/') === 0)
+  return halves.length >= 2
+}
+
 /** How the unit is doing against its building over the last 90 days. */
 export type PerfState = 'poor' | 'watch' | 'ok' | 'unknown'
 export function performance(r: Pick<AdminRow, 'active' | 'perf'>): { state: PerfState; why: string } {
   const p = r.perf
+  if (p && p.combined) return { state: 'unknown', why: 'Combined listing — sells as its halves, so its own RevPAR is not a verdict' }
   if (!r.active || !p || p.revparIndex == null || p.peers < 2) return { state: 'unknown', why: p && p.peers < 2 ? 'No building peers to compare with' : 'No 90-day numbers yet' }
   const pct = Math.round((1 - p.revparIndex) * 100)
   const occ = p.occ90 != null ? ' · occupancy ' + Math.round(p.occ90 * 100) + '%' : ''
