@@ -89,6 +89,8 @@ export const DESKS: Desk[] = [
       { to: '/reservations', label: 'Reservations', hint: 'Arriving, departing, in-house and upcoming bookings' },
       { to: '/guest-orders', label: 'Guest orders', hint: 'Pre-arrival orders, links, catalog, stock and coupons' },
       { to: '/guidebooks', label: 'Guidebooks', hint: 'Guest guidebooks by building: build, fix and push to Guesty' },
+      // Parking (Jon, 2026-10-26): the lots we sell and enforce ourselves — Eden first.
+      { to: '/lots', label: 'Parking', hint: 'Our lots: the calendar of spots, who is parked where, the staff link, and the cars that should not be there' },
       { to: '/reservation-emails', label: 'Front-desk notices', hint: 'Arrival notices for buildings with a front desk', more: true },
       { to: '/faq', label: 'Property FAQ', hint: 'Per-unit knowledge: facts, FAQs, how-tos and key details', more: true },
       { to: '/guests', label: 'Guests', hint: 'Guest directory and profiles (VIP, tags, notes)', more: true },

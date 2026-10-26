@@ -61,6 +61,11 @@ export const FEATURES: Feature[] = [
   // door (/api/salato/watch). The public share/verify links (/salato/share, /salato/verify) stay
   // open — OPEN_PREFIXES wins before the role gate in middleware.
   { key: 'salato',        label: 'Salato settings',   path: '/salato', group: 'Guest Experience' },
+  // PARKING (Jon, 2026-10-26): the lots we run ourselves — Eden first: 10 spots sold at $30 a night,
+  // 3 held for staff and never sold, a calendar of who is in which spot, and the enforcement chain
+  // (flag → 1-hour notice to every in-house guest → tow email drafted). The staff link is /lot/<code>
+  // (OPEN_PREFIXES). Path is /lots because /parking/<code> is the 17 West garage-permit vendor link.
+  { key: 'parking',       label: 'Parking',           path: '/lots', group: 'Guest Experience' },
   { key: 'plan',          label: 'Today in Ops',      path: '/plan', group: 'Operations' },
   // Upkeep (Jon, 2026-10-03): the recurring programs as a KPI page — late / due soon / on track per
   // unit. Its own key so a role can read it without being able to file tasks from it. Admin and
@@ -246,6 +251,11 @@ export const OPEN_PREFIXES = [
   // with no credential of any kind. The 64-character token is the capability and it stops
   // resolving the moment the permit is voided.
   '/permit/',
+  // THE STAFF SIDE OF A PARKING LOT (Jon, 2026-10-26): /lot/<code> is the link a person standing in
+  // the lot opens on their phone to check or scan a plate, walk the spots and flag the cars that
+  // should not be there. No Lighthouse account — the code is the capability, the optional passcode
+  // is checked server-side in /api/public/lot, and everything is scoped to that one lot.
+  '/lot/',
   // The did-it-work confirmation after a door-code release. Open on purpose: the people who know
   // whether a code worked are field techs without logins, and a question only answerable by people
   // who were not at the door is a question that never gets a true answer. The token is the auth.
