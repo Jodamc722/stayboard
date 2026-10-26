@@ -197,11 +197,12 @@ export function coverVerdict(c: AdminRow['cover']): { weak: boolean; why: string
 export function refreshSteps(r: AdminRow, today: string): string[] {
   const out: string[] = []
   const cv = coverVerdict(r.cover)
-  if (!r.cover) out.push('Run the photo analysis and pick the cover it rates highest (the current cover has not been analyzed)')
+  const pf = photoFlags(r.photos, today)
+  const analysisDue = pf.indexOf('unanalyzed') >= 0 || pf.indexOf('stale-analysis') >= 0
+  if (!r.cover) out.push('Run the photo analysis' + (r.photos.analyzedAt ? ' again' : '') + ': pick the cover it rates highest and re-order the first five (the current cover has not been analyzed)')
   else if (cv.weak) out.push('New cover photo — the current one reads ' + cv.why)
   else if (r.cover.quality != null && r.cover.quality < RULES.coverTryQuality) out.push('Try a new cover — the current one is ' + r.cover.quality + '/100 and the search card is the click')
-  const pf = photoFlags(r.photos, today)
-  if (pf.indexOf('unanalyzed') >= 0 || pf.indexOf('stale-analysis') >= 0) out.push('Re-run the photo analysis and re-order the first five' + (r.photos.analyzedAt ? ' (last ' + agoShort(r.photos.analyzedAt, today) + ' ago)' : ''))
+  if (analysisDue && r.cover) out.push('Re-run the photo analysis and re-order the first five' + (r.photos.analyzedAt ? ' (last ' + agoShort(r.photos.analyzedAt, today) + ' ago)' : ''))
   if (pf.indexOf('few') >= 0) out.push('Shoot more photos — ' + r.photos.count + ' is not enough to verify the home')
   if (pf.indexOf('captions') >= 0) out.push('Caption the ' + r.photos.noCaption + ' photos with no caption')
   const os = optimizeState(r, today)
