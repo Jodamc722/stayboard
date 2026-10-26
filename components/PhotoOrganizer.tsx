@@ -627,6 +627,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
 
       {open && (
         <div className="px-4 py-4 border-t border-line space-y-4">
+          <CaptionTag listingId={listingId} />
           {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
           {pushedMsg && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-[13px] text-emerald-700 flex items-center gap-2"><Check size={14} /> {pushedMsg}</div>}
           {busy && order.length === 0 && <div className="rounded-xl border border-line bg-app/40 px-4 py-10 text-center text-sm text-muted">Studying every photo and ranking the best order…</div>}
@@ -978,6 +979,49 @@ function FiveSheet({ initial, all, photos, heroCands, onApply, onClose }: { init
           <button onClick={() => onApply(five.filter(Boolean) as string[])} className="rounded-xl bg-amber-500 text-white px-4 py-2 text-sm font-bold hover:bg-amber-600">Apply these five</button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * THE CAPTION TAG (Jon, 2026-10-26: "a photo captions tag that will customize the photo captions,
+ * but it should be optimized for AI search"). What every caption on this listing should work in —
+ * where a photo actually shows it — on top of the house caption spec and the AI-search rules.
+ * Used by "Describe all", the photo pass and the per-photo ✨.
+ */
+function CaptionTag({ listingId }: { listingId: string }) {
+  const [tag, setTag] = useState('')
+  const [saved, setSaved] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  useEffect(() => {
+    let dead = false
+    fetch('/api/photo-caption/tag?listingId=' + encodeURIComponent(listingId), { cache: 'no-store' }).then(r => r.json())
+      .then(j => { if (!dead && j?.ok) { setTag(j.tag || ''); setSaved(j.tag || '') } }).catch(() => {})
+    return () => { dead = true }
+  }, [listingId])
+  const save = async () => {
+    setBusy(true); setMsg('')
+    try {
+      const j = await fetch('/api/photo-caption/tag', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, tag }) }).then(r => r.json())
+      if (!j?.ok) throw new Error(j?.error || 'Could not save.')
+      setSaved(j.tag || ''); setTag(j.tag || ''); setMsg('Saved — used on the next Describe all or ✨.')
+    } catch (e: any) { setMsg(String(e?.message || e)) }
+    setBusy(false)
+  }
+  return (
+    <div className="rounded-xl border border-line bg-app/40 px-3 py-2.5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-muted">Caption tag</span>
+        <span className="text-[11px] text-muted">What the captions should work in, where a photo shows it. Captions are also written for AI search (plain feature names, the place named on view and building shots).</span>
+      </div>
+      <div className="mt-1.5 flex items-center gap-2">
+        <input value={tag} onChange={e => setTag(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') save() }} maxLength={400}
+          placeholder="e.g. rooftop pool with bay view, walk to Las Olas Blvd, free garage parking, 300 Mbps wifi"
+          className="flex-1 min-w-0 text-[12.5px] rounded-lg border border-line bg-white px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-200" />
+        <button onClick={save} disabled={busy || tag === saved} className="text-[12px] font-semibold rounded-lg bg-ink text-white px-3 py-1.5 disabled:opacity-40">{busy ? 'Saving…' : 'Save'}</button>
+      </div>
+      {msg && <p className="mt-1 text-[11.5px] text-muted">{msg}</p>}
     </div>
   )
 }

@@ -70,6 +70,8 @@ export type ListingAi = {
     captionPrompt: string
     captionMaxWords: number
     captionMaxChars: number
+    /** Write captions so AI assistants and OTA AI search can read and cite them (default on). */
+    captionSearch: boolean
     maxPhotos: number
     photosToCopywriter: number   // how many labelled photos the copywriter is shown
   }
@@ -180,6 +182,28 @@ const DEFAULT_ORDER_PROMPT = `Ordering principles (in priority):
 // that still pushes to Guesty — not a second internal field.
 const DEFAULT_CAPTION_PROMPT = `A specific, guest-facing description of what the photo shows: name the space first (Airbnb shows captions in its room-by-room photo tour, and guests skim them to confirm what they are looking at), then what is in it, then the one true thing that sells it — the feature a guest would book for (the view, the king bed, the walk-in shower, the workspace). Write it like a listing caption a guest reads under the photo — concrete, warm, sentence case, never marketing fluff, never a sentence about how it "feels", never ALL CAPS or exclamation marks. Ground every word in the image. NEVER include a unit, room or listing number, a brand name you are not certain of, or a claim the photo does not show.`
 
+// AI-SEARCH CAPTIONS (Jon, 2026-10-26: "photo captions … should be optimized for AI search"). Guests
+// now find stays through AI assistants (ChatGPT, Gemini, Google AI Overviews) and the OTAs' own AI
+// search, all of which read captions as TEXT — the photo itself is invisible to most of them. A
+// caption that names the thing in the words a guest types ("king bed", "in-unit washer and dryer",
+// "ocean view") is one that answers "a 2-bedroom near Las Olas with a washer and a balcony".
+export const AI_SEARCH_CAPTION = `OPTIMIZE FOR AI SEARCH. AI assistants and the booking sites' AI search read these captions as text, so:
+- Name every feature with the plain, standard term a guest would type into a search: king bed, queen bed, two twin beds, sofa bed, fully equipped kitchen, kitchenette, dishwasher, in-unit washer and dryer, dedicated workspace, private balcony, ocean view, bay view, city view, pool, hot tub, gym, free parking, garage parking, walk-in shower, bathtub, smart TV.
+- One clear subject per caption, stated as fact (what it is, what is in it), with the room named first.
+- On exterior, view, pool, rooftop, building and neighborhood photos, name the place once — the building or the neighborhood and the city — so the stay is matched to "near X" questions. Never on interior shots.
+- Include a number when the photo proves it (2 queen beds, seats 6, 2 sinks).
+- No keyword lists, no repeating the same phrase across captions, no superlatives.`
+
+/** The full caption instruction: the house spec, the AI-search rules, and the listing's own caption tag. */
+export function captionSpec(cfg: ListingAi, tag?: string | null): string {
+  const t = String(tag || '').replace(/\s+/g, ' ').trim().slice(0, 400)
+  return [
+    cfg.photos.captionPrompt,
+    cfg.photos.captionSearch ? AI_SEARCH_CAPTION : '',
+    t ? `CAPTION TAG FOR THIS LISTING — work these in, in natural words, ONLY on photos that actually show them: ${t}` : '',
+  ].filter(Boolean).join('\n\n')
+}
+
 const DEFAULT_PRESETS: EnhancePreset[] = [
   // "Classic" is the exact recipe every enhanced photo got before 2026-08-21 — kept so the
   // default behaviour of the button is unchanged for anyone who does not touch the settings.
@@ -211,6 +235,7 @@ export const DEFAULT_LISTING_AI: ListingAi = {
     captionPrompt: DEFAULT_CAPTION_PROMPT,
     captionMaxWords: 20,
     captionMaxChars: 120,
+    captionSearch: true,
     maxPhotos: 40,
     photosToCopywriter: 10,
   },
@@ -274,6 +299,7 @@ export function mergeListingAi(stored: any): ListingAi {
       captionPrompt: str(ph.captionPrompt, DEFAULT_CAPTION_PROMPT, 2000),
       captionMaxWords: num(ph.captionMaxWords, 20, 4, 40),
       captionMaxChars: num(ph.captionMaxChars, 120, 20, 240),
+      captionSearch: ph.captionSearch === false ? false : true,
       maxPhotos: num(ph.maxPhotos, 40, 5, 60),
       photosToCopywriter: num(ph.photosToCopywriter, 10, 3, 16),
     },

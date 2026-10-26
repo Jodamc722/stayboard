@@ -10,6 +10,8 @@ import { createClient } from '@/lib/supabase-server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
+import { captionSpec } from '@/lib/listing-ai'
+import { captionTagFor } from '@/lib/caption-tags'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 
@@ -45,7 +47,7 @@ export async function POST(req: NextRequest) {
   const cfg = await loadListingAiWithPreview(body?.promptPreview)
 
   const sb = supabaseAdmin()
-  const { data: listing, error } = await sb.from('guesty_listings').select('id, title, building, pictures, raw').eq('id', listingId).single()
+  const { data: listing, error } = await sb.from('guesty_listings').select('id, title, building, address_city, pictures, raw').eq('id', listingId).single()
   if (error || !listing) return NextResponse.json({ error: 'listing not found' }, { status: 404 })
   const raw: any = (listing as any).raw || {}
   const arr0: any[] = Array.isArray(raw?.pictures) ? raw.pictures : (Array.isArray((listing as any).pictures) ? (listing as any).pictures : [])
@@ -61,7 +63,7 @@ export async function POST(req: NextRequest) {
 
   const SYS = `You caption short-term-rental listing photos for Stay Hospitality. Reply with ONLY the caption text — no quotes, no prose, no explanation.
 
-${cfg.photos.captionPrompt}
+${captionSpec(cfg, typeof body?.captionTag === 'string' ? body.captionTag : await captionTagFor(listingId))}
 
 Maximum ${cfg.photos.captionMaxWords} words and ${cfg.photos.captionMaxChars} characters.`
 
@@ -72,7 +74,7 @@ Maximum ${cfg.photos.captionMaxWords} words and ${cfg.photos.captionMaxChars} ch
     const media = ct.includes('png') ? 'image/png' : ct.includes('webp') ? 'image/webp' : ct.includes('gif') ? 'image/gif' : 'image/jpeg'
     const b64 = Buffer.from(await ir.arrayBuffer()).toString('base64')
     const ctx = [
-      'Property: ' + (str((listing as any).title) || 'listing') + ' (' + (str((listing as any).building) || 'building') + ').',
+      'Property: ' + (str((listing as any).title) || 'listing') + ' (' + (str((listing as any).building) || 'building') + (str((listing as any).address_city) ? ', ' + str((listing as any).address_city) : '') + ').',
       known?.room ? `This photo shows: ${known.room}.` : '',
       instruction ? `The host wants this emphasised: "${instruction}".` : '',
       'Caption this photo:',

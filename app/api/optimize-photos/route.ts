@@ -24,6 +24,8 @@ import { createClient } from '@/lib/supabase-server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
+import { captionSpec } from '@/lib/listing-ai'
+import { captionTagFor } from '@/lib/caption-tags'
 import { buildOrder, normalizeRooms, marketingChecks, titleHooks, isJunkCaption, ORDER_RULE, PLAYBOOK, type PhotoFacts, type ShotType } from '@/lib/photo-order'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
@@ -134,6 +136,8 @@ export async function POST(req: NextRequest) {
   // Let the engine choose the cover (Jon can ask for it explicitly; default keeps the current one).
   const autoHero: boolean = body?.autoHero === true
   const cfg = await loadListingAiWithPreview(body?.promptPreview)
+  // The listing's caption tag (lib/caption-tags) rides into every caption; the AI-search rules too.
+  const captionTag: string = typeof body?.captionTag === 'string' ? body.captionTag : await captionTagFor(String(listingId))
 
   const sb = supabaseAdmin()
   const { data: listing, error } = await sb.from('guesty_listings').select('id, title, nickname, building, bedrooms, bathrooms, room_type, max_occupancy, address_city, pictures, raw').eq('id', listingId).single()
@@ -170,7 +174,7 @@ For EVERY photo return:
 - "duplicateOf": the photo NUMBER of a near-identical photo in this batch that is the STRONGER of the two, or null. Two angles of the same room are NOT duplicates; the same angle twice is.
 - "heroWorthy": true only if this photo could be the listing's cover — wide, bright, a space or view a guest would stop scrolling for.
 - "kind": "property" for a real photo of this home/building; "stock" for generic imagery (skyline, map, generic beach, attraction, promo graphic).
-- "caption": ${cfg.photos.captionMaxWords} words / ${cfg.photos.captionMaxChars} characters max. ${cfg.photos.captionPrompt}
+- "caption": ${cfg.photos.captionMaxWords} words / ${cfg.photos.captionMaxChars} characters max. ${captionSpec(cfg, captionTag)}
 - "enhance": one preset key from the menu below; "enhanceWhy": ≤ 10 words grounded in what you see.
 ${presetMenu}
 

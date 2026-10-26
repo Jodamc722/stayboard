@@ -351,6 +351,9 @@ export function ListingAiAdmin({ isOwner }: { isOwner: boolean }) {
               <Knob label="Max words"><Num value={cfg.photos.captionMaxWords} disabled={ro} onChange={n => mutate(c => { c.photos.captionMaxWords = n })} /></Knob>
               <Knob label="Max characters"><Num value={cfg.photos.captionMaxChars} disabled={ro} onChange={n => mutate(c => { c.photos.captionMaxChars = n })} /></Knob>
               <Knob label="Photos shown to the copywriter"><Num value={cfg.photos.photosToCopywriter} disabled={ro} onChange={n => mutate(c => { c.photos.photosToCopywriter = n })} /></Knob>
+              <label className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-ink" title="Adds the AI-search rules to every caption: plain, standard feature names a guest would type; the place named on exterior, view and building shots; facts and numbers, no keyword lists">
+                <input type="checkbox" checked={cfg.photos.captionSearch !== false} disabled={ro} onChange={e => mutate(c => { c.photos.captionSearch = e.target.checked })} /> Optimize for AI search
+              </label>
               <button onClick={() => mutate(c => { c.photos.captionPrompt = DEFAULT_LISTING_AI.photos.captionPrompt })} disabled={ro}
                 className="text-[11.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1 disabled:opacity-40"><RotateCcw size={11} /> Reset</button>
             </div>
