@@ -1,6 +1,6 @@
 'use client'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
-import { buildOrder as engineOrder, type PhotoFacts } from '@/lib/photo-order'
+import { buildOrder as engineOrder, showcaseScore, spaceType, SPACE_LABEL, type PhotoFacts } from '@/lib/photo-order'
 import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive, RefreshCw, Loader2, GripVertical, ChevronsUp, ChevronsDown, CornerLeftUp, X } from 'lucide-react'
 
 type Photo = {
@@ -657,6 +657,11 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       {open && (
         <div className="px-4 py-4 border-t border-line space-y-4">
           <CaptionTag listingId={listingId} />
+          {order.length > 0 && (
+            <FiveBoard five={order.slice(0, 5)} all={order.filter(id => !uploads[id])} photos={photos} heroCands={heroCands}
+              studio={!!profile?.isStudio} locked={!!fiveLock} busy={busy || pushing}
+              onSet={five => applyFive(five)} onAuto={() => { setFiveLock(null); regroup(photos, null) }} />
+          )}
           {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
           {pushedMsg && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-[13px] text-emerald-700 flex items-center gap-2"><Check size={14} /> {pushedMsg}</div>}
           {busy && order.length === 0 && <div className="rounded-xl border border-line bg-app/40 px-4 py-10 text-center text-sm text-muted">Studying every photo and ranking the best order…</div>}
@@ -814,7 +819,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                         <span className={`text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-md border ${slotTone}`}>{header}</span>
                         <span className="text-[11px] text-muted">{header === 'Cover photos' ? 'the first five — what a guest sees in the search card and swipes before opening' : header === 'Consider removing' ? 'duplicates, weak shots and stock — tick to remove on push' : 'the tour, room by room'}</span>
                         <span className="flex-1 border-t border-line" />
-                        {header === 'Cover photos' && <button onClick={() => setFiveOpen(true)} className="inline-flex items-center gap-1 rounded-lg bg-amber-500 text-white px-2.5 py-1 text-[11.5px] font-bold hover:bg-amber-600"><Crown size={12} /> Arrange the five</button>}
+                        {header === 'Cover photos' && <button onClick={() => { const el = document.getElementById('first-five'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); else setFiveOpen(true) }} className="inline-flex items-center gap-1 rounded-lg bg-amber-500 text-white px-2.5 py-1 text-[11.5px] font-bold hover:bg-amber-600"><Crown size={12} /> Arrange the five</button>}
                         {header === 'Cover photos' && fiveLock && <button onClick={() => applyFive([])} className="text-[11px] text-muted hover:text-ink">Back to AI five</button>}
                       </li>
                     )}
@@ -1079,6 +1084,91 @@ function CaptionTag({ listingId }: { listingId: string }) {
         <button onClick={save} disabled={busy || tag === saved} className="text-[12px] font-semibold rounded-lg bg-ink text-white px-3 py-1.5 disabled:opacity-40">{busy ? 'Saving…' : 'Save'}</button>
       </div>
       {msg && <p className="mt-1 text-[11.5px] text-muted">{msg}</p>}
+    </div>
+  )
+}
+
+/**
+ * THE FIRST FIVE, ON THE PAGE (Jon, 2026-10-26: "we need an easier way to organize first 5 … smarter
+ * first 5, we need best photos … easier to pick first 5"). Always visible at the top of the panel,
+ * laid out like Airbnb's header grid. Every change applies at once — no sheet, no Apply:
+ *   · drag a photo from "Best candidates" onto a slot, or drag one slot onto another to swap;
+ *   · or tap a slot, then tap a candidate;
+ *   · ✕ hands a slot back to the engine; "AI's best five" lets the engine choose all of them.
+ * Candidates are ranked by what they are worth in the opening swipe (lib/photo-order
+ * showcaseScore), with the space each one would add.
+ */
+function FiveBoard({ five, all, photos, heroCands, studio, locked, busy, onSet, onAuto }: {
+  five: string[]; all: string[]; photos: Record<string, Photo>; heroCands: HeroCandidate[]; studio: boolean; locked: boolean; busy: boolean
+  onSet: (five: string[]) => void; onAuto: () => void
+}) {
+  const [sel, setSel] = useState<number | null>(null)
+  const [drag, setDrag] = useState<string | null>(null)
+  const factOf = (id: string): PhotoFacts | null => { const p = photos[id]; if (!p) return null; return {
+    _id: id, url: p.url, room: p.room || p.category || 'other', category: p.category || 'other', subject: p.subject || '',
+    shotType: p.shotType || 'medium', quality: typeof p.quality === 'number' ? p.quality : 50, kind: p.kind === 'stock' ? 'stock' : 'property',
+    faults: p.faults || [], sellingPoints: p.sellingPoints || [], duplicateOf: p.duplicateOf || null, heroWorthy: !!p.heroWorthy,
+    caption: p.caption || '', captionSource: 'ai' } }
+  const inFive = new Set(five)
+  const typesIn = new Set(five.map(id => { const f = factOf(id); return f ? spaceType(f, studio) : 'other' }))
+  const cands: { id: string; s: number; t: ReturnType<typeof spaceType> }[] = []
+  for (const id of all) {
+    if (inFive.has(id)) continue
+    const f = factOf(id); if (!f) continue
+    const sc = showcaseScore(f); if (sc > 0) cands.push({ id, s: sc, t: spaceType(f, studio) })
+  }
+  cands.sort((a, b) => b.s - a.s); cands.splice(14)
+  const crown = (id: string) => { const i = heroCands.findIndex(c => c._id === id); return i >= 0 && i < 3 ? i + 1 : null }
+  const place = (slot: number, id: string) => {
+    const n = five.slice(); while (n.length < 5) n.push('')
+    const from = n.indexOf(id)
+    if (from >= 0) { n[from] = n[slot]; n[slot] = id } else n[slot] = id
+    onSet(n.filter(Boolean)); setSel(null)
+  }
+  const clear = (slot: number) => { const n = five.slice(); n.splice(slot, 1); onSet(n) }
+  const q = (v?: number) => (v || 0) >= 75 ? 'bg-emerald-500' : (v || 0) >= 60 ? 'bg-amber-400' : 'bg-rose-500'
+  return (
+    <div id="first-five" className="rounded-2xl border border-amber-200 bg-amber-50/40 p-3">
+      <div className="flex items-center gap-2 flex-wrap mb-2">
+        <Crown size={15} className="text-amber-600" />
+        <span className="text-[14px] font-bold text-ink">First 5 — what guests see before they click</span>
+        <span className="text-[11.5px] text-muted">{locked ? 'Your arrangement — the rest of the order follows it.' : "The AI's picks: the best photos that still show five different spaces."}</span>
+        <button onClick={onAuto} disabled={busy || !locked} className="ml-auto text-[12px] font-semibold rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-amber-800 hover:bg-amber-50 disabled:opacity-40" title="Let the engine choose all five again">AI&apos;s best five</button>
+      </div>
+      <div className="grid grid-cols-4 grid-rows-2 gap-1.5" style={{ aspectRatio: '2 / 1' }}>
+        {[0, 1, 2, 3, 4].map(i => { const id = five[i]; const p = id ? photos[id] : null; const active = sel === i; return (
+          <div key={i}
+            onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); const d = drag || e.dataTransfer.getData('text/plain'); if (d) place(i, d); setDrag(null) }}
+            onClick={() => setSel(active ? null : i)}
+            draggable={!!id} onDragStart={e => { if (id) { setDrag(id); e.dataTransfer.setData('text/plain', id) } }}
+            className={'relative rounded-lg overflow-hidden cursor-pointer border-2 ' + (i === 0 ? 'col-span-2 row-span-2 ' : '') + (active ? 'border-amber-500 ring-2 ring-amber-300' : 'border-transparent hover:border-amber-300')}
+            title={p ? (p.reason || p.subject || '') : 'Empty — drop a photo here'}>
+            {p ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={p.url} alt="" className="absolute inset-0 w-full h-full object-cover" draggable={false} /> : <div className="absolute inset-0 grid place-items-center bg-app text-[11px] text-muted">drop a photo</div>}
+            <span className="absolute top-1 left-1 text-[10.5px] font-bold px-1.5 rounded bg-black/60 text-white">{i === 0 ? '1 · cover' : i + 1}</span>
+            {p && <span className={'absolute top-1 right-1 text-[10px] font-bold px-1 rounded text-white ' + q(p.quality)}>{p.quality ?? '–'}</span>}
+            {p && <span className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-1.5 pt-3 pb-1 text-[10.5px] text-white truncate">{(p.room || p.category || '').replace(/-/g, ' ')}{p.subject ? ' · ' + p.subject : ''}</span>}
+            {p && i > 0 && <button onClick={e => { e.stopPropagation(); clear(i) }} title="Give this seat back to the AI" className="absolute bottom-1 right-1 w-5 h-5 rounded bg-white/90 text-ink grid place-items-center text-[12px] leading-none">×</button>}
+          </div>
+        )})}
+      </div>
+      <div className="mt-2.5">
+        <div className="text-[11.5px] text-ink mb-1"><b>Best candidates</b> <span className="text-muted">— {sel != null ? `tap one to put it in slot ${sel + 1}` : 'drag one onto a slot, or tap a slot first'} · green tag = a space the five don&apos;t show yet</span></div>
+        <div className="flex gap-1.5 overflow-x-auto pb-1">
+          {cands.map(c => { const p = photos[c.id]; const fresh = !typesIn.has(c.t); const cr = crown(c.id); return (
+            <button key={c.id} draggable onDragStart={e => { setDrag(c.id); e.dataTransfer.setData('text/plain', c.id) }} onDragEnd={() => setDrag(null)}
+              onClick={() => { if (sel != null) place(sel, c.id) }}
+              className={'relative shrink-0 w-28 rounded-lg overflow-hidden border text-left ' + (sel != null ? 'border-amber-400 hover:ring-2 hover:ring-amber-300' : 'border-line')}
+              title={`${p.subject || p.category} · quality ${p.quality ?? '–'} · first-5 score ${c.s}`}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={p.url} alt="" className="w-full aspect-[4/3] object-cover" loading="lazy" draggable={false} />
+              <span className={'absolute top-1 left-1 text-[10px] font-bold px-1 rounded text-white ' + q(p.quality)}>{p.quality ?? '–'}</span>
+              {cr && <span className="absolute top-1 right-1 text-[10px] font-bold px-1 rounded bg-amber-500 text-white inline-flex items-center gap-0.5"><Crown size={9} />{cr}</span>}
+              <span className={'block px-1 py-0.5 text-[10px] truncate ' + (fresh ? 'bg-emerald-50 text-emerald-800 font-semibold' : 'text-ink')}>{SPACE_LABEL[c.t] === 'other' ? (p.room || p.category || '').replace(/-/g, ' ') : SPACE_LABEL[c.t]}</span>
+            </button>
+          )})}
+          {!cands.length && <span className="text-[11.5px] text-muted">No other photo is strong enough for the first five.</span>}
+        </div>
+      </div>
     </div>
   )
 }

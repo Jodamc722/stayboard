@@ -241,38 +241,59 @@ export function rankHeroes(photos: PhotoFacts[], limit = 4): HeroCandidate[] {
     .slice(0, limit)
 }
 
-// The showcase recipe by unit type: which spaces get a seat in positions 2–5, in priority order.
-// Each entry is a predicate; the first showable photo that matches (highest quality first) takes
-// the seat. A space with no showable photo gives its seat to the next strongest wide shot.
-function showcaseRecipe(profile: UnitProfile): { label: string; test: (p: PhotoFacts) => boolean }[] {
-  const isView = (p: PhotoFacts) => p.category === 'view' || (p.category === 'outdoor' && /view|ocean|bay|water|skyline/.test(p.sellingPoints.join(' ')))
-  const isAmenity = (p: PhotoFacts) => p.category === 'amenity' && /pool|rooftop|infinity/.test(rk(p.room) + ' ' + rk(p.subject) + ' ' + p.sellingPoints.join(' '))
-  const isKitchen = (p: PhotoFacts) => p.category === 'kitchen'
-  const isLiving = (p: PhotoFacts) => p.category === 'living'
-  const isBedroom = (p: PhotoFacts) => p.category === 'bedroom'
-  const isBath = (p: PhotoFacts) => p.category === 'bathroom'
-  const isOutdoor = (p: PhotoFacts) => p.category === 'outdoor'
-  // The five questions a guest swipes to answer, in the order that earns the tap:
-  // what's special → where I sleep → where I sit → where I cook → where I bathe.
-  const special = { label: "what's special (view, pool, rooftop)", test: (p: PhotoFacts) => isView(p) || isAmenity(p) || isOutdoor(p) }
-  if (profile.isStudio) {
-    // A studio's bedroom IS its living room — one wide shot of it is the cover or seat 2, not both.
-    return [
-      { label: 'shot of the room (where I sleep & sit)', test: (p) => isBedroom(p) || isLiving(p) },
-      special,
-      { label: 'kitchenette (where I cook)', test: isKitchen },
-      { label: 'bathroom (where I bathe)', test: isBath },
-      { label: 'balcony or view', test: (p) => isOutdoor(p) || isView(p) },
-    ]
+// THE FIRST FIVE, BY SCORE (Jon, 2026-10-26: "need smarter first 5, we need best photos").
+// It used to be a fixed recipe — the best "special" shot, then the best bedroom, living room,
+// kitchen, bathroom — filled in that order, so a 61-quality bathroom took seat 5 over a stunning
+// second view. Now every showable photo competes on what it is worth in the opening swipe
+// (quality, wide, what it proves), plus a bonus for showing a SPACE the five do not show yet and a
+// penalty for repeating one. The result is the five best photos that still tour the home.
+export type SpaceType = 'special' | 'amenity' | 'bedroom' | 'living' | 'kitchen' | 'outdoor' | 'bath' | 'other'
+export function spaceType(p: PhotoFacts, studio = false): SpaceType {
+  const sp = p.sellingPoints.join(' ') + ' ' + rk(p.room) + ' ' + rk(p.subject)
+  // A view and a pool are two different reasons to book — both can earn a seat.
+  if (p.category === 'amenity' && /pool|rooftop|infinity|hot-tub|beach|gym/.test(sp)) return 'amenity'
+  if (p.category === 'view' || (p.category === 'outdoor' && /view|ocean|bay|water|skyline/.test(sp))) return 'special'
+  if (studio && (p.category === 'bedroom' || p.category === 'living')) return 'living'
+  if (p.category === 'bedroom') return 'bedroom'
+  if (p.category === 'living' || p.category === 'dining') return 'living'
+  if (p.category === 'kitchen') return 'kitchen'
+  if (p.category === 'outdoor') return 'outdoor'
+  if (p.category === 'bathroom') return 'bath'
+  return 'other'
+}
+export const SPACE_LABEL: Record<SpaceType, string> = { special: 'the view', amenity: 'pool / rooftop / building amenity', bedroom: 'where I sleep', living: 'where I sit', kitchen: 'where I cook', outdoor: 'balcony / outdoor', bath: 'where I bathe', other: 'other' }
+const SPACE_BONUS: Record<SpaceType, number> = { special: 14, amenity: 11, bedroom: 12, living: 10, kitchen: 9, outdoor: 7, bath: 4, other: 0 }
+/** What a photo is worth in positions 2–5 on its own — before diversity. */
+export function showcaseScore(p: PhotoFacts): number {
+  if (p.kind !== 'property' || p.duplicateOf) return 0
+  let s = p.quality * 0.75
+  s += p.shotType === 'wide' ? 12 : p.shotType === 'medium' ? 3 : -25
+  if (p.heroWorthy) s += 5
+  if (/infinity|rooftop|ocean|bay|skyline|sunset|pool|hot-tub|king-bed|floor-to-ceiling|balcony/.test(p.sellingPoints.join(' '))) s += 6
+  for (const f of p.faults) { if (COVER_KILLERS.has(f)) s -= 30; else if (BAD_FAULTS.has(f)) s -= 12 }
+  return Math.max(0, Math.round(s))
+}
+/** The engine's best four seats after `taken` (cover + any fixed seats), with a reason each. */
+export function pickShowcase(pool: PhotoFacts[], taken: PhotoFacts[], seats: number, studio = false): { p: PhotoFacts; why: string; score: number }[] {
+  const rooms = new Set(taken.map(t => rk(t.room)))
+  const types = new Map<SpaceType, number>()
+  for (const t of taken) { const k = spaceType(t, studio); types.set(k, (types.get(k) || 0) + 1) }
+  const out: { p: PhotoFacts; why: string; score: number }[] = []
+  const used = new Set(taken.map(t => t._id))
+  while (out.length < seats) {
+    let best: { p: PhotoFacts; score: number; t: SpaceType } | null = null
+    for (const p of pool) {
+      if (used.has(p._id) || rooms.has(rk(p.room))) continue
+      const t = spaceType(p, studio)
+      const seen = types.get(t) || 0
+      const sc = showcaseScore(p) + (seen ? -10 * seen : SPACE_BONUS[t])
+      if (sc > 0 && (!best || sc > best.score)) best = { p, score: sc, t }
+    }
+    if (!best) break
+    used.add(best.p._id); rooms.add(rk(best.p.room)); types.set(best.t, (types.get(best.t) || 0) + 1)
+    out.push({ p: best.p, score: best.score, why: `best photo for ${SPACE_LABEL[best.t]} — ${best.p.subject || best.p.category}${best.p.shotType === 'wide' ? ', wide' : ''} · quality ${best.p.quality}` })
   }
-  return [
-    special,
-    { label: 'main bedroom (where I sleep)', test: isBedroom },
-    { label: 'living area (where I sit)', test: isLiving },
-    { label: 'kitchen (where I cook)', test: isKitchen },
-    { label: 'bathroom (where I bathe)', test: isBath },
-    { label: 'balcony or view', test: (p) => isOutdoor(p) || isView(p) },
-  ]
+  return out
 }
 
 /**
@@ -306,7 +327,6 @@ export function buildOrder(facts: PhotoFacts[], heroId: string | null, profile: 
   // skipped so the first five are five different spaces.
   const heroRoom = rk(hero.room)
   const seatsWanted = 4
-  const recipe = showcaseRecipe(profile)
   const pool = facts.filter(p => !used.has(p._id) && showable(p) && !dupOf(p)).sort((a, b) => b.quality - a.quality)
   const takenRooms = new Set<string>([heroRoom])
   const sameSpace = (p: PhotoFacts) => takenRooms.has(rk(p.room)) || (profile.isStudio && (p.category === 'bedroom' || p.category === 'living') && (hero.category === 'bedroom' || hero.category === 'living'))
@@ -318,19 +338,11 @@ export function buildOrder(facts: PhotoFacts[], heroId: string | null, profile: 
     used.add(id); takenRooms.add(rk(p.room))
     push(p, { slot: 'showcase', group: 'Showcase', why: `your pick — ${p.subject || p.category}${p.shotType === 'wide' ? ', wide' : ''} · quality ${p.quality}` })
   }
-  for (const seat of recipe) {
-    if (placed.length - 1 >= seatsWanted) break
-    const pick = pool.find(p => !used.has(p._id) && seat.test(p) && !sameSpace(p))
-    if (!pick) continue
-    used.add(pick._id); takenRooms.add(rk(pick.room))
-    push(pick, { slot: 'showcase', group: 'Showcase', why: `showcase — best ${seat.label}${pick.shotType === 'wide' ? ', wide' : ''} · quality ${pick.quality}` })
-  }
-  // Seats still empty → next strongest wide shots of rooms not yet shown.
-  for (const p of pool) {
-    if (placed.length - 1 >= seatsWanted) break
-    if (used.has(p._id) || sameSpace(p)) continue
-    used.add(p._id); takenRooms.add(rk(p.room))
-    push(p, { slot: 'showcase', group: 'Showcase', why: `showcase — strongest remaining wide shot (${p.subject || p.category}) · quality ${p.quality}` })
+  // The engine fills what the host left: the best remaining photos that still tour the home.
+  const fixed = placed.map(x => byId.get(x._id) as PhotoFacts).filter(Boolean)
+  for (const pick of pickShowcase(pool.filter(p => !sameSpace(p)), fixed, seatsWanted - (placed.length - 1), profile.isStudio)) {
+    used.add(pick.p._id); takenRooms.add(rk(pick.p.room))
+    push(pick.p, { slot: 'showcase', group: 'Showcase', why: 'showcase — ' + pick.why })
   }
 
   // ── THE TOUR + BUILDING: every remaining photo grouped by room in walk order; wide → detail;
@@ -405,7 +417,7 @@ export function marketingChecks(placed: Placed[], profile: UnitProfile): Check[]
   }
   // 2. First five answer the five questions
   const rooms5 = new Set(showcase.map(p => rk(p.room)))
-  out.push({ key: 'five', ok: showcase.length >= 4 && rooms5.size === showcase.length, label: 'First five show five different spaces', detail: showcase.length < 4 ? `Only ${showcase.length + 1} strong wide shots for the opening swipe — shoot the missing spaces wide and bright.` : `${showcase.map(p => p.placement.why.replace(/^showcase — best /, '').replace(/ · quality \d+$/, '')).join(' · ')}` })
+  out.push({ key: 'five', ok: showcase.length >= 4 && rooms5.size === showcase.length, label: 'First five show five different spaces', detail: showcase.length < 4 ? `Only ${showcase.length + 1} strong wide shots for the opening swipe — shoot the missing spaces wide and bright.` : `${showcase.map(p => p.placement.why.replace(/^showcase — (best photo for )?/, '').replace(/^your pick — /, '').replace(/ · quality \d+$/, '')).join(' · ')}` })
   // 3. Every bed is shown
   const beds = profile.isStudio ? 1 : (profile.bedrooms ?? 1)
   const bedRooms = new Set(property.filter(p => /^bedroom/.test(rk(p.room)) && p.placement.slot !== 'demoted').map(p => rk(p.room)))
