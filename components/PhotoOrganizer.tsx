@@ -1,7 +1,7 @@
 'use client'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { buildOrder as engineOrder, type PhotoFacts } from '@/lib/photo-order'
-import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive, RefreshCw, Loader2, GripVertical, ChevronsUp, ChevronsDown, CornerLeftUp } from 'lucide-react'
+import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive, RefreshCw, Loader2, GripVertical, ChevronsUp, ChevronsDown, CornerLeftUp, X } from 'lucide-react'
 
 type Photo = {
   _id: string; url: string; caption?: string; category?: string; reason?: string; kind?: string
@@ -25,6 +25,9 @@ type Result = {
   heroSuggestion?: { _id: string; why: string } | null
   /** The engine replaced a weaker current cover with its best candidate (2026-10-26). */
   coverChange?: { from: string; to: string; fromScore: number; toScore: number; why: string } | null
+  /** Amenities the photos show that the listing does not list (2026-10-26). */
+  amenityGaps?: { name: string; photos: string[]; count: number }[]
+  listedAmenities?: string[]
   assessment?: { quality: number | null; coverage: string; notes: string[] } | null
   recommendRemove?: { _id: string; reason: string }[]
   overflow?: number
@@ -62,6 +65,27 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [proposed, setProposed] = useState<string[]>([])      // AI's proposed order (for reset)
   const [, setHeroSug] = useState<Result['heroSuggestion']>(null)
   const [coverChange, setCoverChange] = useState<Result['coverChange']>(null)
+  const [amenityGaps, setAmenityGaps] = useState<NonNullable<Result['amenityGaps']>>([])
+  const [listedAmenities, setListedAmenities] = useState<string[]>([])
+  const [amenBusy, setAmenBusy] = useState('')
+  const [amenMsg, setAmenMsg] = useState('')
+  // MARK WHAT THE PHOTOS SHOW (Jon, 2026-10-26: "if it sees the toaster and we don't have toaster
+  // marked, it should notify you and give you the option to mark it"). Writes the full list to
+  // Guesty through the same route the amenity editor uses — nothing is added without a click.
+  async function markAmenities(names: string[]) {
+    if (!names.length) return
+    setAmenBusy(names.length > 1 ? '*' : names[0]); setAmenMsg('')
+    try {
+      const next = Array.from(new Set([...listedAmenities, ...names]))
+      const r = await fetch('/api/listing-amenities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, amenities: next }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || j?.error) throw new Error(j?.error || 'Guesty would not take it.')
+      setListedAmenities(Array.isArray(j?.amenities) ? j.amenities : next)
+      setAmenityGaps(g => g.filter(x => names.indexOf(x.name) < 0))
+      setAmenMsg('Marked in Guesty: ' + names.join(', ') + '.')
+    } catch (e: any) { setAmenMsg(String(e?.message || e)) }
+    setAmenBusy('')
+  }
   const [overflow, setOverflow] = useState(0)
   const [assessment, setAssessment] = useState<Result['assessment']>(null)
   const [removeList, setRemoveList] = useState<{ _id: string; reason: string }[]>([])
@@ -149,7 +173,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       upIds.forEach(id => { if (photosRef.current[id]) map[id] = photosRef.current[id] })
       const fullOrder = [...j.proposedOrder, ...upIds.filter((id: string) => !j.proposedOrder.includes(id))]
       setPhotos(map); setHeroId(j.heroId); setOrder(fullOrder); setProposed(fullOrder)
-      setHeroSug(j.heroSuggestion || null); setCoverChange(j.coverChange || null); setOverflow(j.overflow || 0); setAssessment(j.assessment || null); setRemoveList(j.recommendRemove || [])
+      setHeroSug(j.heroSuggestion || null); setCoverChange(j.coverChange || null); setAmenityGaps(j.amenityGaps || []); setListedAmenities(j.listedAmenities || []); setOverflow(j.overflow || 0); setAssessment(j.assessment || null); setRemoveList(j.recommendRemove || [])
       if (Array.isArray(j.presets)) setPresets(j.presets)
       if (typeof j.orderRule === 'string') setOrderRule(j.orderRule)
       setSections(Array.isArray(j.sections) ? j.sections : [])
@@ -689,6 +713,28 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
             </div>
           )}
 
+          {amenityGaps.length > 0 && (
+            <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[12.5px] font-bold text-sky-900">Seen in the photos, not marked on the listing</span>
+                <span className="text-[11.5px] text-sky-800">Guests filter on these — tick only what is really there for guests to use.</span>
+                <button onClick={() => markAmenities(amenityGaps.map(g => g.name))} disabled={!!amenBusy} className="ml-auto text-[12px] font-semibold rounded-lg bg-ink text-white px-2.5 py-1 disabled:opacity-40">{amenBusy === '*' ? 'Marking…' : 'Mark all ' + amenityGaps.length}</button>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {amenityGaps.map(g => (
+                  <span key={g.name} className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-white pl-1 pr-1.5 py-1">
+                    {g.photos.slice(0, 2).map(pid => photos[pid]?.url ? <img key={pid} src={photos[pid].url} alt="" title={'Seen in this photo'} className="w-8 h-8 rounded object-cover" /> : null)}
+                    <span className="text-[12.5px] font-semibold text-ink">{g.name}</span>
+                    {g.count > 1 && <span className="text-[11px] text-muted">· {g.count} photos</span>}
+                    <button onClick={() => markAmenities([g.name])} disabled={!!amenBusy} className="text-[11.5px] font-semibold rounded-md border border-line px-1.5 py-0.5 hover:bg-app disabled:opacity-40">{amenBusy === g.name ? '…' : 'Mark'}</button>
+                    <button onClick={() => setAmenityGaps(x => x.filter(y => y.name !== g.name))} title="Not available to guests — dismiss" className="text-muted hover:text-ink"><X size={12} /></button>
+                  </span>
+                ))}
+              </div>
+              {amenMsg && <p className="mt-1.5 text-[11.5px] text-sky-900">{amenMsg}</p>}
+            </div>
+          )}
+          {amenityGaps.length === 0 && amenMsg && <p className="text-[12px] text-emerald-700">{amenMsg}</p>}
           {order.length > 0 && coverChange && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900 flex items-center gap-2 flex-wrap">
               <Crown size={13} /> <span><b>New cover picked.</b> {coverChange.why} scores {coverChange.toScore} as a first photo; the current cover scores {coverChange.fromScore}. Nothing goes live until you push.</span>

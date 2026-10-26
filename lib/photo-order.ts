@@ -84,6 +84,8 @@ export type PhotoFacts = {
   captionSource: 'ai' | 'human' | 'placeholder'
   enhance?: string
   enhanceWhy?: string
+  /** Amenities from the house vocabulary this photo plainly shows (toaster, crib, BBQ grill…). */
+  amenitiesSeen?: string[]
 }
 
 export type Slot = 'cover' | 'showcase' | 'tour' | 'building' | 'demoted'

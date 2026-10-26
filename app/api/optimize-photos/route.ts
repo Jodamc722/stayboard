@@ -26,6 +26,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
 import { captionSpec, AUTO_PRESET } from '@/lib/listing-ai'
 import { captionTagFor } from '@/lib/caption-tags'
+import { VISUAL_AMENITIES, amenityListed } from '@/lib/amenity-catalog'
 import { buildOrder, normalizeRooms, rankHeroes, heroScore, marketingChecks, titleHooks, isJunkCaption, ORDER_RULE, PLAYBOOK, type PhotoFacts, type ShotType } from '@/lib/photo-order'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
@@ -140,7 +141,7 @@ export async function POST(req: NextRequest) {
   const captionTag: string = typeof body?.captionTag === 'string' ? body.captionTag : await captionTagFor(String(listingId))
 
   const sb = supabaseAdmin()
-  const { data: listing, error } = await sb.from('guesty_listings').select('id, title, nickname, building, bedrooms, bathrooms, room_type, max_occupancy, address_city, pictures, raw').eq('id', listingId).single()
+  const { data: listing, error } = await sb.from('guesty_listings').select('id, title, nickname, building, bedrooms, bathrooms, room_type, max_occupancy, address_city, amenities, pictures, raw').eq('id', listingId).single()
   if (error || !listing) return NextResponse.json({ error: 'listing not found' }, { status: 404 })
   const raw = (listing as any).raw || {}
   const allPics = readPics(raw, listing)
@@ -175,10 +176,11 @@ For EVERY photo return:
 - "heroWorthy": true only if this photo could be the listing's cover — wide, bright, a space or view a guest would stop scrolling for.
 - "kind": "property" for a real photo of this home/building; "stock" for generic imagery (skyline, map, generic beach, attraction, promo graphic).
 - "caption": ${cfg.photos.captionMaxWords} words / ${cfg.photos.captionMaxChars} characters max. ${captionSpec(cfg, captionTag)}
+- "amenitiesSeen": the amenities from THIS list that the photo plainly shows — an object you can point at, not one you assume (a toaster on the counter, a crib, a BBQ grill, a desk with a chair, a smart TV, a bathtub). Use the exact spelling from the list; [] when none: ${VISUAL_AMENITIES.join(' | ')}
 - "enhance": one preset key from the menu below; "enhanceWhy": ≤ 10 words grounded in what you see.
 ${presetMenu}
 
-Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","subject":"…","shotType":"…","quality":<0-100>,"faults":[…],"sellingPoints":[…],"duplicateOf":<number|null>,"heroWorthy":<bool>,"kind":"…","caption":"…","enhance":"…","enhanceWhy":"…"}, …]} with ONE entry for EVERY photo number you were given.`
+Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","subject":"…","shotType":"…","quality":<0-100>,"faults":[…],"sellingPoints":[…],"duplicateOf":<number|null>,"heroWorthy":<bool>,"kind":"…","caption":"…","amenitiesSeen":[…],"enhance":"…","enhanceWhy":"…"}, …]} with ONE entry for EVERY photo number you were given.`
 
   const batches: { start: number; pics: Pic[] }[] = []
   for (let i = 0; i < allPics.length; i += BATCH) batches.push({ start: i, pics: allPics.slice(i, i + BATCH) })
@@ -200,6 +202,8 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
   if (!gotAny) return NextResponse.json({ error: errs[0] || 'AI did not return photo facts.' }, { status: 502 })
 
   // ── Assemble facts. Anything the model skipped gets safe defaults (never dropped).
+  const VISUAL_SET = new Set(VISUAL_AMENITIES.map(a => a.toLowerCase()))
+  const VISUAL_CANON: Record<string, string> = {}; for (const a of VISUAL_AMENITIES) VISUAL_CANON[a.toLowerCase()] = a
   const presetKeys = new Set([...cfg.enhance.presets.map(p => p.key.toLowerCase()), 'none', 'auto'])
   const facts: PhotoFacts[] = []
   const byN: Record<number, any> = {}
@@ -234,8 +238,18 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
       captionSource: human?.caption ? 'human' : (caption === aiCaption && aiCaption) ? 'ai' : (existing && caption === existing) ? 'human' : 'placeholder',
       enhance: presetKeys.has(rawPreset) ? rawPreset : cfg.enhance.fallbackPreset,
       enhanceWhy: str(it.enhanceWhy).slice(0, 90),
+      amenitiesSeen: Array.isArray(it.amenitiesSeen) ? it.amenitiesSeen.map((x: any) => str(x).trim()).filter((x: string) => VISUAL_SET.has(x.toLowerCase())).map((x: string) => VISUAL_CANON[x.toLowerCase()]).slice(0, 8) : [],
     })
   })
+
+  // ── SEEN BUT NOT MARKED (Jon, 2026-10-26). Every amenity a photo proves that the listing does not
+  // list, with the photos that prove it — the desk offers to mark each one. Stock photos never count.
+  const listedAmenities: string[] = Array.isArray((listing as any).amenities) ? (listing as any).amenities.map(str) : (Array.isArray(raw?.amenities) ? raw.amenities.map(str) : [])
+  const seenBy: Record<string, string[]> = {}
+  for (const f of facts) if (f.kind === 'property') for (const a of f.amenitiesSeen || []) (seenBy[a] = seenBy[a] || []).push(f._id)
+  const amenityGaps = Object.entries(seenBy).filter(([name]) => !amenityListed(name, listedAmenities))
+    .map(([name, photos]) => ({ name, photos: photos.slice(0, 4), count: photos.length }))
+    .sort((a, b) => b.count - a.count)
 
   // ── PASS 2: the order, from the facts.
   // THE COVER (Jon, 2026-10-26: "you should also pick best first photo"). A cover the host locked
@@ -311,7 +325,7 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
       photoIndex[f._id] = { room: f.room, category: f.category, kind: f.kind, subject: f.subject, shotType: f.shotType, quality: f.quality, sellingPoints: f.sellingPoints, caption: f.caption, enhance: f.enhance, enhanceWhy: f.enhanceWhy, at, ...(human ? { by: 'human' } : {}) }
     }
     const ps = { score: assessment.quality, coverageNote: assessment.coverage, notes: assessment.notes, count: allPics.length, hooks: hooks.map(h => h.hook), at }
-    await sb.from('guesty_listings').update({ raw: { ...raw, _photoIndex: photoIndex, _photoScore: ps }, photo_score: ps }).eq('id', listingId)
+    await sb.from('guesty_listings').update({ raw: { ...raw, _photoIndex: photoIndex, _photoScore: ps, _photoAmenities: { gaps: amenityGaps, at } }, photo_score: ps }).eq('id', listingId)
   } catch { /* best-effort */ }
 
   const mirror: Record<string, any> = (raw._photoMirror && typeof raw._photoMirror === 'object') ? raw._photoMirror : {}
@@ -329,6 +343,7 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
     proposedOrder, photos, sections,
     heroCandidates,
     coverChange,
+    amenityGaps, listedAmenities,
     heroSuggestion: heroCandidates[0] && heroCandidates[0]._id !== proposedOrder[0] ? { _id: heroCandidates[0]._id, why: heroCandidates[0].why } : null,
     assessment, recommendRemove,
     titleHooks: hooks, titleIdeas, checks, playbook: PLAYBOOK, profile, rooms: Array.from(new Set(normalized.map(f => f.room))).sort(), roomVocab,

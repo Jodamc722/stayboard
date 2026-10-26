@@ -173,3 +173,23 @@ export function groupAmenities(names: string[]): AmenityGroup[] {
   }
   return out
 }
+
+/**
+ * THE AMENITIES A PHOTO CAN PROVE (Jon, 2026-10-26: "if it sees the toaster and we don't have
+ * toaster marked, it should notify you and give you the option to mark it"). The house vocabulary
+ * minus what no photo can show — policies, services, wifi, hot water, things nearby — so the photo
+ * analyst only ever names something it can point at.
+ */
+const NOT_VISUAL = new Set(['Wifi', 'Essentials', 'Heating', 'Hot water', 'Cleaning products', 'Netflix', 'Cable TV', 'Ethernet connection',
+  'Laundromat nearby', 'Single level home', 'Concierge', 'Doorman', 'Building staff', 'Host greets you', 'Luggage dropoff allowed',
+  'Long term stays allowed', 'Self check-in', 'Babysitter recommendations', 'Free street parking', 'Paid parking off premises',
+  'Free parking on premises', 'Paid parking on premises', 'Valet parking', 'Beach access', 'Waterfront', 'Security cameras on property'])
+export const VISUAL_AMENITIES: string[] = AMENITY_GROUPS.filter(g => g.name !== 'Policies').reduce<string[]>((a, g) => a.concat(g.items.filter(i => !NOT_VISUAL.has(i))), [])
+
+const normA = (x: string) => String(x || '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
+/** Is `name` already on the listing? Exact words either way ("Coffee maker" ~ "Coffee maker: Keurig"). */
+export function amenityListed(name: string, listed: string[]): boolean {
+  const n = normA(name)
+  if (!n) return true
+  return listed.some(l => { const x = normA(l); return x === n || (' ' + x + ' ').includes(' ' + n + ' ') || (' ' + n + ' ').includes(' ' + x + ' ') && x.length >= 4 })
+}
