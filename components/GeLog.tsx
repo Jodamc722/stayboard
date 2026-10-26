@@ -91,6 +91,21 @@ function tint(v: string): string {
   const cls = PALETTE[h % PALETTE.length]; tintCache.set(k, cls); return cls
 }
 const marketBar = (m: string) => /miami/i.test(m) ? 'border-sky-400' : /broward/i.test(m) ? 'border-violet-400' : /north/i.test(m) ? 'border-emerald-400' : 'border-neutral-300'
+// What the unit's calendar says about a day, in the words somebody scheduling needs to hear.
+const CAL_TONE: Record<string, string> = {
+  vacant: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  checkout: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  checkin: 'bg-amber-50 text-amber-800 border-amber-200',
+  turn: 'bg-amber-50 text-amber-800 border-amber-200',
+  occupied: 'bg-rose-50 text-rose-700 border-rose-200',
+}
+const CAL_SAYS: Record<string, string> = {
+  vacant: 'the unit is empty that day',
+  checkout: 'a guest leaves that morning and nobody arrives',
+  checkin: 'a guest arrives that afternoon',
+  turn: 'that day is already a turn \u2014 a checkout and a check-in',
+  occupied: 'a GUEST IS IN THE UNIT all that day',
+}
 const money = (n: number | null) => n == null ? '' : '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 const prettyDate = (iso: string) => iso ? new Date(iso + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC' }) : ''
 /** "2026-10-03 16:00" → "10/3/2026 16:00", the sheet's own format. */
@@ -164,6 +179,9 @@ export default function GeLog({ date }: { date: string }) {
   const [noteFor, setNoteFor] = useState('')
   const [showEmpty, setShowEmpty] = useState(true)
   const [market, setMarket] = useState('')   // '' = every market
+  // "order them if we need to" (Jon, 2026-10-26). The sheet gets its order from whoever typed it;
+  // a grid has to be told. These are the four orders somebody actually works in.
+  const [sortBy, setSortBy] = useState<'building' | 'unit' | 'type' | 'notes'>('building')
   const [tick, setTick] = useState(0)
   const [units, setUnits] = useState<Unit[]>([])
   const [addFor, setAddFor] = useState<{ person: string; dept: string } | null>(null)
@@ -204,6 +222,17 @@ export default function GeLog({ date }: { date: string }) {
    *  people with nothing on them still get a band, because "Mirian has an empty day" is half of
    *  what this view is for and it is invisible on every other screen. */
   const bands = useMemo(() => {
+    // HOW THE ROWS INSIDE A PERSON ARE ORDERED. 'notes' floats the rows that need a decision —
+    // same-day turns, long stays, moved cleans — to the top of that person's block.
+    const order = (a: Row, b: Row): number => {
+      if (sortBy === 'unit') return a.listing.localeCompare(b.listing)
+      if (sortBy === 'type') return a.taskType.localeCompare(b.taskType) || a.listing.localeCompare(b.listing)
+      if (sortBy === 'notes') {
+        const w = (x: Row) => ((x.notes || []).length ? 0 : 1)
+        return w(a) - w(b) || (b.notes || []).length - (a.notes || []).length || a.listing.localeCompare(b.listing)
+      }
+      return a.hub.localeCompare(b.hub) || a.listing.localeCompare(b.listing)
+    }
     const byPerson = new Map<string, Row[]>()
     // UNASSIGNED WORK GROUPS BY ITS OWN DEPARTMENT AND MARKET (cleanup 2026-10-22). It used to be
     // one band keyed on the empty name, so every unassigned row of the day — Broward cleans, Miami
@@ -225,7 +254,7 @@ export default function GeLog({ date }: { date: string }) {
       if (person.charAt(0) === VENDOR) {
         const [, vname, vmk] = person.split(VENDOR)
         out.push({ person: '', vendor: vname, dept: 'vendor', market: vmk || '', status: '', clash: '', unrostered: false,
-          rows: rs.sort((a: Row, b: Row) => a.hub.localeCompare(b.hub) || a.listing.localeCompare(b.listing)) })
+          rows: rs.sort(order) })
         continue
       }
       const nobody = person.charAt(0) === NOBODY
@@ -236,8 +265,8 @@ export default function GeLog({ date }: { date: string }) {
         dept: deptKey(ros?.dept || first?.dept || 'housekeeping'),
         market: ros?.market || first?.market || '',
         status: ros ? ros.status : '', clash: ros ? ros.clash : '', unrostered: ros ? ros.unrostered : (!!person && !nobody),
-        // Inside a band the sheet reads by building, then unit.
-        rows: rs.sort((a: Row, b: Row) => a.hub.localeCompare(b.hub) || a.listing.localeCompare(b.listing)),
+        // Inside a band: by building by default, as the sheet reads.
+        rows: rs.sort(order),
       })
     }
     // NOBODY-ASSIGNED FIRST. It is the only part of the day that still needs a decision, and in
@@ -350,6 +379,118 @@ export default function GeLog({ date }: { date: string }) {
   /** MOVE A TASK TO ANOTHER DAY — Jon, 2026-10-21: "Should be able to update the breezeway task."
    *  The one edit a supervisor makes constantly that Lighthouse could previously only REPORT: the
    *  day board shows "Moved → 10-18" but had no way to do it. Live, like the assign beside it. */
+  /** Rename the task line the crew reads in the field app. */
+  async function renameTask(r: Row, name: string) {
+    if (!r.taskId || !name.trim() || name.trim() === r.activity) return
+    setBusy(b => ({ ...b, [r.key]: true })); setErr('')
+    try {
+      const res = await fetch('/api/breezeway/rename', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId: r.taskId, name: name.trim() }),
+      })
+      const j = await res.json().catch(() => null)
+      if (!res.ok) throw new Error((j && j.error) || 'Breezeway would not take that name.')
+      setTick(t => t + 1)
+    } catch (e: any) { setErr(e.message || String(e)) } finally { setBusy(b => ({ ...b, [r.key]: false })) }
+  }
+
+  /** The task line, editable in place. */
+  function RenameRow({ r }: { r: Row }) {
+    const [v, setV] = useState(r.activity)
+    const dirty = !!v.trim() && v.trim() !== r.activity
+    return (
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
+        <span className="font-semibold text-ink">Task line</span>
+        <input value={v} onChange={e => setV(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && dirty) renameTask(r, v) }}
+          className="flex-1 min-w-[260px] border border-line rounded-md px-2 py-1 text-[11px] bg-white" />
+        <button onClick={() => renameTask(r, v)} disabled={!dirty || !!busy[r.key]}
+          className={'text-[11px] font-semibold px-2 py-1 rounded-md ' + (dirty && !busy[r.key] ? 'bg-neutral-900 text-white hover:bg-neutral-800' : 'bg-neutral-100 text-neutral-400')}>
+          Save
+        </button>
+        {dirty ? <span className="text-[10.5px] text-muted">The crew reads this line in the field app.</span> : null}
+      </div>
+    )
+  }
+
+  // ── MOVING A TASK ─────────────────────────────────────────────────────────────────────────
+  // Jon, 2026-10-26: "move to other dat and see if calender is available ect. Cleajns should be
+  // asked multiple times before movign, askiing are you sure, etc."
+  //
+  // Both halves of that are one point. A bare date box asks you to pick a day blind — you cannot
+  // see that Thursday has a guest in it and Friday is a checkout with nothing behind it — and the
+  // thing you are changing is somebody's morning. So the panel draws the unit's own booking
+  // calendar, and a CLEAN is confirmed twice before it moves.
+  //
+  // WHY A CLEAN IS DIFFERENT. Moving a repair is a scheduling decision. Moving a departure clean
+  // is the one edit here that can put a cleaner at a door with a guest behind it, or leave a unit
+  // dirty for an arrival — the two mistakes this board exists to prevent. Twice is not theatre:
+  // the first ask names the day and what the calendar says is happening in the unit, the second is
+  // the plain "are you sure" and says so when the day picked is not a clear one.
+  function MovePanel({ r }: { r: Row }) {
+    const [cal, setCal] = useState<{ date: string; status: string; good: boolean; guest: string | null }[] | null>(null)
+    const [to, setTo] = useState(date)
+    const [loading, setLoading] = useState(false)
+    useEffect(() => {
+      if (!r.listingId) return
+      let dead = false
+      setLoading(true)
+      fetch('/api/listing-calendar?listingId=' + encodeURIComponent(r.listingId) + '&days=21', { cache: 'no-store' })
+        .then(x => x.json())
+        .then(j => { if (!dead && j && j.ok) setCal(Array.isArray(j.days) ? j.days : []) })
+        .catch(() => {})
+        .finally(() => { if (!dead) setLoading(false) })
+      return () => { dead = true }
+    }, [r.listingId])
+    const pick = cal ? cal.find(d => d.date === to) : null
+    const isClean = r.kind === 'clean' || /clean|checkout/i.test(r.taskType)
+
+    function go() {
+      if (!to || to === date) { setErr('Pick a different day than the one you are looking at.'); return }
+      const says = pick ? (CAL_SAYS[pick.status] || pick.status) : 'the calendar for that day could not be read'
+      const guest = pick && pick.guest ? ' (' + pick.guest + ')' : ''
+      if (!window.confirm('Move ' + r.listing + ' \u2014 ' + r.activity + ' to ' + short(to) + '?\n\nOn that day ' + says + guest + '.')) return
+      if (isClean && !window.confirm('Are you sure?\n\nThis is a clean. Moving it changes the crew\u2019s day and what Breezeway shows them in the field'
+        + (pick && !pick.good ? ', and ' + short(to) + ' is not a clear day in this unit' : '') + '.')) return
+      moveTask(r, to)
+    }
+
+    return (
+      <div className="mb-2 rounded-lg border border-line bg-app/40 px-2.5 py-2">
+        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+          <span className="font-semibold text-ink">Move this task to</span>
+          <input type="date" value={to} onChange={e => setTo(e.target.value)}
+            className="border border-line rounded-md px-2 py-1 text-[11px] bg-white" />
+          <button onClick={go} disabled={!!busy[r.key]}
+            className={'text-[11px] font-semibold px-2 py-1 rounded-md ' + (busy[r.key] ? 'bg-neutral-200 text-neutral-500' : 'bg-neutral-900 text-white hover:bg-neutral-800')}>
+            {busy[r.key] ? 'Moving\u2026' : 'Move'}
+          </button>
+          {pick ? (
+            <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ' + (CAL_TONE[pick.status] || 'border-line text-muted')}>
+              {pick.status}{pick.guest ? ' \u00b7 ' + pick.guest : ''}
+            </span>
+          ) : null}
+          <span className="text-[10.5px] text-muted">Writes straight to Breezeway \u2014 the crew sees the new day.</span>
+        </div>
+        {/* THE UNIT'S OWN CALENDAR: green is a clear day, amber is tight, rose has a guest in it.
+            Click one rather than typing a date whose consequences you cannot see. */}
+        {loading && !cal ? <p className="text-[10.5px] text-muted mt-1.5">Reading this unit&rsquo;s calendar&hellip;</p> : null}
+        {cal && cal.length ? (
+          <div className="flex flex-wrap gap-1 mt-2">
+            {cal.map(d => (
+              <button key={d.date} onClick={() => setTo(d.date)} title={(CAL_SAYS[d.status] || d.status) + (d.guest ? ' \u2014 ' + d.guest : '')}
+                className={'text-[10px] font-semibold px-1.5 py-1 rounded-md border tabular-nums ' + (CAL_TONE[d.status] || 'border-line text-muted')
+                  + (d.date === to ? ' ring-2 ring-offset-1 ring-neutral-900' : '')}>
+                {d.date.slice(5)}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {cal && !cal.length ? <p className="text-[10.5px] text-muted mt-1.5">No booking calendar for this unit &mdash; pick a date and the move still works.</p> : null}
+      </div>
+    )
+  }
+
   async function moveTask(r: Row, to: string) {
     if (!r.taskId || !to) return
     setBusy(b => ({ ...b, [r.key]: true })); setErr('')
@@ -552,17 +693,8 @@ export default function GeLog({ date }: { date: string }) {
           <tr key={r.key + ':n'} className="bg-app/60">
             <td colSpan={COLS.length} className="border-t border-line px-2 py-2">
               {!r.taskId && <p className="text-[10.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mb-2">No Breezeway task on this row{r.flag ? ' — ' + r.flag : ''}. The note is kept in Lighthouse against {r.listing}.</p>}
-              {r.taskId && r.status !== 'done' && (
-                <div className="flex flex-wrap items-center gap-2 mb-2 text-[11px]">
-                  <span className="font-semibold text-ink">Move this task to</span>
-                  <input type="date" defaultValue={date} id={'mv-' + r.key}
-                    className="border border-line rounded-md px-2 py-1 text-[11px] bg-white" />
-                  <button
-                    onClick={() => { const el = document.getElementById('mv-' + r.key) as HTMLInputElement | null; if (el?.value) moveTask(r, el.value) }}
-                    className="text-[11px] font-semibold px-2 py-1 rounded-md bg-neutral-900 text-white hover:bg-neutral-800">Move</button>
-                  <span className="text-[10.5px] text-muted">Writes straight to Breezeway — the crew sees the new day.</span>
-                </div>
-              )}
+              {r.taskId && r.status !== 'done' && <MovePanel r={r} />}
+              {r.taskId && r.status !== 'done' && <RenameRow r={r} />}
               <CommentThread type={r.taskId ? 'task' : r.glitchId ? 'glitch' : 'clean'}
                 id={r.taskId || String(r.glitchId || r.key)} taskId={r.taskId || undefined}
                 label={r.listing + ' — ' + r.activity} link="/schedule"
@@ -629,6 +761,13 @@ export default function GeLog({ date }: { date: string }) {
             ))}
           </div>
           <div className="ml-auto flex items-center gap-3">
+            <select value={sortBy} onChange={e => setSortBy(e.target.value as any)} title="How the rows inside each person are ordered"
+              className="text-[11px] font-semibold text-ink bg-white border border-line rounded-lg px-2 py-1 outline-none">
+              <option value="building">By building</option>
+              <option value="unit">By unit</option>
+              <option value="type">By type</option>
+              <option value="notes">Needs a decision first</option>
+            </select>
             <button onClick={() => setShowEmpty(s => !s)} className="text-[11px] font-semibold text-muted hover:text-ink">{showEmpty ? 'Hide people with nothing on' : 'Show everyone'}</button>
             <button onClick={exportCsv} title="Download the grid as a CSV" className="text-muted hover:text-ink"><Download size={13} /></button>
             <button onClick={() => setTick(t => t + 1)} title="Reload the day" className="text-muted hover:text-ink"><RefreshCw size={13} className={loading ? 'animate-spin' : ''} /></button>
