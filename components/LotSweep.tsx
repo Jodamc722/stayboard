@@ -327,7 +327,7 @@ function RegisterSheet({ open, onClose, lot, spots, stays, date, post, draft, on
       </div>}>
       <div className="space-y-4">
         <div className="flex gap-1.5 flex-wrap">
-          {(['guest', 'staff', 'vendor'] as BookingKind[]).map(k => <button key={k} onClick={() => setKind(k)} className={pill(kind === k)}>{k === 'guest' ? 'Guest' : k === 'staff' ? 'Staff' : 'Vendor'}</button>)}
+          {(['guest', 'staff', 'vendor'] as BookingKind[]).map(k => <button key={k} onClick={() => { setKind(k); setSpotId(null) }} className={pill(kind === k)}>{k === 'guest' ? 'Guest' : k === 'staff' ? 'Staff' : 'Vendor'}</button>)}
         </div>
         {kind === 'guest' ? (
           stay ? (
