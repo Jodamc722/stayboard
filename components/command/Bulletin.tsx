@@ -63,8 +63,15 @@ async function uploadPhoto(file: File): Promise<string | null> {
 /** Words that make a recommendation read as blame or bad news about people. */
 const cap = (s: string) => s ? s[0].toUpperCase() + s.slice(1) : s
 
+type StatFact = { key: string; label: string; value: string; sub: string; href?: string; tone?: string; kpi?: boolean }
+type StatNote = { text: string; href?: string }
+type StatsRes = { ok: boolean; facts: StatFact[]; highlights?: StatNote[]; lowlights?: StatNote[]; asOf?: string }
+
 export function BulletinBoard({ d }: { d: CommandDay }) {
   const q = useCachedFetch<BoardRes>(BULLETIN_URL, { ttl: 60_000 })
+  // THE REPORT (Jon, 2026-10-26: "get the bulletin report to show KPI, welcome call completion, avg
+  // review scores, etc. Highlights and low lights") — three slides at the front of the card.
+  const sq = useCachedFetch<StatsRes>(BULLETIN_URL + '/stats', { ttl: 300_000 })
   const [local, setLocal] = useState<BoardRes | null>(null)
   const data = local || q.data
   const [composing, setComposing] = useState<PostKind | null>(null)
@@ -93,6 +100,16 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
     // left is the only thing a rotating card genuinely suits — what nobody has to act on: the
     // quote, the birthdays, employee of the month, shout-outs and five-star reviews.
 
+    // THE REPORT FIRST: the numbers, then what went well, then what needs attention.
+    const st = sq.data
+    if (st?.ok) {
+      const order = ['welcome7', 'avgStars', 'avg30', 'occ7', 'adr7', 'onTime7', 'mood7', 'glitchClose', 'glitchOpen', 'arr7', 'occTonight', 'turnToday']
+      const kpis = order.map(k => st.facts.find(f => f.key === k)).filter(Boolean) as StatFact[]
+      if (kpis.length) out.push({ key: 'report:kpi', label: 'This week · KPIs', secs: 14, node: <KpiSlide facts={kpis.slice(0, 8)} /> })
+      if (st.highlights?.length) out.push({ key: 'report:hi', label: 'Highlights', secs: 11, node: <NotesSlide title="Highlights" tone="good" notes={st.highlights} /> })
+      if (st.lowlights?.length) out.push({ key: 'report:lo', label: 'Lowlights', secs: 11, node: <NotesSlide title="Needs attention" tone="bad" notes={st.lowlights} /> })
+    }
+
     const posts = data?.posts || []
     const quote = posts.find(p => p.kind === 'quote')
     const others = posts.filter(p => p.kind !== 'quote')
@@ -106,7 +123,7 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
     if (cel.length) out.push({ key: 'bday:' + cel.map(c => c.name).join('+'), label: cel.some(c => !c.inDays) ? 'Birthday' : 'Birthdays this week', secs: 9, node: <BirthdaySlide cel={cel} today={data?.today || ''} /> })
     for (const p of others) out.push({ key: 'post:' + p.id, label: KIND_LABEL[p.kind], secs: p.kind === 'review' ? 10 : 8, node: <PostSlide p={p} me={me} canPost={canPost} act={act} onFrame={setFraming} onOpen={x => setViewing(x.id)} /> })
     return out
-  }, [data, act])
+  }, [data, act, sq.data])
 
   // ── ONE CLOCK FOR EVERYONE (Jon, 2026-10-07: "it flows weird when you land … keep it where everyone
   // is seeing the same thing at the same time unless they move it forward — set on a timer vs on
@@ -443,6 +460,36 @@ function PostBody({ p, me, canPost, act }: { p: Post; me: string; canPost: boole
       {p.title && <div className="lh-display text-[24px] leading-[1.15] text-ink">{p.title}</div>}
       {p.body && <div className="text-[13px] text-ink/75 mt-0.5 line-clamp-2 whitespace-pre-line">{p.body}</div>}
       {reactions}
+    </div>
+  )
+}
+
+const TONE_TXT: Record<string, string> = { emerald: 'text-emerald-700', sky: 'text-sky-700', amber: 'text-amber-700', slate: 'text-ink' }
+function KpiSlide({ facts }: { facts: StatFact[] }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-5 gap-y-3">
+      {facts.map(f => (
+        <Link key={f.key} href={f.href || '/'} className="min-w-0 group">
+          <div className="text-[10.5px] font-bold uppercase tracking-wider text-muted truncate">{f.label}</div>
+          <div className={'lh-display text-[24px] leading-[1.1] ' + (TONE_TXT[f.tone || 'slate'] || 'text-ink')}>{f.value}</div>
+          <div className="text-[11px] text-muted truncate group-hover:text-ink" title={f.sub}>{f.sub}</div>
+        </Link>
+      ))}
+    </div>
+  )
+}
+function NotesSlide({ title, tone, notes }: { title: string; tone: 'good' | 'bad'; notes: StatNote[] }) {
+  return (
+    <div>
+      <div className={'lh-display text-[22px] leading-[1.15] mb-1.5 ' + (tone === 'good' ? 'text-emerald-700' : 'text-amber-700')}>{title}</div>
+      <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-1">
+        {notes.map((n, i) => (
+          <li key={i} className="text-[13px] text-ink flex items-start gap-1.5">
+            <span className={'mt-[6px] w-1.5 h-1.5 rounded-full shrink-0 ' + (tone === 'good' ? 'bg-emerald-500' : 'bg-amber-500')} />
+            {n.href ? <Link href={n.href} className="hover:underline">{n.text}</Link> : <span>{n.text}</span>}
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

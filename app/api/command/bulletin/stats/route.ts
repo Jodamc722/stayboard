@@ -143,12 +143,50 @@ async function build(money = false): Promise<Fact[]> {
   return facts
 }
 
+// ── HIGHLIGHTS AND LOWLIGHTS (Jon, 2026-10-26: "get the bulletin report to show KPI, welcome call
+// completion, avg review scores, etc. Highlights and low lights"). Short sentences read off the same
+// facts, plus the week's reviews by unit. Lowlights are about the BUSINESS — a unit, a channel, a
+// rate — never a person: the board is the team's page (the 10-06 rule still holds for people).
+export type Note = { text: string; href?: string }
+async function notes(facts: Fact[]): Promise<{ highlights: Note[]; lowlights: Note[] }> {
+  const hi: Note[] = [], lo: Note[] = []
+  const f = (k: string) => facts.find(x => x.key === k)
+  const w7 = f('welcome7'), r7 = f('avgStars'), r30 = f('avg30'), gc = f('glitchClose'), occ = f('occ7'), on = f('onTime7'), mood = f('mood7'), go = f('glitchOpen')
+  const num = (v?: string) => { const n = parseFloat(String(v || '').replace(/[^\d.]/g, '')); return Number.isFinite(n) ? n : null }
+  const put = (good: boolean | null, fact: Fact | undefined, goodText: string, badText: string) => { if (!fact || good == null) return; (good ? hi : lo).push({ text: good ? goodText : badText, href: fact.href }) }
+  if (w7) { const v = num(w7.value); put(v == null ? null : v >= 90 ? true : v < 75 ? false : null, w7, 'Welcome calls at ' + w7.value + ' this week (' + w7.sub + ')', 'Welcome calls only ' + w7.value + ' this week — ' + w7.sub) }
+  if (r7) { const v = num(r7.value); put(v == null ? null : v >= 4.7 ? true : v < 4.4 ? false : null, r7, 'Guest rating ' + r7.value + ' over the last 7 days', 'Guest rating down to ' + r7.value + ' over the last 7 days') }
+  if (r7 && /isn’t sending/.test(r7.sub)) lo.push({ text: 'Reviews missing from Guesty: ' + (r7.sub.split(' · no ').slice(1).join(', no ').replace(/\(Guesty.*$/, '').trim() || 'a channel has gone quiet'), href: '/reviews' })
+  if (r30) { const v = num(r30.value); if (v != null && v >= 4.7) hi.push({ text: '30-day rating ' + r30.value + ' · ' + r30.sub, href: r30.href }) }
+  if (occ) { const v = num(occ.value); put(v == null ? null : v >= 75 ? true : v < 55 ? false : null, occ, 'Occupancy ' + occ.value + ' last 7 days', 'Occupancy only ' + occ.value + ' last 7 days') }
+  if (on) { const v = num(on.value); put(v == null ? null : v >= 95 ? true : v < 85 ? false : null, on, on.value + ' of field tasks on time this week', 'Only ' + on.value + ' of field tasks on time this week — ' + on.sub) }
+  if (mood) { const v = num(mood.value); put(v == null ? null : v >= 95 ? true : v < 90 ? false : null, mood, 'Guests ' + mood.value + ' in their messages', mood.sub.split(' · ')[0] + ' — guests ' + mood.value) }
+  if (gc) { const v = num(gc.value); put(v == null ? null : gc.tone === 'emerald' ? true : gc.tone === 'amber' ? false : null, gc, 'Glitches closed in ' + gc.value + ' on average', 'Glitches taking ' + gc.value + ' to close on average') }
+  if (go) { const v = num(go.value); if (v != null && v > 25) lo.push({ text: v + ' guest issues still open', href: go.href }) }
+  const gw = f('glitchWeek'); if (gw) hi.push({ text: gw.value + ' guest issues resolved this week', href: gw.href })
+  const tc = f('teamCleans'); if (tc) hi.push({ text: tc.value + ' cleans turned this week', href: tc.href })
+  // The week's reviews, by unit: five-star wins and anything three stars or under.
+  try {
+    const sb = supabaseAdmin()
+    const { data } = await sb.from('guesty_reviews').select('listing_id,rating,channel').eq('excluded_from_score', false).is('removed_at', null).gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString()).limit(1000)
+    const rows = ((data || []) as any[]).map(r => ({ l: String(r.listing_id || ''), s: ratingToStars(Number(r.rating)) })).filter(r => r.s != null) as { l: string; s: number }[]
+    const ids = Array.from(new Set(rows.map(r => r.l).filter(Boolean)))
+    const name: Record<string, string> = {}
+    if (ids.length) { const { data: ls } = await sb.from('guesty_listings').select('id,nickname,title').in('id', ids); for (const l of (ls || []) as any[]) name[String(l.id)] = String(l.nickname || l.title || '') }
+    const five = rows.filter(r => r.s >= 4.8).length
+    if (five) hi.push({ text: five + ' five-star review' + (five === 1 ? '' : 's') + ' this week', href: '/reviews' })
+    const low = rows.filter(r => r.s <= 3)
+    if (low.length) lo.push({ text: low.length + ' review' + (low.length === 1 ? '' : 's') + ' at 3★ or under: ' + Array.from(new Set(low.map(r => name[r.l] || 'a unit'))).slice(0, 4).join(', '), href: '/reviews' })
+  } catch { /* the rest still shows */ }
+  return { highlights: hi.slice(0, 6), lowlights: lo.slice(0, 6) }
+}
+
 // Five minutes, one copy per money state (dollars only for people with the money switch).
-const cached = unstable_cache(async (money: boolean) => ({ facts: await build(money), asOf: new Date().toISOString() }), ['bulletin-stats-v4'], { revalidate: 300 })
+const cached = unstable_cache(async (money: boolean) => { const facts = await build(money); return { facts, ...(await notes(facts).catch(() => ({ highlights: [], lowlights: [] }))), asOf: new Date().toISOString() } }, ['bulletin-stats-v5'], { revalidate: 300 })
 
 export async function GET() {
   const gate = await requireVrUser()
   if (!gate.ok) return gate.res
-  try { const c = await cached(canSeeMoney(gate.access as any)); return NextResponse.json({ ok: true, facts: c.facts, asOf: c.asOf }) }
+  try { const c = await cached(canSeeMoney(gate.access as any)); return NextResponse.json({ ok: true, facts: c.facts, highlights: (c as any).highlights || [], lowlights: (c as any).lowlights || [], asOf: c.asOf }) }
   catch (e: any) { return NextResponse.json({ ok: false, facts: [], error: String(e?.message || e).slice(0, 200) }) }
 }
