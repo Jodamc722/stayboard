@@ -143,8 +143,13 @@ export async function GET(req: NextRequest) {
     /** First name + last initial, the same shape the server roster matcher uses. */
     const parts = (x: string) => { const s = str(x).toLowerCase(); let o = ''; for (let i = 0; i < s.length; i++) { const c = s[i]; if ((c >= 'a' && c <= 'z') || c === ' ') o += c } return o.split(' ').filter(Boolean) }
     const same = (a: string, b: string) => { const x = parts(a), y = parts(b); if (!x.length || !y.length || x[0] !== y[0]) return false; const xl = x[1] || '', yl = y[1] || ''; return !xl || !yl || xl[0] === yl[0] }
+    // NO NAME MEANS NO ANSWER, not "housekeeping". Returning a default here was a quiet bug: an
+    // UNASSIGNED row has no person to resolve a department from, so every one of them — a repair,
+    // an inspection, a PM — filed under Housekeeping. Each caller now supplies the fallback that
+    // is right for the KIND of row it is building (Jon, 2026-10-26: "if a clean is unnasined it
+    // should show on the ge log under the correct department").
     const placeOf = (name: string): { dept: string; market: string } => {
-      if (!name) return { dept: 'housekeeping', market: '' }
+      if (!name) return { dept: '', market: '' }
       const direct = deptByName.get(name.toLowerCase()); if (direct) return direct
       // Breezeway spells names fuller than the roster does ("Dayrene Mayari" vs "Dayrene"), so an
       // exact miss falls through to the same first-name + last-initial match the server uses.
@@ -208,7 +213,8 @@ export async function GET(req: NextRequest) {
         taskId: c.breezewayTaskId ? str(c.breezewayTaskId) : null,
         listingId: str(c.listingId) || null,
         person: who,
-        dept: who ? place.dept : 'housekeeping',
+        // Unassigned: a departure clean is housekeeping work whoever ends up doing it.
+        dept: place.dept || 'housekeeping',
         market: str(c.market) || place.market,
         hub: str(c.hub) || '—',
         taskType: c.manual ? 'Misc' : c.bzOnly ? 'Clean' : 'Checkout',
@@ -290,7 +296,10 @@ export async function GET(req: NextRequest) {
             // Same rule as the cleans above: the PERSON's department (via placeOf -> lib/crew),
             // not the one team-schedule inferred from this particular Breezeway task. Otherwise a
             // supervisor's inspections file under Housekeeping and his repairs under Maintenance.
-            person: who, dept: placeOf(who).dept || 'other', market: str(mb.market) || str(j.market),
+            // With NOBODY on it there is no person to ask, so the task's own Breezeway department
+            // answers — which is the right answer for an unassigned row and the only one there is.
+            person: who, dept: placeOf(who).dept || str(p.dept).toLowerCase() || str(j.dept).toLowerCase() || 'other',
+            market: str(mb.market) || str(j.market),
             hub: str(j.market) || '—',
             taskType: typeOf(str(j.task), str(p.dept)),
             activity: str(j.task) || 'Task',
@@ -416,7 +425,7 @@ export async function GET(req: NextRequest) {
           key: 'g:' + str(g.id), kind: 'glitch',
           taskId: tid,
           listingId: null,
-          person: who, dept: who ? place.dept : 'maintenance', market: place.market,
+          person: who, dept: place.dept || 'maintenance', market: place.market,
           hub: '—',
           taskType: 'Glitch',
           activity: summary.slice(0, 90) || str(g.glitch_type) || str(g.category) || 'Glitch',
@@ -448,7 +457,7 @@ export async function GET(req: NextRequest) {
         logRows.push({
           key: 'l:' + e.id, kind: 'log', entryId: e.id, entryNote: e.note || null,
           taskId: e.taskId || null, listingId: e.listingId,
-          person: who, dept: who ? place.dept : (e.dept || 'housekeeping'), market: place.market,
+          person: who, dept: place.dept || e.dept || 'housekeeping', market: place.market,
           hub: e.hub || '', taskType: 'Log', activity: e.title,
           listing: e.unit || '', reservation: '',
           checkIn: null, checkOut: null, sameDay: false,

@@ -873,22 +873,50 @@ export default function GeLog({ date }: { date: string }) {
                 className="ml-auto text-[10.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-0.5"><Plus size={11} /> Add here</button>
             </div>
             {addBar('\u0003unassigned')}
-            <div className="overflow-x-auto rounded-xl border border-rose-200 bg-white">
-              <table className="text-[11px] border-collapse w-full" style={{ tableLayout: 'fixed', minWidth: GRID_W }}>
-                <colgroup>{COLS.map(c => <col key={c.k} style={{ width: c.w }} />)}</colgroup>
-                <thead className="sticky top-0 z-10">
-                  <tr className="bg-neutral-50 text-neutral-500 text-[10px] uppercase tracking-wider font-semibold">
-                    {COLS.map(c => (
-                      <th key={c.k} title={c.full || undefined}
-                        className={'bg-neutral-50 border-b border-line px-2 py-2 font-semibold leading-tight ' + (c.align || 'text-left')}>
-                        {c.label}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>{rowsFor(unassigned)}</tbody>
-              </table>
-            </div>
+            {/* A TABLE PER DEPARTMENT AND MARKET, like everywhere else on this page (Jon,
+                2026-10-26: "if a clean is unnasined it should show on the ge log under the correct
+                department"). One table for all of it blurred a Broward clean, a Miami repair and
+                an inspection into a single list — you could see that fourteen things had nobody on
+                them and not which of your teams had to pick them up. */}
+            {Array.from(new Set(unassigned.map(b => b.dept + '\u0000' + b.market)))
+              .sort((a, b) => {
+                const [da, ma] = a.split('\u0000'), [db, mb] = b.split('\u0000')
+                return deptRank(da) - deptRank(db) || (!ma !== !mb ? (ma ? -1 : 1) : ma.localeCompare(mb))
+              })
+              .map(k => {
+                const [dept, mk] = k.split('\u0000')
+                const grp = unassigned.filter(b => b.dept + '\u0000' + b.market === k)
+                const gn = grp.reduce((t, b) => t + b.rows.length, 0)
+                if (!gn) return null
+                return (
+                  <div key={k} className="space-y-1">
+                    <div className={'flex items-baseline gap-2 pl-2.5 pr-1 pt-1.5 pb-1 border-l-4 ' + marketBar(mk)}>
+                      <h4 className="text-[12px] font-bold text-ink">{mk || 'No market set'}</h4>
+                      <span className="text-[10.5px] uppercase tracking-wider font-semibold text-muted">{DEPT_LABEL[dept] || dept}</span>
+                      <span className="text-[10.5px] text-rose-700 font-semibold tabular-nums">{gn}</span>
+                      <button onClick={() => setAddFor({ key: '\u0003u' + k, person: '', dept })}
+                        className="ml-auto text-[10.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-0.5"><Plus size={11} /> Add here</button>
+                    </div>
+                    {addBar('\u0003u' + k)}
+                    <div className="overflow-x-auto rounded-xl border border-rose-200 bg-white">
+                      <table className="text-[11px] border-collapse w-full" style={{ tableLayout: 'fixed', minWidth: GRID_W }}>
+                        <colgroup>{COLS.map(c => <col key={c.k} style={{ width: c.w }} />)}</colgroup>
+                        <thead className="sticky top-0 z-10">
+                          <tr className="bg-neutral-50 text-neutral-500 text-[10px] uppercase tracking-wider font-semibold">
+                            {COLS.map(c => (
+                              <th key={c.k} title={c.full || undefined}
+                                className={'bg-neutral-50 border-b border-line px-2 py-2 font-semibold leading-tight ' + (c.align || 'text-left')}>
+                                {c.label}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>{rowsFor(grp)}</tbody>
+                      </table>
+                    </div>
+                  </div>
+                )
+              })}
           </div>
         )
       })()}
