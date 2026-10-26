@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   lotByCode, lotToday, judgePlate, readPlateFromPhoto, storePhoto, startSweep, recordCheck, finishSweep, sweepById,
   openIncident, incidentById, noticeTextFor, sendNotice, draftTowEmail, closeIncident, inHouseStays, signedPhotoUrl, ymdET,
+  createBooking, updateBooking, bookingById,
   type SweepCheck,
 } from '@/lib/parking-lots'
 import { tidyPlate, normalizePlate } from '@/lib/plate'
@@ -98,6 +99,30 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
         if (!r) return bad('Could not finish the sweep.')
         const incidents = await Promise.all(r.incidents.map(async i => (i.photoPath ? { ...i, photoUrl: await signedPhotoUrl(i.photoPath, 900) } : i)))
         return NextResponse.json({ ok: true, sweep: r.sweep, incidents })
+      }
+      // THE FIELD TEAM MANAGES THE LOT FROM HERE (Jon, 2026-10-26: "show active parking reservations
+      // so our field team can manage and scan licence plate numbers"). Register a car to a stay,
+      // mark it parked / left / paid, fix a plate. Same engine and same rules as the office tab
+      // (held spots never sold, one car per spot per night); the staff name travels with it.
+      case 'booking.create': {
+        const r = await createBooking({
+          lotId: lot.id, spotId: body.spotId || null, kind: body.kind || 'guest',
+          reservationId: body.reservationId || null, listingId: body.listingId || null, unit: body.unit || null, guestName: body.guestName || null,
+          startsOn: String(body.startsOn || today), endsOn: String(body.endsOn || ''),
+          plate: body.plate, plateState: body.plateState, make: body.make, model: body.model, color: body.color,
+          amountCents: body.amountCents, paid: body.paid, paidVia: body.paidVia, notes: body.notes, status: body.status === 'parked' ? 'parked' : 'reserved',
+        }, by)
+        return NextResponse.json(r, { status: r.ok ? 200 : 400 })
+      }
+      case 'booking.update': {
+        const b = await bookingById(String(body.bookingId || ''))
+        if (!b || b.lotId !== lot.id) return bad('That booking is not on this lot.', 404)
+        // Only the fields a person in the lot has reason to change.
+        const allowed = ['status', 'paid', 'paidVia', 'plate', 'plateState', 'make', 'model', 'color', 'spotId', 'startsOn', 'endsOn', 'notes']
+        const patch: Record<string, any> = {}
+        for (const k of allowed) if (body.patch && k in body.patch) patch[k] = body.patch[k]
+        const r = await updateBooking(b.id, patch, by)
+        return NextResponse.json(r, { status: r.ok ? 200 : 400 })
       }
       case 'incident.open': {
         let photoPath: string | null = null

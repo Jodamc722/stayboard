@@ -729,14 +729,34 @@ export async function lotBundle(lotId: string, from: string, to: string): Promis
   return { lot, spots, bookings, incidents: withPhotos, lastSweep: sweep, today: ymdET() }
 }
 
-/** What the staff page shows: today's lot, spot by spot, with the car expected in each. */
-export async function lotToday(lot: Lot, date: string): Promise<{ date: string; spots: (Spot & { expected: Booking[] })[]; incidents: Incident[]; sweep: Sweep | null }> {
+/** A stay as the field team's phone sees it: enough to register a car, no contact details. */
+export type FieldStay = { id: string; guest: string; unit: string; checkIn: string; checkOut: string; nights: number; inHouse: boolean; arrivesToday: boolean; hasSpot: string | null }
+
+/**
+ * What the staff page shows (Jon, 2026-10-26: "show active parking reservations so our field team
+ * can manage and scan licence plate numbers"): today's lot spot by spot with the car expected in
+ * each, the cars arriving tomorrow, and the stays a car can be registered to — in house first, then
+ * arrivals over the next week. No phone numbers or emails leave through this door.
+ */
+export async function lotToday(lot: Lot, date: string): Promise<{ date: string; spots: (Spot & { expected: Booking[] })[]; arriving: Booking[]; stays: FieldStay[]; incidents: Incident[]; sweep: Sweep | null }> {
   processDueTows(lot.id).catch(() => null)
-  const [spots, bookings, incidents, sweep] = await Promise.all([spotsFor(lot.id), bookingsFor(lot.id, date, date), incidentsFor(lot.id, { openOnly: true, limit: 30 }), lastSweep(lot.id)])
+  const tomorrow = addDays(date, 1)
+  const [spots, bookings, incidents, sweep, stays] = await Promise.all([
+    spotsFor(lot.id), bookingsFor(lot.id, date, addDays(date, 8)), incidentsFor(lot.id, { openOnly: true, limit: 30 }), lastSweep(lot.id),
+    staysForBuilding(lot.building, date, addDays(date, 7)).catch(() => [] as Stay[]),
+  ])
   const live = bookings.filter(b => LIVE_BOOKING.indexOf(b.status) >= 0 && b.startsOn <= date && date <= b.endsOn)
+  const arriving = bookings.filter(b => b.status === 'reserved' && b.startsOn === tomorrow)
+  const spotLabel = (id: string) => spots.find(s => s.id === id)?.label || null
+  const upcoming = bookings.filter(b => LIVE_BOOKING.indexOf(b.status) >= 0 && b.reservationId)
   return {
     date,
     spots: spots.map(s => ({ ...s, expected: live.filter(b => b.spotId === s.id).sort((a, b) => (a.endsOn === date ? 1 : 0) - (b.endsOn === date ? 1 : 0)) })),
+    arriving,
+    stays: stays
+      .filter(s => s.checkOut >= date)
+      .map(s => ({ id: s.id, guest: s.guest, unit: s.unit, checkIn: s.checkIn, checkOut: s.checkOut, nights: s.nights, inHouse: s.checkIn <= date && date < s.checkOut, arrivesToday: s.checkIn === date, hasSpot: (() => { const b = upcoming.find(x => x.reservationId === s.id); return b ? spotLabel(b.spotId) : null })() }))
+      .sort((a, b) => (b.inHouse ? 1 : 0) - (a.inHouse ? 1 : 0) || a.checkIn.localeCompare(b.checkIn) || a.unit.localeCompare(b.unit)),
     incidents: await Promise.all(incidents.map(async i => (i.photoPath ? { ...i, photoUrl: await signedPhotoUrl(i.photoPath, 900) } : i))),
     sweep: sweep && sweep.sweepDate === date ? sweep : null,
   }
