@@ -23,6 +23,8 @@ type Result = {
   proposedOrder: string[]
   photos: Photo[]
   heroSuggestion?: { _id: string; why: string } | null
+  /** The engine replaced a weaker current cover with its best candidate (2026-10-26). */
+  coverChange?: { from: string; to: string; fromScore: number; toScore: number; why: string } | null
   assessment?: { quality: number | null; coverage: string; notes: string[] } | null
   recommendRemove?: { _id: string; reason: string }[]
   overflow?: number
@@ -59,6 +61,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [order, setOrder] = useState<string[]>([])           // working order incl. hero at index 0
   const [proposed, setProposed] = useState<string[]>([])      // AI's proposed order (for reset)
   const [, setHeroSug] = useState<Result['heroSuggestion']>(null)
+  const [coverChange, setCoverChange] = useState<Result['coverChange']>(null)
   const [overflow, setOverflow] = useState(0)
   const [assessment, setAssessment] = useState<Result['assessment']>(null)
   const [removeList, setRemoveList] = useState<{ _id: string; reason: string }[]>([])
@@ -146,7 +149,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       upIds.forEach(id => { if (photosRef.current[id]) map[id] = photosRef.current[id] })
       const fullOrder = [...j.proposedOrder, ...upIds.filter((id: string) => !j.proposedOrder.includes(id))]
       setPhotos(map); setHeroId(j.heroId); setOrder(fullOrder); setProposed(fullOrder)
-      setHeroSug(j.heroSuggestion || null); setOverflow(j.overflow || 0); setAssessment(j.assessment || null); setRemoveList(j.recommendRemove || [])
+      setHeroSug(j.heroSuggestion || null); setCoverChange(j.coverChange || null); setOverflow(j.overflow || 0); setAssessment(j.assessment || null); setRemoveList(j.recommendRemove || [])
       if (Array.isArray(j.presets)) setPresets(j.presets)
       if (typeof j.orderRule === 'string') setOrderRule(j.orderRule)
       setSections(Array.isArray(j.sections) ? j.sections : [])
@@ -198,6 +201,8 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
         ? `${made} photo${made === 1 ? '' : 's'} enhanced${skipped ? `, ${skipped} left alone (already good)` : ''} — press and hold the compare button on a card to see before/after, then tick the ones to use.`
         : `Nothing needed enhancing${skipped ? ` — the AI judged ${skipped} photo${skipped === 1 ? '' : 's'} already good.` : '.'}`)
       if (j.failedCount > 0) setError(`${j.failedCount} photo(s) could not be enhanced — the rest are ready below.`)
+      // Too small for Airbnb's 1024px minimum — enhancing cannot make these sharp (audit 2026-10-26).
+      else if (Array.isArray(j.lowRes) && j.lowRes.length) setError(`${j.lowRes.length} photo${j.lowRes.length === 1 ? ' is' : 's are'} under 1024px on the long side (Airbnb's minimum) — enhancing can't add detail; reshoot or replace ${j.lowRes.length === 1 ? 'it' : 'them'}.`)
     } catch (e: any) { setError(e.message || String(e)) } finally { setEnhancing(false) }
   }
 
@@ -684,6 +689,12 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
             </div>
           )}
 
+          {order.length > 0 && coverChange && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900 flex items-center gap-2 flex-wrap">
+              <Crown size={13} /> <span><b>New cover picked.</b> {coverChange.why} scores {coverChange.toScore} as a first photo; the current cover scores {coverChange.fromScore}. Nothing goes live until you push.</span>
+              <button onClick={() => { setCoverChange(null); analyze(coverChange.from) }} disabled={busy} className="ml-auto text-[12px] font-semibold underline">Keep the old cover</button>
+            </div>
+          )}
           {order.length > 0 && (
             <>
               <div className="flex items-center justify-between gap-2 flex-wrap text-[12px] text-muted">

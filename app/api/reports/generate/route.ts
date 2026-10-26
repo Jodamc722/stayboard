@@ -28,7 +28,7 @@ import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type Li
 import { linenDeckFor } from '@/lib/linen-deck'
 import { buildingPhotos, fillPropertyPics } from '@/lib/building-photos'
 import { withoutCollages } from '@/lib/photo-filter'
-import { computeScore } from '@/lib/optimize-score'
+import { computeScore, ratingToStars, isBeachListing } from '@/lib/optimize-score'
 import { getStaff } from '@/lib/staffing'
 import { marketOf } from '@/lib/segments'
 import { requireLevel } from '@/lib/access'
@@ -341,8 +341,9 @@ export async function POST(req: NextRequest) {
     const ratingsBy: Record<string, number[]> = {}
     for (const r of revs.rows) {
       if (r.excluded_from_score) continue
-      const n = Number(r.rating)
-      if (Number.isFinite(n)) (ratingsBy[String(r.listing_id)] = ratingsBy[String(r.listing_id)] || []).push(n)
+      // On one 0-5 scale: a Booking 9/10 is 4.5★, not 9 (audit 2026-10-26).
+      const n = ratingToStars(Number(r.rating))
+      if (n != null) (ratingsBy[String(r.listing_id)] = ratingsBy[String(r.listing_id)] || []).push(n)
     }
 
     const cards: ListingCard[] = cleaned.map(l => {
@@ -351,7 +352,7 @@ export async function POST(req: NextRequest) {
       let have: string[] = Array.isArray(l.amenities) ? l.amenities.map(String).filter(Boolean) : []
       let suggest: { name: string; reason: string }[] = []
       try {
-        const sc = computeScore(l, { avgRating: avg, reviewCount: rl.length })
+        const sc = computeScore(l, { avgRating: avg, reviewCount: rl.length, isBeach: isBeachListing(l) })
         if (Array.isArray(sc.amenities?.have) && sc.amenities.have.length) have = sc.amenities.have.map(String)
         suggest = (sc.amenities?.suggestions || []).map((x: any) => ({ name: String(x.name), reason: String(x.reason || '') }))
       } catch { /* the listing's own amenity array still stands */ }

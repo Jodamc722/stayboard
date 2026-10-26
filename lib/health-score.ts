@@ -20,7 +20,7 @@
 // Building rollup = 0.70*mean + 0.30*worst-quartile.
 // Evidence base: Airbnb/Booking/Vrbo host help centers (badge thresholds), AirDNA Performance Score &
 // hotel RGI/MPI/ARI (revenue indexing), Algolia/IMDb (Bayesian shrinkage), Breezeway/Rapid Eye (ops KPIs).
-import { computeScore } from '@/lib/optimize-score'
+import { isBeachListing, computeScore } from '@/lib/optimize-score'
 
 export type HealthBand = 'elite' | 'healthy' | 'watch' | 'risk' | 'critical' | 'neutral'
 export type ChannelKey = 'airbnb' | 'vrbo' | 'bookingcom' | 'expedia' | 'other'
@@ -187,7 +187,7 @@ export function computeListingHealth(listing: any, reviews: HealthReview[], opts
   // Channel weights from real booking volume (see ChannelMix above). Airbnb carries the book of
   // business, so an Airbnb review moves the score far more than a Booking/Vrbo one.
   const chW = channelWeights(opts?.channelMix)
-  const optimizeScore = computeScore(listing, { isBeach: /beach/i.test(String(listing?.address_city || '')) }).overall
+  const optimizeScore = computeScore(listing, { isBeach: isBeachListing(listing) }).overall
 
   const rated = reviews.filter(r => toStars(r.rating) != null)
   const count = reviews.length

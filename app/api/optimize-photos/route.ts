@@ -24,9 +24,9 @@ import { createClient } from '@/lib/supabase-server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
-import { captionSpec } from '@/lib/listing-ai'
+import { captionSpec, AUTO_PRESET } from '@/lib/listing-ai'
 import { captionTagFor } from '@/lib/caption-tags'
-import { buildOrder, normalizeRooms, marketingChecks, titleHooks, isJunkCaption, ORDER_RULE, PLAYBOOK, type PhotoFacts, type ShotType } from '@/lib/photo-order'
+import { buildOrder, normalizeRooms, rankHeroes, heroScore, marketingChecks, titleHooks, isJunkCaption, ORDER_RULE, PLAYBOOK, type PhotoFacts, type ShotType } from '@/lib/photo-order'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 
@@ -160,7 +160,7 @@ export async function POST(req: NextRequest) {
   // ── PASS 1: facts per photo, in parallel batches. Photo numbers are GLOBAL (1..N) so the model can
   // point at a duplicate in the same batch by number.
   const images = await Promise.all(allPics.map(p => fetchImage(p.url)))
-  const presetMenu = [...cfg.enhance.presets, { key: 'none', name: 'None', when: 'Already good — leave it exactly as shot.' }].map(p => `  "${p.key}" (${p.name}) — ${p.when}`).join('\n')
+  const presetMenu = [AUTO_PRESET, ...cfg.enhance.presets.filter(p => p.key !== 'auto'), { key: 'none', name: 'None', when: 'Already good — leave it exactly as shot.' }].map(p => `  "${p.key}" (${p.name}) — ${p.when}`).join('\n')
   const SYS = `You are a short-term-rental photo analyst for Stay Hospitality. You are shown a batch of photos from ONE listing. Report FACTS about each photo — you are NOT choosing the order; a separate engine orders them from your facts, so accuracy per photo is what matters.
 
 For EVERY photo return:
@@ -200,7 +200,7 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
   if (!gotAny) return NextResponse.json({ error: errs[0] || 'AI did not return photo facts.' }, { status: 502 })
 
   // ── Assemble facts. Anything the model skipped gets safe defaults (never dropped).
-  const presetKeys = new Set([...cfg.enhance.presets.map(p => p.key.toLowerCase()), 'none'])
+  const presetKeys = new Set([...cfg.enhance.presets.map(p => p.key.toLowerCase()), 'none', 'auto'])
   const facts: PhotoFacts[] = []
   const byN: Record<number, any> = {}
   for (const r of results) if (r.json && Array.isArray(r.json.items)) for (const it of r.json.items) { const n = Number(it?.n); if (Number.isInteger(n) && n >= 1 && n <= allPics.length) byN[n] = it }
@@ -237,10 +237,23 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
     })
   })
 
-  // ── PASS 2: the order, from the facts. Cover = the host's current #1 unless they locked another
-  // or asked the engine to choose.
-  const heroId = lockedHeroId || (autoHero ? null : allPics[0]._id)
+  // ── PASS 2: the order, from the facts.
+  // THE COVER (Jon, 2026-10-26: "you should also pick best first photo"). A cover the host locked
+  // stands. Otherwise the current #1 stays only while it is about as good as the best candidate —
+  // when the engine's top pick out-scores it by 8+ points (a wider, brighter shot, a view, no cover
+  // killer), the engine's pick becomes the cover and the response says so, with a one-tap undo.
   const normalized = normalizeRooms(facts, profile)
+  let heroId: string | null = lockedHeroId || (autoHero ? null : allPics[0]._id)
+  let coverChange: { from: string; to: string; fromScore: number; toScore: number; why: string } | null = null
+  if (!lockedHeroId && !autoHero) {
+    const ranked = rankHeroes(normalized, 4)
+    const cur = normalized.find(f => f._id === allPics[0]._id)
+    const curScore = cur ? heroScore(cur) : 0
+    if (ranked[0] && ranked[0]._id !== allPics[0]._id && ranked[0].score >= curScore + 8) {
+      heroId = ranked[0]._id
+      coverChange = { from: allPics[0]._id, to: ranked[0]._id, fromScore: curScore, toScore: ranked[0].score, why: ranked[0].why }
+    }
+  }
   const { placed, heroCandidates, sections } = buildOrder(normalized, heroId, profile)
   const proposedOrder = placed.map(p => p._id)
   const hooks = titleHooks(normalized)
@@ -272,7 +285,9 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
   const coverage = `${rooms.size} spaces shown across ${property.length} real photos (${wide.length} wide)${missing.length ? '; missing ' + missing.join(', ') : ''}.`
   // The set score is the average photo quality, docked for what costs clicks and bookings.
   const failed = checks.filter(c => c.ok === false).length
-  const quality = Math.max(0, Math.min(100, Math.round(avgQ - Math.min(15, dupCount * 2) - Math.min(10, stockCount * 3) - missing.length * 4 - failed * 3)))
+  // Failed checks are capped: duplicates and missing rooms are already docked above and also fail
+  // their own checks, which used to count them twice (audit 2026-10-26).
+  const quality = Math.max(0, Math.min(100, Math.round(avgQ - Math.min(15, dupCount * 2) - Math.min(10, stockCount * 3) - missing.length * 4 - Math.min(6, failed * 2))))
   const assessment = { quality, coverage, notes: notes.slice(0, 5) }
 
   // ── Title ideas from what the photos prove. Small, fast text call; failure is silent.
@@ -313,6 +328,7 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
     currentOrder: allPics.map(p => p._id),
     proposedOrder, photos, sections,
     heroCandidates,
+    coverChange,
     heroSuggestion: heroCandidates[0] && heroCandidates[0]._id !== proposedOrder[0] ? { _id: heroCandidates[0]._id, why: heroCandidates[0].why } : null,
     assessment, recommendRemove,
     titleHooks: hooks, titleIdeas, checks, playbook: PLAYBOOK, profile, rooms: Array.from(new Set(normalized.map(f => f.room))).sort(), roomVocab,

@@ -214,6 +214,15 @@ const DEFAULT_PRESETS: EnhancePreset[] = [
   { key: 'crisp', name: 'Crisp', when: 'Flat, low-contrast, slightly soft.', brightness: 1.03, saturation: 1.06, contrast: 1.14, sharpen: 1.3, warmth: 0 },
 ]
 
+/**
+ * AUTO (audit 2026-10-26). Every other preset applies the same dials to every photo it is given; Auto
+ * MEASURES the photo first (app/api/photo-enhance autoPipeline) — its levels, its exposure and its
+ * colour cast — and corrects that photo by that much, inside the same hard caps. The dials here are
+ * only the fallback if measuring fails. It is offered to the photo analyst on every run, whatever
+ * presets are saved in settings.
+ */
+export const AUTO_PRESET: EnhancePreset = { key: 'auto', name: 'Auto (measured)', when: 'Measures this photo and corrects its exposure, levels and colour cast — the best default for phone shots and mixed light.', brightness: 1.04, saturation: 1.05, contrast: 1.04, sharpen: 0.8, warmth: 0 }
+
 export const NONE_PRESET: EnhancePreset = { key: 'none', name: 'None', when: 'Leave this photo exactly as shot.', brightness: 1, saturation: 1, contrast: 1, sharpen: 0, warmth: 0 }
 
 // The phrases every short-term-rental listing on the internet already uses. A guest reading four
@@ -315,6 +324,7 @@ export function mergeListingAi(stored: any): ListingAi {
 export function presetByKey(cfg: ListingAi, key: string | null | undefined): EnhancePreset {
   const k = String(key || '').trim().toLowerCase()
   if (k === 'none') return NONE_PRESET
+  if (k === 'auto') return AUTO_PRESET
   const hit = cfg.enhance.presets.find(p => p.key.toLowerCase() === k)
   if (hit) return hit
   const fb = cfg.enhance.presets.find(p => p.key.toLowerCase() === cfg.enhance.fallbackPreset.toLowerCase())

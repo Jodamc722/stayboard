@@ -215,9 +215,13 @@ export function heroScore(p: PhotoFacts): number {
   if (p.heroWorthy) s += 8
   const sp = p.sellingPoints.join(' ')
   if (/ocean|bay|water|view|skyline|sunset/.test(sp)) s += 7
-  if (/pool|rooftop/.test(sp) && p.category === 'amenity') s += 3
+  // South Florida books on water and pools: a bright pool deck or a balcony view is a real cover
+  // contender, not a building shot to bury (audit 2026-10-26).
+  if (/pool|rooftop/.test(sp) && (p.category === 'amenity' || p.category === 'outdoor')) s += 6
+  if (p.category === 'view' || p.category === 'outdoor') s += 5
   if (p.category === 'living' || p.category === 'bedroom') s += 4
-  if (p.category === 'bathroom' || p.category === 'detail' || p.category === 'exterior') s -= 12
+  const scenicExterior = p.category === 'exterior' && /ocean|bay|water|pool|beach/.test(sp)
+  if (p.category === 'bathroom' || p.category === 'detail' || (p.category === 'exterior' && !scenicExterior)) s -= 12
   if (p.category === 'kitchen') s -= 6
   // Differentiators win clicks: a view, a pool, a rooftop, a striking feature the neighbours lack.
   if (/infinity|rooftop|ocean|bay|skyline|sunset|private-pool|hot-tub|fireplace|floor-to-ceiling/.test(sp)) s += 6
@@ -438,7 +442,8 @@ export function isJunkCaption(s: string): boolean {
   if (!t) return true
   if (/^[0-9a-f-]{16,}$/i.test(t)) return true
   if (/\.(jpe?g|png|webp|gif|heic)$/i.test(t)) return true
-  if (/^(dsc|img|dcim|pxl|mvimg|photo|image|screenshot|whatsapp|snapchat|untitled)[\s_-]?\d*/i.test(t)) return true
+  // Anchored at BOTH ends (audit 2026-10-26): "Photo of the bay view" is a caption, "IMG_2041" is not.
+  if (/^(dsc|img|dcim|pxl|mvimg|photo|image|screenshot|whatsapp|snapchat|untitled)([\s_-]*\d+)?$/i.test(t)) return true
   if (/^[\d_\-\s.]+$/.test(t)) return true
   if (!/\s/.test(t) && /\d{3,}/.test(t)) return true   // "IMG20240117", "P1040238"
   return false

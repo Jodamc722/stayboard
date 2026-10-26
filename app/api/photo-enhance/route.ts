@@ -48,13 +48,42 @@ async function ensureBucket(sb: ReturnType<typeof supabaseAdmin>) {
 function applyPreset(pipe: sharp.Sharp, p: EnhancePreset): sharp.Sharp {
   let out = pipe
   if (p.brightness !== 1 || p.saturation !== 1) out = out.modulate({ brightness: p.brightness, saturation: p.saturation })
-  if (p.contrast !== 1) out = out.linear(p.contrast, -Math.round((p.contrast - 1) * 100))
+  // Contrast pivots on mid-grey (128): y = a·x + 128·(1 − a). The old offset −(a − 1)·100 pivoted at
+  // 100, so every "contrast" also brightened the mid-tones a little (audit 2026-10-26).
+  if (p.contrast !== 1) out = out.linear(p.contrast, Math.round(128 * (1 - p.contrast)))
   if (p.warmth > 0) {
     const w = p.warmth / 200
     out = out.recomb([[1 + w, 0, 0], [0, 1, 0], [0, 0, 1 - w]])
   }
   if (p.sharpen > 0) out = out.sharpen({ sigma: p.sharpen })
   return out
+}
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
+
+/**
+ * AUTO: measure, then correct by exactly that much (audit 2026-10-26). From a small preview:
+ *   levels   a 0.5 / 99.5 percentile stretch (normalise) — lifts a flat, hazy phone shot without
+ *            clipping the window, which a flat brightness multiplier does
+ *   exposure brightness toward a mid luminance of ~120, capped 0.97–1.15
+ *   colour   grey-world white balance, each channel capped at ±5% — kills the blue overcast cast or
+ *            the orange tungsten cast without repainting anything
+ *   detail   sharpening scaled to how soft the shot measures (low edge energy → a little more)
+ * Every number stays inside the same hard caps the named presets obey.
+ */
+async function autoPipeline(buf: Buffer, base: sharp.Sharp): Promise<{ pipe: sharp.Sharp; why: string }> {
+  const prev = await sharp(buf, { failOn: 'none' }).rotate().resize(320, 320, { fit: 'inside' }).normalise({ lower: 0.5, upper: 99.5 }).removeAlpha().stats()
+  const [r, g, b] = prev.channels.slice(0, 3).map(c => c.mean)
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+  const grey = (r + g + b) / 3
+  const kr = clamp(grey / Math.max(1, r), 0.95, 1.05), kg = clamp(grey / Math.max(1, g), 0.95, 1.05), kb = clamp(grey / Math.max(1, b), 0.95, 1.05)
+  const bright = clamp(120 / Math.max(1, lum), 0.97, 1.15)
+  const soft = prev.sharpness < 2 ? 1.1 : prev.sharpness < 4 ? 0.9 : 0.6
+  let out = base.normalise({ lower: 0.5, upper: 99.5 })
+  if (Math.abs(kr - 1) > 0.01 || Math.abs(kg - 1) > 0.01 || Math.abs(kb - 1) > 0.01) out = out.recomb([[kr, 0, 0], [0, kg, 0], [0, 0, kb]])
+  out = out.modulate({ brightness: bright, saturation: 1.05 }).sharpen({ sigma: soft })
+  const why = [bright > 1.02 ? 'brightened ' + Math.round((bright - 1) * 100) + '%' : '', (Math.abs(kb - 1) > 0.02 || Math.abs(kr - 1) > 0.02) ? (kb < 1 ? 'warmed a blue cast' : kr < 1 ? 'cooled a warm cast' : 'balanced colour') : '', 'levels stretched'].filter(Boolean).join(' · ')
+  return { pipe: out, why }
 }
 
 async function processOne(
@@ -87,16 +116,26 @@ async function processOne(
   if (preset.key === 'none') return { _id: id, mirroredUrl, preset: 'none', presetName: 'None', bytesBefore: buf.length }
 
   // 2) ENHANCE with the chosen preset — deliberately gentle: real-estate honest, never fake-looking.
+  const meta = await sharp(buf, { failOn: 'none' }).metadata().catch(() => ({} as sharp.Metadata))
   const base = sharp(buf, { failOn: 'none' })
     .rotate()
     .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true })
-  const enhOut = await applyPreset(base, preset).jpeg({ quality: 88, mozjpeg: true }).toBuffer()
+  let piped: sharp.Sharp, autoWhy = ''
+  if (preset.key === 'auto') {
+    try { const a = await autoPipeline(buf, base); piped = a.pipe; autoWhy = a.why } catch { piped = applyPreset(base, preset) }
+  } else piped = applyPreset(base, preset)
+  // sRGB out (audit 2026-10-26): iPhone shots are Display P3; an untagged P3 file reads dull and
+  // flat on every OTA. Convert and tag, so the colour the photographer saw is the colour guests see.
+  const enhOut = await piped.toColourspace('srgb').withIccProfile('srgb').jpeg({ quality: 88, mozjpeg: true }).toBuffer()
+  // Airbnb wants 1024px+ on the long side; a smaller source cannot be enhanced into a sharp one.
+  const longSide = Math.max(Number(meta.width) || 0, Number(meta.height) || 0)
+  const lowRes = longSide > 0 && longSide < 1024
   const enhPath = `${listingId}/${id}/enhanced-${Date.now()}.jpg` // timestamped so CDNs never serve a stale edit
   const up2 = await sb.storage.from(BUCKET).upload(enhPath, enhOut, { contentType: 'image/jpeg', upsert: true })
   if (up2.error) return { _id: id, error: `enhanced upload: ${up2.error.message}` }
   const enhancedUrl = sb.storage.from(BUCKET).getPublicUrl(enhPath).data.publicUrl
 
-  return { _id: id, mirroredUrl, enhancedUrl, preset: preset.key, presetName: preset.name, bytesBefore: buf.length, bytesAfter: enhOut.length }
+  return { _id: id, mirroredUrl, enhancedUrl, preset: preset.key, presetName: preset.name, bytesBefore: buf.length, bytesAfter: enhOut.length, autoWhy, lowRes, longSide }
 }
 
 export async function POST(req: NextRequest) {
@@ -138,7 +177,8 @@ export async function POST(req: NextRequest) {
     if (perPhoto[id]) return presetByKey(cfg, perPhoto[id])
     if (globalPreset) return presetByKey(cfg, globalPreset)
     if (cfg.enhance.autoPick && photoIndex[id]?.enhance) return presetByKey(cfg, photoIndex[id].enhance)
-    return presetByKey(cfg, cfg.enhance.fallbackPreset)
+    // Nothing chose for this photo: measure it (Auto) rather than apply one fixed recipe blind.
+    return presetByKey(cfg, cfg.enhance.autoPick ? 'auto' : cfg.enhance.fallbackPreset)
   }
 
   const targets = all
@@ -182,12 +222,15 @@ export async function POST(req: NextRequest) {
     mirrorOnly,
     // Photos the model judged already good — reported so "nothing happened" is explained, not silent.
     skippedNone: ok.filter(r => !r.enhancedUrl && !mirrorOnly).length,
+    // Below Airbnb's 1024px: enhancing cannot fix these — reshoot or replace them.
+    lowRes: ok.filter(r => (r as any).lowRes).map(r => ({ _id: r._id, longSide: (r as any).longSide })),
     photos: ok.map(r => ({
       _id: r._id,
       ...(r.enhancedUrl ? { enhancedUrl: r.enhancedUrl } : {}),
       mirroredUrl: r.mirroredUrl,
       preset: r.preset, presetName: r.presetName,
-      enhanceWhy: str(photoIndex[r._id]?.enhanceWhy),
+      enhanceWhy: str((r as any).autoWhy) || str(photoIndex[r._id]?.enhanceWhy),
+      ...((r as any).lowRes ? { lowRes: true, longSide: (r as any).longSide } : {}),
     })),
     presets: cfg.enhance.presets,
     errors: failed.map(r => ({ _id: r._id, error: r.error })),

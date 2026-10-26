@@ -100,6 +100,12 @@ export function bandUi(b: Band): { ring: string; label: string } {
   return { ring: 'ring-rose-200 bg-rose-50 text-rose-700', label: 'Needs work' }
 }
 
+function contactInfo(s: string): string | null {
+  if (/[\w.-]+@[\w.-]+\.\w+/.test(s)) return 'an email address'
+  if (/https?:\/\/|www\.|\b[\w-]+\.(com|net|org|io|co)\b/i.test(s)) return 'a URL'
+  if (/(?:\+?\d[\s().-]?){10,}/.test(s)) return 'a phone number'
+  return null
+}
 function hasForbidden(s: string): string | null {
   if (/[\w.-]+@[\w.-]+\.\w+/.test(s)) return 'an email address'
   if (/https?:\/\/|www\.|\b[\w-]+\.(com|net|org|io|co)\b/i.test(s)) return 'a URL'
@@ -138,21 +144,24 @@ export function cancellationInfo(raw: any): { label: string; tier: 'flex' | 'mod
 // High-value amenities ranked by booking/visibility impact for South Florida condos.
 // Each variant is matched case-insensitively as a substring against the normalized
 // amenity list. weight = tier (3 = core, 2 = strong, 1 = nice-to-have).
-type AmenityDef = { name: string; tier: 1 | 2 | 3; variants: string[]; conditional?: string }
+// AUDIT 2026-10-26: variants now match as WHOLE WORDS, with `not` for the look-alikes that used to
+// score as the real thing ("dishwasher" as Washer, "hair dryer" as Dryer, "workspace" as Hot tub via
+// 'spa', "pool towels" as Pool). `partial` = listed, but the weaker version (street parking) — half credit.
+type AmenityDef = { name: string; tier: 1 | 2 | 3; variants: string[]; not?: string[]; partial?: string[]; conditional?: string }
 const HIGH_VALUE: AmenityDef[] = [
   { name: 'Wifi', tier: 3, variants: ['wifi', 'wireless internet', 'internet'] },
   { name: 'Air conditioning', tier: 3, variants: ['air conditioning', 'central air', 'ac unit', 'window ac'] },
-  { name: 'Pool', tier: 3, variants: ['pool'] },
+  { name: 'Pool', tier: 3, variants: ['pool', 'swimming pool'], not: ['pool towels', 'pool towel', 'pool table', 'pool toys'] },
   { name: 'Kitchen', tier: 3, variants: ['kitchen', 'kitchenette', 'cooking basics'] },
-  { name: 'Parking', tier: 3, variants: ['parking', 'garage', 'carport', 'valet'], conditional: 'parking' },
+  { name: 'Parking', tier: 3, variants: ['parking', 'garage', 'carport', 'valet'], partial: ['street parking', 'off premises', 'off-premises', 'paid parking off'], conditional: 'parking' },
   { name: 'Self check-in', tier: 3, variants: ['self check-in', 'self check in', 'smart lock', 'keypad', 'lockbox'] },
-  { name: 'Hot tub', tier: 2, variants: ['hot tub', 'jacuzzi', 'jetted tub', 'spa'] },
-  { name: 'Washer', tier: 2, variants: ['washer', 'washing machine', 'laundry'] },
-  { name: 'Dryer', tier: 2, variants: ['dryer'] },
-  { name: 'Dedicated workspace', tier: 2, variants: ['dedicated workspace', 'laptop-friendly', 'laptop friendly', 'workspace', 'work space', 'desk', 'office'] },
+  { name: 'Hot tub', tier: 2, variants: ['hot tub', 'jacuzzi', 'jetted tub', 'whirlpool'] },
+  { name: 'Washer', tier: 2, variants: ['washer', 'washing machine', 'laundry'], not: ['dishwasher'] },
+  { name: 'Dryer', tier: 2, variants: ['dryer', 'clothes dryer'], not: ['hair dryer', 'hairdryer'] },
+  { name: 'Dedicated workspace', tier: 2, variants: ['dedicated workspace', 'laptop-friendly', 'laptop friendly', 'workspace', 'work space', 'desk', 'office'], not: ['front desk', 'office hours', 'leasing office'] },
   { name: 'Beach access', tier: 2, variants: ['beach access', 'beachfront', 'beach essentials', 'ocean view', 'waterfront'], conditional: 'beach' },
   { name: 'Gym', tier: 2, variants: ['gym', 'exercise equipment', 'fitness'] },
-  { name: 'TV', tier: 2, variants: ['tv', 'hdtv', 'cable', 'netflix'] },
+  { name: 'TV', tier: 2, variants: ['tv', 'hdtv', 'smart tv', 'cable tv', 'netflix'] },
   { name: 'Balcony / Patio', tier: 1, variants: ['balcony', 'patio', 'terrace'] },
   { name: 'Elevator', tier: 1, variants: ['elevator', 'lift'] },
   { name: 'Dishwasher', tier: 1, variants: ['dishwasher'] },
@@ -173,13 +182,27 @@ function normAmenities(list: string[]): string[] {
     .replace(/^free\s+/g, '')
     .trim())
 }
-function present(norm: string[], def: AmenityDef): boolean {
-  // hyphen/space-insensitive contains, so "laptop friendly" matches the "laptop-friendly" variant
-  const flat = (x: string) => x.replace(/[-\s]+/g, ' ').trim()
-  return def.variants.some(v => { const vf = flat(v); return norm.some(a => flat(a).includes(vf)) })
+const flatA = (x: string) => x.replace(/[-\s]+/g, ' ').trim()
+const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+/** Does amenity text `a` contain `v` as whole words (hyphen/space-insensitive)? */
+function hasWords(a: string, v: string): boolean {
+  return new RegExp('(^|[^a-z0-9])' + esc(flatA(v)) + '($|[^a-z0-9])').test(flatA(a))
 }
+/** 'full' = listed; 'partial' = only the weaker version is listed (half credit); null = not listed. */
+function presence(norm: string[], def: AmenityDef): 'full' | 'partial' | null {
+  let partial = false
+  for (const a of norm) {
+    if (def.not && def.not.some(n => hasWords(a, n))) continue
+    if (!def.variants.some(v => hasWords(a, v))) continue
+    if (def.partial && def.partial.some(pv => hasWords(a, pv))) { partial = true; continue }
+    return 'full'
+  }
+  return partial ? 'partial' : null
+}
+function present(norm: string[], def: AmenityDef): boolean { return presence(norm, def) === 'full' }
 
 /* --------------------------------- scoring --------------------------------- */
+const LOCATION_RE = /\b(beach|miami|brickell|south beach|downtown|lincoln|bay ?front|isles?|district|pointe|collins|ocean|fort lauderdale|ft\.? lauderdale|lauderdale|las olas|hollywood|pompano|hallandale|aventura|sunny isles|wynwood|edgewater|midtown|coconut grove|coral gables|key biscayne|little havana|design district|wilton manors|deerfield|boca|galt|intracoastal|marina|harbor|riverwalk|flagler|victoria park|port everglades|airport|fll|mia|convention center|hard rock|cruise port)\b/i
 const TITLE_KW = ['pool', 'ocean', 'beach', 'view', 'hot tub', 'parking', 'king', 'balcony', 'gym', 'waterfront', 'rooftop', 'penthouse']
 function scoreTitle(title: string): { score: number; factors: Factor[] } {
   const t = title.trim()
@@ -195,9 +218,11 @@ function scoreTitle(title: string): { score: number; factors: Factor[] } {
   const forb = t ? hasForbidden(t) : 'empty'
   factors.push({ label: 'Clean & compliant', got: forb ? 5 : 25, max: 25, note: forb && forb !== 'empty' ? `Contains ${forb} - OTAs may reject it` : (forb === 'empty' ? 'No title to check' : 'No caps/emoji/contact issues'), ok: forb ? 'bad' : 'good' })
   const lower = t.toLowerCase()
-  const kw = TITLE_KW.filter(k => lower.includes(k))
+  // Whole words: 'king' must not match "parking" or "walking" (audit 2026-10-26).
+  const kw = TITLE_KW.filter(k => hasWords(lower, k))
   factors.push({ label: 'Standout amenity', got: kw.length ? 20 : 6, max: 20, note: kw.length ? `Leads with: ${kw.slice(0, 3).join(', ')}` : 'No headline amenity (pool, ocean view...) - add one', ok: kw.length ? 'good' : 'warn' })
-  const hasLoc = /\b(beach|miami|brickell|south|downtown|lincoln|bay|isle|district|pointe|collins|ocean)\b/i.test(t) || (t.split(/\s+/).filter(w => /^[A-Z]/.test(w)).length >= 2)
+  // A real place name, not "any two capitalised words" (which every Title Case title has).
+  const hasLoc = LOCATION_RE.test(t)
   factors.push({ label: 'Specific location', got: hasLoc ? 20 : 8, max: 20, note: hasLoc ? 'Names a neighborhood / landmark' : 'Add a neighborhood or landmark guests search for', ok: hasLoc ? 'good' : 'warn' })
   return { score: Math.round(factors.reduce((s, f) => s + f.got, 0)), factors }
 }
@@ -210,6 +235,8 @@ function scoreDescription(pub: any): { score: number; factors: Factor[]; section
     ['neighborhood', 'Neighborhood'], ['transit', 'Getting around'], ['notes', 'Other notes'],
   ]
   const sections = sectionDefs.map(([k, label]) => ({ label, text: get(k) })).filter(s => s.text)
+  // A section counts when it says something: 60+ characters (one boilerplate line does not).
+  const substantive = sections.filter(s => s.text.length >= 60)
   const full = sectionDefs.map(([k]) => get(k)).join(' ')
   const lower = full.toLowerCase()
   const factors: Factor[] = []
@@ -219,13 +246,18 @@ function scoreDescription(pub: any): { score: number; factors: Factor[]; section
   else if (summary.length <= 500) { sGot = 30; sNote = `Summary ${summary.length} chars - good` }
   else { sGot = 22; sNote = `Summary ${summary.length} chars - over Airbnb's 500 cap` }
   factors.push({ label: 'Summary', got: sGot, max: 30, note: sNote, ok: sGot >= 24 ? 'good' : sGot >= 12 ? 'warn' : 'bad' })
-  const filled = sections.length
-  factors.push({ label: 'Sections filled', got: Math.round((Math.min(filled, 6) / 6) * 30), max: 30, note: `${filled} of 6 description sections filled`, ok: filled >= 5 ? 'good' : filled >= 3 ? 'warn' : 'bad' })
-  const layout = /\b(bed|bath|sleeps?|king|queen|sofa|bunk)\b/.test(lower)
+  const filled = substantive.length
+  const space = get('space')
+  factors.push({ label: 'Sections filled', got: Math.round((Math.min(filled, 6) / 6) * 22), max: 22, note: `${filled} of 6 description sections say something (60+ characters)`, ok: filled >= 5 ? 'good' : filled >= 3 ? 'warn' : 'bad' })
+  factors.push({ label: 'The space', got: space.length >= 400 ? 8 : space.length >= 150 ? 5 : space ? 2 : 0, max: 8, note: space ? `${space.length} chars — ${space.length >= 400 ? 'a full room-by-room' : 'thin; walk the rooms, beds and what is in them'}` : 'Empty — the room-by-room section guests read before booking', ok: space.length >= 400 ? 'good' : space.length >= 150 ? 'warn' : 'bad' })
+  // Layout stated with numbers ("2 bedrooms", "sleeps 6", "king bed"), not just the word "bed".
+  const layout = /\b(\d+|one|two|three|four|five|six)[- ](bed(room)?s?|bath(room)?s?|queen|king|twin)\b|\bsleeps? \d+|\b(king|queen)[- ](size )?bed\b/.test(lower)
   factors.push({ label: 'States layout', got: layout ? 15 : 4, max: 15, note: layout ? 'Mentions beds/baths/sleeps' : 'Add bed/bath/sleeps early', ok: layout ? 'good' : 'warn' })
-  const loc = /\b(walk|min|minutes|steps|near|close|beach|downtown|blocks?)\b/.test(lower)
+  // Quantified: "5-minute walk", "2 miles", "3 blocks", "steps to the beach".
+  const loc = /\b\d+[- ]?(min(ute)?s?|mi(les?)?|blocks?|km)\b|\bsteps (to|from)\b|\bwalking distance\b|\bacross the street\b/.test(lower)
   factors.push({ label: 'Quantified location', got: loc ? 15 : 4, max: 15, note: loc ? 'Describes proximity to attractions' : 'Add "5-min walk to..." style distances', ok: loc ? 'good' : 'warn' })
-  const forb = full ? hasForbidden(full) : 'empty'
+  // Contact info only — an ALL-CAPS word is a style issue, not a policy breach.
+  const forb = full ? contactInfo(full) : 'empty'
   factors.push({ label: 'No contact info', got: forb && forb !== 'empty' ? 2 : 10, max: 10, note: forb && forb !== 'empty' ? `Contains ${forb}` : 'Clean', ok: forb && forb !== 'empty' ? 'bad' : 'good' })
   return { score: Math.round(factors.reduce((s, f) => s + f.got, 0)), factors, sections }
 }
@@ -242,9 +274,10 @@ function scoreSettings(raw: any): { score: number; factors: Factor[]; meta: any 
   const checkOut = str(raw?.defaultCheckOutTime || raw?.checkOutTime)
   const cancel = cancellationInfo(raw)
   const factors: Factor[] = []
-  const cGot = cancel.tier === 'flex' ? 30 : cancel.tier === 'mod' ? 22 : cancel.tier === 'strict' ? 8 : 14
+  // Not set scores BELOW the strictest real policy (audit 2026-10-26: it used to beat Strict).
+  const cGot = cancel.tier === 'flex' ? 30 : cancel.tier === 'mod' ? 22 : cancel.tier === 'strict' ? 8 : 4
   factors.push({ label: 'Cancellation policy', got: cGot, max: 30, note: cancel.tier === 'unknown' ? 'Not set in Guesty' : `${cancel.label} - ${cancel.tier === 'flex' ? 'flexible policies rank & convert best' : cancel.tier === 'strict' ? 'strict policies suppress conversion' : 'moderate'}`, ok: cGot >= 22 ? 'good' : cGot >= 14 ? 'warn' : 'bad' })
-  let mGot = 14, mNote = 'Not set'
+  let mGot = 6, mNote = 'Not set in Guesty — set it so the channels show the right stays'
   if (minN != null) {
     const n = Number(minN)
     if (n <= 3) { mGot = 22; mNote = `${n}-night minimum - very bookable` }
@@ -269,41 +302,59 @@ function scoreSettings(raw: any): { score: number; factors: Factor[]; meta: any 
 // scoreReviews() uses for a brand-new listing — so a 25-photo unit lands at 85 until it is scored
 // for real. The factor note says so out loud.
 function scorePhotos(raw: any, photoScoreCol: any, photoCount: number): ScoreResult['photos'] {
-  const ai: any = (photoScoreCol && typeof photoScoreCol === 'object') ? photoScoreCol
+  const ai0: any = (photoScoreCol && typeof photoScoreCol === 'object') ? photoScoreCol
     : ((raw && typeof raw._photoScore === 'object') ? raw._photoScore : null)
+  // A photo score is about ONE photo set. When the set has changed since (count off by more than 3)
+  // or it is over 180 days old, it no longer describes these photos (audit 2026-10-26).
+  const aiCount = ai0 && Number.isFinite(Number(ai0.count)) ? Number(ai0.count) : null
+  const aiAt = ai0 && typeof ai0.at === 'string' ? Date.parse(ai0.at) : NaN
+  const stale = !!ai0 && ((aiCount != null && Math.abs(aiCount - photoCount) > 3) || (Number.isFinite(aiAt) && Date.now() - aiAt > 180 * 86400000))
+  const ai: any = stale ? null : ai0
   const aiQ = ai && Number.isFinite(Number(ai.score)) ? Math.max(0, Math.min(100, Number(ai.score))) : null
   const coverageNote = ai && typeof ai.coverageNote === 'string' ? ai.coverageNote : ''
   const notes: string[] = ai && Array.isArray(ai.notes) ? ai.notes.filter((n: any) => typeof n === 'string').slice(0, 4) : []
 
+  // COUNT (max 45): 20-35 is the sweet spot the photo engine itself targets; past ~45 guests stop
+  // scrolling and repeats creep in, so more is no longer better (audit 2026-10-26).
   let cGot = 0, cNote = ''
-  if (photoCount >= 25) { cGot = 55; cNote = `${photoCount} photos - a full set` }
-  else if (photoCount >= 20) { cGot = 50; cNote = `${photoCount} photos - strong count` }
-  else if (photoCount >= 15) { cGot = 38; cNote = `${photoCount} photos - good, target 20+` }
-  else if (photoCount >= 10) { cGot = 25; cNote = `${photoCount} photos - add more (target 20+)` }
-  else if (photoCount >= 6) { cGot = 12; cNote = `${photoCount} photos - Vrbo's minimum met, well short of ideal` }
-  else if (photoCount > 0) { cGot = 5; cNote = `${photoCount} photos - below Vrbo's 6-photo minimum` }
+  if (photoCount > 45) { cGot = 36; cNote = `${photoCount} photos - too many; cut repeats and weak shots to 25-35` }
+  else if (photoCount >= 20) { cGot = 45; cNote = `${photoCount} photos - a full set` }
+  else if (photoCount >= 15) { cGot = 34; cNote = `${photoCount} photos - good, target 20+` }
+  else if (photoCount >= 10) { cGot = 22; cNote = `${photoCount} photos - add more (target 20+)` }
+  else if (photoCount >= 6) { cGot = 10; cNote = `${photoCount} photos - Vrbo's minimum met, well short of ideal` }
+  else if (photoCount > 0) { cGot = 4; cNote = `${photoCount} photos - below Vrbo's 6-photo minimum` }
   else { cGot = 0; cNote = 'No photos detected' }
 
+  // CAPTIONS (max 15): Airbnb's photo tour and every AI search read them; a blank or a filename is
+  // a photo that says nothing.
+  const pics: any[] = Array.isArray(raw?.pictures) ? raw.pictures : []
+  const caps = pics.map((p: any) => { const o = typeof p === 'string' ? (() => { try { return JSON.parse(p) } catch { return {} } })() : (p || {}); return str(o.caption).trim() })
+  const goodCaps = caps.filter(c => c.split(/\s+/).length >= 3 && !/^[0-9a-f-]{16,}$/i.test(c) && !/\.(jpe?g|png|webp|heic)$/i.test(c)).length
+  const capShare = caps.length ? goodCaps / caps.length : 0
+  const capGot = Math.round(capShare * 15)
+
   const factors: Factor[] = [
-    { label: 'Photo count', got: cGot, max: 55, note: cNote, ok: cGot >= 50 ? 'good' : cGot >= 25 ? 'warn' : 'bad' },
+    { label: 'Photo count', got: cGot, max: 45, note: cNote, ok: cGot >= 40 ? 'good' : cGot >= 22 ? 'warn' : 'bad' },
+    { label: 'Photo captions', got: capGot, max: 15, note: caps.length ? `${goodCaps} of ${caps.length} photos have a real caption` : 'No photos', ok: capShare >= 0.9 ? 'good' : capShare >= 0.5 ? 'warn' : 'bad' },
   ]
   let qGot: number
   if (aiQ != null) {
-    qGot = Math.round((aiQ / 100) * 45)
+    qGot = Math.round((aiQ / 100) * 40)
     factors.push({
-      label: 'AI photo quality', got: qGot, max: 45,
+      label: 'AI photo quality', got: qGot, max: 40,
       note: `Scored ${aiQ}/100 on lighting, sharpness, composition and staging${coverageNote ? ` - ${coverageNote}` : ''}`,
       ok: aiQ >= 80 ? 'good' : aiQ >= 60 ? 'warn' : 'bad',
     })
   } else {
-    qGot = 30
+    // Unmeasured is not good: a token 12/40 (it was 30/45, which let a never-analysed unit read 85).
+    qGot = 12
     factors.push({
-      label: 'AI photo quality', got: qGot, max: 45,
-      note: 'Not scored yet - provisional credit. Run the photo AI on this unit to score it for real.',
+      label: 'AI photo quality', got: qGot, max: 40,
+      note: stale ? 'The photo score is out of date (the photos changed or it is 6+ months old) - run Organize photos again.' : 'Not scored yet - run Organize photos on this unit to score it for real.',
       ok: 'warn',
     })
   }
-  return { score: Math.max(0, Math.min(100, cGot + qGot)), factors, count: photoCount, aiQuality: aiQ, coverageNote, notes }
+  return { score: Math.max(0, Math.min(100, cGot + capGot + qGot)), factors, count: photoCount, aiQuality: aiQ, coverageNote, notes }
 }
 
 // Amenity coverage 0-100 + suggestions. siblingAmenities = amenities present on other
@@ -318,8 +369,10 @@ function scoreAmenities(amenities: string[], opts?: { isBeach?: boolean; sibling
   for (const def of HIGH_VALUE) {
     if (def.conditional === 'beach' && opts?.isBeach === false) continue
     weightTotal += def.tier
-    if (present(norm, def)) { weightHave += def.tier; continue }
-    const siblingHas = def.variants.some(v => sib.some(a => a.includes(v)))
+    const got = presence(norm, def)
+    if (got === 'full') { weightHave += def.tier; continue }
+    if (got === 'partial') { weightHave += def.tier / 2; suggestions.push({ name: def.name, tier: def.tier, reason: 'Only street / off-site parking listed — on-site parking is the version guests filter for' }); continue }
+    const siblingHas = presence(sib, def) === 'full'
     const reason = siblingHas
       ? 'Other units in this building list it - likely available here, just add it'
       : def.tier === 3 ? 'Core amenity guests filter for - big visibility win'
@@ -337,12 +390,17 @@ function scoreAmenities(amenities: string[], opts?: { isBeach?: boolean; sibling
 
 function scoreReviews(avgRating: number | null, reviewCount: number): number {
   let r = 0
-  if (avgRating == null || reviewCount === 0) r = 50 // neutral - don't punish brand-new listings
-  else if (avgRating >= 4.9) r = 100
-  else if (avgRating >= 4.8) r = 88
-  else if (avgRating >= 4.7) r = 70
-  else if (avgRating >= 4.5) r = 50
-  else r = 25
+  // Confidence-weighted (audit 2026-10-26): two 5★ reviews are not a 5.0 listing. Shrink toward a
+  // 4.6 prior by five phantom reviews, so a long record outweighs a lucky start.
+  const adj = avgRating == null || reviewCount === 0 ? null : (avgRating * reviewCount + 4.6 * 5) / (reviewCount + 5)
+  if (adj == null) r = 50 // neutral - don't punish brand-new listings
+  else if (adj >= 4.9) r = 100
+  else if (adj >= 4.8) r = 88
+  else if (adj >= 4.7) r = 72
+  else if (adj >= 4.6) r = 58
+  else if (adj >= 4.5) r = 45
+  else if (adj >= 4.3) r = 30
+  else r = 15
   let v = 0
   if (reviewCount >= 50) v = 100
   else if (reviewCount >= 20) v = 75
@@ -350,6 +408,12 @@ function scoreReviews(avgRating: number | null, reviewCount: number): number {
   else if (reviewCount >= 1) v = 30
   else v = 50 // neutral
   return Math.round(r * 0.6 + v * 0.4)
+}
+
+/** Is this a beach listing? The city alone missed Fort Lauderdale, Hollywood and Sunny Isles beachfront. */
+export function isBeachListing(l: any): boolean {
+  const t = [l?.address_city, l?.building, l?.title, l?.nickname, l?.raw?.address?.full, l?.raw?.address?.street].map(str).join(' ')
+  return /beach|oceanfront|ocean front|beachfront|sunny isles|galt ocean|a1a|collins ave/i.test(t)
 }
 
 /* --------------------------------- entry ----------------------------------- */
@@ -361,7 +425,8 @@ export function computeScore(listing: any, opts?: {
 }): ScoreResult {
   const raw = listing?.raw || {}
   const pub = raw.publicDescription || raw.publicDescriptions || {}
-  const name = listing?.title || raw.title || listing?.nickname || ''
+  // The PUBLIC title only — the internal nickname is a name no guest ever sees (audit 2026-10-26).
+  const name = listing?.title || raw.title || ''
   const amenities: string[] = Array.isArray(listing?.amenities) && listing.amenities.length
     ? listing.amenities : (Array.isArray(raw.amenities) ? raw.amenities : [])
   const photoCount = Array.isArray(listing?.pictures) ? listing.pictures.length
@@ -436,26 +501,28 @@ export const PILLAR_WEIGHTS: Record<Gap['pillar'], number> = {
 // structural point is worth 0.86 of an overall point. Fixing copy cannot move the review signal.
 const REVIEW_BLEND = 0.86
 
-function gapsFromFactors(pillar: Gap['pillar'], factors: Factor[]): Gap[] {
+function gapsFromFactors(pillar: Gap['pillar'], factors: Factor[], blend = REVIEW_BLEND): Gap[] {
   const rawMax = factors.reduce((s, f) => s + f.max, 0) || 1
   return factors
     .filter(f => f.got < f.max)
     .map(f => ({
       pillar, label: f.label, note: f.note, severity: f.ok,
-      points: Math.round(((f.max - f.got) / rawMax) * 100 * PILLAR_WEIGHTS[pillar] * REVIEW_BLEND * 10) / 10,
+      points: Math.round(((f.max - f.got) / rawMax) * 100 * PILLAR_WEIGHTS[pillar] * blend * 10) / 10,
     }))
 }
 
 export function scoreGaps(res: ScoreResult): Gap[] {
+  // Structural points are worth 0.86 overall only when the review blend is in play.
+  const blend = res.reviewSignal ? REVIEW_BLEND : 1
   const out: Gap[] = [
-    ...gapsFromFactors('title', res.title.factors),
-    ...gapsFromFactors('description', res.description.factors),
-    ...gapsFromFactors('photos', res.photos.factors),
-    ...gapsFromFactors('settings', res.settings.factors),
+    ...gapsFromFactors('title', res.title.factors, blend),
+    ...gapsFromFactors('description', res.description.factors, blend),
+    ...gapsFromFactors('photos', res.photos.factors, blend),
+    ...gapsFromFactors('settings', res.settings.factors, blend),
   ]
   // Amenities score without per-factor detail, so express the gap as the two things a human can act
   // on: a missing safety amenity (always first) and the high-value suggestions.
-  const amenGapPts = Math.round((100 - res.amenities.score) * PILLAR_WEIGHTS.amenities * REVIEW_BLEND * 10) / 10
+  const amenGapPts = Math.round((100 - res.amenities.score) * PILLAR_WEIGHTS.amenities * blend * 10) / 10
   if (res.amenities.mustFix.length) {
     out.push({
       pillar: 'amenities', label: 'Missing safety amenity', severity: 'bad',
