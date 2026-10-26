@@ -39,7 +39,7 @@
 // "the GE log is where we can document that": the exception is the thing most worth writing down,
 // and it is the one case the sheet handled and the board did not.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { MessageSquare, ExternalLink, AlertTriangle, RefreshCw, Download, Plus, Check, Trash2, Send } from 'lucide-react'
+import { MessageSquare, ExternalLink, AlertTriangle, RefreshCw, Download, Plus, Check, Trash2, Send, Search } from 'lucide-react'
 import { openAddTask } from './AddTaskSheet'
 import CleanerPicker, { sameRosterPerson, type Person } from './CleanerPicker'
 import CommentThread from './CommentThread'
@@ -184,7 +184,16 @@ export default function GeLog({ date }: { date: string }) {
   const [sortBy, setSortBy] = useState<'building' | 'unit' | 'type' | 'notes'>('building')
   const [tick, setTick] = useState(0)
   const [units, setUnits] = useState<Unit[]>([])
-  const [addFor, setAddFor] = useState<{ person: string; dept: string } | null>(null)
+  // WHICH SECTION THE ADD BAR IS IN. Jon, 2026-10-26: "the add task should love in the section of
+  // the depatment not at top." It used to open under the page header however it was opened, so
+  // "Add here" on the Maintenance table dropped a form three tables away from the thing you were
+  // looking at. The bar now opens inside the section whose button you pressed; `key` is that
+  // section's key, and '' means the header button, which opens it in the first table on screen.
+  const [addFor, setAddFor] = useState<{ key: string; person: string; dept: string } | null>(null)
+  // Jon, 2026-10-26: "should also have a search fliter". One box over everything on the row —
+  // unit, task line, guest, person, building, type, notes — because on a 130-row day you are
+  // looking for one unit or one name and you should not have to pick the column first.
+  const [q, setQ] = useState('')
   const [team, setTeamRaw] = useState<string>(() => { try { return localStorage.getItem('gelog.team') || 'housekeeping' } catch { return 'housekeeping' } })
   const setTeam = (t: string) => { setTeamRaw(t); try { localStorage.setItem('gelog.team', t) } catch { /* fine */ } }
   useEffect(() => {
@@ -276,7 +285,7 @@ export default function GeLog({ date }: { date: string }) {
       if (view === 'person') return a.person.localeCompare(b.person)
       return deptRank(a.dept) - deptRank(b.dept) || a.market.localeCompare(b.market) || a.person.localeCompare(b.person)
     })
-  }, [rows, roster, rosterOf, view])
+  }, [rows, roster, rosterOf, view, sortBy, q])
 
   // THE MARKETS ACTUALLY IN FRONT OF US, not a hard-coded pair: a day with only Broward work
   // should not offer a Miami tab that leads to an empty grid.
@@ -293,12 +302,27 @@ export default function GeLog({ date }: { date: string }) {
     for (const b of bands) m[b.dept] = (m[b.dept] || 0) + b.rows.length
     return m
   }, [bands])
-  const shown = useMemo(() => {
-    let b = showEmpty ? bands : bands.filter(x => x.rows.length)
+  // Everything the market switch and the search leave standing, BEFORE the team tab narrows it.
+  // The unassigned section is built from this, because "what has nobody on it today" is a question
+  // about the day, not about the tab you happen to be looking at.
+  const shownAll = useMemo(() => {
+    let b = (showEmpty && !q.trim()) ? bands : bands.filter(x => x.rows.length)
     if (market) b = b.filter(x => x.market === market)
+    return b
+  }, [bands, showEmpty, market, q])
+
+  // UNASSIGNED WORK FOR THE DAY, IN ONE PLACE (Jon, 2026-10-26: "also have unassinged gtasks
+  // section for the day"). It was spread through the department tables as a band inside each one,
+  // which is tidy and useless: "what has nobody on it" is the first question anybody asks in the
+  // morning, and answering it meant opening six tables and reading the top of each. It leads the
+  // page now, across every department and market, and it is taken OUT of the department tables so
+  // the same row is never listed twice.
+  const unassigned = useMemo(() => shownAll.filter(b => !b.person && !b.vendor), [shownAll])
+  const shown = useMemo(() => {
+    let b = shownAll.filter(x => x.person || x.vendor)
     if (team !== 'all' && view === 'dept') b = b.filter(x => x.dept === team)
     return b
-  }, [bands, showEmpty, market, team, view])
+  }, [shownAll, team, view])
 
   // ONE TABLE PER DEPARTMENT **AND MARKET** — Jon, 2026-10-21: "need to be tables for each
   // department", then "it should be in a completely separate table, not one combined unless we
@@ -675,7 +699,7 @@ export default function GeLog({ date }: { date: string }) {
               {band.status ? <span className={'text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full border ' + statusTone(band.status)}>{band.status}</span> : null}
               {band.person && !band.status && band.unrostered && scheduledToday.size > 0 ? <span className="text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full border bg-white text-muted border-line" title="Not on this week's roster">not rostered</span> : null}
               <span className="text-muted tabular-nums">{band.rows.length} task{band.rows.length === 1 ? '' : 's'}{cleans ? ' · ' + cleans + ' clean' + (cleans === 1 ? '' : 's') : ''}{hrs ? ' · ' + hrs.toFixed(2).replace(/\.?0+$/, '') + ' h' : ''}{left && left !== band.rows.length ? ' · ' + left + ' left' : ''}</span>
-              {!band.vendor ? <button onClick={() => setAddFor({ person: band.person, dept: band.dept })} className="text-[10.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-0.5"><Plus size={10} /> Add{band.person ? ' for ' + shortName(band.person) : ''}</button> : null}
+              {!band.vendor ? <button onClick={() => setAddFor({ key: band.dept + '\u0000' + band.market, person: band.person, dept: band.dept })} className="text-[10.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-0.5"><Plus size={10} /> Add{band.person ? ' for ' + shortName(band.person) : ''}</button> : null}
             </span>
           </td>
         </tr>
@@ -712,7 +736,7 @@ export default function GeLog({ date }: { date: string }) {
             <span className="font-semibold text-ink/70 mr-1.5">Nothing on their day:</span>
             {idle.map((b, i) => (
               <span key={b.person} className="inline-flex items-center gap-1 mr-2">
-                <button onClick={() => setAddFor({ person: b.person, dept: b.dept })} title={'Add a task for ' + b.person}
+                <button onClick={() => setAddFor({ key: b.dept + '\u0000' + b.market, person: b.person, dept: b.dept })} title={'Add a task for ' + b.person}
                   className="font-semibold text-ink/80 hover:text-ink hover:underline">{shortName(b.person)}</button>
                 {b.status ? <span className={'text-[9.5px] font-semibold px-1.5 py-0.5 rounded-full border ' + statusTone(b.status)}>{b.status}</span> : null}
                 {i < idle.length - 1 ? <span className="text-line">·</span> : null}
@@ -724,6 +748,16 @@ export default function GeLog({ date }: { date: string }) {
     }
     return body
   }
+
+  /** The add bar, rendered inside whichever section owns it. `first` makes the first table on
+   *  screen the home for the header button, which has no section of its own. */
+  const addBar = (key: string, first = false) => (addFor && (addFor.key === key || (addFor.key === '' && first))) ? (
+    <div className="rounded-xl border border-line bg-white overflow-hidden">
+      <AddBar key={addFor.person + '|' + addFor.dept} date={date} units={units} crew={crew} scheduled={scheduledToday}
+        seedPerson={addFor.person} seedDept={addFor.dept}
+        onClose={() => setAddFor(null)} onAdded={() => setTick(t => t + 1)} />
+    </div>
+  ) : null
 
   return (
     <section className="space-y-2">
@@ -740,7 +774,7 @@ export default function GeLog({ date }: { date: string }) {
           <span className="text-muted tabular-nums">{scheduledToday.size} of {roster.length} on today</span>
           {totals.fee ? <span className="text-emerald-700 font-semibold tabular-nums">{money(totals.fee)} cleaning</span> : null}
           {totals.hrs ? <span className="text-muted tabular-nums">{totals.hrs.toFixed(2).replace(/\.?0+$/, '')} h</span> : null}
-          <button onClick={() => setAddFor(a => a ? null : { person: '', dept: 'housekeeping' })}
+          <button onClick={() => setAddFor(a => a ? null : { key: '', person: '', dept: team === 'all' ? 'housekeeping' : team })}
             className={'ml-auto text-[12px] font-bold px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1 ' + (addFor ? 'bg-neutral-100 text-ink' : 'bg-neutral-900 text-white hover:bg-neutral-800')}>
             <Plus size={13} /> Add task
           </button>
@@ -761,6 +795,13 @@ export default function GeLog({ date }: { date: string }) {
             ))}
           </div>
           <div className="ml-auto flex items-center gap-3">
+            <div className="relative">
+              <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, task, guest, person…"
+                className="text-[11px] bg-white border border-line rounded-lg pl-6 pr-6 py-1 outline-none w-[230px]" />
+              {q ? <button onClick={() => setQ('')} title="Clear the search"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted hover:text-ink text-[13px] leading-none">&times;</button> : null}
+            </div>
             <select value={sortBy} onChange={e => setSortBy(e.target.value as any)} title="How the rows inside each person are ordered"
               className="text-[11px] font-semibold text-ink bg-white border border-line rounded-lg px-2 py-1 outline-none">
               <option value="building">By building</option>
@@ -773,7 +814,10 @@ export default function GeLog({ date }: { date: string }) {
             <button onClick={() => setTick(t => t + 1)} title="Reload the day" className="text-muted hover:text-ink"><RefreshCw size={13} className={loading ? 'animate-spin' : ''} /></button>
           </div>
         </div>
-        {addFor && (
+        {/* The add bar used to render here, under the page header. It now opens inside the
+            department section it belongs to — see addBar() and the sections below. It still falls
+            back to here when there is no table on screen to put it in. */}
+        {addFor && !sections.length && !unassigned.length && (
           <AddBar key={addFor.person + '|' + addFor.dept} date={date} units={units} crew={crew} scheduled={scheduledToday}
             seedPerson={addFor.person} seedDept={addFor.dept}
             onClose={() => setAddFor(null)} onAdded={() => setTick(t => t + 1)} />
@@ -809,7 +853,43 @@ export default function GeLog({ date }: { date: string }) {
       )}
       {view === 'dept' && !sections.length && !loading ? <p className="rounded-xl border border-line bg-white px-3 py-6 text-center text-[12px] text-muted">Nothing for {DEPT_LABEL[team] || 'this team'} on this day{market ? ' in ' + market : ''}.</p> : null}
 
-      {sections.map(sec => {
+      {/* THE DAY'S UNASSIGNED WORK, FIRST. Every department, every market, everything with
+          nobody on it — the decision queue, above the tables rather than buried as a band inside
+          six of them. It ignores the team tab on purpose: this is a question about the day. */}
+      {unassigned.length > 0 && (() => {
+        const n = unassigned.reduce((t, b) => t + b.rows.length, 0)
+        if (!n) return null
+        return (
+          <div className="space-y-1">
+            <div className="flex items-baseline gap-2 pl-2.5 pr-1 pt-2 pb-1 mt-2 border-l-4 border-rose-400">
+              <h3 className="text-[14px] font-bold text-ink">Unassigned</h3>
+              <span className="text-[10.5px] uppercase tracking-wider font-semibold text-muted">the day</span>
+              <span className="text-[10.5px] text-rose-700 font-semibold tabular-nums">{n} row{n === 1 ? '' : 's'} with nobody on them</span>
+              <button onClick={() => setAddFor({ key: '\u0003unassigned', person: '', dept: team === 'all' ? 'housekeeping' : team })}
+                className="ml-auto text-[10.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-0.5"><Plus size={11} /> Add here</button>
+            </div>
+            {addBar('\u0003unassigned')}
+            <div className="overflow-x-auto rounded-xl border border-rose-200 bg-white">
+              <table className="text-[11px] border-collapse w-full" style={{ tableLayout: 'fixed', minWidth: GRID_W }}>
+                <colgroup>{COLS.map(c => <col key={c.k} style={{ width: c.w }} />)}</colgroup>
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-neutral-50 text-neutral-500 text-[10px] uppercase tracking-wider font-semibold">
+                    {COLS.map(c => (
+                      <th key={c.k} title={c.full || undefined}
+                        className={'bg-neutral-50 border-b border-line px-2 py-2 font-semibold leading-tight ' + (c.align || 'text-left')}>
+                        {c.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>{rowsFor(unassigned)}</tbody>
+              </table>
+            </div>
+          </div>
+        )
+      })()}
+
+      {sections.map((sec, si) => {
         const n = sec.bands.reduce((t, b) => t + b.rows.length, 0)
         const rev = sec.bands.reduce((t, b) => t + b.rows.reduce((u, r) => u + (r.fee || 0), 0), 0)
         return (
@@ -822,10 +902,11 @@ export default function GeLog({ date }: { date: string }) {
               {team === 'all' ? <span className="text-[10.5px] uppercase tracking-wider font-semibold text-muted">{sec.label}</span> : null}
               <span className="text-[10.5px] text-muted tabular-nums">{n} row{n === 1 ? '' : 's'} · {sec.bands.filter(b => b.person).length} on it</span>
               {rev > 0 ? <span className="text-[10.5px] text-emerald-700 font-semibold tabular-nums" title="Cleaning revenue on this table's checkouts">{money(rev)} cleaning</span> : null}
-              <button onClick={() => setAddFor({ person: '', dept: String(sec.key).split('\u0000')[0] || 'housekeeping' })}
+              <button onClick={() => setAddFor({ key: String(sec.key), person: '', dept: String(sec.key).split('\u0000')[0] || 'housekeeping' })}
                 className="ml-auto text-[10.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-0.5"><Plus size={11} /> Add here</button>
             </div>
           ) : null}
+          {addBar(String(sec.key), si === 0)}
           <div className="overflow-x-auto rounded-xl border border-line bg-white">
             {/* FIXED layout, or the colgroup is only a suggestion: one 90-character task name then
                 stretches Activities across the screen and pushes the money columns out of sight. */}
