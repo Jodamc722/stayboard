@@ -168,9 +168,11 @@ export function isCombined(name: string, others: string[]): boolean {
 
 /** How the unit is doing against its building over the last 90 days. */
 export type PerfState = 'poor' | 'watch' | 'ok' | 'unknown'
-export function performance(r: Pick<AdminRow, 'active' | 'perf'>): { state: PerfState; why: string } {
+export function performance(r: Pick<AdminRow, 'active' | 'perf' | 'blocked'>): { state: PerfState; why: string } {
   const p = r.perf
   if (p && p.combined) return { state: 'unknown', why: 'Combined listing — sells as its halves, so its own RevPAR is not a verdict' }
+  // A unit out of service earns nothing by design; judge it when it is back on sale.
+  if (r.blocked && !r.blocked.linked && (r.blocked.openEnded || r.blocked.nights >= 14)) return { state: 'unknown', why: 'Out of service (blocked' + (r.blocked.from ? ' since ' + r.blocked.from : '') + ') — judge it when it is back on sale' }
   if (!r.active || !p || p.revparIndex == null || p.peers < 2) return { state: 'unknown', why: p && p.peers < 2 ? 'No building peers to compare with' : 'No 90-day numbers yet' }
   const pct = Math.round((1 - p.revparIndex) * 100)
   const occ = p.occ90 != null ? ' · occupancy ' + Math.round(p.occ90 * 100) + '%' : ''
