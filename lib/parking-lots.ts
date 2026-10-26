@@ -241,9 +241,20 @@ export async function staysForBuilding(building: string, from: string, to: strin
     for (const r of data || []) out.push(r)
   }
   const needle = str(q).trim().toLowerCase()
-  return out.filter(r => isLiveStay(r.status)).map(r => stayOf(r, units))
+  const stays = out.filter(r => isLiveStay(r.status)).map(r => stayOf(r, units))
     .filter(s => !needle || [s.guest, s.unit, s.confirmationCode || '', s.phone || ''].join(' ').toLowerCase().indexOf(needle) >= 0)
     .sort((a, b) => a.checkIn.localeCompare(b.checkIn) || a.unit.localeCompare(b.unit))
+  // THE BOOKING ROW OFTEN HAS NO conversation_id (first live run: 21 in house, 0 threads). The
+  // conversation mirror links back by reservation_id — the same fallback lib/reservation-360 uses.
+  const missing = stays.filter(s => !s.conversationId).map(s => s.id)
+  for (let i = 0; i < missing.length; i += 150) {
+    const { data: cs } = await db.from('guesty_conversations').select('id, reservation_id, last_message_at').in('reservation_id', missing.slice(i, i + 150)).order('last_message_at', { ascending: false })
+    for (const c of (cs || []) as any[]) {
+      const s = stays.find(x => x.id === str(c.reservation_id))
+      if (s && !s.conversationId) s.conversationId = str(c.id)
+    }
+  }
+  return stays
 }
 
 /** Everyone who could own a car in the lot right now: stays spanning `date`, checkout day included. */

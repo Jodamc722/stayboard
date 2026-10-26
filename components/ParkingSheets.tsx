@@ -84,27 +84,38 @@ export function BookingSheet({ open, onClose, lot, spots, bookings, draft, canFu
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [amountTouched, setAmountTouched] = useState(false)
+  // THE OPEN-TRANSITION RACE (first live run: clicking spot 3 opened the sheet on spot 1). In the
+  // render where the sheet opens, the auto-pick effect below runs with the PREVIOUS sheet's state
+  // and its setSpotId lands after the reset's. So the reset marks a run as pending — the auto-pick
+  // skips exactly that stale run — and bumps `settled` so it runs again once the draft is in state.
+  const [settled, setSettled] = useState(0)
+  const pendingReset = useRef(false)
 
   // Reset from the draft every time the sheet opens.
   useEffect(() => {
     if (!open) return
+    pendingReset.current = true
     const d = draft || {}
     setKind((d.kind as BookingKind) || 'guest')
     const k = (d.kind as BookingKind) || 'guest'
     setStay(k === 'guest' && (d.reservationId || d.guestName) ? { id: d.reservationId || null, guest: d.guestName || '', unit: d.unit || '', phone: d.guestPhone || null, listingId: d.listingId || null } : null)
     setOwnName(k !== 'guest' ? d.guestName || '' : '')
     setQ(''); setHits(null)
-    setStartsOn(d.startsOn || today); setEndsOn(d.endsOn || addDays(d.startsOn || today, 1))
+    const s0 = d.startsOn || today, e0 = d.endsOn || addDays(s0, 1)
+    setStartsOn(s0); setEndsOn(e0)
     setSpotId(d.spotId || null)
     setCar({ make: d.make || '', model: d.model || '', color: d.color || '', plate: d.plate || '', plateState: d.plateState || '' })
-    setAmount(d.amountCents != null ? String(Math.round(d.amountCents) / 100) : '')
+    // The price is set HERE, not left to the suggested-amount effect: that effect only fires when
+    // the nights change, and a fresh sheet with the same one night as the last one saved $0.
+    setAmount(d.amountCents != null ? String(Math.round(d.amountCents) / 100) : String((nightsBetween(s0, e0) * lot.rateCents) / 100))
     setAmountTouched(d.amountCents != null)
+    setSettled(t => t + 1)
     setPaid((d.paid as Paid) === 'na' || !d.paid ? 'unpaid' : (d.paid as Paid))
     setVia(d.paidVia || 'guesty')
     setStatus((d.status as BookingStatus) || 'reserved')
     setNotes(d.notes || '')
     setErr(null)
-  }, [open, draft, today])
+  }, [open, draft, today, lot.rateCents])
 
   const nights = nightsBetween(startsOn, endsOn)
   const suggested = nights * lot.rateCents
@@ -123,12 +134,13 @@ export function BookingSheet({ open, onClose, lot, spots, bookings, draft, canFu
   // Auto-pick the first free spot of the right kind when none is chosen (or the chosen one became impossible).
   useEffect(() => {
     if (!open) return
+    if (pendingReset.current) { pendingReset.current = false; return }
     const ok = (s: Spot) => s.active && !freeMap[s.id] && (kind !== 'guest' || s.kind === 'sell')
     const cur = spots.find(s => s.id === spotId)
     if (cur && (ok(cur) || existing)) return
     const pref = spots.slice().sort((a, b) => (kind === 'guest' ? (a.kind === 'sell' ? 0 : 1) - (b.kind === 'sell' ? 0 : 1) : (a.kind === 'hold' ? 0 : 1) - (b.kind === 'hold' ? 0 : 1)) || a.sort - b.sort).find(ok)
     setSpotId(pref ? pref.id : null)
-  }, [open, kind, freeMap, spots, spotId, existing])
+  }, [open, settled, kind, freeMap, spots, spotId, existing])
 
   const search = useCallback(async (text: string) => {
     setSearching(true)

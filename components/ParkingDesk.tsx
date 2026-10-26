@@ -9,7 +9,7 @@
 // chain) and SETTINGS (price, tow company, spots, the staff link). Held spots sit under the
 // numbered ones, shaded, and the booking form will not sell them.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Loader2, RefreshCw, Plus, ChevronLeft, ChevronRight, Search, Flag, Mail, Truck, Check, X, Copy, Link2, AlertTriangle, Pencil, RotateCw, Car } from 'lucide-react'
+import { Loader2, RefreshCw, Plus, ChevronLeft, ChevronRight, Search, Flag, Mail, Truck, Check, X, Copy, Link2, AlertTriangle, Pencil, RotateCw, Car, MapPinOff } from 'lucide-react'
 import { LeanHead, Pill, Tag, IconBtn, LeanList, LeanRow, LeanSection, LeanEmpty, LeanTabs, Tip } from '@/components/lean'
 import { BookingSheet, NoticeSheet, Pick, lotsApi, todayET, dayShort, whenET, timeET, type BookingDraft } from '@/components/ParkingSheets'
 import { addDays, nightsBetween, cents, carLabel, tidyPlate } from '@/lib/plate'
@@ -384,7 +384,7 @@ function Flags({ lot, incidents, spots, canEdit, onNotice, onTow, onClose, onReg
           <IconBtn title={i.noticeSentAt ? 'Send the notice again' : 'Send the 1-hour notice to every guest in house'} tone={i.status === 'open' ? 'bad' : undefined} onClick={() => onNotice(i)}><Mail size={14} /></IconBtn>
           <IconBtn title={i.towDraftId ? 'Draft the tow email again' : lot.towEmail ? `Draft the tow email to ${lot.towCompany || lot.towEmail} now` : 'Add the tow company email in Settings first'} disabled={!lot.towEmail} onClick={() => onTow(i)}><Truck size={14} /></IconBtn>
           <IconBtn title="Register this car to a stay instead" onClick={() => onRegister(i)}><Car size={14} /></IconBtn>
-          <IconBtn title="Towed — close it" onClick={() => onClose(i, 'towed')}><Truck size={14} className="text-rose-700" /></IconBtn>
+          <IconBtn title="Towed — the car is gone, close it" onClick={() => onClose(i, 'towed')}><MapPinOff size={14} className="text-rose-700" /></IconBtn>
           <IconBtn title="Resolved — the car moved or registered" tone="ok" onClick={() => onClose(i, 'resolved', 'moved or registered')}><Check size={14} /></IconBtn>
           <IconBtn title="Dismiss — it was fine after all" onClick={() => onClose(i, 'dismissed', 'not an issue')}><X size={14} /></IconBtn>
         </> : canEdit ? <IconBtn title="Reopen" onClick={() => onClose(i, 'reopen')}><RotateCw size={14} /></IconBtn> : undefined}>
