@@ -72,6 +72,16 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
   // THE REPORT (Jon, 2026-10-26: "get the bulletin report to show KPI, welcome call completion, avg
   // review scores, etc. Highlights and low lights") — three slides at the front of the card.
   const sq = useCachedFetch<StatsRes>(BULLETIN_URL + '/stats', { ttl: 300_000 })
+  // THE REPORT IS SLOW TO WAKE (2026-10-26, Jon: "the bulletin was working and now it's not"). The
+  // stats behind it take ~30s the first time after a deploy; a miss used to leave the card on the
+  // quote alone for the hook's five-minute tick. Ask again in ten seconds, a few times, so the first
+  // person on Today after a deploy sees the report inside a minute rather than after lunch.
+  const retries = useRef(0)
+  useEffect(() => {
+    if (sq.data || !sq.error || retries.current >= 6) return
+    const t = setTimeout(() => { retries.current++; sq.refresh() }, 10_000)
+    return () => clearTimeout(t)
+  }, [sq.error, sq.data, sq.refresh])
   const [local, setLocal] = useState<BoardRes | null>(null)
   const data = local || q.data
   const [composing, setComposing] = useState<PostKind | null>(null)

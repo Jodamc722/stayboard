@@ -22,6 +22,9 @@ import { buildKpiFor } from '@/lib/kpi'
 import { canSeeMoney } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
+// The cold build walks the KPI engine, Breezeway's mirror and the week's reviews (~30s on a cold
+// cache); the project default timeout cut it off and the board sat on the quote (2026-10-26).
+export const maxDuration = 90
 
 // `kpi`: a business number — it always shows, good day or bad (Jon, 2026-10-09: "it should give a
 // better indication of what's happening in ops, overall KPIs"). Facts without it are about the team
