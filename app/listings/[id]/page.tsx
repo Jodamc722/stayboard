@@ -224,7 +224,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
                   listing.max_occupancy != null ? `sleeps ${listing.max_occupancy}` : null].filter(Boolean).join(' \u00b7 ')}
               </span>
               <span className="text-line">|</span><span>{photoCount} photos</span>
-              {avgRating != null && <><span className="text-line">|</span><span>{avgRating} \u00b7 {reviews.length} reviews</span></>}
+              {avgRating != null && <><span className="text-line">|</span><span>{avgRating}★ · {reviews.length} reviews</span></>}
               <span className="text-line">|</span>
               <span className={lastOptimized ? 'text-emerald-700 font-semibold' : 'text-muted'}>
                 {lastOptimized ? `Optimized ${lastOptimized}` : 'Never optimized'}

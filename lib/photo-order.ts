@@ -251,7 +251,7 @@ export type SpaceType = 'special' | 'amenity' | 'bedroom' | 'living' | 'kitchen'
 export function spaceType(p: PhotoFacts, studio = false): SpaceType {
   const sp = p.sellingPoints.join(' ') + ' ' + rk(p.room) + ' ' + rk(p.subject)
   // A view and a pool are two different reasons to book — both can earn a seat.
-  if (p.category === 'amenity' && /pool|rooftop|infinity|hot-tub|beach|gym/.test(sp)) return 'amenity'
+  if ((p.category === 'amenity' && /pool|rooftop|infinity|hot-tub|beach|gym/.test(sp)) || (p.category === 'outdoor' && /pool|hot-tub|spa\b/.test(sp))) return 'amenity'
   if (p.category === 'view' || (p.category === 'outdoor' && /view|ocean|bay|water|skyline/.test(sp))) return 'special'
   if (studio && (p.category === 'bedroom' || p.category === 'living')) return 'living'
   if (p.category === 'bedroom') return 'bedroom'
@@ -261,7 +261,7 @@ export function spaceType(p: PhotoFacts, studio = false): SpaceType {
   if (p.category === 'bathroom') return 'bath'
   return 'other'
 }
-export const SPACE_LABEL: Record<SpaceType, string> = { special: 'the view', amenity: 'pool / rooftop / building amenity', bedroom: 'where I sleep', living: 'where I sit', kitchen: 'where I cook', outdoor: 'balcony / outdoor', bath: 'where I bathe', other: 'other' }
+export const SPACE_LABEL: Record<SpaceType, string> = { special: 'the view', amenity: 'pool / rooftop', bedroom: 'where I sleep', living: 'where I sit', kitchen: 'where I cook', outdoor: 'balcony / outdoor', bath: 'where I bathe', other: 'other' }
 const SPACE_BONUS: Record<SpaceType, number> = { special: 14, amenity: 11, bedroom: 12, living: 10, kitchen: 9, outdoor: 7, bath: 4, other: 0 }
 /** What a photo is worth in positions 2–5 on its own — before diversity. */
 export function showcaseScore(p: PhotoFacts): number {

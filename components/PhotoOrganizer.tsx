@@ -1117,7 +1117,11 @@ function FiveBoard({ five, all, photos, heroCands, studio, locked, busy, onSet, 
     const f = factOf(id); if (!f) continue
     const sc = showcaseScore(f); if (sc > 0) cands.push({ id, s: sc, t: spaceType(f, studio) })
   }
-  cands.sort((a, b) => b.s - a.s); cands.splice(14)
+  // At most two per room, so eight angles of one pool don't crowd out every other space.
+  cands.sort((a, b) => b.s - a.s)
+  const perRoom: Record<string, number> = {}
+  const shown = cands.filter(c => { const r = (photos[c.id]?.room || photos[c.id]?.category || '') + ''; perRoom[r] = (perRoom[r] || 0) + 1; return perRoom[r] <= 2 }).slice(0, 14)
+  cands.length = 0; cands.push(...shown)
   const crown = (id: string) => { const i = heroCands.findIndex(c => c._id === id); return i >= 0 && i < 3 ? i + 1 : null }
   const place = (slot: number, id: string) => {
     const n = five.slice(); while (n.length < 5) n.push('')
@@ -1135,7 +1139,7 @@ function FiveBoard({ five, all, photos, heroCands, studio, locked, busy, onSet, 
         <span className="text-[11.5px] text-muted">{locked ? 'Your arrangement — the rest of the order follows it.' : "The AI's picks: the best photos that still show five different spaces."}</span>
         <button onClick={onAuto} disabled={busy || !locked} className="ml-auto text-[12px] font-semibold rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-amber-800 hover:bg-amber-50 disabled:opacity-40" title="Let the engine choose all five again">AI&apos;s best five</button>
       </div>
-      <div className="grid grid-cols-4 grid-rows-2 gap-1.5" style={{ aspectRatio: '2 / 1' }}>
+      <div className="grid grid-cols-4 grid-rows-2 gap-1.5 max-w-[760px]" style={{ aspectRatio: '2 / 1' }}>
         {[0, 1, 2, 3, 4].map(i => { const id = five[i]; const p = id ? photos[id] : null; const active = sel === i; return (
           <div key={i}
             onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); const d = drag || e.dataTransfer.getData('text/plain'); if (d) place(i, d); setDrag(null) }}
