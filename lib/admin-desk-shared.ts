@@ -32,6 +32,10 @@ export const RULES = {
   lowReviewDays: 30,
   /** A block this long, not caused by a sibling booking, is worth a second look. */
   longBlockNights: 7,
+  /** A channel missing on this share of the active portfolio (and at least this many listings) is a
+   *  distribution decision, not one to-do per listing: Do now carries ONE line for the channel. */
+  channelRolloutShare: 0.25,
+  channelRolloutMin: 10,
 } as const
 
 export type Severity = 'high' | 'medium' | 'low'
@@ -196,11 +200,26 @@ const plural = (n: number, w: string) => n + ' ' + w + (n === 1 ? '' : 's')
  */
 export function worklist(rows: AdminRow[], today: string): WorkItem[] {
   const out: WorkItem[] = []
+  // A channel nobody has connected across a quarter of the book (Expedia on 130 listings) is one
+  // decision for the portfolio, not 130 lines that bury the seven listings that stopped selling.
+  const activeN = rows.filter(r => r.active).length
+  const missingBy: Record<string, number> = {}
+  for (const r of rows) { if (!r.active) continue; for (const k of MAJORS) if (r.channels[k] && r.channels[k].verdict === 'missing') missingBy[k] = (missingBy[k] || 0) + 1 }
+  const rollout = new Set(MAJORS.filter(k => (missingBy[k] || 0) >= RULES.channelRolloutMin && (missingBy[k] || 0) / Math.max(1, activeN) >= RULES.channelRolloutShare))
+  for (const k of Array.from(rollout)) {
+    out.push({
+      listingId: '', name: 'Portfolio', building: '', market: '', kind: 'channel', channel: k, severity: 'low',
+      title: channelLabel(k) + ' — not connected on ' + missingBy[k] + ' of ' + activeN + ' active listings',
+      why: 'No ' + channelLabel(k) + ' integration on most of the book: a rollout to decide, not a fault on each listing. The Listings tab lists them under "Not connected".',
+      verb: 'Review', href: '/channels?channel=' + encodeURIComponent(k) + '&problems=1',
+    })
+  }
   for (const r of rows) {
     if (!r.active) continue
     const base = { listingId: r.id, name: r.name, building: r.building, market: r.market }
     for (const k of MAJORS) {
       const c = r.channels[k]; if (!c || PROBLEM.indexOf(c.verdict) < 0) continue
+      if (c.verdict === 'missing' && rollout.has(k)) continue
       const sinceTxt = c.since ? ' · since ' + String(c.since).slice(0, 10) : ''
       const detail = c.verdict === 'suspended' ? (c.approval ? 'Airbnb approval: ' + c.approval : 'Airbnb is not selling it')
         : c.verdict === 'missing' ? 'No ' + channelLabel(k) + ' integration on the listing in Guesty'

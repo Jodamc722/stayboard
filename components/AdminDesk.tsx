@@ -90,7 +90,7 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
       </LeanHead>
 
       <LeanTabs value={tab} onChange={setTab} tabs={[
-        { key: 'desk', label: 'Desk', n: work.length || null },
+        { key: 'desk', label: 'Desk', n: work.filter(w => w.severity === 'high').length || null },
         { key: 'listings', label: 'Listings', n: rows.length || null },
         { key: 'reviews', label: 'Reviews' },
       ]} />
@@ -135,7 +135,10 @@ function DeskTab({ work, counts, strip, offline, projects, projectsLoading, load
 
       {/* DO NOW */}
       <LeanSection title="Do now" n={work.length} tone={work.some(w => w.severity === 'high') ? 'rose' : undefined}
-        right={<span className="text-[11px] text-muted">worst first · every line opens where the fix is</span>}>
+        right={<span className="inline-flex items-center gap-1.5 text-[11px] text-muted">
+          {(['high', 'medium', 'low'] as Severity[]).map(sv => { const n = work.filter(w => w.severity === sv).length; return n ? <Tag key={sv} tone={SEV_TONE[sv]} title={sv === 'high' ? 'A listing not selling, or a low review about to close' : sv === 'medium' ? 'Not connected, replies owed, long blocks, never optimized, few photos' : 'Optimization due again, captions, photo analysis'}>{n} {SEV_WORD[sv].toLowerCase()}</Tag> : null })}
+          <span>worst first · every line opens where the fix is</span>
+        </span>}>
         {loading ? <LeanEmpty>Reading the portfolio…</LeanEmpty> : work.length === 0 ? <LeanEmpty>Nothing needs an administrator right now.</LeanEmpty> : (
           <LeanList>
             {shown.map((w, i) => {
@@ -143,9 +146,9 @@ function DeskTab({ work, counts, strip, offline, projects, projectsLoading, load
               return (
                 <LeanRow key={w.kind + ':' + w.listingId + ':' + (w.channel || '') + ':' + i}
                   lead={<Link href={w.href} className={btn} title={w.why}>{w.verb}</Link>}
-                  name={w.name} meta={<>{w.building} · {w.title}</>}
+                  name={w.name} meta={<>{w.building ? w.building + ' · ' : ''}{w.title}</>}
                   tags={<><Tag tone={SEV_TONE[w.severity]} title={w.why}>{SEV_WORD[w.severity]}</Tag><Tag title={w.kind === 'channel' ? 'A channel problem' : w.kind === 'reply' ? 'A review to answer' : w.kind === 'optimize' ? 'Listing copy, settings or score' : w.kind === 'photos' ? 'Photos, captions or the analysis' : 'The Guesty calendar'}><I size={11} className="inline -mt-0.5 mr-1" />{w.kind === 'channel' ? channelLabel(w.channel || '') : w.kind === 'reply' ? 'Reviews' : w.kind === 'optimize' ? 'Optimize' : w.kind === 'photos' ? 'Photos' : 'Blocked'}</Tag></>}
-                  actions={<IconBtn title="Open the unit page" href={'/listings/' + encodeURIComponent(w.listingId)}><Home size={14} /></IconBtn>}>
+                  actions={w.listingId ? <IconBtn title="Open the unit page" href={'/listings/' + encodeURIComponent(w.listingId)}><Home size={14} /></IconBtn> : undefined}>
                   <p className="text-[12.5px] text-ink/85">{w.why}</p>
                 </LeanRow>
               )
@@ -410,9 +413,15 @@ function ReviewsTab() {
           {/* DIRECTION */}
           <LeanSection title="Where it is heading">
             {direction.length === 0 ? <LeanEmpty>Not enough reviews in this window to say.</LeanEmpty> : (
-              <LeanList>
-                {direction.map((x, i) => <LeanRow key={i} lead={<span className={'w-2 h-2 rounded-full shrink-0 ' + (x.tone === 'emerald' ? 'bg-emerald-500' : x.tone === 'rose' ? 'bg-rose-500' : x.tone === 'amber' ? 'bg-amber-500' : 'bg-sky-500')} />} name={<span className="font-medium whitespace-normal">{x.text}</span>} actions={x.href ? <IconBtn title="Open" href={x.href}><ArrowUpRight size={14} /></IconBtn> : undefined} />)}
-              </LeanList>
+              <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70">
+                {direction.map((x, i) => (
+                  <li key={i} className="flex items-start gap-2.5 px-4 py-2 text-[13px] text-ink">
+                    <span className={'mt-[6px] w-2 h-2 rounded-full shrink-0 ' + (x.tone === 'emerald' ? 'bg-emerald-500' : x.tone === 'rose' ? 'bg-rose-500' : x.tone === 'amber' ? 'bg-amber-500' : 'bg-sky-500')} />
+                    <span className="flex-1 min-w-0">{x.text}</span>
+                    {x.href && <Link href={x.href} className="shrink-0 text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-0.5">Open <ArrowUpRight size={12} /></Link>}
+                  </li>
+                ))}
+              </ul>
             )}
           </LeanSection>
 
