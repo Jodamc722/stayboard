@@ -9,7 +9,7 @@ export const metadata = { robots: { index: false, follow: false }, title: 'Appro
 
 export default async function PublicCatalogPage({ params }: { params: { code: string } }) {
   const code = String(params.code || '')
-  const r = await readShared(code)
+  const r = await readShared(code, true)
   if (!r) notFound()
   return (
     <main className="min-h-screen bg-app text-ink">

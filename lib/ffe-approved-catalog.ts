@@ -9,6 +9,7 @@
 //   • The DECISIONS live in ffe_approved_decisions: approved sources, "not for this property", and
 //     a note, one row per item. That is the part that turns the catalog into the replacement list.
 import 'server-only'
+import { randomBytes } from 'crypto'
 import { supabaseAdmin } from './supabase-admin'
 import catalog17West from './ffe-approved-catalog-17west.json'
 
@@ -73,7 +74,6 @@ export async function writeDecision(property: string, itemKey: string, d: { appr
 }
 
 // ---------- share link ----------
-import { randomBytes } from 'crypto'
 
 export async function getShare(property: string): Promise<{ code: string; views: number } | null> {
   try {
@@ -95,16 +95,29 @@ export async function setShare(property: string, who: string, regenerate: boolea
   return { ok: true, code }
 }
 
-/** Resolve a public code to its catalog + decisions; counts the view. Null when the code is unknown. */
-export async function readShared(code: string) {
+/** Resolve a public code to the APPROVED catalog only — the replacement list, nothing else.
+ *  Items without an approved option are dropped, so are unapproved options, rejected items, and who
+ *  approved what (staff emails never leave the building). Notes stay: "order 2 per unit" is part of
+ *  the instruction. `count` bumps the view counter — the page passes true once per open; the API does not. */
+export async function readShared(code: string, count = false): Promise<{ catalog: Catalog; decisions: Record<string, Decision> } | null> {
   if (!/^[0-9a-f]{16}$/i.test(code)) return null
   const db = supabaseAdmin()
   const { data } = await db.from('ffe_catalog_shares').select('property, views').eq('code', code).limit(1)
   const r = (data || [])[0]
   if (!r) return null
-  const catalog = getCatalog(String(r.property))
-  if (!catalog) return null
-  db.from('ffe_catalog_shares').update({ views: Number(r.views || 0) + 1, last_view: new Date().toISOString() }).eq('code', code).then(() => {}, () => {})
-  const decisions = await readDecisions(String(r.property))
-  return { catalog, decisions }
+  const full = getCatalog(String(r.property))
+  if (!full) return null
+  if (count) db.from('ffe_catalog_shares').update({ views: Number(r.views || 0) + 1, last_view: new Date().toISOString() }).eq('code', code).then(() => {}, () => {})
+  const all = await readDecisions(String(r.property))
+  const decisions: Record<string, Decision> = {}
+  const items: CatalogItem[] = []
+  for (const it of full.items) {
+    const d = all[it.key]
+    if (!d || d.rejected || !d.approved.length) continue
+    const options = it.options.filter(o => d.approved.includes(o.src))
+    if (!options.length) continue
+    items.push({ ...it, options })
+    decisions[it.key] = { approved: d.approved, rejected: false, note: d.note, updatedBy: null, updatedAt: null }
+  }
+  return { catalog: { ...full, items, misc: {} }, decisions }
 }

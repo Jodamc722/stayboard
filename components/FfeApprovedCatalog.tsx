@@ -15,7 +15,7 @@
 // for case goods; Wayfair is fine for chairs and sofas; Amazon is fine for build-it-yourself pieces
 // like nightstands; flat-pack options carry an "Assembly needed" tag.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, ExternalLink, Link2, Loader2, RefreshCw, X } from 'lucide-react'
+import { Check, Copy, Link2, Loader2, RefreshCw, X } from 'lucide-react'
 import { useCachedFetch } from '@/lib/swr'
 
 type OptionSrc = 'host' | 'amz' | 'ch' | 'wf'
@@ -41,15 +41,30 @@ const CHIP_TONE = (c: string) =>
 // and the data comes from the public endpoint (which checks the code) instead of the gated one.
 export function FfeApprovedCatalog({ property = '17-west', publicCode }: { property?: string; publicCode?: string }) {
   const isPublic = !!publicCode
-  const { data, loading, error } = useCachedFetch<Payload>(isPublic ? `/api/public/catalog/${publicCode}` : `/api/audit/ffe/approved-catalog?property=${property}`, { ttl: 15_000, persist: false })
+  const { data, loading, error } = useCachedFetch<Payload>(isPublic ? `/api/public/catalog/${publicCode}` : `/api/audit/ffe/approved-catalog?property=${property}`, { ttl: 15_000, persist: false, live: !isPublic })
   const [decisions, setDecisions] = useState<Record<string, Decision>>({})
   const [view, setView] = useState<'all' | 'approved'>(isPublic ? 'approved' : 'all')
   const [order, setOrder] = useState<'group' | 'rank'>('group')
   const [saving, setSaving] = useState<string>('')
+  // The latest decisions, readable outside render (the save path reads it, never the updater).
+  const latest = useRef<Record<string, Decision>>({})
+  // Items this viewer changed in the last few seconds: a teammate's poll must not overwrite them.
+  const dirtyAt = useRef<Record<string, number>>({})
   const seeded = useRef(false)
 
+  // Seed from the server, then MERGE each re-poll (useCachedFetch re-reads every 30 s / on focus) so a
+  // teammate's approvals show up without a reload — except items this viewer just touched.
   useEffect(() => {
-    if (data?.decisions && !seeded.current) { setDecisions(data.decisions); seeded.current = true }
+    if (!data?.decisions) return
+    const incoming = data.decisions
+    setDecisions(prev => {
+      const out: Record<string, Decision> = seeded.current ? { ...prev } : {}
+      const now = Date.now()
+      for (const k of Object.keys(incoming)) { if (!seeded.current || (now - (dirtyAt.current[k] || 0)) > 5000) out[k] = incoming[k] }
+      seeded.current = true
+      latest.current = out
+      return out
+    })
   }, [data])
   useEffect(() => {
     try { if ((window.location.hash || '') === '#approved') setView('approved') } catch { /* no-op */ }
@@ -58,31 +73,45 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
   const canEdit = !isPublic && !!data?.canEdit
   const items = data?.catalog.items || []
 
+  // One in-flight save per item; a change made while one is saving is sent after it (last one wins),
+  // and a failed save puts the item back to what the server last confirmed.
+  const inflight = useRef<Record<string, { next: Decision | null }>>({})
+  const confirmed = useRef<Record<string, Decision>>({})
   const save = useCallback(async (itemKey: string, d: Decision) => {
+    if (inflight.current[itemKey]) { inflight.current[itemKey].next = d; return }
+    inflight.current[itemKey] = { next: null }
     setSaving('Saving…')
+    let ok = false, msg = ''
     try {
       const r = await fetch('/api/audit/ffe/approved-catalog', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ property, itemKey, approved: d.approved, rejected: d.rejected, note: d.note }),
       })
       const j = await r.json().catch(() => ({}))
-      setSaving(r.ok && j.ok ? 'Saved' : (j.error || 'That did not save.'))
-    } catch { setSaving('That did not save.') }
+      ok = r.ok && !!j.ok; msg = ok ? 'Saved' : (j.error || 'That did not save.')
+    } catch { msg = 'That did not save.' }
+    const queued = inflight.current[itemKey]?.next || null
+    delete inflight.current[itemKey]
+    if (ok) confirmed.current[itemKey] = d
+    else {
+      const back = confirmed.current[itemKey] || data?.decisions?.[itemKey] || { approved: [], rejected: false, note: '' }
+      setDecisions(prev => { const out = { ...prev, [itemKey]: back }; latest.current = out; return out })
+    }
+    setSaving(msg)
+    if (queued && ok) save(itemKey, queued)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [property])
 
   const noteTimers = useRef<Record<string, any>>({})
   const decide = (key: string, patch: (d: Decision) => Decision, debounce = false) => {
     if (!canEdit) return
-    setDecisions(prev => {
-      const cur = prev[key] || { approved: [], rejected: false, note: '' }
-      const next = patch(cur)
-      const out = { ...prev, [key]: next }
-      if (debounce) {
-        clearTimeout(noteTimers.current[key])
-        noteTimers.current[key] = setTimeout(() => save(key, next), 700)
-      } else save(key, next)
-      return out
-    })
+    const cur = latest.current[key] || { approved: [], rejected: false, note: '' }
+    const next = patch(cur)
+    const out = { ...latest.current, [key]: next }
+    latest.current = out; dirtyAt.current[key] = Date.now()
+    setDecisions(out)
+    if (debounce) { clearTimeout(noteTimers.current[key]); noteTimers.current[key] = setTimeout(() => save(key, next), 700) }
+    else save(key, next)
   }
   const toggle = (key: string, src: OptionSrc) => decide(key, d => {
     const has = d.approved.includes(src)
@@ -124,11 +153,11 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
         <Kpi v={`${stats.approved}`} l="items with an approved option" tone="text-emerald-700" />
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <Toggle value={view} onChange={v => { setView(v as any); try { window.history.replaceState(null, '', v === 'approved' ? '#approved' : '#') } catch { /* no-op */ } }}
-          options={[['all', 'Everything'], ['approved', 'Approved catalog']]} />
+        {!isPublic && <Toggle value={view} onChange={v => { setView(v as any); try { window.history.replaceState(null, '', v === 'approved' ? '#approved' : '#') } catch { /* no-op */ } }}
+          options={[['all', 'Everything'], ['approved', 'Approved catalog']]} />}
         {view === 'all' && <Toggle value={order} onChange={v => setOrder(v as any)} options={[['group', 'By room item'], ['rank', 'Biggest savings first']]} />}
         <span className="text-xs text-muted" aria-live="polite">
-          {isPublic ? (view === 'approved' ? 'Approved options only.' : 'Every option considered; approved ones are marked.')
+          {isPublic ? 'Approved options only.'
             : !canEdit ? 'View only — approving needs edit access to FF&E.' : saving || 'Approvals save as you go and are shared with the whole team.'}
         </span>
         {!isPublic && <ShareLink property={property} canEdit={canEdit} />}
@@ -339,11 +368,13 @@ function SoloCard({ item, d, status, canEdit, view, isPublic, onToggle }: { item
     <article className="rounded-xl border border-line bg-white shadow-soft overflow-hidden flex flex-col" id={item.key}>
       {(view === 'all' || onMain) && <Photo o={main} />}
       <div className="p-3 grid gap-1 content-start">
-        <div className="flex items-center justify-between gap-2"><span className="text-[11px] uppercase tracking-wider text-muted font-semibold">{main.vendor}</span><StatusPill s={status} n={d?.approved.length || 0} /></div>
-        <div className="text-[13.5px] font-medium leading-snug break-words">{main.url ? <a href={main.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{main.name}</a> : main.name}</div>
-        {main.chips.length > 0 && <div className="flex flex-wrap gap-1">{main.chips.map(c => <span key={c} className={'text-[11px] font-semibold rounded-full px-2 py-0.5 ' + CHIP_TONE(c)}>{c}</span>)}</div>}
-        <div className="text-lg font-bold tabular-nums text-brand-700">{money(main.price)}</div>
-        {main.price != null && (view === 'all' || onMain) && (isPublic ? (onMain && <Approved />) : <ApproveBtn on={onMain} disabled={!canEdit} onClick={() => onToggle(item.key, 'host')} />)}
+        <div className="flex items-center justify-between gap-2"><span className="text-[11px] uppercase tracking-wider text-muted font-semibold">{(view === 'all' || onMain) ? main.vendor : item.name}</span><StatusPill s={status} n={d?.approved.length || 0} /></div>
+        {(view === 'all' || onMain) && <>
+          <div className="text-[13.5px] font-medium leading-snug break-words">{main.url ? <a href={main.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{main.name}</a> : main.name}</div>
+          {main.chips.length > 0 && <div className="flex flex-wrap gap-1">{main.chips.map(c => <span key={c} className={'text-[11px] font-semibold rounded-full px-2 py-0.5 ' + CHIP_TONE(c)}>{c}</span>)}</div>}
+          <div className="text-lg font-bold tabular-nums text-brand-700">{money(main.price)}</div>
+          {main.price != null && (isPublic ? (onMain && <Approved />) : <ApproveBtn on={onMain} disabled={!canEdit} onClick={() => onToggle(item.key, 'host')} />)}
+        </>}
       </div>
       {alt && (view === 'all' || onAlt) && (
         <div className={'mt-auto border-t border-dashed border-line grid gap-2.5 p-3 ' + (alt.src === 'ch' ? 'bg-sky-50/60' : 'bg-violet-50/60')} style={{ gridTemplateColumns: '64px 1fr' }}>
@@ -406,4 +437,3 @@ function ShareLink({ property, canEdit }: { property: string; canEdit: boolean }
   )
 }
 
-export function ExternalHint() { return <ExternalLink className="w-3 h-3 inline" /> }

@@ -1,4 +1,4 @@
--- 160 — APPROVED CATALOG DECISIONS (Jon, 2026-10-20): the 17 West furniture catalog review.
+-- 162 — APPROVED CATALOG DECISIONS (Jon, 2026-10-20): the 17 West furniture catalog review.
 --
 -- "Make this easy to review, approve, and build our 17 West furniture catalog, so when needing to
 -- replace, we know what we are approved to replace it with… Once approved, this will be our 17 West
