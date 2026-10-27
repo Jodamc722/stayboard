@@ -97,7 +97,12 @@ export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesCo
   })
   const pool: string[] = Array.isArray(base.photoPool) ? base.photoPool : []
   const pic = (n: number) => (pool.length ? pool[n % pool.length] : '')
-  const card: ContactCard = { ...CONTACT_DEFAULT, ...(i.contact || {}) }
+  // SPREAD COPIES UNDEFINED, WHICH IS HOW THE JOB TITLE DISAPPEARED (2026-10-27). The desk sends
+  // { name } only, and `{...DEFAULT, ...{role: undefined}}` overwrites the default role with
+  // undefined rather than keeping it. Only keys that actually carry a value get to win.
+  const given: Record<string, string> = {}
+  for (const [k, v] of Object.entries(i.contact || {})) if (typeof v === 'string' && v.trim()) given[k] = v
+  const card: ContactCard = { ...CONTACT_DEFAULT, ...given }
 
   const omit = Array.from(new Set((Array.isArray(base.omit) ? base.omit : []).concat(SALES_OMIT)))
 

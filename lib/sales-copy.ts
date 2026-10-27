@@ -30,9 +30,11 @@ export const CONTACT_SUBTITLE = 'One person who owns this relationship, start to
 export const CONTACT_BODY =
   'You will not be handed to a queue. The person who walks you through this deck is the person who answers when you call, brings the right people in when something needs them, and stays with your account after it goes live.'
 export type ContactCard = { name: string; role: string; phone: string; email: string; photo: string; blurb: string }
+// EMPTY, NOT PLACEHOLDER PROSE. Instructional copy stored as content is copy that eventually
+// reaches a prospect. The slide shows the hints as placeholders in edit mode instead, and prints
+// only the lines that have been filled in.
 export const CONTACT_DEFAULT: ContactCard = {
-  name: '', role: 'Business Development', phone: '', email: '', photo: '',
-  blurb: 'Add your photo, title and direct line here once — every deck you generate afterwards carries them.',
+  name: '', role: 'Business Development', phone: '', email: '', photo: '', blurb: '',
 }
 
 // ── 2 · HOW OPERATIONS WORKS ────────────────────────────────────────────────
@@ -123,10 +125,11 @@ export const LH_ROWS: KV[] = [
   { k: 'Guest inbox and calls', v: 'Messages from every channel in one place, and recorded calls turned into notes and next steps on the booking instead of staying in somebody\'s head.' },
   { k: 'Listing optimization', v: 'Every listing scored against what guests search and praise, with the specific fix named — the missing amenity, the weak title, the photo in the wrong place.' },
   { k: 'Reviews', v: 'Replies drafted and tracked on every channel, and the themes behind them turned into work on the unit.' },
-  { k: 'Owner reporting', v: 'The report you receive is generated from the same data the team works from. Nothing is retyped on the way to you.' },
 ]
+// SIX ROWS, BECAUSE SEVEN SCROLLED. Owner reporting moved into the note rather than being cut:
+// on a slide that is presented at 16:9, a row you have to scroll to is a row nobody reads.
 export const LH_NOTE =
-  'Nothing here is yours to learn or log into. It exists so that the people running your property are never working from memory.'
+  'The report you receive is generated from this same data, so nothing is retyped on the way to you. And none of it is yours to learn or log into — it exists so the people running your property are never working from memory.'
 
 // ── 7 · ONBOARDING, FROM THE OWNER'S SIDE ───────────────────────────────────
 // Jon: "walk through onboarding". The internal checklist already exists in the onboarding deck

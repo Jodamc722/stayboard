@@ -3758,7 +3758,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // A deck handed over by a named person closes better than one from a company, so the
           // face goes second, before the pitch. The photo is a Pick like every other image here,
           // so it is set by clicking it in edit mode and travels with the deck.
-          if (!hid('contact')) { const cc: Any = sec('contact').card || {}; slides.push({ key: 'contact', ai: true, node: (
+          // AN UNFILLED CARD DOES NOT PRINT (2026-10-27). Out of edit mode the empty photo panel
+          // and the blank title, line and email read as a half-built page in front of a prospect,
+          // so each prints only once it carries something and the slide itself waits for a name.
+          const ccCard: Any = sec('contact').card || {}
+          const ccShow = (k: string) => edit || !!String(ccCard[k] || '').trim()
+          if (!hid('contact') && (edit || String(ccCard.name || '').trim())) { const cc: Any = ccCard; slides.push({ key: 'contact', ai: true, node: (
             <Slide nav="Your contact" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
                 <div className="flex-1 min-h-0 flex" style={{ gap: 48, paddingBottom: 18 }}>
@@ -3769,31 +3774,43 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     </p>
                   </div>
                   <div className="flex-1 min-w-0 flex items-center" style={{ gap: 34 }}>
-                    <div style={{ flexShrink: 0 }}>
-                      <Pick title="Your photo" cur={String(cc.photo || '')} set={u => patch('contact.card.photo', u)}
-                        style={{ width: 230, height: 280, borderRadius: 14, border: '1px solid ' + t.cardBorder }} />
-                      {edit && !cc.photo ? (
-                        <p className="sb-noprint" style={{ fontSize: 11.5, color: t.muted, marginTop: 8, width: 230, textAlign: 'center' }}>Click the panel to add your photo</p>
-                      ) : null}
-                    </div>
+                    {ccShow('photo') ? (
+                      <div style={{ flexShrink: 0 }}>
+                        <Pick title="Your photo" cur={String(cc.photo || '')} set={u => patch('contact.card.photo', u)}
+                          style={{ width: 230, height: 280, borderRadius: 14, border: '1px solid ' + t.cardBorder }} />
+                        {edit && !cc.photo ? (
+                          <p className="sb-noprint" style={{ fontSize: 11.5, color: t.muted, marginTop: 8, width: 230, textAlign: 'center' }}>Click the panel to add your photo</p>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <div style={{ minWidth: 0 }}>
                       <p style={{ fontSize: 30, fontWeight: 600, letterSpacing: '-0.02em', color: t.ink, lineHeight: 1.15 }}>
                         <Ed v={cc.name || ''} set={v => patch('contact.card.name', v)} edit={edit} placeholder="Your name" />
                       </p>
-                      <p style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.accent, marginTop: 8 }}>
-                        <Ed v={cc.role || ''} set={v => patch('contact.card.role', v)} edit={edit} placeholder="Title" />
-                      </p>
-                      <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 16, maxWidth: '34ch' }}>
-                        <Ed v={cc.blurb || ''} set={v => patch('contact.card.blurb', v)} edit={edit} multiline placeholder="One line about you (optional)" />
-                      </p>
-                      <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid ' + t.cardBorder, display: 'grid', gap: 6 }}>
-                        <p style={{ fontSize: 14, color: t.ink }}>
-                          <Ed v={cc.phone || ''} set={v => patch('contact.card.phone', v)} edit={edit} placeholder="Direct line" />
+                      {ccShow('role') ? (
+                        <p style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.accent, marginTop: 8 }}>
+                          <Ed v={cc.role || ''} set={v => patch('contact.card.role', v)} edit={edit} placeholder="Title" />
                         </p>
-                        <p style={{ fontSize: 14, color: t.ink }}>
-                          <Ed v={cc.email || ''} set={v => patch('contact.card.email', v)} edit={edit} placeholder="Email" />
+                      ) : null}
+                      {ccShow('blurb') ? (
+                        <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 16, maxWidth: '34ch' }}>
+                          <Ed v={cc.blurb || ''} set={v => patch('contact.card.blurb', v)} edit={edit} multiline placeholder="One line about you (optional)" />
                         </p>
-                      </div>
+                      ) : null}
+                      {(ccShow('phone') || ccShow('email')) ? (
+                        <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid ' + t.cardBorder, display: 'grid', gap: 6 }}>
+                          {ccShow('phone') ? (
+                            <p style={{ fontSize: 14, color: t.ink }}>
+                              <Ed v={cc.phone || ''} set={v => patch('contact.card.phone', v)} edit={edit} placeholder="Direct line" />
+                            </p>
+                          ) : null}
+                          {ccShow('email') ? (
+                            <p style={{ fontSize: 14, color: t.ink }}>
+                              <Ed v={cc.email || ''} set={v => patch('contact.card.email', v)} edit={edit} placeholder="Email" />
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -5214,23 +5231,27 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     </>
                   }
                   right={
-                    <div>
+                    // TWO COLUMNS OF FOUR (2026-10-27). Eight steps in one column ran off the
+                    // bottom of the slide behind a "scroll for more" chip, and a step you have to
+                    // scroll to during a pitch is a step nobody hears. The week and who does it
+                    // share the eyebrow so each cell keeps its full width for the words.
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '14px 30px' }}>
                       {((sec('onbsteps').steps || []) as Any[]).map((f: Any, i: number) => (
-                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '92px 1fr 110px', gap: 18, alignItems: 'baseline', padding: '11px 0', borderTop: '1px solid ' + t.cardBorder }}>
-                          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: t.accent }}>
-                            <Ed v={f.when || ''} set={v => patch('onbsteps.steps.' + i + '.when', v)} edit={edit} />
-                          </span>
-                          <div style={{ minWidth: 0 }}>
-                            <p style={{ fontSize: 14, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
-                              <Ed v={f.k || ''} set={v => patch('onbsteps.steps.' + i + '.k', v)} edit={edit} multiline />
-                            </p>
-                            <p style={{ fontSize: 13, lineHeight: 1.55, color: t.body, marginTop: 4 }}>
-                              <Ed v={f.v || ''} set={v => patch('onbsteps.steps.' + i + '.v', v)} edit={edit} multiline />
-                            </p>
-                          </div>
-                          <span style={{ fontSize: 11.5, color: t.muted, textAlign: 'right' }}>
-                            <Ed v={f.who || ''} set={v => patch('onbsteps.steps.' + i + '.who', v)} edit={edit} />
-                          </span>
+                        <div key={i} style={{ borderTop: '1px solid ' + t.cardBorder, paddingTop: 10, minWidth: 0 }}>
+                          <p className="flex items-baseline" style={{ gap: 8, justifyContent: 'space-between' }}>
+                            <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: t.accent }}>
+                              <Ed v={f.when || ''} set={v => patch('onbsteps.steps.' + i + '.when', v)} edit={edit} />
+                            </span>
+                            <span style={{ fontSize: 10.5, color: t.muted, textAlign: 'right' }}>
+                              <Ed v={f.who || ''} set={v => patch('onbsteps.steps.' + i + '.who', v)} edit={edit} />
+                            </span>
+                          </p>
+                          <p style={{ fontSize: 14, fontWeight: 600, color: t.ink, lineHeight: 1.3, marginTop: 5 }}>
+                            <Ed v={f.k || ''} set={v => patch('onbsteps.steps.' + i + '.k', v)} edit={edit} multiline />
+                          </p>
+                          <p style={{ fontSize: 12.5, lineHeight: 1.5, color: t.body, marginTop: 4 }}>
+                            <Ed v={f.v || ''} set={v => patch('onbsteps.steps.' + i + '.v', v)} edit={edit} multiline />
+                          </p>
                         </div>
                       ))}
                     </div>
