@@ -364,7 +364,7 @@ export const MAXREV_ROWS: KV[] = [
   { k: 'Optimization', v: 'Our own AI turns reviews and guest feedback into listing fixes, every week.' },
 ]
 export const MAXREV_NOTE =
-  'You see every decision in your monthly statement and owner report, and any rate can be explained on request.'
+  'Connected end to end: your rate, bookings, field work and listing share one record, so nothing about your property falls between systems.'
 
 // ── 14 · MANAGEMENT TERMS ───────────────────────────────────────────────────
 // Jon: "we can add our management terms".

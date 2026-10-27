@@ -5054,14 +5054,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src="/icon-192.png" alt="Lighthouse" style={{ width: 64, height: 64, borderRadius: 16, flexShrink: 0 }} />
                 </div>
-                <div style={{ marginTop: 28, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, flex: 1, minHeight: 0, alignContent: 'start' }}>
+                <div style={{ marginTop: 28, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gridAutoRows: '1fr', gap: 16, flex: 1, minHeight: 0 }}>
                   {lhRows.map((r: Any, i: number) => (
-                    <div key={i} style={{ background: t.card, border: '1px solid ' + t.cardBorder, borderRadius: 14, padding: '18px 20px' }}>
-                      <p style={{ fontSize: 15.5, fontWeight: 600, color: t.ink, margin: 0 }}>
+                    <div key={i} className="flex flex-col justify-center" style={{ background: t.card, border: '1px solid ' + t.cardBorder, borderRadius: 16, padding: '20px 24px' }}>
+                      <p style={{ fontSize: 18, fontWeight: 600, color: t.ink, margin: 0 }}>
                         <span style={{ color: t.accent, marginRight: 8, fontVariantNumeric: 'tabular-nums' }}>{String(i + 1).padStart(2, '0')}</span>
                         <Ed v={r.k || ''} set={v => patch('lighthouse.rows.' + i + '.k', v)} edit={edit} />
                       </p>
-                      <p style={{ fontSize: 13.5, lineHeight: 1.5, color: t.body, margin: '8px 0 0' }}>
+                      <p style={{ fontSize: 15, lineHeight: 1.5, color: t.body, margin: '10px 0 0' }}>
                         <Ed v={r.v || ''} set={v => patch('lighthouse.rows.' + i + '.v', v)} edit={edit} multiline />
                       </p>
                     </div>
@@ -5096,7 +5096,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             <Slide nav="The technology" warn={edit} ground={GROUND.dark}>
               <div className="flex flex-col" style={{ height: '100%' }}>
                 <SalesHead k="maxrev" eyebrow="How we manage it" dark />
-                <div style={{ marginTop: 40, display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, mrRows.length) + ', 1fr)', gap: 22, flex: 1, minHeight: 0 }}>
+                <div style={{ marginTop: 40, display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, mrRows.length) + ', 1fr)', gap: 22 }}>
                   {mrRows.map((r: Any, i: number) => { const f: Any = mrTools[i] || null; const logo = f ? houseLogo(f.logo, f.name) : ''; const wordmark = WORDMARK_LOGOS.indexOf(logo) >= 0; return (
                     <div key={i} className="flex flex-col" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 16, overflow: 'hidden' }}>
                       <div className="flex items-center justify-center" style={{ background: '#fff', height: 86, padding: '0 18px' }}>
@@ -5106,13 +5106,16 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: t.accent === '#fff' ? '#fff' : 'rgba(255,255,255,0.62)', margin: 0 }}>
                           <Ed v={r.k || ''} set={v => patch('maxrev.rows.' + i + '.k', v)} edit={edit} />
                         </p>
-                        <p style={{ fontSize: 16, lineHeight: 1.45, color: '#fff', margin: '10px 0 0' }}>
+                        <p style={{ fontSize: 17, lineHeight: 1.45, color: '#fff', margin: '10px 0 0' }}>
                           <Ed v={r.v || ''} set={v => patch('maxrev.rows.' + i + '.v', v)} edit={edit} multiline />
                         </p>
                       </div>
                     </div>
                   ) })}
                 </div>
+                <p className="mt-auto" style={{ fontSize: 18, lineHeight: 1.45, color: 'rgba(255,255,255,0.86)', margin: 0, paddingTop: 20, borderTop: '1px solid rgba(255,255,255,0.16)', maxWidth: '62ch' }}>
+                  <Ed v={sec('maxrev').note || ''} set={v => patch('maxrev.note', v)} edit={edit} multiline />
+                </p>
               </div>
             </Slide>
           ) }) } else
@@ -5338,7 +5341,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 {/* THE PEOPLE AND THE BUILDINGS, SIDE BY SIDE (Jon, 2026-10-27: "our stats, team,
                     and our experience and credibility"). Faces on the left — who answers the
                     phone — and the buildings we already run on the right. */}
-                <div className="mt-auto" style={{ display: 'grid', gridTemplateColumns: (team4.length && bld.length) ? '1fr 1.15fr' : '1fr', gap: 28, alignItems: 'end' }}>
+                <div className="mt-auto" style={{ display: 'grid', gridTemplateColumns: (team4.length && bld.length) ? '1fr 1.15fr' : '1fr', gap: 28, alignItems: 'end', paddingTop: 22 }}>
                   {team4.length ? (
                     <div>
                       <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: '0 0 10px' }}>Your team</p>
@@ -5528,7 +5531,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         ['Per month', both(rg.monthlyLow, rg.monthlyHigh), false],
                         ['Nightly rate', both(rg.rateLow, rg.rateHigh), false],
                         ['Occupancy', both(rg.occLow, rg.occHigh), false],
-                        ...(salesFee && lo ? [['Yours a year after our ' + (Math.round(salesFee * 10) / 10) + '% fee', keep(lo) + (hi && hi !== lo ? ' – ' + keep(hi) : ''), true]] : []),
+                        ...(salesFee && lo ? [['After our ' + (Math.round(salesFee * 10) / 10) + '% fee, a year', keep(lo) + (hi && hi !== lo ? ' – ' + keep(hi) : ''), true]] : []),
                       ] as Any[]).filter((x: Any) => x[1]).map(([l, v, dark]: Any, i: number) => (
                         <div key={i} style={{ background: dark ? t.band : t.card, borderRadius: 14, padding: '16px 18px', border: dark ? undefined : '1px solid ' + t.cardBorder }}>
                           <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: dark ? 'rgba(255,255,255,0.62)' : t.muted, margin: 0 }}>{l}</p>
@@ -6534,7 +6537,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             // whole slide; it stays in the editor, where someone can paste the figures in, and out
             // of the deck the prospect reads until they are there.
             const cpHasFigures = cpRows.some((r: Any) => ['rev', 'rate', 'occ'].some(k => /\d/.test(String(r[k] || ''))))
-            if ((cpRows.length && cpHasFigures) || edit) slides.push({ key: 'comps', ai: true, node: (
+            if (!(isSales && deckIsShort) && ((cpRows.length && cpHasFigures) || edit)) slides.push({ key: 'comps', ai: true, node: (
             <Slide nav="Comparable listings" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
                 <div className="flex items-baseline justify-between" style={{ gap: 20 }}>
