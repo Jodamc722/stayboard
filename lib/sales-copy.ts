@@ -117,17 +117,17 @@ export const DIRECT_NOTE =
 // Jon: "how Lighthouse works". The stack slide names it in one line. This one shows it, because
 // software built in-house is the single thing on the table a competitor cannot buy, and a list of
 // adjectives does not prove it exists. Each row is a screen that can be opened in the room.
-export const LH_HEADLINE = 'Lighthouse'
-export const LH_SUBTITLE = 'Our own software. Built for this business, by this business.'
+export const LH_HEADLINE = 'Lighthouse: our own AI'
+export const LH_SUBTITLE = 'Proprietary software we built to optimize, manage and automate everything behind your property.'
 export const LH_BODY =
   'Most managers run on the same three or four bought platforms as everyone else, and live with the gaps between them. We built the layer that closes those gaps — and it is the reason the answer to a question about your property is a screen rather than a phone call to somebody who might remember.'
 export const LH_ROWS: KV[] = [
-  { k: 'The day board', v: 'Every arrival, departure, clean, inspection and open job on one live screen. Who has it, where it stands, what is at risk.' },
-  { k: 'The schedule', v: 'Cleans and field work assigned by name and pushed to the crew with the brief for that unit.' },
-  { k: 'Issues and guest feedback', v: 'Anything a guest says or a cleaner finds becomes a tracked job on the right unit, with photos and a deadline.' },
-  { k: 'Guest inbox and calls', v: 'Every channel in one inbox, and recorded calls turned into next steps on the booking.' },
-  { k: 'Listing optimization', v: 'Every listing scored against what guests search and praise, with the specific fix named.' },
-  { k: 'Reviews', v: 'Replies drafted and tracked on every channel, and the themes behind them turned into work.' },
+  { k: 'Operations', v: 'Every clean, inspection and repair scheduled, assigned and tracked on one live board.' },
+  { k: 'Listing optimization', v: 'Each listing scored against what guests search and praise, with the fix named.' },
+  { k: 'Photos and captions', v: 'Photos ordered and captioned automatically, the hero shot chosen by what converts.' },
+  { k: 'Guidebooks', v: 'A digital guidebook for every unit, built from the listing in minutes.' },
+  { k: 'Review management', v: 'Replies drafted on every channel; repeat complaints become work orders.' },
+  { k: 'Guest messages and calls', v: 'One inbox for every channel; recorded calls become next steps on the booking.' },
 ]
 // SIX ROWS, BECAUSE SEVEN SCROLLED. Owner reporting moved into the note rather than being cut:
 // on a slide that is presented at 16:9, a row you have to scroll to is a row nobody reads.
@@ -197,16 +197,14 @@ export const MARKET_HINTS: Record<string, string> = {
 }
 
 // ── 10 · THE CLOSE ──────────────────────────────────────────────────────────
-export const CLOSE_HEADLINE = 'Three steps to live'
-export const CLOSE_SUBTITLE = 'From this conversation to your first booking, usually inside four weeks.'
-// THE PROJECTION IS NOT A NEXT STEP ANY MORE (2026-10-27). It used to be the first row here, on a
-// deck that now carries the projection three slides earlier — offering a prospect something they
-// are already holding reads as a template nobody read. The close asks for the one thing that moves
-// the deal: the walk-through.
+export const CLOSE_HEADLINE = 'Book a walk-through'
+export const CLOSE_SUBTITLE = ''
+// THE CLOSE ASKS FOR ONE THING: the walk-through. Three steps, each one line, so the path from
+// this deck to a first booking reads in five seconds.
 export const CLOSE_ROWS: KV[] = [
-  { k: 'Walk the property', v: 'An hour on site: what the listing needs, what setup will cost, and the projection checked against the real unit. No charge and no commitment.' },
-  { k: 'Sign one plain agreement', v: 'Plain terms, no lock-in beyond the notice period, walked through clause by clause before you sign.' },
-  { k: 'Go live', v: 'Photographed, listed on every channel, priced daily, with a team that already knows your building.' },
+  { k: 'Walk the property', v: 'An hour on site. No charge, no commitment.' },
+  { k: 'Sign one plain agreement', v: 'Every clause walked through before you sign.' },
+  { k: 'Live in about four weeks', v: 'Photographed, listed everywhere, priced daily.' },
 ]
 export const CLOSE_NOTE = 'The next step is the walk-through. One call books it.'
 
@@ -264,8 +262,10 @@ export const SALES_AGENDA: KV[] = [
 // Thirteen slides and a cover. Every one of them is doing a job the one before it set up.
 export const SALES_ORDER = [
   'welcome',
-  'property', 'market', 'plan', 'comps', 'edge', 'proof', 'returns',  // theirs: the unit, the area, the money
-  'maxrev', 'ops', 'stack',                       // ours: how the money happens
+  // Jon, 2026-10-27: projection on the cover, then the month-by-month, then the technology that
+  // manages rate, operations and optimization, then who we are and why choose us, then book a walk.
+  'property', 'market', 'plan', 'maxrev', 'edge', 'comps', 'proof', 'returns',
+  'ops', 'stack',
   'overview', 'experience', 'team',               // who is doing it
   'terms', 'onbsteps', 'contact', 'close',        // what it costs and what happens next
   // Everything the full deck adds, in the order it argues best.
@@ -275,12 +275,11 @@ export const SALES_ORDER = [
 // Twelve slides and a cover. The contact card rides on the close rather than taking a slide of
 // its own, and the onboarding timeline waits for the meeting: a prospect who has not decided does
 // not need the four-week plan yet.
-export const SHORT_KEEP = [
-  'property', 'market', 'plan', 'comps', 'edge', 'proof', 'returns',
-  'maxrev', 'ops', 'stack',
-  'overview', 'experience', 'team',
-  'terms', 'close',
-]
+// FIVE SLIDES, NO WASTE (Jon, 2026-10-27: "It should be 4-5, no waste! Think professional,
+// clean, capture attention then paint the picture"). The cover catches the eye; then what it
+// could earn, why us, how, and the next step. The company, team and terms lines live inside those
+// slides rather than on their own; everything else is the full deck, for the meeting.
+export const SHORT_KEEP = ['plan', 'maxrev', 'edge', 'close', 'lighthouse']
 /** Every slide the sales deck can carry, so the short/full switch has something to subtract from. */
 export const SALES_KEYS = [
   'welcome', 'contact', 'property', 'market', 'comps', 'edge', 'returns', 'agenda', 'team', 'overview', 'experience', 'ops', 'craft',
@@ -323,6 +322,12 @@ export const SHORT_HIDDEN_HISTORY: string[][] = [
   ['agenda', 'craft', 'dist', 'marketing', 'channels', 'direct', 'guestcare', 'revenue',
     'lighthouse', 'gpo', 'guesty', 'statement', 'ai', 'season', 'ramp', 'rampsteps', 'money',
     'video', 'onbsteps', 'contact', 'returns', 'comps'],
+  // 2026-10-27, seventh: cut to five plus Lighthouse — cover, month by month, technology, who we
+  // are, book a walk-through, and the Lighthouse slide after the ask.
+  ['welcome', 'contact', 'property', 'market', 'comps', 'returns', 'agenda', 'team', 'overview',
+    'experience', 'ops', 'craft', 'marketing', 'dist', 'channels', 'direct', 'guestcare', 'revenue',
+    'stack', 'proof', 'terms', 'onbsteps', 'gpo', 'guesty', 'statement', 'ai',
+    'season', 'ramp', 'rampsteps', 'money', 'video'],
   // 2026-10-27, sixth: our homes against the market (the edge slide) joins the short deck.
   ['agenda', 'craft', 'dist', 'marketing', 'channels', 'direct', 'guestcare', 'revenue',
     'lighthouse', 'gpo', 'guesty', 'statement', 'ai', 'season', 'ramp', 'rampsteps', 'money',
@@ -345,16 +350,18 @@ export const SALES_WELCOME = 'Three things decide what a property earns: how the
 // The short deck's one revenue slide. The full deck argues this across five — pricing, the comp
 // set, distribution, the listing craft, direct — and each of those is a better slide than this
 // one. This is the version for someone who has given us ninety seconds.
-export const MAXREV_HEADLINE = 'How we earn you more'
+export const MAXREV_HEADLINE = 'The technology behind your revenue'
 export const MAXREV_SUBTITLE = 'Five levers, worked every day.'
 export const MAXREV_BODY =
   'Revenue is not one decision at the start. It is a rate moved daily against live demand, on a listing built to convert, sold in every place a guest might look.'
+// One row per platform, in the order the money is made: the rate, where it sells, the operation
+// that earns the review, and the software that keeps improving all three. The renderer pairs each
+// row with the stack slide's logo in the same position.
 export const MAXREV_ROWS: KV[] = [
-  { k: 'Priced every day', v: 'A named revenue manager at Pacer works your rate daily against live demand, your comp set and the dates ahead.' },
-  { k: 'Sold in 40+ places', v: 'One calendar, every major channel and a long tail of partners. A booking can arrive from anywhere.' },
-  { k: 'Built to convert', v: 'Photography, title, the first three images and the amenities set by us. A listing that converts ranks higher.' },
-  { k: 'The nights others leave empty', v: 'Minimum stays worked by date, gap nights priced to fill, big weekends captured months out.' },
-  { k: 'Direct, with no commission', v: 'Our own site and the guest profiles every stay builds bring past guests back with no channel cut.' },
+  { k: 'Rate', v: 'Live market data and a revenue manager reprice every night of your calendar.' },
+  { k: 'Distribution', v: 'Airbnb, Vrbo, Booking.com, Expedia and our own site, on one calendar.' },
+  { k: 'Operations', v: 'Every clean, inspection and repair scheduled, checked and photographed.' },
+  { k: 'Optimization', v: 'Our own AI turns reviews and guest feedback into listing fixes, every week.' },
 ]
 export const MAXREV_NOTE =
   'You see every decision in your monthly statement and owner report, and any rate can be explained on request.'
@@ -423,7 +430,7 @@ export const PROOF_NOTE =
 // important sentence on the page. It assumes an established listing with reviews and booking
 // history, so year one can run lower, and an owner who reads the number as a year-one promise is
 // an owner we lose in month six.
-export const PLAN_HEADLINE = 'What your property could earn'
+export const PLAN_HEADLINE = 'Your year, month by month'
 export const PLAN_SUBTITLE = ''
 export const PLAN_BODY =
   'Built from a market revenue estimate for this building, bedroom count and size, checked against what our own units nearby actually earned.'
@@ -491,7 +498,7 @@ export const MARKET_BODY = ''
 // than adjectives: what homes we run earned, against what the same size of home earned across the
 // market, on the same window (lib/sales-edge). The headline is the takeaway, written once the
 // numbers are in; the copy below is only the frame around them.
-export const EDGE_HEADLINE = 'Our homes out-earn the market'
+export const EDGE_HEADLINE = 'Why owners choose Stay'
 export const EDGE_SUBTITLE = 'Same size of home, same twelve months.'
 export const EDGE_BODY =
   'Most homes in this market are run by their owners, or by a manager who lists them and waits. The gap between that and a home that is priced, sold and serviced every day is not a few percent.'

@@ -3598,6 +3598,17 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       </p>
                     ) : null}
                   </div>
+                  {/* THE PROPERTY'S OWN PHOTOS, beside the number (Jon, 2026-10-27: "first slide,
+                      projection for rev, property and [photos]"). Up to three, from the property
+                      section; none set, none shown. */}
+                  {(() => { const ph: string[] = (((c.property || {}).photos || []) as string[]).filter((u: string) => u && u !== hero.heroImage).slice(0, 3); return ph.length ? (
+                    <div className="absolute flex flex-col" style={{ right: '4%', top: '16%', bottom: '10%', width: '21%', gap: 10 }}>
+                      {ph.map((u, i) => (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img key={i} src={u} alt="" style={{ flex: 1, minHeight: 0, width: '100%', objectFit: 'cover', borderRadius: 12, border: '2px solid rgba(255,255,255,0.85)', boxShadow: '0 12px 30px -12px rgba(0,0,0,0.6)' }} />
+                      ))}
+                    </div>
+                  ) : null })()}
                   {edit && (
                     <button
                       onClick={() => { setPhotoUrl(''); setPhotoPick({ title: 'Cover photo', cur: String(hero.heroImage || ''), set: u => patch('hero.heroImage', u) }) }}
@@ -3871,6 +3882,23 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               ) : null}
             </div>
           ))
+
+          const SalesHead = stable('SalesHead', ({ k, eyebrow, dark }: { k: string; eyebrow: string; dark?: boolean }) => (
+            <div>
+              <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: dark ? 'rgba(255,255,255,0.6)' : t.accent, margin: 0 }}>{eyebrow}</p>
+              <h2 style={{ fontSize: 40, lineHeight: 1.08, letterSpacing: '-0.025em', fontWeight: 600, color: dark ? '#fff' : t.ink, margin: '10px 0 0', maxWidth: '24ch' }}>
+                <Ed v={sec(k).headline || ''} set={v => patch(k + '.headline', v)} edit={edit} multiline />
+              </h2>
+            </div>
+          ))
+          const salesFee = (() => {
+            const tr: Any[] = Array.isArray(sec('terms').rows) ? sec('terms').rows : []
+            const row: Any = tr.find((r: Any) => /fee/i.test(String(r.k || ''))) || null
+            const m = row ? String(row.v || '').match(/([\d.]+)\s*%/) : null
+            const n = m ? Number(m[1]) : 0
+            return n > 0 && n < 60 ? n : 0
+          })()
+
 
           // TWO COLUMNS FOR THE WORDY SLIDES (Jon, 2026-09-24: "Some of the wording is not showing").
           // Headline, subtitle and the paragraph stacked on the left used most of the slide's height
@@ -5008,6 +5036,40 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // in-house is the one thing on the table a competitor cannot buy and a list of
           // adjectives does not prove it exists. Every row is a screen that can be opened in the
           // room if they ask.
+          // ── 6 · LIGHTHOUSE (Jon, 2026-10-27: "extra slide that dives into Lighthouse AI tool
+          // and what it does, built in house, proprietary and designed to optimize, manage and
+          // automate"). The one thing on the table no competitor can buy, so it gets a slide of
+          // its own after the ask: six things it does, a line each.
+          if (isSales && !hid('lighthouse')) { const lhs: Any = sec('lighthouse'); const lhRows: Any[] = ((lhs.rows || []) as Any[]).slice(0, 6)
+            slides.push({ key: 'lighthouse', ai: true, node: (
+            <Slide nav="Lighthouse" warn={edit} ground={GROUND.tint}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <div className="flex items-start justify-between" style={{ gap: 30 }}>
+                  <div>
+                    <SalesHead k="lighthouse" eyebrow="Built in-house · proprietary" />
+                    <p style={{ fontSize: 16, lineHeight: 1.5, color: t.body, margin: '12px 0 0', maxWidth: '54ch' }}>
+                      <Ed v={lhs.subtitle || ''} set={v => patch('lighthouse.subtitle', v)} edit={edit} multiline />
+                    </p>
+                  </div>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/icon-192.png" alt="Lighthouse" style={{ width: 64, height: 64, borderRadius: 16, flexShrink: 0 }} />
+                </div>
+                <div style={{ marginTop: 28, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, flex: 1, minHeight: 0, alignContent: 'start' }}>
+                  {lhRows.map((r: Any, i: number) => (
+                    <div key={i} style={{ background: t.card, border: '1px solid ' + t.cardBorder, borderRadius: 14, padding: '18px 20px' }}>
+                      <p style={{ fontSize: 15.5, fontWeight: 600, color: t.ink, margin: 0 }}>
+                        <span style={{ color: t.accent, marginRight: 8, fontVariantNumeric: 'tabular-nums' }}>{String(i + 1).padStart(2, '0')}</span>
+                        <Ed v={r.k || ''} set={v => patch('lighthouse.rows.' + i + '.k', v)} edit={edit} />
+                      </p>
+                      <p style={{ fontSize: 13.5, lineHeight: 1.5, color: t.body, margin: '8px 0 0' }}>
+                        <Ed v={r.v || ''} set={v => patch('lighthouse.rows.' + i + '.v', v)} edit={edit} multiline />
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Slide>
+          ) }) } else
           if (!hid('lighthouse')) slides.push({ key: 'lighthouse', ai: true, node: (
             <PitchRows k="lighthouse" nav="Lighthouse" label="Lighthouse" note="" dark />
           ) })
@@ -5016,6 +5078,44 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // The short deck's one revenue slide. The full deck argues this across five — pricing,
           // the comp set, distribution, the listing craft, direct — and each of those is a better
           // slide than this one. This is the version for someone who has given us ninety seconds.
+          // ═══════════ THE FIVE-SLIDE PROPOSAL (Jon, 2026-10-27) ═══════════
+          // "It should be 4-5 [slides], no waste! Think professional, clean, capture attention then
+          // paint the picture." The cover catches the eye with their property and its number; four
+          // slides then paint the picture in the order an owner's questions arrive — what could it
+          // earn, why you, how, and what now. Every one of them is built the same way: a small
+          // label, one headline that is the takeaway, one visual, and no paragraph anywhere. The
+          // full walkthrough deck keeps every other slide for the meeting this one earns.
+          // ── 4 · HOW WE DO IT — four lines and the tools behind them ──
+          if (isSales && !hid('maxrev')) { const mr: Any = sec('maxrev'); const mrRows: Any[] = ((mr.rows || []) as Any[]).slice(0, 4)
+            // Each row's platform, by name: PriceLabs prices, Guesty distributes, Breezeway runs the
+            // field, Lighthouse optimizes. Read off the stack slide so an uploaded logo carries over.
+            const stackTools: Any[] = ((sec('stack').tools && (sec('stack').tools as Any[]).length ? sec('stack').tools : STACK_TOOLS) as Any[])
+            const toolNamed = (n: string) => stackTools.find((x: Any) => String(x.name || '').toLowerCase() === n) || STACK_TOOLS.find(x => x.name.toLowerCase() === n) || null
+            const mrTools: Any[] = ['pricelabs', 'guesty', 'breezeway', 'lighthouse'].map(toolNamed)
+            slides.push({ key: 'maxrev', ai: true, node: (
+            <Slide nav="The technology" warn={edit} ground={GROUND.dark}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <SalesHead k="maxrev" eyebrow="How we manage it" dark />
+                <div style={{ marginTop: 40, display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, mrRows.length) + ', 1fr)', gap: 22, flex: 1, minHeight: 0 }}>
+                  {mrRows.map((r: Any, i: number) => { const f: Any = mrTools[i] || null; const logo = f ? houseLogo(f.logo, f.name) : ''; const wordmark = WORDMARK_LOGOS.indexOf(logo) >= 0; return (
+                    <div key={i} className="flex flex-col" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 16, overflow: 'hidden' }}>
+                      <div className="flex items-center justify-center" style={{ background: '#fff', height: 86, padding: '0 18px' }}>
+                        {f ? <StackMark logo={logo} mono={f.mono} name={f.name} accent={t.accent} card="#fff" border="#e5e7eb" bare lockup={!wordmark} height={28} ink="#111827" /> : null}
+                      </div>
+                      <div style={{ padding: '20px 20px 22px' }}>
+                        <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: t.accent === '#fff' ? '#fff' : 'rgba(255,255,255,0.62)', margin: 0 }}>
+                          <Ed v={r.k || ''} set={v => patch('maxrev.rows.' + i + '.k', v)} edit={edit} />
+                        </p>
+                        <p style={{ fontSize: 16, lineHeight: 1.45, color: '#fff', margin: '10px 0 0' }}>
+                          <Ed v={r.v || ''} set={v => patch('maxrev.rows.' + i + '.v', v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    </div>
+                  ) })}
+                </div>
+              </div>
+            </Slide>
+          ) }) } else
           if (!hid('maxrev')) slides.push({ key: 'maxrev', ai: true, node: (
             <PitchRows k="maxrev" nav="Max revenue" label="Revenue" note="" dark />
           ) })
@@ -5197,6 +5297,103 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // what the same size of home earned across the market (lib/sales-edge). Only bedroom
           // counts where we are actually ahead print, so the slide can never claim what the
           // numbers do not say; a deck with none of those carries no slide at all.
+          if (isSales && !hid('edge')) { const eg: Any = sec('edge')
+            const egRows: Any[] = ((eg.rows || []) as Any[]).filter((r: Any) => r && r.ahead && r.median)
+            const lead: Any = egRows.find((r: Any) => r.bedrooms === eg.focus) || egRows.slice().sort((a: Any, b: Any) => (Number(b.multiple) || 0) - (Number(a.multiple) || 0))[0] || null
+            const max = Math.max(1, ...egRows.map((r: Any) => Number(r.gross) || 0))
+            const $m = (n: Any) => '$' + Math.round(Number(n) || 0).toLocaleString('en-US')
+            const word = (b: string) => (b === 'Studio' ? 'studios' : String(b).replace('BR', '-bedrooms'))
+            const stats: Any[] = houseRows<Any>(sec('overview').stats, COMPANY_STATS_RETIRED_MARK, COMPANY_STATS_2 as Any[]).slice(0, 4)
+            // Five buildings we run, with their own photographs — anything marked coming soon stays off.
+            const bld: Any[] = ((sec('experience').items || []) as Any[]).filter((it: Any) => it && it.pic && !/soon/i.test(String(it.tag || ''))).slice(0, 4)
+            const team4: Any[] = ((sec('team').people || []) as Any[]).filter((p: Any) => p && String(p.name || '').trim()).slice(0, 4)
+            slides.push({ key: 'edge', ai: true, node: (
+            <Slide nav="Who we are" warn={edit}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <SalesHead k="edge" eyebrow="Who we are" />
+                {/* CREDIBILITY IN THREE LAYERS (Jon, 2026-10-27: "who we are and why choose us,
+                    credibility"): the result (our homes against the market), the track record (the
+                    four company numbers), and the proof you can see (the buildings we run). */}
+                <div style={{ marginTop: 20, display: 'grid', gridTemplateColumns: lead ? '330px 1fr' : '1fr', gap: 28 }}>
+                  {lead ? (
+                    <div style={{ background: t.band, borderRadius: 18, padding: '20px 24px', color: '#fff' }}>
+                      <p style={{ fontFamily: SERIF, fontSize: 64, lineHeight: 0.95, letterSpacing: '-0.04em', margin: 0 }}>{String(lead.multiple)}×</p>
+                      <p style={{ fontSize: 15, lineHeight: 1.4, margin: '12px 0 0', color: 'rgba(255,255,255,0.9)' }}>
+                        what our {word(String(lead.bedrooms))} earn against the {String(eg.benchLabel || 'market')} median
+                      </p>
+                      <p style={{ fontSize: 12.5, margin: '14px 0 0', paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.18)', color: 'rgba(255,255,255,0.7)', fontVariantNumeric: 'tabular-nums' }}>
+                        {$m(lead.gross)} a year vs {$m(lead.median)}
+                      </p>
+                    </div>
+                  ) : null}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '18px 26px', alignContent: 'center' }}>
+                    {stats.map((f: Any, i: number) => (
+                      <div key={i} style={{ borderTop: '2px solid ' + t.accent, paddingTop: 10 }}>
+                        <p style={{ fontFamily: SERIF, fontSize: 32, color: t.ink, margin: 0, letterSpacing: '-0.025em', lineHeight: 1 }}>{String(f.v || '')}</p>
+                        <p style={{ fontSize: 13, color: t.muted, margin: '6px 0 0' }}>{String(f.k || '')}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {/* THE PEOPLE AND THE BUILDINGS, SIDE BY SIDE (Jon, 2026-10-27: "our stats, team,
+                    and our experience and credibility"). Faces on the left — who answers the
+                    phone — and the buildings we already run on the right. */}
+                <div className="mt-auto" style={{ display: 'grid', gridTemplateColumns: (team4.length && bld.length) ? '1fr 1.15fr' : '1fr', gap: 28, alignItems: 'end' }}>
+                  {team4.length ? (
+                    <div>
+                      <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: '0 0 10px' }}>Your team</p>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + team4.length + ', 1fr)', gap: 12 }}>
+                        {team4.map((p: Any, i: number) => (
+                          <div key={i} style={{ minWidth: 0 }}>
+                            {p.photo ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={String(p.photo)} alt="" style={{ width: '100%', aspectRatio: '4 / 5', objectFit: 'cover', objectPosition: '50% 20%', borderRadius: 10 }} />
+                            ) : (
+                              <div className="flex items-center justify-center" style={{ width: '100%', aspectRatio: '4 / 5', borderRadius: 10, background: t.chip, color: t.muted, fontWeight: 700 }}>
+                                {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
+                              </div>
+                            )}
+                            <p style={{ fontSize: 12, fontWeight: 600, color: t.ink, margin: '6px 0 0', lineHeight: 1.2 }}>{String(p.name || '')}</p>
+                            <p style={{ fontSize: 10.5, color: t.muted, margin: '2px 0 0', lineHeight: 1.25 }}>{String(p.role || '')}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {bld.length ? (
+                    <div>
+                      <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: '0 0 10px' }}>Buildings we run</p>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + bld.length + ', 1fr)', gap: 10 }}>
+                        {bld.map((it: Any, i: number) => (
+                          <div key={i} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', aspectRatio: '3 / 4', background: t.chip }}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={String(it.pic)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '16px 8px 7px', background: 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.72) 100%)', color: '#fff', fontSize: 10.5, fontWeight: 600, lineHeight: 1.2 }}>{String(it.k || '')}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+                <p style={{ fontSize: 9.5, color: t.muted, margin: '10px 0 0', lineHeight: 1.4 }}>
+                  {lead ? String(eg.note || '') + (eg.source ? ' Source: ' + String(eg.source) + '.' : '') : ''}
+                </p>
+                {edit ? (
+                  <div className="sb-noprint flex items-center" style={{ gap: 8, marginTop: 8 }}>
+                    <select value={egMarket} onChange={e => setEgMarket(e.target.value)} style={{ fontSize: 12, padding: '5px 8px', borderRadius: 8, border: '1px solid ' + t.cardBorder, background: t.card, color: t.ink }}>
+                      <option value="Miami">Miami</option><option value="Broward">Broward</option>
+                    </select>
+                    <select value={String(eg.focus || '')} onChange={e => patch('edge.focus', e.target.value)} style={{ fontSize: 12, padding: '5px 8px', borderRadius: 8, border: '1px solid ' + t.cardBorder, background: t.card, color: t.ink }}>
+                      <option value="">Lead with the strongest</option>
+                      {['Studio', '1BR', '2BR', '3BR', '4BR'].map(b => <option key={b} value={b}>Lead with {b}</option>)}
+                    </select>
+                    <button onClick={pullEdge} disabled={egBusy} style={{ fontSize: 12, fontWeight: 600, padding: '6px 12px', borderRadius: 999, background: t.ink, color: t.bg, opacity: egBusy ? 0.6 : 1 }}>{egBusy ? 'Measuring…' : 'Measure again'}</button>
+                    {egMsg ? <span style={{ fontSize: 11.5, color: t.muted }}>{egMsg}</span> : null}
+                  </div>
+                ) : null}
+              </div>
+            </Slide>
+          ) }) } else
           if (!hid('edge')) { const eg: Any = sec('edge')
             const egAll: Any[] = Array.isArray(eg.rows) ? (eg.rows as Any[]) : []
             const egRows: Any[] = egAll.filter((r: Any) => r && r.ahead && r.median)
@@ -5311,6 +5508,67 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // build them into the deck for the property"). Built from our own model for listings we
           // run, or read out of a file someone else built — see /api/reports/sales-plan, which
           // will refuse rather than invent a number it could not read.
+          if (isSales && !hid('plan') && ((sec('plan').range && typeof sec('plan').range === 'object') || (edit && !((sec('plan').rows || []) as Any[]).length))) { const pl: Any = sec('plan'); const rg: Any = pl.range || null
+            const ms: Any[] = Array.isArray(pl.months) ? (pl.months as Any[]) : []
+            const mMax = Math.max(1, ...ms.map((m: Any) => Number(m.highNum) || Number(m.baseNum) || 0))
+            const num = (v: Any) => { const n = Number(String(v || '').replace(/[^0-9.]/g, '')); return Number.isFinite(n) && n > 0 ? n : 0 }
+            const both = (a: Any, b: Any) => { const x = String(a || '').trim(), y = String(b || '').trim(); return y && y !== x ? x + ' – ' + y : x }
+            const keep = (n: number) => '$' + (Math.round((n * (1 - salesFee / 100)) / 100) * 100).toLocaleString('en-US')
+            const lo = rg ? num(rg.annualLow) : 0, hi = rg ? num(rg.annualHigh) : 0
+            slides.push({ key: 'plan', ai: true, node: (
+            <Slide nav="Month by month" warn={edit} ground={GROUND.tint}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <SalesHead k="plan" eyebrow="The projection" />
+                {rg ? (
+                  <>
+                    {/* THE FOUR NUMBERS UNDER THE COVER'S RANGE, in one row: what a month brings,
+                        the rate and occupancy behind it, and what the owner keeps. */}
+                    <div style={{ marginTop: 26, display: 'grid', gridTemplateColumns: 'repeat(' + (salesFee && lo ? 4 : 3) + ', 1fr)', gap: 14 }}>
+                      {([
+                        ['Per month', both(rg.monthlyLow, rg.monthlyHigh), false],
+                        ['Nightly rate', both(rg.rateLow, rg.rateHigh), false],
+                        ['Occupancy', both(rg.occLow, rg.occHigh), false],
+                        ...(salesFee && lo ? [['Yours a year after our ' + (Math.round(salesFee * 10) / 10) + '% fee', keep(lo) + (hi && hi !== lo ? ' – ' + keep(hi) : ''), true]] : []),
+                      ] as Any[]).filter((x: Any) => x[1]).map(([l, v, dark]: Any, i: number) => (
+                        <div key={i} style={{ background: dark ? t.band : t.card, borderRadius: 14, padding: '16px 18px', border: dark ? undefined : '1px solid ' + t.cardBorder }}>
+                          <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: dark ? 'rgba(255,255,255,0.62)' : t.muted, margin: 0 }}>{l}</p>
+                          <p style={{ fontFamily: SERIF, fontSize: 26, letterSpacing: '-0.02em', color: dark ? '#fff' : t.ink, margin: '8px 0 0', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{v}</p>
+                        </div>
+                      ))}
+                    </div>
+                    {ms.length ? (
+                      <div className="flex flex-col" style={{ marginTop: 24, flex: 1, minHeight: 0 }}>
+                        <div className="flex items-center" style={{ gap: 18, marginBottom: 8, fontSize: 11, color: t.muted }}>
+                          <span className="inline-flex items-center" style={{ gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: inkA(t.ink, 0.28) }} />Base</span>
+                          <span className="inline-flex items-center" style={{ gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: t.accent }} />High end</span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + ms.length + ', 1fr)', gap: 10, alignItems: 'end', flex: 1, minHeight: 120 }}>
+                          {ms.map((m: Any, i: number) => { const b = Number(m.baseNum) || 0; const h2 = Number(m.highNum) || b; return (
+                            <span key={i} className="flex flex-col items-center justify-end" style={{ height: '100%' }} title={String(m.label) + ' · ' + String(m.base || '') + ' – ' + String(m.high || '')}>
+                              <span style={{ fontSize: 10, color: t.ink, fontWeight: 600, marginBottom: 5, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{String(m.high || m.base || '')}</span>
+                              <span className="flex items-end" style={{ gap: 3, width: '100%', height: 'calc(100% - 20px)' }}>
+                                <span style={{ flex: 1, height: Math.max(2, (b / mMax) * 100) + '%', background: inkA(t.ink, 0.28), borderRadius: '3px 3px 0 0' }} />
+                                <span style={{ flex: 1, height: Math.max(2, (h2 / mMax) * 100) + '%', background: t.accent, borderRadius: '3px 3px 0 0' }} />
+                              </span>
+                            </span>
+                          ) })}
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + ms.length + ', 1fr)', gap: 10, marginTop: 7, paddingTop: 7, borderTop: '1px solid ' + t.rule }}>
+                          {ms.map((m: Any, i: number) => <span key={i} style={{ fontSize: 10.5, fontWeight: 600, color: t.muted, textAlign: 'center', letterSpacing: '0.06em', textTransform: 'uppercase' }}>{String(m.label).slice(0, 3)}</span>)}
+                        </div>
+                      </div>
+                    ) : <div style={{ flex: 1 }} />}
+                    <p style={{ fontSize: 11, color: t.muted, margin: '14px 0 0', lineHeight: 1.45 }}>
+                      Fully ramped: assumes an established listing with reviews and booking history, so year one can run lower.
+                    </p>
+                  </>
+                ) : (
+                  <p style={{ marginTop: 24, fontSize: 13, color: t.muted }}>Upload the projection below. Until then this slide stays out of the deck.</p>
+                )}
+                {edit ? <PlanBuild /> : null}
+              </div>
+            </Slide>
+          ) }) } else
           if (!hid('plan')) { const pl: Any = sec('plan'); const plRows: Any[] = (pl.rows || []) as Any[]
             const plCols: string[] = (pl.cols || []) as string[]
             // THE SHAPE OF THE YEAR, ABOVE THE TABLE (Jon, 2026-10-27: "reads it and makes it
@@ -6997,6 +7255,52 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // team slide who can be reached — a sent deck must never end on nobody.
           const closeCard: Any = String(ccCard.name || '').trim() ? ccCard
             : (((sec('team').people || []) as Any[]).find((p: Any) => String(p.name || '').trim() && (String(p.phone || '').trim() || String(p.email || '').trim())) || {})
+          if (isSales && !hid('close')) { const cl: Any = sec('close'); const clRows: Any[] = ((cl.rows || []) as Any[]).slice(0, 3)
+            slides.push({ key: 'close', ai: true, node: (
+            <Slide nav="Next step" warn={edit}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 48, flex: 1, minHeight: 0 }}>
+                  <div className="flex flex-col">
+                    <SalesHead k="close" eyebrow="Next step" />
+                    <div style={{ marginTop: 34, display: 'grid', gap: 0 }}>
+                      {clRows.map((r: Any, i: number) => (
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '44px 1fr', alignItems: 'baseline', padding: '13px 0', borderTop: '1px solid ' + t.rule }}>
+                          <span style={{ fontFamily: SERIF, fontSize: 22, color: t.accent }}>{i + 1}</span>
+                          <div>
+                            <p style={{ fontSize: 18, fontWeight: 600, color: t.ink, margin: 0 }}>
+                              <Ed v={r.k || ''} set={v => patch('close.rows.' + i + '.k', v)} edit={edit} />
+                            </p>
+                            <p style={{ fontSize: 13.5, lineHeight: 1.5, color: t.body, margin: '4px 0 0' }}>
+                              <Ed v={r.v || ''} set={v => patch('close.rows.' + i + '.v', v)} edit={edit} multiline />
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {salesFee ? (
+                      <div className="mt-auto" style={{ display: 'flex', alignItems: 'baseline', gap: 14, background: t.chip, borderRadius: 12, padding: '14px 20px' }}>
+                        <span style={{ fontFamily: SERIF, fontSize: 30, color: t.ink, lineHeight: 1 }}>{Math.round(salesFee * 10) / 10}%</span>
+                        <span style={{ fontSize: 13.5, color: t.body, lineHeight: 1.45 }}>management fee on rental revenue. Pricing, guest care, cleaning, maintenance and owner reporting included.</span>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div style={{ background: t.band, borderRadius: 18, padding: '30px 28px', color: '#fff', display: 'flex', flexDirection: 'column' }}>
+                    <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.6)', margin: 0 }}>Book your walk-through</p>
+                    {String(closeCard.photo || '').trim() ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={String(closeCard.photo)} alt="" style={{ width: 92, height: 92, borderRadius: 999, objectFit: 'cover', marginTop: 24, border: '2px solid rgba(255,255,255,0.3)' }} />
+                    ) : null}
+                    <p style={{ fontSize: 24, fontWeight: 600, margin: '18px 0 0', lineHeight: 1.15 }}>{String(closeCard.name || '') || (edit ? 'Fill in the contact card' : '')}</p>
+                    {String(closeCard.role || '').trim() ? <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', margin: '5px 0 0' }}>{String(closeCard.role)}</p> : null}
+                    <div className="mt-auto" style={{ paddingTop: 18, borderTop: '1px solid rgba(255,255,255,0.18)', display: 'grid', gap: 8 }}>
+                      {String(closeCard.phone || '').trim() ? <p style={{ fontSize: 18, margin: 0, fontVariantNumeric: 'tabular-nums' }}>{String(closeCard.phone)}</p> : null}
+                      {String(closeCard.email || '').trim() ? <p style={{ fontSize: 14, margin: 0, color: 'rgba(255,255,255,0.86)', wordBreak: 'break-all' }}>{String(closeCard.email)}</p> : null}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Slide>
+          ) }) } else
           if (!hid('close')) slides.push({ key: 'close', ai: true, node: (
             <Slide nav="Next steps" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
