@@ -1,13 +1,13 @@
 // CATALOGS API (Jon, 2026-10-27): the list, new catalogs, and editing what is on one.
 //
 //   GET                                 → catalogs (with item/approved counts), suppliers, listings for the picker, tiers
-//   POST { action, ... }                → create | generate | update | archive | addItem | updateItem | addOption | updateOption
+//   POST { action, ... }                → create | generate | update | archive | addItem | updateItem | addOption | updateOption | order
 //
 // Reading is FF&E 'view'; every write is FF&E 'edit', like approving. `generate` reads a listing's
 // photos through the AI and can take ~20–40 s.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { listCatalogs, cloneCatalog, updateCatalog, archiveCatalog, addItem, updateItem, addOption, updateOption, SUPPLIERS } from '@/lib/ffe-approved-catalog'
+import { listCatalogs, cloneCatalog, updateCatalog, archiveCatalog, addItem, updateItem, addOption, updateOption, orderFromCatalog, SUPPLIERS } from '@/lib/ffe-approved-catalog'
 import { generateCatalog, listListings, TIERS, type Tier } from '@/lib/ffe-catalog-generate'
 
 export const dynamic = 'force-dynamic'
@@ -42,7 +42,8 @@ export async function POST(req: NextRequest) {
         const tier = (TIERS.some(t => t.key === str(b.tier)) ? str(b.tier) : 'midlux') as Tier
         r = await generateCatalog({ slug: str(b.slug) ? slugify(str(b.slug)) : slugify(name), name, listingId, tier, from: str(b.from) || 'default', who }); break
       }
-      case 'update': r = await updateCatalog(str(b.slug), { name: b.name, suppliers: b.suppliers, notes: b.notes }); break
+      case 'update': r = await updateCatalog(str(b.slug), { name: b.name, suppliers: b.suppliers, notes: b.notes, ownerId: b.ownerId, ownerName: b.ownerName, listingId: b.listingId }); break
+      case 'order': r = await orderFromCatalog(str(b.slug), str(b.listingId), who); break
       case 'archive': r = await archiveCatalog(str(b.slug)); break
       case 'addItem': r = await addItem(str(b.slug), { name: b.name, category: b.category, section: b.section }); break
       case 'updateItem': r = await updateItem(str(b.itemId), { name: b.name, category: b.category, archive: b.archive }); break

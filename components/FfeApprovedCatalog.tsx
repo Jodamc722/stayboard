@@ -26,10 +26,10 @@ import { useCachedFetch } from '@/lib/swr'
 type OptionSrc = string
 type Opt = { id?: string; src: OptionSrc; vendor: string; name: string; url: string | null; price: number | null; each?: string; image: string | null; chips: string[]; fit: 'cover' | 'contain' }
 type Item = { id?: string; key: string; section: 'compare' | 'vendor' | 'amenity'; category: string; name: string; options: Opt[] }
-type Catalog = { property: string; title: string; kind?: 'default' | 'property'; suppliers?: string[]; tier?: string | null; styleBrief?: string | null; sourceSheet: string; asOf: string; items: Item[]; misc: Record<string, string[]>; fromDb?: boolean }
-type Decision = { approved: OptionSrc[]; rejected: boolean; note: string; suggested?: string[]; suggestNote?: string }
+type Catalog = { property: string; title: string; kind?: 'default' | 'property'; suppliers?: string[]; tier?: string | null; styleBrief?: string | null; listingId?: string | null; sourceSheet: string; asOf: string; items: Item[]; misc: Record<string, string[]>; fromDb?: boolean }
+type Decision = { approved: OptionSrc[]; rejected: boolean; note: string; suggested?: string[]; suggestNote?: string; ownerPicked?: boolean }
 type Supplier = { key: string; name: string; note: string }
-type Payload = { ok: boolean; catalog: Catalog; decisions: Record<string, Decision>; suppliers?: Supplier[]; canEdit: boolean }
+type Payload = { ok: boolean; catalog: Catalog; decisions: Record<string, Decision>; suppliers?: Supplier[]; canEdit: boolean; mode?: 'view' | 'select' }
 
 const money = (v: number | null | undefined) => (v == null ? '—' : '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
 const TONES: Record<string, string> = { host: 'text-brand-700', amz: 'text-amber-700', ch: 'text-sky-700', wf: 'text-violet-700' }
@@ -46,8 +46,11 @@ const CHIP_TONE = (c: string) =>
 export function FfeApprovedCatalog({ property = '17-west', publicCode }: { property?: string; publicCode?: string }) {
   const isPublic = !!publicCode
   const { data, loading, error, refresh } = useCachedFetch<Payload>(isPublic ? `/api/public/catalog/${publicCode}` : `/api/audit/ffe/approved-catalog?property=${property}`, { ttl: 15_000, persist: false, live: !isPublic })
+  // An owner choosing through a 'select' link: every allowed option shows, with one choice per item.
+  const selecting = isPublic && data?.mode === 'select'
   const [decisions, setDecisions] = useState<Record<string, Decision>>({})
   const [view, setView] = useState<'all' | 'approved'>(isPublic ? 'approved' : 'all')
+  useEffect(() => { if (selecting) setView('all') }, [selecting])
   const [tab, setTab] = useState<'review' | 'list' | 'manage'>('review')
   const [order, setOrder] = useState<'group' | 'rank'>('group')
   const [saving, setSaving] = useState<string>('')
@@ -127,6 +130,18 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
   const acceptSuggestion = (key: string) => decide(key, d => ({ ...d, approved: Array.from(new Set([...d.approved, ...(d.suggested || [])])), rejected: false }))
   const acceptAll = () => { for (const it of items) { const d = decisions[it.key]; if (d?.suggested?.length && !d.approved.length && !d.rejected) acceptSuggestion(it.key) } }
   const nSuggested = items.filter(it => { const d = decisions[it.key]; return d?.suggested?.length && !d.approved.length && !d.rejected }).length
+  const pick = async (key: string, src: string) => {
+    if (!selecting) return
+    const cur = latest.current[key] || { approved: [], rejected: false, note: '' }
+    const next: Decision = cur.approved.includes(src) ? { ...cur, approved: [], ownerPicked: false } : { ...cur, approved: [src], rejected: false, ownerPicked: true }
+    const out = { ...latest.current, [key]: next }; latest.current = out; setDecisions(out); setSaving('Saving…')
+    try {
+      const r = await fetch(`/api/public/catalog/${publicCode}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itemKey: key, src: next.approved[0] || null }) })
+      const j = await r.json().catch(() => ({}))
+      setSaving(j.ok ? 'Your choice is saved' : (j.error || 'That did not save.'))
+    } catch { setSaving('That did not save.') }
+  }
+  const nPicked = items.filter(it => decisions[it.key]?.approved.length).length
 
   const status = (key: string) => {
     const d = decisions[key]
@@ -174,13 +189,13 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
           <button type="button" onClick={acceptAll} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 text-brand-700 text-[12.5px] font-semibold px-3 py-1.5"><Sparkles className="w-3.5 h-3.5" /> Approve all {nSuggested} suggestions</button>
         )}
         <span className="text-xs text-muted" aria-live="polite">
-          {isPublic ? 'Approved options only.'
+          {selecting ? (saving || `${nPicked} of ${items.length} chosen — tap "Choose this" on the option you want for each item.`) : isPublic ? 'Approved options only.'
             : !canEdit ? 'View only — approving needs edit access to FF&E.' : saving || 'Approvals save as you go and are shared with the whole team.'}
         </span>
         {!isPublic && <ShareLink property={property} canEdit={canEdit} />}
       </div>
 
-      {!isPublic && tab === 'list' && <ApprovedList items={items} decisions={decisions} />}
+      {!isPublic && tab === 'list' && <ApprovedList items={items} decisions={decisions} property={property} listingId={data.catalog.listingId} />}
       {!isPublic && tab === 'manage' && canEdit && <Manage property={property} catalog={data.catalog} suppliers={data.suppliers || []} onChanged={() => refresh()} />}
       {(isPublic || tab === 'review') && <>
 
@@ -193,7 +208,7 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
           {groupBy(ranked, order === 'rank' ? () => '' : i => i.category).map(([cat, list]) => (
             <Group key={cat || 'ranked'} title={cat} count={list.length}>
               {list.map(it => (
-                <CompareCard key={it.key} item={it} d={decisions[it.key]} status={status(it.key)} canEdit={canEdit} view={view} isPublic={isPublic}
+                <CompareCard key={it.key} item={it} d={decisions[it.key]} status={status(it.key)} canEdit={canEdit} view={view} isPublic={isPublic} selecting={selecting} onPick={pick}
                   onToggle={toggle} onReject={reject} onNote={note} />
               ))}
             </Group>
@@ -210,7 +225,7 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
           <div key={cat} className="mt-5">
             <h3 className="text-[15px] font-bold text-ink mb-2">{cat}</h3>
             <div className="grid gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-              {list.map(it => <SoloCard key={it.key} item={it} d={decisions[it.key]} status={status(it.key)} canEdit={canEdit} view={view} isPublic={isPublic} onToggle={toggle} />)}
+              {list.map(it => <SoloCard key={it.key} item={it} d={decisions[it.key]} status={status(it.key)} canEdit={canEdit} view={view} isPublic={isPublic} selecting={selecting} onPick={pick} onToggle={toggle} />)}
             </div>
           </div>
         ))}
@@ -239,7 +254,7 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
                       {o.url ? <a href={o.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{o.name}</a> : o.name}</td>
                     <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap">{money(o.price)}</td>
                     <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap font-semibold text-brand-700">{o.each || '—'}</td>
-                    <td className="px-3 py-2 text-right">{(o.price != null || o.url) && (view === 'all' || on) && (isPublic ? (on && <Approved />) : <ApproveBtn on={on} disabled={!canEdit} onClick={() => toggle(it.key, o.src)} small />)}</td>
+                    <td className="px-3 py-2 text-right">{(o.price != null || o.url) && (view === 'all' || on) && (selecting ? <ChooseBtn on={on} onClick={() => pick(it.key, o.src)} small /> : isPublic ? (on && <Approved />) : <ApproveBtn on={on} disabled={!canEdit} onClick={() => toggle(it.key, o.src)} small />)}</td>
                   </tr>) }))}
               </tbody>
             </table>
@@ -339,8 +354,8 @@ function Diff({ ref_, price }: { ref_: number; price: number | null }) {
   return <span className={'text-[11.5px] font-semibold rounded px-1.5 py-0.5 ' + (d > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700')}>{d > 0 ? '−' : '+'}{money(Math.abs(d))} <span className="font-medium opacity-80">({p.toFixed(0)}% {d > 0 ? 'less' : 'more'})</span></span>
 }
 
-function CompareCard({ item, d, status, canEdit, view, isPublic, onToggle, onReject, onNote }: {
-  item: Item; d?: Decision; status: string; canEdit: boolean; view: 'all' | 'approved'; isPublic?: boolean
+function CompareCard({ item, d, status, canEdit, view, isPublic, selecting, onPick, onToggle, onReject, onNote }: {
+  item: Item; d?: Decision; status: string; canEdit: boolean; view: 'all' | 'approved'; isPublic?: boolean; selecting?: boolean; onPick: (k: string, s: OptionSrc) => void
   onToggle: (k: string, s: OptionSrc) => void; onReject: (k: string) => void; onNote: (k: string, v: string) => void
 }) {
   const host = item.options.find(o => o.src === 'host') || item.options[0]
@@ -364,7 +379,8 @@ function CompareCard({ item, d, status, canEdit, view, isPublic, onToggle, onRej
                 {o.chips.length > 0 && <div className="flex flex-wrap gap-1">{o.chips.map(c => <span key={c} className={'text-[11px] font-semibold rounded-full px-2 py-0.5 ' + CHIP_TONE(c)}>{c}</span>)}</div>}
                 <div className={'text-xl font-bold tabular-nums mt-1 ' + (o.src === 'host' ? 'text-brand-700' : 'text-ink')}>{money(o.price)}</div>
                 {o !== host && host.price != null && <div><Diff ref_={host.price || 0} price={o.price} /></div>}
-                {(o.price != null || o.url) && (view === 'all' || on) && (isPublic ? (on && <Approved />) : <ApproveBtn on={on} disabled={!canEdit} onClick={() => onToggle(item.key, o.src)} />)}
+                {(o.price != null || o.url) && (view === 'all' || on) && (selecting ? <ChooseBtn on={on} onClick={() => onPick(item.key, o.src)} /> : isPublic ? (on && <Approved />) : <ApproveBtn on={on} disabled={!canEdit} onClick={() => onToggle(item.key, o.src)} />)}
+                {on && d?.ownerPicked && !selecting && <OwnerPicked />}
                 {!isPublic && view === 'all' && d?.suggested?.includes(o.src) && <Suggested why={d.suggestNote} />}
               </div>
             </div>
@@ -386,7 +402,7 @@ function CompareCard({ item, d, status, canEdit, view, isPublic, onToggle, onRej
   )
 }
 
-function SoloCard({ item, d, status, canEdit, view, isPublic, onToggle }: { item: Item; d?: Decision; status: string; canEdit: boolean; view: 'all' | 'approved'; isPublic?: boolean; onToggle: (k: string, s: OptionSrc) => void }) {
+function SoloCard({ item, d, status, canEdit, view, isPublic, selecting, onPick, onToggle }: { item: Item; d?: Decision; status: string; canEdit: boolean; view: 'all' | 'approved'; isPublic?: boolean; selecting?: boolean; onPick: (k: string, s: OptionSrc) => void; onToggle: (k: string, s: OptionSrc) => void }) {
   const main = item.options[0]; const alts = item.options.slice(1)
   if (!main) return null
   const onMain = !!d?.approved.includes(main.src)
@@ -399,7 +415,8 @@ function SoloCard({ item, d, status, canEdit, view, isPublic, onToggle }: { item
           <div className="text-[13.5px] font-medium leading-snug break-words">{main.url ? <a href={main.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{main.name}</a> : main.name}</div>
           {main.chips.length > 0 && <div className="flex flex-wrap gap-1">{main.chips.map(c => <span key={c} className={'text-[11px] font-semibold rounded-full px-2 py-0.5 ' + CHIP_TONE(c)}>{c}</span>)}</div>}
           <div className="text-lg font-bold tabular-nums text-brand-700">{money(main.price)}</div>
-          {(main.price != null || main.url) && (isPublic ? (onMain && <Approved />) : <ApproveBtn on={onMain} disabled={!canEdit} onClick={() => onToggle(item.key, main.src)} />)}
+          {(main.price != null || main.url) && (selecting ? <ChooseBtn on={onMain} onClick={() => onPick(item.key, main.src)} /> : isPublic ? (onMain && <Approved />) : <ApproveBtn on={onMain} disabled={!canEdit} onClick={() => onToggle(item.key, main.src)} />)}
+          {onMain && d?.ownerPicked && !selecting && <OwnerPicked />}
           {!isPublic && view === 'all' && d?.suggested?.includes(main.src) && <Suggested why={d.suggestNote} />}
         </>}
       </div>
@@ -410,7 +427,8 @@ function SoloCard({ item, d, status, canEdit, view, isPublic, onToggle }: { item
             <div className={'text-[11px] uppercase tracking-wider font-semibold ' + SRC_TONE[alt.src]}>{alt.vendor}{alt.chips[0] ? ` · ${alt.chips[0].toLowerCase()}` : ''}</div>
             <div className="text-[13px] font-medium leading-snug break-words">{alt.url ? <a href={alt.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{alt.name}</a> : alt.name}</div>
             <div className="text-[15px] font-bold tabular-nums flex items-center gap-2 flex-wrap">{money(alt.price)} {main.price != null && <Diff ref_={main.price || 0} price={alt.price} />}</div>
-            {(view === 'all' || onAlt) && (isPublic ? (onAlt && <Approved />) : <ApproveBtn on={onAlt} disabled={!canEdit} onClick={() => onToggle(item.key, alt.src)} small />)}
+            {(view === 'all' || onAlt) && (selecting ? <ChooseBtn on={onAlt} onClick={() => onPick(item.key, alt.src)} small /> : isPublic ? (onAlt && <Approved />) : <ApproveBtn on={onAlt} disabled={!canEdit} onClick={() => onToggle(item.key, alt.src)} small />)}
+            {onAlt && d?.ownerPicked && !selecting && <OwnerPicked />}
             {!isPublic && view === 'all' && d?.suggested?.includes(alt.src) && <Suggested why={d.suggestNote} />}
           </div>
         </div>
@@ -425,7 +443,7 @@ function Suggested({ why }: { why?: string }) {
 
 // THE APPROVED LIST (Jon, 2026-10-27: "when you click approve, there will be a tab with the links to
 // each item"). One row per approved option: what it is, where to buy it, the link, the price, the note.
-function ApprovedList({ items, decisions }: { items: Item[]; decisions: Record<string, Decision> }) {
+function ApprovedList({ items, decisions, property, listingId }: { items: Item[]; decisions: Record<string, Decision>; property: string; listingId?: string | null }) {
   const rows: { item: Item; o: Opt; note: string }[] = []
   for (const it of items) { const d = decisions[it.key]; if (!d || d.rejected || !d.approved.length) continue; for (const o of it.options) if (d.approved.includes(o.src)) rows.push({ item: it, o, note: d.note }) }
   if (!rows.length) return <p className="text-sm text-muted">Nothing approved yet. Approve options on the Review tab and they show up here with their links.</p>
@@ -436,6 +454,7 @@ function ApprovedList({ items, decisions }: { items: Item[]; decisions: Record<s
   }
   return (
     <div className="space-y-4">
+      <OrderFromCatalog property={property} listingId={listingId} />
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted">{rows.length} approved {rows.length === 1 ? 'option' : 'options'} across {new Set(rows.map(r => r.item.key)).size} items. These are the links to order from.</p>
         <button type="button" onClick={copyAll} className="inline-flex items-center gap-1.5 text-[12px] font-semibold rounded-lg border border-line bg-white px-2.5 py-1.5 hover:border-ink"><Copy className="w-3.5 h-3.5" /> Copy as table</button>
@@ -550,6 +569,58 @@ function Manage({ property, catalog, suppliers, onChanged }: { property: string;
   )
 }
 
+function ChooseBtn({ on, onClick, small }: { on: boolean; onClick: () => void; small?: boolean }) {
+  return (
+    <button type="button" aria-pressed={on} onClick={onClick}
+      className={'inline-flex items-center gap-1.5 rounded-lg border font-semibold ' + (small ? 'px-2 py-1 text-[11.5px]' : 'px-2.5 py-1.5 text-[12.5px] mt-1') + (on ? ' bg-emerald-600 border-emerald-600 text-white' : ' bg-white border-line text-ink hover:border-ink')}>
+      <span className={'w-3.5 h-3.5 rounded-full border flex items-center justify-center ' + (on ? 'bg-white border-white' : 'border-line')}>{on && <Check className="w-3 h-3 text-emerald-700" strokeWidth={3} />}</span>
+      {on ? 'Your choice' : 'Choose this'}
+    </button>
+  )
+}
+function OwnerPicked() { return <span className="text-[11px] font-semibold text-sky-800 bg-sky-50 rounded-full px-2 py-0.5 w-fit">Owner’s choice</span> }
+
+// ORDER FROM THE CATALOG (Jon, 2026-10-27: "that we can order from in the future"): one draft FF&E
+// order for the unit, one line per approved option with product, link, photo, vendor and price.
+function OrderFromCatalog({ property, listingId }: { property: string; listingId?: string | null }) {
+  const [open, setOpen] = useState(false)
+  const [units, setUnits] = useState<{ id: string; label: string }[]>([])
+  const [q, setQ] = useState('')
+  const [unit, setUnit] = useState(listingId || '')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | React.ReactNode>('')
+  useEffect(() => { if (open && !units.length) fetch('/api/audit/ffe/catalogs').then(r => r.json()).then(j => setUnits((j?.listings || []).map((l: any) => ({ id: l.id, label: l.label })))).catch(() => {}) }, [open, units.length])
+  const hits = units.filter(u => !q || u.label.toLowerCase().includes(q.toLowerCase())).slice(0, 10)
+  const go = async () => {
+    if (!unit) { setMsg('Pick the unit this order is for.'); return }
+    setBusy(true); setMsg('')
+    try {
+      const r = await fetch('/api/audit/ffe/catalogs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'order', slug: property, listingId: unit }) })
+      const j = await r.json().catch(() => ({}))
+      if (!j.ok) setMsg(j.error || 'That did not save.')
+      else setMsg(<span>Draft order <b>{j.orderNo}</b> created with {j.lines} lines — <a href={`/ffe/order/${j.id}`} className="underline font-semibold">open it</a> to price, send to the owner and buy.</span>)
+    } finally { setBusy(false) }
+  }
+  return (
+    <div className="rounded-xl border border-line bg-white shadow-soft p-3 grid gap-2">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-sm"><b className="text-ink">Order from this list.</b> <span className="text-muted">Creates a draft FF&E order with one line per approved option, ready to price, send to the owner and buy.</span></div>
+        <button type="button" onClick={() => setOpen(o => !o)} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white text-[12.5px] font-semibold px-3 py-1.5"><Plus className="w-3.5 h-3.5" /> Create FF&E order</button>
+      </div>
+      {open && (
+        <div className="grid gap-2 md:grid-cols-[1fr_auto] items-end">
+          <div className="grid gap-1 text-[12px] font-semibold text-muted">Unit
+            <input value={q} onChange={e => { setQ(e.target.value); setUnit('') }} placeholder={unit ? (units.find(u => u.id === unit)?.label || unit) : 'Type to search units…'} className="text-sm font-normal text-ink rounded-md border border-line px-2.5 py-2" />
+            {!unit && q && <div className="rounded-md border border-line bg-white max-h-48 overflow-auto">{hits.map(u => <button key={u.id} type="button" onClick={() => { setUnit(u.id); setQ(u.label) }} className="block w-full text-left px-3 py-1.5 text-sm font-normal hover:bg-app">{u.label}</button>)}</div>}
+          </div>
+          <button type="button" disabled={busy} onClick={go} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white text-[12.5px] font-semibold px-3 py-2 hover:border-ink disabled:opacity-60">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Create draft order</button>
+        </div>
+      )}
+      {msg && <div className="text-sm text-ink">{msg}</div>}
+    </div>
+  )
+}
+
 function Approved() {
   return <span className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-emerald-700 mt-1"><Check className="w-3.5 h-3.5" strokeWidth={3} /> Approved</span>
 }
@@ -559,18 +630,19 @@ function Approved() {
 function ShareLink({ property, canEdit }: { property: string; canEdit: boolean }) {
   const [code, setCode] = useState<string | null>(null)
   const [views, setViews] = useState(0)
+  const [mode, setMode] = useState<'view' | 'select'>('view')
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
   const [confirmRegen, setConfirmRegen] = useState(false)
   useEffect(() => {
-    fetch(`/api/audit/ffe/approved-catalog/share?property=${property}`).then(r => r.json()).then(j => { if (j?.ok) { setCode(j.code || null); setViews(j.views || 0) } }).catch(() => {})
+    fetch(`/api/audit/ffe/approved-catalog/share?property=${property}`).then(r => r.json()).then(j => { if (j?.ok) { setCode(j.code || null); setViews(j.views || 0); setMode(j.mode === 'select' ? 'select' : 'view') } }).catch(() => {})
   }, [property])
-  const make = async (regenerate: boolean) => {
+  const make = async (regenerate: boolean, newMode?: 'view' | 'select') => {
     setBusy(true); setConfirmRegen(false)
     try {
-      const r = await fetch('/api/audit/ffe/approved-catalog/share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ property, regenerate }) })
+      const r = await fetch('/api/audit/ffe/approved-catalog/share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ property, regenerate, mode: newMode }) })
       const j = await r.json().catch(() => ({}))
-      if (j?.ok && j.code) { setCode(j.code); setViews(0) }
+      if (j?.ok && j.code) { setCode(j.code); if (regenerate) setViews(0); setMode(j.mode === 'select' ? 'select' : 'view') }
     } finally { setBusy(false) }
   }
   const url = code && typeof window !== 'undefined' ? `${window.location.origin}/catalog/${code}` : ''
@@ -579,18 +651,28 @@ function ShareLink({ property, canEdit }: { property: string; canEdit: boolean }
   }
   if (!code) {
     return canEdit ? (
-      <button type="button" onClick={() => make(false)} disabled={busy} className="ml-auto inline-flex items-center gap-1.5 text-[12.5px] font-semibold rounded-lg border border-line bg-white px-3 py-1.5 hover:border-ink disabled:opacity-60">
-        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Create share link
-      </button>
+      <div className="ml-auto flex items-center gap-2 flex-wrap">
+        <button type="button" onClick={() => make(false, 'select')} disabled={busy} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold rounded-lg bg-ink text-white px-3 py-1.5 disabled:opacity-60">
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Link for the owner to choose
+        </button>
+        <button type="button" onClick={() => make(false, 'view')} disabled={busy} className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold rounded-lg border border-line bg-white px-3 py-1.5 hover:border-ink disabled:opacity-60">
+          <Link2 className="w-3.5 h-3.5" /> Link to the approved list
+        </button>
+      </div>
     ) : null
   }
   return (
     <div className="ml-auto flex items-center gap-2 flex-wrap">
-      <input readOnly value={url} onFocus={e => e.currentTarget.select()} className="text-[12px] rounded-md border border-line bg-white px-2 py-1.5 w-[260px] max-w-full text-muted" aria-label="Share link" />
+      <input readOnly value={url} onFocus={e => e.currentTarget.select()} className="text-[12px] rounded-md border border-line bg-white px-2 py-1.5 w-[240px] max-w-full text-muted" aria-label="Share link" />
       <button type="button" onClick={copy} className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg border border-line bg-white px-2.5 py-1.5 hover:border-ink"><Copy className="w-3.5 h-3.5" /> {copied ? 'Copied' : 'Copy'}</button>
-      <span className="text-[11px] text-muted">{views} {views === 1 ? 'view' : 'views'} · opens the approved list, no sign-in</span>
+      {canEdit ? (
+        <span className="inline-flex rounded-full border border-line bg-white p-0.5" title="What the link shows">
+          {(['select', 'view'] as const).map(m => <button key={m} type="button" aria-pressed={mode === m} disabled={busy} onClick={() => make(false, m)} className={'px-2.5 py-1 text-[11.5px] font-semibold rounded-full ' + (mode === m ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>{m === 'select' ? 'Owner chooses' : 'Approved list'}</button>)}
+        </span>
+      ) : <span className="text-[11px] text-muted">{mode === 'select' ? 'owner is choosing' : 'approved list'}</span>}
+      <span className="text-[11px] text-muted">{views} {views === 1 ? 'view' : 'views'} · no sign-in</span>
       {canEdit && (confirmRegen
-        ? <span className="inline-flex items-center gap-1 text-[11.5px]"><span className="text-muted">Old link stops working.</span><button type="button" onClick={() => make(true)} className="font-semibold text-rose-700">Regenerate</button><button type="button" onClick={() => setConfirmRegen(false)} className="text-muted">Cancel</button></span>
+        ? <span className="inline-flex items-center gap-1 text-[11.5px]"><span className="text-muted">Old link stops working.</span><button type="button" onClick={() => make(true, mode)} className="font-semibold text-rose-700">Regenerate</button><button type="button" onClick={() => setConfirmRegen(false)} className="text-muted">Cancel</button></span>
         : <button type="button" onClick={() => setConfirmRegen(true)} disabled={busy} className="inline-flex items-center gap-1 text-[11.5px] text-muted hover:text-ink"><RefreshCw className="w-3 h-3" /> Regenerate</button>)}
     </div>
   )
