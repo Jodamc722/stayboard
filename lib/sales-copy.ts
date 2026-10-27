@@ -315,8 +315,10 @@ export const PROOF_HEADLINE = 'What properties like yours earn'
 export const PROOF_SUBTITLE = 'Real bookings, on properties we run today.'
 export const PROOF_BODY =
   'Not a model. These are booked and settled numbers from our own portfolio for the window shown, on the same basis your statement would report them.'
+// The two bases are named exactly as the owner reports name them (lib/basis), because the person
+// reading this slide may be holding one of those reports a month later.
 export const PROOF_NOTE =
-  'Revenue only: gross, and net of the channel fees the booking site keeps. Expenses belong to each owner and are not shown here.'
+  'Revenue only. Gross is accommodation plus cleaning; net of fees is accommodation after the channel takes its commission. Expenses belong to each owner and are not shown here.'
 
 // ── 16 · THE PROJECTION ─────────────────────────────────────────────────────
 // Jon: "make it possible to upload projections and build them into the deck for the property."

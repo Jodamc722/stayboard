@@ -22,6 +22,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pullReservations, metricsFor, fmtK, etToday } from '@/lib/owner-report'
+import { basisTriple, BASIS_NOTE } from '@/lib/basis'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { requireLevel } from '@/lib/access'
 
@@ -116,8 +117,18 @@ export async function GET(req: NextRequest) {
   for (const r of resv) { (byId[r.listing_id] = byId[r.listing_id] || []).push(r) }
 
   const pct = (n: number) => Math.round(n) + '%'
+  // THE SAME TWO BASES THE OWNER REPORTS USE (lib/basis), through the same function. Gross is
+  // accommodation + cleaning; net of fees is accommodation after the channel's host fee. Writing
+  // this arithmetic out by hand here is how a unit ends up reporting one number on an owner's
+  // report and a different one on a sales slide.
+  const rawOf = (m: ReturnType<typeof metricsFor>) => ({
+    accomNum: m.accomRevenue, accomGrossNum: m.accomGrossRevenue, cleaningNum: m.cleaningRevenue,
+    feeNum: m.channelFees, occNights: m.occupiedNights, availNights: m.availableNights,
+  })
   const rows = picked.map(l => {
     const m = metricsFor(byId[String(l.id)] || [], 1, from, toExcl)
+    const raw = rawOf(m)
+    const g = basisTriple(raw, 'gross'), n = basisTriple(raw, 'net')
     const br = l.bedrooms == null ? '' : (Number(l.bedrooms) === 0 ? 'Studio' : Number(l.bedrooms) + 'BR')
     const unit = str(l.unit)
     const bld = rollupBuilding(str(l.building))
@@ -126,16 +137,13 @@ export async function GET(req: NextRequest) {
       // Unit and building, not the owner — see the header of this file.
       label: [br, unit ? 'Unit ' + unit : ''].filter(Boolean).join(' · ') || str(l.nickname || l.title),
       sub: bld,
-      // GROSS: accommodation + cleaning, before the channel keeps anything.
-      gross: fmtK(m.grossRevenue),
-      // NET OF FEES: what landed after the booking site's commission. Not net of OUR fee, and not
-      // net of any expense — this is revenue on two bases, nothing more.
-      net: fmtK(m.accomRevenue + m.cleaningRevenue),
+      gross: fmtK(g.revenue),
+      net: fmtK(n.revenue),
       occ: pct(m.occupancyPct),
-      adr: '$' + m.grossAdr,
+      adr: '$' + g.adr,
       nights: String(m.occupiedNights),
-      _gross: m.grossRevenue, _net: m.accomRevenue + m.cleaningRevenue,
-      _occNights: m.occupiedNights, _availNights: m.availableNights, _res: m.reservations,
+      _gross: g.revenue, _net: n.revenue,
+      _occNights: m.occupiedNights, _availNights: m.availableNights,
     }
   }).sort((a, b) => b._gross - a._gross)
 
@@ -155,7 +163,9 @@ export async function GET(req: NextRequest) {
     names,
     window: label(from) + ' – ' + label(to),
     from, to,
-    rows: rows.map(({ _gross, _net, _occNights, _availNights, _res, id, ...r }) => r),
+    rows: rows.map(({ _gross, _net, _occNights, _availNights, id, ...r }) => r),
     totals,
+    // So the slide can say which two bases it is printing, in the words the reports use.
+    basis: { gross: BASIS_NOTE.gross, net: BASIS_NOTE.net },
   })
 }
