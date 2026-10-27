@@ -271,7 +271,8 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
         </section>
       )}
 
-      {/* Amenities */}
+      {/* Amenities (catalogs from before the essentials; empty once the sheet's amenities became essentials) */}
+      {items.some(i => i.section === 'amenity') && <>
       <section>
         <h2 className="text-xl font-bold text-ink tracking-tight">Amenities</h2>
         <p className="text-sm text-muted mt-1 max-w-3xl">Case pricing from the sheet with the per-unit cost worked out. Thumbnails show the vendor&apos;s retail packaging; hospitality case packs can differ.</p>
@@ -301,6 +302,7 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
           </div>
         ))}
       </section>
+      </>}
 
       {view === 'all' && !isPublic && (
         <section>
@@ -726,7 +728,7 @@ function EssentialCard({ item, d, status, canEdit, view, isPublic, selecting, on
             <TierChip t={o.tier} />
             <span className="min-w-0 flex-1"><span className={'text-[10.5px] uppercase tracking-wider font-semibold mr-1.5 ' + SRC_TONE[o.src]}>{o.vendor}</span>{o.url ? <a href={o.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{o.name}</a> : o.name}
               {o.chips.filter(c => /Estimate|Search/.test(c)).length > 0 && <span className="ml-1.5 text-[10.5px] font-semibold text-amber-800">{o.chips.includes('Estimate') ? 'Estimate' : 'Search link'}</span>}</span>
-            <span className="tabular-nums font-semibold whitespace-nowrap">{money(o.price)}</span>
+            <span className="tabular-nums font-semibold whitespace-nowrap">{money(o.price)}{o.each ? <span className="block text-[10.5px] font-medium text-muted text-right">{o.each} each</span> : null}</span>
             {(o.price != null || o.url) && (selecting ? <ChooseBtn on={on} onClick={() => onPick(item.key, o.src)} small /> : isPublic ? (on && <Approved />) : <ApproveBtn on={on} disabled={!canEdit} onClick={() => onToggle(item.key, o.src)} small />)}
           </li>
         ) })}
@@ -799,7 +801,7 @@ function Onboarding({ property, items, decisions, onChanged }: { property: strin
         <div className="grid gap-3 md:grid-cols-[1.4fr_repeat(3,100px)] items-end">
           <div className="grid gap-1 text-[12px] font-semibold text-muted">Unit
             <input value={q} onChange={e => { setQ(e.target.value); setUnit('') }} placeholder="Type to search units…" className="text-sm font-normal text-ink rounded-md border border-line px-2.5 py-2" />
-            {!unit && q && <div className="rounded-md border border-line bg-white max-h-48 overflow-auto">{hits.map(u => <button key={u.id} type="button" onClick={() => { setUnit(u.id); setQ(u.label); setSize({ bedrooms: u.bedrooms ?? 1, bathrooms: u.bathrooms ?? 1, guests: u.guests ?? 2 }) }} className="block w-full text-left px-3 py-1.5 text-sm font-normal hover:bg-app">{u.label}{u.bedrooms != null ? <span className="text-muted"> · {u.bedrooms} BR · {u.bathrooms ?? '?'} BA · {u.guests ?? '?'} guests</span> : null}</button>)}</div>}
+            {!unit && q && <div className="rounded-md border border-line bg-white max-h-48 overflow-auto">{hits.map(u => <button key={u.id} type="button" onClick={() => { setUnit(u.id); setQ(u.label); setQtyEdit({}); setSize({ bedrooms: u.bedrooms ?? 1, bathrooms: u.bathrooms ?? 1, guests: u.guests ?? 2 }) }} className="block w-full text-left px-3 py-1.5 text-sm font-normal hover:bg-app">{u.label}{u.bedrooms != null ? <span className="text-muted"> · {u.bedrooms} BR · {u.bathrooms ?? '?'} BA · {u.guests ?? '?'} guests</span> : null}</button>)}</div>}
           </div>
           {(['bedrooms', 'bathrooms', 'guests'] as const).map(k => (
             <label key={k} className="grid gap-1 text-[12px] font-semibold text-muted capitalize">{k}<input type="number" min={0} step={k === 'bathrooms' ? 0.5 : 1} value={size[k]} onChange={e => setSize({ ...size, [k]: Number(e.target.value) || 0 })} className="text-sm font-normal text-ink rounded-md border border-line px-2.5 py-2" /></label>

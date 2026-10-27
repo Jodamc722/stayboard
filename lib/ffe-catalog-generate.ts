@@ -30,9 +30,10 @@ function smallUrl(u: string): string {
 
 export async function listListings(): Promise<{ id: string; label: string; photos: number; bedrooms: number | null; bathrooms: number | null; guests: number | null }[]> {
   try {
-    const { data } = await supabaseAdmin().from('guesty_listings').select('id, nickname, title, building, pictures, bedrooms:raw->>bedrooms, bathrooms:raw->>bathrooms, guests:raw->>accommodates').limit(1000)
+    const { data } = await supabaseAdmin().from('guesty_listings').select('id, nickname, title, building, status, pictures, bedrooms:raw->>bedrooms, bathrooms:raw->>bathrooms, guests:raw->>accommodates').limit(1000)
     const n = (v: any) => { const x = parseFloat(String(v ?? '')); return Number.isFinite(x) ? x : null }
-    return (data || []).map((l: any) => ({ id: String(l.id), label: [l.nickname || l.title, l.building].filter(Boolean).join(' · '), photos: Array.isArray(l.pictures) ? l.pictures.length : 0,
+    const DEAD = ['inactive', 'disabled', 'archived', 'deleted']   // same as lib/ffe-portfolio: an order can only be raised for a live unit
+    return (data || []).filter((l: any) => !DEAD.includes(String(l.status || '').toLowerCase())).map((l: any) => ({ id: String(l.id), label: [l.nickname || l.title, l.building].filter(Boolean).join(' · '), photos: Array.isArray(l.pictures) ? l.pictures.length : 0,
       bedrooms: n(l.bedrooms), bathrooms: n(l.bathrooms), guests: n(l.guests) }))
       .filter(l => l.label).sort((a, b) => a.label.localeCompare(b.label))
   } catch { return [] }

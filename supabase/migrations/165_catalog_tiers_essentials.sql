@@ -16,3 +16,7 @@ alter table public.ffe_catalog_items add column if not exists need text;
 alter table public.ffe_catalog_items add column if not exists qty numeric not null default 1;
 alter table public.ffe_catalog_items add column if not exists qty_per text not null default 'unit';
 alter table public.ffe_catalog_options add column if not exists tier text;
+
+-- One live option per (item, supplier key): approvals are keyed by src, so two options sharing one
+-- would be indistinguishable. addOption numbers a second option from a supplier (amz-2).
+create unique index if not exists ffe_catalog_options_item_src on public.ffe_catalog_options (item_id, src) where archived_at is null;
