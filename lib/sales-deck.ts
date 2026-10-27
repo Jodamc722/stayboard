@@ -42,6 +42,7 @@ import {
   PROOF_HEADLINE, PROOF_SUBTITLE, PROOF_BODY, PROOF_NOTE,
   PLAN_HEADLINE, PLAN_SUBTITLE, PLAN_BODY, PLAN_NOTE,
   COMPS_HEADLINE, COMPS_SUBTITLE, COMPS_BODY, COMPS_NOTE,
+  EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY, EDGE_NOTE,
 } from './sales-copy'
 
 /** The sales-only sections, laid over an onboarding document. Every one is optional, so an
@@ -142,6 +143,17 @@ export type SalesSections = {
   comps?: {
     headline: string; subtitle: string; body: string; note: string; label?: string
     rows: { name: string; rev: string; rate: string; occ: string; beds: string; baths: string; rating: string; sleeps: string }[]
+  }
+  /**
+   * Our homes against the market, by bedroom count (lib/sales-edge). Measured at generate time
+   * and again from the slide; `focus` is the prospect's bedroom count so their row leads.
+   */
+  edge?: {
+    headline: string; subtitle: string; body: string; note: string
+    focus?: string
+    benchLabel?: string; window?: string; source?: string
+    pro?: { revenue: number; rate: number } | null
+    rows: { bedrooms: string; homes: number; gross: number; occ: number; adr: number; median: number | null; top: number | null; multiple: number | null; ahead: boolean; aboveTop: boolean }[]
   }
   close?: { headline: string; subtitle: string; rows: KV[]; note: string }
   /** Empty url = no slide, so an unfinished video never shows a prospect a grey box. */
@@ -274,6 +286,9 @@ export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesCo
     // The onboarding deck's team line counts the cards and welcomes an owner who has signed. On a
     // proposal the same faces answer a different question, so the subtitle asks it.
     team: { ...base.team, subtitle: 'The people who would be on your property.' },
+    // A HEADLINE IS THE TAKEAWAY, NOT THE TOPIC (2026-10-27 sales audit). "Overview of Stay
+    // Hospitality" tells a reader what the slide is about; this tells them what to believe.
+    overview: { ...(base as any).overview, headline: 'Ten years. 450 homes. One standard.' },
 
     contact: { headline: CONTACT_HEADLINE, subtitle: CONTACT_SUBTITLE, body: CONTACT_BODY, card },
     ops: { headline: OPS_HEADLINE, subtitle: OPS_SUBTITLE, body: OPS_BODY, rows: OPS_ROWS, note: OPS_NOTE, photo: pic(2) },
@@ -307,6 +322,11 @@ export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesCo
     proof: { headline: PROOF_HEADLINE, subtitle: PROOF_SUBTITLE, body: PROOF_BODY, note: PROOF_NOTE, scope: '', window: '', names: false, rows: [] },
     returns: { headline: RETURNS_HEADLINE, subtitle: RETURNS_SUBTITLE, body: RETURNS_BODY, note: RETURNS_NOTE, window: '', rows: [] },
     plan: { headline: PLAN_HEADLINE, subtitle: PLAN_SUBTITLE, body: PLAN_BODY, note: PLAN_NOTE, range: null, months: [], cols: [], rows: [] },
+    edge: {
+      headline: EDGE_HEADLINE, subtitle: EDGE_SUBTITLE, body: EDGE_BODY, note: EDGE_NOTE,
+      focus: i.intake && i.intake.bedrooms ? (Number(i.intake.bedrooms) === 0 ? 'Studio' : Math.min(4, Number(i.intake.bedrooms)) + 'BR') : '',
+      rows: [],
+    },
     comps: { headline: COMPS_HEADLINE, subtitle: COMPS_SUBTITLE, body: COMPS_BODY, note: COMPS_NOTE, rows: [] },
     close: { headline: CLOSE_HEADLINE, subtitle: CLOSE_SUBTITLE, rows: CLOSE_ROWS, note: CLOSE_NOTE },
     video: { headline: VIDEO_HEADLINE, subtitle: VIDEO_SUBTITLE, body: VIDEO_BODY, url: '', poster: '' },

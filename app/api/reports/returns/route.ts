@@ -86,7 +86,21 @@ export async function GET(req: NextRequest) {
     } catch { /* a building with no statements simply has no figure */ }
   }))
 
-  const rows = names.map(b => {
+  // A FULL YEAR, OR IT IS NOT IN THE TABLE (2026-10-27). The slide says "every building we operate
+  // with a full year behind it", and the table did not enforce it: District 225 printed 28%
+  // occupancy because its one unit had bookings for only half the window, and the other half was
+  // counted as empty nights. A unit counts when a stay checks in within the first sixty days of
+  // the window — it was live for the year — and a building with no such unit drops out.
+  const liveByD = new Date(from + 'T12:00:00Z'); liveByD.setUTCDate(liveByD.getUTCDate() + 60)
+  const liveBy = liveByD.toISOString().slice(0, 10)
+  const partial: string[] = []
+  for (const b of names) {
+    const all = byBuilding[b]
+    const full = all.filter(l => (byListing[String(l.id)] || []).some((r: any) => str(r.check_in) <= liveBy))
+    if (!full.length) partial.push(b)
+    byBuilding[b] = full
+  }
+  const rows = names.filter(b => byBuilding[b].length).map(b => {
     const ls = byBuilding[b]
     const ids = ls.map(l => String(l.id))
     const mine: any[] = []
@@ -121,6 +135,8 @@ export async function GET(req: NextRequest) {
     window: from + ' → ' + to,
     months,
     buildings: rows.map(({ _g, ...r }) => r),
+    /** Buildings left out because none of their units was live for the whole window. */
+    partial,
     basis: {
       gross: 'Accommodation + cleaning, as the guest paid it',
       net: 'Accommodation after the channel takes its commission',

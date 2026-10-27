@@ -44,7 +44,7 @@ export const CONTACT_DEFAULT: ContactCard = {
 // Jon: "how operations works". The single question every serious owner asks and almost no deck
 // answers concretely: who physically shows up, when, and how do you know they did. Written as the
 // shape of a day, because a day is checkable and an org chart is not.
-export const OPS_HEADLINE = 'How operations works'
+export const OPS_HEADLINE = 'Run by our own team, on the record'
 export const OPS_SUBTITLE = 'Our own people, on our own payroll, running the same day every day.'
 export const OPS_BODY =
   'Housekeeping, maintenance, inspections and guest care are in-house. Nobody is dispatched from an app and hoped for. Every market has its own crew, its own supervisor and its own escalation path, and every job carries a checklist, an assignee, a timestamp and photographs.'
@@ -197,15 +197,18 @@ export const MARKET_HINTS: Record<string, string> = {
 }
 
 // ── 10 · THE CLOSE ──────────────────────────────────────────────────────────
-export const CLOSE_HEADLINE = 'What happens next'
-export const CLOSE_SUBTITLE = ''
+export const CLOSE_HEADLINE = 'Three steps to live'
+export const CLOSE_SUBTITLE = 'From this conversation to your first booking, usually inside four weeks.'
+// THE PROJECTION IS NOT A NEXT STEP ANY MORE (2026-10-27). It used to be the first row here, on a
+// deck that now carries the projection three slides earlier — offering a prospect something they
+// are already holding reads as a template nobody read. The close asks for the one thing that moves
+// the deal: the walk-through.
 export const CLOSE_ROWS: KV[] = [
-  { k: 'A revenue projection for this property', v: 'Built on what comparable units in this market actually earned, not a percentage of a hope. We will send it in writing.' },
-  { k: 'A walk of the property', v: 'An hour on site tells us what the listing needs and what the setup will cost. No charge and no commitment.' },
-  { k: 'The agreement', v: 'One document, plain terms, no lock-in beyond the notice period. We will walk you through every clause before you sign anything.' },
-  { k: 'Four weeks later', v: 'Live on every channel, priced daily, with a team that knows your building.' },
+  { k: 'Walk the property', v: 'An hour on site: what the listing needs, what setup will cost, and the projection checked against the real unit. No charge and no commitment.' },
+  { k: 'Sign one plain agreement', v: 'Plain terms, no lock-in beyond the notice period, walked through clause by clause before you sign.' },
+  { k: 'Go live', v: 'Photographed, listed on every channel, priced daily, with a team that already knows your building.' },
 ]
-export const CLOSE_NOTE = 'Questions are welcome at any point, including the uncomfortable ones.'
+export const CLOSE_NOTE = 'The next step is the walk-through. Pick a time with the person below.'
 
 // ── 11 · THE VIDEO SLIDE ────────────────────────────────────────────────────
 // Jon, 2026-10-27: "what I think I'd do is build a video that we can embed into one of the slides."
@@ -261,7 +264,7 @@ export const SALES_AGENDA: KV[] = [
 // Thirteen slides and a cover. Every one of them is doing a job the one before it set up.
 export const SALES_ORDER = [
   'welcome',
-  'property', 'market', 'plan', 'comps', 'proof', 'returns',  // theirs: the unit, the area, the money
+  'property', 'market', 'plan', 'comps', 'edge', 'proof', 'returns',  // theirs: the unit, the area, the money
   'maxrev', 'ops', 'stack',                       // ours: how the money happens
   'overview', 'experience', 'team',               // who is doing it
   'terms', 'onbsteps', 'contact', 'close',        // what it costs and what happens next
@@ -273,14 +276,14 @@ export const SALES_ORDER = [
 // its own, and the onboarding timeline waits for the meeting: a prospect who has not decided does
 // not need the four-week plan yet.
 export const SHORT_KEEP = [
-  'property', 'market', 'plan', 'comps', 'proof', 'returns',
+  'property', 'market', 'plan', 'comps', 'edge', 'proof', 'returns',
   'maxrev', 'ops', 'stack',
   'overview', 'experience', 'team',
   'terms', 'close',
 ]
 /** Every slide the sales deck can carry, so the short/full switch has something to subtract from. */
 export const SALES_KEYS = [
-  'welcome', 'contact', 'property', 'market', 'comps', 'returns', 'agenda', 'team', 'overview', 'experience', 'ops', 'craft',
+  'welcome', 'contact', 'property', 'market', 'comps', 'edge', 'returns', 'agenda', 'team', 'overview', 'experience', 'ops', 'craft',
   'marketing', 'dist', 'channels', 'direct', 'guestcare', 'revenue', 'stack', 'lighthouse',
   'maxrev', 'proof', 'plan', 'terms', 'onbsteps', 'gpo', 'guesty', 'statement', 'ai',
   'season', 'ramp', 'rampsteps', 'money', 'video', 'close',
@@ -320,6 +323,10 @@ export const SHORT_HIDDEN_HISTORY: string[][] = [
   ['agenda', 'craft', 'dist', 'marketing', 'channels', 'direct', 'guestcare', 'revenue',
     'lighthouse', 'gpo', 'guesty', 'statement', 'ai', 'season', 'ramp', 'rampsteps', 'money',
     'video', 'onbsteps', 'contact', 'returns', 'comps'],
+  // 2026-10-27, sixth: our homes against the market (the edge slide) joins the short deck.
+  ['agenda', 'craft', 'dist', 'marketing', 'channels', 'direct', 'guestcare', 'revenue',
+    'lighthouse', 'gpo', 'guesty', 'statement', 'ai', 'season', 'ramp', 'rampsteps', 'money',
+    'video', 'onbsteps', 'contact'],
 ]
 
 // Lines this deck used to open with. Replaced in place on a deck that still carries them, exactly
@@ -337,7 +344,7 @@ export const SALES_WELCOME = 'Three things decide what a property earns: how the
 // The short deck's one revenue slide. The full deck argues this across five — pricing, the comp
 // set, distribution, the listing craft, direct — and each of those is a better slide than this
 // one. This is the version for someone who has given us ninety seconds.
-export const MAXREV_HEADLINE = 'How we get you the most revenue'
+export const MAXREV_HEADLINE = 'How we earn you more'
 export const MAXREV_SUBTITLE = 'Five levers, worked every day.'
 export const MAXREV_BODY =
   'Revenue is not one decision at the start. It is a rate moved daily against live demand, on a listing built to convert, sold in every place a guest might look.'
@@ -415,7 +422,7 @@ export const PROOF_NOTE =
 // important sentence on the page. It assumes an established listing with reviews and booking
 // history, so year one can run lower, and an owner who reads the number as a year-one promise is
 // an owner we lose in month six.
-export const PLAN_HEADLINE = 'Our projected range'
+export const PLAN_HEADLINE = 'What your property could earn'
 export const PLAN_SUBTITLE = ''
 export const PLAN_BODY =
   'Built from a market revenue estimate for this building, bedroom count and size, checked against what our own units nearby actually earned.'
@@ -476,6 +483,19 @@ export const PROPERTY_FACTS: KV[] = [
 // /api/reports/sales-plan, which reads a PDF, a screenshot, a spreadsheet or a CSV and will refuse
 // rather than invent. Until something is written or read in, the slide does not print.
 export const MARKET_BODY = ''
+
+// ── 20 · WHY OWNERS SWITCH — OUR HOMES AGAINST THE MARKET ───────────────────
+// Raskin's order for a sales story is the change, then who wins and who loses, then the promised
+// land, then the proof. This is the winners-and-losers slide, and it is made of numbers rather
+// than adjectives: what homes we run earned, against what the same size of home earned across the
+// market, on the same window (lib/sales-edge). The headline is the takeaway, written once the
+// numbers are in; the copy below is only the frame around them.
+export const EDGE_HEADLINE = 'Our homes out-earn the market'
+export const EDGE_SUBTITLE = 'Same size of home, same twelve months.'
+export const EDGE_BODY =
+  'Most homes in this market are run by their owners, or by a manager who lists them and waits. The gap between that and a home that is priced, sold and serviced every day is not a few percent.'
+export const EDGE_NOTE =
+  'Ours: every home we ran for the whole twelve months, all channels, gross booking revenue. Theirs: entire homes listed all twelve months, Airbnb booking revenue.'
 
 // ── 18 · REAL RETURNS BY BUILDING ───────────────────────────────────────────
 // Nick Carline's brief, 2026-10-27: "Real returns by building. Annual gross, occupancy and nightly

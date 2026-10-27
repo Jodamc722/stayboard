@@ -27,12 +27,13 @@ import { buildStatementSection } from '@/lib/statement-section'
 import { projectionSectionFor } from '@/lib/projections'
 import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type ListingCard, type KV } from '@/lib/onboarding-report'
 import { buildSalesContent } from '@/lib/sales-deck'
+import { measureEdge } from '@/lib/sales-edge'
 import { proofListings, proofRows, monthLabel as proofMonth, effectiveFee, completedMonths, ownersForListings } from '@/lib/sales-proof'
 import { marketIntel } from '@/lib/sales-market'
 import { getSetting } from '@/lib/app-settings'
 import { SALES_CONTACT_KEY, type SalesContactSetting } from '@/lib/sales-copy'
 import { linenDeckFor } from '@/lib/linen-deck'
-import { buildingPhotos, fillPropertyPics } from '@/lib/building-photos'
+import { buildingPhotos, buildingPhotoPools, fillPropertyPics } from '@/lib/building-photos'
 import { withoutCollages } from '@/lib/photo-filter'
 import { computeScore, ratingToStars, isBeachListing } from '@/lib/optimize-score'
 import { getStaff } from '@/lib/staffing'
@@ -307,6 +308,37 @@ export async function POST(req: NextRequest) {
       heroImage: heroImageUrl || (cards[0] && cards[0].photos[0] ? cards[0].photos[0] : null),
       contact: contactIn,
     })
+    // OUR HOMES AGAINST THE MARKET (lib/sales-edge). Measured now so the deck arrives carrying it;
+    // a market with no published benchmark, or where we do not win, simply has no rows.
+    try {
+      const ed: any = (contentS as any).edge
+      const mk = str(body?.market) || String(marketS || '')
+      const edge = mk ? await measureEdge({ market: mk, to: asOf }) : null
+      if (ed && edge) {
+        ed.rows = edge.rows; ed.benchLabel = edge.benchLabel; ed.window = edge.window
+        ed.source = edge.source; ed.pro = edge.pro
+      }
+    } catch { /* the slide's own Measure button still works */ }
+    // A PROSPECT'S DECK HAS NO LISTING OF OURS TO PHOTOGRAPH (2026-10-27 sales audit). Every
+    // section photo is drawn from the listing pool, so a deck for a unit we do not run yet arrived
+    // as fourteen slides of flat navy and cream — the About slide's photo half was a blank
+    // gradient. Best-in-class decks are photograph-led, so the pool falls back to the homes we
+    // run, best buildings first, and the cover takes the first of them until someone picks the
+    // prospect's own photo with "Change cover photo".
+    try {
+      const cs: any = contentS
+      if (!Array.isArray(cs.photoPool) || !cs.photoPool.length) {
+        const pools = await buildingPhotoPools(3)
+        const lead = ['17WEST', 'Elser', 'Arya', 'Botanica', 'Capri', 'Eden']
+        const names = lead.filter(b => pools[b] && pools[b].length).concat(Object.keys(pools).filter(b => lead.indexOf(b) < 0))
+        const pool: string[] = []
+        for (let k = 0; k < 3; k++) for (const b of names) { const p = (pools[b] || [])[k]; if (p && pool.indexOf(p) < 0) pool.push(p) }
+        if (pool.length) {
+          cs.photoPool = pool
+          if (cs.hero && !cs.hero.heroImage) cs.hero.heroImage = pool[0]
+        }
+      }
+    } catch { /* flat slides, and every photo slot still has its picker */ }
     // OUR PROPERTIES gets a picture per building, exactly as the onboarding deck does.
     try {
       const ex: any = (contentS as any).experience

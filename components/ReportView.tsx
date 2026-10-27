@@ -31,7 +31,7 @@ import {
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
 } from '@/lib/onboarding-copy'
-import { MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS, PLAN_LABELS } from '@/lib/sales-copy'
+import { EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY, EDGE_NOTE, MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS, PLAN_LABELS } from '@/lib/sales-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, seasonBodyStale } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
@@ -2223,10 +2223,31 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           dr.returns.rows = d.buildings; dr.returns.window = String(d.window || '')
           if (Array.isArray(dr.omit)) dr.omit = dr.omit.filter((k: string) => k !== 'returns')
         })
-        setRtMsg(d.buildings.length + ' buildings — review, then Save.')
+        setRtMsg(d.buildings.length + ' buildings with a full year' + (Array.isArray(d.partial) && d.partial.length ? ' (not a full year yet: ' + d.partial.join(', ') + ')' : '') + ' — remove any with ×, then Save.')
       } else setRtMsg(String(d?.error || 'Could not pull the returns.'))
     } catch { setRtMsg('Could not pull the returns.') }
     setRtBusy(false)
+  }
+  const [egBusy, setEgBusy] = useState(false)
+  const [egMsg, setEgMsg] = useState('')
+  const [egMarket, setEgMarket] = useState<string>(() => (/broward|lauderdale|hollywood|pompano/i.test(String(((initial as Any)?.content?.meta || {}).market || '')) ? 'Broward' : 'Miami'))
+  async function pullEdge() {
+    if (egBusy) return
+    setEgBusy(true); setEgMsg('')
+    try {
+      const d = await fetch('/api/reports/edge?market=' + encodeURIComponent(egMarket)).then(r => r.json())
+      if (d?.ok && Array.isArray(d.rows)) {
+        mutate((dr: Any) => {
+          dr.edge = dr.edge || {}
+          dr.edge.rows = d.rows; dr.edge.benchLabel = d.benchLabel; dr.edge.window = d.window
+          dr.edge.source = d.source; dr.edge.pro = d.pro
+          if (Array.isArray(dr.omit)) dr.omit = dr.omit.filter((k: string) => k !== 'edge')
+        })
+        const ahead = d.rows.filter((r: Any) => r.ahead).length
+        setEgMsg(ahead ? ahead + ' home sizes ahead of the market — review, then Save.' : 'Not ahead of the market at any size here, so the slide stays out.')
+      } else setEgMsg(String(d?.error || 'Could not measure.'))
+    } catch { setEgMsg('Could not measure.') }
+    setEgBusy(false)
   }
   const [plBusy, setPlBusy] = useState(false)
   const [plMsg, setPlMsg] = useState('')
@@ -2391,8 +2412,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     const heroOld = SALES_RETIRED_HERO.indexOf(String(((c as Any).hero || {}).headline || '').trim()) >= 0
     const welcomeOld = SALES_RETIRED_WELCOME.indexOf(String(((c as Any).welcome || {}).body || '').trim()) >= 0
     const sameList = JSON.stringify(wasShort) === JSON.stringify(meta.shortHidden)
-    if (!freed.length && !heroOld && !welcomeOld && sameList) return
+    // A deck made before the edge slide existed gets its empty frame, so Measure is one click away.
+    const noEdge = !(c as Any).edge
+    if (!freed.length && !heroOld && !welcomeOld && sameList && !noEdge) return
     mutate((d: Any) => {
+      if (!d.edge) d.edge = { headline: EDGE_HEADLINE, subtitle: EDGE_SUBTITLE, body: EDGE_BODY, note: EDGE_NOTE, focus: '', rows: [] }
       if (freed.length) d.omit = (Array.isArray(d.omit) ? d.omit : []).filter((k: string) => freed.indexOf(k) < 0)
       if (heroOld) { d.hero = d.hero || {}; d.hero.headline = SALES_HERO }
       if (welcomeOld) { d.welcome = d.welcome || {}; d.welcome.body = SALES_WELCOME }
@@ -3543,6 +3567,22 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   <p className="mt-4 text-[16px] sm:text-[18px] leading-[1.5]" style={{ color: 'rgba(255,255,255,0.86)', maxWidth: '42ch' }}>
                     <Ed v={(isOnboarding && !isSales) ? houseLine(hero.headline, HERO_HEADLINE) : (hero.headline || '')} set={v => patch('hero.headline', v)} edit={edit} multiline />
                   </p>
+                  {/* THE NUMBER ON THE COVER (2026-10-27 sales audit). The first page gets the
+                      longest look of any page in a sent deck, and the one thing an owner opened
+                      it to learn is what the property could earn. Read off the projection slide,
+                      so uploading a projection updates the cover with it. */}
+                  {(() => {
+                    const rg: Any = isSales && c.plan && typeof c.plan === 'object' && c.plan.range && typeof c.plan.range === 'object' ? c.plan.range : null
+                    const lo = rg ? String(rg.annualLow || '').trim() : ''
+                    const hi = rg ? String(rg.annualHigh || '').trim() : ''
+                    if (!lo) return null
+                    return (
+                      <div className="mt-6 inline-flex flex-col" style={{ alignSelf: 'flex-start', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.24)', borderRadius: 14, padding: '12px 18px', backdropFilter: 'blur(6px)' }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.7)' }}>Projected gross revenue · fully ramped</span>
+                        <span style={{ fontFamily: SERIF, fontSize: 30, letterSpacing: '-0.02em', color: '#fff', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>{lo}{hi && hi !== lo ? ' – ' + hi : ''} <span style={{ fontSize: 15, color: 'rgba(255,255,255,0.75)' }}>a year</span></span>
+                      </div>
+                    )
+                  })()}
                   <p className="mt-7 text-[11.5px]" style={{ color: 'rgba(255,255,255,0.6)' }}>
                     <Ed v={hero.preparedFor || ''} set={v => patch('hero.preparedFor', v)} edit={edit} />
                     {'  ·  '}{meta.asOf ? new Date(String(meta.asOf) + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : ''}
@@ -4499,7 +4539,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </p>
                 )}
                 <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 18, paddingBottom: 18 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '18px 20px' }}>
+                  {/* MORE THAN EIGHT GOES TO SIX ACROSS (2026-10-27 sales audit): at four across the
+                      third row sat under a "scroll for more" chip, and a portfolio slide whose
+                      best buildings are below the fold is a portfolio slide that undersells. */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + (((sec('experience').items || []) as Any[]).length > 8 ? 6 : 4) + ',1fr)', gap: ((sec('experience').items || []) as Any[]).length > 8 ? '14px 14px' : '18px 20px' }}>
                     {(sec('experience').items || []).map((f: Any, i: number) => (
                       <div key={i} style={{ minWidth: 0 }}>
                         <div style={{ position: 'relative', overflow: 'hidden', width: '100%', aspectRatio: '4 / 3', borderRadius: 10, background: t.chip, border: '1px solid ' + t.cardBorder }}>
@@ -5015,7 +5058,15 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           ))}
                         </div>
                         {rtRows.slice(0, 10).map((r: Any, i: number) => (
-                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.5fr 0.5fr 1fr 1fr 0.7fr 0.8fr', gap: 10, padding: '8px 0', borderBottom: '1px solid ' + t.rule, alignItems: 'baseline' }}>
+                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.5fr 0.5fr 1fr 1fr 0.7fr 0.8fr', gap: 10, padding: '8px 0', borderBottom: '1px solid ' + t.rule, alignItems: 'baseline', position: 'relative' }}>
+                            {/* THE PRESENTER CHOOSES THE ROWS (2026-10-27 sales audit). A hotel
+                                block at 30% occupancy is true and belongs in an owner report; it
+                                does not belong in front of a condo owner deciding on us. */}
+                            {edit ? (
+                              <button className="sb-noprint" title="Leave this building out of the deck"
+                                onClick={() => mutate((d: Any) => { const rr: Any[] = (d.returns && Array.isArray(d.returns.rows)) ? d.returns.rows : []; rr.splice(i, 1) })}
+                                style={{ position: 'absolute', left: -22, top: 9, fontSize: 12, lineHeight: 1, color: t.muted, background: 'transparent', border: 0, cursor: 'pointer' }}>×</button>
+                            ) : null}
                             <div style={{ minWidth: 0 }}>
                               <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, margin: 0 }}>{String(r.building || '')}</p>
                               <p style={{ fontSize: 10.5, color: t.muted, margin: 0 }}>{[String(r.market || ''), String(r.bedrooms || '')].filter(Boolean).join(' · ')}</p>
@@ -5034,6 +5085,124 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     )
                   } />
                 <Foot label="Returns by building" />
+              </div>
+            </Slide>
+          ) }) }
+
+          // ── 4d-iii · OUR HOMES AGAINST THE MARKET (2026-10-27 sales audit) ──────────────
+          // The winners-and-losers slide: what homes we ran for the whole year earned, against
+          // what the same size of home earned across the market (lib/sales-edge). Only bedroom
+          // counts where we are actually ahead print, so the slide can never claim what the
+          // numbers do not say; a deck with none of those carries no slide at all.
+          if (!hid('edge')) { const eg: Any = sec('edge')
+            const egAll: Any[] = Array.isArray(eg.rows) ? (eg.rows as Any[]) : []
+            const egRows: Any[] = egAll.filter((r: Any) => r && r.ahead && r.median)
+            const egLead: Any = egRows.find((r: Any) => r.bedrooms === eg.focus) || egRows.slice().sort((a: Any, b: Any) => (Number(b.multiple) || 0) - (Number(a.multiple) || 0))[0] || null
+            const egMax = Math.max(1, ...egRows.map((r: Any) => Math.max(Number(r.gross) || 0, Number(r.top) || 0)))
+            const money = (n: Any) => '$' + Math.round(Number(n) || 0).toLocaleString('en-US')
+            const brWord = (b: string) => (b === 'Studio' ? 'studio' : String(b).replace('BR', '-bedroom'))
+            if (egRows.length || edit) slides.push({ key: 'edge', ai: true, node: (
+            <Slide nav="Against the market" warn={edit} ground={GROUND.tint}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Split k="edge" leftW={330}
+                  left={
+                    <>
+                      <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder }}>
+                        <Ed v={eg.body || ''} set={v => patch('edge.body', v)} edit={edit} multiline />
+                      </p>
+                      {eg.pro && eg.pro.revenue ? (
+                        <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                          {[[eg.pro.revenue, 'more revenue'], [eg.pro.rate, 'higher nightly rate']].map(([n, l]) => (
+                            <div key={String(l)} style={{ background: t.chip, borderRadius: 10, padding: '11px 14px' }}>
+                              <p style={{ fontFamily: SERIF, fontSize: 26, color: t.accent, margin: 0, letterSpacing: '-0.02em' }}>+{String(n)}%</p>
+                              <p style={{ fontSize: 11, color: t.muted, margin: '3px 0 0', lineHeight: 1.35 }}>{String(l)}</p>
+                            </div>
+                          ))}
+                          <p style={{ gridColumn: '1 / -1', fontSize: 11.5, color: t.muted, margin: 0, lineHeight: 1.45 }}>
+                            Professionally managed homes against owner-run homes of the same size, across {String(eg.benchLabel || 'the market')}.
+                          </p>
+                        </div>
+                      ) : null}
+                      {edit ? (
+                        <div className="sb-noprint" style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid ' + t.cardBorder, display: 'grid', gap: 7 }}>
+                          <select value={egMarket} onChange={e => setEgMarket(e.target.value)}
+                            style={{ fontSize: 12.5, padding: '6px 8px', borderRadius: 8, border: '1px solid ' + t.cardBorder, background: t.card, color: t.ink }}>
+                            <option value="Miami">Miami</option>
+                            <option value="Broward">Broward (Fort Lauderdale)</option>
+                          </select>
+                          <select value={String(eg.focus || '')} onChange={e => patch('edge.focus', e.target.value)}
+                            style={{ fontSize: 12.5, padding: '6px 8px', borderRadius: 8, border: '1px solid ' + t.cardBorder, background: t.card, color: t.ink }}>
+                            <option value="">Lead with the strongest size</option>
+                            {['Studio', '1BR', '2BR', '3BR', '4BR'].map(b => <option key={b} value={b}>Lead with {b}</option>)}
+                          </select>
+                          <button onClick={pullEdge} disabled={egBusy}
+                            style={{ fontSize: 12, fontWeight: 600, padding: '7px 12px', borderRadius: 999, background: t.ink, color: t.bg, opacity: egBusy ? 0.6 : 1 }}>
+                            {egBusy ? 'Measuring…' : 'Measure against the market'}
+                          </button>
+                          {egMsg ? <p style={{ fontSize: 11.5, color: t.muted }}>{egMsg}</p> : null}
+                          {egAll.length > egRows.length ? (
+                            <p style={{ fontSize: 11, color: t.muted, lineHeight: 1.45 }}>
+                              Not shown, because we are not ahead or there is no benchmark: {egAll.filter((r: Any) => egRows.indexOf(r) < 0).map((r: Any) => r.bedrooms + (r.median ? ' (ours ' + money(r.gross) + ' vs ' + money(r.median) + ')' : ' (no benchmark)')).join(', ')}.
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </>
+                  }
+                  right={
+                    egLead ? (
+                      <div>
+                        {/* THE NUMBER FIRST. One home size, said as a sentence a broker can repeat. */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.25fr 1fr', background: t.band, borderRadius: 14, overflow: 'hidden' }}>
+                          <div style={{ padding: '20px 24px' }}>
+                            <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)', margin: 0 }}>Our median {brWord(String(egLead.bedrooms))}, a year</p>
+                            <p style={{ fontFamily: SERIF, fontSize: 44, letterSpacing: '-0.03em', color: '#fff', margin: '8px 0 0', fontVariantNumeric: 'tabular-nums' }}>{money(egLead.gross)}</p>
+                            <p style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.72)', margin: '6px 0 0' }}>{String(egLead.homes)} homes · {String(egLead.occ)}% occupied · ${String(egLead.adr)} a night</p>
+                          </div>
+                          <div style={{ padding: '20px 24px', borderLeft: '1px solid rgba(255,255,255,0.18)' }}>
+                            <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)', margin: 0 }}>Against the {String(eg.benchLabel || 'market')} median</p>
+                            <p style={{ fontFamily: SERIF, fontSize: 44, letterSpacing: '-0.03em', color: '#fff', margin: '8px 0 0' }}>{String(egLead.multiple)}×</p>
+                            <p style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.72)', margin: '6px 0 0' }}>
+                              {money(egLead.median)} median{egLead.aboveTop ? ' · above the top quarter (' + money(egLead.top) + ')' : ''}
+                            </p>
+                          </div>
+                        </div>
+                        {/* EVERY SIZE WE WIN AT, ON ONE SCALE, so the lead number reads as a pattern
+                            rather than one good building. */}
+                        <div style={{ marginTop: 18 }}>
+                          <div className="flex items-center" style={{ gap: 16, marginBottom: 10 }}>
+                            {[[inkA(t.ink, 0.22), (eg.benchLabel || 'Market') + ' median'], [inkA(t.ink, 0.45), 'Top quarter'], [t.accent, 'Homes we run']].map(([col, l]) => (
+                              <span key={String(l)} className="inline-flex items-center" style={{ gap: 6, fontSize: 10.5, color: t.muted }}>
+                                <span style={{ width: 10, height: 10, borderRadius: 2, background: String(col), display: 'inline-block' }} />{String(l)}
+                              </span>
+                            ))}
+                          </div>
+                          {egRows.map((r: Any) => (
+                            <div key={r.bedrooms} style={{ display: 'grid', gridTemplateColumns: '64px 1fr', gap: 12, alignItems: 'center', padding: '7px 0', borderTop: '1px solid ' + t.rule }}>
+                              <p style={{ fontSize: 12.5, fontWeight: 600, color: r === egLead ? t.accent : t.ink, margin: 0 }}>{String(r.bedrooms)}</p>
+                              <div style={{ display: 'grid', gap: 3 }}>
+                                {[[r.median, inkA(t.ink, 0.22)], [r.top, inkA(t.ink, 0.45)], [r.gross, t.accent]].map(([v, col], j) => (
+                                  <div key={j} className="flex items-center" style={{ gap: 8 }}>
+                                    <span style={{ display: 'block', height: j === 2 ? 9 : 6, width: (((Number(v) || 0) / egMax) * 78) + '%', background: String(col), borderRadius: 3 }} />
+                                    <span style={{ fontSize: j === 2 ? 11.5 : 10.5, fontWeight: j === 2 ? 600 : 400, color: j === 2 ? t.ink : t.muted, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{money(v)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <p style={{ fontSize: 10.5, lineHeight: 1.5, color: t.muted, marginTop: 10 }}>
+                          <Ed v={eg.note || ''} set={v => patch('edge.note', v)} edit={edit} multiline />
+                          {eg.source ? ' Source: ' + String(eg.source) + '.' : ''}
+                        </p>
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: 13, color: t.muted, lineHeight: 1.6, maxWidth: '46ch' }}>
+                        Measure against the market on the left. If we are not ahead at any home size, this slide stays out of the deck.
+                      </p>
+                    )
+                  } />
+                <Foot label="Against the market" />
               </div>
             </Slide>
           ) }) }
@@ -5107,6 +5276,28 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                                 <p style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.72)', margin: '7px 0 0' }}>{i === 0 ? (String(plRange.annualSub || '') || sub) : sub}</p>
                               </div>
                             ))}
+                            {/* WHAT LANDS WITH THE OWNER (2026-10-27 sales audit). The question
+                                behind every projection is "and what do I keep?" — the industry
+                                advice is to put net-to-owner on the first page a prospect reads.
+                                Our fee is the one deduction we set, so it is the one printed: the
+                                fee comes off the terms slide, so the two can never disagree. */}
+                            {(() => {
+                              const num = (v: Any) => { const n = Number(String(v || '').replace(/[^0-9.]/g, '')); return Number.isFinite(n) && n > 0 ? n : 0 }
+                              const tr: Any[] = Array.isArray(sec('terms').rows) ? sec('terms').rows : []
+                              const feeRow: Any = tr.find((r: Any) => /fee/i.test(String(r.k || ''))) || null
+                              const fm = feeRow ? String(feeRow.v || '').match(/([\d.]+)\s*%/) : null
+                              const fee = fm ? Number(fm[1]) : 0
+                              const lo = num(plRange.annualLow), hi = num(plRange.annualHigh)
+                              if (!(fee > 0 && fee < 60) || !lo) return null
+                              const k = (n: number) => '$' + (Math.round((n * (1 - fee / 100)) / 100) * 100).toLocaleString('en-US')
+                              return (
+                                <div style={{ gridColumn: '1 / -1', padding: '10px 22px 12px', borderTop: '1px solid rgba(255,255,255,0.18)', display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)' }}>To you, after our {Math.round(fee * 10) / 10}% fee</span>
+                                  <span style={{ fontFamily: SERIF, fontSize: 21, color: '#fff', fontVariantNumeric: 'tabular-nums' }}>{k(lo)}{hi && hi !== lo ? ' – ' + k(hi) : ''}</span>
+                                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.62)' }}>a year, before your own costs</span>
+                                </div>
+                              )
+                            })()}
                           </div>
                         ) : null}
                         {plRange && (plRange.rateLow || plRange.occLow) ? (
@@ -5133,17 +5324,17 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: '0 0 8px' }}>{PLAN_LABELS.byMonth}</p>
                             {/* Base and high end as a pair per month, which is what makes the
                                 range read as a range rather than as two unrelated numbers. */}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + plMonths.length + ', 1fr)', gap: 6, alignItems: 'end', height: 70 }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + plMonths.length + ', 1fr)', gap: 6, alignItems: 'end', height: 58 }}>
                               {plMonths.map((m: Any, i: number) => (
                                 <span key={i} className="flex items-end justify-center" style={{ gap: 2, height: '100%' }}
                                   title={String(m.label) + ' · ' + String(m.base || '') + ' – ' + String(m.high || '')}>
-                                  <span style={{ display: 'block', width: '42%', height: Math.max(2, ((Number(m.baseNum) || 0) / plMax) * 66), background: inkA(t.ink, 0.55), borderRadius: '2px 2px 0 0' }} />
-                                  <span style={{ display: 'block', width: '42%', height: Math.max(2, ((Number(m.highNum) || Number(m.baseNum) || 0) / plMax) * 66), background: t.accent, borderRadius: '2px 2px 0 0' }} />
+                                  <span style={{ display: 'block', width: '42%', height: Math.max(2, ((Number(m.baseNum) || 0) / plMax) * 54), background: inkA(t.ink, 0.55), borderRadius: '2px 2px 0 0' }} />
+                                  <span style={{ display: 'block', width: '42%', height: Math.max(2, ((Number(m.highNum) || Number(m.baseNum) || 0) / plMax) * 54), background: t.accent, borderRadius: '2px 2px 0 0' }} />
                                 </span>
                               ))}
                             </div>
                             {([['', 'label'], [PLAN_LABELS.base, 'base'], [PLAN_LABELS.high, 'high'], [PLAN_LABELS.baseRate, 'rate'], [PLAN_LABELS.baseOcc, 'occ']] as const)
-                              .filter(([, k]) => k === 'label' || plMonths.some((m: Any) => String(m[k] || '')))
+                              .filter(([, k]) => k === 'label' || ((k === 'rate' || k === 'occ') && plSeason.length ? false : plMonths.some((m: Any) => String(m[k] || ''))))
                               .map(([lbl, k]) => (
                                 <div key={k} style={{ display: 'grid', gridTemplateColumns: '96px repeat(' + plMonths.length + ', 1fr)', gap: 6, padding: '4px 0', borderTop: k === 'label' ? undefined : '1px solid ' + t.rule }}>
                                   <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: t.muted }}>{lbl}</span>
@@ -5176,11 +5367,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             ))}
                           </div>
                         ) : null}
-                        {(pl.note || edit) ? (
-                          <p style={{ fontSize: 10.5, lineHeight: 1.5, color: t.muted, marginTop: 12, maxWidth: '96ch' }}>
-                            <Ed v={pl.note || ''} set={v => patch('plan.note', v)} edit={edit} multiline />
-                          </p>
-                        ) : null}
+                        {/* The note prints once, in the left column. Printed here as well it was
+                            the line that pushed the slide into a scroll. */}
                         {pl.source ? <p style={{ fontSize: 10, color: t.muted, marginTop: 6 }}>{String(pl.source)}</p> : null}
                       </div>
                     ) : plRows.length ? (
@@ -5983,7 +6171,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             ]
             const cpCols = CP_COLS.filter(c => cpRows.some((r: Any) => String(r[c.k] || '').trim()))
             const cpGrid = '28px 2.4fr ' + (cpCols.map(c => c.w).join(' ') || '1fr')
-            if (cpRows.length || edit) slides.push({ key: 'comps', ai: true, node: (
+            // A COMP LIST WITH NO FIGURES IS NOT EVIDENCE (2026-10-27 sales audit). Eight listing
+            // names and a bedroom count gave a prospect nothing to compare against and cost a
+            // whole slide; it stays in the editor, where someone can paste the figures in, and out
+            // of the deck the prospect reads until they are there.
+            const cpHasFigures = cpRows.some((r: Any) => ['rev', 'rate', 'occ'].some(k => /\d/.test(String(r[k] || ''))))
+            if ((cpRows.length && cpHasFigures) || edit) slides.push({ key: 'comps', ai: true, node: (
             <Slide nav="Comparable listings" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
                 <div className="flex items-baseline justify-between" style={{ gap: 20 }}>
@@ -6704,7 +6897,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             <Slide nav="Next steps" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
                 <Title k="close" />
-                <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 26 }}>
+                {/* A SENT DECK ENDS ON A PERSON (2026-10-27 sales audit). The short deck hides the
+                    contact slide, so the last page a prospect read named three steps and nobody to
+                    take them with. On a proposal the presenter's card now sits beside the steps,
+                    with the one ask: book the walk-through. */}
+                <div className="flex-1 min-h-0" style={{ marginTop: 26, display: 'grid', gridTemplateColumns: isSales && (edit || String(ccCard.name || '').trim()) ? '1fr 330px' : '1fr', gap: 40 }}>
+                <div className="min-h-0 onb-scroll">
                   {((sec('close').rows || []) as Any[]).map((f: Any, i: number) => (
                     <div key={i} style={{ display: 'grid', gridTemplateColumns: '34px 1fr', columnGap: 16, alignItems: 'baseline', padding: '15px 0', borderTop: '1px solid ' + t.rule }}>
                       <span style={{ fontSize: 12.5, fontWeight: 700, color: t.accent }}>{String(i + 1).padStart(2, '0')}</span>
@@ -6721,6 +6919,26 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   <p style={{ fontSize: 13, color: t.muted, marginTop: 20 }}>
                     <Ed v={sec('close').note || ''} set={v => patch('close.note', v)} edit={edit} multiline />
                   </p>
+                </div>
+                {isSales && (edit || String(ccCard.name || '').trim()) ? (
+                  <div style={{ background: t.band, borderRadius: 16, padding: '24px 24px 22px', alignSelf: 'start', color: '#fff' }}>
+                    <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)', margin: 0 }}>Book your walk-through</p>
+                    <div className="flex items-center" style={{ gap: 14, marginTop: 16 }}>
+                      {String(ccCard.photo || '').trim() ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={String(ccCard.photo)} alt="" style={{ width: 64, height: 64, borderRadius: 999, objectFit: 'cover', border: '2px solid rgba(255,255,255,0.3)' }} />
+                      ) : null}
+                      <div style={{ minWidth: 0 }}>
+                        <p style={{ fontSize: 19, fontWeight: 600, margin: 0, lineHeight: 1.2 }}>{String(ccCard.name || '') || (edit ? 'Fill in the contact slide' : '')}</p>
+                        {String(ccCard.role || '').trim() ? <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', margin: '4px 0 0' }}>{String(ccCard.role)}</p> : null}
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.18)', display: 'grid', gap: 7 }}>
+                      {String(ccCard.phone || '').trim() ? <p style={{ fontSize: 15, margin: 0, fontVariantNumeric: 'tabular-nums' }}>{String(ccCard.phone)}</p> : null}
+                      {String(ccCard.email || '').trim() ? <p style={{ fontSize: 14, margin: 0, color: 'rgba(255,255,255,0.86)', wordBreak: 'break-all' }}>{String(ccCard.email)}</p> : null}
+                    </div>
+                  </div>
+                ) : null}
                 </div>
                 <Foot label="Next steps" />
               </div>
