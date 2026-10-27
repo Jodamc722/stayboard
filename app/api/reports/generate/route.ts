@@ -26,6 +26,7 @@ import { coverageFor } from '@/lib/owner-statements'
 import { buildStatementSection } from '@/lib/statement-section'
 import { projectionSectionFor } from '@/lib/projections'
 import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type ListingCard, type KV } from '@/lib/onboarding-report'
+import { buildSalesContent } from '@/lib/sales-deck'
 import { linenDeckFor } from '@/lib/linen-deck'
 import { buildingPhotos, fillPropertyPics } from '@/lib/building-photos'
 import { withoutCollages } from '@/lib/photo-filter'
@@ -178,13 +179,93 @@ export async function POST(req: NextRequest) {
   // kind 'onboarding' (Jon, 2026-09-16) builds the WELCOME PRESENTATION for a new owner — the
   // kickoff call as a document. Like 'projection' it has no period: the unit has no history yet,
   // which is the entire point of the exercise.
-  const KINDS = ['review', 'projection', 'onboarding']
+  const KINDS = ['review', 'projection', 'onboarding', 'sales']
   const kind = KINDS.indexOf(str(body?.kind)) >= 0 ? str(body?.kind) : 'review'
   if (kind === 'review' && (!/^\d{4}-\d{2}-\d{2}$/.test(periodStart) || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd) || periodStart > periodEnd)) {
     return NextResponse.json({ error: 'periodStart/periodEnd (YYYY-MM-DD) required' }, { status: 400 })
   }
-  if (!listingIds.length && !buildings.length) {
+  // A SALES DECK NEEDS NO SCOPE (2026-10-27): the prospect's property is usually not on our
+  // account yet, so that deck is allowed through on a name alone and validates its own input.
+  if (kind !== 'sales' && !listingIds.length && !buildings.length) {
     return NextResponse.json({ error: 'listingIds or buildings required' }, { status: 400 })
+  }
+
+  // ── THE SALES DECK (Jon, 2026-10-27) ──────────────────────────────────────
+  // A management proposal for someone who has NOT signed. It is an owner_reports row like every
+  // other document here, which is how it arrives with a share link, PDF and PowerPoint export,
+  // Present mode and the full inline editor on day one — see lib/sales-deck for what it borrows
+  // from the onboarding deck and what it adds.
+  //
+  // A SCOPE IS OPTIONAL HERE, and that is the one real difference from onboarding. A prospect's
+  // property is usually not on our account yet, so the deck can be generated against nothing but
+  // a name; pick a building we DO run and the deck fills with that building's own photographs,
+  // which is the right move when pitching a second owner in a building we already operate.
+  if (kind === 'sales') {
+    const { listings: sListings, scopeLabel: sAuto } = await resolveScope(listingIds, buildings)
+    const sIds = sListings.map(l => l.id)
+    const prospect = str(body?.ownerName) || str(body?.prospect)
+    const scopeLabel = scopeLabelIn || (sIds.length ? sAuto : prospect)
+    if (!scopeLabel) return NextResponse.json({ error: 'Name the property or the prospect this deck is for.' }, { status: 400 })
+    const dbS = supabaseAdmin()
+
+    let cards: ListingCard[] = []
+    if (sIds.length) {
+      const { data: fullS } = await dbS.from('guesty_listings')
+        .select('id, title, nickname, building, unit, status, bedrooms, bathrooms, max_occupancy, amenities, pictures, raw')
+        .in('id', sIds)
+      const rowsS: any[] = (fullS || []) as any[]
+      const cleanedS = await Promise.all(rowsS.map(async l => {
+        const pictures = Array.isArray(l.pictures) ? l.pictures.map(String).filter(Boolean) : []
+        return { ...l, pictures, clean: await withoutCollages(pictures, 30) }
+      }))
+      cards = cleanedS.map(l => listingCardFrom(l, [], [], l.clean))
+    }
+
+    const tplS = await getOnboardingTemplate()
+    const marketS = sListings.length ? marketOf(sListings[0].building || '') : str(body?.market)
+    // The house team, so the deck shows faces without anyone filling it in first. Same fallback
+    // the onboarding deck uses: saved cards win, the live roster stands in until they exist.
+    if (!tplS.team.length) {
+      try {
+        const staff = await getStaff()
+        tplS.team = staff
+          .filter((p: any) => p.field !== false && ['supervision', 'maintenance', 'ccs'].indexOf(String(p.dept || '')) >= 0)
+          .slice(0, 6)
+          .map((p: any) => ({ name: p.name, role: p.title || p.role || String(p.dept || ''), blurb: '', photo: null, market: p.area || '' }))
+      } catch { /* the slide renders with whatever the template has */ }
+    }
+
+    const pStartS = etToday()
+    const contentS = buildSalesContent(tplS, {
+      scopeLabel,
+      asOf,
+      market: marketS,
+      ownerName: prospect,
+      ownerEmail: str(body?.ownerEmail),
+      ownerPhone: str(body?.ownerPhone),
+      cards,
+      heroImage: heroImageUrl || (cards[0] && cards[0].photos[0] ? cards[0].photos[0] : null),
+      contact: (body?.contact && typeof body.contact === 'object') ? {
+        name: str(body.contact.name), role: str(body.contact.role) || undefined,
+        phone: str(body.contact.phone), email: str(body.contact.email),
+        photo: str(body.contact.photo), blurb: str(body.contact.blurb) || undefined,
+      } : undefined,
+    })
+    // OUR PROPERTIES gets a picture per building, exactly as the onboarding deck does.
+    try {
+      const ex: any = (contentS as any).experience
+      if (ex && Array.isArray(ex.items)) ex.items = fillPropertyPics(ex.items, await buildingPhotos())
+    } catch { /* blank tiles; the editor's Change chip still works */ }
+
+    const codeS = makeCode()
+    const titleS = str(body?.title) || (scopeLabel + ' \u2014 Management Proposal \u2014 ' + prettyDate(asOf))
+    const { data: insS, error: errS } = await supabaseAdmin().from('owner_reports').insert({
+      code: codeS, title: titleS, scope_label: scopeLabel, listing_ids: sIds,
+      period_start: pStartS, period_end: pStartS, as_of: asOf,
+      theme, status: 'draft', content: contentS, created_by: user.email || null,
+    }).select('id, code').limit(1)
+    if (errS) return NextResponse.json({ error: errS.message }, { status: 500 })
+    return NextResponse.json({ ok: true, id: (insS || [])[0]?.id, code: codeS, aiUsed: false })
   }
 
   if (kind === 'onboarding') {

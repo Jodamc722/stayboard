@@ -31,6 +31,7 @@ import {
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
 } from '@/lib/onboarding-copy'
+import { MARKET_HINTS } from '@/lib/sales-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, seasonBodyStale } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
@@ -2225,7 +2226,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   // stored JSON, so gating on the report's kind — not on whether the data exists — is what
   // actually clears it from the reviews already out there. Older projection reports predate
   // meta.kind, so their hero label stands in for it.
-  const isOnboarding = String((c.meta || {}).kind || '') === 'onboarding'
+  // THE SALES DECK RENDERS THROUGH THE ONBOARDING DECK (2026-10-27). Same frame, same editor,
+  // same Present mode, same export; it simply carries a different set of sections. Treating it as
+  // a third renderer would have meant maintaining two of everything within a month.
+  const kindOf = String((c.meta || {}).kind || '')
+  const isSales = kindOf === 'sales'
+  const isOnboarding = kindOf === 'onboarding' || isSales
 
   // THE MONTH + SECTION PHOTOGRAPHY (Jon, 2026-09-22 rebuild). Both are derived rather than stored,
   // so every review that already existed gained them on deploy. `gallery` is resolved server-side
@@ -2319,14 +2325,28 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const customSecs: Any[] = (Array.isArray(c.custom) ? c.custom : []).filter((cs: Any) => cs && (String(cs.title || '').trim() || String(cs.body || '').trim() || String(cs.kind || '') === 'photos' || String(cs.kind || '') === 'notes' || String(cs.kind || '') === 'composed'))
   // JON'S EIGHT, PLUS ANY EXTRA SWITCHED BACK ON (see the onboarding block below). Present mode
   // counts slides off this, so a deck with the extras off says "6 of 8" and not "6 of 17".
-  const onboardingSectionKeys = ['welcome', 'agenda', 'team', 'overview', 'experience', 'craft', 'guestcare',
-    'revenue', 'stack', 'listings', 'guesty', 'statement', 'notes',
+  // THE SALES DECK'S OWN SLIDES RIDE ON THE SAME COUNT (2026-10-27). They are listed here rather
+  // than in a second array because Present mode numbers every slide the deck renders, and a deck
+  // that says "6 of 8" while showing twenty is the bug this list exists to prevent.
+  const onboardingSectionKeys = ['welcome', 'contact', 'market', 'agenda', 'team', 'overview', 'experience',
+    'ops', 'craft', 'marketing', 'dist', 'channels', 'direct', 'guestcare',
+    'revenue', 'stack', 'lighthouse', 'listings', 'onbsteps', 'gpo', 'guesty', 'statement', 'video', 'close', 'notes',
     'unit', 'strategy', 'ramp', 'rampsteps', 'season', 'ai', 'tech', 'money', 'comms', 'checklist', 'nextup']
+  /** The same test the deck itself uses: hidden, or simply not in this document, means no slide.
+   *  An onboarding deck carries none of the sales keys and so counts none of them. */
+  const sectionRenders = (k: string): boolean => {
+    if (isHidden(k) || !c[k] || typeof c[k] !== 'object') return false
+    // Two of them answer to their own content as well: an unfilled market slide and a video with
+    // no link do not print, so they must not be counted either.
+    if (k === 'market' && !edit) return ((c.market as Any).rows || []).some((r: Any) => String(r && r.v || '').trim())
+    if (k === 'video') return !!String((c.video as Any).url || '').trim() || edit
+    return true
+  }
   const onboardingListingSlides = isOnboarding && !isHidden('listings')
     ? (Array.isArray((c.listings || {}).items) ? (c.listings as Any).items.length : 0)
     : 0
   const presentCount = isOnboarding
-    ? 1 + onboardingSectionKeys.filter(k => !isHidden(k)).length + onboardingListingSlides + customSecs.length
+    ? 1 + onboardingSectionKeys.filter(sectionRenders).length + onboardingListingSlides + customSecs.length
       // The linen package is optional: counted only when the deck was generated with one.
       + (c.linens && Array.isArray(c.linens.tiers) && c.linens.tiers.length && !isHidden('linens') ? 1 : 0)
     : isReviewDeck
@@ -3314,7 +3334,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     <Ed v={hero.title || ''} set={v => patch('hero.title', v)} edit={edit} />
                   </h1>
                   <p className="mt-4 text-[16px] sm:text-[18px] leading-[1.5]" style={{ color: 'rgba(255,255,255,0.86)', maxWidth: '42ch' }}>
-                    <Ed v={isOnboarding ? houseLine(hero.headline, HERO_HEADLINE) : (hero.headline || '')} set={v => patch('hero.headline', v)} edit={edit} multiline />
+                    <Ed v={(isOnboarding && !isSales) ? houseLine(hero.headline, HERO_HEADLINE) : (hero.headline || '')} set={v => patch('hero.headline', v)} edit={edit} multiline />
                   </p>
                   <p className="mt-7 text-[11.5px]" style={{ color: 'rgba(255,255,255,0.6)' }}>
                     <Ed v={hero.preparedFor || ''} set={v => patch('hero.preparedFor', v)} edit={edit} />
@@ -3362,7 +3382,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             <Ed v={hero.title || ''} set={v => patch('hero.title', v)} edit={edit} />
           </h1>
           <p className="mt-6 text-lg sm:text-[22px] font-medium max-w-2xl mx-auto leading-[1.45]" style={{ color: t.body }}>
-            <Ed v={isOnboarding ? houseLine(hero.headline, HERO_HEADLINE) : (hero.headline || '')} set={v => patch('hero.headline', v)} edit={edit} multiline />
+            <Ed v={(isOnboarding && !isSales) ? houseLine(hero.headline, HERO_HEADLINE) : (hero.headline || '')} set={v => patch('hero.headline', v)} edit={edit} multiline />
           </p>
           {hero.heroImage && (
             // eslint-disable-next-line @next/next/no-img-element
@@ -3560,6 +3580,58 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             </p>
           )
 
+          // ── THE SALES DECK'S WORKHORSE (Jon, 2026-10-27) ─────────────────────────
+          // Six of the new slides are the same object: an argument on the left, a numbered list of
+          // what we actually do on the right, and a closing line under the argument. Written once
+          // here rather than six times down the file, because the day one of them gets a wider
+          // grid or a different rule, all six should get it.
+          //
+          // EVERY ONE IS GATED ON ITS SECTION EXISTING, not on the document's kind. An onboarding
+          // deck generated before today simply has no `ops` key, so it renders exactly as it did,
+          // and a sales deck that someone hides a slide on keeps it hidden.
+          const PitchRows = stable('PitchRows', ({ k, nav, label, note, dark, cols }: {
+            k: string; nav: string; label: string; note?: string; dark?: boolean; cols?: number
+          }) => {
+            const rows: Any[] = (sec(k).rows || []) as Any[]
+            const bodyColor = dark ? D.body : t.body
+            const ruleColor = dark ? D.rule : t.cardBorder
+            return (
+              <Slide nav={nav} warn={edit} ground={dark ? GROUND.dark : undefined}>
+                <div className="flex flex-col" style={{ height: '100%' }}>
+                  <Split k={k} dark={dark}
+                    left={
+                      <>
+                        <p style={{ fontSize: 14, lineHeight: 1.6, color: bodyColor, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + ruleColor, whiteSpace: 'pre-line' }}>
+                          <Ed v={sec(k).body || ''} set={v => patch(k + '.body', v)} edit={edit} multiline />
+                        </p>
+                        {(sec(k).note || edit) && note !== undefined ? (
+                          <p style={{ fontSize: 12.5, lineHeight: 1.55, color: dark ? D.muted : t.muted, marginTop: 14 }}>
+                            <Ed v={sec(k).note || ''} set={v => patch(k + '.note', v)} edit={edit} multiline />
+                          </p>
+                        ) : null}
+                      </>
+                    }
+                    right={
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + (cols || 2) + ',1fr)', gap: '16px 26px' }}>
+                        {rows.map((f: Any, i: number) => (
+                          <div key={i} style={{ borderTop: '1px solid ' + ruleColor, paddingTop: 10 }}>
+                            <p className="flex items-baseline" style={{ gap: 8, fontSize: 14, fontWeight: 600, color: dark ? D.ink : t.ink, lineHeight: 1.3 }}>
+                              <span style={{ fontSize: 11.5, fontWeight: 700, color: dark ? D.ink : t.accent }}>{String(i + 1).padStart(2, '0')}</span>
+                              <Ed v={f.k || ''} set={v => patch(k + '.rows.' + i + '.k', v)} edit={edit} multiline />
+                            </p>
+                            <p style={{ fontSize: 13, lineHeight: 1.55, color: bodyColor, marginTop: 5 }}>
+                              <Ed v={f.v || ''} set={v => patch(k + '.rows.' + i + '.v', v)} edit={edit} multiline />
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    } />
+                  <Foot label={label} dark={dark} />
+                </div>
+              </Slide>
+            )
+          })
+
           // A photograph that holds half the composition and bleeds off the slide edge.
           const Half = stable('Half', ({ src, side, title, set }: {
             src: string; side: 'left' | 'right'; title?: string; set?: (u: string) => void
@@ -3666,7 +3738,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       <Ed v={sec('welcome').subtitle || ''} set={v => patch('welcome.subtitle', v)} edit={edit} />
                     </p>
                     <p style={{ marginTop: 26, fontSize: 19, lineHeight: 1.65, color: t.body, maxWidth: '42ch', whiteSpace: 'pre-line' }}>
-                      <Ed v={houseLine(sec('welcome').body, WELCOME_BODY)} set={v => patch('welcome.body', v)} edit={edit} multiline />
+                      <Ed v={isSales ? (sec('welcome').body || '') : houseLine(sec('welcome').body, WELCOME_BODY)} set={v => patch('welcome.body', v)} edit={edit} multiline />
                     </p>
                   </div>
                   <div style={{ paddingBottom: 18 }}>
@@ -3682,6 +3754,91 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           ) })
 
           // ── 2 · AGENDA — two columns ───────────────────────────────────────
+          // ── 1b · WHO IS PRESENTING (Jon, 2026-10-27: "have a place for Nick to add his face")
+          // A deck handed over by a named person closes better than one from a company, so the
+          // face goes second, before the pitch. The photo is a Pick like every other image here,
+          // so it is set by clicking it in edit mode and travels with the deck.
+          if (!hid('contact')) { const cc: Any = sec('contact').card || {}; slides.push({ key: 'contact', ai: true, node: (
+            <Slide nav="Your contact" warn={edit}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <div className="flex-1 min-h-0 flex" style={{ gap: 48, paddingBottom: 18 }}>
+                  <div className="flex flex-col min-h-0" style={{ width: 360, flexShrink: 0 }}>
+                    <Title k="contact" narrow />
+                    <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder, whiteSpace: 'pre-line' }}>
+                      <Ed v={sec('contact').body || ''} set={v => patch('contact.body', v)} edit={edit} multiline />
+                    </p>
+                  </div>
+                  <div className="flex-1 min-w-0 flex items-center" style={{ gap: 34 }}>
+                    <div style={{ flexShrink: 0 }}>
+                      <Pick title="Your photo" cur={String(cc.photo || '')} set={u => patch('contact.card.photo', u)}
+                        style={{ width: 230, height: 280, borderRadius: 14, border: '1px solid ' + t.cardBorder }} />
+                      {edit && !cc.photo ? (
+                        <p className="sb-noprint" style={{ fontSize: 11.5, color: t.muted, marginTop: 8, width: 230, textAlign: 'center' }}>Click the panel to add your photo</p>
+                      ) : null}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ fontSize: 30, fontWeight: 600, letterSpacing: '-0.02em', color: t.ink, lineHeight: 1.15 }}>
+                        <Ed v={cc.name || ''} set={v => patch('contact.card.name', v)} edit={edit} placeholder="Your name" />
+                      </p>
+                      <p style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.accent, marginTop: 8 }}>
+                        <Ed v={cc.role || ''} set={v => patch('contact.card.role', v)} edit={edit} placeholder="Title" />
+                      </p>
+                      <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 16, maxWidth: '34ch' }}>
+                        <Ed v={cc.blurb || ''} set={v => patch('contact.card.blurb', v)} edit={edit} multiline placeholder="One line about you (optional)" />
+                      </p>
+                      <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid ' + t.cardBorder, display: 'grid', gap: 6 }}>
+                        <p style={{ fontSize: 14, color: t.ink }}>
+                          <Ed v={cc.phone || ''} set={v => patch('contact.card.phone', v)} edit={edit} placeholder="Direct line" />
+                        </p>
+                        <p style={{ fontSize: 14, color: t.ink }}>
+                          <Ed v={cc.email || ''} set={v => patch('contact.card.email', v)} edit={edit} placeholder="Email" />
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <Foot label="Your contact" />
+              </div>
+            </Slide>
+          ) }) }
+
+          // ── 1c · THEIR PROPERTY, THEIR MARKET (Jon, 2026-10-27: "customization features:
+          // talking about the property, the market, the area"). Four prompts the presenter fills
+          // for the property in front of them.
+          //
+          // AN UNFILLED SLIDE DOES NOT PRINT. Out of edit mode a row with no answer is dropped and
+          // the slide disappears entirely when none are written, because generic paragraphs about
+          // someone's own neighbourhood cost more trust than a shorter deck does.
+          if (!hid('market')) { const mkRows: Any[] = (sec('market').rows || []) as Any[]
+            const mkShown = edit ? mkRows : mkRows.filter((r: Any) => String(r.v || '').trim())
+            if (mkShown.length) slides.push({ key: 'market', ai: true, node: (
+            <Slide nav="Your market" warn={edit} ground={GROUND.tint}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Split k="market" leftW={320}
+                  left={(sec('market').photo || edit) ? (
+                    <Pick title="A photo for this slide" cur={String(sec('market').photo || '')} set={u => patch('market.photo', u)}
+                      style={{ width: '100%', height: 190, borderRadius: 12, marginTop: 22, border: '1px solid ' + t.cardBorder }} />
+                  ) : null}
+                  right={
+                    <div style={{ display: 'grid', gap: 16 }}>
+                      {mkShown.map((f: Any, i: number) => (
+                        <div key={i} style={{ borderTop: '1px solid ' + t.cardBorder, paddingTop: 11 }}>
+                          <p style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.accent }}>
+                            <Ed v={f.k || ''} set={v => patch('market.rows.' + mkRows.indexOf(f) + '.k', v)} edit={edit} />
+                          </p>
+                          <p style={{ fontSize: 14.5, lineHeight: 1.6, color: t.body, marginTop: 6 }}>
+                            <Ed v={f.v || ''} set={v => patch('market.rows.' + mkRows.indexOf(f) + '.v', v)} edit={edit} multiline
+                              placeholder={MARKET_HINTS[String(f.k || '')] || 'Write this for the property in front of you'} />
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  } />
+                <Foot label="Your market" />
+              </div>
+            </Slide>
+          ) }) }
+
           if (!hid('agenda')) slides.push({ key: 'agenda', node: (
             <Slide nav="Agenda" warn={edit} ground={GROUND.tint}>
               <div className="flex flex-col h-full">
@@ -3984,6 +4141,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // listing, the amenities, the descriptions, the distribution, the marketing, improving
           // ramp." Six numbered rows, in the order the work actually happens, so the owner can
           // picture it rather than take it on trust.
+          // ── 4b · HOW OPERATIONS WORKS (Jon, 2026-10-27: "how operations works")
+          // The question every serious owner asks and few decks answer concretely: who physically
+          // shows up, when, and how do you know they did. Written as the shape of a day, because
+          // a day is checkable and an org chart is not.
+          if (!hid('ops')) slides.push({ key: 'ops', ai: true, node: (
+            <PitchRows k="ops" nav="Operations" label="Operations" note="" />
+          ) })
+
           if (!hid('craft')) slides.push({ key: 'craft', ai: true, node: (
             <Slide nav="The listing" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
@@ -4025,6 +4190,21 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           const chanCountStored = String(sec('channels').count || '').trim()
           const chanCount = (!chanCountStored || CHANNEL_COUNT_RETIRED.indexOf(chanCountStored) >= 0) ? CHANNEL_COUNT : chanCountStored
           const chanBody = channelBodyStale(sec('channels').subtitle) ? CHANNEL_BODY : (sec('channels').subtitle || '')
+
+          // ── 4d · MARKETING (Jon, 2026-10-27: "talk marketing") ───────────────
+          // Distribution is where the calendar is published; marketing is what makes somebody
+          // choose it in the ten seconds after they see it. Two slides, because conflating them
+          // is how the second one disappears.
+          if (!hid('marketing')) slides.push({ key: 'marketing', ai: true, node: (
+            <PitchRows k="marketing" nav="Marketing" label="Marketing" />
+          ) })
+
+          // ── 4e · DISTRIBUTION (Jon, 2026-10-27: "talk distribution") ─────────
+          // The mechanism, ahead of the wall of names that follows it. An owner who has only ever
+          // been on one site does not know what a connected calendar buys them.
+          if (!hid('dist')) slides.push({ key: 'dist', ai: true, node: (
+            <PitchRows k="dist" nav="Distribution" label="Distribution" />
+          ) })
 
           if (!hid('channels')) slides.push({ key: 'channels', ai: true, node: (
             <Slide nav="Where it sells" warn={edit} ground={GROUND.dark} bleed>
@@ -4078,6 +4258,15 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // A sequence, not a service list, because the owner's real question is what happens to
           // their unit between one guest leaving and the next arriving. The Breezeway line is the
           // footer of the slide rather than a row in it: it is the evidence under all six stages.
+          // ── 5b · DIRECT BOOKINGS (Jon, 2026-10-27: "talk about AI website optimization
+          // to drive direct bookings"). It lands straight after the channel wall on purpose: the
+          // argument only works once the owner has seen how much distribution we do.
+          // NO PERCENTAGE ON THIS SLIDE — see lib/sales-copy for why a direct-booking share quoted
+          // as a promise is the sentence an owner repeats back to us in month four.
+          if (!hid('direct')) slides.push({ key: 'direct', ai: true, node: (
+            <PitchRows k="direct" nav="Direct bookings" label="Direct bookings" note="" dark />
+          ) })
+
           if (!hid('guestcare')) slides.push({ key: 'guestcare', ai: true, node: (
             <Slide nav="The guest experience" warn={edit} ground={GROUND.tint}>
               <div className="flex flex-col" style={{ height: '100%' }}>
@@ -4271,6 +4460,15 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           ) })
 
           // ── 6 · THE LISTING — two slides per unit ──────────────────────────
+          // ── 6b · LIGHTHOUSE (Jon, 2026-10-27: "how Lighthouse works") ────────
+          // The stack slide names it in one line. This one shows it, because software built
+          // in-house is the one thing on the table a competitor cannot buy and a list of
+          // adjectives does not prove it exists. Every row is a screen that can be opened in the
+          // room if they ask.
+          if (!hid('lighthouse')) slides.push({ key: 'lighthouse', ai: true, node: (
+            <PitchRows k="lighthouse" nav="Lighthouse" label="Lighthouse" note="" dark />
+          ) })
+
           if (!hid('listings')) {
             const items: Any[] = sec('listings').items || []
             items.forEach((L: Any, li: number) => {
@@ -4996,6 +5194,61 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           ) })
 
           // ── 6 · THE OWNER PORTAL ───────────────────────────────────────────
+          // ── 7b · ONBOARDING, FROM THE OWNER'S SIDE (Jon, 2026-10-27: "walk through
+          // onboarding"). The internal who-does-what checklist already exists further down this
+          // file for the onboarding deck. A prospect does not want our checklist; they want to
+          // know what the next four weeks cost THEM in time and decisions, so every step carries
+          // who does it and when.
+          if (!hid('onbsteps')) slides.push({ key: 'onbsteps', ai: true, node: (
+            <Slide nav="Onboarding" warn={edit} ground={GROUND.tint}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Split k="onbsteps" leftW={330}
+                  left={
+                    <>
+                      <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder, whiteSpace: 'pre-line' }}>
+                        <Ed v={sec('onbsteps').body || ''} set={v => patch('onbsteps.body', v)} edit={edit} multiline />
+                      </p>
+                      <p style={{ fontSize: 12.5, lineHeight: 1.55, color: t.muted, marginTop: 14 }}>
+                        <Ed v={sec('onbsteps').note || ''} set={v => patch('onbsteps.note', v)} edit={edit} multiline />
+                      </p>
+                    </>
+                  }
+                  right={
+                    <div>
+                      {((sec('onbsteps').steps || []) as Any[]).map((f: Any, i: number) => (
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '92px 1fr 110px', gap: 18, alignItems: 'baseline', padding: '11px 0', borderTop: '1px solid ' + t.cardBorder }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: t.accent }}>
+                            <Ed v={f.when || ''} set={v => patch('onbsteps.steps.' + i + '.when', v)} edit={edit} />
+                          </span>
+                          <div style={{ minWidth: 0 }}>
+                            <p style={{ fontSize: 14, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
+                              <Ed v={f.k || ''} set={v => patch('onbsteps.steps.' + i + '.k', v)} edit={edit} multiline />
+                            </p>
+                            <p style={{ fontSize: 13, lineHeight: 1.55, color: t.body, marginTop: 4 }}>
+                              <Ed v={f.v || ''} set={v => patch('onbsteps.steps.' + i + '.v', v)} edit={edit} multiline />
+                            </p>
+                          </div>
+                          <span style={{ fontSize: 11.5, color: t.muted, textAlign: 'right' }}>
+                            <Ed v={f.who || ''} set={v => patch('onbsteps.steps.' + i + '.who', v)} edit={edit} />
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  } />
+                <Foot label="Onboarding" />
+              </div>
+            </Slide>
+          ) })
+
+          // ── 7c · HOSTGPO (Jon, 2026-10-27: "connecting to HostGPO… an additional partner that
+          // we have to get access to great brands and discounts on furniture, furnishings, rugs,
+          // beds, etc., just with the onboarding profile"). Scoped exactly to that, and no savings
+          // percentage is printed: the rates are the partner's, they vary by brand, and a number
+          // here is the one a prospect holds us to.
+          if (!hid('gpo')) slides.push({ key: 'gpo', ai: true, node: (
+            <PitchRows k="gpo" nav="Furnishing" label="Furnishing" note="" />
+          ) })
+
           if (!hid('guesty')) slides.push({ key: 'guesty', ai: true, node: (
             <Slide nav="Owner portal" warn={edit} bleed ground={GROUND.tint}>
               <div style={{ position: 'absolute', inset: 0 }}>
@@ -5513,6 +5766,78 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           }
 
           // ── 8 · OTHER NOTES ───────────────────────────────────────────────
+          // ── 8b · THE VIDEO (Jon, 2026-10-27: "build a video that we can embed into one of
+          // the slides"). NO URL, NO SLIDE — an unfinished video never shows a prospect a grey
+          // box. A YouTube or Vimeo link is embedded; anything else is offered as a link, because
+          // a video that will not play inside the deck still has to be watchable from it.
+          if (!hid('video')) { const vurl = String(sec('video').url || '').trim()
+            const vEmbed = (() => {
+              const yt = vurl.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/)
+              if (yt) return 'https://www.youtube.com/embed/' + yt[1]
+              const vm = vurl.match(/vimeo\.com\/(?:video\/)?(\d{6,})/)
+              if (vm) return 'https://player.vimeo.com/video/' + vm[1]
+              return ''
+            })()
+            if (vurl || edit) slides.push({ key: 'video', node: (
+            <Slide nav="Video" warn={edit} ground={GROUND.dark}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Title k="video" dark />
+                <div className="flex-1 min-h-0 flex items-center justify-center" style={{ marginTop: 20, paddingBottom: 18 }}>
+                  {vEmbed ? (
+                    <iframe src={vEmbed} title="Video" allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture" allowFullScreen
+                      style={{ width: '100%', height: '100%', border: 0, borderRadius: 14, background: '#000' }} />
+                  ) : vurl ? (
+                    // A direct file (mp4/mov) plays inline; anything else at least has to be reachable.
+                    /\.(mp4|webm|mov|m4v)(\?|$)/i.test(vurl)
+                      ? <video src={vurl} controls playsInline style={{ width: '100%', height: '100%', borderRadius: 14, background: '#000', objectFit: 'contain' }} />
+                      : <a href={vurl} target="_blank" rel="noreferrer" style={{ fontSize: 15, color: D.ink, textDecoration: 'underline' }}>Watch the video</a>
+                  ) : (
+                    <p style={{ fontSize: 13.5, color: D.muted, textAlign: 'center', maxWidth: '44ch', lineHeight: 1.6 }}>
+                      Paste a YouTube, Vimeo or .mp4 link below and it plays here. With no link, this slide does not appear in the deck.
+                    </p>
+                  )}
+                </div>
+                {edit ? (
+                  <div className="sb-noprint" style={{ marginBottom: 12 }}>
+                    <p style={{ fontSize: 12, color: D.muted }}>
+                      Video link: <Ed v={vurl} set={v => patch('video.url', v)} edit placeholder="https://youtu.be/…" />
+                    </p>
+                  </div>
+                ) : null}
+                <Foot label="Video" dark />
+              </div>
+            </Slide>
+          ) }) }
+
+          // ── 8c · THE CLOSE (Jon, 2026-10-27) ─────────────────────────────────
+          // The last slide is an ask with four concrete next steps, not a thank-you card.
+          if (!hid('close')) slides.push({ key: 'close', ai: true, node: (
+            <Slide nav="Next steps" warn={edit}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Title k="close" />
+                <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 26 }}>
+                  {((sec('close').rows || []) as Any[]).map((f: Any, i: number) => (
+                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '34px 1fr', columnGap: 16, alignItems: 'baseline', padding: '15px 0', borderTop: '1px solid ' + t.rule }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: t.accent }}>{String(i + 1).padStart(2, '0')}</span>
+                      <div>
+                        <p style={{ fontSize: 17, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
+                          <Ed v={f.k || ''} set={v => patch('close.rows.' + i + '.k', v)} edit={edit} multiline />
+                        </p>
+                        <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 5, maxWidth: '72ch' }}>
+                          <Ed v={f.v || ''} set={v => patch('close.rows.' + i + '.v', v)} edit={edit} multiline />
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                  <p style={{ fontSize: 13, color: t.muted, marginTop: 20 }}>
+                    <Ed v={sec('close').note || ''} set={v => patch('close.note', v)} edit={edit} multiline />
+                  </p>
+                </div>
+                <Foot label="Next steps" />
+              </div>
+            </Slide>
+          ) })
+
           if (!hid('notes')) slides.push({ key: 'notes', node: (
             <Slide nav="Other notes" warn={edit} ground={GROUND.tint}>
               <div className="flex flex-col h-full">

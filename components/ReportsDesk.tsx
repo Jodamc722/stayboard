@@ -85,11 +85,13 @@ export function ReportsDesk() {
   // IS the period — and skips the AI pass, so it generates in a few seconds.
   // 'onboarding' = the welcome presentation for a NEW owner (Jon, 2026-09-16). Also periodless —
   // the unit has no history yet, which is why we are having the call.
-  const [kind, setKind] = useState<'review' | 'projection' | 'onboarding'>('review')
+  const [kind, setKind] = useState<'review' | 'projection' | 'onboarding' | 'sales'>('review')
   const [ownerName, setOwnerName] = useState('')
+  /** Who is presenting the sales deck. Seeds the contact card; the photo is added on the slide. */
+  const [presenter, setPresenter] = useState('')
   const [goLive, setGoLive] = useState('')
   // The list below mixes three document types once you have a few of each; this filters it.
-  const [listKind, setListKind] = useState<'all' | 'review' | 'projection' | 'onboarding'>('all')
+  const [listKind, setListKind] = useState<'all' | 'review' | 'projection' | 'onboarding' | 'sales'>('all')
   const [periodStart, setPeriodStart] = useState(defaults.start)
   const [periodEnd, setPeriodEnd] = useState(defaults.end)
   const [showNew, setShowNew] = useState(false)
@@ -206,7 +208,8 @@ export function ReportsDesk() {
     : scopeMode === 'unit' ? pickedUnits : []
   const scopeLabel = scopeMode === 'owner' ? ownerLabel : scopeMode === 'unit' ? unitLabel : ''
   const byIds = scopeMode === 'owner' || scopeMode === 'unit'
-  const scopeReady = byIds ? scopeIds.length > 0 : picked.length > 0
+  // A sales deck is the one document that does not need a property (see the generator).
+  const scopeReady = kind === 'sales' ? true : (byIds ? scopeIds.length > 0 : picked.length > 0)
   const pickedKey = byIds ? scopeIds.join(',') : picked.join(',')
   useEffect(() => {
     if (!pickedKey) { setStmtList([]); setStmtPicked([]); return }
@@ -249,6 +252,7 @@ export function ReportsDesk() {
     }
     setGenerating(true)
     setMsg(kind === 'projection' ? 'Building the projection report… (~5s)'
+      : kind === 'sales' ? 'Building the sales deck… (~10s)'
       : kind === 'onboarding' ? 'Building the onboarding presentation… (~10s)'
       : 'Pulling data + writing the report… (~30s)')
     try {
@@ -263,6 +267,7 @@ export function ReportsDesk() {
           periodStart, periodEnd,
           ownerName: ownerName || undefined,
           goLive: goLive || undefined,
+          contact: kind === 'sales' && presenter ? { name: presenter } : undefined,
           pacingUrl: pacing ? pacing.url : undefined,
           statementIds: stmtPicked.length ? stmtPicked : undefined,
           heroImageUrl: heroImg ? heroImg.url : undefined,
@@ -286,20 +291,23 @@ export function ReportsDesk() {
 
   // Which kind a stored row is. The kind lives in the title at generation ("… — Owner Onboarding
   // — Sep 16, 2026"), so rows generated before onboarding existed still classify correctly.
-  const kindOfRow = (r: ReportRow): 'review' | 'projection' | 'onboarding' =>
+  const kindOfRow = (r: ReportRow): 'review' | 'projection' | 'onboarding' | 'sales' =>
     /onboarding/i.test(String(r.title || '')) ? 'onboarding'
+      : /proposal/i.test(String(r.title || '')) ? 'sales'
       : /projection/i.test(String(r.title || '')) ? 'projection' : 'review'
   const shownReports = listKind === 'all' ? reports : reports.filter(r => kindOfRow(r) === listKind)
 
-  const nKind = (k: 'review' | 'projection' | 'onboarding') => reports.filter(r => kindOfRow(r) === k).length
-  const KIND_TAG: Record<'review' | 'projection' | 'onboarding', { l: string; t: 'brand' | 'violet' | 'emerald' }> = {
+  const nKind = (k: 'review' | 'projection' | 'onboarding' | 'sales') => reports.filter(r => kindOfRow(r) === k).length
+  const KIND_TAG: Record<'review' | 'projection' | 'onboarding' | 'sales', { l: string; t: 'brand' | 'violet' | 'emerald' | 'amber' }> = {
     review: { l: 'Review', t: 'brand' }, projection: { l: 'Projection', t: 'violet' }, onboarding: { l: 'Onboarding', t: 'emerald' },
+    sales: { l: 'Proposal', t: 'amber' },
   }
   // Hover text for the three document types — the explainer paragraphs that used to sit under the toggle.
-  const KIND_HELP: Record<'review' | 'projection' | 'onboarding', string> = {
+  const KIND_HELP: Record<'review' | 'projection' | 'onboarding' | 'sales', string> = {
     review: 'Performance review for a period: revenue, occupancy, reviews and completed work pulled automatically.',
     projection: 'Next season’s net owner revenue per unit, with property health and ADR-upside recommendations. Edit any wording in place after generating.',
     onboarding: 'The kickoff call as a document: listing reviewed on every channel, strategy, ramp, team, billables and a worked statement. Answers save live on the call; the boilerplate is the house template.',
+    sales: 'A management proposal for someone who has not signed: who we are, how operations works, marketing, distribution, revenue, the technology, onboarding and what happens next. Pick a building to fill it with that building\u2019s photographs, or generate it on a name alone. Share link, PDF and PowerPoint, and every word editable.',
   }
 
   return (
@@ -330,6 +338,10 @@ export function ReportsDesk() {
                 <button onClick={() => setKind('onboarding')} title={KIND_HELP.onboarding}
                   className={'px-3 py-1 text-[12px] font-semibold ' + (kind === 'onboarding' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
                   Owner onboarding
+                </button>
+                <button onClick={() => setKind('sales')} title={KIND_HELP.sales}
+                  className={'px-3 py-1 text-[12px] font-semibold ' + (kind === 'sales' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
+                  Sales deck
                 </button>
               </div>
               {/* THE PROJECTION BUILDER LIVES HERE (Jon, 2026-08-25): projections are built for an
@@ -479,6 +491,23 @@ export function ReportsDesk() {
                     <input type="date" value={periodEnd} onChange={e => setPeriodEnd(e.target.value)} className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
                   </label>
                 </>
+              ) : kind === 'sales' ? (
+                <>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Who it is for</span>
+                    <input value={ownerName} onChange={e => setOwnerName(e.target.value)} placeholder="Owner or developer"
+                      className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Presented by</span>
+                    <input value={presenter} onChange={e => setPresenter(e.target.value)} placeholder="Your name"
+                      className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                  {/* THE PROPERTY IS OPTIONAL ON THIS ONE (2026-10-27). A prospect's unit is
+                      usually not on our account yet, so the deck generates on a name alone; pick
+                      a building we DO run and it fills with that building's own photographs. */}
+                  <span className="pb-2"><Tag title="Pick a building to fill the deck with its photographs, or generate on the name alone">Property optional</Tag></span>
+                </>
               ) : kind === 'onboarding' ? (
                 <>
                   <label className="block">
@@ -497,7 +526,7 @@ export function ReportsDesk() {
               )}
               <button onClick={generate} disabled={generating || !scopeReady}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 text-white text-sm font-semibold px-5 py-2 hover:bg-brand-700 disabled:opacity-50">
-                {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {kind === 'projection' ? 'Generate projection report' : kind === 'onboarding' ? 'Generate onboarding' : 'Generate report'}
+                {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {kind === 'projection' ? 'Generate projection report' : kind === 'onboarding' ? 'Generate onboarding' : kind === 'sales' ? 'Generate sales deck' : 'Generate report'}
               </button>
             </div>
             {picked.length > 0 && (
@@ -609,6 +638,7 @@ export function ReportsDesk() {
           { key: 'review' as const, label: 'Reviews', n: nKind('review') },
           { key: 'projection' as const, label: 'Projections', n: nKind('projection') },
           { key: 'onboarding' as const, label: 'Onboarding', n: nKind('onboarding') },
+          { key: 'sales' as const, label: 'Proposals', n: nKind('sales') },
         ]}
         value={listKind} onChange={setListKind} />
       {loading ? (
