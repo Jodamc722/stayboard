@@ -4579,7 +4579,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + (((sec('experience').items || []) as Any[]).length > 8 ? 6 : 4) + ',1fr)', gap: ((sec('experience').items || []) as Any[]).length > 8 ? '14px 14px' : '18px 20px' }}>
                     {(sec('experience').items || []).map((f: Any, i: number) => (
                       <div key={i} style={{ minWidth: 0 }}>
-                        <div style={{ position: 'relative', overflow: 'hidden', width: '100%', aspectRatio: '4 / 3', borderRadius: 10, background: t.chip, border: '1px solid ' + t.cardBorder }}>
+                        <div style={{ position: 'relative', overflow: 'hidden', width: '100%', aspectRatio: ((sec('experience').items || []) as Any[]).length > 8 ? '3 / 2' : '4 / 3', borderRadius: 10, background: t.chip, border: '1px solid ' + t.cardBorder }}>
                           {f.pic ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={String(f.pic)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -4598,7 +4598,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           )}
                         </div>
                         {/* Name only under the picture (Jon, 2026-09-24: "No descriptions actually"). */}
-                        <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, letterSpacing: '-0.01em', lineHeight: 1.3, marginTop: 9 }}>
+                        <p style={{ fontSize: ((sec('experience').items || []) as Any[]).length > 8 ? 12 : 13.5, fontWeight: 600, color: t.ink, letterSpacing: '-0.01em', lineHeight: 1.3, marginTop: ((sec('experience').items || []) as Any[]).length > 8 ? 7 : 9 }}>
                           <Ed v={f.k || ''} set={v => patch('experience.items.' + i + '.k', v)} edit={edit} multiline />
                         </p>
                       </div>
@@ -5141,23 +5141,20 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 <Split k="edge" leftW={330}
                   left={
                     <>
-                      <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder }}>
+                      <p style={{ fontSize: 13.5, lineHeight: 1.55, color: t.body, marginTop: 16, paddingTop: 14, borderTop: '1px solid ' + t.cardBorder }}>
                         <Ed v={eg.body || ''} set={v => patch('edge.body', v)} edit={edit} multiline />
                       </p>
                       {eg.pro && eg.pro.revenue ? (
                         <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                          {[[eg.pro.revenue, 'more revenue'], [eg.pro.rate, 'higher nightly rate']].map(([n, l]) => (
+                          {[[eg.pro.revenue, 'more revenue than owner-run homes'], [eg.pro.rate, 'higher nightly rate than owner-run']].map(([n, l]) => (
                             <div key={String(l)} style={{ background: t.chip, borderRadius: 10, padding: '11px 14px' }}>
                               <p style={{ fontFamily: SERIF, fontSize: 26, color: t.accent, margin: 0, letterSpacing: '-0.02em' }}>+{String(n)}%</p>
                               <p style={{ fontSize: 11, color: t.muted, margin: '3px 0 0', lineHeight: 1.35 }}>{String(l)}</p>
                             </div>
                           ))}
-                          <p style={{ gridColumn: '1 / -1', fontSize: 11.5, color: t.muted, margin: 0, lineHeight: 1.45 }}>
-                            Professionally managed homes against owner-run homes of the same size, across {String(eg.benchLabel || 'the market')}.
-                          </p>
                         </div>
                       ) : null}
-                      <p style={{ fontSize: 10, lineHeight: 1.45, color: t.muted, marginTop: 12 }}>
+                      <p style={{ fontSize: 9.5, lineHeight: 1.4, color: t.muted, marginTop: 10 }}>
                         <Ed v={eg.note || ''} set={v => patch('edge.note', v)} edit={edit} multiline />
                         {eg.source ? ' Source: ' + String(eg.source) + '.' : ''}
                       </p>
@@ -6942,7 +6939,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 <div className="flex-1 min-h-0" style={{ marginTop: 26, display: 'grid', gridTemplateColumns: isSales && (edit || String(closeCard.name || '').trim()) ? '1fr 330px' : '1fr', gap: 40 }}>
                 <div className="min-h-0 onb-scroll">
                   {((sec('close').rows || []) as Any[]).map((f: Any, i: number) => (
-                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '34px 1fr', columnGap: 16, alignItems: 'baseline', padding: '15px 0', borderTop: '1px solid ' + t.rule }}>
+                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '34px 1fr', columnGap: 16, alignItems: 'baseline', padding: isSales ? '11px 0' : '15px 0', borderTop: '1px solid ' + t.rule }}>
                       <span style={{ fontSize: 12.5, fontWeight: 700, color: t.accent }}>{String(i + 1).padStart(2, '0')}</span>
                       <div>
                         <p style={{ fontSize: 17, fontWeight: 600, color: t.ink, lineHeight: 1.3 }}>
@@ -6954,7 +6951,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       </div>
                     </div>
                   ))}
-                  <p style={{ fontSize: 13, color: t.muted, marginTop: 20 }}>
+                  <p style={{ fontSize: 13, color: t.muted, marginTop: isSales ? 12 : 20 }}>
                     <Ed v={sec('close').note || ''} set={v => patch('close.note', v)} edit={edit} multiline />
                   </p>
                 </div>

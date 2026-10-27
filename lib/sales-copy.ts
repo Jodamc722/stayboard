@@ -495,7 +495,7 @@ export const EDGE_SUBTITLE = 'Same size of home, same twelve months.'
 export const EDGE_BODY =
   'Most homes in this market are run by their owners, or by a manager who lists them and waits. The gap between that and a home that is priced, sold and serviced every day is not a few percent.'
 export const EDGE_NOTE =
-  'Ours: every home we ran for the whole twelve months, all channels, gross booking revenue. Theirs: entire homes listed all twelve months, Airbnb booking revenue.'
+  'Ours: homes we ran all twelve months, every channel. Theirs: entire homes listed all twelve months, Airbnb only.'
 
 // ── 18 · REAL RETURNS BY BUILDING ───────────────────────────────────────────
 // Nick Carline's brief, 2026-10-27: "Real returns by building. Annual gross, occupancy and nightly

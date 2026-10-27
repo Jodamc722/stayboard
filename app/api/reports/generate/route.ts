@@ -333,6 +333,10 @@ export async function POST(req: NextRequest) {
         const names = lead.filter(b => pools[b] && pools[b].length).concat(Object.keys(pools).filter(b => lead.indexOf(b) < 0))
         const pool: string[] = []
         for (let k = 0; k < 3; k++) for (const b of names) { const p = (pools[b] || [])[k]; if (p && pool.indexOf(p) < 0) pool.push(p) }
+        // Guesty's first frames are sometimes amenity collages with words printed on them — the
+        // one kind of picture a section photo must never be — so the pool is screened first.
+        const clean = pool.length ? await withoutCollages(pool, pool.length) : []
+        pool.splice(0, pool.length, ...clean)
         if (pool.length) {
           cs.photoPool = pool
           if (cs.hero && !cs.hero.heroImage) cs.hero.heroImage = pool[0]
