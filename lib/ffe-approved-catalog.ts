@@ -111,6 +111,22 @@ function jsonCatalog(slug: string): Catalog {
 
 // ---------- read ----------
 
+// MIGRATION 165 COLUMNS (need / qty / qty_per on items, tier on options). Writes only send them once
+// they exist: before 165 the database API rejects an unknown column and the whole row fails, which
+// would quietly make empty catalogs. Checked at most once a minute.
+let has165Cache: { at: number; ok: boolean } | null = null
+async function has165(): Promise<boolean> {
+  if (has165Cache && Date.now() - has165Cache.at < 60_000) return has165Cache.ok
+  let ok = false
+  try {
+    const db = supabaseAdmin()
+    const [a, b] = await Promise.all([db.from('ffe_catalog_items').select('need, qty, qty_per').limit(1), db.from('ffe_catalog_options').select('tier').limit(1)])
+    ok = !a.error && !b.error
+  } catch { ok = false }
+  has165Cache = { at: Date.now(), ok }
+  return ok
+}
+
 async function tablesReady(): Promise<boolean> {
   try { const { error } = await supabaseAdmin().from('ffe_catalogs').select('slug').limit(1); return !error } catch { return false }
 }
@@ -121,21 +137,38 @@ async function tablesReady(): Promise<boolean> {
  *  request landing at the same moment) sees the conflict and writes nothing. Loads never call
  *  ensureSeeded again from inside this path (loadCatalog, not getCatalog), so it cannot recurse. */
 let seedOnce: Promise<void> | null = null
+let essentialsDone = false
 async function ensureSeeded(): Promise<void> {
-  if (!seedOnce) seedOnce = seedNow().then(seedEssentials).catch(() => { seedOnce = null })
-  return seedOnce
+  if (!seedOnce) seedOnce = seedNow().catch(() => { seedOnce = null })
+  await seedOnce
+  // The essentials half waits for migration 165 and is re-checked (at most once a minute, via has165)
+  // until it has run here, so applying 165 to a running deployment needs no restart.
+  if (!essentialsDone) { try { essentialsDone = await seedEssentials() } catch { /* next read tries again */ } }
 }
 
 /** Migration 165's half of the seed: the onboarding essentials (sections, quantity rules, a pick per
  *  tier) and the tiered furniture the sheet lacks go onto the DEFAULT, and the sheet's real amenities
- *  get their section and quantity rule. Runs once: skipped when the default already has 'ess-' items
- *  or when 165 has not run (the need column is missing). */
-async function seedEssentials(): Promise<void> {
+ *  get their section and quantity rule. One writer at a time: a marker row ('_seed-essentials', kept
+ *  archived so no list shows it) is claimed with an insert only one request can win; it is marked
+ *  done at the end, and a run that died midway is retried after five minutes — every step is
+ *  idempotent (items upsert by key, an item's options are replaced). Returns true once done. */
+const SEED_MARK = '_seed-essentials'
+async function seedEssentials(): Promise<boolean> {
+  if (!(await has165())) return false
   const db = supabaseAdmin()
-  const probe = await db.from('ffe_catalog_items').select('id, need').eq('catalog', DEFAULT_SLUG).like('key', 'ess-%').limit(1)
-  if (probe.error || (probe.data || []).length) return
+  const { data: marks } = await db.from('ffe_catalogs').select('notes, created_at').eq('slug', SEED_MARK).limit(1)
+  const mark = (marks || [])[0]
+  if (mark?.notes === 'done') return true
+  if (mark) {
+    if (Date.now() - new Date(mark.created_at).getTime() < 5 * 60_000) return false          // someone is seeding
+    const { data: claimed } = await db.from('ffe_catalogs').update({ created_at: new Date().toISOString() }).eq('slug', SEED_MARK).eq('created_at', mark.created_at).select('slug')
+    if (!(claimed || []).length) return false
+  } else {
+    const { error } = await db.from('ffe_catalogs').insert({ slug: SEED_MARK, name: 'Seed marker', kind: 'marker', notes: 'running', archived_at: new Date().toISOString() })
+    if (error) return false                                                                      // another request won the claim
+  }
   const { essentialsSeed, AMENITY_RULES, FURNITURE_TIER_BY_SUPPLIER } = await import('./ffe-essentials-seed')
-  const { data: last } = await db.from('ffe_catalog_items').select('sort').eq('catalog', DEFAULT_SLUG).order('sort', { ascending: false }).limit(1)
+  const { data: last } = await db.from('ffe_catalog_items').select('sort').eq('catalog', DEFAULT_SLUG).not('key', 'like', 'ess-%').not('key', 'like', 'fur-%').order('sort', { ascending: false }).limit(1)
   const base = ((last || [])[0]?.sort ?? 0) + 1
   const seed = essentialsSeed()
   for (let i = 0; i < seed.length; i++) {
@@ -157,6 +190,8 @@ async function seedEssentials(): Promise<void> {
       if (ids.length) await db.from('ffe_catalog_options').update({ tier }).in('item_id', ids).eq('src', src).is('tier', null)
     }
   }
+  await db.from('ffe_catalogs').update({ notes: 'done' }).eq('slug', SEED_MARK)
+  return true
 }
 
 /** Bring a catalog up to the default: items it lacks are copied in (with their options), and items
@@ -165,17 +200,21 @@ export async function syncFromDefault(slug: string): Promise<{ ok: boolean; erro
   if (slug === DEFAULT_SLUG) return { ok: false, error: 'This is the default.' }
   const [def, cat] = await Promise.all([getCatalog(DEFAULT_SLUG), getCatalog(slug)])
   if (!def || !cat) return { ok: false, error: 'Unknown catalog.' }
-  const have = new Map(cat.items.map(i => [i.key, i]))
-  const missing = def.items.filter(i => !have.has(i.key))
-  if (missing.length) await writeItems(slug, missing)
-  let updated = 0
   const db = supabaseAdmin()
+  const have = new Map(cat.items.map(i => [i.key, i]))
+  // Every key the property ever had, archived ones too: an item the team removed stays removed.
+  const { data: allKeys } = await db.from('ffe_catalog_items').select('key, sort').eq('catalog', slug)
+  const known = new Set((allKeys || []).map((r: any) => String(r.key)))
+  const maxSort = Math.max(0, ...(allKeys || []).map((r: any) => Number(r.sort) || 0))
+  const missing = def.items.filter(i => !known.has(i.key))
+  const added = missing.length ? await writeItems(slug, missing, maxSort + 1) : 0
+  let updated = 0
   for (const d of def.items) {
     const c = have.get(d.key); if (!c || !c.id || c.need || !d.need) continue
     const { error } = await db.from('ffe_catalog_items').update({ section: d.section, category: d.category, need: d.need, qty: d.qty ?? 1, qty_per: d.qtyPer || 'unit' }).eq('id', c.id)
     if (!error) updated++
   }
-  return { ok: true, added: missing.length, updated }
+  return { ok: true, added, updated }
 }
 async function seedNow(): Promise<void> {
   const db = supabaseAdmin()
@@ -193,19 +232,27 @@ async function seedNow(): Promise<void> {
   }
 }
 
-async function writeItems(slug: string, items: CatalogItem[]) {
+async function writeItems(slug: string, items: CatalogItem[], sortBase = 0): Promise<number> {
   const db = supabaseAdmin()
+  const v165 = await has165()
+  let written = 0
   for (let i = 0; i < items.length; i++) {
     const it = items[i]
-    const { data: row, error } = await db.from('ffe_catalog_items')
-      .upsert({ catalog: slug, key: it.key, section: it.section, category: it.category, name: it.name, sort: i, need: it.need ?? null, qty: it.qty ?? 1, qty_per: it.qtyPer || 'unit' }, { onConflict: 'catalog,key' })
-      .select('id').single()
+    const itemRow: any = { catalog: slug, key: it.key, section: v165 || it.section !== 'essential' ? it.section : 'amenity', category: it.category, name: it.name, sort: sortBase + i }
+    if (v165) { itemRow.need = it.need ?? null; itemRow.qty = it.qty ?? 1; itemRow.qty_per = it.qtyPer || 'unit' }
+    const { data: row, error } = await db.from('ffe_catalog_items').upsert(itemRow, { onConflict: 'catalog,key' }).select('id').single()
     if (error || !row) continue
+    written++
     // Idempotent: a re-run (a seed that died midway) replaces this item's options instead of doubling them.
     await db.from('ffe_catalog_options').delete().eq('item_id', row.id)
-    const opts = it.options.map((o, j) => ({ item_id: row.id, src: o.src, vendor: o.vendor, name: o.name, url: o.url || null, price: o.price ?? null, each: o.each || null, image_url: o.image || null, chips: o.chips || [], fit: o.fit || 'contain', sort: j, tier: o.tier ?? null }))
+    const opts = it.options.map((o, j) => {
+      const r: any = { item_id: row.id, src: o.src, vendor: o.vendor, name: o.name, url: o.url || null, price: o.price ?? null, each: o.each || null, image_url: o.image || null, chips: o.chips || [], fit: o.fit || 'contain', sort: j }
+      if (v165) r.tier = o.tier ?? null
+      return r
+    })
     if (opts.length) await db.from('ffe_catalog_options').insert(opts)
   }
+  return written
 }
 
 /** Read one catalog from the tables, no seeding, no fallback. */
@@ -262,7 +309,11 @@ export async function cloneCatalog(fromSlug: string, slug: string, name: string,
   const db = supabaseAdmin()
   const { error } = await db.from('ffe_catalogs').insert({ slug, name: name || slug, kind: 'property', based_on: fromSlug, suppliers: src.suppliers, created_by: who })
   if (error) return { ok: false, error: /duplicate|unique|23505/i.test(error.message) ? 'That slug is taken.' : error.message }
-  await writeItems(slug, src.items)
+  const written = await writeItems(slug, src.items)
+  if (src.items.length && !written) {
+    await db.from('ffe_catalogs').delete().eq('slug', slug)
+    return { ok: false, error: 'The catalog items did not save — check the catalog migrations (162–165) have run.' }
+  }
   if (copyDecisions) {
     const d = await readDecisions(fromSlug)
     const rows = Object.entries(d).map(([k, v]) => ({ property: slug, item_key: k, approved: v.approved, rejected: v.rejected, note: v.note || null, updated_by: who, updated_at: new Date().toISOString() }))
@@ -295,17 +346,22 @@ export async function archiveCatalog(slug: string) {
 export async function addItem(slug: string, d: { name: unknown; category: unknown; section: unknown }) {
   if (!(await tablesReady())) return { ok: false, error: 'Run migration 163 first.' }
   const name = str(d.name).slice(0, 160); if (!name) return { ok: false, error: 'Give the item a name.' }
-  const section = ['compare', 'vendor', 'amenity'].includes(str(d.section)) ? str(d.section) : 'vendor'
+  const v165 = await has165()
+  const asked = str(d.section)
+  const section = asked === 'essential' && v165 ? 'essential' : ['compare', 'vendor', 'amenity'].includes(asked) ? asked : asked === 'essential' ? 'amenity' : 'vendor'
   const category = str(d.category).slice(0, 60) || 'Other'
   const db = supabaseAdmin()
   const { data: last } = await db.from('ffe_catalog_items').select('sort').eq('catalog', slug).order('sort', { ascending: false }).limit(1)
   const key = 'x-' + randomBytes(4).toString('hex')
-  const { data, error } = await db.from('ffe_catalog_items').insert({ catalog: slug, key, section, category, name, sort: ((last || [])[0]?.sort ?? 0) + 1 }).select('id, key').single()
+  const row: any = { catalog: slug, key, section, category, name, sort: ((last || [])[0]?.sort ?? 0) + 1 }
+  if (section === 'essential') { row.need = 'suggested'; row.qty = 1; row.qty_per = 'unit' }   // starts as a suggestion; change it on Manage
+  const { data, error } = await db.from('ffe_catalog_items').insert(row).select('id, key').single()
   return error ? { ok: false, error: error.message } : { ok: true, id: data?.id, key: data?.key }
 }
 
 export async function updateItem(itemId: string, d: { name?: unknown; category?: unknown; archive?: unknown; need?: unknown; qty?: unknown; qtyPer?: unknown }) {
   const row: any = {}
+  if ((d.need !== undefined || d.qty !== undefined || d.qtyPer !== undefined) && !(await has165())) return { ok: false, error: 'Run migration 165 first (sections and quantity rules).' }
   if (d.need !== undefined) row.need = NEEDS_OK.includes(String(d.need)) ? String(d.need) : null
   if (d.need !== undefined && row.need) row.section = 'essential'
   if (d.qty !== undefined) { const q = num(d.qty); if (q != null && q > 0 && q < 1000) row.qty = q }
@@ -335,12 +391,13 @@ export async function addOption(itemId: string, d: { src: unknown; name: unknown
   const taken = new Set((existing || []).map((o: any) => String(o.src)))
   let key = src; for (let n = 2; taken.has(key); n++) key = `${src}-${n}`
   const sort = Math.max(0, ...(existing || []).map((o: any) => Number(o.sort) || 0)) + 1
-  const { data, error } = await db.from('ffe_catalog_options').insert({ item_id: itemId, src: key, vendor: SUPPLIER_NAME(src), name, url, price: num(d.price), each: str(d.each).slice(0, 40) || null, image_url: image, chips, fit: 'contain', sort, tier: tierOf(d.tier) }).select('id').single()
+  const { data, error } = await db.from('ffe_catalog_options').insert({ item_id: itemId, src: key, vendor: SUPPLIER_NAME(src), name, url, price: num(d.price), each: str(d.each).slice(0, 40) || null, image_url: image, chips, fit: 'contain', sort, ...((await has165()) ? { tier: tierOf(d.tier) } : {}) }).select('id').single()
   return error ? { ok: false, error: error.message } : { ok: true, id: data?.id }
 }
 
 export async function updateOption(optionId: string, d: { name?: unknown; url?: unknown; price?: unknown; each?: unknown; image?: unknown; archive?: unknown; tier?: unknown }) {
   const row: any = {}
+  if (d.tier !== undefined && !(await has165())) return { ok: false, error: 'Run migration 165 first (tiers).' }
   if (d.tier !== undefined) row.tier = tierOf(d.tier)
   if (typeof d.name === 'string' && d.name.trim()) row.name = d.name.trim().slice(0, 200)
   if (typeof d.url === 'string') row.url = /^https?:\/\//i.test(d.url.trim()) ? d.url.trim().slice(0, 1000) : null
@@ -412,6 +469,9 @@ export async function setShare(property: string, who: string, regenerate: boolea
   return { ok: true, code, mode: mode || 'view' }
 }
 
+/** An option that is still a supplier search page, not a product (the starter seed's links). */
+export const isSearchOption = (o: CatalogOption) => (o.chips || []).some(c => /^Search/.test(c)) || /amazon\.com\/s\?|\/search\?|keyword\.php|catalogsearch/i.test(o.url || '')
+
 /** Hide FURNITURE options whose supplier is not on the catalog's pick list (empty list = everything
  *  allowed). Onboarding essentials are left alone: their tier picks the option, and an iron from
  *  Amazon is fine in a luxury unit where an Amazon sofa is not. */
@@ -440,11 +500,13 @@ export async function readShared(code: string, count = false): Promise<{ catalog
   const decisions: Record<string, Decision> = {}
   const items: CatalogItem[] = []
   const strip = (o: CatalogOption) => ({ ...o, id: undefined })
+  // A search link is a starting point for the team, not a product an owner can pick.
+  const pickable = (o: CatalogOption) => (o.price != null || o.url) && !isSearchOption(o)
   for (const it of full.items) {
     const d = all[it.key]
     if (mode === 'select') {
       if (d?.rejected) continue
-      const options = it.options.filter(o => o.price != null || o.url).map(strip)
+      const options = it.options.filter(pickable).map(strip)
       if (!options.length) continue
       items.push({ ...it, id: undefined, options })
       if (d && d.approved.length) decisions[it.key] = { approved: d.approved, rejected: false, note: d.note, updatedBy: null, updatedAt: null, ownerPicked: !!d.ownerPicked }
@@ -472,7 +534,7 @@ export async function ownerPick(code: string, itemKey: string, src: string | nul
   if (!loaded) return { ok: false, error: 'not found' }
   const it = applySuppliers(loaded).items.find(i => i.key === itemKey)
   if (!it) return { ok: false, error: 'Unknown item.' }
-  if (src !== null && !it.options.some(o => o.src === src && (o.price != null || o.url))) return { ok: false, error: 'Unknown option.' }
+  if (src !== null && !it.options.some(o => o.src === src && (o.price != null || o.url) && !isSearchOption(o))) return { ok: false, error: 'Unknown option.' }
   const { error } = await db.from('ffe_approved_decisions').upsert({
     property, item_key: itemKey, approved: src ? [src] : [], rejected: false, owner_picked: !!src, updated_by: 'owner via link', updated_at: new Date().toISOString(),
   }, { onConflict: 'property,item_key' })
@@ -493,7 +555,7 @@ async function createOrder(unit: { id: string; name: string; building: string; o
   if (ins.error) return { ok: false, error: ins.error.message }
   const order = (ins.data || [])[0]
   const r = await db.from('ffe_order_lines').insert(lines.map(l => ({ ...l, listing_id: unit.id, unit_name: unit.name, building: unit.building, order_id: order.id, stage: 'draft', updated_at: now })))
-  if (r.error) return { ok: false, error: r.error.message }
+  if (r.error) { await db.from('ffe_orders').delete().eq('id', order.id); return { ok: false, error: r.error.message } }
   return { ok: true, id: order.id as string, orderNo: order.order_no as string, lines: lines.length }
 }
 

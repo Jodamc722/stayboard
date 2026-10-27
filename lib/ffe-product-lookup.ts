@@ -12,7 +12,7 @@ import 'server-only'
 export type Lookup = { ok: boolean; url: string; supplier: string | null; name: string | null; price: number | null; image: string | null; blocked?: boolean; error?: string }
 
 const HOSTS: [RegExp, string][] = [
-  [/(^|\.)amazon\.com$|(^|\.)amzn\.(to|com)$|a\.co$/i, 'amz'],
+  [/(^|\.)amazon\.com$|(^|\.)amzn\.(to|com)$|(^|\.)a\.co$/i, 'amz'],
   [/(^|\.)walmart\.com$/i, 'walmart'],
   [/(^|\.)target\.com$/i, 'target'],
   [/(^|\.)hostgpo\.com$|(^|\.)article\.com$/i, 'host'],
@@ -59,17 +59,41 @@ export function supplierFor(url: string): string | null {
   return null
 }
 
+async function readCapped(r: Response, max: number): Promise<string> {
+  const reader = r.body?.getReader(); if (!reader) return ''
+  const dec = new TextDecoder(); let out = ''
+  while (out.length < max) { const { done, value } = await reader.read(); if (done) break; out += dec.decode(value, { stream: true }) }
+  try { await reader.cancel() } catch { /* already closed */ }
+  return out.slice(0, max)
+}
+
+/** Only supplier sites, only https on the normal port: the server fetches what a person pasted, so
+ *  the supplier table above is the allowlist, and every redirect hop is checked against it too. */
+function allowed(u: string): boolean {
+  try { const x = new URL(u); return x.protocol === 'https:' && (x.port === '' || x.port === '443') && !!supplierFor(u) } catch { return false }
+}
+
 export async function lookupProduct(raw: string): Promise<Lookup> {
   const url = String(raw || '').trim()
   if (!/^https?:\/\//i.test(url)) return { ok: false, url, supplier: null, name: null, price: null, image: null, error: 'Paste a full product link (https://…).' }
   const supplier = supplierFor(url)
+  if (!allowed(url)) return { ok: true, url, supplier, name: null, price: null, image: null, blocked: true, error: supplier ? undefined : 'Not a supplier Lighthouse reads — type the name and price.' }
   let html = ''
   try {
-    const r = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(9000), headers: {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml', 'Accept-Language': 'en-US,en;q=0.9' } })
-    const ct = r.headers.get('content-type') || ''
-    if (r.ok && ct.includes('html')) html = (await r.text()).slice(0, 1_500_000)
+    let at = url
+    for (let hop = 0; hop < 4; hop++) {
+      const r = await fetch(at, { redirect: 'manual', signal: AbortSignal.timeout(9000), headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml', 'Accept-Language': 'en-US,en;q=0.9' } })
+      if (r.status >= 300 && r.status < 400) {
+        const next = r.headers.get('location'); if (!next) break
+        const abs = new URL(next, at).toString(); if (!allowed(abs)) break
+        at = abs; continue
+      }
+      const ct = r.headers.get('content-type') || ''
+      if (r.ok && ct.includes('html')) html = await readCapped(r, 1_500_000)
+      break
+    }
   } catch { /* blocked or slow — fall through with what the address tells us */ }
   const title = html ? (meta(html, 'og:title') || decode(html.match(/<title[^>]*>([^<]*)/i)?.[1] || '')) : ''
   const blocked = !html || /robot check|captcha|access denied|are you a human|pardon our interruption/i.test(title + html.slice(0, 4000))
