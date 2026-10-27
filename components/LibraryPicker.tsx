@@ -9,7 +9,10 @@
 // a picture is added, so a library pick costs no upload at all.
 //
 // Opens on the target's own property (the Elser case: the same lobby, pool and gym shots), then any
-// property or unit by search. Buttons, not menus; every icon says what it does.
+// property or unit by search. The search is smart (Jon: "17west pool", "elser pool"): every word has
+// to land on the photo — its unit or property, its caption, or what the photo analysis saw — so the
+// results are photos across units, grouped by unit, each one pickable (/api/photos/library?search=).
+// Buttons, not menus; every icon says what it does.
 import { useEffect, useMemo, useState } from 'react'
 import { Check, CheckSquare, Images, Search, Square, X } from 'lucide-react'
 import { useCachedFetch } from '@/lib/swr'
@@ -20,6 +23,8 @@ type Unit = { id: string; name: string; title: string | null; building: string; 
 type Building = { name: string; market: string; units: Unit[]; photos: number }
 type IndexRes = { ok: boolean; error?: string; buildings: Building[] }
 type UnitRes = { ok: boolean; error?: string; unit: Unit; photos: Photo[] }
+type Hit = Photo & { listingId: string; unit: string; building: string; market: string; active: boolean; why: string[] }
+type SearchRes = { ok: boolean; error?: string; q: string; hits: Hit[]; total: number; units: number; words: string[] }
 
 export type LibraryPick = { url: string; caption: string; thumb: string; fromListingId: string; fromUnit: string; picId: string; width: number | null; height: number | null }
 
@@ -43,6 +48,9 @@ export function LibraryPicker({ open, onClose, onPick, startBuilding, startListi
   const [b, setB] = useState<string>('')
   const [u, setU] = useState<string>('')
   const [q, setQ] = useState('')
+  // The photo search waits for the typing to pause; the unit chips follow every keystroke.
+  const [dq, setDq] = useState('')
+  useEffect(() => { const t = setTimeout(() => setDq(q.trim()), 300); return () => clearTimeout(t) }, [q])
   const [picked, setPicked] = useState<Map<string, LibraryPick>>(new Map())
   const [busy, setBusy] = useState(false)
   useEffect(() => { if (open) { setPicked(new Map()); setQ(''); setU(''); setB(startBuilding || '') } }, [open, startBuilding])
@@ -73,6 +81,18 @@ export function LibraryPicker({ open, onClose, onPick, startBuilding, startListi
     }
     return out.slice(0, 40)
   }, [buildings, q, excludeListingId])
+  const srch = useCachedFetch<SearchRes>(open && dq ? '/api/photos/library?search=' + encodeURIComponent(dq) : null, { ttl: 600_000, persist: false, live: false })
+  const found = useMemo(() => (srch.data?.hits || []).filter(h => h.listingId !== excludeListingId), [srch.data, excludeListingId])
+  const groups = useMemo(() => {
+    const m = new Map<string, { id: string; unit: string; building: string; active: boolean; hits: Hit[] }>()
+    for (const h of found) { const g = m.get(h.listingId) || { id: h.listingId, unit: h.unit, building: h.building, active: h.active, hits: [] }; g.hits.push(h); m.set(h.listingId, g) }
+    return Array.from(m.values())
+  }, [found])
+  const hkey = (h: Hit) => h.listingId + ':' + h.id
+  const pickOf = (h: Hit): LibraryPick => ({ url: h.url, caption: h.caption, thumb: h.thumb, fromListingId: h.listingId, fromUnit: h.unit, picId: h.id, width: h.width, height: h.height })
+  const toggleHit = (h: Hit) => setPicked(prev => { const n = new Map(prev); const k = hkey(h); if (n.has(k)) n.delete(k); else n.set(k, pickOf(h)); return n })
+  const pickMany = (hs: Hit[]) => setPicked(prev => { const n = new Map(prev); const all = hs.every(h => n.has(hkey(h))); for (const h of hs) { const k = hkey(h); if (all) n.delete(k); else if (!n.has(k)) n.set(k, pickOf(h)) } return n })
+  const searching = !!hits && (q.trim() !== dq || (srch.loading && !srch.data))
   const unitRes = useCachedFetch<UnitRes>(open && u ? '/api/photos/library?listing=' + encodeURIComponent(u) : null, { ttl: 600_000 })
   const photos = unitRes.data?.photos || []
   const unitMeta = unitRes.data?.unit || units.find(x => x.id === u) || null
@@ -98,7 +118,7 @@ export function LibraryPicker({ open, onClose, onPick, startBuilding, startListi
           </div>
           <div className="ml-auto relative">
             <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
-            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Unit or property…" className="w-52 rounded-lg border border-line bg-white pl-7 pr-7 py-1.5 text-[12.5px]" />
+            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="elser pool · 17west gym · 511…" title="A unit, a property, or what the photo shows — every word has to match" className="w-60 rounded-lg border border-line bg-white pl-7 pr-7 py-1.5 text-[12.5px]" />
             {q && <button onClick={() => setQ('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink" title="Clear"><X size={12} /></button>}
           </div>
           <button onClick={onClose} className="rounded-lg border border-line p-1.5 text-muted hover:text-ink" title="Close"><X size={14} /></button>
@@ -107,10 +127,10 @@ export function LibraryPicker({ open, onClose, onPick, startBuilding, startListi
         <div className="px-4 py-2 border-b border-line space-y-1.5 max-h-[32vh] overflow-y-auto shrink-0">
           {hits ? (
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-muted mr-1">Found</span>
-              {hits.length === 0 ? <span className="text-[12px] text-muted">No unit matches.</span> : (
-                <LeanPick size="sm" value={u} onPick={id => { const hit = hits.find(x => x.id === id); if (hit) { setB(hit.building); setU(hit.id) } }}
-                  options={hits.map(h => ({ v: h.id, label: <>{h.name} <span className="opacity-60">{h.building} · {h.photos}</span></> }))} />
+              <span className="text-[11px] font-bold uppercase tracking-wider text-muted mr-1">Units</span>
+              {hits.length === 0 ? <span className="text-[12px] text-muted">No unit by that name — the photos below are matched by what they show.</span> : (
+                <LeanPick size="sm" value="" onPick={id => { const hit = hits.find(x => x.id === id); if (hit) { setQ(''); setB(hit.building); setU(hit.id) } }}
+                  options={hits.map(h => ({ v: h.id, label: <>{h.name} <span className="opacity-60">{h.building} · {h.photos}</span></>, title: 'Browse ' + h.name }))} />
               )}
             </div>
           ) : (
@@ -134,7 +154,44 @@ export function LibraryPicker({ open, onClose, onPick, startBuilding, startListi
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
-          {!u ? <p className="text-[12.5px] text-muted">Pick a unit to see its photos.</p>
+          {hits ? (
+            searching ? <p className="text-[12.5px] text-muted">Searching the photos…</p>
+            : srch.error && !srch.data ? <p className="text-[12.5px] text-rose-700">Could not search: {srch.error}</p>
+            : found.length === 0 ? <p className="text-[12.5px] text-muted">No photo matches “{dq}”. Try a property and what the photo shows — <i>elser pool</i>, <i>17west gym</i>, <i>bedroom king</i>.</p> : (
+              <>
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                  <span className="text-[12.5px] font-semibold text-ink">{found.length}{srch.data && srch.data.total > srch.data.hits.length ? ' of ' + srch.data.total : ''} photo{found.length === 1 ? '' : 's'} in {groups.length} unit{groups.length === 1 ? '' : 's'}</span>
+                  <span className="text-[11.5px] text-muted">match “{dq}” — tap to pick</span>
+                  {srch.data && srch.data.total > srch.data.hits.length && <Tag title="Add a word to narrow it — the unit number, or what the photo shows">first {srch.data.hits.length} shown</Tag>}
+                  <button onClick={() => pickMany(found)} className={ghost + ' ml-auto'}>{found.every(h => picked.has(hkey(h))) ? <Square size={13} /> : <CheckSquare size={13} />} {found.every(h => picked.has(hkey(h))) ? 'Unpick all found' : 'Pick all found'}</button>
+                </div>
+                <div className="space-y-3">
+                  {groups.map(g => (
+                    <div key={g.id}>
+                      <div className="flex items-center gap-1.5 mb-1.5 flex-wrap text-[12px]">
+                        <button onClick={() => { setQ(''); setB(g.building); setU(g.id) }} className="font-semibold text-ink hover:underline" title={'Browse every photo of ' + g.unit}>{g.unit}</button>
+                        <span className="text-muted">{g.building} · {g.hits.length} photo{g.hits.length === 1 ? '' : 's'}</span>
+                        {!g.active && <Tag title="This listing is not active in Guesty — its photos are still here to reuse">offline</Tag>}
+                        <button onClick={() => pickMany(g.hits)} className="text-[11.5px] text-muted hover:text-ink ml-1" title={'Pick every matching photo of ' + g.unit}>{g.hits.every(h => picked.has(hkey(h))) ? 'Unpick these' : 'Pick these'}</button>
+                      </div>
+                      <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+                        {g.hits.map(h => {
+                          const on = picked.has(hkey(h))
+                          return (
+                            <button key={hkey(h)} onClick={() => toggleHit(h)} className={'relative rounded-xl overflow-hidden border aspect-[4/3] bg-slate-100 text-left ' + (on ? 'border-ink ring-2 ring-brand-100' : 'border-line hover:border-ink/40')} title={(h.caption || 'No caption') + ' · ' + h.unit + (h.width && h.height ? ' · ' + h.width + '×' + h.height : '') + ' · matched ' + h.why.join(', ')}>
+                              <img src={h.thumb} alt={h.caption} loading="lazy" className="w-full h-full object-cover" />
+                              <span className={'absolute top-1 right-1 rounded-md p-1 ' + (on ? 'bg-ink text-white' : 'bg-white/90 border border-line text-ink')}>{on ? <Check size={12} /> : <Square size={12} />}</span>
+                              {(h.caption || h.width) && <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/70 to-transparent px-1.5 pt-3 pb-1 text-[10px] text-white flex items-center gap-1"><span className="truncate flex-1">{h.caption}</span>{h.width && h.height && <span className="shrink-0 text-white/80 tabular-nums">{h.width}×{h.height}</span>}</span>}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )
+          ) : !u ? <p className="text-[12.5px] text-muted">Pick a unit to see its photos.</p>
             : unitRes.loading && !unitRes.data ? <p className="text-[12.5px] text-muted">Reading the photos…</p>
             : unitRes.error && !unitRes.data ? <p className="text-[12.5px] text-rose-700">Could not read the photos: {unitRes.error}</p>
             : photos.length === 0 ? <p className="text-[12.5px] text-muted">No photos on this unit.</p> : (

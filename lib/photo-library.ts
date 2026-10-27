@@ -19,6 +19,7 @@ import { marketOf } from './segments'
 import { unitLabel } from './unit-label'
 import { isJunkCaption } from './photo-order'
 import { safeName } from './zip-stream'
+import { haystack, matchQuery, queryWords, analysisWords, type Haystack } from './photo-search'
 
 export const PHOTO_LIBRARY_CACHE_TAG = 'photo-library'
 const str = (v: any) => (v == null ? '' : String(v)).trim()
@@ -67,12 +68,12 @@ function unitOf(l: any, photos: LibPhoto[]): LibUnit {
 }
 const picsOf = (raw: any): LibPhoto[] => (Array.isArray(raw) ? raw : []).map(photoOf).filter(Boolean) as LibPhoto[]
 
-async function readAll(): Promise<any[]> {
+async function readAll(withIndex = false): Promise<any[]> {
   const sb = supabaseAdmin()
   const out: any[] = []
   for (let from = 0; from < 5000; from += 1000) {
     const { data, error } = await sb.from('guesty_listings')
-      .select('id, nickname, title, building, status, address_city, pics:raw->pictures')
+      .select('id, nickname, title, building, status, address_city, pics:raw->pictures' + (withIndex ? ', pidx:raw->_photoIndex' : ''))
       .order('id').range(from, from + 999)
     if (error) throw new Error('guesty_listings: ' + error.message)
     out.push(...(data || []))
@@ -178,3 +179,68 @@ export function photoFileName(p: LibPhoto, index: number, taken: Set<string>): s
   return name
 }
 export const zipFileName = (label: string) => safeName(label, 'photos') + ' photos.zip'
+
+// ── SMART SEARCH (Jon, 2026-10-27: "smart search like 17west pool or elser pool"). Every word of
+// the query has to land on the photo — the unit and property names, the caption as the team wrote
+// it, or what the photo analysis saw (room, category, subject, selling points). "pool" also finds
+// swimming and jacuzzi; "view" finds skyline and ocean (lib/photo-search has the rules and tests).
+// So "elser pool" is Elser's pool shots across every Elser unit, in one grid, ready to pick.
+export type PhotoHit = LibPhoto & { listingId: string; unit: string; building: string; market: string; active: boolean; why: string[] }
+type CorpusRow = { p: LibPhoto; unit: LibUnit; h: Haystack }
+type Corpus = { at: number; rows: CorpusRow[] }
+// Module-level memo, not unstable_cache: the corpus (every photo with its words) is a few MB, well
+// over the 2 MB a cache entry may hold, and it is only ever read in one place.
+let corpus: Corpus | null = null
+let corpusLoading: Promise<Corpus> | null = null
+const CORPUS_TTL = 10 * 60 * 1000
+async function loadCorpus(): Promise<Corpus> {
+  if (corpus && Date.now() - corpus.at < CORPUS_TTL) return corpus
+  if (corpusLoading) return corpusLoading
+  corpusLoading = (async () => {
+    try {
+      const rows: CorpusRow[] = []
+      for (const l of await readAll(true)) {
+        const photos = picsOf(l.pics)
+        const u = unitOf(l, photos)
+        const idx = l.pidx && typeof l.pidx === 'object' ? l.pidx : {}
+        for (const p of photos) rows.push({ p, unit: u, h: haystack([u.name, u.building], [p.caption].concat(analysisWords(idx[p.id]))) })
+      }
+      corpus = { at: Date.now(), rows }
+      return corpus
+    } finally { corpusLoading = null }
+  })()
+  return corpusLoading
+}
+/** Drop the memo (after a listing sync, with ?refresh=1). */
+export function forgetSearchCorpus() { corpus = null }
+export type PhotoSearch = { hits: PhotoHit[]; total: number; units: number; words: string[] }
+export async function searchPhotos(q: string, limit = 160): Promise<PhotoSearch> {
+  const ws = queryWords(q)
+  if (!ws.length) return { hits: [], total: 0, units: 0, words: [] }
+  const c = await loadCorpus()
+  const all: PhotoHit[] = []
+  for (const r of c.rows) {
+    const why = matchQuery(r.h, ws)
+    if (why) all.push({ ...r.p, listingId: r.unit.id, unit: r.unit.name, building: r.unit.building, market: r.unit.market, active: r.unit.active, why })
+  }
+  // Active units first, then by property and unit; a unit's own photo order is kept (stable sort).
+  all.sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1) || a.building.localeCompare(b.building, undefined, { numeric: true }) || a.unit.localeCompare(b.unit, undefined, { numeric: true }))
+  // The same file on several listings (a copied listing) is one result.
+  const seen = new Set<string>()
+  const hits: PhotoHit[] = []
+  for (const h of all) { if (seen.has(h.url)) continue; seen.add(h.url); hits.push(h) }
+  const units = new Set(hits.map(h => h.listingId)).size
+  return { hits: hits.slice(0, limit), total: hits.length, units, words: ws }
+}
+/** The search results as download sets — one folder per unit when they span more than one. */
+export async function searchPhotoSets(q: string): Promise<UnitPhotos[]> {
+  const r = await searchPhotos(q, 5000)
+  const byUnit = new Map<string, UnitPhotos>()
+  for (const h of r.hits) {
+    const set = byUnit.get(h.listingId) || { unit: { id: h.listingId, name: h.unit, title: null, building: h.building, market: h.market, active: h.active, photos: 0, cover: h.thumb }, photos: [] }
+    set.photos.push({ id: h.id, url: h.url, thumb: h.thumb, view: h.view, caption: h.caption, width: h.width, height: h.height })
+    set.unit.photos = set.photos.length
+    byUnit.set(h.listingId, set)
+  }
+  return Array.from(byUnit.values())
+}

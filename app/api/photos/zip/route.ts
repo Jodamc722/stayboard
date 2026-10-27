@@ -2,13 +2,14 @@
 //   GET ?listing=<id>                 every photo of the unit
 //   GET ?listing=<id>&pics=<id,id,…>  the picked ones
 //   GET ?building=<name>              every unit of the property, one folder per unit
+//   GET ?search=<words>               every photo the smart search finds ("elser pool"), a folder per unit
 // The archive is written as the photos arrive from Guesty (lib/zip-stream: stored, never
 // re-compressed, so each file is byte-for-byte the original) and streamed to the browser, so nothing
 // is held in memory and the 4.5 MB response limit does not apply. A photo that cannot be fetched is
 // skipped and listed in "_could not fetch.txt" rather than failing the whole download.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { unitPhotos, buildingPhotos, photoFileName, zipFileName, type UnitPhotos } from '@/lib/photo-library'
+import { unitPhotos, buildingPhotos, searchPhotoSets, photoFileName, zipFileName, type UnitPhotos } from '@/lib/photo-library'
 import { ZipWriter, safeName } from '@/lib/zip-stream'
 
 export const dynamic = 'force-dynamic'
@@ -22,8 +23,9 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams
   const listing = String(sp.get('listing') || '').trim()
   const building = String(sp.get('building') || '').trim()
+  const search = String(sp.get('search') || '').trim().slice(0, 80)
   const picks = String(sp.get('pics') || '').split(',').map(s => s.trim()).filter(Boolean)
-  if (!listing && !building) return NextResponse.json({ ok: false, error: 'listing or building is required' }, { status: 400 })
+  if (!listing && !building && !search) return NextResponse.json({ ok: false, error: 'listing, building or search is required' }, { status: 400 })
 
   let sets: UnitPhotos[] = []
   let label = ''
@@ -33,10 +35,14 @@ export async function GET(req: NextRequest) {
       if (!u) return NextResponse.json({ ok: false, error: 'No such unit.' }, { status: 404 })
       sets = [{ unit: u.unit, photos: picks.length ? u.photos.filter(p => picks.indexOf(p.id) >= 0) : u.photos }]
       label = u.unit.name + (picks.length ? ' (' + sets[0].photos.length + ' picked)' : '')
-    } else {
+    } else if (building) {
       sets = await buildingPhotos(building)
       if (!sets.length) return NextResponse.json({ ok: false, error: 'No photos for that property.' }, { status: 404 })
       label = building
+    } else {
+      sets = await searchPhotoSets(search)
+      if (!sets.length) return NextResponse.json({ ok: false, error: 'No photo matches that search.' }, { status: 404 })
+      label = 'Search ' + search
     }
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })

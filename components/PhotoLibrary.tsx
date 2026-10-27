@@ -7,6 +7,9 @@
 // picked set or a whole property comes down as one ZIP (streamed from /api/photos/zip, the files
 // byte-for-byte Guesty's originals), a single photo through /api/photos/file. The URL carries where
 // you are (?b=Property&u=<unit id>), so a unit's photos are one link to send a teammate.
+// The search is smart (Jon: "17west pool", "elser pool"): every word has to land on the photo — its
+// unit or property, its caption, or what the photo analysis saw — so results are photos across units,
+// grouped by unit, each viewable and downloadable, the whole set as one ZIP (?search= on both APIs).
 // Clean rows and tags, buttons not menus, every icon says what it does on hover (lib/lean rules).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
@@ -20,6 +23,8 @@ type Unit = { id: string; name: string; title: string | null; building: string; 
 type Building = { name: string; market: string; units: Unit[]; photos: number }
 type IndexRes = { ok: boolean; error?: string; at: string; buildings: Building[]; units: number; photos: number }
 type UnitRes = { ok: boolean; error?: string; unit: Unit; photos: Photo[] }
+type Hit = Photo & { listingId: string; unit: string; building: string; market: string; active: boolean; why: string[] }
+type SearchRes = { ok: boolean; error?: string; q: string; hits: Hit[]; total: number; units: number; words: string[] }
 
 const LIB = '/api/photos/library'
 const zipHref = (q: string) => '/api/photos/zip?' + q
@@ -39,6 +44,9 @@ export function PhotoLibrary({ canEdit }: { canEdit: boolean }) {
   const u = sp?.get('u') || ''
   const idx = useCachedFetch<IndexRes>(LIB, { ttl: 600_000 })
   const [q, setQ] = useState('')
+  // The photo search waits for the typing to pause; the unit chips follow every keystroke.
+  const [dq, setDq] = useState('')
+  useEffect(() => { const t = setTimeout(() => setDq(q.trim()), 300); return () => clearTimeout(t) }, [q])
   const [market, setMarket] = useState('all')
   const [refreshing, setRefreshing] = useState(false)
   const go = useCallback((next: { b?: string; u?: string }) => {
@@ -70,7 +78,7 @@ export function PhotoLibrary({ canEdit }: { canEdit: boolean }) {
       <LeanHead title="Photo library" sub={idx.data ? `${idx.data.buildings.length} properties · ${idx.data.units} units · ${idx.data.photos.toLocaleString()} photos · as Guesty holds them, full size · updated ${agoText(idx.data.at)}` : idx.error ? 'Could not load: ' + idx.error : 'Reading the library…'}>
         <div className="relative">
           <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Unit or property…" className="w-56 rounded-lg border border-line bg-white pl-7 pr-7 py-1.5 text-[12.5px]" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="elser pool · 17west gym · 511…" title="A unit, a property, or what the photo shows — every word has to match" className="w-64 rounded-lg border border-line bg-white pl-7 pr-7 py-1.5 text-[12.5px]" />
           {q && <button onClick={() => setQ('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink" title="Clear"><X size={12} /></button>}
         </div>
         {markets.length > 1 && <LeanPick size="sm" value={market} onPick={setMarket} options={[{ v: 'all', label: 'All' }, ...markets.map(m => ({ v: m, label: m }))]} />}
@@ -85,7 +93,16 @@ export function PhotoLibrary({ canEdit }: { canEdit: boolean }) {
       </nav>
 
       {hits ? (
-        <UnitGrid units={hits} empty="No unit matches." onOpen={un => { setQ(''); go({ b: un.building, u: un.id }) }} showBuilding />
+        <div className="space-y-3">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-muted mr-1">Units</span>
+            {hits.length === 0 ? <span className="text-[12px] text-muted">No unit by that name — the photos below are matched by what they show.</span> : (
+              <LeanPick size="sm" value="" onPick={id => { const hit = hits.find(x => x.id === id); if (hit) { setQ(''); go({ b: hit.building, u: hit.id }) } }}
+                options={hits.map(h => ({ v: h.id, label: <>{h.name} <span className="opacity-60">{h.building} · {h.photos}</span></>, title: 'Open ' + h.name }))} />
+            )}
+          </div>
+          <SearchResults q={dq} pending={q.trim() !== dq} market={market} onOpenUnit={(bb, id) => { setQ(''); go({ b: bb, u: id }) }} />
+        </div>
       ) : u ? (
         <UnitView id={u} meta={unitMeta} />
       ) : b ? (
@@ -108,6 +125,84 @@ export function PhotoLibrary({ canEdit }: { canEdit: boolean }) {
             })}
           </div>
         )
+      )}
+    </div>
+  )
+}
+
+/** The smart search's photos: grouped by unit, each one viewable and downloadable, the set as one ZIP. */
+function SearchResults({ q, pending, market, onOpenUnit }: { q: string; pending: boolean; market: string; onOpenUnit: (building: string, id: string) => void }) {
+  const r = useCachedFetch<SearchRes>(q ? LIB + '?search=' + encodeURIComponent(q) : null, { ttl: 600_000, persist: false, live: false })
+  const found = useMemo(() => (r.data?.hits || []).filter(h => market === 'all' || h.market === market), [r.data, market])
+  const groups = useMemo(() => {
+    const m = new Map<string, { id: string; unit: string; building: string; active: boolean; hits: Hit[] }>()
+    for (const h of found) { const g = m.get(h.listingId) || { id: h.listingId, unit: h.unit, building: h.building, active: h.active, hits: [] }; g.hits.push(h); m.set(h.listingId, g) }
+    return Array.from(m.values())
+  }, [found])
+  const [open, setOpen] = useState<number | null>(null)
+  const [confirm, setConfirm] = useState(false)
+  useEffect(() => { setOpen(null); setConfirm(false) }, [q])
+  useEffect(() => {
+    if (open == null) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(null); if (e.key === 'ArrowRight') setOpen(o => (o == null ? 0 : (o + 1) % found.length)); if (e.key === 'ArrowLeft') setOpen(o => (o == null ? 0 : (o - 1 + found.length) % found.length)) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, found.length])
+  if (!q || pending || (r.loading && !r.data)) return <LeanEmpty>Searching the photos…</LeanEmpty>
+  if (r.error && !r.data) return <LeanEmpty>Could not search: {r.error}</LeanEmpty>
+  if (!found.length) return <LeanEmpty>No photo matches “{q}”. Try a property and what the photo shows — <i>elser pool</i>, <i>17west gym</i>, <i>bedroom king</i>.</LeanEmpty>
+  const total = r.data?.total || found.length
+  const index = (h: Hit) => found.indexOf(h)
+  return (
+    <div className="space-y-3">
+      <div className="rounded-2xl border border-line bg-white px-4 py-3 flex items-center gap-3 flex-wrap">
+        <div className="min-w-0">
+          <div className="text-[15px] font-bold text-ink">{found.length}{total > (r.data?.hits.length || 0) ? ' of ' + total : ''} photo{found.length === 1 ? '' : 's'} in {groups.length} unit{groups.length === 1 ? '' : 's'}</div>
+          <div className="text-[12px] text-muted flex items-center gap-1.5 flex-wrap">
+            <span>match “{q}” — every word on the unit, the caption or what the photo shows</span>
+            {total > (r.data?.hits.length || 0) && <Tag title="Add a word to narrow it — the unit number, or what the photo shows. The ZIP takes all of them.">first {r.data?.hits.length} shown</Tag>}
+          </div>
+        </div>
+        <div className="ml-auto flex items-center gap-2 flex-wrap">
+          {!confirm || total <= 150 ? (
+            <a href={zipHref('search=' + encodeURIComponent(q))} onClick={e => { if (total > 150 && !confirm) { e.preventDefault(); setConfirm(true) } }} className={btn} title={'One ZIP of all ' + total + ' matching photos, a folder per unit, full size'}><Download size={13} /> Download all {total} (ZIP)</a>
+          ) : (
+            <span className="inline-flex items-center gap-2 text-[12px] text-muted">
+              {total.toLocaleString()} full-size photos in one file — it can run large.
+              <a href={zipHref('search=' + encodeURIComponent(q))} onClick={() => setConfirm(false)} className={btn}><Download size={13} /> Download anyway</a>
+              <button onClick={() => setConfirm(false)} className={ghost}>Cancel</button>
+            </span>
+          )}
+        </div>
+      </div>
+      {groups.map(g => (
+        <div key={g.id}>
+          <div className="flex items-center gap-1.5 mb-1.5 flex-wrap text-[12.5px]">
+            <button onClick={() => onOpenUnit(g.building, g.id)} className="font-semibold text-ink hover:underline" title={'Open ' + g.unit + ' in the library'}>{g.unit}</button>
+            <span className="text-muted">{g.building} · {g.hits.length} photo{g.hits.length === 1 ? '' : 's'}</span>
+            {!g.active && <Tag title="This listing is not active in Guesty">offline</Tag>}
+            <IconBtn title={'Download these ' + g.hits.length + ' photos of ' + g.unit + ' as a ZIP'} href={zipHref('listing=' + encodeURIComponent(g.id) + '&pics=' + encodeURIComponent(g.hits.map(h => h.id).join(',')))}><Download size={13} /></IconBtn>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2">
+            {g.hits.map(h => (
+              <div key={h.listingId + ':' + h.id} className="relative rounded-xl overflow-hidden border border-line bg-slate-100 group">
+                <button onClick={() => setOpen(index(h))} className="block w-full aspect-[4/3]" title={(h.caption || 'No caption') + ' · ' + h.unit + (h.width && h.height ? ' · ' + h.width + '×' + h.height : '') + ' · matched ' + h.why.join(', ')}>
+                  <img src={h.thumb} alt={h.caption} loading="lazy" className="w-full h-full object-cover" />
+                </button>
+                <a href={fileHref(h.listingId, h.id)} className="absolute top-1.5 right-1.5 rounded-md bg-white/90 border border-line p-1 text-ink opacity-0 group-hover:opacity-100 transition" title="Download this photo, full size"><Download size={13} /></a>
+                {(h.caption || h.width) && (
+                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/70 to-transparent px-2 pt-4 pb-1.5 text-[10.5px] text-white flex items-center gap-1.5 pointer-events-none">
+                    <span className="truncate flex-1">{h.caption}</span>
+                    {h.width && h.height && <span className={'shrink-0 tabular-nums ' + (grade(h.width, h.height) === 'low' ? 'text-rose-200 font-semibold' : 'text-white/80')} title={GRADE_LABEL[grade(h.width, h.height)!]}>{h.width}×{h.height}</span>}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      {open != null && found[open] && (
+        <Lightbox p={found[open]} i={open} n={found.length} listing={found[open].listingId} label={found[open].unit} onClose={() => setOpen(null)} onPrev={() => setOpen((open - 1 + found.length) % found.length)} onNext={() => setOpen((open + 1) % found.length)} />
       )}
     </div>
   )
@@ -243,11 +338,12 @@ function UnitView({ id, meta }: { id: string; meta: Unit | null }) {
   )
 }
 
-function Lightbox({ p, i, n, listing, onClose, onPrev, onNext }: { p: Photo; i: number; n: number; listing: string; onClose: () => void; onPrev: () => void; onNext: () => void }) {
+function Lightbox({ p, i, n, listing, label, onClose, onPrev, onNext }: { p: Photo; i: number; n: number; listing: string; label?: string; onClose: () => void; onPrev: () => void; onNext: () => void }) {
   return (
     <div className="fixed inset-0 z-[90] bg-ink/90 flex flex-col" onClick={onClose} role="dialog" aria-label="Photo">
       <div className="flex items-center gap-2 px-4 h-12 text-white/90 text-[12.5px]" onClick={e => e.stopPropagation()}>
         <span className="font-semibold tabular-nums">{i + 1} / {n}</span>
+        {label && <span className="font-semibold truncate">{label}</span>}
         <span className="truncate">{p.caption || 'No caption'}</span>
         {p.width && p.height && <span className="text-white/60">{p.width}×{p.height}</span>}
         {grade(p.width, p.height) && <Tag tone={GRADE_TONE[grade(p.width, p.height)!]}>{GRADE_LABEL[grade(p.width, p.height)!]}</Tag>}
