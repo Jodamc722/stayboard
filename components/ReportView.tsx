@@ -2115,6 +2115,50 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     } catch (_e) { setAttachMsg('Could not pull reviews.') }
     setRvBusy(false)
   }
+  // PER-SLIDE REFRESH (Jon, 2026-10-27: "the budget slide — I accidentally deleted one of the
+  // months. Can we please have a refresh button on that... we should actually have refreshes on
+  // all of the slides. That way, if the data has changed, we can click refresh and then have it
+  // say, are you sure?").
+  //
+  // A report's numbers are frozen at generate time on purpose — an owner's link has to keep
+  // saying what we sent them. The cost of that was the one-way door: a month deleted by hand, or
+  // a mirror that caught up with a late reservation, could only be fixed by minting a new report
+  // and abandoning the /r/<code> link. Refresh re-derives ONE slide from source into the same
+  // report row, and asks first, because the figures on that slide are replaced.
+  //
+  // The confirm is the whole point of the gate: written copy (headlines, month notes) survives a
+  // refresh, a hand-typed figure does not, and that is the sentence it has to say out loud.
+  const REFRESHABLE: Record<string, string> = {
+    snapshot: 'the snapshot', listings: 'the per-listing table', plan: 'the budget slide',
+    ahead: 'the looking-ahead slide', statement: 'the owner statement',
+  }
+  const [rfKey, setRfKey] = useState('')
+  const [rfMsg, setRfMsg] = useState<{ key: string; text: string; bad: boolean } | null>(null)
+  async function refreshSlide(key: string) {
+    if (rfKey || !REFRESHABLE[key]) return
+    const ok = window.confirm(
+      'Refresh ' + REFRESHABLE[key] + ' from live data?\n\n'
+      + 'The figures on this slide get rebuilt from Guesty and the budget as they stand right now. '
+      + 'Typed headlines and month notes are kept — any figure or row you edited by hand on this slide is replaced.\n\n'
+      + 'Are you sure?')
+    if (!ok) return
+    setRfKey(key); setRfMsg(null)
+    try {
+      const r = await fetch('/api/reports/refresh-section', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: initial.id, section: key }),
+      })
+      const d = await r.json()
+      if (d?.ok && d?.content) {
+        setC(d.content) // written server-side already — no Save needed for the numbers
+        setRfMsg({ key, text: String(d.summary || 'Refreshed.') + ' Saved.', bad: false })
+      } else {
+        setRfMsg({ key, text: String((d && d.error) || 'Could not refresh that slide.'), bad: true })
+      }
+    } catch (_e) { setRfMsg({ key, text: 'Could not refresh that slide.', bad: true }) }
+    setRfKey('')
+  }
+
   // Change the report's own reporting period in place. The server recomputes the snapshot,
   // month-by-month and per-listing rows and writes them back to THIS report — no new report row,
   // so the /r/<code> link already sent to an owner keeps working and just shows the new window.
@@ -5883,9 +5927,27 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             return (
               <Slide nav={nav} noteKey={note} warn={edit} pad={0} ground={GROUND[tone]}>
                 <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '40px 72px 38px' }}>
-                  <div className="flex items-baseline justify-between" style={{ flex: '0 0 auto' }}>
+                  <div className="flex items-baseline justify-between" style={{ flex: '0 0 auto', gap: 14 }}>
                     <p style={meta1}>{O((note || nav) + '_sec', sec)}</p>
-                    <p style={meta1}>{O((note || nav) + '_subj', subj || '')}</p>
+                    {/* REFRESH SITS IN THE FRAME, NOT ON THE SLIDE. One place, so every slide
+                        that has a source to re-derive from gets the same control in the same
+                        spot — and the slides that don't (pacing off an uploaded PDF, the written
+                        ones) simply don't show one rather than offering a button that lies. */}
+                    <div className="flex items-baseline" style={{ gap: 10 }}>
+                      {edit && note && REFRESHABLE[note] ? (
+                        <>
+                          {rfMsg && rfMsg.key === note ? (
+                            <span className="sb-noprint" style={{ fontSize: 10.5, fontWeight: 600, color: rfMsg.bad ? '#d9534f' : (dark ? D.muted : tint(0.5)), maxWidth: 420, textAlign: 'right' }}>{rfMsg.text}</span>
+                          ) : null}
+                          <button className="sb-noprint" onClick={() => refreshSlide(note)} disabled={!!rfKey}
+                            title={'Rebuild this slide\u2019s figures from live data'}
+                            style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', padding: '5px 11px', borderRadius: 999, whiteSpace: 'nowrap', background: dark ? 'rgba(255,255,255,0.12)' : tint(0.07), color: dark ? D.ink : tint(0.62), opacity: rfKey && rfKey !== note ? 0.45 : 1 }}>
+                            {rfKey === note ? 'Refreshing\u2026' : 'Refresh'}
+                          </button>
+                        </>
+                      ) : null}
+                      <p style={meta1}>{O((note || nav) + '_subj', subj || '')}</p>
+                    </div>
                   </div>
                   {/* SCROLLS ONLY WHEN IT HAS TO (Jon, 2026-09-29: "any slide that has additional
                       information is all scrollable… only if the text goes beyond the page"). The

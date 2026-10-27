@@ -429,3 +429,67 @@ export function makeCode(): string {
   const uuid = c && c.randomUUID ? c.randomUUID() : String(Math.random()).slice(2) + String(Math.random()).slice(2)
   return String(uuid).replace(/-/g, '').slice(0, 16)
 }
+
+// ---------- Performance vs Plan (the budget slide) ----------
+// ONE BUILDER, TWO CALLERS (2026-10-27). This was inline in /api/reports/generate, which meant the
+// only way to get the budget slide was to mint a whole new report. Jon deleted a month from a live
+// 17 West report by hand and there was nothing to put it back with. Now the generator and the
+// per-slide Refresh both derive the section from owner_budgets + the reservation mirror through
+// here, so a refreshed slide and a freshly generated one can never disagree.
+//
+// Returns null when the scope has no budget rows — the section simply does not render then.
+export async function planSectionFor(
+  listingIds: string[], buildings: string[], asOf: string, units: number,
+  mAheadIn?: { iso: string; label: string; short: string; m: MetricSet }[],
+): Promise<ReportContent['plan']> {
+  const mAhead = (mAheadIn && mAheadIn.length) ? mAheadIn : await monthsAhead(listingIds, asOf, units, 6)
+  if (!mAhead.length) return null
+
+  // The deck shows the two closed months, the month in progress, and next month's pace.
+  const prevPrev = monthStart(addDays(mAhead[0].iso, -1))
+  const wantIsos = [prevPrev].concat(mAhead.slice(0, 3).map(m => m.iso))
+  const budgets = await pullBudgets(buildings, wantIsos)
+  if (!Object.keys(budgets).length) return null
+
+  const candidates: { iso: string; endExcl: string; pacing?: boolean }[] = [{ iso: prevPrev, endExcl: mAhead[0].iso }]
+  candidates.push({ iso: mAhead[0].iso, endExcl: mAhead[1] ? mAhead[1].iso : monthEndExcl(mAhead[0].iso) })
+  if (mAhead[1]) candidates.push({ iso: mAhead[1].iso, endExcl: mAhead[2] ? mAhead[2].iso : monthEndExcl(mAhead[1].iso) })
+  // Forward "PACING" card: next month's on-the-books pace against its budget.
+  if (mAhead[2]) candidates.push({ iso: mAhead[2].iso, endExcl: mAhead[3] ? mAhead[3].iso : monthEndExcl(mAhead[2].iso), pacing: true })
+
+  const monthsOut: NonNullable<ReportContent['plan']>['months'] = []
+  for (const c of candidates) {
+    const b = budgets[c.iso]
+    if (!b) continue
+    const mresv = await pullReservations(listingIds, c.iso, c.endExcl)
+    const mm = metricsFor(mresv, units, c.iso, c.endExcl)
+    const inMonth = asOf >= c.iso && asOf < c.endExcl
+    const rows: NonNullable<ReportContent['plan']>['months'][number]['rows'] = []
+    if (b.occupancy_pct != null) {
+      const d = mm.occupancyPct - Number(b.occupancy_pct)
+      rows.push({ metric: 'Occupancy', actual: mm.occupancyPct + '%', budget: 'vs ' + Math.round(Number(b.occupancy_pct)) + '%', delta: (d >= 0 ? '+' : '−') + Math.abs(Math.round(d)) + ' pts', good: d >= 0 })
+    }
+    if (b.adr != null) {
+      const d = mm.grossAdr - Number(b.adr)
+      rows.push({ metric: 'ADR', actual: '$' + mm.grossAdr, budget: 'vs $' + Math.round(Number(b.adr)), delta: (d >= 0 ? '+$' : '−$') + Math.abs(Math.round(d)), good: d >= 0 })
+    }
+    if (b.revpar != null) {
+      const d = mm.grossRevpar - Number(b.revpar)
+      rows.push({ metric: 'RevPAR', actual: '$' + mm.grossRevpar, budget: 'vs $' + Math.round(Number(b.revpar)), delta: (d >= 0 ? '+$' : '−$') + Math.abs(Math.round(d)), good: d >= 0 })
+    }
+    if (b.gross_revenue != null) {
+      const d = mm.grossRevenue - Number(b.gross_revenue)
+      rows.push({ metric: 'Gross Rev', actual: fmtK(mm.grossRevenue), budget: 'vs ' + fmtK(Number(b.gross_revenue)), delta: (d >= 0 ? '+' : '−') + fmtK(Math.abs(Math.round(d))), good: d >= 0 })
+    }
+    if (!rows.length) continue
+    const mLabel = new Date(c.iso.slice(0, 7) + '-15T12:00:00Z').toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' }).toUpperCase()
+    monthsOut.push({
+      label: mLabel,
+      status: inMonth ? 'IN MONTH' : (c.pacing ? 'PACING' : 'CLOSED'),
+      rows,
+      note: c.pacing ? 'On the books so far — these numbers build as the month fills in.' : '',
+    })
+  }
+  if (!monthsOut.length) return null
+  return { headline: 'Tracking against the ' + asOf.slice(0, 4) + ' budget.', subtitle: '', months: monthsOut }
+}

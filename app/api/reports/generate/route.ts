@@ -14,7 +14,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   resolveScope, pullReservations, metricsFor, fmtK, ytdStats, monthsAhead,
-  pullBudgets, pullReviews, pullTasks, weekBuckets, makeCode, etToday,
+  pullReviews, pullTasks, weekBuckets, makeCode, etToday, planSectionFor,
 } from '@/lib/owner-report'
 import type { ReportContent, ReportListing, MetricSet } from '@/lib/owner-report'
 import { basisTriple, BASIS_LABEL, BASIS_NOTE, type Basis } from '@/lib/basis'
@@ -22,7 +22,8 @@ import { paceStatus, paceGuidance } from '@/lib/pacing'
 import { reconcilePacing, seriesRows, crossCheckAdr, seriesAvg } from '@/lib/pacing-check'
 import { checkWindow, truthForWindow } from '@/lib/pacing-truth'
 import { measurePacingPdf } from '@/lib/pacing-pixels'
-import { ownerMonths, rollup, coverageFor, MONTH_LABEL, statementDetail } from '@/lib/owner-statements'
+import { coverageFor } from '@/lib/owner-statements'
+import { buildStatementSection } from '@/lib/statement-section'
 import { projectionSectionFor } from '@/lib/projections'
 import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type ListingCard, type KV } from '@/lib/onboarding-report'
 import { linenDeckFor } from '@/lib/linen-deck'
@@ -143,85 +144,6 @@ async function parsePacing(url: string, scopeLabel: string, periodLabel: string,
 // The figures are the ones the account-wide audit established: AF is owner earnings before
 // expenses, CMS is Stay's commission, PO is the payout that actually moved. `dueToOwner` on
 // the statement is a settlement balance, so it is shown as a cross-check, never as earnings.
-const usd = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
-
-async function buildStatementSection(statementIds: string[], scopeLabel: string) {
-  const sb = supabaseAdmin()
-  const { data } = await sb.from('guesty_owner_statements')
-    .select('id, owner_id, owner_name, period_month, period_start, period_end, due_to_owner')
-    .in('id', statementIds)
-  const stmts = (data || []) as any[]
-  if (!stmts.length) return null
-
-  const ownerIds = Array.from(new Set(stmts.map(s => String(s.owner_id || '')).filter(Boolean)))
-  const months = Array.from(new Set(stmts.map(s => String(s.period_month || '')).filter(Boolean)))
-  const picked = new Set(stmts.map(s => String(s.owner_id) + '|' + String(s.period_month)))
-  const all = await ownerMonths({ ownerIds, months })
-  const rows = all.filter(r => picked.has(r.key))
-  if (!rows.length) return null
-
-  const r = rollup(rows)
-  const t = r.totals
-
-  // Unit-level and fee-level detail for the same owner-months. Non-fatal by design: this is
-  // added depth on a section that already stands on its own, so a failure here must not cost
-  // the whole report.
-  let detail: Awaited<ReturnType<typeof statementDetail>> | null = null
-  try {
-    detail = await statementDetail({ ownerIds, months })
-  } catch { detail = null }
-  if (detail && detail.units.length) {
-    const ids = detail.units.filter(u => !u.portfolio).map(u => u.listingId)
-    if (ids.length) {
-      const { data: ls } = await sb.from('guesty_listings').select('id, title, nickname, unit').in('id', ids)
-      const nameOf: Record<string, string> = {}
-      for (const l of (ls || []) as any[]) nameOf[String(l.id)] = String(l.nickname || l.title || l.unit || l.id)
-      for (const u of detail.units) if (!u.portfolio) u.name = nameOf[u.listingId] || u.listingId
-    }
-    // Named so it reads as a deliberate line on the statement rather than a rounding plug.
-    for (const u of detail.units) if (u.portfolio) u.name = 'Portfolio-level — not unit-attributed'
-  }
-  const spanLabel = r.span
-    ? (r.span.first === r.span.last ? MONTH_LABEL(r.span.first) : MONTH_LABEL(r.span.first) + ' – ' + MONTH_LABEL(r.span.last))
-    : ''
-  const ownerNames = Array.from(new Set(rows.map(x => x.ownerName))).filter(Boolean)
-  const scope = ownerNames.length <= 2 ? ownerNames.join(' + ') : ownerNames.length + ' owners'
-
-  // Settlement lags recognition, so a variance is normal; it is only worth a line when it is
-  // big enough to notice against net.
-  const varPct = t.net ? Math.abs(t.variance / t.net) * 100 : 0
-  const noteBits = [
-    'Recognised owner-ledger basis, direct from Guesty accounting.',
-    t.statements + ' statement' + (t.statements === 1 ? '' : 's') + ', ' + t.tied + ' tied to the cent.',
-  ]
-  if (varPct >= 1) {
-    noteBits.push('Payouts run ' + usd(Math.abs(t.variance)) + (t.variance >= 0 ? ' ahead of' : ' behind') + ' recognised earnings — settlement timing, not a shortfall.')
-  }
-
-  return {
-    headline: 'Owner earnings of ' + usd(t.net) + ' net across ' + spanLabel + '.',
-    subtitle: 'Recognised Guesty accounting for ' + (scope || scopeLabel) + ' · ' + spanLabel,
-    scope: scope || scopeLabel,
-    note: noteBits.join(' '),
-    kpis: [
-      { label: 'Rental income', value: usd(t.rental), sub: 'Before expenses' },
-      { label: 'Management commission', value: usd(t.commission), sub: t.commissionPct + '% of rental' },
-      { label: 'Net to owner', value: usd(t.net), sub: 'After commission and charges' },
-      { label: 'Paid out', value: usd(t.paid), sub: 'Actually settled' },
-    ],
-    months: r.months,
-    owners: r.owners.map(o => ({
-      ownerName: o.ownerName, rental: o.rental, commission: o.commission,
-      net: o.net, paid: o.paid, months: o.months,
-    })),
-    totals: t,
-    units: detail ? detail.units : [],
-    fees: detail ? detail.fees : [],
-    unattributed: detail ? detail.unattributed : 0,
-    feeLabels: detail ? detail.named : false,
-  }
-}
-
 export async function POST(req: NextRequest) {
   // Roles+levels write gate (2026-08-04): below-edit access on 'reports' is rejected here,
   // whatever the UI shows. requireLevel also covers the signed-out 401.
@@ -553,56 +475,11 @@ export async function POST(req: NextRequest) {
   const mAhead = await monthsAhead(ids, asOf, units, 6) // [prev, current, +1..+5]
 
   // ---- budgets (Performance vs Plan only if rows exist) ----
+  // The section itself is built by planSectionFor() in lib/owner-report, shared with the per-slide
+  // Refresh on a live report — see that function for why.
   const scopeBuildings: string[] = []
   for (const l of listings) if (scopeBuildings.indexOf(l.building) < 0) scopeBuildings.push(l.building)
-  const planMonthIsos = mAhead.slice(0, 3).map(m => m.iso) // prev-2? deck shows 2 closed + in-month; we have prev + current from mAhead
-  // widen: include the month before prev for a 3-month view
-  const prevPrev = mAhead[0] ? addDaysIso(mAhead[0].iso, -1).slice(0, 7) + '-01' : null
-  const wantIsos = (prevPrev ? [prevPrev] : []).concat(planMonthIsos)
-  const budgets = await pullBudgets(scopeBuildings, wantIsos)
-
-  let plan: ReportContent['plan'] = null
-  if (Object.keys(budgets).length > 0) {
-    const monthsOut: { label: string; status: string; rows: { metric: string; actual: string; budget: string; delta: string; good: boolean }[]; note: string }[] = []
-    const candidates: { iso: string; endExcl: string; pacing?: boolean }[] = []
-    if (prevPrev) candidates.push({ iso: prevPrev, endExcl: mAhead[0].iso })
-    candidates.push({ iso: mAhead[0].iso, endExcl: mAhead[1].iso })
-    candidates.push({ iso: mAhead[1].iso, endExcl: addDaysIso(mAhead[2] ? mAhead[2].iso : mAhead[1].iso, 0) })
-    // Forward "PACING" card: next month's on-the-books pace vs its budget (only appears if a budget row exists).
-    if (mAhead[2]) candidates.push({ iso: mAhead[2].iso, endExcl: mAhead[3] ? mAhead[3].iso : addDaysIso(mAhead[2].iso, 31), pacing: true })
-    for (const c of candidates) {
-      const b = budgets[c.iso]
-      if (!b) continue
-      const mresv = await pullReservations(ids, c.iso, c.endExcl)
-      const mm = metricsFor(mresv, units, c.iso, c.endExcl)
-      const inMonth = asOf >= c.iso && asOf < c.endExcl
-      const rows: { metric: string; actual: string; budget: string; delta: string; good: boolean }[] = []
-      if (b.occupancy_pct != null) {
-        const d = mm.occupancyPct - Number(b.occupancy_pct)
-        rows.push({ metric: 'Occupancy', actual: mm.occupancyPct + '%', budget: 'vs ' + Math.round(Number(b.occupancy_pct)) + '%', delta: (d >= 0 ? '+' : '−') + Math.abs(Math.round(d)) + ' pts', good: d >= 0 })
-      }
-      if (b.adr != null) {
-        const d = mm.grossAdr - Number(b.adr)
-        rows.push({ metric: 'ADR', actual: '$' + mm.grossAdr, budget: 'vs $' + Math.round(Number(b.adr)), delta: (d >= 0 ? '+$' : '−$') + Math.abs(Math.round(d)), good: d >= 0 })
-      }
-      if (b.revpar != null) {
-        const d = mm.grossRevpar - Number(b.revpar)
-        rows.push({ metric: 'RevPAR', actual: '$' + mm.grossRevpar, budget: 'vs $' + Math.round(Number(b.revpar)), delta: (d >= 0 ? '+$' : '−$') + Math.abs(Math.round(d)), good: d >= 0 })
-      }
-      if (b.gross_revenue != null) {
-        const d = mm.grossRevenue - Number(b.gross_revenue)
-        rows.push({ metric: 'Gross Rev', actual: fmtK(mm.grossRevenue), budget: 'vs ' + fmtK(Number(b.gross_revenue)), delta: (d >= 0 ? '+' : '−') + fmtK(Math.abs(Math.round(d))).replace('$', '$'), good: d >= 0 })
-      }
-      if (!rows.length) continue
-      const mLabel = new Date(c.iso.slice(0, 7) + '-15T12:00:00Z').toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' }).toUpperCase()
-      const status = inMonth ? 'IN MONTH' : (c.pacing ? 'PACING' : 'CLOSED')
-      const note = c.pacing ? 'On the books so far — these numbers build as the month fills in.' : ''
-      monthsOut.push({ label: mLabel, status, rows, note })
-    }
-    if (monthsOut.length) {
-      plan = { headline: 'Tracking against the ' + asOf.slice(0, 4) + ' budget.', subtitle: '', months: monthsOut }
-    }
-  }
+  const plan = await planSectionFor(ids, scopeBuildings, asOf, units, mAhead)
 
   // ---- reviews + tasks ----
   const reviewFrom = addDaysIso(periodStart, -14) // small lookback so a slow review week still fills the section
