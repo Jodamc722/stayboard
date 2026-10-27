@@ -95,6 +95,10 @@ export const FEATURES: Feature[] = [
   // FF&E Audit (2026-08-10, Jon): one phone link per unit, room by room, EN/ES. A furniture
   // PURCHASING list — deliberately not wired to Breezeway, maintenance or billing.
   { key: 'ffe',           label: 'FF&E Audit',        path: '/ffe', group: 'Owners' },
+  // CATALOG (Jon, 2026-10-27: "can we have a Catalog page"): the default onboarding catalog and one per
+  // property, each reviewed into an approved replacement list. Its level follows FF&E unless a role
+  // sets it on its own (LEVEL_FALLBACK below), so nobody has to be re-permissioned for it to appear.
+  { key: 'catalogs',      label: 'Catalog',           path: '/catalogs', group: 'Owners' },
   // Onboarding (2026-09-02, Jon): one public link per NEW unit — details → generated rooms →
   // inventory + room photos — before the unit exists in Guesty; assigned to the listing when it
   // goes live. /onboard/<code> is the phone side and stays public (OPEN_PREFIXES).
@@ -322,9 +326,12 @@ export type RoleDef = {
   perms: Record<string, string>; is_system?: boolean; sort?: number
 }
 
+// A feature that borrows another's level until a role sets it explicitly (new pages that are really
+// part of an existing area: nobody should have to touch every role to see them).
+const LEVEL_FALLBACK: Record<string, string> = { catalogs: 'ffe' }
 export function roleLevel(role: RoleDef | null | undefined, featureKey: string): Level {
   if (!role || !role.perms || typeof role.perms !== 'object') return 'off'
-  const explicit = role.perms[featureKey]
+  const explicit = role.perms[featureKey] ?? (LEVEL_FALLBACK[featureKey] ? role.perms[LEVEL_FALLBACK[featureKey]] : null)
   if (explicit != null) return normLevel(explicit)
   const star = role.perms['*']
   return star != null ? normLevel(star) : 'off'
@@ -427,7 +434,7 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'admin', label: 'Admin',            landing: '/command', blurb: 'Everything + user management', pages: 'all' },
   { key: 'gm',    label: 'GM',               landing: '/command', blurb: 'Everything except admin tools', pages: 'all' },
   { key: 'ops',   label: 'Ops',              landing: '/command',    blurb: 'Field operations: cleans, glitches, audits, orders',
-    pages: ['home', 'plan', 'upkeep', 'schedule', 'glitches', 'audits', 'orders', 'requests', 'projects', 'ffe', 'onboarding', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'blocked', 'faq', 'guest-orders', 'api-keys', 'loops'] },
+    pages: ['home', 'plan', 'upkeep', 'schedule', 'glitches', 'audits', 'orders', 'requests', 'projects', 'ffe', 'catalogs', 'onboarding', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'blocked', 'faq', 'guest-orders', 'api-keys', 'loops'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
     pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims', 'guests', 'guest-orders', 'api-keys', 'loops'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',

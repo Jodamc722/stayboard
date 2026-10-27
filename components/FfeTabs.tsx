@@ -49,7 +49,7 @@ export function FfeTabs() {
           </button>
         ))}
         {/* CATALOGS (Jon, 2026-10-20 → 10-27): their own pages, not a panel — they are long, and links to them get sent around. */}
-        <Link href="/ffe/catalogs" className="px-4 py-2 text-[12.5px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap text-muted hover:text-ink border-l border-line">
+        <Link href="/catalogs" className="px-4 py-2 text-[12.5px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap text-muted hover:text-ink border-l border-line">
           <BookOpenCheck className="w-3.5 h-3.5" /> Catalogs
         </Link>
       </div>

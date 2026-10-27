@@ -19,7 +19,7 @@ type Payload = { ok: boolean; catalogs: Cat[]; listings: Listing[]; tiers: Tier[
 
 export function FfeCatalogList() {
   const router = useRouter()
-  const { data, loading, error, refresh } = useCachedFetch<Payload>('/api/audit/ffe/catalogs', { ttl: 10_000, persist: false })
+  const { data, loading, error, refresh } = useCachedFetch<Payload>('/api/audit/catalogs', { ttl: 10_000, persist: false })
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<'copy' | 'photos'>('photos')
   const [name, setName] = useState('')
@@ -43,13 +43,13 @@ export function FfeCatalogList() {
     if (mode === 'photos' && !listingId) { setErr('Pick the listing to read the photos from.'); return }
     setBusy(mode === 'photos' ? 'Reading the listing photos and building the catalog… about 30 seconds.' : 'Creating…')
     try {
-      const r = await fetch('/api/audit/ffe/catalogs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const r = await fetch('/api/audit/catalogs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(mode === 'photos' ? { action: 'generate', name, listingId, tier, from } : { action: 'create', name, from }) })
       const j = await r.json().catch(() => ({}))
       if (!j.ok && !j.slug) { setErr(j.error || 'That did not save.'); setBusy(''); return }
       if (j.error) setErr(j.error)
       refresh()
-      router.push(`/ffe/catalogs/${j.slug}`)
+      router.push(`/catalogs/${j.slug}`)
     } catch { setErr('That did not save.'); setBusy('') }
   }
 
@@ -121,13 +121,13 @@ export function FfeCatalogList() {
           <tbody>
             {cats.map(c => (
               <tr key={c.slug} className="border-b border-line last:border-0">
-                <td className="px-4 py-2.5 font-semibold text-ink"><Link href={`/ffe/catalogs/${c.slug}`} className="hover:underline inline-flex items-center gap-1.5">{c.kind === 'default' ? <BookOpenCheck className="w-3.5 h-3.5 text-brand-700" /> : null}{c.name}</Link>
+                <td className="px-4 py-2.5 font-semibold text-ink"><Link href={`/catalogs/${c.slug}`} className="hover:underline inline-flex items-center gap-1.5">{c.kind === 'default' ? <BookOpenCheck className="w-3.5 h-3.5 text-brand-700" /> : null}{c.name}</Link>
                   {c.kind === 'default' && <span className="ml-2 text-[10.5px] font-semibold uppercase tracking-wider text-brand-700 bg-brand-50 rounded-full px-2 py-0.5">Default</span>}</td>
                 <td className="px-3 py-2.5 text-muted">{c.basedOn || '—'}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{c.items}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums"><span className={c.approved ? 'text-emerald-700 font-semibold' : 'text-muted'}>{c.approved}</span><span className="text-muted"> / {c.items}</span></td>
                 <td className="px-3 py-2.5 text-muted text-[12px]">{c.suppliers.length ? `${c.suppliers.length} selected` : 'All'}</td>
-                <td className="px-3 py-2.5 text-right"><Link href={`/ffe/catalogs/${c.slug}`} className="text-[12px] font-semibold text-ink border border-line rounded-lg px-2.5 py-1 hover:border-ink">Open</Link></td>
+                <td className="px-3 py-2.5 text-right"><Link href={`/catalogs/${c.slug}`} className="text-[12px] font-semibold text-ink border border-line rounded-lg px-2.5 py-1 hover:border-ink">Open</Link></td>
               </tr>
             ))}
             {cats.length === 0 && <tr><td colSpan={6} className="px-4 py-6 text-sm text-muted">No catalogs yet.</td></tr>}
