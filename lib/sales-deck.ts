@@ -118,16 +118,30 @@ export type SalesSections = {
       monthlyLow: string; monthlyHigh: string
       rateLow: string; rateHigh: string
       occLow: string; occHigh: string
+      /** The sub-labels vary page to page — "once fully ramped", "varies by season (below)". */
+      annualSub?: string; rateSub?: string
     } | null
     months?: { label: string; base: string; high: string; rate: string; occ: string; baseNum?: number; highNum?: number }[]
+    /**
+     * The season table, where the page carries one: in season and off season against nightly
+     * rate, occupancy, per month and the season total. Present on the units whose year has two
+     * halves worth naming and absent on the ones where it does not — so it is optional, not a
+     * row of blanks.
+     */
+    season?: { label: string; rate: string; occ: string; perMonth: string; total: string }[]
     cols: string[]
     rows: { k: string; cells: string[] }[]
     totals?: { k: string; cells: string[] }
   }
-  /** The comparable listings, hand-gathered and pasted — there is no comp feed in this system. */
+  /**
+   * The comparable listings. The real pages carry a different set of columns each time — a
+   * downtown studio in a new building has names and bedrooms and nothing else, a Lighthouse Point
+   * house has revenue, rate, occupancy, beds, baths and a rating — so the columns are whatever
+   * the rows actually have, and `label` is the first column's heading ("Listing", "Location").
+   */
   comps?: {
-    headline: string; subtitle: string; body: string; note: string
-    rows: { name: string; rev: string; rate: string; occ: string; beds: string; baths: string; rating: string }[]
+    headline: string; subtitle: string; body: string; note: string; label?: string
+    rows: { name: string; rev: string; rate: string; occ: string; beds: string; baths: string; rating: string; sleeps: string }[]
   }
   close?: { headline: string; subtitle: string; rows: KV[]; note: string }
   /** Empty url = no slide, so an unfinished video never shows a prospect a grey box. */

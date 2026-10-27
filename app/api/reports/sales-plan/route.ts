@@ -141,10 +141,29 @@ export async function POST(req: NextRequest) {
     // range runs from the PriceLabs midpoint to its top-of-range figure, with the uplift split
     // between nightly rate and occupancy" — so the arithmetic is the same on every projection and
     // can be checked, rather than being whatever the model felt like that afternoon.
-    const instruction = 'This document is a short-term rental revenue estimate for one property (usually a PriceLabs revenue estimate, sometimes a spreadsheet or a screenshot of one). Report ONLY figures printed in it. Return STRICT JSON: {"annualMid": number or null (the midpoint/expected annual revenue), "annualHigh": number or null (the top of the range, if the document gives one), "annualLow": number or null (the bottom, if given), "adr": number or null (average nightly rate), "occupancy": number or null (annual occupancy as a percent, 0-100), "months": [{"label": "JAN", "revenue": number or null, "adr": number or null, "occupancy": number or null}] (twelve entries in calendar order where the document shows a monthly breakdown; use null for any value it does not print), "unit": one short line naming the property/unit type if the document says, "label": one short line naming the source and period}. Rules: copy figures exactly, never recompute them, never fill a blank with an estimate, and never invent a month the document does not show. If the document is NOT a revenue estimate but does contain some other projection table, leave annualMid null and instead return {"cols": [column headers left to right], "rows": [{"k": row label, "cells": [one value per column, exactly as printed]}], "totals": {"k": label, "cells": [...]} or null} alongside it, every row padded to the same length as cols. If it contains neither, return {"annualMid": null, "months": [], "rows": []}.'
+    // WHAT WE ASK FOR, AND WHAT WE WORK OUT OURSELVES.
+    //
+    // Two kinds of document arrive here and both are handled by one read: a finished Stay revenue
+    // projection (every figure is printed on it, so there is nothing to derive) and a raw market
+    // estimate from PriceLabs (a midpoint and a top of range, from which the rest follows). The
+    // model reports only what is printed; anything missing is derived below by Jon's own rule, so
+    // the arithmetic is identical on every projection and can be checked.
+    const instruction = 'This document is a short-term rental revenue projection or market revenue estimate for one property. Report ONLY what is printed on it — never compute, never estimate, never fill a blank. Return STRICT JSON:\n'
+      + '{"title": the property/unit heading, "subtitle": the line under it (address, bedrooms, size, floor), "preparedFor": who it says it is prepared for,\n'
+      + ' "annualLow": number or null, "annualHigh": number or null (the projected annual revenue range; if only one annual figure is given put it in annualLow),\n'
+      + ' "annualSub": the small line under the annual figure, "monthlyLow": number or null, "monthlyHigh": number or null,\n'
+      + ' "rateLow": number or null, "rateHigh": number or null, "rateSub": the small line under the nightly rate,\n'
+      + ' "occLow": number or null, "occHigh": number or null (occupancy percents, 0-100),\n'
+      + ' "months": [{"label": "JAN", "base": number or null, "high": number or null, "rate": number or null, "occ": number or null}] in calendar order, only for months the document shows,\n'
+      + ' "season": [{"label": "In season (Dec-Mar)", "rate": "as printed", "occ": "as printed", "perMonth": "as printed", "total": "as printed"}] ONLY if the document has a season summary table, else [],\n'
+      + ' "comps": [{"name": the listing or location, "rev": estimated annual revenue exactly as printed including any range, "rate": nightly rate, "occ": occupancy, "beds": bedrooms, "baths": bathrooms, "rating": guest rating, "sleeps": sleeps}] for the comparable listings table, each field "" where that column is not on the page,\n'
+      + ' "compsLabel": the heading of the comparable table\'s first column (e.g. "Listing" or "Location"),\n'
+      + ' "footnote": any line about figures being fully ramped or about event nights,\n'
+      + ' "label": one short line naming the source and period}\n'
+      + 'If the document contains no projection at all, return {"annualLow": null, "months": [], "comps": []}.'
     const text = await anthropic({
-      model: modelFor('reports'), max_tokens: 3000,
-      system: 'You read revenue estimates and projections out of documents for a sales deck. Output STRICT JSON only. You never invent a figure, and you never recompute one.',
+      model: modelFor('reports'), max_tokens: 4000,
+      system: 'You read revenue projections out of documents for a sales deck. Output STRICT JSON only. You never invent a figure and you never recompute one.',
       messages: [{ role: 'user', content: block ? [block, { type: 'text', text: instruction }] : [{ type: 'text', text: instruction + '\n\nThe file:\n' + textBody }] }],
     })
     const j = parseJson(text)
@@ -152,69 +171,90 @@ export async function POST(req: NextRequest) {
 
     const n = (v: any): number | null => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : null }
     const money = (v: number) => '$' + Math.round(v).toLocaleString('en-US')
-    const kk = (v: number) => (v >= 10_000 ? '$' + Math.round(v / 1000) + 'K' : '$' + Math.round(v).toLocaleString('en-US'))
+    const kk = (v: number) => (v >= 10_000 ? '$' + Math.round(v / 1000) + 'K' : v >= 1000 ? '$' + (v / 1000).toFixed(1) + 'K' : '$' + Math.round(v).toLocaleString('en-US'))
 
-    const mid = n(j.annualMid) || n(j.annualLow)
-    const top = n(j.annualHigh)
-    if (mid) {
-      // THE SPLIT. uplift = top/mid − 1, shared evenly between rate and occupancy, so that
-      // rate × occupancy reproduces the revenue uplift exactly: each gets √(1+uplift). With no
-      // top-of-range figure there is no range, and the page prints one number rather than
-      // inventing a second.
-      const uplift = top && top > mid ? (top / mid) - 1 : 0
+    const lo = n(j.annualLow)
+    if (lo) {
+      // THE RANGE. A finished projection prints both ends and we use them. A market estimate
+      // prints a midpoint and a top, and the uplift between them is split evenly between nightly
+      // rate and occupancy — each taking the square root, so rate x occupancy reproduces the
+      // revenue uplift exactly. Occupancy is capped at 95: a percentage of a year cannot be
+      // stretched past one. With no second figure there is no range, and the page prints one
+      // number rather than inventing a second.
+      const hi = n(j.annualHigh) && Number(j.annualHigh) > lo ? Number(j.annualHigh) : lo
+      const uplift = hi > lo ? (hi / lo) - 1 : 0
       const each = Math.sqrt(1 + uplift)
-      const adr = n(j.adr)
-      const occ = n(j.occupancy)
-      // Occupancy is a percentage of a year and cannot be stretched past it. Capped at 95, which
-      // is already higher than any real portfolio sustains.
-      const occHigh = occ ? Math.min(95, occ * each) : null
-      const annualHigh = top || mid
+      const rLo = n(j.rateLow), rHi = n(j.rateHigh)
+      const oLo = n(j.occLow), oHi = n(j.occHigh)
+      const mLo = n(j.monthlyLow), mHi = n(j.monthlyHigh)
       const range = {
-        annualLow: money(mid),
-        annualHigh: money(annualHigh),
-        monthlyLow: money(mid / 12),
-        monthlyHigh: money(annualHigh / 12),
-        rateLow: adr ? money(adr) : '',
-        rateHigh: adr ? money(adr * each) : '',
-        occLow: occ ? Math.round(occ) + '%' : '',
-        occHigh: occHigh ? Math.round(occHigh) + '%' : '',
+        annualLow: money(lo),
+        annualHigh: money(hi),
+        monthlyLow: money(mLo || lo / 12),
+        monthlyHigh: money(mHi || hi / 12),
+        rateLow: rLo ? money(rLo) : '',
+        rateHigh: rLo ? money(rHi && rHi > rLo ? rHi : rLo * each) : '',
+        occLow: oLo ? Math.round(oLo) + '%' : '',
+        occHigh: oLo ? Math.round(oHi && oHi > oLo ? oHi : Math.min(95, oLo * each)) + '%' : '',
+        annualSub: str(j.annualSub).slice(0, 80),
+        rateSub: str(j.rateSub).slice(0, 80),
       }
 
-      // The monthly bars follow the document's own seasonality. Where it prints revenue per month
-      // we use it and scale the high end by the same uplift; where it prints only a share we
-      // apportion the annual figure. A month the document does not show is not drawn.
+      // The monthly bars are the document's own. Where it prints a high end we use it; where it
+      // prints only a base we scale by the same uplift. A month the document does not show is not
+      // drawn, and a monthly series that plainly does not add up to the annual figure is
+      // apportioned to it rather than contradicting the band above it.
       const rawMonths: any[] = Array.isArray(j.months) ? j.months.slice(0, 12) : []
-      const sum = rawMonths.reduce((a, m) => a + (n(m?.revenue) || 0), 0)
+      const sumBase = rawMonths.reduce((a, m) => a + (n(m?.base) || 0), 0)
+      const scale = sumBase > 0 && Math.abs(sumBase - lo) / lo > 0.25 ? lo / sumBase : 1
       const months = rawMonths.map((m: any) => {
-        const rev = n(m?.revenue)
-        const base = rev != null ? (sum > 0 && Math.abs(sum - mid) / mid > 0.25 ? (rev / sum) * mid : rev) : null
+        const base = n(m?.base) != null ? Number(m.base) * scale : null
+        const high = n(m?.high) != null ? Number(m.high) * scale : (base != null ? base * (1 + uplift) : null)
         return {
           label: str(m?.label).slice(0, 4).toUpperCase(),
           base: base != null ? kk(base) : '',
-          high: base != null ? kk(base * (1 + uplift)) : '',
-          rate: n(m?.adr) != null ? money(Number(m.adr)) : '',
-          occ: n(m?.occupancy) != null ? Math.round(Number(m.occupancy)) + '%' : '',
+          high: high != null ? kk(high) : '',
+          rate: n(m?.rate) != null ? money(Number(m.rate)) : '',
+          occ: n(m?.occ) != null ? Math.round(Number(m.occ)) + '%' : '',
           baseNum: base != null ? Math.round(base) : undefined,
-          highNum: base != null ? Math.round(base * (1 + uplift)) : undefined,
+          highNum: high != null ? Math.round(high) : undefined,
         }
       }).filter((m: any) => m.label)
+
+      const season = (Array.isArray(j.season) ? j.season : []).slice(0, 3).map((r: any) => ({
+        label: str(r?.label).slice(0, 40), rate: str(r?.rate).slice(0, 24),
+        occ: str(r?.occ).slice(0, 20), perMonth: str(r?.perMonth).slice(0, 24), total: str(r?.total).slice(0, 28),
+      })).filter((r: any) => r.label)
+
+      const comps = (Array.isArray(j.comps) ? j.comps : []).slice(0, 12).map((r: any) => ({
+        name: str(r?.name).slice(0, 120), rev: str(r?.rev).slice(0, 40), rate: str(r?.rate).slice(0, 20),
+        occ: str(r?.occ).slice(0, 12), beds: str(r?.beds).slice(0, 10), baths: str(r?.baths).slice(0, 10),
+        rating: str(r?.rating).slice(0, 8), sleeps: str(r?.sleeps).slice(0, 8),
+      })).filter((r: any) => r.name)
 
       const prevPlan: any = content.plan || {}
       content.plan = {
         ...prevPlan,
         headline: str(prevPlan.headline) || 'Our projected range',
-        subtitle: str(prevPlan.subtitle) || str(j.unit).slice(0, 80),
+        subtitle: str(prevPlan.subtitle) || str(j.title).slice(0, 90),
         body: str(prevPlan.body) || '',
-        note: str(prevPlan.note) || '',
-        source: str(body?.label) || str(j.label).slice(0, 120) || 'Market revenue estimate',
-        range, months,
+        // The fully-ramped line is the document's own where it has one, because it is the sentence
+        // that stops an owner reading the number as a year-one promise.
+        note: str(j.footnote).slice(0, 300) || str(prevPlan.note) || '',
+        source: str(body?.label) || str(j.label).slice(0, 120) || 'Revenue projection',
+        range, months, season,
         cols: Array.isArray(prevPlan.cols) ? prevPlan.cols : [],
         rows: Array.isArray(prevPlan.rows) ? prevPlan.rows : [],
+      }
+      if (comps.length) {
+        const prevC: any = content.comps || {}
+        content.comps = { ...prevC, rows: comps, label: str(j.compsLabel).slice(0, 30) || str(prevC.label) || 'Listing' }
+        if (Array.isArray(content.omit)) content.omit = content.omit.filter((k: string) => k !== 'comps')
       }
       if (Array.isArray(content.omit)) content.omit = content.omit.filter((k: string) => k !== 'plan')
       const { error: errR } = await db.from('owner_reports').update({ content, updated_at: new Date().toISOString() }).eq('id', id)
       if (errR) return NextResponse.json({ error: errR.message }, { status: 500 })
-      return NextResponse.json({ ok: true, source: content.plan.source, range, months: months.length, content })
+      return NextResponse.json({ ok: true, source: content.plan.source, range, months: months.length, season: season.length, comps: comps.length, content })
     }
 
     // Not a revenue estimate we could read as a range — fall back to the generic table, which is

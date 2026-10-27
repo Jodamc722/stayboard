@@ -5069,6 +5069,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const plRange: Any = pl.range && typeof pl.range === 'object' ? pl.range : null
             const plMonths: Any[] = Array.isArray(pl.months) ? (pl.months as Any[]) : []
             const plMax = Math.max(1, ...plMonths.map((m: Any) => Number(m.highNum) || Number(m.baseNum) || 0))
+            const plSeason: Any[] = Array.isArray(pl.season) ? (pl.season as Any[]) : []
             if (plRows.length || plRange || plMonths.length || edit) slides.push({ key: 'plan', ai: true, node: (
             <Slide nav="Projection" warn={edit} ground={GROUND.tint}>
               <div className="flex flex-col" style={{ height: '100%' }}>
@@ -5103,7 +5104,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                                     <> – <Ed v={String(plRange[hi] || '')} set={v => patch('plan.range.' + hi, v)} edit={edit} /></>
                                   ) : null}
                                 </p>
-                                <p style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.72)', margin: '7px 0 0' }}>{sub}</p>
+                                <p style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.72)', margin: '7px 0 0' }}>{i === 0 ? (String(plRange.annualSub || '') || sub) : sub}</p>
                               </div>
                             ))}
                           </div>
@@ -5121,7 +5122,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                                       <> – <Ed v={String(plRange[hi] || '')} set={v => patch('plan.range.' + hi, v)} edit={edit} /></>
                                     ) : null}
                                   </p>
-                                  <p style={{ fontSize: 11.5, color: t.muted, margin: '5px 0 0' }}>{sub}</p>
+                                  <p style={{ fontSize: 11.5, color: t.muted, margin: '5px 0 0' }}>{lo === 'rateLow' ? (String(plRange.rateSub || '') || sub) : sub}</p>
                                 </div>
                               ) : null
                             ))}
@@ -5155,7 +5156,32 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                               ))}
                           </div>
                         ) : null}
-                        {pl.source ? <p style={{ fontSize: 10.5, color: t.muted, marginTop: 12 }}>{String(pl.source)}</p> : null}
+                        {plSeason.length ? (
+                          // THE YEAR HAS TWO HALVES ON SOME OF THESE PAGES AND NOT ON OTHERS, so
+                          // the season table prints only where the document carried one.
+                          <div style={{ marginTop: 14, background: t.chip, borderRadius: 10, padding: '12px 16px' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr 1.2fr', gap: 12 }}>
+                              {['Season', 'Nightly rate', 'Occupancy', 'Per month', 'Season total'].map(h => (
+                                <p key={h} style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0 }}>{h}</p>
+                              ))}
+                            </div>
+                            {plSeason.map((r: Any, i: number) => (
+                              <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr 1.2fr', gap: 12, marginTop: 7 }}>
+                                {['label', 'rate', 'occ', 'perMonth', 'total'].map(k => (
+                                  <p key={k} style={{ fontSize: 11.5, color: k === 'label' ? t.accent : t.ink, fontWeight: k === 'label' ? 600 : 400, margin: 0, fontVariantNumeric: 'tabular-nums' }}>
+                                    <Ed v={String(r[k] || '')} set={v => patch('plan.season.' + i + '.' + k, v)} edit={edit} />
+                                  </p>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                        {(pl.note || edit) ? (
+                          <p style={{ fontSize: 10.5, lineHeight: 1.5, color: t.muted, marginTop: 12, maxWidth: '96ch' }}>
+                            <Ed v={pl.note || ''} set={v => patch('plan.note', v)} edit={edit} multiline />
+                          </p>
+                        ) : null}
+                        {pl.source ? <p style={{ fontSize: 10, color: t.muted, marginTop: 6 }}>{String(pl.source)}</p> : null}
                       </div>
                     ) : plRows.length ? (
                       <div className="onb-scroll" style={{ overflowX: 'auto' }}>
@@ -5942,6 +5968,21 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // no comp feed in this system — Nick gathers them off Airbnb by hand — so the slide
           // takes a paste and formats it rather than pretending to a source we do not have.
           if (!hid('comps')) { const cp: Any = sec('comps'); const cpRows: Any[] = (cp.rows || []) as Any[]
+            // ONLY THE COLUMNS THE ROWS ACTUALLY CARRY. A downtown studio in a new building has
+            // names and bedrooms and nothing else; a Lighthouse Point house has revenue, rate,
+            // occupancy, beds, baths and a rating. Printing a column of blanks for the first one
+            // would say we went looking and found nothing, which is not what happened.
+            const CP_COLS: { k: string; h: string; w: string }[] = [
+              { k: 'rev', h: 'Est. revenue / year', w: '1.3fr' },
+              { k: 'rate', h: 'Nightly rate', w: '0.8fr' },
+              { k: 'occ', h: 'Occupancy', w: '0.7fr' },
+              { k: 'beds', h: 'Beds', w: '0.5fr' },
+              { k: 'baths', h: 'Baths', w: '0.5fr' },
+              { k: 'sleeps', h: 'Sleeps', w: '0.5fr' },
+              { k: 'rating', h: 'Rating', w: '0.6fr' },
+            ]
+            const cpCols = CP_COLS.filter(c => cpRows.some((r: Any) => String(r[c.k] || '').trim()))
+            const cpGrid = '28px 2.4fr ' + (cpCols.map(c => c.w).join(' ') || '1fr')
             if (cpRows.length || edit) slides.push({ key: 'comps', ai: true, node: (
             <Slide nav="Comparable listings" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
@@ -5971,20 +6012,22 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 16 }}>
                   {cpRows.length ? (
                     <>
-                      <div style={{ display: 'grid', gridTemplateColumns: '28px 2.4fr 1.2fr 0.8fr 0.7fr 0.5fr 0.5fr 0.6fr', gap: 10, paddingBottom: 7, borderBottom: '1px solid ' + t.rule }}>
-                        {['', 'Listing', 'Est. revenue / year', 'Nightly rate', 'Occupancy', 'Beds', 'Baths', 'Rating'].map((h, i) => (
-                          <p key={h + i} style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: i <= 1 ? 'left' : 'right' }}>{h}</p>
+                      <div style={{ display: 'grid', gridTemplateColumns: cpGrid, gap: 10, paddingBottom: 7, borderBottom: '1px solid ' + t.rule }}>
+                        <p style={{ margin: 0 }} />
+                        <p style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0 }}>{String(cp.label || 'Listing')}</p>
+                        {cpCols.map(c => (
+                          <p key={c.k} style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: 'right' }}>{c.h}</p>
                         ))}
                       </div>
                       {cpRows.slice(0, 10).map((r: Any, i: number) => (
-                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '28px 2.4fr 1.2fr 0.8fr 0.7fr 0.5fr 0.5fr 0.6fr', gap: 10, padding: '7px 0', borderBottom: '1px solid ' + t.rule, alignItems: 'baseline' }}>
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: cpGrid, gap: 10, padding: '7px 0', borderBottom: '1px solid ' + t.rule, alignItems: 'baseline' }}>
                           <span style={{ fontSize: 10.5, fontWeight: 700, color: t.accent, fontVariantNumeric: 'tabular-nums' }}>{String(i + 1).padStart(2, '0')}</span>
                           <p style={{ fontSize: 12.5, color: t.ink, margin: 0, minWidth: 0 }}>
                             <Ed v={String(r.name || '')} set={v => patch('comps.rows.' + i + '.name', v)} edit={edit} />
                           </p>
-                          {['rev', 'rate', 'occ', 'beds', 'baths', 'rating'].map(k => (
-                            <p key={k} style={{ fontSize: 12.5, color: k === 'rev' ? t.ink : t.body, fontWeight: k === 'rev' ? 600 : 400, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                              <Ed v={String(r[k] || '')} set={v => patch('comps.rows.' + i + '.' + k, v)} edit={edit} />
+                          {cpCols.map(c => (
+                            <p key={c.k} style={{ fontSize: 12.5, color: c.k === 'rev' ? t.ink : t.body, fontWeight: c.k === 'rev' ? 600 : 400, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                              <Ed v={String(r[c.k] || '')} set={v => patch('comps.rows.' + i + '.' + c.k, v)} edit={edit} />
                             </p>
                           ))}
                         </div>
