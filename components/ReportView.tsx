@@ -2119,6 +2119,25 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     } catch (_e) { setAttachMsg('Could not pull reviews.') }
     setRvBusy(false)
   }
+  // The presenter saved once for the house, so the next proposal starts with it already filled.
+  const [ccBusy, setCcBusy] = useState(false)
+  const [ccMsg, setCcMsg] = useState('')
+  async function saveContactDefault() {
+    if (ccBusy) return
+    const card: Any = ((c as Any).contact || {}).card || {}
+    if (!String(card.name || '').trim()) { setCcMsg('Add your name first.'); return }
+    setCcBusy(true); setCcMsg('')
+    try {
+      const r = await fetch('/api/reports/sales-contact', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(card),
+      })
+      const d = await r.json()
+      setCcMsg(d?.ok ? 'Saved — every new deck starts with this.' : String(d?.error || 'Could not save.'))
+    } catch { setCcMsg('Could not save.') }
+    setCcBusy(false)
+  }
+
   // ── THE NUMBERS ON A SALES DECK (Jon, 2026-10-27) ────────────────────────
   // "We should be able to upload a projection, pull actuals from other property owner statements,
   // and pull by owner or by listing of actual gross rev and net of fees, but not expense."
@@ -3786,8 +3805,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // EVERY ONE IS GATED ON ITS SECTION EXISTING, not on the document's kind. An onboarding
           // deck generated before today simply has no `ops` key, so it renders exactly as it did,
           // and a sales deck that someone hides a slide on keeps it hidden.
-          const PitchRows = stable('PitchRows', ({ k, nav, label, note, dark, cols }: {
-            k: string; nav: string; label: string; note?: string; dark?: boolean; cols?: number
+          const PitchRows = stable('PitchRows', ({ k, nav, label, note, dark, cols, marks }: {
+            k: string; nav: string; label: string; note?: string; dark?: boolean; cols?: number; marks?: boolean
           }) => {
             const rows: Any[] = (sec(k).rows || []) as Any[]
             const bodyColor = dark ? D.body : t.body
@@ -3823,6 +3842,23 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         ))}
                       </div>
                     } />
+                  {/* THE MARKS, WHERE THERE IS ROOM FOR THEM (Jon, 2026-10-27: "should show
+                      logos"). The distribution slide argued 40+ channels in words over an empty
+                      bottom third; the names a reader recognises do that job in a glance and cost
+                      no height anywhere else. One ink, one size — eight brand palettes at eight
+                      weights would read as a sticker sheet. */}
+                  {marks ? (
+                    <div className="flex items-center" style={{ gap: 44, flexWrap: 'wrap', paddingTop: 18, marginBottom: 6, borderTop: '1px solid ' + (dark ? D.rule : t.rule) }}>
+                      {CHANNEL_MARKS.map(m => (
+                        <svg key={m.name} role="img" aria-label={m.name} viewBox="0 0 24 24"
+                          style={{ height: 24, width: 'auto', fill: dark ? 'rgba(255,255,255,0.88)' : inkA(t.ink, 0.72), flex: '0 0 auto' }}>
+                          <title>{m.name}</title>
+                          <path d={m.d} />
+                        </svg>
+                      ))}
+                      <span style={{ fontSize: 12.5, color: dark ? D.muted : t.muted, maxWidth: '44ch' }}>+ Vrbo, Hopper, Blueground, Whimstay, Google Vacation Rentals</span>
+                    </div>
+                  ) : null}
                   <Foot label={label} dark={dark} />
                 </div>
               </Slide>
@@ -4011,6 +4047,16 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     </div>
                   </div>
                 </div>
+                {edit ? (
+                  <div className="sb-noprint flex items-center" style={{ gap: 10, marginBottom: 10 }}>
+                    <button onClick={saveContactDefault} disabled={ccBusy}
+                      title="Save this card for the house, so every new proposal starts with it"
+                      style={{ fontSize: 11.5, fontWeight: 600, padding: '6px 12px', borderRadius: 999, background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink, opacity: ccBusy ? 0.6 : 1 }}>
+                      {ccBusy ? 'Saving\u2026' : 'Save as the default contact'}
+                    </button>
+                    {ccMsg ? <span style={{ fontSize: 11.5, color: t.muted }}>{ccMsg}</span> : null}
+                  </div>
+                ) : null}
                 <Foot label="Your contact" />
               </div>
             </Slide>
@@ -4417,7 +4463,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // The mechanism, ahead of the wall of names that follows it. An owner who has only ever
           // been on one site does not know what a connected calendar buys them.
           if (!hid('dist')) slides.push({ key: 'dist', ai: true, node: (
-            <PitchRows k="dist" nav="Distribution" label="Distribution" />
+            <PitchRows k="dist" nav="Distribution" label="Distribution" marks />
           ) })
 
           if (!hid('channels')) slides.push({ key: 'channels', ai: true, node: (

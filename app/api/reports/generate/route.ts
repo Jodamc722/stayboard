@@ -27,6 +27,9 @@ import { buildStatementSection } from '@/lib/statement-section'
 import { projectionSectionFor } from '@/lib/projections'
 import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type ListingCard, type KV } from '@/lib/onboarding-report'
 import { buildSalesContent } from '@/lib/sales-deck'
+import { proofListings, proofRows, monthLabel as proofMonth } from '@/lib/sales-proof'
+import { getSetting } from '@/lib/app-settings'
+import { SALES_CONTACT_KEY, type SalesContactSetting } from '@/lib/sales-copy'
 import { linenDeckFor } from '@/lib/linen-deck'
 import { buildingPhotos, fillPropertyPics } from '@/lib/building-photos'
 import { withoutCollages } from '@/lib/photo-filter'
@@ -236,6 +239,16 @@ export async function POST(req: NextRequest) {
     }
 
     const pStartS = etToday()
+    // THE PRESENTER IS SAVED ONCE, NOT RETYPED PER DECK (Jon, 2026-10-27: "better customization
+    // tools"). The house default lives in app_settings; whatever the desk sends wins over it.
+    const houseContact = await getSetting<SalesContactSetting>(SALES_CONTACT_KEY, { name: '', role: '', phone: '', email: '', photo: '', blurb: '' })
+    const sentContact = (body?.contact && typeof body.contact === 'object') ? body.contact : {}
+    const contactIn: Record<string, string> = {}
+    for (const k of ['name', 'role', 'phone', 'email', 'photo', 'blurb']) {
+      const v = str((sentContact as any)[k]) || str((houseContact as any)[k])
+      if (v) contactIn[k] = v
+    }
+
     const contentS = buildSalesContent(tplS, {
       length: str(body?.length) === 'full' ? 'full' : 'short',
       scopeLabel,
@@ -246,17 +259,34 @@ export async function POST(req: NextRequest) {
       ownerPhone: str(body?.ownerPhone),
       cards,
       heroImage: heroImageUrl || (cards[0] && cards[0].photos[0] ? cards[0].photos[0] : null),
-      contact: (body?.contact && typeof body.contact === 'object') ? {
-        name: str(body.contact.name), role: str(body.contact.role) || undefined,
-        phone: str(body.contact.phone), email: str(body.contact.email),
-        photo: str(body.contact.photo), blurb: str(body.contact.blurb) || undefined,
-      } : undefined,
+      contact: contactIn,
     })
     // OUR PROPERTIES gets a picture per building, exactly as the onboarding deck does.
     try {
       const ex: any = (contentS as any).experience
       if (ex && Array.isArray(ex.items)) ex.items = fillPropertyPics(ex.items, await buildingPhotos())
     } catch { /* blank tiles; the editor's Change chip still works */ }
+
+    // A PROPOSAL FOR A BUILDING WE RUN ARRIVES CARRYING THAT BUILDING'S NUMBERS (2026-10-27).
+    // The proof slide used to open empty with an instruction to go and press a button, which is a
+    // slide nobody fills under time pressure. Revenue only and labelled by unit — see
+    // lib/sales-proof for why that is structural rather than a setting.
+    if (sIds.length) {
+      try {
+        const picked = await proofListings({ listingIds: sIds })
+        if (picked.length) {
+          const toP = asOf
+          const d = new Date(toP + 'T12:00:00Z'); d.setUTCMonth(d.getUTCMonth() - 12)
+          const fromP = d.toISOString().slice(0, 10)
+          const { rows, totals } = await proofRows(picked, fromP, toP)
+          const pf: any = (contentS as any).proof
+          if (pf && rows.length) {
+            pf.rows = rows; pf.totals = totals
+            pf.window = proofMonth(fromP) + ' \u2013 ' + proofMonth(toP)
+          }
+        }
+      } catch { /* the slide stays empty and the pull panel still works */ }
+    }
 
     const codeS = makeCode()
     const titleS = str(body?.title) || (scopeLabel + ' \u2014 Management Proposal \u2014 ' + prettyDate(asOf))

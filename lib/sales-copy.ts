@@ -30,6 +30,9 @@ export const CONTACT_SUBTITLE = 'One person who owns this relationship, start to
 export const CONTACT_BODY =
   'You will not be handed to a queue. The person who walks you through this deck is the person who answers when you call, brings the right people in when something needs them, and stays with your account after it goes live.'
 export type ContactCard = { name: string; role: string; phone: string; email: string; photo: string; blurb: string }
+/** The presenter saved once for the house, in app_settings, and seeded into every new deck. */
+export const SALES_CONTACT_KEY = 'sales_contact'
+export type SalesContactSetting = ContactCard
 // EMPTY, NOT PLACEHOLDER PROSE. Instructional copy stored as content is copy that eventually
 // reaches a prospect. The slide shows the hints as placeholders in edit mode instead, and prints
 // only the lines that have been filled in.
@@ -46,12 +49,12 @@ export const OPS_SUBTITLE = 'Our own people, on our own payroll, running the sam
 export const OPS_BODY =
   'Housekeeping, maintenance, inspections and guest care are in-house. Nobody is dispatched from an app and hoped for. Every market has its own crew, its own supervisor and its own escalation path, and every job carries a checklist, an assignee, a timestamp and photographs.'
 export const OPS_ROWS: KV[] = [
-  { k: 'The day starts the night before', v: 'Tomorrow\'s departures, arrivals and same-day turns are built into a schedule the whole team can see, with the cleans assigned by name before anyone goes to bed.' },
-  { k: 'The turn', v: 'Departure clean against the standard checklist, photographed as it runs. A same-day turn is flagged as one, because an arrival at 4pm behind an 11am checkout is a different job from a vacant week.' },
-  { k: 'The inspection', v: 'A supervisor stands in the unit before the guest does. Lights, water, AC, wifi, supplies and presentation against a fixed list — not a glance from the doorway.' },
-  { k: 'Maintenance', v: 'Anything found becomes a tracked job with an owner and a deadline, routed to the right trade. Preventative work runs on a routine per unit, not when something finally breaks.' },
-  { k: 'Guest care', v: 'Messages answered around the clock from one inbox across every channel. A guest who cannot get in is an emergency on our side of the line, not theirs.' },
-  { k: 'Escalation', v: 'Housekeeping, maintenance, guest care and management sit in one room in real time, in two languages. A problem at your property reaches whoever can fix it in seconds.' },
+  { k: 'The day starts the night before', v: 'Tomorrow\'s departures, arrivals and same-day turns are scheduled and assigned by name before anyone goes to bed.' },
+  { k: 'The turn', v: 'Departure clean against the standard checklist, photographed as it runs. A same-day turn is flagged as one.' },
+  { k: 'The inspection', v: 'A supervisor stands in the unit before the guest does, against a fixed list. Not a glance from the doorway.' },
+  { k: 'Maintenance', v: 'Anything found becomes a tracked job with an owner and a deadline. Preventative work runs on a routine, not when something breaks.' },
+  { k: 'Guest care', v: 'Messages answered around the clock from one inbox. A guest who cannot get in is our emergency, not theirs.' },
+  { k: 'Escalation', v: 'Housekeeping, maintenance, guest care and management in one room, in two languages. A problem reaches whoever can fix it in seconds.' },
 ]
 export const OPS_NOTE =
   'All of it is recorded as it happens, so readiness is documented rather than assumed — and so the answer to "what happened at my property last Tuesday" is a record, not a recollection.'
@@ -81,12 +84,12 @@ export const DIST_SUBTITLE = 'One calendar, 40+ places to sell it.'
 export const DIST_BODY =
   'A property on one channel sells at the speed of one audience. Yours is published across every major channel and a long tail of partners from a single calendar, so a booking can arrive from wherever it arrives and two guests can never book the same night.'
 export const DIST_ROWS: KV[] = [
-  { k: 'One calendar, every channel', v: 'Rates, availability and minimum stays pushed out and bookings pulled back in real time. No double bookings, no manual blocking, no channel quietly out of date.' },
-  { k: 'The channels you know', v: 'Airbnb, Vrbo, Booking.com, Expedia and their partner networks, plus corporate and extended-stay demand that never touches a consumer site.' },
-  { k: 'The long tail', v: 'Dozens of smaller and regional partners that cost nothing to be on and reach audiences the big four do not.' },
+  { k: 'One calendar, every channel', v: 'Rates and availability out, bookings back, in real time. No double bookings and no channel quietly out of date.' },
+  { k: 'The channels you know', v: 'Airbnb, Vrbo, Booking.com, Expedia and their partner networks — plus corporate and extended-stay demand.' },
+  { k: 'The long tail', v: 'Dozens of regional partners that cost nothing to be on and reach audiences the big four do not.' },
   { k: 'Direct', v: 'Our own booking site and the guidebook link, where a repeat guest books without a channel taking a cut.' },
-  { k: 'Channel mix by date', v: 'Where a slow window gets pushed harder, and which channels carry which dates. A soft March is worked in December.' },
-  { k: 'One set of rules', v: 'House rules, cancellation terms, fees and guest screening applied consistently everywhere, so the property is sold the same way on every site.' },
+  { k: 'Channel mix by date', v: 'Which channels carry which dates, and where a slow window gets pushed. A soft March is worked in December.' },
+  { k: 'One set of rules', v: 'House rules, cancellation terms, fees and screening applied the same way on every site.' },
 ]
 
 // ── 5 · AI WEBSITE OPTIMIZATION AND DIRECT BOOKINGS ─────────────────────────
@@ -119,12 +122,12 @@ export const LH_SUBTITLE = 'Our own software. Built for this business, by this b
 export const LH_BODY =
   'Most managers run on the same three or four bought platforms as everyone else, and live with the gaps between them. We built the layer that closes those gaps — and it is the reason the answer to a question about your property is a screen rather than a phone call to somebody who might remember.'
 export const LH_ROWS: KV[] = [
-  { k: 'The day board', v: 'Every arrival, departure, clean, inspection and open job across the portfolio on one screen, live. Who is doing it, where it stands, what is at risk.' },
-  { k: 'The schedule', v: 'Cleans and field work assigned by name, moved by hand when a booking changes, pushed straight to the crew with the brief they need for that unit.' },
-  { k: 'Issues and guest feedback', v: 'Anything a guest says, a cleaner finds or a call surfaces becomes a tracked job on the right unit, with photos, an owner and a deadline.' },
-  { k: 'Guest inbox and calls', v: 'Messages from every channel in one place, and recorded calls turned into notes and next steps on the booking instead of staying in somebody\'s head.' },
-  { k: 'Listing optimization', v: 'Every listing scored against what guests search and praise, with the specific fix named — the missing amenity, the weak title, the photo in the wrong place.' },
-  { k: 'Reviews', v: 'Replies drafted and tracked on every channel, and the themes behind them turned into work on the unit.' },
+  { k: 'The day board', v: 'Every arrival, departure, clean, inspection and open job on one live screen. Who has it, where it stands, what is at risk.' },
+  { k: 'The schedule', v: 'Cleans and field work assigned by name and pushed to the crew with the brief for that unit.' },
+  { k: 'Issues and guest feedback', v: 'Anything a guest says or a cleaner finds becomes a tracked job on the right unit, with photos and a deadline.' },
+  { k: 'Guest inbox and calls', v: 'Every channel in one inbox, and recorded calls turned into next steps on the booking.' },
+  { k: 'Listing optimization', v: 'Every listing scored against what guests search and praise, with the specific fix named.' },
+  { k: 'Reviews', v: 'Replies drafted and tracked on every channel, and the themes behind them turned into work.' },
 ]
 // SIX ROWS, BECAUSE SEVEN SCROLLED. Owner reporting moved into the note rather than being cut:
 // on a slide that is presented at 16:9, a row you have to scroll to is a row nobody reads.
@@ -298,11 +301,11 @@ export const MAXREV_SUBTITLE = 'Five levers, worked every day.'
 export const MAXREV_BODY =
   'Revenue is not one decision at the start. It is a rate moved daily against live demand, on a listing built to convert, sold in every place a guest might look.'
 export const MAXREV_ROWS: KV[] = [
-  { k: 'Priced every day', v: 'A named revenue manager at Pacer, our revenue partner, works your rate daily against live demand, your comp set and the dates ahead. Not a rule set once and left.' },
-  { k: 'Sold in 40+ places', v: 'One calendar published across every major channel and a long tail of partners, so a booking can arrive from wherever it arrives.' },
-  { k: 'Built to convert', v: 'Photography, title, the first three images and the amenity list set by us. A listing that converts ranks higher, and a higher ranking brings more bookings.' },
-  { k: 'The nights others leave empty', v: 'Minimum stays opened and closed by date, gap nights priced to fill, and the big weekends captured months out.' },
-  { k: 'Direct, with no commission', v: 'Our own site and the guest profiles every stay builds bring past guests back without a channel taking a cut.' },
+  { k: 'Priced every day', v: 'A named revenue manager at Pacer works your rate daily against live demand, your comp set and the dates ahead.' },
+  { k: 'Sold in 40+ places', v: 'One calendar, every major channel and a long tail of partners. A booking can arrive from anywhere.' },
+  { k: 'Built to convert', v: 'Photography, title, the first three images and the amenities set by us. A listing that converts ranks higher.' },
+  { k: 'The nights others leave empty', v: 'Minimum stays worked by date, gap nights priced to fill, big weekends captured months out.' },
+  { k: 'Direct, with no commission', v: 'Our own site and the guest profiles every stay builds bring past guests back with no channel cut.' },
 ]
 export const MAXREV_NOTE =
   'You see every decision in your monthly statement and owner report, and any rate can be explained on request.'

@@ -21,8 +21,9 @@
 // case where the owner is the point (a developer looking at their own portfolio).
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { pullReservations, metricsFor, fmtK, etToday } from '@/lib/owner-report'
-import { basisTriple, BASIS_NOTE } from '@/lib/basis'
+import { etToday } from '@/lib/owner-report'
+import { BASIS_NOTE } from '@/lib/basis'
+import { proofListings, proofRows, monthLabel as mLabel } from '@/lib/sales-proof'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { requireLevel } from '@/lib/access'
 
@@ -30,16 +31,9 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
-function nextDay(iso: string): string {
-  const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1)
-  return d.toISOString().slice(0, 10)
-}
 function monthsBack(iso: string, n: number): string {
   const d = new Date(iso + 'T12:00:00Z'); d.setUTCMonth(d.getUTCMonth() - n)
   return d.toISOString().slice(0, 10)
-}
-function label(iso: string): string {
-  return new Date(iso + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' })
 }
 
 export async function GET(req: NextRequest) {
@@ -90,80 +84,19 @@ export async function GET(req: NextRequest) {
     scopeName = str(o.full_name)
   }
 
-  const { data: ls } = await db.from('guesty_listings')
-    .select('id, title, nickname, building, unit, bedrooms, status')
-    .limit(1000)
-  const all = (ls || []) as any[]
-  const wantB = building.toLowerCase()
-  const picked = all.filter(l => {
-    const st = str(l.status).toLowerCase()
-    if (['inactive', 'disabled', 'archived', 'deleted'].indexOf(st) >= 0) return false
-    const name = str(l.nickname || l.title || l.id)
-    // A combined "Full" listing is the same apartment sold a second way; counting it alongside
-    // its halves would double the building's revenue on a slide meant to prove we can be trusted
-    // with numbers.
-    if (/\bfull\b/i.test(name)) return false
-    if (ids.length) return ids.indexOf(String(l.id)) >= 0
-    if (wantB) return rollupBuilding(str(l.building)).toLowerCase() === wantB
-    return false
-  })
+  const picked = await proofListings(ids.length ? { listingIds: ids } : { building })
   if (!picked.length) return NextResponse.json({ error: 'Nothing to pull — pick an owner, a building or some listings.' }, { status: 400 })
   if (!scopeName) scopeName = building ? rollupBuilding(building) : (picked.length === 1 ? str(picked[0].nickname || picked[0].title) : picked.length + ' listings')
 
-  const useIds = picked.map(l => String(l.id))
-  const toExcl = nextDay(to)
-  const resv = await pullReservations(useIds, from, toExcl)
-  const byId: Record<string, any[]> = {}
-  for (const r of resv) { (byId[r.listing_id] = byId[r.listing_id] || []).push(r) }
-
-  const pct = (n: number) => Math.round(n) + '%'
-  // THE SAME TWO BASES THE OWNER REPORTS USE (lib/basis), through the same function. Gross is
-  // accommodation + cleaning; net of fees is accommodation after the channel's host fee. Writing
-  // this arithmetic out by hand here is how a unit ends up reporting one number on an owner's
-  // report and a different one on a sales slide.
-  const rawOf = (m: ReturnType<typeof metricsFor>) => ({
-    accomNum: m.accomRevenue, accomGrossNum: m.accomGrossRevenue, cleaningNum: m.cleaningRevenue,
-    feeNum: m.channelFees, occNights: m.occupiedNights, availNights: m.availableNights,
-  })
-  const rows = picked.map(l => {
-    const m = metricsFor(byId[String(l.id)] || [], 1, from, toExcl)
-    const raw = rawOf(m)
-    const g = basisTriple(raw, 'gross'), n = basisTriple(raw, 'net')
-    const br = l.bedrooms == null ? '' : (Number(l.bedrooms) === 0 ? 'Studio' : Number(l.bedrooms) + 'BR')
-    const unit = str(l.unit)
-    const bld = rollupBuilding(str(l.building))
-    return {
-      id: String(l.id),
-      // Unit and building, not the owner — see the header of this file.
-      label: [br, unit ? 'Unit ' + unit : ''].filter(Boolean).join(' · ') || str(l.nickname || l.title),
-      sub: bld,
-      gross: fmtK(g.revenue),
-      net: fmtK(n.revenue),
-      occ: pct(m.occupancyPct),
-      adr: '$' + g.adr,
-      nights: String(m.occupiedNights),
-      _gross: g.revenue, _net: n.revenue,
-      _occNights: m.occupiedNights, _availNights: m.availableNights,
-    }
-  }).sort((a, b) => b._gross - a._gross)
-
-  const sum = (k: '_gross' | '_net' | '_occNights' | '_availNights') => rows.reduce((a, r) => a + r[k], 0)
-  const totalNights = sum('_occNights')
-  const totals = {
-    gross: fmtK(sum('_gross')),
-    net: fmtK(sum('_net')),
-    occ: sum('_availNights') ? pct((sum('_occNights') / sum('_availNights')) * 100) : '—',
-    adr: totalNights ? '$' + Math.round(sum('_gross') / totalNights) : '—',
-    nights: String(totalNights),
-  }
+  const { rows, totals } = await proofRows(picked, from, to)
 
   return NextResponse.json({
     ok: true,
     scope: (names && ownerId ? scopeName : (building ? rollupBuilding(building) : scopeName)),
     names,
-    window: label(from) + ' – ' + label(to),
+    window: mLabel(from) + ' – ' + mLabel(to),
     from, to,
-    rows: rows.map(({ _gross, _net, _occNights, _availNights, id, ...r }) => r),
+    rows,
     totals,
     // So the slide can say which two bases it is printing, in the words the reports use.
     basis: { gross: BASIS_NOTE.gross, net: BASIS_NOTE.net },
