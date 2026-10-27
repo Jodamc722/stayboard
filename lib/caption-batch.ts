@@ -13,7 +13,7 @@
 export const CERTAINTY_RULES = `CERTAINTY RULES — these override every other instruction, including any list of terms to use:
 - Bed size: say king, queen, full, double or twin ONLY when the photo makes the size unmistakable. If there is any doubt, just say "bed" (or "bedroom") — never guess a size.
 - Inside the unit or a shared building space: say "private", "in-unit", "shared", "building", "residents'" or "community" ONLY when the photo makes it unmistakable (a lobby desk, a building pool with many loungers, a balcony seen from the unit's own living room). If there is any doubt, just describe what is there — "Pool deck with loungers", "Fitness room with treadmills" — without saying whose it is.
-- Never a claim the photo does not show.`
+- Never a claim the photo does not show — no "heated", "new", "renovated", "luxury", no temperature, no brand.`
 
 export type BatchItem = { i: number; context?: string }
 export type BatchAnswer = { caption: string; bedSure: boolean; placeSure: boolean }
@@ -72,6 +72,7 @@ export function sanitizeCaption(raw: string, flags: { bedSure: boolean; placeSur
       return ''
     })
   }
+  c = c.replace(/\bheated\s+/gi, '')
   c = c.replace(/\s+([,.;:])/g, '$1').replace(/\s{2,}/g, ' ').replace(/^[,.;:\s-]+/, '').trim()
   if (c) c = c.charAt(0).toUpperCase() + c.slice(1)
   c = c.replace(/[!]+/g, '').replace(/\.$/, '')

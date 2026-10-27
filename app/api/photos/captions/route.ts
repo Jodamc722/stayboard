@@ -91,6 +91,10 @@ export async function POST(req: NextRequest) {
   if (!listingId) return NextResponse.json({ ok: false, error: 'listingId required' }, { status: 400 })
   const token = await guestyToken()
   if (!token) return NextResponse.json({ ok: false, error: 'Guesty token unavailable — run a sync, then retry.' }, { status: 503 })
+  // TIDY: re-apply the strict rules to captions this batch wrote earlier (no AI). `since` (ISO) also
+  // accepts index entries written by the batch before it signed them.
+  const tidy = body?.tidy === true
+  const since = str(body?.since)
 
   const sb = supabaseAdmin()
   const { data: row, error } = await sb.from('guesty_listings').select('id, nickname, title, building, status, address_city, raw').eq('id', listingId).single()
@@ -102,6 +106,29 @@ export async function POST(req: NextRequest) {
   if (!lr.ok) return NextResponse.json({ ok: false, error: `Guesty ${lr.status} reading the listing` }, { status: 502 })
   const lj: any = await lr.json().catch(() => ({}))
   const live: any[] = picsOf(Array.isArray(lj?.pictures) ? lj.pictures : lj?.data?.pictures)
+  if (tidy) {
+    const idx0 = raw._photoIndex && typeof raw._photoIndex === 'object' ? raw._photoIndex : {}
+    const sinceMs = since ? Date.parse(since) : NaN
+    const changed = new Map<string, string>()
+    live.forEach((p, i) => {
+      const id = str(p._id) || 'idx-' + i
+      const e = idx0[id]; const c = str(p.caption)
+      if (!e || !c || str(e.caption) !== c) return
+      const ours = e.by === 'caption-batch' || (Number.isFinite(sinceMs) && Date.parse(str(e.at)) >= sinceMs)
+      if (!ours) return
+      const t = sanitizeCaption(c, { bedSure: false, placeSure: false }, 200)
+      if (t && t !== c) changed.set(id, t)
+    })
+    if (!changed.size) return NextResponse.json({ ok: true, listingId, tidied: 0 })
+    const next = live.map((p, i) => { const id = str(p._id) || 'idx-' + i; const c = changed.get(id); return c ? { ...p, caption: c } : p })
+    const pr = await fetch(`${BASE}/listings/${encodeURIComponent(listingId)}`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ pictures: next }) })
+    if (!pr.ok) return NextResponse.json({ ok: false, listingId, error: `Guesty ${pr.status}` }, { status: 502 })
+    const index = { ...idx0 }
+    changed.forEach((c, id) => { index[id] = { ...(index[id] || {}), caption: c, by: 'caption-batch' } })
+    try { await sb.from('guesty_listings').update({ raw: { ...raw, pictures: next, _photoIndex: index } }).eq('id', listingId) } catch { /* next sync */ }
+    try { revalidateTag(PHOTO_LIBRARY_CACHE_TAG); forgetSearchCorpus() } catch { /* fine */ }
+    return NextResponse.json({ ok: true, listingId, tidied: changed.size, samples: Array.from(changed.values()).slice(0, 4) })
+  }
   const targets = live.map((p, i) => ({ p, i, id: str(p._id) || 'idx-' + i })).filter(t => needs(t.p))
   if (!targets.length) return NextResponse.json({ ok: true, listingId, written: 0, reused: 0, ai: 0, failed: 0, note: 'Every photo already has a caption.' })
 
@@ -151,7 +178,10 @@ Each caption: at most ${cfg.photos.captionMaxWords} words and ${cfg.photos.capti
     const answers = parseBatch(text, items.map((_, n) => n + 1))
     items.forEach((x, n) => {
       const a = answers[n]
-      const c = a ? sanitizeCaption(a.caption, a, cfg.photos.captionMaxChars) : ''
+      // STRICT (Jon's rules, 2026-10-27): the model marks itself "sure" far too readily ("queen bed",
+      // "private balcony" on photos that do not prove it), so the batch never keeps a bed size or a
+      // private/shared claim. A person can add one by hand where they know it.
+      const c = a ? sanitizeCaption(a.caption, { bedSure: false, placeSure: false }, cfg.photos.captionMaxChars) : ''
       if (c && !isJunkCaption(c)) { result.set(x.t.id, c); ai++ } else failed++
     })
   }
@@ -179,7 +209,7 @@ Each caption: at most ${cfg.photos.captionMaxWords} words and ${cfg.photos.capti
   try {
     const index = { ...idx }
     const at = new Date().toISOString()
-    result.forEach((c, id) => { index[id] = { ...(index[id] || {}), caption: c, at } })
+    result.forEach((c, id) => { index[id] = { ...(index[id] || {}), caption: c, at, by: 'caption-batch' } })
     await sb.from('guesty_listings').update({ raw: { ...raw, pictures: next, _photoIndex: index } }).eq('id', listingId)
   } catch { /* the next sync brings it anyway */ }
   try { revalidateTag(PHOTO_LIBRARY_CACHE_TAG); forgetSearchCorpus() } catch { /* fine */ }
