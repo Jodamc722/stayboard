@@ -1,13 +1,15 @@
 // CATALOGS API (Jon, 2026-10-27): the list, new catalogs, and editing what is on one.
 //
 //   GET                                 → catalogs (with item/approved counts), suppliers, listings for the picker, tiers
-//   POST { action, ... }                → create | generate | update | archive | addItem | updateItem | addOption | updateOption | order
+//   POST { action, ... }                → create | generate | update | archive | addItem | updateItem | addOption | updateOption
+//                                         | order | preset (onboarding order) | syncDefault | lookup (paste a product link)
 //
 // Reading is FF&E 'view'; every write is FF&E 'edit', like approving. `generate` reads a listing's
 // photos through the AI and can take ~20–40 s.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { listCatalogs, cloneCatalog, updateCatalog, archiveCatalog, addItem, updateItem, addOption, updateOption, orderFromCatalog, SUPPLIERS } from '@/lib/ffe-approved-catalog'
+import { listCatalogs, cloneCatalog, updateCatalog, archiveCatalog, addItem, updateItem, addOption, updateOption, orderFromCatalog, presetOrder, syncFromDefault, SUPPLIERS } from '@/lib/ffe-approved-catalog'
+import { lookupProduct } from '@/lib/ffe-product-lookup'
 import { generateCatalog, listListings, TIERS, type Tier } from '@/lib/ffe-catalog-generate'
 
 export const dynamic = 'force-dynamic'
@@ -44,11 +46,14 @@ export async function POST(req: NextRequest) {
       }
       case 'update': r = await updateCatalog(str(b.slug), { name: b.name, suppliers: b.suppliers, notes: b.notes, ownerId: b.ownerId, ownerName: b.ownerName, listingId: b.listingId }); break
       case 'order': r = await orderFromCatalog(str(b.slug), str(b.listingId), who); break
+      case 'preset': r = await presetOrder(str(b.slug), str(b.listingId), str(b.tier), b.lines, who); break
+      case 'syncDefault': r = await syncFromDefault(str(b.slug)); break
+      case 'lookup': r = await lookupProduct(str(b.url)); break
       case 'archive': r = await archiveCatalog(str(b.slug)); break
       case 'addItem': r = await addItem(str(b.slug), { name: b.name, category: b.category, section: b.section }); break
-      case 'updateItem': r = await updateItem(str(b.itemId), { name: b.name, category: b.category, archive: b.archive }); break
-      case 'addOption': r = await addOption(str(b.itemId), { src: b.src, name: b.name, url: b.url, price: b.price, each: b.each, image: b.image, chips: b.chips }); break
-      case 'updateOption': r = await updateOption(str(b.optionId), { name: b.name, url: b.url, price: b.price, each: b.each, image: b.image, archive: b.archive }); break
+      case 'updateItem': r = await updateItem(str(b.itemId), { name: b.name, category: b.category, archive: b.archive, need: b.need, qty: b.qty, qtyPer: b.qtyPer }); break
+      case 'addOption': r = await addOption(str(b.itemId), { src: b.src, name: b.name, url: b.url, price: b.price, each: b.each, image: b.image, chips: b.chips, tier: b.tier }); break
+      case 'updateOption': r = await updateOption(str(b.optionId), { name: b.name, url: b.url, price: b.price, each: b.each, image: b.image, archive: b.archive, tier: b.tier }); break
       default: return NextResponse.json({ ok: false, error: 'Unknown action.' }, { status: 400 })
     }
     if (!r || r.ok === false) return NextResponse.json({ ok: false, error: (r && r.error) || 'That did not save.', ...(r || {}) }, { status: 400 })

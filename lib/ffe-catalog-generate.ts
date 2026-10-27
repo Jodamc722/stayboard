@@ -17,9 +17,9 @@ import { cloneCatalog, getCatalog, addItem, addOption, SUPPLIERS, baseKey } from
 
 export type Tier = 'standard' | 'midlux' | 'luxury'
 export const TIERS: { key: Tier; label: string; blurb: string; suppliers: string[] }[] = [
-  { key: 'standard', label: 'Standard', blurb: 'Durable, good-looking, best price. Amazon and Wayfair where they match; City Home for case goods.', suppliers: ['amz', 'wf', 'ch', 'lowes', 'samsung', 'staples', 'helix', 'nn', 'rugsusa', 'beekman', 'apotheke', 'pg', 'dh', 'other'] },
-  { key: 'midlux', label: 'Mid-lux', blurb: 'A step up on the pieces guests touch and see first: HostGPO/Article for seating and beds, delivered case goods, standard elsewhere.', suppliers: ['host', 'ch', 'wf', 'amz', 'lowes', 'samsung', 'staples', 'helix', 'nn', 'rugsusa', 'beekman', 'apotheke', 'pg', 'dh', 'other'] },
-  { key: 'luxury', label: 'Luxury', blurb: 'Contract-grade and designer pieces throughout: HostGPO/Article and City Home, no flat-pack.', suppliers: ['host', 'ch', 'lowes', 'samsung', 'staples', 'helix', 'nn', 'rugsusa', 'beekman', 'apotheke', 'pg', 'dh', 'other'] },
+  { key: 'standard', label: 'Standard', blurb: 'Durable, good-looking, best price. Amazon and Wayfair where they match; City Home for case goods.', suppliers: ['amz', 'walmart', 'target', 'wf', 'ch', 'lowes', 'samsung', 'staples', 'helix', 'nn', 'rugsusa', 'beekman', 'apotheke', 'pg', 'dh', 'other'] },
+  { key: 'midlux', label: 'Mid-lux', blurb: 'A step up on the pieces guests touch and see first: HostGPO/Article for seating and beds, delivered case goods, standard elsewhere.', suppliers: ['host', 'ch', 'wf', 'amz', 'walmart', 'target', 'lowes', 'samsung', 'staples', 'helix', 'nn', 'rugsusa', 'beekman', 'apotheke', 'pg', 'dh', 'other'] },
+  { key: 'luxury', label: 'Luxury', blurb: 'Contract-grade and designer pieces throughout: HostGPO/Article and City Home, no flat-pack.', suppliers: ['host', 'ch', 'target', 'lowes', 'samsung', 'staples', 'helix', 'nn', 'rugsusa', 'beekman', 'apotheke', 'pg', 'dh', 'other'] },
 ]
 
 const str = (v: any) => (typeof v === 'string' ? v.trim() : '')
@@ -28,10 +28,12 @@ function smallUrl(u: string): string {
   return u
 }
 
-export async function listListings(): Promise<{ id: string; label: string; photos: number }[]> {
+export async function listListings(): Promise<{ id: string; label: string; photos: number; bedrooms: number | null; bathrooms: number | null; guests: number | null }[]> {
   try {
-    const { data } = await supabaseAdmin().from('guesty_listings').select('id, nickname, title, building, pictures').limit(1000)
-    return (data || []).map((l: any) => ({ id: String(l.id), label: [l.nickname || l.title, l.building].filter(Boolean).join(' · '), photos: Array.isArray(l.pictures) ? l.pictures.length : 0 }))
+    const { data } = await supabaseAdmin().from('guesty_listings').select('id, nickname, title, building, pictures, bedrooms:raw->>bedrooms, bathrooms:raw->>bathrooms, guests:raw->>accommodates').limit(1000)
+    const n = (v: any) => { const x = parseFloat(String(v ?? '')); return Number.isFinite(x) ? x : null }
+    return (data || []).map((l: any) => ({ id: String(l.id), label: [l.nickname || l.title, l.building].filter(Boolean).join(' · '), photos: Array.isArray(l.pictures) ? l.pictures.length : 0,
+      bedrooms: n(l.bedrooms), bathrooms: n(l.bathrooms), guests: n(l.guests) }))
       .filter(l => l.label).sort((a, b) => a.label.localeCompare(b.label))
   } catch { return [] }
 }
@@ -81,7 +83,7 @@ export async function generateCatalog(opts: { slug: string; name: string; listin
 
   // 2. Ask: what does the place look like, and which option fits each item?
   const allowed = new Set(tier.suppliers)
-  const menu = cat.items.filter(i => i.section !== 'amenity').map(i => ({
+  const menu = cat.items.filter(i => i.section !== 'amenity' && i.section !== 'essential').map(i => ({
     key: i.key, item: i.name, category: i.category,
     options: i.options.filter(o => allowed.has(baseKey(o.src))).map(o => ({ src: o.src, supplier: o.vendor, product: o.name, price: o.price, tags: o.chips })),
   })).filter(i => i.options.length)

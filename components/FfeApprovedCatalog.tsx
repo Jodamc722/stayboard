@@ -24,8 +24,11 @@ import { Check, Copy, ExternalLink, Link2, Loader2, Plus, RefreshCw, Sparkles, T
 import { useCachedFetch } from '@/lib/swr'
 
 type OptionSrc = string
-type Opt = { id?: string; src: OptionSrc; vendor: string; name: string; url: string | null; price: number | null; each?: string; image: string | null; chips: string[]; fit: 'cover' | 'contain' }
-type Item = { id?: string; key: string; section: 'compare' | 'vendor' | 'amenity'; category: string; name: string; options: Opt[] }
+type Tier = 'standard' | 'midlux' | 'luxury'
+type Opt = { id?: string; src: OptionSrc; vendor: string; name: string; url: string | null; price: number | null; each?: string; image: string | null; chips: string[]; fit: 'cover' | 'contain'; tier?: Tier | null }
+type Need = 'must' | 'recommended' | 'suggested'
+type QtyPer = 'unit' | 'bedroom' | 'bathroom' | 'guest'
+type Item = { id?: string; key: string; section: 'compare' | 'vendor' | 'amenity' | 'essential'; category: string; name: string; options: Opt[]; need?: Need | null; qty?: number; qtyPer?: QtyPer }
 type Catalog = { property: string; title: string; kind?: 'default' | 'property'; suppliers?: string[]; tier?: string | null; styleBrief?: string | null; listingId?: string | null; sourceSheet: string; asOf: string; items: Item[]; misc: Record<string, string[]>; fromDb?: boolean }
 type Decision = { approved: OptionSrc[]; rejected: boolean; note: string; suggested?: string[]; suggestNote?: string; ownerPicked?: boolean }
 type Supplier = { key: string; name: string; note: string }
@@ -34,8 +37,23 @@ type Payload = { ok: boolean; catalog: Catalog; decisions: Record<string, Decisi
 const money = (v: number | null | undefined) => (v == null ? '—' : '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
 const TONES: Record<string, string> = { host: 'text-brand-700', amz: 'text-amber-700', ch: 'text-sky-700', wf: 'text-violet-700' }
 const SRC_TONE = new Proxy(TONES, { get: (t, k: string) => t[String(k).replace(/-\d+$/, '')] || 'text-muted' }) as Record<string, string>
+const TIER_LABEL: Record<string, string> = { standard: 'Standard', midlux: 'Mid-lux', luxury: 'Luxury' }
+const TIER_TONE: Record<string, string> = { standard: 'bg-app text-ink border border-line', midlux: 'bg-sky-50 text-sky-800', luxury: 'bg-ink text-white' }
+const NEED_LABEL: Record<string, string> = { must: 'Must-have', recommended: 'Recommended', suggested: 'Suggested' }
+const PER_LABEL: Record<string, string> = { unit: 'per unit', bedroom: 'per bedroom', bathroom: 'per bathroom', guest: 'per guest' }
+function TierChip({ t }: { t?: string | null }) { return t ? <span className={'text-[10.5px] font-semibold uppercase tracking-wider rounded-full px-2 py-0.5 ' + (TIER_TONE[t] || '')}>{TIER_LABEL[t] || t}</span> : null }
+// The six suppliers the team searches (Jon, 2026-10-27). Each opens that site's own search.
+const SEARCH_SUPPLIERS: { key: string; name: string; url: (q: string) => string }[] = [
+  { key: 'amz', name: 'Amazon', url: q => `https://www.amazon.com/s?k=${encodeURIComponent(q)}` },
+  { key: 'walmart', name: 'Walmart', url: q => `https://www.walmart.com/search?q=${encodeURIComponent(q)}` },
+  { key: 'target', name: 'Target', url: q => `https://www.target.com/s?searchTerm=${encodeURIComponent(q)}` },
+  { key: 'host', name: 'HostGPO', url: q => `https://www.hostgpo.com/search?q=${encodeURIComponent(q)}` },
+  { key: 'wf', name: 'Wayfair', url: q => `https://www.wayfair.com/keyword.php?keyword=${encodeURIComponent(q)}` },
+  { key: 'ch', name: 'City Home', url: q => `https://www.cityhome.com/catalogsearch/result/?q=${encodeURIComponent(q)}` },
+]
 const CHIP_TONE = (c: string) =>
-  /Assembly/.test(c) ? 'bg-amber-50 text-amber-800'
+  /Estimate|Search —/.test(c) ? 'bg-amber-50 text-amber-800'
+  : /Assembly/.test(c) ? 'bg-amber-50 text-amber-800'
     : /Delivered/.test(c) ? 'bg-sky-50 text-sky-800'
       : /Contract|Bundle|Hospitality|Good|Better|Best/.test(c) ? 'bg-brand-50 text-brand-700'
         : /Set of|piece/.test(c) ? 'bg-amber-50 text-amber-800'
@@ -51,7 +69,7 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
   const [decisions, setDecisions] = useState<Record<string, Decision>>({})
   const [view, setView] = useState<'all' | 'approved'>(isPublic ? 'approved' : 'all')
   useEffect(() => { if (selecting) setView('all') }, [selecting])
-  const [tab, setTab] = useState<'review' | 'list' | 'manage'>('review')
+  const [tab, setTab] = useState<'review' | 'list' | 'manage' | 'onboarding'>('review')
   const [order, setOrder] = useState<'group' | 'rank'>('group')
   const [saving, setSaving] = useState<string>('')
   // The latest decisions, readable outside render (the save path reads it, never the updater).
@@ -75,7 +93,7 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
     })
   }, [data])
   useEffect(() => {
-    try { const h = (window.location.hash || '').replace('#', ''); if (h === 'approved' || h === 'list') setTab('list'); if (h === 'manage') setTab('manage') } catch { /* no-op */ }
+    try { const h = (window.location.hash || '').replace('#', ''); if (h === 'approved' || h === 'list') setTab('list'); if (h === 'manage') setTab('manage'); if (h === 'onboarding') setTab('onboarding') } catch { /* no-op */ }
   }, [])
 
   const canEdit = !isPublic && !!data?.canEdit
@@ -164,6 +182,7 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
   const compare = items.filter(i => i.section === 'compare').filter(visible)
   const vendor = items.filter(i => i.section === 'vendor').filter(visible)
   const amenity = items.filter(i => i.section === 'amenity').filter(visible)
+  const essential = items.filter(i => i.section === 'essential').filter(visible)
   const ranked = order === 'rank'
     ? [...compare].sort((a, b) => savings(b) - savings(a))
     : compare
@@ -183,7 +202,7 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
       )}
       <div className="flex flex-wrap items-center gap-3">
         {!isPublic && <Toggle value={tab} onChange={v => { setTab(v as any); setView(v === 'list' ? 'approved' : 'all'); try { window.history.replaceState(null, '', v === 'review' ? '#' : '#' + v) } catch { /* no-op */ } }}
-          options={canEdit ? [['review', 'Review'], ['list', 'Approved list'], ['manage', 'Manage']] : [['review', 'Review'], ['list', 'Approved list']]} />}
+          options={canEdit ? [['review', 'Review'], ['list', 'Approved list'], ['onboarding', 'Onboarding order'], ['manage', 'Manage']] : [['review', 'Review'], ['list', 'Approved list']]} />}
         {!isPublic && tab === 'review' && <Toggle value={order} onChange={v => setOrder(v as any)} options={[['group', 'By room item'], ['rank', 'Biggest savings first']]} />}
         {!isPublic && tab === 'review' && canEdit && nSuggested > 0 && (
           <button type="button" onClick={acceptAll} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 text-brand-700 text-[12.5px] font-semibold px-3 py-1.5"><Sparkles className="w-3.5 h-3.5" /> Approve all {nSuggested} suggestions</button>
@@ -196,6 +215,7 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
       </div>
 
       {!isPublic && tab === 'list' && <ApprovedList items={items} decisions={decisions} property={property} listingId={data.catalog.listingId} />}
+      {!isPublic && tab === 'onboarding' && canEdit && <Onboarding property={property} items={items} decisions={decisions} onChanged={() => refresh()} />}
       {!isPublic && tab === 'manage' && canEdit && <Manage property={property} catalog={data.catalog} suppliers={data.suppliers || []} onChanged={() => refresh()} />}
       {(isPublic || tab === 'review') && <>
 
@@ -230,6 +250,26 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
           </div>
         ))}
       </section>
+
+      {/* Onboarding essentials (Jon, 2026-10-27): Must-have / Recommended / Suggested, a pick per tier */}
+      {(essential.length > 0 || items.some(i => i.section === 'essential')) && (
+        <section>
+          <h2 className="text-xl font-bold text-ink tracking-tight">Onboarding essentials</h2>
+          <p className="text-sm text-muted mt-1 max-w-3xl">What goes into a unit before the first guest: must-haves are in every onboarding order, recommended ones are in by default, suggested ones are added when they fit the unit. Each has an option per tier; lines marked <b>Estimate</b> are planning prices on a search link until a real product is pinned.</p>
+          {essential.length === 0 && <Empty />}
+          {(['must', 'recommended', 'suggested'] as Need[]).map(need => {
+            const list = essential.filter(i => (i.need || 'suggested') === need); if (!list.length) return null
+            return (
+              <div key={need} className="mt-5">
+                <h3 className="text-[15px] font-bold text-ink mb-2">{NEED_LABEL[need]} <span className="text-xs text-muted font-medium">{list.length} items</span></h3>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {list.map(it => <EssentialCard key={it.key} item={it} d={decisions[it.key]} status={status(it.key)} canEdit={canEdit} view={view} isPublic={isPublic} selecting={selecting} onPick={pick} onToggle={toggle} />)}
+                </div>
+              </div>
+            )
+          })}
+        </section>
+      )}
 
       {/* Amenities */}
       <section>
@@ -376,7 +416,7 @@ function CompareCard({ item, d, status, canEdit, view, isPublic, selecting, onPi
               <div className="p-3 grid gap-1 content-start">
                 <div className={'text-[11px] uppercase tracking-wider font-semibold ' + SRC_TONE[o.src]}>{o.vendor}</div>
                 <div className="text-[13.5px] font-medium leading-snug break-words">{o.url ? <a href={o.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{o.name}</a> : o.name}</div>
-                {o.chips.length > 0 && <div className="flex flex-wrap gap-1">{o.chips.map(c => <span key={c} className={'text-[11px] font-semibold rounded-full px-2 py-0.5 ' + CHIP_TONE(c)}>{c}</span>)}</div>}
+                {(o.tier || o.chips.length > 0) && <div className="flex flex-wrap gap-1"><TierChip t={o.tier} />{o.chips.map(c => <span key={c} className={'text-[11px] font-semibold rounded-full px-2 py-0.5 ' + CHIP_TONE(c)}>{c}</span>)}</div>}
                 <div className={'text-xl font-bold tabular-nums mt-1 ' + (o.src === 'host' ? 'text-brand-700' : 'text-ink')}>{money(o.price)}</div>
                 {o !== host && host.price != null && <div><Diff ref_={host.price || 0} price={o.price} /></div>}
                 {(o.price != null || o.url) && (view === 'all' || on) && (selecting ? <ChooseBtn on={on} onClick={() => onPick(item.key, o.src)} /> : isPublic ? (on && <Approved />) : <ApproveBtn on={on} disabled={!canEdit} onClick={() => onToggle(item.key, o.src)} />)}
@@ -413,7 +453,7 @@ function SoloCard({ item, d, status, canEdit, view, isPublic, selecting, onPick,
         <div className="flex items-center justify-between gap-2"><span className="text-[11px] uppercase tracking-wider text-muted font-semibold">{(view === 'all' || onMain) ? main.vendor : item.name}</span><StatusPill s={status} n={d?.approved.length || 0} /></div>
         {(view === 'all' || onMain) && <>
           <div className="text-[13.5px] font-medium leading-snug break-words">{main.url ? <a href={main.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{main.name}</a> : main.name}</div>
-          {main.chips.length > 0 && <div className="flex flex-wrap gap-1">{main.chips.map(c => <span key={c} className={'text-[11px] font-semibold rounded-full px-2 py-0.5 ' + CHIP_TONE(c)}>{c}</span>)}</div>}
+          {(main.tier || main.chips.length > 0) && <div className="flex flex-wrap gap-1"><TierChip t={main.tier} />{main.chips.map(c => <span key={c} className={'text-[11px] font-semibold rounded-full px-2 py-0.5 ' + CHIP_TONE(c)}>{c}</span>)}</div>}
           <div className="text-lg font-bold tabular-nums text-brand-700">{money(main.price)}</div>
           {(main.price != null || main.url) && (selecting ? <ChooseBtn on={onMain} onClick={() => onPick(item.key, main.src)} /> : isPublic ? (onMain && <Approved />) : <ApproveBtn on={onMain} disabled={!canEdit} onClick={() => onToggle(item.key, main.src)} />)}
           {onMain && d?.ownerPicked && !selecting && <OwnerPicked />}
@@ -493,7 +533,22 @@ function Manage({ property, catalog, suppliers, onChanged }: { property: string;
   const [msg, setMsg] = useState('')
   const [newItem, setNewItem] = useState({ name: '', category: '', section: 'vendor' })
   const [optFor, setOptFor] = useState<string | null>(null)
-  const [opt, setOpt] = useState({ src: 'amz', name: '', url: '', price: '', each: '', image: '' })
+  const blankOpt = { src: 'amz', name: '', url: '', price: '', each: '', image: '', tier: '' }
+  const [opt, setOpt] = useState(blankOpt)
+  const [findQ, setFindQ] = useState('')
+  const [reading, setReading] = useState(false)
+  const [readMsg, setReadMsg] = useState('')
+  const readLink = async () => {
+    if (!opt.url) return
+    setReading(true); setReadMsg('')
+    try {
+      const r = await fetch('/api/audit/ffe/catalogs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'lookup', slug: property, url: opt.url }) })
+      const j = await r.json().catch(() => ({}))
+      if (!j.ok) { setReadMsg(j.error || 'Could not read that link.'); return }
+      setOpt(o => ({ ...o, src: j.supplier || o.src, name: j.name || o.name, price: j.price != null ? String(j.price) : o.price, image: j.image || o.image }))
+      setReadMsg(j.blocked ? 'That site would not show its page to Lighthouse — supplier filled in; type the name and price.' : `Read from the page${j.price == null ? ' (no price found — type it)' : ''}.`)
+    } finally { setReading(false) }
+  }
   const post = async (body: any) => {
     setMsg('Saving…')
     const r = await fetch('/api/audit/ffe/catalogs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, slug: property }) })
@@ -508,7 +563,7 @@ function Manage({ property, catalog, suppliers, onChanged }: { property: string;
     <div className="space-y-6">
       <section className="rounded-xl border border-line bg-white shadow-soft p-4">
         <h3 className="font-bold text-ink text-[15px]">Suppliers for this catalog</h3>
-        <p className="text-sm text-muted mt-1">Options from suppliers that aren&apos;t ticked are hidden from the review and from the share link. Nothing ticked means everything shows.</p>
+        <p className="text-sm text-muted mt-1">Furniture options from suppliers that aren&apos;t ticked are hidden from the review and from the share link. Nothing ticked means everything shows. Onboarding essentials aren&apos;t filtered — their tier picks the option.</p>
         <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3 mt-3">
           {suppliers.map(sp => (
             <label key={sp.key} className="flex items-start gap-2 text-sm rounded-lg border border-line px-3 py-2 cursor-pointer hover:border-ink">
@@ -525,7 +580,7 @@ function Manage({ property, catalog, suppliers, onChanged }: { property: string;
         <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto_auto] mt-3 items-end">
           <label className="grid gap-1 text-[12px] font-semibold text-muted">Item<input value={newItem.name} onChange={e => setNewItem({ ...newItem, name: e.target.value })} placeholder="e.g. Bar cart" className="text-sm font-normal text-ink rounded-md border border-line px-2.5 py-2" /></label>
           <label className="grid gap-1 text-[12px] font-semibold text-muted">Category<input list="cat-list" value={newItem.category} onChange={e => setNewItem({ ...newItem, category: e.target.value })} placeholder="e.g. Living room" className="text-sm font-normal text-ink rounded-md border border-line px-2.5 py-2" /><datalist id="cat-list">{cats.map(c => <option key={c} value={c} />)}</datalist></label>
-          <label className="grid gap-1 text-[12px] font-semibold text-muted">Section<select value={newItem.section} onChange={e => setNewItem({ ...newItem, section: e.target.value })} className="text-sm font-normal text-ink rounded-md border border-line px-2.5 py-2 bg-white"><option value="compare">Furniture (compare)</option><option value="vendor">Furniture (vendor-only)</option><option value="amenity">Amenity</option></select></label>
+          <label className="grid gap-1 text-[12px] font-semibold text-muted">Section<select value={newItem.section} onChange={e => setNewItem({ ...newItem, section: e.target.value })} className="text-sm font-normal text-ink rounded-md border border-line px-2.5 py-2 bg-white"><option value="compare">Furniture (compare)</option><option value="vendor">Furniture (vendor-only)</option><option value="essential">Onboarding essential</option><option value="amenity">Amenity</option></select></label>
           <button type="button" onClick={async () => { const j = await post({ action: 'addItem', ...newItem }); if (j.ok) setNewItem({ name: '', category: '', section: 'vendor' }) }} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white text-[12.5px] font-semibold px-3 py-2"><Plus className="w-3.5 h-3.5" /> Add item</button>
         </div>
       </section>
@@ -536,15 +591,33 @@ function Manage({ property, catalog, suppliers, onChanged }: { property: string;
           <div key={it.key} className="rounded-xl border border-line bg-white shadow-soft p-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="font-semibold text-ink"><span className="text-[11px] uppercase tracking-wider text-muted font-semibold mr-2">{it.category}</span>{it.name}</div>
-              <div className="flex items-center gap-2">
-                {it.id && <button type="button" onClick={() => { setOptFor(optFor === it.id ? null : it.id!); setOpt({ src: 'amz', name: '', url: '', price: '', each: '', image: '' }) }} className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg border border-line px-2.5 py-1 hover:border-ink"><Plus className="w-3 h-3" /> Add option</button>}
+              <div className="flex items-center gap-2 flex-wrap">
+                {it.id && (
+                  <span className="inline-flex items-center gap-1 text-[12px]">
+                    <select aria-label="Section" value={it.need || ''} onChange={e => post({ action: 'updateItem', itemId: it.id, need: e.target.value || null })} className="rounded-md border border-line px-1.5 py-1 bg-white">
+                      <option value="">Catalog only</option><option value="must">Must-have</option><option value="recommended">Recommended</option><option value="suggested">Suggested</option>
+                    </select>
+                    {it.need && <>
+                      <input aria-label="Quantity" type="number" min={0.5} step={0.5} defaultValue={it.qty ?? 1} onBlur={e => { const v = Number(e.target.value); if (v && v !== it.qty) post({ action: 'updateItem', itemId: it.id, qty: v }) }} className="w-14 rounded-md border border-line px-1.5 py-1 text-right" />
+                      <select aria-label="Per" value={it.qtyPer || 'unit'} onChange={e => post({ action: 'updateItem', itemId: it.id, qtyPer: e.target.value })} className="rounded-md border border-line px-1.5 py-1 bg-white">
+                        {Object.entries(PER_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      </select>
+                    </>}
+                  </span>
+                )}
+                {it.id && <button type="button" onClick={() => { setOptFor(optFor === it.id ? null : it.id!); setOpt(blankOpt); setFindQ(it.name); setReadMsg('') }} className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg border border-line px-2.5 py-1 hover:border-ink"><Plus className="w-3 h-3" /> Find &amp; add product</button>}
                 {it.id && <button type="button" onClick={() => { if (window.confirm(`Remove "${it.name}" from this catalog?`)) post({ action: 'updateItem', itemId: it.id, archive: true }) }} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-rose-700"><Trash2 className="w-3 h-3" /> Remove</button>}
               </div>
             </div>
             <ul className="mt-2 grid gap-1">
               {it.options.map(o => (
                 <li key={o.id || o.src} className={'flex items-center gap-2 text-[13px] ' + (picked.length && !picked.includes(o.src) ? 'opacity-50' : '')}>
-                  <span className={'text-[11px] uppercase tracking-wider font-semibold w-28 shrink-0 ' + SRC_TONE[o.src]}>{o.vendor}</span>
+                  {o.id ? (
+                    <select aria-label="Tier" value={o.tier || ''} onChange={e => post({ action: 'updateOption', optionId: o.id, tier: e.target.value || null })} className="text-[11.5px] rounded-md border border-line px-1 py-0.5 bg-white w-24 shrink-0">
+                      <option value="">Any tier</option><option value="standard">Standard</option><option value="midlux">Mid-lux</option><option value="luxury">Luxury</option>
+                    </select>
+                  ) : <span className="w-24 shrink-0"><TierChip t={o.tier} /></span>}
+                  <span className={'text-[11px] uppercase tracking-wider font-semibold w-24 shrink-0 ' + SRC_TONE[o.src]}>{o.vendor}</span>
                   <span className="min-w-0 truncate">{o.url ? <a href={o.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{o.name}</a> : o.name}</span>
                   <span className="ml-auto tabular-nums font-semibold whitespace-nowrap">{money(o.price)}</span>
                   {o.id && <button type="button" title="Remove this option" onClick={() => post({ action: 'updateOption', optionId: o.id, archive: true })} className="text-muted hover:text-rose-700"><X className="w-3.5 h-3.5" /></button>}
@@ -553,13 +626,30 @@ function Manage({ property, catalog, suppliers, onChanged }: { property: string;
               {it.options.length === 0 && <li className="text-[13px] text-muted">No options yet — add one with a link.</li>}
             </ul>
             {optFor === it.id && (
-              <div className="mt-3 grid gap-2 md:grid-cols-[150px_1fr_1fr] lg:grid-cols-[150px_1.2fr_1.6fr_90px_90px_auto] items-end border-t border-line pt-3">
-                <label className="grid gap-1 text-[12px] font-semibold text-muted">Supplier<select value={opt.src} onChange={e => setOpt({ ...opt, src: e.target.value })} className="text-sm font-normal text-ink rounded-md border border-line px-2 py-1.5 bg-white">{suppliers.map(sp => <option key={sp.key} value={sp.key}>{sp.name}</option>)}</select></label>
-                <label className="grid gap-1 text-[12px] font-semibold text-muted">Product<input value={opt.name} onChange={e => setOpt({ ...opt, name: e.target.value })} className="text-sm font-normal text-ink rounded-md border border-line px-2 py-1.5" /></label>
-                <label className="grid gap-1 text-[12px] font-semibold text-muted">Link<input value={opt.url} onChange={e => setOpt({ ...opt, url: e.target.value })} placeholder="https://…" className="text-sm font-normal text-ink rounded-md border border-line px-2 py-1.5" /></label>
-                <label className="grid gap-1 text-[12px] font-semibold text-muted">Price<input value={opt.price} onChange={e => setOpt({ ...opt, price: e.target.value })} placeholder="$" className="text-sm font-normal text-ink rounded-md border border-line px-2 py-1.5" /></label>
-                <label className="grid gap-1 text-[12px] font-semibold text-muted">Photo URL<input value={opt.image} onChange={e => setOpt({ ...opt, image: e.target.value })} placeholder="https://…" className="text-sm font-normal text-ink rounded-md border border-line px-2 py-1.5" /></label>
-                <button type="button" onClick={async () => { const j = await post({ action: 'addOption', itemId: it.id, ...opt }); if (j.ok) setOptFor(null) }} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white text-[12.5px] font-semibold px-3 py-2"><Plus className="w-3.5 h-3.5" /> Save</button>
+              <div className="mt-3 border-t border-line pt-3 grid gap-3">
+                <div className="grid gap-1.5">
+                  <div className="text-[12px] font-semibold text-muted">1 · Search the suppliers</div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <input value={findQ} onChange={e => setFindQ(e.target.value)} className="text-sm rounded-md border border-line px-2.5 py-1.5 w-[260px] max-w-full" aria-label="Search for" />
+                    {SEARCH_SUPPLIERS.map(sp => <a key={sp.key} href={sp.url(findQ || it.name)} target="_blank" rel="noopener" className={'inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg border border-line px-2.5 py-1 hover:border-ink ' + SRC_TONE[sp.key]}>{sp.name} <ExternalLink className="w-3 h-3" /></a>)}
+                  </div>
+                </div>
+                <div className="grid gap-1.5">
+                  <div className="text-[12px] font-semibold text-muted">2 · Paste the product link you picked</div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <input value={opt.url} onChange={e => setOpt({ ...opt, url: e.target.value })} placeholder="https://…" className="text-sm rounded-md border border-line px-2.5 py-1.5 flex-1 min-w-[240px]" aria-label="Product link" />
+                    <button type="button" disabled={!opt.url || reading} onClick={readLink} className="inline-flex items-center gap-1.5 text-[12px] font-semibold rounded-lg border border-line px-2.5 py-1.5 hover:border-ink disabled:opacity-60">{reading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Read link</button>
+                    {readMsg && <span className="text-[12px] text-muted">{readMsg}</span>}
+                  </div>
+                </div>
+                <div className="grid gap-2 md:grid-cols-[140px_1fr_90px_120px] lg:grid-cols-[140px_1.6fr_90px_120px_1fr_auto] items-end">
+                  <label className="grid gap-1 text-[12px] font-semibold text-muted">Supplier<select value={opt.src} onChange={e => setOpt({ ...opt, src: e.target.value })} className="text-sm font-normal text-ink rounded-md border border-line px-2 py-1.5 bg-white">{suppliers.map(sp => <option key={sp.key} value={sp.key}>{sp.name}</option>)}</select></label>
+                  <label className="grid gap-1 text-[12px] font-semibold text-muted">Product<input value={opt.name} onChange={e => setOpt({ ...opt, name: e.target.value })} className="text-sm font-normal text-ink rounded-md border border-line px-2 py-1.5" /></label>
+                  <label className="grid gap-1 text-[12px] font-semibold text-muted">Price<input value={opt.price} onChange={e => setOpt({ ...opt, price: e.target.value })} placeholder="$" className="text-sm font-normal text-ink rounded-md border border-line px-2 py-1.5" /></label>
+                  <label className="grid gap-1 text-[12px] font-semibold text-muted">Tier<select value={opt.tier} onChange={e => setOpt({ ...opt, tier: e.target.value })} className="text-sm font-normal text-ink rounded-md border border-line px-2 py-1.5 bg-white"><option value="">Any tier</option><option value="standard">Standard</option><option value="midlux">Mid-lux</option><option value="luxury">Luxury</option></select></label>
+                  <label className="grid gap-1 text-[12px] font-semibold text-muted">Photo URL<input value={opt.image} onChange={e => setOpt({ ...opt, image: e.target.value })} placeholder="https://… (filled from the link when it can)" className="text-sm font-normal text-ink rounded-md border border-line px-2 py-1.5" /></label>
+                  <button type="button" onClick={async () => { const j = await post({ action: 'addOption', itemId: it.id, ...opt, tier: opt.tier || null }); if (j.ok) { setOptFor(null); setOpt(blankOpt) } }} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white text-[12.5px] font-semibold px-3 py-2"><Plus className="w-3.5 h-3.5" /> Save</button>
+                </div>
               </div>
             )}
           </div>
@@ -617,6 +707,145 @@ function OrderFromCatalog({ property, listingId }: { property: string; listingId
         </div>
       )}
       {msg && <div className="text-sm text-ink">{msg}</div>}
+    </div>
+  )
+}
+
+function EssentialCard({ item, d, status, canEdit, view, isPublic, selecting, onPick, onToggle }: { item: Item; d?: Decision; status: string; canEdit: boolean; view: 'all' | 'approved'; isPublic?: boolean; selecting?: boolean; onPick: (k: string, s: OptionSrc) => void; onToggle: (k: string, s: OptionSrc) => void }) {
+  const opts = view === 'approved' ? item.options.filter(o => d?.approved.includes(o.src)) : item.options
+  return (
+    <article className="rounded-xl border border-line bg-white shadow-soft p-3 grid gap-2" id={item.key}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0"><div className="font-semibold text-ink text-[14px]">{item.name}</div><div className="text-[11.5px] text-muted">{item.category} · {item.qty ?? 1} {PER_LABEL[item.qtyPer || 'unit']}</div></div>
+        <StatusPill s={status} n={d?.approved.length || 0} />
+      </div>
+      <ul className="grid gap-1.5">
+        {opts.map(o => { const on = !!d?.approved.includes(o.src); return (
+          <li key={o.id || o.src} className="flex items-center gap-2 text-[13px] flex-wrap">
+            <div className="w-10 h-10 rounded-md bg-[#f1f2ee] overflow-hidden flex items-center justify-center shrink-0">{o.image ? <img src={o.image} alt="" loading="lazy" className="w-full h-full object-contain p-0.5 mix-blend-multiply" /> : <span className={'text-[10px] font-bold ' + SRC_TONE[o.src]}>{o.vendor.slice(0, 3)}</span>}</div>
+            <TierChip t={o.tier} />
+            <span className="min-w-0 flex-1"><span className={'text-[10.5px] uppercase tracking-wider font-semibold mr-1.5 ' + SRC_TONE[o.src]}>{o.vendor}</span>{o.url ? <a href={o.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{o.name}</a> : o.name}
+              {o.chips.filter(c => /Estimate|Search/.test(c)).length > 0 && <span className="ml-1.5 text-[10.5px] font-semibold text-amber-800">{o.chips.includes('Estimate') ? 'Estimate' : 'Search link'}</span>}</span>
+            <span className="tabular-nums font-semibold whitespace-nowrap">{money(o.price)}</span>
+            {(o.price != null || o.url) && (selecting ? <ChooseBtn on={on} onClick={() => onPick(item.key, o.src)} small /> : isPublic ? (on && <Approved />) : <ApproveBtn on={on} disabled={!canEdit} onClick={() => onToggle(item.key, o.src)} small />)}
+          </li>
+        ) })}
+        {opts.length === 0 && <li className="text-[12.5px] text-muted">No product yet — add one on Manage.</li>}
+      </ul>
+    </article>
+  )
+}
+
+// THE PRESET ONBOARDING ORDER (Jon, 2026-10-27: "tiers, and preset orders, with swap options for
+// onboarding… must-have, recommended and suggested"). Pick the unit and the tier: every must-have is
+// in, recommended ones are in by default, suggested ones are off until ticked; each line takes the
+// tier's option (an approved one first) and its quantity from the unit's bedrooms, bathrooms and
+// guests. The team swaps any line to another option of the same item, changes a quantity, and the
+// result becomes a draft FF&E order for the unit's owner.
+const TIER_ORDER: Tier[] = ['standard', 'midlux', 'luxury']
+function pickFor(it: Item, tier: Tier, d?: Decision): Opt | null {
+  const usable = it.options.filter(o => o.price != null || o.url)
+  if (!usable.length) return null
+  const approved = (o: Opt) => !!d?.approved.includes(o.src)
+  const dist = (o: Opt) => (o.tier ? Math.abs(TIER_ORDER.indexOf(o.tier) - TIER_ORDER.indexOf(tier)) : 0.5)
+  return [...usable].sort((a, b) => (dist(a) - dist(b)) || (Number(approved(b)) - Number(approved(a))) || ((a.price ?? 1e9) - (b.price ?? 1e9)))[0]
+}
+function Onboarding({ property, items, decisions, onChanged }: { property: string; items: Item[]; decisions: Record<string, Decision>; onChanged: () => void }) {
+  const [units, setUnits] = useState<{ id: string; label: string; bedrooms: number | null; bathrooms: number | null; guests: number | null }[]>([])
+  const [q, setQ] = useState('')
+  const [unit, setUnit] = useState('')
+  const [size, setSize] = useState({ bedrooms: 1, bathrooms: 1, guests: 2 })
+  const [tier, setTier] = useState<Tier>('midlux')
+  const [on, setOn] = useState<Record<string, boolean>>({})
+  const [swap, setSwap] = useState<Record<string, string>>({})
+  const [qtyEdit, setQtyEdit] = useState<Record<string, number>>({})
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState<React.ReactNode>('')
+  useEffect(() => { fetch('/api/audit/ffe/catalogs').then(r => r.json()).then(j => setUnits(j?.listings || [])).catch(() => {}) }, [])
+  const essentials = items.filter(i => i.section === 'essential' && i.need)
+  const mult = (per?: QtyPer) => per === 'bedroom' ? Math.max(1, size.bedrooms) : per === 'bathroom' ? Math.max(1, Math.ceil(size.bathrooms)) : per === 'guest' ? Math.max(1, size.guests) : 1
+  const lines = essentials.map(it => {
+    const included = it.need === 'must' ? true : (on[it.key] ?? it.need === 'recommended')
+    const chosen = (swap[it.key] && it.options.find(o => o.src === swap[it.key])) || pickFor(it, tier, decisions[it.key])
+    const qty = qtyEdit[it.key] ?? Math.max(1, Math.ceil((it.qty ?? 1) * mult(it.qtyPer)))
+    return { it, included, chosen, qty }
+  })
+  const total = lines.filter(l => l.included && l.chosen?.price != null).reduce((t, l) => t + (l.chosen!.price! * l.qty), 0)
+  const missing = lines.filter(l => l.included && !l.chosen).length
+  const sync = async () => {
+    setBusy('Bringing in the essentials…')
+    const r = await fetch('/api/audit/ffe/catalogs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'syncDefault', slug: property }) })
+    const j = await r.json().catch(() => ({})); setBusy(''); setMsg(j.ok ? `Added ${j.added} items, set sections on ${j.updated}.` : (j.error || 'That did not save.')); if (j.ok) onChanged()
+  }
+  const create = async () => {
+    if (!unit) { setMsg('Pick the unit this order is for.'); return }
+    setBusy('Creating the order…'); setMsg('')
+    const body = { action: 'preset', slug: property, listingId: unit, tier, lines: lines.filter(l => l.included && l.chosen).map(l => ({ itemKey: l.it.key, src: l.chosen!.src, qty: l.qty })) }
+    const r = await fetch('/api/audit/ffe/catalogs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    const j = await r.json().catch(() => ({})); setBusy('')
+    setMsg(j.ok ? <span>Draft order <b>{j.orderNo}</b> created with {j.lines} lines — <a href={`/ffe/order/${j.id}`} className="underline font-semibold">open it</a> to price, send to the owner and buy.</span> : (j.error || 'That did not save.'))
+  }
+  if (!essentials.length) return (
+    <div className="rounded-xl border border-line bg-white shadow-soft p-4 max-w-2xl grid gap-2">
+      <div className="text-sm text-ink"><b>This catalog has no onboarding essentials yet.</b> Bring them in from the default catalog — must-haves, recommended and suggested items with a pick per tier. Your approvals here stay as they are.</div>
+      <button type="button" disabled={!!busy} onClick={sync} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white text-[12.5px] font-semibold px-3 py-2 w-fit disabled:opacity-60">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Bring in essentials from the default</button>
+      {msg && <div className="text-sm">{msg}</div>}
+    </div>
+  )
+  const hits = units.filter(u => !q || u.label.toLowerCase().includes(q.toLowerCase())).slice(0, 10)
+  return (
+    <div className="space-y-5">
+      <div className="rounded-xl border border-line bg-white shadow-soft p-4 grid gap-3">
+        <div className="grid gap-3 md:grid-cols-[1.4fr_repeat(3,100px)] items-end">
+          <div className="grid gap-1 text-[12px] font-semibold text-muted">Unit
+            <input value={q} onChange={e => { setQ(e.target.value); setUnit('') }} placeholder="Type to search units…" className="text-sm font-normal text-ink rounded-md border border-line px-2.5 py-2" />
+            {!unit && q && <div className="rounded-md border border-line bg-white max-h-48 overflow-auto">{hits.map(u => <button key={u.id} type="button" onClick={() => { setUnit(u.id); setQ(u.label); setSize({ bedrooms: u.bedrooms ?? 1, bathrooms: u.bathrooms ?? 1, guests: u.guests ?? 2 }) }} className="block w-full text-left px-3 py-1.5 text-sm font-normal hover:bg-app">{u.label}{u.bedrooms != null ? <span className="text-muted"> · {u.bedrooms} BR · {u.bathrooms ?? '?'} BA · {u.guests ?? '?'} guests</span> : null}</button>)}</div>}
+          </div>
+          {(['bedrooms', 'bathrooms', 'guests'] as const).map(k => (
+            <label key={k} className="grid gap-1 text-[12px] font-semibold text-muted capitalize">{k}<input type="number" min={0} step={k === 'bathrooms' ? 0.5 : 1} value={size[k]} onChange={e => setSize({ ...size, [k]: Number(e.target.value) || 0 })} className="text-sm font-normal text-ink rounded-md border border-line px-2.5 py-2" /></label>
+          ))}
+        </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          <Toggle value={tier} onChange={v => { setTier(v as Tier); setSwap({}) }} options={[['standard', 'Standard'], ['midlux', 'Mid-lux'], ['luxury', 'Luxury']]} />
+          <span className="text-sm text-muted">{lines.filter(l => l.included).length} lines · <b className="text-ink tabular-nums">{money(total)}</b> estimated{missing ? ` · ${missing} with no product yet` : ''}</span>
+          <button type="button" disabled={!!busy} onClick={create} className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-ink text-white text-[12.5px] font-semibold px-3 py-2 disabled:opacity-60">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Create FF&amp;E order</button>
+        </div>
+        {msg && <div className="text-sm text-ink">{msg}</div>}
+      </div>
+      {(['must', 'recommended', 'suggested'] as Need[]).map(need => {
+        const ls = lines.filter(l => l.it.need === need); if (!ls.length) return null
+        return (
+          <div key={need} className="rounded-xl border border-line bg-white shadow-soft overflow-x-auto">
+            <table className="w-full text-sm min-w-[760px]">
+              <caption className="text-left font-bold text-ink px-4 pt-3 pb-2 text-[15px]">{NEED_LABEL[need]} <span className="text-xs text-muted font-medium">{need === 'must' ? 'always in the order' : need === 'recommended' ? 'in by default — untick to leave out' : 'off by default — tick to add'}</span></caption>
+              <thead><tr className="text-[11px] uppercase tracking-wider text-muted border-b border-line"><th className="w-10 px-3" /><th className="text-left px-2 py-1.5">Item</th><th className="text-left px-2 py-1.5">Product (swap)</th><th className="text-right px-2 py-1.5">Qty</th><th className="text-right px-2 py-1.5">Each</th><th className="text-right px-3 py-1.5">Line</th></tr></thead>
+              <tbody>
+                {ls.map(({ it, included, chosen, qty }) => (
+                  <tr key={it.key} className={'border-b border-line last:border-0 ' + (included ? '' : 'opacity-50')}>
+                    <td className="px-3 py-2"><input type="checkbox" aria-label={`Include ${it.name}`} disabled={need === 'must'} checked={included} onChange={e => setOn({ ...on, [it.key]: e.target.checked })} /></td>
+                    <td className="px-2 py-2"><div className="font-semibold text-ink">{it.name}</div><div className="text-[11.5px] text-muted">{it.category} · {it.qty ?? 1} {PER_LABEL[it.qtyPer || 'unit']}</div></td>
+                    <td className="px-2 py-2">
+                      {it.options.length ? (
+                        <div className="flex items-center gap-2">
+                          <TierChip t={chosen?.tier} />
+                          <select value={chosen?.src || ''} onChange={e => setSwap({ ...swap, [it.key]: e.target.value })} className="text-[13px] rounded-md border border-line px-2 py-1 bg-white max-w-[360px]">
+                            {it.options.map(o => <option key={o.src} value={o.src}>{[o.tier ? TIER_LABEL[o.tier] : 'Any tier', o.vendor, o.name.slice(0, 60), o.price != null ? money(o.price) : 'no price'].join(' · ')}</option>)}
+                          </select>
+                          {chosen?.url && <a href={chosen.url} target="_blank" rel="noopener" className="text-muted hover:text-ink" title="Open the product"><ExternalLink className="w-3.5 h-3.5" /></a>}
+                        </div>
+                      ) : <span className="text-[12.5px] text-amber-800">No product yet — add one on Manage</span>}
+                    </td>
+                    <td className="px-2 py-2 text-right"><input type="number" min={1} value={qty} onChange={e => setQtyEdit({ ...qtyEdit, [it.key]: Math.max(1, Number(e.target.value) || 1) })} className="w-16 text-right text-[13px] rounded-md border border-line px-2 py-1 tabular-nums" /></td>
+                    <td className="px-2 py-2 text-right tabular-nums">{money(chosen?.price)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold">{chosen?.price != null ? money(chosen.price * qty) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      })}
+      <p className="text-xs text-muted">Quantities come from the unit&apos;s bedrooms, bathrooms and guests and the item&apos;s rule (Manage tab). Prices marked Estimate are planning numbers until a real product is pinned; the order snapshots whatever is shown here.</p>
     </div>
   )
 }
