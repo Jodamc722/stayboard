@@ -245,7 +245,7 @@ function UnitView({ id, meta }: { id: string; meta: Unit | null }) {
 
 function Lightbox({ p, i, n, listing, onClose, onPrev, onNext }: { p: Photo; i: number; n: number; listing: string; onClose: () => void; onPrev: () => void; onNext: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 bg-ink/90 flex flex-col" onClick={onClose} role="dialog" aria-label="Photo">
+    <div className="fixed inset-0 z-[90] bg-ink/90 flex flex-col" onClick={onClose} role="dialog" aria-label="Photo">
       <div className="flex items-center gap-2 px-4 h-12 text-white/90 text-[12.5px]" onClick={e => e.stopPropagation()}>
         <span className="font-semibold tabular-nums">{i + 1} / {n}</span>
         <span className="truncate">{p.caption || 'No caption'}</span>
