@@ -1,5 +1,5 @@
 'use client'
-// THE 17 WEST CATALOG — REVIEW AND APPROVE (Jon, 2026-10-20).
+// A CATALOG — REVIEW, APPROVE, THE APPROVED LIST, MANAGE (Jon, 2026-10-20 → 10-27).
 //
 // "Make this easy to review, approve, and build our 17 West furniture catalog, so when needing to
 // replace, we know what we are approved to replace it with."
@@ -7,29 +7,33 @@
 // Every item from the sourcing sheet sits on one card with its options side by side: the HostGPO
 // member price through Article, the Amazon listing from the sheet, and a City Home (delivered and
 // set up) or Wayfair (chairs and sofas; flat-pack) match. Tap Approve on each option that is
-// acceptable for the property; mark a card "Not for 17 West" when none is. Decisions save to the
+// acceptable for the property; mark a card "Not for this property" when none is. Decisions save to the
 // server as you go, so the whole team sees the same list. "Approved catalog" hides everything else
 // — that view IS the replacement list.
 //
 // Vendor rules this reflects (Jon, 2026-10-20): City Furniture (now City Home) rather than flat-pack
 // for case goods; Wayfair is fine for chairs and sofas; Amazon is fine for build-it-yourself pieces
 // like nightstands; flat-pack options carry an "Assembly needed" tag.
+//
+// 2026-10-27: catalogs became per-property (lib/ffe-approved-catalog). This page now has tabs:
+//   Review         the cards, Approve per option, suggestions from the listing photos
+//   Approved list  one row per approved item with the link, supplier and price — the order list
+//   Manage         the supplier pick list, add items, add options with links (edit access)
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, Link2, Loader2, RefreshCw, X } from 'lucide-react'
+import { Check, Copy, ExternalLink, Link2, Loader2, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
 import { useCachedFetch } from '@/lib/swr'
 
-type OptionSrc = 'host' | 'amz' | 'ch' | 'wf'
-type Opt = { src: OptionSrc; vendor: string; name: string; url: string | null; price: number | null; each?: string; image: string | null; chips: string[]; fit: 'cover' | 'contain' }
-type Item = { key: string; section: 'compare' | 'vendor' | 'amenity'; category: string; name: string; options: Opt[] }
-type Catalog = { property: string; title: string; sourceSheet: string; asOf: string; items: Item[]; misc: Record<string, string[]> }
-type Decision = { approved: OptionSrc[]; rejected: boolean; note: string }
-type Payload = { ok: boolean; catalog: Catalog; decisions: Record<string, Decision>; canEdit: boolean }
+type OptionSrc = string
+type Opt = { id?: string; src: OptionSrc; vendor: string; name: string; url: string | null; price: number | null; each?: string; image: string | null; chips: string[]; fit: 'cover' | 'contain' }
+type Item = { id?: string; key: string; section: 'compare' | 'vendor' | 'amenity'; category: string; name: string; options: Opt[] }
+type Catalog = { property: string; title: string; kind?: 'default' | 'property'; suppliers?: string[]; tier?: string | null; styleBrief?: string | null; sourceSheet: string; asOf: string; items: Item[]; misc: Record<string, string[]>; fromDb?: boolean }
+type Decision = { approved: OptionSrc[]; rejected: boolean; note: string; suggested?: string[]; suggestNote?: string }
+type Supplier = { key: string; name: string; note: string }
+type Payload = { ok: boolean; catalog: Catalog; decisions: Record<string, Decision>; suppliers?: Supplier[]; canEdit: boolean }
 
 const money = (v: number | null | undefined) => (v == null ? '—' : '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
-const SRC_LABEL: Record<OptionSrc, string> = { host: 'HostGPO', amz: 'Amazon', ch: 'City Home', wf: 'Wayfair' }
-const SRC_TONE: Record<OptionSrc, string> = {
-  host: 'text-brand-700', amz: 'text-amber-700', ch: 'text-sky-700', wf: 'text-violet-700',
-}
+const TONES: Record<string, string> = { host: 'text-brand-700', amz: 'text-amber-700', ch: 'text-sky-700', wf: 'text-violet-700' }
+const SRC_TONE = new Proxy(TONES, { get: (t, k: string) => t[String(k).replace(/-\d+$/, '')] || 'text-muted' }) as Record<string, string>
 const CHIP_TONE = (c: string) =>
   /Assembly/.test(c) ? 'bg-amber-50 text-amber-800'
     : /Delivered/.test(c) ? 'bg-sky-50 text-sky-800'
@@ -41,9 +45,10 @@ const CHIP_TONE = (c: string) =>
 // and the data comes from the public endpoint (which checks the code) instead of the gated one.
 export function FfeApprovedCatalog({ property = '17-west', publicCode }: { property?: string; publicCode?: string }) {
   const isPublic = !!publicCode
-  const { data, loading, error } = useCachedFetch<Payload>(isPublic ? `/api/public/catalog/${publicCode}` : `/api/audit/ffe/approved-catalog?property=${property}`, { ttl: 15_000, persist: false, live: !isPublic })
+  const { data, loading, error, refresh } = useCachedFetch<Payload>(isPublic ? `/api/public/catalog/${publicCode}` : `/api/audit/ffe/approved-catalog?property=${property}`, { ttl: 15_000, persist: false, live: !isPublic })
   const [decisions, setDecisions] = useState<Record<string, Decision>>({})
   const [view, setView] = useState<'all' | 'approved'>(isPublic ? 'approved' : 'all')
+  const [tab, setTab] = useState<'review' | 'list' | 'manage'>('review')
   const [order, setOrder] = useState<'group' | 'rank'>('group')
   const [saving, setSaving] = useState<string>('')
   // The latest decisions, readable outside render (the save path reads it, never the updater).
@@ -67,7 +72,7 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
     })
   }, [data])
   useEffect(() => {
-    try { if ((window.location.hash || '') === '#approved') setView('approved') } catch { /* no-op */ }
+    try { const h = (window.location.hash || '').replace('#', ''); if (h === 'approved' || h === 'list') setTab('list'); if (h === 'manage') setTab('manage') } catch { /* no-op */ }
   }, [])
 
   const canEdit = !isPublic && !!data?.canEdit
@@ -119,6 +124,9 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
   })
   const reject = (key: string) => decide(key, d => (d.rejected ? { ...d, rejected: false } : { approved: [], rejected: true, note: d.note }))
   const note = (key: string, v: string) => decide(key, d => ({ ...d, note: v }), true)
+  const acceptSuggestion = (key: string) => decide(key, d => ({ ...d, approved: Array.from(new Set([...d.approved, ...(d.suggested || [])])), rejected: false }))
+  const acceptAll = () => { for (const it of items) { const d = decisions[it.key]; if (d?.suggested?.length && !d.approved.length && !d.rejected) acceptSuggestion(it.key) } }
+  const nSuggested = items.filter(it => { const d = decisions[it.key]; return d?.suggested?.length && !d.approved.length && !d.rejected }).length
 
   const status = (key: string) => {
     const d = decisions[key]
@@ -152,16 +160,29 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
         <Kpi v={`${stats.reviewed}`} l={`of ${stats.total} items reviewed`} tone="text-brand-700" />
         <Kpi v={`${stats.approved}`} l="items with an approved option" tone="text-emerald-700" />
       </div>
+      {data.catalog.styleBrief && (
+        <div className="rounded-xl border border-line bg-brand-50/60 px-4 py-3 text-sm text-ink max-w-3xl">
+          <div className="text-[11px] uppercase tracking-wider text-brand-700 font-semibold mb-1 inline-flex items-center gap-1"><Sparkles className="w-3 h-3" /> The look, from the listing photos{data.catalog.tier ? ` · ${data.catalog.tier === 'midlux' ? 'Mid-lux' : data.catalog.tier[0].toUpperCase() + data.catalog.tier.slice(1)}` : ''}</div>
+          {data.catalog.styleBrief}
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-3">
-        {!isPublic && <Toggle value={view} onChange={v => { setView(v as any); try { window.history.replaceState(null, '', v === 'approved' ? '#approved' : '#') } catch { /* no-op */ } }}
-          options={[['all', 'Everything'], ['approved', 'Approved catalog']]} />}
-        {view === 'all' && <Toggle value={order} onChange={v => setOrder(v as any)} options={[['group', 'By room item'], ['rank', 'Biggest savings first']]} />}
+        {!isPublic && <Toggle value={tab} onChange={v => { setTab(v as any); setView(v === 'list' ? 'approved' : 'all'); try { window.history.replaceState(null, '', v === 'review' ? '#' : '#' + v) } catch { /* no-op */ } }}
+          options={canEdit ? [['review', 'Review'], ['list', 'Approved list'], ['manage', 'Manage']] : [['review', 'Review'], ['list', 'Approved list']]} />}
+        {!isPublic && tab === 'review' && <Toggle value={order} onChange={v => setOrder(v as any)} options={[['group', 'By room item'], ['rank', 'Biggest savings first']]} />}
+        {!isPublic && tab === 'review' && canEdit && nSuggested > 0 && (
+          <button type="button" onClick={acceptAll} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 text-brand-700 text-[12.5px] font-semibold px-3 py-1.5"><Sparkles className="w-3.5 h-3.5" /> Approve all {nSuggested} suggestions</button>
+        )}
         <span className="text-xs text-muted" aria-live="polite">
           {isPublic ? 'Approved options only.'
             : !canEdit ? 'View only — approving needs edit access to FF&E.' : saving || 'Approvals save as you go and are shared with the whole team.'}
         </span>
         {!isPublic && <ShareLink property={property} canEdit={canEdit} />}
       </div>
+
+      {!isPublic && tab === 'list' && <ApprovedList items={items} decisions={decisions} />}
+      {!isPublic && tab === 'manage' && canEdit && <Manage property={property} catalog={data.catalog} suppliers={data.suppliers || []} onChanged={() => refresh()} />}
+      {(isPublic || tab === 'review') && <>
 
       {/* Head-to-head */}
       <section>
@@ -209,17 +230,17 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
                 <th className="text-right px-2 py-1.5">Case</th><th className="text-right px-2 py-1.5">Per unit</th><th className="text-right px-3 py-1.5">Approved</th>
               </tr></thead>
               <tbody>
-                {list.map(it => { const o = it.options[0]; const on = !!decisions[it.key]?.approved.includes('host'); return (
-                  <tr key={it.key} className="border-b border-line last:border-0">
+                {list.flatMap(it => it.options.map((o, oi) => { const on = !!decisions[it.key]?.approved.includes(o.src); if (view === 'approved' && !on) return null; return (
+                  <tr key={it.key + (o.id || o.src)} className="border-b border-line last:border-0">
                     <td className="px-3 py-2"><div className="w-11 h-11 rounded-md bg-app flex items-center justify-center overflow-hidden">
                       {o.image ? <img src={o.image} alt="" className="w-full h-full object-contain p-0.5 mix-blend-multiply" loading="lazy" /> : <span className="font-bold text-muted">{o.vendor.slice(0, 1)}</span>}</div></td>
-                    <td className="px-2 py-2 font-semibold text-ink whitespace-nowrap">{it.name}</td>
+                    <td className="px-2 py-2 font-semibold text-ink whitespace-nowrap">{oi === 0 ? it.name : <span className="text-muted font-normal">also</span>}</td>
                     <td className="px-2 py-2"><span className="block text-[11px] uppercase tracking-wider text-muted font-semibold">{o.vendor}</span>
                       {o.url ? <a href={o.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{o.name}</a> : o.name}</td>
                     <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap">{money(o.price)}</td>
                     <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap font-semibold text-brand-700">{o.each || '—'}</td>
-                    <td className="px-3 py-2 text-right">{o.price != null && (view === 'all' || on) && (isPublic ? (on && <Approved />) : <ApproveBtn on={on} disabled={!canEdit} onClick={() => toggle(it.key, 'host')} small />)}</td>
-                  </tr>) })}
+                    <td className="px-3 py-2 text-right">{(o.price != null || o.url) && (view === 'all' || on) && (isPublic ? (on && <Approved />) : <ApproveBtn on={on} disabled={!canEdit} onClick={() => toggle(it.key, o.src)} small />)}</td>
+                  </tr>) }))}
               </tbody>
             </table>
           </div>
@@ -244,8 +265,10 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
         </section>
       )}
 
+      </>}
+
       <p className="text-xs text-muted max-w-3xl border-t border-line pt-4">
-        Prices as recorded in the <em>{data.catalog.sourceSheet}</em> sheet ({data.catalog.asOf}); HostGPO member pricing, Amazon, City Home and Wayfair listing prices as found, and they change. Photos come from each vendor&apos;s listing and link to it. City Home and Wayfair alternatives were selected by visual and functional similarity, not verified dimensions; City Home beds are shown in queen.
+        {data.catalog.fromDb ? 'Prices are as entered or as found on each vendor listing, and they change.' : <>Prices as recorded in the <em>{data.catalog.sourceSheet}</em> sheet ({data.catalog.asOf}); HostGPO member pricing, Amazon, City Home and Wayfair listing prices as found, and they change.</>} Photos come from each vendor&apos;s listing and link to it. City Home and Wayfair alternatives were selected by visual and functional similarity, not verified dimensions; City Home beds are shown in queen.
       </p>
     </div>
   )
@@ -254,7 +277,7 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
 // ---------- pieces ----------
 
 function savings(it: Item) {
-  const host = it.options.find(o => o.src === 'host')?.price ?? 0
+  const host = (it.options.find(o => o.src === 'host') || it.options[0])?.price ?? 0
   const alts = it.options.filter(o => o.src !== 'host').map(o => o.price).filter((p): p is number => p != null)
   return alts.length ? host - Math.min(...alts) : 0
 }
@@ -288,7 +311,7 @@ function Group({ title, count, children }: { title: string; count: number; child
 }
 function StatusPill({ s, n }: { s: string; n: number }) {
   const cls = s === 'approved' ? 'bg-emerald-50 text-emerald-700' : s === 'rejected' ? 'bg-rose-50 text-rose-700' : 'bg-app text-muted'
-  const label = s === 'approved' ? (n > 1 ? `Approved · ${n} options` : 'Approved') : s === 'rejected' ? 'Not for 17 West' : 'Pending review'
+  const label = s === 'approved' ? (n > 1 ? `Approved · ${n} options` : 'Approved') : s === 'rejected' ? 'Not for this property' : 'Pending review'
   return <span className={'text-[11px] font-semibold rounded-full px-2.5 py-0.5 whitespace-nowrap ' + cls}>{label}</span>
 }
 function ApproveBtn({ on, disabled, onClick, small }: { on: boolean; disabled?: boolean; onClick: () => void; small?: boolean }) {
@@ -320,7 +343,8 @@ function CompareCard({ item, d, status, canEdit, view, isPublic, onToggle, onRej
   item: Item; d?: Decision; status: string; canEdit: boolean; view: 'all' | 'approved'; isPublic?: boolean
   onToggle: (k: string, s: OptionSrc) => void; onReject: (k: string) => void; onNote: (k: string, v: string) => void
 }) {
-  const host = item.options.find(o => o.src === 'host')!
+  const host = item.options.find(o => o.src === 'host') || item.options[0]
+  if (!host) return null
   const opts = view === 'approved' ? item.options.filter(o => d?.approved.includes(o.src)) : item.options
   return (
     <article className="rounded-xl border border-line bg-white shadow-soft overflow-hidden" id={item.key}>
@@ -332,15 +356,16 @@ function CompareCard({ item, d, status, canEdit, view, isPublic, onToggle, onRej
         {opts.map(o => {
           const on = !!d?.approved.includes(o.src)
           return (
-            <div key={o.src} className={'min-w-0 border-r border-line last:border-r-0 ' + (o.src === 'host' ? 'bg-gradient-to-b from-brand-50 to-transparent' : '')}>
+            <div key={o.id || o.src} className={'min-w-0 border-r border-line last:border-r-0 ' + (o.src === 'host' ? 'bg-gradient-to-b from-brand-50 to-transparent' : '')}>
               <Photo o={o} />
               <div className="p-3 grid gap-1 content-start">
                 <div className={'text-[11px] uppercase tracking-wider font-semibold ' + SRC_TONE[o.src]}>{o.vendor}</div>
                 <div className="text-[13.5px] font-medium leading-snug break-words">{o.url ? <a href={o.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{o.name}</a> : o.name}</div>
                 {o.chips.length > 0 && <div className="flex flex-wrap gap-1">{o.chips.map(c => <span key={c} className={'text-[11px] font-semibold rounded-full px-2 py-0.5 ' + CHIP_TONE(c)}>{c}</span>)}</div>}
                 <div className={'text-xl font-bold tabular-nums mt-1 ' + (o.src === 'host' ? 'text-brand-700' : 'text-ink')}>{money(o.price)}</div>
-                {o.src !== 'host' && <div><Diff ref_={host.price || 0} price={o.price} /></div>}
-                {o.price != null && (view === 'all' || on) && (isPublic ? (on && <Approved />) : <ApproveBtn on={on} disabled={!canEdit} onClick={() => onToggle(item.key, o.src)} />)}
+                {o !== host && host.price != null && <div><Diff ref_={host.price || 0} price={o.price} /></div>}
+                {(o.price != null || o.url) && (view === 'all' || on) && (isPublic ? (on && <Approved />) : <ApproveBtn on={on} disabled={!canEdit} onClick={() => onToggle(item.key, o.src)} />)}
+                {!isPublic && view === 'all' && d?.suggested?.includes(o.src) && <Suggested why={d.suggestNote} />}
               </div>
             </div>
           )
@@ -352,7 +377,7 @@ function CompareCard({ item, d, status, canEdit, view, isPublic, onToggle, onRej
             className="text-[13px] rounded-md border border-line bg-app px-2 py-1.5 resize-y min-h-[32px] w-full" />
           <button type="button" aria-pressed={!!d?.rejected} disabled={!canEdit} onClick={() => onReject(item.key)}
             className={'inline-flex items-center gap-1 text-xs font-semibold rounded-lg border px-2.5 py-1.5 whitespace-nowrap disabled:opacity-60 ' + (d?.rejected ? 'bg-rose-50 border-rose-300 text-rose-700' : 'border-line text-muted hover:text-ink')}>
-            <X className="w-3 h-3" /> Not for 17 West
+            <X className="w-3 h-3" /> Not for this property
           </button>
         </div>
       )}
@@ -362,8 +387,9 @@ function CompareCard({ item, d, status, canEdit, view, isPublic, onToggle, onRej
 }
 
 function SoloCard({ item, d, status, canEdit, view, isPublic, onToggle }: { item: Item; d?: Decision; status: string; canEdit: boolean; view: 'all' | 'approved'; isPublic?: boolean; onToggle: (k: string, s: OptionSrc) => void }) {
-  const main = item.options[0]; const alt = item.options[1]
-  const onMain = !!d?.approved.includes('host'); const onAlt = !!(alt && d?.approved.includes(alt.src))
+  const main = item.options[0]; const alts = item.options.slice(1)
+  if (!main) return null
+  const onMain = !!d?.approved.includes(main.src)
   return (
     <article className="rounded-xl border border-line bg-white shadow-soft overflow-hidden flex flex-col" id={item.key}>
       {(view === 'all' || onMain) && <Photo o={main} />}
@@ -373,21 +399,154 @@ function SoloCard({ item, d, status, canEdit, view, isPublic, onToggle }: { item
           <div className="text-[13.5px] font-medium leading-snug break-words">{main.url ? <a href={main.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{main.name}</a> : main.name}</div>
           {main.chips.length > 0 && <div className="flex flex-wrap gap-1">{main.chips.map(c => <span key={c} className={'text-[11px] font-semibold rounded-full px-2 py-0.5 ' + CHIP_TONE(c)}>{c}</span>)}</div>}
           <div className="text-lg font-bold tabular-nums text-brand-700">{money(main.price)}</div>
-          {main.price != null && (isPublic ? (onMain && <Approved />) : <ApproveBtn on={onMain} disabled={!canEdit} onClick={() => onToggle(item.key, 'host')} />)}
+          {(main.price != null || main.url) && (isPublic ? (onMain && <Approved />) : <ApproveBtn on={onMain} disabled={!canEdit} onClick={() => onToggle(item.key, main.src)} />)}
+          {!isPublic && view === 'all' && d?.suggested?.includes(main.src) && <Suggested why={d.suggestNote} />}
         </>}
       </div>
-      {alt && (view === 'all' || onAlt) && (
-        <div className={'mt-auto border-t border-dashed border-line grid gap-2.5 p-3 ' + (alt.src === 'ch' ? 'bg-sky-50/60' : 'bg-violet-50/60')} style={{ gridTemplateColumns: '64px 1fr' }}>
+      {alts.map(alt => { const onAlt = !!d?.approved.includes(alt.src); if (!(view === 'all' || onAlt)) return null; return (
+        <div key={alt.id || alt.src} className={'mt-auto border-t border-dashed border-line grid gap-2.5 p-3 ' + (alt.src.startsWith('ch') ? 'bg-sky-50/60' : alt.src.startsWith('wf') ? 'bg-violet-50/60' : 'bg-app')} style={{ gridTemplateColumns: '64px 1fr' }}>
           <div className="w-16 h-16 rounded-md bg-[#f1f2ee] overflow-hidden flex items-center justify-center">{alt.image ? <img src={alt.image} alt="" loading="lazy" className={'w-full h-full ' + (alt.fit === 'cover' ? 'object-cover' : 'object-contain p-1 mix-blend-multiply')} /> : null}</div>
           <div className="grid gap-0.5 min-w-0">
-            <div className={'text-[11px] uppercase tracking-wider font-semibold ' + SRC_TONE[alt.src]}>{alt.vendor} · {alt.chips[0]?.toLowerCase()}</div>
+            <div className={'text-[11px] uppercase tracking-wider font-semibold ' + SRC_TONE[alt.src]}>{alt.vendor}{alt.chips[0] ? ` · ${alt.chips[0].toLowerCase()}` : ''}</div>
             <div className="text-[13px] font-medium leading-snug break-words">{alt.url ? <a href={alt.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{alt.name}</a> : alt.name}</div>
-            <div className="text-[15px] font-bold tabular-nums flex items-center gap-2 flex-wrap">{money(alt.price)} <Diff ref_={main.price || 0} price={alt.price} /></div>
+            <div className="text-[15px] font-bold tabular-nums flex items-center gap-2 flex-wrap">{money(alt.price)} {main.price != null && <Diff ref_={main.price || 0} price={alt.price} />}</div>
             {(view === 'all' || onAlt) && (isPublic ? (onAlt && <Approved />) : <ApproveBtn on={onAlt} disabled={!canEdit} onClick={() => onToggle(item.key, alt.src)} small />)}
+            {!isPublic && view === 'all' && d?.suggested?.includes(alt.src) && <Suggested why={d.suggestNote} />}
           </div>
         </div>
-      )}
+      ) })}
     </article>
+  )
+}
+
+function Suggested({ why }: { why?: string }) {
+  return <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-700 bg-brand-50 rounded-full px-2 py-0.5 w-fit" title={why || ''}><Sparkles className="w-3 h-3" /> Suggested{why ? ` · ${why}` : ''}</span>
+}
+
+// THE APPROVED LIST (Jon, 2026-10-27: "when you click approve, there will be a tab with the links to
+// each item"). One row per approved option: what it is, where to buy it, the link, the price, the note.
+function ApprovedList({ items, decisions }: { items: Item[]; decisions: Record<string, Decision> }) {
+  const rows: { item: Item; o: Opt; note: string }[] = []
+  for (const it of items) { const d = decisions[it.key]; if (!d || d.rejected || !d.approved.length) continue; for (const o of it.options) if (d.approved.includes(o.src)) rows.push({ item: it, o, note: d.note }) }
+  if (!rows.length) return <p className="text-sm text-muted">Nothing approved yet. Approve options on the Review tab and they show up here with their links.</p>
+  const groups = groupBy(rows.map(r => r.item), i => i.category).map(([cat]) => cat).filter((c, i, a) => a.indexOf(c) === i)
+  const copyAll = async () => {
+    const text = rows.map(r => `${r.item.name}\t${r.o.vendor}\t${r.o.name}\t${money(r.o.price)}\t${r.o.url || ''}\t${r.note || ''}`).join('\n')
+    try { await navigator.clipboard.writeText('Item\tSupplier\tProduct\tPrice\tLink\tNote\n' + text) } catch { /* no-op */ }
+  }
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <p className="text-sm text-muted">{rows.length} approved {rows.length === 1 ? 'option' : 'options'} across {new Set(rows.map(r => r.item.key)).size} items. These are the links to order from.</p>
+        <button type="button" onClick={copyAll} className="inline-flex items-center gap-1.5 text-[12px] font-semibold rounded-lg border border-line bg-white px-2.5 py-1.5 hover:border-ink"><Copy className="w-3.5 h-3.5" /> Copy as table</button>
+      </div>
+      {groups.map(cat => (
+        <div key={cat} className="rounded-xl border border-line bg-white shadow-soft overflow-x-auto">
+          <table className="w-full text-sm min-w-[640px]">
+            <caption className="text-left font-bold text-ink px-4 pt-3 pb-2 text-[15px]">{cat}</caption>
+            <thead><tr className="text-[11px] uppercase tracking-wider text-muted border-b border-line"><th className="w-14" /><th className="text-left px-2 py-1.5">Item</th><th className="text-left px-2 py-1.5">Buy</th><th className="text-right px-2 py-1.5">Price</th><th className="text-left px-2 py-1.5">Note</th><th className="px-3 py-1.5" /></tr></thead>
+            <tbody>
+              {rows.filter(r => r.item.category === cat).map(r => (
+                <tr key={r.item.key + r.o.src + (r.o.id || '')} className="border-b border-line last:border-0">
+                  <td className="px-3 py-2"><div className="w-11 h-11 rounded-md bg-[#f1f2ee] flex items-center justify-center overflow-hidden">{r.o.image ? <img src={r.o.image} alt="" loading="lazy" className={'w-full h-full ' + (r.o.fit === 'cover' ? 'object-cover' : 'object-contain p-0.5 mix-blend-multiply')} /> : null}</div></td>
+                  <td className="px-2 py-2 font-semibold text-ink">{r.item.name}</td>
+                  <td className="px-2 py-2"><span className={'block text-[11px] uppercase tracking-wider font-semibold ' + SRC_TONE[r.o.src]}>{r.o.vendor}</span>{r.o.name}{r.o.chips.length > 0 && <span className="ml-2 text-[11px] text-muted">{r.o.chips.join(' · ')}</span>}</td>
+                  <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap font-semibold">{money(r.o.price)}{r.o.each ? <span className="block text-[11px] font-medium text-muted">{r.o.each} each</span> : null}</td>
+                  <td className="px-2 py-2 text-[13px] text-muted max-w-[220px]">{r.note}</td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap">{r.o.url ? <a href={r.o.url} target="_blank" rel="noopener" className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg border border-line px-2.5 py-1 hover:border-ink">Open <ExternalLink className="w-3 h-3" /></a> : <span className="text-[12px] text-muted">no link</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// MANAGE (Jon, 2026-10-27: "links, select suppliers"): the catalog's supplier pick list, new items,
+// and new options with a link and price. Reads the catalog with every supplier (all=1) so a hidden
+// supplier's options can still be seen and re-enabled.
+function Manage({ property, catalog, suppliers, onChanged }: { property: string; catalog: Catalog; suppliers: Supplier[]; onChanged: () => void }) {
+  const { data, refresh } = useCachedFetch<Payload>(`/api/audit/ffe/approved-catalog?property=${property}&all=1`, { ttl: 5_000, persist: false, live: false })
+  const full = data?.catalog || catalog
+  const [picked, setPicked] = useState<string[]>(catalog.suppliers || [])
+  const [msg, setMsg] = useState('')
+  const [newItem, setNewItem] = useState({ name: '', category: '', section: 'vendor' })
+  const [optFor, setOptFor] = useState<string | null>(null)
+  const [opt, setOpt] = useState({ src: 'amz', name: '', url: '', price: '', each: '', image: '' })
+  const post = async (body: any) => {
+    setMsg('Saving…')
+    const r = await fetch('/api/audit/ffe/catalogs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, slug: property }) })
+    const j = await r.json().catch(() => ({}))
+    setMsg(j.ok ? 'Saved' : (j.error || 'That did not save.'))
+    if (j.ok) { refresh(); onChanged() }
+    return j
+  }
+  const toggleSupplier = (k: string) => { const next = picked.includes(k) ? picked.filter(x => x !== k) : [...picked, k]; setPicked(next); post({ action: 'update', suppliers: next }) }
+  const cats = Array.from(new Set(full.items.map(i => i.category)))
+  return (
+    <div className="space-y-6">
+      <section className="rounded-xl border border-line bg-white shadow-soft p-4">
+        <h3 className="font-bold text-ink text-[15px]">Suppliers for this catalog</h3>
+        <p className="text-sm text-muted mt-1">Options from suppliers that aren&apos;t ticked are hidden from the review and from the share link. Nothing ticked means everything shows.</p>
+        <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3 mt-3">
+          {suppliers.map(sp => (
+            <label key={sp.key} className="flex items-start gap-2 text-sm rounded-lg border border-line px-3 py-2 cursor-pointer hover:border-ink">
+              <input type="checkbox" checked={picked.includes(sp.key)} onChange={() => toggleSupplier(sp.key)} className="mt-1" />
+              <span><span className="font-semibold text-ink">{sp.name}</span><span className="block text-[12px] text-muted">{sp.note}</span></span>
+            </label>
+          ))}
+        </div>
+        <div className="text-xs text-muted mt-2" aria-live="polite">{msg}</div>
+      </section>
+
+      <section className="rounded-xl border border-line bg-white shadow-soft p-4">
+        <h3 className="font-bold text-ink text-[15px]">Add an item</h3>
+        <div className="grid gap-2 md:grid-cols-[1fr_1fr_auto_auto] mt-3 items-end">
+          <label className="grid gap-1 text-[12px] font-semibold text-muted">Item<input value={newItem.name} onChange={e => setNewItem({ ...newItem, name: e.target.value })} placeholder="e.g. Bar cart" className="text-sm font-normal text-ink rounded-md border border-line px-2.5 py-2" /></label>
+          <label className="grid gap-1 text-[12px] font-semibold text-muted">Category<input list="cat-list" value={newItem.category} onChange={e => setNewItem({ ...newItem, category: e.target.value })} placeholder="e.g. Living room" className="text-sm font-normal text-ink rounded-md border border-line px-2.5 py-2" /><datalist id="cat-list">{cats.map(c => <option key={c} value={c} />)}</datalist></label>
+          <label className="grid gap-1 text-[12px] font-semibold text-muted">Section<select value={newItem.section} onChange={e => setNewItem({ ...newItem, section: e.target.value })} className="text-sm font-normal text-ink rounded-md border border-line px-2.5 py-2 bg-white"><option value="compare">Furniture (compare)</option><option value="vendor">Furniture (vendor-only)</option><option value="amenity">Amenity</option></select></label>
+          <button type="button" onClick={async () => { const j = await post({ action: 'addItem', ...newItem }); if (j.ok) setNewItem({ name: '', category: '', section: 'vendor' }) }} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white text-[12.5px] font-semibold px-3 py-2"><Plus className="w-3.5 h-3.5" /> Add item</button>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="font-bold text-ink text-[15px]">Items and their options</h3>
+        {full.items.map(it => (
+          <div key={it.key} className="rounded-xl border border-line bg-white shadow-soft p-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="font-semibold text-ink"><span className="text-[11px] uppercase tracking-wider text-muted font-semibold mr-2">{it.category}</span>{it.name}</div>
+              <div className="flex items-center gap-2">
+                {it.id && <button type="button" onClick={() => { setOptFor(optFor === it.id ? null : it.id!); setOpt({ src: 'amz', name: '', url: '', price: '', each: '', image: '' }) }} className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg border border-line px-2.5 py-1 hover:border-ink"><Plus className="w-3 h-3" /> Add option</button>}
+                {it.id && <button type="button" onClick={() => { if (window.confirm(`Remove "${it.name}" from this catalog?`)) post({ action: 'updateItem', itemId: it.id, archive: true }) }} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-rose-700"><Trash2 className="w-3 h-3" /> Remove</button>}
+              </div>
+            </div>
+            <ul className="mt-2 grid gap-1">
+              {it.options.map(o => (
+                <li key={o.id || o.src} className={'flex items-center gap-2 text-[13px] ' + (picked.length && !picked.includes(o.src) ? 'opacity-50' : '')}>
+                  <span className={'text-[11px] uppercase tracking-wider font-semibold w-28 shrink-0 ' + SRC_TONE[o.src]}>{o.vendor}</span>
+                  <span className="min-w-0 truncate">{o.url ? <a href={o.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{o.name}</a> : o.name}</span>
+                  <span className="ml-auto tabular-nums font-semibold whitespace-nowrap">{money(o.price)}</span>
+                  {o.id && <button type="button" title="Remove this option" onClick={() => post({ action: 'updateOption', optionId: o.id, archive: true })} className="text-muted hover:text-rose-700"><X className="w-3.5 h-3.5" /></button>}
+                </li>
+              ))}
+              {it.options.length === 0 && <li className="text-[13px] text-muted">No options yet — add one with a link.</li>}
+            </ul>
+            {optFor === it.id && (
+              <div className="mt-3 grid gap-2 md:grid-cols-[150px_1fr_1fr] lg:grid-cols-[150px_1.2fr_1.6fr_90px_90px_auto] items-end border-t border-line pt-3">
+                <label className="grid gap-1 text-[12px] font-semibold text-muted">Supplier<select value={opt.src} onChange={e => setOpt({ ...opt, src: e.target.value })} className="text-sm font-normal text-ink rounded-md border border-line px-2 py-1.5 bg-white">{suppliers.map(sp => <option key={sp.key} value={sp.key}>{sp.name}</option>)}</select></label>
+                <label className="grid gap-1 text-[12px] font-semibold text-muted">Product<input value={opt.name} onChange={e => setOpt({ ...opt, name: e.target.value })} className="text-sm font-normal text-ink rounded-md border border-line px-2 py-1.5" /></label>
+                <label className="grid gap-1 text-[12px] font-semibold text-muted">Link<input value={opt.url} onChange={e => setOpt({ ...opt, url: e.target.value })} placeholder="https://…" className="text-sm font-normal text-ink rounded-md border border-line px-2 py-1.5" /></label>
+                <label className="grid gap-1 text-[12px] font-semibold text-muted">Price<input value={opt.price} onChange={e => setOpt({ ...opt, price: e.target.value })} placeholder="$" className="text-sm font-normal text-ink rounded-md border border-line px-2 py-1.5" /></label>
+                <label className="grid gap-1 text-[12px] font-semibold text-muted">Photo URL<input value={opt.image} onChange={e => setOpt({ ...opt, image: e.target.value })} placeholder="https://…" className="text-sm font-normal text-ink rounded-md border border-line px-2 py-1.5" /></label>
+                <button type="button" onClick={async () => { const j = await post({ action: 'addOption', itemId: it.id, ...opt }); if (j.ok) setOptFor(null) }} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white text-[12.5px] font-semibold px-3 py-2"><Plus className="w-3.5 h-3.5" /> Save</button>
+              </div>
+            )}
+          </div>
+        ))}
+      </section>
+    </div>
   )
 }
 
