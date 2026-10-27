@@ -19,7 +19,7 @@ type Payload = { ok: boolean; catalogs: Cat[]; listings: Listing[]; tiers: Tier[
 
 export function FfeCatalogList() {
   const router = useRouter()
-  const { data, loading, error, refresh } = useCachedFetch<Payload>('/api/audit/catalogs', { ttl: 10_000, persist: false })
+  const { data, loading, error, refresh } = useCachedFetch<Payload>('/api/audit/ffe/catalogs', { ttl: 10_000, persist: false })
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<'copy' | 'photos'>('photos')
   const [name, setName] = useState('')
@@ -43,7 +43,7 @@ export function FfeCatalogList() {
     if (mode === 'photos' && !listingId) { setErr('Pick the listing to read the photos from.'); return }
     setBusy(mode === 'photos' ? 'Reading the listing photos and building the catalog… about 30 seconds.' : 'Creating…')
     try {
-      const r = await fetch('/api/audit/catalogs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const r = await fetch('/api/audit/ffe/catalogs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(mode === 'photos' ? { action: 'generate', name, listingId, tier, from } : { action: 'create', name, from }) })
       const j = await r.json().catch(() => ({}))
       if (!j.ok && !j.slug) { setErr(j.error || 'That did not save.'); setBusy(''); return }
