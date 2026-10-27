@@ -223,3 +223,106 @@ export const SALES_AGENDA: KV[] = [
   { k: 'Onboarding', v: 'Signature to first booking, and what we need from you' },
   { k: 'What happens next', v: 'A projection, a walk-through, and a plain agreement' },
 ]
+
+// ── 12 · THE SHORT DECK (Jon, 2026-10-27: "visually it's way too long, need to make it shorter,
+// stronger sales, to get them to want to learn more — think initial conversation, send this deck
+// to get them interested. Should have a place to share projections, about us, how we operate and
+// how we get max revenue. We can add our management terms. Needs to be customizable fully.")
+//
+// SAME DOCUMENT, TWO LENGTHS. The short deck is not a different deck: it is this one with most of
+// the slides switched off, because the full walkthrough is still the right thing to carry into a
+// sit-down and maintaining two of them would mean fixing every sentence twice. Switching between
+// them in the editor only moves keys in and out of `omit`, so a slide someone edited is still
+// there, with the edit, when the long version comes back on.
+//
+// WHAT SURVIVES THE CUT is what a stranger needs to want a second conversation: who we are, the
+// buildings we run, how the operation works, how the money gets made, what their property could
+// do, the terms, and how to say yes. Everything that explains rather than argues waits for the
+// meeting.
+export const SHORT_KEEP = [
+  'welcome', 'contact', 'overview', 'experience', 'ops', 'maxrev', 'proof', 'plan', 'terms', 'onbsteps', 'close',
+]
+/** Every slide the sales deck can carry, so the short/full switch has something to subtract from. */
+export const SALES_KEYS = [
+  'welcome', 'contact', 'market', 'agenda', 'team', 'overview', 'experience', 'ops', 'craft',
+  'marketing', 'dist', 'channels', 'direct', 'guestcare', 'revenue', 'stack', 'lighthouse',
+  'maxrev', 'proof', 'plan', 'terms', 'onbsteps', 'gpo', 'guesty', 'statement', 'ai',
+  'season', 'ramp', 'rampsteps', 'money', 'video', 'close',
+]
+/** The short deck is the full one with everything that explains rather than argues switched off.
+ *  It lives in THIS file, not in lib/sales-deck, because the deck renderer is a client component
+ *  and sales-deck reaches the server-only onboarding builder. */
+export const shortOmit = (): string[] => SALES_KEYS.filter(k => SHORT_KEEP.indexOf(k) < 0)
+
+// ── 13 · HOW WE GET MAX REVENUE ─────────────────────────────────────────────
+// The short deck's one revenue slide. The full deck argues this across five — pricing, the comp
+// set, distribution, the listing craft, direct — and each of those is a better slide than this
+// one. This is the version for someone who has given us ninety seconds.
+export const MAXREV_HEADLINE = 'How we get you the most revenue'
+export const MAXREV_SUBTITLE = 'Five levers, worked every day.'
+export const MAXREV_BODY =
+  'Revenue is not one decision at the start. It is a rate moved daily against live demand, on a listing built to convert, sold in every place a guest might look.'
+export const MAXREV_ROWS: KV[] = [
+  { k: 'Priced every day', v: 'A named revenue manager at Pacer, our revenue partner, works your rate daily against live demand, your comp set and the dates ahead. Not a rule set once and left.' },
+  { k: 'Sold in 40+ places', v: 'One calendar published across every major channel and a long tail of partners, so a booking can arrive from wherever it arrives.' },
+  { k: 'Built to convert', v: 'Photography, title, the first three images and the amenity list set by us. A listing that converts ranks higher, and a higher ranking brings more bookings.' },
+  { k: 'The nights others leave empty', v: 'Minimum stays opened and closed by date, gap nights priced to fill, and the big weekends captured months out.' },
+  { k: 'Direct, with no commission', v: 'Our own site and the guest profiles every stay builds bring past guests back without a channel taking a cut.' },
+]
+export const MAXREV_NOTE =
+  'You see every decision in your monthly statement and owner report, and any rate can be explained on request.'
+
+// ── 14 · MANAGEMENT TERMS ───────────────────────────────────────────────────
+// Jon: "we can add our management terms".
+//
+// THE NUMBERS WE HOLD ARE PRINTED; THE ONES WE DO NOT ARE PROMPTS. Fee, labour rate and the
+// approval ceiling come from the house template, so they are the same figures the onboarding deck
+// and the billing rules already use. Contract length, notice and payout timing are not in this
+// system, and a term invented on a sales slide is a term we would be held to — so they ship as
+// empty rows with a hint, and an unfilled row does not print.
+export const TERMS_HEADLINE = 'How we work together'
+export const TERMS_SUBTITLE = 'Plain terms, and what each one covers.'
+export type TermRow = { k: string; v: string; hint?: string }
+export function termRows(mgmtPct: number, laborRate: number, approvalLimit: number): TermRow[] {
+  const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
+  return [
+    { k: 'Management fee', v: mgmtPct + '% of rental revenue', hint: '' },
+    { k: 'What it covers', v: 'Guest care around the clock, housekeeping and maintenance coordination, revenue management, distribution across every channel, listing and marketing, and your monthly statement and owner report.' },
+    { k: 'Labour', v: 'In-house housekeeping and maintenance at ' + money(laborRate) + ' an hour, billed only for work on your property.' },
+    { k: 'Spending', v: 'Anything over ' + money(approvalLimit) + ' comes to you for approval before it is spent. Under it, we fix the problem and it appears on your statement.' },
+    { k: 'Your statement', v: '', hint: 'When the statement is issued and when the payout lands' },
+    { k: 'Term and notice', v: '', hint: 'Contract length and the notice period either side' },
+  ]
+}
+export const TERMS_NOTE =
+  'Nothing here is unusual, and nothing is hidden in an appendix. We will walk you through the agreement clause by clause before you sign it.'
+
+// ── 15 · WHAT PROPERTIES LIKE YOURS EARN ────────────────────────────────────
+// Jon, 2026-10-27: "pull actuals from other property owner statements, and pull by owner or by
+// listing of actual gross rev and net of fees, but not expense."
+//
+// REVENUE ONLY, AND THAT IS A RULE RATHER THAN A SETTING. The slide carries gross revenue, revenue
+// net of channel fees, occupancy, ADR and nights. It never carries a commission line, a labour
+// line or any other expense: those belong to the owner whose property it is, and a prospect is not
+// the person to show them to. The endpoint that builds this slide has no access to the expense
+// side at all, so the rule cannot be switched off by editing a slide.
+//
+// AND IT LABELS BY UNIT, NOT BY OWNER. "2BR · 17West" is the comparison a prospect actually wants;
+// a name attached to someone else's revenue is a confidence we were not given. The owner's name
+// can be switched on per deck when the owner is the point (a developer looking at their own
+// portfolio), and it is off until someone does.
+export const PROOF_HEADLINE = 'What properties like yours earn'
+export const PROOF_SUBTITLE = 'Real bookings, on properties we run today.'
+export const PROOF_BODY =
+  'Not a model. These are booked and settled numbers from our own portfolio for the window shown, on the same basis your statement would report them.'
+export const PROOF_NOTE =
+  'Revenue only: gross, and net of the channel fees the booking site keeps. Expenses belong to each owner and are not shown here.'
+
+// ── 16 · THE PROJECTION ─────────────────────────────────────────────────────
+// Jon: "make it possible to upload projections and build them into the deck for the property."
+export const PLAN_HEADLINE = 'What your property could do'
+export const PLAN_SUBTITLE = ''
+export const PLAN_BODY =
+  'Built from what comparable properties in this market actually earned, not a percentage of a hope. Every assumption behind it is one we will walk through with you.'
+export const PLAN_NOTE =
+  'A projection is a projection. We will not promise you a number, and we will show you exactly how this one was built.'

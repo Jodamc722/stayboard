@@ -34,7 +34,11 @@ import {
   MARKET_HEADLINE, MARKET_SUBTITLE, MARKET_PROMPTS,
   CLOSE_HEADLINE, CLOSE_SUBTITLE, CLOSE_ROWS, CLOSE_NOTE,
   VIDEO_HEADLINE, VIDEO_SUBTITLE, VIDEO_BODY,
-  SALES_AGENDA,
+  SALES_AGENDA, shortOmit,
+  MAXREV_HEADLINE, MAXREV_SUBTITLE, MAXREV_BODY, MAXREV_ROWS, MAXREV_NOTE,
+  TERMS_HEADLINE, TERMS_SUBTITLE, termRows, TERMS_NOTE, type TermRow,
+  PROOF_HEADLINE, PROOF_SUBTITLE, PROOF_BODY, PROOF_NOTE,
+  PLAN_HEADLINE, PLAN_SUBTITLE, PLAN_BODY, PLAN_NOTE,
 } from './sales-copy'
 
 /** The sales-only sections, laid over an onboarding document. Every one is optional, so an
@@ -50,8 +54,28 @@ export type SalesSections = {
   onbsteps?: { headline: string; subtitle: string; body: string; steps: Step[]; note: string }
   gpo?: { headline: string; subtitle: string; body: string; rows: KV[]; note: string }
   market?: { headline: string; subtitle: string; rows: KV[]; photo?: string }
-  /** The projection for THIS property, when one has been built or uploaded. */
-  plan?: { headline: string; subtitle: string; body: string; rows: KV[]; note: string; source?: string }
+  /** The short deck's one revenue slide; the full deck argues it across five. */
+  maxrev?: { headline: string; subtitle: string; body: string; rows: KV[]; note: string }
+  /** Management terms. Figures we hold are printed; the ones we do not are empty prompts. */
+  terms?: { headline: string; subtitle: string; rows: TermRow[]; note: string }
+  /**
+   * What comparable properties actually earned. REVENUE ONLY — gross and net of channel fees —
+   * and never an expense line; see lib/sales-copy and /api/reports/proof for why that is a rule
+   * rather than a setting. Empty until someone pulls it, and an empty one does not print.
+   */
+  proof?: {
+    headline: string; subtitle: string; body: string; note: string
+    scope: string; window: string; names: boolean
+    rows: { label: string; sub: string; gross: string; net: string; occ: string; adr: string; nights: string }[]
+    totals?: { gross: string; net: string; occ: string; adr: string; nights: string }
+  }
+  /** The projection for THIS property, built from our model or parsed from an upload. */
+  plan?: {
+    headline: string; subtitle: string; body: string; note: string; source?: string
+    cols: string[]
+    rows: { k: string; cells: string[] }[]
+    totals?: { k: string; cells: string[] }
+  }
   close?: { headline: string; subtitle: string; rows: KV[]; note: string }
   /** Empty url = no slide, so an unfinished video never shows a prospect a grey box. */
   video?: { headline: string; subtitle: string; body: string; url: string; poster?: string }
@@ -61,7 +85,11 @@ export type SalesContent = Omit<OnboardingContent, 'meta'> & SalesSections & {
   meta: Omit<OnboardingContent['meta'], 'kind'> & { kind: 'sales'; prospect?: string; presenter?: string }
 }
 
+export type SalesLength = 'short' | 'full'
+
 export type SalesInput = {
+  /** 'short' is the deck you send to get a second conversation; 'full' is the one you present. */
+  length?: SalesLength
   scopeLabel: string
   asOf: string
   market: string
@@ -77,6 +105,8 @@ export type SalesInput = {
 
 /** Sections written for someone who has already signed. A prospect is deciding, not answering. */
 const SALES_OMIT = ['unit', 'strategy', 'listings', 'checklist', 'notes', 'linens', 'nextup', 'comms', 'tech']
+
+
 
 export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesContent {
   const base = buildOnboardingContent(t, {
@@ -104,7 +134,14 @@ export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesCo
   for (const [k, v] of Object.entries(i.contact || {})) if (typeof v === 'string' && v.trim()) given[k] = v
   const card: ContactCard = { ...CONTACT_DEFAULT, ...given }
 
-  const omit = Array.from(new Set((Array.isArray(base.omit) ? base.omit : []).concat(SALES_OMIT)))
+  // SHORT BY DEFAULT (Jon, 2026-10-27). The deck that gets sent is the one that has to earn a
+  // second conversation; the long one is for the meeting it earns. Switching between them in the
+  // editor only moves keys in and out of this list, so an edited slide keeps its edit either way.
+  const omit = Array.from(new Set(
+    (Array.isArray(base.omit) ? base.omit : [])
+      .concat(SALES_OMIT)
+      .concat(i.length === 'full' ? [] : shortOmit()),
+  ))
 
   return {
     ...base,
@@ -133,6 +170,10 @@ export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesCo
     onbsteps: { headline: ONB_HEADLINE, subtitle: ONB_SUBTITLE, body: ONB_BODY, steps: ONB_STEPS, note: ONB_NOTE },
     gpo: { headline: GPO_HEADLINE, subtitle: GPO_SUBTITLE, body: GPO_BODY, rows: GPO_ROWS, note: GPO_NOTE },
     market: { headline: MARKET_HEADLINE, subtitle: MARKET_SUBTITLE, rows: MARKET_PROMPTS.map(r => ({ ...r })), photo: pic(8) },
+    maxrev: { headline: MAXREV_HEADLINE, subtitle: MAXREV_SUBTITLE, body: MAXREV_BODY, rows: MAXREV_ROWS, note: MAXREV_NOTE },
+    terms: { headline: TERMS_HEADLINE, subtitle: TERMS_SUBTITLE, rows: termRows(t.mgmtPct, t.laborRate, t.approvalLimit), note: TERMS_NOTE },
+    proof: { headline: PROOF_HEADLINE, subtitle: PROOF_SUBTITLE, body: PROOF_BODY, note: PROOF_NOTE, scope: '', window: '', names: false, rows: [] },
+    plan: { headline: PLAN_HEADLINE, subtitle: PLAN_SUBTITLE, body: PLAN_BODY, note: PLAN_NOTE, cols: [], rows: [] },
     close: { headline: CLOSE_HEADLINE, subtitle: CLOSE_SUBTITLE, rows: CLOSE_ROWS, note: CLOSE_NOTE },
     video: { headline: VIDEO_HEADLINE, subtitle: VIDEO_SUBTITLE, body: VIDEO_BODY, url: '', poster: '' },
 

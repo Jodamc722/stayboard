@@ -89,6 +89,8 @@ export function ReportsDesk() {
   const [ownerName, setOwnerName] = useState('')
   /** Who is presenting the sales deck. Seeds the contact card; the photo is added on the slide. */
   const [presenter, setPresenter] = useState('')
+  /** Short is the deck you send to earn a meeting; Full is the one you present at it. */
+  const [deckLength, setDeckLength] = useState<'short' | 'full'>('short')
   const [goLive, setGoLive] = useState('')
   // The list below mixes three document types once you have a few of each; this filters it.
   const [listKind, setListKind] = useState<'all' | 'review' | 'projection' | 'onboarding' | 'sales'>('all')
@@ -268,6 +270,7 @@ export function ReportsDesk() {
           ownerName: ownerName || undefined,
           goLive: goLive || undefined,
           contact: kind === 'sales' && presenter ? { name: presenter } : undefined,
+          length: kind === 'sales' ? deckLength : undefined,
           pacingUrl: pacing ? pacing.url : undefined,
           statementIds: stmtPicked.length ? stmtPicked : undefined,
           heroImageUrl: heroImg ? heroImg.url : undefined,
@@ -502,6 +505,14 @@ export function ReportsDesk() {
                     <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Presented by</span>
                     <input value={presenter} onChange={e => setPresenter(e.target.value)} placeholder="Your name"
                       className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Length</span>
+                    <select value={deckLength} onChange={e => setDeckLength(e.target.value === 'full' ? 'full' : 'short')}
+                      className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink">
+                      <option value="short">Short — send it</option>
+                      <option value="full">Full — present it</option>
+                    </select>
                   </label>
                   {/* THE PROPERTY IS OPTIONAL ON THIS ONE (2026-10-27). A prospect's unit is
                       usually not on our account yet, so the deck generates on a name alone; pick

@@ -237,6 +237,7 @@ export async function POST(req: NextRequest) {
 
     const pStartS = etToday()
     const contentS = buildSalesContent(tplS, {
+      length: str(body?.length) === 'full' ? 'full' : 'short',
       scopeLabel,
       asOf,
       market: marketS,

@@ -31,7 +31,7 @@ import {
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
 } from '@/lib/onboarding-copy'
-import { MARKET_HINTS } from '@/lib/sales-copy'
+import { MARKET_HINTS, shortOmit } from '@/lib/sales-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, seasonBodyStale } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
@@ -1249,6 +1249,9 @@ const PITCH_DEFAULTS: Record<string, Any> = {
 }
 const PITCH_SEEDS: string[] = Object.keys(PITCH_DEFAULTS)
 
+/** The slides the Short switch puts away. Named once, so the switch and the test agree. */
+const SHORT_HIDDEN: string[] = shortOmit()
+
 export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, recs, delta }: { initial: Any; canEdit: boolean; isTeam?: boolean; gallery?: string[]; listingTable?: Any; recs?: Any; delta?: Any }) {
   const [c, setC] = useState<Any>(initial.content || {})
   // Marks every in-slide scroll area that has more below it (see .onb-scroll[data-more] above).
@@ -2116,6 +2119,80 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     } catch (_e) { setAttachMsg('Could not pull reviews.') }
     setRvBusy(false)
   }
+  // ── THE NUMBERS ON A SALES DECK (Jon, 2026-10-27) ────────────────────────
+  // "We should be able to upload a projection, pull actuals from other property owner statements,
+  // and pull by owner or by listing of actual gross rev and net of fees, but not expense."
+  //
+  // The expense rule is enforced in /api/reports/proof, not here: that route reads the reservation
+  // mirror and has no access to the ledger at all, so there is no expense figure for this panel to
+  // show even by mistake. What this panel chooses is the scope and the window.
+  const [pfScopes, setPfScopes] = useState<{ owners: { id: string; name: string; n: number }[]; buildings: string[] } | null>(null)
+  const [pfOwner, setPfOwner] = useState('')
+  const [pfBuilding, setPfBuilding] = useState('')
+  const [pfMonths, setPfMonths] = useState(12)
+  const [pfNames, setPfNames] = useState(false)
+  const [pfBusy, setPfBusy] = useState(false)
+  const [pfMsg, setPfMsg] = useState('')
+  async function loadProofScopes() {
+    if (pfScopes) return
+    try {
+      const d = await fetch('/api/reports/proof').then(r => r.json())
+      if (d?.ok) setPfScopes({ owners: d.owners || [], buildings: d.buildings || [] })
+    } catch { /* the panel still takes a building typed by hand */ }
+  }
+  async function pullProof() {
+    if (pfBusy) return
+    if (!pfOwner && !pfBuilding) { setPfMsg('Pick an owner or a building first.'); return }
+    setPfBusy(true); setPfMsg('')
+    try {
+      const to = new Date(); const from = new Date(to)
+      from.setMonth(from.getMonth() - Math.max(1, pfMonths))
+      const q = '/api/reports/proof?from=' + from.toISOString().slice(0, 10) + '&to=' + to.toISOString().slice(0, 10)
+        + (pfOwner ? '&owner=' + encodeURIComponent(pfOwner) : '')
+        + (pfBuilding ? '&building=' + encodeURIComponent(pfBuilding) : '')
+        + (pfNames ? '&names=1' : '')
+      const d = await fetch(q).then(r => r.json())
+      if (d?.ok && Array.isArray(d.rows)) {
+        mutate((dr: Any) => {
+          dr.proof = dr.proof || {}
+          dr.proof.rows = d.rows; dr.proof.totals = d.totals
+          dr.proof.scope = pfNames ? String(d.scope || '') : ''
+          dr.proof.window = String(d.window || ''); dr.proof.names = pfNames
+          if (Array.isArray(dr.omit)) dr.omit = dr.omit.filter((k: string) => k !== 'proof')
+        })
+        setPfMsg(d.rows.length + ' propert' + (d.rows.length === 1 ? 'y' : 'ies') + ' pulled — review, then Save.')
+      } else setPfMsg(String(d?.error || 'Could not pull those actuals.'))
+    } catch { setPfMsg('Could not pull those actuals.') }
+    setPfBusy(false)
+  }
+  const [plBusy, setPlBusy] = useState(false)
+  const [plMsg, setPlMsg] = useState('')
+  async function buildPlan(source: 'model' | 'upload', url?: string) {
+    if (plBusy) return
+    setPlBusy(true); setPlMsg('')
+    try {
+      const r = await fetch('/api/reports/sales-plan', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: initial.id, source, url }),
+      })
+      const d = await r.json()
+      if (d?.ok && d?.content) { setC(d.content); setPlMsg(String(d.source || 'Projection built') + ' — saved.') }
+      else setPlMsg(String(d?.error || 'Could not build that projection.'))
+    } catch { setPlMsg('Could not build that projection.') }
+    setPlBusy(false)
+  }
+  async function uploadProjection(file: File) {
+    if (plBusy) return
+    setPlBusy(true); setPlMsg('Uploading…')
+    try {
+      const fd = new FormData(); fd.append('file', file)
+      const up = await fetch('/api/guidebook/upload', { method: 'POST', body: fd }).then(r => r.json())
+      if (!up?.url) { setPlMsg('Upload failed.'); setPlBusy(false); return }
+      setPlBusy(false)
+      await buildPlan('upload', up.url)
+    } catch { setPlMsg('Upload failed.'); setPlBusy(false) }
+  }
+
   // PER-SLIDE REFRESH (Jon, 2026-10-27: "the budget slide — I accidentally deleted one of the
   // months. Can we please have a refresh button on that... we should actually have refreshes on
   // all of the slides. That way, if the data has changed, we can click refresh and then have it
@@ -2232,6 +2309,19 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const kindOf = String((c.meta || {}).kind || '')
   const isSales = kindOf === 'sales'
   const isOnboarding = kindOf === 'onboarding' || isSales
+  /** Short is the default a sales deck generates in; this reads what the document actually says. */
+  const deckIsShort = isSales && SHORT_HIDDEN.some((k: string) => (Array.isArray(c.omit) ? c.omit : []).indexOf(k) >= 0)
+  function setDeckLength(v: 'short' | 'full') {
+    mutate((d: Any) => {
+      const cur: string[] = Array.isArray(d.omit) ? d.omit : (d.omit = [])
+      if (v === 'full') {
+        // Only the slides the short switch hid come back. Anything hidden by hand stays hidden.
+        d.omit = cur.filter((k: string) => SHORT_HIDDEN.indexOf(k) < 0)
+      } else {
+        for (const k of SHORT_HIDDEN) if (cur.indexOf(k) < 0) cur.push(k)
+      }
+    })
+  }
 
   // THE MONTH + SECTION PHOTOGRAPHY (Jon, 2026-09-22 rebuild). Both are derived rather than stored,
   // so every review that already existed gained them on deploy. `gallery` is resolved server-side
@@ -2490,6 +2580,26 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           {/* LOCK IN AS THE STANDARD (Jon, 2026-09-24). Two clicks, because it rewrites the template
               every future deck is generated from. Saves this deck first so what is locked in is
               what is on screen. */}
+          {/* SHORT OR FULL, ONE DOCUMENT (Jon, 2026-10-27: "visually it's way too long, need to
+              make it shorter, stronger sales, to get them to want to learn more"). The deck you
+              send has to earn a second conversation; the long one is for the meeting it earns.
+              This only moves keys in and out of `omit`, so a slide someone edited is still there,
+              with the edit, when the other length comes back on. */}
+          {edit && isSales && (
+            <span className="inline-flex items-center rounded-full overflow-hidden" style={{ border: '1px solid ' + t.toolbarBorder, background: t.card }}>
+              {([['short', 'Short'], ['full', 'Full']] as const).map(([v, lbl]) => {
+                const on = v === 'short' ? deckIsShort : !deckIsShort
+                return (
+                  <button key={v} onClick={() => setDeckLength(v)}
+                    title={v === 'short' ? 'The deck you send: who we are, the buildings, how we operate, how the money is made, the numbers, the terms, and how to say yes' : 'Every slide: the process, the guest journey, distribution, the stack, Lighthouse, HostGPO and the rest'}
+                    className="px-3 py-1.5 text-[12px] font-semibold"
+                    style={on ? { background: t.ink, color: t.bg } : { color: t.muted }}>
+                    {lbl}
+                  </button>
+                )
+              })}
+            </span>
+          )}
           {edit && isOnboarding && (
             <button onClick={async () => {
                 if (stdArm !== 'armed') { setStdArm('armed'); setTimeout(() => setStdArm(a => a === 'armed' ? '' : a), 6000); return }
@@ -3580,6 +3690,59 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             </p>
           )
 
+          // The pull panel on the proof slide. Scope and window only — there is no expense
+          // control because there is no expense figure in what it fetches.
+          const ProofPull = stable('ProofPull', () => (
+            <div className="sb-noprint" style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid ' + t.cardBorder }}>
+              <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, marginBottom: 8 }}>Pull actuals</p>
+              <div style={{ display: 'grid', gap: 7 }}>
+                <select value={pfOwner} onFocus={loadProofScopes} onChange={e => { setPfOwner(e.target.value); if (e.target.value) setPfBuilding('') }}
+                  style={{ fontSize: 12.5, padding: '6px 8px', borderRadius: 8, border: '1px solid ' + t.cardBorder, background: t.card, color: t.ink }}>
+                  <option value="">By owner…</option>
+                  {(pfScopes?.owners || []).map(o => <option key={o.id} value={o.id}>{o.name} · {o.n}</option>)}
+                </select>
+                <select value={pfBuilding} onFocus={loadProofScopes} onChange={e => { setPfBuilding(e.target.value); if (e.target.value) setPfOwner('') }}
+                  style={{ fontSize: 12.5, padding: '6px 8px', borderRadius: 8, border: '1px solid ' + t.cardBorder, background: t.card, color: t.ink }}>
+                  <option value="">By building…</option>
+                  {(pfScopes?.buildings || []).map(b => <option key={b} value={b}>{b}</option>)}
+                </select>
+                <select value={String(pfMonths)} onChange={e => setPfMonths(Number(e.target.value) || 12)}
+                  style={{ fontSize: 12.5, padding: '6px 8px', borderRadius: 8, border: '1px solid ' + t.cardBorder, background: t.card, color: t.ink }}>
+                  {[3, 6, 12, 24].map(m => <option key={m} value={m}>Last {m} months</option>)}
+                </select>
+                <label className="flex items-center" style={{ gap: 7, fontSize: 12, color: t.muted }}>
+                  <input type="checkbox" checked={pfNames} onChange={e => setPfNames(e.target.checked)} />
+                  Show the owner&rsquo;s name
+                </label>
+                <button onClick={pullProof} disabled={pfBusy}
+                  style={{ fontSize: 12, fontWeight: 600, padding: '7px 12px', borderRadius: 999, background: t.ink, color: t.bg, opacity: pfBusy ? 0.6 : 1 }}>
+                  {pfBusy ? 'Pulling…' : 'Pull the numbers'}
+                </button>
+                {pfMsg ? <p style={{ fontSize: 11.5, color: t.muted }}>{pfMsg}</p> : null}
+              </div>
+            </div>
+          ))
+
+          // Build from our own model, or read a projection someone else built.
+          const PlanBuild = stable('PlanBuild', () => (
+            <div className="sb-noprint" style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid ' + t.cardBorder }}>
+              <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, marginBottom: 8 }}>The projection</p>
+              <div style={{ display: 'grid', gap: 7 }}>
+                <button onClick={() => buildPlan('model')} disabled={plBusy}
+                  title="Uses our own projection model for the listings this deck was generated against"
+                  style={{ fontSize: 12, fontWeight: 600, padding: '7px 12px', borderRadius: 999, background: t.ink, color: t.bg, opacity: plBusy ? 0.6 : 1 }}>
+                  {plBusy ? 'Working…' : 'Build from our model'}
+                </button>
+                <label style={{ fontSize: 12, fontWeight: 600, padding: '7px 12px', borderRadius: 999, background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink, textAlign: 'center', cursor: 'pointer' }}>
+                  Upload a projection
+                  <input type="file" accept=".pdf,.csv,.txt" style={{ display: 'none' }}
+                    onChange={e => { const f = e.target.files && e.target.files[0]; if (f) uploadProjection(f); e.target.value = '' }} />
+                </label>
+                {plMsg ? <p style={{ fontSize: 11.5, color: t.muted }}>{plMsg}</p> : null}
+              </div>
+            </div>
+          ))
+
           // ── THE SALES DECK'S WORKHORSE (Jon, 2026-10-27) ─────────────────────────
           // Six of the new slides are the same object: an argument on the left, a numbered list of
           // what we actually do on the right, and a closing line under the argument. Written once
@@ -4165,6 +4328,145 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           if (!hid('ops')) slides.push({ key: 'ops', ai: true, node: (
             <PitchRows k="ops" nav="Operations" label="Operations" note="" />
           ) })
+
+          // ── 4c · HOW WE GET MAX REVENUE (Jon, 2026-10-27) ────────────────────
+          // The short deck's one revenue slide. The full deck argues this across five — pricing,
+          // the comp set, distribution, the listing craft, direct — and each of those is a better
+          // slide than this one. This is the version for someone who has given us ninety seconds.
+          if (!hid('maxrev')) slides.push({ key: 'maxrev', ai: true, node: (
+            <PitchRows k="maxrev" nav="Max revenue" label="Revenue" note="" dark />
+          ) })
+
+          // ── 4d · WHAT PROPERTIES LIKE YOURS EARN ─────────────────────────────
+          // Jon, 2026-10-27: "pull actuals from other property owner statements… actual gross rev
+          // and net of fees, but not expense."
+          //
+          // REVENUE ONLY, AND THE RULE LIVES IN THE ENDPOINT. /api/reports/proof reads the
+          // reservation mirror and nothing else, so there is no commission, labour or ledger line
+          // anywhere in the data this slide can draw on — it cannot be switched back on by editing
+          // the deck. Rows label by unit and building; the owner's name is off unless someone
+          // deliberately turns it on, because a name attached to someone else's revenue is a
+          // confidence we were not given.
+          if (!hid('proof')) { const pr: Any = sec('proof'); const prRows: Any[] = (pr.rows || []) as Any[]
+            if (prRows.length || edit) slides.push({ key: 'proof', ai: true, node: (
+            <Slide nav="The numbers" warn={edit}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Split k="proof" leftW={320}
+                  left={
+                    <>
+                      <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder }}>
+                        <Ed v={pr.body || ''} set={v => patch('proof.body', v)} edit={edit} multiline />
+                      </p>
+                      <p style={{ fontSize: 12.5, lineHeight: 1.55, color: t.muted, marginTop: 14 }}>
+                        <Ed v={pr.note || ''} set={v => patch('proof.note', v)} edit={edit} multiline />
+                      </p>
+                      {edit ? <ProofPull /> : null}
+                    </>
+                  }
+                  right={
+                    prRows.length ? (
+                      <div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.5fr repeat(5, 1fr)', gap: 10, paddingBottom: 8, borderBottom: '1px solid ' + t.rule }}>
+                          {['Property', 'Gross', 'Net of fees', 'Occ', 'ADR', 'Nights'].map((h, i) => (
+                            <p key={h} style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: i === 0 ? 'left' : 'right' }}>{h}</p>
+                          ))}
+                        </div>
+                        {prRows.slice(0, 12).map((r: Any, i: number) => (
+                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.5fr repeat(5, 1fr)', gap: 10, padding: '9px 0', borderBottom: '1px solid ' + t.rule, alignItems: 'baseline' }}>
+                            <div style={{ minWidth: 0 }}>
+                              <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, margin: 0 }}>{String(r.label || '')}</p>
+                              <p style={{ fontSize: 11, color: t.muted, margin: 0 }}>{String(r.sub || '')}</p>
+                            </div>
+                            {['gross', 'net', 'occ', 'adr', 'nights'].map(k => (
+                              <p key={k} style={{ fontSize: 13.5, color: k === 'gross' ? t.ink : t.body, fontWeight: k === 'gross' ? 600 : 400, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{String(r[k] || '—')}</p>
+                            ))}
+                          </div>
+                        ))}
+                        {pr.totals ? (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr repeat(5, 1fr)', gap: 10, padding: '11px 0 0', borderTop: '2px solid ' + t.ink, alignItems: 'baseline' }}>
+                            <p style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: t.ink, margin: 0 }}>Total</p>
+                            {['gross', 'net', 'occ', 'adr', 'nights'].map(k => (
+                              <p key={k} style={{ fontSize: 14, fontWeight: 600, color: t.ink, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{String((pr.totals || {})[k] || '—')}</p>
+                            ))}
+                          </div>
+                        ) : null}
+                        {(pr.scope || pr.window) ? (
+                          <p style={{ fontSize: 11, color: t.muted, marginTop: 12 }}>{[String(pr.scope || ''), String(pr.window || '')].filter(Boolean).join('  \u00b7  ')}</p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: 13, color: t.muted, lineHeight: 1.6, maxWidth: '46ch' }}>
+                        Pull the actuals on the left. Until then this slide does not appear in the deck.
+                      </p>
+                    )
+                  } />
+                <Foot label="The numbers" />
+              </div>
+            </Slide>
+          ) }) }
+
+          // ── 4e · THE PROJECTION (Jon, 2026-10-27: "make it possible to upload projections and
+          // build them into the deck for the property"). Built from our own model for listings we
+          // run, or read out of a file someone else built — see /api/reports/sales-plan, which
+          // will refuse rather than invent a number it could not read.
+          if (!hid('plan')) { const pl: Any = sec('plan'); const plRows: Any[] = (pl.rows || []) as Any[]
+            const plCols: string[] = (pl.cols || []) as string[]
+            if (plRows.length || edit) slides.push({ key: 'plan', ai: true, node: (
+            <Slide nav="Projection" warn={edit} ground={GROUND.tint}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Split k="plan" leftW={320}
+                  left={
+                    <>
+                      <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder }}>
+                        <Ed v={pl.body || ''} set={v => patch('plan.body', v)} edit={edit} multiline />
+                      </p>
+                      <p style={{ fontSize: 12.5, lineHeight: 1.55, color: t.muted, marginTop: 14 }}>
+                        <Ed v={pl.note || ''} set={v => patch('plan.note', v)} edit={edit} multiline />
+                      </p>
+                      {edit ? <PlanBuild /> : null}
+                    </>
+                  }
+                  right={
+                    plRows.length ? (
+                      <div className="onb-scroll" style={{ overflowX: 'auto' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr repeat(' + Math.max(1, plCols.length) + ', minmax(62px,1fr))', gap: 8, paddingBottom: 8, borderBottom: '1px solid ' + t.rule }}>
+                          <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0 }}>&nbsp;</p>
+                          {plCols.map((h, i) => (
+                            <p key={i} style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: 'right' }}>{String(h)}</p>
+                          ))}
+                        </div>
+                        {plRows.slice(0, 14).map((r: Any, i: number) => (
+                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.4fr repeat(' + Math.max(1, plCols.length) + ', minmax(62px,1fr))', gap: 8, padding: '8px 0', borderBottom: '1px solid ' + t.rule, alignItems: 'baseline' }}>
+                            <p style={{ fontSize: 13, fontWeight: 600, color: t.ink, margin: 0, minWidth: 0 }}>
+                              <Ed v={String(r.k || '')} set={v => patch('plan.rows.' + i + '.k', v)} edit={edit} />
+                            </p>
+                            {plCols.map((_c, j) => (
+                              <p key={j} style={{ fontSize: 12.5, color: t.body, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                                <Ed v={String((r.cells || [])[j] || '')} set={v => patch('plan.rows.' + i + '.cells.' + j, v)} edit={edit} />
+                              </p>
+                            ))}
+                          </div>
+                        ))}
+                        {pl.totals ? (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1.4fr repeat(' + Math.max(1, plCols.length) + ', minmax(62px,1fr))', gap: 8, padding: '10px 0 0', borderTop: '2px solid ' + t.ink, alignItems: 'baseline' }}>
+                            <p style={{ fontSize: 12.5, fontWeight: 700, color: t.ink, margin: 0 }}>{String(pl.totals.k || 'Total')}</p>
+                            {plCols.map((_c, j) => (
+                              <p key={j} style={{ fontSize: 13, fontWeight: 600, color: t.ink, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{String((pl.totals.cells || [])[j] || '')}</p>
+                            ))}
+                          </div>
+                        ) : null}
+                        {pl.source ? <p style={{ fontSize: 11, color: t.muted, marginTop: 12 }}>{String(pl.source)}</p> : null}
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: 13, color: t.muted, lineHeight: 1.6, maxWidth: '46ch' }}>
+                        Build the projection on the left, or upload one. Until then this slide does not appear in the deck.
+                      </p>
+                    )
+                  } />
+                <Foot label="Projection" />
+              </div>
+            </Slide>
+          ) }) }
 
           if (!hid('craft')) slides.push({ key: 'craft', ai: true, node: (
             <Slide nav="The listing" warn={edit}>
@@ -5216,6 +5518,42 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // file for the onboarding deck. A prospect does not want our checklist; they want to
           // know what the next four weeks cost THEM in time and decisions, so every step carries
           // who does it and when.
+          // ── 7a · MANAGEMENT TERMS (Jon, 2026-10-27: "we can add our management terms")
+          // The fee, the labour rate and the approval ceiling are the house template's own
+          // figures, so this slide and the billing rules can never disagree. The terms this system
+          // does not hold — contract length, notice, when the payout lands — ship as empty rows
+          // with a hint, and an unfilled row does not print: a term invented on a sales slide is a
+          // term we would be held to.
+          if (!hid('terms')) { const tmRows: Any[] = (sec('terms').rows || []) as Any[]
+            const tmShown = edit ? tmRows : tmRows.filter((r: Any) => String(r.v || '').trim())
+            if (tmShown.length) slides.push({ key: 'terms', ai: true, node: (
+            <Slide nav="Terms" warn={edit}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Split k="terms" leftW={320}
+                  left={
+                    <p style={{ fontSize: 12.5, lineHeight: 1.55, color: t.muted, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder }}>
+                      <Ed v={sec('terms').note || ''} set={v => patch('terms.note', v)} edit={edit} multiline />
+                    </p>
+                  }
+                  right={
+                    <div style={{ display: 'grid', gap: 14 }}>
+                      {tmShown.map((f: Any) => { const i = tmRows.indexOf(f); return (
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '170px 1fr', gap: 20, alignItems: 'baseline', borderTop: '1px solid ' + t.cardBorder, paddingTop: 10 }}>
+                          <p style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: t.accent, margin: 0 }}>
+                            <Ed v={f.k || ''} set={v => patch('terms.rows.' + i + '.k', v)} edit={edit} multiline />
+                          </p>
+                          <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, margin: 0 }}>
+                            <Ed v={f.v || ''} set={v => patch('terms.rows.' + i + '.v', v)} edit={edit} multiline placeholder={String(f.hint || 'Write this one in')} />
+                          </p>
+                        </div>
+                      ) })}
+                    </div>
+                  } />
+                <Foot label="Terms" />
+              </div>
+            </Slide>
+          ) }) }
+
           if (!hid('onbsteps')) slides.push({ key: 'onbsteps', ai: true, node: (
             <Slide nav="Onboarding" warn={edit} ground={GROUND.tint}>
               <div className="flex flex-col" style={{ height: '100%' }}>
@@ -6692,7 +7030,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     {listingTable.rows.map((r: Any) => {
                       const rev = revOf(r)
                       return (
-                        <div key={r.id} style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, padding: '9px 0', borderBottom: '1px solid ' + tint(0.07), alignItems: 'center' }}>
+                        <div key={r.id} style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, padding: '9px 0', borderBottom: '1px solid ' + t.rule, alignItems: 'center' }}>
                           <div style={{ minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 9 }}>
                             <span style={{ fontSize: 14, color: t.ink, fontWeight: 500, whiteSpace: 'nowrap' }}>{O('lt_' + r.id + '_unit', String(r.unit || r.name || ''))}</span>
                             {(size(r) || edit) ? <span style={{ fontSize: 11, color: tint(0.45) }}>{O('lt_' + r.id + '_size', size(r))}</span> : null}
@@ -7067,7 +7405,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         ))}
                       </div>
                       {rows.map((m: Any, i: number) => (
-                        <div key={i} style={{ display: 'grid', gridTemplateColumns: g, gap: 10, padding: '9px 0', borderBottom: '1px solid ' + tint(0.07) }}>
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: g, gap: 10, padding: '9px 0', borderBottom: '1px solid ' + t.rule }}>
                           <p style={{ fontSize: 13.5, color: t.ink, margin: 0, fontWeight: 500 }}>{O('stmt_' + (m.month || m.label || i) + '_m', String(m.label || m.month || ''))}</p>
                           {['rental', 'commission', 'other', 'net', 'paid'].map(k => (
                             <p key={k} style={{ fontSize: 13.5, color: k === 'net' ? t.ink : tint(0.62), fontWeight: k === 'net' ? 500 : 400, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{O('stmt_' + (m.month || m.label || i) + '_' + k, money0(m[k]))}</p>
