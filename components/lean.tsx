@@ -98,7 +98,10 @@ export function Tip({ label, children }: { label: string; children: ReactNode })
   return (
     <span className="relative inline-flex group/tip">
       {children}
-      <span role="tooltip" className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 z-50 whitespace-nowrap rounded-md bg-ink text-white text-[11px] font-medium px-2 py-1 opacity-0 group-hover/tip:opacity-100 transition-opacity duration-75 shadow">
+      {/* `hidden` until hover, not opacity 0: an invisible label laid out past the right edge still widens the
+          pane's scroll width, and a focus or a trackpad swipe then scrolls the page sideways under the sidebar
+          (seen on /photos, 2026-10-27). */}
+      <span role="tooltip" className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 z-50 whitespace-nowrap rounded-md bg-ink text-white text-[11px] font-medium px-2 py-1 hidden group-hover/tip:block shadow">
         {label}
       </span>
     </span>
