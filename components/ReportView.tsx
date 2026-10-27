@@ -4188,6 +4188,25 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </div>
                   {/* FOUR FRAMES, THE FIRST ONE LARGE — the order a guest meets them in, which is
                       the order that decides whether this property books. */}
+                  {!edit && !ppPhotos.length ? (
+                    // NO PHOTOS YET, NO EMPTY FRAMES (2026-10-27 sales audit). Three cream boxes
+                    // on the second page told a prospect the deck was unfinished. Until someone
+                    // picks photos, the property is set in type instead — its name and its shape,
+                    // as large as the cover's.
+                    (() => {
+                      const fv = (k: string) => String((ppFacts.find((f: Any) => f.k === k) || {}).v || '').trim()
+                      const bld = fv('The building').split(' · ')[0] || String(hero.title || '')
+                      return (
+                        <div className="flex-1 min-w-0 flex flex-col justify-end" style={{ background: t.band, borderRadius: 16, padding: '34px 38px', color: '#fff' }}>
+                          <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.6)', margin: 0 }}>Prepared for this property</p>
+                          <p style={{ fontFamily: SERIF, fontSize: 46, lineHeight: 1.05, letterSpacing: '-0.025em', margin: '12px 0 0' }}>{bld}</p>
+                          {fv('The unit') ? <p style={{ fontSize: 19, margin: '14px 0 0', color: 'rgba(255,255,255,0.88)' }}>{fv('The unit')}</p> : null}
+                          {fv('Where it is') ? <p style={{ fontSize: 14, margin: '8px 0 0', color: 'rgba(255,255,255,0.64)' }}>{fv('Where it is')}</p> : null}
+                          {fv('What it sells') ? <p style={{ fontSize: 15, lineHeight: 1.5, margin: '20px 0 0', paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.18)', color: 'rgba(255,255,255,0.86)', maxWidth: '44ch' }}>{fv('What it sells')}</p> : null}
+                        </div>
+                      )
+                    })()
+                  ) : (
                   <div className="flex-1 min-w-0" style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gridTemplateRows: '1fr 1fr', gap: 12 }}>
                     {[0, 1, 2].map(n => (
                       <Pick key={n} title={'Photo ' + (n + 1)} cur={String(ppPhotos[n] || '')}
@@ -4195,6 +4214,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         style={{ width: '100%', height: '100%', borderRadius: 12, border: '1px solid ' + t.cardBorder, ...(n === 0 ? { gridRow: 'span 2' } : {}) }} />
                     ))}
                   </div>
+                  )}
                 </div>
                 <Foot label="Your property" />
               </div>
@@ -4230,7 +4250,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       {miMonths.length ? (
                         <div>
                           <div className="flex items-baseline" style={{ gap: 30, flexWrap: 'wrap' }}>
-                            {([['Occupancy', 'occ'], ['ADR', 'adr'], ['RevPAR', 'revpar'], ['Gross per unit', 'grossPerUnit']] as const).map(([lbl, k]) => (
+                            {/* ONE REVENUE NUMBER PER SIZE OF HOME IN THE DECK (2026-10-27). This average
+                                counts units we took on mid-year; the against-the-market slide counts
+                                only full-year homes. Two different "what our 2-beds earn" figures on
+                                consecutive slides read as a mistake, so when that slide carries the
+                                number this one keeps to the market's shape. */}
+                            {([['Occupancy', 'occ'], ['ADR', 'adr'], ['RevPAR', 'revpar'], ['Gross per unit', 'grossPerUnit']] as const)
+                              .filter(([, k]) => !(k === 'grossPerUnit' && !hid('edge') && ((sec('edge').rows || []) as Any[]).some((r: Any) => r && r.ahead)))
+                              .map(([lbl, k]) => (
                               <div key={lbl}>
                                 <p style={{ fontFamily: SERIF, fontSize: 26, letterSpacing: '-0.02em', color: t.ink, margin: 0, fontVariantNumeric: 'tabular-nums' }}>{String(mi[k] || '—')}</p>
                                 <p style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: '5px 0 0' }}>{lbl}</p>
@@ -4242,12 +4269,19 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           </p>
                           {/* THE SHAPE OF THE YEAR. Occupancy by month, measured, with the peak
                               lit — an owner's first question about a market is when it fills. */}
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + miMonths.length + ', 1fr)', gap: 5, alignItems: 'end', height: 92, marginTop: 18 }}>
-                            {miMonths.map((m: Any, i: number) => (
-                              <span key={i} title={String(m.label) + ' · ' + Math.round(Number(m.occPct) || 0) + '% · ' + String(m.adr || '')}
-                                style={{ display: 'block', height: Math.max(3, (Math.max(0, Math.min(100, Number(m.occPct) || 0)) / 100) * 88), borderRadius: '3px 3px 0 0', background: m.peak ? t.accent : inkA(t.ink, 0.26) }} />
-                            ))}
+                          {/* WHEN THE CHART IS THE SLIDE, IT GETS THE SLIDE (2026-10-27 sales audit). With
+                              no written rows under it the bars sat in the top third above an empty
+                              half-page; now they take the height and carry their own figures. */}
+                          {(() => { const tall = !mkShown.length; const H = tall ? 220 : 92; return (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + miMonths.length + ', 1fr)', gap: 5, alignItems: 'end', height: H + (tall ? 18 : 0), marginTop: 18 }}>
+                            {miMonths.map((m: Any, i: number) => { const pct = Math.max(0, Math.min(100, Number(m.occPct) || 0)); return (
+                              <span key={i} className="flex flex-col items-center justify-end" style={{ height: '100%' }} title={String(m.label) + ' · ' + Math.round(pct) + '% · ' + String(m.adr || '')}>
+                                {tall ? <span style={{ fontSize: 9.5, fontWeight: 600, color: m.peak ? t.accent : t.muted, marginBottom: 4, fontVariantNumeric: 'tabular-nums' }}>{Math.round(pct)}%</span> : null}
+                                <span style={{ display: 'block', width: '100%', height: Math.max(3, (pct / 100) * (H - 4)), borderRadius: '3px 3px 0 0', background: m.peak ? t.accent : inkA(t.ink, 0.26) }} />
+                              </span>
+                            ) })}
                           </div>
+                          ) })()}
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + miMonths.length + ', 1fr)', gap: 5, marginTop: 7 }}>
                             {miMonths.map((m: Any, i: number) => (
                               <span key={i} style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '0.04em', color: m.peak ? t.ink : t.muted, textAlign: 'center' }}>{String(m.label).slice(0, 1)}</span>
@@ -5111,7 +5145,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         <Ed v={eg.body || ''} set={v => patch('edge.body', v)} edit={edit} multiline />
                       </p>
                       {eg.pro && eg.pro.revenue ? (
-                        <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                           {[[eg.pro.revenue, 'more revenue'], [eg.pro.rate, 'higher nightly rate']].map(([n, l]) => (
                             <div key={String(l)} style={{ background: t.chip, borderRadius: 10, padding: '11px 14px' }}>
                               <p style={{ fontFamily: SERIF, fontSize: 26, color: t.accent, margin: 0, letterSpacing: '-0.02em' }}>+{String(n)}%</p>
@@ -5123,6 +5157,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           </p>
                         </div>
                       ) : null}
+                      <p style={{ fontSize: 10, lineHeight: 1.45, color: t.muted, marginTop: 12 }}>
+                        <Ed v={eg.note || ''} set={v => patch('edge.note', v)} edit={edit} multiline />
+                        {eg.source ? ' Source: ' + String(eg.source) + '.' : ''}
+                      </p>
                       {edit ? (
                         <div className="sb-noprint" style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid ' + t.cardBorder, display: 'grid', gap: 7 }}>
                           <select value={egMarket} onChange={e => setEgMarket(e.target.value)}
@@ -5178,7 +5216,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             ))}
                           </div>
                           {egRows.map((r: Any) => (
-                            <div key={r.bedrooms} style={{ display: 'grid', gridTemplateColumns: '64px 1fr', gap: 12, alignItems: 'center', padding: '7px 0', borderTop: '1px solid ' + t.rule }}>
+                            <div key={r.bedrooms} style={{ display: 'grid', gridTemplateColumns: '64px 1fr', gap: 12, alignItems: 'center', padding: '6px 0', borderTop: '1px solid ' + t.rule }}>
                               <p style={{ fontSize: 12.5, fontWeight: 600, color: r === egLead ? t.accent : t.ink, margin: 0 }}>{String(r.bedrooms)}</p>
                               <div style={{ display: 'grid', gap: 3 }}>
                                 {[[r.median, inkA(t.ink, 0.22)], [r.top, inkA(t.ink, 0.45)], [r.gross, t.accent]].map(([v, col], j) => (
@@ -5191,10 +5229,6 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             </div>
                           ))}
                         </div>
-                        <p style={{ fontSize: 10.5, lineHeight: 1.5, color: t.muted, marginTop: 10 }}>
-                          <Ed v={eg.note || ''} set={v => patch('edge.note', v)} edit={edit} multiline />
-                          {eg.source ? ' Source: ' + String(eg.source) + '.' : ''}
-                        </p>
                       </div>
                     ) : (
                       <p style={{ fontSize: 13, color: t.muted, lineHeight: 1.6, maxWidth: '46ch' }}>
@@ -6893,6 +6927,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
 
           // ── 8c · THE CLOSE (Jon, 2026-10-27) ─────────────────────────────────
           // The last slide is an ask with four concrete next steps, not a thank-you card.
+          // The card on the close: the presenter when one is set, otherwise the first person on the
+          // team slide who can be reached — a sent deck must never end on nobody.
+          const closeCard: Any = String(ccCard.name || '').trim() ? ccCard
+            : (((sec('team').people || []) as Any[]).find((p: Any) => String(p.name || '').trim() && (String(p.phone || '').trim() || String(p.email || '').trim())) || {})
           if (!hid('close')) slides.push({ key: 'close', ai: true, node: (
             <Slide nav="Next steps" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
@@ -6901,7 +6939,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     contact slide, so the last page a prospect read named three steps and nobody to
                     take them with. On a proposal the presenter's card now sits beside the steps,
                     with the one ask: book the walk-through. */}
-                <div className="flex-1 min-h-0" style={{ marginTop: 26, display: 'grid', gridTemplateColumns: isSales && (edit || String(ccCard.name || '').trim()) ? '1fr 330px' : '1fr', gap: 40 }}>
+                <div className="flex-1 min-h-0" style={{ marginTop: 26, display: 'grid', gridTemplateColumns: isSales && (edit || String(closeCard.name || '').trim()) ? '1fr 330px' : '1fr', gap: 40 }}>
                 <div className="min-h-0 onb-scroll">
                   {((sec('close').rows || []) as Any[]).map((f: Any, i: number) => (
                     <div key={i} style={{ display: 'grid', gridTemplateColumns: '34px 1fr', columnGap: 16, alignItems: 'baseline', padding: '15px 0', borderTop: '1px solid ' + t.rule }}>
@@ -6920,22 +6958,22 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     <Ed v={sec('close').note || ''} set={v => patch('close.note', v)} edit={edit} multiline />
                   </p>
                 </div>
-                {isSales && (edit || String(ccCard.name || '').trim()) ? (
+                {isSales && (edit || String(closeCard.name || '').trim()) ? (
                   <div style={{ background: t.band, borderRadius: 16, padding: '24px 24px 22px', alignSelf: 'start', color: '#fff' }}>
                     <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)', margin: 0 }}>Book your walk-through</p>
                     <div className="flex items-center" style={{ gap: 14, marginTop: 16 }}>
-                      {String(ccCard.photo || '').trim() ? (
+                      {String(closeCard.photo || '').trim() ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={String(ccCard.photo)} alt="" style={{ width: 64, height: 64, borderRadius: 999, objectFit: 'cover', border: '2px solid rgba(255,255,255,0.3)' }} />
+                        <img src={String(closeCard.photo)} alt="" style={{ width: 64, height: 64, borderRadius: 999, objectFit: 'cover', border: '2px solid rgba(255,255,255,0.3)' }} />
                       ) : null}
                       <div style={{ minWidth: 0 }}>
-                        <p style={{ fontSize: 19, fontWeight: 600, margin: 0, lineHeight: 1.2 }}>{String(ccCard.name || '') || (edit ? 'Fill in the contact slide' : '')}</p>
-                        {String(ccCard.role || '').trim() ? <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', margin: '4px 0 0' }}>{String(ccCard.role)}</p> : null}
+                        <p style={{ fontSize: 19, fontWeight: 600, margin: 0, lineHeight: 1.2 }}>{String(closeCard.name || '') || (edit ? 'Fill in the contact slide' : '')}</p>
+                        {String(closeCard.role || '').trim() ? <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', margin: '4px 0 0' }}>{String(closeCard.role)}</p> : null}
                       </div>
                     </div>
                     <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.18)', display: 'grid', gap: 7 }}>
-                      {String(ccCard.phone || '').trim() ? <p style={{ fontSize: 15, margin: 0, fontVariantNumeric: 'tabular-nums' }}>{String(ccCard.phone)}</p> : null}
-                      {String(ccCard.email || '').trim() ? <p style={{ fontSize: 14, margin: 0, color: 'rgba(255,255,255,0.86)', wordBreak: 'break-all' }}>{String(ccCard.email)}</p> : null}
+                      {String(closeCard.phone || '').trim() ? <p style={{ fontSize: 15, margin: 0, fontVariantNumeric: 'tabular-nums' }}>{String(closeCard.phone)}</p> : null}
+                      {String(closeCard.email || '').trim() ? <p style={{ fontSize: 14, margin: 0, color: 'rgba(255,255,255,0.86)', wordBreak: 'break-all' }}>{String(closeCard.email)}</p> : null}
                     </div>
                   </div>
                 ) : null}

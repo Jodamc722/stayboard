@@ -208,7 +208,7 @@ export const CLOSE_ROWS: KV[] = [
   { k: 'Sign one plain agreement', v: 'Plain terms, no lock-in beyond the notice period, walked through clause by clause before you sign.' },
   { k: 'Go live', v: 'Photographed, listed on every channel, priced daily, with a team that already knows your building.' },
 ]
-export const CLOSE_NOTE = 'The next step is the walk-through. Pick a time with the person below.'
+export const CLOSE_NOTE = 'The next step is the walk-through. One call books it.'
 
 // ── 11 · THE VIDEO SLIDE ────────────────────────────────────────────────────
 // Jon, 2026-10-27: "what I think I'd do is build a video that we can embed into one of the slides."
