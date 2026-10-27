@@ -3541,6 +3541,74 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 <Sparkles size={11} /> AI
               </button>
             )}
+            {isSales ? (() => {
+              // THE SALES COVER, REBUILT ONE SLIDE AT A TIME (Jon, 2026-10-27: "go 1 slide at a
+              // time... clear, clean and easy to read... push them to consider further
+              // exploration"). One job: tell an owner, in the three seconds a sent deck gets, whose
+              // property this is about and what it could earn. Name, one line, one number. The
+              // photograph carries the mood; everything else is small and out of the way.
+              const rg: Any = c.plan && typeof c.plan === 'object' && c.plan.range && typeof c.plan.range === 'object' ? c.plan.range : null
+              const lo = rg ? String(rg.annualLow || '').trim() : ''
+              const hi = rg ? String(rg.annualHigh || '').trim() : ''
+              const pc: Any = (c.contact && c.contact.card) || {}
+              const when = meta.asOf ? new Date(String(meta.asOf) + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : ''
+              return (
+                <div className="onb-cover relative overflow-hidden rounded-3xl" style={{ background: t.band, aspectRatio: '16 / 9' }}>
+                  {hero.heroImage ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={hero.heroImage} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                  ) : null}
+                  <div className="absolute inset-0" style={{ background: 'linear-gradient(90deg, rgba(8,12,20,0.9) 0%, rgba(8,12,20,0.72) 38%, rgba(8,12,20,0.25) 72%, rgba(8,12,20,0.1) 100%)' }} />
+                  <div className="onb-cover-in absolute inset-0 flex flex-col" style={{ padding: '6% 6.5%' }}>
+                    <div className="flex items-center justify-between">
+                      {mark.logo ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={mark.logo} alt={mark.word} style={{ height: 34, width: 'auto', objectFit: 'contain', filter: 'invert(1) brightness(2.2)' }} />
+                      ) : (
+                        <p style={{ color: '#fff', fontSize: 12, fontWeight: 700, letterSpacing: '0.42em' }}>{mark.word}</p>
+                      )}
+                      <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.7)' }}>
+                        Management proposal{when ? ' · ' + when : ''}
+                      </p>
+                    </div>
+                    <div className="mt-auto" style={{ maxWidth: '58%' }}>
+                      {String(hero.preparedFor || '').trim() || edit ? (
+                        <p style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.66)' }}>
+                          <Ed v={hero.preparedFor || ''} set={v => patch('hero.preparedFor', v)} edit={edit} placeholder="Prepared for…" />
+                        </p>
+                      ) : null}
+                      <h1 style={{ marginTop: 10, fontSize: 'clamp(30px, 4.4vw, 54px)', fontWeight: 600, letterSpacing: '-0.03em', lineHeight: 1.02, color: '#fff' }}>
+                        <Ed v={hero.title || ''} set={v => patch('hero.title', v)} edit={edit} />
+                      </h1>
+                      <p style={{ marginTop: 14, fontSize: 'clamp(15px, 1.6vw, 19px)', lineHeight: 1.45, color: 'rgba(255,255,255,0.86)', maxWidth: '34ch' }}>
+                        <Ed v={hero.headline || ''} set={v => patch('hero.headline', v)} edit={edit} multiline />
+                      </p>
+                      {lo ? (
+                        <div style={{ marginTop: 26, paddingTop: 18, borderTop: '1px solid rgba(255,255,255,0.22)' }}>
+                          <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)' }}>Projected gross revenue · fully ramped</p>
+                          <p style={{ marginTop: 6, fontFamily: SERIF, fontSize: 'clamp(28px, 3.6vw, 44px)', letterSpacing: '-0.025em', color: '#fff', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                            {lo}{hi && hi !== lo ? ' – ' + hi : ''}<span style={{ fontFamily: 'inherit', fontSize: '0.42em', color: 'rgba(255,255,255,0.7)', marginLeft: 10 }}>a year</span>
+                          </p>
+                        </div>
+                      ) : null}
+                    </div>
+                    {String(pc.name || '').trim() ? (
+                      <p style={{ marginTop: 22, fontSize: 12, color: 'rgba(255,255,255,0.62)' }}>
+                        Presented by {String(pc.name)}{String(pc.phone || '').trim() ? ' · ' + String(pc.phone) : ''}
+                      </p>
+                    ) : null}
+                  </div>
+                  {edit && (
+                    <button
+                      onClick={() => { setPhotoUrl(''); setPhotoPick({ title: 'Cover photo', cur: String(hero.heroImage || ''), set: u => patch('hero.heroImage', u) }) }}
+                      className="sb-noprint absolute bottom-4 right-4 rounded-full px-3.5 py-2 text-[11.5px] font-semibold shadow"
+                      style={{ background: 'rgba(255,255,255,0.94)', color: '#111' }}>
+                      Change cover photo
+                    </button>
+                  )}
+                </div>
+              )
+            })() : (
             <div className="onb-cover relative overflow-hidden rounded-3xl" style={{ background: t.band }}>
               {hero.heroImage ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -3602,6 +3670,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 </button>
               )}
             </div>
+            )}
           </header>
         ) : (
         isReviewDeck ? null : (

@@ -333,11 +333,12 @@ export const SHORT_HIDDEN_HISTORY: string[][] = [
 // as lib/onboarding-copy does for the onboarding deck, and never on one someone has edited.
 export const SALES_RETIRED_HERO = [
   'A hospitality company that runs whole buildings, offered to one property at a time.',
+  'The revenue management, the tools and the team around the success of your property.',
 ]
 export const SALES_RETIRED_WELCOME = [
   'What follows is how we would run your property: the people, the technology, the marketing, and what the first four weeks look like. Every number in it is one you can check, and every claim is one we can show you the record of.',
 ]
-export const SALES_HERO = 'The revenue management, the tools and the team around the success of your property.'
+export const SALES_HERO = 'How we would run it, and what it could earn.'
 export const SALES_WELCOME = 'Three things decide what a property earns: how the rate is managed, the tools the operation runs on, and the team that actually shows up. What follows is all three, plus what the first four weeks look like. Every number in it is one you can check, and every claim is one we can show you the record of.'
 
 // ── 13 · HOW WE GET MAX REVENUE ─────────────────────────────────────────────
