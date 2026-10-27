@@ -26,10 +26,10 @@ export type CatalogItem = {
   id?: string; key: string; section: 'compare' | 'vendor' | 'amenity'; category: string; name: string; options: CatalogOption[]
 }
 export type Catalog = {
-  property: string; title: string; kind: 'default' | 'property'; basedOn?: string | null; suppliers: string[]; tier?: string | null; listingId?: string | null; styleBrief?: string | null
+  property: string; title: string; kind: 'default' | 'property'; basedOn?: string | null; suppliers: string[]; tier?: string | null; listingId?: string | null; styleBrief?: string | null; ownerId?: string | null; ownerName?: string | null
   sourceSheet: string; asOf: string; items: CatalogItem[]; misc: Record<string, string[]>; fromDb: boolean
 }
-export type Decision = { approved: OptionSrc[]; rejected: boolean; note: string; updatedBy: string | null; updatedAt: string | null; suggested?: string[]; suggestNote?: string }
+export type Decision = { approved: OptionSrc[]; rejected: boolean; note: string; updatedBy: string | null; updatedAt: string | null; suggested?: string[]; suggestNote?: string; ownerPicked?: boolean }
 export type CatalogSummary = { slug: string; name: string; kind: 'default' | 'property'; basedOn: string | null; suppliers: string[]; items: number; approved: number; createdAt: string | null }
 
 /** The suppliers we buy from. `key` is what options and the pick list carry; add here when a new vendor shows up. */
@@ -151,7 +151,7 @@ async function loadCatalog(slug: string): Promise<Catalog | null> {
   }
   return {
     property: slug, title: c.name, kind: c.kind === 'default' ? 'default' : 'property', basedOn: c.based_on || null, suppliers: c.suppliers || [],
-    tier: c.tier || null, listingId: c.listing_id || null, styleBrief: c.style_brief || null,
+    tier: c.tier || null, listingId: c.listing_id || null, styleBrief: c.style_brief || null, ownerId: c.owner_id || null, ownerName: c.owner_name || null,
     sourceSheet: JSON_SEED.sourceSheet, asOf: JSON_SEED.asOf, fromDb: true,
     items: (items || []).map((i: any) => ({ id: i.id, key: i.key, section: i.section, category: i.category, name: i.name, options: byItem[i.id] || [] })),
     misc: slug === DEFAULT_SLUG || slug === LEGACY_SLUG ? (JSON_SEED.misc || {}) : {},
@@ -198,12 +198,14 @@ export async function cloneCatalog(fromSlug: string, slug: string, name: string,
   return { ok: true, slug }
 }
 
-export async function updateCatalog(slug: string, patch: { name?: unknown; suppliers?: unknown; notes?: unknown }) {
+export async function updateCatalog(slug: string, patch: { name?: unknown; suppliers?: unknown; notes?: unknown; ownerId?: unknown; ownerName?: unknown; listingId?: unknown }) {
   if (!(await tablesReady())) return { ok: false, error: 'Run migration 163 first.' }
   const row: any = {}
   if (typeof patch.name === 'string' && patch.name.trim()) row.name = patch.name.trim().slice(0, 120)
   if (Array.isArray(patch.suppliers)) row.suppliers = patch.suppliers.filter((s): s is string => typeof s === 'string' && SUPPLIERS.some(x => x.key === s))
   if (typeof patch.notes === 'string') row.notes = patch.notes.slice(0, 2000)
+  if (typeof patch.ownerId === 'string') { row.owner_id = patch.ownerId.slice(0, 120) || null; row.owner_name = typeof patch.ownerName === 'string' ? patch.ownerName.slice(0, 160) || null : null }
+  if (typeof patch.listingId === 'string') row.listing_id = patch.listingId.slice(0, 120) || null
   if (!Object.keys(row).length) return { ok: false, error: 'Nothing to change.' }
   const { error } = await supabaseAdmin().from('ffe_catalogs').update(row).eq('slug', slug)
   return error ? { ok: false, error: error.message } : { ok: true }
@@ -281,7 +283,7 @@ export async function readDecisions(property: string): Promise<Record<string, De
     for (const r of data || []) {
       out[String(r.item_key)] = { approved: Array.isArray(r.approved) ? (r.approved as string[]) : [], rejected: !!r.rejected,
         note: typeof r.note === 'string' ? r.note : '', updatedBy: r.updated_by || null, updatedAt: r.updated_at || null,
-        suggested: Array.isArray(r.suggested) ? (r.suggested as string[]) : [], suggestNote: typeof r.suggest_note === 'string' ? r.suggest_note : '' }
+        suggested: Array.isArray(r.suggested) ? (r.suggested as string[]) : [], suggestNote: typeof r.suggest_note === 'string' ? r.suggest_note : '', ownerPicked: !!r.owner_picked }
     }
   } catch { /* fail open */ }
   return out
@@ -305,24 +307,28 @@ export async function writeDecision(property: string, itemKey: string, d: { appr
 
 // ---------- share link ----------
 
-export async function getShare(property: string): Promise<{ code: string; views: number } | null> {
+export type ShareMode = 'view' | 'select'
+export async function getShare(property: string): Promise<{ code: string; views: number; mode: ShareMode } | null> {
   try {
-    const { data } = await supabaseAdmin().from('ffe_catalog_shares').select('code, views').eq('property', property).limit(1)
+    const { data } = await supabaseAdmin().from('ffe_catalog_shares').select('*').eq('property', property).limit(1)
     const r = (data || [])[0]
-    return r ? { code: String(r.code), views: Number(r.views || 0) } : null
+    return r ? { code: String(r.code), views: Number(r.views || 0), mode: r.mode === 'select' ? 'select' : 'view' } : null
   } catch { return null }
 }
 
 /** Create the catalog's share code, or replace it (which revokes the old link). */
-export async function setShare(property: string, who: string, regenerate: boolean) {
+export async function setShare(property: string, who: string, regenerate: boolean, mode?: ShareMode) {
   if (!(await getCatalog(property))) return { ok: false, error: 'Unknown catalog.' }
   const have = await getShare(property)
-  if (have && !regenerate) return { ok: true, code: have.code }
+  if (have && !regenerate) {
+    if (mode && mode !== have.mode) { const { error } = await supabaseAdmin().from('ffe_catalog_shares').update({ mode }).eq('property', property); if (error) return { ok: false, error: error.message } }
+    return { ok: true, code: have.code, mode: mode || have.mode }
+  }
   const code = randomBytes(8).toString('hex')
   const { error } = await supabaseAdmin().from('ffe_catalog_shares')
-    .upsert({ property, code, created_by: who || null, created_at: new Date().toISOString(), views: 0, last_view: null }, { onConflict: 'property' })
+    .upsert({ property, code, created_by: who || null, created_at: new Date().toISOString(), views: 0, last_view: null, mode: mode || 'view' }, { onConflict: 'property' })
   if (error) return { ok: false, error: error.message }
-  return { ok: true, code }
+  return { ok: true, code, mode: mode || 'view' }
 }
 
 /** Hide options whose supplier is not on the catalog's pick list (empty list = everything allowed). */
@@ -332,30 +338,91 @@ export function applySuppliers(cat: Catalog): Catalog {
   return { ...cat, items: cat.items.map(it => ({ ...it, options: it.options.filter(o => ok.has(baseKey(o.src))) })) }
 }
 
-/** Resolve a public code to the APPROVED catalog only — the replacement list, nothing else.
- *  Items without an approved option are dropped, so are unapproved options, rejected items, and who
- *  approved what (staff emails never leave the building). Notes stay: "order 2 per unit" is part of
- *  the instruction. `count` bumps the view counter — the page passes true once per open; the API does not. */
-export async function readShared(code: string, count = false): Promise<{ catalog: Catalog; decisions: Record<string, Decision> } | null> {
+/** Resolve a public code. In 'view' mode: the APPROVED catalog only — the replacement list, nothing
+ *  else (no unapproved options, no rejected items, no staff emails, no suggestions). In 'select'
+ *  mode: every option the catalog's suppliers allow, with the owner's picks so far, so the owner can
+ *  choose. `count` bumps the view counter — the page passes true once per open; the API does not. */
+export async function readShared(code: string, count = false): Promise<{ catalog: Catalog; decisions: Record<string, Decision>; mode: ShareMode } | null> {
   if (!/^[0-9a-f]{16}$/i.test(code)) return null
   const db = supabaseAdmin()
-  const { data } = await db.from('ffe_catalog_shares').select('property, views').eq('code', code).limit(1)
+  const { data } = await db.from('ffe_catalog_shares').select('*').eq('code', code).limit(1)
   const r = (data || [])[0]
   if (!r) return null
   const loaded = await getCatalog(String(r.property))
   if (!loaded) return null
   const full = applySuppliers(loaded)
+  const mode: ShareMode = r.mode === 'select' ? 'select' : 'view'
   if (count) db.from('ffe_catalog_shares').update({ views: Number(r.views || 0) + 1, last_view: new Date().toISOString() }).eq('code', code).then(() => {}, () => {})
   const all = await readDecisions(String(r.property))
   const decisions: Record<string, Decision> = {}
   const items: CatalogItem[] = []
+  const strip = (o: CatalogOption) => ({ ...o, id: undefined })
   for (const it of full.items) {
     const d = all[it.key]
+    if (mode === 'select') {
+      if (d?.rejected) continue
+      const options = it.options.filter(o => o.price != null || o.url).map(strip)
+      if (!options.length) continue
+      items.push({ ...it, id: undefined, options })
+      if (d && d.approved.length) decisions[it.key] = { approved: d.approved, rejected: false, note: d.note, updatedBy: null, updatedAt: null, ownerPicked: !!d.ownerPicked }
+      continue
+    }
     if (!d || d.rejected || !d.approved.length) continue
-    const options = it.options.filter(o => d.approved.includes(o.src)).map(o => ({ ...o, id: undefined }))
+    const options = it.options.filter(o => d.approved.includes(o.src)).map(strip)
     if (!options.length) continue
     items.push({ ...it, id: undefined, options })
-    decisions[it.key] = { approved: d.approved, rejected: false, note: d.note, updatedBy: null, updatedAt: null }
+    decisions[it.key] = { approved: d.approved, rejected: false, note: d.note, updatedBy: null, updatedAt: null, ownerPicked: !!d.ownerPicked }
   }
-  return { catalog: { ...full, items, misc: {}, styleBrief: null, listingId: null }, decisions }
+  return { catalog: { ...full, items, misc: {}, styleBrief: mode === 'select' ? full.styleBrief : null, listingId: null, ownerId: null }, decisions, mode }
+}
+
+/** The owner's choice through a 'select' link: one option per item, saved as the approval and flagged
+ *  as the owner's. Only works while the link is in select mode; the option must be one the link shows. */
+export async function ownerPick(code: string, itemKey: string, src: string | null): Promise<{ ok: boolean; error?: string }> {
+  if (!/^[0-9a-f]{16}$/i.test(code)) return { ok: false, error: 'not found' }
+  const db = supabaseAdmin()
+  const { data } = await db.from('ffe_catalog_shares').select('property, mode').eq('code', code).limit(1)
+  const r = (data || [])[0]
+  if (!r || r.mode !== 'select') return { ok: false, error: 'This link is no longer taking selections.' }
+  const property = String(r.property)
+  const loaded = await getCatalog(property)
+  if (!loaded) return { ok: false, error: 'not found' }
+  const it = applySuppliers(loaded).items.find(i => i.key === itemKey)
+  if (!it) return { ok: false, error: 'Unknown item.' }
+  if (src !== null && !it.options.some(o => o.src === src && (o.price != null || o.url))) return { ok: false, error: 'Unknown option.' }
+  const { error } = await db.from('ffe_approved_decisions').upsert({
+    property, item_key: itemKey, approved: src ? [src] : [], rejected: false, owner_picked: !!src, updated_by: 'owner via link', updated_at: new Date().toISOString(),
+  }, { onConflict: 'property,item_key' })
+  return error ? { ok: false, error: error.message } : { ok: true }
+}
+
+/** Turn the approved list into a draft FF&E order for the catalog's owner: one line per approved
+ *  option, snapshotting product, link, photo, vendor and price onto the line (lib/ffe orders).
+ *  `listingId` is the unit the pieces are for; the catalog's own listing when it has one. */
+export async function orderFromCatalog(property: string, listingId: string, who: string): Promise<{ ok: boolean; error?: string; id?: string; orderNo?: string; lines?: number }> {
+  const cat = await getCatalog(property)
+  if (!cat) return { ok: false, error: 'Unknown catalog.' }
+  const db = supabaseAdmin()
+  const { ffePortfolio } = await import('./ffe-portfolio')
+  const units = await ffePortfolio(db)
+  const unit = units.find(u => u.id === listingId)
+  if (!unit) return { ok: false, error: 'Pick the unit this order is for.' }
+  const decisions = await readDecisions(property)
+  const lines: any[] = []
+  for (const it of applySuppliers(cat).items) {
+    const d = decisions[it.key]; if (!d || d.rejected || !d.approved.length) continue
+    for (const o of it.options) {
+      if (!d.approved.includes(o.src)) continue
+      lines.push({ listing_id: unit.id, unit_name: unit.name, building: unit.building, room: it.category.slice(0, 80), item_key: `${it.key}:${o.src}`.slice(0, 120),
+        title: it.name.slice(0, 160), product: o.name.slice(0, 200), image_url: o.image, url: o.url, vendor: o.vendor, qty: 1, unit_cost: o.price, note: d.note ? d.note.slice(0, 500) : null, stage: 'draft' })
+    }
+  }
+  if (!lines.length) return { ok: false, error: 'Nothing is approved on this catalog yet.' }
+  const now = new Date().toISOString()
+  const ins = await db.from('ffe_orders').insert({ owner_id: unit.ownerId, owner_name: unit.ownerName, title: `${cat.title} — from the approved catalog`, note: null, status: 'draft', created_by: who || null, updated_at: now }).select('id, order_no').limit(1)
+  if (ins.error) return { ok: false, error: ins.error.message }
+  const order = (ins.data || [])[0]
+  const r = await db.from('ffe_order_lines').insert(lines.map(l => ({ ...l, order_id: order.id, updated_at: now })))
+  if (r.error) return { ok: false, error: r.error.message }
+  return { ok: true, id: order.id, orderNo: order.order_no, lines: lines.length }
 }

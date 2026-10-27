@@ -15,11 +15,12 @@ export default async function PublicCatalogPage({ params }: { params: { code: st
     <main className="min-h-screen bg-app text-ink">
       <div className="max-w-[1180px] mx-auto px-4 py-8">
         <header className="mb-6">
-          <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold">Stay Hospitality · Approved catalog</p>
+          <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold">Stay Hospitality · {r.mode === 'select' ? 'Choose your furnishings' : 'Approved catalog'}</p>
           <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">{r.catalog.title}</h1>
           <p className="text-sm text-muted mt-1 max-w-2xl">
-            The furniture and amenities approved for this property, with the vendor and price for each. When something needs
-            replacing, these are the approved options.
+            {r.mode === 'select'
+              ? 'For each item, tap "Choose this" on the option you want for your property. Your choices save as you go; the Stay team orders from them, now and whenever something needs replacing.'
+              : 'The furniture and amenities approved for this property, with the vendor and price for each. When something needs replacing, these are the approved options.'}
           </p>
         </header>
         <FfeApprovedCatalog property={r.catalog.property} publicCode={code} />
