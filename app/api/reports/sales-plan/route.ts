@@ -29,9 +29,14 @@ export const maxDuration = 120
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 const money0 = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
 
-async function anthropic(payload: any): Promise<string | null> {
+// WHY THE READ FAILED IS WORTH SAYING OUT LOUD (2026-10-27). The first live upload of a real
+// projection came back "No projection could be read out of that file", which sent me looking at
+// the PDF when the call might never have left the building: aiFetch returns a 429 with a reason
+// when the AI budget's hard stop is on, and swallowing that reads as a bad document. Every failure
+// now carries why, because "the file is wrong" and "we are over budget" need different answers.
+async function anthropic(payload: any): Promise<{ text: string | null; why: string }> {
   const key = process.env.ANTHROPIC_API_KEY
-  if (!key) return null
+  if (!key) return { text: null, why: 'AI is not configured on this environment.' }
   try {
     const r = await aiFetch('reports', {
       method: 'POST',
@@ -39,9 +44,15 @@ async function anthropic(payload: any): Promise<string | null> {
       body: JSON.stringify(payload),
     })
     const d: any = await r.json().catch(() => ({}))
-    if (!r.ok) return null
-    return Array.isArray(d?.content) ? d.content.map((x: any) => x?.text || '').join('').trim() : null
-  } catch { return null }
+    if (!r.ok) {
+      const msg = str(d?.error?.message) || ('the AI call returned ' + r.status)
+      return { text: null, why: r.status === 429 ? ('AI budget: ' + msg) : ('AI error: ' + msg) }
+    }
+    const text = Array.isArray(d?.content) ? d.content.map((x: any) => x?.text || '').join('').trim() : ''
+    return { text: text || null, why: text ? '' : 'the AI returned nothing' }
+  } catch (e: any) {
+    return { text: null, why: 'AI call failed: ' + String(e?.message || e).slice(0, 120) }
+  }
 }
 function parseJson(text: string | null): any | null {
   if (!text) return null
@@ -161,13 +172,17 @@ export async function POST(req: NextRequest) {
       + ' "footnote": any line about figures being fully ramped or about event nights,\n'
       + ' "label": one short line naming the source and period}\n'
       + 'If the document contains no projection at all, return {"annualLow": null, "months": [], "comps": []}.'
-    const text = await anthropic({
+    const read = await anthropic({
       model: modelFor('reports'), max_tokens: 4000,
       system: 'You read revenue projections out of documents for a sales deck. Output STRICT JSON only. You never invent a figure and you never recompute one.',
       messages: [{ role: 'user', content: block ? [block, { type: 'text', text: instruction }] : [{ type: 'text', text: instruction + '\n\nThe file:\n' + textBody }] }],
     })
-    const j = parseJson(text)
-    if (!j) return NextResponse.json({ error: 'No projection could be read out of that file.' }, { status: 400 })
+    const j = parseJson(read.text)
+    if (!j) {
+      return NextResponse.json({
+        error: read.why ? ('Could not read that file \u2014 ' + read.why) : 'No projection could be read out of that file.',
+      }, { status: read.why.startsWith('AI budget') ? 429 : 400 })
+    }
 
     const n = (v: any): number | null => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : null }
     const money = (v: number) => '$' + Math.round(v).toLocaleString('en-US')
