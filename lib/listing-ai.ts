@@ -13,6 +13,8 @@
 // or door codes, never claim a garage, tell real photos from stock). It is assembled in the route
 // and sits outside this config so a prompt experiment can never put a wrong fact on a live listing.
 
+import { CERTAINTY_RULES } from './caption-batch'
+
 export type SectionKey = 'title' | 'summary' | 'space' | 'access' | 'neighborhood' | 'transit' | 'notes'
 
 export const SECTION_KEYS: SectionKey[] = ['title', 'summary', 'space', 'access', 'neighborhood', 'transit', 'notes']
@@ -201,6 +203,7 @@ export function captionSpec(cfg: ListingAi, tag?: string | null): string {
     cfg.photos.captionPrompt,
     cfg.photos.captionSearch ? AI_SEARCH_CAPTION : '',
     t ? `CAPTION TAG FOR THIS LISTING — work these in, in natural words, ONLY on photos that actually show them: ${t}` : '',
+    CERTAINTY_RULES,
   ].filter(Boolean).join('\n\n')
 }
 

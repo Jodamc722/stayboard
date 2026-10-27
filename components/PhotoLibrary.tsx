@@ -85,6 +85,8 @@ export function PhotoLibrary({ canEdit }: { canEdit: boolean }) {
         {canEdit && <IconBtn title={refreshing ? 'Rebuilding…' : 'Re-read the listings now (otherwise every 10 minutes)'} onClick={refresh} disabled={refreshing}><RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /></IconBtn>}
       </LeanHead>
 
+      {canEdit && <CaptionAll />}
+
       {/* Where you are */}
       <nav className="flex items-center gap-1 text-[12.5px] mb-3 flex-wrap" aria-label="Folder path">
         <button onClick={() => go({})} className={'font-semibold ' + (!b && !u ? 'text-ink' : 'text-muted hover:text-ink')}>Properties</button>
@@ -203,6 +205,63 @@ function SearchResults({ q, pending, market, onOpenUnit }: { q: string; pending:
       ))}
       {open != null && found[open] && (
         <Lightbox p={found[open]} i={open} n={found.length} listing={found[open].listingId} label={found[open].unit} onClose={() => setOpen(null)} onPrev={() => setOpen((open - 1 + found.length) % found.length)} onNext={() => setOpen((open + 1) % found.length)} />
+      )}
+    </div>
+  )
+}
+
+/**
+ * CAPTIONS FOR EVERY PHOTO (Jon, 2026-10-27). One line: how many photos have no caption, and a button
+ * that writes them unit by unit and pushes each unit to Guesty (/api/photos/captions). Captions the
+ * team wrote are never touched. Bed sizes and "private / shared" only when the photo makes them certain.
+ */
+function CaptionAll() {
+  const r = useCachedFetch<{ ok: boolean; error?: string; photos: number; missing: number; listings: { id: string; name: string; building: string; active: boolean; total: number; missing: number }[] }>('/api/photos/captions', { ttl: 600_000, persist: false })
+  const [run, setRun] = useState<{ on: boolean; done: number; of: number; written: number; failed: number; last: string; stop: string } | null>(null)
+  const stopRef = useRef(false)
+  const start = async () => {
+    const list = r.data?.listings || []
+    if (!list.length) return
+    stopRef.current = false
+    let written = 0, failed = 0
+    setRun({ on: true, done: 0, of: list.length, written: 0, failed: 0, last: '', stop: '' })
+    for (let k = 0; k < list.length; k++) {
+      if (stopRef.current) break
+      const l = list[k]
+      let stop = ''
+      try {
+        const res = await fetch('/api/photos/captions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId: l.id }) })
+        const j = await res.json().catch(() => ({} as any))
+        written += Number(j?.written) || 0; failed += Number(j?.failed) || 0
+        if (j?.budget || res.status === 429) stop = j?.budget || j?.error || 'AI spend cap reached'
+        setRun({ on: true, done: k + 1, of: list.length, written, failed, last: l.name + (j?.samples?.[0] ? ' — “' + j.samples[0] + '”' : j?.error ? ' — ' + j.error : ''), stop })
+      } catch (e: any) { failed += l.missing; setRun({ on: true, done: k + 1, of: list.length, written, failed, last: l.name + ' — ' + String(e?.message || e), stop: '' }) }
+      if (stop) break
+    }
+    setRun(prev => prev ? { ...prev, on: false } : prev)
+    invalidateCache('/api/photos/captions'); invalidateCache(LIB); r.refresh()
+  }
+  if (!r.data && !run) return null
+  const missing = r.data?.missing || 0
+  if (!missing && !run) return null
+  return (
+    <div className="rounded-2xl border border-line bg-white px-4 py-2.5 mb-3 flex items-center gap-2 flex-wrap text-[12.5px]">
+      <span className="font-semibold text-ink">Captions</span>
+      {run ? (
+        <>
+          <span className="text-muted tabular-nums">{run.done}/{run.of} units · {run.written.toLocaleString()} written{run.failed ? ' · ' + run.failed + ' skipped' : ''}</span>
+          {run.last && <span className="text-muted truncate max-w-[40rem]">{run.last}</span>}
+          {run.stop && <Tag tone="rose" title="Raise the cap in Settings → AI spend, then press Write again — it carries on where it stopped">{run.stop}</Tag>}
+          <span className="flex-1" />
+          {run.on ? <button onClick={() => { stopRef.current = true }} className={ghost}>Stop after this unit</button> : missing > 0 && <button onClick={start} className={btn}>Write the remaining {missing.toLocaleString()}</button>}
+        </>
+      ) : (
+        <>
+          <span className="text-muted">{missing.toLocaleString()} of {(r.data?.photos || 0).toLocaleString()} photos in {r.data?.listings.length} units have no caption.</span>
+          <Tag title="A caption the team wrote is never changed. A bed size, or private / shared, only when the photo makes it certain.">only the blank ones</Tag>
+          <span className="flex-1" />
+          <button onClick={start} className={btn} title="Write a caption for every photo without one and push each unit to Guesty — unit by unit, keep this tab open">Write them</button>
+        </>
       )}
     </div>
   )
