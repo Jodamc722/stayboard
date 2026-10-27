@@ -97,6 +97,12 @@ export const AI_TASKS: AiTask[] = [
   { key: 'eve-vision', title: 'Eve — reading photos', group: 'Eve', def: 'sonnet',
     what: 'Looks at unit photos and describes condition, damage, staging.',
     matters: 'Feeds inspection notes; a wrong read sends a cleaner back for nothing.' },
+  // PARKING — THE SCANNER (Jon, 2026-10-26: "scanner type mode, quick, scan multiple"). One call per
+  // car: the plate, state, make, model, colour and how sure it is. Rides eve-vision's tier until one
+  // is set here — a cheaper tier is a fair trade for speed in the lot if its reads hold up.
+  { key: 'plate-read', title: 'Parking — reading a plate', group: 'Guests', def: 'sonnet', inherit: 'eve-vision',
+    what: 'Reads one photo of a parked car on the staff lot link: plate characters, state, make, model, colour, with a confidence.',
+    matters: 'A misread plate flags the wrong car; an unreadable one just asks for another shot.' },
   // DIRECT BOOKING ID CHECK (Jon, 2026-10-13). One call per booking attempt on /book: reads the ID and
   // the selfie and says retake / pass / desk-review. Never decides on face similarity alone.
   { key: 'direct-booking-id', title: 'Direct booking — ID + selfie check', group: 'Guests', def: 'sonnet',

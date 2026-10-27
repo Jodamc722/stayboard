@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Loader2, Search, X, Check, AlertTriangle, Camera } from 'lucide-react'
 import { Sheet } from '@/components/Sheet'
 import { Tag } from '@/components/lean'
-import { nightsBetween, addDays, rangesOverlap, cents, tidyPlate, carLabel } from '@/lib/plate'
+import { nightsBetween, addDays, rangesOverlap, cents, tidyPlate, carLabel, normalizePlate } from '@/lib/plate'
 import type { Booking, Spot, Lot, Incident, BookingKind, Paid, BookingStatus, Stay } from '@/lib/parking-lots'
 
 const TZ = 'America/New_York'
@@ -372,6 +372,151 @@ export async function fileToJpegBase64(file: File, maxPx = 1280): Promise<{ base
     const data = c.toDataURL('image/jpeg', 0.85)
     return { base64: data.replace(/^data:[^,]+,/, ''), mime: 'image/jpeg' }
   } finally { URL.revokeObjectURL(url) }
+}
+
+// ── THE SCANNER (Jon, 2026-10-26: "scanner type mode, should be quick and be able to scan multiple
+// and show yes confirmed, read not read, try again") ────────────────────────────────────────────
+// A live camera that stays open. Tap Scan: the frame goes to the model, the answer comes back as one
+// strip — green "ABC 1234 · Registered, spot 3", red "NOT registered", amber "Looks like ABC 1234?
+// Yes / Retake" when the read is unsure, grey "Couldn't read — try again" — and the camera is ready
+// for the next car. `scan` is what each frame means on the page that opened the scanner: a plate
+// check (multi: scan car after car, flag the strangers) or a plate to fill into a form (single: the
+// first confirmed read is handed back). No permission or no camera → the phone's camera app instead.
+export type ScanRead = { plate: string | null; state: string | null; make: string | null; model: string | null; color: string | null; confidence: number; note: string | null }
+export type ScanOutcome = {
+  read: ScanRead | null
+  /** What to show under the plate: the verdict line, with a tone. Absent in single mode. */
+  verdict?: { tone: 'ok' | 'bad' | 'warn'; title: string; note?: string } | null
+  /** An action offered on the strip (multi mode): "Flag this car", "Register it". */
+  actions?: { label: string; tone: 'bad' | 'muted'; run: () => Promise<string> }[]
+}
+export function Scanner({ open, onClose, title, mode, scan, onPick }: {
+  open: boolean; onClose: () => void; title: string
+  /** multi: keep scanning, list the results. single: hand back the first confirmed read and close. */
+  mode: 'multi' | 'single'
+  /** Reads (and, in multi mode, judges) one frame. `plate` set = the person typed or confirmed it. */
+  scan: (photo: { base64: string; mime: string } | null, plate?: string) => Promise<ScanOutcome>
+  onPick?: (read: ScanRead, photo: { base64: string; mime: string } | null) => void
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const [cam, setCam] = useState<'starting' | 'on' | 'off'>('starting')
+  const [busy, setBusy] = useState(false)
+  const [typed, setTyped] = useState('')
+  type ScanItem = { id: number; photo: { base64: string; mime: string } | null; out: ScanOutcome; status: 'ok' | 'unsure' | 'unreadable'; done?: string }
+  const [results, setResults] = useState<ScanItem[]>([])
+  const [flash, setFlash] = useState(false)
+  const seq = useRef(0)
+
+  useEffect(() => {
+    if (!open) return
+    let alive = true
+    setCam('starting'); setResults([]); setTyped('')
+    ;(async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error('no camera api')
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false })
+        if (!alive) { stream.getTracks().forEach(t => t.stop()); return }
+        streamRef.current = stream
+        if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => null) }
+        setCam('on')
+      } catch { if (alive) setCam('off') }
+    })()
+    return () => { alive = false; streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null }
+  }, [open])
+
+  const snap = (): { base64: string; mime: string } | null => {
+    const v = videoRef.current
+    if (!v || !v.videoWidth) return null
+    const scale = Math.min(1, 1280 / Math.max(v.videoWidth, v.videoHeight))
+    const c = document.createElement('canvas')
+    c.width = Math.round(v.videoWidth * scale); c.height = Math.round(v.videoHeight * scale)
+    const ctx = c.getContext('2d')
+    if (!ctx) return null
+    ctx.drawImage(v, 0, 0, c.width, c.height)
+    return { base64: c.toDataURL('image/jpeg', 0.85).replace(/^data:[^,]+,/, ''), mime: 'image/jpeg' }
+  }
+  const run = async (photo: { base64: string; mime: string } | null, plate?: string) => {
+    setBusy(true); setFlash(true); setTimeout(() => setFlash(false), 120)
+    try {
+      const out = await scan(photo, plate)
+      const status: 'ok' | 'unsure' | 'unreadable' = !out.read?.plate ? 'unreadable' : (out.read.confidence < 0.7 && !plate) ? 'unsure' : 'ok'
+      if (mode === 'single' && status === 'ok' && out.read) { onPick?.(out.read, photo); onClose(); return }
+      const item: ScanItem = { id: ++seq.current, photo, out, status }
+      setResults(r => [item].concat(r).slice(0, 30))
+    } catch (e: any) {
+      const item: ScanItem = { id: ++seq.current, photo, out: { read: null, verdict: { tone: 'warn', title: 'Could not scan', note: e?.message || String(e) } }, status: 'unreadable' }
+      setResults(r => [item].concat(r).slice(0, 30))
+    } finally { setBusy(false) }
+  }
+  const confirm = (item: ScanItem) => { if (item.out.read?.plate) run(item.photo, item.out.read.plate) }
+  const act = async (item: ScanItem, a: NonNullable<ScanOutcome['actions']>[number]) => {
+    try { const done = await a.run(); setResults(r => r.map(x => x.id === item.id ? { ...x, done } : x)) } catch (e: any) { setResults(r => r.map(x => x.id === item.id ? { ...x, done: e?.message || String(e) } : x)) }
+  }
+  if (!open) return null
+  const toneCls = (t: 'ok' | 'bad' | 'warn' | 'grey') => t === 'ok' ? 'border-emerald-400 bg-emerald-50 text-emerald-900' : t === 'bad' ? 'border-rose-400 bg-rose-50 text-rose-900' : t === 'warn' ? 'border-amber-400 bg-amber-50 text-amber-900' : 'border-neutral-300 bg-neutral-100 text-neutral-700'
+  const scanned = results.filter(r => r.status === 'ok').length
+  return (
+    <div className="fixed inset-0 z-[80] bg-black text-white flex flex-col">
+      <div className="flex items-center gap-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-[15px] font-bold truncate">{title}</div>
+          <div className="text-[12px] text-white/70">{mode === 'multi' ? `${scanned} scanned` : 'Point at the plate and tap Scan'}</div>
+        </div>
+        <button onClick={onClose} aria-label="Close the scanner" className="rounded-full bg-white/15 p-2"><X size={18} /></button>
+      </div>
+      <div className="relative bg-black" style={{ height: '42vh' }}>
+        {cam !== 'off' && <video ref={videoRef} playsInline muted autoPlay className="w-full h-full object-cover" />}
+        {cam === 'starting' && <div className="absolute inset-0 flex items-center justify-center text-[14px] text-white/80"><Loader2 size={16} className="animate-spin mr-2" /> Starting the camera…</div>}
+        {cam === 'off' && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center text-[14px] text-white/80">
+            <span>The camera could not be opened here — allow camera access for this site, or use the phone's camera app:</span>
+            <CameraButton onPhoto={p => run(p)} busy={busy} label={busy ? 'Reading…' : 'Take a photo'} />
+          </div>
+        )}
+        {cam === 'on' && <div className="pointer-events-none absolute inset-x-[12%] top-[28%] bottom-[28%] rounded-xl border-2 border-white/70" />}
+        {flash && <div className="absolute inset-0 bg-white/80" />}
+      </div>
+      <div className="px-4 py-3 flex items-center gap-2">
+        {cam === 'on' && <button onClick={() => { const p = snap(); if (p) run(p) }} disabled={busy} className="flex-1 rounded-2xl bg-white text-black py-4 text-[17px] font-bold inline-flex items-center justify-center gap-2 disabled:opacity-60">{busy ? <><Loader2 size={18} className="animate-spin" /> Reading…</> : <><Camera size={18} /> Scan</>}</button>}
+        <form onSubmit={e => { e.preventDefault(); if (normalizePlate(typed)) { run(null, typed); setTyped('') } }} className="flex items-center gap-1">
+          <input value={typed} onChange={e => setTyped(e.target.value.toUpperCase())} placeholder="or type it" autoCapitalize="characters" autoCorrect="off" className="w-32 rounded-xl bg-white/10 border border-white/20 px-3 py-3 text-[15px] font-mono font-bold tracking-wider uppercase placeholder:text-white/40 placeholder:font-sans placeholder:tracking-normal focus:outline-none" />
+          <button type="submit" disabled={busy || !normalizePlate(typed)} className="rounded-xl bg-white/15 px-3 py-3 text-[14px] font-bold disabled:opacity-40">Go</button>
+        </form>
+      </div>
+      <div className="flex-1 overflow-y-auto px-4 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-2">
+        {results.length === 0 && <p className="text-[13px] text-white/60 text-center pt-2">{mode === 'multi' ? 'Each scan shows up here: confirmed, not registered, or try again.' : 'The first clear read fills the form.'}</p>}
+        {results.map(item => {
+          const r = item.out.read
+          const v = item.out.verdict
+          const tone: 'ok' | 'bad' | 'warn' | 'grey' = item.status === 'unreadable' ? 'grey' : item.status === 'unsure' ? 'warn' : (v?.tone || 'ok')
+          return (
+            <div key={item.id} className={`rounded-2xl border-2 px-3 py-2.5 ${toneCls(tone)}`}>
+              {item.status === 'unreadable' && <div className="text-[15px] font-bold">Couldn't read a plate — try again<span className="block text-[12.5px] font-normal mt-0.5">{item.out.read?.note || item.out.verdict?.note || 'Get closer, straight on, plate inside the frame.'}</span></div>}
+              {item.status === 'unsure' && r && (
+                <div>
+                  <div className="text-[15px] font-bold">Looks like <span className="font-mono">{r.plate}</span> — not sure{r.note ? <span className="block text-[12.5px] font-normal mt-0.5">{r.note}</span> : null}</div>
+                  <div className="mt-2 flex gap-2">
+                    <button onClick={() => confirm(item)} disabled={busy} className="flex-1 rounded-xl bg-neutral-900 text-white py-2.5 text-[14px] font-bold disabled:opacity-50"><Check size={15} className="inline -mt-0.5 mr-1" />Yes, that's it</button>
+                    <button onClick={() => setResults(rs => rs.filter(x => x.id !== item.id))} className="flex-1 rounded-xl bg-white text-neutral-900 border border-neutral-300 py-2.5 text-[14px] font-bold">Retake</button>
+                  </div>
+                </div>
+              )}
+              {item.status === 'ok' && r && (
+                <div>
+                  <div className="text-[17px] font-bold"><span className="font-mono">{r.plate}</span>{(r.make || r.model || r.color) && <span className="text-[13px] font-semibold opacity-80"> · {[r.color, r.make, r.model].filter(Boolean).join(' ')}</span>}</div>
+                  {v && <div className="text-[14px] font-bold mt-0.5">{v.tone === 'ok' ? '✓ ' : v.tone === 'bad' ? '✗ ' : '⚠ '}{v.title}{v.note ? <span className="block text-[12.5px] font-normal">{v.note}</span> : null}</div>}
+                  {item.done ? <div className="mt-1.5 text-[13px] font-semibold">{item.done}</div> : item.out.actions && item.out.actions.length > 0 && (
+                    <div className="mt-2 flex gap-2">{item.out.actions.map(a => <button key={a.label} onClick={() => act(item, a)} className={`flex-1 rounded-xl py-2.5 text-[14px] font-bold ${a.tone === 'bad' ? 'bg-rose-600 text-white' : 'bg-white text-neutral-900 border border-neutral-300'}`}>{a.label}</button>)}</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 export function CameraButton({ onPhoto, busy, label = 'Scan plate' }: { onPhoto: (p: { base64: string; mime: string }) => void; busy?: boolean; label?: string }) {

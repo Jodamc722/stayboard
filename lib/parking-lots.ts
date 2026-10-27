@@ -703,11 +703,11 @@ export async function readPlateFromPhoto(base64: string, mime: string): Promise<
   const media = /^image\/(jpeg|png|webp|gif)$/i.exec(str(mime)) ? str(mime).toLowerCase() : 'image/jpeg'
   try {
     const [{ modelPairFor }, { anthropicMessages, textOf }] = await Promise.all([import('./ai-models'), import('./anthropic-call')])
-    const { model, fallback } = await modelPairFor('eve-vision')
+    const { model, fallback } = await modelPairFor('plate-read')
     const r = await anthropicMessages(key, {
       model, max_tokens: 300, system: READ_SYSTEM,
       messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: media, data } }, { type: 'text', text: 'Read this vehicle. JSON only.' }] }],
-    }, fallback, 'eve-vision')
+    }, fallback, 'plate-read')
     if (!r.ok) return { ok: false, error: r.status === 429 ? 'The AI budget for today is used up — type the plate.' : `The photo could not be read (${r.status}) — type the plate.` }
     const text = textOf(r.data)
     const m = text.match(/\{[\s\S]*\}/)

@@ -18,7 +18,7 @@
 // No login: the link is the key. Your name is asked once and remembered on the phone.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Check, X, Camera, Flag, Mail, Truck, AlertTriangle, ChevronDown, Search, Plus, Pencil } from 'lucide-react'
-import { NoticeSheet, CameraButton } from '@/components/ParkingSheets'
+import { NoticeSheet, Scanner, type ScanOutcome, type ScanRead } from '@/components/ParkingSheets'
 import { Sheet } from '@/components/Sheet'
 import { tidyPlate, normalizePlate, carLabel, cents, nightsBetween, addDays, rangesOverlap } from '@/lib/plate'
 import type { Spot, Booking, Incident, Sweep, SweepCheck, FieldStay, BookingKind, Paid } from '@/lib/parking-lots'
@@ -291,15 +291,14 @@ function RegisterSheet({ open, onClose, lot, spots, stays, date, post, draft, on
   }, [open, kind, taken, spots, spotId])
   const nights = nightsBetween(startsOn, endsOn)
   const pickStay = (s: FieldStay) => { setStay(s); setStartsOn(s.checkIn <= date ? date : s.checkIn); setEndsOn(s.checkOut > date ? s.checkOut : addDays(date, 1)) }
-  const scan = async (ph: Photo) => {
-    setBusy('scan'); setErr('')
-    try {
-      const j = await post({ action: 'plate.read', photo: ph.base64, photoMime: ph.mime })
-      setRead(j.read)
-      if (j.read?.plate) setCar(c => ({ ...c, plate: j.read.plate || c.plate, plateState: j.read.state || c.plateState, make: j.read.make || c.make, model: j.read.model || c.model, color: j.read.color || c.color }))
-      else setErr('Could not read a plate in that photo — type it.')
-    } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy(null) }
+  const [scanning, setScanning] = useState(false)
+  const readFrame = async (ph: Photo | null, typed?: string): Promise<ScanOutcome> => {
+    if (typed) return { read: { plate: typed, state: null, make: null, model: null, color: null, confidence: 1, note: null } }
+    if (!ph) return { read: null }
+    const j = await post({ action: 'plate.read', photo: ph.base64, photoMime: ph.mime })
+    return { read: j.read || null }
   }
+  const useRead = (rd: ScanRead) => { setRead(rd); setCar(c => ({ ...c, plate: rd.plate || c.plate, plateState: rd.state || c.plateState, make: rd.make || c.make, model: rd.model || c.model, color: rd.color || c.color })) }
   const save = async () => {
     setBusy('save'); setErr('')
     try {
@@ -357,7 +356,8 @@ function RegisterSheet({ open, onClose, lot, spots, stays, date, post, draft, on
         <div className="space-y-2">
           <div className="flex gap-2">
             <input value={car.plate} onChange={e => setCar({ ...car, plate: e.target.value.toUpperCase() })} placeholder="PLATE" autoCapitalize="characters" autoCorrect="off" className={field + ' font-mono font-bold tracking-widest uppercase'} />
-            <CameraButton onPhoto={scan} busy={busy === 'scan'} label={busy === 'scan' ? 'Reading…' : 'Scan'} />
+            <button type="button" onClick={() => setScanning(true)} className="inline-flex items-center gap-1.5 rounded-2xl bg-neutral-900 text-white px-4 text-[14px] font-bold"><Camera size={16} /> Scan</button>
+            <Scanner open={scanning} onClose={() => setScanning(false)} mode="single" title="Scan the plate" scan={readFrame} onPick={rd => useRead(rd)} />
           </div>
           {read && <p className="text-[12.5px] text-neutral-500">Camera read <b className="font-mono">{read.plate || '?'}</b>{read.confidence < 0.7 ? ' — not sure, check it against the car' : ''}{read.note ? ` · ${read.note}` : ''}</p>}
           <div className="grid grid-cols-4 gap-2">
@@ -409,6 +409,14 @@ function Frame({ title, sub, children }: { title: string; sub?: React.ReactNode;
 }
 
 // ── 1. CHECK A PLATE ────────────────────────────────────────────────────────────────────────────
+const verdictLine = (v: Verdict): NonNullable<ScanOutcome['verdict']> => {
+  const who = v.booking ? `${v.booking.guestName || v.booking.kind}${v.booking.unit ? ' · ' + v.booking.unit : ''}` : ''
+  if (v.verdict === 'ok' || v.verdict === 'leaving_today') return { tone: 'ok', title: `Confirmed — spot ${v.belongsIn?.label || '?'}${v.verdict === 'leaving_today' ? ', leaving today' : ''}`, note: who }
+  if (v.verdict === 'wrong_spot') return { tone: 'warn', title: `Wrong spot — belongs in ${v.belongsIn?.label || '?'}`, note: who }
+  if (v.verdict === 'staff_in_sell') return { tone: 'warn', title: `Staff car in a sold spot — belongs in ${v.belongsIn?.label || '?'}`, note: who }
+  return { tone: 'bad', title: 'NOT registered', note: v.near.length ? `Close to ${v.near.map(n => n.booking.plate).join(', ')} — check the plate` : undefined }
+}
+
 function CheckPlate({ spots, post, onFlagged, onRegister }: { spots: SpotToday[]; post: (b: Record<string, any>) => Promise<any>; onFlagged: (i: Incident) => void; onRegister: (plate: string, read: Read | null) => void }) {
   const [plate, setPlate] = useState('')
   const [v, setV] = useState<Verdict | null>(null)
@@ -422,22 +430,36 @@ function CheckPlate({ spots, post, onFlagged, onRegister }: { spots: SpotToday[]
     setBusy('check'); setErr('')
     try { const j = await post({ action: 'plate.judge', plate: p, spotId }); setV(j) } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy(null) }
   }
-  const scan = async (ph: Photo) => {
-    setBusy('scan'); setErr(''); setPhoto(ph); setRead(null)
-    try {
-      const j = await post({ action: 'plate.read', photo: ph.base64, photoMime: ph.mime, spotId })
-      setRead(j.read)
-      if (j.read?.plate) { setPlate(j.read.plate); if (j.judged) setV(j.judged) } else setErr('Could not read a plate in that photo — type it.')
-    } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy(null) }
+  const [scanning, setScanning] = useState(false)
+  const flagVerdict = async (verdict: Verdict, rd: Read | null, ph: Photo | null) => {
+    const sp = spots.find(s => s.id === spotId)
+    const j = await post({ action: 'incident.open', plate: verdict.plate, kind: verdict.verdict === 'wrong_spot' ? 'wrong_spot' : verdict.verdict === 'staff_in_sell' ? 'staff_in_sell' : 'unregistered', bookingId: verdict.booking?.id || null, spotId, spotLabel: sp?.label || null, make: rd?.make || verdict.booking?.make || null, model: rd?.model || verdict.booking?.model || null, color: rd?.color || verdict.booking?.color || null, plateState: rd?.state || null, photo: ph?.base64, photoMime: ph?.mime })
+    onFlagged(j.incident)
+    return j.incident as Incident
+  }
+  // THE SCANNER'S VERDICT STRIP: what one frame means here. Green = registered (where), amber = wrong
+  // spot, red = not registered with Flag / Register on the strip, so the next car is one tap away.
+  const scanFrame = async (ph: Photo | null, typed?: string): Promise<ScanOutcome> => {
+    let rd: ScanRead | null = null
+    let verdict: Verdict | null = null
+    if (typed) { verdict = await post({ action: 'plate.judge', plate: typed, spotId }); rd = { plate: verdict?.plate || typed, state: null, make: null, model: null, color: null, confidence: 1, note: null } }
+    else if (ph) { const j = await post({ action: 'plate.read', photo: ph.base64, photoMime: ph.mime, spotId }); rd = j.read || null; verdict = j.judged || null }
+    if (!rd?.plate) return { read: rd }
+    if (!verdict || rd.confidence < 0.7) return { read: rd, verdict: verdict ? verdictLine(verdict) : null }
+    const bad = verdict.verdict !== 'ok' && verdict.verdict !== 'leaving_today' && verdict.verdict !== 'empty'
+    const v2 = verdict
+    return {
+      read: rd, verdict: verdictLine(v2),
+      actions: bad ? [
+        { label: 'Flag this car', tone: 'bad', run: async () => { await flagVerdict(v2, rd, ph); return 'Flagged — the notice is one tap under Flags.' } },
+        ...(v2.verdict === 'unregistered' ? [{ label: 'Register it', tone: 'muted' as const, run: async () => { onRegister(v2.plate, rd); setScanning(false); return 'Opening the form…' } }] : []),
+      ] : undefined,
+    }
   }
   const flag = async () => {
     if (!v) return
     setBusy('flag'); setErr('')
-    try {
-      const sp = spots.find(s => s.id === spotId)
-      const j = await post({ action: 'incident.open', plate: v.plate, kind: v.verdict === 'wrong_spot' ? 'wrong_spot' : v.verdict === 'staff_in_sell' ? 'staff_in_sell' : 'unregistered', bookingId: v.booking?.id || null, spotId, spotLabel: sp?.label || null, make: read?.make || v.booking?.make || null, model: read?.model || v.booking?.model || null, color: read?.color || v.booking?.color || null, plateState: read?.state || null, photo: photo?.base64, photoMime: photo?.mime })
-      onFlagged(j.incident); setV(null); setPlate(''); setRead(null); setPhoto(null)
-    } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy(null) }
+    try { await flagVerdict(v, read, photo); setV(null); setPlate(''); setRead(null); setPhoto(null) } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy(null) }
   }
   const bad = v && v.verdict !== 'ok' && v.verdict !== 'leaving_today' && v.verdict !== 'empty'
   return (
@@ -451,9 +473,10 @@ function CheckPlate({ spots, post, onFlagged, onRegister }: { spots: SpotToday[]
         <button onClick={() => check()} disabled={busy != null || !normalizePlate(plate)} className="rounded-2xl bg-neutral-900 text-white px-4 font-bold text-[15px] disabled:opacity-40">{busy === 'check' ? <Loader2 size={16} className="animate-spin" /> : 'Check'}</button>
       </div>
       <div className="mt-2 flex items-center gap-2 flex-wrap">
-        <CameraButton onPhoto={scan} busy={busy === 'scan'} label={busy === 'scan' ? 'Reading…' : 'Scan with camera'} />
+        <button type="button" onClick={() => setScanning(true)} className="inline-flex items-center gap-1.5 rounded-2xl bg-neutral-900 text-white px-4 py-2.5 text-[14px] font-bold"><Camera size={16} /> Scan plates</button>
         <SpotPick spots={spots} value={spotId} onChange={setSpotId} />
       </div>
+      <Scanner open={scanning} onClose={() => setScanning(false)} mode="multi" title={`Scan plates${spots.find(s => s.id === spotId) ? ' · spot ' + spots.find(s => s.id === spotId)!.label : ''}`} scan={scanFrame} />
       {read && <p className="mt-1.5 text-[12.5px] text-neutral-500">Camera read <b className="font-mono">{read.plate || '?'}</b>{read.make || read.model ? ` · ${[read.color, read.make, read.model].filter(Boolean).join(' ')}` : ''}{read.confidence < 0.7 ? ' — not sure, check the plate against the car' : ''}{read.note ? ` · ${read.note}` : ''}</p>}
       {err && <p className="mt-2 text-[13px] text-rose-700">{err}</p>}
       {v && (
@@ -515,10 +538,12 @@ function Walk({ spots, date, sweep, setSweep, post, onFinished }: { spots: SpotT
       setSweep(j.sweep); setOther(null); setPlate(''); setRead(null); setPhoto(null); setExtra(false)
     } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy(null) }
   }
-  const scan = async (ph: Photo, spotId: string | null) => {
-    setBusy('scan'); setErr(''); setPhoto(ph); setRead(null)
-    try { const j = await post({ action: 'plate.read', photo: ph.base64, photoMime: ph.mime, spotId }); setRead(j.read); if (j.read?.plate) setPlate(j.read.plate); else setErr('Could not read a plate in that photo — type it.') }
-    catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy(null) }
+  const [scanFor, setScanFor] = useState<string | null | false>(false)     // false = closed; null = a car outside any spot
+  const readFrame = async (ph: Photo | null, typed?: string): Promise<ScanOutcome> => {
+    if (typed) return { read: { plate: typed, state: null, make: null, model: null, color: null, confidence: 1, note: null } }
+    if (!ph) return { read: null }
+    const j = await post({ action: 'plate.read', photo: ph.base64, photoMime: ph.mime, spotId: scanFor || null })
+    return { read: j.read || null }
   }
   const finish = async () => {
     if (!active) return
@@ -531,7 +556,7 @@ function Walk({ spots, date, sweep, setSweep, post, onFinished }: { spots: SpotT
     <div className="mt-2 rounded-xl bg-white border border-neutral-300 p-2.5 space-y-2">
       <input value={plate} onChange={e => setPlate(e.target.value.toUpperCase())} placeholder="PLATE of the car here" autoCapitalize="characters" autoCorrect="off" className={field + ' font-mono font-bold tracking-widest uppercase'} />
       <div className="flex items-center gap-2 flex-wrap">
-        <CameraButton onPhoto={ph => scan(ph, s?.id || null)} busy={busy === 'scan'} label={busy === 'scan' ? 'Reading…' : 'Scan'} />
+        <button type="button" onClick={() => setScanFor(s ? s.id : null)} className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 text-white px-3 py-2 text-[13px] font-bold"><Camera size={15} /> Scan</button>
         {read && <span className="text-[12px] text-neutral-500">read <b className="font-mono">{read.plate || '?'}</b>{read.make || read.model ? ` · ${[read.color, read.make, read.model].filter(Boolean).join(' ')}` : ''}{read.confidence < 0.7 ? ' — not sure' : ''}</span>}
       </div>
       <div className="flex gap-2">
@@ -592,6 +617,8 @@ function Walk({ spots, date, sweep, setSweep, post, onFinished }: { spots: SpotT
           <button onClick={finish} disabled={busy != null} className={big(n >= spots.length ? 'ok' : 'ink') + ' w-full mt-1'}>{busy === 'finish' ? <Loader2 size={16} className="animate-spin" /> : <Flag size={16} />} Finish the walk — flag what should not be here</button>
         </div>
       )}
+      <Scanner open={scanFor !== false} onClose={() => setScanFor(false)} mode="single" title={scanFor ? `Spot ${spots.find(s => s.id === scanFor)?.label || ''} — scan the plate` : 'Scan the plate'} scan={readFrame}
+        onPick={(rd, ph) => { setPlate(rd.plate || ''); setRead(rd); setPhoto(ph); setErr('') }} />
     </section>
   )
 }
