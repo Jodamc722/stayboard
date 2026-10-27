@@ -457,7 +457,11 @@ function sinceFilter(iso: string): string {
 // lastUpdatedAt (2026-09-28 audit #3): without it raw.lastUpdatedAt was always empty, so the owner
 // audit's "changed / canceled after its statement was built" check could never fire and the
 // incremental early-stop below was dead code. Rows pick it up on their next pull.
-const FIELDS = encodeURIComponent('status guest listing checkIn checkOut checkInDateLocalized checkOutDateLocalized nightsCount money source customFields confirmationCode createdAt lastUpdatedAt note tags')
+// guestsCount + numberOfGuests (2026-10-27, Botanica → Cloudbeds export): every reader of
+// raw.guestsCount / raw.numberOfGuests (guestSplit, the registration notices, the Salato verify
+// board, the occupancy export) was reading a field the pull never asked for, so adults and children
+// were blank on every row. Rows pick them up on their next pull; the bookings export can backfill.
+const FIELDS = encodeURIComponent('status guest listing checkIn checkOut checkInDateLocalized checkOutDateLocalized nightsCount guestsCount numberOfGuests money source customFields confirmationCode createdAt lastUpdatedAt note tags')
 
 /**
  * Targeted re-pull: refresh specific reservations from Guesty RIGHT NOW (folio edits, fee

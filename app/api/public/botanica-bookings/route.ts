@@ -32,6 +32,7 @@ import { linkGate, signedInUser } from '@/lib/passcode-gate'
 import { getLink } from '@/lib/share-links-server'
 import { customFieldNameMap, filledCustomFields } from '@/lib/custom-fields'
 import { guestSplit } from '@/lib/reservation-pull'
+import { pullReservationsByIds } from '@/lib/guesty'
 import { makeXlsx, type XCell } from '@/lib/xlsx-lite'
 
 export const dynamic = 'force-dynamic'
@@ -108,8 +109,10 @@ function channelOf(src: string): string {
   if (s.includes('marriott')) return 'Marriott Homes & Villas'
   if (s.includes('blueground')) return 'Blueground'
   if (s.includes('google')) return 'Google'
-  if (s.includes('direct') || s.includes('website') || s.includes('manual') || s.includes('owner') || s.includes('homerunner') || s.includes('engine')) return 'Direct'
-  return src
+  if (s.includes('orbitz')) return 'Expedia' // Orbitz books through the Expedia group
+  // be-api = Guesty's own booking-engine API — our direct booking page.
+  if (s.includes('direct') || s.includes('website') || s.includes('manual') || s.includes('owner') || s.includes('homerunner') || s.includes('engine') || s === 'be-api' || s === 'be_api') return 'Direct'
+  return cap(src)
 }
 // Airbnb always charges the guest at booking and pays us after check-in: the guest owes the hotel
 // nothing. No other channel is asserted — Booking.com and Expedia can be either, so those rows
@@ -189,6 +192,41 @@ async function ensureLinkRow(who: string | null): Promise<void> {
   } catch { /* the hub will show nothing until the next signed-in visit; the gate still fails closed */ }
 }
 
+/** Every Botanica listing id in the mirror (building or name says Botanica). */
+async function botanicaListingIds(db: ReturnType<typeof supabaseAdmin>): Promise<string[]> {
+  const { data, error } = await db.from('guesty_listings').select('id,nickname,title,building')
+  if (error) throw new Error(error.message)
+  return ((data || []) as any[]).filter(l => /botanica/i.test(str(l.building)) || /botanica/i.test(str(l.nickname || l.title))).map(l => String(l.id))
+}
+
+async function backfillGuestCounts(): Promise<NextResponse> {
+  const started = Date.now()
+  try {
+    const db = supabaseAdmin()
+    const ids = await botanicaListingIds(db)
+    if (!ids.length) return NextResponse.json({ ok: false, error: 'No Botanica listings found' }, { status: 500 })
+    // Rows that have neither count yet. A row Guesty genuinely holds no count for comes back the
+    // same way and is asked again next time — a bounded cost (one re-pull per run), never a loop here.
+    let missing: string[] = []
+    for (let i = 0; i < 30; i++) {
+      const { data, error } = await db.from('guesty_reservations').select('id').in('listing_id', ids)
+        .is('raw->guestsCount', null).is('raw->numberOfGuests', null).order('check_in', { ascending: false }).range(i * 1000, i * 1000 + 999)
+      if (error) throw new Error(error.message)
+      if (!data || !data.length) break
+      missing = missing.concat((data as any[]).map(r => String(r.id)))
+      if (data.length < 1000) break
+    }
+    let pulled = 0, offset = 0
+    while (offset < missing.length && Date.now() - started < 40_000) {
+      pulled += await pullReservationsByIds(missing.slice(offset, offset + 200))
+      offset += 200
+    }
+    return NextResponse.json({ ok: true, missingBefore: missing.length, asked: Math.min(offset, missing.length), pulled, remaining: Math.max(0, missing.length - offset), seconds: Math.round((Date.now() - started) / 1000) })
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
+  }
+}
+
 export async function GET(req: NextRequest) {
   const me = await signedInUser()
   if (me.signedIn) await ensureLinkRow(me.who)
@@ -205,6 +243,15 @@ export async function GET(req: NextRequest) {
   const to = isoOk(str(sp.get('to')).trim()) ? str(sp.get('to')).trim() : ''
   const format = str(sp.get('format') || 'json').toLowerCase()
   const extended = str(sp.get('cols')).toLowerCase() === 'extended'
+
+  // ?backfill=1 (signed-in only): re-pull from Guesty every Botanica reservation whose mirror row
+  // predates guestsCount / numberOfGuests being part of the pull, so adults and children fill in.
+  // Chunks of 200 ids (the re-pull's own cap), inside a time budget; answers how many are left, so
+  // the caller repeats until remaining is 0. Each chunk is four Guesty calls.
+  if (str(sp.get('backfill')) === '1') {
+    if (!gate.signedIn) return NextResponse.json({ ok: false, error: 'Sign in to Lighthouse to backfill.' }, { status: 403 })
+    return backfillGuestCounts()
+  }
 
   try {
     const db = supabaseAdmin()
@@ -242,7 +289,7 @@ export async function GET(req: NextRequest) {
     }
     const nameMap = await customFieldNameMap().catch(() => ({} as Record<string, string>))
 
-    const counts = { all: 0, inHouse: 0, upcoming: 0, past: 0, cancelled: 0, duplicatesDropped: 0, withEmail: 0, withPhone: 0, withAddress: 0 }
+    const counts = { all: 0, inHouse: 0, upcoming: 0, past: 0, cancelled: 0, duplicatesDropped: 0, withEmail: 0, withPhone: 0, withAddress: 0, withAdults: 0 }
     const seen: Record<string, boolean> = {}
     type Row = { cells: (string | number)[]; extra: (string | number)[]; key: string; sortCi: string; room: string; cloudStatus: string; channel: string }
     const rows: Row[] = []
@@ -290,6 +337,7 @@ export async function GET(req: NextRequest) {
 
       // ── Reservation ──
       const split = guestSplit({ guestsCount: r.gc, numberOfGuests: r.nog, guests: r.guests })
+      if (split.adults != null) counts.withAdults++
       const channel = channelOf(str(r.source) || str(r.platform))
       const source = CHANNEL_COLLECT.indexOf(channel) >= 0 ? channel + ' (Channel Collect)' : channel
       const booked = dateOf(r.created_at || r.confirmedAt)

@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 type Row = { id: string; status: string; channel: string; cells: (string | number)[]; extra: (string | number)[] }
 type Data = {
   ok: boolean; error?: string; property?: string; today?: string; generatedAt?: string; lastSync?: string | null; signedIn?: boolean; label?: string | null
-  rooms?: number; counts?: { all: number; inHouse: number; upcoming: number; past: number; cancelled: number; duplicatesDropped: number; withEmail: number; withPhone: number; withAddress: number }
+  rooms?: number; counts?: { all: number; inHouse: number; upcoming: number; past: number; cancelled: number; duplicatesDropped: number; withEmail: number; withPhone: number; withAddress: number; withAdults: number }
   groups?: { label: string; span: number }[]; header?: string[]; extendedHeader?: string[]; rules?: { col: string; rule: string }[]; rows?: Row[]
 }
 type Scope = 'all' | 'current' | 'past'
@@ -56,6 +56,7 @@ export default function BotanicaBookingsPage() {
   const [limit, setLimit] = useState(PAGE)
   const [showRules, setShowRules] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [bf, setBf] = useState<{ running: boolean; msg: string }>({ running: false, msg: '' })
 
   const query = useMemo(() => 'scope=' + scope + '&status=' + (withCancelled ? 'all' : 'live'), [scope, withCancelled])
 
@@ -74,6 +75,21 @@ export default function BotanicaBookingsPage() {
   useEffect(() => { const tm = setInterval(() => { if (document.visibilityState === 'visible') load() }, 15 * 60 * 1000); return () => clearInterval(tm) }, [load])
 
   const doRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false) }
+  // Guest counts were never part of the Guesty pull before 2026-10-27; this re-pulls the Botanica
+  // rows that still lack them, 200 at a time, until none are left, then reloads.
+  const backfill = async () => {
+    setBf({ running: true, msg: 'Asking Guesty…' })
+    try {
+      for (let i = 0; i < 20; i++) {
+        const r = await fetch(API + '?backfill=1', { cache: 'no-store' })
+        const j = await r.json()
+        if (!r.ok || !j.ok) { setBf({ running: false, msg: j.error || 'Backfill failed' }); return }
+        if (!j.remaining) { setBf({ running: false, msg: 'Done — ' + j.pulled + ' bookings refreshed' }); break }
+        setBf({ running: true, msg: j.pulled + ' refreshed, ' + j.remaining + ' to go…' })
+      }
+    } catch (e: any) { setBf({ running: false, msg: String(e?.message || e) }) }
+    await load()
+  }
   const submitPw = async (e: any) => {
     e.preventDefault()
     setPwBusy(true); setPwErr('')
@@ -157,6 +173,13 @@ export default function BotanicaBookingsPage() {
           </div>
         ) : null}
 
+        {data?.signedIn && c && c.all > 0 && c.withAdults / c.all < 0.8 ? (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex flex-wrap items-center gap-2">
+            <span>Adults / children are blank on {(c.all - c.withAdults).toLocaleString()} of {c.all.toLocaleString()} bookings — the mirror row predates guest counts being pulled from Guesty.</span>
+            <button type="button" onClick={backfill} disabled={bf.running} className="font-semibold px-2.5 py-1 rounded-lg bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 disabled:opacity-50">{bf.running ? 'Refreshing…' : 'Fill from Guesty'}</button>
+            {bf.msg ? <span className="text-amber-700">{bf.msg}</span> : null}
+          </div>
+        ) : (bf.msg ? <div className="mt-3 text-xs text-neutral-500">{bf.msg}</div> : null)}
         {/* Controls — one line */}
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {([['all', 'All bookings'], ['current', 'In house & upcoming'], ['past', 'Checked out']] as [Scope, string][]).map(([k, label]) => (
