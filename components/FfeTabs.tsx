@@ -48,9 +48,9 @@ export function FfeTabs() {
             <t.Icon className="w-3.5 h-3.5" /> {t.label}
           </button>
         ))}
-        {/* 17 WEST CATALOG (Jon, 2026-10-20): its own page, not a panel — it is long, and a link to it gets sent around. */}
-        <Link href="/ffe/17-west" className="px-4 py-2 text-[12.5px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap text-muted hover:text-ink border-l border-line">
-          <BookOpenCheck className="w-3.5 h-3.5" /> 17 West catalog
+        {/* CATALOGS (Jon, 2026-10-20 → 10-27): their own pages, not a panel — they are long, and links to them get sent around. */}
+        <Link href="/ffe/catalogs" className="px-4 py-2 text-[12.5px] font-semibold inline-flex items-center gap-1.5 whitespace-nowrap text-muted hover:text-ink border-l border-line">
+          <BookOpenCheck className="w-3.5 h-3.5" /> Catalogs
         </Link>
       </div>
       {tab === 'links' ? <FfeIndex />

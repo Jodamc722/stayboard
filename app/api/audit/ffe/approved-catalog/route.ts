@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { atLeast } from '@/lib/features'
-import { getCatalog, readDecisions, writeDecision } from '@/lib/ffe-approved-catalog'
+import { getCatalog, readDecisions, writeDecision, applySuppliers, SUPPLIERS } from '@/lib/ffe-approved-catalog'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,10 +18,12 @@ export async function GET(req: NextRequest) {
   const g = await requireLevel('ffe', 'view')
   if (!g.ok) return g.res
   const property = str(req.nextUrl.searchParams.get('property')) || '17-west'
-  const catalog = getCatalog(property)
-  if (!catalog) return NextResponse.json({ ok: false, error: 'No catalog for that property.' }, { status: 404 })
+  const full = await getCatalog(property)
+  if (!full) return NextResponse.json({ ok: false, error: 'No catalog for that property.' }, { status: 404 })
+  // The review shows only options from suppliers on the catalog's pick list; the Manage tab sees everything.
+  const catalog = req.nextUrl.searchParams.get('all') === '1' ? full : applySuppliers(full)
   const decisions = await readDecisions(property)
-  return NextResponse.json({ ok: true, catalog, decisions, canEdit: atLeast(g.access.levels['ffe'], 'edit') })
+  return NextResponse.json({ ok: true, catalog, decisions, suppliers: SUPPLIERS, canEdit: atLeast(g.access.levels['ffe'], 'edit') })
 }
 
 export async function POST(req: NextRequest) {
