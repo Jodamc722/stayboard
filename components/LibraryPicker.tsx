@@ -90,7 +90,7 @@ export function LibraryPicker({ open, onClose, onPick, startBuilding, startListi
   return (
     <div className="fixed inset-0 z-[90] bg-ink/40 flex items-center justify-center p-3" onClick={onClose} role="dialog" aria-label="Pick photos from the library">
       <div className="w-full max-w-[1100px] max-h-[92vh] rounded-2xl bg-white border border-line shadow-2xl flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
-        <div className="px-4 py-3 border-b border-line flex items-center gap-2 flex-wrap">
+        <div className="px-4 py-3 border-b border-line flex items-center gap-2 flex-wrap shrink-0">
           <Images size={15} className="text-ink" />
           <div className="min-w-0">
             <div className="text-[14px] font-bold text-ink">{title || 'Pick photos from the library'}</div>
@@ -104,7 +104,7 @@ export function LibraryPicker({ open, onClose, onPick, startBuilding, startListi
           <button onClick={onClose} className="rounded-lg border border-line p-1.5 text-muted hover:text-ink" title="Close"><X size={14} /></button>
         </div>
 
-        <div className="px-4 py-2 border-b border-line space-y-1.5 max-h-[28vh] overflow-y-auto">
+        <div className="px-4 py-2 border-b border-line space-y-1.5 max-h-[32vh] overflow-y-auto shrink-0">
           {hits ? (
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-[11px] font-bold uppercase tracking-wider text-muted mr-1">Found</span>
@@ -161,7 +161,7 @@ export function LibraryPicker({ open, onClose, onPick, startBuilding, startListi
             )}
         </div>
 
-        <div className="px-4 py-3 border-t border-line flex items-center gap-2 flex-wrap">
+        <div className="px-4 py-3 border-t border-line flex items-center gap-2 flex-wrap shrink-0">
           <span className="text-[12.5px] text-muted">{picked.size ? <><b className="text-ink">{picked.size}</b> picked{Array.from(new Set(Array.from(picked.values()).map(x => x.fromUnit))).length > 1 ? ' from ' + Array.from(new Set(Array.from(picked.values()).map(x => x.fromUnit))).length + ' units' : ''}</> : 'Nothing picked yet'}</span>
           {picked.size > 0 && <button onClick={() => setPicked(new Map())} className="text-[12px] text-muted hover:text-ink">Clear</button>}
           <span className="flex-1" />
