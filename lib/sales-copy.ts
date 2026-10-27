@@ -261,7 +261,7 @@ export const SALES_AGENDA: KV[] = [
 // Thirteen slides and a cover. Every one of them is doing a job the one before it set up.
 export const SALES_ORDER = [
   'welcome',
-  'property', 'market', 'plan', 'proof',          // theirs: the unit, the area, the money
+  'property', 'market', 'plan', 'proof', 'returns',  // theirs: the unit, the area, the money
   'maxrev', 'ops', 'stack',                       // ours: how the money happens
   'overview', 'experience', 'team',               // who is doing it
   'terms', 'onbsteps', 'contact', 'close',        // what it costs and what happens next
@@ -273,14 +273,14 @@ export const SALES_ORDER = [
 // its own, and the onboarding timeline waits for the meeting: a prospect who has not decided does
 // not need the four-week plan yet.
 export const SHORT_KEEP = [
-  'property', 'market', 'plan', 'proof',
+  'property', 'market', 'plan', 'proof', 'returns',
   'maxrev', 'ops', 'stack',
   'overview', 'experience', 'team',
   'terms', 'close',
 ]
 /** Every slide the sales deck can carry, so the short/full switch has something to subtract from. */
 export const SALES_KEYS = [
-  'welcome', 'contact', 'property', 'market', 'agenda', 'team', 'overview', 'experience', 'ops', 'craft',
+  'welcome', 'contact', 'property', 'market', 'returns', 'agenda', 'team', 'overview', 'experience', 'ops', 'craft',
   'marketing', 'dist', 'channels', 'direct', 'guestcare', 'revenue', 'stack', 'lighthouse',
   'maxrev', 'proof', 'plan', 'terms', 'onbsteps', 'gpo', 'guesty', 'statement', 'ai',
   'season', 'ramp', 'rampsteps', 'money', 'video', 'close',
@@ -312,6 +312,10 @@ export const SHORT_HIDDEN_HISTORY: string[][] = [
   ['agenda', 'craft', 'dist', 'marketing', 'channels', 'direct', 'guestcare', 'revenue',
     'lighthouse', 'gpo', 'guesty', 'statement', 'ai', 'season', 'ramp', 'rampsteps', 'money',
     'video', 'onbsteps', 'contact'],
+  // 2026-10-27, fourth: returns by building, the slide Nick asks for on every call.
+  ['agenda', 'craft', 'dist', 'marketing', 'channels', 'direct', 'guestcare', 'revenue',
+    'lighthouse', 'gpo', 'guesty', 'statement', 'ai', 'season', 'ramp', 'rampsteps', 'money',
+    'video', 'onbsteps', 'contact', 'returns'],
 ]
 
 // Lines this deck used to open with. Replaced in place on a deck that still carries them, exactly
@@ -428,3 +432,17 @@ export const PROPERTY_FACTS: KV[] = [
 // /api/reports/sales-plan, which reads a PDF, a screenshot, a spreadsheet or a CSV and will refuse
 // rather than invent. Until something is written or read in, the slide does not print.
 export const MARKET_BODY = ''
+
+// ── 18 · REAL RETURNS BY BUILDING ───────────────────────────────────────────
+// Nick Carline's brief, 2026-10-27: "Real returns by building. Annual gross, occupancy and nightly
+// rate for the buildings we run (District 225, NoMad, Elser, Arya, the Amrit)."
+//
+// The single most useful slide in a deck going to lenders and brokers, because it is the one claim
+// nobody else in this market can make with their own numbers. Buildings, not owners: no owner is
+// named and no expense appears, so it can be forwarded to anybody.
+export const RETURNS_HEADLINE = 'What the buildings we run actually earn'
+export const RETURNS_SUBTITLE = 'Twelve months of settled bookings, by building.'
+export const RETURNS_BODY =
+  'Not a case study chosen because it flattered us. Every building we operate with a full year behind it, on the same basis, in one table.'
+export const RETURNS_NOTE =
+  'Gross is accommodation plus cleaning, as the guest paid it. Revenue only — no expenses, and no owner is identified.'

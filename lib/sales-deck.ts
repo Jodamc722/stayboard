@@ -32,6 +32,7 @@ import {
   ONB_HEADLINE, ONB_SUBTITLE, ONB_BODY, ONB_STEPS, ONB_NOTE, type Step,
   GPO_HEADLINE, GPO_SUBTITLE, GPO_BODY, GPO_ROWS, GPO_NOTE,
   MARKET_HEADLINE, MARKET_SUBTITLE, MARKET_PROMPTS,
+  RETURNS_HEADLINE, RETURNS_SUBTITLE, RETURNS_BODY, RETURNS_NOTE,
   PROPERTY_HEADLINE, PROPERTY_SUBTITLE, PROPERTY_BODY, PROPERTY_FACTS,
   CLOSE_HEADLINE, CLOSE_SUBTITLE, CLOSE_ROWS, CLOSE_NOTE,
   VIDEO_HEADLINE, VIDEO_SUBTITLE, VIDEO_BODY,
@@ -94,6 +95,14 @@ export type SalesSections = {
     source?: 'statements' | 'bookings'
     rows: { label: string; sub: string; gross: string; net: string; occ: string; adr: string; nights: string }[]
     totals?: { gross: string; net: string; occ: string; adr: string; nights: string }
+  }
+  /**
+   * What the buildings we run actually earn. Buildings, never owners — see lib/sales-copy. Empty
+   * until someone pulls it, and an empty one does not print.
+   */
+  returns?: {
+    headline: string; subtitle: string; body: string; note: string; window: string
+    rows: { building: string; market: string; units: number; bedrooms: string; gross: string; perUnit: string; occ: string; adr: string; nights: string }[]
   }
   /** The projection for THIS property, built from our model or parsed from an upload. */
   plan?: {
@@ -257,6 +266,7 @@ export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesCo
     maxrev: { headline: MAXREV_HEADLINE, subtitle: MAXREV_SUBTITLE, body: MAXREV_BODY, rows: MAXREV_ROWS, note: MAXREV_NOTE },
     terms: { headline: TERMS_HEADLINE, subtitle: TERMS_SUBTITLE, rows: termRows(t.mgmtPct, t.laborRate, t.approvalLimit), note: TERMS_NOTE },
     proof: { headline: PROOF_HEADLINE, subtitle: PROOF_SUBTITLE, body: PROOF_BODY, note: PROOF_NOTE, scope: '', window: '', names: false, rows: [] },
+    returns: { headline: RETURNS_HEADLINE, subtitle: RETURNS_SUBTITLE, body: RETURNS_BODY, note: RETURNS_NOTE, window: '', rows: [] },
     plan: { headline: PLAN_HEADLINE, subtitle: PLAN_SUBTITLE, body: PLAN_BODY, note: PLAN_NOTE, cols: [], rows: [] },
     close: { headline: CLOSE_HEADLINE, subtitle: CLOSE_SUBTITLE, rows: CLOSE_ROWS, note: CLOSE_NOTE },
     video: { headline: VIDEO_HEADLINE, subtitle: VIDEO_SUBTITLE, body: VIDEO_BODY, url: '', poster: '' },

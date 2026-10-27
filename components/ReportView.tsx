@@ -2187,6 +2187,27 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     } catch { setPfMsg('Could not pull those actuals.') }
     setPfBusy(false)
   }
+  // Real returns by building — Nick's most-asked-for slide, and the only claim in the deck
+  // nobody else in this market can make with their own numbers.
+  const [rtBusy, setRtBusy] = useState(false)
+  const [rtMsg, setRtMsg] = useState('')
+  const [rtMonths, setRtMonths] = useState(12)
+  async function pullReturns() {
+    if (rtBusy) return
+    setRtBusy(true); setRtMsg('')
+    try {
+      const d = await fetch('/api/reports/returns?months=' + rtMonths).then(r => r.json())
+      if (d?.ok && Array.isArray(d.buildings)) {
+        mutate((dr: Any) => {
+          dr.returns = dr.returns || {}
+          dr.returns.rows = d.buildings; dr.returns.window = String(d.window || '')
+          if (Array.isArray(dr.omit)) dr.omit = dr.omit.filter((k: string) => k !== 'returns')
+        })
+        setRtMsg(d.buildings.length + ' buildings — review, then Save.')
+      } else setRtMsg(String(d?.error || 'Could not pull the returns.'))
+    } catch { setRtMsg('Could not pull the returns.') }
+    setRtBusy(false)
+  }
   const [plBusy, setPlBusy] = useState(false)
   const [plMsg, setPlMsg] = useState('')
   async function buildPlan(source: 'model' | 'upload', url?: string) {
@@ -4929,6 +4950,70 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     )
                   } />
                 <Foot label="The numbers" />
+              </div>
+            </Slide>
+          ) }) }
+
+          // ── 4d-ii · WHAT THE BUILDINGS WE RUN ACTUALLY EARN ─────────────────
+          // Nick Carline, 2026-10-27: "Real returns by building. Annual gross, occupancy and
+          // nightly rate for the buildings we run." Buildings, never owners — nobody is named and
+          // no expense appears, so a broker can forward it to anyone.
+          if (!hid('returns')) { const rt: Any = sec('returns'); const rtRows: Any[] = (rt.rows || []) as Any[]
+            if (rtRows.length || edit) slides.push({ key: 'returns', ai: true, node: (
+            <Slide nav="Returns by building" warn={edit} ground={GROUND.tint}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Split k="returns" leftW={300}
+                  left={
+                    <>
+                      <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder }}>
+                        <Ed v={rt.body || ''} set={v => patch('returns.body', v)} edit={edit} multiline />
+                      </p>
+                      <p style={{ fontSize: 12, lineHeight: 1.55, color: t.muted, marginTop: 12 }}>
+                        <Ed v={rt.note || ''} set={v => patch('returns.note', v)} edit={edit} multiline />
+                      </p>
+                      {edit ? (
+                        <div className="sb-noprint" style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid ' + t.cardBorder, display: 'grid', gap: 7 }}>
+                          <select value={String(rtMonths)} onChange={e => setRtMonths(Number(e.target.value) || 12)}
+                            style={{ fontSize: 12.5, padding: '6px 8px', borderRadius: 8, border: '1px solid ' + t.cardBorder, background: t.card, color: t.ink }}>
+                            {[6, 12, 24].map(m => <option key={m} value={m}>Last {m} months</option>)}
+                          </select>
+                          <button onClick={pullReturns} disabled={rtBusy}
+                            style={{ fontSize: 12, fontWeight: 600, padding: '7px 12px', borderRadius: 999, background: t.ink, color: t.bg, opacity: rtBusy ? 0.6 : 1 }}>
+                            {rtBusy ? 'Pulling…' : 'Pull every building'}
+                          </button>
+                          {rtMsg ? <p style={{ fontSize: 11.5, color: t.muted }}>{rtMsg}</p> : null}
+                        </div>
+                      ) : null}
+                    </>
+                  }
+                  right={
+                    rtRows.length ? (
+                      <div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 0.5fr 1fr 1fr 0.7fr 0.8fr', gap: 10, paddingBottom: 8, borderBottom: '1px solid ' + t.rule }}>
+                          {['Building', 'Units', 'Gross', 'Per unit', 'Occ', 'ADR'].map((h, i) => (
+                            <p key={h} style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: i === 0 ? 'left' : 'right' }}>{h}</p>
+                          ))}
+                        </div>
+                        {rtRows.slice(0, 10).map((r: Any, i: number) => (
+                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.5fr 0.5fr 1fr 1fr 0.7fr 0.8fr', gap: 10, padding: '8px 0', borderBottom: '1px solid ' + t.rule, alignItems: 'baseline' }}>
+                            <div style={{ minWidth: 0 }}>
+                              <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, margin: 0 }}>{String(r.building || '')}</p>
+                              <p style={{ fontSize: 10.5, color: t.muted, margin: 0 }}>{[String(r.market || ''), String(r.bedrooms || '')].filter(Boolean).join(' · ')}</p>
+                            </div>
+                            {['units', 'gross', 'perUnit', 'occ', 'adr'].map(k => (
+                              <p key={k} style={{ fontSize: 13, color: k === 'gross' ? t.ink : t.body, fontWeight: k === 'gross' ? 600 : 400, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{String(r[k] ?? '—')}</p>
+                            ))}
+                          </div>
+                        ))}
+                        {rt.window ? <p style={{ fontSize: 11, color: t.muted, marginTop: 10 }}>{String(rt.window)}</p> : null}
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: 13, color: t.muted, lineHeight: 1.6, maxWidth: '46ch' }}>
+                        Pull the buildings on the left. Until then this slide does not appear in the deck.
+                      </p>
+                    )
+                  } />
+                <Foot label="Returns by building" />
               </div>
             </Slide>
           ) }) }
