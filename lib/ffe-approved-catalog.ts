@@ -18,12 +18,16 @@ import { supabaseAdmin } from './supabase-admin'
 import seedJson from './ffe-approved-catalog-17west.json'
 
 export type OptionSrc = string
+export type Tier = 'standard' | 'midlux' | 'luxury'
+export type Need = 'must' | 'recommended' | 'suggested'
+export type QtyPer = 'unit' | 'bedroom' | 'bathroom' | 'guest'
 export type CatalogOption = {
   id?: string; src: OptionSrc; vendor: string; name: string; url: string | null; price: number | null
-  each?: string; image: string | null; chips: string[]; fit: 'cover' | 'contain'
+  each?: string; image: string | null; chips: string[]; fit: 'cover' | 'contain'; tier?: Tier | null
 }
 export type CatalogItem = {
-  id?: string; key: string; section: 'compare' | 'vendor' | 'amenity'; category: string; name: string; options: CatalogOption[]
+  id?: string; key: string; section: 'compare' | 'vendor' | 'amenity' | 'essential'; category: string; name: string; options: CatalogOption[]
+  need?: Need | null; qty?: number; qtyPer?: QtyPer
 }
 export type Catalog = {
   property: string; title: string; kind: 'default' | 'property'; basedOn?: string | null; suppliers: string[]; tier?: string | null; listingId?: string | null; styleBrief?: string | null; ownerId?: string | null; ownerName?: string | null
@@ -36,6 +40,8 @@ export type CatalogSummary = { slug: string; name: string; kind: 'default' | 'pr
 export const SUPPLIERS: { key: string; name: string; note: string }[] = [
   { key: 'host', name: 'HostGPO · Article', note: 'Member pricing; contract-grade available' },
   { key: 'amz', name: 'Amazon', note: 'Fast; assembly needed' },
+  { key: 'walmart', name: 'Walmart', note: 'Budget essentials; assembly needed' },
+  { key: 'target', name: 'Target', note: 'Kitchen, bath and decor' },
   { key: 'ch', name: 'City Home', note: 'Delivered and set up (formerly City Furniture)' },
   { key: 'wf', name: 'Wayfair', note: 'Chairs and sofas; assembly needed' },
   { key: 'lowes', name: "Lowe's", note: 'Appliances' },
@@ -50,7 +56,21 @@ export const SUPPLIERS: { key: string; name: string; note: string }[] = [
   { key: 'dh', name: 'Diversified Hospitality', note: 'Dish and dishwasher' },
   { key: 'other', name: 'Other', note: 'Anything else' },
 ]
-export const SUPPLIER_NAME = (key: string) => SUPPLIERS.find(s => s.key === key)?.name || key
+export const SUPPLIER_NAME = (key: string) => SUPPLIERS.find(s => s.key === key.replace(/-\d+$/, ''))?.name || key
+/** Where "search the suppliers" sends the team (Jon, 2026-10-27): each site's own search, so the
+ *  results are live and the team pastes back the product they pick. */
+export const SEARCH_SUPPLIERS: { key: string; name: string; url: (q: string) => string }[] = [
+  { key: 'amz', name: 'Amazon', url: q => `https://www.amazon.com/s?k=${encodeURIComponent(q)}` },
+  { key: 'walmart', name: 'Walmart', url: q => `https://www.walmart.com/search?q=${encodeURIComponent(q)}` },
+  { key: 'target', name: 'Target', url: q => `https://www.target.com/s?searchTerm=${encodeURIComponent(q)}` },
+  { key: 'host', name: 'HostGPO', url: q => `https://www.hostgpo.com/search?q=${encodeURIComponent(q)}` },
+  { key: 'wf', name: 'Wayfair', url: q => `https://www.wayfair.com/keyword.php?keyword=${encodeURIComponent(q)}` },
+  { key: 'ch', name: 'City Home', url: q => `https://www.cityhome.com/catalogsearch/result/?q=${encodeURIComponent(q)}` },
+]
+const TIERS_OK = ['standard', 'midlux', 'luxury']
+const NEEDS_OK = ['must', 'recommended', 'suggested']
+const PER_OK = ['unit', 'bedroom', 'bathroom', 'guest']
+const tierOf = (v: any): Tier | null => (TIERS_OK.includes(String(v)) ? (String(v) as Tier) : null)
 /** An option's supplier key. A second option from the same supplier on one item gets 'amz-2', 'amz-3'…
  *  so approvals (which are keyed by src) tell them apart; this strips the suffix back to the supplier. */
 export const baseKey = (src: string) => src.replace(/-\d+$/, '')
@@ -102,8 +122,60 @@ async function tablesReady(): Promise<boolean> {
  *  ensureSeeded again from inside this path (loadCatalog, not getCatalog), so it cannot recurse. */
 let seedOnce: Promise<void> | null = null
 async function ensureSeeded(): Promise<void> {
-  if (!seedOnce) seedOnce = seedNow().catch(() => { seedOnce = null })
+  if (!seedOnce) seedOnce = seedNow().then(seedEssentials).catch(() => { seedOnce = null })
   return seedOnce
+}
+
+/** Migration 165's half of the seed: the onboarding essentials (sections, quantity rules, a pick per
+ *  tier) and the tiered furniture the sheet lacks go onto the DEFAULT, and the sheet's real amenities
+ *  get their section and quantity rule. Runs once: skipped when the default already has 'ess-' items
+ *  or when 165 has not run (the need column is missing). */
+async function seedEssentials(): Promise<void> {
+  const db = supabaseAdmin()
+  const probe = await db.from('ffe_catalog_items').select('id, need').eq('catalog', DEFAULT_SLUG).like('key', 'ess-%').limit(1)
+  if (probe.error || (probe.data || []).length) return
+  const { essentialsSeed, AMENITY_RULES, FURNITURE_TIER_BY_SUPPLIER } = await import('./ffe-essentials-seed')
+  const { data: last } = await db.from('ffe_catalog_items').select('sort').eq('catalog', DEFAULT_SLUG).order('sort', { ascending: false }).limit(1)
+  const base = ((last || [])[0]?.sort ?? 0) + 1
+  const seed = essentialsSeed()
+  for (let i = 0; i < seed.length; i++) {
+    const it = seed[i]
+    const { data: row, error } = await db.from('ffe_catalog_items')
+      .upsert({ catalog: DEFAULT_SLUG, key: it.key, section: it.section, category: it.category, name: it.name, sort: base + i, need: it.need, qty: it.qty, qty_per: it.qtyPer }, { onConflict: 'catalog,key' })
+      .select('id').single()
+    if (error || !row) continue
+    await db.from('ffe_catalog_options').delete().eq('item_id', row.id)
+    await db.from('ffe_catalog_options').insert(it.options.map((o, j) => ({ item_id: row.id, src: o.src, vendor: o.vendor, name: o.name, url: o.url, price: o.price, image_url: null, chips: o.chips, fit: o.fit, sort: j, tier: o.tier })))
+  }
+  for (const slug of [DEFAULT_SLUG, LEGACY_SLUG]) {
+    for (const [key, r] of Object.entries(AMENITY_RULES)) {
+      await db.from('ffe_catalog_items').update({ section: 'essential', category: r.category, need: r.need, qty: r.qty, qty_per: r.per }).eq('catalog', slug).eq('key', key)
+    }
+    const { data: its } = await db.from('ffe_catalog_items').select('id').eq('catalog', slug).in('section', ['compare', 'vendor']).not('key', 'like', 'fur-%')
+    const ids = (its || []).map((x: any) => x.id)
+    for (const [src, tier] of Object.entries(FURNITURE_TIER_BY_SUPPLIER)) {
+      if (ids.length) await db.from('ffe_catalog_options').update({ tier }).in('item_id', ids).eq('src', src).is('tier', null)
+    }
+  }
+}
+
+/** Bring a catalog up to the default: items it lacks are copied in (with their options), and items
+ *  it has but without a section/quantity rule take the default's. Decisions are untouched. */
+export async function syncFromDefault(slug: string): Promise<{ ok: boolean; error?: string; added?: number; updated?: number }> {
+  if (slug === DEFAULT_SLUG) return { ok: false, error: 'This is the default.' }
+  const [def, cat] = await Promise.all([getCatalog(DEFAULT_SLUG), getCatalog(slug)])
+  if (!def || !cat) return { ok: false, error: 'Unknown catalog.' }
+  const have = new Map(cat.items.map(i => [i.key, i]))
+  const missing = def.items.filter(i => !have.has(i.key))
+  if (missing.length) await writeItems(slug, missing)
+  let updated = 0
+  const db = supabaseAdmin()
+  for (const d of def.items) {
+    const c = have.get(d.key); if (!c || !c.id || c.need || !d.need) continue
+    const { error } = await db.from('ffe_catalog_items').update({ section: d.section, category: d.category, need: d.need, qty: d.qty ?? 1, qty_per: d.qtyPer || 'unit' }).eq('id', c.id)
+    if (!error) updated++
+  }
+  return { ok: true, added: missing.length, updated }
 }
 async function seedNow(): Promise<void> {
   const db = supabaseAdmin()
@@ -126,12 +198,12 @@ async function writeItems(slug: string, items: CatalogItem[]) {
   for (let i = 0; i < items.length; i++) {
     const it = items[i]
     const { data: row, error } = await db.from('ffe_catalog_items')
-      .upsert({ catalog: slug, key: it.key, section: it.section, category: it.category, name: it.name, sort: i }, { onConflict: 'catalog,key' })
+      .upsert({ catalog: slug, key: it.key, section: it.section, category: it.category, name: it.name, sort: i, need: it.need ?? null, qty: it.qty ?? 1, qty_per: it.qtyPer || 'unit' }, { onConflict: 'catalog,key' })
       .select('id').single()
     if (error || !row) continue
     // Idempotent: a re-run (a seed that died midway) replaces this item's options instead of doubling them.
     await db.from('ffe_catalog_options').delete().eq('item_id', row.id)
-    const opts = it.options.map((o, j) => ({ item_id: row.id, src: o.src, vendor: o.vendor, name: o.name, url: o.url || null, price: o.price ?? null, each: o.each || null, image_url: o.image || null, chips: o.chips || [], fit: o.fit || 'contain', sort: j }))
+    const opts = it.options.map((o, j) => ({ item_id: row.id, src: o.src, vendor: o.vendor, name: o.name, url: o.url || null, price: o.price ?? null, each: o.each || null, image_url: o.image || null, chips: o.chips || [], fit: o.fit || 'contain', sort: j, tier: o.tier ?? null }))
     if (opts.length) await db.from('ffe_catalog_options').insert(opts)
   }
 }
@@ -142,18 +214,19 @@ async function loadCatalog(slug: string): Promise<Catalog | null> {
   const { data: cat } = await db.from('ffe_catalogs').select('*').eq('slug', slug).limit(1)
   const c = (cat || [])[0]
   if (!c || c.archived_at) return null
-  const { data: items } = await db.from('ffe_catalog_items').select('id, key, section, category, name, sort').eq('catalog', slug).is('archived_at', null).order('sort')
+  const { data: items } = await db.from('ffe_catalog_items').select('*').eq('catalog', slug).is('archived_at', null).order('sort')
   const ids = (items || []).map((i: any) => i.id)
   const { data: opts } = ids.length ? await db.from('ffe_catalog_options').select('*').in('item_id', ids).is('archived_at', null).order('sort') : { data: [] as any[] }
   const byItem: Record<string, CatalogOption[]> = {}
   for (const o of opts || []) {
-    (byItem[o.item_id] = byItem[o.item_id] || []).push({ id: o.id, src: o.src, vendor: o.vendor, name: o.name, url: o.url, price: o.price == null ? null : Number(o.price), each: o.each || undefined, image: o.image_url, chips: o.chips || [], fit: o.fit === 'cover' ? 'cover' : 'contain' })
+    (byItem[o.item_id] = byItem[o.item_id] || []).push({ id: o.id, src: o.src, vendor: o.vendor, name: o.name, url: o.url, price: o.price == null ? null : Number(o.price), each: o.each || undefined, image: o.image_url, chips: o.chips || [], fit: o.fit === 'cover' ? 'cover' : 'contain', tier: tierOf(o.tier) })
   }
   return {
     property: slug, title: c.name, kind: c.kind === 'default' ? 'default' : 'property', basedOn: c.based_on || null, suppliers: c.suppliers || [],
     tier: c.tier || null, listingId: c.listing_id || null, styleBrief: c.style_brief || null, ownerId: c.owner_id || null, ownerName: c.owner_name || null,
     sourceSheet: JSON_SEED.sourceSheet, asOf: JSON_SEED.asOf, fromDb: true,
-    items: (items || []).map((i: any) => ({ id: i.id, key: i.key, section: i.section, category: i.category, name: i.name, options: byItem[i.id] || [] })),
+    items: (items || []).map((i: any) => ({ id: i.id, key: i.key, section: i.section, category: i.category, name: i.name, options: byItem[i.id] || [],
+      need: NEEDS_OK.includes(i.need) ? i.need : null, qty: i.qty == null ? 1 : Number(i.qty), qtyPer: PER_OK.includes(i.qty_per) ? i.qty_per : 'unit' })),
     misc: slug === DEFAULT_SLUG || slug === LEGACY_SLUG ? (JSON_SEED.misc || {}) : {},
   }
 }
@@ -231,8 +304,12 @@ export async function addItem(slug: string, d: { name: unknown; category: unknow
   return error ? { ok: false, error: error.message } : { ok: true, id: data?.id, key: data?.key }
 }
 
-export async function updateItem(itemId: string, d: { name?: unknown; category?: unknown; archive?: unknown }) {
+export async function updateItem(itemId: string, d: { name?: unknown; category?: unknown; archive?: unknown; need?: unknown; qty?: unknown; qtyPer?: unknown }) {
   const row: any = {}
+  if (d.need !== undefined) row.need = NEEDS_OK.includes(String(d.need)) ? String(d.need) : null
+  if (d.need !== undefined && row.need) row.section = 'essential'
+  if (d.qty !== undefined) { const q = num(d.qty); if (q != null && q > 0 && q < 1000) row.qty = q }
+  if (d.qtyPer !== undefined && PER_OK.includes(String(d.qtyPer))) row.qty_per = String(d.qtyPer)
   if (typeof d.name === 'string' && d.name.trim()) row.name = d.name.trim().slice(0, 160)
   if (typeof d.category === 'string' && d.category.trim()) row.category = d.category.trim().slice(0, 60)
   if (d.archive === true) row.archived_at = new Date().toISOString()
@@ -241,26 +318,30 @@ export async function updateItem(itemId: string, d: { name?: unknown; category?:
   return error ? { ok: false, error: error.message } : { ok: true }
 }
 
-export async function addOption(itemId: string, d: { src: unknown; name: unknown; url: unknown; price: unknown; each: unknown; image: unknown; chips: unknown }) {
+export async function addOption(itemId: string, d: { src: unknown; name: unknown; url: unknown; price: unknown; each: unknown; image: unknown; chips: unknown; tier?: unknown }) {
   if (!(await tablesReady())) return { ok: false, error: 'Run migration 163 first.' }
   const src = SUPPLIERS.some(s => s.key === str(d.src)) ? str(d.src) : 'other'
   const name = str(d.name).slice(0, 200); if (!name) return { ok: false, error: 'Give the product a name.' }
   const url = /^https?:\/\//i.test(str(d.url)) ? str(d.url).slice(0, 1000) : null
   const image = /^https?:\/\//i.test(str(d.image)) ? str(d.image).slice(0, 1000) : null
   const chips = Array.isArray(d.chips) ? d.chips.filter((c): c is string => typeof c === 'string').map(c => c.slice(0, 40)).slice(0, 6) : []
-  if (src === 'amz' || src === 'wf') { if (!chips.includes('Assembly needed')) chips.push('Assembly needed') }
+  // "Assembly needed" is about furniture: an iron from Amazon needs no assembly.
+  const { data: itemRow } = await supabaseAdmin().from('ffe_catalog_items').select('section').eq('id', itemId).limit(1)
+  const furniture = ['compare', 'vendor'].includes(String((itemRow || [])[0]?.section || ''))
+  if (furniture && (src === 'amz' || src === 'wf' || src === 'walmart') && !chips.includes('Assembly needed')) chips.push('Assembly needed')
   if (src === 'ch' && !chips.includes('Delivered & set up')) chips.push('Delivered & set up')
   const db = supabaseAdmin()
   const { data: existing } = await db.from('ffe_catalog_options').select('src, sort').eq('item_id', itemId).is('archived_at', null)
   const taken = new Set((existing || []).map((o: any) => String(o.src)))
   let key = src; for (let n = 2; taken.has(key); n++) key = `${src}-${n}`
   const sort = Math.max(0, ...(existing || []).map((o: any) => Number(o.sort) || 0)) + 1
-  const { data, error } = await db.from('ffe_catalog_options').insert({ item_id: itemId, src: key, vendor: SUPPLIER_NAME(src), name, url, price: num(d.price), each: str(d.each).slice(0, 40) || null, image_url: image, chips, fit: 'contain', sort }).select('id').single()
+  const { data, error } = await db.from('ffe_catalog_options').insert({ item_id: itemId, src: key, vendor: SUPPLIER_NAME(src), name, url, price: num(d.price), each: str(d.each).slice(0, 40) || null, image_url: image, chips, fit: 'contain', sort, tier: tierOf(d.tier) }).select('id').single()
   return error ? { ok: false, error: error.message } : { ok: true, id: data?.id }
 }
 
-export async function updateOption(optionId: string, d: { name?: unknown; url?: unknown; price?: unknown; each?: unknown; image?: unknown; archive?: unknown }) {
+export async function updateOption(optionId: string, d: { name?: unknown; url?: unknown; price?: unknown; each?: unknown; image?: unknown; archive?: unknown; tier?: unknown }) {
   const row: any = {}
+  if (d.tier !== undefined) row.tier = tierOf(d.tier)
   if (typeof d.name === 'string' && d.name.trim()) row.name = d.name.trim().slice(0, 200)
   if (typeof d.url === 'string') row.url = /^https?:\/\//i.test(d.url.trim()) ? d.url.trim().slice(0, 1000) : null
   if (d.price !== undefined) row.price = num(d.price)
@@ -331,11 +412,13 @@ export async function setShare(property: string, who: string, regenerate: boolea
   return { ok: true, code, mode: mode || 'view' }
 }
 
-/** Hide options whose supplier is not on the catalog's pick list (empty list = everything allowed). */
+/** Hide FURNITURE options whose supplier is not on the catalog's pick list (empty list = everything
+ *  allowed). Onboarding essentials are left alone: their tier picks the option, and an iron from
+ *  Amazon is fine in a luxury unit where an Amazon sofa is not. */
 export function applySuppliers(cat: Catalog): Catalog {
   if (!cat.suppliers.length) return cat
   const ok = new Set(cat.suppliers)
-  return { ...cat, items: cat.items.map(it => ({ ...it, options: it.options.filter(o => ok.has(baseKey(o.src))) })) }
+  return { ...cat, items: cat.items.map(it => (it.section === 'essential' ? it : { ...it, options: it.options.filter(o => ok.has(baseKey(o.src))) })) }
 }
 
 /** Resolve a public code. In 'view' mode: the APPROVED catalog only — the replacement list, nothing
@@ -396,16 +479,30 @@ export async function ownerPick(code: string, itemKey: string, src: string | nul
   return error ? { ok: false, error: error.message } : { ok: true }
 }
 
-/** Turn the approved list into a draft FF&E order for the catalog's owner: one line per approved
- *  option, snapshotting product, link, photo, vendor and price onto the line (lib/ffe orders).
- *  `listingId` is the unit the pieces are for; the catalog's own listing when it has one. */
-export async function orderFromCatalog(property: string, listingId: string, who: string): Promise<{ ok: boolean; error?: string; id?: string; orderNo?: string; lines?: number }> {
-  const cat = await getCatalog(property)
-  if (!cat) return { ok: false, error: 'Unknown catalog.' }
+async function unitFor(listingId: string) {
   const db = supabaseAdmin()
   const { ffePortfolio } = await import('./ffe-portfolio')
   const units = await ffePortfolio(db)
-  const unit = units.find(u => u.id === listingId)
+  return units.find(u => u.id === listingId) || null
+}
+
+async function createOrder(unit: { id: string; name: string; building: string; ownerId: string; ownerName: string }, title: string, who: string, lines: any[]) {
+  const db = supabaseAdmin()
+  const now = new Date().toISOString()
+  const ins = await db.from('ffe_orders').insert({ owner_id: unit.ownerId, owner_name: unit.ownerName, title: title.slice(0, 120), note: null, status: 'draft', created_by: who || null, updated_at: now }).select('id, order_no').limit(1)
+  if (ins.error) return { ok: false, error: ins.error.message }
+  const order = (ins.data || [])[0]
+  const r = await db.from('ffe_order_lines').insert(lines.map(l => ({ ...l, listing_id: unit.id, unit_name: unit.name, building: unit.building, order_id: order.id, stage: 'draft', updated_at: now })))
+  if (r.error) return { ok: false, error: r.error.message }
+  return { ok: true, id: order.id as string, orderNo: order.order_no as string, lines: lines.length }
+}
+
+/** Turn the approved list into a draft FF&E order for the unit's owner: one line per approved
+ *  option, snapshotting product, link, photo, vendor and price onto the line. */
+export async function orderFromCatalog(property: string, listingId: string, who: string): Promise<{ ok: boolean; error?: string; id?: string; orderNo?: string; lines?: number }> {
+  const cat = await getCatalog(property)
+  if (!cat) return { ok: false, error: 'Unknown catalog.' }
+  const unit = await unitFor(listingId)
   if (!unit) return { ok: false, error: 'Pick the unit this order is for.' }
   const decisions = await readDecisions(property)
   const lines: any[] = []
@@ -413,16 +510,38 @@ export async function orderFromCatalog(property: string, listingId: string, who:
     const d = decisions[it.key]; if (!d || d.rejected || !d.approved.length) continue
     for (const o of it.options) {
       if (!d.approved.includes(o.src)) continue
-      lines.push({ listing_id: unit.id, unit_name: unit.name, building: unit.building, room: it.category.slice(0, 80), item_key: `${it.key}:${o.src}`.slice(0, 120),
-        title: it.name.slice(0, 160), product: o.name.slice(0, 200), image_url: o.image, url: o.url, vendor: o.vendor, qty: 1, unit_cost: o.price, note: d.note ? d.note.slice(0, 500) : null, stage: 'draft' })
+      lines.push({ room: it.category.slice(0, 80), item_key: `${it.key}:${o.src}`.slice(0, 120), title: it.name.slice(0, 160), product: o.name.slice(0, 200),
+        image_url: o.image, url: o.url, vendor: o.vendor, qty: 1, unit_cost: o.price, note: d.note ? d.note.slice(0, 500) : null })
     }
   }
   if (!lines.length) return { ok: false, error: 'Nothing is approved on this catalog yet.' }
-  const now = new Date().toISOString()
-  const ins = await db.from('ffe_orders').insert({ owner_id: unit.ownerId, owner_name: unit.ownerName, title: `${cat.title} — from the approved catalog`, note: null, status: 'draft', created_by: who || null, updated_at: now }).select('id, order_no').limit(1)
-  if (ins.error) return { ok: false, error: ins.error.message }
-  const order = (ins.data || [])[0]
-  const r = await db.from('ffe_order_lines').insert(lines.map(l => ({ ...l, order_id: order.id, updated_at: now })))
-  if (r.error) return { ok: false, error: r.error.message }
-  return { ok: true, id: order.id, orderNo: order.order_no, lines: lines.length }
+  return createOrder(unit, `${cat.title} — from the approved catalog`, who, lines)
+}
+
+/** THE PRESET ONBOARDING ORDER (Jon, 2026-10-27). The page builds the preview (sections, tier
+ *  picks, quantities from bedrooms/bathrooms/guests, the team's swaps) and sends the lines it kept;
+ *  this checks every line against the catalog — the item exists and the option is one of its own —
+ *  and snapshots product, link, photo, vendor and price onto a draft FF&E order for the unit. */
+export async function presetOrder(property: string, listingId: string, tier: string, raw: unknown, who: string): Promise<{ ok: boolean; error?: string; id?: string; orderNo?: string; lines?: number }> {
+  const cat = await getCatalog(property)
+  if (!cat) return { ok: false, error: 'Unknown catalog.' }
+  const unit = await unitFor(listingId)
+  if (!unit) return { ok: false, error: 'Pick the unit this order is for.' }
+  const list: any[] = Array.isArray(raw) ? raw.slice(0, 500) : []
+  const byKey = new Map(applySuppliers(cat).items.map(i => [i.key, i]))
+  const decisions = await readDecisions(property)
+  const lines: any[] = []
+  const seen = new Set<string>()
+  for (const l of list) {
+    const it = byKey.get(String(l?.itemKey || '')); if (!it) continue
+    const o = it.options.find(x => x.src === String(l?.src || '')); if (!o) continue
+    const k = `${it.key}:${o.src}`; if (seen.has(k)) continue; seen.add(k)
+    const qty = Math.max(1, Math.min(999, Math.round(Number(l?.qty) || 1)))
+    const need = it.need === 'must' ? 'Must-have' : it.need === 'recommended' ? 'Recommended' : it.need === 'suggested' ? 'Suggested' : 'Furniture'
+    lines.push({ room: it.category.slice(0, 80), item_key: k.slice(0, 120), title: it.name.slice(0, 160), product: o.name.slice(0, 200), image_url: o.image, url: o.url, vendor: o.vendor,
+      qty, unit_cost: o.price, note: [need, decisions[it.key]?.note].filter(Boolean).join(' · ').slice(0, 500) || null })
+  }
+  if (!lines.length) return { ok: false, error: 'No lines to order.' }
+  const tierLabel = tier === 'luxury' ? 'Luxury' : tier === 'standard' ? 'Standard' : 'Mid-lux'
+  return createOrder(unit, `${unit.name} — onboarding essentials (${tierLabel})`, who, lines)
 }
