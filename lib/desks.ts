@@ -124,6 +124,8 @@ export const DESKS: Desk[] = [
       { to: '/onboarding/linens', label: 'Linens', hint: 'Your linen standard, and the linen order for any set of units' },
       { to: '/audits', label: 'Quality', hint: 'Unit walks and what they found, dispatched to Breezeway' },
       { to: '/orders', label: 'Purchasing', hint: 'Buying desk: approve, buy, receive and install' },
+      // Catalog (Jon, 2026-10-27): the default onboarding catalog and one per property — approved replacement lists with links.
+      { to: '/catalogs', match: ['/catalog'], label: 'Catalog', hint: 'Approved furniture and amenity catalogs per property, with the links to buy from; build one from a listing’s photos' },
       { to: '/reports', label: 'Owner reports', hint: 'Owner reviews, projections and onboarding decks' },
       { to: '/projections', label: 'Projections', hint: 'Next season’s owner revenue model behind the projection decks', more: true },
     ],
