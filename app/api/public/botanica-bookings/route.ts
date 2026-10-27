@@ -30,7 +30,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { linkGate, signedInUser } from '@/lib/passcode-gate'
 import { getLink } from '@/lib/share-links-server'
-import { customFieldNameMap, filledCustomFields } from '@/lib/custom-fields'
+import { customFieldNameMap } from '@/lib/custom-fields'
 import { guestSplit } from '@/lib/reservation-pull'
 import { pullReservationsByIds } from '@/lib/guesty'
 import { makeXlsx, type XCell } from '@/lib/xlsx-lite'
@@ -40,6 +40,8 @@ export const maxDuration = 60
 
 const LINK_CODE = 'botanica-bookings'
 const LIVE = ['confirmed', 'checked_in', 'checked_out']
+// A line Lighthouse wrote into the reservation notes: a bracketed date stamp, then the entry.
+const STAMPED = /^\[\d{4}-\d{2}-\d{2}[^\]]*\]/
 
 // The template, column for column. Three headings, 22 columns, this order.
 const GROUPS: { label: string; cols: string[] }[] = [
@@ -56,7 +58,7 @@ const COLUMN_RULES: { col: string; rule: string }[] = [
   { col: 'First / Last Name', rule: 'The Guesty guest record; a single full name is split at the first space.' },
   { col: 'Email · Phone', rule: 'The guest’s email and phone in Guesty. Airbnb gives a relay email, and some channels give no phone — the cell is blank rather than guessed.' },
   { col: 'Address · Country', rule: 'The guest’s address in Guesty when the channel sent one (street, city, state, ZIP). Most OTA guests have none — blank. Country falls back to the guest’s nationality.' },
-  { col: 'Notes', rule: 'The Guesty reservation note plus the “Reservation notes” custom field. Door codes are never exported.' },
+  { col: 'Notes', rule: 'What a person typed on the booking in Guesty (the note and the “Reservation notes” field): ETA, refunds, special requests. Lighthouse’s own dated call and sentiment stamps are left out. Door codes are never exported.' },
   { col: 'Check-in · Check-out · Booking date', rule: 'Guesty’s local stay dates and the date the booking was created (Eastern time), as YYYY-MM-DD.' },
   { col: 'Room Type · Room Number', rule: 'From the Guesty listing name, e.g. “Botanica 1109 - King w/ Kitchenette” → room 1109, type “King w/ Kitchenette”. A combined listing (1104/1106) keeps both numbers.' },
   { col: 'Adults · Children', rule: 'Guesty’s split when the channel sent one; a bare guest count lands as adults with children blank.' },
@@ -326,12 +328,26 @@ export async function GET(req: NextRequest) {
       if (email) counts.withEmail++
       if (phone) counts.withPhone++
       if (addr.line) counts.withAddress++
+      // NOTES = what a person typed, not what Lighthouse stamped. The "Reservation notes" custom
+      // field carries Lighthouse's own dated entries ("[2026-10-01] Guest sentiment: …", "[…] Post-
+      // checkout call by Talkroute…") — 440 of the 465 notes on the first live run. Those are our
+      // operating log, not something the hotel's new system needs on the booking; the hand-written
+      // lines (ETA, refunds, special requests) are. Same line test as lib/ops-brief.
       const noteParts: string[] = []
       const rawNote: any = r.rawNote
-      const noteText = typeof rawNote === 'string' ? rawNote : (rawNote && typeof rawNote === 'object' ? Object.values(rawNote).filter(v => typeof v === 'string').join(' ') : str(r.notes))
-      if (str(noteText).trim()) noteParts.push(str(noteText).trim())
-      for (const f of filledCustomFields(r.custom_fields, nameMap)) {
-        if (/^reservation notes?$/i.test(f.name) && f.value && noteParts.indexOf(f.value) < 0) noteParts.push(f.value)
+      const noteText = typeof rawNote === 'string' ? rawNote : (rawNote && typeof rawNote === 'object' ? Object.values(rawNote).filter(v => typeof v === 'string').join('\n') : str(r.notes))
+      const pushLines = (text: string) => {
+        for (const line of str(text).split(/[\u21b5\n\r]+/)) {
+          const t = line.trim()
+          if (!t || STAMPED.test(t)) continue
+          if (noteParts.indexOf(t) < 0) noteParts.push(t)
+        }
+      }
+      pushLines(noteText)
+      for (const cf of (Array.isArray(r.custom_fields) ? r.custom_fields : [])) {
+        const id = String(cf?.fieldId?._id || cf?.fieldId || cf?.field?._id || cf?._id || '')
+        const name = str(cf?.fieldName || cf?.name || nameMap[id] || cf?.fieldId?.name || '')
+        if (/^reservation[ _]notes?$/i.test(name.trim()) && typeof cf?.value === 'string') pushLines(cf.value)
       }
       const notes = noteParts.join(' | ').replace(/\s+/g, ' ').slice(0, 1000)
 
