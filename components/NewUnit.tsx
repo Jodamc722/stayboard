@@ -11,7 +11,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Tag, LeanEmpty } from '@/components/lean'
 import { FIELDS, GROUPS, FIELD_BY_KEY, PUBLISH_CHANNELS, COPY_KEYS, type GroupKey } from '@/lib/unit-intake'
-import { Plus, RefreshCw, Rocket, Check, AlertTriangle, ExternalLink, Trash2, Sparkles, Upload, ChevronUp, ChevronDown, X } from 'lucide-react'
+import { Plus, RefreshCw, Rocket, Check, AlertTriangle, ExternalLink, Trash2, Sparkles, Upload, ChevronUp, ChevronDown, X, LibraryBig } from 'lucide-react'
+import { LibraryPicker, type LibraryPick } from '@/components/LibraryPicker'
 
 type Row = {
   id: string; nickname: string; building: string | null
@@ -189,6 +190,7 @@ function IntakePanel({ row, post, busy, setNote }: {
 
   const photos: any[] = Array.isArray(row.data.photos) ? row.data.photos : []
   const [uploading, setUploading] = useState(false)
+  const [libOpen, setLibOpen] = useState(false)
   const upload = async (files: FileList | null) => {
     if (!files || !files.length) return
     setUploading(true)
@@ -300,10 +302,17 @@ function IntakePanel({ row, post, busy, setNote }: {
         <div className="flex items-baseline gap-2 mb-1.5 flex-wrap">
           <h3 className="text-[12.5px] font-bold text-ink">Photos</h3>
           <p className="text-[11.5px] text-muted">They go up with the listing. Five is the bar; the first one is the cover.</p>
-          <label className={`ml-auto inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] font-semibold cursor-pointer ${uploading ? 'opacity-50' : 'text-muted hover:text-ink'}`}>
+          <button onClick={() => setLibOpen(true)} disabled={busy} title="Pick photos another unit already has — the building's lobby, pool, gym — no re-upload; Guesty copies them from their link on the push"
+            className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] font-semibold text-muted hover:text-ink disabled:opacity-40">
+            <LibraryBig size={13} /> From library
+          </button>
+          <label className={`inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] font-semibold cursor-pointer ${uploading ? 'opacity-50' : 'text-muted hover:text-ink'}`}>
             <Upload size={13} /> {uploading ? 'Uploading…' : 'Add photos'}
             <input type="file" accept="image/*" multiple hidden disabled={uploading} onChange={e => { upload(e.target.files); e.currentTarget.value = '' }} />
           </label>
+          <LibraryPicker open={libOpen} onClose={() => setLibOpen(false)} startBuilding={String(draft.building || row.data.building || '')} excludeListingId={row.listing_id || null}
+            title={'Add photos to ' + (draft.nickname || row.data.nickname || 'the new unit') + ' from the library'} verb="Add"
+            onPick={async (picks: LibraryPick[]) => { const j = await post({ action: 'photoAdd', id: row.id, photos: picks.map(p => ({ url: p.url, caption: p.caption })) }); if (j?.ok) { setLibOpen(false); setNote(`${picks.length} photo${picks.length === 1 ? '' : 's'} added from the library.`) } }} />
           {row.listing_id && photos.length > 0 && (
             <button onClick={async () => { const j = await post({ action: 'photos', id: row.id }); if (j?.ok) setNote(`${j.sent} photos sent to Guesty.`) }} disabled={busy}
               className="rounded-lg border border-line px-2.5 py-1.5 text-[12.5px] font-semibold text-muted hover:text-ink disabled:opacity-40">

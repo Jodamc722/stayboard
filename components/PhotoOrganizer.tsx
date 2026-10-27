@@ -1,7 +1,8 @@
 'use client'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { buildOrder as engineOrder, showcaseScore, spaceType, SPACE_LABEL, type PhotoFacts } from '@/lib/photo-order'
-import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive, RefreshCw, Loader2, GripVertical, ChevronsUp, ChevronsDown, CornerLeftUp, X } from 'lucide-react'
+import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive, RefreshCw, Loader2, GripVertical, ChevronsUp, ChevronsDown, CornerLeftUp, X, LibraryBig } from 'lucide-react'
+import { LibraryPicker, type LibraryPick } from '@/components/LibraryPicker'
 
 type Photo = {
   _id: string; url: string; caption?: string; category?: string; reason?: string; kind?: string
@@ -134,6 +135,9 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   // They live in `photos`/`order` like any other photo and are pushed via photo-order's adds map.
   const [uploads, setUploads] = useState<Record<string, { orig: string }>>({})
   const [uploadingCount, setUploadingCount] = useState(0)
+  // FROM THE LIBRARY (Jon, 2026-10-27): photos another unit already has — the Elser lobby, the pool —
+  // staged exactly like uploads (Guesty copies them from their link on Push), so nothing is re-uploaded.
+  const [libOpen, setLibOpen] = useState(false)
   const [mirroring, setMirroring] = useState(false)
   const [capBusy, setCapBusy] = useState<Set<string>>(new Set())
   const [metaBusy, setMetaBusy] = useState<Set<string>>(new Set())
@@ -312,6 +316,21 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       finally { setUploadingCount(c => Math.max(0, c - 1)) }
     }
     if (fileRef.current) fileRef.current.value = ''
+  }
+
+  function addFromLibrary(picks: LibraryPick[]) {
+    if (!picks.length) return
+    setError(null); setPushedMsg(null); setOpen(true)
+    const stamp = Date.now()
+    picks.forEach((pk, i) => {
+      const id = `lib-${stamp}-${i}-${Math.random().toString(36).slice(2, 6)}`
+      setPhotos(prev => ({ ...prev, [id]: { _id: id, url: pk.url, caption: pk.caption || '', category: 'other', kind: 'library' } }))
+      setUploads(prev => ({ ...prev, [id]: { orig: pk.url } }))
+      setOrder(prev => [...prev, id])
+      setProposed(prev => [...prev, id])
+    })
+    setLibOpen(false)
+    setPushedMsg(`${picks.length} photo${picks.length === 1 ? '' : 's'} added from the library — place them, then Push to send them to Guesty.`)
   }
 
   // REPLACE an existing photo's image: pick a file, it's mirrored + enhanced like an upload, then
@@ -622,6 +641,11 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
             {uploadingCount > 0 ? <Sparkles size={15} className="animate-pulse" /> : <ImagePlus size={15} />}
             {uploadingCount > 0 ? `Uploading ${uploadingCount}\u2026` : 'Add photos'}
           </button>
+          <button onClick={() => setLibOpen(true)} disabled={uploadingCount > 0 || pushing}
+            title="Pick photos another unit already has — the building's lobby, pool, gym — and add them here without re-uploading; place and push them like any other photo"
+            className="inline-flex items-center gap-2 rounded-xl border border-line bg-white text-ink px-3.5 py-2.5 text-sm font-semibold hover:bg-app disabled:opacity-50">
+            <LibraryBig size={15} /> From library
+          </button>
           <button onClick={() => mirror()} disabled={mirroring || pushing}
             title="Back up every photo's untouched original to Stay storage — no changes, nothing pushed"
             className="inline-flex items-center gap-2 rounded-xl border border-line bg-white text-ink px-3.5 py-2.5 text-sm font-semibold hover:bg-app disabled:opacity-50">
@@ -843,7 +867,9 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                         {isHero && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 inline-flex items-center gap-0.5"><Star size={10} /> Cover</span>}
                         {(() => { const ci = heroCands.findIndex(c => c._id === id); return ci >= 0 && ci < 3 && !isHero ? <button onClick={() => setAsHero(id)} title={`Cover pick #${ci + 1} (score ${heroCands[ci].score}) — click to make it the cover`} className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-500 text-white inline-flex items-center gap-0.5"><Crown size={10} /> Cover pick #{ci + 1}</button> : null })()}
                         {p.kind === 'stock' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-800 inline-flex items-center gap-0.5"><MapPinned size={10} /> Stock</span>}
-                        {uploads[id] && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-sky-100 text-sky-800 inline-flex items-center gap-0.5"><ImagePlus size={10} /> New</span>}
+                        {uploads[id] && (p.kind === 'library'
+                          ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-violet-100 text-violet-800 inline-flex items-center gap-0.5" title="From the photo library — Guesty copies it from its link when you push"><LibraryBig size={10} /> Library</span>
+                          : <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-sky-100 text-sky-800 inline-flex items-center gap-0.5"><ImagePlus size={10} /> New</span>)}
                         {replaced[id] && <button onClick={() => undoReplace(id)} title="Image replaced — click to undo and keep the old photo" className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-violet-100 text-violet-800 inline-flex items-center gap-0.5"><RefreshCw size={10} /> Replaced</button>}
                         {removeList.some(r => r._id === id) && !toRemove.has(id) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-100 text-rose-700 inline-flex items-center gap-0.5"><Trash2 size={10} /> Suggest</span>}
                         {toRemove.has(id) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-600 text-white inline-flex items-center gap-0.5"><Trash2 size={10} /> Removing</span>}
@@ -973,6 +999,8 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
           onClose={() => setFiveOpen(false)}
         />
       )}
+      <LibraryPicker open={libOpen} onClose={() => setLibOpen(false)} onPick={addFromLibrary} startListingId={listingId} excludeListingId={listingId}
+        title={'Add photos to ' + name + ' from the library'} verb="Add" />
     </section>
   )
 }

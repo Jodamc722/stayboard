@@ -139,6 +139,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, row: view(out) })
   }
 
+  // FROM THE LIBRARY (Jon, 2026-10-27): photos another unit already has, by their Guesty links.
+  // They sit on the row like uploads and go up with the push; Guesty fetches each link itself.
+  if (action === 'photoAdd') {
+    const incoming: any[] = Array.isArray(body.photos) ? body.photos : []
+    const photos: any[] = Array.isArray(cur.data.photos) ? [...cur.data.photos] : []
+    const have = new Set(photos.map((p: any) => String(p?.url || '')))
+    let added = 0
+    for (const p of incoming) {
+      const url = String(p?.url || '').trim()
+      if (!/^https:\/\//.test(url) || have.has(url) || photos.length >= 120) continue
+      photos.push({ url, caption: String(p?.caption || '').trim().slice(0, 200) || undefined, from: 'library' })
+      have.add(url); added++
+    }
+    const data = { ...cur.data, photos }
+    const { data: out, error } = await sb.from('unit_intake').update({ data, updated_at: new Date().toISOString() }).eq('id', id).select('*').single()
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, added, row: view(out) })
+  }
+
   if (action === 'photos') {
     if (!cur.listing_id) return NextResponse.json({ error: 'Not in Guesty yet.' }, { status: 400 })
     try {

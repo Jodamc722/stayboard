@@ -39,7 +39,9 @@ export async function POST(req: NextRequest) {
   const raw: any = (row.raw && typeof row.raw === 'object') ? row.raw : {}
   const current: any[] = Array.isArray(raw.pictures) ? raw.pictures
     : (Array.isArray((row as any).pictures) ? (row as any).pictures : [])
-  if (current.length === 0) return NextResponse.json({ error: 'listing has no pictures' }, { status: 400 })
+  // A brand-new listing has no pictures yet; adds from the library or an upload are how it gets its
+  // first ones (Jon, 2026-10-27). Only a push with nothing to add needs something to reorder.
+  if (current.length === 0 && !Object.keys(adds).length) return NextResponse.json({ error: 'listing has no pictures' }, { status: 400 })
 
   // Reorder by _id; then drop any photos flagged in `remove`. Photos not named in `order` are appended
   // (we never silently drop) - `remove` is the ONLY way a photo leaves the listing.
