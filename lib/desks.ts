@@ -113,6 +113,7 @@ export const DESKS: Desk[] = [
     views: [
       { to: '/buildings', label: 'Properties', hint: 'Buildings and units: health, fix next, copy and photos; unit pages open from here', match: ['/listings', '/optimize', '/health'] },
       { to: '/channels', label: 'Channels', hint: 'Which listing is live on which channel, and what broke' },
+      { to: '/photos', label: 'Photos', hint: 'The photo library: every property and unit photo, full size — view, pick, download as a ZIP' },
     ],
   },
   {

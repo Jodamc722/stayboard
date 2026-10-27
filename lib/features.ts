@@ -118,6 +118,9 @@ export const FEATURES: Feature[] = [
   // disconnected, suspended or simply not connected — and the daily trigger behind it. View reads
   // the matrix; full runs the check by hand (Refresh). Admin/manager inherit full through '*'.
   { key: 'channels',      label: 'Channels',          path: '/channels', group: 'Listings' },
+  // The photo library (Jon, 2026-10-27): every property and unit photo as Guesty holds it — browse,
+  // view, download one or a ZIP. View reads and downloads; edit may rebuild the index.
+  { key: 'photo-library', label: 'Photo library',     path: '/photos', group: 'Listings' },
   // Lighthouse checking itself. Under Settings rather than Portfolio: it is about the app, not the
   // buildings, and the whole point of moving it off Slack and out of email was to stop app-health
   // noise landing where operational information lives.
