@@ -385,7 +385,7 @@ export async function GET(req: NextRequest) {
     const header = extended ? HEADER.concat(EXTENDED) : HEADER
     const outRows = rows.map(r => extended ? r.cells.concat(r.extra) : r.cells)
     const stamp = today.replace(/-/g, '')
-    const fname = 'botanica-bookings-' + (scope === 'all' ? 'all' : scope) + (withCancelled ? '-incl-cancelled' : '') + (extended ? '-extended' : '') + '-' + stamp
+    const fname = 'botanica-bookings-' + (scope === 'all' ? 'all' : scope) + (from || to ? '-checkin-' + (from || 'start') + '-to-' + (to || 'end') : '') + (withCancelled ? '-incl-cancelled' : '') + (extended ? '-extended' : '') + '-' + stamp
 
     if (format === 'csv') {
       const csv = [header.map(csvCell).join(',')].concat(outRows.map(r => r.map(csvCell).join(','))).join('\r\n')

@@ -18,6 +18,9 @@ const API = '/api/public/botanica-bookings'
 const BLUE = '#3f5ba9' // the template's header blue
 const MONEY_COLS = [18, 19]
 const PAGE = 300
+const iso = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+const addDays = (ymd: string, n: number) => { const d = new Date(ymd + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
+const monthStart = (ymd: string) => ymd.slice(0, 8) + '01'
 
 const money = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const when = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime()) ? iso : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }) }
@@ -53,12 +56,18 @@ export default function BotanicaBookingsPage() {
   const [scope, setScope] = useState<Scope>('all')
   const [withCancelled, setWithCancelled] = useState(false)
   const [q, setQ] = useState('')
+  // Date selector (Jon, 2026-10-27): check-in from / to. Empty = every booking.
+  const [fromD, setFromD] = useState('')
+  const [toD, setToD] = useState('')
   const [limit, setLimit] = useState(PAGE)
   const [showRules, setShowRules] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [bf, setBf] = useState<{ running: boolean; msg: string }>({ running: false, msg: '' })
 
-  const query = useMemo(() => 'scope=' + scope + '&status=' + (withCancelled ? 'all' : 'live'), [scope, withCancelled])
+  const query = useMemo(() => {
+    const lo = fromD && toD && fromD > toD ? toD : fromD, hi = fromD && toD && fromD > toD ? fromD : toD
+    return 'scope=' + scope + '&status=' + (withCancelled ? 'all' : 'live') + (lo ? '&from=' + lo : '') + (hi ? '&to=' + hi : '')
+  }, [scope, withCancelled, fromD, toD])
 
   const load = useCallback(async () => {
     try {
@@ -191,6 +200,29 @@ export default function BotanicaBookingsPage() {
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search name, email, room, confirmation…" className="text-xs border border-neutral-200 rounded-lg px-3 py-1.5 bg-white w-64 focus:outline-none focus:ring-2 focus:ring-sky-400/40" />
           <span className="text-xs text-neutral-500 ml-auto">{rows.length.toLocaleString()} row{rows.length === 1 ? '' : 's'}{c && c.duplicatesDropped ? ' · ' + c.duplicatesDropped + ' duplicate mirror row' + (c.duplicatesDropped === 1 ? '' : 's') + ' dropped' : ''}{data?.rooms ? ' · ' + data.rooms + ' Botanica listings' : ''}</span>
           <button type="button" onClick={() => setShowRules(s => !s)} className="text-xs font-medium text-neutral-600 underline-offset-2 hover:underline">{showRules ? 'Hide column rules' : 'How each column is filled'}</button>
+        </div>
+
+        {/* Date selector — check-in dates. Presets are buttons, never a menu. */}
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+          <span className="font-semibold text-neutral-600">Check-in</span>
+          <input type="date" value={fromD} onChange={e => setFromD(e.target.value)} className="border border-neutral-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-sky-400/40" aria-label="Check-in from" />
+          <span className="text-neutral-400">to</span>
+          <input type="date" value={toD} onChange={e => setToD(e.target.value)} className="border border-neutral-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-sky-400/40" aria-label="Check-in to" />
+          {(() => {
+            const t = data?.today || iso(new Date())
+            const ms = monthStart(t), nextMs = monthStart(addDays(ms, 32)), lastMs = monthStart(addDays(ms, -1))
+            const presets: [string, string, string, string][] = [
+              ['This month', ms, addDays(nextMs, -1), 'Check-ins this calendar month'],
+              ['Last month', lastMs, addDays(ms, -1), 'Check-ins last calendar month'],
+              ['Next 30 days', t, addDays(t, 30), 'Arrivals from today through 30 days out'],
+              ['Last 90 days', addDays(t, -90), t, 'Check-ins in the last 90 days'],
+            ]
+            return presets.map(([label, a, b, hint]) => {
+              const on = fromD === a && toD === b
+              return <button key={label} type="button" title={hint} onClick={() => { setFromD(a); setToD(b) }} className={'font-semibold px-2.5 py-1.5 rounded-lg border transition-colors ' + (on ? 'text-white border-transparent' : 'bg-white text-neutral-700 border-neutral-200 hover:border-neutral-300')} style={on ? { background: BLUE } : undefined}>{label}</button>
+            })
+          })()}
+          {fromD || toD ? <button type="button" onClick={() => { setFromD(''); setToD('') }} className="font-medium text-neutral-600 underline-offset-2 hover:underline">Clear dates</button> : <span className="text-neutral-400">all dates</span>}
         </div>
 
         {showRules && data?.rules ? (
