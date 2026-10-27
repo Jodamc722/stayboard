@@ -5103,14 +5103,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             <Slide nav="The technology" warn={edit} ground={GROUND.dark}>
               <div className="flex flex-col" style={{ height: '100%' }}>
                 <SalesHead k="maxrev" eyebrow="How we manage it" dark />
-                <div style={{ marginTop: 40, display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, mrRows.length) + ', 1fr)', gap: 22 }}>
+                <div style={{ margin: 'auto 0', paddingTop: 28, display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, mrRows.length) + ', 1fr)', gap: 22 }}>
                   {mrRows.map((r: Any, i: number) => { const f: Any = mrTools[i] || null; const logo = f ? houseLogo(f.logo, f.name) : ''; const wordmark = WORDMARK_LOGOS.indexOf(logo) >= 0; return (
                     <div key={i} className="flex flex-col" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 16, overflow: 'hidden' }}>
-                      <div className="flex items-center justify-center" style={{ background: '#fff', height: 86, padding: '0 18px' }}>
+                      <div className="flex items-center justify-center" style={{ background: '#fff', height: 104, padding: '0 18px' }}>
                         {f ? <StackMark logo={logo} mono={f.mono} name={f.name} accent={t.accent} card="#fff" border="#e5e7eb" bare lockup={!wordmark} height={28} ink="#111827" /> : null}
                       </div>
-                      <div style={{ padding: '20px 20px 22px' }}>
-                        <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: t.accent === '#fff' ? '#fff' : 'rgba(255,255,255,0.62)', margin: 0 }}>
+                      <div style={{ padding: '24px 22px 30px' }}>
+                        <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)', margin: 0 }}>
                           <Ed v={r.k || ''} set={v => patch('maxrev.rows.' + i + '.k', v)} edit={edit} />
                         </p>
                         <p style={{ fontSize: 17, lineHeight: 1.45, color: '#fff', margin: '10px 0 0' }}>
