@@ -5912,6 +5912,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // "Reset figures" in the toolbar drops them all.
           const OV: Record<string, string> = (c.ov && typeof c.ov === 'object') ? (c.ov as Any) : {}
           const ovKey = (k: string) => String(k).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 90)
+          /** The raw override typed for a key, or '' — so a figure derived from an overridden one
+           *  (the "8% under" under a typed delta) is derived from what the slide actually prints. */
+          const ovOf = (k: string): string => {
+            const key = ovKey(k)
+            return Object.prototype.hasOwnProperty.call(OV, key) ? String(OV[key]) : ''
+          }
           const O = (k: string, def: Any, ml?: boolean): Any => {
             const key = ovKey(k)
             const has = Object.prototype.hasOwnProperty.call(OV, key)
@@ -6117,8 +6123,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         <div className="flex" style={{ marginTop: 32, borderTop: '1px solid rgba(255,255,255,0.20)', paddingTop: 20 }}>
                           {cards.slice(0, 4).map((x: Any, i: number, arr: Any[]) => (
                             <div key={x.key || i} style={{ paddingRight: i === arr.length - 1 ? 0 : 44, marginRight: i === arr.length - 1 ? 0 : 44, borderRight: i === arr.length - 1 ? 'none' : '1px solid rgba(255,255,255,0.14)' }}>
-                              <span style={{ display: 'block', fontFamily: SERIF, fontWeight: 400, fontSize: 33, lineHeight: 1, letterSpacing: '-0.025em', fontVariantNumeric: 'tabular-nums', color: '#fff' }}>{O('cover_c' + i + '_v', cardValue(x, snapPrimary))}</span>
-                              <span style={{ display: 'block', fontSize: 9.5, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)', marginTop: 9 }}>{O('cover_c' + i + '_l', String(x.label || ''))}</span>
+                              <span style={{ display: 'block', fontFamily: SERIF, fontWeight: 400, fontSize: 33, lineHeight: 1, letterSpacing: '-0.025em', fontVariantNumeric: 'tabular-nums', color: '#fff' }}>{O('cover_c' + (x.key || i) + '_v', cardValue(x, snapPrimary))}</span>
+                              <span style={{ display: 'block', fontSize: 9.5, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)', marginTop: 9 }}>{O('cover_c' + (x.key || i) + '_l', String(x.label || ''))}</span>
                             </div>
                           ))}
                         </div>
@@ -6558,6 +6564,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             // keeps the old layout for a month worth dramatising, with the shortfall toned down to
             // the body colour. Switched per report in edit mode; stored on content.plan.view.
             const planView: 'simple' | 'bars' = String((plan as Any).view || '') === 'bars' ? 'bars' : 'simple'
+            /** This month's identity for override keys — the label without its year. */
+            const mKey = String(m0.label || '').replace(/\s+\d{4}$/, '')
             // "$$335" is sitting in stored rows on the Sept 28 report; print one sign whatever was stored.
             const one$ = (v: string) => String(v || '').replace(/\${2,}/g, '$')
             const softNeg = 'rgba(255,255,255,0.72)'
@@ -6603,16 +6611,27 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   {rows.map((r: Any, j: number) => {
                     const f = figures(r)
                     const neg = isNeg(r)
+                    // A TYPED FIGURE BELONGS TO A MONTH, NOT TO A POSITION (Jon, 2026-10-27: "look
+                    // at how it's adding up after I delete a month, look at rev, it's saying 2K,
+                    // wrong"). Overrides were keyed plan_<monthIndex>_<rowIndex>, so deleting a
+                    // month slid every later month up one and handed its typed figures to whoever
+                    // now sat at that index — October printed a +$2K that had been typed for
+                    // another month, while the percent line beneath it, computed live, read 8%
+                    // under. Keyed by the month's own name and the row's own metric, a typed
+                    // figure stays on the line it was typed on however the months are edited.
+                    // Keys written the old way are simply never asked for again, so those figures
+                    // fall back to the computed truth rather than printing on the wrong row.
+                    const rk = 'plan_' + mKey + '_' + String(r.metric || j)
                     const mag = Math.min(0.46, (share(r) / span) * 0.44)
                     const pl = f.plan
                     if (planView === 'simple') return (
                       <div key={j} style={{ display: 'grid', gridTemplateColumns: '120px 190px minmax(0,1fr) 150px', gap: 24, alignItems: 'baseline', padding: '13px 0', borderTop: j ? '1px solid ' + D.rule : 'none' }}>
                         <span style={{ fontSize: 13, color: D.muted }}><Ed v={String(r.metric || '')} set={v => patch('plan.months.' + ix + '.rows.' + j + '.metric', v)} edit={edit} /></span>
-                        <span style={{ fontFamily: SERIF, fontSize: 24, letterSpacing: '-0.02em', color: D.ink, fontVariantNumeric: 'tabular-nums' }}>{O('plan_' + ix + '_' + j + '_actual', one$(f.actual) || '—')}</span>
+                        <span style={{ fontFamily: SERIF, fontSize: 24, letterSpacing: '-0.02em', color: D.ink, fontVariantNumeric: 'tabular-nums' }}>{O(rk + '_actual', one$(f.actual) || '—')}</span>
                         <span style={{ fontSize: 13, color: D.muted, fontVariantNumeric: 'tabular-nums' }}>{edit ? <>Budget <Ed v={String(r.plan || pl || '')} set={v => patch('plan.months.' + ix + '.rows.' + j + '.plan', v)} edit /></> : (pl ? 'Budget ' + one$(pl) : '')}</span>
                         <span style={{ textAlign: 'right' }}>
-                          <span style={{ display: 'block', fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', color: deltaColor(neg, !!f.delta) }}>{O('plan_' + ix + '_' + j + '_delta', one$(f.delta) || '—')}</span>
-                          <span style={{ display: 'block', fontSize: 11, color: D.muted, marginTop: 2 }}>{O('plan_' + ix + '_' + j + '_pct', pctOf(f, String(r.metric || '')))}</span>
+                          <span style={{ display: 'block', fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', color: deltaColor(neg, !!f.delta) }}>{O(rk + '_delta', one$(f.delta) || '—')}</span>
+                          <span style={{ display: 'block', fontSize: 11, color: D.muted, marginTop: 2 }}>{O(rk + '_pct', pctOf({ plan: f.plan, delta: ovOf(rk + '_delta') || f.delta }, String(r.metric || '')))}</span>
                         </span>
                       </div>
                     )
@@ -6620,7 +6639,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       <div key={j} style={{ display: 'grid', gridTemplateColumns: '236px minmax(0,1fr) 112px', gap: 24, alignItems: 'center', padding: '12px 0', borderTop: j ? '1px solid ' + D.rule : 'none' }}>
                         <div className="flex items-baseline" style={{ gap: 10 }}>
                           <span style={{ fontSize: 13, color: D.muted, width: 84, flexShrink: 0 }}><Ed v={String(r.metric || '')} set={v => patch('plan.months.' + ix + '.rows.' + j + '.metric', v)} edit={edit} /></span>
-                          <span style={{ fontFamily: SERIF, fontSize: 21, letterSpacing: '-0.02em', color: D.ink, fontVariantNumeric: 'tabular-nums' }}>{O('plan_' + ix + '_' + j + '_actual', one$(f.actual) || '—')}</span>
+                          <span style={{ fontFamily: SERIF, fontSize: 21, letterSpacing: '-0.02em', color: D.ink, fontVariantNumeric: 'tabular-nums' }}>{O(rk + '_actual', one$(f.actual) || '—')}</span>
                           {(pl || edit) ? <span style={{ fontSize: 11.5, color: D.muted, fontVariantNumeric: 'tabular-nums' }}>{edit ? <>vs <Ed v={String(r.plan || pl || '')} set={v => patch('plan.months.' + ix + '.rows.' + j + '.plan', v)} edit /></> : 'vs ' + one$(pl)}</span> : null}
                         </div>
                         <ChartTip dark title={String(r.metric || '')} rows={[
@@ -6640,7 +6659,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             }} />
                           </div>
                         </ChartTip>
-                        <p style={{ fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', textAlign: 'right', margin: 0, fontVariantNumeric: 'tabular-nums', color: deltaColor(neg, !!f.delta) }}>{O('plan_' + ix + '_' + j + '_delta', one$(f.delta) || '—')}</p>
+                        <p style={{ fontFamily: SERIF, fontSize: 22, letterSpacing: '-0.02em', textAlign: 'right', margin: 0, fontVariantNumeric: 'tabular-nums', color: deltaColor(neg, !!f.delta) }}>{O(rk + '_delta', one$(f.delta) || '—')}</p>
                       </div>
                     )
                   })}
@@ -6648,7 +6667,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 {(m0.note || edit) ? <p style={{ fontSize: 13.5, lineHeight: 1.6, color: D.body, margin: '16px 0 0', maxWidth: '80ch' }}><Ed v={String(m0.note || '')} set={v => patch('plan.months.' + ix + '.note', v)} edit={edit} multiline placeholder="A line about this month (optional)" /></p> : null}
                 {isLiveMonth && hasBasisRaw(SM) ? (
                   <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: D.muted, margin: '14px 0 0' }}>
-                    {O('plan_live_' + ix, String(m0.label || '').replace(/\s+\d{4}$/, '') + ' is live — ' + BASIS_NOTE[planBasis].toLowerCase() + ', against the budget')}
+                    {O('plan_live_' + mKey, String(m0.label || '').replace(/\s+\d{4}$/, '') + ' is live — ' + BASIS_NOTE[planBasis].toLowerCase() + ', against the budget')}
                   </p>
                 ) : null}
                 {edit && (
@@ -6703,9 +6722,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       </div>
                       {rows.map((m: Any, i: number) => (
                         <div key={i} style={{ display: 'grid', gridTemplateColumns: g, gap: 10, padding: '9px 0', borderBottom: '1px solid ' + tint(0.07) }}>
-                          <p style={{ fontSize: 13.5, color: t.ink, margin: 0, fontWeight: 500 }}>{O('stmt_' + i + '_m', String(m.label || m.month || ''))}</p>
+                          <p style={{ fontSize: 13.5, color: t.ink, margin: 0, fontWeight: 500 }}>{O('stmt_' + (m.month || m.label || i) + '_m', String(m.label || m.month || ''))}</p>
                           {['rental', 'commission', 'other', 'net', 'paid'].map(k => (
-                            <p key={k} style={{ fontSize: 13.5, color: k === 'net' ? t.ink : tint(0.62), fontWeight: k === 'net' ? 500 : 400, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{O('stmt_' + i + '_' + k, money0(m[k]))}</p>
+                            <p key={k} style={{ fontSize: 13.5, color: k === 'net' ? t.ink : tint(0.62), fontWeight: k === 'net' ? 500 : 400, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{O('stmt_' + (m.month || m.label || i) + '_' + k, money0(m[k]))}</p>
                           ))}
                         </div>
                       ))}
@@ -6784,9 +6803,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       const bits = [x.nights ? x.nights + ' nights' : '', x.revenue ? x.revenue + ' gross' : '', x.res ? x.res + ' stays' : ''].filter(Boolean)
                       return (
                         <div key={i} style={{ paddingTop: 14, borderTop: '2px solid ' + (i === curIx ? t.accent : tint(0.14)) }}>
-                          <Lbl ok={'ahead_' + i + '_l'}>{String(x.full || x.month || '')}</Lbl>
-                          <div style={{ marginTop: 10 }}><Fig size={36} ok={'ahead_' + i + '_v'}>{Math.round(pct) + '%'}</Fig></div>
-                          <p style={{ fontSize: 12.5, color: tint(0.45), margin: '8px 0 0', fontVariantNumeric: 'tabular-nums' }}>{O('ahead_' + i + '_s', bits.length ? 'booked · ' + bits.join(' · ') : 'booked so far')}</p>
+                          <Lbl ok={'ahead_' + (x.month || i) + '_l'}>{String(x.full || x.month || '')}</Lbl>
+                          <div style={{ marginTop: 10 }}><Fig size={36} ok={'ahead_' + (x.month || i) + '_v'}>{Math.round(pct) + '%'}</Fig></div>
+                          <p style={{ fontSize: 12.5, color: tint(0.45), margin: '8px 0 0', fontVariantNumeric: 'tabular-nums' }}>{O('ahead_' + (x.month || i) + '_s', bits.length ? 'booked · ' + bits.join(' · ') : 'booked so far')}</p>
                         </div>
                       )
                     })}
@@ -6806,9 +6825,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         ['Nights on the books', String(x.nights || '')],
                         ['Reservations', String(x.res || '')],
                       ]} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
-                        <Fig size={26} ok={'ahead_' + i + '_v'}>{Math.round(pct) + '%'}</Fig>
-                        <span style={{ marginTop: 9, borderRadius: '4px 4px 0 0', background: i === curIx ? t.accent : tint(0.22), height: Math.max(4, ((OV[ovKey('ahead_' + i + '_v')] != null ? (parseFloat(String(OV[ovKey('ahead_' + i + '_v')])) || 0) : pct) / 100) * 142) }} />
-                        <span style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: tint(0.45), marginTop: 12 }}>{O('ahead_' + i + '_m', String(x.month || ''))}</span>
+                        <Fig size={26} ok={'ahead_' + (x.month || i) + '_v'}>{Math.round(pct) + '%'}</Fig>
+                        <span style={{ marginTop: 9, borderRadius: '4px 4px 0 0', background: i === curIx ? t.accent : tint(0.22), height: Math.max(4, ((ovOf('ahead_' + (x.month || i) + '_v') ? (parseFloat(ovOf('ahead_' + (x.month || i) + '_v')) || 0) : pct) / 100) * 142) }} />
+                        <span style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: tint(0.45), marginTop: 12 }}>{O('ahead_' + (x.month || i) + '_m', String(x.month || ''))}</span>
                         {/* The rate used to print here AND in the hover card. One of them had to go,
                             and the hover is the one that can hold the whole row. */}
                       </ChartTip>
@@ -7087,7 +7106,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     <div style={{ marginTop: 22, display: 'grid', gridTemplateColumns: 'repeat(' + Math.min(3, Math.max(1, groups.length)) + ', minmax(0,1fr))', gap: '22px 34px', flex: '0 1 auto', minHeight: 0 }}>
                       {groups.slice(0, 6).map((g: Any, i: number) => (
                         <div key={i} style={{ paddingTop: 14, borderTop: '1px solid ' + tint(0.22) }}>
-                          <Lbl>{g.manualIdx != null ? <Ed v={String(g.category || '')} set={v => patch('projects.manual.' + g.manualIdx + '.category', v)} edit={edit} /> : O('work_' + i + '_cat', String(g.category || ''))}</Lbl>
+                          <Lbl>{g.manualIdx != null ? <Ed v={String(g.category || '')} set={v => patch('projects.manual.' + g.manualIdx + '.category', v)} edit={edit} /> : O('work_' + (g.category || i) + '_cat', String(g.category || ''))}</Lbl>
                           <div style={{ marginTop: 10 }}>
                             {(g.items || []).slice(0, perGroup).map((it: string, j: number) => (
                               <p key={j} style={{ fontSize: 13, lineHeight: 1.55, color: tint(0.62), margin: '0 0 6px', position: 'relative' }}>
@@ -7097,7 +7116,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                                 ) : null}
                                 {g.manualIdx != null && j < (manual[g.manualIdx]?.items || []).length
                                   ? <Ed v={String(it)} set={v => patch('projects.manual.' + g.manualIdx + '.items.' + j, v)} edit={edit} multiline />
-                                  : O('work_' + i + '_' + j, String(it), true)}
+                                  : O('work_' + (g.category || i) + '_' + j, String(it), true)}
                               </p>
                             ))}
                             {(g.items || []).length > perGroup ? <p style={{ fontSize: 12, color: tint(0.35), margin: 0 }}>+{(g.items || []).length - perGroup} more</p> : null}

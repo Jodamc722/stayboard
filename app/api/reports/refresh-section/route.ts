@@ -126,6 +126,17 @@ export async function POST(req: NextRequest) {
       months: next.months.map(m => (noteOf[m.label] ? { ...m, note: noteOf[m.label] } : m)),
       ...(old.view ? { view: old.view } : {}),
     }
+    // TYPED-OVER FIGURES ON THIS SLIDE GO WITH THE FIGURES (2026-10-27). A refresh says the
+    // numbers are rebuilt from source; an override sitting in front of one would quietly keep
+    // printing the old answer over the new one. Only the figures are dropped — the slide's copy
+    // (its title, the month notes, the live-month line) is keyed separately and stays. The
+    // legacy plan_<monthIndex>_<rowIndex>_* keys are dropped too: those are from before
+    // overrides were keyed by month and metric, and they belong to a position, not a row.
+    if (content.ov && typeof content.ov === 'object') {
+      for (const k of Object.keys(content.ov)) {
+        if (/^plan_\d+_\d+_/.test(k) || /^plan_.+_(actual|delta|pct)$/.test(k)) delete content.ov[k]
+      }
+    }
     summary = next.months.length + ' budget month' + (next.months.length === 1 ? '' : 's')
       + ' rebuilt (' + next.months.map(m => m.label).join(', ') + ').'
   }
