@@ -23,7 +23,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { etToday } from '@/lib/owner-report'
 import { BASIS_NOTE } from '@/lib/basis'
-import { proofListings, proofRows, monthLabel as mLabel } from '@/lib/sales-proof'
+import { proofListings, proofRows, monthLabel as mLabel, ownersForListings, completedMonths, ownerRevenueRows } from '@/lib/sales-proof'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { requireLevel } from '@/lib/access'
 
@@ -84,6 +84,43 @@ export async function GET(req: NextRequest) {
     scopeName = str(o.full_name)
   }
 
+  // ── REAL OWNER REVENUE (the default) ──────────────────────────────────────
+  // Jon, 2026-10-27: the slide should read the completed owner statements, by owner, property or
+  // listing, and carry gross owner revenue before our fee and the in-pocket figure after it —
+  // never an expense. See lib/sales-proof for why `pocket` is rental minus commission and
+  // deliberately not the statement's own net.
+  if (str(sp.get('source') || 'statements') === 'statements') {
+    const fromM = from.slice(0, 7), toM = to.slice(0, 7)
+    const listingScope = ids.length ? ids : (await proofListings({ building })).map(l => String(l.id))
+    const owners = ownerId ? [ownerId] : await ownersForListings(listingScope)
+    if (!owners.length) {
+      return NextResponse.json({ error: 'No owner on record for that scope — pick an owner, or switch the source to bookings.' }, { status: 400 })
+    }
+    const months = await completedMonths(owners, fromM, toM)
+    if (!months.length) {
+      return NextResponse.json({ error: 'No completed owner statements between ' + fromM + ' and ' + toM + '.' }, { status: 400 })
+    }
+    const { rows, totals } = await ownerRevenueRows(owners, months, ownerId ? undefined : listingScope)
+    if (!rows.length) {
+      return NextResponse.json({ error: 'Those statements carry no rental revenue for that scope.' }, { status: 400 })
+    }
+    if (!scopeName) scopeName = building ? rollupBuilding(building) : rows.length + ' propert' + (rows.length === 1 ? 'y' : 'ies')
+    return NextResponse.json({
+      ok: true,
+      source: 'statements',
+      scope: (names && ownerId ? scopeName : (building ? rollupBuilding(building) : scopeName)),
+      names,
+      window: mLabel(months[0] + '-01') + ' \u2013 ' + mLabel(months[months.length - 1] + '-01'),
+      statements: months.length,
+      rows,
+      totals,
+      basis: {
+        gross: 'Rental revenue recognised to the owner, before our management fee',
+        net: 'After our management fee. No expenses of any kind are included.',
+      },
+    })
+  }
+
   const picked = await proofListings(ids.length ? { listingIds: ids } : { building })
   if (!picked.length) return NextResponse.json({ error: 'Nothing to pull — pick an owner, a building or some listings.' }, { status: 400 })
   if (!scopeName) scopeName = building ? rollupBuilding(building) : (picked.length === 1 ? str(picked[0].nickname || picked[0].title) : picked.length + ' listings')
@@ -96,6 +133,7 @@ export async function GET(req: NextRequest) {
     names,
     window: mLabel(from) + ' – ' + mLabel(to),
     from, to,
+    source: 'bookings',
     rows,
     totals,
     // So the slide can say which two bases it is printing, in the words the reports use.

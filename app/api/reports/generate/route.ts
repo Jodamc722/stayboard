@@ -28,6 +28,7 @@ import { projectionSectionFor } from '@/lib/projections'
 import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type ListingCard, type KV } from '@/lib/onboarding-report'
 import { buildSalesContent } from '@/lib/sales-deck'
 import { proofListings, proofRows, monthLabel as proofMonth } from '@/lib/sales-proof'
+import { marketIntel } from '@/lib/sales-market'
 import { getSetting } from '@/lib/app-settings'
 import { SALES_CONTACT_KEY, type SalesContactSetting } from '@/lib/sales-copy'
 import { linenDeckFor } from '@/lib/linen-deck'
@@ -249,8 +250,34 @@ export async function POST(req: NextRequest) {
       if (v) contactIn[k] = v
     }
 
+    // WHAT THE DESK ASKED BEFORE GENERATING (Jon, 2026-10-27: "it should ask you some basic
+    // questions, maybe property address, building name, number of units, bed type"). The answers
+    // build the property slide, and the bedroom count picks the comparable set the market slide is
+    // measured against.
+    const intakeIn = (body?.intake && typeof body.intake === 'object') ? body.intake : {}
+    const intake: Record<string, string> = {}
+    for (const k of ['address', 'building', 'kind', 'units', 'bedrooms', 'baths', 'sleeps', 'beds', 'furnished', 'goal']) {
+      const v = str((intakeIn as any)[k]).slice(0, 160)
+      if (v) intake[k] = v
+    }
+    // THEIR MARKET, MEASURED FROM OUR OWN BOOK (lib/sales-market). The market comes from the
+    // building this deck was scoped to, or from what the desk was told; with neither we have
+    // nothing honest to put on the slide and it stays out.
+    let intel = null
+    try {
+      const bedN = intake.bedrooms ? Number(intake.bedrooms) : (cards[0] && cards[0] ? null : null)
+      intel = await marketIntel({
+        market: str(body?.market),
+        building: sListings.length ? sListings[0].building : intake.building,
+        bedrooms: Number.isFinite(Number(bedN)) ? Number(bedN) : null,
+        to: asOf,
+      })
+    } catch { intel = null }
+
     const contentS = buildSalesContent(tplS, {
       length: str(body?.length) === 'full' ? 'full' : 'short',
+      intake,
+      intel,
       scopeLabel,
       asOf,
       market: marketS,

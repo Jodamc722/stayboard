@@ -31,7 +31,7 @@ import {
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
 } from '@/lib/onboarding-copy'
-import { MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME } from '@/lib/sales-copy'
+import { MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS } from '@/lib/sales-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, seasonBodyStale } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
@@ -2150,6 +2150,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const [pfBuilding, setPfBuilding] = useState('')
   const [pfMonths, setPfMonths] = useState(12)
   const [pfNames, setPfNames] = useState(false)
+  /** Real owner revenue is the default; the booking mirror is there for a scope with no owner. */
+  const [pfSource, setPfSource] = useState<'statements' | 'bookings'>('statements')
   const [pfBusy, setPfBusy] = useState(false)
   const [pfMsg, setPfMsg] = useState('')
   async function loadProofScopes() {
@@ -2169,7 +2171,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
       const q = '/api/reports/proof?from=' + from.toISOString().slice(0, 10) + '&to=' + to.toISOString().slice(0, 10)
         + (pfOwner ? '&owner=' + encodeURIComponent(pfOwner) : '')
         + (pfBuilding ? '&building=' + encodeURIComponent(pfBuilding) : '')
-        + (pfNames ? '&names=1' : '')
+        + (pfNames ? '&names=1' : '') + '&source=' + pfSource
       const d = await fetch(q).then(r => r.json())
       if (d?.ok && Array.isArray(d.rows)) {
         mutate((dr: Any) => {
@@ -2177,6 +2179,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           dr.proof.rows = d.rows; dr.proof.totals = d.totals
           dr.proof.scope = pfNames ? String(d.scope || '') : ''
           dr.proof.window = String(d.window || ''); dr.proof.names = pfNames
+          dr.proof.source = String(d.source || pfSource)
           if (Array.isArray(dr.omit)) dr.omit = dr.omit.filter((k: string) => k !== 'proof')
         })
         setPfMsg(d.rows.length + ' propert' + (d.rows.length === 1 ? 'y' : 'ies') + ' pulled — review, then Save.')
@@ -3759,6 +3762,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   <option value="">By building…</option>
                   {(pfScopes?.buildings || []).map(b => <option key={b} value={b}>{b}</option>)}
                 </select>
+                <select value={pfSource} onChange={e => setPfSource(e.target.value === 'bookings' ? 'bookings' : 'statements')}
+                  style={{ fontSize: 12.5, padding: '6px 8px', borderRadius: 8, border: '1px solid ' + t.cardBorder, background: t.card, color: t.ink }}>
+                  <option value="statements">From completed owner statements</option>
+                  <option value="bookings">From the booking mirror</option>
+                </select>
                 <select value={String(pfMonths)} onChange={e => setPfMonths(Number(e.target.value) || 12)}
                   style={{ fontSize: 12.5, padding: '6px 8px', borderRadius: 8, border: '1px solid ' + t.cardBorder, background: t.card, color: t.ink }}>
                   {[3, 6, 12, 24].map(m => <option key={m} value={m}>Last {m} months</option>)}
@@ -3956,7 +3964,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             )
           })
 
-          const slides: { key: string; node: React.ReactNode; ai?: boolean }[] = []
+          let slides: { key: string; node: React.ReactNode; ai?: boolean }[] = []
 
           // ── 1 · WELCOME — split, photo bleeding right ──────────────────────
           if (!hid('welcome')) slides.push({ key: 'welcome', ai: true, node: (
@@ -4062,6 +4070,56 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             </Slide>
           ) }) }
 
+          // ── 1b · THEIR PROPERTY (Jon, 2026-10-27: "a clean, streamlined deck that shows
+          // their listing... It should have photos"). The second slide of a proposal is the
+          // prospect's own property: the only subject they are certain to care about, and the
+          // fastest proof the deck was made for them rather than printed in a stack. The facts
+          // come from what the desk asked before generating; a blank one does not print, and with
+          // nothing written and no photographs the slide stays out of the deck entirely.
+          if (!hid('property')) { const pp: Any = sec('property')
+            const ppFacts: Any[] = (pp.facts || []) as Any[]
+            const ppShown = edit ? ppFacts : ppFacts.filter((f: Any) => String(f.v || '').trim())
+            const ppPhotos: string[] = ((pp.photos || []) as string[]).filter(Boolean)
+            if (ppShown.length || ppPhotos.length) slides.push({ key: 'property', ai: true, node: (
+            <Slide nav="Your property" warn={edit}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <div className="flex-1 min-h-0 flex" style={{ gap: 40, paddingBottom: 18 }}>
+                  <div className="flex flex-col min-h-0" style={{ width: 330, flexShrink: 0 }}>
+                    <Title k="property" narrow />
+                    {(pp.body || edit) ? (
+                      <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder }}>
+                        <Ed v={pp.body || ''} set={v => patch('property.body', v)} edit={edit} multiline placeholder="A line about this property (optional)" />
+                      </p>
+                    ) : null}
+                    <div style={{ display: 'grid', gap: 13, marginTop: 20 }}>
+                      {ppShown.map((f: Any) => { const i = ppFacts.indexOf(f); return (
+                        <div key={i}>
+                          <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.accent, margin: 0 }}>
+                            <Ed v={f.k || ''} set={v => patch('property.facts.' + i + '.k', v)} edit={edit} />
+                          </p>
+                          <p style={{ fontSize: 14, lineHeight: 1.5, color: t.ink, margin: '4px 0 0' }}>
+                            <Ed v={f.v || ''} set={v => patch('property.facts.' + i + '.v', v)} edit={edit} multiline
+                              placeholder={PROPERTY_FACT_HINTS[String(f.k || '')] || ''} />
+                          </p>
+                        </div>
+                      ) })}
+                    </div>
+                  </div>
+                  {/* FOUR FRAMES, THE FIRST ONE LARGE — the order a guest meets them in, which is
+                      the order that decides whether this property books. */}
+                  <div className="flex-1 min-w-0" style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gridTemplateRows: '1fr 1fr', gap: 12 }}>
+                    {[0, 1, 2].map(n => (
+                      <Pick key={n} title={'Photo ' + (n + 1)} cur={String(ppPhotos[n] || '')}
+                        set={u => mutate((d: Any) => { d.property = d.property || {}; const ph = (d.property.photos = Array.isArray(d.property.photos) ? d.property.photos : []); while (ph.length <= n) ph.push(''); ph[n] = u })}
+                        style={{ width: '100%', height: '100%', borderRadius: 12, border: '1px solid ' + t.cardBorder, ...(n === 0 ? { gridRow: 'span 2' } : {}) }} />
+                    ))}
+                  </div>
+                </div>
+                <Foot label="Your property" />
+              </div>
+            </Slide>
+          ) }) }
+
           // ── 1c · THEIR PROPERTY, THEIR MARKET (Jon, 2026-10-27: "customization features:
           // talking about the property, the market, the area"). Four prompts the presenter fills
           // for the property in front of them.
@@ -4071,7 +4129,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // someone's own neighbourhood cost more trust than a shorter deck does.
           if (!hid('market')) { const mkRows: Any[] = (sec('market').rows || []) as Any[]
             const mkShown = edit ? mkRows : mkRows.filter((r: Any) => String(r.v || '').trim())
-            if (mkShown.length) slides.push({ key: 'market', ai: true, node: (
+            // THE MEASURED HALF (Jon, 2026-10-27: "it should show our expertise and understanding
+            // of the market"). Built by lib/sales-market from our own book in their market, at
+            // their property's size where we run three or more of them. Twelve months of real
+            // occupancy and rate is the only market claim we can be held to, and it is a better
+            // one than any index: these are nights we actually sold down the street.
+            const mi: Any = sec('market').intel || null
+            const miMonths: Any[] = mi && Array.isArray(mi.months) ? mi.months : []
+            if (mkShown.length || miMonths.length) slides.push({ key: 'market', ai: true, node: (
             <Slide nav="Your market" warn={edit} ground={GROUND.tint}>
               <div className="flex flex-col" style={{ height: '100%' }}>
                 <Split k="market" leftW={320}
@@ -4081,6 +4146,37 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   ) : null}
                   right={
                     <div style={{ display: 'grid', gap: 16 }}>
+                      {miMonths.length ? (
+                        <div>
+                          <div className="flex items-baseline" style={{ gap: 30, flexWrap: 'wrap' }}>
+                            {([['Occupancy', 'occ'], ['ADR', 'adr'], ['RevPAR', 'revpar'], ['Gross per unit', 'grossPerUnit']] as const).map(([lbl, k]) => (
+                              <div key={lbl}>
+                                <p style={{ fontFamily: SERIF, fontSize: 26, letterSpacing: '-0.02em', color: t.ink, margin: 0, fontVariantNumeric: 'tabular-nums' }}>{String(mi[k] || '—')}</p>
+                                <p style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: '5px 0 0' }}>{lbl}</p>
+                              </div>
+                            ))}
+                          </div>
+                          <p style={{ fontSize: 11.5, color: t.muted, margin: '10px 0 0' }}>
+                            {'Our ' + mi.units + (mi.basis === 'size' && mi.bedrooms != null ? ' ' + (Number(mi.bedrooms) === 0 ? 'studio' : mi.bedrooms + '-bedroom') : '') + ' unit' + (mi.units === 1 ? '' : 's') + ' in ' + mi.label + ' · ' + mi.window}
+                          </p>
+                          {/* THE SHAPE OF THE YEAR. Occupancy by month, measured, with the peak
+                              lit — an owner's first question about a market is when it fills. */}
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + miMonths.length + ', 1fr)', gap: 5, alignItems: 'end', height: 92, marginTop: 18 }}>
+                            {miMonths.map((m: Any, i: number) => (
+                              <span key={i} title={String(m.label) + ' · ' + Math.round(Number(m.occPct) || 0) + '% · ' + String(m.adr || '')}
+                                style={{ display: 'block', height: Math.max(3, (Math.max(0, Math.min(100, Number(m.occPct) || 0)) / 100) * 88), borderRadius: '3px 3px 0 0', background: m.peak ? t.accent : inkA(t.ink, 0.26) }} />
+                            ))}
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + miMonths.length + ', 1fr)', gap: 5, marginTop: 7 }}>
+                            {miMonths.map((m: Any, i: number) => (
+                              <span key={i} style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '0.04em', color: m.peak ? t.ink : t.muted, textAlign: 'center' }}>{String(m.label).slice(0, 1)}</span>
+                            ))}
+                          </div>
+                          <p style={{ fontSize: 12, color: t.body, margin: '14px 0 0' }}>
+                            {'Peak ' + mi.peakLabel + ', quietest ' + mi.lowLabel + '. Occupancy by month, on our own bookings.'}
+                          </p>
+                        </div>
+                      ) : null}
                       {mkShown.map((f: Any, i: number) => (
                         <div key={i} style={{ borderTop: '1px solid ' + t.cardBorder, paddingTop: 11 }}>
                           <p style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.accent }}>
@@ -4774,18 +4870,30 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                             widens the window or exports. */}
                         {pr.totals ? (
                           <div className="flex" style={{ gap: 38, paddingBottom: 16, marginBottom: 14, borderBottom: '1px solid ' + t.rule }}>
-                            {([['Gross revenue', 'gross'], ['Net of fees', 'net'], ['Occupancy', 'occ'], ['Properties', '']] as const).map(([lbl, k]) => (
+                            {([['Gross revenue', 'gross'], ['Net of fees', 'net'], ['Occupancy', 'occ'], ['Properties', '']] as const)
+                              // Occupancy has no honest denominator on the ledger, so a statement
+                              // pull shows the property count where it would have sat.
+                              .filter(([, k]) => !(String(pr.source || '') !== 'bookings' && k === 'occ'))
+                              .map(([lbl, k]) => (
                               <div key={lbl}>
                                 <p style={{ fontFamily: SERIF, fontSize: 30, letterSpacing: '-0.02em', color: t.ink, margin: 0, fontVariantNumeric: 'tabular-nums' }}>
                                   {k ? String((pr.totals || {})[k] || '—') : String(prRows.length)}
                                 </p>
-                                <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: '6px 0 0' }}>{lbl}</p>
+                                <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: '6px 0 0' }}>
+                                  {String(pr.source || '') === 'bookings' ? lbl
+                                    : lbl === 'Gross revenue' ? 'Owner revenue'
+                                    : lbl === 'Net of fees' ? 'After our fee' : lbl}
+                                </p>
                               </div>
                             ))}
                           </div>
                         ) : null}
                         <div style={{ display: 'grid', gridTemplateColumns: '1.5fr repeat(5, 1fr)', gap: 10, paddingBottom: 8, borderBottom: '1px solid ' + t.rule }}>
-                          {['Property', 'Gross', 'Net of fees', 'Occ', 'ADR', 'Nights'].map((h, i) => (
+                          {(String(pr.source || '') === 'bookings'
+                            ? ['Property', 'Gross', 'Net of fees', 'Occ', 'ADR', 'Nights']
+                            // Real owner revenue off the completed statements: what the owner
+                            // grossed, and what reached them after our fee. Never an expense.
+                            : ['Property', 'Owner revenue', 'After our fee', 'Occ', 'ADR', 'Nights']).map((h, i) => (
                             <p key={h} style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: i === 0 ? 'left' : 'right' }}>{h}</p>
                           ))}
                         </div>
@@ -6520,6 +6628,20 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             ) })
           })
 
+          // THE PROSPECT'S PROPERTY LEADS A PROPOSAL (Jon, 2026-10-27). The onboarding deck is
+          // ordered the way a kickoff call runs — company first, because the owner has already
+          // signed. A proposal is the other way round: their property, their market, what it could
+          // earn, what properties like theirs do earn, and only then who we are. Sorted here
+          // rather than by moving the pushes, so the onboarding deck keeps its own order and one
+          // list in lib/sales-copy stays the single answer to "what order is this deck in".
+          if (isSales) {
+            const rank = (k: string) => { const ix = SALES_ORDER.indexOf(k); return ix < 0 ? SALES_ORDER.length : ix }
+            slides = slides
+              .map((sl, ix) => ({ sl, ix }))
+              .sort((a, b) => rank(a.sl.key) - rank(b.sl.key) || a.ix - b.ix)
+              .map(x => x.sl)
+          }
+
           return (
             <TextScale.Provider value={textScale}>
               {slides.map((sl, i) => (
@@ -6881,7 +7003,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             )
           })
 
-          const slides: { key: string; node: React.ReactNode; ai?: boolean }[] = []
+          let slides: { key: string; node: React.ReactNode; ai?: boolean }[] = []
           const next = () => slides.length + 1
 
           // ── 1 · COVER ─────────────────────────────────────────────────────

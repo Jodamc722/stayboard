@@ -32,6 +32,7 @@ import {
   ONB_HEADLINE, ONB_SUBTITLE, ONB_BODY, ONB_STEPS, ONB_NOTE, type Step,
   GPO_HEADLINE, GPO_SUBTITLE, GPO_BODY, GPO_ROWS, GPO_NOTE,
   MARKET_HEADLINE, MARKET_SUBTITLE, MARKET_PROMPTS,
+  PROPERTY_HEADLINE, PROPERTY_SUBTITLE, PROPERTY_BODY, PROPERTY_FACTS,
   CLOSE_HEADLINE, CLOSE_SUBTITLE, CLOSE_ROWS, CLOSE_NOTE,
   VIDEO_HEADLINE, VIDEO_SUBTITLE, VIDEO_BODY,
   SALES_AGENDA, shortOmit, SALES_HERO, SALES_WELCOME,
@@ -44,6 +45,15 @@ import {
 /** The sales-only sections, laid over an onboarding document. Every one is optional, so an
  *  onboarding deck generated before today renders exactly as it did — the slides are gated on the
  *  section being present, not on the document's kind. */
+/** The measured half of the market slide. Mirrors lib/sales-market's MarketIntel, minus the
+ *  fields only the builder needs, so the client never imports a server-only module. */
+export type MarketIntelLite = {
+  label: string; units: number; basis: 'size' | 'market'; bedrooms: number | null
+  window: string; occ: string; adr: string; revpar: string; grossPerUnit: string
+  months: { label: string; iso: string; occPct: number; adr: string; peak?: boolean }[]
+  peakLabel: string; lowLabel: string
+}
+
 export type SalesSections = {
   contact?: { headline: string; subtitle: string; body: string; card: ContactCard }
   ops?: { headline: string; subtitle: string; body: string; rows: KV[]; note: string; photo?: string }
@@ -53,7 +63,21 @@ export type SalesSections = {
   lighthouse?: { headline: string; subtitle: string; body: string; rows: KV[]; note: string; shots?: string[] }
   onbsteps?: { headline: string; subtitle: string; body: string; steps: Step[]; note: string }
   gpo?: { headline: string; subtitle: string; body: string; rows: KV[]; note: string }
-  market?: { headline: string; subtitle: string; rows: KV[]; photo?: string }
+  /** Their property: what we were told about it, and pictures of it. */
+  property?: {
+    headline: string; subtitle: string; body: string
+    facts: KV[]
+    photos: string[]
+  }
+  /**
+   * Their market, built from OUR book in it — see lib/sales-market. `intel` is the measured half
+   * and never invented; `rows` is the local knowledge a person adds. Either half can stand alone,
+   * and with neither the slide does not print.
+   */
+  market?: {
+    headline: string; subtitle: string; rows: KV[]; photo?: string
+    intel?: MarketIntelLite | null
+  }
   /** The short deck's one revenue slide; the full deck argues it across five. */
   maxrev?: { headline: string; subtitle: string; body: string; rows: KV[]; note: string }
   /** Management terms. Figures we hold are printed; the ones we do not are empty prompts. */
@@ -66,6 +90,8 @@ export type SalesSections = {
   proof?: {
     headline: string; subtitle: string; body: string; note: string
     scope: string; window: string; names: boolean
+    /** 'statements' = real owner revenue off the completed statements; 'bookings' = the mirror. */
+    source?: 'statements' | 'bookings'
     rows: { label: string; sub: string; gross: string; net: string; occ: string; adr: string; nights: string }[]
     totals?: { gross: string; net: string; occ: string; adr: string; nights: string }
   }
@@ -106,9 +132,37 @@ export type SalesInput = {
   heroImage: string | null
   /** The person presenting. Carried on meta so the next deck can be seeded from the last one. */
   contact?: Partial<ContactCard>
+  /** What the desk asked about the property before generating. */
+  intake?: {
+    address?: string; building?: string; kind?: string; units?: string
+    bedrooms?: string; baths?: string; sleeps?: string; beds?: string
+    furnished?: string; goal?: string
+  }
+  /** Their market, measured from our own book (lib/sales-market). */
+  intel?: MarketIntelLite | null
+  photos?: string[]
 }
 
 /** Sections written for someone who has already signed. A prospect is deciding, not answering. */
+/** The four lines on the property slide, from what the desk was told. Blank in, blank out. */
+function propertyFacts(x: NonNullable<SalesInput['intake']>): KV[] {
+  const n = (v?: string) => String(v || '').trim()
+  const unit = [
+    n(x.bedrooms) ? (Number(n(x.bedrooms)) === 0 ? 'Studio' : n(x.bedrooms) + ' bed') : '',
+    n(x.baths) ? n(x.baths) + ' bath' : '',
+    n(x.sleeps) ? 'sleeps ' + n(x.sleeps) : '',
+    n(x.beds),
+  ].filter(Boolean).join(' · ')
+  const building = [n(x.building), n(x.kind), n(x.units) && Number(n(x.units)) > 1 ? n(x.units) + ' units' : ''].filter(Boolean).join(' · ')
+  const facts = PROPERTY_FACTS.map(r => ({ ...r }))
+  const set = (k: string, v: string) => { const f = facts.find(f => f.k === k); if (f && v) f.v = v }
+  set('The unit', unit)
+  set('The building', building)
+  set('Where it is', n(x.address))
+  set('What it sells', n(x.goal))
+  return facts
+}
+
 const SALES_OMIT = ['unit', 'strategy', 'listings', 'checklist', 'notes', 'linens', 'nextup', 'comms', 'tech']
 
 
@@ -186,7 +240,20 @@ export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesCo
     lighthouse: { headline: LH_HEADLINE, subtitle: LH_SUBTITLE, body: LH_BODY, rows: LH_ROWS, note: LH_NOTE, shots: [] },
     onbsteps: { headline: ONB_HEADLINE, subtitle: ONB_SUBTITLE, body: ONB_BODY, steps: ONB_STEPS, note: ONB_NOTE },
     gpo: { headline: GPO_HEADLINE, subtitle: GPO_SUBTITLE, body: GPO_BODY, rows: GPO_ROWS, note: GPO_NOTE },
-    market: { headline: MARKET_HEADLINE, subtitle: MARKET_SUBTITLE, rows: MARKET_PROMPTS.map(r => ({ ...r })), photo: pic(8) },
+    // THEIR PROPERTY, FROM WHAT THE DESK ASKED (2026-10-27). Facts the person typed become the
+    // four lines on the slide; anything they left blank simply does not print.
+    property: {
+      headline: PROPERTY_HEADLINE, subtitle: PROPERTY_SUBTITLE, body: PROPERTY_BODY,
+      facts: propertyFacts(i.intake || {}),
+      photos: (i.photos && i.photos.length ? i.photos : pool.slice(0, 4)),
+    },
+    market: {
+      headline: MARKET_HEADLINE,
+      subtitle: MARKET_SUBTITLE,
+      rows: MARKET_PROMPTS.map(r => ({ ...r })),
+      photo: pic(8),
+      intel: i.intel || null,
+    },
     maxrev: { headline: MAXREV_HEADLINE, subtitle: MAXREV_SUBTITLE, body: MAXREV_BODY, rows: MAXREV_ROWS, note: MAXREV_NOTE },
     terms: { headline: TERMS_HEADLINE, subtitle: TERMS_SUBTITLE, rows: termRows(t.mgmtPct, t.laborRate, t.approvalLimit), note: TERMS_NOTE },
     proof: { headline: PROOF_HEADLINE, subtitle: PROOF_SUBTITLE, body: PROOF_BODY, note: PROOF_NOTE, scope: '', window: '', names: false, rows: [] },

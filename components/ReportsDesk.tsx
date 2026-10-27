@@ -91,6 +91,15 @@ export function ReportsDesk() {
   const [presenter, setPresenter] = useState('')
   /** Short is the deck you send to earn a meeting; Full is the one you present at it. */
   const [deckLength, setDeckLength] = useState<'short' | 'full'>('short')
+  // WHAT THE DECK ASKS BEFORE IT BUILDS (Jon, 2026-10-27: "when you're generating the sales deck,
+  // it should ask you some basic questions, maybe property address, building name, number of
+  // units, bed type — whatever you think you need to ask in order to generate a really robust
+  // deck"). These are the fields the revenue one-pager we already send is built from: the unit and
+  // building name it with, the bedroom count picks the comparable set the market slide is measured
+  // against, and the rest fill the property slide.
+  const [intake, setIntake] = useState<Record<string, string>>({})
+  const iv = (k: string) => intake[k] || ''
+  const setIv = (k: string, v: string) => setIntake(p => ({ ...p, [k]: v }))
   const [goLive, setGoLive] = useState('')
   // The list below mixes three document types once you have a few of each; this filters it.
   const [listKind, setListKind] = useState<'all' | 'review' | 'projection' | 'onboarding' | 'sales'>('all')
@@ -271,6 +280,8 @@ export function ReportsDesk() {
           goLive: goLive || undefined,
           contact: kind === 'sales' && presenter ? { name: presenter } : undefined,
           length: kind === 'sales' ? deckLength : undefined,
+          intake: kind === 'sales' ? intake : undefined,
+          market: kind === 'sales' ? (intake.market || undefined) : undefined,
           pacingUrl: pacing ? pacing.url : undefined,
           statementIds: stmtPicked.length ? stmtPicked : undefined,
           heroImageUrl: heroImg ? heroImg.url : undefined,
@@ -505,6 +516,70 @@ export function ReportsDesk() {
                     <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Presented by</span>
                     <input value={presenter} onChange={e => setPresenter(e.target.value)} placeholder="Your name"
                       className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Building</span>
+                    <input value={iv('building')} onChange={e => setIv('building', e.target.value)} placeholder="Domus Brickell Park"
+                      className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Address</span>
+                    <input value={iv('address')} onChange={e => setIv('address', e.target.value)} placeholder="1611 SW 2nd Ave, Brickell"
+                      className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Type</span>
+                    <select value={iv('kind')} onChange={e => setIv('kind', e.target.value)}
+                      className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink">
+                      <option value="">Type…</option>
+                      {['Condo', 'Townhome', 'House', 'Whole building', 'Hotel'].map(k => <option key={k} value={k}>{k}</option>)}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Units</span>
+                    <input value={iv('units')} onChange={e => setIv('units', e.target.value)} placeholder="1" inputMode="numeric"
+                      className="mt-1 block w-20 rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Beds</span>
+                    <input value={iv('bedrooms')} onChange={e => setIv('bedrooms', e.target.value)} placeholder="2" inputMode="numeric"
+                      className="mt-1 block w-20 rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Baths</span>
+                    <input value={iv('baths')} onChange={e => setIv('baths', e.target.value)} placeholder="2" inputMode="numeric"
+                      className="mt-1 block w-20 rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Sleeps</span>
+                    <input value={iv('sleeps')} onChange={e => setIv('sleeps', e.target.value)} placeholder="4" inputMode="numeric"
+                      className="mt-1 block w-20 rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Beds in it</span>
+                    <input value={iv('beds')} onChange={e => setIv('beds', e.target.value)} placeholder="King + 2 queens"
+                      className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Furnished</span>
+                    <select value={iv('furnished')} onChange={e => setIv('furnished', e.target.value)}
+                      className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink">
+                      <option value="">—</option>
+                      {['Fully furnished', 'Part furnished', 'Unfurnished', 'New build'].map(k => <option key={k} value={k}>{k}</option>)}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">What it sells on</span>
+                    <input value={iv('goal')} onChange={e => setIv('goal', e.target.value)} placeholder="Bay view, 34th floor, free parking"
+                      className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Market</span>
+                    <select value={iv('market')} onChange={e => setIv('market', e.target.value)}
+                      className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink">
+                      <option value="">From the property</option>
+                      {[['Miami', 'Miami'], ['Broward', 'Fort Lauderdale'], ['North', 'Palm Beach']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                    </select>
                   </label>
                   <label className="block">
                     <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Length</span>

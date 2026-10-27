@@ -81,3 +81,116 @@ export async function proofRows(listings: any[], from: string, to: string): Prom
   }
   return { rows: rows.map(({ _gross, _net, _occNights, _availNights, ...r }) => r), totals }
 }
+
+// ── REAL OWNER REVENUE, OFF THE COMPLETED STATEMENTS ────────────────────────
+// Jon, 2026-10-27: "you should be able to pull real data from real owner revenue... select it by
+// owner, by property, or by listing. It should scan the actual completed owner statements for a
+// time period... pull just that owner revenue data for that particular listing. It should only
+// pull gross owner revenue before our management fee and then post-management-fee in-pocket
+// revenue, but should not include expenses."
+//
+// TWO FIGURES, AND ONLY TWO.
+//   gross    the rental revenue recognised to the owner, before our commission
+//   pocket   that, less our management commission, and nothing else
+//
+// `pocket` is deliberately NOT the statement's own net. Net is rental − commission + other, and
+// `other` is where the expenses live: supplies, labour, repairs, the things one owner spent that
+// are nobody else's business. Taking rental and commission and stopping there is what makes this
+// publishable to a stranger at all.
+//
+// COMPLETED MONTHS ONLY. The months come from guesty_owner_statements rows that exist for these
+// owners inside the window — a statement that has been issued. A part-month nobody has closed
+// would read as a collapse in revenue on a slide whose whole job is to be trusted.
+import { ownerMonths, statementDetail } from './owner-statements'
+
+export type OwnerRow = { label: string; sub: string; gross: string; net: string; occ: string; adr: string; nights: string }
+
+/** Owners who hold any of these listings, for a scope given as a building or a set of listings. */
+export async function ownersForListings(listingIds: string[]): Promise<string[]> {
+  if (!listingIds.length) return []
+  const db = supabaseAdmin()
+  const { data } = await db.from('guesty_owners').select('id, listing_ids').limit(500)
+  const want = new Set(listingIds.map(String))
+  return ((data || []) as any[])
+    .filter(o => (Array.isArray(o.listing_ids) ? o.listing_ids : []).some((x: any) => want.has(String(x))))
+    .map(o => String(o.id))
+}
+
+/** The statement months actually issued for these owners inside the window. */
+export async function completedMonths(ownerIds: string[], fromMonth: string, toMonth: string): Promise<string[]> {
+  if (!ownerIds.length) return []
+  const db = supabaseAdmin()
+  const { data } = await db.from('guesty_owner_statements')
+    .select('period_month').in('owner_id', ownerIds).limit(2000)
+  const months = Array.from(new Set(((data || []) as any[])
+    .map(r => String(r.period_month || '').slice(0, 7)).filter(Boolean)))
+    .filter(m => m >= fromMonth && m <= toMonth)
+  return months.sort()
+}
+
+/**
+ * Per-listing owner revenue across those months. `only` narrows to a set of listings; a portfolio
+ * line that no unit carries is dropped rather than shown as a mystery row on a sales slide.
+ */
+export async function ownerRevenueRows(
+  ownerIds: string[], months: string[], only?: string[],
+): Promise<{ rows: OwnerRow[]; totals: ProofTotals; months: string[] }> {
+  if (!ownerIds.length || !months.length) return { rows: [], totals: { gross: '', net: '', occ: '', adr: '', nights: '' }, months: [] }
+  const detail = await statementDetail({ ownerIds, months })
+  const want = only && only.length ? new Set(only.map(String)) : null
+  const db = supabaseAdmin()
+  const { data: ls } = await db.from('guesty_listings')
+    .select('id, title, nickname, building, unit, bedrooms').limit(1000)
+  const byId: Record<string, any> = {}
+  for (const l of ((ls || []) as any[])) byId[String(l.id)] = l
+
+  const units = (detail.units || [])
+    .filter(u => !u.portfolio)
+    .filter(u => !want || want.has(String(u.listingId)))
+    // A unit the owner held for part of the window with nothing recognised is not a data point.
+    .filter(u => Number(u.rental) > 0)
+  const rows = units.map(u => {
+    const l = byId[String(u.listingId)] || {}
+    const br = l.bedrooms == null ? '' : (Number(l.bedrooms) === 0 ? 'Studio' : Number(l.bedrooms) + 'BR')
+    const unit = str(l.unit)
+    const gross = Number(u.rental) || 0
+    const pocket = gross - (Number(u.commission) || 0)
+    const nights = Number(u.nights) || 0
+    return {
+      label: [br, unit ? 'Unit ' + unit : ''].filter(Boolean).join(' · ') || str(l.nickname || l.title || u.name || u.listingId),
+      sub: l.building ? rollupBuilding(str(l.building)) : '',
+      gross: fmtK(gross),
+      net: fmtK(pocket),
+      // Occupancy needs an availability denominator the ledger does not carry; nights and the
+      // rate they earned are what a statement can honestly say.
+      occ: '—',
+      adr: nights ? '$' + Math.round(gross / nights) : '—',
+      nights: nights ? String(nights) : '—',
+      _g: gross, _p: pocket, _n: nights,
+    }
+  }).sort((a, b) => b._g - a._g)
+
+  const sum = (k: '_g' | '_p' | '_n') => rows.reduce((a, r) => a + r[k], 0)
+  const nights = sum('_n')
+  return {
+    rows: rows.map(({ _g, _p, _n, ...r }) => r),
+    totals: {
+      gross: fmtK(sum('_g')), net: fmtK(sum('_p')), occ: '—',
+      adr: nights ? '$' + Math.round(sum('_g') / nights) : '—',
+      nights: nights ? String(nights) : '—',
+    },
+    months,
+  }
+}
+
+/** Owner-level totals, for a deck pitched at a developer who thinks in portfolios, not units. */
+export async function ownerRevenueByOwner(ownerIds: string[], months: string[]) {
+  const all = await ownerMonths({ ownerIds, months })
+  const byOwner: Record<string, { name: string; gross: number; pocket: number }> = {}
+  for (const r of all) {
+    const o = byOwner[r.ownerId] || (byOwner[r.ownerId] = { name: r.ownerName, gross: 0, pocket: 0 })
+    o.gross += Number(r.rental) || 0
+    o.pocket += (Number(r.rental) || 0) - (Number(r.commission) || 0)
+  }
+  return Object.values(byOwner).sort((a, b) => b.gross - a.gross)
+}

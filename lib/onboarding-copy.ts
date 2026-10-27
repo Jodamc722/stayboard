@@ -385,7 +385,10 @@ export const COMPANY_STATS_RETIRED_MARK = ['Miami & Broward', '400+',
   // matching on '140+' would have retired the replacement on sight, since it carries 140+ too.
   'Properties managed', 'Hotels operated',
   // Jon, 2026-09-24: units, not properties
-  'Properties & hotels']
+  'Properties & hotels',
+  // 2026-10-27: the four figures the revenue one-pager already puts in front of prospects. Matched
+  // on the labels the new list does not reuse, so the replacement is never retired on sight.
+  'Markets', 'In-house']
 /** The stored paragraph, unless it is empty or still carries `mark`. */
 export function houseBody(stored: unknown, mark: string | string[], current: string): string {
   const s = String(stored || '')
@@ -558,11 +561,20 @@ export const OVERVIEW_BODY_2 =
 // tile appears as soon as IN_BUSINESS_SINCE holds the founding year; it stays out until then,
 // because a guessed year is exactly the figure an owner repeats back.
 export const IN_BUSINESS_SINCE = ''
+// THE FOUR FIGURES WE ALREADY PUT IN FRONT OF PROSPECTS (2026-10-27). Jon sent the revenue
+// projection one-pager the team sends today — Domus Brickell Park, prepared for an agent's
+// clients — and it closes on these four: 450 units managed, 1,000,000+ guests hosted, 4.6/5 guest
+// satisfaction, 10 years in business. Two of them this deck did not have, and the years-in-
+// business tile sat empty for a month waiting for exactly this (see the note above it).
+//
+// They are printed here as that page prints them. "10 years" is NOT turned into a founding year:
+// the one-pager says ten years, and deriving 2016 from it would invent a precision nobody gave us
+// — and a founding year is exactly the sentence an owner repeats back.
 export const COMPANY_STATS_2: { k: string; v: string }[] = [
-  { k: 'Units managed', v: '450+' },
-  ...(IN_BUSINESS_SINCE ? [{ k: 'In business since', v: IN_BUSINESS_SINCE }] : []),
-  { k: 'Markets', v: 'Miami · Fort Lauderdale · Pompano · Palm Beach' },
-  { k: 'In-house', v: 'Housekeeping, maintenance & guest care' },
+  { k: 'Units managed', v: '450' },
+  { k: 'Guests hosted', v: '1,000,000+' },
+  { k: 'Guest satisfaction', v: '4.6 / 5' },
+  { k: 'Years in business', v: '10' },
 ]
 
 // ── EXPERIENCE ──────────────────────────────────────────────────────────────

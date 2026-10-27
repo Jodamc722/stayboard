@@ -247,15 +247,40 @@ export const SALES_AGENDA: KV[] = [
 // it still means is that nothing on it explains something a prospect did not ask about yet: the
 // guest journey, the channel wall, HostGPO, the worked statement, the ramp curve and the money
 // rules all wait for the meeting.
-// 'team' added the same day (Jon: "how we manage revenue, tools and team around the success of
-// your property") — the three things the deck is pointed at, so the faces belong on the short one.
+// THE PROSPECT'S PROPERTY LEADS (Jon, 2026-10-27: "think like the top sales director in the
+// country in short-term rentals... shows their listing, about their area, and market data... sell
+// these owners to sign with us. Short, compact, easy to go through, simple, clear, and
+// directional").
+//
+// The onboarding deck runs company-first, which is right for someone who has already signed and is
+// now meeting the people who will run their unit. A proposal is the other way round. Nobody reads
+// twelve slides about a management company; they read four about their own property and then ask
+// who you are. So: their property, their market, what it could earn, what properties like theirs
+// do earn — and only then how we get there and who we are.
+//
+// Thirteen slides and a cover. Every one of them is doing a job the one before it set up.
+export const SALES_ORDER = [
+  'welcome',
+  'property', 'market', 'plan', 'proof',          // theirs: the unit, the area, the money
+  'maxrev', 'ops', 'stack',                       // ours: how the money happens
+  'overview', 'experience', 'team',               // who is doing it
+  'terms', 'onbsteps', 'contact', 'close',        // what it costs and what happens next
+  // Everything the full deck adds, in the order it argues best.
+  'craft', 'dist', 'marketing', 'channels', 'direct', 'guestcare', 'revenue', 'lighthouse',
+  'gpo', 'guesty', 'statement', 'ai', 'season', 'ramp', 'rampsteps', 'money', 'video', 'agenda',
+]
+// Twelve slides and a cover. The contact card rides on the close rather than taking a slide of
+// its own, and the onboarding timeline waits for the meeting: a prospect who has not decided does
+// not need the four-week plan yet.
 export const SHORT_KEEP = [
-  'welcome', 'contact', 'overview', 'experience', 'team', 'ops', 'craft', 'dist', 'stack',
-  'lighthouse', 'maxrev', 'proof', 'plan', 'terms', 'onbsteps', 'close',
+  'property', 'market', 'plan', 'proof',
+  'maxrev', 'ops', 'stack',
+  'overview', 'experience', 'team',
+  'terms', 'close',
 ]
 /** Every slide the sales deck can carry, so the short/full switch has something to subtract from. */
 export const SALES_KEYS = [
-  'welcome', 'contact', 'market', 'agenda', 'team', 'overview', 'experience', 'ops', 'craft',
+  'welcome', 'contact', 'property', 'market', 'agenda', 'team', 'overview', 'experience', 'ops', 'craft',
   'marketing', 'dist', 'channels', 'direct', 'guestcare', 'revenue', 'stack', 'lighthouse',
   'maxrev', 'proof', 'plan', 'terms', 'onbsteps', 'gpo', 'guesty', 'statement', 'ai',
   'season', 'ramp', 'rampsteps', 'money', 'video', 'close',
@@ -279,6 +304,14 @@ export const SHORT_HIDDEN_HISTORY: string[][] = [
   ['market', 'agenda', 'team', 'craft', 'marketing', 'dist', 'channels', 'direct', 'guestcare',
     'revenue', 'stack', 'lighthouse', 'gpo', 'guesty', 'statement', 'ai', 'season', 'ramp',
     'rampsteps', 'money', 'video'],
+  // 2026-10-27, second: the stack, Lighthouse, listing optimization, distribution and the team
+  // came onto the short deck.
+  ['market', 'agenda', 'marketing', 'channels', 'direct', 'guestcare', 'revenue', 'gpo', 'guesty',
+    'statement', 'ai', 'season', 'ramp', 'rampsteps', 'money', 'video'],
+  // 2026-10-27, third: the deck was reordered prospect-first and cut to twelve.
+  ['agenda', 'craft', 'dist', 'marketing', 'channels', 'direct', 'guestcare', 'revenue',
+    'lighthouse', 'gpo', 'guesty', 'statement', 'ai', 'season', 'ramp', 'rampsteps', 'money',
+    'video', 'onbsteps', 'contact'],
 ]
 
 // Lines this deck used to open with. Replaced in place on a deck that still carries them, exactly
@@ -366,3 +399,32 @@ export const PLAN_BODY =
   'Built from what comparable properties in this market actually earned, not a percentage of a hope. Every assumption behind it is one we will walk through with you.'
 export const PLAN_NOTE =
   'A projection is a projection. We will not promise you a number, and we will show you exactly how this one was built.'
+
+// ── 17 · THEIR PROPERTY ─────────────────────────────────────────────────────
+// Jon, 2026-10-27: "a clean, streamlined deck that shows their listing, about their area... It
+// should have photos."
+//
+// The second slide of a proposal is the prospect's own property, because that is the only subject
+// they are certain to care about and the fastest proof that this deck was made for them rather
+// than printed in a stack. Where the property is already on our account the facts and the
+// photographs fill themselves; where it is not, they are four fields and a picker.
+export const PROPERTY_HEADLINE = 'Your property'
+export const PROPERTY_SUBTITLE = ''
+export const PROPERTY_BODY = ''
+export const PROPERTY_FACT_HINTS: Record<string, string> = {
+  'The unit': 'Bedrooms, bathrooms, how many it sleeps',
+  'The building': 'Building or community, and what it offers a guest',
+  'Where it is': 'Neighbourhood, and what is within a walk',
+  'What it sells': 'The one thing a guest books this property for',
+}
+export const PROPERTY_FACTS: KV[] = [
+  { k: 'The unit', v: '' },
+  { k: 'The building', v: '' },
+  { k: 'Where it is', v: '' },
+  { k: 'What it sells', v: '' },
+]
+
+// The market slide takes an uploaded report the same way the projection does — see
+// /api/reports/sales-plan, which reads a PDF, a screenshot, a spreadsheet or a CSV and will refuse
+// rather than invent. Until something is written or read in, the slide does not print.
+export const MARKET_BODY = ''
