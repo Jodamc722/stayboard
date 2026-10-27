@@ -239,8 +239,16 @@ export const SALES_AGENDA: KV[] = [
 // buildings we run, how the operation works, how the money gets made, what their property could
 // do, the terms, and how to say yes. Everything that explains rather than argues waits for the
 // meeting.
+// REVISED 2026-10-27, same day, after Jon read it: "should show tech stack and what it does, how
+// we manage properties, listing optimization, distribution, etc." Short no longer means thin. What
+// it still means is that nothing on it explains something a prospect did not ask about yet: the
+// guest journey, the channel wall, HostGPO, the worked statement, the ramp curve and the money
+// rules all wait for the meeting.
+// 'team' added the same day (Jon: "how we manage revenue, tools and team around the success of
+// your property") — the three things the deck is pointed at, so the faces belong on the short one.
 export const SHORT_KEEP = [
-  'welcome', 'contact', 'overview', 'experience', 'ops', 'maxrev', 'proof', 'plan', 'terms', 'onbsteps', 'close',
+  'welcome', 'contact', 'overview', 'experience', 'team', 'ops', 'craft', 'dist', 'stack',
+  'lighthouse', 'maxrev', 'proof', 'plan', 'terms', 'onbsteps', 'close',
 ]
 /** Every slide the sales deck can carry, so the short/full switch has something to subtract from. */
 export const SALES_KEYS = [

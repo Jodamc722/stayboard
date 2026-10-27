@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { projectionSectionFor } from '@/lib/projections'
 import { aiFetch } from '@/lib/ai-usage'
+import { xlsxCsv } from '@/lib/xlsx-read'
 import { modelFor } from '@/lib/ai-models'
 import { hasEditCookie } from '@/lib/edit-access'
 import { requireLevel } from '@/lib/access'
@@ -86,20 +87,49 @@ export async function POST(req: NextRequest) {
   } else {
     const url = str(body?.url)
     if (!url) return NextResponse.json({ error: 'Upload a projection file first.' }, { status: 400 })
+    // ANY FILE TYPE (Jon, 2026-10-27: "a place to upload a projections PDF or any file type, reads
+    // it and makes it beautiful"). A PDF and an image go to the model as what they are, because a
+    // projection is very often a screenshot or a scan. Everything else is turned into text first:
+    // a spreadsheet through lib/xlsx-lite, a Word file through mammoth, and anything else read as
+    // UTF-8. What the model never receives is raw binary dressed up as text — that is how you get
+    // a confidently invented table out of mojibake.
     let block: any = null
     let textBody = ''
     try {
       const r = await fetch(url)
       if (!r.ok) return NextResponse.json({ error: 'Could not read that file.' }, { status: 400 })
       const buf = Buffer.from(await r.arrayBuffer())
-      if (buf.length > 8 * 1024 * 1024) return NextResponse.json({ error: 'That file is too large to read (8MB max).' }, { status: 400 })
-      if (/\.pdf(\?|$)/i.test(url)) {
+      if (buf.length > 12 * 1024 * 1024) return NextResponse.json({ error: 'That file is too large to read (12MB max).' }, { status: 400 })
+      const ext = (/\.([a-z0-9]+)(?:\?|$)/i.exec(url) || [])[1]?.toLowerCase() || ''
+      const isPdf = ext === 'pdf' || buf.subarray(0, 4).toString('latin1') === '%PDF'
+      const isZip = buf.subarray(0, 2).toString('latin1') === 'PK'
+      const IMG: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' }
+
+      if (isPdf) {
         block = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buf.toString('base64') } }
+      } else if (IMG[ext]) {
+        block = { type: 'image', source: { type: 'base64', media_type: IMG[ext], data: buf.toString('base64') } }
+      } else if (isZip) {
+        // Both .xlsx and .docx are zipped XML; try the spreadsheet first, then the document.
+        const csv = xlsxCsv(buf)
+        if (csv) {
+          textBody = csv.slice(0, 120_000)
+        } else {
+          try {
+            const mammoth = await import('mammoth')
+            const out = await mammoth.extractRawText({ buffer: buf })
+            textBody = String(out?.value || '').slice(0, 120_000)
+          } catch { textBody = '' }
+          if (!textBody.trim()) {
+            return NextResponse.json({ error: 'That file could not be read. Export it as CSV, PDF or an image and upload that.' }, { status: 400 })
+          }
+        }
       } else {
         textBody = buf.toString('utf8').slice(0, 120_000)
-        // A spreadsheet saved as .xlsx is a zip, not text; it arrives here as mojibake.
-        if (/\.(xlsx|xls|numbers)(\?|$)/i.test(url) || /^PK\x03\x04/.test(textBody)) {
-          return NextResponse.json({ error: 'Export the projection as CSV or PDF and upload that — a spreadsheet file cannot be read directly.' }, { status: 400 })
+        // Binary pretending to be text: more than a few control bytes and we are guessing.
+        const junk = (textBody.slice(0, 4000).match(/[\u0000-\u0008\u000e-\u001f]/g) || []).length
+        if (junk > 20 || !textBody.trim()) {
+          return NextResponse.json({ error: 'That file could not be read as text. Export it as CSV, PDF or an image and upload that.' }, { status: 400 })
         }
       }
     } catch { return NextResponse.json({ error: 'Could not read that file.' }, { status: 400 }) }

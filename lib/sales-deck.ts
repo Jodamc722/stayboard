@@ -150,16 +150,22 @@ export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesCo
       ...base.hero,
       dateLabel: 'MANAGEMENT PROPOSAL',
       title: i.scopeLabel,
-      headline: 'A hospitality company that runs whole buildings, offered to one property at a time.',
+      // THE SPINE OF THE DECK, IN ONE LINE (Jon, 2026-10-27: "how we manage revenue, tools and
+      // team around the success of your property"). Everything after the cover is one of those
+      // three, and the cover says so, so a prospect knows what they are being shown.
+      headline: 'The revenue management, the tools and the team around the success of your property.',
       preparedFor: i.ownerName ? 'Prepared for ' + i.ownerName : 'Prepared for the owners of ' + i.scopeLabel,
     },
     welcome: {
       ...base.welcome,
       headline: 'Thank you for your time',
       subtitle: i.ownerName || i.scopeLabel,
-      body: 'What follows is how we would run your property: the people, the technology, the marketing, and what the first four weeks look like. Every number in it is one you can check, and every claim is one we can show you the record of.',
+      body: 'Three things decide what a property earns: how the rate is managed, the tools the operation runs on, and the team that actually shows up. What follows is all three, plus what the first four weeks look like. Every number in it is one you can check, and every claim is one we can show you the record of.',
     },
     agenda: { ...base.agenda, headline: 'What we will cover', subtitle: 'In this order.', items: SALES_AGENDA },
+    // The onboarding deck's team line counts the cards and welcomes an owner who has signed. On a
+    // proposal the same faces answer a different question, so the subtitle asks it.
+    team: { ...base.team, subtitle: 'The people who would be on your property.' },
 
     contact: { headline: CONTACT_HEADLINE, subtitle: CONTACT_SUBTITLE, body: CONTACT_BODY, card },
     ops: { headline: OPS_HEADLINE, subtitle: OPS_SUBTITLE, body: OPS_BODY, rows: OPS_ROWS, note: OPS_NOTE, photo: pic(2) },

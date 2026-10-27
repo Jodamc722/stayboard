@@ -3432,7 +3432,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               <div className="onb-cover-in relative flex flex-col px-7 sm:px-11 pt-9 pb-9">
                 {mark.logo ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={mark.logo} alt={mark.word} style={{ height: 26, width: 'auto', alignSelf: 'flex-start', objectFit: 'contain', filter: 'invert(1) brightness(2.2)' }} />
+                  // THE MARK LEADS A PROPOSAL (Jon, 2026-10-27, twice: "have our logo"). On an
+                  // onboarding deck the owner already knows who we are and 26px is furniture; on
+                  // a cover going to someone who does not, it is the first thing to read.
+                  <img src={mark.logo} alt={mark.word} style={{ height: isSales ? 40 : 26, width: 'auto', alignSelf: 'flex-start', objectFit: 'contain', filter: 'invert(1) brightness(2.2)' }} />
                 ) : (
                   <p className="text-[11px] font-bold" style={{ color: '#fff', letterSpacing: '0.42em', alignSelf: 'flex-start' }}>{mark.word}</p>
                 )}
@@ -4329,145 +4332,6 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             <PitchRows k="ops" nav="Operations" label="Operations" note="" />
           ) })
 
-          // ── 4c · HOW WE GET MAX REVENUE (Jon, 2026-10-27) ────────────────────
-          // The short deck's one revenue slide. The full deck argues this across five — pricing,
-          // the comp set, distribution, the listing craft, direct — and each of those is a better
-          // slide than this one. This is the version for someone who has given us ninety seconds.
-          if (!hid('maxrev')) slides.push({ key: 'maxrev', ai: true, node: (
-            <PitchRows k="maxrev" nav="Max revenue" label="Revenue" note="" dark />
-          ) })
-
-          // ── 4d · WHAT PROPERTIES LIKE YOURS EARN ─────────────────────────────
-          // Jon, 2026-10-27: "pull actuals from other property owner statements… actual gross rev
-          // and net of fees, but not expense."
-          //
-          // REVENUE ONLY, AND THE RULE LIVES IN THE ENDPOINT. /api/reports/proof reads the
-          // reservation mirror and nothing else, so there is no commission, labour or ledger line
-          // anywhere in the data this slide can draw on — it cannot be switched back on by editing
-          // the deck. Rows label by unit and building; the owner's name is off unless someone
-          // deliberately turns it on, because a name attached to someone else's revenue is a
-          // confidence we were not given.
-          if (!hid('proof')) { const pr: Any = sec('proof'); const prRows: Any[] = (pr.rows || []) as Any[]
-            if (prRows.length || edit) slides.push({ key: 'proof', ai: true, node: (
-            <Slide nav="The numbers" warn={edit}>
-              <div className="flex flex-col" style={{ height: '100%' }}>
-                <Split k="proof" leftW={320}
-                  left={
-                    <>
-                      <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder }}>
-                        <Ed v={pr.body || ''} set={v => patch('proof.body', v)} edit={edit} multiline />
-                      </p>
-                      <p style={{ fontSize: 12.5, lineHeight: 1.55, color: t.muted, marginTop: 14 }}>
-                        <Ed v={pr.note || ''} set={v => patch('proof.note', v)} edit={edit} multiline />
-                      </p>
-                      {edit ? <ProofPull /> : null}
-                    </>
-                  }
-                  right={
-                    prRows.length ? (
-                      <div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1.5fr repeat(5, 1fr)', gap: 10, paddingBottom: 8, borderBottom: '1px solid ' + t.rule }}>
-                          {['Property', 'Gross', 'Net of fees', 'Occ', 'ADR', 'Nights'].map((h, i) => (
-                            <p key={h} style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: i === 0 ? 'left' : 'right' }}>{h}</p>
-                          ))}
-                        </div>
-                        {prRows.slice(0, 12).map((r: Any, i: number) => (
-                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.5fr repeat(5, 1fr)', gap: 10, padding: '9px 0', borderBottom: '1px solid ' + t.rule, alignItems: 'baseline' }}>
-                            <div style={{ minWidth: 0 }}>
-                              <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, margin: 0 }}>{String(r.label || '')}</p>
-                              <p style={{ fontSize: 11, color: t.muted, margin: 0 }}>{String(r.sub || '')}</p>
-                            </div>
-                            {['gross', 'net', 'occ', 'adr', 'nights'].map(k => (
-                              <p key={k} style={{ fontSize: 13.5, color: k === 'gross' ? t.ink : t.body, fontWeight: k === 'gross' ? 600 : 400, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{String(r[k] || '—')}</p>
-                            ))}
-                          </div>
-                        ))}
-                        {pr.totals ? (
-                          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr repeat(5, 1fr)', gap: 10, padding: '11px 0 0', borderTop: '2px solid ' + t.ink, alignItems: 'baseline' }}>
-                            <p style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: t.ink, margin: 0 }}>Total</p>
-                            {['gross', 'net', 'occ', 'adr', 'nights'].map(k => (
-                              <p key={k} style={{ fontSize: 14, fontWeight: 600, color: t.ink, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{String((pr.totals || {})[k] || '—')}</p>
-                            ))}
-                          </div>
-                        ) : null}
-                        {(pr.scope || pr.window) ? (
-                          <p style={{ fontSize: 11, color: t.muted, marginTop: 12 }}>{[String(pr.scope || ''), String(pr.window || '')].filter(Boolean).join('  \u00b7  ')}</p>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <p style={{ fontSize: 13, color: t.muted, lineHeight: 1.6, maxWidth: '46ch' }}>
-                        Pull the actuals on the left. Until then this slide does not appear in the deck.
-                      </p>
-                    )
-                  } />
-                <Foot label="The numbers" />
-              </div>
-            </Slide>
-          ) }) }
-
-          // ── 4e · THE PROJECTION (Jon, 2026-10-27: "make it possible to upload projections and
-          // build them into the deck for the property"). Built from our own model for listings we
-          // run, or read out of a file someone else built — see /api/reports/sales-plan, which
-          // will refuse rather than invent a number it could not read.
-          if (!hid('plan')) { const pl: Any = sec('plan'); const plRows: Any[] = (pl.rows || []) as Any[]
-            const plCols: string[] = (pl.cols || []) as string[]
-            if (plRows.length || edit) slides.push({ key: 'plan', ai: true, node: (
-            <Slide nav="Projection" warn={edit} ground={GROUND.tint}>
-              <div className="flex flex-col" style={{ height: '100%' }}>
-                <Split k="plan" leftW={320}
-                  left={
-                    <>
-                      <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder }}>
-                        <Ed v={pl.body || ''} set={v => patch('plan.body', v)} edit={edit} multiline />
-                      </p>
-                      <p style={{ fontSize: 12.5, lineHeight: 1.55, color: t.muted, marginTop: 14 }}>
-                        <Ed v={pl.note || ''} set={v => patch('plan.note', v)} edit={edit} multiline />
-                      </p>
-                      {edit ? <PlanBuild /> : null}
-                    </>
-                  }
-                  right={
-                    plRows.length ? (
-                      <div className="onb-scroll" style={{ overflowX: 'auto' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr repeat(' + Math.max(1, plCols.length) + ', minmax(62px,1fr))', gap: 8, paddingBottom: 8, borderBottom: '1px solid ' + t.rule }}>
-                          <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0 }}>&nbsp;</p>
-                          {plCols.map((h, i) => (
-                            <p key={i} style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: 'right' }}>{String(h)}</p>
-                          ))}
-                        </div>
-                        {plRows.slice(0, 14).map((r: Any, i: number) => (
-                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.4fr repeat(' + Math.max(1, plCols.length) + ', minmax(62px,1fr))', gap: 8, padding: '8px 0', borderBottom: '1px solid ' + t.rule, alignItems: 'baseline' }}>
-                            <p style={{ fontSize: 13, fontWeight: 600, color: t.ink, margin: 0, minWidth: 0 }}>
-                              <Ed v={String(r.k || '')} set={v => patch('plan.rows.' + i + '.k', v)} edit={edit} />
-                            </p>
-                            {plCols.map((_c, j) => (
-                              <p key={j} style={{ fontSize: 12.5, color: t.body, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                                <Ed v={String((r.cells || [])[j] || '')} set={v => patch('plan.rows.' + i + '.cells.' + j, v)} edit={edit} />
-                              </p>
-                            ))}
-                          </div>
-                        ))}
-                        {pl.totals ? (
-                          <div style={{ display: 'grid', gridTemplateColumns: '1.4fr repeat(' + Math.max(1, plCols.length) + ', minmax(62px,1fr))', gap: 8, padding: '10px 0 0', borderTop: '2px solid ' + t.ink, alignItems: 'baseline' }}>
-                            <p style={{ fontSize: 12.5, fontWeight: 700, color: t.ink, margin: 0 }}>{String(pl.totals.k || 'Total')}</p>
-                            {plCols.map((_c, j) => (
-                              <p key={j} style={{ fontSize: 13, fontWeight: 600, color: t.ink, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{String((pl.totals.cells || [])[j] || '')}</p>
-                            ))}
-                          </div>
-                        ) : null}
-                        {pl.source ? <p style={{ fontSize: 11, color: t.muted, marginTop: 12 }}>{String(pl.source)}</p> : null}
-                      </div>
-                    ) : (
-                      <p style={{ fontSize: 13, color: t.muted, lineHeight: 1.6, maxWidth: '46ch' }}>
-                        Build the projection on the left, or upload one. Until then this slide does not appear in the deck.
-                      </p>
-                    )
-                  } />
-                <Foot label="Projection" />
-              </div>
-            </Slide>
-          ) }) }
-
           if (!hid('craft')) slides.push({ key: 'craft', ai: true, node: (
             <Slide nav="The listing" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
@@ -4787,6 +4651,174 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           if (!hid('lighthouse')) slides.push({ key: 'lighthouse', ai: true, node: (
             <PitchRows k="lighthouse" nav="Lighthouse" label="Lighthouse" note="" dark />
           ) })
+
+          // ── 4c · HOW WE GET MAX REVENUE (Jon, 2026-10-27) ────────────────────
+          // The short deck's one revenue slide. The full deck argues this across five — pricing,
+          // the comp set, distribution, the listing craft, direct — and each of those is a better
+          // slide than this one. This is the version for someone who has given us ninety seconds.
+          if (!hid('maxrev')) slides.push({ key: 'maxrev', ai: true, node: (
+            <PitchRows k="maxrev" nav="Max revenue" label="Revenue" note="" dark />
+          ) })
+
+          // ── 4d · WHAT PROPERTIES LIKE YOURS EARN ─────────────────────────────
+          // Jon, 2026-10-27: "pull actuals from other property owner statements… actual gross rev
+          // and net of fees, but not expense."
+          //
+          // REVENUE ONLY, AND THE RULE LIVES IN THE ENDPOINT. /api/reports/proof reads the
+          // reservation mirror and nothing else, so there is no commission, labour or ledger line
+          // anywhere in the data this slide can draw on — it cannot be switched back on by editing
+          // the deck. Rows label by unit and building; the owner's name is off unless someone
+          // deliberately turns it on, because a name attached to someone else's revenue is a
+          // confidence we were not given.
+          if (!hid('proof')) { const pr: Any = sec('proof'); const prRows: Any[] = (pr.rows || []) as Any[]
+            if (prRows.length || edit) slides.push({ key: 'proof', ai: true, node: (
+            <Slide nav="The numbers" warn={edit}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Split k="proof" leftW={320}
+                  left={
+                    <>
+                      <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder }}>
+                        <Ed v={pr.body || ''} set={v => patch('proof.body', v)} edit={edit} multiline />
+                      </p>
+                      <p style={{ fontSize: 12.5, lineHeight: 1.55, color: t.muted, marginTop: 14 }}>
+                        <Ed v={pr.note || ''} set={v => patch('proof.note', v)} edit={edit} multiline />
+                      </p>
+                      {edit ? <ProofPull /> : null}
+                    </>
+                  }
+                  right={
+                    prRows.length ? (
+                      <div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.5fr repeat(5, 1fr)', gap: 10, paddingBottom: 8, borderBottom: '1px solid ' + t.rule }}>
+                          {['Property', 'Gross', 'Net of fees', 'Occ', 'ADR', 'Nights'].map((h, i) => (
+                            <p key={h} style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: i === 0 ? 'left' : 'right' }}>{h}</p>
+                          ))}
+                        </div>
+                        {prRows.slice(0, 12).map((r: Any, i: number) => (
+                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.5fr repeat(5, 1fr)', gap: 10, padding: '9px 0', borderBottom: '1px solid ' + t.rule, alignItems: 'baseline' }}>
+                            <div style={{ minWidth: 0 }}>
+                              <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, margin: 0 }}>{String(r.label || '')}</p>
+                              <p style={{ fontSize: 11, color: t.muted, margin: 0 }}>{String(r.sub || '')}</p>
+                            </div>
+                            {['gross', 'net', 'occ', 'adr', 'nights'].map(k => (
+                              <p key={k} style={{ fontSize: 13.5, color: k === 'gross' ? t.ink : t.body, fontWeight: k === 'gross' ? 600 : 400, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{String(r[k] || '—')}</p>
+                            ))}
+                          </div>
+                        ))}
+                        {pr.totals ? (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr repeat(5, 1fr)', gap: 10, padding: '11px 0 0', borderTop: '2px solid ' + t.ink, alignItems: 'baseline' }}>
+                            <p style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: t.ink, margin: 0 }}>Total</p>
+                            {['gross', 'net', 'occ', 'adr', 'nights'].map(k => (
+                              <p key={k} style={{ fontSize: 14, fontWeight: 600, color: t.ink, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{String((pr.totals || {})[k] || '—')}</p>
+                            ))}
+                          </div>
+                        ) : null}
+                        {(pr.scope || pr.window) ? (
+                          <p style={{ fontSize: 11, color: t.muted, marginTop: 12 }}>{[String(pr.scope || ''), String(pr.window || '')].filter(Boolean).join('  \u00b7  ')}</p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: 13, color: t.muted, lineHeight: 1.6, maxWidth: '46ch' }}>
+                        Pull the actuals on the left. Until then this slide does not appear in the deck.
+                      </p>
+                    )
+                  } />
+                <Foot label="The numbers" />
+              </div>
+            </Slide>
+          ) }) }
+
+          // ── 4e · THE PROJECTION (Jon, 2026-10-27: "make it possible to upload projections and
+          // build them into the deck for the property"). Built from our own model for listings we
+          // run, or read out of a file someone else built — see /api/reports/sales-plan, which
+          // will refuse rather than invent a number it could not read.
+          if (!hid('plan')) { const pl: Any = sec('plan'); const plRows: Any[] = (pl.rows || []) as Any[]
+            const plCols: string[] = (pl.cols || []) as string[]
+            // THE SHAPE OF THE YEAR, ABOVE THE TABLE (Jon, 2026-10-27: "reads it and makes it
+            // beautiful"). A projection is a table because that is what it is, but a table is the
+            // slowest way to see that August is the month that pays for the year. The bars are
+            // drawn from the totals row where the file had one, otherwise from the column sums, so
+            // the picture and the table are the same numbers — and a column that is not a figure
+            // simply has no bar rather than a bar of zero.
+            const plNum = (v: Any): number | null => {
+              const raw = String(v == null ? '' : v).trim()
+              if (!raw || !/\d/.test(raw)) return null
+              const n = Number(raw.replace(/[^0-9.\-]/g, ''))
+              return Number.isFinite(n) ? (/^[-−(]/.test(raw) ? -Math.abs(n) : n) : null
+            }
+            const plSeries: (number | null)[] = plCols.map((_c, j) => {
+              const t = pl.totals ? plNum((pl.totals.cells || [])[j]) : null
+              if (t != null) return t
+              let sum = 0, any = false
+              for (const r of plRows) { const n = plNum((r.cells || [])[j]); if (n != null) { sum += n; any = true } }
+              return any ? sum : null
+            })
+            const plMax = Math.max(0, ...plSeries.map(n => (n == null ? 0 : Math.abs(n))))
+            const plChart = plMax > 0 && plSeries.filter(n => n != null).length >= 3
+            if (plRows.length || edit) slides.push({ key: 'plan', ai: true, node: (
+            <Slide nav="Projection" warn={edit} ground={GROUND.tint}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <Split k="plan" leftW={320}
+                  left={
+                    <>
+                      <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder }}>
+                        <Ed v={pl.body || ''} set={v => patch('plan.body', v)} edit={edit} multiline />
+                      </p>
+                      <p style={{ fontSize: 12.5, lineHeight: 1.55, color: t.muted, marginTop: 14 }}>
+                        <Ed v={pl.note || ''} set={v => patch('plan.note', v)} edit={edit} multiline />
+                      </p>
+                      {edit ? <PlanBuild /> : null}
+                    </>
+                  }
+                  right={
+                    plRows.length ? (
+                      <div className="onb-scroll" style={{ overflowX: 'auto' }}>
+                        {plChart ? (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1.4fr repeat(' + Math.max(1, plCols.length) + ', minmax(62px,1fr))', gap: 8, alignItems: 'end', height: 104, marginBottom: 14 }}>
+                            <span />
+                            {plSeries.map((n, j) => (
+                              <span key={j} style={{ display: 'block', height: n == null ? 0 : Math.max(3, (Math.abs(n) / plMax) * 96), borderRadius: '4px 4px 0 0', background: j === plSeries.length - 1 ? t.accent : t.barA || t.ink, opacity: n == null ? 0 : (j === plSeries.length - 1 ? 1 : 0.82) }} />
+                            ))}
+                          </div>
+                        ) : null}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr repeat(' + Math.max(1, plCols.length) + ', minmax(62px,1fr))', gap: 8, paddingBottom: 8, borderBottom: '1px solid ' + t.rule }}>
+                          <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0 }}>&nbsp;</p>
+                          {plCols.map((h, i) => (
+                            <p key={i} style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: 'right' }}>{String(h)}</p>
+                          ))}
+                        </div>
+                        {plRows.slice(0, 14).map((r: Any, i: number) => (
+                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.4fr repeat(' + Math.max(1, plCols.length) + ', minmax(62px,1fr))', gap: 8, padding: '8px 0', borderBottom: '1px solid ' + t.rule, alignItems: 'baseline' }}>
+                            <p style={{ fontSize: 13, fontWeight: 600, color: t.ink, margin: 0, minWidth: 0 }}>
+                              <Ed v={String(r.k || '')} set={v => patch('plan.rows.' + i + '.k', v)} edit={edit} />
+                            </p>
+                            {plCols.map((_c, j) => (
+                              <p key={j} style={{ fontSize: 12.5, color: t.body, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                                <Ed v={String((r.cells || [])[j] || '')} set={v => patch('plan.rows.' + i + '.cells.' + j, v)} edit={edit} />
+                              </p>
+                            ))}
+                          </div>
+                        ))}
+                        {pl.totals ? (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1.4fr repeat(' + Math.max(1, plCols.length) + ', minmax(62px,1fr))', gap: 8, padding: '10px 0 0', borderTop: '2px solid ' + t.ink, alignItems: 'baseline' }}>
+                            <p style={{ fontSize: 12.5, fontWeight: 700, color: t.ink, margin: 0 }}>{String(pl.totals.k || 'Total')}</p>
+                            {plCols.map((_c, j) => (
+                              <p key={j} style={{ fontSize: 13, fontWeight: 600, color: t.ink, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{String((pl.totals.cells || [])[j] || '')}</p>
+                            ))}
+                          </div>
+                        ) : null}
+                        {pl.source ? <p style={{ fontSize: 11, color: t.muted, marginTop: 12 }}>{String(pl.source)}</p> : null}
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: 13, color: t.muted, lineHeight: 1.6, maxWidth: '46ch' }}>
+                        Build the projection on the left, or upload one. Until then this slide does not appear in the deck.
+                      </p>
+                    )
+                  } />
+                <Foot label="Projection" />
+              </div>
+            </Slide>
+          ) }) }
 
           if (!hid('listings')) {
             const items: Any[] = sec('listings').items || []
