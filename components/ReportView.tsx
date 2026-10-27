@@ -4766,12 +4766,30 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   right={
                     prRows.length ? (
                       <div>
+                        {/* THE TOTAL LEADS, THE UNITS BACK IT UP (2026-10-27). Twenty-six rows ran
+                            off the slide behind a scroll chip with the one number worth saying out
+                            loud — what the building earned — at the bottom of it. A prospect wants
+                            the portfolio figure and then enough rows to believe it, not a rent
+                            roll. The rest stay in the data and come back the moment someone
+                            widens the window or exports. */}
+                        {pr.totals ? (
+                          <div className="flex" style={{ gap: 38, paddingBottom: 16, marginBottom: 14, borderBottom: '1px solid ' + t.rule }}>
+                            {([['Gross revenue', 'gross'], ['Net of fees', 'net'], ['Occupancy', 'occ'], ['Properties', '']] as const).map(([lbl, k]) => (
+                              <div key={lbl}>
+                                <p style={{ fontFamily: SERIF, fontSize: 30, letterSpacing: '-0.02em', color: t.ink, margin: 0, fontVariantNumeric: 'tabular-nums' }}>
+                                  {k ? String((pr.totals || {})[k] || '—') : String(prRows.length)}
+                                </p>
+                                <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: '6px 0 0' }}>{lbl}</p>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
                         <div style={{ display: 'grid', gridTemplateColumns: '1.5fr repeat(5, 1fr)', gap: 10, paddingBottom: 8, borderBottom: '1px solid ' + t.rule }}>
                           {['Property', 'Gross', 'Net of fees', 'Occ', 'ADR', 'Nights'].map((h, i) => (
                             <p key={h} style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: i === 0 ? 'left' : 'right' }}>{h}</p>
                           ))}
                         </div>
-                        {prRows.slice(0, 12).map((r: Any, i: number) => (
+                        {prRows.slice(0, 6).map((r: Any, i: number) => (
                           <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.5fr repeat(5, 1fr)', gap: 10, padding: '9px 0', borderBottom: '1px solid ' + t.rule, alignItems: 'baseline' }}>
                             <div style={{ minWidth: 0 }}>
                               <p style={{ fontSize: 13.5, fontWeight: 600, color: t.ink, margin: 0 }}>{String(r.label || '')}</p>
@@ -4784,7 +4802,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         ))}
                         {pr.totals ? (
                           <div style={{ display: 'grid', gridTemplateColumns: '1.5fr repeat(5, 1fr)', gap: 10, padding: '11px 0 0', borderTop: '2px solid ' + t.ink, alignItems: 'baseline' }}>
-                            <p style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: t.ink, margin: 0 }}>Total</p>
+                            <p style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: t.ink, margin: 0 }}>
+                              {prRows.length > 6 ? 'All ' + prRows.length : 'Total'}
+                            </p>
                             {['gross', 'net', 'occ', 'adr', 'nights'].map(k => (
                               <p key={k} style={{ fontSize: 14, fontWeight: 600, color: t.ink, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{String((pr.totals || {})[k] || '—')}</p>
                             ))}
