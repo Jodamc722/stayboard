@@ -34,7 +34,7 @@ import {
   MARKET_HEADLINE, MARKET_SUBTITLE, MARKET_PROMPTS,
   CLOSE_HEADLINE, CLOSE_SUBTITLE, CLOSE_ROWS, CLOSE_NOTE,
   VIDEO_HEADLINE, VIDEO_SUBTITLE, VIDEO_BODY,
-  SALES_AGENDA, shortOmit,
+  SALES_AGENDA, shortOmit, SALES_HERO, SALES_WELCOME,
   MAXREV_HEADLINE, MAXREV_SUBTITLE, MAXREV_BODY, MAXREV_ROWS, MAXREV_NOTE,
   TERMS_HEADLINE, TERMS_SUBTITLE, termRows, TERMS_NOTE, type TermRow,
   PROOF_HEADLINE, PROOF_SUBTITLE, PROOF_BODY, PROOF_NOTE,
@@ -81,11 +81,16 @@ export type SalesSections = {
   video?: { headline: string; subtitle: string; body: string; url: string; poster?: string }
 }
 
-export type SalesContent = Omit<OnboardingContent, 'meta'> & SalesSections & {
-  meta: Omit<OnboardingContent['meta'], 'kind'> & { kind: 'sales'; prospect?: string; presenter?: string }
-}
-
 export type SalesLength = 'short' | 'full'
+
+export type SalesContent = Omit<OnboardingContent, 'meta'> & SalesSections & {
+  meta: Omit<OnboardingContent['meta'], 'kind'> & {
+    kind: 'sales'; prospect?: string; presenter?: string
+    length?: SalesLength
+    /** The short list in force when this deck was generated. */
+    shortHidden?: string[]
+  }
+}
 
 export type SalesInput = {
   /** 'short' is the deck you send to get a second conversation; 'full' is the one you present. */
@@ -145,7 +150,13 @@ export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesCo
 
   return {
     ...base,
-    meta: { ...base.meta, kind: 'sales', prospect: i.ownerName, presenter: card.name },
+    // The short list this deck was built with, so a later widening of it can reach this deck —
+    // see SHORT_HIDDEN_HISTORY in lib/sales-copy.
+    meta: {
+      ...base.meta, kind: 'sales', prospect: i.ownerName, presenter: card.name,
+      length: i.length === 'full' ? 'full' : 'short',
+      shortHidden: i.length === 'full' ? [] : shortOmit(),
+    },
     hero: {
       ...base.hero,
       dateLabel: 'MANAGEMENT PROPOSAL',
@@ -153,14 +164,14 @@ export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesCo
       // THE SPINE OF THE DECK, IN ONE LINE (Jon, 2026-10-27: "how we manage revenue, tools and
       // team around the success of your property"). Everything after the cover is one of those
       // three, and the cover says so, so a prospect knows what they are being shown.
-      headline: 'The revenue management, the tools and the team around the success of your property.',
+      headline: SALES_HERO,
       preparedFor: i.ownerName ? 'Prepared for ' + i.ownerName : 'Prepared for the owners of ' + i.scopeLabel,
     },
     welcome: {
       ...base.welcome,
       headline: 'Thank you for your time',
       subtitle: i.ownerName || i.scopeLabel,
-      body: 'Three things decide what a property earns: how the rate is managed, the tools the operation runs on, and the team that actually shows up. What follows is all three, plus what the first four weeks look like. Every number in it is one you can check, and every claim is one we can show you the record of.',
+      body: SALES_WELCOME,
     },
     agenda: { ...base.agenda, headline: 'What we will cover', subtitle: 'In this order.', items: SALES_AGENDA },
     // The onboarding deck's team line counts the cards and welcomes an owner who has signed. On a

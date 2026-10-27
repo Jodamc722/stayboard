@@ -262,6 +262,33 @@ export const SALES_KEYS = [
  *  and sales-deck reaches the server-only onboarding builder. */
 export const shortOmit = (): string[] => SALES_KEYS.filter(k => SHORT_KEEP.indexOf(k) < 0)
 
+// WHAT THE SHORT SWITCH HID IN EVERY EARLIER VERSION OF THIS LIST.
+//
+// A deck stores the slides it was generated with, so widening SHORT_KEEP would otherwise only
+// reach decks made after the change — and the person looking at yesterday's deck, asking for the
+// technology slide that is now on the short one, would not get it. The renderer compares what a
+// deck hid against what the current list hides and un-hides the difference. Nothing is ever
+// hidden by this, so a slide switched off by hand stays off.
+//
+// Each entry is one shipped version of the list, newest last. Add a line when SHORT_KEEP changes.
+export const SHORT_HIDDEN_HISTORY: string[][] = [
+  // 2026-10-27, first: kept welcome/contact/overview/experience/ops/maxrev/proof/plan/terms/onbsteps/close
+  ['market', 'agenda', 'team', 'craft', 'marketing', 'dist', 'channels', 'direct', 'guestcare',
+    'revenue', 'stack', 'lighthouse', 'gpo', 'guesty', 'statement', 'ai', 'season', 'ramp',
+    'rampsteps', 'money', 'video'],
+]
+
+// Lines this deck used to open with. Replaced in place on a deck that still carries them, exactly
+// as lib/onboarding-copy does for the onboarding deck, and never on one someone has edited.
+export const SALES_RETIRED_HERO = [
+  'A hospitality company that runs whole buildings, offered to one property at a time.',
+]
+export const SALES_RETIRED_WELCOME = [
+  'What follows is how we would run your property: the people, the technology, the marketing, and what the first four weeks look like. Every number in it is one you can check, and every claim is one we can show you the record of.',
+]
+export const SALES_HERO = 'The revenue management, the tools and the team around the success of your property.'
+export const SALES_WELCOME = 'Three things decide what a property earns: how the rate is managed, the tools the operation runs on, and the team that actually shows up. What follows is all three, plus what the first four weeks look like. Every number in it is one you can check, and every claim is one we can show you the record of.'
+
 // ── 13 · HOW WE GET MAX REVENUE ─────────────────────────────────────────────
 // The short deck's one revenue slide. The full deck argues this across five — pricing, the comp
 // set, distribution, the listing craft, direct — and each of those is a better slide than this

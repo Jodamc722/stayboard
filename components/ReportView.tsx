@@ -31,7 +31,7 @@ import {
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
 } from '@/lib/onboarding-copy'
-import { MARKET_HINTS, shortOmit } from '@/lib/sales-copy'
+import { MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME } from '@/lib/sales-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, seasonBodyStale } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
@@ -2309,6 +2309,37 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const kindOf = String((c.meta || {}).kind || '')
   const isSales = kindOf === 'sales'
   const isOnboarding = kindOf === 'onboarding' || isSales
+  // A SALES DECK CATCHES UP WITH THE HOUSE DECK (2026-10-27). A deck stores the slides it was
+  // generated with, so widening the short list would otherwise only reach decks made afterwards —
+  // and the person looking at yesterday's deck, asking where the technology slide is, would never
+  // get it. On open, anything the short switch hid in an earlier version of the list and does not
+  // hide now is un-hidden, and the two opening lines are swapped if they are still the retired
+  // ones. Nothing is ever hidden by this and an edited line is never touched, so a slide switched
+  // off by hand and a sentence someone rewrote both survive.
+  useEffect(() => {
+    // On the way into edit mode, never while a prospect is reading the link: the deck they were
+    // sent is the deck they see, and a viewer cannot save the repair anyway.
+    if (!edit || String(((c || {}).meta || {}).kind || '') !== 'sales') return
+    const meta: Any = (c as Any).meta || {}
+    const omit: string[] = Array.isArray((c as Any).omit) ? (c as Any).omit : []
+    const wasShort: string[] = Array.isArray(meta.shortHidden) ? meta.shortHidden
+      : (meta.length === 'full' ? [] : SHORT_HIDDEN_HISTORY[0])
+    const freed = wasShort.filter(k => shortOmit().indexOf(k) < 0 && omit.indexOf(k) >= 0)
+    const heroOld = SALES_RETIRED_HERO.indexOf(String(((c as Any).hero || {}).headline || '').trim()) >= 0
+    const welcomeOld = SALES_RETIRED_WELCOME.indexOf(String(((c as Any).welcome || {}).body || '').trim()) >= 0
+    const sameList = JSON.stringify(wasShort) === JSON.stringify(meta.shortHidden)
+    if (!freed.length && !heroOld && !welcomeOld && sameList) return
+    mutate((d: Any) => {
+      if (freed.length) d.omit = (Array.isArray(d.omit) ? d.omit : []).filter((k: string) => freed.indexOf(k) < 0)
+      if (heroOld) { d.hero = d.hero || {}; d.hero.headline = SALES_HERO }
+      if (welcomeOld) { d.welcome = d.welcome || {}; d.welcome.body = SALES_WELCOME }
+      d.meta = d.meta || {}
+      if (d.meta.length !== 'full') d.meta.shortHidden = shortOmit()
+    })
+  // Once per document; `c` changes on every keystroke and this must not chase it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial.id, edit])
+
   /** Short is the default a sales deck generates in; this reads what the document actually says. */
   const deckIsShort = isSales && SHORT_HIDDEN.some((k: string) => (Array.isArray(c.omit) ? c.omit : []).indexOf(k) >= 0)
   function setDeckLength(v: 'short' | 'full') {
