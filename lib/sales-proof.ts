@@ -134,7 +134,7 @@ export async function completedMonths(ownerIds: string[], fromMonth: string, toM
  */
 export async function ownerRevenueRows(
   ownerIds: string[], months: string[], only?: string[],
-): Promise<{ rows: OwnerRow[]; totals: ProofTotals; months: string[] }> {
+): Promise<{ rows: OwnerRow[]; totals: ProofTotals; months: string[]; unattributed?: number; feePct?: number }> {
   if (!ownerIds.length || !months.length) return { rows: [], totals: { gross: '', net: '', occ: '', adr: '', nights: '' }, months: [] }
   const detail = await statementDetail({ ownerIds, months })
   const want = only && only.length ? new Set(only.map(String)) : null
@@ -149,12 +149,39 @@ export async function ownerRevenueRows(
     .filter(u => !want || want.has(String(u.listingId)))
     // A unit the owner held for part of the window with nothing recognised is not a data point.
     .filter(u => Number(u.rental) > 0)
+
+  // COMMISSION BOOKED ABOVE THE UNIT STILL CAME OUT OF THE OWNER'S POCKET (2026-10-27).
+  //
+  // The first live pull of 17WEST read $1.83M of owner revenue against $1.65M after our fee — an
+  // effective 9.8% on a 20% agreement. The gap is commission the ledger books without a listing
+  // id, which lands on the portfolio line that this table deliberately drops. Dropping the line
+  // is right; dropping the cost with it is not, and it would have printed an in-pocket figure
+  // roughly a tenth too high on a slide whose entire job is to be trusted with numbers.
+  //
+  // So the owner-level commission for the same months is the control total, and anything the unit
+  // rows do not account for is spread across them in proportion to rental — the same basis the
+  // fee is charged on. `unattributed` says how much had to be allocated, so a reader of this data
+  // can see it was.
+  const owners = await ownerMonths({ ownerIds, months })
+  const scoped = want ? null : owners
+  const ctlRental = (scoped || owners).reduce((a, r) => a + (Number(r.rental) || 0), 0)
+  const ctlCommission = (scoped || owners).reduce((a, r) => a + (Number(r.commission) || 0), 0)
+  const unitRental = units.reduce((a, u) => a + (Number(u.rental) || 0), 0)
+  const unitCommission = units.reduce((a, u) => a + (Number(u.commission) || 0), 0)
+  // Only when the scope is the whole owner-month set can the control total be compared directly;
+  // a listing-scoped pull is a subset and its share of the control is its share of rental.
+  const expected = want && ctlRental > 0
+    ? (unitRental / ctlRental) * ctlCommission
+    : ctlCommission
+  const missing = Math.max(0, expected - unitCommission)
+  const spread = (rental: number) => (unitRental > 0 ? (rental / unitRental) * missing : 0)
+
   const rows = units.map(u => {
     const l = byId[String(u.listingId)] || {}
     const br = l.bedrooms == null ? '' : (Number(l.bedrooms) === 0 ? 'Studio' : Number(l.bedrooms) + 'BR')
     const unit = str(l.unit)
     const gross = Number(u.rental) || 0
-    const pocket = gross - (Number(u.commission) || 0)
+    const pocket = gross - (Number(u.commission) || 0) - spread(gross)
     const nights = Number(u.nights) || 0
     return {
       label: [br, unit ? 'Unit ' + unit : ''].filter(Boolean).join(' · ') || str(l.nickname || l.title || u.name || u.listingId),
@@ -173,6 +200,8 @@ export async function ownerRevenueRows(
   const sum = (k: '_g' | '_p' | '_n') => rows.reduce((a, r) => a + r[k], 0)
   const nights = sum('_n')
   return {
+    unattributed: Math.round(missing),
+    feePct: sum('_g') > 0 ? Math.round(((sum('_g') - sum('_p')) / sum('_g')) * 1000) / 10 : 0,
     rows: rows.map(({ _g, _p, _n, ...r }) => r),
     totals: {
       gross: fmtK(sum('_g')), net: fmtK(sum('_p')), occ: '—',

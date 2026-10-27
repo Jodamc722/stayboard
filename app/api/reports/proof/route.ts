@@ -100,7 +100,7 @@ export async function GET(req: NextRequest) {
     if (!months.length) {
       return NextResponse.json({ error: 'No completed owner statements between ' + fromM + ' and ' + toM + '.' }, { status: 400 })
     }
-    const { rows, totals } = await ownerRevenueRows(owners, months, ownerId ? undefined : listingScope)
+    const { rows, totals, unattributed, feePct } = await ownerRevenueRows(owners, months, ownerId ? undefined : listingScope)
     if (!rows.length) {
       return NextResponse.json({ error: 'Those statements carry no rental revenue for that scope.' }, { status: 400 })
     }
@@ -114,6 +114,11 @@ export async function GET(req: NextRequest) {
       statements: months.length,
       rows,
       totals,
+      // What the effective fee works out at across the scope, and how much commission had to be
+      // allocated because the ledger booked it above the unit. Both are here so a number that
+      // looks wrong can be checked rather than argued about.
+      feePct,
+      unattributed,
       basis: {
         gross: 'Rental revenue recognised to the owner, before our management fee',
         net: 'After our management fee. No expenses of any kind are included.',
