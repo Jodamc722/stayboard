@@ -7,7 +7,7 @@
 // Every item from the sourcing sheet sits on one card with its options side by side: the HostGPO
 // member price through Article, the Amazon listing from the sheet, and a City Home (delivered and
 // set up) or Wayfair (chairs and sofas; flat-pack) match. Tap Approve on each option that is
-// acceptable for the property; mark a card "Not for 17 West" when none is. Decisions save to the
+// acceptable for the property; mark a card "Not for this property" when none is. Decisions save to the
 // server as you go, so the whole team sees the same list. "Approved catalog" hides everything else
 // — that view IS the replacement list.
 //
@@ -33,7 +33,7 @@ type Payload = { ok: boolean; catalog: Catalog; decisions: Record<string, Decisi
 
 const money = (v: number | null | undefined) => (v == null ? '—' : '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
 const TONES: Record<string, string> = { host: 'text-brand-700', amz: 'text-amber-700', ch: 'text-sky-700', wf: 'text-violet-700' }
-const SRC_TONE = new Proxy(TONES, { get: (t, k: string) => t[k] || 'text-muted' }) as Record<string, string>
+const SRC_TONE = new Proxy(TONES, { get: (t, k: string) => t[String(k).replace(/-\d+$/, '')] || 'text-muted' }) as Record<string, string>
 const CHIP_TONE = (c: string) =>
   /Assembly/.test(c) ? 'bg-amber-50 text-amber-800'
     : /Delivered/.test(c) ? 'bg-sky-50 text-sky-800'
@@ -230,17 +230,17 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
                 <th className="text-right px-2 py-1.5">Case</th><th className="text-right px-2 py-1.5">Per unit</th><th className="text-right px-3 py-1.5">Approved</th>
               </tr></thead>
               <tbody>
-                {list.map(it => { const o = it.options[0]; if (!o) return null; const on = !!decisions[it.key]?.approved.includes(o.src); return (
-                  <tr key={it.key} className="border-b border-line last:border-0">
+                {list.flatMap(it => it.options.map((o, oi) => { const on = !!decisions[it.key]?.approved.includes(o.src); if (view === 'approved' && !on) return null; return (
+                  <tr key={it.key + (o.id || o.src)} className="border-b border-line last:border-0">
                     <td className="px-3 py-2"><div className="w-11 h-11 rounded-md bg-app flex items-center justify-center overflow-hidden">
                       {o.image ? <img src={o.image} alt="" className="w-full h-full object-contain p-0.5 mix-blend-multiply" loading="lazy" /> : <span className="font-bold text-muted">{o.vendor.slice(0, 1)}</span>}</div></td>
-                    <td className="px-2 py-2 font-semibold text-ink whitespace-nowrap">{it.name}</td>
+                    <td className="px-2 py-2 font-semibold text-ink whitespace-nowrap">{oi === 0 ? it.name : <span className="text-muted font-normal">also</span>}</td>
                     <td className="px-2 py-2"><span className="block text-[11px] uppercase tracking-wider text-muted font-semibold">{o.vendor}</span>
                       {o.url ? <a href={o.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{o.name}</a> : o.name}</td>
                     <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap">{money(o.price)}</td>
                     <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap font-semibold text-brand-700">{o.each || '—'}</td>
-                    <td className="px-3 py-2 text-right">{o.price != null && (view === 'all' || on) && (isPublic ? (on && <Approved />) : <ApproveBtn on={on} disabled={!canEdit} onClick={() => toggle(it.key, o.src)} small />)}</td>
-                  </tr>) })}
+                    <td className="px-3 py-2 text-right">{(o.price != null || o.url) && (view === 'all' || on) && (isPublic ? (on && <Approved />) : <ApproveBtn on={on} disabled={!canEdit} onClick={() => toggle(it.key, o.src)} small />)}</td>
+                  </tr>) }))}
               </tbody>
             </table>
           </div>
@@ -268,7 +268,7 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
       </>}
 
       <p className="text-xs text-muted max-w-3xl border-t border-line pt-4">
-        Prices as recorded in the <em>{data.catalog.sourceSheet}</em> sheet ({data.catalog.asOf}); HostGPO member pricing, Amazon, City Home and Wayfair listing prices as found, and they change. Photos come from each vendor&apos;s listing and link to it. City Home and Wayfair alternatives were selected by visual and functional similarity, not verified dimensions; City Home beds are shown in queen.
+        {data.catalog.fromDb ? 'Prices are as entered or as found on each vendor listing, and they change.' : <>Prices as recorded in the <em>{data.catalog.sourceSheet}</em> sheet ({data.catalog.asOf}); HostGPO member pricing, Amazon, City Home and Wayfair listing prices as found, and they change.</>} Photos come from each vendor&apos;s listing and link to it. City Home and Wayfair alternatives were selected by visual and functional similarity, not verified dimensions; City Home beds are shown in queen.
       </p>
     </div>
   )
@@ -311,7 +311,7 @@ function Group({ title, count, children }: { title: string; count: number; child
 }
 function StatusPill({ s, n }: { s: string; n: number }) {
   const cls = s === 'approved' ? 'bg-emerald-50 text-emerald-700' : s === 'rejected' ? 'bg-rose-50 text-rose-700' : 'bg-app text-muted'
-  const label = s === 'approved' ? (n > 1 ? `Approved · ${n} options` : 'Approved') : s === 'rejected' ? 'Not for 17 West' : 'Pending review'
+  const label = s === 'approved' ? (n > 1 ? `Approved · ${n} options` : 'Approved') : s === 'rejected' ? 'Not for this property' : 'Pending review'
   return <span className={'text-[11px] font-semibold rounded-full px-2.5 py-0.5 whitespace-nowrap ' + cls}>{label}</span>
 }
 function ApproveBtn({ on, disabled, onClick, small }: { on: boolean; disabled?: boolean; onClick: () => void; small?: boolean }) {
@@ -377,7 +377,7 @@ function CompareCard({ item, d, status, canEdit, view, isPublic, onToggle, onRej
             className="text-[13px] rounded-md border border-line bg-app px-2 py-1.5 resize-y min-h-[32px] w-full" />
           <button type="button" aria-pressed={!!d?.rejected} disabled={!canEdit} onClick={() => onReject(item.key)}
             className={'inline-flex items-center gap-1 text-xs font-semibold rounded-lg border px-2.5 py-1.5 whitespace-nowrap disabled:opacity-60 ' + (d?.rejected ? 'bg-rose-50 border-rose-300 text-rose-700' : 'border-line text-muted hover:text-ink')}>
-            <X className="w-3 h-3" /> Not for 17 West
+            <X className="w-3 h-3" /> Not for this property
           </button>
         </div>
       )}
@@ -387,9 +387,9 @@ function CompareCard({ item, d, status, canEdit, view, isPublic, onToggle, onRej
 }
 
 function SoloCard({ item, d, status, canEdit, view, isPublic, onToggle }: { item: Item; d?: Decision; status: string; canEdit: boolean; view: 'all' | 'approved'; isPublic?: boolean; onToggle: (k: string, s: OptionSrc) => void }) {
-  const main = item.options[0]; const alt = item.options[1]
+  const main = item.options[0]; const alts = item.options.slice(1)
   if (!main) return null
-  const onMain = !!d?.approved.includes(main.src); const onAlt = !!(alt && d?.approved.includes(alt.src))
+  const onMain = !!d?.approved.includes(main.src)
   return (
     <article className="rounded-xl border border-line bg-white shadow-soft overflow-hidden flex flex-col" id={item.key}>
       {(view === 'all' || onMain) && <Photo o={main} />}
@@ -403,18 +403,18 @@ function SoloCard({ item, d, status, canEdit, view, isPublic, onToggle }: { item
           {!isPublic && view === 'all' && d?.suggested?.includes(main.src) && <Suggested why={d.suggestNote} />}
         </>}
       </div>
-      {alt && (view === 'all' || onAlt) && (
-        <div className={'mt-auto border-t border-dashed border-line grid gap-2.5 p-3 ' + (alt.src === 'ch' ? 'bg-sky-50/60' : 'bg-violet-50/60')} style={{ gridTemplateColumns: '64px 1fr' }}>
+      {alts.map(alt => { const onAlt = !!d?.approved.includes(alt.src); if (!(view === 'all' || onAlt)) return null; return (
+        <div key={alt.id || alt.src} className={'mt-auto border-t border-dashed border-line grid gap-2.5 p-3 ' + (alt.src.startsWith('ch') ? 'bg-sky-50/60' : alt.src.startsWith('wf') ? 'bg-violet-50/60' : 'bg-app')} style={{ gridTemplateColumns: '64px 1fr' }}>
           <div className="w-16 h-16 rounded-md bg-[#f1f2ee] overflow-hidden flex items-center justify-center">{alt.image ? <img src={alt.image} alt="" loading="lazy" className={'w-full h-full ' + (alt.fit === 'cover' ? 'object-cover' : 'object-contain p-1 mix-blend-multiply')} /> : null}</div>
           <div className="grid gap-0.5 min-w-0">
-            <div className={'text-[11px] uppercase tracking-wider font-semibold ' + SRC_TONE[alt.src]}>{alt.vendor} · {alt.chips[0]?.toLowerCase()}</div>
+            <div className={'text-[11px] uppercase tracking-wider font-semibold ' + SRC_TONE[alt.src]}>{alt.vendor}{alt.chips[0] ? ` · ${alt.chips[0].toLowerCase()}` : ''}</div>
             <div className="text-[13px] font-medium leading-snug break-words">{alt.url ? <a href={alt.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{alt.name}</a> : alt.name}</div>
-            <div className="text-[15px] font-bold tabular-nums flex items-center gap-2 flex-wrap">{money(alt.price)} <Diff ref_={main.price || 0} price={alt.price} /></div>
+            <div className="text-[15px] font-bold tabular-nums flex items-center gap-2 flex-wrap">{money(alt.price)} {main.price != null && <Diff ref_={main.price || 0} price={alt.price} />}</div>
             {(view === 'all' || onAlt) && (isPublic ? (onAlt && <Approved />) : <ApproveBtn on={onAlt} disabled={!canEdit} onClick={() => onToggle(item.key, alt.src)} small />)}
             {!isPublic && view === 'all' && d?.suggested?.includes(alt.src) && <Suggested why={d.suggestNote} />}
           </div>
         </div>
-      )}
+      ) })}
     </article>
   )
 }

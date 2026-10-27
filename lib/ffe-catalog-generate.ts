@@ -13,7 +13,7 @@ import { supabaseAdmin } from './supabase-admin'
 import { anthropicMessages, textOf } from './anthropic-call'
 import { MODEL_IDS, MODEL_FALLBACK } from './ai-models'
 import { parseJson } from './json-repair'
-import { cloneCatalog, getCatalog, addItem, addOption, SUPPLIERS } from './ffe-approved-catalog'
+import { cloneCatalog, getCatalog, addItem, addOption, SUPPLIERS, baseKey } from './ffe-approved-catalog'
 
 export type Tier = 'standard' | 'midlux' | 'luxury'
 export const TIERS: { key: Tier; label: string; blurb: string; suppliers: string[] }[] = [
@@ -50,8 +50,13 @@ async function listingPhotos(listingId: string, max = 8): Promise<{ title: strin
       const r = await fetch(smallUrl(u), { signal: AbortSignal.timeout(8000) })
       if (!r.ok) continue
       const ct = (r.headers.get('content-type') || '').toLowerCase()
+      if (!ct.startsWith('image/')) continue
+      const len = Number(r.headers.get('content-length') || 0)
+      if (len > 4_000_000) continue                               // the API caps images; a 4 MB original is not worth the call
+      const buf = Buffer.from(await r.arrayBuffer())
+      if (buf.length > 4_000_000) continue
       const media = ct.includes('png') ? 'image/png' : ct.includes('webp') ? 'image/webp' : ct.includes('gif') ? 'image/gif' : 'image/jpeg'
-      images.push({ media, b64: Buffer.from(await r.arrayBuffer()).toString('base64') })
+      images.push({ media, b64: buf.toString('base64') })
     } catch { /* skip this photo */ }
   }
   return { title: str((listing as any).nickname) || str((listing as any).title), images }
@@ -78,7 +83,7 @@ export async function generateCatalog(opts: { slug: string; name: string; listin
   const allowed = new Set(tier.suppliers)
   const menu = cat.items.filter(i => i.section !== 'amenity').map(i => ({
     key: i.key, item: i.name, category: i.category,
-    options: i.options.filter(o => allowed.has(o.src)).map(o => ({ src: o.src, supplier: o.vendor, product: o.name, price: o.price, tags: o.chips })),
+    options: i.options.filter(o => allowed.has(baseKey(o.src))).map(o => ({ src: o.src, supplier: o.vendor, product: o.name, price: o.price, tags: o.chips })),
   })).filter(i => i.options.length)
   const SYS = `You are the furnishing buyer for Stay Hospitality, a short-term rental operator in South Florida. You will see photos of one of their listings and a catalog of items, each with purchase options from different suppliers (supplier keys: ${SUPPLIERS.map(s => s.key + '=' + s.name).join(', ')}).
 
@@ -106,14 +111,16 @@ Rules: one pick per catalog item, choose only from that item's listed options; i
   let suggested = 0
   for (const p of picks) {
     const it = byKey.get(str(p.key)); if (!it) continue
-    const src = str(p.src); if (!it.options.some(o => o.src === src && allowed.has(src))) continue
+    const src = str(p.src); if (!it.options.some(o => o.src === src && allowed.has(baseKey(src)))) continue
     const { error } = await db.from('ffe_approved_decisions').upsert({ property: opts.slug, item_key: it.key, suggested: [src], suggest_note: str(p.why).slice(0, 200) || null, updated_by: opts.who || null, updated_at: new Date().toISOString() }, { onConflict: 'property,item_key' })
     if (!error) suggested++
   }
   let added = 0
   for (const m of missing.slice(0, 8)) {
     const name = str(m.name).slice(0, 120); if (!name) continue
-    const supplier = SUPPLIERS.some(s => s.key === str(m.supplier)) ? str(m.supplier) : 'amz'
+    // A supplier the tier hides would make an item nobody can see: fall back to the tier's first supplier.
+    const asked = str(m.supplier)
+    const supplier = SUPPLIERS.some(s => s.key === asked) && allowed.has(asked) ? asked : tier.suppliers[0]
     const q = encodeURIComponent(str(m.search) || name)
     const url = supplier === 'amz' ? `https://www.amazon.com/s?k=${q}` : supplier === 'wf' ? `https://www.wayfair.com/keyword.php?keyword=${q}` : supplier === 'ch' ? `https://www.cityhome.com/search?q=${q}` : supplier === 'host' ? `https://www.article.com/search?q=${q}` : `https://www.google.com/search?q=${q}`
     const it = await addItem(opts.slug, { name, category: str(m.category) || 'Suggested from photos', section: 'vendor' })

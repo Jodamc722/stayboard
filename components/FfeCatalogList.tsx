@@ -49,7 +49,7 @@ export function FfeCatalogList() {
       if (!j.ok && !j.slug) { setErr(j.error || 'That did not save.'); setBusy(''); return }
       if (j.error) setErr(j.error)
       refresh()
-      router.push(`/ffe/catalogs/${j.slug}${j.suggested ? '' : ''}`)
+      router.push(`/ffe/catalogs/${j.slug}`)
     } catch { setErr('That did not save.'); setBusy('') }
   }
 

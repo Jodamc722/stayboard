@@ -51,6 +51,9 @@ export const SUPPLIERS: { key: string; name: string; note: string }[] = [
   { key: 'other', name: 'Other', note: 'Anything else' },
 ]
 export const SUPPLIER_NAME = (key: string) => SUPPLIERS.find(s => s.key === key)?.name || key
+/** An option's supplier key. A second option from the same supplier on one item gets 'amz-2', 'amz-3'…
+ *  so approvals (which are keyed by src) tell them apart; this strips the suffix back to the supplier. */
+export const baseKey = (src: string) => src.replace(/-\d+$/, '')
 
 const JSON_SEED = seedJson as any
 const DEFAULT_SLUG = 'default'
@@ -92,18 +95,30 @@ async function tablesReady(): Promise<boolean> {
   try { const { error } = await supabaseAdmin().from('ffe_catalogs').select('slug').limit(1); return !error } catch { return false }
 }
 
-/** Seed the default from the JSON file when the table is empty, and create '17-west' as its clone
- *  so decisions already keyed '17-west' keep matching (same item keys). Runs at most once each. */
+/** Seed the default from the JSON file when it is missing, and create '17-west' as its clone so
+ *  decisions already keyed '17-west' keep matching (same item keys). The catalog ROW is inserted
+ *  first with a plain insert: whoever wins the unique key writes the items; a loser (a second
+ *  request landing at the same moment) sees the conflict and writes nothing. Loads never call
+ *  ensureSeeded again from inside this path (loadCatalog, not getCatalog), so it cannot recurse. */
+let seedOnce: Promise<void> | null = null
 async function ensureSeeded(): Promise<void> {
+  if (!seedOnce) seedOnce = seedNow().catch(() => { seedOnce = null })
+  return seedOnce
+}
+async function seedNow(): Promise<void> {
   const db = supabaseAdmin()
   const { data: rows } = await db.from('ffe_catalogs').select('slug').in('slug', [DEFAULT_SLUG, LEGACY_SLUG])
   const have = new Set((rows || []).map((r: any) => r.slug))
   if (!have.has(DEFAULT_SLUG)) {
-    const src = jsonCatalog(DEFAULT_SLUG)
-    await db.from('ffe_catalogs').upsert({ slug: DEFAULT_SLUG, name: 'Default onboarding catalog', kind: 'default', based_on: null, suppliers: [], notes: `Seeded from the ${JSON_SEED.sourceSheet} sheet (${JSON_SEED.asOf}).` }, { onConflict: 'slug' })
-    await writeItems(DEFAULT_SLUG, src.items)
+    const { error } = await db.from('ffe_catalogs').insert({ slug: DEFAULT_SLUG, name: 'Default onboarding catalog', kind: 'default', based_on: null, suppliers: [], notes: `Seeded from the ${JSON_SEED.sourceSheet} sheet (${JSON_SEED.asOf}).` })
+    if (!error) await writeItems(DEFAULT_SLUG, jsonCatalog(DEFAULT_SLUG).items)
+    else if (!/duplicate|unique|23505/i.test(error.message)) throw new Error(error.message)
   }
-  if (!have.has(LEGACY_SLUG)) await cloneCatalog(DEFAULT_SLUG, LEGACY_SLUG, JSON_SEED.title || '17 West furniture catalog', null)
+  if (!have.has(LEGACY_SLUG)) {
+    const src = (await loadCatalog(DEFAULT_SLUG)) || jsonCatalog(DEFAULT_SLUG)
+    const { error } = await db.from('ffe_catalogs').insert({ slug: LEGACY_SLUG, name: JSON_SEED.title || '17 West furniture catalog', kind: 'property', based_on: DEFAULT_SLUG, suppliers: [] })
+    if (!error) await writeItems(LEGACY_SLUG, src.items)
+  }
 }
 
 async function writeItems(slug: string, items: CatalogItem[]) {
@@ -114,15 +129,15 @@ async function writeItems(slug: string, items: CatalogItem[]) {
       .upsert({ catalog: slug, key: it.key, section: it.section, category: it.category, name: it.name, sort: i }, { onConflict: 'catalog,key' })
       .select('id').single()
     if (error || !row) continue
+    // Idempotent: a re-run (a seed that died midway) replaces this item's options instead of doubling them.
+    await db.from('ffe_catalog_options').delete().eq('item_id', row.id)
     const opts = it.options.map((o, j) => ({ item_id: row.id, src: o.src, vendor: o.vendor, name: o.name, url: o.url || null, price: o.price ?? null, each: o.each || null, image_url: o.image || null, chips: o.chips || [], fit: o.fit || 'contain', sort: j }))
     if (opts.length) await db.from('ffe_catalog_options').insert(opts)
   }
 }
 
-export async function getCatalog(slug: string): Promise<Catalog | null> {
-  if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(slug)) return null
-  if (!(await tablesReady())) return (slug === DEFAULT_SLUG || slug === LEGACY_SLUG) ? jsonCatalog(slug) : null
-  await ensureSeeded()
+/** Read one catalog from the tables, no seeding, no fallback. */
+async function loadCatalog(slug: string): Promise<Catalog | null> {
   const db = supabaseAdmin()
   const { data: cat } = await db.from('ffe_catalogs').select('*').eq('slug', slug).limit(1)
   const c = (cat || [])[0]
@@ -141,6 +156,13 @@ export async function getCatalog(slug: string): Promise<Catalog | null> {
     items: (items || []).map((i: any) => ({ id: i.id, key: i.key, section: i.section, category: i.category, name: i.name, options: byItem[i.id] || [] })),
     misc: slug === DEFAULT_SLUG || slug === LEGACY_SLUG ? (JSON_SEED.misc || {}) : {},
   }
+}
+
+export async function getCatalog(slug: string): Promise<Catalog | null> {
+  if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(slug)) return null
+  if (!(await tablesReady())) return (slug === DEFAULT_SLUG || slug === LEGACY_SLUG) ? jsonCatalog(slug) : null
+  await ensureSeeded()
+  return loadCatalog(slug)
 }
 
 export async function listCatalogs(): Promise<CatalogSummary[]> {
@@ -165,10 +187,8 @@ export async function cloneCatalog(fromSlug: string, slug: string, name: string,
   const src = await getCatalog(fromSlug)
   if (!src) return { ok: false, error: 'Unknown source catalog.' }
   const db = supabaseAdmin()
-  const { data: exists } = await db.from('ffe_catalogs').select('slug').eq('slug', slug).limit(1)
-  if ((exists || []).length) return { ok: false, error: 'That slug is taken.' }
   const { error } = await db.from('ffe_catalogs').insert({ slug, name: name || slug, kind: 'property', based_on: fromSlug, suppliers: src.suppliers, created_by: who })
-  if (error) return { ok: false, error: error.message }
+  if (error) return { ok: false, error: /duplicate|unique|23505/i.test(error.message) ? 'That slug is taken.' : error.message }
   await writeItems(slug, src.items)
   if (copyDecisions) {
     const d = await readDecisions(fromSlug)
@@ -229,8 +249,11 @@ export async function addOption(itemId: string, d: { src: unknown; name: unknown
   if (src === 'amz' || src === 'wf') { if (!chips.includes('Assembly needed')) chips.push('Assembly needed') }
   if (src === 'ch' && !chips.includes('Delivered & set up')) chips.push('Delivered & set up')
   const db = supabaseAdmin()
-  const { data: last } = await db.from('ffe_catalog_options').select('sort').eq('item_id', itemId).order('sort', { ascending: false }).limit(1)
-  const { data, error } = await db.from('ffe_catalog_options').insert({ item_id: itemId, src, vendor: SUPPLIER_NAME(src), name, url, price: num(d.price), each: str(d.each).slice(0, 40) || null, image_url: image, chips, fit: 'contain', sort: ((last || [])[0]?.sort ?? 0) + 1 }).select('id').single()
+  const { data: existing } = await db.from('ffe_catalog_options').select('src, sort').eq('item_id', itemId).is('archived_at', null)
+  const taken = new Set((existing || []).map((o: any) => String(o.src)))
+  let key = src; for (let n = 2; taken.has(key); n++) key = `${src}-${n}`
+  const sort = Math.max(0, ...(existing || []).map((o: any) => Number(o.sort) || 0)) + 1
+  const { data, error } = await db.from('ffe_catalog_options').insert({ item_id: itemId, src: key, vendor: SUPPLIER_NAME(src), name, url, price: num(d.price), each: str(d.each).slice(0, 40) || null, image_url: image, chips, fit: 'contain', sort }).select('id').single()
   return error ? { ok: false, error: error.message } : { ok: true, id: data?.id }
 }
 
@@ -306,7 +329,7 @@ export async function setShare(property: string, who: string, regenerate: boolea
 export function applySuppliers(cat: Catalog): Catalog {
   if (!cat.suppliers.length) return cat
   const ok = new Set(cat.suppliers)
-  return { ...cat, items: cat.items.map(it => ({ ...it, options: it.options.filter(o => ok.has(o.src)) })) }
+  return { ...cat, items: cat.items.map(it => ({ ...it, options: it.options.filter(o => ok.has(baseKey(o.src))) })) }
 }
 
 /** Resolve a public code to the APPROVED catalog only — the replacement list, nothing else.
