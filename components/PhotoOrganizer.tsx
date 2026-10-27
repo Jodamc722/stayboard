@@ -289,12 +289,33 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
     } catch { return file }
   }
 
+  // NEW PHOTOS GO AT THE END (2026-10-27). Before the AI has run, `order` is empty, so an upload or
+  // a library pick used to become the whole order — and on Push the photo-order route appends the
+  // listing's existing photos AFTER it, making a lobby shot the cover. Seed the order with what
+  // the listing has now, so additions land last and the person moves them where they belong.
+  async function seedOrderIfEmpty(): Promise<void> {
+    if (orderRef.current.length > 0 || Object.keys(photosRef.current).length > 0) return
+    try {
+      const r = await fetch('/api/photos/library?listing=' + encodeURIComponent(listingId), { cache: 'no-store' })
+      const j: any = await r.json().catch(() => null)
+      const list: any[] = j && Array.isArray(j.photos) ? j.photos : []
+      if (!list.length) return
+      const map: Record<string, Photo> = {}
+      for (const p of list) map[p.id] = { _id: p.id, url: p.view || p.url, caption: p.caption || '', category: 'other' }
+      const ids = list.map((p: any) => String(p.id))
+      setPhotos(prev => ({ ...map, ...prev }))
+      setOrder(prev => (prev.length ? prev : ids)); setProposed(prev => (prev.length ? prev : ids))
+      orderRef.current = ids
+    } catch { /* the push appends what it does not see; the order is still honest */ }
+  }
+
   // UPLOAD new photos: each file is mirrored (untouched original) + enhanced on the server, then
   // appears in the grid like any other photo (enhanced by default). Pushed via photo-order `adds`.
   async function addFiles(list: FileList | null) {
     if (!list || list.length === 0) return
     const files = Array.from(list).slice(0, 20)
     setError(null); setPushedMsg(null); setUploadingCount(files.length); setOpen(true)
+    await seedOrderIfEmpty()
     for (const f of files) {
       try {
         const blob = await resizeToJpeg(f)
@@ -318,9 +339,10 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
     if (fileRef.current) fileRef.current.value = ''
   }
 
-  function addFromLibrary(picks: LibraryPick[]) {
+  async function addFromLibrary(picks: LibraryPick[]) {
     if (!picks.length) return
     setError(null); setPushedMsg(null); setOpen(true)
+    await seedOrderIfEmpty()
     const stamp = Date.now()
     picks.forEach((pk, i) => {
       const id = `lib-${stamp}-${i}-${Math.random().toString(36).slice(2, 6)}`
@@ -330,7 +352,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       setProposed(prev => [...prev, id])
     })
     setLibOpen(false)
-    setPushedMsg(`${picks.length} photo${picks.length === 1 ? '' : 's'} added from the library — place them, then Push to send them to Guesty.`)
+    setPushedMsg(`${picks.length} photo${picks.length === 1 ? '' : 's'} added from the library at the end — move them where they belong, then Push to send them to Guesty.`)
   }
 
   // REPLACE an existing photo's image: pick a file, it's mirrored + enhanced like an upload, then
