@@ -31,7 +31,7 @@ import {
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
 } from '@/lib/onboarding-copy'
-import { MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS } from '@/lib/sales-copy'
+import { MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS, PLAN_LABELS } from '@/lib/sales-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, seasonBodyStale } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
@@ -2189,6 +2189,26 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   }
   // Real returns by building — Nick's most-asked-for slide, and the only claim in the deck
   // nobody else in this market can make with their own numbers.
+  // The comparable listings, pasted. Nick gathers them off Airbnb by hand, so the deck's job is
+  // to turn whatever shape that paste arrives in into a table — not to pretend to a comp feed.
+  const [compPaste, setCompPaste] = useState('')
+  const [compOpen, setCompOpen] = useState(false)
+  const [compBusy, setCompBusy] = useState(false)
+  const [compMsg, setCompMsg] = useState('')
+  async function readComps(textIn: string) {
+    if (compBusy || !textIn.trim()) return
+    setCompBusy(true); setCompMsg('')
+    try {
+      const r = await fetch('/api/reports/sales-comps', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: initial.id, text: textIn }),
+      })
+      const d = await r.json()
+      if (d?.ok && d?.content) { setC(d.content); setCompPaste(''); setCompOpen(false); setCompMsg(d.rows + ' listings — saved.') }
+      else setCompMsg(String(d?.error || 'Could not read those listings.'))
+    } catch { setCompMsg('Could not read those listings.') }
+    setCompBusy(false)
+  }
   const [rtBusy, setRtBusy] = useState(false)
   const [rtMsg, setRtMsg] = useState('')
   const [rtMonths, setRtMonths] = useState(12)
@@ -5043,9 +5063,13 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               for (const r of plRows) { const n = plNum((r.cells || [])[j]); if (n != null) { sum += n; any = true } }
               return any ? sum : null
             })
-            const plMax = Math.max(0, ...plSeries.map(n => (n == null ? 0 : Math.abs(n))))
-            const plChart = plMax > 0 && plSeries.filter(n => n != null).length >= 3
-            if (plRows.length || edit) slides.push({ key: 'plan', ai: true, node: (
+            const plChartMax = Math.max(0, ...plSeries.map(n => (n == null ? 0 : Math.abs(n))))
+            const plChart = plChartMax > 0 && plSeries.filter(n => n != null).length >= 3
+            // The one-pager's own shape, when a revenue estimate has been read in.
+            const plRange: Any = pl.range && typeof pl.range === 'object' ? pl.range : null
+            const plMonths: Any[] = Array.isArray(pl.months) ? (pl.months as Any[]) : []
+            const plMax = Math.max(1, ...plMonths.map((m: Any) => Number(m.highNum) || Number(m.baseNum) || 0))
+            if (plRows.length || plRange || plMonths.length || edit) slides.push({ key: 'plan', ai: true, node: (
             <Slide nav="Projection" warn={edit} ground={GROUND.tint}>
               <div className="flex flex-col" style={{ height: '100%' }}>
                 <Split k="plan" leftW={320}
@@ -5061,13 +5085,85 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     </>
                   }
                   right={
-                    plRows.length ? (
+                    plRange || plMonths.length ? (
+                      // THE PAGE THE TEAM ALREADY SENDS (2026-10-27). Range band, then the two
+                      // figures behind it, then the year. Same order as the one-pager, because
+                      // that order is why the one-pager works: the number first, the arithmetic
+                      // under it, the shape of the year under that.
+                      <div>
+                        {plRange ? (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1.45fr 1fr', background: t.band, borderRadius: 12, overflow: 'hidden' }}>
+                            {([[PLAN_LABELS.annual, 'annualLow', 'annualHigh', PLAN_LABELS.annualSub, 34],
+                               [PLAN_LABELS.monthly, 'monthlyLow', 'monthlyHigh', PLAN_LABELS.monthlySub, 24]] as const).map(([lbl, lo, hi, sub, size], i) => (
+                              <div key={lbl} style={{ padding: '18px 22px', borderLeft: i ? '1px solid rgba(255,255,255,0.18)' : undefined }}>
+                                <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)', margin: 0 }}>{lbl}</p>
+                                <p style={{ fontFamily: SERIF, fontSize: size, letterSpacing: '-0.025em', color: '#fff', margin: '8px 0 0', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                                  <Ed v={String(plRange[lo] || '')} set={v => patch('plan.range.' + lo, v)} edit={edit} />
+                                  {String(plRange[hi] || '') && String(plRange[hi]) !== String(plRange[lo]) ? (
+                                    <> – <Ed v={String(plRange[hi] || '')} set={v => patch('plan.range.' + hi, v)} edit={edit} /></>
+                                  ) : null}
+                                </p>
+                                <p style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.72)', margin: '7px 0 0' }}>{sub}</p>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                        {plRange && (plRange.rateLow || plRange.occLow) ? (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
+                            {([[PLAN_LABELS.rate, 'rateLow', 'rateHigh', PLAN_LABELS.rateSub],
+                               [PLAN_LABELS.occ, 'occLow', 'occHigh', PLAN_LABELS.occSub]] as const).map(([lbl, lo, hi, sub]) => (
+                              String(plRange[lo] || '') ? (
+                                <div key={lbl} style={{ background: t.chip, borderRadius: 12, padding: '14px 18px' }}>
+                                  <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: 0 }}>{lbl}</p>
+                                  <p style={{ fontFamily: SERIF, fontSize: 26, letterSpacing: '-0.025em', color: t.accent, margin: '7px 0 0', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                                    <Ed v={String(plRange[lo] || '')} set={v => patch('plan.range.' + lo, v)} edit={edit} />
+                                    {String(plRange[hi] || '') && String(plRange[hi]) !== String(plRange[lo]) ? (
+                                      <> – <Ed v={String(plRange[hi] || '')} set={v => patch('plan.range.' + hi, v)} edit={edit} /></>
+                                    ) : null}
+                                  </p>
+                                  <p style={{ fontSize: 11.5, color: t.muted, margin: '5px 0 0' }}>{sub}</p>
+                                </div>
+                              ) : null
+                            ))}
+                          </div>
+                        ) : null}
+                        {plMonths.length ? (
+                          <div style={{ marginTop: 16 }}>
+                            <p style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: '0 0 8px' }}>{PLAN_LABELS.byMonth}</p>
+                            {/* Base and high end as a pair per month, which is what makes the
+                                range read as a range rather than as two unrelated numbers. */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + plMonths.length + ', 1fr)', gap: 6, alignItems: 'end', height: 70 }}>
+                              {plMonths.map((m: Any, i: number) => (
+                                <span key={i} className="flex items-end justify-center" style={{ gap: 2, height: '100%' }}
+                                  title={String(m.label) + ' · ' + String(m.base || '') + ' – ' + String(m.high || '')}>
+                                  <span style={{ display: 'block', width: '42%', height: Math.max(2, ((Number(m.baseNum) || 0) / plMax) * 66), background: inkA(t.ink, 0.55), borderRadius: '2px 2px 0 0' }} />
+                                  <span style={{ display: 'block', width: '42%', height: Math.max(2, ((Number(m.highNum) || Number(m.baseNum) || 0) / plMax) * 66), background: t.accent, borderRadius: '2px 2px 0 0' }} />
+                                </span>
+                              ))}
+                            </div>
+                            {([['', 'label'], [PLAN_LABELS.base, 'base'], [PLAN_LABELS.high, 'high'], [PLAN_LABELS.baseRate, 'rate'], [PLAN_LABELS.baseOcc, 'occ']] as const)
+                              .filter(([, k]) => k === 'label' || plMonths.some((m: Any) => String(m[k] || '')))
+                              .map(([lbl, k]) => (
+                                <div key={k} style={{ display: 'grid', gridTemplateColumns: '96px repeat(' + plMonths.length + ', 1fr)', gap: 6, padding: '4px 0', borderTop: k === 'label' ? undefined : '1px solid ' + t.rule }}>
+                                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: t.muted }}>{lbl}</span>
+                                  {plMonths.map((m: Any, i: number) => (
+                                    <span key={i} style={{ fontSize: k === 'label' ? 9.5 : 9.5, fontWeight: k === 'label' ? 700 : 400, letterSpacing: k === 'label' ? '0.08em' : undefined, color: k === 'label' ? t.ink : t.body, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+                                      {String(m[k] || '')}
+                                    </span>
+                                  ))}
+                                </div>
+                              ))}
+                          </div>
+                        ) : null}
+                        {pl.source ? <p style={{ fontSize: 10.5, color: t.muted, marginTop: 12 }}>{String(pl.source)}</p> : null}
+                      </div>
+                    ) : plRows.length ? (
                       <div className="onb-scroll" style={{ overflowX: 'auto' }}>
                         {plChart ? (
                           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr repeat(' + Math.max(1, plCols.length) + ', minmax(62px,1fr))', gap: 8, alignItems: 'end', height: 104, marginBottom: 14 }}>
                             <span />
                             {plSeries.map((n, j) => (
-                              <span key={j} style={{ display: 'block', height: n == null ? 0 : Math.max(3, (Math.abs(n) / plMax) * 96), borderRadius: '4px 4px 0 0', background: j === plSeries.length - 1 ? t.accent : t.barA || t.ink, opacity: n == null ? 0 : (j === plSeries.length - 1 ? 1 : 0.82) }} />
+                              <span key={j} style={{ display: 'block', height: n == null ? 0 : Math.max(3, (Math.abs(n) / plChartMax) * 96), borderRadius: '4px 4px 0 0', background: j === plSeries.length - 1 ? t.accent : t.barA || t.ink, opacity: n == null ? 0 : (j === plSeries.length - 1 ? 1 : 0.82) }} />
                             ))}
                           </div>
                         ) : null}
@@ -5840,6 +5936,75 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // file for the onboarding deck. A prospect does not want our checklist; they want to
           // know what the next four weeks cost THEM in time and decisions, so every step carries
           // who does it and when.
+          // ── 4f · THE COMPARABLE LISTINGS ─────────────────────────────────────
+          // The second half of the one-pager, and the evidence an owner checks first, because
+          // they can open every one of these in a browser while you are still talking. There is
+          // no comp feed in this system — Nick gathers them off Airbnb by hand — so the slide
+          // takes a paste and formats it rather than pretending to a source we do not have.
+          if (!hid('comps')) { const cp: Any = sec('comps'); const cpRows: Any[] = (cp.rows || []) as Any[]
+            if (cpRows.length || edit) slides.push({ key: 'comps', ai: true, node: (
+            <Slide nav="Comparable listings" warn={edit}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <div className="flex items-baseline justify-between" style={{ gap: 20 }}>
+                  <Title k="comps" sub={false} />
+                  {edit ? (
+                    <button className="sb-noprint" onClick={() => setCompOpen(o => !o)}
+                      style={{ fontSize: 11.5, fontWeight: 600, padding: '6px 12px', borderRadius: 999, background: t.card, border: '1px solid ' + t.cardBorder, color: t.ink, whiteSpace: 'nowrap' }}>
+                      Paste listings
+                    </button>
+                  ) : null}
+                </div>
+                {edit && compOpen ? (
+                  <div className="sb-noprint" style={{ marginTop: 12 }}>
+                    <textarea value={compPaste} onChange={e => setCompPaste(e.target.value)} rows={5}
+                      placeholder="Paste the listings here — titles and figures in any order, one listing per line."
+                      style={{ width: '100%', fontSize: 12.5, lineHeight: 1.5, padding: 10, borderRadius: 10, border: '1px solid ' + t.cardBorder, background: t.card, color: t.ink, fontFamily: 'inherit', resize: 'vertical' }} />
+                    <div className="flex items-center" style={{ gap: 10, marginTop: 8 }}>
+                      <button onClick={() => readComps(compPaste)} disabled={compBusy || !compPaste.trim()}
+                        style={{ fontSize: 12, fontWeight: 600, padding: '7px 13px', borderRadius: 999, background: t.ink, color: t.bg, opacity: compBusy || !compPaste.trim() ? 0.5 : 1 }}>
+                        {compBusy ? 'Reading…' : 'Read the listings'}
+                      </button>
+                      {compMsg ? <span style={{ fontSize: 11.5, color: t.muted }}>{compMsg}</span> : null}
+                    </div>
+                  </div>
+                ) : null}
+                <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 16 }}>
+                  {cpRows.length ? (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: '28px 2.4fr 1.2fr 0.8fr 0.7fr 0.5fr 0.5fr 0.6fr', gap: 10, paddingBottom: 7, borderBottom: '1px solid ' + t.rule }}>
+                        {['', 'Listing', 'Est. revenue / year', 'Nightly rate', 'Occupancy', 'Beds', 'Baths', 'Rating'].map((h, i) => (
+                          <p key={h + i} style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, margin: 0, textAlign: i <= 1 ? 'left' : 'right' }}>{h}</p>
+                        ))}
+                      </div>
+                      {cpRows.slice(0, 10).map((r: Any, i: number) => (
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '28px 2.4fr 1.2fr 0.8fr 0.7fr 0.5fr 0.5fr 0.6fr', gap: 10, padding: '7px 0', borderBottom: '1px solid ' + t.rule, alignItems: 'baseline' }}>
+                          <span style={{ fontSize: 10.5, fontWeight: 700, color: t.accent, fontVariantNumeric: 'tabular-nums' }}>{String(i + 1).padStart(2, '0')}</span>
+                          <p style={{ fontSize: 12.5, color: t.ink, margin: 0, minWidth: 0 }}>
+                            <Ed v={String(r.name || '')} set={v => patch('comps.rows.' + i + '.name', v)} edit={edit} />
+                          </p>
+                          {['rev', 'rate', 'occ', 'beds', 'baths', 'rating'].map(k => (
+                            <p key={k} style={{ fontSize: 12.5, color: k === 'rev' ? t.ink : t.body, fontWeight: k === 'rev' ? 600 : 400, margin: 0, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                              <Ed v={String(r[k] || '')} set={v => patch('comps.rows.' + i + '.' + k, v)} edit={edit} />
+                            </p>
+                          ))}
+                        </div>
+                      ))}
+                      <p style={{ fontSize: 10.5, color: t.muted, marginTop: 12, maxWidth: '86ch' }}>
+                        <Ed v={cp.note || ''} set={v => patch('comps.note', v)} edit={edit} multiline />
+                      </p>
+                    </>
+                  ) : (
+                    <p style={{ fontSize: 13, color: t.muted, lineHeight: 1.6, maxWidth: '52ch' }}>
+                      Paste the comparable listings above — one per line, any order of name, revenue, rate,
+                      occupancy, beds, baths and rating. Until then this slide does not appear in the deck.
+                    </p>
+                  )}
+                </div>
+                <Foot label="Comparable listings" />
+              </div>
+            </Slide>
+          ) }) }
+
           // ── 7a · MANAGEMENT TERMS (Jon, 2026-10-27: "we can add our management terms")
           // The fee, the labour rate and the approval ceiling are the house template's own
           // figures, so this slide and the billing rules can never disagree. The terms this system

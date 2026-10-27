@@ -261,7 +261,7 @@ export const SALES_AGENDA: KV[] = [
 // Thirteen slides and a cover. Every one of them is doing a job the one before it set up.
 export const SALES_ORDER = [
   'welcome',
-  'property', 'market', 'plan', 'proof', 'returns',  // theirs: the unit, the area, the money
+  'property', 'market', 'plan', 'comps', 'proof', 'returns',  // theirs: the unit, the area, the money
   'maxrev', 'ops', 'stack',                       // ours: how the money happens
   'overview', 'experience', 'team',               // who is doing it
   'terms', 'onbsteps', 'contact', 'close',        // what it costs and what happens next
@@ -273,14 +273,14 @@ export const SALES_ORDER = [
 // its own, and the onboarding timeline waits for the meeting: a prospect who has not decided does
 // not need the four-week plan yet.
 export const SHORT_KEEP = [
-  'property', 'market', 'plan', 'proof', 'returns',
+  'property', 'market', 'plan', 'comps', 'proof', 'returns',
   'maxrev', 'ops', 'stack',
   'overview', 'experience', 'team',
   'terms', 'close',
 ]
 /** Every slide the sales deck can carry, so the short/full switch has something to subtract from. */
 export const SALES_KEYS = [
-  'welcome', 'contact', 'property', 'market', 'returns', 'agenda', 'team', 'overview', 'experience', 'ops', 'craft',
+  'welcome', 'contact', 'property', 'market', 'comps', 'returns', 'agenda', 'team', 'overview', 'experience', 'ops', 'craft',
   'marketing', 'dist', 'channels', 'direct', 'guestcare', 'revenue', 'stack', 'lighthouse',
   'maxrev', 'proof', 'plan', 'terms', 'onbsteps', 'gpo', 'guesty', 'statement', 'ai',
   'season', 'ramp', 'rampsteps', 'money', 'video', 'close',
@@ -316,6 +316,10 @@ export const SHORT_HIDDEN_HISTORY: string[][] = [
   ['agenda', 'craft', 'dist', 'marketing', 'channels', 'direct', 'guestcare', 'revenue',
     'lighthouse', 'gpo', 'guesty', 'statement', 'ai', 'season', 'ramp', 'rampsteps', 'money',
     'video', 'onbsteps', 'contact', 'returns'],
+  // 2026-10-27, fifth: the projection page's own range, monthly bars and comparable listings.
+  ['agenda', 'craft', 'dist', 'marketing', 'channels', 'direct', 'guestcare', 'revenue',
+    'lighthouse', 'gpo', 'guesty', 'statement', 'ai', 'season', 'ramp', 'rampsteps', 'money',
+    'video', 'onbsteps', 'contact', 'returns', 'comps'],
 ]
 
 // Lines this deck used to open with. Replaced in place on a deck that still carries them, exactly
@@ -397,12 +401,50 @@ export const PROOF_NOTE =
 
 // ── 16 · THE PROJECTION ─────────────────────────────────────────────────────
 // Jon: "make it possible to upload projections and build them into the deck for the property."
-export const PLAN_HEADLINE = 'What your property could do'
+// THE SHAPE OF THE PAGE THE TEAM ALREADY SENDS (2026-10-27). Jon sent the live one-pager — Stay
+// Revenue Projection, Domus Brickell Park, two-bedroom — and described how it is built: a
+// PriceLabs revenue estimate for the building, bedroom count and size, checked against our own
+// statements where we run units nearby, with eight or nine Airbnb comps from the same building
+// and the unit's size, floor and view off the MLS listing. The range runs from the PriceLabs
+// midpoint to its top-of-range figure, the uplift split between nightly rate and occupancy, and
+// the monthly bars follow PriceLabs seasonality.
+//
+// EVERY PROJECTION IS LABELLED FULLY RAMPED, and that is not a disclaimer — it is the single most
+// important sentence on the page. It assumes an established listing with reviews and booking
+// history, so year one can run lower, and an owner who reads the number as a year-one promise is
+// an owner we lose in month six.
+export const PLAN_HEADLINE = 'Our projected range'
 export const PLAN_SUBTITLE = ''
 export const PLAN_BODY =
-  'Built from what comparable properties in this market actually earned, not a percentage of a hope. Every assumption behind it is one we will walk through with you.'
+  'Built from a market revenue estimate for this building, bedroom count and size, checked against what our own units nearby actually earned.'
 export const PLAN_NOTE =
-  'A projection is a projection. We will not promise you a number, and we will show you exactly how this one was built.'
+  'Figures are fully ramped projections, assuming an established listing with reviews and booking history.'
+export const PLAN_LABELS = {
+  annual: 'Projected annual revenue',
+  annualSub: 'Gross rental revenue a year, once fully ramped',
+  monthly: 'Per month',
+  monthlySub: 'Average rental revenue a month',
+  rate: 'Projected nightly rate',
+  rateSub: 'Average daily rate',
+  occ: 'Projected occupancy',
+  occSub: 'Average across the year',
+  byMonth: 'Projected revenue by month',
+  base: 'Base',
+  high: 'High end',
+  baseRate: 'Base nightly rate',
+  baseOcc: 'Base occupancy',
+}
+
+// ── 19 · THE COMPARABLE LISTINGS ────────────────────────────────────────────
+// The second half of the one-pager: the top-earning listings of the same size in the same
+// building, which is the evidence an owner checks first because they can open every one of them
+// in a browser. Hand-gathered today — there is no comp feed in this system — so the slide takes a
+// paste and formats it, rather than pretending to a source we do not have.
+export const COMPS_HEADLINE = 'Top-earning comparable listings nearby'
+export const COMPS_SUBTITLE = ''
+export const COMPS_BODY = ''
+export const COMPS_NOTE =
+  'Live listings in and around this building, at the same size. Estimated annual revenue, nightly rate and occupancy as published.'
 
 // ── 17 · THEIR PROPERTY ─────────────────────────────────────────────────────
 // Jon, 2026-10-27: "a clean, streamlined deck that shows their listing, about their area... It

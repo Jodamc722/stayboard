@@ -134,15 +134,93 @@ export async function POST(req: NextRequest) {
       }
     } catch { return NextResponse.json({ error: 'Could not read that file.' }, { status: 400 }) }
 
-    const instruction = 'This is a revenue projection for a short-term rental property. Pull the table out of it EXACTLY as printed. Return STRICT JSON only: {"cols": [column headers left to right, usually months], "rows": [{"k": the row label, "cells": [one value per column, as printed including $ and % signs]}], "totals": {"k": the total row label, "cells": [...]} or null, "label": one short line naming what this projection is and the period it covers}. Rules: copy figures exactly as they appear, never recompute, never round, never fill a blank cell with an estimate. Every row must have exactly as many cells as there are cols; pad with "" where the document is blank. If the document contains no projection table you can read, return {"rows": []}.'
+    // WHAT WE ASK THE MODEL FOR, AND WHAT WE WORK OUT OURSELVES.
+    //
+    // It reads the document and reports only what is printed on it. The range, the rate and
+    // occupancy spread and the monthly split are then DERIVED here, by Jon's own rule — "the
+    // range runs from the PriceLabs midpoint to its top-of-range figure, with the uplift split
+    // between nightly rate and occupancy" — so the arithmetic is the same on every projection and
+    // can be checked, rather than being whatever the model felt like that afternoon.
+    const instruction = 'This document is a short-term rental revenue estimate for one property (usually a PriceLabs revenue estimate, sometimes a spreadsheet or a screenshot of one). Report ONLY figures printed in it. Return STRICT JSON: {"annualMid": number or null (the midpoint/expected annual revenue), "annualHigh": number or null (the top of the range, if the document gives one), "annualLow": number or null (the bottom, if given), "adr": number or null (average nightly rate), "occupancy": number or null (annual occupancy as a percent, 0-100), "months": [{"label": "JAN", "revenue": number or null, "adr": number or null, "occupancy": number or null}] (twelve entries in calendar order where the document shows a monthly breakdown; use null for any value it does not print), "unit": one short line naming the property/unit type if the document says, "label": one short line naming the source and period}. Rules: copy figures exactly, never recompute them, never fill a blank with an estimate, and never invent a month the document does not show. If the document is NOT a revenue estimate but does contain some other projection table, leave annualMid null and instead return {"cols": [column headers left to right], "rows": [{"k": row label, "cells": [one value per column, exactly as printed]}], "totals": {"k": label, "cells": [...]} or null} alongside it, every row padded to the same length as cols. If it contains neither, return {"annualMid": null, "months": [], "rows": []}.'
     const text = await anthropic({
       model: modelFor('reports'), max_tokens: 3000,
-      system: 'You extract tables from documents for a sales deck. Output STRICT JSON only. You never invent a figure.',
+      system: 'You read revenue estimates and projections out of documents for a sales deck. Output STRICT JSON only. You never invent a figure, and you never recompute one.',
       messages: [{ role: 'user', content: block ? [block, { type: 'text', text: instruction }] : [{ type: 'text', text: instruction + '\n\nThe file:\n' + textBody }] }],
     })
     const j = parseJson(text)
-    if (!j || !Array.isArray(j.rows) || !j.rows.length) {
-      return NextResponse.json({ error: 'No projection table could be read out of that file.' }, { status: 400 })
+    if (!j) return NextResponse.json({ error: 'No projection could be read out of that file.' }, { status: 400 })
+
+    const n = (v: any): number | null => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : null }
+    const money = (v: number) => '$' + Math.round(v).toLocaleString('en-US')
+    const kk = (v: number) => (v >= 10_000 ? '$' + Math.round(v / 1000) + 'K' : '$' + Math.round(v).toLocaleString('en-US'))
+
+    const mid = n(j.annualMid) || n(j.annualLow)
+    const top = n(j.annualHigh)
+    if (mid) {
+      // THE SPLIT. uplift = top/mid − 1, shared evenly between rate and occupancy, so that
+      // rate × occupancy reproduces the revenue uplift exactly: each gets √(1+uplift). With no
+      // top-of-range figure there is no range, and the page prints one number rather than
+      // inventing a second.
+      const uplift = top && top > mid ? (top / mid) - 1 : 0
+      const each = Math.sqrt(1 + uplift)
+      const adr = n(j.adr)
+      const occ = n(j.occupancy)
+      // Occupancy is a percentage of a year and cannot be stretched past it. Capped at 95, which
+      // is already higher than any real portfolio sustains.
+      const occHigh = occ ? Math.min(95, occ * each) : null
+      const annualHigh = top || mid
+      const range = {
+        annualLow: money(mid),
+        annualHigh: money(annualHigh),
+        monthlyLow: money(mid / 12),
+        monthlyHigh: money(annualHigh / 12),
+        rateLow: adr ? money(adr) : '',
+        rateHigh: adr ? money(adr * each) : '',
+        occLow: occ ? Math.round(occ) + '%' : '',
+        occHigh: occHigh ? Math.round(occHigh) + '%' : '',
+      }
+
+      // The monthly bars follow the document's own seasonality. Where it prints revenue per month
+      // we use it and scale the high end by the same uplift; where it prints only a share we
+      // apportion the annual figure. A month the document does not show is not drawn.
+      const rawMonths: any[] = Array.isArray(j.months) ? j.months.slice(0, 12) : []
+      const sum = rawMonths.reduce((a, m) => a + (n(m?.revenue) || 0), 0)
+      const months = rawMonths.map((m: any) => {
+        const rev = n(m?.revenue)
+        const base = rev != null ? (sum > 0 && Math.abs(sum - mid) / mid > 0.25 ? (rev / sum) * mid : rev) : null
+        return {
+          label: str(m?.label).slice(0, 4).toUpperCase(),
+          base: base != null ? kk(base) : '',
+          high: base != null ? kk(base * (1 + uplift)) : '',
+          rate: n(m?.adr) != null ? money(Number(m.adr)) : '',
+          occ: n(m?.occupancy) != null ? Math.round(Number(m.occupancy)) + '%' : '',
+          baseNum: base != null ? Math.round(base) : undefined,
+          highNum: base != null ? Math.round(base * (1 + uplift)) : undefined,
+        }
+      }).filter((m: any) => m.label)
+
+      const prevPlan: any = content.plan || {}
+      content.plan = {
+        ...prevPlan,
+        headline: str(prevPlan.headline) || 'Our projected range',
+        subtitle: str(prevPlan.subtitle) || str(j.unit).slice(0, 80),
+        body: str(prevPlan.body) || '',
+        note: str(prevPlan.note) || '',
+        source: str(body?.label) || str(j.label).slice(0, 120) || 'Market revenue estimate',
+        range, months,
+        cols: Array.isArray(prevPlan.cols) ? prevPlan.cols : [],
+        rows: Array.isArray(prevPlan.rows) ? prevPlan.rows : [],
+      }
+      if (Array.isArray(content.omit)) content.omit = content.omit.filter((k: string) => k !== 'plan')
+      const { error: errR } = await db.from('owner_reports').update({ content, updated_at: new Date().toISOString() }).eq('id', id)
+      if (errR) return NextResponse.json({ error: errR.message }, { status: 500 })
+      return NextResponse.json({ ok: true, source: content.plan.source, range, months: months.length, content })
+    }
+
+    // Not a revenue estimate we could read as a range — fall back to the generic table, which is
+    // still the right answer for a projection someone built in a spreadsheet of their own.
+    if (!Array.isArray(j.rows) || !j.rows.length) {
+      return NextResponse.json({ error: 'No projection could be read out of that file.' }, { status: 400 })
     }
     cols = (Array.isArray(j.cols) ? j.cols : []).map((x: any) => str(x).slice(0, 24)).slice(0, 14)
     rows = j.rows.slice(0, 30).map((r: any) => ({

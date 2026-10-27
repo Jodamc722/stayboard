@@ -41,6 +41,7 @@ import {
   TERMS_HEADLINE, TERMS_SUBTITLE, termRows, TERMS_NOTE, type TermRow,
   PROOF_HEADLINE, PROOF_SUBTITLE, PROOF_BODY, PROOF_NOTE,
   PLAN_HEADLINE, PLAN_SUBTITLE, PLAN_BODY, PLAN_NOTE,
+  COMPS_HEADLINE, COMPS_SUBTITLE, COMPS_BODY, COMPS_NOTE,
 } from './sales-copy'
 
 /** The sales-only sections, laid over an onboarding document. Every one is optional, so an
@@ -104,12 +105,29 @@ export type SalesSections = {
     headline: string; subtitle: string; body: string; note: string; window: string
     rows: { building: string; market: string; units: number; bedrooms: string; gross: string; perUnit: string; occ: string; adr: string; nights: string }[]
   }
-  /** The projection for THIS property, built from our model or parsed from an upload. */
+  /**
+   * The projection, in the shape of the one-pager the team already sends: a range, the rate and
+   * occupancy behind it, and twelve months of base/high. `cols`/`rows` is the generic table a
+   * model-built or hand-pasted projection still uses, and either half renders on its own.
+   */
   plan?: {
     headline: string; subtitle: string; body: string; note: string; source?: string
+    /** Every figure as printed, so nothing is re-derived at render time. */
+    range?: {
+      annualLow: string; annualHigh: string
+      monthlyLow: string; monthlyHigh: string
+      rateLow: string; rateHigh: string
+      occLow: string; occHigh: string
+    } | null
+    months?: { label: string; base: string; high: string; rate: string; occ: string; baseNum?: number; highNum?: number }[]
     cols: string[]
     rows: { k: string; cells: string[] }[]
     totals?: { k: string; cells: string[] }
+  }
+  /** The comparable listings, hand-gathered and pasted — there is no comp feed in this system. */
+  comps?: {
+    headline: string; subtitle: string; body: string; note: string
+    rows: { name: string; rev: string; rate: string; occ: string; beds: string; baths: string; rating: string }[]
   }
   close?: { headline: string; subtitle: string; rows: KV[]; note: string }
   /** Empty url = no slide, so an unfinished video never shows a prospect a grey box. */
@@ -267,7 +285,8 @@ export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesCo
     terms: { headline: TERMS_HEADLINE, subtitle: TERMS_SUBTITLE, rows: termRows(t.mgmtPct, t.laborRate, t.approvalLimit), note: TERMS_NOTE },
     proof: { headline: PROOF_HEADLINE, subtitle: PROOF_SUBTITLE, body: PROOF_BODY, note: PROOF_NOTE, scope: '', window: '', names: false, rows: [] },
     returns: { headline: RETURNS_HEADLINE, subtitle: RETURNS_SUBTITLE, body: RETURNS_BODY, note: RETURNS_NOTE, window: '', rows: [] },
-    plan: { headline: PLAN_HEADLINE, subtitle: PLAN_SUBTITLE, body: PLAN_BODY, note: PLAN_NOTE, cols: [], rows: [] },
+    plan: { headline: PLAN_HEADLINE, subtitle: PLAN_SUBTITLE, body: PLAN_BODY, note: PLAN_NOTE, range: null, months: [], cols: [], rows: [] },
+    comps: { headline: COMPS_HEADLINE, subtitle: COMPS_SUBTITLE, body: COMPS_BODY, note: COMPS_NOTE, rows: [] },
     close: { headline: CLOSE_HEADLINE, subtitle: CLOSE_SUBTITLE, rows: CLOSE_ROWS, note: CLOSE_NOTE },
     video: { headline: VIDEO_HEADLINE, subtitle: VIDEO_SUBTITLE, body: VIDEO_BODY, url: '', poster: '' },
 
