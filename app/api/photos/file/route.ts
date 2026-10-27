@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   const listing = String(sp.get('listing') || '').trim(), pic = String(sp.get('pic') || '').trim()
   if (!listing || !pic) return NextResponse.json({ ok: false, error: 'listing and pic are required' }, { status: 400 })
   try {
-    const u = await unitPhotos(listing)
+    const u = await unitPhotos(listing, { measure: false })
     const i = u ? u.photos.findIndex(p => p.id === pic) : -1
     if (!u || i < 0) return NextResponse.json({ ok: false, error: 'No such photo.' }, { status: 404 })
     const p = u.photos[i]
@@ -26,7 +26,9 @@ export async function GET(req: NextRequest) {
     if (!up.ok || !up.body) return NextResponse.json({ ok: false, error: 'The photo could not be fetched (' + up.status + ').' }, { status: 502 })
     const name = photoFileName(p, i, new Set())
     const headers = new Headers()
-    headers.set('Content-Type', up.headers.get('content-type') || 'image/jpeg')
+    const upType = up.headers.get('content-type') || ''
+    const ext = (name.split('.').pop() || 'jpg').toLowerCase()
+    headers.set('Content-Type', upType && upType !== 'application/octet-stream' ? upType : ({ jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', heic: 'image/heic', avif: 'image/avif' } as Record<string, string>)[ext] || 'image/jpeg')
     const len = up.headers.get('content-length'); if (len) headers.set('Content-Length', len)
     headers.set('Content-Disposition', disposition(name))
     headers.set('Cache-Control', 'private, max-age=3600')

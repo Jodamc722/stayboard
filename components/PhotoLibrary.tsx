@@ -26,6 +26,10 @@ const zipHref = (q: string) => '/api/photos/zip?' + q
 const fileHref = (listing: string, pic: string) => '/api/photos/file?listing=' + encodeURIComponent(listing) + '&pic=' + encodeURIComponent(pic)
 const btn = 'inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-2.5 py-1.5 text-[12px] font-bold hover:opacity-90 shrink-0 disabled:opacity-40'
 const ghost = 'inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-ink hover:border-ink/40 shrink-0 disabled:opacity-40'
+/** What the long side says about the file (same rule as lib/photo-library resolutionGrade). */
+const grade = (w: number | null, h: number | null): 'high' | 'web' | 'low' | null => { if (!w || !h) return null; const l = Math.max(w, h); return l >= 2000 ? 'high' : l >= 1200 ? 'web' : 'low' }
+const GRADE_LABEL = { high: 'high-res', web: 'web size', low: 'low-res' } as const
+const GRADE_TONE = { high: 'emerald', web: 'slate', low: 'rose' } as const
 const agoText = (iso?: string | null) => { if (!iso) return ''; const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? 'just now' : m < 60 ? m + 'm ago' : Math.round(m / 60) + 'h ago' }
 
 export function PhotoLibrary({ canEdit }: { canEdit: boolean }) {
@@ -166,6 +170,16 @@ function UnitView({ id, meta }: { id: string; meta: Unit | null }) {
   useEffect(() => { setPicked(new Set()); setPicking(false); setOpen(null) }, [id])
   const toggle = (pid: string) => setPicked(prev => { const n = new Set(prev); if (n.has(pid)) n.delete(pid); else n.add(pid); return n })
   const pickedList = photos.filter(p => picked.has(p.id)).map(p => p.id)
+  // The quality on hand: the longest side across the unit, and how many photos are only web size or less.
+  const res = useMemo(() => {
+    const measured = photos.filter(p => p.width && p.height)
+    if (!measured.length) return null
+    const maxLong = Math.max(...measured.map(p => Math.max(p.width!, p.height!)))
+    const low = measured.filter(p => grade(p.width, p.height) === 'low').length
+    const web = measured.filter(p => grade(p.width, p.height) === 'web').length
+    const high = measured.filter(p => grade(p.width, p.height) === 'high').length
+    return { measured: measured.length, maxLong, low, web, high }
+  }, [photos])
   // keyboard: arrows in the lightbox
   useEffect(() => {
     if (open == null) return
@@ -179,7 +193,12 @@ function UnitView({ id, meta }: { id: string; meta: Unit | null }) {
       <div className="rounded-2xl border border-line bg-white px-4 py-3 flex items-center gap-3 flex-wrap">
         <div className="min-w-0">
           <div className="text-[15px] font-bold text-ink flex items-center gap-2 flex-wrap">{unit?.name || 'Unit'}{unit && !unit.active && <Tag>offline in Guesty</Tag>}</div>
-          <div className="text-[12px] text-muted">{unit?.building}{unit?.title ? ' · ' + unit.title : ''} · {photos.length} photo{photos.length === 1 ? '' : 's'} · full size as Guesty holds them</div>
+          <div className="text-[12px] text-muted flex items-center gap-1.5 flex-wrap">
+            <span>{unit?.building}{unit?.title ? ' · ' + unit.title : ''} · {photos.length} photo{photos.length === 1 ? '' : 's'} · full size as Guesty holds them</span>
+            {res && res.high > 0 && <Tag tone="emerald" title={res.high + ' photos with a long side of 2000 px or more — print and OTA grade'}>{res.high} high-res</Tag>}
+            {res && res.web > 0 && <Tag title={res.web + ' photos between 1200 and 1999 px on the long side — fine on screen, not for print'}>{res.web} web size</Tag>}
+            {res && res.low > 0 && <Tag tone="rose" title={res.low + ' photos under 1200 px on the long side — Guesty only has a small file; re-upload the originals to improve the listing'}>{res.low} low-res</Tag>}
+          </div>
         </div>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           {photos.length > 0 && <a href={zipHref('listing=' + encodeURIComponent(id))} className={btn} title={'One ZIP, every photo at full size, named in order with its caption'}><Download size={13} /> Download all (ZIP)</a>}
@@ -205,7 +224,12 @@ function UnitView({ id, meta }: { id: string; meta: Unit | null }) {
                 <span className="absolute top-1.5 left-1.5 rounded-md bg-ink/70 text-white text-[10px] font-bold px-1.5 py-0.5 tabular-nums">{i + 1}</span>
                 {picking && <button onClick={() => toggle(p.id)} className="absolute top-1.5 right-1.5 rounded-md bg-white/90 border border-line p-1 text-ink" title={on ? 'Unpick' : 'Pick'}>{on ? <CheckSquare size={13} /> : <Square size={13} />}</button>}
                 {!picking && <a href={fileHref(id, p.id)} className="absolute top-1.5 right-1.5 rounded-md bg-white/90 border border-line p-1 text-ink opacity-0 group-hover:opacity-100 transition" title="Download this photo, full size"><Download size={13} /></a>}
-                {p.caption && <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/70 to-transparent px-2 pt-4 pb-1.5 text-[10.5px] text-white truncate pointer-events-none">{p.caption}</div>}
+                {(p.caption || p.width) && (
+                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/70 to-transparent px-2 pt-4 pb-1.5 text-[10.5px] text-white flex items-center gap-1.5 pointer-events-none">
+                    <span className="truncate flex-1">{p.caption}</span>
+                    {p.width && p.height && <span className={'shrink-0 tabular-nums ' + (grade(p.width, p.height) === 'low' ? 'text-rose-200 font-semibold' : 'text-white/80')} title={GRADE_LABEL[grade(p.width, p.height)!]}>{p.width}×{p.height}</span>}
+                  </div>
+                )}
               </div>
             )
           })}
@@ -226,6 +250,7 @@ function Lightbox({ p, i, n, listing, onClose, onPrev, onNext }: { p: Photo; i: 
         <span className="font-semibold tabular-nums">{i + 1} / {n}</span>
         <span className="truncate">{p.caption || 'No caption'}</span>
         {p.width && p.height && <span className="text-white/60">{p.width}×{p.height}</span>}
+        {grade(p.width, p.height) && <Tag tone={GRADE_TONE[grade(p.width, p.height)!]}>{GRADE_LABEL[grade(p.width, p.height)!]}</Tag>}
         <span className="flex-1" />
         <a href={fileHref(listing, p.id)} className="inline-flex items-center gap-1.5 rounded-lg bg-white text-ink px-2.5 py-1.5 text-[12px] font-bold" title="Download this photo, full size"><Download size={13} /> Download</a>
         <a href={p.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-white/30 px-2.5 py-1.5 text-[12px] font-semibold" title="Open the original in a new tab">Open original</a>

@@ -26,7 +26,7 @@ const httpish = (u: any): string => { const s = str(u); return /^https:\/\//i.te
 
 export type LibPhoto = {
   id: string
-  /** The full-size file — what downloads. */
+  /** The full-size file — what downloads: Guesty's "original", the upload as it was. */
   url: string
   thumb: string
   /** A comfortable viewing size for the lightbox. */
@@ -101,14 +101,57 @@ async function buildIndex(): Promise<LibraryIndex> {
 /** Property → unit → counts and covers. Ten minutes; a listing sync changes it slowly. */
 export const libraryIndex = unstable_cache(buildIndex, ['photo-library-index-v1'], { tags: [PHOTO_LIBRARY_CACHE_TAG], revalidate: 600 })
 
-/** One unit's photos, in the listing's order. */
-export async function unitPhotos(listingId: string): Promise<UnitPhotos | null> {
+// ── HOW BIG IS THE FILE, REALLY (Jon: "high quality"). Guesty's picture objects carry no
+// dimensions, and its "original" is whatever was uploaded — 1200×800 on some units, 4000+ on
+// others. Cloudinary (which serves assets.guesty.com) answers `fl_getinfo` with the stored size,
+// so the library can say "1200×800 · 290 KB" on every photo and the team knows when the best
+// Guesty has is only web size. Read once per listing a day; a miss leaves the photo unmeasured.
+export type PhotoDims = Record<string, { width: number; height: number; bytes: number | null }>
+const INFO_HOST = /(^|\.)(guesty\.com|cloudinary\.com)$/i
+async function readDims(photos: { id: string; url: string }[]): Promise<PhotoDims> {
+  const out: PhotoDims = {}
+  const todo = photos.filter(p => { try { const h = new URL(p.url).hostname; return INFO_HOST.test(h) && p.url.indexOf('/image/upload/') >= 0 } catch { return false } })
+  let i = 0
+  const worker = async () => {
+    while (i < todo.length) {
+      const p = todo[i++]
+      try {
+        const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 5000)
+        const r = await fetch(p.url.replace('/image/upload/', '/image/upload/fl_getinfo/'), { signal: ctl.signal })
+        clearTimeout(t)
+        if (!r.ok) continue
+        const j: any = await r.json().catch(() => null)
+        const w = Number(j?.input?.width || j?.output?.width), h = Number(j?.input?.height || j?.output?.height)
+        if (w > 0 && h > 0) out[p.id] = { width: w, height: h, bytes: Number(j?.input?.bytes) > 0 ? Number(j.input.bytes) : null }
+      } catch { /* unmeasured */ }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(8, todo.length) }, worker))
+  return out
+}
+const cachedDims = unstable_cache(async (_listingId: string, photos: { id: string; url: string }[]) => readDims(photos), ['photo-library-dims-v1'], { revalidate: 86400 })
+
+/** One unit's photos, in the listing's order, measured where Cloudinary will say. */
+export async function unitPhotos(listingId: string, opts?: { measure?: boolean }): Promise<UnitPhotos | null> {
   const { data, error } = await supabaseAdmin().from('guesty_listings')
     .select('id, nickname, title, building, status, address_city, pics:raw->pictures').eq('id', listingId).maybeSingle()
   if (error) throw new Error('guesty_listings: ' + error.message)
   if (!data) return null
-  const photos = picsOf((data as any).pics)
+  let photos = picsOf((data as any).pics)
+  if (opts?.measure !== false && photos.some(p => !p.width)) {
+    try {
+      const dims = await cachedDims(listingId, photos.map(p => ({ id: p.id, url: p.url })))
+      photos = photos.map(p => p.width ? p : (dims[p.id] ? { ...p, width: dims[p.id].width, height: dims[p.id].height } : p))
+    } catch { /* unmeasured is fine */ }
+  }
   return { unit: unitOf(data, photos), photos }
+}
+
+/** What the long side says about the file: at least 2000 px is print/OTA grade; 1200–1999 is web size; under that is low. */
+export function resolutionGrade(w: number | null, h: number | null): 'high' | 'web' | 'low' | null {
+  if (!w || !h) return null
+  const long = Math.max(w, h)
+  return long >= 2000 ? 'high' : long >= 1200 ? 'web' : 'low'
 }
 
 /** Every unit of a building with its photos — for the building ZIP. */

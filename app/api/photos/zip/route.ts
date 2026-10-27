@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   let label = ''
   try {
     if (listing) {
-      const u = await unitPhotos(listing)
+      const u = await unitPhotos(listing, { measure: false })
       if (!u) return NextResponse.json({ ok: false, error: 'No such unit.' }, { status: 404 })
       sets = [{ unit: u.unit, photos: picks.length ? u.photos.filter(p => picks.indexOf(p.id) >= 0) : u.photos }]
       label = u.unit.name + (picks.length ? ' (' + sets[0].photos.length + ' picked)' : '')
