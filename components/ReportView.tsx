@@ -31,7 +31,7 @@ import {
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
 } from '@/lib/onboarding-copy'
-import { EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY, EDGE_NOTE, MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS, PLAN_LABELS } from '@/lib/sales-copy'
+import { EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY, EDGE_NOTE, LH_ROWS, MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS, PLAN_LABELS } from '@/lib/sales-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, seasonBodyStale } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
@@ -5040,29 +5040,36 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // and what it does, built in house, proprietary and designed to optimize, manage and
           // automate"). The one thing on the table no competitor can buy, so it gets a slide of
           // its own after the ask: six things it does, a line each.
-          if (isSales && !hid('lighthouse')) { const lhs: Any = sec('lighthouse'); const lhRows: Any[] = ((lhs.rows || []) as Any[]).slice(0, 6)
+          if (isSales && !hid('lighthouse')) { const lhs: Any = sec('lighthouse')
+            // A DECK GENERATED BEFORE PREVENTIVE MAINTENANCE WAS ON THIS SLIDE (Jon, 2026-10-27: "also
+            // lighthouse, PM care automated and tracked and scheduled") still carries the earlier
+            // house rows; untouched house copy is swapped for the current list, an edited row never is.
+            const stored: Any[] = (lhs.rows || []) as Any[]
+            const RETIRED_LH = ['Operations|Listing optimization|Photos and captions|Guidebooks|Review management|Guest messages and calls']
+            const lhHouse = RETIRED_LH.indexOf(stored.map((r: Any) => String(r.k || '')).join('|')) >= 0
+            const lhRows: Any[] = (lhHouse ? LH_ROWS : stored).slice(0, 6)
             slides.push({ key: 'lighthouse', ai: true, node: (
-            <Slide nav="Lighthouse" warn={edit} ground={GROUND.tint}>
-              <div className="flex flex-col" style={{ height: '100%' }}>
-                <div className="flex items-start justify-between" style={{ gap: 30 }}>
-                  <div>
-                    <SalesHead k="lighthouse" eyebrow="Built in-house · proprietary" />
-                    <p style={{ fontSize: 16, lineHeight: 1.5, color: t.body, margin: '12px 0 0', maxWidth: '54ch' }}>
-                      <Ed v={lhs.subtitle || ''} set={v => patch('lighthouse.subtitle', v)} edit={edit} multiline />
-                    </p>
+            <Slide nav="Lighthouse" warn={edit}>
+              <div style={{ display: 'grid', gridTemplateColumns: '330px 1fr', gap: 56, height: '100%' }}>
+                <div className="flex flex-col">
+                  <SalesHead k="lighthouse" eyebrow="Built in-house" />
+                  <p style={{ fontSize: 16, lineHeight: 1.55, color: t.body, margin: '16px 0 0' }}>
+                    <Ed v={lhs.subtitle || ''} set={v => patch('lighthouse.subtitle', v)} edit={edit} multiline />
+                  </p>
+                  <div className="mt-auto flex items-center" style={{ gap: 12 }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="/icon-192.png" alt="" style={{ width: 44, height: 44, borderRadius: 11 }} />
+                    <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.2em', color: t.ink }}>LIGHTHOUSE</span>
                   </div>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src="/icon-192.png" alt="Lighthouse" style={{ width: 64, height: 64, borderRadius: 16, flexShrink: 0 }} />
                 </div>
-                <div style={{ marginTop: 28, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gridAutoRows: '1fr', gap: 16, flex: 1, minHeight: 0 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 40, alignContent: 'center' }}>
                   {lhRows.map((r: Any, i: number) => (
-                    <div key={i} className="flex flex-col justify-center" style={{ background: t.card, border: '1px solid ' + t.cardBorder, borderRadius: 16, padding: '20px 24px' }}>
-                      <p style={{ fontSize: 18, fontWeight: 600, color: t.ink, margin: 0 }}>
-                        <span style={{ color: t.accent, marginRight: 8, fontVariantNumeric: 'tabular-nums' }}>{String(i + 1).padStart(2, '0')}</span>
-                        <Ed v={r.k || ''} set={v => patch('lighthouse.rows.' + i + '.k', v)} edit={edit} />
+                    <div key={i} style={{ borderTop: '1px solid ' + t.rule, padding: '18px 0 20px' }}>
+                      <p style={{ fontSize: 17, fontWeight: 600, color: t.ink, margin: 0 }}>
+                        {lhHouse ? String(r.k || '') : <Ed v={r.k || ''} set={v => patch('lighthouse.rows.' + i + '.k', v)} edit={edit} />}
                       </p>
-                      <p style={{ fontSize: 15, lineHeight: 1.5, color: t.body, margin: '10px 0 0' }}>
-                        <Ed v={r.v || ''} set={v => patch('lighthouse.rows.' + i + '.v', v)} edit={edit} multiline />
+                      <p style={{ fontSize: 14, lineHeight: 1.5, color: t.muted, margin: '6px 0 0' }}>
+                        {lhHouse ? String(r.v || '') : <Ed v={r.v || ''} set={v => patch('lighthouse.rows.' + i + '.v', v)} edit={edit} multiline />}
                       </p>
                     </div>
                   ))}
@@ -5113,9 +5120,6 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     </div>
                   ) })}
                 </div>
-                <p className="mt-auto" style={{ fontSize: 18, lineHeight: 1.45, color: 'rgba(255,255,255,0.86)', margin: 0, paddingTop: 20, borderTop: '1px solid rgba(255,255,255,0.16)', maxWidth: '62ch' }}>
-                  <Ed v={sec('maxrev').note || ''} set={v => patch('maxrev.note', v)} edit={edit} multiline />
-                </p>
               </div>
             </Slide>
           ) }) } else
@@ -5379,7 +5383,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   ) : null}
                 </div>
                 <p style={{ fontSize: 9.5, color: t.muted, margin: '10px 0 0', lineHeight: 1.4 }}>
-                  {lead ? String(eg.note || '') + (eg.source ? ' Source: ' + String(eg.source) + '.' : '') : ''}
+                  {lead ? 'Homes we ran all 12 months, every channel, against AirROI ' + String(eg.benchLabel || '') + ' homes listed all 12 months (Airbnb), to September 2026.' : ''}
                 </p>
                 {edit ? (
                   <div className="sb-noprint flex items-center" style={{ gap: 8, marginTop: 8 }}>
@@ -7288,7 +7292,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     ) : null}
                   </div>
                   <div style={{ background: t.band, borderRadius: 18, padding: '30px 28px', color: '#fff', display: 'flex', flexDirection: 'column' }}>
-                    <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.6)', margin: 0 }}>Book your walk-through</p>
+                    <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.6)', margin: 0 }}>Your contact</p>
                     {String(closeCard.photo || '').trim() ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={String(closeCard.photo)} alt="" style={{ width: 92, height: 92, borderRadius: 999, objectFit: 'cover', marginTop: 24, border: '2px solid rgba(255,255,255,0.3)' }} />

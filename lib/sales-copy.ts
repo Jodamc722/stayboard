@@ -122,12 +122,14 @@ export const LH_SUBTITLE = 'Proprietary software we built to optimize, manage an
 export const LH_BODY =
   'Most managers run on the same three or four bought platforms as everyone else, and live with the gaps between them. We built the layer that closes those gaps — and it is the reason the answer to a question about your property is a screen rather than a phone call to somebody who might remember.'
 export const LH_ROWS: KV[] = [
-  { k: 'Operations', v: 'Every clean, inspection and repair scheduled, assigned and tracked on one live board.' },
-  { k: 'Listing optimization', v: 'Each listing scored against what guests search and praise, with the fix named.' },
-  { k: 'Photos and captions', v: 'Photos ordered and captioned automatically, the hero shot chosen by what converts.' },
+  { k: 'Operations', v: 'Every clean, inspection and repair scheduled, assigned and tracked live.' },
+  { k: 'Preventive maintenance', v: 'PM care automated: scheduled on a routine for every unit, tracked to done.' },
+  { k: 'Listing optimization', v: 'Each listing scored against what guests search and praise, fix named.' },
+  { k: 'Photos and captions', v: 'Photos ordered and captioned automatically, hero shot chosen to convert.' },
   { k: 'Guidebooks', v: 'A digital guidebook for every unit, built from the listing in minutes.' },
-  { k: 'Review management', v: 'Replies drafted on every channel; repeat complaints become work orders.' },
-  { k: 'Guest messages and calls', v: 'One inbox for every channel; recorded calls become next steps on the booking.' },
+  // Jon, 2026-10-27: "review management — not only responding to reviews but using it to make
+  // informed decisions, and respond to, call guests, track conversations, create inspections".
+  { k: 'Reviews and guest feedback', v: 'Every review, message and call tracked and acted on: replies drafted, guests called back, inspections created.' },
 ]
 // SIX ROWS, BECAUSE SEVEN SCROLLED. Owner reporting moved into the note rather than being cut:
 // on a slide that is presented at 16:9, a row you have to scroll to is a row nobody reads.
