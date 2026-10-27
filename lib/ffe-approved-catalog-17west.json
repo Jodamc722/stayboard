@@ -1,0 +1,2383 @@
+{
+ "property": "17-west",
+ "title": "17 West furniture catalog",
+ "sourceSheet": "Stay Hospitality x HostGPO - Amazon",
+ "asOf": "2026-10-20",
+ "items": [
+  {
+   "key": "cmp-1",
+   "section": "compare",
+   "category": "Nightstands",
+   "name": "Tovi Side Table - Smoked Oak",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Tovi Side Table - Smoked Oak",
+     "url": "https://www.article.com/product/30094/tovi-side-table-smoked-oak",
+     "price": 159.2,
+     "image": "/ffe/17west/img/cmp01-article-62a458.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "VASAGLE Round Side Table with Lower Shelf",
+     "url": "https://www.amazon.com/dp/B0B18NB7ZF",
+     "price": 35.99,
+     "image": "/ffe/17west/img/cmp01-amazon-ded5c3.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Atlantic Mid Tone Nightstand",
+     "url": "https://www.cityhome.com/product/35278",
+     "price": 199.95,
+     "image": "/ffe/17west/img/cmp01-cityhome-cc2608.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "cmp-2",
+   "section": "compare",
+   "category": "Nightstands",
+   "name": "Cooper 1-Drawer Nightstand - Walnut",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Cooper 1-Drawer Nightstand - Walnut",
+     "url": "https://www.article.com/product/26897/cooper-1-drawer-nightstand-walnut",
+     "price": 239.2,
+     "image": "/ffe/17west/img/cmp02-article-14bb57.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "LYNCOHOME Fluted Nightstand with Charging Station, 2 Drawers",
+     "url": "https://www.amazon.com/dp/B0FX9CJCX8",
+     "price": 129.99,
+     "image": "/ffe/17west/img/cmp02-amazon-af0b71.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Palmdale Dark Tone Nightstand",
+     "url": "https://www.cityhome.com/product/1280792",
+     "price": 199.95,
+     "image": "/ffe/17west/img/cmp02-cityhome-3bd3df.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "cmp-3",
+   "section": "compare",
+   "category": "Nightstands",
+   "name": "Torme 1-Drawer Nightstand",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Torme 1-Drawer Nightstand",
+     "url": "https://www.article.com/product/27331/torme-1-drawer-nightstand-smoked-oak",
+     "price": 279.2,
+     "image": "/ffe/17west/img/cmp03-article-9e456e.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "Nathan James Benjamin 1-Drawer Modern Nightstand",
+     "url": "https://www.amazon.com/dp/B0FTF99D2B",
+     "price": 116.99,
+     "image": "/ffe/17west/img/cmp03-amazon-847f53.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Lyndie Light Tone 1-Drawer Nightstand",
+     "url": "https://www.cityhome.com/product/1281758",
+     "price": 229.95,
+     "image": "/ffe/17west/img/cmp03-cityhome-ec5eab.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "cmp-4",
+   "section": "compare",
+   "category": "Nightstands",
+   "name": "Leif 2-Drawer Nightstand - White Oak",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Leif 2-Drawer Nightstand - White Oak",
+     "url": "https://www.article.com/product/24868/leif-2-drawer-nightstand-white-oak",
+     "price": 279.2,
+     "image": "/ffe/17west/img/cmp04-article-04ae79.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "Evermagin Fluted Nightstand, Set of 2, Natural Oak",
+     "url": "https://www.amazon.com/dp/B0DR2XNMCD",
+     "price": 169.99,
+     "image": "/ffe/17west/img/cmp04-amazon-d8faf0.jpg",
+     "chips": [
+      "Set of 2",
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Lyndie Light Tone 2-Drawer Nightstand",
+     "url": "https://www.cityhome.com/product/1281760",
+     "price": 299.95,
+     "image": "/ffe/17west/img/cmp04-cityhome-f7bbc5.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "cmp-5",
+   "section": "compare",
+   "category": "Dressers",
+   "name": "Cooper 6-Drawer Double Dresser - Walnut",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Cooper 6-Drawer Double Dresser - Walnut",
+     "url": "https://www.article.com/product/26893/cooper-6-drawer-double-dresser-walnut",
+     "price": 799.2,
+     "image": "/ffe/17west/img/cmp05-article-906407.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "MAISONARIA Walnut 3-Piece Bedroom Set: 6-Drawer Dresser + 2 Nightstands",
+     "url": "https://www.amazon.com/dp/B0G57ZPRMS",
+     "price": 399.99,
+     "image": "/ffe/17west/img/cmp05-amazon-55ad25.jpg",
+     "chips": [
+      "3-piece set",
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Palmdale Dark Tone Dresser",
+     "url": "https://www.cityhome.com/product/1280788",
+     "price": 499.95,
+     "image": "/ffe/17west/img/cmp05-cityhome-d01e36.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "cmp-6",
+   "section": "compare",
+   "category": "Dressers",
+   "name": "Leif 4-Drawer Chest - White Oak",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Leif 4-Drawer Chest - White Oak",
+     "url": "https://www.article.com/product/24866/leif-4-drawer-chest-white-oak",
+     "price": 639.2,
+     "image": "/ffe/17west/img/cmp06-article-e7c3d9.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "Garvee 4-Drawer Dresser, 39.3\" Tall",
+     "url": "https://www.amazon.com/dp/B0H71GJCRL",
+     "price": 149.99,
+     "image": "/ffe/17west/img/cmp06-amazon-efdb66.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Layton Light Tone Drawer Chest",
+     "url": "https://www.cityhome.com/product/4020498",
+     "price": 499.95,
+     "image": "/ffe/17west/img/cmp06-cityhome-f23053.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "cmp-7",
+   "section": "compare",
+   "category": "Dressers",
+   "name": "The Rosin Nightstand x Double Dresser Bundle",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "The Rosin Nightstand x Double Dresser Bundle",
+     "url": "https://www.article.com/furniture-bundles/823/the-rosin-nightstand-x-double-dresser-bundle",
+     "price": 1594.4,
+     "image": "/ffe/17west/img/cmp07-article-246762.jpg",
+     "chips": [
+      "Bundle"
+     ],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "LEYAOYAO Rattan Dresser + Nightstand Set, 3 Piece",
+     "url": "https://www.amazon.com/dp/B0F9L68VK8",
+     "price": 529.99,
+     "image": "/ffe/17west/img/cmp07-amazon-125179.jpg",
+     "chips": [
+      "3-piece set",
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Palmdale Dark Tone Dresser + Nightstand (2 pieces, $499.95 + $199.95)",
+     "url": "https://www.cityhome.com/product/1280788",
+     "price": 699.9,
+     "image": "/ffe/17west/img/cmp07-cityhome-d01e36.jpg",
+     "chips": [
+      "2-piece set",
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "cmp-8",
+   "section": "compare",
+   "category": "Table lamps",
+   "name": "Oslo Table Lamp - Lichen",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Oslo Table Lamp - Lichen",
+     "url": "https://www.article.com/product/24892/oslo-table-lamp-lichen",
+     "price": 103.2,
+     "image": "/ffe/17west/img/cmp08-article-fb056f.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "Nourison 22\" Black Ceramic Table Lamp, Oatmeal Linen Shade",
+     "url": "https://www.amazon.com/dp/B0DTQCY7XW",
+     "price": 89.99,
+     "image": "/ffe/17west/img/cmp08-amazon-8ea218.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Cass Ceramic Table Lamp",
+     "url": "https://www.cityhome.com/product/5450019",
+     "price": 49.95,
+     "image": "/ffe/17west/img/cmp08-cityhome-2f2907.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "cmp-9",
+   "section": "compare",
+   "category": "Table lamps",
+   "name": "Markham Small Table Lamp - Brass",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Markham Small Table Lamp - Brass",
+     "url": "https://www.article.com/product/24957/markham-small-table-lamp-brass",
+     "price": 111.2,
+     "image": "/ffe/17west/img/cmp09-article-959f71.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "Oneach 19.5\" Warm Gold Small Table Lamps, Set of 2",
+     "url": "https://www.amazon.com/dp/B0FN3N9N4H",
+     "price": 59.99,
+     "image": "/ffe/17west/img/cmp09-amazon-7adba9.jpg",
+     "chips": [
+      "Set of 2",
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Lunan Gold Table Lamp",
+     "url": "https://www.cityhome.com/product/5450113",
+     "price": 149.95,
+     "image": "/ffe/17west/img/cmp09-cityhome-d337b4.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "cmp-10",
+   "section": "compare",
+   "category": "Dining sets",
+   "name": "So Fresh and So Clean Bundle",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "So Fresh and So Clean Bundle",
+     "url": "https://www.article.com/furniture-bundles/465/so-fresh-and-so-clean-bundle",
+     "price": 658.8,
+     "image": "/ffe/17west/img/cmp10-article-5ecea3.jpg",
+     "chips": [
+      "Bundle"
+     ],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "34.6\" Round Dining Table Set for 4",
+     "url": "https://www.amazon.com/dp/B0GNFHZLSY",
+     "price": 284.99,
+     "image": "/ffe/17west/img/cmp10-amazon-7dac03.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Lynden Light Tone Round Table + 4 Upholstered Chairs",
+     "url": "https://www.cityhome.com/product/9731157",
+     "price": 559.75,
+     "image": "/ffe/17west/img/cmp10-cityhome-0c5ab8.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "cmp-11",
+   "section": "compare",
+   "category": "Dining sets",
+   "name": "The Sylvo Dining Chair x Plumas Extendable Dining Table Bundle",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "The Sylvo Dining Chair x Plumas Extendable Dining Table Bundle",
+     "url": "https://www.article.com/furniture-bundles/768/the-sylvo-dining-chair-x-plumas-extendable-dining-table-bundle",
+     "price": 1180.3,
+     "image": "/ffe/17west/img/cmp11-article-c84758.jpg",
+     "chips": [
+      "Bundle"
+     ],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "42\"\u201358\" Extendable Round Dining Table for 4\u20136, with Storage",
+     "url": "https://www.amazon.com/dp/B0FXFDDHH3",
+     "price": 229.99,
+     "image": "/ffe/17west/img/cmp11-amazon-727ae1.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Delray Light Tone Rectangular Table, 4 Chairs + Bench",
+     "url": "https://www.cityhome.com/product/9733084",
+     "price": 774.7,
+     "image": "/ffe/17west/img/cmp11-cityhome-4c2202.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "cmp-12",
+   "section": "compare",
+   "category": "Dining sets",
+   "name": "Sede Dining Chair - Walnut",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Sede Dining Chair - Walnut",
+     "url": "https://www.article.com/product/30069/sede-dining-chair-walnut",
+     "price": 159.2,
+     "image": "/ffe/17west/img/cmp12-article-06ed25.jpg",
+     "chips": [
+      "Contract Grade"
+     ],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "kikiumi Walnut Dining Chairs, Set of 4, Mid-Century Modern",
+     "url": "https://www.amazon.com/dp/B0F4DCXF8M",
+     "price": 87.48,
+     "image": "/ffe/17west/img/cmp12-amazon-862139.jpg",
+     "chips": [
+      "Set of 4",
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "wf",
+     "vendor": "Wayfair",
+     "name": "George Oliver Mid-Century Dining Chair with Solid Wood Legs",
+     "url": "https://www.wayfair.com/furniture/pdp/george-oliver-mid-century-dining-chair-with-solid-wood-legs-built-in-handle-w118734384.html",
+     "price": 189.99,
+     "image": "/ffe/17west/img/cmp12-wayfair-133ff4.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "cmp-13",
+   "section": "compare",
+   "category": "Bar stools",
+   "name": "Svelti Counter Stool - Pure Black",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Svelti Counter Stool - Pure Black",
+     "url": "https://www.article.com/product/18046/svelti-counter-stool-pure-black",
+     "price": 87.2,
+     "image": "/ffe/17west/img/cmp13-article-c73256.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "26\" Counter Height Bar Stools, Set of 3",
+     "url": "https://www.amazon.com/dp/B0BVYXQP5B",
+     "price": 43.33,
+     "image": "/ffe/17west/img/cmp13-amazon-53da28.jpg",
+     "chips": [
+      "Set of 3",
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "wf",
+     "vendor": "Wayfair",
+     "name": "Wade Logan Carie 24\" Sherpa Upholstered Counter Stool",
+     "url": "https://www.wayfair.com/furniture/pdp/wade-logan-carie-24-sherpa-upholstered-counter-stool-soft-stylish-bar-stool-multiple-colors-modern-kitchen-island-seating-w110621508.html",
+     "price": 94.99,
+     "image": "/ffe/17west/img/cmp13-wayfair-f11014.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "cmp-14",
+   "section": "compare",
+   "category": "Bar stools",
+   "name": "Sede Leather Swivel Bar Stool - Walnut and Black",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Sede Leather Swivel Bar Stool - Walnut and Black",
+     "url": "https://www.article.com/product/30079/sede-leather-swivel-bar-stool-walnut-and-black",
+     "price": 239.2,
+     "image": "/ffe/17west/img/cmp14-article-55065a.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "Nalupatio Adjustable Faux Leather Swivel Bar Stools, Set of 2",
+     "url": "https://www.amazon.com/dp/B0CR6BRVNH",
+     "price": 40.0,
+     "image": "/ffe/17west/img/cmp14-amazon-3509ff.jpg",
+     "chips": [
+      "Set of 2",
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "wf",
+     "vendor": "Wayfair",
+     "name": "Red Barrel Studio Genuine Top Grain Leather Swivel Bar Stool, Rubberwood Frame",
+     "url": "https://www.wayfair.com/furniture/pdp/red-barrel-studio-genuine-top-grain-leather-swivel-with-solid-rubberwood-frame-mid-high-back-design-w116300029.html",
+     "price": 249.99,
+     "image": "/ffe/17west/img/cmp14-wayfair-66e46a.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "cmp-15",
+   "section": "compare",
+   "category": "Sofa beds",
+   "name": "Hanson 88\" Sofa Bed - Harbor Ivory",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Hanson 88\" Sofa Bed - Harbor Ivory",
+     "url": "https://www.article.com/product/29020/hanson-88-sofa-bed-harbor-ivory",
+     "price": 1119.2,
+     "image": "/ffe/17west/img/cmp15-article-3cfb6a.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "SUNWAVE 83\" Sleeper Sofa, 3-in-1 Pull-Out Sofa Bed, Corduroy",
+     "url": "https://www.amazon.com/dp/B0H2JCLWVF",
+     "price": 439.99,
+     "image": "/ffe/17west/img/cmp15-amazon-144608.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "wf",
+     "vendor": "Wayfair",
+     "name": "Ebern Designs Queen Size Pull-Out Sofa Bed with Memory Foam Mattress",
+     "url": "https://www.wayfair.com/furniture/pdp/ebern-designs-queen-size-pull-out-sofa-bed-convertible-sleeper-sofa-couch-with-pullout-bed-2-in-1-sofa-bed-couch-with-memory-foam-mattress-for-living-room-office-space-saving-w112811435.html",
+     "price": 779.99,
+     "image": "/ffe/17west/img/cmp15-wayfair-334f3b.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "cmp-16",
+   "section": "compare",
+   "category": "Sofa beds",
+   "name": "Sven 88\" Tufted Sofa Bed",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Sven 88\" Tufted Sofa Bed",
+     "url": "https://www.article.com/product/24687/sven-88-tufted-sofa-bed-fir-green",
+     "price": 1279.2,
+     "image": "/ffe/17west/img/cmp16-article-f83fef.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "KEIKI 81.9\" King Pull-Out Sofa Bed, 3-in-1 Convertible",
+     "url": "https://www.amazon.com/dp/B0G2B282SQ",
+     "price": 529.97,
+     "image": "/ffe/17west/img/cmp16-amazon-05fe0e.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "wf",
+     "vendor": "Wayfair",
+     "name": "Serta Sabrina 72.6\" Queen Convertible Sleeper Sofa, Tufted Back",
+     "url": "https://www.wayfair.com/furniture/pdp/serta-sabrina-726-queen-size-convertible-sleeper-sofa-with-pop-up-bed-rolled-arm-tufted-back-stf1283.html",
+     "price": 1069.99,
+     "image": "/ffe/17west/img/cmp16-wayfair-a1e879.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "cmp-17",
+   "section": "compare",
+   "category": "Sofa beds",
+   "name": "Vati 80\" Sofa Bed",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Vati 80\" Sofa Bed",
+     "url": "https://www.article.com/product/33734/vati-80-velvet-sofa-bed-hale-rust",
+     "price": 1439.2,
+     "image": "/ffe/17west/img/cmp17-article-51e73c.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "Tbfit 80\" Sofa Bed, Pull-Out Sleeper with USB + Storage Chaise",
+     "url": "https://www.amazon.com/dp/B0GW12FZ94",
+     "price": 449.99,
+     "image": "/ffe/17west/img/cmp17-amazon-c70f11.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "wf",
+     "vendor": "Wayfair",
+     "name": "Mercury Row Perdue 81.5\" Velvet Square Arm Convertible Sofa",
+     "url": "https://www.wayfair.com/furniture/pdp/mercury-row-perdue-815-velvet-square-arm-convertible-sofa-w009315804.html",
+     "price": 429.99,
+     "image": "/ffe/17west/img/cmp17-wayfair-effa2c.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "cmp-18",
+   "section": "compare",
+   "category": "Sofa beds",
+   "name": "Nordby 87\" Sofa Bed - Henge Gray",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Nordby 87\" Sofa Bed - Henge Gray",
+     "url": "https://www.article.com/product/15540/nordby-87-sofa-bed-henge-gray",
+     "price": 1279.2,
+     "image": "/ffe/17west/img/cmp18-article-f2e939.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "Tbfit 80\" Pull-Out Sofa, 3-in-1 Sleeper with USB + Storage",
+     "url": "https://www.amazon.com/dp/B0FD3VDSM1",
+     "price": 449.99,
+     "image": "/ffe/17west/img/cmp18-amazon-011083.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "wf",
+     "vendor": "Wayfair",
+     "name": "Ebern Designs 82\" Upholstered Convertible Sleeper Sofa",
+     "url": "https://www.wayfair.com/furniture/pdp/ebern-designs-82-upholstered-convertible-sleeper-sofa-w117907158.html",
+     "price": 999.99,
+     "image": "/ffe/17west/img/cmp18-wayfair-345fb9.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "cmp-19",
+   "section": "compare",
+   "category": "Floor lamps",
+   "name": "Arvo Floor Lamp",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Arvo Floor Lamp",
+     "url": "https://www.article.com/product/17790/arvo-floor-lamp-white",
+     "price": 199.2,
+     "image": "/ffe/17west/img/cmp19-article-248f35.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "SUNMORY Arc Floor Lamp, 3 Color Temperatures",
+     "url": "https://www.amazon.com/dp/B0CDW797MM",
+     "price": 30.99,
+     "image": "/ffe/17west/img/cmp19-amazon-876191.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Kai Gold Arc Floor Lamp",
+     "url": "https://www.cityhome.com/product/5450015",
+     "price": 399.95,
+     "image": "/ffe/17west/img/cmp19-cityhome-da3337.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "cmp-20",
+   "section": "compare",
+   "category": "Floor lamps",
+   "name": "Oslo Floor Lamp - Charcoal",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Oslo Floor Lamp - Charcoal",
+     "url": "https://www.article.com/product/21457/oslo-floor-lamp-charcoal",
+     "price": 183.2,
+     "image": "/ffe/17west/img/cmp20-article-ecd24b.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "Globe Electric Novogratz Floor Lamp, Dark Gray",
+     "url": "https://www.amazon.com/dp/B0832BP92G",
+     "price": 115.99,
+     "image": "/ffe/17west/img/cmp20-amazon-013357.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Alma Gold Marble Floor Lamp",
+     "url": "https://www.cityhome.com/product/5450159",
+     "price": 129.95,
+     "image": "/ffe/17west/img/cmp20-cityhome-b0535d.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "cmp-21",
+   "section": "compare",
+   "category": "Floor lamps",
+   "name": "Markham Floor Lamp - Brass",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "HostGPO \u00b7 Article",
+     "name": "Markham Floor Lamp - Brass",
+     "url": "https://www.article.com/product/23602/markham-floor-lamp-brass",
+     "price": 239.2,
+     "image": "/ffe/17west/img/cmp21-article-867d05.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "amz",
+     "vendor": "Amazon",
+     "name": "Gold Floor Lamp, Tall Standing Lamp 55\u201365\", Adjustable",
+     "url": "https://www.amazon.com/dp/B0D3TYDRJP",
+     "price": 59.99,
+     "image": "/ffe/17west/img/cmp21-amazon-4754b9.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Khia Gold Floor Lamp",
+     "url": "https://www.cityhome.com/product/5450125",
+     "price": 199.95,
+     "image": "/ffe/17west/img/cmp21-cityhome-36afa3.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "solo-1",
+   "section": "vendor",
+   "category": "Mattresses",
+   "name": "Helix | HostGPO Hospitality Standard 10\" Mattress - King",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Helix",
+     "name": "Helix | HostGPO Hospitality Standard 10\" Mattress - King",
+     "url": "https://helixsleep.com/products/midnight",
+     "price": 470.0,
+     "image": "/ffe/17west/img/solo01-helix-hostgpo-hosp-4d0305.jpg",
+     "chips": [
+      "King \u00b7 representative photo"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-2",
+   "section": "vendor",
+   "category": "Mattresses",
+   "name": "Helix | HostGPO Hospitality Standard 10\" Mattress - Queen",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Helix",
+     "name": "Helix | HostGPO Hospitality Standard 10\" Mattress - Queen",
+     "url": "https://helixsleep.com/products/midnight",
+     "price": 390.0,
+     "image": "/ffe/17west/img/solo02-helix-hostgpo-hosp-4d0305.jpg",
+     "chips": [
+      "Queen \u00b7 representative photo"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-3",
+   "section": "vendor",
+   "category": "Beds",
+   "name": "Lenia King Panel Bed",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Lenia King Panel Bed",
+     "url": "https://www.article.com/product/31306/lenia-king-panel-bed-walnut",
+     "price": 1039.2,
+     "image": "/ffe/17west/img/solo03-lenia-king-panel-b-a2bf42.jpg",
+     "chips": [
+      "King"
+     ],
+     "fit": "cover"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Capraia Dark Tone Panel Bed",
+     "url": "https://www.cityhome.com/product/9739599",
+     "price": 499.95,
+     "image": "/ffe/17west/img/solo03-ch-0e3bee.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "solo-4",
+   "section": "vendor",
+   "category": "Beds",
+   "name": "Ayra King Bed - Walnut",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Ayra King Bed - Walnut",
+     "url": "https://www.article.com/product/31928/ayra-king-bed-walnut",
+     "price": 1031.2,
+     "image": "/ffe/17west/img/solo04-ayra-king-bed-waln-1ec7d4.jpg",
+     "chips": [
+      "King"
+     ],
+     "fit": "cover"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Palmdale Dark Tone Platform Bed",
+     "url": "https://www.cityhome.com/product/9723575",
+     "price": 299.95,
+     "image": "/ffe/17west/img/solo04-ch-d3aaf8.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "solo-5",
+   "section": "vendor",
+   "category": "Beds",
+   "name": "Cooper Queen Low Profile Bed",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Cooper Queen Low Profile Bed",
+     "url": "https://www.article.com/product/26889/cooper-queen-low-profile-bed-walnut",
+     "price": 719.2,
+     "image": "/ffe/17west/img/solo05-cooper-queen-low-p-0dcc78.jpg",
+     "chips": [
+      "Queen"
+     ],
+     "fit": "cover"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Atlantic Mid Tone Panel Bed",
+     "url": "https://www.cityhome.com/product/9733773",
+     "price": 199.95,
+     "image": "/ffe/17west/img/solo05-ch-385e1f.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "solo-6",
+   "section": "vendor",
+   "category": "Beds",
+   "name": "Dalsa Queen Bed",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Dalsa Queen Bed",
+     "url": "https://www.article.com/product/25655/dalsa-queen-bed-natural-oak",
+     "price": 799.2,
+     "image": "/ffe/17west/img/solo06-dalsa-queen-bed-fe8519.jpg",
+     "chips": [
+      "Queen"
+     ],
+     "fit": "cover"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Alton Light Tone Platform Bed",
+     "url": "https://www.cityhome.com/product/9730700",
+     "price": 799.85,
+     "image": "/ffe/17west/img/solo06-ch-70eb25.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "solo-7",
+   "section": "vendor",
+   "category": "Coffee tables",
+   "name": "Cooper 51\" Rectangular Coffee Table",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Cooper 51\" Rectangular Coffee Table",
+     "url": "https://www.article.com/product/29826/cooper-51-rectangular-coffee-table-walnut",
+     "price": 319.2,
+     "image": "/ffe/17west/img/solo07-cooper-51-rectangu-054d2a.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Lyndie Light Tone Drawer Rectangular Coffee Table",
+     "url": "https://www.cityhome.com/product/1281988",
+     "price": 399.95,
+     "image": "/ffe/17west/img/solo07-ch-b21bf5.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "solo-8",
+   "section": "vendor",
+   "category": "Coffee tables",
+   "name": "Nordens 35.5\" Concrete Coffee Table",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Nordens 35.5\" Concrete Coffee Table",
+     "url": "https://www.article.com/product/23828/nordens-35-5-concrete-coffee-table-soft-white",
+     "price": 479.2,
+     "image": "/ffe/17west/img/solo08-nordens-35-5-concr-06598d.jpg",
+     "chips": [
+      "Contract Grade"
+     ],
+     "fit": "cover"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Kaleb White Marble Coffee Table",
+     "url": "https://www.cityhome.com/product/1280084",
+     "price": 399.95,
+     "image": "/ffe/17west/img/solo08-ch-41e5bf.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "solo-9",
+   "section": "vendor",
+   "category": "Coffee tables",
+   "name": "Adel 35\" Round Coffee Table",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Adel 35\" Round Coffee Table",
+     "url": "https://www.article.com/product/26862/adel-35-round-coffee-table-smoked-oak",
+     "price": 399.2,
+     "image": "/ffe/17west/img/solo09-adel-35-round-coff-35bc51.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Lyndie Light Tone Round Coffee Table",
+     "url": "https://www.cityhome.com/product/1281840",
+     "price": 149.95,
+     "image": "/ffe/17west/img/solo09-ch-156804.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "solo-10",
+   "section": "vendor",
+   "category": "Coffee tables",
+   "name": "Suri 44\" Rectangular Coffee Table",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Suri 44\" Rectangular Coffee Table",
+     "url": "https://www.article.com/product/24844/suri-44-rectangular-coffee-table-white-oak",
+     "price": 479.2,
+     "image": "/ffe/17west/img/solo10-suri-44-rectangula-e195e3.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Boca Grande Light Tone Coffee Table",
+     "url": "https://www.cityhome.com/product/6160054",
+     "price": 399.95,
+     "image": "/ffe/17west/img/solo10-ch-8bc276.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "solo-11",
+   "section": "vendor",
+   "category": "Bar table",
+   "name": "Seno Round Bar Table",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Seno Round Bar Table",
+     "url": "https://www.article.com/product/27610/seno-round-bar-table-oak",
+     "price": 319.2,
+     "image": "/ffe/17west/img/solo11-seno-round-bar-tab-406ca0.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Robin Light Tone High Table + 3 Barstools",
+     "url": "https://www.cityhome.com/product/1289334",
+     "price": 399.95,
+     "image": "/ffe/17west/img/solo11-ch-7e1147.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "solo-12",
+   "section": "vendor",
+   "category": "Lounge chairs",
+   "name": "Matrix 30.5\" Velvet Lounge Chair",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Matrix 30.5\" Velvet Lounge Chair",
+     "url": "https://www.article.com/product/19046/matrix-30-5-velvet-lounge-chair-pacific-blue",
+     "price": 479.2,
+     "image": "/ffe/17west/img/solo12-matrix-30-5-velvet-3ff092.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "wf",
+     "vendor": "Wayfair",
+     "name": "Etta Avenue Hendrix Polyester Barrel Chair",
+     "url": "https://www.wayfair.com/furniture/pdp/etta-avenue-hendrix-polyester-barrel-chair-w005011576.html",
+     "price": 219.99,
+     "image": "/ffe/17west/img/solo12-wf-81cbd4.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-13",
+   "section": "vendor",
+   "category": "Lounge chairs",
+   "name": "Otio 26\" Leather Lounge Chair",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Otio 26\" Leather Lounge Chair",
+     "url": "https://www.article.com/product/22546/otio-26-leather-lounge-chair-walnut-and-toscana-tan",
+     "price": 719.2,
+     "image": "/ffe/17west/img/solo13-otio-26-leather-lo-e0a207.jpg",
+     "chips": [
+      "Contract Grade"
+     ],
+     "fit": "cover"
+    },
+    {
+     "src": "wf",
+     "vendor": "Wayfair",
+     "name": "George Oliver 25.78\" Wide Mid-Century Faux Leather Accent Chair",
+     "url": "https://www.wayfair.com/furniture/pdp/george-oliver-2578-wide-mid-century-faux-leather-accent-chair-with-an-extra-pillow-w010374162.html",
+     "price": 143.99,
+     "image": "/ffe/17west/img/solo13-wf-fc088f.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-14",
+   "section": "vendor",
+   "category": "Lounge chairs",
+   "name": "Otio 26\" Velvet Lounge Chair - Walnut and Hale Ink",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Otio 26\" Velvet Lounge Chair - Walnut and Hale Ink",
+     "url": "https://www.article.com/product/26261/otio-26-velvet-lounge-chair-walnut-and-hale-ink",
+     "price": 639.2,
+     "image": "/ffe/17west/img/solo14-otio-26-velvet-lou-6a224a.jpg",
+     "chips": [
+      "Contract Grade"
+     ],
+     "fit": "cover"
+    },
+    {
+     "src": "wf",
+     "vendor": "Wayfair",
+     "name": "George Oliver Quinze Mid-Century Chenille Accent Armchair",
+     "url": "https://www.wayfair.com/furniture/pdp/george-oliver-quinze-mid-century-modern-upholstered-chenille-solid-wood-accent-armchair-w113567884.html",
+     "price": 167.99,
+     "image": "/ffe/17west/img/solo14-wf-93df1e.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-15",
+   "section": "vendor",
+   "category": "Lounge chairs",
+   "name": "Sunny 32\" Velvet Lounge Chair - Hale Ink",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Sunny 32\" Velvet Lounge Chair - Hale Ink",
+     "url": "https://www.article.com/product/27027/sunny-32-velvet-lounge-chair-hale-ink",
+     "price": 559.2,
+     "image": "/ffe/17west/img/solo15-sunny-32-velvet-lo-8f3d12.jpg",
+     "chips": [
+      "Contract Grade"
+     ],
+     "fit": "cover"
+    },
+    {
+     "src": "wf",
+     "vendor": "Wayfair",
+     "name": "House of Hampton Robeson 28\" Wide Velvet Barrel Chair",
+     "url": "https://www.wayfair.com/furniture/pdp/house-of-hampton-robeson-28-wide-velvet-barrel-chair-w002589375.html",
+     "price": 162.99,
+     "image": "/ffe/17west/img/solo15-wf-290004.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-16",
+   "section": "vendor",
+   "category": "Lounge chairs",
+   "name": "Everse 33.5\" Velvet Lounge Chair - Melange Green",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Everse 33.5\" Velvet Lounge Chair - Melange Green",
+     "url": "https://www.article.com/product/27029/everse-33-5-velvet-lounge-chair-melange-green",
+     "price": 399.2,
+     "image": "/ffe/17west/img/solo16-everse-33-5-velvet-c5e367.jpg",
+     "chips": [
+      "Contract Grade"
+     ],
+     "fit": "cover"
+    },
+    {
+     "src": "wf",
+     "vendor": "Wayfair",
+     "name": "Mercer41 Green Velvet Accent Chair",
+     "url": "https://www.wayfair.com/furniture/pdp/mercer41-green-velvet-accent-chair-w119953121.html",
+     "price": 203.99,
+     "image": "/ffe/17west/img/solo16-wf-133037.jpg",
+     "chips": [
+      "Assembly needed"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-17",
+   "section": "vendor",
+   "category": "Floor mirrors",
+   "name": "Laud Floor Mirror - Walnut",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Laud Floor Mirror - Walnut",
+     "url": "https://www.article.com/product/19242/laud-floor-mirror-walnut",
+     "price": 479.2,
+     "image": "/ffe/17west/img/solo17-laud-floor-mirror--b0b3d2.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Iona Brown Wood Floor Mirror",
+     "url": "https://www.cityhome.com/product/5790012",
+     "price": 599.95,
+     "image": "/ffe/17west/img/solo17-ch-df8dc6.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "solo-18",
+   "section": "vendor",
+   "category": "Floor mirrors",
+   "name": "Mansfield Floor Mirror - Brass",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Mansfield Floor Mirror - Brass",
+     "url": "https://www.article.com/product/23271/mansfield-floor-mirror-brass",
+     "price": 319.2,
+     "image": "/ffe/17west/img/solo18-mansfield-floor-mi-f02061.jpg",
+     "chips": [
+      "Also available in Black"
+     ],
+     "fit": "cover"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Hudson Gold Floor Mirror",
+     "url": "https://www.cityhome.com/product/5790030",
+     "price": 399.95,
+     "image": "/ffe/17west/img/solo18-ch-48ebbf.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "solo-19",
+   "section": "vendor",
+   "category": "Rugs",
+   "name": "Perfect Handwoven Jute-Blend Rug 8'6\" x 11'6\"",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Rugs USA",
+     "name": "Perfect Handwoven Jute-Blend Rug 8'6\" x 11'6\"",
+     "url": "https://www.rugsusa.com/products/perfect-handwoven-juteblend-rug-natural",
+     "price": 377.1,
+     "image": "/ffe/17west/img/solo19-perfect-handwoven--d3e9ba.jpg",
+     "chips": [
+      "Free Shipping"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Olive Jute 8x10 Area Rug",
+     "url": "https://www.cityhome.com/product/5930167",
+     "price": 499.95,
+     "image": "/ffe/17west/img/solo19-ch-ead25d.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "solo-20",
+   "section": "vendor",
+   "category": "Rugs",
+   "name": "Softest Knit Wool Rug 9'6\" x 13'6\"",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Rugs USA",
+     "name": "Softest Knit Wool Rug 9'6\" x 13'6\"",
+     "url": "https://www.rugsusa.com/products/softest-knit-wool-rug-off-white",
+     "price": 631.2,
+     "image": "/ffe/17west/img/solo20-softest-knit-wool--dc5f56.jpg",
+     "chips": [
+      "Free Shipping"
+     ],
+     "fit": "contain"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Harlec Ivory 10x13 Area Rug",
+     "url": "https://www.cityhome.com/product/5420070",
+     "price": 649.95,
+     "image": "/ffe/17west/img/solo20-ch-57ac3a.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "solo-21",
+   "section": "vendor",
+   "category": "Rugs",
+   "name": "Texa 8 x 10 Rug - Fog Gray",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Article",
+     "name": "Texa 8 x 10 Rug - Fog Gray",
+     "url": "https://www.article.com/product/1833/texa-8-x-10-rug-fog-gray",
+     "price": 559.2,
+     "image": "/ffe/17west/img/solo21-texa-8-x-10-rug-fo-b9b42e.jpg",
+     "chips": [],
+     "fit": "cover"
+    },
+    {
+     "src": "ch",
+     "vendor": "City Home",
+     "name": "Venetian Gray 8x10 Area Rug",
+     "url": "https://www.cityhome.com/product/5120118",
+     "price": 399.95,
+     "image": "/ffe/17west/img/solo21-ch-31465d.jpg",
+     "chips": [
+      "Delivered & set up"
+     ],
+     "fit": "cover"
+    }
+   ]
+  },
+  {
+   "key": "solo-22",
+   "section": "vendor",
+   "category": "Faux plants",
+   "name": "Faux 3' Bay Leaf Topiary (Indoor/Outdoor)",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Nearly Natural",
+     "name": "Faux 3' Bay Leaf Topiary (Indoor/Outdoor)",
+     "url": "https://www.nearlynatural.com/products/3-bay-leaf-topiary-uv-resistant-w-604-lvs-indoor-outdoor",
+     "price": 71.41,
+     "image": "/ffe/17west/img/solo22-faux-3-bay-leaf-to-2a79e0.jpg",
+     "chips": [
+      "Free Shipping"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-23",
+   "section": "vendor",
+   "category": "Faux plants",
+   "name": "Faux 6' Paradise Palm Tree",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Nearly Natural",
+     "name": "Faux 6' Paradise Palm Tree",
+     "url": "https://www.nearlynatural.com/products/6-paradise-palm-tree-w-15-lvs",
+     "price": 87.88,
+     "image": "/ffe/17west/img/solo23-faux-6-paradise-pa-24ae7c.jpg",
+     "chips": [
+      "Free Shipping"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-24",
+   "section": "vendor",
+   "category": "Faux plants",
+   "name": "Faux 21\" Agave Plant",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Nearly Natural",
+     "name": "Faux 21\" Agave Plant",
+     "url": "https://www.nearlynatural.com/products/21-agave-artificial-plant",
+     "price": 57.52,
+     "image": "/ffe/17west/img/solo24-faux-21-agave-plan-6e1c05.jpg",
+     "chips": [
+      "Free Shipping"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-25",
+   "section": "vendor",
+   "category": "Appliances",
+   "name": "Hisense 5000 BTU (DOE) 115-Volt Vented Small Room Portable Air Conditioner, Remote Included",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Lowe's",
+     "name": "Hisense 5000 BTU (DOE) 115-Volt Vented Small Room Portable Air Conditioner, Remote Included",
+     "url": "https://www.lowes.com/pd/Hisense-5000-BTU-DOE-115-Volt-White-Vented-Portable-Air-Conditioner-Remote-Control-Included-150-sq-ft-Cooling/5016257683",
+     "price": 337.46,
+     "image": "/ffe/17west/img/solo25-hisense-5000-btu-d-87464a.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-26",
+   "section": "vendor",
+   "category": "Appliances",
+   "name": "Shark Rocket Pro Corded with Headlights Ultra-Lightweight Pet Stick Vacuum (Convertible to Handheld)",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Lowe's",
+     "name": "Shark Rocket Pro Corded with Headlights Ultra-Lightweight Pet Stick Vacuum (Convertible to Handheld)",
+     "url": "https://www.lowes.com/pd/Shark-120-Volt-Corded-Pet-Stick-Vacuum/5013377645",
+     "price": 187.99,
+     "image": "/ffe/17west/img/solo26-shark-rocket-pro-c-b32186.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-27",
+   "section": "vendor",
+   "category": "Appliances",
+   "name": "Whirlpool Top-Load Washer with Agitator + Vented Electric Dryer Set",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Lowe's",
+     "name": "Whirlpool Top-Load Washer with Agitator + Vented Electric Dryer Set",
+     "url": "https://www.lowes.com/pd/Whirlpool-Whirlpool-Top-Load-Washer-with-2-in-1-Removable-Agitator-and-Soft-Close-Glass-Lid/5016333345",
+     "price": 958.0,
+     "image": "/ffe/17west/img/solo27-whirlpool-top-load-1b23d1.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-28",
+   "section": "vendor",
+   "category": "Appliances",
+   "name": "Refrigerator, full size with freezer on the bottom",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Lowe's",
+     "name": "Refrigerator, full size with freezer on the bottom",
+     "url": null,
+     "price": null,
+     "image": null,
+     "chips": [
+      "Model TBD"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-29",
+   "section": "vendor",
+   "category": "TVs",
+   "name": "55\" Samsung HU7010F Smart Hospitality TV with Casting, Large OTT Library and Pro:Idiom",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Samsung",
+     "name": "55\" Samsung HU7010F Smart Hospitality TV with Casting, Large OTT Library and Pro:Idiom",
+     "url": "https://www.samsung.com/us/business/commercial-tvs/hotel-tv/55-inch-hotel-tv-hu7010f-uhd-4k-sku-hg55u701fnfxza/",
+     "price": 585.13,
+     "image": "/ffe/17west/img/solo29-55-samsung-hu7010f-a5e33d.jpg",
+     "chips": [
+      "Hospitality"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-30",
+   "section": "vendor",
+   "category": "TVs",
+   "name": "55\" Class Crystal UHD U8000F 4K Smart TV (2025)",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Samsung",
+     "name": "55\" Class Crystal UHD U8000F 4K Smart TV (2025)",
+     "url": "https://www.samsung.com/us/tvs/uhd-4k-tv/55-inch-class-crystal-uhd-u8000f-4k-smart-tv-sku-un55u8000ffxza/",
+     "price": 314.99,
+     "image": "/ffe/17west/img/solo30-55-class-crystal-u-686552.jpg",
+     "chips": [
+      "Good"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-31",
+   "section": "vendor",
+   "category": "TVs",
+   "name": "55\" Class Mini LED M80H 4K Samsung Vision AI Smart TV (2026)",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Samsung",
+     "name": "55\" Class Mini LED M80H 4K Samsung Vision AI Smart TV (2026)",
+     "url": "https://www.samsung.com/us/tvs/mini-led-tv/55-inch-mini-led-4k-tv-m80h-sku-un55m80hafxza/",
+     "price": 439.99,
+     "image": "/ffe/17west/img/solo31-55-class-mini-led--092429.jpg",
+     "chips": [
+      "Better"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-32",
+   "section": "vendor",
+   "category": "TVs",
+   "name": "55\" Class The Frame LS03H 4K Vision AI Smart TV (2026)",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Samsung",
+     "name": "55\" Class The Frame LS03H 4K Vision AI Smart TV (2026)",
+     "url": "https://www.samsung.com/us/lifestyle-tvs/the-frame/55-inch-the-frame-qled-4k-tv-ls03he-sku-qn55ls03hefxza/",
+     "price": 799.99,
+     "image": "/ffe/17west/img/solo32-55-class-the-frame-d91b33.jpg",
+     "chips": [
+      "Best"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-33",
+   "section": "vendor",
+   "category": "TVs",
+   "name": "Slim Fit Wall Mount 42\"\u201385\"",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Samsung",
+     "name": "Slim Fit Wall Mount 42\"\u201385\"",
+     "url": null,
+     "price": 123.49,
+     "image": null,
+     "chips": [
+      "Samsung: works with any TV; 3rd-party mounts can run cheaper on Amazon"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "solo-34",
+   "section": "vendor",
+   "category": "Outdoor",
+   "name": "Outdoor sectional",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "TBD",
+     "name": "Outdoor sectional",
+     "url": null,
+     "price": null,
+     "image": null,
+     "chips": [
+      "Not yet sourced"
+     ],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-1",
+   "section": "amenity",
+   "category": "Paper & kitchen",
+   "name": "Coffee pods",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Staples",
+     "name": "Peet's Coffee Major Dickason's Blend Keurig K-Cup Pods, Dark Roast, 22/Box",
+     "url": "https://www.staples.com/peet-s-coffee-major-dickason-s-blend-coffee-dark-roast-0-47-oz-keurig-k-cup-pods-22-box-6547/product_1274179",
+     "price": 19.49,
+     "each": "$0.89",
+     "image": "/ffe/17west/img/am01-coffee-pods-7c2106.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-2",
+   "section": "amenity",
+   "category": "Paper & kitchen",
+   "name": "Condiment kit",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "TBD",
+     "name": "Not yet sourced",
+     "url": null,
+     "price": null,
+     "each": "",
+     "image": null,
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-3",
+   "section": "amenity",
+   "category": "Paper & kitchen",
+   "name": "Kitchen sponge",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Staples",
+     "name": "Scotch-Brite Heavy Duty Sponge with Scrubber, Green/Yellow, 6/Pack (426)",
+     "url": "https://www.staples.com/scotch-brite-heavy-duty-scrub-sponges-green-yellow-6-pack-426/product_959797",
+     "price": 5.88,
+     "each": "$0.98",
+     "image": "/ffe/17west/img/am03-kitchen-sponge-4e14f7.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-4",
+   "section": "amenity",
+   "category": "Paper & kitchen",
+   "name": "Trash bags 38\u00d760",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Staples",
+     "name": "Coastwide Professional Black 55\u201360 Gallon Trash Bag, High Density, 150 ct",
+     "url": "https://www.staples.com/coastwide-professional-55-60-gallon-trash-bag-38-x-60-high-density-22-mic-black-6-rolls-cw17712-z7660wk/product_814865",
+     "price": 85.49,
+     "each": "$0.57",
+     "image": "/ffe/17west/img/am04-trash-bags-38-60-5dec7a.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-5",
+   "section": "amenity",
+   "category": "Paper & kitchen",
+   "name": "Trash bags 24\u00d724",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Staples",
+     "name": "PERK Clear 10 Gallon Kitchen Trash Bag, 24\" \u00d7 24\", High Density, 0.36 mil, 300/Box",
+     "url": "https://www.staples.com/perk-10-gallon-kitchen-trash-bag-24-x-24-high-density-0-36-mil-clear-300-bags-box-pk56746/product_24377878",
+     "price": 16.19,
+     "each": "$0.05",
+     "image": "/ffe/17west/img/am05-trash-bags-24-24-2ac029.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-6",
+   "section": "amenity",
+   "category": "Paper & kitchen",
+   "name": "Toilet paper",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Staples",
+     "name": "Coastwide Professional Toilet Paper, 2-ply, White, 500 Sheets/Roll, 96 Rolls/Case",
+     "url": "https://www.staples.com/coastwide-professional-2-ply-standard-toilet-paper-white-500-sheets-roll-96-rolls-carton-cw26212/product_365377",
+     "price": 59.17,
+     "each": "$0.62",
+     "image": "/ffe/17west/img/am06-toilet-paper-da6a3e.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-7",
+   "section": "amenity",
+   "category": "Paper & kitchen",
+   "name": "Paper towel",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Staples",
+     "name": "Coastwide Professional Paper Towels, 2-ply, 85 Sheets/Roll, 30 Rolls/Pack",
+     "url": "https://www.staples.com/coastwide-professional-kitchen-rolls-paper-towel-2-ply-white-85-sheets-roll-30-rolls-carton-cw21810ct/product_365384",
+     "price": 33.41,
+     "each": "$1.11",
+     "image": "/ffe/17west/img/am07-paper-towel-edb0ec.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-8",
+   "section": "amenity",
+   "category": "Paper & kitchen",
+   "name": "Facial tissue",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Staples",
+     "name": "Angel Soft Professional Series Facial Tissue, 2-Ply, 96 Tissues/Box, 36 Boxes/Pack",
+     "url": "https://www.staples.com/angel-soft-professional-series-standard-facial-tissues-2-ply-96-sheets-box-36-boxes-pack-46580/product_515516",
+     "price": 80.95,
+     "each": "$2.25",
+     "image": "/ffe/17west/img/am08-facial-tissue-1c2d4f.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-9",
+   "section": "amenity",
+   "category": "Bath amenities \u00b7 travel tubes",
+   "name": "Shampoo tube",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Beekman 1802",
+     "name": "Fresh Air Shampoo, 30 mL Travel Size, Case of 198",
+     "url": "https://beekman1802.com/collections/fresh-air",
+     "price": 79.37,
+     "each": "$0.40",
+     "image": "/ffe/17west/img/am09-shampoo-tube-9bd051.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-10",
+   "section": "amenity",
+   "category": "Bath amenities \u00b7 travel tubes",
+   "name": "Conditioner tube",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Beekman 1802",
+     "name": "Fresh Air Conditioner, 30 mL Travel Size, Case of 198",
+     "url": "https://beekman1802.com/collections/fresh-air",
+     "price": 79.37,
+     "each": "$0.40",
+     "image": "/ffe/17west/img/am10-conditioner-tube-9bd051.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-11",
+   "section": "amenity",
+   "category": "Bath amenities \u00b7 travel tubes",
+   "name": "Body wash tube",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Beekman 1802",
+     "name": "Fresh Air Body Wash, 30 mL Travel Size, Case of 198",
+     "url": "https://beekman1802.com/products/fresh-air-hand-body-wash",
+     "price": 79.37,
+     "each": "$0.40",
+     "image": "/ffe/17west/img/am11-body-wash-tube-0e770d.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-12",
+   "section": "amenity",
+   "category": "Bath amenities \u00b7 travel tubes",
+   "name": "Body lotion tube",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Beekman 1802",
+     "name": "Fresh Air Lotion, 30 mL Travel Size, Case of 198",
+     "url": "https://beekman1802.com/products/fresh-air-lotion",
+     "price": 79.37,
+     "each": "$0.40",
+     "image": "/ffe/17west/img/am12-body-lotion-tube-1d4ccc.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-13",
+   "section": "amenity",
+   "category": "Bath amenities \u00b7 travel tubes",
+   "name": "Cleansing bar soap",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Public Goods",
+     "name": "Beekman 1802 Fresh Air Cleansing Bar, 30 g, Case of 300",
+     "url": "https://beekman1802.com/products/fresh-air-bar-soap",
+     "price": 76.85,
+     "each": "$0.25",
+     "image": "/ffe/17west/img/am13-cleansing-bar-so-1b76df.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-14",
+   "section": "amenity",
+   "category": "Bath amenities \u00b7 dispensers (480 mL)",
+   "name": "Shampoo dispenser",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Apotheke",
+     "name": "Canvas Shampoo, 480 mL Spaza Dispenser, Case of 18",
+     "url": "https://apothekeco.com/products/canvas-amenity-shampoo-480ml",
+     "price": 84.01,
+     "each": "$4.66",
+     "image": "/ffe/17west/img/am14-shampoo-dispense-044223.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-15",
+   "section": "amenity",
+   "category": "Bath amenities \u00b7 dispensers (480 mL)",
+   "name": "Conditioner dispenser",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Apotheke",
+     "name": "Canvas Conditioner, 480 mL Spaza Dispenser, Case of 18",
+     "url": "https://apothekeco.com/products/canvas-amenity-shampoo-and-conditioner-bundle",
+     "price": 84.01,
+     "each": "$4.66",
+     "image": "/ffe/17west/img/am15-conditioner-disp-6aafa9.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-16",
+   "section": "amenity",
+   "category": "Bath amenities \u00b7 dispensers (480 mL)",
+   "name": "Body wash dispenser",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Apotheke",
+     "name": "Canvas Bath Gel, 480 mL Spaza Dispenser, Case of 18",
+     "url": "https://apothekeco.com/products/canvas-amenity-body-wash-480ml",
+     "price": 84.01,
+     "each": "$4.66",
+     "image": "/ffe/17west/img/am16-body-wash-dispen-a88aa6.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-17",
+   "section": "amenity",
+   "category": "Bath amenities \u00b7 dispensers (480 mL)",
+   "name": "Hand soap dispenser",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Apotheke",
+     "name": "Canvas Hand Wash, 480 mL Spaza Dispenser, Case of 18",
+     "url": "https://apothekeco.com/products/canvas-liquid-soap",
+     "price": 84.01,
+     "each": "$4.66",
+     "image": "/ffe/17west/img/am17-hand-soap-dispen-1071ec.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-18",
+   "section": "amenity",
+   "category": "Bath amenities \u00b7 dispensers (480 mL)",
+   "name": "Body lotion dispenser",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Apotheke",
+     "name": "Canvas Lotion, 480 mL Spaza Dispenser, Case of 18",
+     "url": "https://apothekeco.com/products/canvas-lotion",
+     "price": 84.01,
+     "each": "$4.66",
+     "image": "/ffe/17west/img/am18-body-lotion-disp-2c6dc0.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-19",
+   "section": "amenity",
+   "category": "Bath amenities \u00b7 gallon refills (3.8 L)",
+   "name": "Shampoo refill",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Apotheke",
+     "name": "Canvas Shampoo w/ Pump, 3.8 L Refill, Case of 4",
+     "url": "https://apothekeco.com/products/canvas-amenity-shampoo-480ml",
+     "price": 125.39,
+     "each": "$31.34",
+     "image": "/ffe/17west/img/am19-shampoo-refill-044223.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-20",
+   "section": "amenity",
+   "category": "Bath amenities \u00b7 gallon refills (3.8 L)",
+   "name": "Conditioner refill",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Apotheke",
+     "name": "Canvas Conditioner w/ Pump, 3.8 L Refill, Case of 4",
+     "url": "https://apothekeco.com/products/canvas-amenity-shampoo-and-conditioner-bundle",
+     "price": 125.39,
+     "each": "$31.34",
+     "image": "/ffe/17west/img/am20-conditioner-refi-6aafa9.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-21",
+   "section": "amenity",
+   "category": "Bath amenities \u00b7 gallon refills (3.8 L)",
+   "name": "Body + hand wash refill",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Apotheke",
+     "name": "Canvas Bath Gel + Hand Wash w/ Pump, 3.8 L Refill, Case of 4",
+     "url": "https://apothekeco.com/products/canvas-amenity-body-wash-480ml",
+     "price": 125.39,
+     "each": "$31.34",
+     "image": "/ffe/17west/img/am21-body-hand-wash-r-a88aa6.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-22",
+   "section": "amenity",
+   "category": "Bath amenities \u00b7 gallon refills (3.8 L)",
+   "name": "Lotion refill",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Apotheke",
+     "name": "Canvas Lotion w/ Pump, 3.8 L Refill, Case of 4",
+     "url": "https://apothekeco.com/products/canvas-lotion",
+     "price": 125.39,
+     "each": "$31.34",
+     "image": "/ffe/17west/img/am22-lotion-refill-2c6dc0.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-23",
+   "section": "amenity",
+   "category": "Cleaning & laundry",
+   "name": "Dish soap refill",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Public Goods",
+     "name": "Dish Soap, Mandarin Basil, 34 fl oz (Refill)",
+     "url": "https://www.publicgoods.com/products/natural-dish-soap",
+     "price": 11.97,
+     "each": "$11.97",
+     "image": "/ffe/17west/img/am23-dish-soap-refill-db1bdd.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-24",
+   "section": "amenity",
+   "category": "Cleaning & laundry",
+   "name": "Dish soap",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Public Goods",
+     "name": "Dish Soap, Mandarin Basil, 16 fl oz",
+     "url": "https://www.publicgoods.com/products/natural-dish-soap",
+     "price": 5.97,
+     "each": "$5.97",
+     "image": "/ffe/17west/img/am24-dish-soap-53a442.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-25",
+   "section": "amenity",
+   "category": "Cleaning & laundry",
+   "name": "Dish soap (mini)",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Diversified Hospitality",
+     "name": "Terra Breeze Dish Soap, 1.6 oz Extra Small, Case of 144",
+     "url": "https://www.diversifiedhospitality.com/terra-breeze-detergents/",
+     "price": 94.0,
+     "each": "$0.65",
+     "image": "/ffe/17west/img/am25-dish-soap-mini-583b8f.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-26",
+   "section": "amenity",
+   "category": "Cleaning & laundry",
+   "name": "Laundry pods",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Public Goods",
+     "name": "Laundry Detergent Pods 100 ct (Case of 4)",
+     "url": "https://www.publicgoods.com/products/laundry-detergent-pods",
+     "price": 43.13,
+     "each": "$10.78 / box",
+     "image": "/ffe/17west/img/am26-laundry-pods-72146a.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-27",
+   "section": "amenity",
+   "category": "Cleaning & laundry",
+   "name": "Dishwasher detergent",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Diversified Hospitality",
+     "name": "Terra Breeze Dishwasher Detergent, 1.5 oz Packets, Case of 200",
+     "url": "https://www.diversifiedhospitality.com/terra-breeze-detergents/",
+     "price": 59.0,
+     "each": "$0.29",
+     "image": "/ffe/17west/img/am27-dishwasher-deter-72773d.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-28",
+   "section": "amenity",
+   "category": "Cleaning & laundry",
+   "name": "Dish pods",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Public Goods",
+     "name": "Dishwasher Detergent Pods 80 ct (Case of 6)",
+     "url": "https://www.publicgoods.com/products/dishwasher-detergent-pods",
+     "price": 53.89,
+     "each": "$8.98",
+     "image": "/ffe/17west/img/am28-dish-pods-6bd1a6.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  },
+  {
+   "key": "am-29",
+   "section": "amenity",
+   "category": "Cleaning & laundry",
+   "name": "Hand soap",
+   "options": [
+    {
+     "src": "host",
+     "vendor": "Public Goods",
+     "name": "Hand Soap, 12 fl oz (Case of 12)",
+     "url": "https://www.publicgoods.com/products/natural-hand-soap",
+     "price": 64.58,
+     "each": "$5.38",
+     "image": "/ffe/17west/img/am29-hand-soap-776718.jpg",
+     "chips": [],
+     "fit": "contain"
+    }
+   ]
+  }
+ ],
+ "misc": {
+  "Bedroom & bath": [
+   "Iron",
+   "Iron board",
+   "Luggage rack",
+   "Hangers",
+   "Hair dryer",
+   "Scale",
+   "Makeup mirror"
+  ],
+  "Kitchen & dining": [
+   "Toaster",
+   "Coffee maker",
+   "Electric cook top",
+   "Blender",
+   "Cookware set",
+   "Knife set",
+   "Utensil set",
+   "Cutting board",
+   "Oven tray",
+   "Mixing bowl set",
+   "Flatware set",
+   "Dinnerware set",
+   "Glassware set",
+   "Wine glasses",
+   "Glass pitcher",
+   "Platter",
+   "Ice bucket with tongs",
+   "Ice bucket tray",
+   "Ice cube tray"
+  ],
+  "Cleaning & utility": [
+   "Garbage can",
+   "Paper towel holder",
+   "Broom and dust pan",
+   "Batteries"
+  ]
+ }
+}
