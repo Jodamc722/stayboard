@@ -223,3 +223,37 @@ export async function ownerRevenueByOwner(ownerIds: string[], months: string[]) 
   }
   return Object.values(byOwner).sort((a, b) => b.gross - a.gross)
 }
+
+// ── THE FEE IS PER BUILDING, NOT ONE HOUSE NUMBER ───────────────────────────
+// Jon, 2026-10-27, asked which was right when 17WEST's completed statements showed an effective
+// 10.1% against the 20% the house template prints: "17WEST is ~10%."
+//
+// So the terms slide can no longer read one number off the template and call it the fee. This
+// measures what the ledger actually charged — commission over rental, across the completed
+// statement months — for whatever listings a document is scoped to, and returns null rather than
+// a guess when there is nothing to measure. A proposal that prints a fee the owner's own
+// statements will contradict is worse than one that prints no fee at all.
+export async function effectiveFee(listingIds: string[], months: string[]): Promise<{ pct: number; months: number; rental: number } | null> {
+  if (!listingIds.length || !months.length) return null
+  const owners = await ownersForListings(listingIds)
+  if (!owners.length) return null
+  const detail = await statementDetail({ ownerIds: owners, months })
+  const want = new Set(listingIds.map(String))
+  let rental = 0, commission = 0
+  for (const u of (detail.units || [])) {
+    if (u.portfolio || !want.has(String(u.listingId))) continue
+    rental += Number(u.rental) || 0
+    commission += Number(u.commission) || 0
+  }
+  // Commission the ledger books above the unit belongs to these units too — same control total as
+  // ownerRevenueRows, and for the same reason.
+  const all = await ownerMonths({ ownerIds: owners, months })
+  const ctlRental = all.reduce((a, r) => a + (Number(r.rental) || 0), 0)
+  const ctlCommission = all.reduce((a, r) => a + (Number(r.commission) || 0), 0)
+  if (ctlRental > 0) {
+    const expected = (rental / ctlRental) * ctlCommission
+    if (expected > commission) commission = expected
+  }
+  if (rental <= 0) return null
+  return { pct: Math.round((commission / rental) * 1000) / 10, months: months.length, rental: Math.round(rental) }
+}

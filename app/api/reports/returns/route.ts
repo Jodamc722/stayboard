@@ -21,6 +21,7 @@ import { basisTriple } from '@/lib/basis'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { marketLabel, marketOf } from '@/lib/segments'
 import { requireLevel } from '@/lib/access'
+import { ownersForListings, completedMonths, effectiveFee } from '@/lib/sales-proof'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -68,6 +69,23 @@ export async function GET(req: NextRequest) {
   const byListing: Record<string, any[]> = {}
   for (const r of resv) { (byListing[r.listing_id] = byListing[r.listing_id] || []).push(r) }
 
+  // THE EFFECTIVE FEE, BUILDING BY BUILDING (Jon, 2026-10-27). The house template prints 20% and
+  // 17WEST's statements say 10.1%, so the spread is a thing to be able to see rather than to
+  // discover in front of a prospect. Measured only where completed statements exist; a building
+  // with none simply has no figure.
+  const toM = to.slice(0, 7)
+  const fromM = from.slice(0, 7)
+  const feeOf: Record<string, number> = {}
+  await Promise.all(names.map(async b => {
+    try {
+      const ids = byBuilding[b].map(l => String(l.id))
+      const owners = await ownersForListings(ids)
+      if (!owners.length) return
+      const fee = await effectiveFee(ids, await completedMonths(owners, fromM, toM))
+      if (fee && fee.pct > 0) feeOf[b] = fee.pct
+    } catch { /* a building with no statements simply has no figure */ }
+  }))
+
   const rows = names.map(b => {
     const ls = byBuilding[b]
     const ids = ls.map(l => String(l.id))
@@ -93,6 +111,7 @@ export async function GET(req: NextRequest) {
       revpar: '$' + g.revpar,
       nights: String(m.occupiedNights),
       reservations: m.reservations,
+      feePct: feeOf[b] == null ? null : feeOf[b],
       _g: g.revenue,
     }
   }).filter(r => r._g > 0).sort((a, b) => b._g - a._g)

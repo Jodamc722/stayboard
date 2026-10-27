@@ -167,6 +167,8 @@ export type SalesInput = {
   }
   /** Their market, measured from our own book (lib/sales-market). */
   intel?: MarketIntelLite | null
+  /** What the ledger actually charged this scope, when there are statements to measure. */
+  feePct?: number | null
   photos?: string[]
 }
 
@@ -282,7 +284,12 @@ export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesCo
       intel: i.intel || null,
     },
     maxrev: { headline: MAXREV_HEADLINE, subtitle: MAXREV_SUBTITLE, body: MAXREV_BODY, rows: MAXREV_ROWS, note: MAXREV_NOTE },
-    terms: { headline: TERMS_HEADLINE, subtitle: TERMS_SUBTITLE, rows: termRows(t.mgmtPct, t.laborRate, t.approvalLimit), note: TERMS_NOTE },
+    terms: {
+      headline: TERMS_HEADLINE, subtitle: TERMS_SUBTITLE,
+      // The measured fee wins over the template — see the generator for why.
+      rows: termRows(i.feePct != null && i.feePct > 0 ? i.feePct : t.mgmtPct, t.laborRate, t.approvalLimit),
+      note: TERMS_NOTE,
+    },
     proof: { headline: PROOF_HEADLINE, subtitle: PROOF_SUBTITLE, body: PROOF_BODY, note: PROOF_NOTE, scope: '', window: '', names: false, rows: [] },
     returns: { headline: RETURNS_HEADLINE, subtitle: RETURNS_SUBTITLE, body: RETURNS_BODY, note: RETURNS_NOTE, window: '', rows: [] },
     plan: { headline: PLAN_HEADLINE, subtitle: PLAN_SUBTITLE, body: PLAN_BODY, note: PLAN_NOTE, range: null, months: [], cols: [], rows: [] },

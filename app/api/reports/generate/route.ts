@@ -27,7 +27,7 @@ import { buildStatementSection } from '@/lib/statement-section'
 import { projectionSectionFor } from '@/lib/projections'
 import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type ListingCard, type KV } from '@/lib/onboarding-report'
 import { buildSalesContent } from '@/lib/sales-deck'
-import { proofListings, proofRows, monthLabel as proofMonth } from '@/lib/sales-proof'
+import { proofListings, proofRows, monthLabel as proofMonth, effectiveFee, completedMonths, ownersForListings } from '@/lib/sales-proof'
 import { marketIntel } from '@/lib/sales-market'
 import { getSetting } from '@/lib/app-settings'
 import { SALES_CONTACT_KEY, type SalesContactSetting } from '@/lib/sales-copy'
@@ -274,8 +274,27 @@ export async function POST(req: NextRequest) {
       })
     } catch { intel = null }
 
+    // THE FEE THIS PROPERTY'S BUILDING IS ACTUALLY ON (Jon, 2026-10-27). The house template says
+    // 20%; 17WEST's completed statements say 10.1%, and Jon confirmed 17WEST is the ~10% one. A
+    // proposal that prints a fee the owner's own statements will contradict is worse than one
+    // that prints no fee, so the terms slide now reads what the ledger charged for this scope and
+    // falls back to the template only when there is nothing to measure.
+    let feePct: number | null = null
+    if (sIds.length) {
+      try {
+        const owners = await ownersForListings(sIds)
+        if (owners.length) {
+          const toM = asOf.slice(0, 7)
+          const d12 = new Date(asOf + 'T12:00:00Z'); d12.setUTCMonth(d12.getUTCMonth() - 12)
+          const fee = await effectiveFee(sIds, await completedMonths(owners, d12.toISOString().slice(0, 7), toM))
+          if (fee && fee.pct > 0) feePct = fee.pct
+        }
+      } catch { feePct = null }
+    }
+
     const contentS = buildSalesContent(tplS, {
       length: str(body?.length) === 'full' ? 'full' : 'short',
+      feePct,
       intake,
       intel,
       scopeLabel,

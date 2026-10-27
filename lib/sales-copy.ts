@@ -365,7 +365,9 @@ export type TermRow = { k: string; v: string; hint?: string }
 export function termRows(mgmtPct: number, laborRate: number, approvalLimit: number): TermRow[] {
   const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
   return [
-    { k: 'Management fee', v: mgmtPct + '% of rental revenue', hint: '' },
+    // A measured rate is rarely round. 10.1 prints as 10.1 and 20 prints as 20, because rounding
+    // a measured 10.1 up to "about 20" is how a sales slide gets caught by a statement.
+    { k: 'Management fee', v: (Math.round(mgmtPct * 10) / 10) + '% of rental revenue', hint: '' },
     { k: 'What it covers', v: 'Guest care around the clock, housekeeping and maintenance coordination, revenue management, distribution across every channel, listing and marketing, and your monthly statement and owner report.' },
     { k: 'Labour', v: 'In-house housekeeping and maintenance at ' + money(laborRate) + ' an hour, billed only for work on your property.' },
     { k: 'Spending', v: 'Anything over ' + money(approvalLimit) + ' comes to you for approval before it is spent. Under it, we fix the problem and it appears on your statement.' },
