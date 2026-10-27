@@ -173,7 +173,7 @@ export async function POST(req: NextRequest) {
       + ' "label": one short line naming the source and period}\n'
       + 'If the document contains no projection at all, return {"annualLow": null, "months": [], "comps": []}.'
     const read = await anthropic({
-      model: modelFor('reports'), max_tokens: 4000,
+      model: await modelFor('reports'), max_tokens: 4000,
       system: 'You read revenue projections out of documents for a sales deck. Output STRICT JSON only. You never invent a figure and you never recompute one.',
       messages: [{ role: 'user', content: block ? [block, { type: 'text', text: instruction }] : [{ type: 'text', text: instruction + '\n\nThe file:\n' + textBody }] }],
     })

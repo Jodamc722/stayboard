@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: modelFor('reports'), max_tokens: 2500,
+        model: await modelFor('reports'), max_tokens: 2500,
         system: 'You turn pasted short-term rental listing data into a table for a sales deck. Output STRICT JSON only. You never invent a figure.',
         messages: [{ role: 'user', content: [{ type: 'text', text: 'Below is a paste describing comparable short-term rental listings. Turn it into STRICT JSON: {"rows": [{"name": the listing title, "rev": estimated annual revenue exactly as printed (a range like "$96,491 – $120,018" if two figures are given), "rate": nightly rate as printed, "occ": occupancy as printed, "beds": bedrooms, "baths": bathrooms, "rating": guest rating}]}. Rules: copy every figure exactly as it appears, keep ranges as ranges, and leave a field as "" when the paste does not give it. Never estimate, never fill a blank, never add a listing that is not there. Keep the order of the paste.\n\nThe paste:\n' + text }] }],
       }),
