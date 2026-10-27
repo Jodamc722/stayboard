@@ -11,6 +11,10 @@
 export const LINK_KINDS = [
   'vendor-board', 'scheduler', 'field-board', 'parking', 'day-sheet', 'delivery', 'orders-live', 'salato-desk',
   'marketing', 'owner-audit', 'botanica', 'owner-report', 'guidebook', 'guide', 'order-form', 'count', 'custom-page',
+  // BOTANICA BOOKINGS EXPORT (Jon, 2026-10-27): every Botanica booking in the Cloudbeds
+  // reservation-import layout — guest contact details included, so it is its own row with its own
+  // passcode and NOT the Margaux report link (which deliberately carries no guest names).
+  'botanica-bookings',
   // A PROJECT BOARD SHARED BY LINK (Jon, 2026-10-09: it "should show on the sharable link tab").
   // Minted on the project itself, not here — the hub is the one place every live link is listed,
   // and a board handed to an owner that this page cannot see is exactly the link nobody revokes.
@@ -26,12 +30,12 @@ export const CREATABLE_KINDS: LinkKind[] = ['vendor-board', 'scheduler', 'field-
 /** Kinds whose link never expires by nature — the crew boards. Everything else is "generated". */
 // 'project-board' is standing on purpose: a board handed to an owner is open until somebody
 // revokes it, which makes it exactly the kind of link that must not hide behind a filter.
-export const STANDING_KINDS: LinkKind[] = ['vendor-board', 'scheduler', 'field-board', 'parking', 'day-sheet', 'delivery', 'orders-live', 'salato-desk', 'marketing', 'owner-audit', 'botanica', 'project-board']
+export const STANDING_KINDS: LinkKind[] = ['vendor-board', 'scheduler', 'field-board', 'parking', 'day-sheet', 'delivery', 'orders-live', 'salato-desk', 'marketing', 'owner-audit', 'botanica', 'botanica-bookings', 'project-board']
 
 export const KIND_LABEL: Record<LinkKind, string> = {
   'vendor-board': 'Vendor cleaning board', scheduler: 'Team scheduler', 'field-board': 'Live field board', parking: 'Parking board',
   'day-sheet': 'Day sheet', delivery: 'Delivery log', 'orders-live': 'Guest orders — live', 'salato-desk': 'Salato desk board',
-  marketing: 'Direct bookings report', 'owner-audit': 'Owner statement audit', botanica: 'Botanica report',
+  marketing: 'Direct bookings report', 'owner-audit': 'Owner statement audit', botanica: 'Botanica report', 'botanica-bookings': 'Botanica bookings export',
   'owner-report': 'Owner report', guidebook: 'Guidebook', guide: 'Guest guide page', 'order-form': 'Order form', count: 'Inventory count', 'custom-page': 'Custom report',
   'project-board': 'Project board',
 }
@@ -80,6 +84,7 @@ export function pathFor(kind: string, code: string): string {
     case 'marketing': return '/report/marketing'
     case 'owner-audit': return '/report/owner-audit'
     case 'botanica': return '/report/botanica'
+    case 'botanica-bookings': return '/report/botanica-bookings'
     case 'owner-report': return '/r/' + code
     case 'guidebook': return '/g/' + code
     case 'guide': return '/guide/' + code
@@ -92,7 +97,7 @@ export function pathFor(kind: string, code: string): string {
 
 /** A FIXED page (one row per page, on a short readable code) versus a code-per-row page. Fixed
  *  pages cannot be minted twice: a second "day sheet" link would need a second page. */
-export const FIXED_CODE_KINDS: string[] = ['day-sheet', 'delivery', 'orders-live', 'salato-desk', 'marketing', 'owner-audit', 'botanica', 'order-form']
+export const FIXED_CODE_KINDS: string[] = ['day-sheet', 'delivery', 'orders-live', 'salato-desk', 'marketing', 'owner-audit', 'botanica', 'botanica-bookings', 'order-form']
 
 export function linkStatus(l: Pick<ShareLinkRow, 'revoked_at' | 'expires_at' | 'open' | 'passcode_hash'>, now = Date.now()): LinkStatus {
   if (l.revoked_at) return 'revoked'
@@ -166,6 +171,7 @@ export function describeLink(l: Pick<ShareLinkRow, 'kind' | 'scope' | 'audience'
       break
     case 'owner-audit': parts.push('monthly statement review'); parts.push('owner-level money'); break
     case 'botanica': parts.push('Botanica occupancy, ADR & revenue since opening'); break
+    case 'botanica-bookings': parts.push('every Botanica booking in the Cloudbeds import layout'); parts.push('full guest contact details'); parts.push('Excel / CSV download'); break
     case 'owner-report': parts.push('one owner report'); break
     case 'guidebook': parts.push('one guidebook'); break
     case 'guide': parts.push('guest guide page'); break

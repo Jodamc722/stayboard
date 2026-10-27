@@ -292,7 +292,7 @@ export async function POST(req: NextRequest) {
   const wantsOpen = body.open === true && !given
   if (given && given.length < 5) return NextResponse.json({ ok: false, error: 'A passcode needs at least 5 characters.' }, { status: 400 })
   if (kind === 'parking' && (wantsOpen || (given && given.length < 8))) return NextResponse.json({ ok: false, error: 'A parking link needs its own passcode, at least 8 characters — the garage is outside the company.' }, { status: 400 })
-  if (wantsOpen && ['vendor-board', 'day-sheet', 'delivery', 'orders-live', 'marketing', 'owner-audit', 'botanica'].indexOf(kind) >= 0) {
+  if (wantsOpen && ['vendor-board', 'day-sheet', 'delivery', 'orders-live', 'marketing', 'owner-audit', 'botanica', 'botanica-bookings'].indexOf(kind) >= 0) {
     return NextResponse.json({ ok: false, error: 'This kind of link always has a passcode.' }, { status: 400 })
   }
   if (c.scope.sections?.contacts && wantsOpen) return NextResponse.json({ ok: false, error: 'A link carrying the contact list needs a passcode.' }, { status: 400 })

@@ -69,6 +69,7 @@ function buildZip(entries: { name: string; data: Buffer }[]): Buffer {
 // Style indexes (cellXfs below):
 //   0 default · 1 bold · 2 title (bold 14) · 3 header (bold, grey fill, bottom border)
 //   4 currency · 5 number 0.00 · 6 total currency (bold, top border) · 7 total label · 8 muted
+//   9 link · 10 blue header (bold white on #3F5BA9 — the Cloudbeds import template's header)
 export type XCell = { v: string | number; s?: number; num?: boolean }
 export type XSheet = { name: string; widths: number[]; rows: XCell[][]; links?: { ref: string; url: string }[] }
 
@@ -80,18 +81,20 @@ export function colRef(i: number): string {
 const XLSX_STYLES = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
   '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
   '<numFmts count="1"><numFmt numFmtId="164" formatCode="&quot;$&quot;#,##0.00"/></numFmts>' +
-  '<fonts count="5"><font><sz val="11"/><name val="Calibri"/></font>' +
+  '<fonts count="6"><font><sz val="11"/><name val="Calibri"/></font>' +
   '<font><b/><sz val="11"/><name val="Calibri"/></font>' +
   '<font><b/><sz val="14"/><name val="Calibri"/></font>' +
   '<font><sz val="11"/><color rgb="FF6B7280"/><name val="Calibri"/></font>' +
-  '<font><u/><sz val="11"/><color rgb="FF2563EB"/><name val="Calibri"/></font></fonts>' +
-  '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
-  '<fill><patternFill patternType="solid"><fgColor rgb="FFEEEFF3"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+  '<font><u/><sz val="11"/><color rgb="FF2563EB"/><name val="Calibri"/></font>' +
+  '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts>' +
+  '<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
+  '<fill><patternFill patternType="solid"><fgColor rgb="FFEEEFF3"/><bgColor indexed="64"/></patternFill></fill>' +
+  '<fill><patternFill patternType="solid"><fgColor rgb="FF3F5BA9"/><bgColor indexed="64"/></patternFill></fill></fills>' +
   '<borders count="3"><border><left/><right/><top/><bottom/><diagonal/></border>' +
   '<border><left/><right/><top/><bottom style="thin"><color rgb="FFB8BCC6"/></bottom><diagonal/></border>' +
   '<border><left/><right/><top style="medium"/><bottom/><diagonal/></border></borders>' +
   '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-  '<cellXfs count="9">' +
+  '<cellXfs count="11">' +
   '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
   '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
   '<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
@@ -102,6 +105,8 @@ const XLSX_STYLES = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
   '<xf numFmtId="0" fontId="1" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1"/>' +
   '<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
   '<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+  // 10 · blue header: bold white on the import-template blue (the Cloudbeds sheet's own look).
+  '<xf numFmtId="0" fontId="5" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>' +
   '</cellXfs></styleSheet>'
 
 function sheetXml(sh: XSheet): string {
