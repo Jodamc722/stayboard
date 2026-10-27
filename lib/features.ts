@@ -228,6 +228,9 @@ export const OPEN_PREFIXES = [
   '/order/', '/orders-live',
   // OWNER JOB LINKS (Jon, 2026-10-07). /job/<token> shows an owner one job with its photos and charge.
   '/job/',
+  // APPROVED CATALOG LINK (Jon, 2026-10-27). /catalog/<code> is the read-only approved furniture list for
+  // one property; the code is the capability and /api/public/catalog checks it on every call.
+  '/catalog/',
   // DIRECT BOOKING (Jon, 2026-10-13). /book is the public booking page: search, price, ID + selfie, pay
   // through Guesty. Its API is /api/public/book, which checks everything server-side.
   '/book/',

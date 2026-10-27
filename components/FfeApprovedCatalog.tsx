@@ -15,7 +15,7 @@
 // for case goods; Wayfair is fine for chairs and sofas; Amazon is fine for build-it-yourself pieces
 // like nightstands; flat-pack options carry an "Assembly needed" tag.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ExternalLink, Loader2, X } from 'lucide-react'
+import { Check, Copy, ExternalLink, Link2, Loader2, RefreshCw, X } from 'lucide-react'
 import { useCachedFetch } from '@/lib/swr'
 
 type OptionSrc = 'host' | 'amz' | 'ch' | 'wf'
@@ -37,10 +37,13 @@ const CHIP_TONE = (c: string) =>
         : /Set of|piece/.test(c) ? 'bg-amber-50 text-amber-800'
           : 'bg-app text-muted'
 
-export function FfeApprovedCatalog({ property = '17-west' }: { property?: string }) {
-  const { data, loading, error } = useCachedFetch<Payload>(`/api/audit/ffe/approved-catalog?property=${property}`, { ttl: 15_000, persist: false })
+// publicCode: the page is being read through a share link — read-only, opens on the approved list,
+// and the data comes from the public endpoint (which checks the code) instead of the gated one.
+export function FfeApprovedCatalog({ property = '17-west', publicCode }: { property?: string; publicCode?: string }) {
+  const isPublic = !!publicCode
+  const { data, loading, error } = useCachedFetch<Payload>(isPublic ? `/api/public/catalog/${publicCode}` : `/api/audit/ffe/approved-catalog?property=${property}`, { ttl: 15_000, persist: false })
   const [decisions, setDecisions] = useState<Record<string, Decision>>({})
-  const [view, setView] = useState<'all' | 'approved'>('all')
+  const [view, setView] = useState<'all' | 'approved'>(isPublic ? 'approved' : 'all')
   const [order, setOrder] = useState<'group' | 'rank'>('group')
   const [saving, setSaving] = useState<string>('')
   const seeded = useRef(false)
@@ -52,7 +55,7 @@ export function FfeApprovedCatalog({ property = '17-west' }: { property?: string
     try { if ((window.location.hash || '') === '#approved') setView('approved') } catch { /* no-op */ }
   }, [])
 
-  const canEdit = !!data?.canEdit
+  const canEdit = !isPublic && !!data?.canEdit
   const items = data?.catalog.items || []
 
   const save = useCallback(async (itemKey: string, d: Decision) => {
@@ -125,8 +128,10 @@ export function FfeApprovedCatalog({ property = '17-west' }: { property?: string
           options={[['all', 'Everything'], ['approved', 'Approved catalog']]} />
         {view === 'all' && <Toggle value={order} onChange={v => setOrder(v as any)} options={[['group', 'By room item'], ['rank', 'Biggest savings first']]} />}
         <span className="text-xs text-muted" aria-live="polite">
-          {!canEdit ? 'View only — approving needs edit access to FF&E.' : saving || 'Approvals save as you go and are shared with the whole team.'}
+          {isPublic ? (view === 'approved' ? 'Approved options only.' : 'Every option considered; approved ones are marked.')
+            : !canEdit ? 'View only — approving needs edit access to FF&E.' : saving || 'Approvals save as you go and are shared with the whole team.'}
         </span>
+        {!isPublic && <ShareLink property={property} canEdit={canEdit} />}
       </div>
 
       {/* Head-to-head */}
@@ -138,7 +143,7 @@ export function FfeApprovedCatalog({ property = '17-west' }: { property?: string
           {groupBy(ranked, order === 'rank' ? () => '' : i => i.category).map(([cat, list]) => (
             <Group key={cat || 'ranked'} title={cat} count={list.length}>
               {list.map(it => (
-                <CompareCard key={it.key} item={it} d={decisions[it.key]} status={status(it.key)} canEdit={canEdit} view={view}
+                <CompareCard key={it.key} item={it} d={decisions[it.key]} status={status(it.key)} canEdit={canEdit} view={view} isPublic={isPublic}
                   onToggle={toggle} onReject={reject} onNote={note} />
               ))}
             </Group>
@@ -155,7 +160,7 @@ export function FfeApprovedCatalog({ property = '17-west' }: { property?: string
           <div key={cat} className="mt-5">
             <h3 className="text-[15px] font-bold text-ink mb-2">{cat}</h3>
             <div className="grid gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-              {list.map(it => <SoloCard key={it.key} item={it} d={decisions[it.key]} status={status(it.key)} canEdit={canEdit} view={view} onToggle={toggle} />)}
+              {list.map(it => <SoloCard key={it.key} item={it} d={decisions[it.key]} status={status(it.key)} canEdit={canEdit} view={view} isPublic={isPublic} onToggle={toggle} />)}
             </div>
           </div>
         ))}
@@ -184,7 +189,7 @@ export function FfeApprovedCatalog({ property = '17-west' }: { property?: string
                       {o.url ? <a href={o.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{o.name}</a> : o.name}</td>
                     <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap">{money(o.price)}</td>
                     <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap font-semibold text-brand-700">{o.each || '—'}</td>
-                    <td className="px-3 py-2 text-right">{o.price != null && (view === 'all' || on) && <ApproveBtn on={on} disabled={!canEdit} onClick={() => toggle(it.key, 'host')} small />}</td>
+                    <td className="px-3 py-2 text-right">{o.price != null && (view === 'all' || on) && (isPublic ? (on && <Approved />) : <ApproveBtn on={on} disabled={!canEdit} onClick={() => toggle(it.key, 'host')} small />)}</td>
                   </tr>) })}
               </tbody>
             </table>
@@ -192,7 +197,7 @@ export function FfeApprovedCatalog({ property = '17-west' }: { property?: string
         ))}
       </section>
 
-      {view === 'all' && (
+      {view === 'all' && !isPublic && (
         <section>
           <div className="flex flex-wrap items-end justify-between gap-2">
             <div><h2 className="text-xl font-bold text-ink tracking-tight">Miscellaneous</h2>
@@ -282,8 +287,8 @@ function Diff({ ref_, price }: { ref_: number; price: number | null }) {
   return <span className={'text-[11.5px] font-semibold rounded px-1.5 py-0.5 ' + (d > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700')}>{d > 0 ? '−' : '+'}{money(Math.abs(d))} <span className="font-medium opacity-80">({p.toFixed(0)}% {d > 0 ? 'less' : 'more'})</span></span>
 }
 
-function CompareCard({ item, d, status, canEdit, view, onToggle, onReject, onNote }: {
-  item: Item; d?: Decision; status: string; canEdit: boolean; view: 'all' | 'approved'
+function CompareCard({ item, d, status, canEdit, view, isPublic, onToggle, onReject, onNote }: {
+  item: Item; d?: Decision; status: string; canEdit: boolean; view: 'all' | 'approved'; isPublic?: boolean
   onToggle: (k: string, s: OptionSrc) => void; onReject: (k: string) => void; onNote: (k: string, v: string) => void
 }) {
   const host = item.options.find(o => o.src === 'host')!
@@ -306,13 +311,13 @@ function CompareCard({ item, d, status, canEdit, view, onToggle, onReject, onNot
                 {o.chips.length > 0 && <div className="flex flex-wrap gap-1">{o.chips.map(c => <span key={c} className={'text-[11px] font-semibold rounded-full px-2 py-0.5 ' + CHIP_TONE(c)}>{c}</span>)}</div>}
                 <div className={'text-xl font-bold tabular-nums mt-1 ' + (o.src === 'host' ? 'text-brand-700' : 'text-ink')}>{money(o.price)}</div>
                 {o.src !== 'host' && <div><Diff ref_={host.price || 0} price={o.price} /></div>}
-                {o.price != null && (view === 'all' || on) && <ApproveBtn on={on} disabled={!canEdit} onClick={() => onToggle(item.key, o.src)} />}
+                {o.price != null && (view === 'all' || on) && (isPublic ? (on && <Approved />) : <ApproveBtn on={on} disabled={!canEdit} onClick={() => onToggle(item.key, o.src)} />)}
               </div>
             </div>
           )
         })}
       </div>
-      {view === 'all' && (
+      {view === 'all' && !isPublic && (
         <div className="border-t border-line px-4 py-2 grid gap-2 items-center" style={{ gridTemplateColumns: '1fr auto' }}>
           <textarea rows={1} value={d?.note || ''} readOnly={!canEdit} onChange={e => onNote(item.key, e.target.value)} placeholder="Notes — e.g. order 2 per unit, walnut only, confirm dimensions"
             className="text-[13px] rounded-md border border-line bg-app px-2 py-1.5 resize-y min-h-[32px] w-full" />
@@ -322,12 +327,12 @@ function CompareCard({ item, d, status, canEdit, view, onToggle, onReject, onNot
           </button>
         </div>
       )}
-      {view === 'approved' && d?.note && <div className="border-t border-line px-4 py-2 text-[13px]"><span className="text-[11px] uppercase tracking-wider text-muted font-semibold mr-2">Note</span>{d.note}</div>}
+      {(view === 'approved' || isPublic) && d?.note && <div className="border-t border-line px-4 py-2 text-[13px]"><span className="text-[11px] uppercase tracking-wider text-muted font-semibold mr-2">Note</span>{d.note}</div>}
     </article>
   )
 }
 
-function SoloCard({ item, d, status, canEdit, view, onToggle }: { item: Item; d?: Decision; status: string; canEdit: boolean; view: 'all' | 'approved'; onToggle: (k: string, s: OptionSrc) => void }) {
+function SoloCard({ item, d, status, canEdit, view, isPublic, onToggle }: { item: Item; d?: Decision; status: string; canEdit: boolean; view: 'all' | 'approved'; isPublic?: boolean; onToggle: (k: string, s: OptionSrc) => void }) {
   const main = item.options[0]; const alt = item.options[1]
   const onMain = !!d?.approved.includes('host'); const onAlt = !!(alt && d?.approved.includes(alt.src))
   return (
@@ -338,7 +343,7 @@ function SoloCard({ item, d, status, canEdit, view, onToggle }: { item: Item; d?
         <div className="text-[13.5px] font-medium leading-snug break-words">{main.url ? <a href={main.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{main.name}</a> : main.name}</div>
         {main.chips.length > 0 && <div className="flex flex-wrap gap-1">{main.chips.map(c => <span key={c} className={'text-[11px] font-semibold rounded-full px-2 py-0.5 ' + CHIP_TONE(c)}>{c}</span>)}</div>}
         <div className="text-lg font-bold tabular-nums text-brand-700">{money(main.price)}</div>
-        {main.price != null && (view === 'all' || onMain) && <ApproveBtn on={onMain} disabled={!canEdit} onClick={() => onToggle(item.key, 'host')} />}
+        {main.price != null && (view === 'all' || onMain) && (isPublic ? (onMain && <Approved />) : <ApproveBtn on={onMain} disabled={!canEdit} onClick={() => onToggle(item.key, 'host')} />)}
       </div>
       {alt && (view === 'all' || onAlt) && (
         <div className={'mt-auto border-t border-dashed border-line grid gap-2.5 p-3 ' + (alt.src === 'ch' ? 'bg-sky-50/60' : 'bg-violet-50/60')} style={{ gridTemplateColumns: '64px 1fr' }}>
@@ -347,11 +352,57 @@ function SoloCard({ item, d, status, canEdit, view, onToggle }: { item: Item; d?
             <div className={'text-[11px] uppercase tracking-wider font-semibold ' + SRC_TONE[alt.src]}>{alt.vendor} · {alt.chips[0]?.toLowerCase()}</div>
             <div className="text-[13px] font-medium leading-snug break-words">{alt.url ? <a href={alt.url} target="_blank" rel="noopener" className="underline decoration-line hover:text-brand-700">{alt.name}</a> : alt.name}</div>
             <div className="text-[15px] font-bold tabular-nums flex items-center gap-2 flex-wrap">{money(alt.price)} <Diff ref_={main.price || 0} price={alt.price} /></div>
-            {(view === 'all' || onAlt) && <ApproveBtn on={onAlt} disabled={!canEdit} onClick={() => onToggle(item.key, alt.src)} small />}
+            {(view === 'all' || onAlt) && (isPublic ? (onAlt && <Approved />) : <ApproveBtn on={onAlt} disabled={!canEdit} onClick={() => onToggle(item.key, alt.src)} small />)}
           </div>
         </div>
       )}
     </article>
+  )
+}
+
+function Approved() {
+  return <span className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-emerald-700 mt-1"><Check className="w-3.5 h-3.5" strokeWidth={3} /> Approved</span>
+}
+
+// SHARE LINK (Jon, 2026-10-27): one unguessable link per property that opens the approved list with
+// no sign-in. Regenerate replaces the code, which is how the old link stops working.
+function ShareLink({ property, canEdit }: { property: string; canEdit: boolean }) {
+  const [code, setCode] = useState<string | null>(null)
+  const [views, setViews] = useState(0)
+  const [busy, setBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [confirmRegen, setConfirmRegen] = useState(false)
+  useEffect(() => {
+    fetch(`/api/audit/ffe/approved-catalog/share?property=${property}`).then(r => r.json()).then(j => { if (j?.ok) { setCode(j.code || null); setViews(j.views || 0) } }).catch(() => {})
+  }, [property])
+  const make = async (regenerate: boolean) => {
+    setBusy(true); setConfirmRegen(false)
+    try {
+      const r = await fetch('/api/audit/ffe/approved-catalog/share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ property, regenerate }) })
+      const j = await r.json().catch(() => ({}))
+      if (j?.ok && j.code) { setCode(j.code); setViews(0) }
+    } finally { setBusy(false) }
+  }
+  const url = code && typeof window !== 'undefined' ? `${window.location.origin}/catalog/${code}` : ''
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* the field is selectable */ }
+  }
+  if (!code) {
+    return canEdit ? (
+      <button type="button" onClick={() => make(false)} disabled={busy} className="ml-auto inline-flex items-center gap-1.5 text-[12.5px] font-semibold rounded-lg border border-line bg-white px-3 py-1.5 hover:border-ink disabled:opacity-60">
+        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Create share link
+      </button>
+    ) : null
+  }
+  return (
+    <div className="ml-auto flex items-center gap-2 flex-wrap">
+      <input readOnly value={url} onFocus={e => e.currentTarget.select()} className="text-[12px] rounded-md border border-line bg-white px-2 py-1.5 w-[260px] max-w-full text-muted" aria-label="Share link" />
+      <button type="button" onClick={copy} className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg border border-line bg-white px-2.5 py-1.5 hover:border-ink"><Copy className="w-3.5 h-3.5" /> {copied ? 'Copied' : 'Copy'}</button>
+      <span className="text-[11px] text-muted">{views} {views === 1 ? 'view' : 'views'} · opens the approved list, no sign-in</span>
+      {canEdit && (confirmRegen
+        ? <span className="inline-flex items-center gap-1 text-[11.5px]"><span className="text-muted">Old link stops working.</span><button type="button" onClick={() => make(true)} className="font-semibold text-rose-700">Regenerate</button><button type="button" onClick={() => setConfirmRegen(false)} className="text-muted">Cancel</button></span>
+        : <button type="button" onClick={() => setConfirmRegen(true)} disabled={busy} className="inline-flex items-center gap-1 text-[11.5px] text-muted hover:text-ink"><RefreshCw className="w-3 h-3" /> Regenerate</button>)}
+    </div>
   )
 }
 

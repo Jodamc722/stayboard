@@ -71,3 +71,40 @@ export async function writeDecision(property: string, itemKey: string, d: { appr
   if (error) return { ok: false, error: error.message }
   return { ok: true, decision: { approved, rejected, note, updatedBy: who || null, updatedAt: new Date().toISOString() } as Decision }
 }
+
+// ---------- share link ----------
+import { randomBytes } from 'crypto'
+
+export async function getShare(property: string): Promise<{ code: string; views: number } | null> {
+  try {
+    const { data } = await supabaseAdmin().from('ffe_catalog_shares').select('code, views').eq('property', property).limit(1)
+    const r = (data || [])[0]
+    return r ? { code: String(r.code), views: Number(r.views || 0) } : null
+  } catch { return null }
+}
+
+/** Create the property's share code, or replace it (which revokes the old link). */
+export async function setShare(property: string, who: string, regenerate: boolean) {
+  if (!getCatalog(property)) return { ok: false, error: 'Unknown catalog.' }
+  const have = await getShare(property)
+  if (have && !regenerate) return { ok: true, code: have.code }
+  const code = randomBytes(8).toString('hex')
+  const { error } = await supabaseAdmin().from('ffe_catalog_shares')
+    .upsert({ property, code, created_by: who || null, created_at: new Date().toISOString(), views: 0, last_view: null }, { onConflict: 'property' })
+  if (error) return { ok: false, error: error.message }
+  return { ok: true, code }
+}
+
+/** Resolve a public code to its catalog + decisions; counts the view. Null when the code is unknown. */
+export async function readShared(code: string) {
+  if (!/^[0-9a-f]{16}$/i.test(code)) return null
+  const db = supabaseAdmin()
+  const { data } = await db.from('ffe_catalog_shares').select('property, views').eq('code', code).limit(1)
+  const r = (data || [])[0]
+  if (!r) return null
+  const catalog = getCatalog(String(r.property))
+  if (!catalog) return null
+  db.from('ffe_catalog_shares').update({ views: Number(r.views || 0) + 1, last_view: new Date().toISOString() }).eq('code', code).then(() => {}, () => {})
+  const decisions = await readDecisions(String(r.property))
+  return { catalog, decisions }
+}

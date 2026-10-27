@@ -23,3 +23,16 @@ create table if not exists public.ffe_approved_decisions (
 );
 
 alter table public.ffe_approved_decisions enable row level security;
+
+-- SHARE LINK (Jon, 2026-10-27: "create this as sharable link from Lighthouse"). One unguessable
+-- code per property; /catalog/<code> shows the approved list read-only, no sign-in. Regenerating
+-- the code is how an old link is revoked.
+create table if not exists public.ffe_catalog_shares (
+  property    text primary key,
+  code        text not null unique,
+  created_by  text,
+  created_at  timestamptz not null default now(),
+  views       integer not null default 0,
+  last_view   timestamptz
+);
+alter table public.ffe_catalog_shares enable row level security;
