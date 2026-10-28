@@ -1,5 +1,7 @@
-// PUBLIC, PII-SAFE Salato board data (sendable link like the vendor links).
-// No guest names / phone / email / notes / plates — only unit, dates, times, guest count, source, SDT.
+// Salato front-desk board data (the passcode link /salato/share, share_links row 'salato-desk').
+// Unit, dates, times, guest count, source, SDT — and, since 2026-10-28, the GUEST NAME on the booking
+// (Jon: the desk needs to know who is arriving; the link is passcode-gated). Still no phone, email,
+// notes or plates. The Past tab also lists CANCELLED bookings, marked, outside the verified counts.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { salatoListings } from '@/lib/salato-units'
@@ -13,6 +15,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 const LIVE = /confirm|checked/i
+const CANCELED = /cancel/i
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(iso: string, n: number) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
@@ -31,22 +34,24 @@ async function pastStays(db: any, ids: string[], match: Record<string, string>, 
   const all: any[] = []
   for (let from = 0; from < 20000; from += 1000) {
     const { data, error } = await db.from('guesty_reservations')
-      .select('id,listing_id,check_in,check_out,nights,status,source,g1:raw->>guestsCount,g2:raw->>numberOfGuests,rawSource:raw->>source')
+      .select('id,listing_id,check_in,check_out,nights,status,source,guest_name,g1:raw->>guestsCount,g2:raw->>numberOfGuests,rawSource:raw->>source')
       .in('listing_id', ids).lte('check_out', today).order('check_out', { ascending: false }).order('id').range(from, from + 999)
     if (error) throw new Error(error.message)
     all.push(...(data || []))
     if (!data || data.length < 1000) break
   }
-  const rows = all.filter(r => LIVE.test(str(r.status))).map(r => {
+  // ALL past reservations (Jon, 2026-10-28): stays, and cancelled bookings marked as such.
+  const rows = all.filter(r => LIVE.test(str(r.status)) || CANCELED.test(str(r.status))).map(r => {
     const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
     const nights = r.nights ?? (ci && co ? Math.round((Date.parse(co + 'T12:00:00Z') - Date.parse(ci + 'T12:00:00Z')) / 864e5) : null)
     const gRaw = r.g1 ?? r.g2
-    return { id: String(r.id), unit: match[String(r.listing_id)] || 'Unit', checkIn: ci, checkOut: co, nights, oneNight: underMinimum(nights), checkInTime: null, checkOutTime: null, guests: gRaw == null || gRaw === '' ? null : Number(gRaw), source: r.source || r.rawSource || null, sameDayTurn: false, verified: false, verifiedAt: null as string | null }
+    return { id: String(r.id), unit: match[String(r.listing_id)] || 'Unit', checkIn: ci, checkOut: co, nights, oneNight: underMinimum(nights), checkInTime: null, checkOutTime: null, guests: gRaw == null || gRaw === '' ? null : Number(gRaw), source: r.source || r.rawSource || null, sameDayTurn: false, verified: false, verifiedAt: null as string | null, guest: str(r.guest_name).replace(/\s+/g, ' ').trim() || null, canceled: CANCELED.test(str(r.status)) }
   })
-  const vmap = await verifiedMap(db, rows.map(r => r.id))
+  const vmap = await verifiedMap(db, rows.filter(r => !r.canceled).map(r => r.id))
   for (const r of rows) if (vmap[r.id] !== undefined) { r.verified = true; r.verifiedAt = vmap[r.id] || null }
-  const verified = rows.filter(r => r.verified).length
-  return { ok: true, today, past: rows, pastCount: rows.length, pastVerified: verified }
+  const stays = rows.filter(r => !r.canceled)
+  const verified = stays.filter(r => r.verified).length
+  return { ok: true, today, past: rows, pastCount: stays.length, pastVerified: verified, pastCanceled: rows.length - stays.length }
 }
 
 export async function GET(req: NextRequest) {
@@ -72,7 +77,7 @@ export async function GET(req: NextRequest) {
     // Paged (lib/db-page): one capped read would silently drop bookings off the desk's list once the
     // window held more than 1,000 of them.
     const resPaged = await pageRows((a, b) => db.from('guesty_reservations')
-      .select('id,listing_id,check_in,check_out,nights,status,source,ciLocal:raw->>checkInDateLocalized,coLocal:raw->>checkOutDateLocalized,planned:raw->>plannedArrival,g1:raw->>guestsCount,g2:raw->>numberOfGuests,rawSource:raw->>source')
+      .select('id,listing_id,check_in,check_out,nights,status,source,guest_name,ciLocal:raw->>checkInDateLocalized,coLocal:raw->>checkOutDateLocalized,planned:raw->>plannedArrival,g1:raw->>guestsCount,g2:raw->>numberOfGuests,rawSource:raw->>source')
       .in('listing_id', ids).lte('check_in', end).gte('check_out', start).order('id').range(a, b))
     if (resPaged.truncated) console.error('public/salato: reservation read stopped early')
     const res = resPaged.rows
@@ -83,7 +88,7 @@ export async function GET(req: NextRequest) {
       const guests = gRaw == null || gRaw === '' ? null : Number(gRaw)
       const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
       const nights = r.nights ?? (ci && co ? Math.round((Date.parse(co + 'T12:00:00Z') - Date.parse(ci + 'T12:00:00Z')) / 864e5) : null)
-      return { id: String(r.id), verifyToken: salatoVerifyToken(String(r.id)), unit: match[String(r.listing_id)] || 'Unit', checkIn: ci, checkOut: co, nights, oneNight: underMinimum(nights), checkInTime, checkOutTime, guests, source: r.source || r.rawSource || null, sameDayTurn: false, verified: false, verifiedAt: null as string | null }
+      return { id: String(r.id), verifyToken: salatoVerifyToken(String(r.id)), unit: match[String(r.listing_id)] || 'Unit', checkIn: ci, checkOut: co, nights, oneNight: underMinimum(nights), checkInTime, checkOutTime, guests, source: r.source || r.rawSource || null, sameDayTurn: false, verified: false, verifiedAt: null as string | null, guest: str(r.guest_name).replace(/\s+/g, ' ').trim() || null }
     }
     const rows = ((res || []) as any[]).filter(r => LIVE.test(str(r.status))).map(toRow)
     const arrivals = rows.filter(r => r.checkIn >= today && r.checkIn <= end).sort((a, b) => a.checkIn.localeCompare(b.checkIn) || a.unit.localeCompare(b.unit))

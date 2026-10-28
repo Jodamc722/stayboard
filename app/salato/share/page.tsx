@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
 
-type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; oneNight?: boolean; verified?: boolean; verifyToken?: string; verifiedAt?: string | null }
+type Row = { id?: string; unit: string; checkIn: string; checkOut: string; nights: number | null; checkInTime: string | null; checkOutTime: string | null; guests: number | null; source: string | null; sameDayTurn: boolean; oneNight?: boolean; verified?: boolean; verifyToken?: string; verifiedAt?: string | null; guest?: string | null; canceled?: boolean }
 type Data = { ok: boolean; today: string; unitCount?: number; arrivals: Row[]; departures: Row[]; active: Row[]; minNights?: number; contact?: string; error?: string }
 type ViewData = { ok: boolean; fullName?: string | null; unit?: string | null; signedAt?: string | null; idUrl?: string | null; selfieUrl?: string | null; signatureUrl?: string | null }
 
@@ -14,7 +14,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'active', label: 'In-house' },
   { key: 'past', label: 'Past' },
 ]
-type PastData = { ok: boolean; past: Row[]; pastCount: number; pastVerified: number; error?: string }
+type PastData = { ok: boolean; past: Row[]; pastCount: number; pastVerified: number; pastCanceled?: number; error?: string }
 // One row per stay: today's arrivals are in both lists, and showed twice on the Verify tab.
 function uniqById(rows: Row[]): Row[] { const seen: Record<string, boolean> = {}; return rows.filter(r => !r.id || (seen[r.id] ? false : (seen[r.id] = true))) }
 function fmtDate(iso: string) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }
@@ -125,7 +125,7 @@ export default function SalatoShare() {
   // "Verify" lists everyone a front desk checks in: upcoming arrivals + in-house guests.
   // Verify tab = everyone the desk checks in (upcoming arrivals + in-house), unverified first.
   const verifyRows = data ? uniqById(data.arrivals.concat(data.active)) : []
-  const pastRows = past ? (pastOnlyUnverified ? past.past.filter(r => !r.verified) : past.past) : []
+  const pastRows = past ? (pastOnlyUnverified ? past.past.filter(r => !r.verified && !r.canceled) : past.past) : []
   const rows = data ? (tab === 'verify' ? verifyRows.slice().sort((a, b) => (a.verified === b.verified ? 0 : a.verified ? 1 : -1)) : tab === 'past' ? pastRows : data[tab]) : []
   const dateOf = (r: Row) => (tab === 'departures' || tab === 'past') ? r.checkOut : r.checkIn
   const groups = tab === 'past' ? groupByDay(rows, dateOf).reverse() : groupByDay(rows, dateOf)
@@ -260,7 +260,7 @@ export default function SalatoShare() {
         )}
         {tab === 'past' && past && (
           <div className='flex items-center gap-3 flex-wrap rounded-2xl border border-neutral-200 bg-white p-4 mb-4 shadow-sm'>
-            <div className='text-sm'><span className='font-bold'>{past.pastCount}</span> past stays · <span className='font-semibold text-emerald-700'>{past.pastVerified} verified</span> · <span className={'font-semibold ' + (past.pastCount - past.pastVerified ? 'text-rose-700' : 'text-neutral-500')}>{past.pastCount - past.pastVerified} not verified</span></div>
+            <div className='text-sm'><span className='font-bold'>{past.pastCount}</span> past stays · <span className='font-semibold text-emerald-700'>{past.pastVerified} verified</span> · <span className={'font-semibold ' + (past.pastCount - past.pastVerified ? 'text-rose-700' : 'text-neutral-500')}>{past.pastCount - past.pastVerified} not verified</span>{past.pastCanceled ? <span className='text-neutral-500'> · {past.pastCanceled} cancelled</span> : null}</div>
             <span className='flex-1' />
             <label className='text-xs text-neutral-600 flex items-center gap-1.5 cursor-pointer'><input type='checkbox' checked={pastOnlyUnverified} onChange={e => setPastOnlyUnverified(e.target.checked)} /> Not verified only</label>
           </div>
@@ -289,7 +289,9 @@ export default function SalatoShare() {
                     <div className='flex items-start gap-3'>
                       <div className='flex-1 min-w-0'>
                         <div className='flex items-center gap-2 flex-wrap'>
-                          <span className='text-[15px] font-bold text-neutral-900 truncate'>{r.unit}</span>
+                          <span className={'text-[15px] font-bold truncate ' + (r.canceled ? 'text-neutral-400 line-through' : 'text-neutral-900')}>{r.unit}</span>
+                          {r.guest && <span className={'text-[14px] font-semibold truncate ' + (r.canceled ? 'text-neutral-400' : 'text-neutral-700')}>{r.guest}</span>}
+                          {r.canceled && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-neutral-200 text-neutral-600'>Cancelled</span>}
                           {isNew(r) && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500 text-white'>New</span>}
                           {tab === 'departures' && r.sameDayTurn && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-700'>Same-day turn</span>}
                           {tab !== 'departures' && tab !== 'past' && r.oneNight && <span className='text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-rose-600 text-white'>1 night · not permitted</span>}
@@ -309,7 +311,7 @@ export default function SalatoShare() {
                             <a href={'/salato/verify/' + (r.verifyToken || '')} target='_blank' rel='noopener noreferrer' className='text-xs font-semibold px-3 py-2 rounded-xl bg-neutral-900 text-white'>Verify</a>
                             <button onClick={() => sendLink(r)} className='text-[11px] font-semibold text-neutral-600 underline'>{sentId === r.id ? 'Link copied' : 'Send link'}</button>
                           </div>)}
-                      {tab === 'past' && (r.verified
+                      {tab === 'past' && !r.canceled && (r.verified
                         ? <button onClick={() => r.id && openViewer(r.id)} className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800'>✓ Verified</button>
                         : <span className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700'>Not verified</span>)}
                     </div>
