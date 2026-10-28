@@ -266,8 +266,8 @@ function Catalog({ cat, tier, setTier, busy, onChoose, onInclude, onCompare, onO
           return (
             <div key={need} className="mt-6">
               <div className="flex flex-wrap items-baseline gap-x-2 mb-2"><h3 className="text-[15px] font-bold">{NEED[need].label}</h3><span className="text-[12.5px] text-muted">{NEED[need].hint}</span></div>
-              <div className="rounded-2xl bg-white border border-line divide-y divide-line overflow-hidden">
-                {list.map(it => <EssentialRow key={it.key} it={it} tier={tier} onInclude={onInclude} onCompare={onCompare} onOwn={onOwn} onChoose={onChoose} onRemoveOwn={onRemoveOwn} />)}
+              <div className="grid gap-4 grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+                {list.map(it => <EssentialCard key={it.key} it={it} tier={tier} onInclude={onInclude} onCompare={onCompare} onOwn={onOwn} onChoose={onChoose} onRemoveOwn={onRemoveOwn} />)}
               </div>
             </div>
           )
@@ -313,40 +313,47 @@ function SectionHead({ title, sub, total, action }: { title: string; sub: string
   )
 }
 
-function Thumb({ o, cls = 'hidden sm:grid w-14 h-14' }: { o: Opt | null; cls?: string }) {
-  return <div className={cls + ' rounded-xl bg-app border border-line overflow-hidden shrink-0 place-items-center'}>{o?.image ? <img src={o.image} alt="" className={'w-full h-full ' + (o.fit === 'cover' ? 'object-cover' : 'object-contain p-1')} /> : <Package className="w-5 h-5 text-muted" />}</div>
-}
-
-function EssentialRow({ it, tier, onInclude, onCompare, onOwn, onChoose, onRemoveOwn }: { it: Item; tier: Tier; onInclude: (it: Item, on: boolean) => void; onCompare: (it: Item) => void; onOwn: (it: Item) => void; onChoose: (it: Item, s: string | null) => void; onRemoveOwn: (it: Item, src: string) => void }) {
+// ESSENTIALS AS A CATALOG (Jon, 2026-10-28: "should have a specific option and be in catalog form, show
+// actual items"): a photo card per item — the actual product for the tier (or their choice), the
+// quantity for this home, compare, and in / out.
+function EssentialCard({ it, tier, onInclude, onCompare, onOwn, onChoose, onRemoveOwn }: { it: Item; tier: Tier; onInclude: (it: Item, on: boolean) => void; onCompare: (it: Item) => void; onOwn: (it: Item) => void; onChoose: (it: Item, s: string | null) => void; onRemoveOwn: (it: Item, src: string) => void }) {
   const c = current(it, tier)
   const on = included(it)
-  const ownOpt = c.opt?.own ? c.opt : null
+  const o = c.opt
+  const ownOpt = o?.own ? o : null
   return (
-    <div className={'flex items-center gap-3 sm:gap-4 px-4 py-3 ' + (on ? '' : 'opacity-60')}>
-      <Thumb o={c.opt} />
-      <div className="min-w-0 flex-1">
-        <div className="font-semibold text-[14.5px] text-ink">{it.name}{it.qty > 1 && <span className="text-muted font-medium"> × {it.qty}</span>}</div>
-        <div className="text-[12.5px] text-muted truncate">
-          {c.mine && c.opt ? <span className="text-sky-800 font-medium">{ownOpt ? 'Your link' : 'Your choice'}: {c.opt.name}</span> : c.opt ? `${c.opt.vendor} · ${c.opt.name}` : 'Stay sources this for your tier'}
-          {PER[it.qtyPer] && <span> · {PER[it.qtyPer]}</span>}
+    <article className={'rounded-2xl bg-white border overflow-hidden flex flex-col transition ' + (on ? (c.mine ? 'border-emerald-500 ring-1 ring-emerald-500' : 'border-line') : 'border-line opacity-55')}>
+      <div className="relative aspect-square bg-white border-b border-line">
+        {o?.image ? <img src={o.image} alt="" loading="lazy" className={'w-full h-full ' + (o.fit === 'cover' ? 'object-cover' : 'object-contain p-5')} /> : <div className="w-full h-full grid place-items-center text-muted bg-app"><Package className="w-8 h-8" /></div>}
+        <div className="absolute top-2.5 left-2.5">
+          {c.mine ? <span className="text-[11px] font-semibold rounded-full px-2.5 py-1 bg-emerald-600 text-white inline-flex items-center gap-1"><Check className="w-3 h-3" /> {ownOpt ? 'Your link' : 'Your choice'}</span>
+            : o ? <span className="text-[11px] font-semibold rounded-full px-2.5 py-1 bg-white/90 text-ink border border-line">Stay’s pick · {TIER_LABEL[tier]}</span> : null}
         </div>
-        <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-[12.5px] font-semibold">
-          {it.options.length > 1 && <button type="button" onClick={() => onCompare(it)} className="text-ink underline underline-offset-2">Compare {it.options.length}</button>}
+        <div className="absolute top-2.5 right-2.5">
+          {it.need === 'must'
+            ? <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 rounded-full px-2 py-1" title="Always included"><Lock className="w-3 h-3" /> Included</span>
+            : <Switch on={on} onChange={v => onInclude(it, v)} label={`Include ${it.name}`} />}
+        </div>
+      </div>
+      <div className="p-3.5 flex-1 flex flex-col">
+        <div className="text-[12px] text-muted font-semibold uppercase tracking-wider">{it.name}{it.qty > 1 && <span className="normal-case tracking-normal"> · × {it.qty}{PER[it.qtyPer] ? ` (${PER[it.qtyPer]})` : ''}</span>}</div>
+        <div className="font-semibold text-[13.5px] text-ink mt-0.5 line-clamp-2 leading-snug">{o?.name || 'Stay sources this for your tier'}</div>
+        <div className="flex items-baseline justify-between mt-1.5 gap-2">
+          <span className="text-[12.5px] text-muted truncate">{o?.vendor || 'estimate'}</span>
+          <span className="text-[15px] font-bold tabular-nums">{c.price != null ? usd(c.price * it.qty) : '—'}</span>
+        </div>
+        <div className="mt-auto pt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12.5px] font-semibold">
+          {!c.mine && o && on && <button type="button" onClick={() => onChoose(it, o.src)} className="rounded-full bg-ink text-white px-3 py-1.5">Choose this</button>}
+          {it.options.length > 1 && <button type="button" onClick={() => onCompare(it)} className="rounded-full border border-line px-3 py-1.5 hover:border-ink">Compare {it.options.length}</button>}
+          {o?.url && <a href={o.url} target="_blank" rel="noopener noreferrer" className="text-muted hover:text-ink inline-flex items-center gap-1">View <ExternalLink className="w-3 h-3" /></a>}
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[12px] font-semibold">
           {ownOpt ? <button type="button" onClick={() => onRemoveOwn(it, ownOpt.src)} className="text-muted hover:text-rose-700">Remove my link</button>
-            : <button type="button" onClick={() => onOwn(it)} className="text-muted hover:text-ink inline-flex items-center gap-1"><Link2 className="w-3.5 h-3.5" /> Use my own link</button>}
+            : <button type="button" onClick={() => onOwn(it)} className="text-muted hover:text-ink inline-flex items-center gap-1"><Link2 className="w-3 h-3" /> My own link</button>}
           {c.mine && !ownOpt && <button type="button" onClick={() => onChoose(it, null)} className="text-muted hover:text-ink">Use Stay’s pick</button>}
         </div>
       </div>
-      <div className="text-right shrink-0">
-        <div className="text-[14.5px] font-bold tabular-nums">{c.price != null ? usd(c.price * it.qty) : '—'}</div>
-        {!c.opt && c.price != null && <div className="text-[11px] text-muted">estimate</div>}
-      </div>
-      <div className="shrink-0 sm:w-[92px] flex justify-end">
-        {it.need === 'must'
-          ? <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-emerald-800 bg-emerald-50 rounded-full px-2 sm:px-2.5 py-1" title="Always included"><Lock className="w-3 h-3" /><span className="hidden sm:inline">Included</span></span>
-          : <Switch on={on} onChange={v => onInclude(it, v)} label={`Include ${it.name}`} />}
-      </div>
-    </div>
+    </article>
   )
 }
 
