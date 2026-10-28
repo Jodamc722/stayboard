@@ -516,7 +516,13 @@ export const EDGE_NOTE =
 // MONARCH'S FIGURES ARE ITS OWN, as Igor Simkin gave them on the Alex & Annie podcast — 26
 // brands, 12 states, just under 6,000 homes — and should be re-checked with Monarch before a
 // deck carrying them goes to a lender. The phone number is deliberately left off Eric's card.
-export const SALES_LEADER = { name: 'Eric English', role: 'Owner', email: 'eric@stay-hospitality.com', phone: '', photo: '' }
+// ADD-ONS, NOT DEFAULTS (Jon, 2026-10-28: "that should be an add-on not a default, give Nick
+// options for this. Ryan Cassidy is also an important contact"). The owners and the Monarch band
+// are switched on per deck from the team slide; a deck generated today shows neither.
+export const SALES_LEADERS = [
+  { name: 'Eric English', role: 'Owner', email: 'eric@stay-hospitality.com', phone: '', photo: '' },
+  { name: 'Ryan Cassidy', role: 'Owner', email: 'ryan@stay-hospitality.com', phone: '', photo: '' },
+]
 export const MONARCH_EYEBROW = 'Part of Monarch Collective'
 export const MONARCH_LINE = 'A national collective of local vacation rental brands: 26 brands and about 6,000 homes across 12 states. Shared revenue management, data and buying power behind a local team on every home.'
 // Whole buildings we run end to end. Everywhere else we manage units inside the building (Jon,

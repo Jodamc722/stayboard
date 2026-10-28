@@ -31,7 +31,7 @@ import {
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
 } from '@/lib/onboarding-copy'
-import { EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY, EDGE_NOTE, LH_ROWS, SALES_LEADER, MONARCH_EYEBROW, MONARCH_LINE, FULLY_MANAGED, MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS, PLAN_LABELS } from '@/lib/sales-copy'
+import { EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY, EDGE_NOTE, LH_ROWS, SALES_LEADERS, MONARCH_EYEBROW, MONARCH_LINE, FULLY_MANAGED, MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS, PLAN_LABELS } from '@/lib/sales-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, seasonBodyStale } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
@@ -4440,8 +4440,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // numbers and the buildings, and this one carries the people, large enough to recognise.
           if (isSales && !hid('team')) {
             const base: Any[] = ((sec('team').people || []) as Any[]).filter((p: Any) => p && String(p.name || '').trim())
-            // Eric leads unless the deck already carries him.
-            const ppl: Any[] = (base.some((p: Any) => /eric\s+english/i.test(String(p.name || ''))) ? base : [SALES_LEADER as Any, ...base]).slice(0, 5)
+            // Two add-ons the presenter switches on per deck: the owners, and the Monarch band.
+            const tm: Any = sec('team')
+            const showLeaders = tm.showLeaders === true
+            const showMonarch = tm.showMonarch === true
+            const leaders: Any[] = showLeaders ? (SALES_LEADERS as Any[]).filter(l => !base.some((p: Any) => String(p.name || '').toLowerCase() === l.name.toLowerCase())) : []
+            const ppl: Any[] = [...leaders, ...base].slice(0, 6)
             slides.push({ key: 'team', node: (
             <Slide nav="Your team" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
@@ -4467,11 +4471,24 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     </div>
                   ))}
                 </div>
-                {/* THE POWER BEHIND THE LOCAL TEAM (Jon, 2026-10-28). */}
-                <div className="flex items-center" style={{ marginTop: 22, gap: 22, background: t.band, borderRadius: 14, padding: '16px 22px' }}>
-                  <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)', margin: 0, whiteSpace: 'nowrap' }}>{MONARCH_EYEBROW}</p>
-                  <p style={{ fontSize: 14, lineHeight: 1.45, color: '#fff', margin: 0 }}>{MONARCH_LINE}</p>
-                </div>
+                {/* THE POWER BEHIND THE LOCAL TEAM (Jon, 2026-10-28) — an add-on. */}
+                {showMonarch ? (
+                  <div className="flex items-center" style={{ marginTop: 22, gap: 22, background: t.band, borderRadius: 14, padding: '16px 22px' }}>
+                    <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)', margin: 0, whiteSpace: 'nowrap' }}>{MONARCH_EYEBROW}</p>
+                    <p style={{ fontSize: 14, lineHeight: 1.45, color: '#fff', margin: 0 }}>{MONARCH_LINE}</p>
+                  </div>
+                ) : null}
+                {edit ? (
+                  <div className="sb-noprint flex items-center" style={{ gap: 8, marginTop: 12 }}>
+                    <span style={{ fontSize: 11, color: t.muted }}>Add-ons:</span>
+                    {([['showLeaders', 'Owners (Eric, Ryan)', showLeaders], ['showMonarch', 'Monarch Collective', showMonarch]] as const).map(([k, l, on]) => (
+                      <button key={k} onClick={() => patch('team.' + k, !on)}
+                        style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 12px', borderRadius: 999, border: '1px solid ' + (on ? t.ink : t.cardBorder), background: on ? t.ink : t.card, color: on ? t.bg : t.ink }}>
+                        {on ? '✓ ' : '+ '}{l}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </Slide>
           ) }) } else
