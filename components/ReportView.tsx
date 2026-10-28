@@ -8051,7 +8051,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 // hides a slide and the Hidden list brings it back. Slides you built yourself can
                 // be duplicated and deleted; the house slides hide rather than delete, so nothing
                 // a deck depends on is ever lost.
-                <div className="sb-noprint" style={{ position: 'fixed', left: 12, top: 110, bottom: 64, width: 236, zIndex: 45, background: t.card, border: '1px solid ' + t.toolbarBorder, borderRadius: 14, boxShadow: '0 18px 40px -20px rgba(0,0,0,0.35)', display: 'flex', flexDirection: 'column' }}>
+                <div className="sb-noprint" style={{ position: 'fixed', left: 12, top: 110, bottom: 108, width: 236, zIndex: 45, background: t.card, border: '1px solid ' + t.toolbarBorder, borderRadius: 14, boxShadow: '0 18px 40px -20px rgba(0,0,0,0.35)', display: 'flex', flexDirection: 'column' }}>
                   <div className="flex items-center justify-between" style={{ padding: '10px 12px', borderBottom: '1px solid ' + t.rule }}>
                     <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted }}>Slides · {deckRows.length}</span>
                     <span className="flex items-center" style={{ gap: 6 }}>
