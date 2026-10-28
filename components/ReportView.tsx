@@ -7703,8 +7703,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             slides.push({ key: 'close', ai: true, node: (
             <Slide nav="Next step" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 48, flex: 1, minHeight: 0 }}>
-                  <div className="flex flex-col">
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: 48, flex: 1, minHeight: 0 }}>
+                  <div className="flex flex-col" style={{ minWidth: 0 }}>
                     <SalesHead k="close" eyebrow="Next step" />
                     <div style={{ marginTop: 34, display: 'grid', gap: 0 }}>
                       {clRows.map((r: Any, i: number) => (
@@ -7724,7 +7724,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     {salesFee ? (
                       <div className="mt-auto" style={{ display: 'flex', alignItems: 'baseline', gap: 14, background: t.chip, borderRadius: 12, padding: '14px 20px' }}>
                         <span style={{ fontFamily: SERIF, fontSize: 30, color: t.ink, lineHeight: 1 }}>{Math.round(salesFee * 10) / 10}%</span>
-                        <span style={{ fontSize: 13.5, color: t.body, lineHeight: 1.45 }}><Lab id="closeFee" d="management fee on rental revenue. Pricing, guest care, cleaning, maintenance and owner reporting included." /></span>
+                        <span style={{ fontSize: 13.5, color: t.body, lineHeight: 1.45, flex: 1, minWidth: 0 }}><Lab id="closeFee" d="management fee on rental revenue. Pricing, guest care, cleaning, maintenance and owner reporting included." /></span>
                       </div>
                     ) : null}
                   </div>
@@ -8051,7 +8051,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 // hides a slide and the Hidden list brings it back. Slides you built yourself can
                 // be duplicated and deleted; the house slides hide rather than delete, so nothing
                 // a deck depends on is ever lost.
-                <div className="sb-noprint" style={{ position: 'fixed', left: 12, top: 110, bottom: 16, width: 236, zIndex: 45, background: t.card, border: '1px solid ' + t.toolbarBorder, borderRadius: 14, boxShadow: '0 18px 40px -20px rgba(0,0,0,0.35)', display: 'flex', flexDirection: 'column' }}>
+                <div className="sb-noprint" style={{ position: 'fixed', left: 12, top: 110, bottom: 64, width: 236, zIndex: 45, background: t.card, border: '1px solid ' + t.toolbarBorder, borderRadius: 14, boxShadow: '0 18px 40px -20px rgba(0,0,0,0.35)', display: 'flex', flexDirection: 'column' }}>
                   <div className="flex items-center justify-between" style={{ padding: '10px 12px', borderBottom: '1px solid ' + t.rule }}>
                     <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted }}>Slides · {deckRows.length}</span>
                     <span className="flex items-center" style={{ gap: 6 }}>
