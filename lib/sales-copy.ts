@@ -526,6 +526,9 @@ export const SALES_LEADERS = [
   { name: 'Eric English', role: 'Owner', email: 'eric@stay-hospitality.com', phone: '', photo: '' },
   { name: 'Ryan Cassidy', role: 'Owner', email: 'ryan@stay-hospitality.com', phone: '', photo: '' },
 ]
+// Kept off the proposal's team slide (Jon, 2026-10-28: "get rid of Bernadette and Karla from the
+// team slide on the sales deck"). The onboarding deck still shows the whole team.
+export const SALES_TEAM_EXCLUDE = ['karla valle', 'bernadette tan']
 export const MONARCH_EYEBROW = 'Part of Monarch Collective'
 export const MONARCH_LINE = 'A national collective of local vacation rental brands: 26 brands and about 6,000 homes across 12 states. Shared revenue management, data and buying power behind a local team on every home.'
 // Whole buildings we run end to end. Everywhere else we manage units inside the building (Jon,

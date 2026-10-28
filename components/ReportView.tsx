@@ -31,7 +31,7 @@ import {
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
 } from '@/lib/onboarding-copy'
-import { CLOSE_ROWS, CLOSE_ROWS_RETIRED, EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY, EDGE_NOTE, LH_ROWS, SALES_LEADERS, MONARCH_EYEBROW, MONARCH_LINE, FULLY_MANAGED, MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS, PLAN_LABELS } from '@/lib/sales-copy'
+import { CLOSE_ROWS, CLOSE_ROWS_RETIRED, EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY, EDGE_NOTE, LH_ROWS, SALES_LEADERS, SALES_TEAM_EXCLUDE, MONARCH_EYEBROW, MONARCH_LINE, FULLY_MANAGED, MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS, PLAN_LABELS } from '@/lib/sales-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, seasonBodyStale } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
@@ -4460,7 +4460,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // the buildings and every face was a thumbnail. Now the credibility slide carries the
           // numbers and the buildings, and this one carries the people, large enough to recognise.
           if (isSales && !hid('team')) {
-            const base: Any[] = ((sec('team').people || []) as Any[]).filter((p: Any) => p && String(p.name || '').trim())
+            const base: Any[] = ((sec('team').people || []) as Any[]).filter((p: Any) => p && String(p.name || '').trim() && SALES_TEAM_EXCLUDE.indexOf(String(p.name).trim().toLowerCase()) < 0)
             // Two add-ons the presenter switches on per deck: the owners, and the Monarch band.
             const tm: Any = sec('team')
             const showLeaders = tm.showLeaders === true
