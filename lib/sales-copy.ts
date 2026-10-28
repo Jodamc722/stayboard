@@ -204,10 +204,13 @@ export const CLOSE_SUBTITLE = ''
 // THE CLOSE ASKS FOR ONE THING: the walk-through. Three steps, each one line, so the path from
 // this deck to a first booking reads in five seconds.
 export const CLOSE_ROWS: KV[] = [
-  { k: 'Walk the property', v: 'An hour on site. No charge, no commitment.' },
-  { k: 'Sign one plain agreement', v: 'Every clause walked through before you sign.' },
-  { k: 'Live in about four weeks', v: 'Photographed, listed everywhere, priced daily.' },
+  { k: 'Property walkthrough', v: 'We tour the property, confirm the projection and outline any setup needs. Complimentary.' },
+  { k: 'Management agreement', v: 'We review the terms with you and finalize the agreement.' },
+  { k: 'Launch', v: 'Professional photography, every channel and live pricing, typically within four weeks.' },
 ]
+// Rows earlier decks were generated with. Jon, 2026-10-28: "hate 'sign one plain agreement', not
+// professional." An unedited deck still carrying them is shown the current set.
+export const CLOSE_ROWS_RETIRED = ['Walk the property', 'Sign one plain agreement', 'Live in about four weeks']
 export const CLOSE_NOTE = 'The next step is the walk-through. One call books it.'
 
 // ── 11 · THE VIDEO SLIDE ────────────────────────────────────────────────────
