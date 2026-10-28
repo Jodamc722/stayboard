@@ -31,7 +31,7 @@ import {
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
 } from '@/lib/onboarding-copy'
-import { CLOSE_ROWS, CLOSE_ROWS_RETIRED, EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY, EDGE_NOTE, LH_ROWS, SALES_LEADERS, SALES_TEAM_EXCLUDE, MONARCH_EYEBROW, MONARCH_LINE, FULLY_MANAGED, MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS, PLAN_LABELS } from '@/lib/sales-copy'
+import { CLOSE_ROWS, CLOSE_ROWS_RETIRED, EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY, EDGE_NOTE, LH_ROWS, SALES_LEADERS, SALES_TEAM_EXCLUDE, MONARCH_EYEBROW, MONARCH_LINE, FULLY_MANAGED, MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS, PLAN_LABELS, SALES_KEYS, SLIDE_LABEL } from '@/lib/sales-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, seasonBodyStale } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
@@ -1544,8 +1544,71 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   }, [edit, exKey])
 
   // path setter: patch('voices.quotes.0.text', v)
+  // UNDO AND REDO (Nick, 2026-10-28: "Undo and redo"). Every change to the deck goes through
+  // patch() or mutate(), so both push the state they are about to replace. Typing into one field
+  // is one undo step, not one per keystroke: a patch to the same path within a second and a half
+  // of the last one joins it.
+  const undoRef = useRef<Any[]>([])
+  const redoRef = useRef<Any[]>([])
+  const lastPatchRef = useRef<{ path: string; at: number }>({ path: '', at: 0 })
+  const [histTick, setHistTick] = useState(0)
+  const [slidesPanel, setSlidesPanel] = useState(true)
+  const [dupBusy, setDupBusy] = useState(false)
+  async function duplicateDeck() {
+    if (dupBusy) return
+    setDupBusy(true)
+    try {
+      await save()
+      const r = await fetch('/api/reports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'duplicate', id: initial.id }) })
+      const d = await r.json().catch(() => ({}))
+      if (d?.ok && d.code) { window.location.href = '/r/' + d.code; return }
+      setAttachMsg(String(d?.error || 'Could not duplicate.'))
+    } catch { setAttachMsg('Could not duplicate.') }
+    setDupBusy(false)
+  }
+  const remember = (prev: Any, path: string) => {
+    const now = Date.now()
+    const same = path && lastPatchRef.current.path === path && now - lastPatchRef.current.at < 1500
+    lastPatchRef.current = { path, at: now }
+    if (same) return
+    undoRef.current.push(prev)
+    if (undoRef.current.length > 80) undoRef.current.shift()
+    redoRef.current = []
+  }
+  function undo() {
+    const prev = undoRef.current.pop()
+    if (prev === undefined) return
+    setC((cur: Any) => { redoRef.current.push(cur); return prev })
+    lastPatchRef.current = { path: '', at: 0 }
+    setHistTick(n => n + 1)
+  }
+  function redo() {
+    const next = redoRef.current.pop()
+    if (next === undefined) return
+    setC((cur: Any) => { undoRef.current.push(cur); return next })
+    lastPatchRef.current = { path: '', at: 0 }
+    setHistTick(n => n + 1)
+  }
+  void histTick
+  useEffect(() => {
+    if (!edit) return
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return
+      const k = e.key.toLowerCase()
+      if (k !== 'z' && k !== 'y') return
+      // Inside a field the browser's own undo is the right one; outside, the deck's.
+      const el = e.target as HTMLElement | null
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return
+      e.preventDefault()
+      if (k === 'y' || e.shiftKey) redo(); else undo()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edit])
   function patch(path: string, value: Any) {
     setC((prev: Any) => {
+      remember(prev, path)
       const next = JSON.parse(JSON.stringify(prev))
       const parts = path.split('.')
       let node = next
@@ -1565,7 +1628,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     })
   }
   function mutate(fn: (draft: Any) => void) {
-    setC((prev: Any) => { const next = JSON.parse(JSON.stringify(prev)); fn(next); return next })
+    setC((prev: Any) => { remember(prev, ''); const next = JSON.parse(JSON.stringify(prev)); fn(next); return next })
   }
 
   // ADOPT THE HOUSE COPY, ONCE, WHEN EDITING STARTS (Jon, 2026-09-18: "it's also not letting me
@@ -2724,6 +2787,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               send has to earn a second conversation; the long one is for the meeting it earns.
               This only moves keys in and out of `omit`, so a slide someone edited is still there,
               with the edit, when the other length comes back on. */}
+          {edit && isOnboarding && (
+            <span className="inline-flex items-center rounded-full overflow-hidden" style={{ border: '1px solid ' + t.toolbarBorder, background: t.card }}>
+              <button onClick={() => setSlidesPanel(v => !v)} className="px-3 py-1.5 text-[12px] font-semibold" style={slidesPanel ? { background: t.ink, color: t.bg } : { color: t.ink }}>Slides</button>
+              <button onClick={undo} disabled={!undoRef.current.length} title="Undo (⌘Z)" className="px-2.5 py-1.5 text-[12px] font-semibold disabled:opacity-35" style={{ color: t.ink, borderLeft: '1px solid ' + t.toolbarBorder }}>↶ Undo</button>
+              <button onClick={redo} disabled={!redoRef.current.length} title="Redo (⇧⌘Z)" className="px-2.5 py-1.5 text-[12px] font-semibold disabled:opacity-35" style={{ color: t.ink, borderLeft: '1px solid ' + t.toolbarBorder }}>↷ Redo</button>
+              <button onClick={duplicateDeck} disabled={dupBusy} title="Save, then make a copy of this deck for the next prospect" className="px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ color: t.ink, borderLeft: '1px solid ' + t.toolbarBorder }}>{dupBusy ? 'Copying…' : 'Duplicate deck'}</button>
+            </span>
+          )}
           {edit && isSales && (
             <span className="inline-flex items-center rounded-full overflow-hidden" style={{ border: '1px solid ' + t.toolbarBorder, background: t.card }}>
               {([['short', 'Short'], ['full', 'Full']] as const).map(([v, lbl]) => {
@@ -7705,7 +7776,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           customs.forEach((cs: Any, ci: number) => {
             if (String(cs.kind || '') === 'composed') {
               const setC1 = (field: string, v: Any) => patch('custom.' + ci + '.' + field, v)
-              slides.push({ key: 'custom', node: (
+              slides.push({ key: 'custom:' + String(cs.id || ci), node: (
                 <Slide nav={String(cs.title || 'New slide')} warn={edit} ground={GROUND.light}>
                   <div className="flex flex-col h-full">
                     {edit ? <div className="sb-noprint flex items-center justify-end" style={{ gap: 6, marginBottom: 8 }}>
@@ -7721,7 +7792,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               ) })
               return
             }
-            slides.push({ key: 'custom', node: (
+            slides.push({ key: 'custom:' + String(cs.id || ci), node: (
               <Slide nav={String(cs.title || 'New slide')} warn={edit} ground={GROUND.light}>
                 <div className="flex flex-col h-full">
                   <div className="flex items-start justify-between" style={{ gap: 24 }}>
@@ -7795,9 +7866,95 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               .sort((a, b) => rank(a.sl.key) - rank(b.sl.key) || a.ix - b.ix)
               .map(x => x.sl)
           }
+          // THE ORDER THE PRESENTER CHOSE (Nick, 2026-10-28: "drag slides into any order… lead
+          // with the slides that matter most to a given audience"). content.order is the list of
+          // slide keys as arranged in the Slides panel. It wins over the house order; a slide it
+          // does not mention (added since) keeps its place after the ones it does. Present mode,
+          // the PDF and the PPTX all read this same array, so every output is in this order.
+          const userOrder: string[] = Array.isArray(c.order) ? (c.order as Any[]).map(String) : []
+          if (userOrder.length) {
+            const rk = (k: string) => { const ix = userOrder.indexOf(k); return ix < 0 ? userOrder.length : ix }
+            slides = slides
+              .map((sl, ix) => ({ sl, ix }))
+              .sort((a, b) => rk(a.sl.key) - rk(b.sl.key) || a.ix - b.ix)
+              .map(x => x.sl)
+          }
+          // The panel's list: one row per slide key, in deck order, with the name the slide gives
+          // itself.
+          const deckRows: { key: string; label: string; first: number; custom: boolean }[] = []
+          slides.forEach((sl, i) => {
+            if (deckRows.some(r => r.key === sl.key)) return
+            const nv: Any = (sl.node as Any) && (sl.node as Any).props ? (sl.node as Any).props.nav : ''
+            deckRows.push({ key: sl.key, label: String(nv || (CORE.concat(EXTRA).find(x => x.k === sl.key) || { label: sl.key }).label), first: i, custom: sl.key.indexOf('custom:') === 0 })
+          })
+          const hiddenRows: { key: string; label: string }[] = (Array.isArray(c.omit) ? (c.omit as Any[]).map(String) : [])
+            .filter(k => (isSales ? SALES_KEYS : CORE.map(x => x.k)).indexOf(k) >= 0 && !deckRows.some(r => r.key === k))
+            .map(k => ({ key: k, label: SLIDE_LABEL[k] || (CORE.concat(EXTRA).find(x => x.k === k) || { label: k }).label }))
+          const writeOrder = (keys: string[]) => mutate((d: Any) => { d.order = keys })
+          const moveRow = (from: number, to: number) => {
+            const keys = deckRows.map(r => r.key)
+            if (to < 0 || to >= keys.length || from === to) return
+            const [k] = keys.splice(from, 1); keys.splice(to, 0, k)
+            writeOrder(keys)
+          }
 
           return (
             <TextScale.Provider value={textScale}>
+              {edit && slidesPanel ? (
+                // THE SLIDES PANEL (Nick, 2026-10-28: "a slide sidebar… drag slides into any
+                // order, duplicate a slide or delete it"). Drag a row, or use the arrows; the eye
+                // hides a slide and the Hidden list brings it back. Slides you built yourself can
+                // be duplicated and deleted; the house slides hide rather than delete, so nothing
+                // a deck depends on is ever lost.
+                <div className="sb-noprint" style={{ position: 'fixed', left: 12, top: 110, bottom: 16, width: 236, zIndex: 45, background: t.card, border: '1px solid ' + t.toolbarBorder, borderRadius: 14, boxShadow: '0 18px 40px -20px rgba(0,0,0,0.35)', display: 'flex', flexDirection: 'column' }}>
+                  <div className="flex items-center justify-between" style={{ padding: '10px 12px', borderBottom: '1px solid ' + t.rule }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted }}>Slides · {deckRows.length}</span>
+                    <span className="flex items-center" style={{ gap: 6 }}>
+                      {userOrder.length ? <button onClick={() => mutate((d: Any) => { delete d.order })} title="Back to the house order" style={{ fontSize: 10.5, color: t.muted }}>Reset order</button> : null}
+                      <button onClick={() => setSlidesPanel(false)} title="Close" style={{ color: t.muted }}><X size={13} /></button>
+                    </span>
+                  </div>
+                  <div style={{ overflowY: 'auto', flex: 1, padding: 6 }}>
+                    {deckRows.map((r, i) => (
+                      <div key={r.key} draggable
+                        onDragStart={e => { e.dataTransfer.setData('text/slide', String(i)); e.dataTransfer.effectAllowed = 'move' }}
+                        onDragOver={e => { if (e.dataTransfer.types.indexOf('text/slide') >= 0) { e.preventDefault(); (e.currentTarget as HTMLElement).style.boxShadow = 'inset 0 2px 0 ' + t.accent } }}
+                        onDragLeave={e => { (e.currentTarget as HTMLElement).style.boxShadow = 'none' }}
+                        onDrop={e => { (e.currentTarget as HTMLElement).style.boxShadow = 'none'; const from = Number(e.dataTransfer.getData('text/slide')); if (Number.isFinite(from)) moveRow(from, i) }}
+                        className="flex items-center"
+                        style={{ gap: 6, padding: '7px 6px', borderRadius: 8, cursor: 'grab', background: 'transparent' }}>
+                        <span style={{ fontSize: 10.5, color: t.muted, width: 16, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{i + 1}</span>
+                        <button onClick={() => { const el = document.getElementById(r.key + '-' + r.first); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}
+                          style={{ flex: 1, minWidth: 0, textAlign: 'left', fontSize: 12.5, fontWeight: 600, color: t.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.label}>{r.label}</button>
+                        <button onClick={() => moveRow(i, i - 1)} disabled={i === 0} title="Move up" style={{ fontSize: 11, color: t.muted, opacity: i === 0 ? 0.3 : 1 }}>▲</button>
+                        <button onClick={() => moveRow(i, i + 1)} disabled={i === deckRows.length - 1} title="Move down" style={{ fontSize: 11, color: t.muted, opacity: i === deckRows.length - 1 ? 0.3 : 1 }}>▼</button>
+                        {r.custom ? (
+                          <>
+                            <button title="Duplicate" onClick={() => mutate((d: Any) => { const id = r.key.slice(7); const ix = (d.custom || []).findIndex((x: Any) => String(x.id) === id); if (ix >= 0) { const copy = JSON.parse(JSON.stringify(d.custom[ix])); copy.id = 'c' + Date.now().toString(36); d.custom.splice(ix + 1, 0, copy); if (Array.isArray(d.order)) { const oi = d.order.indexOf(r.key); if (oi >= 0) d.order.splice(oi + 1, 0, 'custom:' + copy.id) } } })} style={{ fontSize: 11, color: t.muted }}>⧉</button>
+                            <button title="Delete" onClick={() => mutate((d: Any) => { const id = r.key.slice(7); d.custom = (d.custom || []).filter((x: Any) => String(x.id) !== id); if (Array.isArray(d.order)) d.order = d.order.filter((k: string) => k !== r.key) })} style={{ fontSize: 12, color: t.accent }}>×</button>
+                          </>
+                        ) : (
+                          <button title="Hide this slide" onClick={() => toggleSection(r.key)} style={{ color: t.muted }}><EyeOff size={12} /></button>
+                        )}
+                      </div>
+                    ))}
+                    {hiddenRows.length ? (
+                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid ' + t.rule }}>
+                        <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, padding: '0 6px 4px' }}>Hidden</p>
+                        {hiddenRows.map(r => (
+                          <div key={r.key} className="flex items-center" style={{ gap: 6, padding: '5px 6px' }}>
+                            <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: t.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.label}</span>
+                            <button title="Show this slide" onClick={() => toggleSection(r.key)} style={{ color: t.accent }}><Eye size={12} /></button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div style={{ padding: 10, borderTop: '1px solid ' + t.rule }}>
+                    <button onClick={() => openCompose(null)} style={{ width: '100%', fontSize: 12, fontWeight: 600, borderRadius: 999, padding: '7px 10px', background: t.ink, color: t.bg }}>+ New slide</button>
+                  </div>
+                </div>
+              ) : null}
               {slides.map((sl, i) => (
                 <SectionShell
                   key={sl.key + '-' + i}

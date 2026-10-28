@@ -550,3 +550,14 @@ export const RETURNS_BODY =
   'Not a case study chosen because it flattered us. Every building we operate with a full year behind it, on the same basis, in one table.'
 export const RETURNS_NOTE =
   'Gross is accommodation plus cleaning, as the guest paid it. Revenue only — no expenses, and no owner is identified.'
+
+/** Friendly names for the Slides panel's Hidden list (a hidden slide has no node to name itself). */
+export const SLIDE_LABEL: Record<string, string> = {
+  welcome: 'Cover', contact: 'Contact', property: 'The property', market: 'The market', comps: 'Comparables',
+  edge: 'Who we are', returns: 'What homes earn', agenda: 'Agenda', team: 'Team', overview: 'Overview',
+  experience: 'Experience', ops: 'Operations', craft: 'Craft', marketing: 'Marketing', dist: 'Distribution',
+  channels: 'Channels', direct: 'Direct booking', guestcare: 'Guest care', revenue: 'Revenue', stack: 'Tech stack',
+  lighthouse: 'Lighthouse', maxrev: 'Technology', proof: 'Proof', plan: 'Month by month', terms: 'Terms',
+  onbsteps: 'Onboarding steps', gpo: 'Guest policies', guesty: 'Owner portal', statement: 'Owner statement',
+  ai: 'AI', season: 'Seasonality', ramp: 'Ramp', rampsteps: 'Ramp steps', money: 'Money', video: 'Video', close: 'Book a walk-through',
+}

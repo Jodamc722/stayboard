@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { hasEditCookie } from '@/lib/edit-access'
 import { requireReportLevel } from '@/lib/garden/access'
+import { makeCode } from '@/lib/owner-report'
 
 export const dynamic = 'force-dynamic'
 
@@ -77,4 +78,30 @@ export async function DELETE(req: NextRequest) {
   const { error } = await supabaseAdmin().from('owner_reports').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
+}
+
+// DUPLICATE A DECK (Nick, 2026-10-28: "duplicate a deck… start the next prospect from one that
+// already works"). A copy of the row with a new share code, " (copy)" on the title and status back
+// to draft. Everything else — content, theme, listings, scope — comes across as it is.
+export async function POST(req: NextRequest) {
+  const body = await req.json().catch(() => ({} as any))
+  if (str(body?.action) !== 'duplicate') return NextResponse.json({ error: 'unknown action' }, { status: 400 })
+  const id = str(body?.id)
+  if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
+  const __gate = await requireReportLevel(id, 'edit')
+  if (!__gate.ok) return __gate.res
+  const user = await requireUser()
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const db = supabaseAdmin()
+  const { data: rows, error } = await db.from('owner_reports').select('*').eq('id', id).limit(1)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const src: any = (rows || [])[0]
+  if (!src) return NextResponse.json({ error: 'not found' }, { status: 404 })
+  const code = makeCode()
+  const { id: _i, code: _c, created_at: _ca, updated_at: _ua, ...rest } = src
+  const { data: ins, error: e2 } = await db.from('owner_reports').insert({
+    ...rest, code, title: (str(src.title) + ' (copy)').slice(0, 160), status: 'draft', created_by: user.email || null,
+  }).select('id, code').limit(1)
+  if (e2) return NextResponse.json({ error: e2.message }, { status: 500 })
+  return NextResponse.json({ ok: true, id: (ins || [])[0]?.id, code })
 }
