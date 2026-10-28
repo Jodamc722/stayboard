@@ -749,6 +749,11 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
             You are looking at {VIEW_NAME[view] || 'another page'}. Every tab works; Next picks the tour back up.
           </p>
         ) : null}
+        {!exploring && view === 'analytics' ? (
+          <p style={{ fontSize: 9.5, lineHeight: 1.45, color: P.body, marginTop: 6, background: '#eef3fe', borderRadius: 6, padding: '6px 8px' }}>
+            That is the tour. Every tab along the top opens; click any of them to keep exploring.
+          </p>
+        ) : null}
         {nextGo ? (
           <button onClick={nextGo} style={{
             alignSelf: 'stretch', marginTop: 7, fontSize: 10, fontWeight: 700, color: '#fff', background: P.blue,
