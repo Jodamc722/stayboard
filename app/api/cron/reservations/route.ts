@@ -51,6 +51,10 @@ async function run(req: NextRequest) {
     // Right after the sync, so the post is minutes behind Guesty. See lib/salato-watch.ts.
     let salato: any = null
     try { const { runSalatoWatch } = await import('@/lib/salato-watch'); const w = await runSalatoWatch({ fromCron: true }); salato = { announced: w.announced, oneNight: w.oneNight, nudged: w.nudged, resolved: w.resolved, error: w.error, skipped: w.skipped } } catch (e: any) { salato = { error: String(e?.message || e).slice(0, 120) } }
+    // NEW SALATO BOOKINGS BY EMAIL (Jon, 2026-10-28): every new booking to the front desk list, with
+    // the board link. Own try: an email hiccup never fails the booking feed. lib/salato-new-bookings.ts.
+    let salatoEmail: any = null
+    try { const { runSalatoNewBookingEmail } = await import('@/lib/salato-new-bookings'); const m = await runSalatoNewBookingEmail(); salatoEmail = { fresh: m.fresh, sent: m.sent, seeded: m.seeded, skipped: m.skipped, error: m.error } } catch (e: any) { salatoEmail = { error: String(e?.message || e).slice(0, 120) } }
     // OPEN FOLIOS, HOURLY (Jon, 2026-10-21: "if we fix the folio it should update the report"). The
     // Expedia fee breakouts the Statements desk is waiting on are re-pulled from Guesty once an hour,
     // because a folio edit does not reliably move a reservation's lastUpdatedAt and this feed would
@@ -61,7 +65,7 @@ async function run(req: NextRequest) {
     // ops team's bell within minutes. Own try, like the two above. See lib/banned-guests.ts.
     let banned: any = null
     try { const { runBannedWatch } = await import('@/lib/banned-guests'); const b = await runBannedWatch(); banned = { hits: b.hits, notified: b.notified, skipped: b.skipped } } catch (e: any) { banned = { error: String(e?.message || e).slice(0, 120) } }
-    return NextResponse.json({ ranAt: new Date().toISOString(), mode, reservations: n, salato, folios, banned, elapsed_ms: Date.now() - started })
+    return NextResponse.json({ ranAt: new Date().toISOString(), mode, reservations: n, salato, salatoEmail, folios, banned, elapsed_ms: Date.now() - started })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }

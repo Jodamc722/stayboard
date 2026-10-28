@@ -1,4 +1,6 @@
-// SALATO DAILY — reservations only, for the front desk.
+// SALATO DAILY — upcoming reservations, for the front desk, with the link to the board.
+// (2026-10-28, Jon: "a morning email just showing upcoming reservations to front desk, this should
+// also include the link." In-house and departures moved off the email; they are on the board.)
 //
 // Jon, 2026-08-14: "send a daily email to Salato as well, show only reservations, upcoming etc and
 // active reservations. Highlight anything related to the hotel."
@@ -140,34 +142,43 @@ async function run(req: NextRequest): Promise<Response> {
       heads.map(h => '<th style="' + th + '">' + h + '</th>').join('') + '</tr>' + body + '</table>'
     const empty = (t: string) => '<p style="margin:0;font-size:13px;color:#6b7280">' + t + '</p>'
 
+    // UPCOMING ONLY, WITH THE LINK (Jon, 2026-10-28: "a morning email just showing upcoming
+    // reservations to front desk, this should also include the link"). Arriving today and the next
+    // two weeks, grouped by day; in-house and departures are on the board, one tap away.
+    const ahead = arrivingToday.concat(upcoming)
+    const flaggedAhead = ahead.filter(r => r.flags.length)
+    const BOARD = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '') + '/salato/share'
+    const button = '<p style="margin:14px 0;text-align:center"><a href="' + BOARD + '" style="display:inline-block;background:#111827;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:10px 18px;border-radius:10px">Open the front desk board</a></p>'
+    const byDay: Record<string, R[]> = {}
+    for (const r of upcoming.slice(0, 60)) (byDay[r.ci] = byDay[r.ci] || []).push(r)
+    const upcomingInner = upcoming.length
+      ? Object.keys(byDay).sort().map(d => '<p style="margin:10px 0 4px;font-size:12px;font-weight:700;color:#111827">' + esc(niceDay(d)) + ' <span style="color:#9ca3af;font-weight:600">· ' + byDay[d].length + '</span></p>' +
+          tbl(['Unit / guest', 'Stay', 'Channel'], byDay[d].map(r => row(r, 'both')).join(''))).join('') +
+        (upcoming.length > 60 ? '<p style="margin:8px 0 0;font-size:11.5px;color:#9ca3af">+' + (upcoming.length - 60) + ' more on the board.</p>' : '')
+      : empty('Nothing booked in the next two weeks.')
+
     const html = '<!doctype html><html><body style="margin:0;background:#f5f5f4;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">' +
       '<div style="max-width:720px;margin:0 auto;padding:18px">' +
       '<div style="background:#111827;border-radius:12px;padding:16px 18px">' +
       '<p style="margin:0;color:#9ca3af;font-size:11px;letter-spacing:.16em">S A L A T O &nbsp; F R O N T &nbsp; D E S K</p>' +
-      '<p style="margin:4px 0 0;color:#fff;font-size:17px;font-weight:800">Reservations — ' + niceDay(today) + '</p>' +
-      '<p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">' + inHouse.length + ' in house · ' + arrivingToday.length +
-      ' arriving · ' + departingToday.length + ' departing · ' + upcoming.length + ' booked through ' + niceDay(horizon) + '</p></div>' +
-      (hotelFlagged.length
-        ? card('Needs a look', hotelFlagged.length, 'anything hotel-related, a same-day turn, or a booking with no name',
-            tbl(['Unit / guest', 'Dates', 'Channel'], hotelFlagged.map(r => row(r, 'both')).join('')), '#dc2626')
+      '<p style="margin:4px 0 0;color:#fff;font-size:17px;font-weight:800">Upcoming reservations — ' + niceDay(today) + '</p>' +
+      '<p style="margin:2px 0 0;color:#9ca3af;font-size:12.5px">' + arrivingToday.length + ' arriving today · ' + upcoming.length + ' more through ' + niceDay(horizon) + '</p></div>' +
+      button +
+      (flaggedAhead.length
+        ? card('Needs a look', flaggedAhead.length, 'anything hotel-related, a same-day turn, or a booking with no name',
+            tbl(['Unit / guest', 'Stay', 'Channel'], flaggedAhead.map(r => row(r, 'both')).join('')), '#dc2626')
         : '') +
       card('Arriving today', arrivingToday.length, 'Check-ins for ' + niceDay(today),
-        arrivingToday.length ? tbl(['Unit / guest', 'Arrives', 'Channel'], arrivingToday.map(r => row(r, 'ci')).join('')) : empty('No arrivals today.'), '#4338ca') +
-      card('Departing today', departingToday.length, 'Check-outs for ' + niceDay(today),
-        departingToday.length ? tbl(['Unit / guest', 'Departs', 'Channel'], departingToday.map(r => row(r, 'co')).join('')) : empty('No departures today.'), '#0891b2') +
-      card('In house', inHouse.length, 'Staying tonight, arrived before today',
-        inHouse.length ? tbl(['Unit / guest', 'Through', 'Channel'], inHouse.map(r => row(r, 'co')).join('')) : empty('Nobody in house.'), '#059669') +
-      card('Upcoming', upcoming.length, niceDay(addDays(today, 1)) + ' to ' + niceDay(horizon),
-        upcoming.length ? tbl(['Unit / guest', 'Arrives', 'Channel'], upcoming.slice(0, 40).map(r => row(r, 'both')).join('')) +
-          (upcoming.length > 40 ? '<p style="margin:8px 0 0;font-size:11.5px;color:#9ca3af">+' + (upcoming.length - 40) + ' more on the board.</p>' : '')
-          : empty('Nothing booked in the next two weeks.'), '#6366f1') +
-      '<p style="margin:12px 0 0;font-size:11px;color:#9ca3af;text-align:center">Reservations only. Sent every morning from Lighthouse.</p>' +
+        arrivingToday.length ? tbl(['Unit / guest', 'Stay', 'Channel'], arrivingToday.map(r => row(r, 'both')).join('')) : empty('No arrivals today.'), '#4338ca') +
+      card('Upcoming', upcoming.length, niceDay(addDays(today, 1)) + ' to ' + niceDay(horizon), upcomingInner, '#6366f1') +
+      button +
+      '<p style="margin:0;font-size:11px;color:#9ca3af;text-align:center">Upcoming reservations only — in-house guests and departures are on the board. Sent every morning from Lighthouse.</p>' +
       '</div></body></html>'
 
     if (preview) return new NextResponse(html, { headers: { 'content-type': 'text/html; charset=utf-8' } })
 
-    const subject = 'Salato ' + niceDay(today) + ': ' + arrivingToday.length + ' in, ' + departingToday.length +
-      ' out, ' + inHouse.length + ' in house' + (hotelFlagged.length ? ' · ' + hotelFlagged.length + ' to check' : '')
+    const subject = 'Salato ' + niceDay(today) + ': ' + arrivingToday.length + ' arriving today, ' + upcoming.length + ' upcoming' +
+      (flaggedAhead.length ? ' · ' + flaggedAhead.length + ' to check' : '')
 
     const cfg = await getSetting<{ enabled?: boolean; fromEmail?: string; to?: string[] }>('salato_daily', {}).catch(() => ({} as any))
     const fromEmail = cfg?.fromEmail || ''
