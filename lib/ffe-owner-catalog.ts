@@ -167,7 +167,8 @@ export async function ownerHome(code: string, count = false) {
   const listings = await ownerListings(link.ownerId)
   return { owner: firstName(link.ownerName), message: link.message, tier: link.tier, listings }
 }
-const firstName = (n: string) => (n.split(/\s+/)[0] || n)
+// A person is greeted by first name; a company ("1615 Elser Investment LLC") by its full name.
+const firstName = (n: string) => (/\b(LLC|L\.L\.C|Inc|Corp|Co|Ltd|LP|LLP|Trust|Holdings|Group|Investments?|Properties|Realty|Management|MGT)\b\.?/i.test(n) || /^\d/.test(n) ? n : (n.split(/\s+/)[0] || n))
 
 const per = (p: string | undefined, size: { bedrooms: number | null; bathrooms: number | null; guests: number | null }) =>
   p === 'bedroom' ? Math.max(1, size.bedrooms ?? 1) : p === 'bathroom' ? Math.max(1, Math.ceil(size.bathrooms ?? 1)) : p === 'guest' ? Math.max(1, size.guests ?? 2) : 1
