@@ -44,6 +44,8 @@ type Props = {
   ownerName?: string
   /** The owner's own listing photos, for the My properties grid. */
   photos?: string[]
+  /** Open on a screen other than sign-in — the sales deck starts on the dashboard. */
+  start?: 'login' | 'dashboard' | 'calendar' | 'analytics'
 }
 
 // The portal's palette, sampled from the live screens. Deliberately NOT the deck's theme: the
@@ -101,8 +103,8 @@ const STEPS: { k: string; d: string; at: View[] }[] = [
   { k: 'Analytics', d: 'Year to date, by unit.', at: ['analytics'] },
 ]
 
-export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos }: Props) {
-  const [view, setView] = useState<View>('login')
+export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos, start }: Props) {
+  const [view, setView] = useState<View>(start || 'login')
   const [open, setOpen] = useState<Resv | null>(null)
   const [drawer, setDrawer] = useState(false)
   const [from, setFrom] = useState<number | null>(null)

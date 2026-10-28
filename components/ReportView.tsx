@@ -4453,14 +4453,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   <SalesHead k="team" eyebrow="Your team" />
                   <p style={{ fontSize: 14, lineHeight: 1.5, color: t.muted, margin: 0, maxWidth: '36ch', textAlign: 'right' }}>Our own people, on our own payroll. You will know every one of them by name.</p>
                 </div>
-                <div style={{ marginTop: 28, display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, ppl.length) + ', 1fr)', gap: 20, flex: 1, minHeight: 0 }}>
+                <div style={{ marginTop: 26, display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(4, ppl.length) + ', 1fr)', gap: 20, alignItems: 'start' }}>
                   {ppl.map((p: Any, i: number) => (
                     <div key={i} className="flex flex-col" style={{ minWidth: 0 }}>
                       {p.photo ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={String(p.photo)} alt="" style={{ width: '100%', flex: 1, minHeight: 0, objectFit: 'cover', objectPosition: '50% 22%', borderRadius: 16 }} />
+                        <img src={String(p.photo)} alt="" style={{ width: '100%', aspectRatio: showMonarch ? '1 / 1' : '4 / 5', objectFit: 'cover', objectPosition: '50% 22%', borderRadius: 16 }} />
                       ) : (
-                        <div className="flex items-center justify-center" style={{ width: '100%', flex: 1, borderRadius: 16, background: t.chip, color: t.muted, fontSize: 28, fontWeight: 700 }}>
+                        <div className="flex items-center justify-center" style={{ width: '100%', aspectRatio: showMonarch ? '1 / 1' : '4 / 5', borderRadius: 16, background: t.chip, color: t.muted, fontSize: 28, fontWeight: 700 }}>
                           {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
                         </div>
                       )}
@@ -5118,8 +5118,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             }
             slides.push({ key: 'lighthouse', ai: true, node: (
             <Slide nav="Lighthouse" warn={edit} ground={GROUND.dark}>
-              <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', gap: 52, height: '100%' }}>
-                <div className="flex flex-col">
+              <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: 44, height: '100%' }}>
+                <div className="flex flex-col" style={{ height: '100%' }}>
                   <div className="flex items-center" style={{ gap: 14 }}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src="/icon-192.png" alt="" style={{ width: 52, height: 52, borderRadius: 13, boxShadow: '0 0 0 1px rgba(255,255,255,0.18)' }} />
@@ -5135,9 +5135,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     Built for this business, by this business. No other manager runs it.
                   </p>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridAutoRows: '1fr', gap: 14 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignContent: 'center' }}>
                   {lhRows.map((r: Any, i: number) => { const Ic = lhIcon(String(r.k || '')); return (
-                    <div key={i} className="flex" style={{ gap: 16, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: '20px 22px' }}>
+                    <div key={i} className="flex" style={{ gap: 14, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 14, padding: '16px 18px' }}>
                       <span className="flex items-center justify-center" style={{ width: 40, height: 40, borderRadius: 11, background: t.accent, flexShrink: 0 }}>
                         <Ic size={19} color="#fff" strokeWidth={2} />
                       </span>
@@ -5145,7 +5145,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         <p style={{ fontSize: 16.5, fontWeight: 600, color: '#fff', margin: '1px 0 0' }}>
                           {lhHouse ? String(r.k || '') : <Ed v={r.k || ''} set={v => patch('lighthouse.rows.' + i + '.k', v)} edit={edit} />}
                         </p>
-                        <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.72)', margin: '6px 0 0' }}>
+                        <p style={{ fontSize: 13, lineHeight: 1.45, color: 'rgba(255,255,255,0.72)', margin: '5px 0 0' }}>
                           {lhHouse ? String(r.v || '') : <Ed v={r.v || ''} set={v => patch('lighthouse.rows.' + i + '.v', v)} edit={edit} multiline />}
                         </p>
                       </div>
@@ -6783,8 +6783,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   {/* The replica is authored for a full slide; it is laid out at that size and
                       scaled into the window, so every control stays clickable. */}
                   <div style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                    <div style={{ position: 'absolute', top: 0, left: 0, width: '1000px', height: '700px', transform: 'scale(0.67)', transformOrigin: 'top left', padding: 14 }}>
-                      <OwnerPortalDemo
+                    <div style={{ position: 'absolute', inset: 0, padding: 10 }}>
+                      <OwnerPortalDemo start="dashboard"
                         unitName={String(((sec('property').facts || []) as Any[]).find((x: Any) => x.k === 'The building')?.v || hero.title || 'Your unit').split(' · ')[0]}
                         portalUrl={housePortalUrl(sec('guesty').portalUrl)}
                         ownerName={String(hero.preparedFor || '').replace(/^prepared for\s+/i, '')}
