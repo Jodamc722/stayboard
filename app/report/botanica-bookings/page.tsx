@@ -6,11 +6,12 @@
 // — its own passcode, because this page carries guest contact details. Data: /api/public/botanica-bookings.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-type Row = { id: string; status: string; channel: string; cells: (string | number)[]; extra: (string | number)[] }
+// One booking as the API sends it: check-in / check-out, live (not cancelled), Cloudbeds status,
+// channel, has email / phone / address / adults, and the 22 template cells.
+type Row = { id: string; ci: string; co: string; live: boolean; s: string; ch: string; e: boolean; p: boolean; a: boolean; ad: boolean; c: (string | number)[] }
 type Data = {
-  ok: boolean; error?: string; property?: string; today?: string; generatedAt?: string; lastSync?: string | null; signedIn?: boolean; label?: string | null
-  rooms?: number; counts?: { all: number; inHouse: number; upcoming: number; past: number; cancelled: number; duplicatesDropped: number; withEmail: number; withPhone: number; withAddress: number; withAdults: number }
-  groups?: { label: string; span: number }[]; header?: string[]; extendedHeader?: string[]; rules?: { col: string; rule: string }[]; rows?: Row[]
+  ok: boolean; error?: string; today?: string; generatedAt?: string; lastSync?: string | null; signedIn?: boolean
+  rooms?: number; duplicatesDropped?: number; groups?: { label: string; span: number }[]; header?: string[]; rules?: { col: string; rule: string }[]; rows?: Row[]
 }
 type Scope = 'all' | 'current' | 'past'
 const CODE = 'botanica-bookings'
@@ -67,27 +68,40 @@ export default function BotanicaBookingsPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [bf, setBf] = useState<{ running: boolean; msg: string }>({ running: false, msg: '' })
 
+  // The download URL carries the same filter the page shows (the server applies the same rule).
   const query = useMemo(() => {
     const t2 = oneDay ? fromD : toD
     const lo = fromD && t2 && fromD > t2 ? t2 : fromD, hi = fromD && t2 && fromD > t2 ? fromD : t2
     return 'scope=' + scope + '&status=' + (withCancelled ? 'all' : 'live') + '&by=' + by + (lo ? '&from=' + lo : '') + (hi ? '&to=' + hi : '')
   }, [scope, withCancelled, fromD, toD, by, oneDay])
 
-  const load = useCallback(async () => {
-    try {
-      setErr('')
-      const res = await fetch(API + '?' + query, { cache: 'no-store' })
-      const j: Data = await res.json()
-      if (res.status === 401 || (j as any).needsPassword) { setNeedsPw(true); setPwMsg(String((j as any).error || '')); setLoading(false); return }
-      if (!res.ok || j.ok === false) { setErr(j.error || 'Failed to load'); setLoading(false); return }
-      setData(j); setLastUpdated(new Date()); setLimit(PAGE)
-    } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
-  }, [query])
+  // LOAD ONCE, FILTER HERE (Jon, 2026-10-28: "the link sometimes breaks"). The page fetches every
+  // booking once and every filter runs in the browser — a click never waits on the server. A failed
+  // refresh never blanks the page: the last good data stays up with a note, and a load retries once.
+  const load = useCallback(async (fresh = false) => {
+    setErr('')
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const ctl = new AbortController()
+      const tm = setTimeout(() => ctl.abort(), 45000)
+      try {
+        const res = await fetch(API + (fresh ? '?fresh=1' : ''), { cache: 'no-store', signal: ctl.signal })
+        const j: Data = await res.json().catch(() => ({ ok: false, error: 'The server sent an unreadable answer' } as Data))
+        if (res.status === 401 || (j as any).needsPassword) { setNeedsPw(true); setPwMsg(String((j as any).error || '')); setLoading(false); return }
+        if (res.ok && j.ok !== false) { setData(j); setLastUpdated(new Date()); setLoading(false); return }
+        if (attempt === 1) setErr(j.error || 'Could not load the bookings')
+      } catch (e: any) {
+        if (attempt === 1) setErr(e?.name === 'AbortError' ? 'The bookings took too long to load' : String(e?.message || e))
+      } finally { clearTimeout(tm) }
+      await new Promise(r => setTimeout(r, 1500))
+    }
+    setLoading(false)
+  }, [])
 
-  useEffect(() => { setLoading(true); load() }, [load])
+  useEffect(() => { load() }, [load])
   useEffect(() => { const tm = setInterval(() => { if (document.visibilityState === 'visible') load() }, 15 * 60 * 1000); return () => clearInterval(tm) }, [load])
+  useEffect(() => { setLimit(PAGE) }, [scope, withCancelled, fromD, toD, by, oneDay, q])
 
-  const doRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false) }
+  const doRefresh = async () => { setRefreshing(true); await load(true); setRefreshing(false) }
   // Guest counts were never part of the Guesty pull before 2026-10-27; this re-pulls the Botanica
   // rows that still lack them, 200 at a time, until none are left, then reloads.
   const backfill = async () => {
@@ -101,7 +115,7 @@ export default function BotanicaBookingsPage() {
         setBf({ running: true, msg: j.pulled + ' refreshed, ' + j.remaining + ' to go…' })
       }
     } catch (e: any) { setBf({ running: false, msg: String(e?.message || e) }) }
-    await load()
+    await load(true)
   }
   const submitPw = async (e: any) => {
     e.preventDefault()
@@ -115,16 +129,42 @@ export default function BotanicaBookingsPage() {
     setPwBusy(false)
   }
 
+  // THE FILTER — same rule as pick() in the API (keep the two in step).
+  const win = useMemo(() => {
+    const t2 = oneDay ? fromD : toD
+    return { lo: fromD && t2 && fromD > t2 ? t2 : fromD, hi: fromD && t2 && fromD > t2 ? fromD : t2 }
+  }, [fromD, toD, oneDay])
+  const inWindow = useCallback((r: Row) => {
+    const { lo, hi } = win
+    if (by === 'checkout') return (!lo || r.co >= lo) && (!hi || r.co <= hi)
+    if (by === 'stay') return (!lo || r.co > lo) && (!hi || r.ci <= hi)
+    return (!lo || r.ci >= lo) && (!hi || r.ci <= hi)
+  }, [win, by])
+  const dated = useMemo(() => (data?.rows || []).filter(inWindow), [data, inWindow])
   const rows = useMemo(() => {
-    const all = data?.rows || []
     const n = q.trim().toLowerCase()
-    if (!n) return all
-    return all.filter(r => (r.cells.slice(0, 4).join(' ') + ' ' + r.cells[11] + ' ' + r.cells[16] + ' ' + r.channel + ' ' + r.status).toLowerCase().includes(n))
-  }, [data, q])
+    return dated.filter(r => {
+      if (!r.live && !withCancelled) return false
+      if (scope === 'current' && r.s === 'Checked Out') return false
+      if (scope === 'past' && r.s !== 'Checked Out') return false
+      if (n && !(r.c.slice(0, 4).join(' ') + ' ' + r.c[11] + ' ' + r.c[16] + ' ' + r.ch + ' ' + r.s).toLowerCase().includes(n)) return false
+      return true
+    })
+  }, [dated, withCancelled, scope, q])
+  const c = useMemo(() => {
+    const k = { all: rows.length, inHouse: 0, upcoming: 0, past: 0, cancelled: 0, withEmail: 0, withPhone: 0, withAddress: 0, withAdults: 0 }
+    for (const r of dated) {
+      if (!r.live) k.cancelled++
+      else if (r.s === 'Checked In') k.inHouse++
+      else if (r.s === 'Checked Out') k.past++
+      else k.upcoming++
+    }
+    for (const r of rows) { if (r.e) k.withEmail++; if (r.p) k.withPhone++; if (r.a) k.withAddress++; if (r.ad) k.withAdults++ }
+    return k
+  }, [dated, rows])
   const shown = rows.slice(0, limit)
   const header = data?.header || []
   const groups = data?.groups || []
-  const c = data?.counts
 
   if (needsPw) return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-neutral-100">
@@ -143,8 +183,14 @@ export default function BotanicaBookingsPage() {
       </form>
     </div>
   )
-  if (err) return <div className="min-h-screen flex items-center justify-center text-neutral-500 text-sm p-6">{err}</div>
-  if (loading && !data) return <div className="min-h-screen flex items-center justify-center text-neutral-400 text-sm">Loading every Botanica booking…</div>
+  // Only a FIRST load that failed fills the screen — and it offers a retry instead of a dead end.
+  if (err && !data) return (
+    <div className="min-h-screen flex flex-col items-center justify-center gap-3 text-sm p-6 text-neutral-600">
+      <div>{err}</div>
+      <button type="button" onClick={() => { setLoading(true); load(true) }} className="text-sm font-semibold px-3.5 py-2 rounded-lg text-white" style={{ background: BLUE }}>Try again</button>
+    </div>
+  )
+  if (!data) return <div className="min-h-screen flex items-center justify-center text-neutral-400 text-sm">{loading ? 'Loading every Botanica booking…' : ''}</div>
 
   const dl = (format: 'xlsx' | 'csv', extended = false) => API + '?' + query + '&format=' + format + (extended ? '&cols=extended' : '')
 
@@ -175,9 +221,10 @@ export default function BotanicaBookingsPage() {
         </div>
 
         {/* Tiles */}
+        {err ? <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Couldn’t refresh just now ({err}) — showing the bookings loaded {lastUpdated ? lastUpdated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'earlier'}. <button type="button" onClick={doRefresh} className="font-semibold underline">Retry</button></div> : null}
         {c ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-4">
-            <Tile label="Bookings shown" value={String(c.all)} sub={scope === 'all' ? 'all time' : scope === 'current' ? 'in house & upcoming' : 'checked out'} />
+            <Tile label="Bookings shown" value={c.all.toLocaleString()} sub={win.lo || win.hi ? 'in the dates picked' : scope === 'all' ? 'all time' : scope === 'current' ? 'in house & upcoming' : 'checked out'} />
             <Tile label="In house today" value={String(c.inHouse)} sub={data?.today ? data.today : undefined} />
             <Tile label="Upcoming" value={String(c.upcoming)} sub="confirmed, not yet arrived" />
             <Tile label="Checked out" value={String(c.past)} sub="history" />
@@ -202,7 +249,7 @@ export default function BotanicaBookingsPage() {
             <input type="checkbox" checked={withCancelled} onChange={e => setWithCancelled(e.target.checked)} /> Include cancelled
           </label>
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search name, email, room, confirmation…" className="text-xs border border-neutral-200 rounded-lg px-3 py-1.5 bg-white w-64 focus:outline-none focus:ring-2 focus:ring-sky-400/40" />
-          <span className="text-xs text-neutral-500 ml-auto">{rows.length.toLocaleString()} row{rows.length === 1 ? '' : 's'}{c && c.duplicatesDropped ? ' · ' + c.duplicatesDropped + ' duplicate mirror row' + (c.duplicatesDropped === 1 ? '' : 's') + ' dropped' : ''}{data?.rooms ? ' · ' + data.rooms + ' Botanica listings' : ''}</span>
+          <span className="text-xs text-neutral-500 ml-auto">{rows.length.toLocaleString()} row{rows.length === 1 ? '' : 's'}{data?.duplicatesDropped ? ' · ' + data.duplicatesDropped + ' duplicate mirror row' + (data.duplicatesDropped === 1 ? '' : 's') + ' dropped' : ''}{data?.rooms ? ' · ' + data.rooms + ' Botanica listings' : ''}</span>
           <button type="button" onClick={() => setShowRules(s => !s)} className="text-xs font-medium text-neutral-600 underline-offset-2 hover:underline">{showRules ? 'Hide column rules' : 'How each column is filled'}</button>
         </div>
 
@@ -274,7 +321,7 @@ export default function BotanicaBookingsPage() {
               <tbody>
                 {shown.map(r => (
                   <tr key={r.id} className="border-b border-neutral-100 hover:bg-sky-50/40">
-                    {r.cells.map((v, i) => {
+                    {r.c.map((v, i) => {
                       const cls = 'px-3 py-1.5 align-top ' + (MONEY_COLS.indexOf(i) >= 0 ? 'text-right tabular-nums ' : '') + (i === 7 || i === 18 ? 'border-l border-neutral-100 ' : '')
                       if (i === 15) return <td key={i} className={cls}><Tag tone={STATUS_TONE[String(v)]}>{v}</Tag></td>
                       if (i === 14) return <td key={i} className={cls + 'whitespace-nowrap'}><Tag>{v}</Tag></td>

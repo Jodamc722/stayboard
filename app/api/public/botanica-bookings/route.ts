@@ -178,9 +178,11 @@ function csvCell(v: any): string {
 }
 
 /** The link row, made on the first signed-in visit so the hub can show it and Jon can mint its passcode. */
+let linkRowKnown = false
 async function ensureLinkRow(who: string | null): Promise<void> {
+  if (linkRowKnown) return
   try {
-    if (await getLink(LINK_CODE)) return
+    if (await getLink(LINK_CODE)) { linkRowKnown = true; return }
     const db = supabaseAdmin()
     const probe = await db.from('share_links').select('passcode_hash').limit(1)
     if (probe.error) return // migration 101 not run yet — nothing to create
@@ -229,6 +231,176 @@ async function backfillGuestCounts(): Promise<NextResponse> {
   }
 }
 
+// ── THE DATASET, BUILT ONCE AND SHARED ─────────────────────────────────────────────────────────
+// Jon, 2026-10-28: "The link sometimes breaks can we make it more clean and efficient". Measured:
+// every call took 7–8 s and every filter click was a new call (paging ~2,600 rows with the whole
+// raw.guest and raw.money objects), so a slow phone or a cold function gave up. Now:
+//   · one narrow select (only the sub-fields the columns read), pages fetched in parallel;
+//   · the whole Botanica set — live AND cancelled — is built once and kept for CACHE_MS in this
+//     instance, with concurrent callers sharing the one build in flight;
+//   · every filter (scope, cancelled, check-in / check-out / stay dates) is applied to that set in
+//     memory — on the server for the downloads, and in the browser for the page, which loads once.
+type Built = { at: number; today: string; lastSync: string | null; rooms: number; rows: BRow[] }
+type BRow = { id: string; ci: string; co: string; live: boolean; status: string; channel: string; room: string; hasEmail: boolean; hasPhone: boolean; hasAddr: boolean; hasAdults: boolean; dup: boolean; cells: (string | number)[]; extra: (string | number)[] }
+const CACHE_MS = 2 * 60 * 1000
+let built: Built | null = null
+let building: Promise<Built> | null = null
+async function getBuilt(fresh = false): Promise<Built> {
+  if (!fresh && built && Date.now() - built.at < CACHE_MS && built.today === ymdNY(new Date())) return built
+  if (building) return building
+  building = buildAll().then(b => { built = b; return b }).finally(() => { building = null })
+  return building
+}
+
+const SELECT = [
+  'id', 'listing_id', 'guest_name', 'guest_email', 'guest_phone', 'check_in', 'check_out', 'nights', 'status', 'source', 'confirmation_code', 'notes', 'custom_fields', 'created_at', 'money_paid', 'money_currency',
+  'gFirst:raw->guest->>firstName', 'gLast:raw->guest->>lastName', 'gFull:raw->guest->>fullName', 'gEmail:raw->guest->>email', 'gPhone:raw->guest->>phone',
+  'gAddress:raw->guest->address', 'gHometown:raw->guest->>hometown', 'gNationality:raw->guest->>nationality', 'gCountry:raw->guest->>country',
+  'mCurrency:raw->money->>currency', 'mFareAdj:raw->money->>fareAccommodationAdjusted', 'mFare:raw->money->>fareAccommodation', 'mClean:raw->money->>fareCleaning',
+  'mFees:raw->money->>totalFees', 'mTaxes:raw->money->>totalTaxes', 'mTotal:raw->money->>totalPrice', 'mSub:raw->money->>subTotalPrice', 'mPaid:raw->money->>totalPaid',
+  'mFullyPaid:raw->money->>isFullyPaid', 'mBalance:raw->money->>balanceDue', 'mHostFee:raw->money->>hostServiceFee', 'mPayout:raw->money->>hostPayout', 'mPayments:raw->money->payments',
+  'gc:raw->guestsCount', 'nog:raw->numberOfGuests', 'guests:raw->guests', 'platform:raw->integration->>platform', 'canceledAt:raw->>canceledAt', 'confirmedAt:raw->>confirmedAt',
+  'updatedAt:raw->>lastUpdatedAt', 'rawNote:raw->note', 'ratePlan:raw->ratePlan', 'ratePlanName:raw->>ratePlanName',
+].join(',')
+
+async function buildAll(): Promise<Built> {
+  const db = supabaseAdmin()
+  const today = ymdNY(new Date())
+  const [lRes, syncRes, nameMap] = await Promise.all([
+    db.from('guesty_listings').select('id,nickname,title,building'),
+    db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle(),
+    customFieldNameMap().catch(() => ({} as Record<string, string>)),
+  ])
+  if (lRes.error) throw new Error(lRes.error.message)
+  type Room = { listingId: string; name: string; room: string; type: string }
+  const byId: Record<string, Room> = {}
+  const ids: string[] = []
+  for (const l of (lRes.data || []) as any[]) {
+    const name = str(l.nickname || l.title)
+    if (!/botanica/i.test(str(l.building)) && !/botanica/i.test(name)) continue
+    const r = roomOf(name)
+    byId[String(l.id)] = { listingId: String(l.id), name, room: r.room, type: r.type }
+    ids.push(String(l.id))
+  }
+  if (!ids.length) throw new Error('No Botanica listings found in the Guesty mirror')
+
+  // Page 0 tells us the total; the rest go in parallel.
+  const PAGE_N = 1000
+  const page = (i: number) => db.from('guesty_reservations').select(SELECT, i === 0 ? { count: 'exact' } : undefined).in('listing_id', ids).order('check_in', { ascending: true }).order('id', { ascending: true }).range(i * PAGE_N, i * PAGE_N + PAGE_N - 1)
+  const first = await page(0)
+  if (first.error) throw new Error(first.error.message)
+  let resv: any[] = (first.data || []) as any[]
+  const total = Number(first.count) || resv.length
+  const more = Math.min(30, Math.ceil(total / PAGE_N)) - 1
+  if (more > 0) {
+    const rest = await Promise.all(Array.from({ length: more }, (_, k) => page(k + 1)))
+    for (const r of rest) { if (r.error) throw new Error(r.error.message); resv = resv.concat((r.data || []) as any[]) }
+  }
+
+  const seen: Record<string, boolean> = {}
+  const rows: BRow[] = []
+  for (const r of resv) {
+    const st = str(r.status).toLowerCase()
+    const ci = dateOf(r.check_in), co = dateOf(r.check_out)
+    const rm = byId[String(r.listing_id)]
+    if (!rm) continue
+    const isLive = LIVE.indexOf(st) >= 0
+    const cancelled = /cancel|declined|expired|closed/.test(st) || (!isLive && !!str(r.canceledAt))
+    // Inquiries never became bookings: not a cancellation, not a stay — never listed.
+    if (!isLive && !cancelled) continue
+    const dk = rm.listingId + '|' + (str(r.confirmation_code) || String(r.id)) + '|' + ci + '|' + co
+    const dup = !!seen[dk]; seen[dk] = true
+    const cloudStatus = statusOf(st, ci, co, today)
+
+    // ── Guest ──
+    let first = str(r.gFirst).trim(), last = str(r.gLast).trim()
+    if (!first && !last) { const parts = str(r.gFull || r.guest_name).trim().split(/\s+/).filter(Boolean); first = parts.shift() || ''; last = parts.join(' ') }
+    const email = str(r.guest_email || r.gEmail).trim()
+    const phone = str(r.guest_phone || r.gPhone).trim()
+    const addr = addressOf({ address: r.gAddress, hometown: r.gHometown, nationality: r.gNationality, country: r.gCountry })
+    // NOTES = what a person typed, not what Lighthouse stamped (dated "[2026-10-01] Guest
+    // sentiment…" / Talkroute lines are our operating log). Same line test as lib/ops-brief.
+    const noteParts: string[] = []
+    const pushLines = (text: string) => {
+      for (const line of str(text).split(/[↵\n\r]+/)) {
+        const t = line.trim()
+        if (!t || STAMPED.test(t)) continue
+        if (noteParts.indexOf(t) < 0) noteParts.push(t)
+      }
+    }
+    const rawNote: any = r.rawNote
+    pushLines(typeof rawNote === 'string' ? rawNote : (rawNote && typeof rawNote === 'object' ? Object.values(rawNote).filter(v => typeof v === 'string').join('\n') : str(r.notes)))
+    for (const cf of (Array.isArray(r.custom_fields) ? r.custom_fields : [])) {
+      const id = String(cf?.fieldId?._id || cf?.fieldId || cf?.field?._id || cf?._id || '')
+      const name = str(cf?.fieldName || cf?.name || nameMap[id] || cf?.fieldId?.name || '')
+      if (/^reservation[ _]notes?$/i.test(name.trim()) && typeof cf?.value === 'string') pushLines(cf.value)
+    }
+    const notes = noteParts.join(' | ').replace(/\s+/g, ' ').slice(0, 1000)
+
+    // ── Reservation ──
+    const split = guestSplit({ guestsCount: r.gc, numberOfGuests: r.nog, guests: r.guests })
+    const channel = channelOf(str(r.source) || str(r.platform))
+    const source = CHANNEL_COLLECT.indexOf(channel) >= 0 ? channel + ' (Channel Collect)' : channel
+    const booked = dateOf(r.created_at || r.confirmedAt)
+    const rp: any = r.ratePlan
+    const ratePlan = str(typeof rp === 'object' && rp ? (rp.name || rp.title) : rp) || str(r.ratePlanName)
+
+    // ── Payment ──
+    const currency = str(r.mCurrency || r.money_currency || 'USD')
+    const accommodation = num(has(r.mFareAdj) ? r.mFareAdj : r.mFare)
+    const cleaning = num(r.mClean), fees = num(r.mFees), taxes = num(r.mTaxes)
+    const roomTotal = r2(has(r.mTotal) ? num(r.mTotal) : (has(r.mSub) ? num(r.mSub) + taxes : accommodation + cleaning + fees + taxes))
+    const paidGuesty = r2(has(r.mPaid) ? num(r.mPaid) : num(r.money_paid))
+    const fullyPaid = str(r.mFullyPaid) === 'true' || (has(r.mBalance) && num(r.mBalance) <= 0.009 && paidGuesty > 0)
+    const pay = lastPayment({ payments: r.mPayments })
+    let amountPaid: number, payType: string, payDate: string
+    if (cloudStatus === 'Canceled' || cloudStatus === 'Not Confirmed') {
+      amountPaid = r2(Math.min(paidGuesty, roomTotal > 0 ? roomTotal : paidGuesty))
+      payType = amountPaid > 0 ? (CHANNEL_COLLECT.indexOf(channel) >= 0 ? 'Channel Collect (' + channel + ')' : (pay?.method || 'Imported from previous system')) : ''
+      payDate = amountPaid > 0 ? (pay?.date || booked) : ''
+    } else if (CHANNEL_COLLECT.indexOf(channel) >= 0) {
+      amountPaid = roomTotal; payType = 'Channel Collect (' + channel + ')'; payDate = booked
+    } else {
+      amountPaid = r2(fullyPaid || cloudStatus === 'Checked Out' ? roomTotal : Math.min(paidGuesty, roomTotal))
+      payType = amountPaid > 0 ? (pay?.method || 'Imported from previous system') : ''
+      payDate = amountPaid > 0 ? (pay?.date || booked) : ''
+    }
+
+    rows.push({
+      id: String(r.id), ci, co, live: isLive, status: cloudStatus, channel, room: rm.room, dup,
+      hasEmail: !!email, hasPhone: !!phone, hasAddr: !!addr.line, hasAdults: split.adults != null,
+      cells: [
+        first, last, email, phone, addr.line, addr.country, notes,
+        ci, co, booked, rm.type, rm.room, split.adults == null ? '' : split.adults, split.children == null ? '' : split.children, source, cloudStatus, str(r.confirmation_code), ratePlan,
+        roomTotal, amountPaid, payType, payDate,
+      ],
+      extra: [
+        String(r.id), rm.name, str(r.source) || str(r.platform), cap(st.replace(/_/g, ' ')), num(r.nights) || (ci && co ? daysBetween(ci, co) : ''), currency,
+        r2(accommodation), r2(cleaning), r2(fees), r2(taxes), r2(num(r.mHostFee)), r2(num(r.mPayout)), paidGuesty, has(r.mBalance) ? r2(num(r.mBalance)) : '',
+        dateOf(r.canceledAt), dateOf(r.updatedAt), dup ? 'Yes' : '',
+      ],
+    })
+  }
+  rows.sort((a, b) => a.ci.localeCompare(b.ci) || a.room.localeCompare(b.room, 'en', { numeric: true }))
+  const lastSync = syncRes.data && (syncRes.data as any).last_sync_at ? String((syncRes.data as any).last_sync_at) : null
+  return { at: Date.now(), today, lastSync, rooms: ids.length, rows }
+}
+
+type Filter = { scope: string; withCancelled: boolean; by: string; from: string; to: string }
+/** The one filter — the page runs the same logic in the browser (keep the two in step). */
+function pick(rows: BRow[], f: Filter): BRow[] {
+  return rows.filter(r => {
+    if (r.dup) return false
+    if (!r.live && !f.withCancelled) return false
+    if (f.scope === 'current' && r.status === 'Checked Out') return false
+    if (f.scope === 'past' && r.status !== 'Checked Out') return false
+    if (f.by === 'checkout') { if (f.from && r.co < f.from) return false; if (f.to && r.co > f.to) return false }
+    else if (f.by === 'stay') { if (f.from && !(r.co > f.from)) return false; if (f.to && r.ci > f.to) return false }
+    else { if (f.from && r.ci < f.from) return false; if (f.to && r.ci > f.to) return false }
+    return true
+  })
+}
+
 export async function GET(req: NextRequest) {
   const me = await signedInUser()
   if (me.signedIn) await ensureLinkRow(me.who)
@@ -238,182 +410,40 @@ export async function GET(req: NextRequest) {
   if (!gate.ok) return gate.res
 
   const sp = req.nextUrl.searchParams
-  const today = ymdNY(new Date())
-  const scope = ['all', 'current', 'past'].indexOf(str(sp.get('scope'))) >= 0 ? str(sp.get('scope')) : 'all'
-  const withCancelled = str(sp.get('status')).toLowerCase() === 'all'
-  const from = isoOk(str(sp.get('from')).trim()) ? str(sp.get('from')).trim() : ''
-  const to = isoOk(str(sp.get('to')).trim()) ? str(sp.get('to')).trim() : ''
-  // DATE BY (Jon, 2026-10-28): which date the from/to window reads. checkin = arrivals in the window
-  // (default); checkout = departures in the window; stay = in house on any night of the window
-  // (check-in on or before `to`, check-out after `from`). from = to is one day: arrivals that day,
-  // departures that day, or everyone sleeping there that night.
-  const by = ['checkin', 'checkout', 'stay'].indexOf(str(sp.get('by'))) >= 0 ? str(sp.get('by')) : 'checkin'
+  if (str(sp.get('backfill')) === '1') {
+    // Re-pull from Guesty the Botanica rows that predate guest counts being in the pull (signed-in only).
+    if (!gate.signedIn) return NextResponse.json({ ok: false, error: 'Sign in to Lighthouse to backfill.' }, { status: 403 })
+    const res = await backfillGuestCounts()
+    built = null
+    return res
+  }
+  let from = isoOk(str(sp.get('from')).trim()) ? str(sp.get('from')).trim() : ''
+  let to = isoOk(str(sp.get('to')).trim()) ? str(sp.get('to')).trim() : ''
+  if (from && to && from > to) { const t = from; from = to; to = t }
+  const f: Filter = {
+    scope: ['all', 'current', 'past'].indexOf(str(sp.get('scope'))) >= 0 ? str(sp.get('scope')) : 'all',
+    withCancelled: str(sp.get('status')).toLowerCase() === 'all',
+    // DATE BY (Jon, 2026-10-28): checkin = arrivals in the window; checkout = departures; stay = in
+    // house on any night of it (check-in on or before `to`, check-out after `from`). from = to is one day.
+    by: ['checkin', 'checkout', 'stay'].indexOf(str(sp.get('by'))) >= 0 ? str(sp.get('by')) : 'checkin',
+    from, to,
+  }
   const format = str(sp.get('format') || 'json').toLowerCase()
   const extended = str(sp.get('cols')).toLowerCase() === 'extended'
 
-  // ?backfill=1 (signed-in only): re-pull from Guesty every Botanica reservation whose mirror row
-  // predates guestsCount / numberOfGuests being part of the pull, so adults and children fill in.
-  // Chunks of 200 ids (the re-pull's own cap), inside a time budget; answers how many are left, so
-  // the caller repeats until remaining is 0. Each chunk is four Guesty calls.
-  if (str(sp.get('backfill')) === '1') {
-    if (!gate.signedIn) return NextResponse.json({ ok: false, error: 'Sign in to Lighthouse to backfill.' }, { status: 403 })
-    return backfillGuestCounts()
-  }
-
   try {
-    const db = supabaseAdmin()
-    const { data: listings, error: lErr } = await db.from('guesty_listings').select('id,nickname,title,building,status,active:raw->>active')
-    if (lErr) throw new Error(lErr.message)
-    type Room = { listingId: string; name: string; room: string; type: string; listed: boolean }
-    const byId: Record<string, Room> = {}
-    const ids: string[] = []
-    for (const l of (listings || []) as any[]) {
-      const name = str(l.nickname || l.title)
-      if (!/botanica/i.test(str(l.building)) && !/botanica/i.test(name)) continue
-      const retired = /inactive|disabled|archived|deleted/i.test(str(l.status)) || str(l.active) === 'false'
-      const r = roomOf(name)
-      byId[String(l.id)] = { listingId: String(l.id), name, room: r.room, type: r.type, listed: !retired }
-      ids.push(String(l.id))
-    }
-    if (!ids.length) return NextResponse.json({ ok: false, error: 'No Botanica listings found in the Guesty mirror' }, { status: 500 })
+    const data = await getBuilt(str(sp.get('fresh')) === '1')
+    const today = data.today
 
-    // Every reservation on those listings — the sub-objects the columns need, never the whole raw
-    // payload (a Guesty reservation is tens of KB; a few thousand of them is not a page load).
-    let resv: any[] = []
-    for (let i = 0; i < 30; i++) {
-      let q = db.from('guesty_reservations')
-        .select('id,listing_id,guest_name,guest_email,guest_phone,check_in,check_out,nights,status,source,confirmation_code,notes,custom_fields,created_at,money_paid,money_balance,money_currency,guest:raw->guest,money:raw->money,gc:raw->guestsCount,nog:raw->numberOfGuests,guests:raw->guests,platform:raw->integration->>platform,canceledAt:raw->>canceledAt,confirmedAt:raw->>confirmedAt,updatedAt:raw->>lastUpdatedAt,rawNote:raw->note,ratePlan:raw->ratePlan,ratePlanName:raw->>ratePlanName')
-        .in('listing_id', ids)
-        .order('check_in', { ascending: true })
-        .range(i * 1000, i * 1000 + 999)
-      if (by === 'checkout') { if (from) q = q.gte('check_out', from); if (to) q = q.lte('check_out', to) }
-      else if (by === 'stay') { if (from) q = q.gt('check_out', from); if (to) q = q.lte('check_in', to) }
-      else { if (from) q = q.gte('check_in', from); if (to) q = q.lte('check_in', to) }
-      const { data, error } = await q
-      if (error) throw new Error(error.message)
-      if (!data || data.length === 0) break
-      resv = resv.concat(data)
-      if (data.length < 1000) break
-    }
-    const nameMap = await customFieldNameMap().catch(() => ({} as Record<string, string>))
-
-    const counts = { all: 0, inHouse: 0, upcoming: 0, past: 0, cancelled: 0, duplicatesDropped: 0, withEmail: 0, withPhone: 0, withAddress: 0, withAdults: 0 }
-    const seen: Record<string, boolean> = {}
-    type Row = { cells: (string | number)[]; extra: (string | number)[]; key: string; sortCi: string; room: string; cloudStatus: string; channel: string }
-    const rows: Row[] = []
-    for (const r of resv) {
-      const st = str(r.status).toLowerCase()
-      const ci = dateOf(r.check_in), co = dateOf(r.check_out)
-      const rm = byId[String(r.listing_id)]
-      if (!rm) continue
-      const cancelled = /cancel|declined|expired|closed/.test(st) || (!LIVE.includes(st) && !!str(r.canceledAt))
-      const isLive = LIVE.includes(st)
-      // Inquiries never became bookings: not a cancellation, not a stay — out, whatever the switch.
-      if (!isLive && !cancelled) continue
-      if (!isLive && !withCancelled) { counts.cancelled++; continue }
-      const dk = rm.listingId + '|' + (str(r.confirmation_code) || String(r.id)) + '|' + ci + '|' + co
-      const dup = !!seen[dk]; seen[dk] = true
-      if (dup) { counts.duplicatesDropped++; continue }
-
-      const cloudStatus = statusOf(st, ci, co, today)
-      if (cloudStatus === 'Canceled' || cloudStatus === 'Not Confirmed') counts.cancelled++
-      else if (cloudStatus === 'Checked Out') counts.past++
-      else if (cloudStatus === 'Checked In') counts.inHouse++
-      else counts.upcoming++
-      if (scope === 'current' && (cloudStatus === 'Checked Out')) continue
-      if (scope === 'past' && cloudStatus !== 'Checked Out') continue
-      counts.all++
-
-      // ── Guest ──
-      const g: any = r.guest && typeof r.guest === 'object' ? r.guest : {}
-      let first = str(g.firstName).trim(), last = str(g.lastName).trim()
-      if (!first && !last) { const parts = str(g.fullName || r.guest_name).trim().split(/\s+/).filter(Boolean); first = parts.shift() || ''; last = parts.join(' ') }
-      const email = str(r.guest_email || g.email || (Array.isArray(g.emails) ? (typeof g.emails[0] === 'object' ? g.emails[0]?.address : g.emails[0]) : '')).trim()
-      const phone = str(r.guest_phone || g.phone || (Array.isArray(g.phones) ? (typeof g.phones[0] === 'object' ? g.phones[0]?.number : g.phones[0]) : '')).trim()
-      const addr = addressOf(g)
-      if (email) counts.withEmail++
-      if (phone) counts.withPhone++
-      if (addr.line) counts.withAddress++
-      // NOTES = what a person typed, not what Lighthouse stamped. The "Reservation notes" custom
-      // field carries Lighthouse's own dated entries ("[2026-10-01] Guest sentiment: …", "[…] Post-
-      // checkout call by Talkroute…") — 440 of the 465 notes on the first live run. Those are our
-      // operating log, not something the hotel's new system needs on the booking; the hand-written
-      // lines (ETA, refunds, special requests) are. Same line test as lib/ops-brief.
-      const noteParts: string[] = []
-      const rawNote: any = r.rawNote
-      const noteText = typeof rawNote === 'string' ? rawNote : (rawNote && typeof rawNote === 'object' ? Object.values(rawNote).filter(v => typeof v === 'string').join('\n') : str(r.notes))
-      const pushLines = (text: string) => {
-        for (const line of str(text).split(/[\u21b5\n\r]+/)) {
-          const t = line.trim()
-          if (!t || STAMPED.test(t)) continue
-          if (noteParts.indexOf(t) < 0) noteParts.push(t)
-        }
+    if (format === 'csv' || format === 'xlsx') {
+      const rows = pick(data.rows, f)
+      const header = extended ? HEADER.concat(EXTENDED) : HEADER
+      const outRows = rows.map(r => extended ? r.cells.concat(r.extra) : r.cells)
+      const fname = 'botanica-bookings-' + (f.scope === 'all' ? 'all' : f.scope) + (from || to ? '-' + f.by + '-' + (from || 'start') + (to !== from ? '-to-' + (to || 'end') : '') : '') + (f.withCancelled ? '-incl-cancelled' : '') + (extended ? '-extended' : '') + '-' + today.replace(/-/g, '')
+      if (format === 'csv') {
+        const csv = [header.map(csvCell).join(',')].concat(outRows.map(r => r.map(csvCell).join(','))).join('\r\n')
+        return new NextResponse('﻿' + csv, { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="' + fname + '.csv"', 'Cache-Control': 'no-store' } })
       }
-      pushLines(noteText)
-      for (const cf of (Array.isArray(r.custom_fields) ? r.custom_fields : [])) {
-        const id = String(cf?.fieldId?._id || cf?.fieldId || cf?.field?._id || cf?._id || '')
-        const name = str(cf?.fieldName || cf?.name || nameMap[id] || cf?.fieldId?.name || '')
-        if (/^reservation[ _]notes?$/i.test(name.trim()) && typeof cf?.value === 'string') pushLines(cf.value)
-      }
-      const notes = noteParts.join(' | ').replace(/\s+/g, ' ').slice(0, 1000)
-
-      // ── Reservation ──
-      const split = guestSplit({ guestsCount: r.gc, numberOfGuests: r.nog, guests: r.guests })
-      if (split.adults != null) counts.withAdults++
-      const channel = channelOf(str(r.source) || str(r.platform))
-      const source = CHANNEL_COLLECT.indexOf(channel) >= 0 ? channel + ' (Channel Collect)' : channel
-      const booked = dateOf(r.created_at || r.confirmedAt)
-      const rp: any = r.ratePlan
-      const ratePlan = str(typeof rp === 'object' && rp ? (rp.name || rp.title) : rp) || str(r.ratePlanName)
-
-      // ── Payment ──
-      const m: any = r.money && typeof r.money === 'object' ? r.money : {}
-      const currency = str(m.currency || r.money_currency || 'USD')
-      const accommodation = num(m.fareAccommodationAdjusted ?? m.fareAccommodation)
-      const cleaning = num(m.fareCleaning), fees = num(m.totalFees), taxes = num(m.totalTaxes)
-      const roomTotal = r2(has(m.totalPrice) ? num(m.totalPrice) : (has(m.subTotalPrice) ? num(m.subTotalPrice) + taxes : accommodation + cleaning + fees + taxes))
-      const paidGuesty = r2(has(m.totalPaid) ? num(m.totalPaid) : num(r.money_paid))
-      const fullyPaid = m.isFullyPaid === true || (has(m.balanceDue) && num(m.balanceDue) <= 0.009 && paidGuesty > 0)
-      const pay = lastPayment(m)
-      let amountPaid: number, payType: string, payDate: string
-      if (cloudStatus === 'Canceled' || cloudStatus === 'Not Confirmed') {
-        amountPaid = r2(Math.min(paidGuesty, roomTotal > 0 ? roomTotal : paidGuesty))
-        payType = amountPaid > 0 ? (CHANNEL_COLLECT.indexOf(channel) >= 0 ? 'Channel Collect (' + channel + ')' : (pay?.method || 'Imported from previous system')) : ''
-        payDate = amountPaid > 0 ? (pay?.date || booked) : ''
-      } else if (CHANNEL_COLLECT.indexOf(channel) >= 0) {
-        amountPaid = roomTotal; payType = 'Channel Collect (' + channel + ')'; payDate = booked
-      } else {
-        amountPaid = r2(fullyPaid || cloudStatus === 'Checked Out' ? roomTotal : Math.min(paidGuesty, roomTotal))
-        payType = amountPaid > 0 ? (pay?.method || 'Imported from previous system') : ''
-        payDate = amountPaid > 0 ? (pay?.date || booked) : ''
-      }
-
-      const cells: (string | number)[] = [
-        first, last, email, phone, addr.line, addr.country, notes,
-        ci, co, booked, rm.type, rm.room, split.adults == null ? '' : split.adults, split.children == null ? '' : split.children, source, cloudStatus, str(r.confirmation_code), ratePlan,
-        roomTotal, amountPaid, payType, payDate,
-      ]
-      const extra: (string | number)[] = [
-        String(r.id), rm.name, str(r.source) || str(r.platform), cap(st.replace(/_/g, ' ')), num(r.nights) || (ci && co ? daysBetween(ci, co) : ''), currency,
-        r2(accommodation), r2(cleaning), r2(fees), r2(taxes), r2(num(m.hostServiceFee)), r2(num(m.hostPayout)), paidGuesty, has(m.balanceDue) ? r2(num(m.balanceDue)) : '',
-        dateOf(r.canceledAt), dateOf(r.updatedAt), '',
-      ]
-      rows.push({ cells, extra, key: String(r.id), sortCi: ci, room: rm.room, cloudStatus, channel })
-    }
-    rows.sort((a, b) => a.sortCi.localeCompare(b.sortCi) || a.room.localeCompare(b.room, 'en', { numeric: true }))
-
-    const { data: syncSt } = await db.from('guesty_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
-    const lastSync = syncSt && (syncSt as any).last_sync_at ? String((syncSt as any).last_sync_at) : null
-    const header = extended ? HEADER.concat(EXTENDED) : HEADER
-    const outRows = rows.map(r => extended ? r.cells.concat(r.extra) : r.cells)
-    const stamp = today.replace(/-/g, '')
-    const fname = 'botanica-bookings-' + (scope === 'all' ? 'all' : scope) + (from || to ? '-' + by + '-' + (from || 'start') + (to !== from ? '-to-' + (to || 'end') : '') : '') + (withCancelled ? '-incl-cancelled' : '') + (extended ? '-extended' : '') + '-' + stamp
-
-    if (format === 'csv') {
-      const csv = [header.map(csvCell).join(',')].concat(outRows.map(r => r.map(csvCell).join(','))).join('\r\n')
-      return new NextResponse('﻿' + csv, { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="' + fname + '.csv"', 'Cache-Control': 'no-store' } })
-    }
-    if (format === 'xlsx') {
       // Row 1 = the three blue headings over their columns, row 2 = the column names, like the template.
       const groupRow: XCell[] = []
       for (const gr of GROUPS) { groupRow.push({ v: gr.label, s: 10 }); for (let i = 1; i < gr.cols.length; i++) groupRow.push({ v: '', s: 10 }) }
@@ -426,12 +456,16 @@ export async function GET(req: NextRequest) {
       const buf = makeXlsx([{ name: 'Botanica bookings', widths, rows: [groupRow, headRow].concat(body) }])
       return new NextResponse(buf as any, { headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': 'attachment; filename="' + fname + '.xlsx"', 'Cache-Control': 'no-store' } })
     }
+
+    // JSON for the page: EVERY booking once (live + cancelled, duplicates dropped), lean — the page
+    // filters in the browser, so a filter click never goes back to the server.
+    const rows = data.rows.filter(r => !r.dup)
     return NextResponse.json({
-      ok: true, property: 'Botanica (The Garden Hotel & Resort)', today, generatedAt: new Date().toISOString(), lastSync,
-      scope, withCancelled, from, to, by, extended, signedIn: gate.signedIn, label: gate.link?.title || null,
-      rooms: ids.length, counts, groups: GROUPS.map(g => ({ label: g.label, span: g.cols.length })), header, extendedHeader: EXTENDED, rules: COLUMN_RULES,
-      rows: rows.map(r => ({ id: r.key, status: r.cloudStatus, channel: r.channel, cells: r.cells, extra: r.extra })),
-    })
+      ok: true, today, generatedAt: new Date(data.at).toISOString(), lastSync: data.lastSync, rooms: data.rooms,
+      signedIn: gate.signedIn, groups: GROUPS.map(g => ({ label: g.label, span: g.cols.length })), header: HEADER, rules: COLUMN_RULES,
+      duplicatesDropped: data.rows.length - rows.length,
+      rows: rows.map(r => ({ id: r.id, ci: r.ci, co: r.co, live: r.live, s: r.status, ch: r.channel, e: r.hasEmail, p: r.hasPhone, a: r.hasAddr, ad: r.hasAdults, c: r.cells })),
+    }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
