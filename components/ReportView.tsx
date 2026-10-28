@@ -2270,24 +2270,6 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     } catch { setEgMsg('Could not measure.') }
     setEgBusy(false)
   }
-  const [rsBusy, setRsBusy] = useState(false)
-  const [rsMsg, setRsMsg] = useState('')
-  const [rsSkip, setRsSkip] = useState(0)
-  async function pullRealStatement() {
-    if (rsBusy) return
-    setRsBusy(true); setRsMsg('')
-    try {
-      const cur: Any = (c as Any).statement && (c as Any).statement.real
-      const next = cur ? rsSkip + 1 : 0
-      const d = await fetch('/api/reports/sales-statement?skip=' + next).then(r => r.json())
-      if (d?.ok && d.statement) {
-        setRsSkip(next)
-        mutate((dr: Any) => { dr.statement = dr.statement || {}; dr.statement.real = d.statement })
-        setRsMsg(String(d.statement.unitLabel || '') + ' · ' + String(d.statement.period || '') + ' — review, then Save.')
-      } else setRsMsg(String(d?.error || 'No statement found.'))
-    } catch { setRsMsg('No statement found.') }
-    setRsBusy(false)
-  }
   const [plBusy, setPlBusy] = useState(false)
   const [plMsg, setPlMsg] = useState('')
   async function buildPlan(source: 'model' | 'upload', url?: string) {
@@ -6944,69 +6926,84 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // make it different from the statements they get today.
           // ── 7 · STATEMENTS — the worked month, then the three rules ────────
           if (isSales && !hid('statement')) {
-            // A REAL MONTH, NAMES REMOVED, when the deck carries one (lib/sales-statement); the
-            // house sample only when it does not.
-            const realSt: Any = sec('statement').real && typeof sec('statement').real === 'object' ? sec('statement').real : null
-            const st: Any = realSt ? realSt : { ...sec('statement'), ...SAMPLE_STATEMENT }
+            // AN EXAMPLE, LAID OUT LIKE THE REAL THING (Jon, 2026-10-28: "use a real owner
+            // statement", then "use example not real data"). The figures are the house example
+            // (lib/statement-sample), never a real owner's month; the layout is the statement an
+            // owner actually receives from Guesty — header, performance strip, the summary in the
+            // issued order, the payout, and the bookings behind it.
+            const st: Any = { ...sec('statement'), ...SAMPLE_STATEMENT }
+            const stRes: Any[] = (st.reservations || []) as Any[]
+            const amtOf = (r: Any, cat: RegExp) => { const ln = ((r.lines || []) as Any[]).find((l: Any) => cat.test(String(l.cat || ''))); return ln ? String(ln.amt || '') : '' }
             const points: [string, string][] = [
-              ['Already net of channel fees', 'Rental income arrives after Airbnb and the others take their cut. No surprise deductions.'],
-              ['Every charge traces to a job', 'Each line names the work, the date and the hours. Nothing bundled.'],
+              ['Already net of channel fees', 'Rental income arrives after Airbnb and the others take their cut.'],
+              ['Every charge traces to a job', 'Each line names the work, the date and the hours.'],
               ['Your approval above ' + (() => { const tr: Any[] = Array.isArray(sec('terms').rows) ? sec('terms').rows : []; const r: Any = tr.find((x: Any) => /spend/i.test(String(x.k || ''))); const m = r ? String(r.v || '').match(/\$[\d,]+/) : null; return m ? m[0] : '$300' })(), 'Anything bigger comes to you before it is spent.'],
             ]
+            const cell = (txt: string, o: Any = {}) => <span style={{ fontSize: 11, color: '#374151', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', ...o }}>{txt}</span>
             slides.push({ key: 'statement', ai: true, node: (
               <Slide nav="Owner statement" warn={edit}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 430px', gap: 52, height: '100%' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 580px', gap: 40, height: '100%' }}>
                   <div className="flex flex-col">
                     <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: t.accent, margin: 0 }}>Owner statement</p>
-                    <h2 style={{ fontSize: 40, lineHeight: 1.08, letterSpacing: '-0.025em', fontWeight: 600, color: t.ink, margin: '10px 0 0', maxWidth: '16ch' }}>A statement you can read in a minute</h2>
-                    <div style={{ marginTop: 30, display: 'grid', gap: 18 }}>
+                    <h2 style={{ fontSize: 38, lineHeight: 1.08, letterSpacing: '-0.025em', fontWeight: 600, color: t.ink, margin: '10px 0 0', maxWidth: '14ch' }}>A statement you can read in a minute</h2>
+                    <div style={{ marginTop: 26, display: 'grid', gap: 14 }}>
                       {points.map(([k, v], i) => (
-                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '34px 1fr', alignItems: 'baseline', borderTop: '1px solid ' + t.rule, paddingTop: 14 }}>
-                          <span style={{ fontFamily: SERIF, fontSize: 20, color: t.accent }}>{i + 1}</span>
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '30px 1fr', alignItems: 'baseline', borderTop: '1px solid ' + t.rule, paddingTop: 12 }}>
+                          <span style={{ fontFamily: SERIF, fontSize: 19, color: t.accent }}>{i + 1}</span>
                           <div>
-                            <p style={{ fontSize: 16, fontWeight: 600, color: t.ink, margin: 0 }}>{k}</p>
-                            <p style={{ fontSize: 13.5, lineHeight: 1.5, color: t.muted, margin: '4px 0 0' }}>{v}</p>
+                            <p style={{ fontSize: 15, fontWeight: 600, color: t.ink, margin: 0 }}>{k}</p>
+                            <p style={{ fontSize: 13, lineHeight: 1.45, color: t.muted, margin: '3px 0 0' }}>{v}</p>
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
-                  <div className="flex flex-col" style={{ background: '#fff', border: '1px solid ' + t.cardBorder, borderRadius: 14, boxShadow: '0 24px 50px -28px rgba(10,20,40,0.4)', padding: '22px 24px', alignSelf: 'center' }}>
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p style={{ fontSize: 15, fontWeight: 600, color: '#111827', margin: 0 }}>Owner statement</p>
-                        <p style={{ fontSize: 11.5, color: '#6b7280', margin: '3px 0 0' }}>{String(st.unitLabel || '')} · {String(st.period || '')}</p>
+                  <div className="flex flex-col" style={{ background: '#fff', border: '1px solid ' + t.cardBorder, borderRadius: 12, boxShadow: '0 24px 50px -28px rgba(10,20,40,0.4)', padding: '18px 22px', alignSelf: 'center' }}>
+                    {/* the document's own header */}
+                    <div className="flex items-center justify-between" style={{ paddingBottom: 10, borderBottom: '2px solid #111827' }}>
+                      {mark.logo ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={mark.logo} alt={mark.word} style={{ height: 20, width: 'auto', objectFit: 'contain' }} />
+                      ) : <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.35em', color: '#111827' }}>{mark.word}</span>}
+                      <div style={{ textAlign: 'right' }}>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: '#111827', margin: 0 }}>Owner statement · {String(st.period || '')}</p>
+                        <p style={{ fontSize: 10.5, color: '#6b7280', margin: '2px 0 0' }}>{String(st.unitLabel || '')} · <span style={{ color: t.gold, fontWeight: 700, letterSpacing: '0.08em' }}>EXAMPLE</span></p>
                       </div>
-                      <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: realSt ? t.accent : t.gold, border: '1px solid ' + (realSt ? t.accent : t.gold), borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap' }}>{realSt ? 'Real · names removed' : 'Sample'}</span>
                     </div>
-                    <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
-                      {((st.kpis || []) as Any[]).slice(0, 3).map((k: Any, i: number) => (
-                        <div key={i} style={{ background: '#f5f6f8', borderRadius: 8, padding: '8px 10px' }}>
-                          <p style={{ fontSize: 10, color: '#6b7280', margin: 0 }}>{String(k.k || '')}</p>
-                          <p style={{ fontSize: 15, fontWeight: 600, color: '#111827', margin: '2px 0 0', fontVariantNumeric: 'tabular-nums' }}>{String(k.v || '')}</p>
+                    <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 1, background: '#e5e7eb', border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+                      {((st.kpis || []) as Any[]).slice(0, 4).map((k: Any, i: number) => (
+                        <div key={i} style={{ background: '#fff', padding: '6px 10px' }}>
+                          <p style={{ fontSize: 9.5, color: '#6b7280', margin: 0 }}>{String(k.k || '')}</p>
+                          <p style={{ fontSize: 14, fontWeight: 600, color: '#111827', margin: '1px 0 0', fontVariantNumeric: 'tabular-nums' }}>{String(k.v || '')}</p>
                         </div>
                       ))}
                     </div>
-                    <div style={{ marginTop: 14 }}>
-                      {((st.summary || []) as Any[]).filter((ln: Any) => !/initial balance/i.test(String(ln.k || ''))).map((ln: Any, i: number) => (
-                        <div key={i} className="flex justify-between" style={{ gap: 12, padding: '7px 2px', borderBottom: '1px solid #eef0f3', borderTop: ln.rule ? '1px solid #111827' : undefined }}>
-                          <span style={{ fontSize: 12.5, color: ln.rule ? '#111827' : '#374151', fontWeight: ln.rule ? 600 : 400 }}>{String(ln.k || '')}</span>
-                          <span style={{ fontSize: 12.5, fontWeight: ln.rule ? 600 : 500, color: ln.neg ? t.gold : '#111827', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{String(ln.v || '')}</span>
+                    <div className="flex justify-between" style={{ marginTop: 10, padding: '4px 8px', background: '#f3f4f6', borderRadius: '5px 5px 0 0' }}>
+                      <span style={{ fontSize: 10, color: '#6b7280' }}>Category</span><span style={{ fontSize: 10, color: '#6b7280' }}>Monthly amount</span>
+                    </div>
+                    {((st.summary || []) as Any[]).filter((ln: Any) => !/initial balance/i.test(String(ln.k || ''))).map((ln: Any, i: number) => (
+                      <div key={i} className="flex justify-between" style={{ gap: 12, padding: '4px 8px', borderBottom: '1px solid #eef0f3', borderTop: ln.rule ? '1px solid #111827' : undefined }}>
+                        <span style={{ fontSize: 11.5, color: ln.rule ? '#111827' : '#374151', fontWeight: ln.rule ? 600 : 400 }}>{String(ln.k || '')}</span>
+                        <span style={{ fontSize: 11.5, fontWeight: ln.rule ? 600 : 500, color: ln.neg ? t.gold : '#111827', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{String(ln.v || '')}</span>
+                      </div>
+                    ))}
+                    <div className="flex items-baseline justify-between" style={{ marginTop: 8, background: t.band, borderRadius: 8, padding: '9px 14px' }}>
+                      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)' }}>{String((st.due || {}).k || 'Payment due to owner')}</span>
+                      <span style={{ fontSize: 19, fontWeight: 600, color: '#fff', fontVariantNumeric: 'tabular-nums' }}>{String((st.due || {}).v || '')}</span>
+                    </div>
+                    {stRes.length ? (
+                      <div style={{ marginTop: 12 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.6fr 0.9fr 0.9fr', gap: 8, padding: '0 2px 4px', borderBottom: '1px solid #111827' }}>
+                          {['Reservation', 'Stay', 'Rental', 'Mgmt fee'].map((h, i) => <span key={h} style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#6b7280', textAlign: i > 1 ? 'right' : 'left' }}>{h}</span>)}
                         </div>
-                      ))}
-                    </div>
-                    <div className="flex items-baseline justify-between" style={{ marginTop: 14, background: t.band, borderRadius: 10, padding: '12px 16px' }}>
-                      <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.8)' }}>{String((st.due || {}).k || 'Payment due to owner')}</span>
-                      <span style={{ fontSize: 22, fontWeight: 600, color: '#fff', fontVariantNumeric: 'tabular-nums' }}>{String((st.due || {}).v || '')}</span>
-                    </div>
-                    {edit ? (
-                      <div className="sb-noprint flex items-center" style={{ gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-                        <button onClick={() => pullRealStatement()} disabled={rsBusy}
-                          style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 12px', borderRadius: 999, background: t.ink, color: t.bg, opacity: rsBusy ? 0.6 : 1 }}>
-                          {rsBusy ? 'Finding…' : realSt ? 'Show another real month' : 'Use a real statement'}
-                        </button>
-                        {realSt ? <button onClick={() => mutate((d: Any) => { if (d.statement) delete d.statement.real })} style={{ fontSize: 11.5, color: t.muted }}>Use the sample</button> : null}
-                        {rsMsg ? <span style={{ fontSize: 11, color: t.muted }}>{rsMsg}</span> : null}
+                        {stRes.slice(0, 3).map((r: Any, i: number) => (
+                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.6fr 0.9fr 0.9fr', gap: 8, padding: '4px 2px', borderBottom: '1px solid #eef0f3' }}>
+                            {cell(String(r.guest || ''), { color: '#111827', fontWeight: 600 })}
+                            {cell(String(r.stay || ''))}
+                            {cell(amtOf(r, /rental/i), { textAlign: 'right' })}
+                            {cell(amtOf(r, /management/i), { textAlign: 'right', color: t.gold })}
+                          </div>
+                        ))}
                       </div>
                     ) : null}
                   </div>
