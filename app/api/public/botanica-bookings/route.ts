@@ -243,6 +243,11 @@ export async function GET(req: NextRequest) {
   const withCancelled = str(sp.get('status')).toLowerCase() === 'all'
   const from = isoOk(str(sp.get('from')).trim()) ? str(sp.get('from')).trim() : ''
   const to = isoOk(str(sp.get('to')).trim()) ? str(sp.get('to')).trim() : ''
+  // DATE BY (Jon, 2026-10-28): which date the from/to window reads. checkin = arrivals in the window
+  // (default); checkout = departures in the window; stay = in house on any night of the window
+  // (check-in on or before `to`, check-out after `from`). from = to is one day: arrivals that day,
+  // departures that day, or everyone sleeping there that night.
+  const by = ['checkin', 'checkout', 'stay'].indexOf(str(sp.get('by'))) >= 0 ? str(sp.get('by')) : 'checkin'
   const format = str(sp.get('format') || 'json').toLowerCase()
   const extended = str(sp.get('cols')).toLowerCase() === 'extended'
 
@@ -281,8 +286,9 @@ export async function GET(req: NextRequest) {
         .in('listing_id', ids)
         .order('check_in', { ascending: true })
         .range(i * 1000, i * 1000 + 999)
-      if (from) q = q.gte('check_in', from)
-      if (to) q = q.lte('check_in', to)
+      if (by === 'checkout') { if (from) q = q.gte('check_out', from); if (to) q = q.lte('check_out', to) }
+      else if (by === 'stay') { if (from) q = q.gt('check_out', from); if (to) q = q.lte('check_in', to) }
+      else { if (from) q = q.gte('check_in', from); if (to) q = q.lte('check_in', to) }
       const { data, error } = await q
       if (error) throw new Error(error.message)
       if (!data || data.length === 0) break
@@ -401,7 +407,7 @@ export async function GET(req: NextRequest) {
     const header = extended ? HEADER.concat(EXTENDED) : HEADER
     const outRows = rows.map(r => extended ? r.cells.concat(r.extra) : r.cells)
     const stamp = today.replace(/-/g, '')
-    const fname = 'botanica-bookings-' + (scope === 'all' ? 'all' : scope) + (from || to ? '-checkin-' + (from || 'start') + '-to-' + (to || 'end') : '') + (withCancelled ? '-incl-cancelled' : '') + (extended ? '-extended' : '') + '-' + stamp
+    const fname = 'botanica-bookings-' + (scope === 'all' ? 'all' : scope) + (from || to ? '-' + by + '-' + (from || 'start') + (to !== from ? '-to-' + (to || 'end') : '') : '') + (withCancelled ? '-incl-cancelled' : '') + (extended ? '-extended' : '') + '-' + stamp
 
     if (format === 'csv') {
       const csv = [header.map(csvCell).join(',')].concat(outRows.map(r => r.map(csvCell).join(','))).join('\r\n')
@@ -422,7 +428,7 @@ export async function GET(req: NextRequest) {
     }
     return NextResponse.json({
       ok: true, property: 'Botanica (The Garden Hotel & Resort)', today, generatedAt: new Date().toISOString(), lastSync,
-      scope, withCancelled, from, to, extended, signedIn: gate.signedIn, label: gate.link?.title || null,
+      scope, withCancelled, from, to, by, extended, signedIn: gate.signedIn, label: gate.link?.title || null,
       rooms: ids.length, counts, groups: GROUPS.map(g => ({ label: g.label, span: g.cols.length })), header, extendedHeader: EXTENDED, rules: COLUMN_RULES,
       rows: rows.map(r => ({ id: r.key, status: r.cloudStatus, channel: r.channel, cells: r.cells, extra: r.extra })),
     })

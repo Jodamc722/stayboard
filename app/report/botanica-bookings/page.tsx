@@ -59,15 +59,19 @@ export default function BotanicaBookingsPage() {
   // Date selector (Jon, 2026-10-27): check-in from / to. Empty = every booking.
   const [fromD, setFromD] = useState('')
   const [toD, setToD] = useState('')
+  // Which date the window reads, and one-day vs range (Jon, 2026-10-28).
+  const [by, setBy] = useState<'checkin' | 'checkout' | 'stay'>('checkin')
+  const [oneDay, setOneDay] = useState(false)
   const [limit, setLimit] = useState(PAGE)
   const [showRules, setShowRules] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [bf, setBf] = useState<{ running: boolean; msg: string }>({ running: false, msg: '' })
 
   const query = useMemo(() => {
-    const lo = fromD && toD && fromD > toD ? toD : fromD, hi = fromD && toD && fromD > toD ? fromD : toD
-    return 'scope=' + scope + '&status=' + (withCancelled ? 'all' : 'live') + (lo ? '&from=' + lo : '') + (hi ? '&to=' + hi : '')
-  }, [scope, withCancelled, fromD, toD])
+    const t2 = oneDay ? fromD : toD
+    const lo = fromD && t2 && fromD > t2 ? t2 : fromD, hi = fromD && t2 && fromD > t2 ? fromD : t2
+    return 'scope=' + scope + '&status=' + (withCancelled ? 'all' : 'live') + '&by=' + by + (lo ? '&from=' + lo : '') + (hi ? '&to=' + hi : '')
+  }, [scope, withCancelled, fromD, toD, by, oneDay])
 
   const load = useCallback(async () => {
     try {
@@ -202,28 +206,47 @@ export default function BotanicaBookingsPage() {
           <button type="button" onClick={() => setShowRules(s => !s)} className="text-xs font-medium text-neutral-600 underline-offset-2 hover:underline">{showRules ? 'Hide column rules' : 'How each column is filled'}</button>
         </div>
 
-        {/* Date selector — check-in dates. Presets are buttons, never a menu. */}
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-          <span className="font-semibold text-neutral-600">Check-in</span>
-          <input type="date" value={fromD} onChange={e => setFromD(e.target.value)} className="border border-neutral-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-sky-400/40" aria-label="Check-in from" />
-          <span className="text-neutral-400">to</span>
-          <input type="date" value={toD} onChange={e => setToD(e.target.value)} className="border border-neutral-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-sky-400/40" aria-label="Check-in to" />
-          {(() => {
-            const t = data?.today || iso(new Date())
-            const ms = monthStart(t), nextMs = monthStart(addDays(ms, 32)), lastMs = monthStart(addDays(ms, -1))
-            const presets: [string, string, string, string][] = [
-              ['This month', ms, addDays(nextMs, -1), 'Check-ins this calendar month'],
-              ['Last month', lastMs, addDays(ms, -1), 'Check-ins last calendar month'],
-              ['Next 30 days', t, addDays(t, 30), 'Arrivals from today through 30 days out'],
-              ['Last 90 days', addDays(t, -90), t, 'Check-ins in the last 90 days'],
-            ]
-            return presets.map(([label, a, b, hint]) => {
-              const on = fromD === a && toD === b
-              return <button key={label} type="button" title={hint} onClick={() => { setFromD(a); setToD(b) }} className={'font-semibold px-2.5 py-1.5 rounded-lg border transition-colors ' + (on ? 'text-white border-transparent' : 'bg-white text-neutral-700 border-neutral-200 hover:border-neutral-300')} style={on ? { background: BLUE } : undefined}>{label}</button>
-            })
-          })()}
-          {fromD || toD ? <button type="button" onClick={() => { setFromD(''); setToD('') }} className="font-medium text-neutral-600 underline-offset-2 hover:underline">Clear dates</button> : <span className="text-neutral-400">all dates</span>}
-        </div>
+        {/* Date selector — by check-in, check-out or stay dates; one day or a range. Buttons, never a menu. */}
+        {(() => {
+          const t = data?.today || iso(new Date())
+          const ms = monthStart(t), nextMs = monthStart(addDays(ms, 32)), lastMs = monthStart(addDays(ms, -1))
+          const word = by === 'checkin' ? 'Check-ins' : by === 'checkout' ? 'Check-outs' : 'Stays'
+          const pill = (on: boolean) => 'font-semibold px-2.5 py-1.5 rounded-lg border transition-colors ' + (on ? 'text-white border-transparent' : 'bg-white text-neutral-700 border-neutral-200 hover:border-neutral-300')
+          const days: [string, string, string][] = [
+            ['Yesterday', addDays(t, -1), word + ' yesterday'], ['Today', t, word + ' today'], ['Tomorrow', addDays(t, 1), word + ' tomorrow'],
+          ]
+          const ranges: [string, string, string, string][] = [
+            ['This month', ms, addDays(nextMs, -1), word + ' this calendar month'],
+            ['Last month', lastMs, addDays(ms, -1), word + ' last calendar month'],
+            ['Next 30 days', t, addDays(t, 30), word + ' from today through 30 days out'],
+            ['Last 90 days', addDays(t, -90), t, word + ' in the last 90 days'],
+          ]
+          const isDay = (d: string) => oneDay && fromD === d
+          const isRange = (a: string, b: string) => !oneDay && fromD === a && toD === b
+          const input = 'border border-neutral-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-sky-400/40'
+          return (
+            <div className="mt-2 space-y-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-neutral-600 w-14">Date by</span>
+                {([['checkin', 'Check-in', 'Bookings arriving in the dates'], ['checkout', 'Check-out', 'Bookings departing in the dates'], ['stay', 'Stay dates', 'Bookings in house on any night of the dates — one day = everyone sleeping there that night']] as ['checkin' | 'checkout' | 'stay', string, string][]).map(([k, label, hint]) => (
+                  <button key={k} type="button" title={hint} onClick={() => setBy(k)} className={pill(by === k)} style={by === k ? { background: BLUE } : undefined}>{label}</button>
+                ))}
+                <span className="w-px h-5 bg-neutral-200 mx-1" />
+                <button type="button" title="Pick one date" onClick={() => { setOneDay(true); if (fromD) setToD(fromD) }} className={pill(oneDay)} style={oneDay ? { background: BLUE } : undefined}>One day</button>
+                <button type="button" title="Pick a from / to range" onClick={() => setOneDay(false)} className={pill(!oneDay)} style={!oneDay ? { background: BLUE } : undefined}>Range</button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-neutral-600 w-14">{oneDay ? 'On' : 'From'}</span>
+                <input type="date" value={fromD} onChange={e => { setFromD(e.target.value); if (oneDay) setToD(e.target.value) }} className={input} aria-label={oneDay ? 'Date' : 'From'} />
+                {!oneDay ? <><span className="text-neutral-400">to</span><input type="date" value={toD} onChange={e => setToD(e.target.value)} className={input} aria-label="To" /></> : null}
+                {days.map(([label, d, hint]) => <button key={label} type="button" title={hint} onClick={() => { setOneDay(true); setFromD(d); setToD(d) }} className={pill(isDay(d))} style={isDay(d) ? { background: BLUE } : undefined}>{label}</button>)}
+                {ranges.map(([label, a, b, hint]) => <button key={label} type="button" title={hint} onClick={() => { setOneDay(false); setFromD(a); setToD(b) }} className={pill(isRange(a, b))} style={isRange(a, b) ? { background: BLUE } : undefined}>{label}</button>)}
+                {fromD || toD ? <button type="button" onClick={() => { setFromD(''); setToD('') }} className="font-medium text-neutral-600 underline-offset-2 hover:underline">Clear dates</button> : <span className="text-neutral-400">all dates</span>}
+              </div>
+              {fromD ? <div className="text-neutral-500">Showing {by === 'checkin' ? 'bookings checking in' : by === 'checkout' ? 'bookings checking out' : 'bookings in house'} {oneDay || fromD === toD ? (by === 'stay' ? 'the night of ' : 'on ') + fromD : (by === 'stay' ? 'any night ' : '') + 'from ' + fromD + (toD ? ' to ' + toD : ' onward')}.</div> : null}
+            </div>
+          )
+        })()}
 
         {showRules && data?.rules ? (
           <div className="mt-3 rounded-2xl border border-neutral-200 bg-white p-4 text-xs text-neutral-700 grid sm:grid-cols-2 gap-x-6 gap-y-1.5">
