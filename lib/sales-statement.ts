@@ -47,7 +47,9 @@ const LEAD = ['17WEST', 'Elser', 'Arya', 'Salato']
 
 export async function realStatement(opts: { asOf: string; skip?: number; bedrooms?: number | null }): Promise<RealStatement | null> {
   const sb = supabaseAdmin()
-  const months = [monthsBack(opts.asOf, 1), monthsBack(opts.asOf, 2), monthsBack(opts.asOf, 3)]
+  // Twelve completed months, so the example can be a full month in season rather than whichever
+  // quiet month happens to be most recent.
+  const months = Array.from({ length: 12 }, (_, i) => monthsBack(opts.asOf, i + 1))
 
   const { data: owners } = await sb.from('guesty_owners').select('id, listing_ids')
   const single = ((owners || []) as any[]).filter(o => Array.isArray(o.listing_ids) && o.listing_ids.length === 1)
@@ -68,7 +70,7 @@ export async function realStatement(opts: { asOf: string; skip?: number; bedroom
   // One pull for every candidate's ledger across the window, then score.
   const ownerIds = Array.from(new Set(cands.map(s => String(s.owner_id))))
   const rows: any[] = []
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 40; i++) {
     const { data } = await sb.from('guesty_owner_ledger')
       .select("owner_id, listing_id, entry_date, entry_month, charge_code, amount, name:raw->>name, res:raw->reservationConfirmationCode->>title")
       .in('owner_id', ownerIds).in('entry_month', months).eq('recognized', true)
@@ -104,8 +106,10 @@ export async function realStatement(opts: { asOf: string; skip?: number; bedroom
     let score = 0
     const li = LEAD.indexOf(m.b); if (li >= 0) score += 40 - li * 5
     if (opts.bedrooms != null && m.br === opts.bedrooms) score += 30
-    score += Math.min(20, rental / 1000)
-    score += str(s.period_month) === months[0] ? 5 : 0
+    // A strong, ordinary month: well booked and well paid, not a freak.
+    score += Math.min(60, rental / 250)
+    const occ = stays.length
+    score += Math.min(10, occ * 2)
     scored.push({ key, score })
   }
   if (!scored.length) return null
