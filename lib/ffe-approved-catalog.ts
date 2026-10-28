@@ -16,6 +16,7 @@ import 'server-only'
 import { randomBytes } from 'crypto'
 import { supabaseAdmin } from './supabase-admin'
 import seedJson from './ffe-approved-catalog-17west.json'
+import { isConsumable } from './ffe-consumables'
 
 export type OptionSrc = string
 export type Tier = 'standard' | 'midlux' | 'luxury'
@@ -601,7 +602,7 @@ export async function presetOrder(property: string, listingId: string, tier: str
   const lines: any[] = []
   const seen = new Set<string>()
   for (const l of list) {
-    const it = byKey.get(String(l?.itemKey || '')); if (!it) continue
+    const it = byKey.get(String(l?.itemKey || '')); if (!it || isConsumable(it)) continue   // consumables are stocked by the team, not ordered here
     const o = it.options.find(x => x.src === String(l?.src || '')); if (!o) continue
     const k = `${it.key}:${o.src}`; if (seen.has(k)) continue; seen.add(k)
     const qty = Math.max(1, Math.min(999, Math.round(Number(l?.qty) || 1)))

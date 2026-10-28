@@ -28,6 +28,7 @@ import {
   type Catalog, type CatalogItem, type CatalogOption, type Decision,
 } from './ffe-approved-catalog'
 import { lookupProduct, supplierFor } from './ffe-product-lookup'
+import { isConsumable } from './ffe-consumables'
 
 export type Tier = 'standard' | 'midlux' | 'luxury'
 const TIERS: Tier[] = ['standard', 'midlux', 'luxury']
@@ -181,6 +182,7 @@ const pickable = (o: CatalogOption) => (o.price != null || !!o.url) && !isSearch
 function shapeItems(cat: Catalog, decisions: Record<string, Decision>, size: { bedrooms: number | null; bathrooms: number | null; guests: number | null }): OwnerItem[] {
   const out: OwnerItem[] = []
   for (const it of cat.items) {
+    if (isConsumable(it)) continue                                                // the team stocks these; never on the owner's list
     const d = decisions[it.key]
     if (d?.rejected && !d.ownerPicked) continue                                   // the team said "not for this property"
     const need = it.need || (it.section === 'amenity' ? 'recommended' : null)
