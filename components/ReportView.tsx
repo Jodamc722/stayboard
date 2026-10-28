@@ -6794,7 +6794,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     ))}
                   </div>
                 </div>
-                <div className="flex flex-col" style={{ minHeight: 0, borderRadius: 14, overflow: 'hidden', border: '1px solid ' + t.cardBorder, boxShadow: '0 24px 50px -28px rgba(10,20,40,0.45)', background: '#fff' }}>
+                {/* The window takes the replica's own proportions, so it is filled edge to edge
+                    rather than scaled to the width with white space under it. */}
+                <div className="flex flex-col" style={{ alignSelf: 'center', width: '100%', aspectRatio: '990 / 520', minHeight: 0, borderRadius: 14, overflow: 'hidden', border: '1px solid ' + t.cardBorder, boxShadow: '0 24px 50px -28px rgba(10,20,40,0.45)', background: '#fff' }}>
                   <div className="flex items-center" style={{ gap: 6, padding: '9px 12px', background: '#eef1f6', borderBottom: '1px solid #e2e6ee', flexShrink: 0 }}>
                     {['#ff5f57', '#febc2e', '#28c840'].map(cl => <span key={cl} style={{ width: 9, height: 9, borderRadius: 9, background: cl }} />)}
                     <span style={{ marginLeft: 10, fontSize: 10.5, color: '#6b7280', background: '#fff', borderRadius: 6, padding: '3px 10px', flex: 1, maxWidth: 320 }}>
