@@ -3125,7 +3125,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         .sb-present > section > *, .sb-present > header > * { max-width: 1080px; width: 100%; margin-left: auto; margin-right: auto; }
         .sb-present > section > * > .pt-12 { padding-top: 0 !important; }
         .sb-present .onb-sec { padding-top: 0 !important; }
-        .sb-present header img { height: auto !important; max-height: 42vh !important; width: 100%; object-fit: cover; border-radius: 18px; }
+        /* The review report's cover photo. Scoped away from the decks (Nick, 2026-10-28: "in Present
+           mode, the STAY logo on the cover blows up to fill the whole slide"): a deck cover is a
+           header too, so this rule was resizing its logo to full width — and its photo and
+           thumbnails with it. Deck covers size their own images; the mark is pinned regardless. */
+        .sb-present:not(.sb-present-deck) header img:not(.sb-mark) { height: auto !important; max-height: 42vh !important; width: 100%; object-fit: cover; border-radius: 18px; }
+        .sb-present .sb-mark { width: auto !important; max-height: none !important; object-fit: contain !important; border-radius: 0 !important; }
         .sb-present img { object-fit: cover; }
       `}</style>
 
@@ -3584,7 +3589,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     <div className="flex items-center justify-between">
                       {mark.logo ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={mark.logo} alt={mark.word} style={{ height: 34, width: 'auto', objectFit: 'contain', filter: 'invert(1) brightness(2.2)' }} />
+                        <img className="sb-mark" src={mark.logo} alt={mark.word} style={{ height: 34, width: 'auto', objectFit: 'contain', filter: 'invert(1) brightness(2.2)' }} />
                       ) : (
                         <p style={{ color: '#fff', fontSize: 12, fontWeight: 700, letterSpacing: '0.42em' }}>{mark.word}</p>
                       )}
@@ -3653,7 +3658,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   // THE MARK LEADS A PROPOSAL (Jon, 2026-10-27, twice: "have our logo"). On an
                   // onboarding deck the owner already knows who we are and 26px is furniture; on
                   // a cover going to someone who does not, it is the first thing to read.
-                  <img src={mark.logo} alt={mark.word} style={{ height: isSales ? 40 : 26, width: 'auto', alignSelf: 'flex-start', objectFit: 'contain', filter: 'invert(1) brightness(2.2)' }} />
+                  <img className="sb-mark" src={mark.logo} alt={mark.word} style={{ height: isSales ? 40 : 26, width: 'auto', alignSelf: 'flex-start', objectFit: 'contain', filter: 'invert(1) brightness(2.2)' }} />
                 ) : (
                   <p className="text-[11px] font-bold" style={{ color: '#fff', letterSpacing: '0.42em', alignSelf: 'flex-start' }}>{mark.word}</p>
                 )}
