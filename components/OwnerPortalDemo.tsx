@@ -36,7 +36,7 @@
 // It is an illustration and says so on the slide. It carries Guesty's real control names because
 // that is the point — an owner has to recognise "+ New reservation" when they see it — and it
 // holds no real owner's data: every figure and guest name here is invented.
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 type Props = {
   unitName: string
@@ -121,14 +121,22 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
 
   const reset = () => {
     setView('login'); setOpen(null); setDrawer(false)
-    setFrom(null); setTo(null); setAdults(2); setFf(false); setMine(null); setPicker(false)
+    setFrom(null); setTo(null); setAdults(2); setFf(false); setMine(null); setPicker(false); setLastStep(0)
   }
 
-  const step = useMemo(() => {
+  // OFF THE GUIDED PATH IS NOT BACK TO THE START (2026-10-28, "does it all work, fix"). Opening
+  // Accounting or Documents used to drop the guide to step 1 with every tick gone, because those
+  // screens are not steps. The guide now remembers where the owner had got to and says they are
+  // exploring; Next takes them back to the tour.
+  const guided = useMemo(() => {
     if (view === 'calendar' && (drawer || mine)) return 4
-    const i = STEPS.findIndex(s => s.at.indexOf(view) >= 0)
-    return i < 0 ? 0 : i
+    return STEPS.findIndex(s => s.at.indexOf(view) >= 0)
   }, [view, drawer, mine])
+  const [lastStep, setLastStep] = useState(0)
+  useEffect(() => { if (guided >= 0) setLastStep(guided) }, [guided])
+  const exploring = guided < 0
+  const step = exploring ? lastStep : guided
+  const VIEW_NAME: Partial<Record<View, string>> = { report: 'Reservation report', documents: 'Documents', accounting: 'Accounting', help: 'Help center' }
 
   // THE NEXT CLICK, SHOWN (Jon, 2026-09-24: "have a directional click-through process so that they
   // know that it's interactive"). Exactly one control pulses at a time, with a label saying what it
@@ -151,6 +159,9 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
     ? { className: 'opd-hot' + (pos ? ' opd-' + pos : ''), 'data-tip': TIPS[key] || '' }
     : {}
   const NEXT: Partial<Record<View, View>> = { login: 'dashboard', dashboard: 'properties', properties: 'calendar' }
+  // What "Next step" does from wherever the owner is, through the whole tour — including the two
+  // calendar steps and Analytics, which used to have no Next at all.
+  const go = (v: View) => { setView(v); setOpen(null); setDrawer(false); setPicker(false) }
 
   const isMine = (d: number) => mine != null && d >= mine.from && d <= mine.to
   const isPicking = (d: number) => from != null && to != null && d >= from && d <= to
@@ -168,6 +179,15 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
     if (from == null || to == null) return
     setMine({ from, to }); setDrawer(false); setFrom(null); setTo(null)
   }
+  const nextGo: (() => void) | null = (() => {
+    const off = !STEPS.some(s => s.at.indexOf(view) >= 0) && !(view === 'calendar')
+    if (off) return () => { const v = STEPS[lastStep].at[0]; go(v); if (lastStep === 4) { setDrawer(true); setPicker(true) } }
+    if (NEXT[view]) return () => go(NEXT[view] as View)
+    if (view === 'calendar' && mine) return () => go('analytics')
+    if (view === 'calendar' && drawer) return from != null && to != null ? create : null
+    if (view === 'calendar') return () => { setOpen(null); setDrawer(true); setPicker(true) }
+    return null
+  })()
 
   // EVERY TAB GOES SOMEWHERE (Jon, 2026-09-18: "can we have all the tabs working, can be just a
   // visual of the page, not have to click into anything"). Four of the seven used to be dead
@@ -724,8 +744,13 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
             )
           })}
         </div>
-        {NEXT[view] ? (
-          <button onClick={() => { const v = NEXT[view]; if (v) { setView(v); setOpen(null); setDrawer(false) } }} style={{
+        {exploring ? (
+          <p style={{ fontSize: 9.5, lineHeight: 1.45, color: P.body, marginTop: 6, background: '#eef3fe', borderRadius: 6, padding: '6px 8px' }}>
+            You are looking at {VIEW_NAME[view] || 'another page'}. Every tab works; Next picks the tour back up.
+          </p>
+        ) : null}
+        {nextGo ? (
+          <button onClick={nextGo} style={{
             alignSelf: 'stretch', marginTop: 7, fontSize: 10, fontWeight: 700, color: '#fff', background: P.blue,
             border: 0, borderRadius: 6, padding: '7px 9px', cursor: 'pointer',
           }}>Next step &#8594;</button>
