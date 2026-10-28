@@ -3078,6 +3078,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         .sb-present-deck > section > div {
           width: 100% !important; display: flex !important; justify-content: center !important; }
         .sb-present-deck > header { width: 100%; }
+        /* THE COVER IS THE SAME SIZE AS EVERY OTHER SLIDE (Jon, 2026-10-28: "first slide is off").
+           The presenting header caps its children at 1080px for the scrolling report; a deck's
+           cover sizes itself from the viewport like the slides do, so the cap made it the one
+           slide smaller than the rest — 1080 wide against 1213 on a laptop. */
+        .sb-present-deck > header > * { max-width: none !important; }
         .sb-present-deck > header > div { margin-left: auto; margin-right: auto; }
         /* THE MARK IS CLAMPED, NOT NEGOTIATED. The cover's inner column is a flex container,
            and in present mode the slide is re-sized by CSS — between the two, the logo kept
