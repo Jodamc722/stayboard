@@ -3585,7 +3585,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     <img src={hero.heroImage} alt="" className="absolute inset-0 w-full h-full object-cover" />
                   ) : null}
                   <div className="absolute inset-0" style={{ background: 'linear-gradient(90deg, rgba(8,12,20,0.9) 0%, rgba(8,12,20,0.72) 38%, rgba(8,12,20,0.25) 72%, rgba(8,12,20,0.1) 100%)' }} />
-                  <div className="onb-cover-in absolute inset-0 flex flex-col" style={{ padding: '6% 6.5%' }}>
+                  {/* Left-aligned in Present mode too: the presenting header centres its text. */}
+                  <div className="onb-cover-in absolute inset-0 flex flex-col" style={{ padding: '6% 6.5%', textAlign: 'left' }}>
                     <div className="flex items-center justify-between">
                       {mark.logo ? (
                         // eslint-disable-next-line @next/next/no-img-element
