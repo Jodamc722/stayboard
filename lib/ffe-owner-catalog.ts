@@ -381,3 +381,59 @@ export async function ownerAct(code: string, listingId: string, b: any): Promise
 }
 
 export type { CatalogItem }
+
+// ---------- assign a catalog to an owner, from the catalog's own page (Jon, 2026-10-28) ----------
+// "Share a link, assign to the owner, and they pick their catalog — so it helps with ordering, and
+// when we replace things we know what the owner approved, to match their taste and style."
+// Assigning sets the catalog's owner and listing; the owner's link then opens THIS catalog for that
+// listing (it is the listing's catalog), and what they choose is the approved replacement list.
+
+/** What the catalog page's Owner panel shows. */
+export async function catalogOwnerPanel(slug: string) {
+  if (!catalogSlugOk(slug)) return null
+  const db = supabaseAdmin()
+  const { data } = await db.from('ffe_catalogs').select('*').eq('slug', slug).is('archived_at', null).limit(1)
+  const c: any = (data || [])[0]
+  if (!c) return null
+  let listing: { id: string; label: string } | null = null
+  if (c.listing_id) {
+    const { data: l } = await db.from('guesty_listings').select('id, nickname, title, building').eq('id', c.listing_id).limit(1)
+    const r: any = (l || [])[0]
+    listing = r ? { id: String(r.id), label: [r.nickname || r.title, r.building].filter(Boolean).join(' · ') } : { id: String(c.listing_id), label: String(c.listing_id) }
+  }
+  let link: OwnerLink | null = null
+  if (c.owner_id) {
+    const { data: ls } = await db.from('ffe_owner_links').select('*').eq('owner_id', c.owner_id).is('revoked_at', null).order('created_at', { ascending: false }).limit(1)
+    link = (ls || [])[0] ? linkFromRow((ls as any[])[0]) : null
+  }
+  const decs = await readDecisions(slug)
+  let picked = 0, included = 0, skipped = 0
+  for (const d of Object.values(decs)) { if (d.ownerPicked && d.approved.length) picked++; if (d.ownerInclude === true) included++; if (d.ownerInclude === false) skipped++ }
+  const cat = await getCatalog(slug)
+  const ownLinks = (cat?.items || []).reduce((n, it) => n + it.options.filter(o => /^own(-\d+)?$/.test(o.src)).length, 0)
+  return { kind: c.kind === 'default' ? 'default' : 'property', ownerId: c.owner_id || null, ownerName: c.owner_name || null, listing, tier: tierOk(c.tier),
+    submittedAt: c.owner_submitted_at || null, ownerNote: c.owner_note || '', link: link ? { code: link.code, views: link.views, lastView: link.lastView, createdAt: link.createdAt } : null,
+    counts: { picked, included, skipped, ownLinks } }
+}
+
+export async function assignOwner(slug: string, ownerId: string, listingId: string) {
+  if (!catalogSlugOk(slug) || slug === 'default') return { ok: false, error: 'The default catalog is not assigned to an owner — make a property catalog from it first.' }
+  const db = supabaseAdmin()
+  const { data: o } = await db.from('guesty_owners').select('id, full_name, listing_ids').eq('id', ownerId).limit(1)
+  const owner: any = (o || [])[0]
+  if (!owner) return { ok: false, error: 'Pick the owner.' }
+  if (!(Array.isArray(owner.listing_ids) ? owner.listing_ids.map(String) : []).includes(listingId)) return { ok: false, error: 'That property is not one of this owner’s in Guesty.' }
+  const other = await catalogRowFor(listingId)
+  if (other && other.slug !== slug) return { ok: false, error: `That property already has a catalog: “${other.name}”. Open that one, or archive it first.` }
+  const { error } = await db.from('ffe_catalogs').update({ owner_id: ownerId, owner_name: owner.full_name || null, listing_id: listingId }).eq('slug', slug)
+  return error ? { ok: false, error: error.message } : { ok: true }
+}
+
+/** The owner's link for this catalog: their live link if they have one, otherwise a new one. */
+export async function linkForCatalog(slug: string, who: string) {
+  const panel = await catalogOwnerPanel(slug)
+  if (!panel) return { ok: false, error: 'Unknown catalog.' }
+  if (!panel.ownerId || !panel.listing) return { ok: false, error: 'Assign the owner and their property first.' }
+  if (panel.link) return { ok: true, code: panel.link.code }
+  return createOwnerLink({ ownerId: panel.ownerId, template: slug, tier: panel.tier || 'midlux', message: '' }, who)
+}

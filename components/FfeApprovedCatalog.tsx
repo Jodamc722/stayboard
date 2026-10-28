@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Copy, ExternalLink, Link2, Loader2, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
 import { useCachedFetch } from '@/lib/swr'
+import { FfeCatalogOwnerPanel } from '@/components/FfeCatalogOwnerPanel'
 
 type OptionSrc = string
 type Tier = 'standard' | 'midlux' | 'luxury'
@@ -189,6 +190,7 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
 
   return (
     <div className="space-y-8">
+      {!isPublic && data.catalog.kind === 'property' && <FfeCatalogOwnerPanel slug={property} canEdit={canEdit} />}
       {/* Summary + view */}
       <div className="grid grid-cols-2 gap-3 max-w-lg">
         <Kpi v={`${stats.reviewed}`} l={`of ${stats.total} items reviewed`} tone="text-brand-700" />
@@ -486,9 +488,14 @@ function Suggested({ why }: { why?: string }) {
 // THE APPROVED LIST (Jon, 2026-10-27: "when you click approve, there will be a tab with the links to
 // each item"). One row per approved option: what it is, where to buy it, the link, the price, the note.
 function ApprovedList({ items, decisions, property, listingId }: { items: Item[]; decisions: Record<string, Decision>; property: string; listingId?: string | null }) {
-  const rows: { item: Item; o: Opt; note: string }[] = []
-  for (const it of items) { const d = decisions[it.key]; if (!d || d.rejected || !d.approved.length) continue; for (const o of it.options) if (d.approved.includes(o.src)) rows.push({ item: it, o, note: d.note }) }
-  if (!rows.length) return <p className="text-sm text-muted">Nothing approved yet. Approve options on the Review tab and they show up here with their links.</p>
+  // THE REPLACEMENT LIST (Jon, 2026-10-28): what may be bought when something needs replacing. The
+  // owner's own picks are marked, and "Owner's picks" narrows the list to just those.
+  const [ownerOnly, setOwnerOnly] = useState(false)
+  const all: { item: Item; o: Opt; note: string; owner: boolean }[] = []
+  for (const it of items) { const d = decisions[it.key]; if (!d || d.rejected || !d.approved.length || d.ownerInclude === false) continue; for (const o of it.options) if (d.approved.includes(o.src)) all.push({ item: it, o, note: d.note, owner: !!d.ownerPicked }) }
+  const nOwner = all.filter(r => r.owner).length
+  const rows = ownerOnly ? all.filter(r => r.owner) : all
+  if (!all.length) return <p className="text-sm text-muted">Nothing approved yet. Approve options on the Review tab and they show up here with their links.</p>
   const groups = groupBy(rows.map(r => r.item), i => i.category).map(([cat]) => cat).filter((c, i, a) => a.indexOf(c) === i)
   const copyAll = async () => {
     const text = rows.map(r => `${r.item.name}\t${r.o.vendor}\t${r.o.name}\t${money(r.o.price)}\t${r.o.url || ''}\t${r.note || ''}`).join('\n')
@@ -498,7 +505,8 @@ function ApprovedList({ items, decisions, property, listingId }: { items: Item[]
     <div className="space-y-4">
       <OrderFromCatalog property={property} listingId={listingId} />
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <p className="text-sm text-muted">{rows.length} approved {rows.length === 1 ? 'option' : 'options'} across {new Set(rows.map(r => r.item.key)).size} items. These are the links to order from.</p>
+        <p className="text-sm text-muted">{rows.length} approved {rows.length === 1 ? 'option' : 'options'} across {new Set(rows.map(r => r.item.key)).size} items — the links to order and replace from.{nOwner > 0 && <> <b className="text-sky-800">{nOwner} chosen by the owner.</b></>}</p>
+        {nOwner > 0 && <Toggle value={ownerOnly ? 'owner' : 'all'} onChange={v => setOwnerOnly(v === 'owner')} options={[['all', 'Everything approved'], ['owner', 'Owner’s picks']]} />}
         <button type="button" onClick={copyAll} className="inline-flex items-center gap-1.5 text-[12px] font-semibold rounded-lg border border-line bg-white px-2.5 py-1.5 hover:border-ink"><Copy className="w-3.5 h-3.5" /> Copy as table</button>
       </div>
       {groups.map(cat => (
@@ -510,7 +518,7 @@ function ApprovedList({ items, decisions, property, listingId }: { items: Item[]
               {rows.filter(r => r.item.category === cat).map(r => (
                 <tr key={r.item.key + r.o.src + (r.o.id || '')} className="border-b border-line last:border-0">
                   <td className="px-3 py-2"><div className="w-11 h-11 rounded-md bg-[#f1f2ee] flex items-center justify-center overflow-hidden">{r.o.image ? <img src={r.o.image} alt="" loading="lazy" className={'w-full h-full ' + (r.o.fit === 'cover' ? 'object-cover' : 'object-contain p-0.5 mix-blend-multiply')} /> : null}</div></td>
-                  <td className="px-2 py-2 font-semibold text-ink">{r.item.name}</td>
+                  <td className="px-2 py-2 font-semibold text-ink">{r.item.name}{r.owner && <div className="mt-0.5"><OwnerPicked /></div>}</td>
                   <td className="px-2 py-2"><span className={'block text-[11px] uppercase tracking-wider font-semibold ' + SRC_TONE[r.o.src]}>{r.o.vendor}</span>{r.o.name}{r.o.chips.length > 0 && <span className="ml-2 text-[11px] text-muted">{r.o.chips.join(' · ')}</span>}</td>
                   <td className="px-2 py-2 text-right tabular-nums whitespace-nowrap font-semibold">{money(r.o.price)}{r.o.each ? <span className="block text-[11px] font-medium text-muted">{r.o.each} each</span> : null}</td>
                   <td className="px-2 py-2 text-[13px] text-muted max-w-[220px]">{r.note}</td>
