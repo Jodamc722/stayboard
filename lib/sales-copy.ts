@@ -266,9 +266,9 @@ export const SALES_ORDER = [
   'welcome',
   // Jon, 2026-10-27: projection on the cover, then the month-by-month, then the technology that
   // manages rate, operations and optimization, then who we are and why choose us, then book a walk.
-  'property', 'market', 'plan', 'maxrev', 'edge', 'comps', 'proof', 'returns',
-  'ops', 'stack',
-  'overview', 'experience', 'team',               // who is doing it
+  // Jon, 2026-10-28: then Lighthouse, the owner portal and the statement, and the team on its own.
+  'property', 'market', 'plan', 'maxrev', 'lighthouse', 'guesty', 'statement', 'edge', 'team',
+  'comps', 'proof', 'returns', 'ops', 'stack', 'overview', 'experience',
   'terms', 'onbsteps', 'contact', 'close',        // what it costs and what happens next
   // Everything the full deck adds, in the order it argues best.
   'craft', 'dist', 'marketing', 'channels', 'direct', 'guestcare', 'revenue', 'lighthouse',
@@ -281,7 +281,7 @@ export const SALES_ORDER = [
 // clean, capture attention then paint the picture"). The cover catches the eye; then what it
 // could earn, why us, how, and the next step. The company, team and terms lines live inside those
 // slides rather than on their own; everything else is the full deck, for the meeting.
-export const SHORT_KEEP = ['plan', 'maxrev', 'edge', 'close', 'lighthouse']
+export const SHORT_KEEP = ['plan', 'maxrev', 'lighthouse', 'guesty', 'statement', 'edge', 'team', 'close']
 /** Every slide the sales deck can carry, so the short/full switch has something to subtract from. */
 export const SALES_KEYS = [
   'welcome', 'contact', 'property', 'market', 'comps', 'edge', 'returns', 'agenda', 'team', 'overview', 'experience', 'ops', 'craft',
@@ -324,6 +324,10 @@ export const SHORT_HIDDEN_HISTORY: string[][] = [
   ['agenda', 'craft', 'dist', 'marketing', 'channels', 'direct', 'guestcare', 'revenue',
     'lighthouse', 'gpo', 'guesty', 'statement', 'ai', 'season', 'ramp', 'rampsteps', 'money',
     'video', 'onbsteps', 'contact', 'returns', 'comps'],
+  // 2026-10-28, eighth: Lighthouse, the owner portal, the statement and the team join it.
+  ['welcome', 'contact', 'property', 'market', 'comps', 'returns', 'agenda', 'overview',
+    'experience', 'ops', 'craft', 'marketing', 'dist', 'channels', 'direct', 'guestcare', 'revenue',
+    'stack', 'proof', 'terms', 'onbsteps', 'gpo', 'ai', 'season', 'ramp', 'rampsteps', 'money', 'video'],
   // 2026-10-27, seventh: cut to five plus Lighthouse — cover, month by month, technology, who we
   // are, book a walk-through, and the Lighthouse slide after the ask.
   ['welcome', 'contact', 'property', 'market', 'comps', 'returns', 'agenda', 'team', 'overview',
@@ -505,7 +509,20 @@ export const EDGE_SUBTITLE = 'Same size of home, same twelve months.'
 export const EDGE_BODY =
   'Most homes in this market are run by their owners, or by a manager who lists them and waits. The gap between that and a home that is priced, sold and serviced every day is not a few percent.'
 export const EDGE_NOTE =
-  'Ours: homes we ran all twelve months, every channel. Theirs: entire homes listed all twelve months, Airbnb only.'
+  'Ours: homes we managed all twelve months, every channel. Theirs: entire homes listed all twelve months, Airbnb only.'
+
+// ── 21 · LEADERSHIP AND MONARCH (Jon, 2026-10-28: "let's add Eric, maybe something about the
+// power of Monarch"). Eric English is Stay's owner; Stay joined Monarch Collective in 2026.
+// MONARCH'S FIGURES ARE ITS OWN, as Igor Simkin gave them on the Alex & Annie podcast — 26
+// brands, 12 states, just under 6,000 homes — and should be re-checked with Monarch before a
+// deck carrying them goes to a lender. The phone number is deliberately left off Eric's card.
+export const SALES_LEADER = { name: 'Eric English', role: 'Owner', email: 'eric@stay-hospitality.com', phone: '', photo: '' }
+export const MONARCH_EYEBROW = 'Part of Monarch Collective'
+export const MONARCH_LINE = 'A national collective of local vacation rental brands: 26 brands and about 6,000 homes across 12 states. Shared revenue management, data and buying power behind a local team on every home.'
+// Whole buildings we run end to end. Everywhere else we manage units inside the building (Jon,
+// 2026-10-28: "we do not run the building, we manage units, but we do have 17 West fully managed
+// and Salato").
+export const FULLY_MANAGED = ['17west', '17 west', 'salato']
 
 // ── 18 · REAL RETURNS BY BUILDING ───────────────────────────────────────────
 // Nick Carline's brief, 2026-10-27: "Real returns by building. Annual gross, occupancy and nightly
@@ -514,7 +531,7 @@ export const EDGE_NOTE =
 // The single most useful slide in a deck going to lenders and brokers, because it is the one claim
 // nobody else in this market can make with their own numbers. Buildings, not owners: no owner is
 // named and no expense appears, so it can be forwarded to anybody.
-export const RETURNS_HEADLINE = 'What the buildings we run actually earn'
+export const RETURNS_HEADLINE = 'What the homes we manage actually earn'
 export const RETURNS_SUBTITLE = 'Twelve months of settled bookings, by building.'
 export const RETURNS_BODY =
   'Not a case study chosen because it flattered us. Every building we operate with a full year behind it, on the same basis, in one table.'

@@ -8,7 +8,7 @@
 import { ComposedSlide } from '@/components/report/ComposedSlide'
 import { buildVerdict } from '@/lib/report-verdict'
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw } from 'lucide-react'
+import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw, CalendarCheck, Wrench, TrendingUp, Camera, BookOpen, MessagesSquare } from 'lucide-react'
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, BASIS_NOTE, basisTriple, isBasis } from '@/lib/basis'
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
 import { SAMPLE_STATEMENT, statementHasRows, statementIsHouseSample, STATEMENT_ALSO } from '@/lib/statement-sample'
@@ -31,7 +31,7 @@ import {
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
 } from '@/lib/onboarding-copy'
-import { EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY, EDGE_NOTE, LH_ROWS, MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS, PLAN_LABELS } from '@/lib/sales-copy'
+import { EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY, EDGE_NOTE, LH_ROWS, SALES_LEADER, MONARCH_EYEBROW, MONARCH_LINE, FULLY_MANAGED, MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS, PLAN_LABELS } from '@/lib/sales-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, seasonBodyStale } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
@@ -4434,6 +4434,47 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           ) })
 
           // ── 3 · THE TEAM — four up, with the contact details on the card ───
+          // ═══ THE TEAM, ON ITS OWN SLIDE (Jon, 2026-10-28: "the team slide, we need to clean
+          // that up, maybe make it two slides"). It shared a slide with the company numbers and
+          // the buildings and every face was a thumbnail. Now the credibility slide carries the
+          // numbers and the buildings, and this one carries the people, large enough to recognise.
+          if (isSales && !hid('team')) {
+            const base: Any[] = ((sec('team').people || []) as Any[]).filter((p: Any) => p && String(p.name || '').trim())
+            // Eric leads unless the deck already carries him.
+            const ppl: Any[] = (base.some((p: Any) => /eric\s+english/i.test(String(p.name || ''))) ? base : [SALES_LEADER as Any, ...base]).slice(0, 5)
+            slides.push({ key: 'team', node: (
+            <Slide nav="Your team" warn={edit}>
+              <div className="flex flex-col" style={{ height: '100%' }}>
+                <div className="flex items-end justify-between" style={{ gap: 30 }}>
+                  <SalesHead k="team" eyebrow="Your team" />
+                  <p style={{ fontSize: 14, lineHeight: 1.5, color: t.muted, margin: 0, maxWidth: '36ch', textAlign: 'right' }}>Our own people, on our own payroll. You will know every one of them by name.</p>
+                </div>
+                <div style={{ marginTop: 28, display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, ppl.length) + ', 1fr)', gap: 20, flex: 1, minHeight: 0 }}>
+                  {ppl.map((p: Any, i: number) => (
+                    <div key={i} className="flex flex-col" style={{ minWidth: 0 }}>
+                      {p.photo ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={String(p.photo)} alt="" style={{ width: '100%', flex: 1, minHeight: 0, objectFit: 'cover', objectPosition: '50% 22%', borderRadius: 16 }} />
+                      ) : (
+                        <div className="flex items-center justify-center" style={{ width: '100%', flex: 1, borderRadius: 16, background: t.chip, color: t.muted, fontSize: 28, fontWeight: 700 }}>
+                          {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
+                        </div>
+                      )}
+                      <p style={{ fontSize: 17, fontWeight: 600, color: t.ink, margin: '14px 0 0', lineHeight: 1.2 }}>{String(p.name || '')}</p>
+                      <p style={{ fontSize: 12.5, color: t.accent, margin: '4px 0 0', fontWeight: 600 }}>{String(p.role || '')}</p>
+                      {String(p.phone || '').trim() ? <p style={{ fontSize: 12.5, color: t.body, margin: '8px 0 0', fontVariantNumeric: 'tabular-nums' }}>{String(p.phone)}</p> : null}
+                      {String(p.email || '').trim() ? <p style={{ fontSize: 12, color: t.muted, margin: '2px 0 0', wordBreak: 'break-all' }}>{String(p.email)}</p> : null}
+                    </div>
+                  ))}
+                </div>
+                {/* THE POWER BEHIND THE LOCAL TEAM (Jon, 2026-10-28). */}
+                <div className="flex items-center" style={{ marginTop: 22, gap: 22, background: t.band, borderRadius: 14, padding: '16px 22px' }}>
+                  <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)', margin: 0, whiteSpace: 'nowrap' }}>{MONARCH_EYEBROW}</p>
+                  <p style={{ fontSize: 14, lineHeight: 1.45, color: '#fff', margin: 0 }}>{MONARCH_LINE}</p>
+                </div>
+              </div>
+            </Slide>
+          ) }) } else
           if (!hid('team')) slides.push({ key: 'team', node: (
             <Slide nav="Your team" warn={edit} ground={GROUND.light}>
               <div className="flex flex-col h-full">
@@ -5048,31 +5089,51 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const RETIRED_LH = ['Operations|Listing optimization|Photos and captions|Guidebooks|Review management|Guest messages and calls']
             const lhHouse = RETIRED_LH.indexOf(stored.map((r: Any) => String(r.k || '')).join('|')) >= 0
             const lhRows: Any[] = (lhHouse ? LH_ROWS : stored).slice(0, 6)
+            // Icons by what the row is about, so an edited title still gets a sensible mark.
+            const lhIcon = (k: string) => {
+              const x = k.toLowerCase()
+              if (/prevent|maint|pm/.test(x)) return Wrench
+              if (/listing|optim|search/.test(x)) return TrendingUp
+              if (/photo|caption/.test(x)) return Camera
+              if (/guide/.test(x)) return BookOpen
+              if (/review|feedback|guest|message|call/.test(x)) return MessagesSquare
+              return CalendarCheck
+            }
             slides.push({ key: 'lighthouse', ai: true, node: (
-            <Slide nav="Lighthouse" warn={edit}>
-              <div style={{ display: 'grid', gridTemplateColumns: '330px 1fr', gap: 56, height: '100%' }}>
+            <Slide nav="Lighthouse" warn={edit} ground={GROUND.dark}>
+              <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', gap: 52, height: '100%' }}>
                 <div className="flex flex-col">
-                  <SalesHead k="lighthouse" eyebrow="Built in-house" />
-                  <p style={{ fontSize: 16, lineHeight: 1.55, color: t.body, margin: '16px 0 0' }}>
+                  <div className="flex items-center" style={{ gap: 14 }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="/icon-192.png" alt="" style={{ width: 52, height: 52, borderRadius: 13, boxShadow: '0 0 0 1px rgba(255,255,255,0.18)' }} />
+                    <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '0.26em', color: '#fff' }}>LIGHTHOUSE</span>
+                  </div>
+                  <div style={{ marginTop: 34 }}>
+                    <SalesHead k="lighthouse" eyebrow="Built in-house · proprietary" dark />
+                  </div>
+                  <p style={{ fontSize: 16, lineHeight: 1.55, color: 'rgba(255,255,255,0.78)', margin: '16px 0 0' }}>
                     <Ed v={lhs.subtitle || ''} set={v => patch('lighthouse.subtitle', v)} edit={edit} multiline />
                   </p>
-                  <div className="mt-auto flex items-center" style={{ gap: 12 }}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src="/icon-192.png" alt="" style={{ width: 44, height: 44, borderRadius: 11 }} />
-                    <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.2em', color: t.ink }}>LIGHTHOUSE</span>
-                  </div>
+                  <p className="mt-auto" style={{ fontSize: 12.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.55)', margin: 0 }}>
+                    Built for this business, by this business. No other manager runs it.
+                  </p>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 40, alignContent: 'center' }}>
-                  {lhRows.map((r: Any, i: number) => (
-                    <div key={i} style={{ borderTop: '1px solid ' + t.rule, padding: '18px 0 20px' }}>
-                      <p style={{ fontSize: 17, fontWeight: 600, color: t.ink, margin: 0 }}>
-                        {lhHouse ? String(r.k || '') : <Ed v={r.k || ''} set={v => patch('lighthouse.rows.' + i + '.k', v)} edit={edit} />}
-                      </p>
-                      <p style={{ fontSize: 14, lineHeight: 1.5, color: t.muted, margin: '6px 0 0' }}>
-                        {lhHouse ? String(r.v || '') : <Ed v={r.v || ''} set={v => patch('lighthouse.rows.' + i + '.v', v)} edit={edit} multiline />}
-                      </p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridAutoRows: '1fr', gap: 14 }}>
+                  {lhRows.map((r: Any, i: number) => { const Ic = lhIcon(String(r.k || '')); return (
+                    <div key={i} className="flex" style={{ gap: 16, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: '20px 22px' }}>
+                      <span className="flex items-center justify-center" style={{ width: 40, height: 40, borderRadius: 11, background: t.accent, flexShrink: 0 }}>
+                        <Ic size={19} color="#fff" strokeWidth={2} />
+                      </span>
+                      <div style={{ minWidth: 0 }}>
+                        <p style={{ fontSize: 16.5, fontWeight: 600, color: '#fff', margin: '1px 0 0' }}>
+                          {lhHouse ? String(r.k || '') : <Ed v={r.k || ''} set={v => patch('lighthouse.rows.' + i + '.k', v)} edit={edit} />}
+                        </p>
+                        <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.72)', margin: '6px 0 0' }}>
+                          {lhHouse ? String(r.v || '') : <Ed v={r.v || ''} set={v => patch('lighthouse.rows.' + i + '.v', v)} edit={edit} multiline />}
+                        </p>
+                      </div>
                     </div>
-                  ))}
+                  ) })}
                 </div>
               </div>
             </Slide>
@@ -5312,7 +5373,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const word = (b: string) => (b === 'Studio' ? 'studios' : String(b).replace('BR', '-bedrooms'))
             const stats: Any[] = houseRows<Any>(sec('overview').stats, COMPANY_STATS_RETIRED_MARK, COMPANY_STATS_2 as Any[]).slice(0, 4)
             // Five buildings we run, with their own photographs — anything marked coming soon stays off.
-            const bld: Any[] = ((sec('experience').items || []) as Any[]).filter((it: Any) => it && it.pic && !/soon/i.test(String(it.tag || ''))).slice(0, 4)
+            const isWhole = (it: Any) => FULLY_MANAGED.some(n => String(it.k || '').toLowerCase().replace(/\s+/g, ' ').includes(n))
+            const bld: Any[] = ((sec('experience').items || []) as Any[]).filter((it: Any) => it && it.pic && !/soon/i.test(String(it.tag || '')))
+              .sort((a: Any, b: Any) => Number(isWhole(b)) - Number(isWhole(a))).slice(0, 5)
             const team4: Any[] = ((sec('team').people || []) as Any[]).filter((p: Any) => p && String(p.name || '').trim()).slice(0, 4)
             slides.push({ key: 'edge', ai: true, node: (
             <Slide nav="Who we are" warn={edit}>
@@ -5342,48 +5405,23 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     ))}
                   </div>
                 </div>
-                {/* THE PEOPLE AND THE BUILDINGS, SIDE BY SIDE (Jon, 2026-10-27: "our stats, team,
-                    and our experience and credibility"). Faces on the left — who answers the
-                    phone — and the buildings we already run on the right. */}
-                <div className="mt-auto" style={{ display: 'grid', gridTemplateColumns: (team4.length && bld.length) ? '1fr 1.15fr' : '1fr', gap: 28, alignItems: 'end', paddingTop: 22 }}>
-                  {team4.length ? (
-                    <div>
-                      <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: '0 0 10px' }}>Your team</p>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + team4.length + ', 1fr)', gap: 12 }}>
-                        {team4.map((p: Any, i: number) => (
-                          <div key={i} style={{ minWidth: 0 }}>
-                            {p.photo ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img src={String(p.photo)} alt="" style={{ width: '100%', aspectRatio: '4 / 5', objectFit: 'cover', objectPosition: '50% 20%', borderRadius: 10 }} />
-                            ) : (
-                              <div className="flex items-center justify-center" style={{ width: '100%', aspectRatio: '4 / 5', borderRadius: 10, background: t.chip, color: t.muted, fontWeight: 700 }}>
-                                {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
-                              </div>
-                            )}
-                            <p style={{ fontSize: 12, fontWeight: 600, color: t.ink, margin: '6px 0 0', lineHeight: 1.2 }}>{String(p.name || '')}</p>
-                            <p style={{ fontSize: 10.5, color: t.muted, margin: '2px 0 0', lineHeight: 1.25 }}>{String(p.role || '')}</p>
-                          </div>
-                        ))}
-                      </div>
+                {bld.length ? (
+                  <div className="mt-auto" style={{ paddingTop: 24 }}>
+                    <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: '0 0 10px' }}>Where we manage</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + bld.length + ', 1fr)', gap: 12 }}>
+                      {bld.map((it: Any, i: number) => (
+                        <div key={i} style={{ position: 'relative', borderRadius: 12, overflow: 'hidden', aspectRatio: '4 / 3', background: t.chip }}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={String(it.pic)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          {isWhole(it) ? <span style={{ position: 'absolute', top: 8, left: 8, fontSize: 9, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', padding: '3px 8px', borderRadius: 999, background: t.accent, color: '#fff' }}>Whole building</span> : null}
+                          <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '18px 10px 8px', background: 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.72) 100%)', color: '#fff', fontSize: 11.5, fontWeight: 600, lineHeight: 1.2 }}>{String(it.k || '')}</span>
+                        </div>
+                      ))}
                     </div>
-                  ) : null}
-                  {bld.length ? (
-                    <div>
-                      <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: '0 0 10px' }}>Buildings we run</p>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + bld.length + ', 1fr)', gap: 10 }}>
-                        {bld.map((it: Any, i: number) => (
-                          <div key={i} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', aspectRatio: '3 / 4', background: t.chip }}>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={String(it.pic)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                            <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '16px 8px 7px', background: 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.72) 100%)', color: '#fff', fontSize: 10.5, fontWeight: 600, lineHeight: 1.2 }}>{String(it.k || '')}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
+                  </div>
+                ) : null}
                 <p style={{ fontSize: 9.5, color: t.muted, margin: '10px 0 0', lineHeight: 1.4 }}>
-                  {lead ? 'Homes we ran all 12 months, every channel, against AirROI ' + String(eg.benchLabel || '') + ' homes listed all 12 months (Airbnb), to September 2026.' : ''}
+                  {lead ? 'Homes we managed all 12 months, every channel, against AirROI ' + String(eg.benchLabel || '') + ' homes listed all 12 months (Airbnb), to September 2026.' : ''}
                 </p>
                 {edit ? (
                   <div className="sb-noprint flex items-center" style={{ gap: 8, marginTop: 8 }}>
@@ -6696,6 +6734,51 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             <PitchRows k="gpo" nav="Furnishing" label="Furnishing" note="" />
           ) })
 
+          // ═══ THE OWNER PORTAL, FOR A PROSPECT (Jon, 2026-10-28: "show guesty portal, and owner
+          // statement — use the slides from owner onboarding but make better"). The onboarding
+          // version is a login card for someone who already has an account. A prospect needs the
+          // opposite: proof that they will see everything. So the slide is the portal itself —
+          // the same clickable replica the onboarding deck walks owners through, framed as a
+          // browser window — beside four lines on what is in it.
+          if (isSales && !hid('guesty')) {
+            const items: Any[] = houseRows<Any>(sec('guesty').items, PORTAL_ITEMS_RETIRED_MARK, PORTAL_ITEMS as Any[]).slice(0, 3)
+            slides.push({ key: 'guesty', ai: true, node: (
+            <Slide nav="Owner portal" warn={edit} ground={GROUND.tint}>
+              <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 36, height: '100%' }}>
+                <div className="flex flex-col">
+                  <SalesHead k="guesty" eyebrow="Owner portal" />
+                  <div style={{ marginTop: 26, display: 'grid', gap: 18 }}>
+                    {items.map((f: Any, i: number) => (
+                      <div key={i} style={{ borderTop: '1px solid ' + t.rule, paddingTop: 12 }}>
+                        <p style={{ fontSize: 15, fontWeight: 600, color: t.ink, margin: 0 }}>{String(f.k || '')}</p>
+                        <p style={{ fontSize: 13, lineHeight: 1.5, color: t.muted, margin: '4px 0 0' }}>{String(f.v || '')}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col" style={{ minHeight: 0, borderRadius: 14, overflow: 'hidden', border: '1px solid ' + t.cardBorder, boxShadow: '0 24px 50px -28px rgba(10,20,40,0.45)', background: '#fff' }}>
+                  <div className="flex items-center" style={{ gap: 6, padding: '9px 12px', background: '#eef1f6', borderBottom: '1px solid #e2e6ee', flexShrink: 0 }}>
+                    {['#ff5f57', '#febc2e', '#28c840'].map(cl => <span key={cl} style={{ width: 9, height: 9, borderRadius: 9, background: cl }} />)}
+                    <span style={{ marginLeft: 10, fontSize: 10.5, color: '#6b7280', background: '#fff', borderRadius: 6, padding: '3px 10px', flex: 1, maxWidth: 320 }}>
+                      {(housePortalUrl(sec('guesty').portalUrl) || 'owners.guesty.com').replace(/^https?:\/\//, '')}
+                    </span>
+                  </div>
+                  {/* The replica is authored for a full slide; it is laid out at that size and
+                      scaled into the window, so every control stays clickable. */}
+                  <div style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                    <div style={{ position: 'absolute', top: 0, left: 0, width: '1000px', height: '700px', transform: 'scale(0.67)', transformOrigin: 'top left', padding: 14 }}>
+                      <OwnerPortalDemo
+                        unitName={String(((sec('property').facts || []) as Any[]).find((x: Any) => x.k === 'The building')?.v || hero.title || 'Your unit').split(' · ')[0]}
+                        portalUrl={housePortalUrl(sec('guesty').portalUrl)}
+                        ownerName={String(hero.preparedFor || '').replace(/^prepared for\s+/i, '')}
+                        photos={(((c.property || {}).photos || []) as string[]).filter(Boolean).slice(0, 3).length ? (((c.property || {}).photos || []) as string[]).filter(Boolean).slice(0, 3) : (hero.heroImage ? [String(hero.heroImage)] : [])}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Slide>
+          ) }) } else
           if (!hid('guesty')) slides.push({ key: 'guesty', ai: true, node: (
             <Slide nav="Owner portal" warn={edit} bleed ground={GROUND.tint}>
               <div style={{ position: 'absolute', inset: 0 }}>
@@ -6771,7 +6854,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // guest already has, choose whether it is friends and family, press Create reservation.
           // Every control is named as our Guesty account actually names it — see the header of
           // components/OwnerPortalDemo for the settings this was read from.
-          if (!hid('guesty')) slides.push({ key: 'guesty', node: (
+          if (!isSales && !hid('guesty')) slides.push({ key: 'guesty', node: (
             <Slide nav="Make an owner stay" warn={edit} ground={GROUND.tint}>
               <div className="flex flex-col h-full">
                 <div className="flex items-baseline justify-between" style={{ gap: 24 }}>
@@ -6795,6 +6878,69 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             </Slide>
           ) })
 
+          // ═══ THE OWNER STATEMENT, FOR A PROSPECT (Jon, 2026-10-28). The onboarding deck teaches
+          // an owner to read their statement across three slides; a prospect needs one look at
+          // how clean it is. The house sample, set as a document, beside the three things that
+          // make it different from the statements they get today.
+          // ── 7 · STATEMENTS — the worked month, then the three rules ────────
+          if (isSales && !hid('statement')) {
+            const st: Any = { ...sec('statement'), ...SAMPLE_STATEMENT }
+            const points: [string, string][] = [
+              ['Already net of channel fees', 'Rental income arrives after Airbnb and the others take their cut. No surprise deductions.'],
+              ['Every charge traces to a job', 'Each line names the work, the date and the hours. Nothing bundled.'],
+              ['Your approval above ' + (() => { const tr: Any[] = Array.isArray(sec('terms').rows) ? sec('terms').rows : []; const r: Any = tr.find((x: Any) => /spend/i.test(String(x.k || ''))); const m = r ? String(r.v || '').match(/\$[\d,]+/) : null; return m ? m[0] : '$300' })(), 'Anything bigger comes to you before it is spent.'],
+            ]
+            slides.push({ key: 'statement', ai: true, node: (
+              <Slide nav="Owner statement" warn={edit}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 430px', gap: 52, height: '100%' }}>
+                  <div className="flex flex-col">
+                    <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: t.accent, margin: 0 }}>Owner statement</p>
+                    <h2 style={{ fontSize: 40, lineHeight: 1.08, letterSpacing: '-0.025em', fontWeight: 600, color: t.ink, margin: '10px 0 0', maxWidth: '16ch' }}>A statement you can read in a minute</h2>
+                    <div style={{ marginTop: 30, display: 'grid', gap: 18 }}>
+                      {points.map(([k, v], i) => (
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '34px 1fr', alignItems: 'baseline', borderTop: '1px solid ' + t.rule, paddingTop: 14 }}>
+                          <span style={{ fontFamily: SERIF, fontSize: 20, color: t.accent }}>{i + 1}</span>
+                          <div>
+                            <p style={{ fontSize: 16, fontWeight: 600, color: t.ink, margin: 0 }}>{k}</p>
+                            <p style={{ fontSize: 13.5, lineHeight: 1.5, color: t.muted, margin: '4px 0 0' }}>{v}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex flex-col" style={{ background: '#fff', border: '1px solid ' + t.cardBorder, borderRadius: 14, boxShadow: '0 24px 50px -28px rgba(10,20,40,0.4)', padding: '22px 24px', alignSelf: 'center' }}>
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p style={{ fontSize: 15, fontWeight: 600, color: '#111827', margin: 0 }}>Owner statement</p>
+                        <p style={{ fontSize: 11.5, color: '#6b7280', margin: '3px 0 0' }}>{String(st.unitLabel || '')} · {String(st.period || '')}</p>
+                      </div>
+                      <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: t.gold, border: '1px solid ' + t.gold, borderRadius: 999, padding: '2px 8px' }}>Sample</span>
+                    </div>
+                    <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
+                      {((st.kpis || []) as Any[]).slice(0, 3).map((k: Any, i: number) => (
+                        <div key={i} style={{ background: '#f5f6f8', borderRadius: 8, padding: '8px 10px' }}>
+                          <p style={{ fontSize: 10, color: '#6b7280', margin: 0 }}>{String(k.k || '')}</p>
+                          <p style={{ fontSize: 15, fontWeight: 600, color: '#111827', margin: '2px 0 0', fontVariantNumeric: 'tabular-nums' }}>{String(k.v || '')}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 14 }}>
+                      {((st.summary || []) as Any[]).filter((ln: Any) => !/initial balance/i.test(String(ln.k || ''))).map((ln: Any, i: number) => (
+                        <div key={i} className="flex justify-between" style={{ gap: 12, padding: '7px 2px', borderBottom: '1px solid #eef0f3', borderTop: ln.rule ? '1px solid #111827' : undefined }}>
+                          <span style={{ fontSize: 12.5, color: ln.rule ? '#111827' : '#374151', fontWeight: ln.rule ? 600 : 400 }}>{String(ln.k || '')}</span>
+                          <span style={{ fontSize: 12.5, fontWeight: ln.rule ? 600 : 500, color: ln.neg ? t.gold : '#111827', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{String(ln.v || '')}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-baseline justify-between" style={{ marginTop: 14, background: t.band, borderRadius: 10, padding: '12px 16px' }}>
+                      <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.8)' }}>{String((st.due || {}).k || 'Payment due to owner')}</span>
+                      <span style={{ fontSize: 22, fontWeight: 600, color: '#fff', fontVariantNumeric: 'tabular-nums' }}>{String((st.due || {}).v || '')}</span>
+                    </div>
+                  </div>
+                </div>
+              </Slide>
+            ) })
+          } else
           // ── 7 · STATEMENTS — the worked month, then the three rules ────────
           if (!hid('statement')) {
             // ── THE STATEMENT, ON ONE SLIDE, INTERACTIVE ──────────────────
