@@ -1076,6 +1076,27 @@ const SLIDE_H = CANVAS.h
 // and the spill warning still measures against the box the content actually has.
 const TextScale = createContext(1)
 
+/** Lays a child out at its authored size and scales it to fit the box it is given, both ways. */
+function FitBox({ w, h, children }: { w: number; h: number; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [k, setK] = useState(0)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const fit = () => { const cw = el.clientWidth, ch = el.clientHeight; if (cw > 0 && ch > 0) setK(Math.min(cw / w, ch / h)) }
+    fit()
+    const ro = new ResizeObserver(fit); ro.observe(el)
+    return () => ro.disconnect()
+  }, [w, h])
+  return (
+    <div ref={ref} style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
+      <div style={{ position: 'absolute', top: 0, left: 0, width: w, height: h, transform: 'scale(' + (k || 0.0001) + ')', transformOrigin: 'top left', opacity: k ? 1 : 0 }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 function Slide({ nav, children, pad, bleed, warn, ground, h, noteKey }: {
   nav?: string; children: React.ReactNode; pad?: number; bleed?: boolean; warn?: boolean
   /** Which content.slideNotes entry this slide shows, so presenter notes can land on it. */
@@ -2248,6 +2269,24 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
       } else setEgMsg(String(d?.error || 'Could not measure.'))
     } catch { setEgMsg('Could not measure.') }
     setEgBusy(false)
+  }
+  const [rsBusy, setRsBusy] = useState(false)
+  const [rsMsg, setRsMsg] = useState('')
+  const [rsSkip, setRsSkip] = useState(0)
+  async function pullRealStatement() {
+    if (rsBusy) return
+    setRsBusy(true); setRsMsg('')
+    try {
+      const cur: Any = (c as Any).statement && (c as Any).statement.real
+      const next = cur ? rsSkip + 1 : 0
+      const d = await fetch('/api/reports/sales-statement?skip=' + next).then(r => r.json())
+      if (d?.ok && d.statement) {
+        setRsSkip(next)
+        mutate((dr: Any) => { dr.statement = dr.statement || {}; dr.statement.real = d.statement })
+        setRsMsg(String(d.statement.unitLabel || '') + ' · ' + String(d.statement.period || '') + ' — review, then Save.')
+      } else setRsMsg(String(d?.error || 'No statement found.'))
+    } catch { setRsMsg('No statement found.') }
+    setRsBusy(false)
   }
   const [plBusy, setPlBusy] = useState(false)
   const [plMsg, setPlMsg] = useState('')
@@ -6783,14 +6822,18 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   {/* The replica is authored for a full slide; it is laid out at that size and
                       scaled into the window, so every control stays clickable. */}
                   <div style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                    <div style={{ position: 'absolute', inset: 0, padding: 10 }}>
+                    {/* THE ONBOARDING SLIDE'S OWN PROPORTIONS (2026-10-28: "the owner portal is cut
+                        off"). The replica is authored for the full content width of a slide; it
+                        is laid out at that size and scaled down to the window, so nothing falls
+                        off the right edge whatever the window is. */}
+                    <FitBox w={990} h={490}>
                       <OwnerPortalDemo start="dashboard"
                         unitName={String(((sec('property').facts || []) as Any[]).find((x: Any) => x.k === 'The building')?.v || hero.title || 'Your unit').split(' · ')[0]}
                         portalUrl={housePortalUrl(sec('guesty').portalUrl)}
                         ownerName={String(hero.preparedFor || '').replace(/^prepared for\s+/i, '')}
                         photos={(((c.property || {}).photos || []) as string[]).filter(Boolean).slice(0, 3).length ? (((c.property || {}).photos || []) as string[]).filter(Boolean).slice(0, 3) : (hero.heroImage ? [String(hero.heroImage)] : [])}
                       />
-                    </div>
+                    </FitBox>
                   </div>
                 </div>
               </div>
@@ -6901,7 +6944,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // make it different from the statements they get today.
           // ── 7 · STATEMENTS — the worked month, then the three rules ────────
           if (isSales && !hid('statement')) {
-            const st: Any = { ...sec('statement'), ...SAMPLE_STATEMENT }
+            // A REAL MONTH, NAMES REMOVED, when the deck carries one (lib/sales-statement); the
+            // house sample only when it does not.
+            const realSt: Any = sec('statement').real && typeof sec('statement').real === 'object' ? sec('statement').real : null
+            const st: Any = realSt ? realSt : { ...sec('statement'), ...SAMPLE_STATEMENT }
             const points: [string, string][] = [
               ['Already net of channel fees', 'Rental income arrives after Airbnb and the others take their cut. No surprise deductions.'],
               ['Every charge traces to a job', 'Each line names the work, the date and the hours. Nothing bundled.'],
@@ -6931,7 +6977,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         <p style={{ fontSize: 15, fontWeight: 600, color: '#111827', margin: 0 }}>Owner statement</p>
                         <p style={{ fontSize: 11.5, color: '#6b7280', margin: '3px 0 0' }}>{String(st.unitLabel || '')} · {String(st.period || '')}</p>
                       </div>
-                      <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: t.gold, border: '1px solid ' + t.gold, borderRadius: 999, padding: '2px 8px' }}>Sample</span>
+                      <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: realSt ? t.accent : t.gold, border: '1px solid ' + (realSt ? t.accent : t.gold), borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap' }}>{realSt ? 'Real · names removed' : 'Sample'}</span>
                     </div>
                     <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
                       {((st.kpis || []) as Any[]).slice(0, 3).map((k: Any, i: number) => (
@@ -6953,6 +6999,16 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.8)' }}>{String((st.due || {}).k || 'Payment due to owner')}</span>
                       <span style={{ fontSize: 22, fontWeight: 600, color: '#fff', fontVariantNumeric: 'tabular-nums' }}>{String((st.due || {}).v || '')}</span>
                     </div>
+                    {edit ? (
+                      <div className="sb-noprint flex items-center" style={{ gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                        <button onClick={() => pullRealStatement()} disabled={rsBusy}
+                          style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 12px', borderRadius: 999, background: t.ink, color: t.bg, opacity: rsBusy ? 0.6 : 1 }}>
+                          {rsBusy ? 'Finding…' : realSt ? 'Show another real month' : 'Use a real statement'}
+                        </button>
+                        {realSt ? <button onClick={() => mutate((d: Any) => { if (d.statement) delete d.statement.real })} style={{ fontSize: 11.5, color: t.muted }}>Use the sample</button> : null}
+                        {rsMsg ? <span style={{ fontSize: 11, color: t.muted }}>{rsMsg}</span> : null}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </Slide>

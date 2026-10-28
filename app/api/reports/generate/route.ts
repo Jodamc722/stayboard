@@ -28,6 +28,7 @@ import { projectionSectionFor } from '@/lib/projections'
 import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type ListingCard, type KV } from '@/lib/onboarding-report'
 import { buildSalesContent } from '@/lib/sales-deck'
 import { measureEdge } from '@/lib/sales-edge'
+import { realStatement } from '@/lib/sales-statement'
 import { proofListings, proofRows, monthLabel as proofMonth, effectiveFee, completedMonths, ownersForListings } from '@/lib/sales-proof'
 import { marketIntel } from '@/lib/sales-market'
 import { getSetting } from '@/lib/app-settings'
@@ -308,6 +309,14 @@ export async function POST(req: NextRequest) {
       heroImage: heroImageUrl || (cards[0] && cards[0].photos[0] ? cards[0].photos[0] : null),
       contact: contactIn,
     })
+    // A REAL OWNER STATEMENT, NAMES REMOVED (lib/sales-statement), matched to the prospect's
+    // bedroom count where one fits; the slide falls back to the house sample without one.
+    try {
+      const brN = intake.bedrooms ? Number(intake.bedrooms) : null
+      const rs = await realStatement({ asOf, bedrooms: Number.isFinite(Number(brN)) ? brN : null })
+      const cs: any = contentS
+      if (rs) { cs.statement = cs.statement || {}; cs.statement.real = rs }
+    } catch { /* the sample stands in */ }
     // OUR HOMES AGAINST THE MARKET (lib/sales-edge). Measured now so the deck arrives carrying it;
     // a market with no published benchmark, or where we do not win, simply has no rows.
     try {
