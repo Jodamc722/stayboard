@@ -33,8 +33,8 @@ export type Catalog = {
   property: string; title: string; kind: 'default' | 'property'; basedOn?: string | null; suppliers: string[]; tier?: string | null; listingId?: string | null; styleBrief?: string | null; ownerId?: string | null; ownerName?: string | null
   sourceSheet: string; asOf: string; items: CatalogItem[]; misc: Record<string, string[]>; fromDb: boolean
 }
-export type Decision = { approved: OptionSrc[]; rejected: boolean; note: string; updatedBy: string | null; updatedAt: string | null; suggested?: string[]; suggestNote?: string; ownerPicked?: boolean }
-export type CatalogSummary = { slug: string; name: string; kind: 'default' | 'property'; basedOn: string | null; suppliers: string[]; items: number; approved: number; createdAt: string | null }
+export type Decision = { approved: OptionSrc[]; rejected: boolean; note: string; updatedBy: string | null; updatedAt: string | null; suggested?: string[]; suggestNote?: string; ownerPicked?: boolean; ownerInclude?: boolean | null }
+export type CatalogSummary = { slug: string; name: string; kind: 'default' | 'property'; basedOn: string | null; suppliers: string[]; items: number; approved: number; createdAt: string | null; ownerName?: string | null; submittedAt?: string | null }
 
 /** The suppliers we buy from. `key` is what options and the pick list carry; add here when a new vendor shows up. */
 export const SUPPLIERS: { key: string; name: string; note: string }[] = [
@@ -55,6 +55,8 @@ export const SUPPLIERS: { key: string; name: string; note: string }[] = [
   { key: 'pg', name: 'Public Goods', note: 'Cleaning and bath' },
   { key: 'dh', name: 'Diversified Hospitality', note: 'Dish and dishwasher' },
   { key: 'other', name: 'Other', note: 'Anything else' },
+  // A product the OWNER sent through their catalog link (Jon, 2026-10-28). Never filtered out by a pick list.
+  { key: 'own', name: 'Owner’s link', note: 'A product the owner asked us to buy' },
 ]
 export const SUPPLIER_NAME = (key: string) => SUPPLIERS.find(s => s.key === key.replace(/-\d+$/, ''))?.name || key
 /** Where "search the suppliers" sends the team (Jon, 2026-10-27): each site's own search, so the
@@ -278,6 +280,8 @@ async function loadCatalog(slug: string): Promise<Catalog | null> {
   }
 }
 
+export const catalogSlugOk = (slug: string) => /^[a-z0-9][a-z0-9-]{1,40}$/.test(slug)
+
 export async function getCatalog(slug: string): Promise<Catalog | null> {
   if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(slug)) return null
   if (!(await tablesReady())) return (slug === DEFAULT_SLUG || slug === LEGACY_SLUG) ? jsonCatalog(slug) : null
@@ -291,12 +295,13 @@ export async function listCatalogs(): Promise<CatalogSummary[]> {
   }
   await ensureSeeded()
   const db = supabaseAdmin()
-  const { data: cats } = await db.from('ffe_catalogs').select('slug, name, kind, based_on, suppliers, created_at').is('archived_at', null).order('kind').order('created_at')
+  const { data: cats } = await db.from('ffe_catalogs').select('*').is('archived_at', null).order('kind').order('created_at')
   const { data: items } = await db.from('ffe_catalog_items').select('catalog').is('archived_at', null)
   const { data: decs } = await db.from('ffe_approved_decisions').select('property, approved, rejected')
   const nItems: Record<string, number> = {}; for (const i of items || []) nItems[i.catalog] = (nItems[i.catalog] || 0) + 1
   const nApproved: Record<string, number> = {}; for (const d of decs || []) if (!d.rejected && Array.isArray(d.approved) && d.approved.length) nApproved[d.property] = (nApproved[d.property] || 0) + 1
-  return (cats || []).map((c: any) => ({ slug: c.slug, name: c.name, kind: c.kind === 'default' ? 'default' : 'property', basedOn: c.based_on || null, suppliers: c.suppliers || [], items: nItems[c.slug] || 0, approved: nApproved[c.slug] || 0, createdAt: c.created_at || null }))
+  return (cats || []).map((c: any) => ({ slug: c.slug, name: c.name, kind: c.kind === 'default' ? 'default' : 'property', basedOn: c.based_on || null, suppliers: c.suppliers || [], items: nItems[c.slug] || 0, approved: nApproved[c.slug] || 0, createdAt: c.created_at || null,
+    ownerName: c.owner_name || null, submittedAt: c.owner_submitted_at || null }))
 }
 
 // ---------- write: catalogs ----------
@@ -421,7 +426,8 @@ export async function readDecisions(property: string): Promise<Record<string, De
     for (const r of data || []) {
       out[String(r.item_key)] = { approved: Array.isArray(r.approved) ? (r.approved as string[]) : [], rejected: !!r.rejected,
         note: typeof r.note === 'string' ? r.note : '', updatedBy: r.updated_by || null, updatedAt: r.updated_at || null,
-        suggested: Array.isArray(r.suggested) ? (r.suggested as string[]) : [], suggestNote: typeof r.suggest_note === 'string' ? r.suggest_note : '', ownerPicked: !!r.owner_picked }
+        suggested: Array.isArray(r.suggested) ? (r.suggested as string[]) : [], suggestNote: typeof r.suggest_note === 'string' ? r.suggest_note : '', ownerPicked: !!r.owner_picked,
+        ownerInclude: typeof r.owner_include === 'boolean' ? r.owner_include : null }
     }
   } catch { /* fail open */ }
   return out
@@ -477,7 +483,7 @@ export const isSearchOption = (o: CatalogOption) => (o.chips || []).some(c => /^
  *  Amazon is fine in a luxury unit where an Amazon sofa is not. */
 export function applySuppliers(cat: Catalog): Catalog {
   if (!cat.suppliers.length) return cat
-  const ok = new Set(cat.suppliers)
+  const ok = new Set([...cat.suppliers, 'own'])
   return { ...cat, items: cat.items.map(it => (it.section === 'essential' ? it : { ...it, options: it.options.filter(o => ok.has(baseKey(o.src))) })) }
 }
 

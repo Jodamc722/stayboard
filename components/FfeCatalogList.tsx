@@ -11,8 +11,9 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { BookOpenCheck, Loader2, Plus, Sparkles, Star } from 'lucide-react'
 import { useCachedFetch } from '@/lib/swr'
+import { FfeOwnerLinks } from '@/components/FfeOwnerLinks'
 
-type Cat = { slug: string; name: string; kind: 'default' | 'property'; basedOn: string | null; suppliers: string[]; items: number; approved: number; createdAt: string | null }
+type Cat = { slug: string; name: string; kind: 'default' | 'property'; basedOn: string | null; suppliers: string[]; items: number; approved: number; createdAt: string | null; ownerName?: string | null; submittedAt?: string | null }
 type Listing = { id: string; label: string; photos: number }
 type Tier = { key: string; label: string; blurb: string }
 type Payload = { ok: boolean; catalogs: Cat[]; listings: Listing[]; tiers: Tier[] }
@@ -122,7 +123,9 @@ export function FfeCatalogList() {
             {cats.map(c => (
               <tr key={c.slug} className="border-b border-line last:border-0">
                 <td className="px-4 py-2.5 font-semibold text-ink"><Link href={`/catalogs/${c.slug}`} className="hover:underline inline-flex items-center gap-1.5">{c.kind === 'default' ? <BookOpenCheck className="w-3.5 h-3.5 text-brand-700" /> : null}{c.name}</Link>
-                  {c.kind === 'default' && <span className="ml-2 text-[10.5px] font-semibold uppercase tracking-wider text-brand-700 bg-brand-50 rounded-full px-2 py-0.5">Default</span>}</td>
+                  {c.kind === 'default' && <span className="ml-2 text-[10.5px] font-semibold uppercase tracking-wider text-brand-700 bg-brand-50 rounded-full px-2 py-0.5">Default</span>}
+                  {c.submittedAt && <span className="ml-2 text-[10.5px] font-semibold uppercase tracking-wider text-emerald-800 bg-emerald-50 rounded-full px-2 py-0.5">Owner sent</span>}
+                  {c.ownerName && <div className="text-[11.5px] font-normal text-muted">Owner: {c.ownerName}</div>}</td>
                 <td className="px-3 py-2.5 text-muted">{c.basedOn || '—'}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{c.items}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums"><span className={c.approved ? 'text-emerald-700 font-semibold' : 'text-muted'}>{c.approved}</span><span className="text-muted"> / {c.items}</span></td>
@@ -134,6 +137,8 @@ export function FfeCatalogList() {
           </tbody>
         </table>
       </div>
+
+      <FfeOwnerLinks templates={cats} />
     </div>
   )
 }
