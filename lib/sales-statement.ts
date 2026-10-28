@@ -64,7 +64,15 @@ export async function realStatement(opts: { asOf: string; skip?: number; bedroom
 
   const { data: stmts } = await sb.from('guesty_owner_statements').select('owner_id, period_month, due_to_owner')
     .in('period_month', months).in('owner_id', Object.keys(listingOf))
-  const cands = ((stmts || []) as any[]).filter(s => lmeta[listingOf[String(s.owner_id)]])
+  // Narrow before reading the ledger: the strongest payouts first, lead buildings and the
+  // prospect's bedroom count given a head start, thirty owner-months at most.
+  const pre = ((stmts || []) as any[]).filter(s => lmeta[listingOf[String(s.owner_id)]]).map(s => {
+    const m = lmeta[listingOf[String(s.owner_id)]]
+    const li = LEAD.indexOf(m.b)
+    const boost = (li >= 0 ? 2 - li * 0.2 : 1) * (opts.bedrooms != null && m.br === opts.bedrooms ? 1.5 : 1)
+    return { s, rank: (Number(s.due_to_owner) || 0) * boost }
+  }).sort((a, b) => b.rank - a.rank).slice(0, 30)
+  const cands = pre.map(x => x.s)
   if (!cands.length) return null
 
   // One pull for every candidate's ledger across the window, then score.
@@ -73,7 +81,7 @@ export async function realStatement(opts: { asOf: string; skip?: number; bedroom
   for (let i = 0; i < 40; i++) {
     const { data } = await sb.from('guesty_owner_ledger')
       .select("owner_id, listing_id, entry_date, entry_month, charge_code, amount, name:raw->>name, res:raw->reservationConfirmationCode->>title")
-      .in('owner_id', ownerIds).in('entry_month', months).eq('recognized', true)
+      .in('owner_id', ownerIds).in('entry_month', Array.from(new Set(cands.map(c => String(c.period_month))))).eq('recognized', true)
       .order('id').range(i * 1000, i * 1000 + 999)
     const d = (data || []) as any[]
     rows.push(...d)
