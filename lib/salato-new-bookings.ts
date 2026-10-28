@@ -77,6 +77,23 @@ export function newBookingsEmail(rows: NewBooking[]): { subject: string; html: s
   return { subject, html }
 }
 
+/** A TEST: the next few real Salato stays, as the new-booking email, to one person only. Marks nothing. */
+export async function sendSalatoNewBookingTest(toEmail: string): Promise<{ ok: boolean; subject?: string; error?: string }> {
+  const cfg = await getSetting<{ fromEmail?: string }>('salato_daily', {}).catch(() => ({} as any))
+  if (!cfg?.fromEmail) return { ok: false, error: 'no sending mailbox in the Salato daily settings' }
+  const db = supabaseAdmin()
+  const { match, ids } = await salatoListings(db)
+  const { data } = await db.from('guesty_reservations').select('id,listing_id,check_in,check_out,nights,status,source,guest_name,confirmation_code,raw->guestsCount')
+    .in('listing_id', ids).gte('check_in', ymd()).order('check_in').limit(10)
+  const rows: NewBooking[] = ((data || []) as any[]).filter(r => isLiveStay(str(r.status))).slice(0, 2).map(r => ({
+    id: str(r.id), unit: match[str(r.listing_id)] || 'Salato', guest: str(r.guest_name), ci: str(r.check_in).slice(0, 10), co: str(r.check_out).slice(0, 10),
+    nights: Number(r.nights) || 0, guests: Number(r.guestsCount) || null, source: str(r.source), code: str(r.confirmation_code) }))
+  if (!rows.length) return { ok: false, error: 'no upcoming Salato stay to show' }
+  const { subject, html } = newBookingsEmail(rows)
+  const r = await sendGmail({ fromEmail: cfg.fromEmail, to: [toEmail], subject: '[TEST] ' + subject, html })
+  return { ok: r.ok, subject: '[TEST] ' + subject, error: r.error }
+}
+
 export type NewBookingResult = { ok: boolean; seeded?: boolean; checked: number; fresh: number; sent: number; to?: number; skipped?: string; error?: string; items?: string[] }
 
 export async function runSalatoNewBookingEmail(opts: { dryRun?: boolean } = {}): Promise<NewBookingResult> {

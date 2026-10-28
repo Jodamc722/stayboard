@@ -3,9 +3,10 @@
 //   GET            → dry run: what it would send right now, nothing sent
 //   GET ?preview=1 → the email as it looks, with the next stays as sample rows
 //   POST           → run it now
+//   POST ?test=1   → the next two real stays as a new-booking email, to YOU only (marks nothing)
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { runSalatoNewBookingEmail, newBookingsEmail } from '@/lib/salato-new-bookings'
+import { runSalatoNewBookingEmail, newBookingsEmail, sendSalatoNewBookingTest } from '@/lib/salato-new-bookings'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -20,8 +21,13 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(await runSalatoNewBookingEmail({ dryRun: true }))
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   const gate = await requireLevel('salato', 'edit')
   if (!gate.ok) return gate.res
+  if (req.nextUrl.searchParams.get('test') === '1') {
+    const me = (gate as any).access?.email || (gate as any).email || ''
+    if (!me) return NextResponse.json({ ok: false, error: 'no signed-in email' }, { status: 400 })
+    return NextResponse.json({ ...(await sendSalatoNewBookingTest(me)), sentTo: me })
+  }
   return NextResponse.json(await runSalatoNewBookingEmail())
 }
