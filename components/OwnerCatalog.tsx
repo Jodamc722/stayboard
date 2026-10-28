@@ -181,7 +181,7 @@ function HomeView({ home, onOpen }: { home: Home | null; onOpen: (id: string) =>
     </div>
   )
 }
-const size = (l: Listing) => [l.bedrooms != null ? `${l.bedrooms} BR` : '', l.bathrooms != null ? `${l.bathrooms} BA` : '', l.guests ? `sleeps ${l.guests}` : ''].filter(Boolean).join(' · ')
+const size = (l: Listing) => [l.bedrooms === 0 ? 'Studio' : l.bedrooms != null ? `${l.bedrooms} BR` : '', l.bathrooms != null ? `${l.bathrooms} BA` : '', l.guests ? `sleeps ${l.guests}` : ''].filter(Boolean).join(' · ')
 function Status({ l }: { l: Listing }) {
   if (l.submittedAt) return <span className="text-[11.5px] font-semibold rounded-full px-2.5 py-1 bg-emerald-50 text-emerald-800">Sent to Stay</span>
   if (l.chosen) return <span className="text-[11.5px] font-semibold rounded-full px-2.5 py-1 bg-sky-50 text-sky-800">{l.chosen} choices saved</span>
@@ -202,7 +202,7 @@ function Hero({ l }: { l: Listing }) {
           <h1 className="text-[28px] md:text-[34px] font-bold tracking-tight leading-tight">{l.label}</h1>
           <div className="text-[13.5px] text-muted mt-1 flex flex-wrap gap-x-4 gap-y-1">
             {l.building && <span>{l.building}</span>}
-            {l.bedrooms != null && <span className="inline-flex items-center gap-1"><BedDouble className="w-4 h-4" /> {l.bedrooms} bedroom{l.bedrooms === 1 ? '' : 's'}</span>}
+            {l.bedrooms != null && <span className="inline-flex items-center gap-1"><BedDouble className="w-4 h-4" /> {l.bedrooms === 0 ? 'Studio' : `${l.bedrooms} bedroom${l.bedrooms === 1 ? '' : 's'}`}</span>}
             {l.bathrooms != null && <span className="inline-flex items-center gap-1"><Bath className="w-4 h-4" /> {l.bathrooms} bath</span>}
             {l.guests != null && <span className="inline-flex items-center gap-1"><Users className="w-4 h-4" /> sleeps {l.guests}</span>}
           </div>
