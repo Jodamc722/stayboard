@@ -4502,7 +4502,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 {edit ? (
                   <div className="sb-noprint flex items-center" style={{ gap: 8, marginTop: 12 }}>
                     <span style={{ fontSize: 11, color: t.muted }}>Add-ons:</span>
-                    {([['showLeaders', 'Owners (Eric, Ryan)', showLeaders], ['showMonarch', 'Monarch Collective', showMonarch]] as const).map(([k, l, on]) => (
+                    {([['showLeaders', 'Leadership (Eric, Ryan)', showLeaders], ['showMonarch', 'Monarch Collective', showMonarch]] as const).map(([k, l, on]) => (
                       <button key={k} onClick={() => patch('team.' + k, !on)}
                         style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 12px', borderRadius: 999, border: '1px solid ' + (on ? t.ink : t.cardBorder), background: on ? t.ink : t.card, color: on ? t.bg : t.ink }}>
                         {on ? '✓ ' : '+ '}{l}
@@ -5445,7 +5445,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 </div>
                 {bld.length ? (
                   <div className="mt-auto" style={{ paddingTop: 24 }}>
-                    <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: '0 0 10px' }}>Where we manage</p>
+                    <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: '0 0 10px' }}>A few of the properties we manage</p>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + bld.length + ', 1fr)', gap: 12 }}>
                       {bld.map((it: Any, i: number) => (
                         <div key={i} style={{ position: 'relative', borderRadius: 12, overflow: 'hidden', aspectRatio: '4 / 3', background: t.chip }}>

@@ -522,9 +522,10 @@ export const EDGE_NOTE =
 // ADD-ONS, NOT DEFAULTS (Jon, 2026-10-28: "that should be an add-on not a default, give Nick
 // options for this. Ryan Cassidy is also an important contact"). The owners and the Monarch band
 // are switched on per deck from the team slide; a deck generated today shows neither.
+// Titles and headshots as stay-hospitality.com/about publishes them (read 2026-10-28).
 export const SALES_LEADERS = [
-  { name: 'Eric English', role: 'Owner', email: 'eric@stay-hospitality.com', phone: '', photo: '' },
-  { name: 'Ryan Cassidy', role: 'Owner', email: 'ryan@stay-hospitality.com', phone: '', photo: '' },
+  { name: 'Eric English', role: 'President', email: 'eric@stay-hospitality.com', phone: '', photo: 'https://www.stay-hospitality.com/wp-content/uploads/2026/10/Eric-English-2026.jpg' },
+  { name: 'Ryan Cassidy', role: 'Chief Revenue Officer', email: 'ryan@stay-hospitality.com', phone: '', photo: 'https://www.stay-hospitality.com/wp-content/uploads/2023/06/Ryan-Cassidy.jpg' },
 ]
 // Kept off the proposal's team slide (Jon, 2026-10-28: "get rid of Bernadette and Karla from the
 // team slide on the sales deck"). The onboarding deck still shows the whole team.
