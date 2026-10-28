@@ -275,6 +275,15 @@ function paceBar(t: Any, occPct: unknown, isCurrent: boolean, monthsOut = 1): st
 
 // ---------- PPTX export (P5): built in the browser from the content JSON + active theme ----------
 const PPTX_CDN = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js'
+const H2I_CDN = 'https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js'
+function loadScript(src: string, global: string): Promise<void> {
+  if ((window as Any)[global]) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    const sc = document.createElement('script')
+    sc.src = src; sc.onload = () => resolve(); sc.onerror = () => reject(new Error('load failed'))
+    document.head.appendChild(sc)
+  })
+}
 
 function cx(v: string, fb: string): string {
   return (v && v.indexOf('#') === 0) ? v.slice(1) : fb
@@ -2091,6 +2100,17 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     const f = e.target.files && e.target.files[0]
     if (!f) return
     setAttachMsg(''); setBusy('hero')
+    if (isOnboarding) {
+      // A PHOTO LIBRARY, NOT A COVER SWAP (Nick, 2026-10-28: "add photos without changing the
+      // cover"). Uploads join content.uploads; they show first in every photo picker and can be
+      // dragged onto any photo on any slide. "Use as cover" is its own button.
+      const files = Array.from(e.target.files || [])
+      const got: string[] = []
+      for (const ff of files) { const u = await uploadOne(ff); if (u) got.push(u) }
+      if (got.length) mutate((d: Any) => { const prev = Array.isArray(d.uploads) ? d.uploads : []; d.uploads = got.concat(prev.filter((u: string) => got.indexOf(u) < 0)) })
+      setBusy(''); e.target.value = ''
+      return
+    }
     const url = await uploadOne(f)
     if (url) { patch('hero.heroImage', url); setPicker(false) }
     setBusy(''); e.target.value = ''
@@ -2103,7 +2123,46 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
       }).catch(() => setPool([]))
     }
   }
+  // A DECK EXPORTS AS ITS SLIDES, IN THE ORDER ON SCREEN (Nick, 2026-10-28: "PDF and PPTX should
+  // follow the on-screen order"). The owner-review PPTX is rebuilt from data; a deck has too many
+  // bespoke layouts for that, so each slide is photographed as drawn — cover first, then every
+  // slide in the order the Slides panel set — and placed full-bleed on a 16:9 page. Edit mode is
+  // left first so the editing chips and outlines are not in the picture.
+  async function makeDeckPptx(): Promise<Any> {
+    await loadScript(PPTX_CDN, 'PptxGenJS')
+    await loadScript(H2I_CDN, 'htmlToImage')
+    const wasEdit = edit
+    if (wasEdit) { setEdit(false); await new Promise(r => setTimeout(r, 700)) }
+    try {
+      const root = scrollRef.current as HTMLElement | null
+      const nodes: HTMLElement[] = root ? Array.from(root.querySelectorAll('.onb-cover, .sb-slide')) as HTMLElement[] : []
+      const pptx = new (window as Any).PptxGenJS()
+      pptx.layout = 'LAYOUT_WIDE'
+      const h2i: Any = (window as Any).htmlToImage
+      const blank = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=='
+      for (const el of nodes) {
+        const w = el.clientWidth || 1
+        const hh = el.clientHeight || 1
+        const url: string = await h2i.toJpeg(el, {
+          quality: 0.92, pixelRatio: Math.min(3, 1920 / w), cacheBust: true, imagePlaceholder: blank,
+          style: { borderRadius: '0', margin: '0' },
+          filter: (n: Any) => !(n && n.classList && (n.classList.contains('sb-noprint') || n.classList.contains('sb-pick'))),
+        })
+        const sl = pptx.addSlide()
+        const W = 13.333, H = 7.5
+        const ar = w / hh
+        const iw = ar >= W / H ? W : H * ar
+        const ih = ar >= W / H ? W / ar : H
+        sl.background = { color: 'FFFFFF' }
+        sl.addImage({ data: url, x: (W - iw) / 2, y: (H - ih) / 2, w: iw, h: ih })
+      }
+      return pptx
+    } finally {
+      if (wasEdit) setEdit(true)
+    }
+  }
   async function makePptx(): Promise<Any> {
+    if (isOnboarding) return makeDeckPptx()
     if (!(window as Any).PptxGenJS) {
       await new Promise((resolve, reject) => {
         const s = document.createElement('script')
@@ -2126,7 +2185,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
       const pptx = await makePptx()
       const h = c.hero || {}
       const name = String(h.title || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'report'
-      await pptx.writeFile({ fileName: name + '-owner-review.pptx' })
+      await pptx.writeFile({ fileName: name + (isOnboarding ? '' : '-owner-review') + '.pptx' })
     } catch (_e) {
       setAttachMsg('PPTX export failed — try again.')
     }
@@ -2572,7 +2631,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   // review never has one, so without the gallery the picker opened on an empty grid and the only
   // way to change a picture was to paste a URL.
   const pickPool: string[] = (() => {
-    const a = Array.isArray(c.photoPool) ? (c.photoPool as string[]) : []
+    const a = (Array.isArray(c.uploads) ? (c.uploads as string[]) : []).concat(Array.isArray(c.photoPool) ? (c.photoPool as string[]) : [])
     const b = Array.isArray(gallery) ? gallery : []
     const seen: Record<string, true> = {}
     return a.concat(b).filter(u => !!u && !seen[u] && (seen[u] = true))
@@ -2736,12 +2795,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           {edit && (
             <>
               <input ref={pacingRef} type="file" accept="application/pdf" className="hidden" onChange={onPacingPick} />
-              <input ref={heroRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={onHeroPick} />
+              <input ref={heroRef} type="file" accept="image/jpeg,image/png,image/webp" multiple={isOnboarding} className="hidden" onChange={onHeroPick} />
               <button onClick={() => pacingRef.current && pacingRef.current.click()} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
                 {busy === 'pacing' ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />} Pacing PDF
               </button>
               <button onClick={openPicker} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={picker ? { background: t.ink, color: t.bg } : { background: t.card, border: '1px solid ' + t.toolbarBorder }}>
-                {busy === 'hero' ? <Loader2 size={12} className="animate-spin" /> : <ImageIcon size={12} />} Hero photo
+                {busy === 'hero' ? <Loader2 size={12} className="animate-spin" /> : <ImageIcon size={12} />} {isOnboarding ? 'Photos' : 'Hero photo'}
               </button>
             </>
           )}
@@ -2849,9 +2908,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
       {canEdit && edit && picker && (
         <div className="px-4 py-3 border-b" style={{ background: t.trackBg, borderColor: t.rule }}>
           <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: t.gold }}>HERO PHOTO  ·  FROM THE LISTING</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: t.gold }}>{isOnboarding ? 'PHOTO LIBRARY  ·  DRAG ONTO ANY PHOTO' : 'HERO PHOTO  ·  FROM THE LISTING'}</p>
             <button onClick={() => heroRef.current && heroRef.current.click()} disabled={!!busy} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
-              <Plus size={11} /> Upload instead
+              {busy === 'hero' ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />} {isOnboarding ? 'Upload photos' : 'Upload instead'}
             </button>
             {hero.heroImage && (
               <button onClick={() => patch('hero.heroImage', null)} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.accent }}>
@@ -2860,7 +2919,28 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             )}
             <button onClick={() => setPicker(false)} title="Close" className="ml-auto" style={{ color: t.muted }}><X size={14} /></button>
           </div>
-          {pool === null ? (
+          {isOnboarding ? (() => {
+            const ups: string[] = Array.isArray(c.uploads) ? (c.uploads as string[]) : []
+            const lib: { url: string; thumb: string; listing: string; up: boolean }[] = ups.map(u => ({ url: u, thumb: u, listing: 'Uploaded', up: true }))
+              .concat((pool || []).filter(p => ups.indexOf(p.url) < 0).map(p => ({ url: p.url, thumb: p.thumb, listing: p.listing, up: false })))
+            if (!lib.length) return <p className="mt-2 text-[12px] italic" style={{ color: t.muted }}>{pool === null ? 'Loading listing photos\u2026' : 'No photos yet \u2014 upload some.'}</p>
+            return (
+              <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+                {lib.map((p, i) => (
+                  <div key={i} className="shrink-0 relative rounded-lg overflow-hidden border-2" draggable
+                    onDragStart={e => { e.dataTransfer.setData('text/sb-photo', p.url); e.dataTransfer.setData('text/uri-list', p.url); e.dataTransfer.effectAllowed = 'copy' }}
+                    style={{ borderColor: hero.heroImage === p.url ? t.accent : t.cardBorder, cursor: 'grab' }} title={p.listing + ' \u2014 drag onto a photo'}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={p.thumb} alt="" loading="lazy" className="h-20 w-28 object-cover" draggable={false} />
+                    <span className="absolute left-1 right-1 bottom-1 flex gap-1">
+                      <button onClick={() => patch('hero.heroImage', p.url)} className="flex-1 rounded px-1 py-0.5 text-[10px] font-semibold" style={{ background: 'rgba(255,255,255,0.94)', color: '#111' }}>{hero.heroImage === p.url ? 'Cover \u2713' : 'Use as cover'}</button>
+                      {p.up ? <button title="Remove from the library" onClick={() => mutate((d: Any) => { d.uploads = (d.uploads || []).filter((u: string) => u !== p.url) })} className="rounded px-1.5 py-0.5 text-[10px] font-semibold" style={{ background: 'rgba(255,255,255,0.94)', color: '#111' }}>×</button> : null}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )
+          })() : pool === null ? (
             <p className="mt-2 text-[12px] italic" style={{ color: t.muted }}>Loading listing photos&hellip;</p>
           ) : pool.length ? (
             <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
@@ -3589,6 +3669,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       const d = await r.json().catch(() => ({}))
                       if (!r.ok || !d?.url) { setUpMsg(d?.error || 'Upload failed.'); setUpBusy(false); return }
                       photoPick.set(String(d.url)); answerChanged()
+                      if (isOnboarding) mutate((dd: Any) => { const prev = Array.isArray(dd.uploads) ? dd.uploads : []; if (prev.indexOf(String(d.url)) < 0) dd.uploads = [String(d.url)].concat(prev) })
                       setUpBusy(false); setPhotoPick(null); setPhotoUrl(''); setUpMsg('')
                     } catch {
                       setUpMsg('Could not reach the server.'); setUpBusy(false)
@@ -3609,7 +3690,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 style={{ background: t.ink, color: t.bg }}>Use</button>
             </div>
             {pickPool.length > 0 && (
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.muted }}>Or pick one from the listing</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.muted }}>{isOnboarding ? 'Or pick one from this deck\u2019s photos' : 'Or pick one from the listing'}</p>
             )}
             <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(140px,1fr))' }}>
               {pickPool.map((src: string, i: number) => (
@@ -3628,7 +3709,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         </div>
       )}
 
-      <div ref={scrollRef} onScroll={onPresentScroll} className={present ? ('sb-present' + (isDeck ? ' sb-present-deck' : '')) : ('sb-report ' + (isDeck ? 'sb-deck max-w-[1180px]' : 'max-w-4xl') + ' mx-auto px-5 sm:px-8 pb-20')}>
+      <div ref={scrollRef} onScroll={onPresentScroll} style={!present && edit && isOnboarding && slidesPanel ? { paddingLeft: 'max(20px, calc(272px - (100vw - 1180px) / 2))' } : undefined} className={present ? ('sb-present' + (isDeck ? ' sb-present-deck' : '')) : ('sb-report ' + (isDeck ? 'sb-deck max-w-[1180px]' : 'max-w-4xl') + ' mx-auto px-5 sm:px-8 pb-20')}>
 
         {/* ---------- COVER ---------- */}
         {/* AN ONBOARDING OPENS ON THEIR PROPERTY, NOT ON OUR LOGO. The review report's cover — a
@@ -3939,7 +4020,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const n = pageNo
             return (
               <div className="flex items-center justify-between pt-4" style={{ borderTop: '1px solid ' + (dark ? D.rule : t.rule) }}>
-                <span style={{ fontSize: 11.5, letterSpacing: '0.08em', color: dark ? D.muted : t.muted }}>{label}</span>
+                <span style={{ fontSize: 11.5, letterSpacing: '0.08em', color: dark ? D.muted : t.muted }}><Lab id={'foot_' + String(label).toLowerCase().replace(/[^a-z0-9]+/g, '_')} d={label} /></span>
                 <span className="flex items-center" style={{ gap: 13 }}>
                   {mark.logo ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -3988,7 +4069,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
 
           const SalesHead = stable('SalesHead', ({ k, eyebrow, dark }: { k: string; eyebrow: string; dark?: boolean }) => (
             <div>
-              <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: dark ? 'rgba(255,255,255,0.6)' : t.accent, margin: 0 }}>{eyebrow}</p>
+              <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: dark ? 'rgba(255,255,255,0.6)' : t.accent, margin: 0 }}><Lab id={'eyebrow_' + k} d={eyebrow} /></p>
               <h2 style={{ fontSize: 40, lineHeight: 1.08, letterSpacing: '-0.025em', fontWeight: 600, color: dark ? '#fff' : t.ink, margin: '10px 0 0', maxWidth: '24ch' }}>
                 <Ed v={sec(k).headline || ''} set={v => patch(k + '.headline', v)} edit={edit} multiline />
               </h2>
@@ -4174,7 +4255,23 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           const Pick = stable('Pick', ({ title, cur, set, style, cover, pos, choices, choicesLabel, groups }: {
             title: string; cur: string; set: (u: string) => void; style?: Any; cover?: boolean; pos?: string; choices?: string[]; choicesLabel?: string; groups?: { id: string; name: string; pics: string[] }[]
           }) => (
-            <div style={{ position: 'relative', overflow: 'hidden', ...(style || {}) }}>
+            <div style={{ position: 'relative', overflow: 'hidden', ...(style || {}) }}
+              onDragOver={edit ? (e => { const ty = Array.from(e.dataTransfer.types || []); if (ty.indexOf('text/sb-photo') >= 0 || ty.indexOf('Files') >= 0) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; (e.currentTarget as HTMLElement).style.outline = '3px solid ' + t.accent } }) : undefined}
+              onDragLeave={edit ? (e => { (e.currentTarget as HTMLElement).style.outline = 'none' }) : undefined}
+              onDrop={edit ? (async e => {
+                const el = e.currentTarget as HTMLElement
+                el.style.outline = 'none'
+                const u = e.dataTransfer.getData('text/sb-photo')
+                if (u) { e.preventDefault(); set(u); answerChanged(); return }
+                const f = e.dataTransfer.files && e.dataTransfer.files[0]
+                if (f && /^image\//.test(f.type)) {
+                  e.preventDefault()
+                  el.style.opacity = '0.55'
+                  const url = await uploadOne(f)
+                  el.style.opacity = ''
+                  if (url) { set(url); answerChanged(); mutate((d: Any) => { const prev = Array.isArray(d.uploads) ? d.uploads : []; if (prev.indexOf(url) < 0) d.uploads = [url].concat(prev) }) }
+                }
+              }) : undefined}>
               {cur ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={cur} alt="" style={{ width: '100%', height: '100%', objectFit: cover === false ? 'contain' : 'cover', objectPosition: pos || 'center' }} />
@@ -4547,8 +4644,28 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const tm: Any = sec('team')
             const showLeaders = tm.showLeaders === true
             const showMonarch = tm.showMonarch === true
+            const allPpl: Any[] = (tm.people || []) as Any[]
             const leaders: Any[] = showLeaders ? (SALES_LEADERS as Any[]).filter(l => !base.some((p: Any) => String(p.name || '').toLowerCase() === l.name.toLowerCase())) : []
-            const ppl: Any[] = [...leaders, ...base].slice(0, 6)
+            // ix: where the card lives in team.people, so an edit lands on the right person. A
+            // leader still carried by the old toggle has no row yet; editing one writes it in.
+            const ppl: Any[] = [...leaders.map((l: Any) => ({ ...l, ix: -1 })), ...base.map((p: Any) => ({ ...p, ix: allPpl.indexOf(p) }))].slice(0, edit ? 8 : 6)
+            const setP = (p: Any, f: string, v: string) => mutate((d: Any) => {
+              const tt = d.team || (d.team = {}); tt.people = Array.isArray(tt.people) ? tt.people : []
+              if (p.ix >= 0 && tt.people[p.ix]) { tt.people[p.ix][f] = v; return }
+              const row: Any = { name: p.name, role: p.role, photo: p.photo, phone: p.phone || '', email: p.email || '', leader: true }
+              row[f] = v; tt.people.unshift(row)
+            })
+            const dropP = (p: Any) => mutate((d: Any) => {
+              const tt = d.team || (d.team = {}); tt.people = Array.isArray(tt.people) ? tt.people : []
+              if (p.ix >= 0) tt.people.splice(p.ix, 1)
+              else tt.showLeaders = false
+            })
+            const toggleLeaders = () => mutate((d: Any) => {
+              const tt = d.team || (d.team = {}); tt.people = Array.isArray(tt.people) ? tt.people : []
+              const isL = (x: Any) => x && (x.leader || (SALES_LEADERS as Any[]).some(l => l.name.toLowerCase() === String(x.name || '').toLowerCase()))
+              if (showLeaders) { tt.showLeaders = false; tt.people = tt.people.filter((x: Any) => !isL(x)) }
+              else { tt.showLeaders = true; tt.people = [...(SALES_LEADERS as Any[]).filter(l => !tt.people.some((x: Any) => String(x.name || '').toLowerCase() === l.name.toLowerCase())).map(l => ({ ...l, phone: l.phone || '', email: l.email || '', leader: true })), ...tt.people] }
+            })
             slides.push({ key: 'team', node: (
             <Slide nav="Your team" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
@@ -4558,19 +4675,23 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 {/* Fixed-width cards, so two people read as two people rather than as half a row. */}
                 <div style={{ marginTop: 26, display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, ppl.length) + ', minmax(0, ' + (ppl.length <= 3 ? 230 : 190) + 'px))', gap: 24, alignItems: 'start' }}>
                   {ppl.map((p: Any, i: number) => (
-                    <div key={i} className="flex flex-col" style={{ minWidth: 0 }}>
-                      {p.photo ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={String(p.photo)} alt="" style={{ width: '100%', aspectRatio: showMonarch ? '1 / 1' : '4 / 5', objectFit: 'cover', objectPosition: '50% 22%', borderRadius: 16 }} />
+                    <div key={i} className="flex flex-col" style={{ minWidth: 0, position: 'relative' }}>
+                      {p.photo || edit ? (
+                        <Pick title={'Photo \u2014 ' + String(p.name || 'team member')} cur={String(p.photo || '')} set={u => setP(p, 'photo', u)} pos="50% 22%"
+                          style={{ width: '100%', aspectRatio: showMonarch ? '1 / 1' : '4 / 5', borderRadius: 16 }} />
                       ) : (
                         <div className="flex items-center justify-center" style={{ width: '100%', aspectRatio: showMonarch ? '1 / 1' : '4 / 5', borderRadius: 16, background: t.chip, color: t.muted, fontSize: 28, fontWeight: 700 }}>
                           {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
                         </div>
                       )}
-                      <p style={{ fontSize: 17, fontWeight: 600, color: t.ink, margin: '14px 0 0', lineHeight: 1.2 }}>{String(p.name || '')}</p>
-                      <p style={{ fontSize: 12.5, color: t.accent, margin: '4px 0 0', fontWeight: 600 }}>{String(p.role || '')}</p>
-                      {String(p.phone || '').trim() ? <p style={{ fontSize: 12.5, color: t.body, margin: '8px 0 0', fontVariantNumeric: 'tabular-nums' }}>{String(p.phone)}</p> : null}
-                      {String(p.email || '').trim() ? <p style={{ fontSize: 12, color: t.muted, margin: '2px 0 0', wordBreak: 'break-all' }}>{String(p.email)}</p> : null}
+                      {edit ? (
+                        <button className="sb-noprint" onClick={() => dropP(p)} title="Remove from this deck"
+                          style={{ position: 'absolute', top: 8, right: 8, width: 24, height: 24, borderRadius: 999, background: 'rgba(255,255,255,0.94)', color: '#111', fontSize: 14, lineHeight: '24px', zIndex: 2 }}>×</button>
+                      ) : null}
+                      <p style={{ fontSize: 17, fontWeight: 600, color: t.ink, margin: '14px 0 0', lineHeight: 1.2 }}><Ed v={String(p.name || '')} set={v => setP(p, 'name', v)} edit={edit} placeholder="Name" /></p>
+                      <p style={{ fontSize: 12.5, color: t.accent, margin: '4px 0 0', fontWeight: 600 }}><Ed v={String(p.role || '')} set={v => setP(p, 'role', v)} edit={edit} placeholder="Title" /></p>
+                      {String(p.phone || '').trim() || edit ? <p style={{ fontSize: 12.5, color: t.body, margin: '8px 0 0', fontVariantNumeric: 'tabular-nums' }}><Ed v={String(p.phone || '')} set={v => setP(p, 'phone', v)} edit={edit} placeholder="Phone" /></p> : null}
+                      {String(p.email || '').trim() || edit ? <p style={{ fontSize: 12, color: t.muted, margin: '2px 0 0', wordBreak: 'break-all' }}><Ed v={String(p.email || '')} set={v => setP(p, 'email', v)} edit={edit} placeholder="Email" /></p> : null}
                     </div>
                   ))}
                 </div>
@@ -4584,8 +4705,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 {edit ? (
                   <div className="sb-noprint flex items-center" style={{ gap: 8, marginTop: 12 }}>
                     <span style={{ fontSize: 11, color: t.muted }}>Add-ons:</span>
+                    <button onClick={() => mutate((d: Any) => { const tt = d.team || (d.team = {}); tt.people = Array.isArray(tt.people) ? tt.people : []; tt.people.push({ name: 'New person', role: '', photo: '', phone: '', email: '' }) })}
+                      style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 12px', borderRadius: 999, background: t.ink, color: t.bg }}>+ Add person</button>
                     {([['showLeaders', 'Leadership (Eric, Ryan)', showLeaders], ['showMonarch', 'Monarch Collective', showMonarch]] as const).map(([k, l, on]) => (
-                      <button key={k} onClick={() => patch('team.' + k, !on)}
+                      <button key={k} onClick={() => (k === 'showLeaders' ? toggleLeaders() : patch('team.' + k, !on))}
                         style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 12px', borderRadius: 999, border: '1px solid ' + (on ? t.ink : t.cardBorder), background: on ? t.ink : t.card, color: on ? t.bg : t.ink }}>
                         {on ? '✓ ' : '+ '}{l}
                       </button>
@@ -5496,7 +5619,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const isWhole = (it: Any) => FULLY_MANAGED.some(n => String(it.k || '').toLowerCase().replace(/\s+/g, ' ').includes(n))
             const bld: Any[] = ((sec('experience').items || []) as Any[]).filter((it: Any) => it && it.pic && !/soon/i.test(String(it.tag || '')))
               .sort((a: Any, b: Any) => Number(isWhole(b)) - Number(isWhole(a))).slice(0, 5)
-            const team4: Any[] = ((sec('team').people || []) as Any[]).filter((p: Any) => p && String(p.name || '').trim()).slice(0, 4)
+            const statBig0 = lead ? String(lead.multiple) + '×' : ''
+            const statLine0 = lead ? 'what our ' + word(String(lead.bedrooms)) + ' earn against the ' + String(eg.benchLabel || 'market') + ' median' : ''
+            const statSub0 = lead ? $m(lead.gross) + ' a year vs ' + $m(lead.median) : ''
+            const showStat = !!(lead || String(eg.statBig || '').trim() || edit)
+            const egFoot0 = lead ? 'Homes we managed all 12 months, every channel, against AirROI ' + String(eg.benchLabel || '') + ' homes listed all 12 months (Airbnb), to September 2026.' : ''
             slides.push({ key: 'edge', ai: true, node: (
             <Slide nav="Who we are" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
@@ -5504,15 +5631,19 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 {/* CREDIBILITY IN THREE LAYERS (Jon, 2026-10-27: "who we are and why choose us,
                     credibility"): the result (our homes against the market), the track record (the
                     four company numbers), and the proof you can see (the buildings we run). */}
-                <div style={{ marginTop: 20, display: 'grid', gridTemplateColumns: lead ? '330px 1fr' : '1fr', gap: 28 }}>
-                  {lead ? (
+                <div style={{ marginTop: 20, display: 'grid', gridTemplateColumns: showStat ? '330px 1fr' : '1fr', gap: 28 }}>
+                  {/* FREE TEXT (Nick, 2026-10-28: "let me type my own headline stat"). The measured
+                      multiple is the default; whatever is typed over it stays on this deck. */}
+                  {showStat ? (
                     <div style={{ background: t.band, borderRadius: 18, padding: '20px 24px', color: '#fff' }}>
-                      <p style={{ fontFamily: SERIF, fontSize: 64, lineHeight: 0.95, letterSpacing: '-0.04em', margin: 0 }}>{String(lead.multiple)}×</p>
+                      <p style={{ fontFamily: SERIF, fontSize: 64, lineHeight: 0.95, letterSpacing: '-0.04em', margin: 0 }}>
+                        <Ed v={String(eg.statBig || '') || statBig0} set={v => patch('edge.statBig', v)} edit={edit} placeholder="3.2×" />
+                      </p>
                       <p style={{ fontSize: 15, lineHeight: 1.4, margin: '12px 0 0', color: 'rgba(255,255,255,0.9)' }}>
-                        what our {word(String(lead.bedrooms))} earn against the {String(eg.benchLabel || 'market')} median
+                        <Ed v={String(eg.statLine || '') || statLine0} set={v => patch('edge.statLine', v)} edit={edit} multiline placeholder="what the figure means" />
                       </p>
                       <p style={{ fontSize: 12.5, margin: '14px 0 0', paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.18)', color: 'rgba(255,255,255,0.7)', fontVariantNumeric: 'tabular-nums' }}>
-                        {$m(lead.gross)} a year vs {$m(lead.median)}
+                        <Ed v={String(eg.statSub || '') || statSub0} set={v => patch('edge.statSub', v)} edit={edit} placeholder="the numbers behind it" />
                       </p>
                     </div>
                   ) : null}
@@ -5527,7 +5658,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 </div>
                 {bld.length ? (
                   <div className="mt-auto" style={{ paddingTop: 24 }}>
-                    <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: '0 0 10px' }}>A few of the properties we manage</p>
+                    <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: '0 0 10px' }}>{<Lab id="edgeProps" d="A few of the properties we manage" />}</p>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + bld.length + ', 1fr)', gap: 12 }}>
                       {bld.map((it: Any, i: number) => (
                         <div key={i} style={{ position: 'relative', borderRadius: 12, overflow: 'hidden', aspectRatio: '4 / 3', background: t.chip }}>
@@ -5541,7 +5672,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   </div>
                 ) : null}
                 <p style={{ fontSize: 9.5, color: t.muted, margin: '10px 0 0', lineHeight: 1.4 }}>
-                  {lead ? 'Homes we managed all 12 months, every channel, against AirROI ' + String(eg.benchLabel || '') + ' homes listed all 12 months (Airbnb), to September 2026.' : ''}
+                  <Ed v={String(eg.footnote || '') || egFoot0} set={v => patch('edge.footnote', v)} edit={edit} multiline placeholder="Source note" />
                 </p>
                 {edit ? (
                   <div className="sb-noprint flex items-center" style={{ gap: 8, marginTop: 8 }}>
@@ -7558,6 +7689,13 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // team slide who can be reached — a sent deck must never end on nobody.
           const closeCard: Any = String(ccCard.name || '').trim() ? ccCard
             : (((sec('team').people || []) as Any[]).find((p: Any) => String(p.name || '').trim() && (String(p.phone || '').trim() || String(p.email || '').trim())) || {})
+          const setCard = (f: string, v: string) => mutate((d: Any) => {
+            const cc0 = d.contact || (d.contact = {})
+            const cur: Any = cc0.card && String(cc0.card.name || '').trim() ? cc0.card : { ...closeCard }
+            cur[f] = v; cc0.card = cur
+          })
+          const cardPeople: Any[] = [...(SALES_LEADERS as Any[]), ...((sec('team').people || []) as Any[])]
+            .filter((p: Any, i: number, a: Any[]) => p && String(p.name || '').trim() && a.findIndex((x: Any) => String(x.name || '').toLowerCase() === String(p.name || '').toLowerCase()) === i)
           if (isSales && !hid('close')) { const cl: Any = sec('close')
             const clStored: Any[] = (cl.rows || []) as Any[]
             const clRetired = clStored.length > 0 && clStored.every((r: Any) => CLOSE_ROWS_RETIRED.indexOf(String(r.k || '')) >= 0)
@@ -7586,21 +7724,28 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     {salesFee ? (
                       <div className="mt-auto" style={{ display: 'flex', alignItems: 'baseline', gap: 14, background: t.chip, borderRadius: 12, padding: '14px 20px' }}>
                         <span style={{ fontFamily: SERIF, fontSize: 30, color: t.ink, lineHeight: 1 }}>{Math.round(salesFee * 10) / 10}%</span>
-                        <span style={{ fontSize: 13.5, color: t.body, lineHeight: 1.45 }}>management fee on rental revenue. Pricing, guest care, cleaning, maintenance and owner reporting included.</span>
+                        <span style={{ fontSize: 13.5, color: t.body, lineHeight: 1.45 }}><Lab id="closeFee" d="management fee on rental revenue. Pricing, guest care, cleaning, maintenance and owner reporting included." /></span>
                       </div>
                     ) : null}
                   </div>
                   <div style={{ background: t.band, borderRadius: 18, padding: '30px 28px', color: '#fff', display: 'flex', flexDirection: 'column' }}>
-                    <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.6)', margin: 0 }}>Your contact</p>
-                    {String(closeCard.photo || '').trim() ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={String(closeCard.photo)} alt="" style={{ width: 92, height: 92, borderRadius: 999, objectFit: 'cover', marginTop: 24, border: '2px solid rgba(255,255,255,0.3)' }} />
+                    <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{<Lab id="closeContact" d="Your contact" />}</p>
+                    {String(closeCard.photo || '').trim() || edit ? (
+                      <Pick title="Contact photo" cur={String(closeCard.photo || '')} set={u => setCard('photo', u)} pos="50% 22%"
+                        style={{ width: 92, height: 92, borderRadius: 999, marginTop: 24, border: '2px solid rgba(255,255,255,0.3)' }} />
                     ) : null}
-                    <p style={{ fontSize: 24, fontWeight: 600, margin: '18px 0 0', lineHeight: 1.15 }}>{String(closeCard.name || '') || (edit ? 'Fill in the contact card' : '')}</p>
-                    {String(closeCard.role || '').trim() ? <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', margin: '5px 0 0' }}>{String(closeCard.role)}</p> : null}
+                    <p style={{ fontSize: 24, fontWeight: 600, margin: '18px 0 0', lineHeight: 1.15 }}><Ed v={String(closeCard.name || '')} set={v => setCard('name', v)} edit={edit} placeholder="Name" /></p>
+                    {String(closeCard.role || '').trim() || edit ? <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', margin: '5px 0 0' }}><Ed v={String(closeCard.role || '')} set={v => setCard('role', v)} edit={edit} placeholder="Title" /></p> : null}
                     <div className="mt-auto" style={{ paddingTop: 18, borderTop: '1px solid rgba(255,255,255,0.18)', display: 'grid', gap: 8 }}>
-                      {String(closeCard.phone || '').trim() ? <p style={{ fontSize: 18, margin: 0, fontVariantNumeric: 'tabular-nums' }}>{String(closeCard.phone)}</p> : null}
-                      {String(closeCard.email || '').trim() ? <p style={{ fontSize: 14, margin: 0, color: 'rgba(255,255,255,0.86)', wordBreak: 'break-all' }}>{String(closeCard.email)}</p> : null}
+                      {String(closeCard.phone || '').trim() || edit ? <p style={{ fontSize: 18, margin: 0, fontVariantNumeric: 'tabular-nums' }}><Ed v={String(closeCard.phone || '')} set={v => setCard('phone', v)} edit={edit} placeholder="Phone" /></p> : null}
+                      {String(closeCard.email || '').trim() || edit ? <p style={{ fontSize: 14, margin: 0, color: 'rgba(255,255,255,0.86)', wordBreak: 'break-all' }}><Ed v={String(closeCard.email || '')} set={v => setCard('email', v)} edit={edit} placeholder="Email" /></p> : null}
+                      {edit ? (
+                        <select className="sb-noprint" value="" onChange={e => { const p: Any = cardPeople[Number(e.target.value)]; if (p) mutate((d: Any) => { const cc0 = d.contact || (d.contact = {}); cc0.card = { name: p.name || '', role: p.role || '', photo: p.photo || '', phone: p.phone || '', email: p.email || '' } }) }}
+                          style={{ marginTop: 6, fontSize: 12, padding: '5px 8px', borderRadius: 8, background: 'rgba(255,255,255,0.12)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)' }}>
+                          <option value="">Use someone from the team…</option>
+                          {cardPeople.map((p: Any, i: number) => <option key={i} value={i} style={{ color: '#111' }}>{String(p.name)}</option>)}
+                        </select>
+                      ) : null}
                     </div>
                   </div>
                 </div>
