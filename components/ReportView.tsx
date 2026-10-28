@@ -4473,7 +4473,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 <div className="flex items-end justify-between" style={{ gap: 30 }}>
                   <SalesHead k="team" eyebrow="Your team" />
                 </div>
-                <div style={{ marginTop: 26, display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(4, ppl.length) + ', 1fr)', gap: 20, alignItems: 'start' }}>
+                {/* Fixed-width cards, so two people read as two people rather than as half a row. */}
+                <div style={{ marginTop: 26, display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, ppl.length) + ', minmax(0, ' + (ppl.length <= 3 ? 230 : 190) + 'px))', gap: 24, alignItems: 'start' }}>
                   {ppl.map((p: Any, i: number) => (
                     <div key={i} className="flex flex-col" style={{ minWidth: 0 }}>
                       {p.photo ? (
