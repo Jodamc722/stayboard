@@ -575,7 +575,7 @@ export async function orderFromCatalog(property: string, listingId: string, who:
   const decisions = await readDecisions(property)
   const lines: any[] = []
   for (const it of applySuppliers(cat).items) {
-    const d = decisions[it.key]; if (!d || d.rejected || !d.approved.length) continue
+    const d = decisions[it.key]; if (!d || d.rejected || !d.approved.length || d.ownerInclude === false) continue   // the owner said not needed
     for (const o of it.options) {
       if (!d.approved.includes(o.src)) continue
       lines.push({ room: it.category.slice(0, 80), item_key: `${it.key}:${o.src}`.slice(0, 120), title: it.name.slice(0, 160), product: o.name.slice(0, 200),
