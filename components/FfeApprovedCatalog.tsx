@@ -23,6 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Copy, ExternalLink, Link2, Loader2, Plus, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
 import { useCachedFetch } from '@/lib/swr'
 import { FfeCatalogOwnerPanel } from '@/components/FfeCatalogOwnerPanel'
+import { isConsumable } from '@/lib/ffe-consumables'
 
 type OptionSrc = string
 type Tier = 'standard' | 'midlux' | 'luxury'
@@ -183,7 +184,8 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
   const compare = items.filter(i => i.section === 'compare').filter(visible)
   const vendor = items.filter(i => i.section === 'vendor').filter(visible)
   const amenity = items.filter(i => i.section === 'amenity').filter(visible)
-  const essential = items.filter(i => i.section === 'essential').filter(visible)
+  const essential = items.filter(i => i.section === 'essential' && !isConsumable(i)).filter(visible)
+  const consumables = items.filter(i => i.section === 'essential' && isConsumable(i)).filter(visible)
   const ranked = order === 'rank'
     ? [...compare].sort((a, b) => savings(b) - savings(a))
     : compare
@@ -270,6 +272,17 @@ export function FfeApprovedCatalog({ property = '17-west', publicCode }: { prope
               </div>
             )
           })}
+        </section>
+      )}
+
+      {/* CONSUMABLES (Jon, 2026-10-28): stocked by the team — not on owner links or onboarding orders. */}
+      {consumables.length > 0 && (
+        <section>
+          <h2 className="text-xl font-bold text-ink tracking-tight">Consumables <span className="text-sm font-medium text-muted">team only</span></h2>
+          <p className="text-sm text-muted mt-1 max-w-3xl">Paper goods, bath amenities and refills, cleaning products, coffee, batteries and bulbs. The team stocks these, so owners never see them and they are left out of onboarding orders.</p>
+          <div className="grid gap-2 md:grid-cols-2 mt-4">
+            {consumables.map(it => <EssentialCard key={it.key} item={it} d={decisions[it.key]} status={status(it.key)} canEdit={canEdit} view={view} isPublic={isPublic} selecting={selecting} onPick={pick} onToggle={toggle} />)}
+          </div>
         </section>
       )}
 
@@ -775,7 +788,7 @@ function Onboarding({ property, items, decisions, onChanged }: { property: strin
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState<React.ReactNode>('')
   useEffect(() => { fetch('/api/audit/ffe/catalogs').then(r => r.json()).then(j => setUnits(j?.listings || [])).catch(() => {}) }, [])
-  const essentials = items.filter(i => i.section === 'essential' && i.need)
+  const essentials = items.filter(i => i.section === 'essential' && i.need && !isConsumable(i))   // consumables: stocked by the team, not ordered here
   const mult = (per?: QtyPer) => per === 'bedroom' ? Math.max(1, size.bedrooms) : per === 'bathroom' ? Math.max(1, Math.ceil(size.bathrooms)) : per === 'guest' ? Math.max(1, size.guests) : 1
   const lines = essentials.map(it => {
     const d = decisions[it.key]
