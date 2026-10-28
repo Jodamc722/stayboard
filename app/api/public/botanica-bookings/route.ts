@@ -34,6 +34,8 @@ import { customFieldNameMap } from '@/lib/custom-fields'
 import { guestSplit } from '@/lib/reservation-pull'
 import { pullReservationsByIds } from '@/lib/guesty'
 import { makeXlsx, type XCell } from '@/lib/xlsx-lite'
+import { setSetting } from '@/lib/app-settings'
+import { waitUntil } from '@vercel/functions'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -242,14 +244,45 @@ async function backfillGuestCounts(): Promise<NextResponse> {
 //     memory — on the server for the downloads, and in the browser for the page, which loads once.
 type Built = { at: number; today: string; lastSync: string | null; rooms: number; rows: BRow[] }
 type BRow = { id: string; ci: string; co: string; live: boolean; status: string; channel: string; room: string; hasEmail: boolean; hasPhone: boolean; hasAddr: boolean; hasAdults: boolean; dup: boolean; cells: (string | number)[]; extra: (string | number)[] }
-const CACHE_MS = 2 * 60 * 1000
+const CACHE_MS = 2 * 60 * 1000       // this instance's copy is reused as-is for 2 minutes
+const SNAP_FRESH_MS = 10 * 60 * 1000 // a stored snapshot younger than this is served without a rebuild
+const SNAP_KEY = 'botanica_bookings_snapshot'
 let built: Built | null = null
 let building: Promise<Built> | null = null
-async function getBuilt(fresh = false): Promise<Built> {
-  if (!fresh && built && Date.now() - built.at < CACHE_MS && built.today === ymdNY(new Date())) return built
+
+// THE STORED SNAPSHOT. A cold function used to spend ~8 s in the reservations query before it could
+// answer anyone. The finished set is now also kept in app_settings, so any instance answers from it
+// at once: younger than 10 minutes it is simply served; older (same day) it is served AND rebuilt
+// in the background (waitUntil), so the next visitor gets the newer one. Only a snapshot from
+// another day — statuses like "Checked In" depend on the date — or ?fresh=1 waits for a rebuild.
+async function readSnapshot(): Promise<Built | null> {
+  try {
+    const { data, error } = await supabaseAdmin().from('app_settings').select('value').eq('key', SNAP_KEY).limit(1)
+    if (error || !data || !data[0]) return null
+    const raw = (data[0] as any).value
+    const b = typeof raw === 'string' ? JSON.parse(raw) : raw
+    return b && Array.isArray(b.rows) && typeof b.at === 'number' ? (b as Built) : null
+  } catch { return null }
+}
+function rebuild(): Promise<Built> {
   if (building) return building
-  building = buildAll().then(b => { built = b; return b }).finally(() => { building = null })
+  building = buildAll()
+    .then(async b => { built = b; await setSetting(SNAP_KEY, b, 'botanica-bookings').catch(() => undefined); return b })
+    .finally(() => { building = null })
   return building
+}
+async function getBuilt(fresh = false): Promise<Built> {
+  const today = ymdNY(new Date())
+  if (fresh) return rebuild()
+  if (built && built.today === today && Date.now() - built.at < CACHE_MS) return built
+  const snap = await readSnapshot()
+  const best = snap && (!built || snap.at > built.at) ? snap : built
+  if (best && best.today === today) {
+    built = best
+    if (Date.now() - best.at >= SNAP_FRESH_MS) waitUntil(rebuild().then(() => undefined, () => undefined))
+    return best
+  }
+  return rebuild()
 }
 
 const SELECT = [
