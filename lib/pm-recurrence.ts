@@ -36,6 +36,7 @@ import { workableDays } from './unit-windows'
 import { updateBreezewayTask, breezewayConfigured } from './breezeway'
 import { getTaskAutomation } from './auto-inspections'
 import { marketOf } from './segments'
+import { openCadenceTaskMap, pickOpen } from './pm-dedupe'
 
 const STATE_KEY = 'pm_recurrence_state'
 const MAX_CREATE_PER_RUN = 25
@@ -93,6 +94,22 @@ export async function runPmRecurrence(opts: { dryRun?: boolean; force?: boolean 
   const maxLead = live.reduce((m, c) => Math.max(m, c.leadDays ?? 14), 14)
   const cal = await buildDueCalendar(today, { horizonDays: Math.max(30, maxLead + 7) })
   const items: DueItem[] = cal.buildings.flatMap(b => b.items).filter(i => byKey[i.cadenceKey] && byKey[i.cadenceKey].successor !== false && i.lastDone)
+
+  // NEVER A SECOND TASK (Jon, 2026-10-28: "We should never create a duplicate task for filter
+  // changes, we should move if not completed"). The due calendar's "already scheduled" check vetoes a
+  // task filed under another department — a filter task on the departure clean sits in Housekeeping —
+  // so it read as unscheduled and the pass filed another, run after run. Before anything is created,
+  // every OPEN task matching the cadence on the unit is read straight from the mirror, any department,
+  // any date; if one exists IT is the successor (moved below when its day has passed). If that read
+  // fails, nothing is created this run — a duplicate guard that fails open is not a guard.
+  let openMap: Record<string, Record<string, { id: string; date: string }[]>>
+  try { openMap = await openCadenceTaskMap(cfg.cadences, today) }
+  catch (e: any) { return { ...out, ok: false, error: `open-task check failed, nothing created: ${String(e?.message || e).slice(0, 160)}` } }
+  for (const it of items) {
+    if (it.scheduled) continue
+    const own = pickOpen((openMap[it.cadenceKey] || {})[it.listingId] as any)
+    if (own) (it as any).scheduled = { taskId: own.id, date: own.date }
+  }
 
   // ── 1. the ledger ──────────────────────────────────────────────────────────────────────────────
   const { data: rowsRes } = await db.from('pm_schedule').select('*').limit(1000) // deliberate cap: Jon to decide — PM recurrence creates, proposes and moves Breezeway tasks off this ledger (unordered)
@@ -259,9 +276,16 @@ export async function runPmRecurrence(opts: { dryRun?: boolean; force?: boolean 
     for (const t of ((ts || []) as any[])) tmap[str(t.id)] = t
     const open = stale.filter((r: any) => { const t = tmap[str(r.task_id)]; return t && !t.finished_at && !/complet|finish|close|approv|cancel|delet|void/i.test(str(t.status)) })
     const w2 = await workableDays(Array.from(new Set(open.map((r: any) => str(r.listing_id)))), today, 21).catch(() => ({} as any))
+    // A job that rides the departure moves to the unit's next checkout (inside 14 days), else today.
+    const riderIds = open.filter((r: any) => byKey[r.cadence_key]?.ridesDeparture).map((r: any) => str(r.listing_id))
+    const nextOut2: Record<string, string> = {}
+    if (riderIds.length) {
+      const { data: rs } = await db.from('guesty_reservations').select('listing_id,check_out,status').in('listing_id', Array.from(new Set(riderIds))).gte('check_out', today).lte('check_out', shift(today, 14)).in('status', ['confirmed', 'reserved', 'checked_in']).order('check_out').limit(500)
+      for (const x of ((rs || []) as any[])) { const lid = str(x.listing_id), co = str(x.check_out).slice(0, 10); if (!nextOut2[lid] || co < nextOut2[lid]) nextOut2[lid] = co }
+    }
     for (const r of open as any[]) {
       const c = byKey[r.cadence_key]
-      const best = c?.needsVacant ? (w2[r.listing_id]?.best?.date || null) : today
+      const best = c?.needsVacant ? (w2[r.listing_id]?.best?.date || null) : c?.ridesDeparture ? (nextOut2[str(r.listing_id)] || today) : today
       if (!best) { out.waiting++; continue }
       try {
         const u = await updateBreezewayTask(str(r.task_id), { name: str(tmap[str(r.task_id)]?.name) || `${c?.label || r.cadence_key} — ${r.unit_name}`, scheduled_date: best })
