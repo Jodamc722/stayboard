@@ -30,7 +30,7 @@ type Need = 'must' | 'recommended' | 'suggested'
 type QtyPer = 'unit' | 'bedroom' | 'bathroom' | 'guest'
 type Item = { id?: string; key: string; section: 'compare' | 'vendor' | 'amenity' | 'essential'; category: string; name: string; options: Opt[]; need?: Need | null; qty?: number; qtyPer?: QtyPer }
 type Catalog = { property: string; title: string; kind?: 'default' | 'property'; suppliers?: string[]; tier?: string | null; styleBrief?: string | null; listingId?: string | null; sourceSheet: string; asOf: string; items: Item[]; misc: Record<string, string[]>; fromDb?: boolean }
-type Decision = { approved: OptionSrc[]; rejected: boolean; note: string; suggested?: string[]; suggestNote?: string; ownerPicked?: boolean }
+type Decision = { approved: OptionSrc[]; rejected: boolean; note: string; suggested?: string[]; suggestNote?: string; ownerPicked?: boolean; ownerInclude?: boolean | null }
 type Supplier = { key: string; name: string; note: string }
 type Payload = { ok: boolean; catalog: Catalog; decisions: Record<string, Decision>; suppliers?: Supplier[]; canEdit: boolean; mode?: 'view' | 'select' }
 
@@ -749,6 +749,9 @@ function pickFor(it: Item, tier: Tier, d?: Decision): Opt | null {
   const usable = it.options.filter(o => o.price != null || o.url)
   if (!usable.length) return null
   const approved = (o: Opt) => !!d?.approved.includes(o.src)
+  // The owner's own choice (through their catalog link) wins over the tier.
+  const owners = d?.ownerPicked ? usable.find(approved) : null
+  if (owners) return owners
   const dist = (o: Opt) => (o.tier ? Math.abs(TIER_ORDER.indexOf(o.tier) - TIER_ORDER.indexOf(tier)) : 0.5)
   return [...usable].sort((a, b) => (dist(a) - dist(b)) || (Number(approved(b)) - Number(approved(a))) || ((a.price ?? 1e9) - (b.price ?? 1e9)))[0]
 }
@@ -767,7 +770,8 @@ function Onboarding({ property, items, decisions, onChanged }: { property: strin
   const essentials = items.filter(i => i.section === 'essential' && i.need)
   const mult = (per?: QtyPer) => per === 'bedroom' ? Math.max(1, size.bedrooms) : per === 'bathroom' ? Math.max(1, Math.ceil(size.bathrooms)) : per === 'guest' ? Math.max(1, size.guests) : 1
   const lines = essentials.map(it => {
-    const included = it.need === 'must' ? true : (on[it.key] ?? it.need === 'recommended')
+    const d = decisions[it.key]
+    const included = it.need === 'must' ? true : (on[it.key] ?? (d?.ownerInclude ?? (d?.ownerPicked || it.need === 'recommended')))
     const chosen = (swap[it.key] && it.options.find(o => o.src === swap[it.key])) || pickFor(it, tier, decisions[it.key])
     const qty = qtyEdit[it.key] ?? Math.max(1, Math.ceil((it.qty ?? 1) * mult(it.qtyPer)))
     return { it, included, chosen, qty }

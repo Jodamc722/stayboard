@@ -238,6 +238,9 @@ export const OPEN_PREFIXES = [
   // APPROVED CATALOG LINK (Jon, 2026-10-27). /catalog/<code> is the read-only approved furniture list for
   // one property; the code is the capability and /api/public/catalog checks it on every call.
   '/catalog/',
+  // CATALOG PRODUCT PHOTOS (2026-10-28): the static images the catalog links show. Without this an
+  // owner who is not signed in got a redirect to the login page instead of every product photo.
+  '/ffe/17west/img/',
   // DIRECT BOOKING (Jon, 2026-10-13). /book is the public booking page: search, price, ID + selfie, pay
   // through Guesty. Its API is /api/public/book, which checks everything server-side.
   '/book/',
