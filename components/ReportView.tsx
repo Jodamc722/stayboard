@@ -37,6 +37,8 @@ import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, season
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
 import { CHANNEL_MARKS, CHANNEL_BODY, CHANNEL_COUNT, CHANNEL_COUNT_RETIRED } from '@/lib/channel-marks'
 import OwnerPortalDemo from '@/components/OwnerPortalDemo'
+import { useViewTracking } from '@/components/useViewTracking'
+import { ViewsPanel } from '@/components/ViewsPanel'
 // The owner review DECK does not build a slide from the verdict (see the slide block for why).
 const VERDICT_ON_DECK = false
 
@@ -1455,6 +1457,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const slideRef = useRef(0)
   slideRef.current = slide
   const scrollRef = useRef<HTMLDivElement>(null)
+  // WHO OPENED THE SHARE LINK (Jon, 2026-10-29). Only a visitor who is not signed in is tracked.
+  const presentRef = useRef(false)
+  presentRef.current = present
+  useViewTracking(String(initial.code || ''), !canEdit && !!initial.code, scrollRef, presentRef)
+  const [viewsOpen, setViewsOpen] = useState(false)
   function slideEls(): HTMLElement[] {
     const el = scrollRef.current
     if (!el) return []
@@ -2852,6 +2859,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           <button onClick={() => enterPresent()} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: t.ink, color: t.bg }}>
             <Play size={12} /> Present
           </button>
+          {isTeam ? (
+            <button onClick={() => setViewsOpen(true)} title="Who opened the share link, time on each slide, clicks" className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+              <Eye size={12} /> Views
+            </button>
+          ) : null}
           <button onClick={copyLink} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
             {copied ? <Check size={12} /> : <LinkIcon size={12} />} {copied ? 'Copied' : 'Copy share link'}
           </button>
@@ -3659,6 +3671,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         </div>
       )}
 
+      {viewsOpen ? <ViewsPanel id={String(initial.id)} t={t} onClose={() => setViewsOpen(false)} /> : null}
       {photoPick && (
         <div className="sb-noprint fixed inset-0 z-[80] flex items-center justify-center p-5"
           style={{ background: 'rgba(10,14,20,0.66)' }}
@@ -7842,8 +7855,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     <p style={{ fontSize: 24, fontWeight: 600, margin: '18px 0 0', lineHeight: 1.15 }}><Ed v={String(closeCard.name || '')} set={v => setCard('name', v)} edit={edit} placeholder="Name" /></p>
                     {String(closeCard.role || '').trim() || edit ? <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', margin: '5px 0 0' }}><Ed v={String(closeCard.role || '')} set={v => setCard('role', v)} edit={edit} placeholder="Title" /></p> : null}
                     <div className="mt-auto" style={{ paddingTop: 18, borderTop: '1px solid rgba(255,255,255,0.18)', display: 'grid', gap: 8 }}>
-                      {String(closeCard.phone || '').trim() || edit ? <p style={{ fontSize: 18, margin: 0, fontVariantNumeric: 'tabular-nums' }}><Ed v={String(closeCard.phone || '')} set={v => setCard('phone', v)} edit={edit} placeholder="Phone" /></p> : null}
-                      {String(closeCard.email || '').trim() || edit ? <p style={{ fontSize: 14, margin: 0, color: 'rgba(255,255,255,0.86)', wordBreak: 'break-all' }}><Ed v={String(closeCard.email || '')} set={v => setCard('email', v)} edit={edit} placeholder="Email" /></p> : null}
+                      {String(closeCard.phone || '').trim() || edit ? <p style={{ fontSize: 18, margin: 0, fontVariantNumeric: 'tabular-nums' }}>{edit ? <Ed v={String(closeCard.phone || '')} set={v => setCard('phone', v)} edit={edit} placeholder="Phone" /> : <a href={'tel:' + String(closeCard.phone || '').replace(/[^0-9+]/g, '')} style={{ color: 'inherit', textDecoration: 'none' }}>{String(closeCard.phone || '')}</a>}</p> : null}
+                      {String(closeCard.email || '').trim() || edit ? <p style={{ fontSize: 14, margin: 0, color: 'rgba(255,255,255,0.86)', wordBreak: 'break-all' }}>{edit ? <Ed v={String(closeCard.email || '')} set={v => setCard('email', v)} edit={edit} placeholder="Email" /> : <a href={'mailto:' + String(closeCard.email || '')} style={{ color: 'inherit', textDecoration: 'none' }}>{String(closeCard.email || '')}</a>}</p> : null}
                       {edit ? (
                         <select className="sb-noprint" value="" onChange={e => { const p: Any = cardPeople[Number(e.target.value)]; if (p) mutate((d: Any) => { const cc0 = d.contact || (d.contact = {}); cc0.card = { name: p.name || '', role: p.role || '', photo: p.photo || '', phone: p.phone || '', email: p.email || '' } }) }}
                           style={{ marginTop: 6, fontSize: 12, padding: '5px 8px', borderRadius: 8, background: 'rgba(255,255,255,0.12)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)' }}>
