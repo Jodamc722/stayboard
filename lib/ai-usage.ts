@@ -46,7 +46,11 @@ export function cacheReadRate(model: string): number {
 
 /** Dollars for one call. Cache writes at 125% of input (5-minute) or 200% (1-hour); reads per cacheReadRate. */
 export function costUsd(model: string, u: Usage): number {
-  const p = MODEL_PRICE[tierOfModel(model)]
+  const m = String(model || '').toLowerCase()
+  // A call that fell back to the old Haiku bills at the old Haiku's price, not the tier's; the newest
+  // Haiku charges 5x list on prompts over 100k tokens.
+  const longHaiku = /haiku-5-5/.test(m) && (u.input + u.cacheRead + u.cacheWrite) > 100_000
+  const p = /haiku-4/.test(m) ? { in: 1, out: 5 } : longHaiku ? { in: 0.5, out: 2.5 } : MODEL_PRICE[tierOfModel(model)]
   const perM = (n: number, rate: number) => (n / 1_000_000) * rate
   const w1h = Math.min(Number(u.cacheWrite1h) || 0, u.cacheWrite)
   return perM(u.input, p.in) + perM(u.output, p.out) + perM(u.cacheRead, p.in * cacheReadRate(model)) + perM(u.cacheWrite - w1h, p.in * 1.25) + perM(w1h, p.in * 2)
@@ -74,6 +78,29 @@ function hashText(t: string): string {
   for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0
   return t.length + ':' + (h >>> 0).toString(36)
 }
+// NEW-MODEL REQUEST SHAPE (2026-10-29, Haiku tier moved 4.5 → 5.5). Haiku 5.5 rejects temperature,
+// top_p, top_k and budgeted thinking with a 400, and thinks by default where 4.5 did not. The ~25 call
+// sites on the haiku tier were written for 4.5, so the request is adapted here rather than in each:
+// sampling params dropped, budgeted thinking made adaptive, and — where the caller asked for no
+// thinking or said nothing — effort set low so the model answers quickly and cheaply, as 4.5 did.
+// max_tokens gets a floor so a short cap cannot be spent on thinking before any text. Output is
+// billed on what is generated, not on the cap, so the floor costs nothing. Callers already read
+// content blocks by type (lib/anthropic-text), and the tier's fallback is the old Haiku.
+export function adaptForModel(rawBody: string): string {
+  try {
+    const b = JSON.parse(rawBody)
+    if (!b || !/haiku-5-5/.test(String(b.model || ''))) return rawBody
+    const out: any = { ...b }
+    delete out.temperature; delete out.top_p; delete out.top_k
+    const t = out.thinking
+    if (t && t.type === 'enabled') out.thinking = { type: 'adaptive' }
+    if (t && t.type === 'disabled') delete out.thinking
+    if (!out.thinking && !out.output_config?.effort) out.output_config = { ...(out.output_config || {}), effort: 'low' }
+    if (Number(out.max_tokens) > 0 && Number(out.max_tokens) < 2048) out.max_tokens = 2048
+    return JSON.stringify(out)
+  } catch { return rawBody }
+}
+
 export function withAutoSystemCache(rawBody: string): string {
   try {
     if (rawBody.includes('"cache_control"')) return rawBody
@@ -160,7 +187,7 @@ export async function aiFetch(task: string, init: RequestInit): Promise<Response
   if (blocked) {
     return new Response(JSON.stringify({ type: 'error', error: { type: 'budget_exceeded', message: blocked } }), { status: 429, headers: { 'content-type': 'application/json' } })
   }
-  if (typeof init.body === 'string') init = { ...init, body: withAutoSystemCache(init.body) }
+  if (typeof init.body === 'string') init = { ...init, body: withAutoSystemCache(adaptForModel(init.body)) }
   const r = await fetch(ANTHROPIC_URL, init)
   const ms = Date.now() - t0
   try {

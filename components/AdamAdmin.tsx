@@ -9,7 +9,7 @@ import { AgentFileDrop } from '@/components/AgentFileDrop'
 
 const j = async (url: string, init?: RequestInit) => { const r = await fetch(url, { cache: 'no-store', ...init }); return r.json() }
 const when = (iso: string) => new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-const TIER_LABEL: Record<string, string> = { fable: 'Fable 5.1', opus: 'Opus 4.8', sonnet: 'Sonnet 5', 'sonnet-prev': 'Sonnet 4.6', haiku: 'Haiku 4.5' }
+const TIER_LABEL: Record<string, string> = { fable: 'Fable 5.1', opus: 'Opus 4.8', sonnet: 'Sonnet 5', 'sonnet-prev': 'Sonnet 4.6', haiku: 'Haiku 5.5' }
 
 // `only="voice"` renders just his name / direction / on-off inside Users & admin → Settings (the
 // same place Eve's live); without it this is his tab — what he knows, files, questions, chats.
