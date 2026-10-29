@@ -10,11 +10,15 @@ import { salatoVerifyToken } from '@/lib/salato-verify-token'
 import { underMinimum, SALATO_MIN_NIGHTS } from '@/lib/salato-watch'
 import { getSetting } from '@/lib/app-settings'
 import { pageRows } from '@/lib/db-page'
+import { isLiveStay } from '@/lib/stay-status'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const LIVE = /confirm|checked/i
+// THE SHARED RULE (lib/stay-status), not a local /confirm|checked/ regex: that one dropped
+// 'reserved', 'awaiting payment' and other live statuses off the board and the Past tab (Jon,
+// 2026-10-29: "the share link should show all past reservations").
+const LIVE = { test: (s: string) => isLiveStay(s) }
 const CANCELED = /cancel/i
 function ymd(d: Date) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function addDays(iso: string, n: number) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
@@ -51,7 +55,10 @@ async function pastStays(db: any, ids: string[], match: Record<string, string>, 
   for (const r of rows) if (vmap[r.id] !== undefined) { r.verified = true; r.verifiedAt = vmap[r.id] || null }
   const stays = rows.filter(r => !r.canceled)
   const verified = stays.filter(r => r.verified).length
-  return { ok: true, today, past: rows, pastCount: stays.length, pastVerified: verified, pastCanceled: rows.length - stays.length }
+  // Every status on the books, so "why isn't X here" has an answer (inquiries / declines are not stays).
+  const statuses: Record<string, number> = {}
+  for (const r of all) { const k = str(r.status) || 'unknown'; statuses[k] = (statuses[k] || 0) + 1 }
+  return { ok: true, today, past: rows, pastCount: stays.length, pastVerified: verified, pastCanceled: rows.length - stays.length, statuses }
 }
 
 export async function GET(req: NextRequest) {
