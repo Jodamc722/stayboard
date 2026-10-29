@@ -33,22 +33,17 @@ export async function generateMetadata({ params }: { params: { id: string } }) {
   return { ...base, title, description, openGraph: { title, description, type: 'website', images: img ? [{ url: img }] : undefined }, twitter: { card: img ? 'summary_large_image' : 'summary', title, description, images: img ? [img] : undefined } }
 }
 
-export default async function PublicGuidebookPage({ params, searchParams }: { params: { id: string }; searchParams?: { book?: string } }) {
+export default async function PublicGuidebookPage({ params, searchParams }: { params: { id: string }; searchParams?: { book?: string; print?: string } }) {
   const id = String(params.id || '')
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound()
   const { data } = await supabaseAdmin().from('guidebooks').select('*').eq('id', id).limit(1)
   const gb = (data || [])[0]
   if (!gb) notFound()
-  // PHONE vs BOOK (Jon, 2026-10-02: "guidebook sharable links … optimized for phones, make it
-  // great"). Under 768px the guest gets the phone guide (GuideMobile); wider screens and print get
-  // the book. ?book=1 forces the book on a phone — the footer link for someone who wants to print.
-  const forceBook = String(searchParams?.book || '') === '1'
-  const book = <GuidebookView initial={gb} guest photoToken={signPlacePhotoToken(String(gb.id))} />
-  if (forceBook) return book
-  return (
-    <>
-      <div className="md:hidden print:hidden"><GuideMobile gb={gb} /></div>
-      <div className="hidden md:block print:block">{book}</div>
-    </>
-  )
+  // ONE GUIDE, EVERY SCREEN (2026-10-29, Jon: "revamp all guidebooks, clean it up and make it
+  // great … optimized for the phone and have a printable setting"). The clean guide (GuideMobile)
+  // on phones and laptops alike; printing it gives the short house manual (GuidePrint, inside it).
+  // ?print=1 opens the print dialog straight away. The old 12-page magazine book still opens at
+  // ?book=1 for anyone who wants it.
+  if (String(searchParams?.book || '') === '1') return <GuidebookView initial={gb} guest photoToken={signPlacePhotoToken(String(gb.id))} />
+  return <GuideMobile gb={gb} autoPrint={String(searchParams?.print || '') === '1'} />
 }
