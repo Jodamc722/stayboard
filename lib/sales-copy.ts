@@ -544,7 +544,13 @@ export const FULLY_MANAGED = ['17west', '17 west', 'salato']
 // The single most useful slide in a deck going to lenders and brokers, because it is the one claim
 // nobody else in this market can make with their own numbers. Buildings, not owners: no owner is
 // named and no expense appears, so it can be forwarded to anybody.
-export const RETURNS_HEADLINE = 'What the homes we manage actually earn'
+export const RETURNS_HEADLINE = 'What the listings we manage actually earn'
+/** HOMES → LISTINGS (Jon, 2026-10-29: "change homes to listing"). Decks generated before the change
+ *  stored the old house line; the renderer shows the new one in its place until someone edits it. */
+export const RETIRED_WORDING: Record<string, string> = {
+  'Ten years. 450 homes. One standard.': 'Ten years. 450 listings. One standard.',
+  'What the homes we manage actually earn': 'What the listings we manage actually earn',
+}
 export const RETURNS_SUBTITLE = 'Twelve months of settled bookings, by building.'
 export const RETURNS_BODY =
   'Not a case study chosen because it flattered us. Every building we operate with a full year behind it, on the same basis, in one table.'

@@ -31,7 +31,7 @@ import {
   STACK_BODY, STACK_TOOLS, STACK_CHANNELS, STACK_NOTE, STACK_HEADLINE, STACK_SUBTITLE,
   housePortalUrl, houseTeamSubtitle, STATEMENT_HIGHLIGHTS, statementHighlightsStale,
 } from '@/lib/onboarding-copy'
-import { CLOSE_ROWS, CLOSE_ROWS_RETIRED, EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY, EDGE_NOTE, LH_ROWS, SALES_LEADERS, SALES_TEAM_EXCLUDE, MONARCH_EYEBROW, MONARCH_LINE, FULLY_MANAGED, MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS, PLAN_LABELS, SALES_KEYS, SLIDE_LABEL } from '@/lib/sales-copy'
+import { CLOSE_ROWS, CLOSE_ROWS_RETIRED, EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY, EDGE_NOTE, LH_ROWS, SALES_LEADERS, SALES_TEAM_EXCLUDE, MONARCH_EYEBROW, MONARCH_LINE, FULLY_MANAGED, MARKET_HINTS, shortOmit, SHORT_HIDDEN_HISTORY, SALES_RETIRED_HERO, SALES_RETIRED_WELCOME, SALES_HERO, SALES_WELCOME, SALES_ORDER, PROPERTY_FACT_HINTS, PLAN_LABELS, SALES_KEYS, SLIDE_LABEL, RETIRED_WORDING } from '@/lib/sales-copy'
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, seasonBodyStale } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
@@ -4215,7 +4215,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 fontSize: narrow ? 34 : TYPE.title.size, lineHeight: TYPE.title.line, letterSpacing: TYPE.title.track,
                 fontWeight: 600, color: dark ? D.ink : t.ink, maxWidth: narrow ? '15ch' : '17ch', margin: 0,
               }}>
-                <Ed v={HOUSE_HEAD[k] ? houseLine(sec(k).headline, HOUSE_HEAD[k]) : (sec(k).headline || '')} set={v => patch(k + '.headline', v)} edit={edit} multiline />
+                <Ed v={(x => RETIRED_WORDING[x] || x)(HOUSE_HEAD[k] ? houseLine(sec(k).headline, HOUSE_HEAD[k]) : (sec(k).headline || ''))} set={v => patch(k + '.headline', v)} edit={edit} multiline />
               </h2>
               {sub !== false && (sec(k).subtitle || edit) ? (
                 <p style={{ marginTop: 14, fontSize: 16.5, lineHeight: 1.55, color: dark ? D.muted : t.muted, maxWidth: '50ch' }}>
@@ -4229,7 +4229,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             <div>
               <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: dark ? 'rgba(255,255,255,0.6)' : t.accent, margin: 0 }}><Lab id={'eyebrow_' + k} d={eyebrow} /></p>
               <h2 style={{ fontSize: 40, lineHeight: 1.08, letterSpacing: '-0.025em', fontWeight: 600, color: dark ? '#fff' : t.ink, margin: '10px 0 0', maxWidth: '24ch' }}>
-                <Ed v={sec(k).headline || ''} set={v => patch(k + '.headline', v)} edit={edit} multiline />
+                <Ed v={RETIRED_WORDING[String(sec(k).headline || '')] || sec(k).headline || ''} set={v => patch(k + '.headline', v)} edit={edit} multiline />
               </h2>
             </div>
           ))
@@ -5847,7 +5847,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const statLine0 = lead ? 'what our ' + word(String(lead.bedrooms)) + ' earn against the ' + String(eg.benchLabel || 'market') + ' median' : ''
             const statSub0 = lead ? $m(lead.gross) + ' a year vs ' + $m(lead.median) : ''
             const showStat = !!(lead || String(eg.statBig || '').trim() || edit)
-            const egFoot0 = lead ? 'Homes we managed all 12 months, every channel, against AirROI ' + String(eg.benchLabel || '') + ' homes listed all 12 months (Airbnb), to September 2026.' : ''
+            const egFoot0 = lead ? 'Listings we managed all 12 months, every channel, against AirROI ' + String(eg.benchLabel || '') + ' listings live all 12 months (Airbnb), to September 2026.' : ''
             slides.push({ key: 'edge', ai: true, node: (
             <Slide nav="Who we are" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>

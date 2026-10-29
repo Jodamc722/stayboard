@@ -288,7 +288,7 @@ export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesCo
     team: { ...base.team, subtitle: 'The people who would be on your property.' },
     // A HEADLINE IS THE TAKEAWAY, NOT THE TOPIC (2026-10-27 sales audit). "Overview of Stay
     // Hospitality" tells a reader what the slide is about; this tells them what to believe.
-    overview: { ...(base as any).overview, headline: 'Ten years. 450 homes. One standard.' },
+    overview: { ...(base as any).overview, headline: 'Ten years. 450 listings. One standard.' },
 
     contact: { headline: CONTACT_HEADLINE, subtitle: CONTACT_SUBTITLE, body: CONTACT_BODY, card },
     ops: { headline: OPS_HEADLINE, subtitle: OPS_SUBTITLE, body: OPS_BODY, rows: OPS_ROWS, note: OPS_NOTE, photo: pic(2) },
