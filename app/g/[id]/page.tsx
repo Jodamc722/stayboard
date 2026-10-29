@@ -45,5 +45,5 @@ export default async function PublicGuidebookPage({ params, searchParams }: { pa
   // ?print=1 opens the print dialog straight away. The old 12-page magazine book still opens at
   // ?book=1 for anyone who wants it.
   if (String(searchParams?.book || '') === '1') return <GuidebookView initial={gb} guest photoToken={signPlacePhotoToken(String(gb.id))} />
-  return <GuideMobile gb={gb} autoPrint={String(searchParams?.print || '') === '1'} />
+  return <GuideMobile gb={gb} autoPrint={String(searchParams?.print || '') === '1'} photoToken={signPlacePhotoToken(String(gb.id))} />
 }

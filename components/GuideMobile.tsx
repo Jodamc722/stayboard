@@ -83,8 +83,9 @@ export function guideData(gb: any) {
     howto: has('houseGuide', true) ? list(s.houseGuide?.items).filter((x: any) => x && (x.title || x.body)) : [],
     rules: has('guidelines', true) ? list(s.guidelines?.items).filter((x: any) => x && (x.title || x.body)) : [],
     rulesIntro: str(s.guidelines?.intro),
-    places: has('localPlaces', true) ? list(s.localPlaces?.items).filter((x: any) => x && x.name) : [],
-    eats: has('restaurants', true) ? list(s.restaurants?.items).filter((x: any) => x && x.name) : [],
+    // _i = the item's index in the saved list (the photo-repair route addresses items by it).
+    places: has('localPlaces', true) ? list(s.localPlaces?.items).map((x: any, i: number) => x && typeof x === 'object' ? { ...x, _i: i } : x).filter((x: any) => x && x.name) : [],
+    eats: has('restaurants', true) ? list(s.restaurants?.items).map((x: any, i: number) => x && typeof x === 'object' ? { ...x, _i: i } : x).filter((x: any) => x && x.name) : [],
     addons: has('addons', true) ? list(s.addons?.items).filter((x: any) => x && (x.name || typeof x === 'string')) : [],
     addonsIntro: str(s.addons?.intro),
     checkoutList: list(s.beforeYouGo?.items).filter((x: any) => typeof x === 'string' && x.trim()),
@@ -99,7 +100,7 @@ export function guideData(gb: any) {
   }
 }
 
-export function GuideMobile({ gb, autoPrint = false }: { gb: any; autoPrint?: boolean }) {
+export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: any; autoPrint?: boolean; photoToken?: string }) {
   const d = useMemo(() => guideData(gb), [gb])
   const { lbl } = d
   const dark = gb?.theme === 'dark'
@@ -315,12 +316,12 @@ export function GuideMobile({ gb, autoPrint = false }: { gb: any; autoPrint?: bo
             {/* EXPLORE / EAT */}
             {d.places.length ? (
               <Section id="explore" kicker={lbl('localPlaces.tag', 'Nearby')} title={lbl('m.explore', 'things to do')} c={c} shadow={shadow}>
-                <PlaceList items={d.places} city={d.placeCity} c={c} />
+                <PlaceList items={d.places} city={d.placeCity} c={c} gbId={String(gb?.id || '')} section="localPlaces" token={photoToken} />
               </Section>
             ) : null}
             {d.eats.length ? (
               <Section id="eat" kicker={lbl('restaurants.tag', 'Our picks')} title={lbl('m.eat', 'where to eat')} c={c} shadow={shadow}>
-                <PlaceList items={d.eats} city={d.placeCity} c={c} />
+                <PlaceList items={d.eats} city={d.placeCity} c={c} gbId={String(gb?.id || '')} section="restaurants" token={photoToken} />
               </Section>
             ) : null}
 
@@ -475,38 +476,51 @@ function CallRow({ Icon, value, sub, c }: { Icon: any; value: string; sub: strin
   )
 }
 
-/** A place's photo, shown only once it has really loaded — never an empty grey box (also when the
- *  browser had it cached and finished before React hydrated, so onLoad never fired). */
-function PlacePhoto({ src }: { src: string }) {
+/**
+ * A place's photo — every card gets one (Jon, 2026-10-29: "make sure each local place has a photo").
+ * The saved picture shows once it has really loaded. If there is none, or it is dead, the card asks
+ * the same repair route the magazine uses (/api/public/place-photo: a fresh search, saved to the book
+ * so the next guest gets it at once) and shows a soft placeholder meanwhile — never a broken icon.
+ */
+function PlacePhoto({ src, gbId, section, index, token, c }: { src: string | null; gbId: string; section: string; index: number; token: string; c: C }) {
+  const [url, setUrl] = useState<string | null>(src)
   const [ok, setOk] = useState(false)
+  const [asked, setAsked] = useState(false)
   const ref = useRef<HTMLImageElement>(null)
-  useEffect(() => { const im = ref.current; if (im && im.complete && im.naturalWidth > 40) setOk(true) }, [src])
+  const repair = async () => {
+    if (asked || !gbId || !(index >= 0)) return
+    setAsked(true)
+    try {
+      const r = await fetch('/api/public/place-photo', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: gbId, section, index, token }) })
+      const j = await r.json().catch(() => ({}))
+      if (j && j.photo && j.photo !== url) { setOk(false); setUrl(j.photo) }
+    } catch { /* placeholder stays */ }
+  }
+  useEffect(() => { if (!url) repair() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const im = ref.current; if (im && im.complete) { if (im.naturalWidth > 40) setOk(true); else if (url) repair() } }, [url]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <div className="relative h-[130px]" style={{ display: ok ? 'block' : 'none' }}>
-      <img ref={ref} src={src} alt="" decoding="async" className="h-full w-full object-cover" onLoad={(e: any) => { if (e.currentTarget.naturalWidth > 40) setOk(true) }} onError={() => setOk(false)} />
+    <div className="relative h-[132px] overflow-hidden" style={{ background: c.tint }}>
+      {url ? <img ref={ref} src={url} alt="" decoding="async" className="h-full w-full object-cover transition-opacity duration-300" style={{ opacity: ok ? 1 : 0 }}
+        onLoad={(e: any) => { if (e.currentTarget.naturalWidth > 40) setOk(true); else repair() }} onError={() => { setOk(false); repair() }} /> : null}
     </div>
   )
 }
 
-function PlaceList({ items, city, c }: { items: any[]; city: string; c: C }) {
-  // Swipeable cards, as before; a photo that fails to load drops away and the card reads as text.
+function PlaceList({ items, city, c, gbId, section, token }: { items: any[]; city: string; c: C; gbId: string; section: string; token: string }) {
+  // Phone: swipe. Laptop: a mouse can't swipe, so the cards sit in a two-column grid.
   return (
-    // Phone: swipe. Laptop: a mouse can't swipe, so the cards sit in a two-column grid.
     <div className="gm-x -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 md:mx-0 md:grid md:grid-cols-2 md:overflow-visible md:px-0">
       {items.slice(0, 10).map((p: any, i: number) => {
         const q = [p.name, p.address || city].filter(Boolean).join(', ')
-        const photo = purl(p.photo)
         return (
-          <div key={i} className="snap-start shrink-0 w-[236px] md:w-auto overflow-hidden rounded-2xl" style={{ background: c.tint }}>
-            {photo ? (
-              <PlacePhoto src={photo} />
-            ) : null}
-            <div className="p-3">
-              <p className="text-[15.5px] font-medium leading-tight" style={{ fontFamily: SERIF }}>{p.name}</p>
-              {p.note ? <p className="mt-1 text-[12.5px] leading-[1.5] line-clamp-3" style={{ color: c.mute }}>{p.note}</p> : null}
-              <div className="mt-2.5 flex items-center gap-2">
-                <a href={mapsUrl(q)} target="_blank" rel="noreferrer" className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-semibold text-white" style={{ background: c.accent }}><Navigation size={12} /> Directions</a>
-                {p.phone && tel(p.phone).length >= 7 ? <a href={'tel:' + tel(p.phone)} aria-label={'Call ' + p.name} className="inline-flex h-9 w-9 items-center justify-center rounded-lg" style={{ background: c.card, color: c.accent }}><Phone size={14} /></a> : null}
+          <div key={i} className="snap-start shrink-0 w-[236px] md:w-auto overflow-hidden rounded-2xl" style={{ background: c.card, border: '1px solid ' + c.line }}>
+            <PlacePhoto src={purl(p.photo)} gbId={gbId} section={section} index={typeof p._i === 'number' ? p._i : i} token={token} c={c} />
+            <div className="p-3.5">
+              <p className="text-[16px] font-medium leading-tight" style={{ fontFamily: SERIF }}>{p.name}</p>
+              {p.note ? <p className="mt-1 text-[12.5px] leading-[1.5] line-clamp-2" style={{ color: c.mute }}>{p.note}</p> : null}
+              <div className="mt-2.5 flex items-center justify-between">
+                <a href={mapsUrl(q)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12.5px] font-semibold" style={{ color: c.accent }}><Navigation size={12} /> Directions</a>
+                {p.phone && tel(p.phone).length >= 7 ? <a href={'tel:' + tel(p.phone)} aria-label={'Call ' + p.name} className="inline-flex items-center gap-1 text-[12.5px] font-semibold" style={{ color: c.mute }}><Phone size={12} /> Call</a> : null}
               </div>
             </div>
           </div>
