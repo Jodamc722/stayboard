@@ -165,6 +165,10 @@
       "schedule": "52 10,11 * * *"
     },
     {
+      "path": "/api/cron/parking-task",
+      "schedule": "41 11,12,14,16 * * *"
+    },
+    {
       "path": "/api/cron/parking",
       "schedule": "7,22,37,52 * * * *"
     },
