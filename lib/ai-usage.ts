@@ -89,9 +89,15 @@ function hashText(t: string): string {
 export function adaptForModel(rawBody: string): string {
   try {
     const b = JSON.parse(rawBody)
-    if (!b || !/haiku-5-5/.test(String(b.model || ''))) return rawBody
+    const model = String(b?.model || '')
+    // Sampling params are refused by every model from the 5 generation on — not only Haiku 5.5. Seen
+    // live 2026-10-29: /api/ai/polish sent temperature 0.2 to Sonnet 5, got a 400, and every polish
+    // was quietly re-sent to the older, pricier Sonnet 4.6. Dropped here for all of them.
+    const newGen = /(sonnet|opus|haiku)-5|fable|mythos/.test(model)
+    if (!b || !newGen) return rawBody
     const out: any = { ...b }
     delete out.temperature; delete out.top_p; delete out.top_k
+    if (!/haiku-5-5/.test(model)) return JSON.stringify(out)
     const t = out.thinking
     if (t && t.type === 'enabled') out.thinking = { type: 'adaptive' }
     if (t && t.type === 'disabled') delete out.thinking
