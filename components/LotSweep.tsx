@@ -44,6 +44,11 @@ export function LotSweep({ code }: { code: string }) {
   const [needsPass, setNeedsPass] = useState(false)
   const [label, setLabel] = useState('Parking')
   const [lot, setLot] = useState<LotInfo | null>(null)
+  // ONE LINK, EVERY LOT (Jon, 2026-10-29): the all-lots link answers with the properties; the phone
+  // picks one and remembers it. A lot's own link skips the picker.
+  const [all, setAll] = useState(false)
+  const [lotsAvail, setLotsAvail] = useState<LotInfo[]>([])
+  const [lotId, setLotId] = useState<string>(() => { try { return localStorage.getItem('lot-pick-' + code) || '' } catch { return '' } })
   const [date, setDate] = useState('')
   const [spots, setSpots] = useState<SpotToday[]>([])
   const [arriving, setArriving] = useState<Booking[]>([])
@@ -62,23 +67,35 @@ export function LotSweep({ code }: { code: string }) {
   const say = (m: string) => { setToast(m); setTimeout(() => setToast(''), 5000) }
 
   const post = useCallback(async (body: Record<string, any>) => {
-    const r = await fetch('/api/public/lot/' + encodeURIComponent(code), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, pass, name }) })
+    const r = await fetch('/api/public/lot/' + encodeURIComponent(code), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, pass, name, lotId: lotId || undefined }) })
     const j = await r.json().catch(() => ({}))
     if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`)
     return j
-  }, [code, pass, name])
+  }, [code, pass, name, lotId])
 
-  const load = useCallback(async (p: string, quiet = false) => {
+  const load = useCallback(async (p: string, quiet = false, pick?: string) => {
     if (!quiet) setLoading(true)
     setErr('')
+    const want = pick ?? lotId
     try {
-      const j = await fetch('/api/public/lot/' + encodeURIComponent(code) + (p ? '?pass=' + encodeURIComponent(p) : ''), { cache: 'no-store' }).then(r => r.json())
+      const j = await fetch('/api/public/lot/' + encodeURIComponent(code) + '?pass=' + encodeURIComponent(p) + (want ? '&lot=' + encodeURIComponent(want) : ''), { cache: 'no-store' }).then(r => r.json())
       if (j?.needsPasscode) { setNeedsPass(true); setLabel(j.label || 'Parking'); setLoading(false); return }
       if (!j?.ok) { setErr(j?.error || 'Could not open this lot.'); setLoading(false); return }
-      setNeedsPass(false); setLot(j.lot); setDate(j.date); setSpots(j.spots || []); setArriving(j.arriving || []); setStays(j.stays || []); setIncidents(j.incidents || []); setSweep(j.sweep || null)
+      setNeedsPass(false); setAll(!!j.all); setLotsAvail(j.lots || [])
+      if (!j.lot) {
+        // The all-lots link with no property picked yet: one lot → take it; several → ask.
+        const only = (j.lots || []).length === 1 ? j.lots[0].id : ''
+        if (only) { setLotId(only); try { localStorage.setItem('lot-pick-' + code, only) } catch {}; return load(p, quiet, only) }
+        setLot(null); setLoading(false); return
+      }
+      setLot(j.lot); setDate(j.date); setSpots(j.spots || []); setArriving(j.arriving || []); setStays(j.stays || []); setIncidents(j.incidents || []); setSweep(j.sweep || null)
     } catch { setErr('No connection — check signal and try again.') } finally { setLoading(false) }
-  }, [code])
-  useEffect(() => { load('') }, [load])
+  }, [code, lotId])
+  // Once, on open. A lot switch calls load itself with the passcode in hand — re-running this effect
+  // would knock a passcoded link back to the passcode screen.
+  const booted = useRef(false)
+  useEffect(() => { if (booted.current) return; booted.current = true; load('') }, [load])
+  const pickLot = (id: string) => { setLotId(id); try { localStorage.setItem('lot-pick-' + code, id) } catch {}; setLot(null); load(pass, false, id) }
 
   const patchIncident = (inc: Incident) => setIncidents(list => list.some(x => x.id === inc.id) ? list.map(x => x.id === inc.id ? { ...x, ...inc, photoUrl: inc.photoUrl ?? x.photoUrl } : x) : [inc].concat(list))
   const saveName = (v: string) => { setName(v); try { localStorage.setItem('lot-staff-name', v) } catch {} }
@@ -92,13 +109,28 @@ export function LotSweep({ code }: { code: string }) {
     </Frame>
   )
   if (loading && !lot) return <Frame title="Parking"><p className="text-neutral-600 text-[15px]"><Loader2 size={16} className="animate-spin inline mr-1.5" />Opening the lot…</p></Frame>
+  if (!lot && all && lotsAvail.length > 0) return (
+    <Frame title="Parking" sub="Which property are you at?">
+      <div className="grid gap-2">
+        {lotsAvail.map(l => <button key={l.id} onClick={() => pickLot(l.id)} className="rounded-2xl bg-neutral-900 text-white px-4 py-4 text-left"><span className="block text-[18px] font-bold" style={serif}>{l.building}</span><span className="block text-[13px] text-white/70">{l.name} · {l.rateCents > 0 ? cents(l.rateCents, l.currency) + ' a night' : 'parking included'}</span></button>)}
+      </div>
+      {err && <p className="mt-3 text-[13px] text-rose-700">{err}</p>}
+    </Frame>
+  )
   if (!lot) return <Frame title="Parking"><p className="text-[15px] text-rose-700">{err || 'This lot link is not valid.'}</p></Frame>
 
   const open = incidents.filter(i => OPEN.indexOf(i.status) >= 0)
   return (
-    <Frame title={lot.name} sub={<>{new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · {cents(lot.rateCents, lot.currency)} a night · {spots.filter(s => s.kind === 'sell').length} sold spots, {spots.filter(s => s.kind === 'hold').length} held</>}>
+    <Frame title={lot.name} sub={<>{new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · {lot.rateCents > 0 ? `${cents(lot.rateCents, lot.currency)} a night` : 'parking included'} · {spots.filter(s => s.kind === 'sell').length} guest spots{spots.some(s => s.kind === 'hold') ? `, ${spots.filter(s => s.kind === 'hold').length} held` : ''}</>}>
       {toast && <div className="fixed bottom-4 left-4 right-4 z-[60] rounded-2xl bg-neutral-900 text-white text-[14px] px-4 py-3 shadow-lg">{toast}</div>}
       {err && <p className="mb-3 text-[13px] text-rose-700 inline-flex items-center gap-1"><AlertTriangle size={14} /> {err}</p>}
+
+      {/* THE PROPERTY — one tap to switch lots on the all-lots link. */}
+      {all && lotsAvail.length > 1 && (
+        <div className="mb-4 flex gap-1.5 flex-wrap">
+          {lotsAvail.map(l => <button key={l.id} onClick={() => l.id !== lot.id && pickLot(l.id)} aria-pressed={l.id === lot.id} className={`rounded-full px-4 py-2 text-[14px] font-bold border ${l.id === lot.id ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white text-neutral-700 border-neutral-300'}`}>{l.building}</button>)}
+        </div>
+      )}
 
       {/* YOUR NAME — once. Every flag and every notice says who stood in the lot. */}
       <label className="block mb-4">
@@ -177,7 +209,7 @@ function Tonight({ lot, spots, arriving, date, post, onChanged, onRegister, say 
   }
   const row = (s: SpotToday, b: Booking, extra?: string) => {
     const isOpen = openId === b.id
-    const paidTag = b.kind === 'guest' ? (b.paid === 'paid' ? `paid ${cents(b.amountCents, lot.currency)}` : b.paid === 'comped' ? 'comped' : `${cents(b.amountCents, lot.currency)} unpaid`) : b.kind
+    const paidTag = b.kind === 'guest' ? (b.paid === 'paid' ? `paid ${cents(b.amountCents, lot.currency)}` : b.paid === 'comped' ? 'comped' : b.paid === 'na' ? 'included' : `${cents(b.amountCents, lot.currency)} unpaid`) : b.kind
     return (
       <div key={b.id} className={`rounded-2xl border bg-white ${b.status === 'parked' ? 'border-emerald-300' : 'border-neutral-300'}`}>
         <button type="button" onClick={() => setOpenId(isOpen ? null : b.id)} className="w-full text-left px-3 py-2.5 flex items-start gap-3">
@@ -187,7 +219,7 @@ function Tonight({ lot, spots, arriving, date, post, onChanged, onRegister, say 
             <span className="block text-[13px] text-neutral-600 truncate">{b.guestName || b.kind}{b.unit ? ' · ' + b.unit : ''} · {dayShort(b.startsOn)} → {dayShort(b.endsOn)}{extra ? ' · ' + extra : ''}</span>
             <span className="block mt-1 text-[12px] font-semibold">
               <span className={`inline-block rounded-md px-1.5 py-0.5 mr-1 ${b.status === 'parked' ? 'bg-emerald-100 text-emerald-800' : 'bg-neutral-100 text-neutral-700'}`}>{b.status === 'parked' ? 'parked' : 'reserved'}</span>
-              <span className={`inline-block rounded-md px-1.5 py-0.5 mr-1 ${b.kind !== 'guest' ? 'bg-neutral-100 text-neutral-700' : b.paid === 'paid' ? 'bg-emerald-100 text-emerald-800' : b.paid === 'comped' ? 'bg-sky-100 text-sky-800' : 'bg-rose-100 text-rose-800'}`}>{paidTag}</span>
+              <span className={`inline-block rounded-md px-1.5 py-0.5 mr-1 ${b.kind !== 'guest' ? 'bg-neutral-100 text-neutral-700' : b.paid === 'paid' ? 'bg-emerald-100 text-emerald-800' : b.paid === 'comped' || b.paid === 'na' ? 'bg-sky-100 text-sky-800' : 'bg-rose-100 text-rose-800'}`}>{paidTag}</span>
               {b.endsOn === date && <span className="inline-block rounded-md px-1.5 py-0.5 bg-amber-100 text-amber-800">leaving today</span>}
             </span>
           </span>
@@ -199,7 +231,7 @@ function Tonight({ lot, spots, arriving, date, post, onChanged, onRegister, say 
               {b.status !== 'parked' && <button disabled={busy === b.id} onClick={() => patch(b, { status: 'parked' }, 'Marked parked.')} className={big('ok')}><Check size={15} /> Car is here</button>}
               <button disabled={busy === b.id} onClick={() => patch(b, { status: 'left' }, 'Marked left — the spot is free.')} className={big('muted')}>Car left</button>
             </div>
-            {b.kind === 'guest' && b.paid !== 'paid' && (
+            {b.kind === 'guest' && b.paid !== 'paid' && b.paid !== 'na' && (
               <div className="flex gap-2">
                 <button disabled={busy === b.id} onClick={() => patch(b, { paid: 'paid', paidVia: 'cash' }, 'Paid in cash.')} className={big('ink')}>Paid cash</button>
                 <button disabled={busy === b.id} onClick={() => patch(b, { paid: 'paid', paidVia: 'card' }, 'Paid by card.')} className={big('ink')}>Paid card</button>
@@ -318,7 +350,7 @@ function RegisterSheet({ open, onClose, lot, spots, stays, date, post, draft, on
   const list = stays.filter(s => !needle || (s.guest + ' ' + s.unit).toLowerCase().indexOf(needle) >= 0)
   const pill = (on: boolean) => `rounded-full border px-3 py-1.5 text-[13px] font-semibold ${on ? 'bg-neutral-900 text-white border-neutral-900' : 'bg-white text-neutral-700 border-neutral-300'}`
   return (
-    <Sheet open={open} onClose={onClose} title="Register a car" subtitle={`${lot.name} · ${cents(lot.rateCents, lot.currency)} a night · held spots are never sold`}
+    <Sheet open={open} onClose={onClose} title="Register a car" subtitle={`${lot.name} · ${lot.rateCents > 0 ? cents(lot.rateCents, lot.currency) + ' a night' : 'parking included, one space per reservation'}`}
       footer={<div className="flex items-center gap-2">
         {err && <span className="text-[12.5px] text-rose-700 mr-auto">{err}</span>}
         <button onClick={onClose} className="text-[13px] font-semibold text-neutral-600 px-3 py-2 ml-auto">Cancel</button>
@@ -372,7 +404,7 @@ function RegisterSheet({ open, onClose, lot, spots, stays, date, post, draft, on
           <label className="block"><span className="text-[12px] font-semibold uppercase tracking-wider text-neutral-500">Leaves on</span><input type="date" value={endsOn} min={addDays(startsOn, 1)} onChange={e => setEndsOn(e.target.value)} className={field + ' mt-1'} /></label>
         </div>
         <div>
-          <span className="block text-[12px] font-semibold uppercase tracking-wider text-neutral-500 mb-1">Spot · {nights} {nights === 1 ? 'night' : 'nights'}{kind === 'guest' ? ` · ${cents(nights * lot.rateCents, lot.currency)}` : ''}</span>
+          <span className="block text-[12px] font-semibold uppercase tracking-wider text-neutral-500 mb-1">Spot · {nights} {nights === 1 ? 'night' : 'nights'}{kind === 'guest' && lot.rateCents > 0 ? ` · ${cents(nights * lot.rateCents, lot.currency)}` : ''}</span>
           <div className="grid grid-cols-5 gap-1.5">
             {spots.map(s => {
               const off = !s.active || taken[s.id] || (kind === 'guest' && s.kind === 'hold')
@@ -381,7 +413,7 @@ function RegisterSheet({ open, onClose, lot, spots, stays, date, post, draft, on
           </div>
           {!spotId && <p className="mt-1 text-[12.5px] text-rose-700">No spot is free for those nights.</p>}
         </div>
-        {kind === 'guest' && (
+        {kind === 'guest' && lot.rateCents > 0 && (
           <div className="flex gap-1.5 flex-wrap items-center">
             <button onClick={() => setPaid('unpaid')} className={pill(paid === 'unpaid')}>Unpaid</button>
             <button onClick={() => { setPaid('paid'); setVia('cash') }} className={pill(paid === 'paid' && via === 'cash')}>Paid cash</button>

@@ -12,7 +12,7 @@ import {
   listLots, lotBundle, lotById, createLot, updateLot, updateSpot, addSpot, buildingsWithoutLot,
   staysForBuilding, inHouseStays, createBooking, updateBooking, deleteBooking, suggestSpot, judgePlate,
   openIncident, incidentById, noticeTextFor, sendNotice, draftTowEmail, closeIncident, noteIncident,
-  storePhoto, readPlateFromPhoto, ymdET,
+  storePhoto, readPlateFromPhoto, ymdET, lotsOverview, getStaffLink, setStaffLink,
 } from '@/lib/parking-lots'
 
 export const dynamic = 'force-dynamic'
@@ -30,9 +30,11 @@ export async function GET(req: NextRequest) {
   const level = lvl(gate)
   const can = { edit: level === 'edit' || level === 'full' || gate.access.role === 'admin', full: level === 'full' || gate.access.role === 'admin' }
   try {
+    const staff = await getStaffLink()
+    const staffLink = staff ? { code: staff.code, hasPasscode: !!staff.passcode, passcode: can.full ? staff.passcode : null, derived: staff.derived } : null
     if (!lotId) {
-      const lots = await listLots()
-      return NextResponse.json({ ok: true, lots, can, today: ymdET(), buildings: can.full ? await buildingsWithoutLot() : [] })
+      const [lots, overview] = await Promise.all([listLots(), lotsOverview(ymdET())])
+      return NextResponse.json({ ok: true, lots, overview, staffLink, can, today: ymdET(), buildings: can.full ? await buildingsWithoutLot() : [] })
     }
     const lot = await lotById(lotId)
     if (!lot) return bad('That lot does not exist.', 404)
@@ -51,16 +53,15 @@ export async function GET(req: NextRequest) {
       const stays = await inHouseStays(lot.building, today)
       return NextResponse.json({ ok: true, stays: stays.map(s => ({ id: s.id, guest: s.guest, unit: s.unit, canMessage: !!s.conversationId })) })
     }
-    const bundle = await lotBundle(lot.id, from, to)
-    const lots = await listLots()
-    return NextResponse.json({ ok: true, ...bundle, from, to, lots, can, buildings: can.full ? await buildingsWithoutLot() : [] })
+    const [bundle, lots, overview] = await Promise.all([lotBundle(lot.id, from, to), listLots(), lotsOverview(today)])
+    return NextResponse.json({ ok: true, ...bundle, from, to, lots, overview, staffLink, can, buildings: can.full ? await buildingsWithoutLot() : [] })
   } catch (e: any) { return bad(String(e?.message || e), 500) }
 }
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   const action = String(body?.action || '')
-  const needsFull = ['lot.create', 'lot.update', 'spot.update', 'spot.add', 'booking.delete'].indexOf(action) >= 0
+  const needsFull = ['lot.create', 'lot.update', 'spot.update', 'spot.add', 'booking.delete', 'staff.update'].indexOf(action) >= 0
   const gate = await requireLevel('parking', needsFull ? 'full' : 'edit')
   if (!gate.ok) return gate.res
   const by = who(gate)
@@ -77,6 +78,11 @@ export async function POST(req: NextRequest) {
       case 'spot.update': {
         const r = await updateSpot(String(body.spotId || ''), body.patch || {})
         return NextResponse.json(r, { status: r.ok ? 200 : 400 })
+      }
+      case 'staff.update': {
+        // The all-lots link: a new passcode, or a brand-new code (the old link stops working).
+        const r = await setStaffLink({ ...('passcode' in body ? { passcode: body.passcode } : {}), regenerate: body.regenerate === true }, by)
+        return r ? NextResponse.json({ ok: true, staffLink: { code: r.code, hasPasscode: !!r.passcode, passcode: r.passcode, derived: false } }) : bad('Could not save the staff link.')
       }
       case 'spot.add': {
         const r = await addSpot(String(body.lotId || ''), body.kind === 'hold' ? 'hold' : 'sell', body.label)

@@ -13,9 +13,10 @@ import { Loader2, RefreshCw, Plus, ChevronLeft, ChevronRight, Search, Flag, Mail
 import { LeanHead, Pill, Tag, IconBtn, LeanList, LeanRow, LeanSection, LeanEmpty, LeanTabs, Tip } from '@/components/lean'
 import { BookingSheet, NoticeSheet, Pick, lotsApi, todayET, dayShort, whenET, timeET, type BookingDraft } from '@/components/ParkingSheets'
 import { addDays, nightsBetween, cents, carLabel, tidyPlate } from '@/lib/plate'
-import type { Booking, Spot, Lot, Incident, Sweep, IncidentStatus } from '@/lib/parking-lots'
+import type { Booking, Spot, Lot, Incident, Sweep, IncidentStatus, LotOverview } from '@/lib/parking-lots'
 
-type Bundle = { lot: Lot; spots: Spot[]; bookings: Booking[]; incidents: Incident[]; lastSweep: Sweep | null; today: string; from: string; to: string; lots: Lot[]; can: { edit: boolean; full: boolean }; buildings: string[] }
+type StaffLink = { code: string; hasPasscode: boolean; passcode: string | null; derived: boolean }
+type Bundle = { lot: Lot; spots: Spot[]; bookings: Booking[]; incidents: Incident[]; lastSweep: Sweep | null; today: string; from: string; to: string; lots: Lot[]; overview: LotOverview[]; staffLink: StaffLink | null; can: { edit: boolean; full: boolean }; buildings: string[] }
 type TabKey = 'calendar' | 'tonight' | 'flags' | 'settings'
 
 const WINDOWS = [7, 14, 30]
@@ -49,6 +50,8 @@ export function ParkingDesk() {
   const [plateV, setPlateV] = useState<any | null>(null)
   // What the lots-only read says when there is no lot to open yet (who may make one, for which buildings).
   const [noLot, setNoLot] = useState<{ can: { edit: boolean; full: boolean }; buildings: string[] } | null>(null)
+  const [overview, setOverview] = useState<LotOverview[]>([])
+  const [staffLink, setStaffLink] = useState<StaffLink | null>(null)
 
   const say = (m: string) => { setToast(m); setTimeout(() => setToast(null), 6000) }
   const from = addDays(start, -1), to = addDays(start, days + 1)
@@ -60,6 +63,7 @@ export function ParkingDesk() {
       const r = await fetch(id ? `/api/lots?lot=${encodeURIComponent(id)}&from=${from}&to=${to}` : '/api/lots', { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || j.message || `HTTP ${r.status}`)
+      setOverview(j.overview || []); setStaffLink(j.staffLink || null)
       if (!id) {
         setLots(j.lots || [])
         const first = (j.lots || [])[0]
@@ -134,20 +138,29 @@ export function ParkingDesk() {
     } catch (e: any) { say(e?.message || String(e)) }
   }
 
-  const link = lot && typeof window !== 'undefined' ? `${window.location.origin}/lot/${lot.shareCode}` : ''
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const link = lot ? `${origin}/lot/${lot.shareCode}` : ''
+  const allLink = staffLink ? `${origin}/lot/${staffLink.code}` : ''
   const copy = async (s: string, m: string) => { try { await navigator.clipboard.writeText(s); say(m) } catch { say('Could not copy — select it by hand.') } }
 
   return (
     <div>
-      <LeanHead title="Parking" sub={lot ? <>{lot.name} · {cents(lot.rateCents, lot.currency)} a night · {tonight.sell} sellable spots{spots.some(s => s.kind === 'hold') ? ` · ${spots.filter(s => s.kind === 'hold' && s.active).length} held for staff, never sold` : ''}</> : undefined}>
+      <LeanHead title="Parking" sub={lot ? <>{lot.name} · {lot.rateCents > 0 ? `${cents(lot.rateCents, lot.currency)} a night` : 'included with the stay, one space per reservation'} · {tonight.sell} {lot.rateCents > 0 ? 'sellable' : 'guest'} spots{spots.some(s => s.kind === 'hold') ? ` · ${spots.filter(s => s.kind === 'hold' && s.active).length} held for staff, never sold` : ''}</> : undefined}>
         {lot && <>
-          <Pill tone={tonight.sold >= tonight.sell && tonight.sell > 0 ? 'rose' : 'brand'} title="Numbered spots sold tonight" onClick={() => setTab('tonight')}>{tonight.sold}/{tonight.sell} sold tonight</Pill>
-          <Pill tone="emerald" title="Tonight's parking revenue (each booking's amount spread over its nights)">{cents(tonight.revenue, lot.currency)} tonight</Pill>
+          <Pill tone={tonight.sold >= tonight.sell && tonight.sell > 0 ? 'rose' : 'brand'} title="Numbered spots taken by guests tonight" onClick={() => setTab('tonight')}>{tonight.sold}/{tonight.sell} {lot.rateCents > 0 ? 'sold' : 'taken'} tonight</Pill>
+          {lot.rateCents > 0 && <Pill tone="emerald" title="Tonight's parking revenue (each booking's amount spread over its nights)">{cents(tonight.revenue, lot.currency)} tonight</Pill>}
           {tonight.unpaid.length > 0 && <Pill tone="amber" title="Guest bookings still unpaid" onClick={() => setTab('tonight')}>{tonight.unpaid.length} unpaid</Pill>}
           <Pill tone={openFlags.length ? 'rose' : 'slate'} title="Cars flagged in the lot that are not closed out" onClick={() => setTab('flags')}>{openFlags.length} {openFlags.length === 1 ? 'flag' : 'flags'}</Pill>
           {can.edit && <button onClick={() => openNew()} className="rounded-lg bg-brand-600 text-white text-[12px] font-semibold px-3 py-1.5 inline-flex items-center gap-1"><Plus size={13} /> Add parking</button>}
         </>}
       </LeanHead>
+
+      {/* EVERY LOT AT A GLANCE (Jon, 2026-10-29: "a visual of all properties … see by lot / properties"). */}
+      {overview.length > 0 && (
+        <div className="mb-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {overview.map(o => <LotCard key={o.lot.id} o={o} selected={o.lot.id === lotId} onPick={() => { setLotId(o.lot.id); setTab('calendar'); try { history.replaceState(null, '', `?lot=${o.lot.id}`) } catch {} }} />)}
+        </div>
+      )}
 
       {/* LOT SWITCH + CHECK A PLATE — one line. */}
       <div className="mb-3 flex items-center gap-1.5 flex-wrap">
@@ -203,9 +216,9 @@ export function ParkingDesk() {
           ) : null} />
 
           {tab === 'calendar' && <Calendar lot={lot} spots={spots} bookings={bookings} start={start} days={days} today={today} canEdit={can.edit} onCell={(spotId, day) => openNew({ spotId, startsOn: day, endsOn: addDays(day, 1), kind: spots.find(s => s.id === spotId)?.kind === 'hold' ? 'staff' : 'guest' })} onBar={openBooking} />}
-          {tab === 'tonight' && <Tonight lot={lot} spots={spots} bookings={bookings} incidents={openFlags} today={today} canEdit={can.edit} onBooking={openBooking} onNew={openNew} link={link} onCopy={copy} lastSweep={data?.lastSweep || null} />}
+          {tab === 'tonight' && <Tonight lot={lot} spots={spots} bookings={bookings} incidents={openFlags} today={today} canEdit={can.edit} onBooking={openBooking} onNew={openNew} link={allLink || link} onCopy={copy} lastSweep={data?.lastSweep || null} />}
           {tab === 'flags' && <Flags lot={lot} incidents={incidents} spots={spots} canEdit={can.edit} onNotice={inc => setNotice(inc)} onTow={draftTow} onClose={(inc, how, res) => incAction(inc, { action: 'incident.close', how, resolution: res }, how === 'reopen' ? 'Reopened.' : how === 'towed' ? 'Marked towed.' : 'Closed.')} onRegister={inc => openNew({ plate: inc.plate || '', make: inc.make || '', model: inc.model || '', color: inc.color || '', plateState: inc.plateState || '', spotId: inc.spotId || null })} onNote={(inc, notes) => incAction(inc, { action: 'incident.note', notes }, 'Note saved.')} />}
-          {tab === 'settings' && <Settings lot={lot} spots={spots} can={can} buildings={data?.buildings || []} link={link} onCopy={copy} onLot={(l) => { setData(d => d ? { ...d, lot: l } : d); setLots(ls => ls.map(x => x.id === l.id ? l : x)) }} onSpots={(ss) => setData(d => d ? { ...d, spots: ss } : d)} onMade={(l) => { setLots(x => x.concat([l])); setLotId(l.id); setTab('calendar'); say(`${l.name} is set up.`) }} say={say} />}
+          {tab === 'settings' && <Settings lot={lot} spots={spots} can={can} buildings={data?.buildings || []} link={link} allLink={allLink} staffLink={staffLink} onStaffLink={setStaffLink} onCopy={copy} onLot={(l) => { setData(d => d ? { ...d, lot: l } : d); setLots(ls => ls.map(x => x.id === l.id ? l : x)) }} onSpots={(ss) => setData(d => d ? { ...d, spots: ss } : d)} onMade={(l) => { setLots(x => x.concat([l])); setLotId(l.id); setTab('calendar'); say(`${l.name} is set up.`) }} say={say} />}
 
           <BookingSheet open={sheetOpen} onClose={() => setSheetOpen(false)} lot={lot} spots={spots} bookings={bookings} draft={sheet} canFull={can.full} onSaved={onSaved} onDeleted={onDeleted} />
           <NoticeSheet open={!!notice} onClose={() => setNotice(null)} lot={lot} incident={notice} onSent={(inc, sent, failed) => { patchIncident(inc); say(`Notice sent to ${sent} ${sent === 1 ? 'guest' : 'guests'}${failed ? `, ${failed} failed` : ''}. Tow email drafts itself at ${inc.towDueAt ? timeET(inc.towDueAt) : 'the deadline'}.`) }} />
@@ -326,7 +339,7 @@ function Tonight({ lot, spots, bookings, incidents, today, canEdit, onBooking, o
         tags={<>
           {b.endsOn === today ? <Tag tone="amber" title="Leaves this morning — the spot is sold again from tonight">leaving today</Tag> : null}
           {b.status === 'parked' ? <Tag tone="emerald">parked</Tag> : <Tag>reserved</Tag>}
-          {b.kind === 'guest' ? <Tag tone={b.paid === 'paid' ? 'emerald' : b.paid === 'comped' ? 'sky' : 'rose'}>{b.paid === 'paid' ? `paid ${cents(b.amountCents, lot.currency)}` : b.paid === 'comped' ? 'comped' : `${cents(b.amountCents, lot.currency)} unpaid`}</Tag> : <Tag>{b.kind}</Tag>}
+          {b.kind === 'guest' ? <Tag tone={b.paid === 'paid' ? 'emerald' : b.paid === 'comped' || b.paid === 'na' ? 'sky' : 'rose'}>{b.paid === 'paid' ? `paid ${cents(b.amountCents, lot.currency)}` : b.paid === 'comped' ? 'comped' : b.paid === 'na' ? 'included' : `${cents(b.amountCents, lot.currency)} unpaid`}</Tag> : <Tag>{b.kind}</Tag>}
           {next ? <Tag tone="violet" title={`${next.guestName || next.kind} arrives tonight`}>then {lastName(next.guestName) || next.kind}</Tag> : null}
         </>}
         actions={<IconBtn title="Open the booking" onClick={() => onBooking(b)}><Pencil size={14} /></IconBtn>} />
@@ -426,8 +439,8 @@ function IncidentDetail({ i, canEdit, onNote }: { i: Incident; canEdit: boolean;
 }
 
 // ── SETTINGS: the lot, its spots, the staff link, a new lot ─────────────────────────────────────
-function Settings({ lot, spots, can, buildings, link, onCopy, onLot, onSpots, onMade, say }: {
-  lot: Lot; spots: Spot[]; can: { edit: boolean; full: boolean }; buildings: string[]; link: string
+function Settings({ lot, spots, can, buildings, link, allLink, staffLink, onStaffLink, onCopy, onLot, onSpots, onMade, say }: {
+  lot: Lot; spots: Spot[]; can: { edit: boolean; full: boolean }; buildings: string[]; link: string; allLink: string; staffLink: StaffLink | null; onStaffLink: (s: StaffLink) => void
   onCopy: (s: string, m: string) => void; onLot: (l: Lot) => void; onSpots: (s: Spot[]) => void; onMade: (l: Lot) => void; say: (m: string) => void
 }) {
   const [f, setF] = useState({ name: lot.name, rate: String(lot.rateCents / 100), noticeMinutes: String(lot.noticeMinutes), towCompany: lot.towCompany || '', towEmail: lot.towEmail || '', towPhone: lot.towPhone || '', address: lot.address || '', rules: lot.rules || '', passcode: '' })
@@ -466,8 +479,11 @@ function Settings({ lot, spots, can, buildings, link, onCopy, onLot, onSpots, on
       </section>
 
       <section className="rounded-2xl border border-line bg-white p-4 space-y-3">
-        <h3 className="text-[11px] font-bold uppercase tracking-wider text-muted">Staff link</h3>
-        <p className="text-[12.5px] text-muted">Share it with whoever checks the lot. No login — the link is the key{lot.hasPasscode ? ', plus the passcode' : ''}.</p>
+        <h3 className="text-[11px] font-bold uppercase tracking-wider text-muted">Staff link — every lot</h3>
+        <p className="text-[12.5px] text-muted">The one link to share: it opens with a property picker, then the lot. No login — the link is the key{staffLink?.hasPasscode ? ', plus the passcode' : ''}.</p>
+        {staffLink && <StaffLinkCard link={allLink} staffLink={staffLink} ro={ro} onChange={onStaffLink} onCopy={onCopy} say={say} />}
+        <h3 className="text-[11px] font-bold uppercase tracking-wider text-muted pt-2">This lot's own link</h3>
+        <p className="text-[12.5px] text-muted">Opens {lot.building} only — for a person who should never see the other lots.</p>
         <div className="flex items-center gap-1.5 flex-wrap">
           <code className="text-[12px] bg-app rounded-lg px-2 py-1 break-all">{link}</code>
           <button onClick={() => onCopy(link, 'Staff link copied.')} className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[11.5px] font-semibold text-ink hover:bg-app"><Copy size={12} /> Copy</button>
@@ -524,5 +540,60 @@ function NewLot({ buildings, onMade }: { buildings: string[]; onMade: (l: Lot) =
       {err && <p className="text-[12px] text-rose-700">{err}</p>}
       <button onClick={make} disabled={!b || busy} className="rounded-lg bg-brand-600 text-white text-[12.5px] font-semibold px-4 py-2 disabled:opacity-50">{busy ? <Loader2 size={13} className="animate-spin inline" /> : `Set up ${b || 'the lot'}`}</button>
     </section>
+  )
+}
+
+
+// ── EVERY LOT AT A GLANCE: one card per property, the spots drawn as a map ──────────────────────
+function LotCard({ o, selected, onPick }: { o: LotOverview; selected: boolean; onPick: () => void }) {
+  const sq = (s: LotOverview['spots'][number]) => {
+    const b = s.tonight
+    const cls = s.flagged ? 'bg-rose-500 text-white ring-2 ring-rose-300'
+      : !b ? (s.kind === 'hold' ? 'bg-slate-100 text-slate-500 border border-dashed border-slate-300' : 'bg-white text-ink border border-line')
+        : b.kind === 'block' ? 'bg-rose-50 text-rose-700 border border-dashed border-rose-300'
+          : b.kind !== 'guest' ? 'bg-slate-300 text-slate-800'
+            : b.paid === 'paid' ? 'bg-emerald-500 text-white' : b.paid === 'unpaid' ? 'bg-amber-400 text-amber-950' : 'bg-sky-400 text-white'
+    const title = s.flagged ? `Spot ${s.label} — flagged` : b ? `Spot ${s.label} — ${b.guestName || b.kind}${b.unit ? ' · ' + b.unit : ''}${b.plate ? ' · ' + b.plate : ''}` : `Spot ${s.label} — free tonight${s.kind === 'hold' ? ' (held)' : ''}`
+    return <span key={s.id} title={title} className={`inline-flex items-center justify-center w-7 h-7 rounded-md text-[10.5px] font-bold tabular-nums ${cls}`}>{s.label}</span>
+  }
+  return (
+    <button type="button" onClick={onPick} aria-pressed={selected} className={`text-left rounded-2xl border bg-white px-3 py-2.5 transition ${selected ? 'border-ink ring-2 ring-ink/10' : 'border-line hover:border-ink/40'}`}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[13.5px] font-bold text-ink">{o.lot.building}</span>
+        <span className="text-[12px] text-muted">{o.lot.rateCents > 0 ? `${cents(o.lot.rateCents, o.lot.currency)}/night` : 'included'}</span>
+        <span className={`ml-auto text-[12px] font-semibold tabular-nums ${o.sold >= o.sellable && o.sellable ? 'text-rose-700' : 'text-ink'}`}>{o.sold}/{o.sellable} tonight</span>
+        {o.unpaid > 0 && <Tag tone="amber">{o.unpaid} unpaid</Tag>}
+        {o.flags > 0 && <Tag tone="rose">{o.flags} {o.flags === 1 ? 'flag' : 'flags'}</Tag>}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">{o.spots.map(sq)}</div>
+    </button>
+  )
+}
+
+function StaffLinkCard({ link, staffLink, ro, onChange, onCopy, say }: { link: string; staffLink: StaffLink; ro: boolean; onChange: (s: StaffLink) => void; onCopy: (s: string, m: string) => void; say: (m: string) => void }) {
+  const [pass, setPass] = useState('')
+  const [busy, setBusy] = useState(false)
+  const inp = 'text-[13px] bg-app border border-line rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60'
+  const save = async (patch: Record<string, any>, done: string) => {
+    setBusy(true)
+    try { const j = await lotsApi({ action: 'staff.update', ...patch }); onChange(j.staffLink); setPass(''); say(done) } catch (e: any) { say(e?.message || String(e)) } finally { setBusy(false) }
+  }
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <code className="text-[12px] bg-app rounded-lg px-2 py-1 break-all">{link}</code>
+        <button onClick={() => onCopy(link, 'Staff link copied.')} className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[11.5px] font-semibold text-ink hover:bg-app"><Copy size={12} /> Copy</button>
+        <a href={link} target="_blank" rel="noreferrer" className="text-[11.5px] font-semibold text-brand-700 hover:underline">Open →</a>
+        {staffLink.hasPasscode && staffLink.passcode && <Tag tone="violet" title="The passcode the team types">passcode {staffLink.passcode}</Tag>}
+      </div>
+      {!ro && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <input value={pass} onChange={e => setPass(e.target.value)} placeholder={staffLink.hasPasscode ? 'Change the passcode…' : 'Add a passcode (optional)'} className={inp + ' max-w-[14rem]'} />
+          <button onClick={() => save({ passcode: pass.trim() }, 'Passcode set.')} disabled={busy || !pass.trim()} className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-ink disabled:opacity-50">Set</button>
+          {staffLink.hasPasscode && <button onClick={() => save({ passcode: '' }, 'Passcode removed.')} disabled={busy} className="text-[12px] font-semibold text-muted hover:text-ink">Remove passcode</button>}
+          <button onClick={() => { if (confirm('Make a new link for every lot? The old one stops working.')) save({ regenerate: true }, 'New staff link made — send it to the team again.') }} disabled={busy} className="ml-auto text-[12px] font-semibold text-rose-700 hover:underline">New link</button>
+        </div>
+      )}
+    </div>
   )
 }

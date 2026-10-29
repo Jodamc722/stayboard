@@ -205,7 +205,7 @@ export function BookingSheet({ open, onClose, lot, spots, bookings, draft, canFu
   const name = kind === 'guest' ? (stay?.guest || 'Guest') : kind === 'block' ? 'Blocked spot' : (ownName.trim() || kind.charAt(0).toUpperCase() + kind.slice(1))
   return (
     <Sheet open={open} onClose={onClose} title={existing ? `Parking · ${name}` : 'Add parking'} wide
-      subtitle={<>{lot.name} · {cents(lot.rateCents, lot.currency)} a night · held spots are never sold</>}
+      subtitle={<>{lot.name} · {lot.rateCents > 0 ? `${cents(lot.rateCents, lot.currency)} a night` : 'parking included, one space per reservation'} · held spots are never sold</>}
       footer={
         <div className="flex items-center gap-2">
           {existing && canFull && <button type="button" onClick={del} disabled={busy} className="text-[12px] font-semibold text-rose-700 hover:underline mr-auto">Delete</button>}
@@ -273,7 +273,7 @@ export function BookingSheet({ open, onClose, lot, spots, bookings, draft, canFu
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 items-end">
           <Field label="First night"><input type="date" value={startsOn} onChange={e => { setStartsOn(e.target.value); if (e.target.value >= endsOn) setEndsOn(addDays(e.target.value, 1)) }} className={input} /></Field>
           <Field label="Leaves on"><input type="date" value={endsOn} min={addDays(startsOn, 1)} onChange={e => setEndsOn(e.target.value)} className={input} /></Field>
-          <div className="text-[12.5px] text-muted pb-2">{nights} {nights === 1 ? 'night' : 'nights'}{kind === 'guest' ? ` · ${cents(suggested, lot.currency)} at the rate` : ''}</div>
+          <div className="text-[12.5px] text-muted pb-2">{nights} {nights === 1 ? 'night' : 'nights'}{kind === 'guest' && lot.rateCents > 0 ? ` · ${cents(suggested, lot.currency)} at the rate` : ''}</div>
         </div>
 
         <Field label="Spot" hint={kind === 'guest' ? 'numbered spots only — S-spots are held for staff' : 'held spots first'}>
@@ -281,7 +281,7 @@ export function BookingSheet({ open, onClose, lot, spots, bookings, draft, canFu
           {!spotId && <p className="mt-1 text-[11.5px] text-rose-700">No spot is free for every one of those nights.</p>}
         </Field>
 
-        {kind === 'guest' && (
+        {kind === 'guest' && lot.rateCents > 0 && (
           <div className="grid sm:grid-cols-3 gap-3 items-end">
             <Field label="Amount" hint="editable">
               <div className="relative"><span className="absolute left-2.5 top-1.5 text-[13px] text-muted">$</span><input inputMode="decimal" value={amount} onChange={e => { setAmount(e.target.value); setAmountTouched(true) }} className={input + ' pl-6 tabular-nums'} /></div>

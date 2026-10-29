@@ -9,7 +9,7 @@
 //                                       incident.open · incident.noticeText · incident.notify · incident.tow · incident.close
 import { NextRequest, NextResponse } from 'next/server'
 import {
-  lotByCode, lotToday, judgePlate, readPlateFromPhoto, storePhoto, startSweep, recordCheck, finishSweep, sweepById,
+  resolveStaffCode, lotToday, judgePlate, readPlateFromPhoto, storePhoto, startSweep, recordCheck, finishSweep, sweepById,
   openIncident, incidentById, noticeTextFor, sendNotice, draftTowEmail, closeIncident, inHouseStays, signedPhotoUrl, ymdET,
   createBooking, updateBooking, bookingById,
   type SweepCheck,
@@ -25,23 +25,31 @@ const passOk = (lot: { passcode: string | null }, given: string) => !lot.passcod
 // The staff name travels with every write, so the record says who stood in the lot.
 const byOf = (name: any) => (String(name || '').replace(/\s+/g, ' ').trim().slice(0, 60) || 'staff') + ' (lot link)'
 
+// What the phone needs to know about a lot — never the tow email, never the passcode.
+const lotInfo = (l: { id: string; name: string; building: string; rules: string | null; rateCents: number; currency: string; noticeMinutes: number; towEmail: string | null; towCompany: string | null; towPhone: string | null }) =>
+  ({ id: l.id, name: l.name, building: l.building, rules: l.rules, rateCents: l.rateCents, currency: l.currency, noticeMinutes: l.noticeMinutes, hasTow: !!l.towEmail, towCompany: l.towCompany, towPhone: l.towPhone })
+
+// ONE LINK, EVERY LOT (Jon, 2026-10-29: "same scan link, just drop down for property"). The all-lots
+// code answers with the list of properties; `lot=` (GET) / `lotId` (POST) says which one the phone is
+// working. A lot's own code still opens that lot alone.
 export async function GET(req: NextRequest, { params }: { params: { code: string } }) {
-  const lot = await lotByCode(params.code)
-  if (!lot) return bad('This lot link is not valid.', 404)
-  if (!passOk(lot, String(req.nextUrl.searchParams.get('pass') || ''))) return NextResponse.json({ ok: false, needsPasscode: true, label: lot.name })
-  const t = await lotToday(lot, ymdET())
-  return NextResponse.json({
-    ok: true,
-    lot: { id: lot.id, name: lot.name, building: lot.building, rules: lot.rules, rateCents: lot.rateCents, currency: lot.currency, noticeMinutes: lot.noticeMinutes, hasTow: !!lot.towEmail, towCompany: lot.towCompany, towPhone: lot.towPhone },
-    ...t,
-  })
+  const r = await resolveStaffCode(params.code, req.nextUrl.searchParams.get('lot'))
+  if (!r) return bad('This lot link is not valid.', 404)
+  const label = r.kind === 'lot' ? r.lot.name : 'Parking'
+  if (!passOk(r, String(req.nextUrl.searchParams.get('pass') || ''))) return NextResponse.json({ ok: false, needsPasscode: true, label })
+  const lots = r.kind === 'all' ? r.lots.map(lotInfo) : [lotInfo(r.lot)]
+  if (!r.lot) return NextResponse.json({ ok: true, all: true, lots, lot: null })
+  const t = await lotToday(r.lot, ymdET())
+  return NextResponse.json({ ok: true, all: r.kind === 'all', lots, lot: lotInfo(r.lot), ...t })
 }
 
 export async function POST(req: NextRequest, { params }: { params: { code: string } }) {
   const body = await req.json().catch(() => ({} as any))
-  const lot = await lotByCode(params.code)
-  if (!lot) return bad('This lot link is not valid.', 404)
-  if (!passOk(lot, String(body?.pass || ''))) return bad('That passcode is not right.', 403)
+  const r = await resolveStaffCode(params.code, body?.lotId)
+  if (!r) return bad('This lot link is not valid.', 404)
+  if (!passOk(r, String(body?.pass || ''))) return bad('That passcode is not right.', 403)
+  if (!r.lot) return bad('Pick a property first.')
+  const lot = r.lot
   const by = byOf(body?.name)
   const action = String(body?.action || '')
   const today = ymdET()

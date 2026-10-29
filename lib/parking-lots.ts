@@ -122,6 +122,62 @@ export async function lotByCode(code: string): Promise<(Lot & { passcode: string
   const { data } = await supabaseAdmin().from('parking_lots').select('*').eq('share_code', c).eq('active', true).maybeSingle()
   return data ? { ...lotOf(data), passcode: str((data as any).share_passcode) || null } : null
 }
+// ── THE ONE STAFF LINK FOR EVERY LOT (Jon, 2026-10-29: "same scan link, just drop down for
+// property") ───────────────────────────────────────────────────────────────────────────────────
+// One code + passcode in app_settings covers all active lots; the phone picks the property. Until
+// somebody sets it, it IS the first lot's link — so the link and passcode Jon already handed the Eden
+// team keep working and simply gain the property picker. A per-lot link (Settings → that lot) still
+// opens that lot alone.
+export const STAFF_LINK_KEY = 'parking_staff_link'
+export type StaffLink = { code: string; passcode: string | null; derived: boolean }
+export async function getStaffLink(): Promise<StaffLink | null> {
+  try {
+    const { getSetting } = await import('./app-settings')
+    const v = await getSetting<{ code?: string; passcode?: string | null } | null>(STAFF_LINK_KEY, null)
+    if (v && str(v.code)) return { code: str(v.code), passcode: str(v.passcode) || null, derived: false }
+  } catch { /* fall through to the derived link */ }
+  const { data } = await supabaseAdmin().from('parking_lots').select('share_code, share_passcode, created_at').eq('active', true).order('created_at').limit(1)
+  const first = data && data[0]
+  return first ? { code: str((first as any).share_code), passcode: str((first as any).share_passcode) || null, derived: true } : null
+}
+export async function setStaffLink(patch: { passcode?: string | null; regenerate?: boolean }, by: string): Promise<StaffLink | null> {
+  const cur = await getStaffLink()
+  const next = { code: patch.regenerate || !cur ? newCode() : cur.code, passcode: 'passcode' in patch ? (clean(patch.passcode, 40) || null) : (cur?.passcode ?? null) }
+  const { setSetting } = await import('./app-settings')
+  const r = await setSetting(STAFF_LINK_KEY, next, by)
+  return r.ok ? { ...next, derived: false } : null
+}
+/** What a /lot/<code> URL means: one lot, or the all-lots link (then the phone names the lot). */
+export async function resolveStaffCode(code: string, lotId?: string | null): Promise<{ kind: 'lot'; lot: Lot; passcode: string | null } | { kind: 'all'; lot: Lot | null; passcode: string | null; lots: Lot[] } | null> {
+  const c = str(code).trim()
+  if (!/^[A-Za-z0-9_-]{6,40}$/.test(c)) return null
+  const all = await getStaffLink()
+  if (all && all.code === c) {
+    const lots = await listLots()
+    const lot = lotId ? lots.find(l => l.id === str(lotId)) || null : null
+    return { kind: 'all', lot, passcode: all.passcode, lots }
+  }
+  const one = await lotByCode(c)
+  return one ? { kind: 'lot', lot: one, passcode: one.passcode } : null
+}
+
+/** Every lot at a glance (Jon, 2026-10-29: "a visual of all properties … see by lot / properties"). */
+export type LotOverview = { lot: Lot; spots: (Spot & { tonight: Booking | null; flagged: boolean })[]; sold: number; sellable: number; unpaid: number; flags: number; revenueCents: number }
+export async function lotsOverview(date: string): Promise<LotOverview[]> {
+  const lots = await listLots()
+  return Promise.all(lots.map(async lot => {
+    const [spots, bookings, incidents] = await Promise.all([spotsFor(lot.id), bookingsFor(lot.id, date, date), incidentsFor(lot.id, { openOnly: true, limit: 50 })])
+    const live = bookings.filter(b => LIVE_BOOKING.indexOf(b.status) >= 0 && b.startsOn <= date && date < b.endsOn)
+    const flaggedSpots = incidents.map(i => i.spotId).filter(Boolean)
+    const rows = spots.map(s => ({ ...s, tonight: live.find(b => b.spotId === s.id) || null, flagged: flaggedSpots.indexOf(s.id) >= 0 }))
+    const sellable = spots.filter(s => s.kind === 'sell').length
+    const sold = rows.filter(s => s.kind === 'sell' && s.tonight && s.tonight.kind === 'guest').length
+    const unpaid = live.filter(b => b.kind === 'guest' && b.paid === 'unpaid').length
+    const revenueCents = live.filter(b => b.kind === 'guest').reduce((a, b) => a + (b.nights ? b.amountCents / b.nights : 0), 0)
+    return { lot, spots: rows, sold, sellable, unpaid, flags: incidents.length, revenueCents }
+  }))
+}
+
 export async function spotsFor(lotId: string, includeInactive = false): Promise<Spot[]> {
   let q = supabaseAdmin().from('parking_spots').select('*').eq('lot_id', lotId).order('sort').order('label')
   if (!includeInactive) q = q.eq('active', true)
@@ -152,10 +208,13 @@ export async function createLot(inp: { building: string; name?: string; sell: nu
   const db = supabaseAdmin()
   const { data: dup } = await db.from('parking_lots').select('id').eq('active', true).ilike('building', building).maybeSingle()
   if (dup) return { ok: false, error: `${building} already has a lot.` }
+  // A rate of 0 is a real choice (Hendricks, Jon 2026-10-29: "6 spots for our guests, 1 per
+  // reservation" — included with the stay), so the words say "included" rather than "$0 per night".
+  const rate = Math.max(0, Math.round(num(inp.rateCents, 0)))
   const { data, error } = await db.from('parking_lots').insert({
-    building, name: clean(inp.name, 80) || `${building} parking`, rate_cents: Math.max(0, Math.round(num(inp.rateCents, 3000))),
+    building, name: clean(inp.name, 80) || `${building} parking`, rate_cents: rate,
     share_code: newCode(), created_by: inp.by,
-    rules: `Parking is ${cents(Math.max(0, Math.round(num(inp.rateCents, 3000))))} per night, one space per reservation, in the spot you were given. Unregistered vehicles are towed at the owner's expense.`,
+    rules: `${rate > 0 ? `Parking is ${cents(rate)} per night` : 'Parking is included with your stay'}, one space per reservation, in the spot you were given. Unregistered vehicles are towed at the owner's expense.`,
   }).select('*').single()
   if (error || !data) return { ok: false, error: error?.message || 'Could not create the lot.' }
   const rows: any[] = []
@@ -330,7 +389,8 @@ export async function createBooking(inp: BookingInput, by: string): Promise<{ ok
   const nights = nightsBetween(startsOn, endsOn)
   const rate = kind === 'guest' ? lot.rateCents : 0
   const amount = inp.amountCents == null || !Number.isFinite(Number(inp.amountCents)) ? nights * rate : Math.max(0, Math.round(Number(inp.amountCents)))
-  const paid: Paid = kind === 'guest' ? ((['unpaid', 'paid', 'comped'] as Paid[]).indexOf(inp.paid as Paid) >= 0 ? (inp.paid as Paid) : 'unpaid') : 'na'
+  // On an included lot (rate 0) there is nothing to collect: the booking is 'na' like a staff car.
+  const paid: Paid = kind === 'guest' && lot.rateCents > 0 ? ((['unpaid', 'paid', 'comped'] as Paid[]).indexOf(inp.paid as Paid) >= 0 ? (inp.paid as Paid) : 'unpaid') : 'na'
   const plate = tidyPlate(inp.plate) || null
   const row = {
     lot_id: lot.id, spot_id: spot.id, kind,
@@ -374,7 +434,7 @@ export async function updateBooking(id: string, patch: Record<string, any>, by: 
     }
     up.spot_id = spotId; up.starts_on = startsOn; up.ends_on = endsOn; up.kind = kind
     if (kind !== 'guest') { up.paid = 'na'; up.rate_cents = 0 }
-    else if (cur.kind !== 'guest') { up.rate_cents = lot.rateCents; up.paid = 'unpaid' }
+    else if (cur.kind !== 'guest') { up.rate_cents = lot.rateCents; up.paid = lot.rateCents > 0 ? 'unpaid' : 'na' }
     if (!('amountCents' in patch) && kind === 'guest' && (startsOn !== cur.startsOn || endsOn !== cur.endsOn || cur.kind !== 'guest')) up.amount_cents = nightsBetween(startsOn, endsOn) * (kind === 'guest' ? (cur.kind === 'guest' ? cur.rateCents : lot.rateCents) : 0)
   }
   up.status = status
@@ -384,7 +444,7 @@ export async function updateBooking(id: string, patch: Record<string, any>, by: 
   if ('plate' in patch) { const p = tidyPlate(patch.plate) || null; up.plate = p; up.plate_norm = p ? normalizePlate(p) || null : null }
   if ('plateState' in patch) up.plate_state = clean(patch.plateState, 20)?.toUpperCase() || null
   if ('amountCents' in patch) up.amount_cents = Math.max(0, Math.round(num(patch.amountCents)))
-  if ('paid' in patch && kind === 'guest') {
+  if ('paid' in patch && kind === 'guest' && lot.rateCents > 0) {
     const p: Paid = (['unpaid', 'paid', 'comped'] as Paid[]).indexOf(patch.paid) >= 0 ? patch.paid : 'unpaid'
     up.paid = p
     up.paid_via = p === 'paid' ? clean(patch.paidVia, 20) || cur.paidVia : null
@@ -420,7 +480,7 @@ async function noteOnGuesty(b: Booking, lot: Lot, by: string, label: string): Pr
     const current: any[] = Array.isArray((res as any)?.custom_fields) ? (res as any).custom_fields : (Array.isArray(raw.customFields) ? raw.customFields : [])
     const spots = await spotsFor(lot.id, true)
     const spot = spots.find(s => s.id === b.spotId)
-    const money = b.kind === 'guest' ? ` · ${cents(b.amountCents, lot.currency)} ${b.paid}` : ''
+    const money = b.kind === 'guest' ? (lot.rateCents > 0 ? ` · ${cents(b.amountCents, lot.currency)} ${b.paid}` : ' · included') : ''
     const line = `${lot.name}: spot ${spot?.label || '?'} · ${carLabel(b)}${b.plate ? ' · ' + b.plate : ''} · ${dayET(b.startsOn)} → ${dayET(b.endsOn)} (${b.nights}n)${money}${b.status !== 'reserved' ? ' · ' + b.status : ''}`
     const wr = await appendReservationNote({ reservationId: b.reservationId, token, current, label, by, note: line })
     if (wr.ok && Array.isArray(wr.fields)) await db.from('guesty_reservations').update({ custom_fields: wr.fields }).eq('id', b.reservationId)
@@ -554,7 +614,7 @@ export function noticeTextFor(lot: Lot, inc: Pick<Incident, 'plate' | 'make' | '
   const mins = lot.noticeMinutes
   const by = timeET(dueAt)
   const why = inc.kind === 'wrong_spot' ? 'in a spot that is not the one it was registered for' : 'without a parking registration'
-  return `Parking notice — ${lot.building}\n\nA ${car}${inc.plate ? `, plate ${inc.plate},` : ''} is parked ${where} ${why}. If this is your vehicle, please move it or register it with us within ${mins === 60 ? '1 hour' : mins + ' minutes'} (by ${by}). Vehicles still unregistered after that are towed at the owner's expense.\n\nParking is ${cents(lot.rateCents, lot.currency)} per night, one space per reservation, in the spot you are given. Reply to this message with your make, model and plate to register.`
+  return `Parking notice — ${lot.building}\n\nA ${car}${inc.plate ? `, plate ${inc.plate},` : ''} is parked ${where} ${why}. If this is your vehicle, please move it or register it with us within ${mins === 60 ? '1 hour' : mins + ' minutes'} (by ${by}). Vehicles still unregistered after that are towed at the owner's expense.\n\n${lot.rateCents > 0 ? `Parking is ${cents(lot.rateCents, lot.currency)} per night` : 'Parking is included with your stay'}, one space per reservation, in the spot you are given. Reply to this message with your make, model and plate to register.`
 }
 
 /** Send the notice to every stay in house at the lot's building right now. */
