@@ -68,6 +68,7 @@ export function guideData(gb: any) {
     s, has, lbl, pa, photos, em,
     name: stayName(gb),
     subtitle: str(s.cover?.subtitle).replace(/\s{2,}/g, ' '),
+    line1: str(s.cover?.line1), line2: str(s.cover?.line2),
     cover: pa.cover || photos[0] || null,
     wifiNet: str(s.wifi?.network), wifiPw: str(s.wifi?.password),
     checkIn: str(s.arrival?.checkIn), checkOut: str(s.arrival?.checkOut),
@@ -171,12 +172,11 @@ export function GuideMobile({ gb, autoPrint = false }: { gb: any; autoPrint?: bo
             <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, rgba(10,10,12,0.35), rgba(10,10,12,0) 30%, rgba(10,10,12,0.78) 100%)' }} />
             <div className="absolute inset-x-0 top-0 flex items-center justify-between px-5" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 14px)' }}>
               <img src={LOGO_URL} alt="Stay Hospitality" className="h-6 w-auto" style={{ filter: 'brightness(0) invert(1)' }} />
-              {d.phone ? <a href={'tel:' + tel(d.phone)} className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-[12px] font-semibold text-white backdrop-blur-md"><Phone size={12} /> Call us</a> : null}
             </div>
             <div className="absolute inset-x-0 bottom-0 px-5 pb-10">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/80">{lbl('cover.kicker', 'Welcome to')}</p>
-              <h1 className="mt-1.5 text-[30px] leading-[1.1] font-semibold text-white" style={{ fontFamily: SERIF, textWrap: 'balance' as any }}>{d.name}</h1>
-              {d.subtitle ? <p className="mt-1.5 text-[12.5px] text-white/80">{d.subtitle}</p> : null}
+              <p className="text-[10px] tracking-[0.45em] text-white/80">{lbl('cover.kicker', 'WELCOME')}</p>
+              <h1 className="mt-2 text-[38px] leading-[1.02] font-medium lowercase text-white" style={{ fontFamily: SERIF, textWrap: 'balance' as any }}>{d.line1 ? <>{d.line1}{d.line2 ? <><br />{d.line2}</> : null}</> : d.name}</h1>
+              {d.subtitle ? <p className="mt-2.5 text-[11px] uppercase tracking-[0.3em] text-white/75">{d.subtitle}</p> : null}
             </div>
           </header>
 
@@ -222,13 +222,15 @@ export function GuideMobile({ gb, autoPrint = false }: { gb: any; autoPrint?: bo
                 </a>
               ) : null}
 
-              {d.phone ? (
-                <div className="mt-4 grid grid-cols-2 gap-2">
-                  <a href={'tel:' + tel(d.phone)} className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-xl text-[13.5px] font-semibold text-white" style={{ background: c.accent }}><Phone size={15} /> Call us</a>
-                  <a href={'sms:' + tel(d.phone)} className="inline-flex min-h-[46px] items-center justify-center gap-2 rounded-xl text-[13.5px] font-semibold" style={{ background: c.tint, color: c.ink }}><MessageSquare size={15} /> Text us</a>
+              {/* CONTACT (Jon, 2026-10-29): guests message us through the app they booked with — no
+                  call or text buttons. Our number is shown for anything urgent. */}
+              <div className="mt-4 flex items-start gap-3 rounded-xl p-3" style={{ background: c.tint }}>
+                <MessageSquare size={18} className="mt-0.5 shrink-0" style={{ color: c.accent }} />
+                <div className="min-w-0">
+                  <p className="text-[14px] font-semibold leading-snug">{lbl('ess.message', 'Questions? Message us in your booking app')}</p>
+                  <p className="mt-0.5 text-[12.5px] leading-snug" style={{ color: c.mute }}>{lbl('ess.messageSub', 'Airbnb, Vrbo, Booking.com or wherever you booked — we reply fast.')}{d.phone ? <> Urgent: <span className="font-semibold tabular-nums" style={{ color: c.ink }}>{d.phone}</span></> : null}</p>
                 </div>
-              ) : null}
-              {d.phone ? <p className="mt-2 text-center text-[11.5px]" style={{ color: c.mute }}>{d.phone} · {lbl('ess.hours', 'available 24/7')}</p> : null}
+              </div>
             </div>
           </div>
 
@@ -245,7 +247,7 @@ export function GuideMobile({ gb, autoPrint = false }: { gb: any; autoPrint?: bo
           <main className="space-y-4 px-4 pt-4">
             {/* ARRIVAL */}
             {(d.entry || d.parking || d.gettingThere) ? (
-              <Section id="arrival" kicker={lbl('arrival.kicker', 'Getting in')} title={lbl('m.arrival', 'Arrival')} c={c} shadow={shadow}>
+              <Section id="arrival" kicker={lbl('arrival.kicker', 'Your arrival')} title={lbl('m.arrival', 'getting in')} c={c} shadow={shadow} photo={d.pa.arrival || null}>
                 <div className="space-y-4">
                   {d.entry ? <Fact Icon={KeyRound} label={lbl('arrival.entryLabel', 'The door')} body={d.entry} k="entry" open={open} toggle={toggle} c={c} /> : null}
                   {d.parking ? <Fact Icon={Car} label={lbl('arrival.parkingLabel', 'Parking')} body={d.parking} k="parking" open={open} toggle={toggle} c={c} /> : null}
@@ -257,7 +259,7 @@ export function GuideMobile({ gb, autoPrint = false }: { gb: any; autoPrint?: bo
 
             {/* HOUSE GUIDE */}
             {d.howto.length ? (
-              <Section id="howto" kicker={lbl('howto.kicker', 'How things work')} title={lbl('m.howto', 'House guide')} c={c} shadow={shadow}>
+              <Section id="howto" kicker={lbl('howto.kicker', 'How things work')} title={lbl('m.howto', 'how-to guide')} c={c} shadow={shadow}>
                 <div className="-mx-1">
                   {d.howto.slice(0, 16).map((it: any, i: number) => {
                     const k = 'h' + i, isOpen = !!open[k], photo = purl(it.photo)
@@ -282,7 +284,7 @@ export function GuideMobile({ gb, autoPrint = false }: { gb: any; autoPrint?: bo
 
             {/* HOUSE RULES */}
             {d.rules.length ? (
-              <Section id="rules" kicker={lbl('guidelines.kicker', 'Please note')} title={lbl('m.rules', 'House rules')} c={c} shadow={shadow}>
+              <Section id="rules" kicker={lbl('guidelines.kicker', 'Please note')} title={lbl('m.rules', 'house rules')} c={c} shadow={shadow}>
                 {d.rulesIntro ? <p className="-mt-1 mb-3 text-[13.5px] leading-[1.6]" style={{ color: c.mute }}>{d.rulesIntro}</p> : null}
                 <ul>
                   {d.rules.slice(0, 12).map((it: any, i: number) => (
@@ -297,7 +299,7 @@ export function GuideMobile({ gb, autoPrint = false }: { gb: any; autoPrint?: bo
 
             {/* THE SPACE */}
             {(d.about || d.highlights.length) ? (
-              <Section id="space" kicker={lbl('about.kicker', 'Your home for the stay')} title={lbl('m.space', 'The space')} c={c} shadow={shadow} photo={d.pa.about || null}>
+              <Section id="space" kicker={lbl('about.kicker', 'Your home for the stay')} title={lbl('m.space', 'about the space')} c={c} shadow={shadow} photo={d.pa.about || d.pa.special || null}>
                 {d.about ? <Clamp text={d.about} k="about" lines={5} open={open} toggle={toggle} c={c} /> : null}
                 {d.highlights.map((g: any, i: number) => (
                   <div key={i} className="mt-4">
@@ -312,19 +314,19 @@ export function GuideMobile({ gb, autoPrint = false }: { gb: any; autoPrint?: bo
 
             {/* EXPLORE / EAT */}
             {d.places.length ? (
-              <Section id="explore" kicker={lbl('localPlaces.tag', 'Nearby')} title={lbl('m.explore', 'Things to do')} c={c} shadow={shadow}>
+              <Section id="explore" kicker={lbl('localPlaces.tag', 'Nearby')} title={lbl('m.explore', 'local places')} c={c} shadow={shadow}>
                 <PlaceList items={d.places} city={d.placeCity} c={c} />
               </Section>
             ) : null}
             {d.eats.length ? (
-              <Section id="eat" kicker={lbl('restaurants.tag', 'Our picks')} title={lbl('m.eat', 'Where to eat')} c={c} shadow={shadow}>
+              <Section id="eat" kicker={lbl('restaurants.tag', 'Our picks')} title={lbl('m.eat', 'where to eat')} c={c} shadow={shadow}>
                 <PlaceList items={d.eats} city={d.placeCity} c={c} />
               </Section>
             ) : null}
 
             {/* EXTRAS */}
             {d.addons.length ? (
-              <Section id="addons" kicker={lbl('addons.kicker', 'At your service')} title={lbl('m.addons', 'Extras')} c={c} shadow={shadow}>
+              <Section id="addons" kicker={lbl('addons.kicker', 'At your service')} title={lbl('m.addons', 'exclusive add-ons')} c={c} shadow={shadow}>
                 {d.addonsIntro ? <p className="-mt-1 mb-2 text-[13.5px] leading-[1.6]" style={{ color: c.mute }}>{d.addonsIntro}</p> : null}
                 <ul>
                   {d.addons.slice(0, 12).map((p: any, i: number) => (
@@ -334,12 +336,12 @@ export function GuideMobile({ gb, autoPrint = false }: { gb: any; autoPrint?: bo
                     </li>
                   ))}
                 </ul>
-                {d.phone ? <a href={'sms:' + tel(d.phone)} className="mt-3 inline-flex min-h-[44px] items-center gap-2 rounded-xl px-4 text-[13.5px] font-semibold text-white" style={{ background: c.accent }}><MessageSquare size={15} /> Text us to arrange</a> : null}
+                <p className="mt-3 text-[13px]" style={{ color: c.mute }}>To arrange any of these, message us in your booking app.</p>
               </Section>
             ) : null}
 
             {/* CHECK-OUT */}
-            <Section id="checkout" kicker={lbl('closing.beforeLabel', 'Before you go')} title={lbl('m.checkout', 'Check-out')} c={c} shadow={shadow}>
+            <Section id="checkout" kicker={lbl('closing.beforeLabel', 'Before you go')} title={lbl('m.checkout', 'checking out')} c={c} shadow={shadow}>
               <p className="-mt-1 text-[13.5px]" style={{ color: c.mute }}>Check-out is {d.checkOut || 'as agreed'}.{d.checkoutList.length ? ' Tick these off as you go.' : ''}</p>
               {d.checkoutList.length ? (
                 <ul className="mt-2 -mx-1">
@@ -355,12 +357,12 @@ export function GuideMobile({ gb, autoPrint = false }: { gb: any; autoPrint?: bo
               ) : null}
               <div className="mt-4 rounded-2xl p-4" style={{ background: c.tint }}>
                 <p className="text-[12px] tracking-[0.3em]" style={{ color: c.accent }}>★★★★★</p>
-                <p className="mt-1 text-[19px] font-semibold" style={{ fontFamily: SERIF }}>{lbl('closing.reviewHeading', 'Loved your stay?')}</p>
+                <p className="mt-1 text-[22px] font-medium lowercase" style={{ fontFamily: SERIF }}>{lbl('closing.reviewHeading', 'loved your stay?')}</p>
                 <p className="mt-1 text-[13.5px] leading-[1.6]" style={{ color: c.mute }}>{d.review || 'A five-star review means the world to our small team.'}</p>
                 <p className="mt-2 text-[12.5px]" style={{ color: c.mute }}>— {d.signoff}</p>
               </div>
               <div className="mt-3 rounded-2xl p-4" style={{ border: '1px solid ' + c.line }}>
-                <p className="text-[17px] font-semibold" style={{ fontFamily: SERIF }}>{lbl('booknext.heading', 'Book your next stay')}</p>
+                <p className="text-[20px] font-medium lowercase" style={{ fontFamily: SERIF }}>{lbl('booknext.heading', 'book your next stay')}</p>
                 <p className="mt-1 text-[13.5px] leading-[1.6]" style={{ color: c.mute }}>{lbl('booknext.body', 'Book directly with us next time and save.')}</p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <a href={d.bookUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-[44px] items-center gap-2 rounded-xl px-4 text-[13.5px] font-semibold text-white" style={{ background: c.accent }}><ExternalLink size={15} /> Book direct</a>
@@ -372,12 +374,12 @@ export function GuideMobile({ gb, autoPrint = false }: { gb: any; autoPrint?: bo
             </Section>
 
             {/* HELP */}
-            <Section id="help" kicker={lbl('emergency.kicker', 'Any time')} title={lbl('m.help', 'Help & emergencies')} c={c} shadow={shadow}>
+            <Section id="help" kicker={lbl('emergency.kicker', 'Any time')} title={lbl('m.help', 'if you need help')} c={c} shadow={shadow}>
               <div className="grid gap-2">
                 <a href="tel:911" className="flex items-center gap-3 rounded-2xl p-3.5 text-white active:opacity-85" style={{ background: '#b42318' }}>
-                  <Siren size={22} /><div><p className="text-[16px] font-bold leading-tight">Emergency: call 911</p><p className="text-[12.5px] opacity-90">Police · fire · ambulance — then call us</p></div>
+                  <Siren size={22} /><div><p className="text-[16px] font-bold leading-tight">Emergency: call 911</p><p className="text-[12.5px] opacity-90">Police · fire · ambulance — then let us know</p></div>
                 </a>
-                {d.phone ? <CallRow Icon={Phone} value={d.phone} sub={'Stay Hospitality · ' + lbl('ess.hours', 'available 24/7')} c={c} /> : null}
+                {d.phone ? <CallRow Icon={Phone} value={d.phone} sub={'Stay Hospitality · urgent issues, 24/7 · everything else, message us in your booking app'} c={c} /> : null}
                 {d.police ? <CallRow Icon={ShieldAlert} value={d.police} sub={d.policeLabel + ' · non-emergency'} c={c} /> : null}
                 {d.contacts.map((x: any, i: number) => <CallRow key={i} Icon={Phone} value={x.value} sub={x.label + (x.note ? ' · ' + x.note : '')} c={c} />)}
               </div>
@@ -414,7 +416,6 @@ export function GuideMobile({ gb, autoPrint = false }: { gb: any; autoPrint?: bo
         {/* THUMB BAR */}
         <nav className="fixed inset-x-0 bottom-0 z-30" style={{ background: dark ? 'rgba(20,19,17,0.94)' : 'rgba(247,244,238,0.94)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)', borderTop: '1px solid ' + c.line, paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
           <div className="mx-auto flex max-w-[680px] items-stretch">
-            {d.phone ? <a href={'tel:' + tel(d.phone)} className="flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-semibold"><Phone size={19} style={{ color: c.accent }} />Call</a> : null}
             {d.wifiNet ? <button type="button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-semibold"><Wifi size={19} style={{ color: c.accent }} />Wi-Fi</button> : null}
             {d.howto.length ? <button type="button" onClick={() => go('howto')} className="flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-semibold"><ListChecks size={19} style={{ color: c.accent }} />Guide</button> : null}
             <button type="button" onClick={() => go('checkout')} className="flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-semibold"><LogOut size={19} style={{ color: c.accent }} />Check-out</button>
@@ -435,8 +436,8 @@ function Section({ id, kicker, title, children, c, shadow, photo }: { id: string
     <section id={'g-' + id} className="scroll-mt-16 overflow-hidden rounded-2xl" style={{ background: c.card, boxShadow: shadow }}>
       {photo ? <img src={photo} alt="" loading="lazy" className="h-[170px] w-full object-cover" onError={(e: any) => { e.currentTarget.style.display = 'none' }} /> : null}
       <div className="p-4">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.16em]" style={{ color: c.accent }}>{kicker}</p>
-        <h2 className="mb-3 mt-0.5 text-[23px] font-semibold leading-tight" style={{ fontFamily: SERIF }}>{title}</h2>
+        <p className="text-[10px] uppercase tracking-[0.4em]" style={{ color: c.accent }}>{kicker}</p>
+        <h2 className="mb-3 mt-1 text-[27px] font-medium lowercase leading-[1.05]" style={{ fontFamily: SERIF }}>{title}</h2>
         {children}
       </div>
     </section>
@@ -476,23 +477,31 @@ function CallRow({ Icon, value, sub, c }: { Icon: any; value: string; sub: strin
 }
 
 function PlaceList({ items, city, c }: { items: any[]; city: string; c: C }) {
+  // Swipeable cards, as before; a photo that fails to load drops away and the card reads as text.
   return (
-    <ul>
+    <div className="gm-x -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1">
       {items.slice(0, 10).map((p: any, i: number) => {
         const q = [p.name, p.address || city].filter(Boolean).join(', ')
+        const photo = purl(p.photo)
         return (
-          <li key={i} className="flex items-start gap-3 py-3" style={{ borderTop: i ? '1px solid ' + c.line : 'none' }}>
-            <div className="min-w-0 flex-1">
-              <p className="text-[15px] font-semibold leading-snug">{p.name}</p>
-              {p.note ? <p className="mt-0.5 text-[13.5px] leading-[1.5]" style={{ color: c.mute }}>{p.note}</p> : null}
-              {p.address ? <p className="mt-0.5 truncate text-[12px]" style={{ color: c.mute }}>{String(p.address).replace(/,\s*(United States|USA)$/i, '')}</p> : null}
+          <div key={i} className="snap-start shrink-0 w-[236px] overflow-hidden rounded-2xl" style={{ background: c.tint }}>
+            {photo ? (
+              <div className="relative h-[130px]">
+                <img src={photo} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" onError={(e: any) => { e.currentTarget.parentElement.style.display = 'none' }} />
+              </div>
+            ) : null}
+            <div className="p-3">
+              <p className="text-[15.5px] font-medium leading-tight" style={{ fontFamily: SERIF }}>{p.name}</p>
+              {p.note ? <p className="mt-1 text-[12.5px] leading-[1.5] line-clamp-3" style={{ color: c.mute }}>{p.note}</p> : null}
+              <div className="mt-2.5 flex items-center gap-2">
+                <a href={mapsUrl(q)} target="_blank" rel="noreferrer" className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-semibold text-white" style={{ background: c.accent }}><Navigation size={12} /> Directions</a>
+                {p.phone && tel(p.phone).length >= 7 ? <a href={'tel:' + tel(p.phone)} aria-label={'Call ' + p.name} className="inline-flex h-9 w-9 items-center justify-center rounded-lg" style={{ background: c.card, color: c.accent }}><Phone size={14} /></a> : null}
+              </div>
             </div>
-            {p.phone && tel(p.phone).length >= 7 ? <a href={'tel:' + tel(p.phone)} aria-label={'Call ' + p.name} className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full" style={{ background: c.tint, color: c.accent }}><Phone size={15} /></a> : null}
-            <a href={mapsUrl(q)} target="_blank" rel="noreferrer" aria-label={'Directions to ' + p.name} className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full" style={{ background: c.tint, color: c.accent }}><Navigation size={15} /></a>
-          </li>
+          </div>
         )
       })}
-    </ul>
+    </div>
   )
 }
 
@@ -545,9 +554,10 @@ export function GuidePrint({ gb }: { gb: any }) {
         <div className="gp-grid">
           {d.wifiNet ? <div style={{ gridColumn: 'span 2' }}><p className="gp-k">Wi-Fi network</p><p className="gp-big">{d.wifiNet}</p></div> : null}
           {d.wifiPw ? <div><p className="gp-k">Wi-Fi password</p><p className="gp-big">{d.wifiPw}</p></div> : null}
+          <div style={{ gridColumn: '1 / -1', fontSize: '9.5pt' }}><b>Questions?</b> Message us in the app you booked with (Airbnb, Vrbo, Booking.com…) — we reply fast.</div>
           {d.checkIn ? <div><p className="gp-k">Check-in</p><p className="gp-v">{d.checkIn}</p></div> : null}
           {d.checkOut ? <div><p className="gp-k">Check-out</p><p className="gp-v">{d.checkOut}</p></div> : null}
-          {d.phone ? <div><p className="gp-k">Call or text us · 24/7</p><p className="gp-v">{d.phone}</p></div> : null}
+          {d.phone ? <div><p className="gp-k">Urgent issues · 24/7</p><p className="gp-v">{d.phone}</p></div> : null}
         </div>
       </div>
 
@@ -592,7 +602,7 @@ export function GuidePrint({ gb }: { gb: any }) {
       ) : null}
 
       <H>Help &amp; emergencies</H>
-      <div className="gp-box gp-sos" style={{ marginBottom: '8pt' }}><span className="gp-big">Emergency: call 911</span> &nbsp;— police, fire, ambulance. Then call us{d.phone ? ' at ' + d.phone : ''}.</div>
+      <div className="gp-box gp-sos" style={{ marginBottom: '8pt' }}><span className="gp-big">Emergency: call 911</span> &nbsp;— police, fire, ambulance. Then let us know{d.phone ? ' at ' + d.phone : ''}.</div>
       <div className="gp-cols">
         {d.police ? <div className="gp-item"><b>{d.policeLabel} · non-emergency</b>{d.police}</div> : null}
         {d.contacts.map((x: any, i: number) => <div key={i} className="gp-item"><b>{x.label}</b>{x.value}{x.note ? <span className="gp-muted"> · {x.note}</span> : null}</div>)}
