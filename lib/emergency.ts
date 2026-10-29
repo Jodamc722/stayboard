@@ -261,10 +261,10 @@ export type EmergencySection = {
   notes?: string
 }
 
-/** Poison Control is the one national line worth suggesting on every book; the operator can delete it. */
-export const DEFAULT_EMERGENCY_CONTACTS: EmergencyContact[] = [
-  { label: 'Poison Control', value: '1-800-222-1222', note: 'Free, 24 hours, nationwide' },
-]
+/** No default extra numbers (Jon, 2026-10-29: "get rid of poison control"). The operator adds their own. */
+export const DEFAULT_EMERGENCY_CONTACTS: EmergencyContact[] = []
+/** Saved books still carry the old Poison Control default — never shown (Jon, 2026-10-29). */
+export const keepContact = (c: any): boolean => !!c && !/poison/i.test(String(c.label || '') + ' ' + String(c.note || ''))
 
 /**
  * A fresh table-driven section plus everything the operator added to the old one: hand-added

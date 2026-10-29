@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Paperclip, Pencil, Printer, Save, Share2, Sparkles, Trash2, Loader2, X } from 'lucide-react'
-import { DEFAULT_EMERGENCY_CONTACTS } from '@/lib/emergency'
+import { DEFAULT_EMERGENCY_CONTACTS, keepContact } from '@/lib/emergency'
 
 const QR = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent('https://stay-hospitality.com')
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
@@ -1097,7 +1097,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
         {(() => {
           const em = s.emergency || {}
           const hosps: any[] = Array.isArray(em.hospitals) ? em.hospitals : []
-          const contacts: any[] = Array.isArray(em.contacts) ? em.contacts : DEFAULT_EMERGENCY_CONTACTS
+          const contacts: any[] = (Array.isArray(em.contacts) ? em.contacts : DEFAULT_EMERGENCY_CONTACTS).filter(keepContact)
           const line = accentColor + '33'
           const card = { borderColor: line, background: accentColor + '0c' }
           const setHosps = (next: any[]) => set(['emergency', 'hospitals'], next)
