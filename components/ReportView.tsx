@@ -1473,9 +1473,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
       return n ? String(n.getAttribute('data-note') || '') : ''
     }))
   }
-  function enterPresent() {
+  function enterPresent(at: number = 0) {
     setEdit(false); setAiKey(null); setPicker(false)
-    setPresent(true); setSlide(0)
+    setPresent(true); setSlide(at)
+    if (at > 0) setTimeout(() => { const kids = slideEls(); if (kids[at]) kids[at].scrollIntoView({ block: 'start' }) }, 160)
     setTimeout(readNavNames, 60)
     setTimeout(() => {
       const el = scrollRef.current
@@ -2832,7 +2833,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           <button onClick={sendToDrive} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
             {busy === 'drive' ? <Loader2 size={12} className="animate-spin" /> : <UploadCloud size={12} />} Slides
           </button>
-          <button onClick={enterPresent} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: t.ink, color: t.bg }}>
+          <button onClick={() => enterPresent()} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: t.ink, color: t.bg }}>
             <Play size={12} /> Present
           </button>
           <button onClick={copyLink} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
@@ -3093,6 +3094,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
            loud. It fills the glass when presenting and stays a tall card when read as a page. */
         .onb-cover { min-height: 460px; }
         .onb-cover-in { min-height: 460px; }
+        .onb-cover.onb-cover-sales, .onb-cover-sales .onb-cover-in { min-height: 0 !important; }
+        .sb-present-deck .onb-cover-sales .onb-cover-in { padding: 64px 72px !important; }
+        /* PHONE, READING MODE: tap any slide to open it full screen (turned sideways, see above). */
+        .sb-tap-hint { display: none; }
+        @media (max-width: 760px) {
+          .sb-tap-hint { display: block; }
+          .sb-deck .onb-cover, .sb-deck .sb-slide { cursor: zoom-in; }
+        }
         .onb-more > summary { list-style: none; }
         .onb-more > summary::-webkit-details-marker { display: none; }
         .onb-more > summary::before { content: '+ '; }
@@ -3130,7 +3139,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         @media (max-width: 680px) {
           .onb-row { grid-template-columns: 1fr !important; }
           .onb-strip { grid-template-columns: 1fr 1fr !important; }
-          .onb-cover, .onb-cover-in { min-height: 380px; }
+          .onb-cover:not(.onb-cover-sales), .onb-cover:not(.onb-cover-sales) .onb-cover-in { min-height: 380px; }
           .onb-team { grid-template-columns: 1fr 1fr !important; }
           .onb-shots { grid-template-columns: 1fr 1fr !important; }
           .onb-shots img { grid-row: auto !important; aspect-ratio: 4 / 3 !important; }
@@ -3391,7 +3400,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           the reports desk. */}
       {!canEdit && !present && (
         <div className="sb-noprint fixed top-4 right-4 z-30 flex items-center gap-2">
-          <button onClick={enterPresent} className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[12px] font-semibold shadow-lg" style={{ background: t.ink, color: t.bg }}>
+          <button onClick={() => enterPresent()} className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[12px] font-semibold shadow-lg" style={{ background: t.ink, color: t.bg }}>
             <Play size={13} /> Present
           </button>
         </div>
@@ -3709,7 +3718,20 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         </div>
       )}
 
-      <div ref={scrollRef} onScroll={onPresentScroll} style={!present && edit && isOnboarding && slidesPanel ? { paddingLeft: 'max(20px, calc(272px - (100vw - 1180px) / 2))' } : undefined} className={present ? ('sb-present' + (isDeck ? ' sb-present-deck' : '')) : ('sb-report ' + (isDeck ? 'sb-deck max-w-[1180px]' : 'max-w-4xl') + ' mx-auto px-5 sm:px-8 pb-20')}>
+      <div ref={scrollRef} onScroll={onPresentScroll}
+        onClick={!present && !edit && isDeck ? (e => {
+          // A PHONE OPENS THE SLIDE YOU TAP, FULL SCREEN (Jon, 2026-10-28: "optimized for phone
+          // when viewing the deck"). Read as a page, a 16:9 slide on a 390px screen is a third of
+          // its size; tapped, it opens in Present mode turned sideways at nearly twice that.
+          if (typeof window === 'undefined' || window.innerWidth > 760) return
+          const tg = e.target as HTMLElement
+          if (tg.closest('a, input, select, textarea')) return
+          const kids = slideEls()
+          const ix = kids.findIndex(k => k.contains(tg))
+          if (ix >= 0 && (tg.closest('.onb-cover') || tg.closest('.sb-slide'))) enterPresent(ix)
+        }) : undefined}
+        style={!present && edit && isOnboarding && slidesPanel ? { paddingLeft: 'max(20px, calc(272px - (100vw - 1180px) / 2))' } : undefined} className={present ? ('sb-present' + (isDeck ? ' sb-present-deck' : '')) : ('sb-report ' + (isDeck ? 'sb-deck max-w-[1180px]' : 'max-w-4xl') + ' mx-auto px-3 sm:px-8 pb-20')}>
+        {!present && isDeck ? <p className="sb-tap-hint sb-noprint" style={{ fontSize: 12, color: t.muted, textAlign: 'center', margin: '14px 0 -18px' }}>Tap any slide to view it full screen</p> : null}
 
         {/* ---------- COVER ---------- */}
         {/* AN ONBOARDING OPENS ON THEIR PROPERTY, NOT ON OUR LOGO. The review report's cover — a
@@ -3736,14 +3758,22 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               const pc: Any = (c.contact && c.contact.card) || {}
               const when = meta.asOf ? new Date(String(meta.asOf) + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : ''
               return (
-                <div className="onb-cover relative overflow-hidden rounded-3xl" style={{ background: t.band, aspectRatio: '16 / 9' }}>
+                // THE COVER IS DRAWN ON THE SAME 1120 x 630 CANVAS AS EVERY OTHER SLIDE (Jon,
+                // 2026-10-28: "the first slide is huge… optimize it for phone"). Its text was sized
+                // to the browser window (clamp on vw) and the card had a 380-460px minimum height,
+                // so on a phone the 16:9 card grew to 676px wide on a 390px screen and the words
+                // came out larger than every slide after it. Now the cover's content is laid out
+                // at the deck's design size and scaled as a whole, exactly like the slides, so it
+                // is the same size as the next slide on every screen, in Present mode and on paper.
+                <div className="onb-cover onb-cover-sales relative overflow-hidden rounded-3xl" style={{ background: t.band, aspectRatio: '16 / 9', minHeight: 0 }}>
                   {hero.heroImage ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={hero.heroImage} alt="" className="absolute inset-0 w-full h-full object-cover" />
                   ) : null}
                   <div className="absolute inset-0" style={{ background: 'linear-gradient(90deg, rgba(8,12,20,0.9) 0%, rgba(8,12,20,0.72) 38%, rgba(8,12,20,0.25) 72%, rgba(8,12,20,0.1) 100%)' }} />
+                  <FitBox w={1120} h={630}>
                   {/* Left-aligned in Present mode too: the presenting header centres its text. */}
-                  <div className="onb-cover-in absolute inset-0 flex flex-col" style={{ padding: '6% 6.5%', textAlign: 'left' }}>
+                  <div className="onb-cover-in absolute inset-0 flex flex-col" style={{ padding: '64px 72px', textAlign: 'left', minHeight: 0 }}>
                     <div className="flex items-center justify-between">
                       {mark.logo ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -3761,16 +3791,16 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           <Ed v={hero.preparedFor || ''} set={v => patch('hero.preparedFor', v)} edit={edit} placeholder="Prepared for…" />
                         </p>
                       ) : null}
-                      <h1 style={{ marginTop: 10, fontSize: 'clamp(30px, 4.4vw, 54px)', fontWeight: 600, letterSpacing: '-0.03em', lineHeight: 1.02, color: '#fff' }}>
+                      <h1 style={{ marginTop: 10, fontSize: 52, fontWeight: 600, letterSpacing: '-0.03em', lineHeight: 1.02, color: '#fff' }}>
                         <Ed v={hero.title || ''} set={v => patch('hero.title', v)} edit={edit} />
                       </h1>
-                      <p style={{ marginTop: 14, fontSize: 'clamp(15px, 1.6vw, 19px)', lineHeight: 1.45, color: 'rgba(255,255,255,0.86)', maxWidth: '34ch' }}>
+                      <p style={{ marginTop: 14, fontSize: 19, lineHeight: 1.45, color: 'rgba(255,255,255,0.86)', maxWidth: '34ch' }}>
                         <Ed v={hero.headline || ''} set={v => patch('hero.headline', v)} edit={edit} multiline />
                       </p>
                       {lo ? (
                         <div style={{ marginTop: 26, paddingTop: 18, borderTop: '1px solid rgba(255,255,255,0.22)' }}>
                           <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)' }}>Projected gross revenue · fully ramped</p>
-                          <p style={{ marginTop: 6, fontFamily: SERIF, fontSize: 'clamp(28px, 3.6vw, 44px)', letterSpacing: '-0.025em', color: '#fff', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                          <p style={{ marginTop: 6, fontFamily: SERIF, fontSize: 44, letterSpacing: '-0.025em', color: '#fff', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
                             {lo}{hi && hi !== lo ? ' – ' + hi : ''}<span style={{ fontFamily: 'inherit', fontSize: '0.42em', color: 'rgba(255,255,255,0.7)', marginLeft: 10 }}>a year</span>
                           </p>
                         </div>
@@ -3793,6 +3823,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       ))}
                     </div>
                   ) : null })()}
+                  </FitBox>
                   {edit && (
                     <button
                       onClick={() => { setPhotoUrl(''); setPhotoPick({ title: 'Cover photo', cur: String(hero.heroImage || ''), set: u => patch('hero.heroImage', u) }) }}
