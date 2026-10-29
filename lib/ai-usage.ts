@@ -34,12 +34,67 @@ export function tierOfModel(model: string): ModelTier {
   return 'sonnet'
 }
 
-/** Dollars for one call. Cache reads bill at 10% of input, cache writes at 125% (Anthropic's published ratios). */
+/** What a cache read costs as a share of list input. 0.1x for most models; Anthropic prices it lower on
+ *  the newest ones (Fable/Mythos 5.1 at 0.025x, Opus/Sonnet 5.5 at 0.05x) — the ledger was overstating
+ *  those reads by 4x and 2x. */
+export function cacheReadRate(model: string): number {
+  const m = String(model || '').toLowerCase()
+  if (/(fable|mythos)-5-1/.test(m)) return 0.025
+  if (/(opus|sonnet)-5-5/.test(m)) return 0.05
+  return 0.1
+}
+
+/** Dollars for one call. Cache writes at 125% of input (5-minute) or 200% (1-hour); reads per cacheReadRate. */
 export function costUsd(model: string, u: Usage): number {
   const p = MODEL_PRICE[tierOfModel(model)]
   const perM = (n: number, rate: number) => (n / 1_000_000) * rate
   const w1h = Math.min(Number(u.cacheWrite1h) || 0, u.cacheWrite)
-  return perM(u.input, p.in) + perM(u.output, p.out) + perM(u.cacheRead, p.in * 0.1) + perM(u.cacheWrite - w1h, p.in * 1.25) + perM(w1h, p.in * 2)
+  return perM(u.input, p.in) + perM(u.output, p.out) + perM(u.cacheRead, p.in * cacheReadRate(model)) + perM(u.cacheWrite - w1h, p.in * 1.25) + perM(w1h, p.in * 2)
+}
+
+// AUTO-CACHE FOR REPEATED SYSTEM PROMPTS (cache pass 2026-10-29). Only Eve and four routes marked
+// cache_control; the other ~60 call sites re-sent the same system prompt at list price every call —
+// ops-focus re-sends ~6k tokens of fixed rules for each market in one run. A breakpoint is NOT added
+// blindly: a write that nobody reads costs 25% MORE than no cache at all. It is added only when this
+// process sent the byte-identical system prompt within the last 4.5 minutes, i.e. a loop or a burst
+// is under way and the next call will read it. One-off calls and prompts with a date or a name baked
+// in never repeat, so they never pay a write. Calls that already place their own breakpoints are left
+// exactly as they are. Below the model's minimum cacheable length the API ignores the marker, so the
+// gate also skips prompts too short to cache.
+const recentSystems = new Map<string, number>()
+function minCacheChars(model: string): number {
+  const m = String(model || '').toLowerCase()
+  if (/haiku-4/.test(m) || /opus-4-[56]/.test(m)) return 4096 * 3.5
+  if (/opus-4-7|mythos-preview/.test(m)) return 2048 * 3.5
+  if (/-5-1|-5-5|fable-5|mythos-5|opus-5(?!-)/.test(m)) return 512 * 3.5
+  return 1024 * 3.5
+}
+function hashText(t: string): string {
+  let h = 5381
+  for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0
+  return t.length + ':' + (h >>> 0).toString(36)
+}
+export function withAutoSystemCache(rawBody: string): string {
+  try {
+    if (rawBody.includes('"cache_control"')) return rawBody
+    const b = JSON.parse(rawBody)
+    if (!b || b.stream || b.system == null) return rawBody
+    const blocks: any[] = typeof b.system === 'string' ? [{ type: 'text', text: b.system }] : Array.isArray(b.system) ? b.system : []
+    const text = blocks.map(x => String(x?.text || '')).join('\n')
+    const toolsText = Array.isArray(b.tools) ? JSON.stringify(b.tools) : ''
+    if (!blocks.length || blocks[blocks.length - 1]?.type !== 'text' || (text.length + toolsText.length) < minCacheChars(String(b.model || ''))) return rawBody
+    const now = Date.now()
+    const key = String(b.model || '') + '|' + hashText(toolsText + '\u0000' + text)
+    const seen = recentSystems.get(key)
+    recentSystems.set(key, now)
+    if (recentSystems.size > 300) {
+      for (const [k, at] of Array.from(recentSystems.entries())) if (now - at > 270_000) recentSystems.delete(k)
+    }
+    if (!seen || now - seen > 270_000) return rawBody
+    const out = blocks.slice()
+    out[out.length - 1] = { ...out[out.length - 1], cache_control: { type: 'ephemeral' } }
+    return JSON.stringify({ ...b, system: out })
+  } catch { return rawBody }
 }
 
 export function usageOf(d: any): Usage {
@@ -105,6 +160,7 @@ export async function aiFetch(task: string, init: RequestInit): Promise<Response
   if (blocked) {
     return new Response(JSON.stringify({ type: 'error', error: { type: 'budget_exceeded', message: blocked } }), { status: 429, headers: { 'content-type': 'application/json' } })
   }
+  if (typeof init.body === 'string') init = { ...init, body: withAutoSystemCache(init.body) }
   const r = await fetch(ANTHROPIC_URL, init)
   const ms = Date.now() - t0
   try {

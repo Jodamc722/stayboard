@@ -72,7 +72,12 @@ export function domainByKey(key: string): EveDomain | null {
 /** Every tool currently visible: core + whatever domains are open. */
 export function activeTools(open: string[]): EveTool[] {
   let list = coreTools()
-  for (const k of open) {
+  // ONE ORDER FOR ONE SET (cache pass 2026-10-29). Tools sit at the very front of the cached prefix,
+  // ahead of the stable system block, so the same open domains concatenated in a different order
+  // were a different prefix: a conversation that opened ops then reviews missed the cache written by
+  // one that opened reviews then ops, and re-wrote ~15k tokens. Registry order, whatever the open order.
+  const order = (k: string) => { const i = DOMAIN_KEYS.indexOf(String(k || '').toLowerCase().trim()); return i < 0 ? 999 : i }
+  for (const k of open.slice().sort((a, b) => order(a) - order(b))) {
     const d = domainByKey(k)
     if (d) list = list.concat(d.tools)
   }

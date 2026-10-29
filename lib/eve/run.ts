@@ -53,6 +53,19 @@ const MAX_TURNS = 16
  * served from cache on the next turn. Strings become single text blocks; tool_result arrays get
  * the marker on their final entry. The original array is never mutated — it is the loop's state.
  */
+let _busy: { at: number; v: boolean } | null = null
+async function eveWasBusy(db: any): Promise<boolean> {
+  if (_busy && Date.now() - _busy.at < 60_000) return _busy.v
+  let v = false
+  try {
+    const since = new Date(Date.now() - 60 * 60_000).toISOString()
+    const { data } = await db.from('ai_usage').select('id').eq('task', 'eve').gte('at', since).limit(1)
+    v = Array.isArray(data) && data.length > 0
+  } catch { v = false }
+  _busy = { at: Date.now(), v }
+  return v
+}
+
 function withCacheBreakpoint(convo: any[]): any[] {
   if (!convo.length) return convo
   const out = convo.slice()
@@ -346,7 +359,13 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     let pauses = 0
     // Flipped off permanently for this request if the API rejects the server-side search tool.
     let webOk = true
-    let longCache = true
+    // THE ONE-HOUR CACHE ONLY WHEN EVE IS BUSY (cache pass 2026-10-29). The 1h write costs 2x list
+    // and only pays when another call arrives inside the hour. The ledger for 22–28 Oct showed Eve
+    // writing 1.08M cache tokens and reading 1.22M — almost one write per read — because most of her
+    // ~9 calls a day were hours apart and every 1h write expired unread. Now: 1h when she has been
+    // called in the last hour (a working session, a tool loop, agent mode), the 1.25x 5-minute kind
+    // when she is cold. Inside a tool loop the first turn decides and the rest follow it.
+    let longCache = await eveWasBusy(db)
     for (let turn = 0; turn < limit; turn++) {
       turns = turn + 1
       // The atlas rides with the memories: what every page of the app is for, and a live census of
