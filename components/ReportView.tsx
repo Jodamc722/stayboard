@@ -5134,39 +5134,76 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     <Ed v={sec('experience').intro == null ? EXPERIENCE_INTRO : sec('experience').intro} set={v => patch('experience.intro', v)} edit={edit} multiline />
                   </p>
                 )}
-                <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 18, paddingBottom: 18 }}>
-                  {/* MORE THAN EIGHT GOES TO SIX ACROSS (2026-10-27 sales audit): at four across the
-                      third row sat under a "scroll for more" chip, and a portfolio slide whose
-                      best buildings are below the fold is a portfolio slide that undersells. */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + (((sec('experience').items || []) as Any[]).length > 8 ? 6 : 4) + ',1fr)', gap: ((sec('experience').items || []) as Any[]).length > 8 ? '14px 14px' : '18px 20px' }}>
-                    {(sec('experience').items || []).map((f: Any, i: number) => (
-                      <div key={i} style={{ minWidth: 0 }}>
-                        <div style={{ position: 'relative', overflow: 'hidden', width: '100%', aspectRatio: ((sec('experience').items || []) as Any[]).length > 8 ? '3 / 2' : '4 / 3', borderRadius: 10, background: t.chip, border: '1px solid ' + t.cardBorder }}>
-                          {f.pic ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={String(f.pic)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                          ) : null}
-                          {(f.tag || (EXPERIENCE_ITEMS.find(x => x.k === f.k) || {}).tag) ? (
-                            <span style={{ position: 'absolute', top: 8, left: 8, fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', padding: '4px 8px', borderRadius: 999, background: t.ink, color: t.bg }}>
-                              {f.tag || (EXPERIENCE_ITEMS.find(x => x.k === f.k) || {}).tag}
-                            </span>
-                          ) : null}
-                          {edit && (
-                            <button onClick={() => { setPickGroup(''); setPropMsg(''); setPropPick({ i, b: String(f.b || f.k || ''), name: String(f.k || 'property'), cur: String(f.pic || '') }) }}
-                              className="sb-noprint sb-pick" title="Choose this property's photo"
-                              style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer' }}>
-                              <span style={{ position: 'absolute', bottom: 8, right: 8, fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 999, background: 'rgba(255,255,255,0.94)', color: '#111' }}>Change</span>
-                            </button>
-                          )}
-                        </div>
-                        {/* Name only under the picture (Jon, 2026-09-24: "No descriptions actually"). */}
-                        <p style={{ fontSize: ((sec('experience').items || []) as Any[]).length > 8 ? 12 : 13.5, fontWeight: 600, color: t.ink, letterSpacing: '-0.01em', lineHeight: 1.3, marginTop: ((sec('experience').items || []) as Any[]).length > 8 ? 7 : 9 }}>
-                          <Ed v={f.k || ''} set={v => patch('experience.items.' + i + '.k', v)} edit={edit} multiline />
-                        </p>
+                {/* ADD, REMOVE, AND FIT (Jon, 2026-10-29: "for properties we should be able to add
+                    and remove. It should also format to fit the amount we have"). The grid is
+                    worked out from the count: every column count from 2 to 6 is tried against the
+                    space the slide has, and the one that gives the biggest photographs wins. A short
+                    last row is centred rather than left hanging. */}
+                {(() => {
+                  const items: Any[] = (sec('experience').items || []) as Any[]
+                  const n = items.length + (edit ? 1 : 0)
+                  const W = 992, H = (sec('experience').intro !== '' || edit) ? 340 : 400, g = 16, cap = 30
+                  let best = { cols: 4, w: 200, h: 150, score: -1 }
+                  for (let cols = 2; cols <= 6; cols++) {
+                    const rows = Math.max(1, Math.ceil(n / cols))
+                    const w = (W - (cols - 1) * g) / cols
+                    const hMax = (H - (rows - 1) * g) / rows - cap
+                    const h = Math.min(w * 0.72, hMax)
+                    if (h < w * 0.45) continue
+                    const empty = rows * cols - n
+                    const score = w * h * (1 - empty * 0.04)
+                    if (score > best.score) best = { cols, w, h, score }
+                  }
+                  const small = best.w < 190
+                  const move = (i: number, d: number) => mutate((dd: Any) => { const a = dd.experience && dd.experience.items; if (!Array.isArray(a)) return; const j = i + d; if (j < 0 || j >= a.length) return; const [x] = a.splice(i, 1); a.splice(j, 0, x) })
+                  const chip = { fontSize: 10.5, fontWeight: 700, padding: '3px 8px', borderRadius: 999, background: 'rgba(255,255,255,0.94)', color: '#111', border: 0 } as React.CSSProperties
+                  return (
+                    <div className="flex-1 min-h-0 onb-scroll" style={{ marginTop: 18, paddingBottom: 6 }}>
+                      <div className="flex flex-wrap justify-center" style={{ gap: g, alignContent: 'flex-start' }}>
+                        {items.map((f: Any, i: number) => { const tag = f.tag === '' ? '' : (f.tag || (EXPERIENCE_ITEMS.find(x => x.k === f.k) || {}).tag || ''); return (
+                          <div key={i} style={{ width: best.w, minWidth: 0 }}>
+                            <div style={{ position: 'relative', overflow: 'hidden', width: '100%', height: best.h, borderRadius: 10, background: t.chip, border: '1px solid ' + t.cardBorder }}>
+                              {f.pic ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={String(f.pic)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              ) : null}
+                              {tag ? (
+                                <span style={{ position: 'absolute', top: 8, left: 8, fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', padding: '4px 8px', borderRadius: 999, background: t.ink, color: t.bg, zIndex: 1 }}>{tag}</span>
+                              ) : null}
+                              {edit && (
+                                <button onClick={() => {
+                                  if (String(f.b || '').trim()) { setPickGroup(''); setPropMsg(''); setPropPick({ i, b: String(f.b || f.k || ''), name: String(f.k || 'property'), cur: String(f.pic || '') }) }
+                                  else { setPhotoUrl(''); setPickGroup(''); setPhotoPick({ title: 'Photo — ' + String(f.k || 'property'), cur: String(f.pic || ''), set: u => patch('experience.items.' + i + '.pic', u) }) }
+                                }}
+                                  className="sb-noprint sb-pick" title="Choose this property's photo"
+                                  style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer' }}>
+                                  <span style={{ position: 'absolute', bottom: 8, right: 8, ...chip }}>Change</span>
+                                </button>
+                              )}
+                              {edit && (
+                                <span className="sb-noprint flex" style={{ position: 'absolute', top: 6, right: 6, gap: 4, zIndex: 2 }}>
+                                  <button style={chip} title="Move earlier" onClick={() => move(i, -1)}>◀</button>
+                                  <button style={chip} title="Move later" onClick={() => move(i, 1)}>▶</button>
+                                  <button style={chip} title={tag ? 'Remove the tag' : 'Mark as coming soon'} onClick={() => patch('experience.items.' + i + '.tag', tag ? '' : 'Coming soon')}>{tag ? 'Untag' : 'Soon'}</button>
+                                  <button style={{ ...chip, color: '#b42318' }} title="Remove this property from the slide" onClick={() => mutate((dd: Any) => { const a = dd.experience && dd.experience.items; if (Array.isArray(a)) a.splice(i, 1) })}>×</button>
+                                </span>
+                              )}
+                            </div>
+                            <p style={{ fontSize: small ? 12 : 13.5, fontWeight: 600, color: t.ink, letterSpacing: '-0.01em', lineHeight: 1.3, marginTop: 7 }}>
+                              <Ed v={f.k || ''} set={v => patch('experience.items.' + i + '.k', v)} edit={edit} multiline />
+                            </p>
+                          </div>
+                        ) })}
+                        {edit ? (
+                          <button className="sb-noprint flex flex-col items-center justify-center" onClick={() => mutate((dd: Any) => { const sc = dd.experience || (dd.experience = {}); sc.items = Array.isArray(sc.items) ? sc.items : []; sc.items.push({ k: 'New property', pic: '', tag: '' }) })}
+                            style={{ width: best.w, height: best.h, borderRadius: 10, border: '2px dashed ' + t.cardBorder, color: t.muted, fontSize: 13, fontWeight: 600, background: 'transparent' }}>
+                            <span style={{ fontSize: 26, lineHeight: 1 }}>+</span>Add a property
+                          </button>
+                        ) : null}
                       </div>
-                    ))}
-                  </div>
-                </div>
+                    </div>
+                  )
+                })()}
                 <Foot label="Our properties" />
               </div>
             </Slide>
