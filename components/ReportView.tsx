@@ -1379,6 +1379,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     ...(bgOv ? { bg: bgOv, toolbarBg: hexA(bgOv, 0.94) } : {}),
   }
   const [designOpen, setDesignOpen] = useState(false)
+  const [propPull, setPropPull] = useState<'' | 'busy' | 'done' | 'fail'>('')
   // THE LIGHTHOUSE PHOTO LIBRARY, FROM THE DECK (Jon, 2026-10-29: "also our photo library in
   // Lighthouse"). 'one' fills the photo being changed; 'deck' adds the picks to this deck's library.
   const [libFor, setLibFor] = useState<'' | 'one' | 'deck'>('')
@@ -5223,10 +5224,31 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                           </div>
                         ) })}
                         {edit ? (
-                          <button className="sb-noprint flex flex-col items-center justify-center" onClick={() => mutate((dd: Any) => { const sc = dd.experience || (dd.experience = {}); sc.items = Array.isArray(sc.items) ? sc.items : []; sc.items.push({ k: 'New property', pic: '', tag: '' }) })}
-                            style={{ width: best.w, height: best.h, borderRadius: 10, border: '2px dashed ' + t.cardBorder, color: t.muted, fontSize: 13, fontWeight: 600, background: 'transparent' }}>
-                            <span style={{ fontSize: 26, lineHeight: 1 }}>+</span>Add a property
-                          </button>
+                          <div className="sb-noprint flex flex-col" style={{ width: best.w, height: best.h, gap: 8 }}>
+                            <button className="flex flex-col items-center justify-center" onClick={() => mutate((dd: Any) => { const sc = dd.experience || (dd.experience = {}); sc.items = Array.isArray(sc.items) ? sc.items : []; sc.items.push({ k: 'New property', pic: '', tag: '' }) })}
+                              style={{ flex: 1, borderRadius: 10, border: '2px dashed ' + t.cardBorder, color: t.muted, fontSize: 12.5, fontWeight: 600, background: 'transparent' }}>
+                              + Add a property
+                            </button>
+                            {/* THE LIVE PORTFOLIO (Jon, 2026-10-29: "properties should pull actual properties
+                                from Lighthouse, except Garden and Monroe"). Replaces the list with every
+                                building that has live listings; photos already chosen are kept. */}
+                            <button className="flex items-center justify-center" disabled={propPull === 'busy'}
+                              onClick={async () => {
+                                setPropPull('busy')
+                                try {
+                                  const r = await fetch('/api/reports/portfolio').then(x => x.json())
+                                  const live: Any[] = Array.isArray(r?.items) ? r.items : []
+                                  if (live.length) mutate((dd: Any) => {
+                                    const sc = dd.experience || (dd.experience = {}); const prev: Any[] = Array.isArray(sc.items) ? sc.items : []
+                                    sc.items = live.map((x: Any) => { const old = prev.find((p: Any) => (p.b && p.b === x.b) || p.k === x.k); return { k: old ? old.k : x.k, v: x.v || '', b: x.b, pic: (old && old.pic) || x.pic || '', ...(old && old.tag != null ? { tag: old.tag } : x.tag ? { tag: x.tag } : {}) } })
+                                  })
+                                  setPropPull(live.length ? 'done' : 'fail')
+                                } catch { setPropPull('fail') }
+                              }}
+                              style={{ flex: 1, borderRadius: 10, background: t.ink, color: t.bg, fontSize: 12, fontWeight: 600, opacity: propPull === 'busy' ? 0.6 : 1 }}>
+                              {propPull === 'busy' ? 'Pulling\u2026' : propPull === 'done' ? '\u2713 Pulled from Lighthouse' : propPull === 'fail' ? 'Could not pull \u2014 retry' : '\u21bb Pull from Lighthouse'}
+                            </button>
+                          </div>
                         ) : null}
                       </div>
                     </div>

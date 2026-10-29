@@ -77,3 +77,40 @@ export async function buildingPhotoPools(perBuilding = 24): Promise<Record<strin
 export function fillPropertyPics<T extends { b?: string; pic?: string | null }>(items: T[], photos: Record<string, string>): T[] {
   return items.map(it => (it.pic || !it.b || !photos[it.b]) ? it : { ...it, pic: photos[it.b] })
 }
+
+// THE PORTFOLIO, FROM LIGHTHOUSE (Jon, 2026-10-29: "properties should pull actual properties from
+// Lighthouse, except for Garden and Monroe, those should be default"). Every building with a live
+// listing on Guesty becomes a tile, with its own photo; the Garden (whose units sit under Botanica,
+// a block we do not market by that name) and the Monroe (no listing yet) are the two fixed tiles.
+// A building qualifies with three or more live listings, or one that the house list names; a
+// building known only by a street number is left for the editor to add by hand with a real name.
+export type PortfolioTile = { k: string; v: string; b: string; pic: string; tag?: string; units: number }
+export async function portfolioProperties(house: { k: string; v?: string; b?: string; tag?: string }[]): Promise<PortfolioTile[]> {
+  const FIXED = ['Botanica', 'Monroe']
+  const named: Record<string, { k: string; v?: string; b?: string; tag?: string }> = {}
+  house.forEach(h => { if (h.b) named[h.b] = h })
+  const count: Record<string, number> = {}
+  const pic: Record<string, string> = {}
+  try {
+    const { data } = await supabaseAdmin().from('guesty_listings')
+      .select('nickname,title,building,pictures,status').limit(1000)
+    const rows = ((data as any[]) || []).filter(l => String(l.status || '').toLowerCase() === 'active')
+      .sort((a, b) => String(a.nickname || a.title || '').localeCompare(String(b.nickname || b.title || '')))
+    for (const l of rows) {
+      const b = buildingOf(l.building, l.nickname || l.title)
+      if (!b) continue
+      count[b] = (count[b] || 0) + 1
+      if (!pic[b]) { const p = Array.isArray(l.pictures) ? l.pictures.find((x: any) => typeof x === 'string' && /^https?:/.test(x)) : null; if (p) pic[b] = p }
+    }
+  } catch { return [] }
+  const live = Object.keys(count).filter(b => !FIXED.includes(b) && (named[b] || (count[b] >= 3 && !/^[\d\s]+(sw|ne|nw|se)?$/i.test(b))))
+  const tile = (b: string): PortfolioTile => FIXED.includes(b)
+    ? { k: named[b].k, v: named[b].v || '', b, pic: '', ...(named[b].tag ? { tag: named[b].tag } : {}), units: 0 }
+    : { k: named[b]?.k || b, v: named[b]?.v || '', b, pic: pic[b] || '', units: count[b] }
+  // House order first (the flagships Jon chose, with the two fixed tiles where it puts them), then
+  // every other live building by size.
+  const first = house.map(h => h.b || '').filter(b => FIXED.includes(b) ? !!named[b] : live.includes(b))
+  const rest = live.filter(b => !first.includes(b)).sort((a, b) => count[b] - count[a] || a.localeCompare(b))
+  const tiles = first.concat(rest).map(tile)
+  return tiles
+}

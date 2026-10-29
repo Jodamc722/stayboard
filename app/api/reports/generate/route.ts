@@ -33,7 +33,7 @@ import { marketIntel } from '@/lib/sales-market'
 import { getSetting } from '@/lib/app-settings'
 import { SALES_CONTACT_KEY, type SalesContactSetting } from '@/lib/sales-copy'
 import { linenDeckFor } from '@/lib/linen-deck'
-import { buildingPhotos, buildingPhotoPools, fillPropertyPics } from '@/lib/building-photos'
+import { buildingPhotos, buildingPhotoPools, fillPropertyPics, portfolioProperties } from '@/lib/building-photos'
 import { withoutCollages } from '@/lib/photo-filter'
 import { computeScore, ratingToStars, isBeachListing } from '@/lib/optimize-score'
 import { getStaff } from '@/lib/staffing'
@@ -346,7 +346,14 @@ export async function POST(req: NextRequest) {
     // OUR PROPERTIES gets a picture per building, exactly as the onboarding deck does.
     try {
       const ex: any = (contentS as any).experience
-      if (ex && Array.isArray(ex.items)) ex.items = fillPropertyPics(ex.items, await buildingPhotos())
+      // THE LIVE PORTFOLIO (Jon, 2026-10-29): the tiles come from Lighthouse's own buildings; the
+      // Garden and the Monroe keep their house tiles. Falls back to the house list if the pull fails.
+      if (ex && Array.isArray(ex.items)) {
+        const live = await portfolioProperties(ex.items).catch(() => [])
+        const keepPics: Record<string, string> = {}; ex.items.forEach((it: any) => { if (it.b && it.pic) keepPics[it.b] = it.pic })
+        if (live.length >= 4) ex.items = live.map(({ units, ...x }) => ({ ...x, pic: keepPics[x.b] || x.pic }))
+        ex.items = fillPropertyPics(ex.items, await buildingPhotos())
+      }
     } catch { /* blank tiles; the editor's Change chip still works */ }
 
     // A PROPOSAL FOR A BUILDING WE RUN ARRIVES CARRYING THAT BUILDING'S NUMBERS (2026-10-27).
@@ -552,7 +559,14 @@ export async function POST(req: NextRequest) {
     // photos. Fills blank pics only, so a template with uploaded pictures keeps them.
     try {
       const ex: any = (content as any).experience
-      if (ex && Array.isArray(ex.items)) ex.items = fillPropertyPics(ex.items, await buildingPhotos())
+      // THE LIVE PORTFOLIO (Jon, 2026-10-29): the tiles come from Lighthouse's own buildings; the
+      // Garden and the Monroe keep their house tiles. Falls back to the house list if the pull fails.
+      if (ex && Array.isArray(ex.items)) {
+        const live = await portfolioProperties(ex.items).catch(() => [])
+        const keepPics: Record<string, string> = {}; ex.items.forEach((it: any) => { if (it.b && it.pic) keepPics[it.b] = it.pic })
+        if (live.length >= 4) ex.items = live.map(({ units, ...x }) => ({ ...x, pic: keepPics[x.b] || x.pic }))
+        ex.items = fillPropertyPics(ex.items, await buildingPhotos())
+      }
     } catch { /* blank tiles; the editor's Change chip still works */ }
 
     const code0 = makeCode()
