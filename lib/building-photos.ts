@@ -103,6 +103,10 @@ export async function portfolioProperties(house: { k: string; v?: string; b?: st
       if (!pic[b]) { const p = Array.isArray(l.pictures) ? l.pictures.find((x: any) => typeof x === 'string' && /^https?:/.test(x)) : null; if (p) pic[b] = p }
     }
   } catch { return [] }
+  // Buildings Lighthouse knows only by street number get a readable name here (Jon, 2026-10-29:
+  // "do it" — add 906 and 3316). Rename on the slide; this is only the starting label.
+  const STREET: Record<string, string> = { '906': '906 Pompano Beach', '3316': '3316 Pompano Beach' }
+  Object.keys(STREET).forEach(b => { if (!named[b]) named[b] = { k: STREET[b], v: 'Pompano Beach', b } })
   const live = Object.keys(count).filter(b => !FIXED.includes(b) && (named[b] || (count[b] >= 3 && !/^[\d\s]+(sw|ne|nw|se)?$/i.test(b))))
   const tile = (b: string): PortfolioTile => FIXED.includes(b)
     ? { k: named[b].k, v: named[b].v || '', b, pic: '', ...(named[b].tag ? { tag: named[b].tag } : {}), units: 0 }
