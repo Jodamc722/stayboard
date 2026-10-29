@@ -212,9 +212,9 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
   )
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 236px', columnGap: 22, height: '100%', minHeight: 0 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 250px', columnGap: 0, height: '100%', minHeight: 0 }}>
       <div style={{
-        border: '1px solid ' + P.line, borderRadius: 10, overflow: 'hidden', position: 'relative',
+        borderRight: '1px solid ' + P.line, overflow: 'hidden', position: 'relative',
         background: P.bg, display: 'flex', flexDirection: 'column', minHeight: 0,
       }}>
         {/* the real top nav — hidden on the login screen, exactly as the portal does */}
@@ -265,9 +265,9 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
             </div>
           ) : view === 'dashboard' ? (
             /* ── 2 · DASHBOARD ─────────────────────────────────────────────── */
-            <div>
+            <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
               <p style={{ fontSize: 13, fontWeight: 700, color: P.ink }}>Welcome back, {who}!</p>
-              <div style={{ border: '1px solid ' + P.line, borderRadius: 8, background: P.card, padding: 10, marginTop: 8 }}>
+              <div style={{ border: '1px solid ' + P.line, borderRadius: 8, background: P.card, padding: 12, marginTop: 8, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                 <div style={{ display: 'flex', alignItems: 'baseline' }}>
                   <div>
                     <p style={{ fontSize: 10.5, fontWeight: 700, color: P.ink }}>Performance</p>
@@ -286,14 +286,14 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
                     </div>
                   ))}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 5, height: 96, marginTop: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 5, flex: 1, minHeight: 96, marginTop: 12 }}>
                   {[46, 78, 66, 92, 58, 70, 38, 84, 52, 74].map((h, i) => (
                     <div key={i} style={{ flex: 1, height: h + '%', background: i % 2 ? P.blue : P.blueSoft, borderRadius: '2px 2px 0 0' }} />
                   ))}
                 </div>
               </div>
-              <button onClick={() => setView('properties')} {...hotOn('props')} style={{
-                marginTop: 9, fontSize: 9.5, fontWeight: 600, color: P.blue, background: 'none',
+              <button onClick={() => setView('properties')} {...hotOn('props', 'right')} style={{
+                marginTop: 10, marginBottom: 26, alignSelf: 'flex-start', fontSize: 9.5, fontWeight: 600, color: P.blue, background: 'none',
                 border: '1px solid ' + P.blue, borderRadius: 6, padding: '6px 12px', cursor: 'pointer',
               }}>Go to My properties &#8594;</button>
             </div>
@@ -713,58 +713,80 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
       </div>
 
       {/* ── the steps ──────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {/* THE GUIDE READS AS A GUIDE (Jon, 2026-10-29: "spacing can be better, make it more obvious
+          it's interactive"). It used to be loose text with the Next button pinned to the very
+          bottom, a hand-span of white under six grey lines. It is now one tinted panel: a pulsing
+          "Interactive demo" header with Step n of 6 and a progress bar, the steps, and Next right
+          under them, where the eye already is. */}
+      <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, background: '#f3f6fe', padding: '14px 14px 12px' }}>
         <style>{`
-          @keyframes opd-pulse { 0% { box-shadow: 0 0 0 0 rgba(37,99,235,0.55); } 70% { box-shadow: 0 0 0 10px rgba(37,99,235,0); } 100% { box-shadow: 0 0 0 0 rgba(37,99,235,0); } }
-          .opd-hot { position: relative; animation: opd-pulse 1.5s ease-out infinite; outline: 2px solid #2563eb; outline-offset: 2px; z-index: 3; }
-          .opd-hot::after { content: attr(data-tip); position: absolute; left: 50%; top: calc(100% + 8px); transform: translateX(-50%);
-            background: #111827; color: #fff; font-size: 9px; font-weight: 700; letter-spacing: 0.01em; padding: 4px 8px; border-radius: 6px;
-            white-space: nowrap; pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.25); z-index: 6; }
-          .opd-hot.opd-up::after { top: auto; bottom: calc(100% + 8px); left: auto; right: 0; transform: none; }
-          .opd-hot.opd-right::after { left: auto; right: 0; transform: none; }
-          @media print { .opd-hot { animation: none; outline: none; } .opd-hot::after { display: none; } }
+          @keyframes opd-pulse { 0% { box-shadow: 0 0 0 0 rgba(37,99,235,0.6); } 70% { box-shadow: 0 0 0 12px rgba(37,99,235,0); } 100% { box-shadow: 0 0 0 0 rgba(37,99,235,0); } }
+          @keyframes opd-bob { 0%,100% { transform: translate(-50%,0); } 50% { transform: translate(-50%,3px); } }
+          @keyframes opd-bob2 { 0%,100% { transform: translateY(0); } 50% { transform: translateY(3px); } }
+          .opd-hot { position: relative; animation: opd-pulse 1.4s ease-out infinite; outline: 2px solid #2563eb; outline-offset: 2px; z-index: 3; }
+          .opd-hot::after { content: attr(data-tip); position: absolute; left: 50%; top: calc(100% + 10px); transform: translateX(-50%);
+            background: #2563eb; color: #fff; font-size: 10px; font-weight: 700; letter-spacing: 0.01em; padding: 5px 10px; border-radius: 7px;
+            white-space: nowrap; pointer-events: none; box-shadow: 0 6px 16px rgba(37,99,235,0.35); z-index: 6; animation: opd-bob 1.4s ease-in-out infinite; }
+          .opd-hot::before { content: ''; position: absolute; left: 50%; top: calc(100% + 5px); margin-left: -5px; border: 5px solid transparent; border-top: 0; border-bottom-color: #2563eb; z-index: 6; pointer-events: none; }
+          .opd-hot.opd-up::after { top: auto; bottom: calc(100% + 10px); left: auto; right: 0; transform: none; animation-name: opd-bob2; }
+          .opd-hot.opd-up::before { top: auto; bottom: calc(100% + 5px); left: auto; right: 14px; border-bottom: 0; border-top: 5px solid #2563eb; }
+          .opd-hot.opd-right::after { left: 0; transform: none; animation-name: opd-bob2; }
+          .opd-hot.opd-right::before { left: 16px; }
+          @keyframes opd-dot { 0% { box-shadow: 0 0 0 0 rgba(37,99,235,0.55); } 70% { box-shadow: 0 0 0 7px rgba(37,99,235,0); } 100% { box-shadow: 0 0 0 0 rgba(37,99,235,0); } }
+          @media print { .opd-hot, .opd-hot::after, .opd-dot { animation: none !important; } .opd-hot { outline: none; } .opd-hot::after, .opd-hot::before { display: none; } }
         `}</style>
-        <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase', color: P.blue }}>Interactive &middot; try it</p>
-        <p style={{ fontSize: 9.5, lineHeight: 1.45, color: P.body, marginTop: 4 }}>
-          Click the highlighted button on the screen to go to the next step.
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <span className="opd-dot" style={{ width: 8, height: 8, borderRadius: 8, background: P.blue, animation: 'opd-dot 1.6s ease-out infinite', flex: '0 0 auto' }} />
+          <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: P.blue }}>Interactive demo</p>
+          <p style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 600, color: P.body }}>Step {step + 1} of {STEPS.length}</p>
+        </div>
+        <div style={{ height: 4, borderRadius: 4, background: '#dbe5fb', marginTop: 8, overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: ((step + 1) / STEPS.length * 100) + '%', background: P.blue, borderRadius: 4, transition: 'width .35s ease' }} />
+        </div>
+        <p style={{ fontSize: 10, lineHeight: 1.45, color: P.ink, marginTop: 9, fontWeight: 600 }}>
+          Click the glowing button on the screen, or press Next.
         </p>
-        <div style={{ marginTop: 9, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        <div style={{ marginTop: 8, minHeight: 0, overflowY: 'auto' }}>
           {STEPS.map((s, i) => {
             const on = i === step
             const done = i < step
             return (
               <button key={s.k} onClick={() => { const v = s.at[0]; setView(v); setOpen(null); setDrawer(i === 4); if (i === 4) setPicker(true) }}
-                style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 0, cursor: 'pointer',
-                  padding: '6px 0 6px 9px', borderLeft: '2px solid ' + (on ? P.blue : done ? '#93b4f3' : '#e6e9f0') }}>
-                <p style={{ fontSize: 11, fontWeight: on ? 700 : 500, color: on ? P.ink : P.muted }}>
-                  {done ? '\u2713 ' : (i + 1) + '. '}{s.k}
-                </p>
-                {on ? <p style={{ fontSize: 9.5, lineHeight: 1.45, color: P.body, marginTop: 2 }}>{s.d}</p> : null}
+                style={{ display: 'flex', gap: 8, alignItems: 'flex-start', width: '100%', textAlign: 'left', cursor: 'pointer',
+                  background: on ? P.card : 'none', border: '1px solid ' + (on ? '#c9d8fb' : 'transparent'), borderRadius: 7,
+                  padding: '5px 7px', marginTop: 2, boxShadow: on ? '0 2px 8px -4px rgba(37,99,235,0.35)' : 'none' }}>
+                <span style={{ flex: '0 0 auto', width: 15, height: 15, borderRadius: 15, marginTop: 1, fontSize: 8, fontWeight: 700, lineHeight: '15px', textAlign: 'center',
+                  color: on || done ? '#fff' : P.muted, background: on ? P.blue : done ? '#93b4f3' : '#e3e8f3' }}>{done ? '\u2713' : i + 1}</span>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: 'block', fontSize: 10.5, fontWeight: on ? 700 : 500, color: on ? P.ink : done ? P.body : P.muted }}>{s.k}</span>
+                  {on ? <span style={{ display: 'block', fontSize: 9, lineHeight: 1.45, color: P.body, marginTop: 2 }}>{s.d}</span> : null}
+                </span>
               </button>
             )
           })}
         </div>
         {exploring ? (
-          <p style={{ fontSize: 9.5, lineHeight: 1.45, color: P.body, marginTop: 6, background: '#eef3fe', borderRadius: 6, padding: '6px 8px' }}>
+          <p style={{ fontSize: 9, lineHeight: 1.45, color: P.body, marginTop: 8, background: P.card, borderRadius: 6, padding: '6px 8px' }}>
             You are looking at {VIEW_NAME[view] || 'another page'}. Every tab works; Next picks the tour back up.
           </p>
         ) : null}
         {!exploring && view === 'analytics' ? (
-          <p style={{ fontSize: 9.5, lineHeight: 1.45, color: P.body, marginTop: 6, background: '#eef3fe', borderRadius: 6, padding: '6px 8px' }}>
+          <p style={{ fontSize: 9, lineHeight: 1.45, color: P.body, marginTop: 8, background: P.card, borderRadius: 6, padding: '6px 8px' }}>
             That is the tour. Every tab along the top opens; click any of them to keep exploring.
           </p>
         ) : null}
-        {nextGo ? (
-          <button onClick={nextGo} style={{
-            alignSelf: 'stretch', marginTop: 7, fontSize: 10, fontWeight: 700, color: '#fff', background: P.blue,
-            border: 0, borderRadius: 6, padding: '7px 9px', cursor: 'pointer',
-          }}>Next step &#8594;</button>
-        ) : null}
-        <button onClick={reset} style={{
-          alignSelf: 'flex-start', marginTop: 7, fontSize: 9, color: P.body, background: 'none',
-          border: '1px solid ' + P.line, borderRadius: 6, padding: '5px 9px', cursor: 'pointer',
-        }}>Start over</button>
-        <p style={{ fontSize: 8, color: P.muted, lineHeight: 1.4, marginTop: 7 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
+          {nextGo ? (
+            <button onClick={nextGo} style={{
+              flex: 1, fontSize: 10.5, fontWeight: 700, color: '#fff', background: P.blue,
+              border: 0, borderRadius: 7, padding: '8px 10px', cursor: 'pointer', boxShadow: '0 6px 14px -8px rgba(37,99,235,0.7)',
+            }}>Next step &#8594;</button>
+          ) : null}
+          <button onClick={reset} style={{
+            fontSize: 9, color: P.body, background: 'none', border: 0, padding: '4px 2px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2,
+          }}>Start over</button>
+        </div>
+        <p style={{ fontSize: 8, color: P.muted, lineHeight: 1.4, marginTop: 'auto', paddingTop: 10 }}>
           Demo with sample data. Live portal: {host}.
         </p>
       </div>

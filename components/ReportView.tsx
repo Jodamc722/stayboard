@@ -1130,20 +1130,29 @@ const SLIDE_H = CANVAS.h
 const TextScale = createContext(1)
 
 /** Lays a child out at its authored size and scales it to fit the box it is given, both ways. */
-function FitBox({ w, h, children }: { w: number; h: number; children: React.ReactNode }) {
+function FitBox({ w, h, fill, children }: { w: number; h: number; fill?: boolean; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
   const [k, setK] = useState(0)
+  // FILL (2026-10-29, Jon: "look at the spacing of this slide"): scale to the height and let the
+  // content take the full width, so a wide frame is filled edge to edge instead of leaving an empty
+  // band down the right of a letterboxed 1000×470 drawing.
+  const [iw, setIw] = useState(w)
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    const fit = () => { const cw = el.clientWidth, ch = el.clientHeight; if (cw > 0 && ch > 0) setK(Math.min(cw / w, ch / h)) }
+    const fit = () => {
+      const cw = el.clientWidth, ch = el.clientHeight
+      if (!(cw > 0 && ch > 0)) return
+      if (fill) { const kk = Math.min(ch / h, cw / w); setK(kk); setIw(Math.max(w, cw / kk)) }
+      else { setK(Math.min(cw / w, ch / h)); setIw(w) }
+    }
     fit()
     const ro = new ResizeObserver(fit); ro.observe(el)
     return () => ro.disconnect()
-  }, [w, h])
+  }, [w, h, fill])
   return (
     <div ref={ref} style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
-      <div style={{ position: 'absolute', top: 0, left: 0, width: w, height: h, transform: 'scale(' + (k || 0.0001) + ')', transformOrigin: 'top left', opacity: k ? 1 : 0 }}>
+      <div style={{ position: 'absolute', top: 0, left: 0, width: iw, height: h, transform: 'scale(' + (k || 0.0001) + ')', transformOrigin: 'top left', opacity: k ? 1 : 0 }}>
         {children}
       </div>
     </div>
@@ -7305,19 +7314,35 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   margin and heading; the portal window alone reaches out past the margin, so the
                   demo keeps its size. */}
               <div className="flex flex-col" style={{ height: '100%' }}>
-                <div className="flex items-end justify-between" style={{ gap: 24 }}>
+                {/* SPACING + "IT IS INTERACTIVE" (Jon, 2026-10-29: "look at the spacing of this
+                    slide, can be better, also make it more obvious it's interactive"). The hint sat
+                    as grey prose floating at the right of the heading and read as a caption; it is
+                    now a blue call-to-action with a pulsing dot, and the browser bar carries a
+                    "Live demo" chip, so the first thing the eye lands on says "click this". */}
+                <style>{`@keyframes pdemo-dot{0%{box-shadow:0 0 0 0 rgba(37,99,235,.55)}70%{box-shadow:0 0 0 8px rgba(37,99,235,0)}100%{box-shadow:0 0 0 0 rgba(37,99,235,0)}}
+                  .pdemo-dot{width:8px;height:8px;border-radius:8px;background:#2563eb;animation:pdemo-dot 1.6s ease-out infinite;flex:0 0 auto}
+                  @media print{.pdemo-dot{animation:none}}`}</style>
+                <div className="flex items-end justify-between" style={{ gap: 28 }}>
                   <SalesHead k="guesty" eyebrow="Owner portal" />
-                  <p style={{ fontSize: 13, color: t.muted, margin: '0 0 4px', textAlign: 'right', maxWidth: '40ch' }}><Lab id="portalHint" d="Click through it. This is exactly what you see: your calendar, your stays, your revenue, your statements." /></p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 6px', maxWidth: 380, background: '#eef3fe', border: '1px solid #c9d8fb', borderRadius: 12, padding: '10px 14px' }}>
+                    <span className="pdemo-dot" />
+                    <p style={{ fontSize: 12.5, lineHeight: 1.45, color: '#1e3a8a', margin: 0 }}>
+                      <b style={{ fontWeight: 700 }}>Interactive. Try it.</b>{' '}<Lab id="portalHint" d="Click through the real owner portal: your calendar, your stays, your revenue, your statements." />
+                    </p>
+                  </div>
                 </div>
-                <div className="flex flex-col" style={{ flex: 1, minHeight: 0, margin: '20px -36px -40px', borderRadius: 14, overflow: 'hidden', border: '1px solid ' + t.cardBorder, boxShadow: '0 24px 50px -28px rgba(10,20,40,0.45)', background: '#fff' }}>
+                <div className="flex flex-col" style={{ flex: 1, minHeight: 0, margin: '18px -36px -40px', borderRadius: 14, overflow: 'hidden', border: '1px solid ' + t.cardBorder, boxShadow: '0 24px 50px -28px rgba(10,20,40,0.45)', background: '#fff' }}>
                   <div className="flex items-center" style={{ gap: 6, padding: '8px 12px', background: '#eef1f6', borderBottom: '1px solid #e2e6ee', flexShrink: 0 }}>
                     {['#ff5f57', '#febc2e', '#28c840'].map(cl => <span key={cl} style={{ width: 9, height: 9, borderRadius: 9, background: cl }} />)}
                     <span style={{ marginLeft: 10, fontSize: 10.5, color: '#6b7280', background: '#fff', borderRadius: 6, padding: '3px 10px', flex: 1, maxWidth: 360 }}>
                       {(housePortalUrl(sec('guesty').portalUrl) || 'owners.guesty.com').replace(/^https?:\/\//, '')}
                     </span>
+                    <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 10.5, fontWeight: 700, color: '#2563eb', background: '#fff', border: '1px solid #c9d8fb', borderRadius: 999, padding: '3px 10px 3px 8px' }}>
+                      <span className="pdemo-dot" style={{ width: 7, height: 7 }} />Live demo · click to explore
+                    </span>
                   </div>
                   <div style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                    <FitBox w={1000} h={470}>
+                    <FitBox w={1000} h={470} fill>
                       <OwnerPortalDemo start="dashboard"
                         unitName={String(((sec('property').facts || []) as Any[]).find((x: Any) => x.k === 'The building')?.v || hero.title || 'Your unit').split(' · ')[0]}
                         portalUrl={housePortalUrl(sec('guesty').portalUrl)}
