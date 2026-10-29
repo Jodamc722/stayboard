@@ -4680,7 +4680,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               ...(leadP.length ? [{ label: 'Leadership', people: leadP }] : []),
               ...(localP.length ? [{ label: leadP.length ? 'Your local team' : 'Your team', people: localP }] : []),
             ]
-            const photoH = showMonarch ? 196 : 236
+            const photoH = showMonarch ? 172 : 236
             const Card = (p: Any, i: number) => (
               <div key={i} className="flex flex-col" style={{ minWidth: 0, position: 'relative' }}>
                 {p.photo || edit ? (
@@ -4721,7 +4721,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     </div>
                   ) : null}
                 </div>
-                <div style={{ marginTop: 28, display: 'grid', gridTemplateColumns: groups.map(g => g.people.length + 'fr').join(' '), gap: 36, alignItems: 'start' }}>
+                <div style={{ marginTop: 28, marginBottom: 20, display: 'grid', gridTemplateColumns: groups.map(g => g.people.length + 'fr').join(' '), gap: 36, alignItems: 'start' }}>
                   {groups.map((g, gi) => (
                     <div key={gi} style={{ minWidth: 0, paddingLeft: gi ? 36 : 0, marginLeft: gi ? -18 : 0, borderLeft: gi ? '1px solid ' + t.rule : 'none' }}>
                       <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: t.muted, margin: '0 0 12px' }}>{g.label}</p>
