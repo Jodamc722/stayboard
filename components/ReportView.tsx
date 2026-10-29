@@ -39,6 +39,7 @@ import { CHANNEL_MARKS, CHANNEL_BODY, CHANNEL_COUNT, CHANNEL_COUNT_RETIRED } fro
 import OwnerPortalDemo from '@/components/OwnerPortalDemo'
 import { useViewTracking } from '@/components/useViewTracking'
 import { ViewsPanel } from '@/components/ViewsPanel'
+import { LibraryPicker } from '@/components/LibraryPicker'
 // The owner review DECK does not build a slide from the verdict (see the slide block for why).
 const VERDICT_ON_DECK = false
 
@@ -1378,6 +1379,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
     ...(bgOv ? { bg: bgOv, toolbarBg: hexA(bgOv, 0.94) } : {}),
   }
   const [designOpen, setDesignOpen] = useState(false)
+  // THE LIGHTHOUSE PHOTO LIBRARY, FROM THE DECK (Jon, 2026-10-29: "also our photo library in
+  // Lighthouse"). 'one' fills the photo being changed; 'deck' adds the picks to this deck's library.
+  const [libFor, setLibFor] = useState<'' | 'one' | 'deck'>('')
   function switchTheme(k: string) {
     setThemeKey(k)
     fetch('/api/reports', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: initial.id, theme: k }) }).catch(() => {})
@@ -2947,6 +2951,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             <button onClick={() => heroRef.current && heroRef.current.click()} disabled={!!busy} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold disabled:opacity-50" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
               {busy === 'hero' ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />} {isOnboarding ? 'Upload photos' : 'Upload instead'}
             </button>
+            {isOnboarding ? (
+              <button onClick={() => setLibFor('deck')} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+                <ImageIcon size={11} /> From the Lighthouse library
+              </button>
+            ) : null}
             {hero.heroImage && (
               <button onClick={() => patch('hero.heroImage', null)} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.accent }}>
                 <X size={11} /> Remove current
@@ -3766,6 +3775,19 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           </div>
         )
       })() : null}
+      {libFor ? (
+        <div className="sb-noprint" style={{ position: 'relative', zIndex: 95 }}>
+          <LibraryPicker open={!!libFor} onClose={() => setLibFor('')}
+            title={libFor === 'one' ? 'Choose a photo from the library' : 'Add photos to this deck'} verb={libFor === 'one' ? 'Use' : 'Add'}
+            onPick={picks => {
+              const urls = picks.map(x => x.url).filter(Boolean)
+              if (!urls.length) { setLibFor(''); return }
+              if (libFor === 'one' && photoPick) { photoPick.set(urls[0]); answerChanged(); setPhotoPick(null); setPhotoUrl('') }
+              mutate((d: Any) => { const prev = Array.isArray(d.uploads) ? d.uploads : []; d.uploads = urls.filter(u => prev.indexOf(u) < 0).concat(prev) })
+              setLibFor('')
+            }} />
+        </div>
+      ) : null}
       {viewsOpen ? <ViewsPanel id={String(initial.id)} t={t} onClose={() => setViewsOpen(false)} /> : null}
       {photoPick && (
         <div className="sb-noprint fixed inset-0 z-[80] flex items-center justify-center p-5"
@@ -3822,6 +3844,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 className="rounded-lg px-3.5 py-2 text-[13px] font-semibold disabled:opacity-40"
                 style={{ background: t.ink, color: t.bg }}>Use</button>
             </div>
+            {isOnboarding ? (
+              <button onClick={() => setLibFor('one')} className="mb-4 inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[13px] font-semibold"
+                style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }}>
+                <ImageIcon size={14} /> Search the Lighthouse photo library
+              </button>
+            ) : null}
             {/* THE WHOLE LIBRARY (Jon, 2026-10-29: "should open up the library"): this deck's
                 uploads and photos first, then every photo on the listing(s) behind it. */}
             {(pickPool.length > 0 || (pool && pool.length > 0)) && (
