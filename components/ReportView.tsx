@@ -209,6 +209,31 @@ const THEMES: Record<string, Any> = {
   },
 }
 
+// ── MORE THEMES (Jon, 2026-10-29: "give more color and themes, more options for customization").
+// Each is written as its twelve defining colours; the remaining tokens (status chips, toolbar,
+// editing outline, chart pair) are derived the same way for every one, so a new theme is a line,
+// not a block. Text tokens were picked to hold 4.5:1 on the theme's own card.
+function themeFrom(x: { label: string; bg: string; ink: string; body: string; sub: string; muted: string; card: string; cardBorder: string; chip: string; accent: string; gold: string; band: string; good?: string; dark?: boolean }): Any {
+  return {
+    ...x, good: x.good || (x.dark ? '#4CC38A' : '#1a7f4f'),
+    statusHotBg: hexA(x.accent, x.dark ? 0.18 : 0.12), statusHotInk: x.accent, statusColdBg: x.chip, statusColdInk: x.sub,
+    downGray: x.muted, rule: x.cardBorder, toolbarBg: hexA(x.bg, 0.94), toolbarBorder: x.cardBorder,
+    trackBg: x.card, footA: x.muted, footB: x.cardBorder, barA: x.dark ? x.muted : x.band, barB: x.accent,
+    edBg: x.dark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.7)', edBorder: x.accent,
+  }
+}
+Object.assign(THEMES, {
+  midnight: themeFrom({ label: 'Midnight', dark: true, bg: '#0B1220', ink: '#F1F4F9', body: '#C3CCDA', sub: '#A3AEBF', muted: '#8C98AB', card: '#121B2D', cardBorder: '#22304A', chip: '#172238', accent: '#5AA8FF', gold: '#D4B062', band: '#1B2B47' }),
+  noir: themeFrom({ label: 'Noir', bg: '#FFFFFF', ink: '#0A0A0A', body: '#2B2B2B', sub: '#555555', muted: '#666666', card: '#FFFFFF', cardBorder: '#E2E2E2', chip: '#F4F4F4', accent: '#C8221B', gold: '#8A6D1F', band: '#0A0A0A' }),
+  coastal: themeFrom({ label: 'Coastal', bg: '#F9F6F0', ink: '#12343B', body: '#34545A', sub: '#4F6A6F', muted: '#5B7276', card: '#FFFFFF', cardBorder: '#E6DED0', chip: '#F3EEE4', accent: '#0E7479', gold: '#A07C3B', band: '#12343B' }),
+  brickell: themeFrom({ label: 'Brickell', bg: '#FFFFFF', ink: '#10263B', body: '#34495E', sub: '#52677B', muted: '#5C6F82', card: '#FFFFFF', cardBorder: '#E4EBF0', chip: '#F1F7F9', accent: '#C2413A', gold: '#0E8080', band: '#0E5566' }),
+  terracotta: themeFrom({ label: 'Terracotta', bg: '#FBF6F1', ink: '#3B2219', body: '#5A3E33', sub: '#6F574C', muted: '#765D52', card: '#FFFFFF', cardBorder: '#EBDDD0', chip: '#F6EDE4', accent: '#A84B24', gold: '#9C7A23', band: '#3B2219' }),
+  emerald: themeFrom({ label: 'Emerald', bg: '#F6F7F3', ink: '#0F2E24', body: '#2F4A40', sub: '#4C645A', muted: '#56695F', card: '#FFFFFF', cardBorder: '#DDE3D8', chip: '#EFF2EB', accent: '#9A7420', gold: '#9A7420', band: '#0F3B2C', good: '#157044' }),
+  blush: themeFrom({ label: 'Blush', bg: '#FCF7F6', ink: '#3A1B26', body: '#57343F', sub: '#6E4F59', muted: '#755761', card: '#FFFFFF', cardBorder: '#F0DEDD', chip: '#F9EDEC', accent: '#9E2C4B', gold: '#9C7A23', band: '#3A1B26' }),
+  slate: themeFrom({ label: 'Slate', bg: '#F4F6F8', ink: '#1C2733', body: '#3B4856', sub: '#566372', muted: '#5C6876', card: '#FFFFFF', cardBorder: '#DDE3EA', chip: '#EEF2F6', accent: '#C45421', gold: '#8A6D1F', band: '#1C2733' }),
+  champagne: themeFrom({ label: 'Champagne', bg: '#F8F4EC', ink: '#2A2418', body: '#4A4132', sub: '#625847', muted: '#6A604E', card: '#FFFDF8', cardBorder: '#E8DFCC', chip: '#F3ECDD', accent: '#86651B', gold: '#86651B', band: '#2A2418' }),
+})
+
 // ── FONT PAIRINGS (2026-08-17) ──────────────────────────────────────────────────────────────────
 // The single biggest "make it more beautiful" lever a document has. Headings only: body copy and
 // every number stay in the system sans (numbers in a display serif drift out of column alignment).
@@ -232,6 +257,13 @@ const FONT_PAIRS: Record<string, { label: string; display: string; href: string;
     display: "'Playfair Display', Georgia, 'Times New Roman', serif",
     href: 'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800;900&display=swap',
   },
+  // 2026-10-29 additions (Jon: "more options for customization").
+  luxe: { label: 'Luxe', display: "'Cormorant Garamond', Georgia, serif", href: 'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&display=swap' },
+  bodoni: { label: 'Fashion', display: "'Bodoni Moda', Didot, Georgia, serif", href: 'https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,500;6..96,600;6..96,700&display=swap' },
+  soft: { label: 'Soft serif', display: "'DM Serif Display', Georgia, serif", href: 'https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap' },
+  geometric: { label: 'Geometric', display: "'Outfit', ui-sans-serif, system-ui, sans-serif", href: 'https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&display=swap' },
+  clean: { label: 'Clean sans', display: "'Manrope', ui-sans-serif, system-ui, sans-serif", body: "'Manrope', ui-sans-serif, system-ui, -apple-system, sans-serif", href: 'https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap' },
+  bold: { label: 'Bold', display: "'Archivo', ui-sans-serif, system-ui, sans-serif", href: 'https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&display=swap' },
   // The hotel's own pairing (see the 'garden' theme): Playfair at 500, uppercase, over Montserrat.
   garden: {
     label: 'Garden',
@@ -1335,10 +1367,17 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   ]
   const sizeKey: string = TEXT_SIZES.some(z => z.k === styleCfg.textSize) ? String(styleCfg.textSize) : 'm'
   const textScale: number = (TEXT_SIZES.find(z => z.k === sizeKey) || { v: 1 }).v
+  const bandOv: string = /^#[0-9a-fA-F]{6}$/.test(String(styleCfg.band || '')) ? String(styleCfg.band) : ''
+  const bgOv: string = /^#[0-9a-fA-F]{6}$/.test(String(styleCfg.bg || '')) ? String(styleCfg.bg) : ''
+  const RADII: { k: string; label: string; v: number }[] = [{ k: 'square', label: 'Square', v: 4 }, { k: 'soft', label: 'Soft', v: 16 }, { k: 'round', label: 'Round', v: 30 }]
+  const radiusKey: string = RADII.some(r => r.k === styleCfg.radius) ? String(styleCfg.radius) : ''
   const t = {
     ...THEMES[themeKey],
     ...(accentOv ? { accent: accentOv, statusHotInk: accentOv, statusHotBg: hexA(accentOv, 0.13), barB: accentOv, edBorder: accentOv } : {}),
+    ...(bandOv ? { band: bandOv } : {}),
+    ...(bgOv ? { bg: bgOv, toolbarBg: hexA(bgOv, 0.94) } : {}),
   }
+  const [designOpen, setDesignOpen] = useState(false)
   function switchTheme(k: string) {
     setThemeKey(k)
     fetch('/api/reports', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: initial.id, theme: k }) }).catch(() => {})
@@ -2771,49 +2810,16 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 ))}
               </span>
             )}
-            <span className="inline-flex items-center gap-1 rounded-full p-0.5" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
-              {Object.keys(THEMES).map(k => (
-                <button key={k} onClick={() => switchTheme(k)} className="rounded-full px-2.5 py-1 text-[11px] font-semibold"
-                  style={themeKey === k ? { background: t.ink, color: t.bg } : { color: t.sub }}>
-                  {THEMES[k].label}
-                </button>
-              ))}
-            </span>
-            {/* Font pairing — headings only, body stays system for number alignment. */}
-            <span className="inline-flex items-center gap-1 rounded-full p-0.5" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
-              {Object.keys(FONT_PAIRS).map(k => (
-                <button key={k} onClick={() => setStyle({ font: k })} title={'Heading typeface: ' + FONT_PAIRS[k].label}
-                  className="rounded-full px-2.5 py-1 text-[11px] font-semibold"
-                  style={fontKey === k ? { background: t.ink, color: t.bg } : { color: t.sub, fontFamily: FONT_PAIRS[k].display || undefined }}>
-                  {FONT_PAIRS[k].label}
-                </button>
-              ))}
-            </span>
-            {/* Type size — the whole deck at once. See TextScale for why it is a canvas trick. */}
-            <span className="inline-flex items-center gap-1 rounded-full p-0.5" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
-              <span className="text-[10px] font-bold uppercase tracking-wide px-1.5" style={{ color: t.sub }}>Size</span>
-              {TEXT_SIZES.map(z => (
-                <button key={z.k} onClick={() => setStyle({ textSize: z.k })} title={'Type size: ' + z.label}
-                  className="rounded-full px-2 py-1 text-[11px] font-semibold"
-                  style={sizeKey === z.k ? { background: t.ink, color: t.bg } : { color: t.sub }}>
-                  {z.label}
-                </button>
-              ))}
-            </span>
-            {/* Custom accent — one dot of brand colour, everywhere at once. */}
-            <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-1" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
-              <label className="relative inline-flex items-center cursor-pointer" title="Custom accent colour — flows into chips, bars, buttons and the PPTX export">
-                <span className="w-4 h-4 rounded-full border" style={{ background: t.accent, borderColor: t.toolbarBorder }} />
-                <input type="color" value={accentOv || t.accent} onChange={e => setStyle({ accent: e.target.value })}
-                  className="absolute inset-0 opacity-0 w-4 h-4 cursor-pointer" />
-              </label>
-              <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: t.sub }}>Accent</span>
-              {accentOv && (
-                <button onClick={() => setStyle({ accent: null })} title="Back to the theme's own accent" style={{ color: t.muted }}>
-                  <X size={11} />
-                </button>
-              )}
-            </span>
+            {/* ONE DESIGN BUTTON (Jon, 2026-10-29: "more color and themes, more options for
+                customization"). Sixteen themes, eleven typefaces and five custom controls no longer
+                fit as rows of pills, so they live in one panel, each option previewed in itself. */}
+            <button onClick={() => setDesignOpen(v => !v)} className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] font-semibold"
+              style={designOpen ? { background: t.ink, color: t.bg } : { background: t.card, border: '1px solid ' + t.toolbarBorder, color: t.ink }}>
+              <span className="inline-flex" style={{ gap: 2 }}>
+                {[t.band, t.accent, t.chip].map((cl, i) => <span key={i} style={{ width: 10, height: 10, borderRadius: 999, background: cl, border: '1px solid ' + t.toolbarBorder }} />)}
+              </span>
+              Design · {THEMES[themeKey].label} · {fontPair.label}
+            </button>
           </div>
           {attachMsg && <span className="text-[11px] font-semibold" style={{ color: t.accent }}>{attachMsg}</span>}
           {edit && (
@@ -3021,6 +3027,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
 
       {/* Display typeface for the chosen pairing — loaded only when a serif pairing is active. */}
       {fontPair.href ? <link rel="stylesheet" href={fontPair.href} /> : null}
+      {/* The Design panel previews every typeface in itself, so it loads them all while open. */}
+      {designOpen ? Object.keys(FONT_PAIRS).filter(k => FONT_PAIRS[k].href && k !== fontKey).map(k => <link key={k} rel="stylesheet" href={FONT_PAIRS[k].href} />) : null}
 
       {/* elevated look: smoother rhythm + hairline dividers between sections */}
       <style>{`
@@ -3037,6 +3045,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         .sb-slide { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden;
           border-radius: 16px; background: ${t.card}; border: 1px solid ${t.cardBorder};
           box-shadow: 0 22px 46px -30px rgba(0,0,0,0.42), 0 2px 6px -3px rgba(0,0,0,0.10); }
+        ${radiusKey ? '.sb-report .sb-slide, .sb-report .onb-cover { border-radius: ' + (RADII.find(r => r.k === radiusKey) || { v: 16 }).v + 'px !important; }' : ''}
         .sb-slide-canvas { position: absolute; top: 0; left: 0; transform-origin: top left;
           box-sizing: border-box; }
         .sb-deck > section { margin-top: 26px !important; border-top: 0 !important; }
@@ -3671,6 +3680,92 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         </div>
       )}
 
+      {designOpen ? (() => {
+        const ACCENTS = ['#B54B33', '#C8221B', '#A3304F', '#8A4F7D', '#5B6CB2', '#1774C6', '#0E7479', '#157044', '#9A7420', '#C45421', '#111827', '#C9A227']
+        const BANDS = ['#0E2740', '#0B1220', '#111827', '#0A0A0A', '#1C2733', '#12343B', '#0E5566', '#0F3B2C', '#24352A', '#364936', '#3B2219', '#3A1B26', '#2A2418', '#2E2A5A']
+        const GROUNDS = ['#FCFAF6', '#FFFFFF', '#F5F6F8', '#F8F4EC', '#F9F6F0', '#F6F7F3', '#FCF7F6', '#EEF2F6', '#E7D8C9']
+        const H = (x: string) => <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: t.muted, margin: '18px 0 8px' }}>{x}</p>
+        const Dot = ({ cl, on, onPick, title }: { cl: string; on: boolean; onPick: () => void; title?: string }) => (
+          <button onClick={onPick} title={title || cl} style={{ width: 26, height: 26, borderRadius: 999, background: cl, border: '2px solid ' + (on ? t.ink : t.toolbarBorder), boxShadow: on ? '0 0 0 2px ' + t.card + ' inset' : undefined }} />
+        )
+        const Custom = ({ val, onPick }: { val: string; onPick: (v: string) => void }) => (
+          <label className="relative inline-flex items-center justify-center cursor-pointer" title="Any colour" style={{ width: 26, height: 26, borderRadius: 999, border: '1px dashed ' + t.muted, color: t.muted, fontSize: 14 }}>
+            +<input type="color" value={val} onChange={e => onPick(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer" />
+          </label>
+        )
+        const Reset = ({ show, onPick }: { show: boolean; onPick: () => void }) => show ? <button onClick={onPick} style={{ fontSize: 11.5, fontWeight: 600, color: t.accent, marginLeft: 6 }}>Theme default</button> : null
+        return (
+          <div className="sb-noprint fixed inset-0 z-[84]" onClick={() => setDesignOpen(false)}>
+            <div onClick={e => e.stopPropagation()} className="rounded-2xl overflow-auto"
+              style={{ position: 'absolute', top: 64, left: 16, width: 'min(760px, calc(100vw - 32px))', maxHeight: 'calc(100vh - 90px)', background: t.card, border: '1px solid ' + t.toolbarBorder, boxShadow: '0 30px 60px -20px rgba(0,0,0,0.35)', padding: '16px 20px 20px', color: t.ink }}>
+              <div className="flex items-center justify-between">
+                <p style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>Design</p>
+                <span className="flex items-center" style={{ gap: 12 }}>
+                  {(accentOv || bandOv || bgOv || radiusKey) ? <button onClick={() => setStyle({ accent: null, band: null, bg: null, radius: null })} style={{ fontSize: 12, fontWeight: 600, color: t.accent }}>Reset colours &amp; corners</button> : null}
+                  <button onClick={() => setDesignOpen(false)} title="Close" style={{ color: t.muted }}><X size={15} /></button>
+                </span>
+              </div>
+              <p style={{ fontSize: 12, color: t.muted, margin: '2px 0 0' }}>Saved with this deck and seen by everyone who opens the link.</p>
+              {H('Theme')}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))', gap: 10 }}>
+                {Object.keys(THEMES).map(k => { const th = THEMES[k]; const on = themeKey === k; return (
+                  <button key={k} onClick={() => switchTheme(k)} className="text-left" style={{ borderRadius: 12, overflow: 'hidden', border: '2px solid ' + (on ? t.ink : t.toolbarBorder), background: th.bg }}>
+                    <span style={{ display: 'block', height: 44, position: 'relative', background: th.card }}>
+                      <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '38%', background: th.band }} />
+                      <span style={{ position: 'absolute', left: '46%', top: 10, width: '40%', height: 6, borderRadius: 3, background: th.ink }} />
+                      <span style={{ position: 'absolute', left: '46%', top: 22, width: '28%', height: 5, borderRadius: 3, background: th.accent }} />
+                      <span style={{ position: 'absolute', left: '46%', top: 32, width: '34%', height: 4, borderRadius: 3, background: th.cardBorder }} />
+                    </span>
+                    <span style={{ display: 'block', padding: '6px 9px', fontSize: 12, fontWeight: 600, color: th.ink }}>{on ? '✓ ' : ''}{th.label}</span>
+                  </button>
+                ) })}
+              </div>
+              {H('Headings typeface')}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))', gap: 8 }}>
+                {Object.keys(FONT_PAIRS).map(k => { const f = FONT_PAIRS[k]; const on = fontKey === k; return (
+                  <button key={k} onClick={() => setStyle({ font: k })} className="text-left" style={{ borderRadius: 10, padding: '8px 10px', border: '2px solid ' + (on ? t.ink : t.toolbarBorder), background: on ? t.chip : t.card }}>
+                    <span style={{ display: 'block', fontFamily: f.display || undefined, fontSize: 20, lineHeight: 1.1, color: t.ink, textTransform: f.caps ? 'uppercase' : undefined }}>Aa Stay</span>
+                    <span style={{ display: 'block', fontSize: 11, color: t.muted, marginTop: 3 }}>{f.label}</span>
+                  </button>
+                ) })}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', columnGap: 24 }}>
+                <div>
+                  {H('Text size')}
+                  <span className="inline-flex rounded-full p-0.5" style={{ background: t.chip, border: '1px solid ' + t.toolbarBorder }}>
+                    {TEXT_SIZES.map(z => <button key={z.k} onClick={() => setStyle({ textSize: z.k })} className="rounded-full px-3 py-1 text-[12px] font-semibold" style={sizeKey === z.k ? { background: t.ink, color: t.bg } : { color: t.sub }}>{z.label}</button>)}
+                  </span>
+                </div>
+                <div>
+                  {H('Corners')}
+                  <span className="inline-flex rounded-full p-0.5" style={{ background: t.chip, border: '1px solid ' + t.toolbarBorder }}>
+                    {RADII.map(r => <button key={r.k} onClick={() => setStyle({ radius: r.k })} className="rounded-full px-3 py-1 text-[12px] font-semibold" style={(radiusKey || 'soft') === r.k ? { background: t.ink, color: t.bg } : { color: t.sub }}>{r.label}</button>)}
+                  </span>
+                </div>
+              </div>
+              {H('Accent — labels, highlights, chart bars')}
+              <div className="flex items-center flex-wrap" style={{ gap: 7 }}>
+                {ACCENTS.map(cl => <Dot key={cl} cl={cl} on={t.accent.toLowerCase() === cl.toLowerCase()} onPick={() => setStyle({ accent: cl })} />)}
+                <Custom val={accentOv || t.accent} onPick={v => setStyle({ accent: v })} />
+                <Reset show={!!accentOv} onPick={() => setStyle({ accent: null })} />
+              </div>
+              {H('Dark panels — cover, bands, contact card')}
+              <div className="flex items-center flex-wrap" style={{ gap: 7 }}>
+                {BANDS.map(cl => <Dot key={cl} cl={cl} on={t.band.toLowerCase() === cl.toLowerCase()} onPick={() => setStyle({ band: cl })} />)}
+                <Custom val={bandOv || t.band} onPick={v => setStyle({ band: v })} />
+                <Reset show={!!bandOv} onPick={() => setStyle({ band: null })} />
+              </div>
+              <p style={{ fontSize: 11, color: t.muted, margin: '6px 0 0' }}>Text on these panels is white, so pick a deep colour.</p>
+              {H('Page background')}
+              <div className="flex items-center flex-wrap" style={{ gap: 7 }}>
+                {GROUNDS.map(cl => <Dot key={cl} cl={cl} on={t.bg.toLowerCase() === cl.toLowerCase()} onPick={() => setStyle({ bg: cl })} />)}
+                <Custom val={bgOv || t.bg} onPick={v => setStyle({ bg: v })} />
+                <Reset show={!!bgOv} onPick={() => setStyle({ bg: null })} />
+              </div>
+            </div>
+          </div>
+        )
+      })() : null}
       {viewsOpen ? <ViewsPanel id={String(initial.id)} t={t} onClose={() => setViewsOpen(false)} /> : null}
       {photoPick && (
         <div className="sb-noprint fixed inset-0 z-[80] flex items-center justify-center p-5"
