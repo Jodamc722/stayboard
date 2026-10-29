@@ -3731,7 +3731,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           if (ix >= 0 && (tg.closest('.onb-cover') || tg.closest('.sb-slide'))) enterPresent(ix)
         }) : undefined}
         style={!present && edit && isOnboarding && slidesPanel ? { paddingLeft: 'max(20px, calc(272px - (100vw - 1180px) / 2))' } : undefined} className={present ? ('sb-present' + (isDeck ? ' sb-present-deck' : '')) : ('sb-report ' + (isDeck ? 'sb-deck max-w-[1180px]' : 'max-w-4xl') + ' mx-auto px-3 sm:px-8 pb-20')}>
-        {!present && isDeck ? <p className="sb-tap-hint sb-noprint" style={{ fontSize: 12, color: t.muted, textAlign: 'center', margin: '14px 0 -18px' }}>Tap any slide to view it full screen</p> : null}
+        {!present && isDeck ? <p className="sb-tap-hint sb-noprint" style={{ fontSize: 12, color: t.muted, textAlign: 'left', margin: '22px 0 -18px' }}>Tap a slide for full screen</p> : null}
 
         {/* ---------- COVER ---------- */}
         {/* AN ONBOARDING OPENS ON THEIR PROPERTY, NOT ON OUR LOGO. The review report's cover — a
