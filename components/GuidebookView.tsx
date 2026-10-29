@@ -79,6 +79,30 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
   const pa: any = {}
   for (const _k of Object.keys(_paRaw)) pa[_k] = purl(_paRaw[_k])
   const photos: string[] = (Array.isArray(s._photos) ? s._photos : []).map(purl).filter(Boolean) as string[]
+  // VARIETY IN THE MAGAZINE (Jon, 2026-10-29: the printed book is the magazine left in the unit).
+  // The generator often gave four pages four shots of the same room — the kitchen on the cover, the
+  // about page, the highlights and the arrival. Reading the book (not editing it), a page whose photo
+  // repeats a room already shown takes an unused photo of a room not yet shown, when the listing has
+  // one; a photo with text on it is never picked. Edit mode shows the saved choices untouched.
+  if (!edit) {
+    const metaArr: any[] = Array.isArray(s._photoMeta) ? s._photoMeta : []
+    const catOf: Record<string, string> = {}, texty: Record<string, boolean> = {}
+    for (const m of metaArr) { const u = purl(m && m.url); if (u) { catOf[u] = String(m.category || ''); if (m.hasText) texty[u] = true } }
+    const usedU: string[] = [], usedC: string[] = []
+    const take = (u: string | null) => { if (!u) return; usedU.push(u); const c = catOf[u]; if (c) usedC.push(c) }
+    take(pa.cover || photos[0] || null)
+    for (const k of ['about', 'special', 'arrival', 'wifi', 'closing']) {
+      const u: string | null = pa[k] || null
+      if (!u) continue
+      const c = catOf[u]
+      if (usedU.indexOf(u) >= 0 || (c && usedC.indexOf(c) >= 0)) {
+        const alt = photos.find(x => usedU.indexOf(x) < 0 && !texty[x] && catOf[x] && usedC.indexOf(catOf[x]) < 0)
+          || (usedU.indexOf(u) >= 0 ? photos.find(x => usedU.indexOf(x) < 0 && !texty[x]) : undefined)
+        if (alt) pa[k] = alt
+      }
+      take(pa[k])
+    }
+  }
   // The guidelines page carries a fill photo (see .gb-fillslot) because its length depends on how
   // many rules a building has. Default it to a listing photo no other slot is already using —
   // photos[0] counts as used when there is no explicit cover, since the cover falls back to it —
@@ -616,8 +640,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
           {!guest && <button onClick={() => { const next = JSON.parse(JSON.stringify(gb)); next.sections._showTags = showTags ? false : true; setGb(next); fetch('/api/guidebook', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: next.id, sections: next.sections }) }) }} className={'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ' + (showTags ? 'border-neutral-300' : 'border-neutral-800 bg-neutral-800 text-white')} title="Show/hide the // labels and accent lines on photos">Photo tags {showTags ? 'on' : 'off'}</button>}
           {!guest && <button onClick={() => { navigator.clipboard.writeText(window.location.origin + '/g/' + gb.id).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) }).catch(() => {}) }} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold" title="Copy the public guest link — no login needed to view">{copied ? <Save size={13} /> : <Share2 size={13} />} {copied ? 'Copied!' : 'Share'}</button>}
           {!guest && <a href={'/g/' + gb.id} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold" title="What the guest sees on their phone">Guest view</a>}
-          {!guest && <a href={'/g/' + gb.id + '?print=1'} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white" title="The short house manual for printing — a few clean Letter pages with a QR code to the live guide"><Printer size={13} /> Print house manual</a>}
-          <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold" title="Print the full magazine-style book"><Printer size={13} /> {guest ? 'Print / PDF' : 'Print full book'}</button>
+          <button onClick={() => window.print()} className={'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold ' + (guest ? 'border border-neutral-300' : 'bg-neutral-900 text-white')} title="Print the magazine to leave in the unit — Letter, print at 100% with background graphics on"><Printer size={13} /> {guest ? 'Print / PDF' : 'Print magazine'}</button>
           {!guest && <button onClick={del} title="Delete this guidebook" className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600"><Trash2 size={13} /></button>}
         </div>
       </div>

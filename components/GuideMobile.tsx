@@ -21,7 +21,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Wifi, Copy, Check, Phone, MapPin, Car, KeyRound, ChevronDown, ListChecks,
-  Compass, Siren, ExternalLink, MessageSquare, Navigation, Hospital, ShieldAlert, Printer, LogOut,
+  Compass, Siren, ExternalLink, MessageSquare, Navigation, Hospital, ShieldAlert, LogOut,
 } from 'lucide-react'
 import { DEFAULT_EMERGENCY_CONTACTS } from '@/lib/emergency'
 
@@ -405,8 +405,7 @@ export function GuideMobile({ gb, autoPrint = false }: { gb: any; autoPrint?: bo
             </Section>
 
             <footer className="pb-6 pt-2 text-center">
-              <button type="button" onClick={() => window.print()} className="inline-flex min-h-[44px] items-center gap-2 rounded-xl px-4 text-[13.5px] font-semibold" style={{ background: c.tint, color: c.ink }}><Printer size={15} /> Print this guide</button>
-              <img src={LOGO_URL} alt="Stay Hospitality" className="mx-auto mt-6 h-6 w-auto" style={{ filter: dark ? 'brightness(0) invert(1)' : 'none', opacity: 0.85 }} />
+              <img src={LOGO_URL} alt="Stay Hospitality" className="mx-auto mt-2 h-6 w-auto" style={{ filter: dark ? 'brightness(0) invert(1)' : 'none', opacity: 0.85 }} />
               <p className="mt-2 text-[12px]" style={{ color: c.mute }}>{lbl('footer.line', 'stay-hospitality.com')}</p>
               {d.email ? <a href={'mailto:' + d.email} className="mt-0.5 inline-block text-[12px]" style={{ color: c.mute }}>{d.email}</a> : null}
             </footer>
