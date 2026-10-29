@@ -174,7 +174,7 @@ export function GuideMobile({ gb, autoPrint = false }: { gb: any; autoPrint?: bo
               <img src={LOGO_URL} alt="Stay Hospitality" className="h-6 w-auto" style={{ filter: 'brightness(0) invert(1)' }} />
             </div>
             <div className="absolute inset-x-0 bottom-0 px-5 pb-10">
-              <p className="text-[10px] tracking-[0.45em] text-white/80">{lbl('cover.kicker', 'WELCOME')}</p>
+              {!/^welcome/i.test(d.line1) ? <p className="text-[10px] tracking-[0.45em] text-white/80">{lbl('cover.kicker', 'WELCOME')}</p> : null}
               <h1 className="mt-2 text-[38px] leading-[1.02] font-medium lowercase text-white" style={{ fontFamily: SERIF, textWrap: 'balance' as any }}>{d.line1 ? <>{d.line1}{d.line2 ? <><br />{d.line2}</> : null}</> : d.name}</h1>
               {d.subtitle ? <p className="mt-2.5 text-[11px] uppercase tracking-[0.3em] text-white/75">{d.subtitle}</p> : null}
             </div>
@@ -476,6 +476,19 @@ function CallRow({ Icon, value, sub, c }: { Icon: any; value: string; sub: strin
   )
 }
 
+/** A place's photo, shown only once it has really loaded — never an empty grey box (also when the
+ *  browser had it cached and finished before React hydrated, so onLoad never fired). */
+function PlacePhoto({ src }: { src: string }) {
+  const [ok, setOk] = useState(false)
+  const ref = useRef<HTMLImageElement>(null)
+  useEffect(() => { const im = ref.current; if (im && im.complete && im.naturalWidth > 40) setOk(true) }, [src])
+  return (
+    <div className="relative h-[130px]" style={{ display: ok ? 'block' : 'none' }}>
+      <img ref={ref} src={src} alt="" decoding="async" className="h-full w-full object-cover" onLoad={(e: any) => { if (e.currentTarget.naturalWidth > 40) setOk(true) }} onError={() => setOk(false)} />
+    </div>
+  )
+}
+
 function PlaceList({ items, city, c }: { items: any[]; city: string; c: C }) {
   // Swipeable cards, as before; a photo that fails to load drops away and the card reads as text.
   return (
@@ -486,9 +499,7 @@ function PlaceList({ items, city, c }: { items: any[]; city: string; c: C }) {
         return (
           <div key={i} className="snap-start shrink-0 w-[236px] overflow-hidden rounded-2xl" style={{ background: c.tint }}>
             {photo ? (
-              <div className="relative h-[130px]">
-                <img src={photo} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" onError={(e: any) => { e.currentTarget.parentElement.style.display = 'none' }} />
-              </div>
+              <PlacePhoto src={photo} />
             ) : null}
             <div className="p-3">
               <p className="text-[15.5px] font-medium leading-tight" style={{ fontFamily: SERIF }}>{p.name}</p>
