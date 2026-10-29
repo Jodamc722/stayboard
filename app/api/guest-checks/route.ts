@@ -94,11 +94,17 @@ export async function GET(req: NextRequest) {
     const RES_COLS = 'id,listing_id,guest_name,listing_name,check_in,check_out,status,source,custom_fields,payments:raw->money->payments'
     const [rules, amounts, vfid] = await Promise.all([loadGuestCheckRules(), loadBuildingAmounts(), verifiedFieldId()])
     // Arrivals in the window, plus anyone in-house or just departed whose deposit is still held (release is work too).
-    const [{ data: res }, { data: held }] = await Promise.all([
+    // IN HOUSE TOO (Jon, 2026-10-29: "make sure the verification works no matter her check-in time").
+    // The window used to start at today's check-ins, so a guest who arrived early, or yesterday, or
+    // whose check-in date had passed before anyone verified her, dropped off the desk and could not
+    // be verified at all. Everyone still in the unit (checked in before today, checking out today or
+    // later) is on the list until they are verified.
+    const [{ data: res }, { data: held }, { data: inHouse }] = await Promise.all([
       db.from('guesty_reservations').select(RES_COLS).gte('check_in', today).lt('check_in', addDays(to, 1)).limit(800),
       db.from('guest_checks').select('reservation_id').eq('deposit_status', 'captured').limit(400),
+      db.from('guesty_reservations').select(RES_COLS).lt('check_in', today).gte('check_out', today).limit(800),
     ])
-    let live = ((res || []) as any[]).filter(r => !/cancel|declin|inquir|expire/i.test(str(r.status)))
+    let live = ((res || []) as any[]).concat((inHouse || []) as any[]).filter(r => !/cancel|declin|inquir|expire/i.test(str(r.status)))
     const heldIds = ((held || []) as any[]).map(h => str(h.reservation_id)).filter(id => !live.some(r => str(r.id) === id))
     if (heldIds.length) {
       const { data: more } = await db.from('guesty_reservations').select(RES_COLS).in('id', heldIds.slice(0, 200))
