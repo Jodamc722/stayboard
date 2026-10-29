@@ -59,7 +59,9 @@ function keyFor(rid: string) { return 'sv:' + rid }
 // kept answering with the guest's name, dates and confirmation code — and kept accepting uploads —
 // long after checkout. Two days of grace covers a late check-out and the desk's follow-up; after
 // that the link answers 410. The team's own view of a finished verification is on the board, not here.
-const VERIFY_GRACE_DAYS = 2
+// 30 days (Jon, 2026-10-29: "it works anytime the front desk accesses it"): the desk can verify a
+// guest before arrival, during the stay, on departure day or after — any time in the month after.
+const VERIFY_GRACE_DAYS = 30
 function ymdET(d: Date): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d) }
 function daysAgoET(n: number): string { const d = new Date(ymdET(new Date()) + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10) }
 const EXPIRED = () => NextResponse.json({ ok: false, expired: true, error: 'This verification link has expired — the stay has ended.' }, { status: 410 })

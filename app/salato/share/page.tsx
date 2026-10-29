@@ -124,7 +124,8 @@ export default function SalatoShare() {
 
   // "Verify" lists everyone a front desk checks in: upcoming arrivals + in-house guests.
   // Verify tab = everyone the desk checks in (upcoming arrivals + in-house), unverified first.
-  const verifyRows = data ? uniqById(data.arrivals.concat(data.active)) : []
+  // Everyone the desk might meet: arriving, in house, and leaving today (Jon, 2026-10-29: verify works any time).
+  const verifyRows = data ? uniqById(data.arrivals.concat(data.active, data.departures.filter(r => r.checkOut === data.today))) : []
   const pastRows = past ? (pastOnlyUnverified ? past.past.filter(r => !r.verified && !r.canceled) : past.past) : []
   const rows = data ? (tab === 'verify' ? verifyRows.slice().sort((a, b) => (a.verified === b.verified ? 0 : a.verified ? 1 : -1)) : tab === 'past' ? pastRows : data[tab]) : []
   const dateOf = (r: Row) => (tab === 'departures' || tab === 'past') ? r.checkOut : r.checkIn
@@ -283,7 +284,7 @@ export default function SalatoShare() {
             <div className='rounded-2xl border border-neutral-200 bg-white shadow-sm divide-y divide-neutral-100 overflow-hidden'>
               {g.rows.map((r, i) => {
                 const time = tab === 'departures' ? r.checkOutTime : r.checkInTime
-                const showVerify = (tab === 'arrivals' || tab === 'active' || tab === 'verify') && !!r.id
+                const showVerify = (tab === 'arrivals' || tab === 'active' || tab === 'verify' || tab === 'departures' || (tab === 'past' && !r.verified && !r.canceled)) && !!r.id && !!r.verifyToken
                 return (
                   <div key={i} className={'px-4 py-3 ' + (isNew(r) ? 'bg-amber-50/60' : '')}>
                     <div className='flex items-start gap-3'>
@@ -311,9 +312,8 @@ export default function SalatoShare() {
                             <a href={'/salato/verify/' + (r.verifyToken || '')} target='_blank' rel='noopener noreferrer' className='text-xs font-semibold px-3 py-2 rounded-xl bg-neutral-900 text-white'>Verify</a>
                             <button onClick={() => sendLink(r)} className='text-[11px] font-semibold text-neutral-600 underline'>{sentId === r.id ? 'Link copied' : 'Send link'}</button>
                           </div>)}
-                      {tab === 'past' && !r.canceled && (r.verified
-                        ? <button onClick={() => r.id && openViewer(r.id)} className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800'>✓ Verified</button>
-                        : <span className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700'>Not verified</span>)}
+                      {tab === 'past' && !r.canceled && r.verified && <button onClick={() => r.id && openViewer(r.id)} className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-800'>✓ Verified</button>}
+                      {tab === 'past' && !r.canceled && !r.verified && !r.verifyToken && <span className='shrink-0 text-xs font-semibold px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700'>Not verified</span>}
                     </div>
                   </div>
                 )

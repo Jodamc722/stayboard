@@ -49,7 +49,7 @@ async function pastStays(db: any, ids: string[], match: Record<string, string>, 
     const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
     const nights = r.nights ?? (ci && co ? Math.round((Date.parse(co + 'T12:00:00Z') - Date.parse(ci + 'T12:00:00Z')) / 864e5) : null)
     const gRaw = r.g1 ?? r.g2
-    return { id: String(r.id), unit: match[String(r.listing_id)] || 'Unit', checkIn: ci, checkOut: co, nights, oneNight: underMinimum(nights), checkInTime: null, checkOutTime: null, guests: gRaw == null || gRaw === '' ? null : Number(gRaw), source: r.source || r.rawSource || null, sameDayTurn: false, verified: false, verifiedAt: null as string | null, guest: str(r.guest_name).replace(/\s+/g, ' ').trim() || null, canceled: CANCELED.test(str(r.status)) }
+    return { id: String(r.id), unit: match[String(r.listing_id)] || 'Unit', checkIn: ci, checkOut: co, nights, oneNight: underMinimum(nights), checkInTime: null, checkOutTime: null, guests: gRaw == null || gRaw === '' ? null : Number(gRaw), source: r.source || r.rawSource || null, sameDayTurn: false, verified: false, verifiedAt: null as string | null, guest: str(r.guest_name).replace(/\s+/g, ' ').trim() || null, canceled: CANCELED.test(str(r.status)), verifyToken: CANCELED.test(str(r.status)) || co < addDays(today, -30) ? undefined : salatoVerifyToken(String(r.id)) }
   })
   const vmap = await verifiedMap(db, rows.filter(r => !r.canceled).map(r => r.id))
   for (const r of rows) if (vmap[r.id] !== undefined) { r.verified = true; r.verifiedAt = vmap[r.id] || null }
@@ -108,6 +108,7 @@ export async function GET(req: NextRequest) {
     const wantIds: string[] = []
     for (const r of arrivals) if (wantIds.indexOf(r.id) < 0) wantIds.push(r.id)
     for (const r of active) if (wantIds.indexOf(r.id) < 0) wantIds.push(r.id)
+    for (const r of departures) if (wantIds.indexOf(r.id) < 0) wantIds.push(r.id)
     if (wantIds.length) {
       const keys = wantIds.map(id => 'sv:' + id)
       const { data: sv } = await db.from('app_settings').select('key,value').in('key', keys)
@@ -115,6 +116,7 @@ export async function GET(req: NextRequest) {
       for (const rowv of (sv || []) as any[]) { const id = String(rowv.key).slice(3); if (rowv.value) { try { const j = JSON.parse(rowv.value); if (j && j.status === 'verified') vmap[id] = str(j.signedAt) } catch {} } }
       for (const r of arrivals) { if (vmap[r.id] !== undefined) { r.verified = true; r.verifiedAt = vmap[r.id] || null } }
       for (const r of active) { if (vmap[r.id] !== undefined) { r.verified = true; r.verifiedAt = vmap[r.id] || null } }
+      for (const r of departures) { if (vmap[r.id] !== undefined) { r.verified = true; r.verifiedAt = vmap[r.id] || null } }
     }
     // TWO-NIGHT MINIMUM (Jon, 2026-09-24): a one-night stay is not permitted at Salato. The board
     // marks it, and tells the desk who to call before checking the guest in.
