@@ -833,14 +833,23 @@ function Ed({ v, set, edit, className, multiline, placeholder, max }: {
   return <AutoInput v={v} set={set} className={className} placeholder={placeholder} />
 }
 
-function SectionShell({ id, title, hidden, edit, onToggle, onAi, children }: {
-  id: string; title: string; hidden: boolean; edit: boolean; onToggle: () => void; onAi?: () => void; children: React.ReactNode
+function SectionShell({ id, title, hidden, edit, onToggle, onAi, onUp, onDown, pos, children }: {
+  id: string; title: string; hidden: boolean; edit: boolean; onToggle: () => void; onAi?: () => void
+  /** Move this slide one place earlier / later (Jon, 2026-10-29: "edit slide order needs to be easier"). */
+  onUp?: () => void; onDown?: () => void; pos?: string; children: React.ReactNode
 }) {
   if (hidden && !edit) return null
   return (
     <section className="relative">
       {edit && (
         <div className="absolute -top-3 right-4 z-10 flex items-center gap-1.5">
+          {(onUp || onDown) && (
+            <span className="inline-flex items-center rounded-full shadow overflow-hidden text-[11px] font-semibold" style={{ background: 'var(--t-card)', border: '1px solid var(--t-border)', color: 'var(--t-ink)' }}>
+              {pos ? <span className="px-2.5 py-1" style={{ opacity: 0.6 }}>Slide {pos}</span> : null}
+              <button onClick={onUp} disabled={!onUp} title="Move this slide earlier" className="px-2.5 py-1 disabled:opacity-30" style={{ borderLeft: pos ? '1px solid var(--t-border)' : undefined }}>↑ Earlier</button>
+              <button onClick={onDown} disabled={!onDown} title="Move this slide later" className="px-2.5 py-1 disabled:opacity-30" style={{ borderLeft: '1px solid var(--t-border)' }}>↓ Later</button>
+            </span>
+          )}
           {onAi && (
             <button
               onClick={onAi}
@@ -1374,6 +1383,13 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const [optBusy, setOptBusy] = useState(false)
   const [optMsg, setOptMsg] = useState('')
   const [pool, setPool] = useState<{ url: string; thumb: string; listing: string }[] | null>(null)
+  // The photo dialog shows the listing's photos too, so it loads them the first time it opens.
+  useEffect(() => {
+    if (!photoPick || pool !== null) return
+    fetch('/api/reports/attach?photos=' + encodeURIComponent(initial.id)).then(r => r.json()).then(d => {
+      setPool(Array.isArray(d?.photos) ? d.photos : [])
+    }).catch(() => setPool([]))
+  }, [photoPick, pool, initial.id])
   const [manualLine, setManualLine] = useState('')
   const [manualCat, setManualCat] = useState('')
   const [manualAiNotes, setManualAiNotes] = useState('')
@@ -3698,11 +3714,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 className="rounded-lg px-3.5 py-2 text-[13px] font-semibold disabled:opacity-40"
                 style={{ background: t.ink, color: t.bg }}>Use</button>
             </div>
-            {pickPool.length > 0 && (
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.muted }}>{isOnboarding ? 'Or pick one from this deck\u2019s photos' : 'Or pick one from the listing'}</p>
+            {/* THE WHOLE LIBRARY (Jon, 2026-10-29: "should open up the library"): this deck's
+                uploads and photos first, then every photo on the listing(s) behind it. */}
+            {(pickPool.length > 0 || (pool && pool.length > 0)) && (
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-2" style={{ color: t.muted }}>{isOnboarding ? 'Or pick from the photo library' : 'Or pick one from the listing'}</p>
             )}
+            {pool === null && isOnboarding ? <p className="text-[12px] italic mb-2" style={{ color: t.muted }}>Loading listing photos&hellip;</p> : null}
             <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(140px,1fr))' }}>
-              {pickPool.map((src: string, i: number) => (
+              {pickPool.concat((pool || []).map(p => p.url).filter(u => pickPool.indexOf(u) < 0)).map((src: string, i: number) => (
                 <button key={i} onClick={() => { photoPick.set(src); answerChanged(); setPhotoPick(null); setPhotoUrl('') }}
                   className="relative rounded-lg overflow-hidden" style={{ aspectRatio: '4 / 3', border: '2px solid ' + (src === photoPick.cur ? t.accent : 'transparent') }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -4942,7 +4961,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               <div style={{ position: 'absolute', inset: 0, background: t.band }}>
                 <Half src={String(sec('overview').photo || pic(4))} side="right"
                   title="About Stay photo" set={u => patch('overview.photo', u)} />
-                <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 452, background: 'linear-gradient(90deg, ' + t.band + ' 0%, rgba(0,0,0,0) 42%)' }} />
+                <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 452, pointerEvents: 'none', background: 'linear-gradient(90deg, ' + t.band + ' 0%, rgba(0,0,0,0) 42%)' }} />
                 <div style={{ position: 'absolute', top: 64, bottom: 44, left: 64, width: 560 }} className="flex flex-col">
                   <div className="flex-1 min-h-0 onb-scroll">
                     <Title k="overview" dark sub={false} narrow />
@@ -5386,6 +5405,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const RETIRED_LH = ['Operations|Listing optimization|Photos and captions|Guidebooks|Review management|Guest messages and calls']
             const lhHouse = RETIRED_LH.indexOf(stored.map((r: Any) => String(r.k || '')).join('|')) >= 0
             const lhRows: Any[] = (lhHouse ? LH_ROWS : stored).slice(0, 6)
+            // An edit to a house row writes the whole current list in first, so the edit lands.
+            const setLh = (i: number, f: string, v: string) => mutate((d: Any) => {
+              const sc = d.lighthouse || (d.lighthouse = {})
+              if (lhHouse || !Array.isArray(sc.rows)) sc.rows = JSON.parse(JSON.stringify(lhRows))
+              if (sc.rows[i]) sc.rows[i][f] = v
+            })
             // Icons by what the row is about, so an edited title still gets a sensible mark.
             const lhIcon = (k: string) => {
               const x = k.toLowerCase()
@@ -5412,7 +5437,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     <Ed v={lhs.subtitle || ''} set={v => patch('lighthouse.subtitle', v)} edit={edit} multiline />
                   </p>
                   <p className="mt-auto" style={{ fontSize: 12.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.55)', margin: 0 }}>
-                    Built for this business, by this business. No other manager runs it.
+                    <Lab id="lhFoot" d="Built for this business, by this business. No other manager runs it." />
                   </p>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignContent: 'center' }}>
@@ -5423,10 +5448,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       </span>
                       <div style={{ minWidth: 0 }}>
                         <p style={{ fontSize: 16.5, fontWeight: 600, color: '#fff', margin: '1px 0 0' }}>
-                          {lhHouse ? String(r.k || '') : <Ed v={r.k || ''} set={v => patch('lighthouse.rows.' + i + '.k', v)} edit={edit} />}
+                          <Ed v={r.k || ''} set={v => setLh(i, 'k', v)} edit={edit} />
                         </p>
                         <p style={{ fontSize: 13, lineHeight: 1.45, color: 'rgba(255,255,255,0.72)', margin: '5px 0 0' }}>
-                          {lhHouse ? String(r.v || '') : <Ed v={r.v || ''} set={v => patch('lighthouse.rows.' + i + '.v', v)} edit={edit} multiline />}
+                          <Ed v={r.v || ''} set={v => setLh(i, 'v', v)} edit={edit} multiline />
                         </p>
                       </div>
                     </div>
@@ -5879,12 +5904,16 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         ['Nightly rate', both(rg.rateLow, rg.rateHigh), false],
                         ['Occupancy', both(rg.occLow, rg.occHigh), false],
                         ...(salesFee && lo ? [['After our ' + (Math.round(salesFee * 10) / 10) + '% fee, a year', keep(lo) + (hi && hi !== lo ? ' – ' + keep(hi) : ''), true]] : []),
-                      ] as Any[]).filter((x: Any) => x[1]).map(([l, v, dark]: Any, i: number) => (
-                        <div key={i} style={{ background: dark ? t.band : t.card, borderRadius: 14, padding: '16px 18px', border: dark ? undefined : '1px solid ' + t.cardBorder }}>
-                          <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: dark ? 'rgba(255,255,255,0.62)' : t.muted, margin: 0 }}>{l}</p>
-                          <p style={{ fontFamily: SERIF, fontSize: 26, letterSpacing: '-0.02em', color: dark ? '#fff' : t.ink, margin: '8px 0 0', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{v}</p>
+                      ] as Any[]).filter((x: Any) => x[1]).map(([l, v, dark]: Any, i: number) => { const ov: Any = (pl.cards || {})[i] || {}; return (
+                        <div key={i} style={{ background: dark ? t.band : t.card, borderRadius: 14, padding: '16px 18px', border: dark ? undefined : '1px solid ' + t.cardBorder, minWidth: 0 }}>
+                          <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: dark ? 'rgba(255,255,255,0.62)' : t.muted, margin: 0 }}>
+                            <Ed v={String(ov.l || '') || l} set={x => patch('plan.cards.' + i + '.l', x)} edit={edit} />
+                          </p>
+                          <p style={{ fontFamily: SERIF, fontSize: 26, letterSpacing: '-0.02em', color: dark ? '#fff' : t.ink, margin: '8px 0 0', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+                            <Ed v={String(ov.v || '') || v} set={x => patch('plan.cards.' + i + '.v', x)} edit={edit} />
+                          </p>
                         </div>
-                      ))}
+                      ) })}
                     </div>
                     {ms.length ? (
                       <div className="flex flex-col" style={{ marginTop: 24, flex: 1, minHeight: 0 }}>
@@ -5906,10 +5935,30 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + ms.length + ', 1fr)', gap: 10, marginTop: 7, paddingTop: 7, borderTop: '1px solid ' + t.rule }}>
                           {ms.map((m: Any, i: number) => <span key={i} style={{ fontSize: 10.5, fontWeight: 600, color: t.muted, textAlign: 'center', letterSpacing: '0.06em', textTransform: 'uppercase' }}>{String(m.label).slice(0, 3)}</span>)}
                         </div>
+                        {/* THE CHART EDITS AS NUMBERS (Jon, 2026-10-29: "if chart… it edits the
+                            chart"). Each month's base and high-end figure, typed here, redraws its
+                            bars and its label; nothing else about the slide changes. */}
+                        {edit ? (
+                          <div className="sb-noprint" style={{ display: 'grid', gridTemplateColumns: 'repeat(' + ms.length + ', 1fr)', gap: 10, marginTop: 6 }}>
+                            {ms.map((m: Any, i: number) => (
+                              <span key={i} className="flex flex-col" style={{ gap: 3 }}>
+                                {(['base', 'high'] as const).map(f => (
+                                  <input key={f} type="text" inputMode="numeric" title={(f === 'base' ? 'Base' : 'High end') + ' · ' + String(m.label)}
+                                    defaultValue={String(Number(m[f + 'Num']) || '')}
+                                    onBlur={e => { const n = Number(String(e.target.value).replace(/[^0-9.]/g, '')); if (!Number.isFinite(n)) return
+                                      if (n === (Number(m[f + 'Num']) || 0)) return
+                                      const lab = n >= 1000 ? '$' + (n >= 10000 ? Math.round(n / 1000) : Math.round(n / 100) / 10) + 'K' : '$' + Math.round(n)
+                                      mutate((d: Any) => { const mm = d.plan && Array.isArray(d.plan.months) ? d.plan.months[i] : null; if (mm) { mm[f + 'Num'] = n; mm[f] = lab } }) }}
+                                    style={{ width: '100%', minWidth: 0, fontSize: 10, padding: '2px 3px', textAlign: 'center', borderRadius: 4, border: '1px solid ' + (f === 'high' ? t.accent : t.cardBorder), background: t.card, color: t.ink, fontVariantNumeric: 'tabular-nums' }} />
+                                ))}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                     ) : <div style={{ flex: 1 }} />}
                     <p style={{ fontSize: 11, color: t.muted, margin: '14px 0 0', lineHeight: 1.45 }}>
-                      Fully ramped: assumes an established listing with reviews and booking history, so year one can run lower.
+                      <Lab id="planNote" d="Fully ramped: assumes an established listing with reviews and booking history, so year one can run lower." />
                     </p>
                   </>
                 ) : (
@@ -7218,8 +7267,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         <div key={i} style={{ display: 'grid', gridTemplateColumns: '30px 1fr', alignItems: 'baseline', borderTop: '1px solid ' + t.rule, paddingTop: 12 }}>
                           <span style={{ fontFamily: SERIF, fontSize: 19, color: t.accent }}>{i + 1}</span>
                           <div>
-                            <p style={{ fontSize: 15, fontWeight: 600, color: t.ink, margin: 0 }}>{k}</p>
-                            <p style={{ fontSize: 13, lineHeight: 1.45, color: t.muted, margin: '3px 0 0' }}>{v}</p>
+                            <p style={{ fontSize: 15, fontWeight: 600, color: t.ink, margin: 0 }}><Lab id={'stPoint' + i + 'k'} d={k} /></p>
+                            <p style={{ fontSize: 13, lineHeight: 1.45, color: t.muted, margin: '3px 0 0' }}><Lab id={'stPoint' + i + 'v'} d={v} /></p>
                           </div>
                         </div>
                       ))}
@@ -8165,6 +8214,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                   edit={edit}
                   onToggle={() => toggleSection(sl.key)}
                   onAi={sl.ai ? () => openAi(sl.key) : undefined}
+                  {...(() => { const ri = deckRows.findIndex(r => r.key === sl.key); if (ri < 0 || deckRows[ri].first !== i) return {}; return {
+                    pos: (ri + 2) + ' of ' + (deckRows.length + 1),
+                    onUp: ri > 0 ? () => moveRow(ri, ri - 1) : undefined,
+                    onDown: ri < deckRows.length - 1 ? () => moveRow(ri, ri + 1) : undefined,
+                  } })()}
                 >
                   {sl.node}
                 </SectionShell>
