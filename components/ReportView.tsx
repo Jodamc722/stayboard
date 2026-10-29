@@ -4666,53 +4666,76 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               if (showLeaders) { tt.showLeaders = false; tt.people = tt.people.filter((x: Any) => !isL(x)) }
               else { tt.showLeaders = true; tt.people = [...(SALES_LEADERS as Any[]).filter(l => !tt.people.some((x: Any) => String(x.name || '').toLowerCase() === l.name.toLowerCase())).map(l => ({ ...l, phone: l.phone || '', email: l.email || '', leader: true })), ...tt.people] }
             })
+            // THE TEAM, REORGANISED (Jon, 2026-10-28: "reorganize the team slide, make it cleaner or
+            // better formatted"). Cards span the full width instead of huddling left; when the
+            // leadership add-on is on, the people split into two labelled groups — who leads the
+            // company, and who runs the owner's home day to day — with a rule between them. Every
+            // card has the same parts in the same place: photo, name, title, then a hairline and
+            // the contact lines. The editing chips sit in the heading row so they never push the
+            // slide past its page.
+            const isLead = (p: Any) => !!p.leader || (SALES_LEADERS as Any[]).some(l => l.name.toLowerCase() === String(p.name || '').toLowerCase())
+            const leadP = ppl.filter(isLead)
+            const localP = ppl.filter(p => !isLead(p))
+            const groups: { label: string; people: Any[] }[] = [
+              ...(leadP.length ? [{ label: 'Leadership', people: leadP }] : []),
+              ...(localP.length ? [{ label: leadP.length ? 'Your local team' : 'Your team', people: localP }] : []),
+            ]
+            const photoH = showMonarch ? 196 : 236
+            const Card = (p: Any, i: number) => (
+              <div key={i} className="flex flex-col" style={{ minWidth: 0, position: 'relative' }}>
+                {p.photo || edit ? (
+                  <Pick title={'Photo — ' + String(p.name || 'team member')} cur={String(p.photo || '')} set={u => setP(p, 'photo', u)} pos="50% 22%"
+                    style={{ width: '100%', height: photoH, borderRadius: 14, background: t.chip }} />
+                ) : (
+                  <div className="flex items-center justify-center" style={{ width: '100%', height: photoH, borderRadius: 14, background: t.chip, color: t.muted, fontSize: 28, fontWeight: 700 }}>
+                    {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
+                  </div>
+                )}
+                {edit ? (
+                  <button className="sb-noprint" onClick={() => dropP(p)} title="Remove from this deck"
+                    style={{ position: 'absolute', top: 8, right: 8, width: 24, height: 24, borderRadius: 999, background: 'rgba(255,255,255,0.94)', color: '#111', fontSize: 14, lineHeight: '24px', zIndex: 2 }}>×</button>
+                ) : null}
+                <p style={{ fontSize: 17, fontWeight: 600, color: t.ink, margin: '14px 0 0', lineHeight: 1.2 }}><Ed v={String(p.name || '')} set={v => setP(p, 'name', v)} edit={edit} placeholder="Name" /></p>
+                <p style={{ fontSize: 12, color: t.accent, margin: '4px 0 0', fontWeight: 600, letterSpacing: '0.01em' }}><Ed v={String(p.role || '')} set={v => setP(p, 'role', v)} edit={edit} placeholder="Title" /></p>
+                <div style={{ marginTop: 10, paddingTop: 9, borderTop: '1px solid ' + t.rule, display: 'grid', gap: 2 }}>
+                  {String(p.phone || '').trim() || edit ? <p style={{ fontSize: 12, color: t.body, margin: 0, fontVariantNumeric: 'tabular-nums' }}><Ed v={String(p.phone || '')} set={v => setP(p, 'phone', v)} edit={edit} placeholder="Phone" /></p> : null}
+                  {String(p.email || '').trim() || edit ? <p style={{ fontSize: 11.5, color: t.muted, margin: 0, wordBreak: 'break-all' }}><Ed v={String(p.email || '')} set={v => setP(p, 'email', v)} edit={edit} placeholder="Email" /></p> : null}
+                </div>
+              </div>
+            )
             slides.push({ key: 'team', node: (
             <Slide nav="Your team" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
-                <div className="flex items-end justify-between" style={{ gap: 30 }}>
+                <div className="flex items-end justify-between" style={{ gap: 24 }}>
                   <SalesHead k="team" eyebrow="Your team" />
+                  {edit ? (
+                    <div className="sb-noprint flex items-center flex-wrap justify-end" style={{ gap: 6, maxWidth: 430 }}>
+                      <button onClick={() => mutate((d: Any) => { const tt = d.team || (d.team = {}); tt.people = Array.isArray(tt.people) ? tt.people : []; tt.people.push({ name: 'New person', role: '', photo: '', phone: '', email: '' }) })}
+                        style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 12px', borderRadius: 999, background: t.ink, color: t.bg }}>+ Add person</button>
+                      {([['showLeaders', 'Leadership (Eric, Ryan)', showLeaders], ['showMonarch', 'Monarch Collective', showMonarch]] as const).map(([k, l, on]) => (
+                        <button key={k} onClick={() => (k === 'showLeaders' ? toggleLeaders() : patch('team.' + k, !on))}
+                          style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 12px', borderRadius: 999, border: '1px solid ' + (on ? t.ink : t.cardBorder), background: on ? t.ink : t.card, color: on ? t.bg : t.ink }}>
+                          {on ? '✓ ' : '+ '}{l}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
-                {/* Fixed-width cards, so two people read as two people rather than as half a row. */}
-                <div style={{ marginTop: 26, display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, ppl.length) + ', minmax(0, ' + (ppl.length <= 3 ? 230 : 190) + 'px))', gap: 24, alignItems: 'start' }}>
-                  {ppl.map((p: Any, i: number) => (
-                    <div key={i} className="flex flex-col" style={{ minWidth: 0, position: 'relative' }}>
-                      {p.photo || edit ? (
-                        <Pick title={'Photo \u2014 ' + String(p.name || 'team member')} cur={String(p.photo || '')} set={u => setP(p, 'photo', u)} pos="50% 22%"
-                          style={{ width: '100%', aspectRatio: showMonarch ? '1 / 1' : '4 / 5', borderRadius: 16 }} />
-                      ) : (
-                        <div className="flex items-center justify-center" style={{ width: '100%', aspectRatio: showMonarch ? '1 / 1' : '4 / 5', borderRadius: 16, background: t.chip, color: t.muted, fontSize: 28, fontWeight: 700 }}>
-                          {String(p.name || '?').trim().split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('')}
-                        </div>
-                      )}
-                      {edit ? (
-                        <button className="sb-noprint" onClick={() => dropP(p)} title="Remove from this deck"
-                          style={{ position: 'absolute', top: 8, right: 8, width: 24, height: 24, borderRadius: 999, background: 'rgba(255,255,255,0.94)', color: '#111', fontSize: 14, lineHeight: '24px', zIndex: 2 }}>×</button>
-                      ) : null}
-                      <p style={{ fontSize: 17, fontWeight: 600, color: t.ink, margin: '14px 0 0', lineHeight: 1.2 }}><Ed v={String(p.name || '')} set={v => setP(p, 'name', v)} edit={edit} placeholder="Name" /></p>
-                      <p style={{ fontSize: 12.5, color: t.accent, margin: '4px 0 0', fontWeight: 600 }}><Ed v={String(p.role || '')} set={v => setP(p, 'role', v)} edit={edit} placeholder="Title" /></p>
-                      {String(p.phone || '').trim() || edit ? <p style={{ fontSize: 12.5, color: t.body, margin: '8px 0 0', fontVariantNumeric: 'tabular-nums' }}><Ed v={String(p.phone || '')} set={v => setP(p, 'phone', v)} edit={edit} placeholder="Phone" /></p> : null}
-                      {String(p.email || '').trim() || edit ? <p style={{ fontSize: 12, color: t.muted, margin: '2px 0 0', wordBreak: 'break-all' }}><Ed v={String(p.email || '')} set={v => setP(p, 'email', v)} edit={edit} placeholder="Email" /></p> : null}
+                <div style={{ marginTop: 28, display: 'grid', gridTemplateColumns: groups.map(g => g.people.length + 'fr').join(' '), gap: 36, alignItems: 'start' }}>
+                  {groups.map((g, gi) => (
+                    <div key={gi} style={{ minWidth: 0, paddingLeft: gi ? 36 : 0, marginLeft: gi ? -18 : 0, borderLeft: gi ? '1px solid ' + t.rule : 'none' }}>
+                      <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: t.muted, margin: '0 0 12px' }}>{g.label}</p>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + g.people.length + ', minmax(0, 1fr))', gap: 20 }}>
+                        {g.people.map(Card)}
+                      </div>
                     </div>
                   ))}
                 </div>
                 {/* THE POWER BEHIND THE LOCAL TEAM (Jon, 2026-10-28) — an add-on. */}
                 {showMonarch ? (
-                  <div className="flex items-center" style={{ marginTop: 22, gap: 22, background: t.band, borderRadius: 14, padding: '16px 22px' }}>
+                  <div className="flex items-center mt-auto" style={{ gap: 22, background: t.band, borderRadius: 14, padding: '13px 22px' }}>
                     <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.62)', margin: 0, whiteSpace: 'nowrap' }}>{MONARCH_EYEBROW}</p>
-                    <p style={{ fontSize: 14, lineHeight: 1.45, color: '#fff', margin: 0 }}>{MONARCH_LINE}</p>
-                  </div>
-                ) : null}
-                {edit ? (
-                  <div className="sb-noprint flex items-center" style={{ gap: 8, marginTop: 12 }}>
-                    <span style={{ fontSize: 11, color: t.muted }}>Add-ons:</span>
-                    <button onClick={() => mutate((d: Any) => { const tt = d.team || (d.team = {}); tt.people = Array.isArray(tt.people) ? tt.people : []; tt.people.push({ name: 'New person', role: '', photo: '', phone: '', email: '' }) })}
-                      style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 12px', borderRadius: 999, background: t.ink, color: t.bg }}>+ Add person</button>
-                    {([['showLeaders', 'Leadership (Eric, Ryan)', showLeaders], ['showMonarch', 'Monarch Collective', showMonarch]] as const).map(([k, l, on]) => (
-                      <button key={k} onClick={() => (k === 'showLeaders' ? toggleLeaders() : patch('team.' + k, !on))}
-                        style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 12px', borderRadius: 999, border: '1px solid ' + (on ? t.ink : t.cardBorder), background: on ? t.ink : t.card, color: on ? t.bg : t.ink }}>
-                        {on ? '✓ ' : '+ '}{l}
-                      </button>
-                    ))}
+                    <p style={{ fontSize: 13.5, lineHeight: 1.45, color: '#fff', margin: 0 }}>{MONARCH_LINE}</p>
                   </div>
                 ) : null}
               </div>
@@ -7000,18 +7023,18 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             // every tab (dashboard, properties, calendar, owner stays, analytics, reservation
             // report, documents, accounting, help) opens what an owner actually sees there.
             slides.push({ key: 'guesty', ai: true, node: (
-            <Slide nav="Owner portal" warn={edit} ground={GROUND.tint} pad={28}>
+            <Slide nav="Owner portal" warn={edit} ground={GROUND.tint}>
+              {/* ONE FRAME FOR EVERY SLIDE (Jon, 2026-10-28: "make sure all slides are the same
+                  size"). The portal slide had its own tighter margin and a smaller heading, so its
+                  title sat higher and read smaller than every other slide's. It now takes the house
+                  margin and heading; the portal window alone reaches out past the margin, so the
+                  demo keeps its size. */}
               <div className="flex flex-col" style={{ height: '100%' }}>
-                <div className="flex items-end justify-between" style={{ gap: 24, padding: '4px 8px 14px' }}>
-                  <div>
-                    <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: t.accent, margin: 0 }}>Owner portal</p>
-                    <h2 style={{ fontSize: 30, lineHeight: 1.1, letterSpacing: '-0.025em', fontWeight: 600, color: t.ink, margin: '6px 0 0' }}>
-                      <Ed v={sec('guesty').headline || ''} set={v => patch('guesty.headline', v)} edit={edit} />
-                    </h2>
-                  </div>
-                  <p style={{ fontSize: 13, color: t.muted, margin: 0, textAlign: 'right', maxWidth: '40ch' }}>Click through it. This is exactly what you see: your calendar, your stays, your revenue, your statements.</p>
+                <div className="flex items-end justify-between" style={{ gap: 24 }}>
+                  <SalesHead k="guesty" eyebrow="Owner portal" />
+                  <p style={{ fontSize: 13, color: t.muted, margin: '0 0 4px', textAlign: 'right', maxWidth: '40ch' }}><Lab id="portalHint" d="Click through it. This is exactly what you see: your calendar, your stays, your revenue, your statements." /></p>
                 </div>
-                <div className="flex flex-col" style={{ flex: 1, minHeight: 0, borderRadius: 14, overflow: 'hidden', border: '1px solid ' + t.cardBorder, boxShadow: '0 24px 50px -28px rgba(10,20,40,0.45)', background: '#fff' }}>
+                <div className="flex flex-col" style={{ flex: 1, minHeight: 0, margin: '20px -36px -40px', borderRadius: 14, overflow: 'hidden', border: '1px solid ' + t.cardBorder, boxShadow: '0 24px 50px -28px rgba(10,20,40,0.45)', background: '#fff' }}>
                   <div className="flex items-center" style={{ gap: 6, padding: '8px 12px', background: '#eef1f6', borderBottom: '1px solid #e2e6ee', flexShrink: 0 }}>
                     {['#ff5f57', '#febc2e', '#28c840'].map(cl => <span key={cl} style={{ width: 9, height: 9, borderRadius: 9, background: cl }} />)}
                     <span style={{ marginLeft: 10, fontSize: 10.5, color: '#6b7280', background: '#fff', borderRadius: 6, padding: '3px 10px', flex: 1, maxWidth: 360 }}>
@@ -7155,8 +7178,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               <Slide nav="Owner statement" warn={edit}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 580px', gap: 40, height: '100%' }}>
                   <div className="flex flex-col">
-                    <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: t.accent, margin: 0 }}>Owner statement</p>
-                    <h2 style={{ fontSize: 38, lineHeight: 1.08, letterSpacing: '-0.025em', fontWeight: 600, color: t.ink, margin: '10px 0 0', maxWidth: '14ch' }}>A statement you can read in a minute</h2>
+                    <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: t.accent, margin: 0 }}><Lab id="eyebrow_statement" d="Owner statement" /></p>
+                    <h2 style={{ fontSize: 40, lineHeight: 1.08, letterSpacing: '-0.025em', fontWeight: 600, color: t.ink, margin: '10px 0 0', maxWidth: '14ch' }}>
+                      <Ed v={String(sec('statement').salesHeadline || '') || 'A statement you can read in a minute'} set={v => patch('statement.salesHeadline', v)} edit={edit} multiline />
+                    </h2>
                     <div style={{ marginTop: 26, display: 'grid', gap: 14 }}>
                       {points.map(([k, v], i) => (
                         <div key={i} style={{ display: 'grid', gridTemplateColumns: '30px 1fr', alignItems: 'baseline', borderTop: '1px solid ' + t.rule, paddingTop: 12 }}>
