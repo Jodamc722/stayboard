@@ -196,6 +196,8 @@ export const BZ_TEMPLATES = {
    * interim "Departure Clean 1.0" copy (910139) was retired the same day — one template, one truth.
    */
   departureClean: 203344,
+  /** Property Exterior Clean 1.0 — Maintenance: walk the grounds and trash area, water plants, blow walkways; photos (lib/exterior-clean-task). */
+  exteriorClean: 921654,
 } as const
 
 /**
