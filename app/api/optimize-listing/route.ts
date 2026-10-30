@@ -33,7 +33,9 @@ import { aiFetch } from '@/lib/ai-usage'
 export const dynamic = 'force-dynamic'
 // Was 45. Opus with ~10 vision images does comparable work to the photo analyst, which needs 120
 // with a 110s abort (a verified run took 57.9s). At 45 a slow full run 504s with no message.
-export const maxDuration = 120
+// 300 (2026-10-30): a well-photographed unit plus an 8000-token answer ran past 120 s and Vercel
+// returned its HTML timeout page, which the panel showed as "Unexpected token '<'".
+export const maxDuration = 300
 
 function str(v: any): string { return typeof v === 'string' ? v : '' }
 
@@ -400,7 +402,7 @@ CURRENT GUESTY CONTENT (improve on this; it may be thin or empty):
 ${JSON.stringify(current)}`
 
   const ac = new AbortController()
-  const acTimer = setTimeout(() => ac.abort(), 110_000)
+  const acTimer = setTimeout(() => ac.abort(), 270_000)
   try {
     const r = await aiFetch('listing-copy', {
       method: 'POST',

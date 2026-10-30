@@ -2,6 +2,16 @@
 import { useEffect, useState } from 'react'
 import { Sparkles, Wand2, AlertTriangle, Info, UploadCloud, Check, RotateCcw, RefreshCw, MessageSquarePlus, Pencil } from 'lucide-react'
 
+/** A reply that is not JSON (a timeout or crash page) becomes a plain message, not "Unexpected token '<'". */
+async function readJson(res: Response): Promise<any> {
+  const text = await res.text()
+  try { return JSON.parse(text) } catch {
+    return { error: res.status === 504 || res.status === 524 || /timeout|timed out/i.test(text)
+      ? 'This took longer than the server allows. Try again — or regenerate one section at a time.'
+      : 'The server had a problem (' + res.status + '). Try again in a minute.' }
+  }
+}
+
 type Content = { title: string; summary: string; space: string; access: string; neighborhood: string; transit: string; notes: string }
 type Result = {
   listingId: string
@@ -57,7 +67,7 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ listingId, instruction }),
       })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
       const r = d as Result
       setResult(r); setEdited({ ...r.proposed })
@@ -82,7 +92,7 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ listingId, currentOnly: true }),
       })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
       const r = d as Result
       setResult(r); setEdited({ ...r.proposed })
@@ -113,7 +123,7 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ listingId, section: k, instruction: (prompts[k] || '').trim(), currentText: (edited as any)?.[k] || '' }),
       })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
       setField(k, String(d.text || ''))
       setInclude(p => ({ ...p, [k]: true }))
@@ -141,7 +151,7 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
       setSectionMsg(m => ({ ...m, [k]: 'Pushed to Guesty ✓' }))
     } catch (e: any) {
@@ -172,7 +182,7 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ listingId, title: titleApproved ? edited.title.trim() : undefined, publicDescription: sections, recreate: wasRecreate }),
       })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
       const parts = [d.pushed?.title ? 'title' : null, ...(d.pushed?.sections || [])].filter(Boolean)
       setPushedMsg(`Pushed to Guesty: ${parts.join(', ')}. Reload to see it reflected.`)
