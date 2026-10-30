@@ -29,12 +29,14 @@ export const TARGETS: Target[] = [
   { key: '906', label: '906', unitRe: /^906\b/i, nameRe: /\b906\b/i, cadence: 'daily' },
   { key: 'oasis', label: 'Oasis', unitRe: /^oasis\b/i, nameRe: /^oasis\b/i, cadence: 'daily' },
   { key: 'hendricks', label: 'Hendricks', unitRe: /^hendricks\b/i, nameRe: /\bhendricks\b/i, cadence: 'mwf' },
-  { key: 'miamird', label: 'Miami Rd', unitRe: /^miami\s*r(oa)?d\b/i, nameRe: /\bmiami\s*r(oa)?d\b/i, cadence: 'mwf' },
+  { key: 'miamird', label: 'Miami Rd', unitRe: /^2023\//, nameRe: /\b2023\b|\bmiami\s*r(oa)?d\b/i, cadence: 'mwf' },
   { key: 'capri', label: 'Capri', unitRe: /^capri\b/i, nameRe: /\bcapri\b/i, cadence: 'alternate' },
-  { key: 'lucerne', label: 'Lucerne', unitRe: /^lucerne\b/i, nameRe: /\blucerne\b/i, cadence: 'alternate' },
+  { key: 'lucerne', label: 'Lucerne', unitRe: /\blucerne\b/i, nameRe: /\blucerne\b/i, cadence: 'alternate' },
   { key: 'boynton', label: 'Boynton', unitRe: /^boynton\b/i, nameRe: /\bboynton\b/i, cadence: 'alternate' },
 ]
 /** Maintenance, on every task. Breezeway names matched on the first word. */
+/** Shared logins that sit on tasks but never walk a property. */
+const NOT_A_PERSON = /customer care|support/i
 const MAINTENANCE = [/^gehron\b/i /* Ronnie */]
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
@@ -82,13 +84,19 @@ export async function planExteriorCleans(day = ymdET(new Date())): Promise<{ day
   const out: ExteriorPlan[] = []
   for (const t of TARGETS) {
     const unitIds = listings.filter(l => t.unitRe.test(l.name)).map(l => l.id)
-    const unitHomes = allProps.filter(p => unitIds.indexOf(str(p.reference_property_id)) >= 0)
+    // Units by listing link, plus Breezeway properties named like the units (a new building whose
+    // Breezeway homes are not linked to their listing yet — Boynton, 2026-10-30).
+    const unitHomes = allProps.filter(p => unitIds.indexOf(str(p.reference_property_id)) >= 0 || t.unitRe.test(str(p.name).trim()))
     const ext = allProps.find(p => /exterior|building/i.test(str(p.name)) && t.nameRe.test(str(p.name)))
     let homeId: number | null = ext ? Number(ext.home_id) : null
     let where = ext ? str(ext.name) : ''
     if (homeId == null) {
       const units = listings.filter(l => t.unitRe.test(l.name) && !/\bfull\b/i.test(l.name)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
       for (const u of units) { const p = allProps.find(x => str(x.reference_property_id) === u.id); if (p) { homeId = Number(p.home_id); where = u.name; break } }
+    }
+    if (homeId == null) {
+      const named = unitHomes.filter(p => !/\bfull\b/i.test(str(p.name))).sort((a, b) => str(a.name).localeCompare(str(b.name), undefined, { numeric: true }))[0]
+      if (named) { homeId = Number(named.home_id); where = str(named.name) }
     }
     const homeIds = unitHomes.map(p => Number(p.home_id)).concat(homeId != null ? [homeId] : [])
     const cleaners: { id: number; name: string }[] = []
@@ -106,7 +114,7 @@ export async function planExteriorCleans(day = ymdET(new Date())): Promise<{ day
         cleanToday = true
         for (const a of (Array.isArray(tk.assignees) ? tk.assignees : []) as any[]) {
           const id = Number(a?.id)
-          if (Number.isFinite(id) && !cleaners.some(h => h.id === id) && !maintenance.some(m => m.id === id)) cleaners.push({ id, name: str(a?.name) })
+          if (Number.isFinite(id) && !NOT_A_PERSON.test(str(a?.name)) && !cleaners.some(h => h.id === id) && !maintenance.some(m => m.id === id)) cleaners.push({ id, name: str(a?.name) })
         }
       }
     }
