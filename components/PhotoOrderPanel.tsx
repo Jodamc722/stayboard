@@ -39,6 +39,7 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
   // Stay storage first, then the photos leave the listing.
   const [del, setDel] = useState<Set<string>>(new Set())
   const toggleDel = (id: string) => setDel(d => { const n = new Set(d); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const [asking, setAsking] = useState('')   // photo id awaiting the are-you-sure step
   const changed = order.join() !== start.join() || Object.keys(swap).length > 0 || del.size > 0
 
   const moveTo = (id: string, pos: number) => setOrder(o => { const n = o.filter(x => x !== id); n.splice(Math.max(0, Math.min(n.length, pos - 1)), 0, id); return n })
@@ -112,10 +113,23 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
                 <div className="relative">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={sw ? sw.url : p.url} alt={p.caption || ''} className={'w-full aspect-[4/3] object-cover ' + (del.has(id) ? 'opacity-30 grayscale' : '')} loading="lazy" />
-                  <button onClick={() => toggleDel(id)} title={del.has(id) ? 'Keep this photo' : 'Delete this photo (on Save)'}
-                    className={'absolute bottom-1.5 right-1.5 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11.5px] font-bold shadow ' + (del.has(id) ? 'bg-white text-ink border border-line' : 'bg-rose-600 text-white hover:bg-rose-700')}>
-                    {del.has(id) ? <><Undo2 size={12} /> Undo</> : <><Trash2 size={12} /> Delete</>}
-                  </button>
+                  {del.has(id) ? (
+                    <button onClick={() => toggleDel(id)} title="Keep this photo"
+                      className="absolute bottom-1.5 right-1.5 inline-flex items-center gap-1 rounded-md bg-white/90 border border-line px-1.5 py-0.5 text-[11px] font-semibold text-ink">
+                      <Undo2 size={11} /> Undo
+                    </button>
+                  ) : asking === id ? (
+                    <div className="absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded-md bg-white/95 border border-line px-1.5 py-1 text-[11px] shadow">
+                      <span className="font-semibold text-rose-700">Are you sure?</span>
+                      <button onClick={() => { toggleDel(id); setAsking('') }} className="rounded px-1.5 py-0.5 bg-rose-600 text-white font-semibold">Yes</button>
+                      <button onClick={() => setAsking('')} className="rounded px-1.5 py-0.5 border border-line text-ink">No</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setAsking(id)} title="Delete photo" aria-label="Delete photo"
+                      className="absolute bottom-1.5 right-1.5 grid place-items-center w-6 h-6 rounded-md bg-black/40 text-white/90 hover:bg-black/60">
+                      <Trash2 size={12} />
+                    </button>
+                  )}
                   {del.has(id) && <span className="absolute inset-0 grid place-items-center text-[12px] font-bold text-rose-700 pointer-events-none">Will be deleted</span>}
                   <span className={'absolute top-1.5 left-1.5 text-[11px] font-bold px-1.5 py-0.5 rounded ' + (top ? 'bg-amber-500 text-white' : 'bg-black/60 text-white')}>{pos === 1 ? <span className="inline-flex items-center gap-0.5"><Crown size={10} /> 1 · cover</span> : pos}</span>
                   {sw && <span className="absolute top-1.5 right-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white">{sw.label}</span>}
