@@ -122,8 +122,8 @@ const DEFAULT_SECTIONS: Record<SectionKey, SectionConfig> = {
   },
   summary: {
     label: 'Summary',
-    guide: 'The headline pitch shown first (the main Airbnb/Vrbo description). HARD CAP 500 characters. It must make someone scrolling stop and book. Shape: (1) the FIRST sentence opens on the strongest true reason to stay HERE — usually the location pull: the famous place it is close to, by name and real drive or walk time from the verified facts (a Boynton Beach unit leads with Delray Beach’s Atlantic Avenue; a Lake Worth unit with Palm Beach) — paired with the home’s best feature; (2) who it is perfect for and the layout in a few words (sleeps, beds); (3) the two or three things guests book for (free parking, pool, patio, kitchen, washer); (4) one warm, true closing reason to book. Plain search words, no inventory. ALWAYS END with a short standalone line: "Please see Other things to note before booking." (within the 500-char cap). Most important field.',
-    targetMin: 350, targetMax: 500, hardCap: 500, mustInclude: '', neverSay: '', enabled: true, examples: [],
+    guide: 'The headline pitch shown first (the main Airbnb/Vrbo description). USE THE FULL SPACE: aim for 480–500 characters (count them; never under 470), HARD CAP 500. It must make someone scrolling stop and book. Shape: (1) the FIRST sentence opens on the strongest true reason to stay HERE — usually the location pull: the famous place it is close to, by name and real drive or walk time from the verified facts (a Boynton Beach unit leads with Delray Beach’s Atlantic Avenue; a Lake Worth unit with Palm Beach) — paired with the home’s best feature; (2) who it is perfect for and the layout in a few words (sleeps, beds); (3) the two or three things guests book for (free parking, pool, patio, kitchen, washer); (4) one warm, true closing reason to book. Plain search words, no inventory. ALWAYS END with a short standalone line: "Please see Other things to note before booking." (within the 500-char cap). Most important field.',
+    targetMin: 470, targetMax: 500, hardCap: 500, mustInclude: '', neverSay: '', enabled: true, examples: [],
   },
   space: {
     label: 'The space',
