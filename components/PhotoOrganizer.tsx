@@ -672,7 +672,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
             title="Back up every photo's untouched original to Stay storage — no changes, nothing pushed"
             className="inline-flex items-center gap-2 rounded-xl border border-line bg-white text-ink px-3.5 py-2.5 text-sm font-semibold hover:bg-app disabled:opacity-50">
             {mirroring ? <Sparkles size={15} className="animate-pulse" /> : <Archive size={15} />}
-            {mirroring ? 'Mirroring\u2026' : 'Mirror'}
+            {mirroring ? 'Backing up\u2026' : 'Back up originals'}
           </button>
           <button onClick={() => enhance(order.length > 0 ? order : undefined)} disabled={enhancing || busy || pushing}
             title="Back up every original, then create a corrected version using the preset the AI picked per photo (exposure, contrast, colour, sharpness — never a repaint). You compare and tick before anything goes live."

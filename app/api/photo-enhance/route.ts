@@ -86,12 +86,29 @@ async function autoPipeline(buf: Buffer, base: sharp.Sharp): Promise<{ pipe: sha
   return { pipe: out, why }
 }
 
+/** One finished version: the pipeline → sRGB-tagged JPEG → uploaded; returns its public URL. */
+async function renderVersion(sb: ReturnType<typeof supabaseAdmin>, listingId: string, id: string, buf: Buffer, preset: EnhancePreset, tag: string, flip = false): Promise<{ url: string; why: string; bytes: number } | { error: string }> {
+  let base = sharp(buf, { failOn: 'none' }).rotate()
+  if (flip) base = base.flop()
+  base = base.resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true })
+  let piped: sharp.Sharp, why = ''
+  if (preset.key === 'none') piped = base
+  else if (preset.key === 'auto') { try { const a = await autoPipeline(buf, base); piped = a.pipe; why = a.why } catch { piped = applyPreset(base, preset) } }
+  else piped = applyPreset(base, preset)
+  const out = await piped.toColourspace('srgb').withIccProfile('srgb').jpeg({ quality: preset.key === 'none' ? 92 : 88, mozjpeg: true }).toBuffer()
+  const path = `${listingId}/${id}/${tag}-${Date.now()}.jpg`
+  const up = await sb.storage.from(BUCKET).upload(path, out, { contentType: 'image/jpeg', upsert: true })
+  if (up.error) return { error: `${tag} upload: ${up.error.message}` }
+  return { url: sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl, why, bytes: out.length }
+}
+
 async function processOne(
   sb: ReturnType<typeof supabaseAdmin>,
   listingId: string,
   pic: any,
   preset: EnhancePreset,
   mirrorOnly = false,
+  extra: { flip?: boolean; variants?: EnhancePreset[] } = {},
 ) {
   const id = String(pic?._id || '')
   const src = str(pic?.original) || str(pic?.large) || str(pic?.thumbnail)
@@ -110,6 +127,26 @@ async function processOne(
   if (up1.error) return { _id: id, error: `mirror upload: ${up1.error.message}` }
   const mirroredUrl = sb.storage.from(BUCKET).getPublicUrl(origPath).data.publicUrl
   if (mirrorOnly) return { _id: id, mirroredUrl, preset: 'none', presetName: 'None', bytesBefore: buf.length }
+
+  // FLIP (Jon, 2026-10-30: "when you click it, it mirrors the photo"): the photo turned left-to-right,
+  // nothing else changed — for a shot that reads better facing the other way. A version to approve.
+  if (extra.flip) {
+    const v = await renderVersion(sb, listingId, id, buf, NONE_PRESET, 'flipped', true)
+    if ('error' in v) return { _id: id, error: v.error }
+    return { _id: id, mirroredUrl, flippedUrl: v.url, preset: 'none', presetName: 'Flipped', bytesBefore: buf.length }
+  }
+  // OPTIONS (Jon, 2026-10-30: "have multiple enhancement options when you enhance"): the same photo
+  // through several presets at once, so the host picks the one that looks right instead of trusting
+  // one recipe.
+  if (extra.variants && extra.variants.length) {
+    const variants: { preset: string; name: string; url: string; why: string }[] = []
+    for (const vp of extra.variants) {
+      const v = await renderVersion(sb, listingId, id, buf, vp, 'opt-' + vp.key)
+      if (!('error' in v)) variants.push({ preset: vp.key, name: vp.name, url: v.url, why: v.why || vp.when })
+    }
+    if (!variants.length) return { _id: id, error: 'no option could be made' }
+    return { _id: id, mirroredUrl, variants, preset: variants[0].preset, presetName: variants[0].name, bytesBefore: buf.length }
+  }
 
   // "None" means the photo is already good — back it up and leave it alone. There is nothing to
   // approve, so no enhanced version is created.
@@ -159,6 +196,8 @@ export async function POST(req: NextRequest) {
   const globalPreset: string = str(body?.preset).trim()
   // Per-photo overrides from the UI: { photoId: presetKey }.
   const perPhoto: Record<string, string> = (body?.presets && typeof body.presets === 'object') ? body.presets : {}
+  const flip = body?.flip === true
+  const wantVariants: string[] = Array.isArray(body?.variants) ? body.variants.filter((x: any) => typeof x === 'string').slice(0, 6) : []
 
   const cfg = await loadListingAi()
 
@@ -181,9 +220,11 @@ export async function POST(req: NextRequest) {
     return presetByKey(cfg, cfg.enhance.autoPick ? 'auto' : cfg.enhance.fallbackPreset)
   }
 
+  // Options and flips are made for a few chosen photos at a time, not the whole set.
   const targets = all
     .filter(p => !wanted || wanted.has(String(p?._id || '')))
-    .slice(0, MAX_PER_CALL)
+    .slice(0, wantVariants.length ? 3 : flip ? 12 : MAX_PER_CALL)
+  const variantPresets: EnhancePreset[] = wantVariants.map(k => presetByKey(cfg, k)).filter((p, i, a) => a.findIndex(x => x.key === p.key) === i)
   if (targets.length === 0) return NextResponse.json({ error: 'no matching photos' }, { status: 400 })
 
   try { await ensureBucket(sb) } catch (e: any) {
@@ -196,7 +237,7 @@ export async function POST(req: NextRequest) {
     const chunk = targets.slice(i, i + CONCURRENCY)
     const settled = await Promise.all(chunk.map(p => {
       const id = String(p?._id || '')
-      return processOne(sb, listingId, p, mirrorOnly ? NONE_PRESET : presetFor(id), mirrorOnly)
+      return processOne(sb, listingId, p, mirrorOnly ? NONE_PRESET : presetFor(id), mirrorOnly, { flip, variants: variantPresets })
         .catch((e: any) => ({ _id: id, error: e?.message || String(e) }))
     }))
     results.push(...settled)
@@ -221,12 +262,14 @@ export async function POST(req: NextRequest) {
     failedCount: failed.length,
     mirrorOnly,
     // Photos the model judged already good — reported so "nothing happened" is explained, not silent.
-    skippedNone: ok.filter(r => !r.enhancedUrl && !mirrorOnly).length,
+    skippedNone: flip || wantVariants.length ? 0 : ok.filter(r => !r.enhancedUrl && !mirrorOnly).length,
     // Below Airbnb's 1024px: enhancing cannot fix these — reshoot or replace them.
     lowRes: ok.filter(r => (r as any).lowRes).map(r => ({ _id: r._id, longSide: (r as any).longSide })),
     photos: ok.map(r => ({
       _id: r._id,
       ...(r.enhancedUrl ? { enhancedUrl: r.enhancedUrl } : {}),
+      ...((r as any).flippedUrl ? { flippedUrl: (r as any).flippedUrl } : {}),
+      ...((r as any).variants ? { variants: (r as any).variants } : {}),
       mirroredUrl: r.mirroredUrl,
       preset: r.preset, presetName: r.presetName,
       enhanceWhy: str((r as any).autoWhy) || str(photoIndex[r._id]?.enhanceWhy),

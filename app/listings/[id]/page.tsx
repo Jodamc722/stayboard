@@ -20,6 +20,7 @@ import { Shell } from '@/components/Shell'
 import { ListingOptimizer } from '@/components/ListingOptimizer'
 import { otaLinksFrom } from '@/lib/ota-links'
 import { PhotoOrganizer } from '@/components/PhotoOrganizer'
+import { PhotoOrderPanel } from '@/components/PhotoOrderPanel'
 import { HeroCollage } from '@/components/HeroCollage'
 import { ListingReviews } from '@/components/ListingReviews'
 import { UnitTasks } from '@/components/UnitTasks'
@@ -351,6 +352,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
             // cover shot is the single highest-impact photo decision on a listing; it belongs where
             // somebody is already looking at the photos. Organiser first — that is the bulk work.
             <div className="space-y-3">
+              <PhotoOrderPanel listingId={listing.id} pictures={pictures} />
               <PhotoOrganizer listingId={listing.id} name={name} />
               <HeroCollage listingId={listing.id} name={name} city={listing.address_city || ''} building={buildingName} pictures={pictures} amenities={amenities} />
             </div>
