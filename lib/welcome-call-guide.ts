@@ -179,7 +179,7 @@ export const BUILDINGS: BuildingGuide[] = [
     // Jon, 2026-10-30: "Boynton Beach property does not have garage so stop saying that." 10 spots,
     // 1 kept for staff and vendors, the rest for guests — one per reservation, included with the stay.
     key: 'boynton', name: 'Boynton Beach', area: 'Boynton Beach',
-    parking: 'Free on-site parking lot, one space per reservation, included with the stay. No garage.',
+    parking: 'Free on-site parking lot, one space per reservation, included with the stay.',
     access: 'Self check-in (code).',
     questions: ['Driving in? (one parking space per reservation)', 'First time in Boynton Beach?'],
     recs: { food: [], coffee: '', grocery: '', beach: '', tip: '' },

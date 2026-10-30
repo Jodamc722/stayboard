@@ -246,7 +246,11 @@ export async function POST(req: NextRequest) {
     bedrooms: listing.bedrooms ?? null,
     bathrooms: listing.bathrooms ?? null,
     sleeps: listing.max_occupancy ?? null,
-    amenities: Array.isArray(listing.amenities) ? listing.amenities.slice(0, 80) : (listing.amenities ?? null),
+    // The Guesty "Garage" tick is often wrong (Boynton, 2026-10-30: "does not have garage so stop
+    // saying that"). It reaches the model only when the verified building facts say garage too.
+    amenities: Array.isArray(listing.amenities)
+      ? listing.amenities.filter((a: any) => !/^garage$/i.test(String(a || '').trim()) || /garage/i.test(String(bFacts?.parking || '')) && !/no garage/i.test(String(bFacts?.parking || ''))).slice(0, 80)
+      : (listing.amenities ?? null),
     tags: Array.isArray(listing.tags) ? listing.tags.slice(0, 30) : (listing.tags ?? null),
     location, bookingSettings: settings,
     minAge21: /arya|amrit|district\s*225/i.test(str(listing.building)),
