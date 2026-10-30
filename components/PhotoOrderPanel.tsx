@@ -10,7 +10,7 @@
 // Per photo, two tools (Jon, same day): FLIP turns the photo left-to-right ("mirror"), and OPTIONS
 // makes several enhanced versions to choose from. Either becomes the photo's new image on save.
 import { useMemo, useState } from 'react'
-import { Check, Crown, FlipHorizontal2, Loader2, RotateCcw, Save, Sparkles, X } from 'lucide-react'
+import { Check, Crown, FlipHorizontal2, Loader2, RotateCcw, Save, Sparkles, Trash2, Undo2, X } from 'lucide-react'
 
 type Pic = { _id?: string; thumbnail?: string; original?: string; large?: string; caption?: string }
 type Variant = { preset: string; name: string; url: string; why?: string }
@@ -34,7 +34,12 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
   const [open, setOpen] = useState(true)
-  const changed = order.join() !== start.join() || Object.keys(swap).length > 0
+  // DELETE (Jon, 2026-10-30: "make the delete button visible and easy"). One red button on every photo
+  // marks it for deletion; it greys out with Undo until Save. On save the originals are backed up to
+  // Stay storage first, then the photos leave the listing.
+  const [del, setDel] = useState<Set<string>>(new Set())
+  const toggleDel = (id: string) => setDel(d => { const n = new Set(d); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const changed = order.join() !== start.join() || Object.keys(swap).length > 0 || del.size > 0
 
   const moveTo = (id: string, pos: number) => setOrder(o => { const n = o.filter(x => x !== id); n.splice(Math.max(0, Math.min(n.length, pos - 1)), 0, id); return n })
 
@@ -66,11 +71,13 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
     setBusy('')
   }
   const save = async () => {
+    if (del.size && !window.confirm(`Delete ${del.size} photo${del.size === 1 ? '' : 's'} from this listing on every channel? The originals are backed up to Stay storage first.`)) return
     setBusy('save'); setErr(''); setMsg('')
     try {
+      if (del.size) await call({ mirrorOnly: true, photoIds: Array.from(del) })
       const urls: Record<string, string> = {}
       for (const [id, s] of Object.entries(swap)) urls[id] = s.url
-      const r = await fetch('/api/photo-order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, order, ...(Object.keys(urls).length ? { urls } : {}) }) })
+      const r = await fetch('/api/photo-order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, order: order.filter(id => !del.has(id)), ...(del.size ? { remove: Array.from(del) } : {}), ...(Object.keys(urls).length ? { urls } : {}) }) })
       const j = await r.json().catch(() => ({}))
       if (!r.ok || j?.error) throw new Error(j?.error || 'Guesty would not take the order.')
       setMsg('Saved to Guesty — the channels pick it up on their next sync. Refreshing…'); setSwap({}); setTimeout(() => { try { window.location.reload() } catch { /* fine */ } }, 1500)
@@ -86,9 +93,10 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
         <span className="text-[14px] font-bold text-ink">Photo order</span>
         <span className="text-[12px] text-muted">Pick a number on any photo to move it there. 1 is the cover; 1–5 are what guests see first.</span>
         <span className="ml-auto flex items-center gap-2">
-          {changed && <button onClick={() => { setOrder(start); setSwap({}) }} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><RotateCcw size={12} /> Reset</button>}
+          {del.size > 0 && <span className="text-[12px] font-semibold text-rose-700">{del.size} to delete</span>}
+          {changed && <button onClick={() => { setOrder(start); setSwap({}); setDel(new Set()) }} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><RotateCcw size={12} /> Reset</button>}
           <button onClick={save} disabled={!changed || busy === 'save'} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3 py-1.5 text-[12.5px] font-bold disabled:opacity-40">
-            {busy === 'save' ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save order
+            {busy === 'save' ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} {del.size ? 'Save & delete' : 'Save order'}
           </button>
           <button onClick={() => setOpen(o => !o)} className="text-[12px] font-semibold text-muted hover:text-ink">{open ? 'Hide' : 'Show'}</button>
         </span>
@@ -100,10 +108,15 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
             const p = byId.get(id); if (!p) return null
             const pos = i + 1, top = pos <= 5, sw = swap[id], opts = options[id]
             return (
-              <div key={id} className={'rounded-xl overflow-hidden border ' + (pos === 1 ? 'border-amber-400 ring-2 ring-amber-200' : top ? 'border-amber-300' : 'border-line')}>
+              <div key={id} className={'rounded-xl overflow-hidden border ' + (del.has(id) ? 'border-rose-300 bg-rose-50' : pos === 1 ? 'border-amber-400 ring-2 ring-amber-200' : top ? 'border-amber-300' : 'border-line')}>
                 <div className="relative">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={sw ? sw.url : p.url} alt={p.caption || ''} className="w-full aspect-[4/3] object-cover" loading="lazy" />
+                  <img src={sw ? sw.url : p.url} alt={p.caption || ''} className={'w-full aspect-[4/3] object-cover ' + (del.has(id) ? 'opacity-30 grayscale' : '')} loading="lazy" />
+                  <button onClick={() => toggleDel(id)} title={del.has(id) ? 'Keep this photo' : 'Delete this photo (on Save)'}
+                    className={'absolute bottom-1.5 right-1.5 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11.5px] font-bold shadow ' + (del.has(id) ? 'bg-white text-ink border border-line' : 'bg-rose-600 text-white hover:bg-rose-700')}>
+                    {del.has(id) ? <><Undo2 size={12} /> Undo</> : <><Trash2 size={12} /> Delete</>}
+                  </button>
+                  {del.has(id) && <span className="absolute inset-0 grid place-items-center text-[12px] font-bold text-rose-700 pointer-events-none">Will be deleted</span>}
                   <span className={'absolute top-1.5 left-1.5 text-[11px] font-bold px-1.5 py-0.5 rounded ' + (top ? 'bg-amber-500 text-white' : 'bg-black/60 text-white')}>{pos === 1 ? <span className="inline-flex items-center gap-0.5"><Crown size={10} /> 1 · cover</span> : pos}</span>
                   {sw && <span className="absolute top-1.5 right-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white">{sw.label}</span>}
                 </div>
