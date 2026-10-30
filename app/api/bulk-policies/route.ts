@@ -34,6 +34,22 @@ export async function GET(req: NextRequest) {
   const tok = await token(sb)
   if (!tok) return NextResponse.json({ error: 'Guesty token unavailable - run a sync, then retry.' }, { status: 503 })
 
+  if (probe === 'fees') {
+    // READ ONLY. How Guesty holds this listing's cleaning fee: the standard fee plus any per-channel
+    // override (Fees section: "Cleaning fee" + e.g. an Airbnb-specific one).
+    const get = async (path: string) => {
+      const rr = await fetch(`${BASE}${path}`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' } })
+      const tt = await rr.text(); let j: any = null; try { j = JSON.parse(tt) } catch { j = tt.slice(0, 300) }
+      return { status: rr.status, body: j }
+    }
+    const [fin, basic, air] = await Promise.all([
+      get(`/financials/listing/${encodeURIComponent(id)}`),
+      get(`/basic-fees/listings/${encodeURIComponent(id)}`),
+      get(`/basic-fees/listings/${encodeURIComponent(id)}/channels/airbnb2`),
+    ])
+    return NextResponse.json({ financials: fin, basicFees: basic, airbnbEffective: air })
+  }
+
   if (probe === 'pictures') {
     const rr = await fetch(`${BASE}/listings/${encodeURIComponent(id)}?fields=pictures`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' } })
     const tt = await rr.text()
