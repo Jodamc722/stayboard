@@ -261,14 +261,20 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
     setMirroring(true); setError(null); setPushedMsg(null)
     try {
       const ids = (only && Array.isArray(only) && only.length ? only : order.filter(id => !uploads[id]))
-      const r = await fetch('/api/photo-enhance', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, mirrorOnly: true, ...(ids.length ? { photoIds: ids } : {}) }),
-      })
-      const raw = await r.text()
-      let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
-      if (!r.ok || !j) throw new Error((j && j.error) || 'Failed to mirror photos. Please try again.')
-      setPushedMsg(`\u2713 Mirrored ${j.count} photo(s) to Stay storage \u2014 untouched originals safely backed up.${j.failedCount ? ` ${j.failedCount} failed.` : ''}`)
+      // The server takes 40 photos a call; a 43-photo listing used to leave its last 3 un-backed-up.
+      let done = 0, failed = 0
+      for (let i = 0; i < Math.max(1, ids.length); i += 40) {
+        const chunk = ids.slice(i, i + 40)
+        const r = await fetch('/api/photo-enhance', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ listingId, mirrorOnly: true, ...(chunk.length ? { photoIds: chunk } : {}) }),
+        })
+        const raw = await r.text()
+        let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
+        if (!r.ok || !j) throw new Error((j && j.error) || 'Failed to back up photos. Please try again.')
+        done += Number(j.count) || 0; failed += Number(j.failedCount) || 0
+      }
+      setPushedMsg(`\u2713 Backed up ${done} original photo(s) to Stay storage.${failed ? ` ${failed} failed.` : ''}`)
     } catch (e: any) { setError(e.message || String(e)) } finally { setMirroring(false) }
   }
 
