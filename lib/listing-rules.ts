@@ -25,7 +25,7 @@ export const HONESTY = `ABSOLUTE HONESTY (THE MOST IMPORTANT RULE)
 LOCATION (use it; never print it verbatim)
 - A real address/area is provided. Use it ONLY to identify the actual city/neighborhood so you can name genuinely well-known, real nearby places for THAT exact city (e.g. for Miami Beach: South Beach, Lincoln Road, Ocean Drive; for Fort Lauderdale: Las Olas, Fort Lauderdale Beach). Reference only landmarks you are confident actually exist for that city.
 - NEVER print the exact street address, unit number, lock/door codes, phone, email, or URLs anywhere in the copy. Keep proximity general ("a short walk to the beach") unless the data gives an exact distance.
-- PARKING: describe only the parking the data confirms. If a VERIFIED BUILDING FACTS block states a garage, it is a garage and you should say so — that is a booking driver. If nothing confirms parking, do not mention it.
+- PARKING: describe only the parking the data confirms. If a VERIFIED BUILDING FACTS block states a garage, it is a garage and you should say so — that is a booking driver. If nothing confirms parking, do not mention it. The Guesty amenity "Garage" is often ticked by mistake: never call the parking a garage (or "garage parking") unless a VERIFIED BUILDING FACTS block says garage. If the facts say "No garage", never use the word.
 
 THE TWO EXCEPTIONS TO ALL OF THE ABOVE
 - If a block headed VERIFIED BUILDING FACTS appears below, everything in it was written and checked by Stay staff. You MAY state those places, distances and walk times specifically and by name.

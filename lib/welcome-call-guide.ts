@@ -176,6 +176,15 @@ export const BUILDINGS: BuildingGuide[] = [
     recs: { food: ['Oceanic at Pompano Pier', 'Beach House Pompano', 'Lucky Fish'], coffee: 'Pompano-area cafes', grocery: 'Publix nearby', beach: 'Pompano Beach - a few blocks east', tip: 'Close to the Pompano Pier and beachfront dining.' },
   },
   {
+    // Jon, 2026-10-30: "Boynton Beach property does not have garage so stop saying that." 10 spots,
+    // 1 kept for staff and vendors, the rest for guests — one per reservation, included with the stay.
+    key: 'boynton', name: 'Boynton Beach', area: 'Boynton Beach',
+    parking: 'Free on-site parking lot, one space per reservation, included with the stay. No garage.',
+    access: 'Self check-in (code).',
+    questions: ['Driving in? (one parking space per reservation)', 'First time in Boynton Beach?'],
+    recs: { food: [], coffee: '', grocery: '', beach: '', tip: '' },
+  },
+  {
     key: 'oasis', name: 'Oasis', area: 'South Florida - confirm exact unit location',
     parking: 'Confirm the parking spot for their specific unit.',
     access: 'Self check-in (code) typical.',
@@ -188,7 +197,7 @@ export function buildingGuideFor(listingName?: string): BuildingGuide | null {
   const s = String(listingName || '').toLowerCase()
   if (!s) return null
   if (/17\s*west/.test(s)) return BUILDINGS.find(b => b.key === '17west') || null
-  for (const key of ['elser', 'arya', 'eden', 'botanica', 'rustic', 'amrit', 'hendricks', 'capri', 'lucerne', 'pelican', 'waves', 'oasis']) {
+  for (const key of ['elser', 'arya', 'eden', 'botanica', 'rustic', 'amrit', 'hendricks', 'capri', 'lucerne', 'pelican', 'waves', 'oasis', 'boynton']) {
     if (s.includes(key)) return BUILDINGS.find(b => b.key === key) || null
   }
   if (/mango|jasmine|sapodilla|bamboo|bougainvillea|mahogany|royal\s*palm/.test(s)) return BUILDINGS.find(b => b.key === 'oasis') || null

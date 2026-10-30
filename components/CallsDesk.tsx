@@ -399,10 +399,10 @@ function WelcomeScript({ r, draft, setDraft, onSaveNote, saving, saved, myName }
               <div><b className="text-ink">Area:</b> {bg.area}</div>
               <div className="flex items-start gap-1.5"><KeyRound size={12} className="mt-0.5 shrink-0" /><span><b className="text-ink">Access:</b> {bg.access}</span></div>
               <div className="flex items-start gap-1.5"><Car size={12} className="mt-0.5 shrink-0" /><span><b className="text-ink">Parking:</b> {bg.parking}</span></div>
-              <div><b className="text-ink">Eat:</b> {bg.recs.food.join(', ')}</div>
-              <div><b className="text-ink">Coffee:</b> {bg.recs.coffee}</div>
-              <div><b className="text-ink">Grocery:</b> {bg.recs.grocery}</div>
-              <div><b className="text-ink">Beach:</b> {bg.recs.beach}</div>
+              {bg.recs.food.length ? <div><b className="text-ink">Eat:</b> {bg.recs.food.join(', ')}</div> : null}
+              {bg.recs.coffee ? <div><b className="text-ink">Coffee:</b> {bg.recs.coffee}</div> : null}
+              {bg.recs.grocery ? <div><b className="text-ink">Grocery:</b> {bg.recs.grocery}</div> : null}
+              {bg.recs.beach ? <div><b className="text-ink">Beach:</b> {bg.recs.beach}</div> : null}
               {bg.questions.length > 0 && <div className="sm:col-span-2"><b className="text-ink">Ask here:</b> {bg.questions.join(' · ')}</div>}
               <div className="text-brand-700 sm:col-span-2">{bg.recs.tip}</div>
             </div>
