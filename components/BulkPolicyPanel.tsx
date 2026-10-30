@@ -6,8 +6,8 @@
 import { useState } from 'react'
 import { Check, SlidersHorizontal, AlertTriangle, RefreshCw, X } from 'lucide-react'
 
-type Unit = { id: string; name: string }
-type Res = { id: string; name: string; ok: boolean; error?: string }
+type Unit = { id: string; name: string; cleaningFee?: number | null }
+type Res = { id: string; name: string; ok: boolean; error?: string; from?: number | null; to?: number }
 
 export function BulkPolicyPanel({ units }: { units: Unit[] }) {
   const [open, setOpen] = useState(false)
@@ -16,6 +16,7 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
   const [minNights, setMinNights] = useState('')
   const [maxNights, setMaxNights] = useState('')
   const [houseRules, setHouseRules] = useState('')
+  const [cleaningFee, setCleaningFee] = useState('')
   const [sel, setSel] = useState<Set<string>>(new Set(units.map(u => u.id)))
   const [busy, setBusy] = useState(false)
   const [confirming, setConfirming] = useState(false)
@@ -30,6 +31,7 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
   if (minNights && Number(minNights) > 0) policy.minNights = Number(minNights)
   if (maxNights && Number(maxNights) > 0) policy.maxNights = Number(maxNights)
   if (houseRules.trim()) policy.houseRules = houseRules.trim()
+  if (cleaningFee !== '' && Number.isFinite(Number(cleaningFee)) && Number(cleaningFee) >= 0) policy.cleaningFee = Number(cleaningFee)
   const fieldCount = Object.keys(policy).length
   const canApply = fieldCount > 0 && sel.size > 0
 
@@ -39,6 +41,7 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
     policy.minNights != null && `min ${policy.minNights}n`,
     policy.maxNights != null && `max ${policy.maxNights}n`,
     policy.houseRules && 'house rules',
+    policy.cleaningFee != null && `cleaning fee $${policy.cleaningFee}`,
   ].filter(Boolean).join(', ')
 
   async function apply() {
@@ -58,7 +61,7 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
   if (!open) {
     return (
       <button onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 text-[13px] font-semibold rounded-lg border border-brand-200 text-brand-700 bg-brand-50 px-3 py-2 hover:bg-brand-100">
-        <SlidersHorizontal size={14} /> Bulk set policies
+        <SlidersHorizontal size={14} /> Bulk set policies &amp; cleaning fee
       </button>
     )
   }
@@ -77,7 +80,7 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
             {results.map(r => (
               <div key={r.id} className="flex items-center justify-between gap-2 text-[12px] border border-line rounded-lg px-2.5 py-1.5">
                 <span className="text-ink truncate">{r.name}</span>
-                {r.ok ? <span className="text-emerald-700 inline-flex items-center gap-1 shrink-0"><Check size={12} /> updated</span>
+                {r.ok ? <span className="text-emerald-700 inline-flex items-center gap-1 shrink-0"><Check size={12} /> {r.to != null ? `clean $${r.from ?? '—'} → $${r.to}` : 'updated'}</span>
                   : <span className="text-rose-600 inline-flex items-center gap-1 shrink-0" title={r.error}><AlertTriangle size={12} /> failed</span>}
               </div>
             ))}
@@ -104,6 +107,9 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
           <label className="block text-[11px] text-muted mb-3">House rules (additional text)
             <textarea value={houseRules} onChange={e => setHouseRules(e.target.value)} rows={2} placeholder="e.g. No parties or events. Quiet hours 10pm–8am. No smoking indoors." className="w-full mt-0.5 px-2.5 py-1.5 text-[13px] rounded-lg border border-line bg-app focus:outline-none focus:ring-2 focus:ring-brand-200" />
           </label>
+          <label className="block text-[11px] text-muted mb-3 max-w-[220px]">Cleaning fee — what the guest pays ($)
+            <input value={cleaningFee} onChange={e => setCleaningFee(e.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" placeholder="e.g. 150" className="w-full mt-0.5 px-2 py-1.5 text-[13px] rounded-lg border border-line bg-app focus:outline-none focus:ring-2 focus:ring-brand-200" />
+          </label>
 
           <div className="flex items-center justify-between mb-1.5">
             <div className="text-[10px] uppercase tracking-wider text-muted font-semibold">2. Apply to units <span className="text-brand-700">· {sel.size}/{units.length}</span></div>
@@ -119,6 +125,7 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
                 <button key={u.id} onClick={() => toggleU(u.id)} className={`text-left text-[12px] px-2.5 py-1.5 rounded-lg border inline-flex items-center gap-2 ${on ? 'bg-app border-line text-ink' : 'bg-white border-line text-muted'}`}>
                   <span className={`w-4 h-4 rounded border inline-flex items-center justify-center shrink-0 ${on ? 'bg-brand-600 border-brand-600 text-white' : 'border-line'}`}>{on && <Check size={11} />}</span>
                   <span className="truncate">{u.name}</span>
+                  {u.cleaningFee != null && <span className="ml-auto shrink-0 text-[11px] text-muted">clean ${u.cleaningFee}</span>}
                 </button>
               )
             })}

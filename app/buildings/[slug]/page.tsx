@@ -90,7 +90,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
     units.flatMap((u: any) => Array.isArray(u.amenities) ? u.amenities : (Array.isArray(u.raw?.amenities) ? u.raw.amenities : []))
   ))
 
-  const bulkUnits = units.map((u: any) => { const amenities = (Array.isArray(u.amenities) ? u.amenities : (Array.isArray(u.raw?.amenities) ? u.raw.amenities : [])) as string[]; return { id: u.id, name: unitLabel(u), amenityCount: amenities.length, amenities } })
+  const bulkUnits = units.map((u: any) => { const amenities = (Array.isArray(u.amenities) ? u.amenities : (Array.isArray(u.raw?.amenities) ? u.raw.amenities : [])) as string[]; const cf = Number(u.raw?.prices?.cleaningFee); return { id: u.id, name: unitLabel(u), amenityCount: amenities.length, amenities, cleaningFee: Number.isFinite(cf) ? cf : null } })
   const bulkAddable = Array.from(new Set(siblingAmenities)).sort((a, b) => a.localeCompare(b))
 
   const scored = units.map((l: any) => {

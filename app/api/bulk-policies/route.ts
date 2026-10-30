@@ -110,6 +110,8 @@ export async function POST(req: NextRequest) {
   if (p.minNights != null && Number.isFinite(Number(p.minNights)) && Number(p.minNights) > 0) change.minNights = Math.round(Number(p.minNights))
   if (p.maxNights != null && Number.isFinite(Number(p.maxNights)) && Number(p.maxNights) > 0) change.maxNights = Math.round(Number(p.maxNights))
   if (typeof p.houseRules === 'string' && p.houseRules.trim()) change.houseRules = p.houseRules.trim().slice(0, 4000)
+  // Cleaning fee (Jon, 2026-10-30: "Bulk edit cleaning fee"): prices.cleaningFee, what the GUEST pays.
+  if (p.cleaningFee != null && p.cleaningFee !== '' && Number.isFinite(Number(p.cleaningFee)) && Number(p.cleaningFee) >= 0 && Number(p.cleaningFee) <= 5000) change.cleaningFee = Math.round(Number(p.cleaningFee) * 100) / 100
   if (Object.keys(change).length === 0 && !dryRunPictures) return NextResponse.json({ error: 'No valid policy changes provided.' }, { status: 400 })
 
   const sb = supabaseAdmin()
@@ -120,7 +122,7 @@ export async function POST(req: NextRequest) {
   const byId = new Map<string, any>()
   ;(rows ?? []).forEach((r: any) => byId.set(r.id, r))
 
-  const results: { id: string; name: string; ok: boolean; error?: string }[] = []
+  const results: { id: string; name: string; ok: boolean; error?: string; from?: number | null; to?: number }[] = []
   let okCount = 0, failCount = 0
 
   // Writability test: PUT a listing's CURRENT pictures back unchanged to see if Guesty allows photo writes.
@@ -148,6 +150,19 @@ export async function POST(req: NextRequest) {
       payload.terms = terms
     }
     if (change.houseRules) payload.publicDescription = { houseRules: change.houseRules }
+    let oldFee: number | null = null
+    if (change.cleaningFee != null) {
+      // prices is read FRESH from Guesty (not the synced raw) so the base price, currency and other
+      // fees go back exactly as they are now — only cleaningFee changes.
+      let prices: any = null
+      try {
+        const g = await fetch(`${BASE}/listings/${encodeURIComponent(id)}?fields=prices`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' } })
+        if (g.ok) { const j = await g.json().catch(() => ({})); if (j?.prices && typeof j.prices === 'object') prices = j.prices }
+      } catch { /* handled below */ }
+      if (!prices) { results.push({ id, name, ok: false, error: 'Could not read the current prices from Guesty — nothing changed.' }); failCount++; continue }
+      oldFee = Number.isFinite(Number(prices.cleaningFee)) ? Number(prices.cleaningFee) : null
+      payload.prices = { ...prices, cleaningFee: change.cleaningFee }
+    }
 
     try {
       const r = await fetch(`${BASE}/listings/${encodeURIComponent(id)}`, {
@@ -167,7 +182,7 @@ export async function POST(req: NextRequest) {
         if (change.houseRules) newRaw.publicDescription = { ...(raw.publicDescription || {}), houseRules: change.houseRules }
         await sb.from('guesty_listings').update({ raw: newRaw }).eq('id', id)
       } catch { /* best effort */ }
-      results.push({ id, name, ok: true }); okCount++
+      results.push({ id, name, ok: true, ...(change.cleaningFee != null ? { from: oldFee, to: change.cleaningFee } : {}) }); okCount++
     } catch (e: any) {
       results.push({ id, name, ok: false, error: e?.message || String(e) }); failCount++
     }
