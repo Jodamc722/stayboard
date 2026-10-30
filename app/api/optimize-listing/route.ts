@@ -35,6 +35,10 @@ export const dynamic = 'force-dynamic'
 // with a 110s abort (a verified run took 57.9s). At 45 a slow full run 504s with no message.
 // 300 (2026-10-30): a well-photographed unit plus an 8000-token answer ran past 120 s and Vercel
 // returned its HTML timeout page, which the panel showed as "Unexpected token '<'".
+/** New-generation models think before answering; cap it so the answer is not starved. Older ones ignore it. */
+const effortFor = (model: string, effort: 'low' | 'medium' | 'high') =>
+  /(sonnet|opus|haiku)-5|fable|mythos/.test(model) ? { output_config: { effort } } : {}
+
 export const maxDuration = 300
 
 function str(v: any): string { return typeof v === 'string' ? v : '' }
@@ -342,7 +346,7 @@ ${JSON.stringify(currentDraft || (current as any)[sk] || '')}`
       const r = await aiFetch('listing-copy', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: await modelFor('listing-copy'), max_tokens: 1200, system: SYS, messages: [{ role: 'user', content: [{ type: 'text', text: USR }, ...photoBlocks] }] }),
+        body: JSON.stringify({ model: await modelFor('listing-copy'), max_tokens: 6000, ...effortFor(await modelFor('listing-copy'), 'low'), system: SYS, messages: [{ role: 'user', content: [{ type: 'text', text: USR }, ...photoBlocks] }] }),
       })
       const d: any = await r.json()
       if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })
@@ -413,7 +417,10 @@ ${JSON.stringify(current)}`
       // 8000, not 3200 (2026-10-19). Six sections plus a title on a well-photographed unit ran past the
       // old cap and the reply was cut mid-sentence, which is what "unparseable" actually meant.
       // Output tokens bill for what is used, so a cap nobody reaches costs nothing.
-      body: JSON.stringify({ model: await modelFor('listing-copy'), max_tokens: 8000, system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: [{ type: 'text', text: USER }, ...photoBlocks] }] }),
+      // 16000 + effort medium (2026-10-30). On Sonnet 5 the model thinks first, and that thinking
+      // spent the whole 8000 — every run came back "ran out of room" with no text at all. Effort caps
+      // the thinking; the larger ceiling leaves the six sections room whatever the model.
+      body: JSON.stringify({ model: await modelFor('listing-copy'), max_tokens: 16000, ...effortFor(await modelFor('listing-copy'), 'medium'), system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: [{ type: 'text', text: USER }, ...photoBlocks] }] }),
     })
     const d: any = await r.json()
     if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })
@@ -433,7 +440,7 @@ ${JSON.stringify(current)}`
         error: cut
           ? 'The model ran out of room before it finished — nothing usable came back. Try again, or generate the long sections one at a time.'
           : 'Model returned an unparseable response.',
-        truncated: cut, raw: text.slice(0, 400),
+        truncated: cut, raw: text.slice(0, 400), blocks: Array.isArray(d?.content) ? d.content.map((c: any) => c?.type) : [], usage: d?.usage || null, model: d?.model || null,
       }, { status: 502 })
     }
 
