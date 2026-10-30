@@ -335,7 +335,7 @@ OUTPUT: STRICT minified JSON only, nothing else, exactly: {"text":"...","rationa
     // The building facts used to appear twice in this message (once here, once above VERIFIED
     // FACTS); the second copy is the one that stays.
     const USR = `Field to rewrite: "${sk}".
-${sk === 'space' && spaceExemplar ? `\nHOUSE STYLE EXEMPLAR (match its voice/format as a baseline, then ENHANCE; do NOT copy its facts):\n"""${spaceExemplar}"""\n` : ''}
+${sk === 'space' && spaceExemplar ? `\nHOUSE VOICE EXEMPLAR (match its warmth and voice only — the FORMAT is the section guide: pitch paragraphs, then Highlights; do NOT copy its facts or its room-by-room layout):\n"""${spaceExemplar}"""\n` : ''}
 ${photoBrief}
 
 ${factsBlock ? factsBlock + '\n\n' : ''}VERIFIED FACTS (use ONLY these; never invent beyond them):
@@ -397,7 +397,7 @@ Return STRICT, minified JSON and nothing else (no markdown, no code fences, no c
 - Every section is a non-empty string. "rationale": 1-2 sentences on why this wins on visibility + honest expectation-setting.`
 
   const USER = `Rewrite the master content for this listing.
-${instruction ? `\nMUST-INCLUDE FROM JON (work this in naturally, within the honesty rules - never invent facts to satisfy it): "${instruction}"\n` : ''}${spaceExemplar ? `\nHOUSE STYLE EXEMPLAR for the 'space' field - match this VOICE and FORMAT as your baseline, then ENHANCE it (even more compelling, photo-grounded). Do NOT copy its specific facts:\n"""${spaceExemplar}"""\n` : ''}
+${instruction ? `\nMUST-INCLUDE FROM JON (work this in naturally, within the honesty rules - never invent facts to satisfy it): "${instruction}"\n` : ''}${spaceExemplar ? `\nHOUSE VOICE EXEMPLAR for the 'space' field - match its warmth and VOICE only. The FORMAT is the section guide (a sales pitch in short paragraphs, then a short Highlights list) — do NOT copy its room-by-room layout or its specific facts:\n"""${spaceExemplar}"""\n` : ''}
 ${photoBrief}
 
 ${factsBlock ? factsBlock + '\n\n' : ''}VERIFIED FACTS (use ONLY these; never invent beyond them):

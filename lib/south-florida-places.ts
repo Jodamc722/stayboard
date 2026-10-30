@@ -86,8 +86,21 @@ export const SOUTH_FLORIDA_PLACES: Place[] = [
   { id: 'west-palm-clematis', name: 'Clematis Street & Rosemary Square (West Palm Beach)', kind: 'district', lat: 26.713, lng: -80.052, what: 'downtown West Palm’s dining, bars and waterfront', reach: 'local' },
   { id: 'brightline-wpb', name: 'Brightline West Palm Beach', kind: 'station', lat: 26.713, lng: -80.056, what: 'the West Palm rail station', reach: 'regional' },
   { id: 'pbi', name: 'Palm Beach International Airport (PBI)', kind: 'airport', lat: 26.683, lng: -80.096, what: 'the West Palm Beach airport', reach: 'regional' },
+  // Boynton Beach & Delray (2026-10-30, Jon: "Boynton Beach is really close to Delray, and Delray is
+  // a very famous area — it should talk about that").
+  { id: 'delray-pineapple-grove', name: 'Pineapple Grove Arts District (Delray Beach)', kind: 'district', lat: 26.466, lng: -80.073, what: 'Delray’s arts district of galleries, cafés and murals just north of Atlantic Avenue', reach: 'local' },
+  { id: 'boynton-oceanfront-park', name: 'Oceanfront Park (Boynton Beach)', kind: 'beach', lat: 26.546, lng: -80.035, what: 'Boynton’s lifeguarded public beach with a boardwalk and picnic pavilions', reach: 'local' },
+  { id: 'boynton-inlet', name: 'Boynton Inlet (Ocean Inlet Park)', kind: 'nature', lat: 26.545, lng: -80.044, what: 'the inlet park for fishing, snorkelling and watching the boats come through', reach: 'local' },
+  { id: 'boynton-harbor', name: 'Boynton Harbor Marina', kind: 'landmark', lat: 26.527, lng: -80.060, what: 'the marina for fishing charters, dive boats and waterfront dining', reach: 'local' },
+  { id: 'wakodahatchee', name: 'Wakodahatchee Wetlands', kind: 'nature', lat: 26.479, lng: -80.144, what: 'a free boardwalk through wetlands full of herons, turtles and the odd alligator', reach: 'local' },
+  { id: 'green-cay', name: 'Green Cay Nature Center & Wetlands', kind: 'nature', lat: 26.485, lng: -80.155, what: 'a boardwalk wetland and nature centre', reach: 'local' },
+  { id: 'morikami', name: 'Morikami Museum and Japanese Gardens', kind: 'landmark', lat: 26.428, lng: -80.165, what: 'acres of Japanese gardens, a museum and a café', reach: 'local' },
+  { id: 'boca-town-center', name: 'Town Center at Boca Raton', kind: 'shopping', lat: 26.365, lng: -80.133, what: 'the area’s large upscale indoor mall', reach: 'local' },
   { id: 'john-prince-park', name: 'John Prince Park', kind: 'park', lat: 26.592, lng: -80.078, what: 'the large lakeside county park', reach: 'local' },
 ]
+
+/** Changes whenever a place is added or removed, so cached area facts recompute on their own. */
+export const PLACES_VERSION = String(SOUTH_FLORIDA_PLACES.length) + ':' + SOUTH_FLORIDA_PLACES.map(p => p.id).join(',').split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7)
 
 /** Straight-line metres between two points. */
 export function haversineM(aLat: number, aLng: number, bLat: number, bLng: number): number {

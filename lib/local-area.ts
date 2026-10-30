@@ -19,7 +19,7 @@
 // (or clearly estimated), and a person can remove anything before it is ever used.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
-import { SOUTH_FLORIDA_PLACES, haversineM, type Place, type PlaceKind } from './south-florida-places'
+import { SOUTH_FLORIDA_PLACES, PLACES_VERSION, haversineM, type Place, type PlaceKind } from './south-florida-places'
 
 export type AreaItem = {
   id: string; name: string; kind: PlaceKind; what: string
@@ -121,7 +121,7 @@ export async function areaFactsFor(lat: number, lng: number, opts: { refresh?: b
   const db = supabaseAdmin()
   let row: any = null
   try { const { data } = await db.from(TABLE).select('*').eq('key', key).maybeSingle(); row = data || null } catch { row = null }
-  const stale = !row || !row.computed_at || (Date.now() - Date.parse(row.computed_at)) > FRESH_DAYS * 86400_000
+  const stale = !row || !row.computed_at || (Date.now() - Date.parse(row.computed_at)) > FRESH_DAYS * 86400_000 || row?.facts?.v !== PLACES_VERSION
   let items: AreaItem[] = Array.isArray(row?.facts?.items) ? row.facts.items : []
   let routed = !!row?.facts?.routed
   let computedAt = String(row?.computed_at || '')
@@ -129,7 +129,7 @@ export async function areaFactsFor(lat: number, lng: number, opts: { refresh?: b
     const c = await computeAreaFacts(lat, lng)
     items = c.items; routed = c.routed; computedAt = new Date().toISOString()
     try {
-      await db.from(TABLE).upsert({ key, lat, lng, facts: { items, routed }, computed_at: computedAt, edits: row?.edits || {} }, { onConflict: 'key' })
+      await db.from(TABLE).upsert({ key, lat, lng, facts: { items, routed, v: PLACES_VERSION }, computed_at: computedAt, edits: row?.edits || {} }, { onConflict: 'key' })
     } catch { /* table not there yet — the facts still return, uncached */ }
   }
   const edits = normEdits(row?.edits)
