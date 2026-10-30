@@ -20,7 +20,9 @@ const ghost = 'inline-flex items-center gap-1 rounded-md border border-line bg-w
 
 export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pictures: Pic[] }) {
   const pics = useMemo(() => pictures.map((p, i) => {
-    const o: any = typeof p === 'string' ? (() => { try { return JSON.parse(p as any) } catch { return {} } })() : (p || {})
+    // Guesty's picture objects carry the _id the order is saved by; a bare URL string (the summary
+    // column) is a last resort and keeps its position key.
+    const o: any = typeof p === 'string' ? (() => { const t = String(p); if (/^https?:/.test(t)) return { original: t }; try { return JSON.parse(t) } catch { return {} } })() : (p || {})
     return { id: String(o._id || 'idx-' + i), url: String(o.thumbnail || o.large || o.original || ''), caption: String(o.caption || '') }
   }).filter(p => p.url), [pictures])
   const start = useMemo(() => pics.map(p => p.id), [pics])

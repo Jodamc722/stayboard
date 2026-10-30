@@ -352,7 +352,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
             // cover shot is the single highest-impact photo decision on a listing; it belongs where
             // somebody is already looking at the photos. Organiser first — that is the bulk work.
             <div className="space-y-3">
-              <PhotoOrderPanel listingId={listing.id} pictures={pictures} />
+              <PhotoOrderPanel listingId={listing.id} pictures={Array.isArray(raw.pictures) && raw.pictures.length ? raw.pictures : pictures} />
               <PhotoOrganizer listingId={listing.id} name={name} />
               <HeroCollage listingId={listing.id} name={name} city={listing.address_city || ''} building={buildingName} pictures={pictures} amenities={amenities} />
             </div>
