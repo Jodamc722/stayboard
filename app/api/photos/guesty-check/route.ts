@@ -17,7 +17,7 @@ const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const pics = (arr: any): { id: string; caption: string; url: string }[] =>
-  (Array.isArray(arr) ? arr : []).map((p: any) => { const o = typeof p === 'string' ? (() => { try { return JSON.parse(p) } catch { return {} } })() : (p || {}); return { id: str(o._id || o.id), caption: str(o.caption).trim(), url: str(o.original || o.large || o.regular || o.thumbnail || o.url) } }).filter(p => p.id || p.url)
+  (Array.isArray(arr) ? arr : []).map((p: any) => { const o = typeof p === 'string' ? (() => { try { return JSON.parse(p) } catch { return { url: p } } })() : (p || {}); return { id: str(o._id || o.id), caption: str(o.caption).trim(), url: str(o.original || o.large || o.regular || o.thumbnail || o.url) } }).filter(p => p.id || p.url)
 
 async function token(sb: any): Promise<string | null> {
   const { data: tok } = await sb.from('guesty_tokens').select('access_token, expires_at').eq('id', 'singleton').maybeSingle()
@@ -35,7 +35,9 @@ async function livePictures(tok: string, id: string): Promise<{ ok: boolean; pic
 }
 
 function compare(mine: ReturnType<typeof pics>, live: ReturnType<typeof pics>) {
-  const key = (p: { id: string; url: string }) => p.id || p.url
+  // The image file name is the stable identity: the pictures column holds bare URLs, raw.pictures holds
+  // objects, and Guesty's transform segments (h_200,c_fit) differ between sizes of the same photo.
+  const key = (p: { id: string; url: string }) => (p.url.split('?')[0].split('/').pop() || p.id).toLowerCase()
   const mineIds = mine.map(key), liveIds = live.map(key)
   const onlyGuesty = live.filter(p => !mineIds.includes(key(p)))
   const onlyOurs = mine.filter(p => !liveIds.includes(key(p)))
@@ -64,7 +66,7 @@ export async function GET(req: NextRequest) {
   const started = Date.now()
   for (const r of rows as any[]) {
     if (Date.now() - started > 270_000) { out.push({ id: r.id, name: r.nickname, skipped: 'time budget' }); continue }
-    const mine = pics(Array.isArray(r.pictures) && r.pictures.length ? r.pictures : r.rawPics)
+    const mine = pics(Array.isArray(r.rawPics) && r.rawPics.length ? r.rawPics : r.pictures)
     const live = await livePictures(tok, r.id)
     if (!live.ok) { out.push({ id: r.id, name: r.nickname || r.title, error: 'Guesty ' + live.status }); continue }
     out.push({ id: r.id, name: r.nickname || r.title, ...compare(mine, pics(live.pictures)) })
@@ -88,7 +90,9 @@ export async function POST(req: NextRequest) {
     if (!live.ok) { failed.push(id); continue }
     const { data: row } = await sb.from('guesty_listings').select('raw').eq('id', id).maybeSingle()
     const raw: any = row?.raw && typeof row.raw === 'object' ? row.raw : {}
-    const { error } = await sb.from('guesty_listings').update({ pictures: live.pictures, raw: { ...raw, pictures: live.pictures } }).eq('id', id)
+    // The pictures column holds bare URLs (what the sync writes); raw.pictures holds the full objects.
+    const urls = live.pictures!.map((p: any) => str(p?.original || p?.large || p?.regular || p?.thumbnail)).filter(Boolean)
+    const { error } = await sb.from('guesty_listings').update({ pictures: urls, raw: { ...raw, pictures: live.pictures } }).eq('id', id)
     if (error) failed.push(id); else done.push(id)
   }
   return NextResponse.json({ ok: true, refreshed: done.length, failed })
