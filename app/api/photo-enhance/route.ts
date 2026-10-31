@@ -21,7 +21,7 @@ import { createClient } from '@/lib/supabase-server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadListingAi } from '@/lib/listing-ai-server'
-import { presetByKey, NONE_PRESET, type EnhancePreset } from '@/lib/listing-ai'
+import { presetByKey, NONE_PRESET, clampPreset, type EnhancePreset } from '@/lib/listing-ai'
 import sharp from 'sharp'
 
 export const dynamic = 'force-dynamic'
@@ -51,7 +51,8 @@ function applyPreset(pipe: sharp.Sharp, p: EnhancePreset): sharp.Sharp {
   // Contrast pivots on mid-grey (128): y = a·x + 128·(1 − a). The old offset −(a − 1)·100 pivoted at
   // 100, so every "contrast" also brightened the mid-tones a little (audit 2026-10-26).
   if (p.contrast !== 1) out = out.linear(p.contrast, Math.round(128 * (1 - p.contrast)))
-  if (p.warmth > 0) {
+  if (p.warmth !== 0) {
+    // Positive = warmer (red up, blue down); negative = cooler (the custom editor only).
     const w = p.warmth / 200
     out = out.recomb([[1 + w, 0, 0], [0, 1, 0], [0, 0, 1 - w]])
   }
@@ -87,8 +88,10 @@ async function autoPipeline(buf: Buffer, base: sharp.Sharp): Promise<{ pipe: sha
 }
 
 /** One finished version: the pipeline → sRGB-tagged JPEG → uploaded; returns its public URL. */
-async function renderVersion(sb: ReturnType<typeof supabaseAdmin>, listingId: string, id: string, buf: Buffer, preset: EnhancePreset, tag: string, flip = false): Promise<{ url: string; why: string; bytes: number } | { error: string }> {
+async function renderVersion(sb: ReturnType<typeof supabaseAdmin>, listingId: string, id: string, buf: Buffer, preset: EnhancePreset, tag: string, flip = false, turn = 0): Promise<{ url: string; why: string; bytes: number } | { error: string }> {
   let base = sharp(buf, { failOn: 'none' }).rotate()
+  // Turn after the EXIF auto-orient, as its own step (sharp applies one rotate per pipeline).
+  if (turn) base = sharp(await base.toBuffer(), { failOn: 'none' }).rotate(turn)
   if (flip) base = base.flop()
   base = base.resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true })
   let piped: sharp.Sharp, why = ''
@@ -108,7 +111,7 @@ async function processOne(
   pic: any,
   preset: EnhancePreset,
   mirrorOnly = false,
-  extra: { flip?: boolean; variants?: EnhancePreset[] } = {},
+  extra: { flip?: boolean; variants?: EnhancePreset[]; custom?: { preset: EnhancePreset; turn: number; flip: boolean } } = {},
 ) {
   const id = String(pic?._id || '')
   const src = str(pic?.original) || str(pic?.large) || str(pic?.thumbnail)
@@ -128,6 +131,15 @@ async function processOne(
   const mirroredUrl = sb.storage.from(BUCKET).getPublicUrl(origPath).data.publicUrl
   if (mirrorOnly) return { _id: id, mirroredUrl, preset: 'none', presetName: 'None', bytesBefore: buf.length }
 
+  // CUSTOM (Jon, 2026-10-31: "it should give real customization options"). The photo editor's own
+  // dials — brightness, contrast, colour, warmth (warmer or cooler), sharpness — plus a quarter turn
+  // and a mirror, rendered as one version to approve. The dials stay inside the same honesty caps the
+  // presets obey: a correction, never a repaint.
+  if (extra.custom) {
+    const v = await renderVersion(sb, listingId, id, buf, extra.custom.preset, 'custom', extra.custom.flip, extra.custom.turn)
+    if ('error' in v) return { _id: id, error: v.error }
+    return { _id: id, mirroredUrl, customUrl: v.url, preset: 'custom', presetName: 'Custom', bytesBefore: buf.length }
+  }
   // FLIP (Jon, 2026-10-30: "when you click it, it mirrors the photo"): the photo turned left-to-right,
   // nothing else changed — for a shot that reads better facing the other way. A version to approve.
   if (extra.flip) {
@@ -197,6 +209,14 @@ export async function POST(req: NextRequest) {
   // Per-photo overrides from the UI: { photoId: presetKey }.
   const perPhoto: Record<string, string> = (body?.presets && typeof body.presets === 'object') ? body.presets : {}
   const flip = body?.flip === true
+  const c0 = body?.custom && typeof body.custom === 'object' ? body.custom : null
+  const custom = c0 ? (() => {
+    const p = clampPreset({ key: 'custom', name: 'Custom', brightness: c0.brightness, saturation: c0.saturation, contrast: c0.contrast, sharpen: c0.sharpen, warmth: Math.max(0, Number(c0.warmth) || 0) })
+    const w = Number(c0.warmth) || 0
+    if (w < 0) p.warmth = Math.max(-8, w)
+    const t = Number(c0.rotate) || 0
+    return { preset: p, turn: [90, 180, 270].indexOf(((t % 360) + 360) % 360) >= 0 ? ((t % 360) + 360) % 360 : 0, flip: c0.flip === true }
+  })() : null
   const wantVariants: string[] = Array.isArray(body?.variants) ? body.variants.filter((x: any) => typeof x === 'string').slice(0, 6) : []
 
   const cfg = await loadListingAi()
@@ -223,7 +243,7 @@ export async function POST(req: NextRequest) {
   // Options and flips are made for a few chosen photos at a time, not the whole set.
   const targets = all
     .filter(p => !wanted || wanted.has(String(p?._id || '')))
-    .slice(0, wantVariants.length ? 3 : flip ? 12 : MAX_PER_CALL)
+    .slice(0, custom ? 1 : wantVariants.length ? 3 : flip ? 12 : MAX_PER_CALL)
   const variantPresets: EnhancePreset[] = wantVariants.map(k => presetByKey(cfg, k)).filter((p, i, a) => a.findIndex(x => x.key === p.key) === i)
   if (targets.length === 0) return NextResponse.json({ error: 'no matching photos' }, { status: 400 })
 
@@ -237,7 +257,7 @@ export async function POST(req: NextRequest) {
     const chunk = targets.slice(i, i + CONCURRENCY)
     const settled = await Promise.all(chunk.map(p => {
       const id = String(p?._id || '')
-      return processOne(sb, listingId, p, mirrorOnly ? NONE_PRESET : presetFor(id), mirrorOnly, { flip, variants: variantPresets })
+      return processOne(sb, listingId, p, mirrorOnly ? NONE_PRESET : presetFor(id), mirrorOnly, { flip, variants: variantPresets, ...(custom ? { custom } : {}) })
         .catch((e: any) => ({ _id: id, error: e?.message || String(e) }))
     }))
     results.push(...settled)

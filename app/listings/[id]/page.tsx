@@ -392,7 +392,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
             <div className="space-y-3">
               <PhotoOrderPanel listingId={listing.id} pictures={Array.isArray(raw.pictures) && raw.pictures.length ? raw.pictures : pictures} />
               <PhotoOrganizer listingId={listing.id} name={name} />
-              <HeroCollage listingId={listing.id} name={name} city={listing.address_city || ''} building={buildingName} pictures={pictures} amenities={amenities} />
+              <HeroCollage listingId={listing.id} name={name} city={listing.address_city || ''} building={buildingName} pictures={Array.isArray(raw.pictures) && raw.pictures.length ? raw.pictures : pictures} amenities={amenities} />
             </div>
           ),
         },

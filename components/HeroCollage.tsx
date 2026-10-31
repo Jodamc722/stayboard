@@ -5,7 +5,8 @@
 // uses Claude vision to pick the framing (it guides the crop — it does not repaint pixels). Everything
 // renders on one canvas so the download/push is exactly what you see.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { LayoutGrid, Download, Sparkles, X, Upload, UploadCloud, Wand2, ZoomIn, RotateCcw, Check } from 'lucide-react'
+import { LayoutGrid, Download, Sparkles, X, Upload, UploadCloud, Wand2, ZoomIn, RotateCcw, Check, LibraryBig } from 'lucide-react'
+import { LibraryPicker, type LibraryPick } from '@/components/LibraryPicker'
 
 type Pic = { _id?: string; original?: string; thumbnail?: string }
 type XF = { scale: number; fx: number; fy: number }               // zoom + focal point (0..1)
@@ -59,7 +60,8 @@ function hiRes(u: string): string {
   return u
 }
 
-export function HeroCollage({ listingId, name, city, building, pictures, amenities }: { listingId: string; name: string; city: string; building: string; pictures: Pic[]; amenities: string[] }) {
+export function HeroCollage({ listingId, name, city, building, pictures, amenities }: { listingId: string; name: string; city: string; building: string; pictures: (Pic | string)[]; amenities: string[] }) {
+  const [libOpen, setLibOpen] = useState(false)
   const [open, setOpen] = useState(false)
   const [layoutKey, setLayoutKey] = useState('single')
   const [ratioKey, setRatioKey] = useState('32')
@@ -87,7 +89,10 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
 
   // Pool = the unit's synced photos + anything the host uploaded.
   const pool = useMemo<PoolItem[]>(() => {
-    const synced = pictures.map((p, i) => ({ id: p._id || `pic_${i}`, url: p.original || p.thumbnail || '', synced: !!p._id })).filter(p => p.url)
+    // THE GALLERY IS THE POOL (Jon, 2026-10-31: "the hero photo generator should be able to select
+    // from the gallery too"). The page used to hand this the bare-URL pictures column, which this read
+    // as objects — every photo had no url and the pool came up empty but for uploads.
+    const synced = pictures.map((p0, i) => { const p: any = typeof p0 === 'string' ? { original: p0 } : (p0 || {}); return { id: p._id || `pic_${i}`, url: p.original || p.large || p.thumbnail || '', synced: !!p._id } }).filter(p => p.url)
     return [...synced, ...uploads]
   }, [pictures, uploads])
   const urlOf = useCallback((id: string) => overrideUrl[id] || pool.find(p => p.id === id)?.url || '', [overrideUrl, pool])
@@ -353,7 +358,10 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
               <div className="rounded-xl border border-line bg-app/30 p-3">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Photos {pool.length ? `(${pool.length})` : ''}</span>
-                  <button onClick={() => fileInput.current?.click()} className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-700 hover:text-brand-800"><Upload size={12} /> Upload</button>
+                  <span className="inline-flex items-center gap-3">
+                    <button onClick={() => setLibOpen(true)} className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-700 hover:text-brand-800" title="Any photo from this property or the rest of the portfolio"><LibraryBig size={12} /> From library</button>
+                    <button onClick={() => fileInput.current?.click()} className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-700 hover:text-brand-800"><Upload size={12} /> Upload</button>
+                  </span>
                   <input ref={fileInput} type="file" accept="image/*" multiple className="hidden" onChange={e => onFiles(e.target.files)} />
                 </div>
                 {pool.length === 0 ? <div className={`text-[12px] ${dragOver ? 'text-brand-700' : 'text-muted'}`}>{dragOver ? 'Drop to upload…' : 'No photos yet — upload originals, or this unit has none synced.'}</div> : (
@@ -368,8 +376,10 @@ export function HeroCollage({ listingId, name, city, building, pictures, ameniti
                     ) })}
                   </div>
                 )}
-                <p className="text-[10px] text-muted mt-1.5">Click a photo to drop it into the selected cell. Uploaded originals give the sharpest hero.</p>
+                <p className="text-[10px] text-muted mt-1.5">Click a photo to drop it into the selected cell. This unit's gallery is here; <b>From library</b> adds the building's pool, lobby or any portfolio photo.</p>
               </div>
+              <LibraryPicker open={libOpen} onClose={() => setLibOpen(false)} startListingId={listingId} title="Add photos to the hero" verb="Add"
+                onPick={(picks: LibraryPick[]) => { const next = picks.map((p, i) => ({ id: 'lib_' + (p.picId || i) + '_' + Date.now(), url: p.url, synced: false })); if (next.length) setUploads(u => [...u, ...next].slice(0, 24)); setLibOpen(false) }} />
             </div>
           </div>
         </div>

@@ -10,7 +10,8 @@
 // Per photo, two tools (Jon, same day): FLIP turns the photo left-to-right ("mirror"), and OPTIONS
 // makes several enhanced versions to choose from. Either becomes the photo's new image on save.
 import { useMemo, useState } from 'react'
-import { Check, Crown, FlipHorizontal2, Loader2, RotateCcw, Save, Sparkles, Trash2, Undo2, X } from 'lucide-react'
+import { Check, Crown, FlipHorizontal2, Loader2, RotateCcw, Save, Sparkles, Trash2, Undo2, X, SlidersHorizontal, Wand2 } from 'lucide-react'
+import { ListingPhotoEditor } from '@/components/ListingPhotoEditor'
 
 type Pic = { _id?: string; thumbnail?: string; original?: string; large?: string; caption?: string }
 type Variant = { preset: string; name: string; url: string; why?: string }
@@ -40,7 +41,12 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
   const [del, setDel] = useState<Set<string>>(new Set())
   const toggleDel = (id: string) => setDel(d => { const n = new Set(d); n.has(id) ? n.delete(id) : n.add(id); return n })
   const [asking, setAsking] = useState('')   // photo id awaiting the are-you-sure step
-  const changed = order.join() !== start.join() || Object.keys(swap).length > 0 || del.size > 0
+  // EDIT FROM THE PHOTO (Jon, 2026-10-31): tap a photo → the editor (looks, fine-tune, caption, place,
+  // replace, delete). Its changes stage here and go out with "Save".
+  const [editing, setEditing] = useState<string | null>(null)
+  const [caps, setCaps] = useState<Record<string, string>>({})
+  const capChanged = Object.entries(caps).filter(([id, c]) => (byId.get(id)?.caption || '') !== c)
+  const changed = order.join() !== start.join() || Object.keys(swap).length > 0 || del.size > 0 || capChanged.length > 0
 
   const moveTo = (id: string, pos: number) => setOrder(o => { const n = o.filter(x => x !== id); n.splice(Math.max(0, Math.min(n.length, pos - 1)), 0, id); return n })
 
@@ -78,7 +84,7 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
       if (del.size) await call({ mirrorOnly: true, photoIds: Array.from(del) })
       const urls: Record<string, string> = {}
       for (const [id, s] of Object.entries(swap)) urls[id] = s.url
-      const r = await fetch('/api/photo-order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, order: order.filter(id => !del.has(id)), ...(del.size ? { remove: Array.from(del) } : {}), ...(Object.keys(urls).length ? { urls } : {}) }) })
+      const r = await fetch('/api/photo-order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, order: order.filter(id => !del.has(id)), ...(del.size ? { remove: Array.from(del) } : {}), ...(Object.keys(urls).length ? { urls } : {}), ...(capChanged.length ? { captions: Object.fromEntries(capChanged) } : {}) }) })
       const j = await r.json().catch(() => ({}))
       if (!r.ok || j?.error) throw new Error(j?.error || 'Guesty would not take the order.')
       setMsg('Saved to Guesty — the channels pick it up on their next sync. Refreshing…'); setSwap({}); setTimeout(() => { try { window.location.reload() } catch { /* fine */ } }, 1500)
@@ -92,10 +98,11 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
     <section className="rounded-2xl border border-line bg-white">
       <div className="px-4 py-3 flex items-center gap-2 flex-wrap">
         <span className="text-[14px] font-bold text-ink">Photo order</span>
-        <span className="text-[12px] text-muted">Pick a number on any photo to move it there. 1 is the cover; 1–5 are what guests see first.</span>
+        <span className="text-[12px] text-muted">Tap a photo to edit it — looks, light and colour, caption, place. Pick a number to move it. 1 is the cover; 1–5 are what guests see first.</span>
+        <a href="#ai-photo-tools" onClick={e => { e.preventDefault(); document.getElementById('ai-photo-tools')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }} className="inline-flex items-center gap-1 text-[12px] font-semibold text-brand-700 hover:text-brand-800"><Wand2 size={12} /> AI: best first 5 &amp; captions</a>
         <span className="ml-auto flex items-center gap-2">
           {del.size > 0 && <span className="text-[12px] font-semibold text-rose-700">{del.size} to delete</span>}
-          {changed && <button onClick={() => { setOrder(start); setSwap({}); setDel(new Set()) }} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><RotateCcw size={12} /> Reset</button>}
+          {changed && <button onClick={() => { setOrder(start); setSwap({}); setDel(new Set()); setCaps({}) }} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><RotateCcw size={12} /> Reset</button>}
           <button onClick={save} disabled={!changed || busy === 'save'} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3 py-1.5 text-[12.5px] font-bold disabled:opacity-40">
             {busy === 'save' ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} {del.size ? 'Save & delete' : 'Save order'}
           </button>
@@ -112,7 +119,7 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
               <div key={id} className={'rounded-xl overflow-hidden border ' + (del.has(id) ? 'border-rose-300 bg-rose-50' : pos === 1 ? 'border-amber-400 ring-2 ring-amber-200' : top ? 'border-amber-300' : 'border-line')}>
                 <div className="relative">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={sw ? sw.url : p.url} alt={p.caption || ''} className={'w-full aspect-[4/3] object-cover ' + (del.has(id) ? 'opacity-30 grayscale' : '')} loading="lazy" />
+                  <img src={sw ? sw.url : p.url} alt={p.caption || ''} onClick={() => setEditing(id)} title="Edit this photo" className={'w-full aspect-[4/3] object-cover cursor-pointer hover:opacity-90 ' + (del.has(id) ? 'opacity-30 grayscale' : '')} loading="lazy" />
                   {del.has(id) ? (
                     <button onClick={() => toggleDel(id)} title="Keep this photo"
                       className="absolute bottom-1.5 right-1.5 inline-flex items-center gap-1 rounded-md bg-white/90 border border-line px-1.5 py-0.5 text-[11px] font-semibold text-ink">
@@ -142,6 +149,7 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
                     </select>
                   </label>
                   <div className="flex items-center gap-1 flex-wrap">
+                    <button onClick={() => setEditing(id)} className={ghost + ' border-ink/30'} title="Looks, fine-tune, caption, place"><SlidersHorizontal size={11} /> Edit</button>
                     <button onClick={() => flip(id)} disabled={!!busy} className={ghost} title="Mirror the photo left-to-right">{busy === id + ':flip' ? <Loader2 size={11} className="animate-spin" /> : <FlipHorizontal2 size={11} />} Flip</button>
                     <button onClick={() => makeOptions(id)} disabled={!!busy} className={ghost} title="Make several enhanced versions to choose from">{busy === id + ':opt' ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />} Enhance options</button>
                     {sw && <button onClick={() => setSwap(s => { const n = { ...s }; delete n[id]; return n })} className={ghost} title="Keep the original"><X size={11} /> Original</button>}
@@ -159,13 +167,27 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
                       <button onClick={() => setOptions(o => { const n = { ...o }; delete n[id]; return n })} className="text-[10px] text-muted col-span-3 text-left inline-flex items-center gap-0.5"><Check size={10} /> Done — keep current</button>
                     </div>
                   )}
-                  {p.caption && <div className="text-[10.5px] text-muted truncate" title={p.caption}>{p.caption}</div>}
+                  {(caps[id] ?? p.caption) && <div className={'text-[10.5px] truncate ' + (caps[id] != null && caps[id] !== p.caption ? 'text-emerald-700' : 'text-muted')} title={caps[id] ?? p.caption}>{caps[id] ?? p.caption}</div>}
                 </div>
               </div>
             )
           })}
         </div>
       )}
+      {editing && byId.get(editing) && (() => {
+        const p = byId.get(editing)!, i = order.indexOf(editing)
+        const step = (d: number) => { const n = order[(i + d + order.length) % order.length]; if (n) setEditing(n) }
+        return (
+          <ListingPhotoEditor listingId={listingId} photo={{ id: p.id, url: p.url.replace(/h_\d+,c_fit\//, ''), caption: p.caption }} position={i + 1} total={order.length}
+            current={swap[editing] || null} caption={caps[editing] ?? p.caption} deleted={del.has(editing)}
+            onClose={() => setEditing(null)} onPrev={() => step(-1)} onNext={() => step(1)}
+            onUse={(url, label) => setSwap(s => ({ ...s, [editing]: { url, label } }))}
+            onRevert={() => setSwap(s => { const n = { ...s }; delete n[editing]; return n })}
+            onCaption={t => setCaps(c => ({ ...c, [editing]: t }))}
+            onMove={n => moveTo(editing, n)}
+            onDelete={() => toggleDel(editing)} />
+        )
+      })()}
     </section>
   )
 }
