@@ -182,7 +182,8 @@ export const BUILDINGS: BuildingGuide[] = [
     parking: 'Free on-site parking lot, one space per reservation, included with the stay.',
     access: 'Self check-in (code).',
     questions: ['Driving in? (one parking space per reservation)', 'First time in Boynton Beach?'],
-    recs: { food: [], coffee: '', grocery: '', beach: '', tip: '' },
+    // Jon, 2026-10-31: "There is beach access from the house, short 3 to 5 min walk."
+    recs: { food: [], coffee: '', grocery: '', beach: 'Beach access from the property - about a 3 to 5-minute walk to the sand', tip: 'On Ocean Blvd (A1A): walk to the beach from the door; Delray Beach\'s Atlantic Avenue is a short drive south.' },
   },
   {
     key: 'oasis', name: 'Oasis', area: 'South Florida - confirm exact unit location',

@@ -129,7 +129,9 @@ export function factsPrompt(f: BuildingFacts | null): string {
   L.push('them, do not add places that are not listed here, and do not turn a walk into a stroll.')
   // A placeholder written for staff ('confirm exact unit location') is not a fact a guest may be told (audit 2026-10-05).
   if (f.area && !/confirm|tbd|\?\?/i.test(f.area)) L.push(`- Area: ${f.area}`)
-  if (f.beach) L.push(`- Beach: ${f.beach}`)
+  // The staff-verified beach line outranks the measured list (which only knows the big public
+  // beaches): when it says a walk, the beach is a walk — lead with it, never call the beach a drive.
+  if (f.beach) L.push(`- Beach: ${f.beach} (this is THE beach story for this property — lead with it in the summary and neighborhood; the public beaches in the area list are extra options, not the nearest sand)`)
   if (f.parking) L.push(`- Parking: ${f.parking} (describe it accurately — if it says garage, it is a garage)`)
   if (f.food.length) L.push(`- Restaurants guests actually go to: ${f.food.join(', ')}`)
   if (f.coffee) L.push(`- Coffee: ${f.coffee}`)
