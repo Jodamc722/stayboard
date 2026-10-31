@@ -289,6 +289,7 @@ export async function POST(req: NextRequest) {
       _id: r._id,
       ...(r.enhancedUrl ? { enhancedUrl: r.enhancedUrl } : {}),
       ...((r as any).flippedUrl ? { flippedUrl: (r as any).flippedUrl } : {}),
+      ...((r as any).customUrl ? { customUrl: (r as any).customUrl } : {}),
       ...((r as any).variants ? { variants: (r as any).variants } : {}),
       mirroredUrl: r.mirroredUrl,
       preset: r.preset, presetName: r.presetName,
