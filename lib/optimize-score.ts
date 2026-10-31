@@ -1,5 +1,5 @@
 import { buildingOf as canonicalBuilding } from '@/lib/segments'
-import { auditAmenities, type Audit } from '@/lib/amenity-audit'
+import { auditAmenities, photoFacts, type Audit } from '@/lib/amenity-audit'
 // Single source of truth for the Listing Optimize Score (0-100).
 // Deterministic, research-backed, computed entirely from structured Guesty data
 // (no AI call) so it can run on the property detail page, the Properties/building
@@ -8,7 +8,7 @@ import { auditAmenities, type Audit } from '@/lib/amenity-audit'
 // amenities, photo count, and the guest-review signal.
 //
 // Components (structural, sum to 1.0 before the review blend):
-//   Title .18 · Description .22 · Photos .18 · Amenity coverage .22 · Booking settings .20
+//   Title .15 · Description .22 · Photos .25 · Amenity coverage .20 · Booking settings .18 (2026-10-30)
 // When review data is available, overall = round(structural * 0.86 + reviewSignal * 0.14).
 //
 // PHOTOS BECAME THEIR OWN PILLAR ON 2026-08-21. They used to be one 16-point factor INSIDE
@@ -205,9 +205,9 @@ function presence(norm: string[], def: AmenityDef): 'full' | 'partial' | null {
 function present(norm: string[], def: AmenityDef): boolean { return presence(norm, def) === 'full' }
 
 /* --------------------------------- scoring --------------------------------- */
-const LOCATION_RE = /\b(beach|miami|brickell|south beach|downtown|lincoln|bay ?front|isles?|district|pointe|collins|ocean|fort lauderdale|ft\.? lauderdale|lauderdale|las olas|hollywood|pompano|hallandale|aventura|sunny isles|wynwood|edgewater|midtown|coconut grove|coral gables|key biscayne|little havana|design district|wilton manors|deerfield|boca|galt|intracoastal|marina|harbor|riverwalk|flagler|victoria park|port everglades|airport|fll|mia|convention center|hard rock|cruise port)\b/i
+const LOCATION_RE = /\b(beach|miami|brickell|south beach|downtown|lincoln|bay ?front|isles?|district|pointe|collins|ocean|fort lauderdale|ft\.? lauderdale|lauderdale|las olas|hollywood|pompano|hallandale|aventura|sunny isles|wynwood|edgewater|midtown|coconut grove|coral gables|key biscayne|little havana|design district|wilton manors|deerfield|boca|galt|intracoastal|marina|harbor|riverwalk|flagler|victoria park|port everglades|airport|fll|mia|convention center|hard rock|cruise port|boynton|delray|lake worth|palm beach|west palm|riviera beach|singer island|jupiter|oakland park|dania|lauderdale-by-the-sea|lighthouse point|coconut creek|plantation|sunrise|weston|davie|north miami|bal harbour|surfside|north beach|mid-?beach)\b/i
 const TITLE_KW = ['pool', 'ocean', 'beach', 'view', 'hot tub', 'parking', 'king', 'balcony', 'gym', 'waterfront', 'rooftop', 'penthouse']
-function scoreTitle(title: string): { score: number; factors: Factor[] } {
+function scoreTitle(title: string, ctx?: { city?: string; building?: string }): { score: number; factors: Factor[] } {
   const t = title.trim()
   const len = t.length
   const factors: Factor[] = []
@@ -215,8 +215,11 @@ function scoreTitle(title: string): { score: number; factors: Factor[] } {
   if (len === 0) { lenGot = 0; lenNote = 'Empty title' }
   else if (len > 65) { lenGot = 8; lenNote = `${len} chars - too long, truncated on every OTA` }
   else if (len > 50) { lenGot = 22; lenNote = `${len} chars - over Airbnb's 50-char cap` }
-  else if (len >= 25) { lenGot = 35; lenNote = `${len} chars - ideal length` }
-  else { lenGot = 20; lenNote = `${len} chars - short, room for a selling point` }
+  // 40-50 uses the space Airbnb gives (the copywriter targets 42-50); shorter titles leave a selling
+  // point on the table, and mobile cards still show the first ~32 characters either way.
+  else if (len >= 40) { lenGot = 35; lenNote = `${len} chars - uses the space well` }
+  else if (len >= 25) { lenGot = 28; lenNote = `${len} chars - room for one more selling point (aim 40-50)` }
+  else { lenGot = 18; lenNote = `${len} chars - short, room for a selling point` }
   factors.push({ label: 'Length', got: lenGot, max: 35, note: lenNote, ok: lenGot >= 30 ? 'good' : lenGot >= 18 ? 'warn' : 'bad' })
   const forb = t ? hasForbidden(t) : 'empty'
   factors.push({ label: 'Clean & compliant', got: forb ? 5 : 25, max: 25, note: forb && forb !== 'empty' ? `Contains ${forb} - OTAs may reject it` : (forb === 'empty' ? 'No title to check' : 'No caps/emoji/contact issues'), ok: forb ? 'bad' : 'good' })
@@ -225,7 +228,10 @@ function scoreTitle(title: string): { score: number; factors: Factor[] } {
   const kw = TITLE_KW.filter(k => hasWords(lower, k))
   factors.push({ label: 'Standout amenity', got: kw.length ? 20 : 6, max: 20, note: kw.length ? `Leads with: ${kw.slice(0, 3).join(', ')}` : 'No headline amenity (pool, ocean view...) - add one', ok: kw.length ? 'good' : 'warn' })
   // A real place name, not "any two capitalised words" (which every Title Case title has).
-  const hasLoc = LOCATION_RE.test(t)
+  // The unit's own city or building name counts too — "Boynton Beach Cottage" names a real place even
+  // if the list above has never heard of it.
+  const own = [ctx?.city, ctx?.building].map(x => String(x || '').trim()).filter(x => x.length >= 4)
+  const hasLoc = LOCATION_RE.test(t) || own.some(x => lower.includes(x.toLowerCase()))
   factors.push({ label: 'Specific location', got: hasLoc ? 20 : 8, max: 20, note: hasLoc ? 'Names a neighborhood / landmark' : 'Add a neighborhood or landmark guests search for', ok: hasLoc ? 'good' : 'warn' })
   return { score: Math.round(factors.reduce((s, f) => s + f.got, 0)), factors }
 }
@@ -374,7 +380,7 @@ function scorePhotos(raw: any, photoScoreCol: any, photoCount: number): ScoreRes
   // THE FIRST FIVE (2026-10-30): the photos a guest swipes on the search card. Five angles of one
   // room sell one room; the strongest sets show the living space, a bedroom, the kitchen or bath
   // and the outdoor/amenity draw. Read from the photo analysis — unmeasured gets a token 4.
-  const idx: Record<string, any> = raw && typeof raw._photoIndex === 'object' && raw._photoIndex ? raw._photoIndex : {}
+  const idx: Record<string, any> = photoFacts(raw)
   const firstIds = pics.slice(0, 5).map((p: any) => { const o = typeof p === 'string' ? (() => { try { return JSON.parse(p) } catch { return {} } })() : (p || {}); return str(o._id || o.id) })
   const known = firstIds.filter(id => id && idx[id])
   let fGot = 4, fNote = 'Not analysed yet - run Organize photos to check the first five'
@@ -462,7 +468,11 @@ export function computeScore(listing: any, opts?: {
   /** The verified building parking line, so a contradicted Garage shows in the audit. */
   parkingFact?: string | null
 }): ScoreResult {
-  const raw = listing?.raw || {}
+  const raw0 = listing?.raw || {}
+  // ONE SCORE EVERYWHERE (2026-10-30): the portfolio pages pass a slimmed raw without pictures, so
+  // captions and the first-five check read zero there and the unit page disagreed. The pictures
+  // column stands in when raw has none.
+  const raw = Array.isArray(raw0.pictures) && raw0.pictures.length ? raw0 : { ...raw0, pictures: Array.isArray(listing?.pictures) ? listing.pictures : [] }
   const pub = raw.publicDescription || raw.publicDescriptions || {}
   // The PUBLIC title only — the internal nickname is a name no guest ever sees (audit 2026-10-26).
   const name = listing?.title || raw.title || ''
@@ -471,22 +481,26 @@ export function computeScore(listing: any, opts?: {
   const photoCount = Array.isArray(listing?.pictures) ? listing.pictures.length
     : (Array.isArray(raw.pictures) ? raw.pictures.length : 0)
 
-  const title = scoreTitle(name)
+  const title = scoreTitle(name, { city: listing?.address_city, building: canonicalBuilding(listing?.building || '', listing?.nickname || null) || '' })
   const description = scoreDescription(pub)
   const photoScoreCol = (listing?.photo_score && typeof listing.photo_score === 'object') ? listing.photo_score : null
   const photos = scorePhotos(raw, photoScoreCol, photoCount)
   const settings = scoreSettings(raw)
   const picIds = (Array.isArray(raw.pictures) ? raw.pictures : []).map((p: any) => { const o = typeof p === 'string' ? (() => { try { return JSON.parse(p) } catch { return {} } })() : (p || {}); return str(o._id || o.id) }).filter(Boolean)
-  const audit = auditAmenities(amenities.map(a => String(a)), raw._photoIndex, picIds, opts?.parkingFact || null)
+  const audit = auditAmenities(amenities.map(a => String(a)), photoFacts(raw), picIds, opts?.parkingFact || null)
   const amen = scoreAmenities(amenities, {
     seenMissing: audit.seenMissing.map(x => x.name),
     isBeach: opts?.isBeach,
     siblingNorm: opts?.siblingAmenities ? normAmenities(opts.siblingAmenities) : undefined,
   })
 
-  // Structural blend (sums to 1.0):
-  //   Title .18 · Description .22 · Photos .18 · Amenities .22 · Settings .20
-  const structural = title.score * 0.18 + description.score * 0.22 + photos.score * 0.18 + amen.score * 0.22 + settings.score * 0.20
+  // Structural blend (sums to 1.0) — PILLAR_WEIGHTS below is the one table.
+  //   Title .15 · Description .22 · Photos .25 · Amenities .20 · Settings .18
+  // REWEIGHTED 2026-10-30: the photo grid decides the click and the booking more than any other part
+  // of a listing, yet it carried the same 18% as the title; settings carried 20% while two of its
+  // four factors (cancellation, Instant Book) cannot be changed from here at all.
+  const W = PILLAR_WEIGHTS
+  const structural = title.score * W.title + description.score * W.description + photos.score * W.photos + amen.score * W.amenities + settings.score * W.settings
 
   let overall = structural
   let reviewSignal: ScoreResult['reviewSignal'] = null
@@ -537,7 +551,7 @@ export type Gap = {
 }
 
 export const PILLAR_WEIGHTS: Record<Gap['pillar'], number> = {
-  title: 0.18, description: 0.22, photos: 0.18, amenities: 0.22, settings: 0.20,
+  title: 0.15, description: 0.22, photos: 0.25, amenities: 0.20, settings: 0.18,
 }
 // Structural score is blended with the review signal at 0.86 when reviews are present, so a
 // structural point is worth 0.86 of an overall point. Fixing copy cannot move the review signal.
@@ -565,6 +579,13 @@ export function scoreGaps(res: ScoreResult): Gap[] {
   // Amenities score without per-factor detail, so express the gap as the two things a human can act
   // on: a missing safety amenity (always first) and the high-value suggestions.
   const amenGapPts = Math.round((100 - res.amenities.score) * PILLAR_WEIGHTS.amenities * blend * 10) / 10
+  const au = res.amenities.audit
+  if (au && au.conflicts.length) {
+    out.push({ pillar: 'amenities', label: 'Amenity listed that is not true', severity: 'bad', note: au.conflicts.map(c => c.name).join(', ') + ' — remove before a guest complains', points: 1 })
+  }
+  if (au && au.seenMissing.length) {
+    out.push({ pillar: 'amenities', label: 'Amenities your photos show', severity: 'warn', note: au.seenMissing.slice(0, 4).map(x => x.name).join(', ') + (au.seenMissing.length > 4 ? ` +${au.seenMissing.length - 4}` : '') + ' — seen in photos, not listed', points: Math.round(Math.min(15, au.seenMissing.length * 3) * PILLAR_WEIGHTS.amenities * blend * 10) / 10 })
+  }
   if (res.amenities.mustFix.length) {
     out.push({
       pillar: 'amenities', label: 'Missing safety amenity', severity: 'bad',

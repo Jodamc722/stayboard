@@ -220,7 +220,7 @@ async function assemble(): Promise<AdminDesk> {
     }
     const rv = revBy.get(id)
     const avg = rv && rv.n ? Math.round((rv.sum / rv.n) * 100) / 100 : null
-    const slim = { ...l, raw: { publicDescription: l.rawPub, publicDescriptions: l.rawPubs, terms: l.rawTerms, prices: l.rawPrices, integrations: l.rawInts, instantBookable: l.rawIb, instantBook: l.rawIb2, defaultCheckInTime: l.rawCi, checkInTime: l.rawCi2, defaultCheckOutTime: l.rawCo, checkOutTime: l.rawCo2, _photoScore: l.rawPs, cancellationPolicy: l.rawCp, airbnb: l.rawAirbnb, bookingcom: l.rawBcom, title: l.rawTitle, defaultListingMinNights: l.rawMinN, amenities: l.rawAmen, _lastOptimized: l.lastOpt } }
+    const slim = { ...l, raw: { publicDescription: l.rawPub, publicDescriptions: l.rawPubs, terms: l.rawTerms, prices: l.rawPrices, integrations: l.rawInts, instantBookable: l.rawIb, instantBook: l.rawIb2, defaultCheckInTime: l.rawCi, checkInTime: l.rawCi2, defaultCheckOutTime: l.rawCo, checkOutTime: l.rawCo2, _photoScore: l.rawPs, _photoIndex: l.pidx, pictures: l.pics, cancellationPolicy: l.rawCp, airbnb: l.rawAirbnb, bookingcom: l.rawBcom, title: l.rawTitle, defaultListingMinNights: l.rawMinN, amenities: l.rawAmen, _lastOptimized: l.lastOpt } }
     let score: number | null = null
     try { score = computeScore(slim, { avgRating: avg, reviewCount: rv ? rv.n : 0 }).overall } catch { score = null }
     const caps = captionStats(l.pics)

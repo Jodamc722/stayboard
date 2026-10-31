@@ -101,17 +101,18 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
   const toRemove = current.filter(a => !sel.has(a))
   const changed = toAdd.length > 0 || toRemove.length > 0
 
-  async function apply() {
+  async function apply(list?: string[]) {
     setBusy(true); setErr(null)
     try {
       const res = await fetch('/api/listing-amenities', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, amenities: Array.from(sel) }),
+        body: JSON.stringify({ listingId, amenities: list || Array.from(sel) }),
       })
       const d = await res.json()
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
       setDone(`Saved — this unit now has ${d.count} amenities in Guesty (syncing to the channels).`)
       if (Array.isArray(d.amenities)) { setCurrent(d.amenities); setSel(new Set(d.amenities)) }
+      try { window.dispatchEvent(new CustomEvent('stay:score-refresh')) } catch { /* no-op */ }
       setConfirming(false)
     } catch (e: any) { setErr(e?.message || String(e)) }
     finally { setBusy(false) }
@@ -167,7 +168,8 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-[10.5px] uppercase tracking-wider font-bold text-sky-800">Seen in your photos, not listed</span>
-                  <button onClick={() => { setDone(null); setSel(sv => { const n = new Set(sv); seen.forEach(x => n.add(x.name)); return n }) }} className="ml-auto text-[11.5px] font-semibold rounded-md bg-ink text-white px-2 py-0.5">Add all {seen.length}</button>
+                  <button onClick={() => { setDone(null); setSel(sv => { const n = new Set(sv); seen.forEach(x => n.add(x.name)); return n }) }} className="ml-auto text-[11.5px] font-semibold rounded-md border border-line bg-white px-2 py-0.5">Stage all {seen.length}</button>
+                  <button onClick={() => { if (window.confirm('Add ' + seen.map(x => x.name).join(', ') + ' to this listing in Guesty now?')) apply(Array.from(new Set([...Array.from(sel), ...seen.map(x => x.name)]))) }} disabled={busy} className="text-[11.5px] font-semibold rounded-md bg-ink text-white px-2 py-0.5 disabled:opacity-50">{busy ? 'Saving…' : `Add ${seen.length} & save`}</button>
                 </div>
                 <div className="flex flex-wrap gap-1.5">{seen.map(x => (
                   <span key={x.name} className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-white pl-1 pr-1.5 py-1">
@@ -273,7 +275,7 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
       </div>
 
       {err && <div className="mt-3 text-[12px] text-rose-600 inline-flex items-start gap-1.5"><AlertTriangle size={13} className="mt-0.5 shrink-0" /> {err}</div>}
-      {done && <div className="mt-3 text-[12px] text-emerald-700 inline-flex items-center gap-1.5"><Check size={13} /> {done} <button onClick={() => location.reload()} className="ml-1 underline underline-offset-2 inline-flex items-center gap-1"><RefreshCw size={11} /> refresh</button></div>}
+      {done && <div className="mt-3 text-[12px] text-emerald-700 inline-flex items-center gap-1.5"><Check size={13} /> {done}</div>}
 
       {changed && !done && (
         <div className="mt-4 pt-3 border-t border-line flex items-center gap-2 flex-wrap">
@@ -286,7 +288,7 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
               <span className="text-[12px] text-ink">
                 Apply {toAdd.length > 0 && <b>+{toAdd.length}</b>}{toAdd.length > 0 && toRemove.length > 0 ? ', ' : ''}{toRemove.length > 0 && <b>−{toRemove.length}</b>} to this unit on Guesty?
               </span>
-              <button onClick={apply} disabled={busy} className="inline-flex items-center gap-1.5 text-[13px] font-semibold rounded-lg bg-brand-600 text-white px-3 py-2 hover:bg-brand-700 disabled:opacity-50">
+              <button onClick={() => apply()} disabled={busy} className="inline-flex items-center gap-1.5 text-[13px] font-semibold rounded-lg bg-brand-600 text-white px-3 py-2 hover:bg-brand-700 disabled:opacity-50">
                 {busy ? 'Applying…' : 'Yes, apply'}
               </button>
               <button onClick={() => setConfirming(false)} disabled={busy} className="text-[12px] text-muted hover:text-ink">Cancel</button>

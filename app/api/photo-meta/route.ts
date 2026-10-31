@@ -16,6 +16,7 @@
 // fixes it, watches it come back wrong, and stops trusting the control. So a human edit is marked
 // `by: 'human'` and /api/optimize-photos now treats those the way it has always treated a
 // human-written caption — as the answer, not as a suggestion to be overwritten.
+import { digestOf } from '@/lib/amenity-audit'
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -63,6 +64,7 @@ export async function POST(req: NextRequest) {
     at: new Date().toISOString(),
   }
   raw._photoIndex = idx
+  raw._photoDigest = digestOf(idx)
 
   const { error: upErr } = await db.from('guesty_listings').update({ raw }).eq('id', listingId)
   if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })

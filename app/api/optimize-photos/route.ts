@@ -19,6 +19,7 @@
 //      promises is what the photos show.
 //
 // Generate-only. Nothing goes to Guesty until the human pushes via /api/photo-order.
+import { digestOf } from '@/lib/amenity-audit'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { requireLevel } from '@/lib/access'
@@ -325,7 +326,7 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
       photoIndex[f._id] = { room: f.room, category: f.category, kind: f.kind, subject: f.subject, shotType: f.shotType, quality: f.quality, sellingPoints: f.sellingPoints, amenitiesSeen: (f as any).amenitiesSeen || [], caption: f.caption, enhance: f.enhance, enhanceWhy: f.enhanceWhy, at, ...(human ? { by: 'human' } : {}) }
     }
     const ps = { score: assessment.quality, coverageNote: assessment.coverage, notes: assessment.notes, count: allPics.length, hooks: hooks.map(h => h.hook), at }
-    await sb.from('guesty_listings').update({ raw: { ...raw, _photoIndex: photoIndex, _photoScore: ps, _photoAmenities: { gaps: amenityGaps, at } }, photo_score: ps }).eq('id', listingId)
+    await sb.from('guesty_listings').update({ raw: { ...raw, _photoIndex: photoIndex, _photoDigest: digestOf(photoIndex), _photoScore: ps, _photoAmenities: { gaps: amenityGaps, at } }, photo_score: ps }).eq('id', listingId)
   } catch { /* best-effort */ }
 
   const mirror: Record<string, any> = (raw._photoMirror && typeof raw._photoMirror === 'object') ? raw._photoMirror : {}

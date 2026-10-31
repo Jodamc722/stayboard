@@ -57,7 +57,8 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
     setOpen(true); setBusy(true); setError(null); setResult(null); setEdited(null); setPushedMsg(null); setSectionMsg({})
     // RECREATE 2.0: a full Recreate also kicks off the photo pass (AI order + captions + hero
     // suggestion + image enhancement) in the PhotoOrganizer panel below — one click, whole listing.
-    if (freshFeel) { try { window.dispatchEvent(new CustomEvent('stay:recreate-listing')) } catch { /* no-op */ } }
+    // The photo tool may never have been opened: ask the workspace to mount it, then hand off.
+    if (freshFeel) { try { window.dispatchEvent(new CustomEvent('stay:mount-tab', { detail: { id: 'photos' } })); setTimeout(() => { try { window.dispatchEvent(new CustomEvent('stay:recreate-listing')) } catch { /* no-op */ } }, 600) } catch { /* no-op */ } }
     try {
       const base = genPrompt.trim()
       const instruction = freshFeel
@@ -154,6 +155,7 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
       const d = await readJson(res)
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
       setSectionMsg(m => ({ ...m, [k]: 'Pushed to Guesty ✓' }))
+      try { window.dispatchEvent(new CustomEvent('stay:score-refresh')) } catch { /* no-op */ }
     } catch (e: any) {
       setError(e?.message || String(e))
     } finally {
@@ -185,7 +187,8 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
       const d = await readJson(res)
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
       const parts = [d.pushed?.title ? 'title' : null, ...(d.pushed?.sections || [])].filter(Boolean)
-      setPushedMsg(`Pushed to Guesty: ${parts.join(', ')}. Reload to see it reflected.`)
+      setPushedMsg(`Pushed to Guesty: ${parts.join(', ')}. The score above updates in a moment.`)
+      try { window.dispatchEvent(new CustomEvent('stay:score-refresh')) } catch { /* no-op */ }
     } catch (e: any) {
       setError(e?.message || String(e))
     } finally {

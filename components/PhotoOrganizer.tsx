@@ -674,6 +674,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
         ? `\u2713 Pushed to Guesty and verified live: ${base}. Now syncing to all channels (Airbnb, Vrbo, etc.).`
         : `Pushed to Guesty: ${base}. ${j.verifyNote || 'Guesty is applying it across channels \u2014 give it a moment.'}`)
       setToRemove(new Set())
+      try { window.dispatchEvent(new CustomEvent('stay:score-refresh')) } catch { /* no-op */ }
       // Pushed uploads are now real Guesty photos — clear temp state so a re-push can't duplicate them.
       if (Object.keys(adds).length) setUploads({})
       if (Object.keys(urls).length) setReplaced({}) // replacements are live now
@@ -802,7 +803,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                 {titleIdeas.map(t => (
                   <li key={t} className="flex items-center gap-2">
                     <span className="flex-1 text-[13px] text-ink">{t} <span className="text-[10.5px] text-muted">({t.length})</span></span>
-                    <button onClick={async () => { try { await navigator.clipboard.writeText(t); setCopiedTitle(t); setTimeout(() => setCopiedTitle(null), 1500); window.dispatchEvent(new CustomEvent('stay:suggest-title', { detail: { title: t } })) } catch {} }}
+                    <button onClick={async () => { try { await navigator.clipboard.writeText(t); setCopiedTitle(t); setTimeout(() => setCopiedTitle(null), 1500); window.dispatchEvent(new CustomEvent('stay:mount-tab', { detail: { id: 'content' } })); setTimeout(() => window.dispatchEvent(new CustomEvent('stay:suggest-title', { detail: { title: t } })), 600) } catch {} }}
                       className="text-[11px] font-semibold px-2 py-1 rounded-md border border-line bg-white text-ink hover:bg-app">{copiedTitle === t ? 'Copied' : 'Copy'}</button>
                   </li>
                 ))}

@@ -27,6 +27,7 @@ import { UnitTasks } from '@/components/UnitTasks'
 import { UnitAudit } from '@/components/UnitAudit'
 import { FaqDesk } from '@/components/FaqDesk'
 import { AmenityEditor } from '@/components/AmenityEditor'
+import { SettingsEditor } from '@/components/SettingsEditor'
 import { buildingGuideFor } from '@/lib/welcome-call-guide'
 import { AreaFacts } from '@/components/AreaFacts'
 import { GuidebookLauncher } from '@/components/GuidebookLauncher'
@@ -192,10 +193,20 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
 
   // Which panel fixes which gap — the factor rows in "What to fix" are links, not just labels.
   const PANEL_FOR: Record<Gap['pillar'], string> = {
-    title: 'content', description: 'content', photos: 'photos', amenities: 'amenities', settings: 'fix',
+    title: 'content', description: 'content', photos: 'photos', amenities: 'amenities', settings: 'settings-panel',
   }
   // The fix rows now say WHERE they go. "Quantified location → Content" is a route; a bare label
   // with an arrow was a promise the reader had to guess at.
+  // The row says the ACTION, not just the destination (2026-10-30 audit): "Write it", "Add them",
+  // "Review first 5" — so the list reads as a to-do, and the two settings no API can change say so.
+  const ACTION_FOR = (g: Gap): string => {
+    if (g.pillar === 'title' || g.pillar === 'description') return 'Write it'
+    if (g.pillar === 'photos') return g.label === 'First five photos' ? 'Review first 5' : g.label === 'Photo captions' ? 'Write captions' : g.label === 'Photo count' ? 'Add photos' : 'Check photos'
+    if (g.pillar === 'amenities') return g.label === 'Amenities your photos show' ? 'Add them' : g.label === 'Amenity listed that is not true' ? 'Remove it' : 'Add amenities'
+    if (g.label === 'Cancellation policy') return 'In Guesty'
+    if (g.label === 'Instant Book') return 'In Airbnb/Vrbo'
+    return 'Edit'
+  }
   const GO_LABEL: Record<Gap['pillar'], string> = {
     title: 'Content', description: 'Content', photos: 'Photos', amenities: 'Amenities', settings: 'Settings',
   }
@@ -295,7 +306,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
                             <span className="block text-[11.5px] text-muted leading-snug">{g.note}</span>
                           </span>
                           <span className="text-[11px] font-semibold text-muted group-hover:text-brand-600 shrink-0 inline-flex items-center gap-0.5">
-                            {GO_LABEL[g.pillar]} <ArrowRight size={11} />
+                            {ACTION_FOR(g)} <ArrowRight size={11} />
                           </span>
                         </a>
                       ))}
@@ -333,16 +344,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
                     Cancellation / Minimum stay / Instant Book / Check-in-out, and this panel listing
                     the same five fields as values. Four of five rows were the same fields twice. The
                     scored version now lives in the breakdown; this one shows what they are set to. */}
-                <div className="rounded-2xl border border-line bg-white overflow-hidden">
-                  <div className="px-3 py-2 bg-app border-b border-line text-[10px] font-bold uppercase tracking-wider text-muted">Booking settings</div>
-                  <dl className="divide-y divide-line text-[12.5px]">
-                    <SettingRow Icon={Ban} label="Cancellation" value={res.settings.meta.cancel.label} tone={res.settings.meta.cancel.tier === 'flex' ? 'good' : res.settings.meta.cancel.tier === 'strict' ? 'bad' : 'muted'} />
-                    <SettingRow Icon={CalendarClock} label="Min nights" value={res.settings.meta.minN != null ? `${res.settings.meta.minN}` : 'Not set'} tone={res.settings.meta.minN != null && Number(res.settings.meta.minN) <= 3 ? 'good' : 'muted'} />
-                    <SettingRow Icon={CalendarClock} label="Max nights" value={res.settings.meta.maxN != null ? `${res.settings.meta.maxN}` : '—'} tone="muted" />
-                    <SettingRow Icon={Zap} label="Instant Book" value={res.settings.meta.instant ? 'On' : (res.settings.meta.instantRaw == null ? 'Unknown' : 'Off')} tone={res.settings.meta.instant ? 'good' : 'bad'} />
-                    <SettingRow Icon={CalendarClock} label="Check-in / out" value={res.settings.meta.checkIn || res.settings.meta.checkOut ? `${res.settings.meta.checkIn || '—'} / ${res.settings.meta.checkOut || '—'}` : 'Not set'} tone="muted" />
-                  </dl>
-                </div>
+                <SettingsEditor listingId={listing.id} meta={res.settings.meta} />
                 <p className="text-[11px] text-muted leading-snug px-0.5">
                   Title and description sync to <b className="text-ink">Airbnb</b> and <b className="text-ink">Vrbo</b> once written to Guesty.
                   {' '}<b className="text-ink">Booking.com</b> writes its own description — there the lever is amenities and settings.
@@ -370,8 +372,9 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
         },
         {
           id: 'content', label: 'Content',
-          badge: String(res.description.score),
-          tone: res.description.score >= 80 ? 'good' : res.description.score >= 60 ? 'warn' : 'bad',
+          // Title and description both live on this tab, so the badge is both (weighted as scored).
+          badge: String(Math.round((res.title.score * 0.15 + res.description.score * 0.22) / 0.37)),
+          tone: Math.round((res.title.score * 0.15 + res.description.score * 0.22) / 0.37) >= 80 ? 'good' : Math.round((res.title.score * 0.15 + res.description.score * 0.22) / 0.37) >= 60 ? 'warn' : 'bad',
           panel: (
             // THE TOOL COMES FIRST (Jon, 2026-08-27: "the optimize should sit above the actual
             // section"). You open this tab to rewrite the copy, not to read it — the live text is

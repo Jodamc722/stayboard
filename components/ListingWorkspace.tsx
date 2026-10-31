@@ -30,7 +30,14 @@
 // DEEP LINKS. #content / #photos / #amenities / #reviews / #ops select their tab, so the portfolio
 // "Fix next" worklist and this page's own fix rows land on an OPEN tool rather than a closed header.
 // Same fix the collapse panels got, now free: a tab cannot be scrolled to and still be shut.
-import { useCallback, useEffect, useState } from 'react'
+//
+// KEEP-ALIVE (2026-10-30 audit). "Only the active tab is rendered" also meant switching tabs threw
+// the other tools away: an unsaved AI draft vanished, and the two cross-tab hand-offs (Recreate's
+// photo pass, "Copy" a title from the photos) fired at a tool that was not mounted. A tab now
+// mounts the first time it is opened — still lazy — and STAYS mounted, hidden, after that. Any tool
+// can ask for another to be mounted without switching: window event 'stay:mount-tab' {detail:{id}}.
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 
 export type WorkTab = {
   id: string
@@ -52,6 +59,23 @@ export function ListingWorkspace({ tabs, storeKey }: { tabs: WorkTab[]; storeKey
   const first = tabs[0]?.id || ''
   const [active, setActive] = useState(first)
   const [ready, setReady] = useState(false)
+  const [mounted, setMounted] = useState<Set<string>>(new Set())
+  // THE SCORE FOLLOWS THE PUSH (2026-10-30). After any tool writes to Guesty it fires
+  // 'stay:score-refresh'; the page's server parts (score chip, tab badges, Fix next) re-render in
+  // place — client tools keep their state — so the number moves without a manual reload.
+  const router = useRouter()
+  const refreshTimer = useRef<any>(null)
+  useEffect(() => {
+    const on = () => { clearTimeout(refreshTimer.current); refreshTimer.current = setTimeout(() => router.refresh(), 1200) }
+    window.addEventListener('stay:score-refresh', on)
+    return () => { window.removeEventListener('stay:score-refresh', on); clearTimeout(refreshTimer.current) }
+  }, [router])
+  useEffect(() => { if (ready && active) setMounted(m => (m.has(active) ? m : new Set(m).add(active))) }, [ready, active])
+  useEffect(() => {
+    const onMount = (e: Event) => { const id = String((e as CustomEvent).detail?.id || ''); if (id && tabs.some(t => t.id === id)) setMounted(m => (m.has(id) ? m : new Set(m).add(id))) }
+    window.addEventListener('stay:mount-tab', onMount)
+    return () => window.removeEventListener('stay:mount-tab', onMount)
+  }, [tabs])
 
   const pick = useCallback((id: string, push = true) => {
     setActive(id)
@@ -71,6 +95,9 @@ export function ListingWorkspace({ tabs, storeKey }: { tabs: WorkTab[]; storeKey
       // a stronger signal than where you happened to be last time.
       const h = window.location.hash.replace('#', '')
       if (h && ids.indexOf(h) >= 0) chosen = h
+      // A hash that names an anchor INSIDE a tab (#settings-panel): open the first tab, where those
+      // live, and scroll to it once it has rendered.
+      else if (h && /^[a-z][a-z0-9-]*$/i.test(h)) { chosen = first; setTimeout(() => { try { document.getElementById(h)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) } catch { /* no-op */ } }, 400) }
       else {
         const v = window.localStorage.getItem(storeKey)
         if (v && ids.indexOf(v) >= 0) chosen = v
@@ -83,6 +110,7 @@ export function ListingWorkspace({ tabs, storeKey }: { tabs: WorkTab[]; storeKey
       try {
         const h = window.location.hash.replace('#', '')
         if (h && ids.indexOf(h) >= 0) setActive(h)
+        else if (h) { const el = document.getElementById(h); if (el) { setActive(first); setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100) } }
       } catch { /* no-op */ }
     }
     window.addEventListener('hashchange', onHash)
@@ -113,10 +141,16 @@ export function ListingWorkspace({ tabs, storeKey }: { tabs: WorkTab[]; storeKey
           )
         })}
       </div>
-      {/* Only the active panel is rendered — the heavy tools do not mount until asked for. */}
-      <div className="mt-4" role="tabpanel" aria-labelledby={'tab-' + (cur?.id || '')}>
-        {cur?.panel}
-      </div>
+      {/* A panel mounts when first opened (or asked for) and then stays, hidden, so nothing is lost. */}
+      {tabs.map(t => {
+        const show = t.id === (cur?.id || '')
+        if (!show && !mounted.has(t.id)) return null
+        return (
+          <div key={t.id} className="mt-4" role="tabpanel" aria-labelledby={'tab-' + t.id} hidden={!show}>
+            {t.panel}
+          </div>
+        )
+      })}
     </div>
   )
 }

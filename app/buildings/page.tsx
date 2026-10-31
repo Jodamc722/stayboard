@@ -58,7 +58,7 @@ const getPortfolioData = unstable_cache(async (periodDays: number | null) => {
   // cache) took 10s+ and the page looked dead. Pull only the sub-fields computeScore reads.
   const [{ data: listings }, workPage, revsPage] = await Promise.all([
     sb.from('guesty_listings')
-      .select("id, title, nickname, building, unit, status, bedrooms, max_occupancy, address_city, amenities, pictures, last_optimized, pub:raw->publicDescription, pub2:raw->publicDescriptions, terms:raw->terms, integrations:raw->integrations, photoScore:raw->_photoScore, lastOptRaw:raw->>_lastOptimized, minN:raw->defaultListingMinNights, ib:raw->instantBookable, ib2:raw->instantBook, ci:raw->>defaultCheckInTime, ci2:raw->>checkInTime, co:raw->>defaultCheckOutTime, co2:raw->>checkOutTime, cancel:raw->>cancellationPolicy, prices:raw->prices, airbnbCancel:raw->airbnb->>cancellationPolicy, bookingCancel:raw->bookingcom->>cancellationPolicy")
+      .select("id, title, nickname, building, unit, status, bedrooms, max_occupancy, address_city, amenities, pictures, last_optimized, pub:raw->publicDescription, pub2:raw->publicDescriptions, terms:raw->terms, integrations:raw->integrations, photoScore:raw->_photoScore, pidx:raw->_photoDigest, lastOptRaw:raw->>_lastOptimized, minN:raw->defaultListingMinNights, ib:raw->instantBookable, ib2:raw->instantBook, ci:raw->>defaultCheckInTime, ci2:raw->>checkInTime, co:raw->>defaultCheckOutTime, co2:raw->>checkOutTime, cancel:raw->>cancellationPolicy, prices:raw->prices, airbnbCancel:raw->airbnb->>cancellationPolicy, bookingCancel:raw->bookingcom->>cancellationPolicy")
       .limit(1000), // deliberate cap: one row per listing, ~290
     // Open work per building is a COUNT, so it reads every open work order, paged by id — not an
     // unordered first 1,000.
@@ -75,7 +75,7 @@ const getPortfolioData = unstable_cache(async (periodDays: number | null) => {
   // Rebuild the slim raw object computeScore expects.
   const slimRaw = (l: any) => ({
     publicDescription: l.pub, publicDescriptions: l.pub2, terms: l.terms, integrations: l.integrations,
-    _photoScore: l.photoScore, _lastOptimized: l.lastOptRaw, defaultListingMinNights: l.minN, instantBookable: l.ib, instantBook: l.ib2,
+    _photoScore: l.photoScore, _photoDigest: l.pidx, _lastOptimized: l.lastOptRaw, defaultListingMinNights: l.minN, instantBookable: l.ib, instantBook: l.ib2,
     defaultCheckInTime: l.ci, checkInTime: l.ci2, defaultCheckOutTime: l.co, checkOutTime: l.co2,
     cancellationPolicy: l.cancel, prices: l.prices,
     airbnb: { cancellationPolicy: l.airbnbCancel }, bookingcom: { cancellationPolicy: l.bookingCancel },

@@ -56,6 +56,37 @@ const PHOTO_WORTHY: { name: string; tip: string }[] = [
   { name: 'Sauna', tip: 'the sauna' },
 ]
 
+/**
+ * THE PHOTO DIGEST — the few facts the score needs from the photo analysis, small enough for the
+ * portfolio pages to read for every listing (the full _photoIndex carries captions and is ~4x the
+ * size). Written next to _photoIndex by the photo analysis and by photo-meta edits.
+ */
+export type DigestEntry = { c?: string; r?: string; k?: 's'; s?: string[]; a?: string[] }
+export function digestOf(index: Record<string, any> | null | undefined): Record<string, DigestEntry> {
+  const out: Record<string, DigestEntry> = {}
+  if (!index || typeof index !== 'object') return out
+  for (const [id, e] of Object.entries(index)) {
+    if (!e || typeof e !== 'object') continue
+    const d: DigestEntry = {}
+    if (e.category) d.c = String(e.category)
+    if (e.room) d.r = String(e.room)
+    if (e.kind === 'stock') d.k = 's'
+    if (Array.isArray(e.sellingPoints) && e.sellingPoints.length) d.s = e.sellingPoints.map(String).slice(0, 4)
+    if (Array.isArray(e.amenitiesSeen) && e.amenitiesSeen.length) d.a = e.amenitiesSeen.map(String).slice(0, 8)
+    out[id] = d
+  }
+  return out
+}
+/** The photo facts from whichever the listing carries: the full index, else the digest. */
+export function photoFacts(raw: any): Record<string, any> {
+  if (raw && raw._photoIndex && typeof raw._photoIndex === 'object' && Object.keys(raw._photoIndex).length) return raw._photoIndex
+  const d = raw && raw._photoDigest && typeof raw._photoDigest === 'object' ? raw._photoDigest : null
+  if (!d) return {}
+  const out: Record<string, any> = {}
+  for (const [id, e] of Object.entries(d as Record<string, DigestEntry>)) out[id] = { category: e.c, room: e.r, kind: e.k === 's' ? 'stock' : 'property', sellingPoints: e.s || [], amenitiesSeen: e.a || [] }
+  return out
+}
+
 const norm = (x: string) => String(x || '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
 
 /**
