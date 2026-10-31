@@ -69,3 +69,45 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ ok: true, amenities: updated, count: updated.length })
 }
+
+// LIVE READ (Jon, 2026-10-30: "ensure they're up to date"). The Amenities tab used to show the copy
+// in our mirror, which goes stale whenever someone edits amenities in Guesty or a channel. This reads
+// Guesty itself (the amenities endpoint, then the listing as a fallback) and refreshes the mirror,
+// so what you edit is what is live.
+export async function GET(req: NextRequest) {
+  const gate = await requireAnyLevel(['optimize', 'listings', 'reports'], 'view')
+  if (!gate.ok) return gate.res
+  const listingId = String(req.nextUrl.searchParams.get('listingId') || '').trim()
+  if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
+  const sb = supabaseAdmin()
+  const { data: tok } = await sb.from('guesty_tokens').select('access_token, expires_at').eq('id', 'singleton').maybeSingle()
+  const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now() + 30_000)
+  if (!valid) return NextResponse.json({ ok: false, error: 'Guesty token unavailable' }, { status: 200 })
+  const headers = { Authorization: `Bearer ${tok!.access_token}`, Accept: 'application/json' }
+  const pick = (j: any): string[] | null => {
+    const arr = Array.isArray(j) ? j : Array.isArray(j?.amenities) ? j.amenities : Array.isArray(j?.data?.amenities) ? j.data.amenities : null
+    return arr ? arr.map((x: any) => (typeof x === 'string' ? x : String(x?.name || x?.amenity || ''))).filter(Boolean) : null
+  }
+  let live: string[] | null = null
+  try {
+    const r = await fetch(`${BASE}/properties-api/amenities/${encodeURIComponent(listingId)}`, { headers, cache: 'no-store' })
+    if (r.ok) live = pick(await r.json().catch(() => null))
+  } catch { /* fall through */ }
+  if (!live) {
+    try {
+      const r = await fetch(`${BASE}/listings/${encodeURIComponent(listingId)}?fields=amenities`, { headers, cache: 'no-store' })
+      if (r.ok) live = pick(await r.json().catch(() => null))
+    } catch { /* below */ }
+  }
+  if (!live) return NextResponse.json({ ok: false, error: 'Could not read amenities from Guesty' }, { status: 200 })
+  try {
+    const { data: row } = await sb.from('guesty_listings').select('amenities, raw').eq('id', listingId).maybeSingle()
+    const was: string[] = Array.isArray(row?.amenities) ? row!.amenities : []
+    const same = was.length === live.length && was.every(a => live!.includes(a))
+    if (!same) {
+      const raw: any = (row?.raw && typeof row.raw === 'object') ? row.raw : {}
+      await sb.from('guesty_listings').update({ amenities: live, raw: { ...raw, amenities: live } }).eq('id', listingId)
+    }
+  } catch { /* the read still answers */ }
+  return NextResponse.json({ ok: true, amenities: live, at: new Date().toISOString() })
+}

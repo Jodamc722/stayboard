@@ -63,7 +63,18 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
   const [photos, setPhotos] = useState<Record<string, Photo>>({})
   const [heroId, setHeroId] = useState<string | null>(null)
   const [order, setOrder] = useState<string[]>([])           // working order incl. hero at index 0
-  const [proposed, setProposed] = useState<string[]>([])      // AI's proposed order (for reset)
+  const [proposed, setProposed] = useState<string[]>([])      // the baseline the edits are measured from (for reset)
+  // YOUR ORDER STAYS YOURS (Jon, 2026-10-30: "the first 5 are only suggested … have its own section of
+  // approval, because sometimes I organize the way that I want and I don't want to have to change it
+  // again"). Organize no longer rewrites the order: the working order starts as the LIVE order (or
+  // the one being edited), the engine's pick for the first five waits in its own approval box, and
+  // the full engine order is one deliberate click away ("Use the full AI order").
+  const [aiFull, setAiFull] = useState<string[]>([])
+  const [aiFive, setAiFive] = useState<string[]>([])
+  const [mode, setMode] = useState<'mine' | 'full'>('mine')
+  const [fiveDismissed, setFiveDismissed] = useState(false)
+  const [fiveApplied, setFiveApplied] = useState(false)
+  const [liveOrder, setLiveOrder] = useState<string[]>([])
   const [, setHeroSug] = useState<Result['heroSuggestion']>(null)
   const [coverChange, setCoverChange] = useState<Result['coverChange']>(null)
   const [amenityGaps, setAmenityGaps] = useState<NonNullable<Result['amenityGaps']>>([])
@@ -176,7 +187,19 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       const upIds = Object.keys(uploadsRef.current)
       upIds.forEach(id => { if (photosRef.current[id]) map[id] = photosRef.current[id] })
       const fullOrder = [...j.proposedOrder, ...upIds.filter((id: string) => !j.proposedOrder.includes(id))]
-      setPhotos(map); setHeroId(j.heroId); setOrder(fullOrder); setProposed(fullOrder)
+      const live: string[] = Array.isArray(j.currentOrder) && j.currentOrder.length ? j.currentOrder : j.proposedOrder
+      const liveAll = [...live, ...upIds.filter((id: string) => !live.includes(id))]
+      // Edits not pushed yet survive a re-run: keep the working order, add anything new at the end.
+      const known = new Set<string>(liveAll)
+      const working = orderRef.current.filter(id => known.has(id))
+      const base = working.length ? [...working, ...liveAll.filter(id => !working.includes(id))] : liveAll
+      const five = (j.proposedOrder as string[]).slice(0, 5)
+      setPhotos(map); setAiFull(fullOrder); setAiFive(five); setFiveApplied(false); setLiveOrder(liveAll)
+      let dismissed = false
+      try { dismissed = localStorage.getItem('photo5.dismiss.' + listingId) === five.join(',') } catch { /* private mode */ }
+      setFiveDismissed(dismissed)
+      if (mode === 'full') { setHeroId(j.heroId); setOrder(fullOrder); setProposed(fullOrder) }
+      else { setHeroId(base[0] || j.heroId); setOrder(base); setProposed(liveAll) }
       setHeroSug(j.heroSuggestion || null); setCoverChange(j.coverChange || null); setAmenityGaps(j.amenityGaps || []); setListedAmenities(j.listedAmenities || []); setOverflow(j.overflow || 0); setAssessment(j.assessment || null); setRemoveList(j.recommendRemove || [])
       if (Array.isArray(j.presets)) setPresets(j.presets)
       if (typeof j.orderRule === 'string') setOrderRule(j.orderRule)
@@ -433,6 +456,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
     })
   }
   function setAsHero(id: string) {
+    if (mode !== 'full') { setOrder(prev => [id, ...prev.filter(x => x !== id)]); setHeroId(id); return }
     // Make this photo the hero (#1). Re-run analysis with the new hero so the rest re-orders around it.
     setHeroId(id); analyze(id)
   }
@@ -541,14 +565,24 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
     const merged: Record<string, Photo> = { ...nextPhotos }
     for (const pl of r.placed) merged[pl._id] = { ...merged[pl._id], placement: pl.placement, reason: pl.placement.why }
     setPhotos(merged)
-    const newOrder = [...r.placed.map(p => p._id), ...order.filter(id => uploads[id])]
-    setOrder(newOrder); setProposed(newOrder)
+    // In "your order" mode a room or tag correction updates the facts, never the order.
+    if (mode === 'full') {
+      const newOrder = [...r.placed.map(p => p._id), ...order.filter(id => uploads[id])]
+      setOrder(newOrder); setProposed(newOrder)
+    }
     setRemoveList(r.placed.filter(p => p.placement.slot === 'demoted').map(p => ({ _id: p._id, reason: p.placement.why })))
     setHeroCands(r.heroCandidates)
   }
   // Apply an arrangement of the first five: the engine keeps them exactly there and rebuilds the rest.
   function applyFive(five: string[]) {
     const clean = five.filter(Boolean)
+    if (mode !== 'full') {
+      // Only the first five move; every other photo keeps the place you gave it.
+      setFiveLock(clean.length ? clean : null)
+      if (clean.length) { setOrder(prev => [...clean, ...prev.filter(id => !clean.includes(id))]); setHeroId(clean[0]) }
+      setFiveOpen(false)
+      return
+    }
     setFiveLock(clean.length ? clean : null)
     regroup(photos, clean.length ? clean : null)
     setFiveOpen(false)
@@ -709,10 +743,16 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
       {open && (
         <div className="px-4 py-4 border-t border-line space-y-4">
           <CaptionTag listingId={listingId} />
+          {order.length > 0 && mode === 'mine' && aiFive.length >= 3 && !fiveDismissed && (fiveApplied || aiFive.join(',') !== order.slice(0, aiFive.length).join(',')) && (
+            <SuggestedFive five={aiFive} current={order.slice(0, 5)} photos={photos} applied={fiveApplied} busy={busy || pushing}
+              onApply={() => { applyFive(aiFive); setFiveApplied(true) }}
+              onUndo={() => { setOrder(proposed); setHeroId(proposed[0] || null); setFiveLock(null); setFiveApplied(false) }}
+              onKeep={() => { try { localStorage.setItem('photo5.dismiss.' + listingId, aiFive.join(',')) } catch { /* fine */ } setFiveDismissed(true) }} />
+          )}
           {order.length > 0 && (
             <FiveBoard five={order.slice(0, 5)} all={order.filter(id => !uploads[id])} photos={photos} heroCands={heroCands}
               studio={!!profile?.isStudio} locked={!!fiveLock} busy={busy || pushing}
-              onSet={five => applyFive(five)} onAuto={() => { setFiveLock(null); regroup(photos, null) }} />
+              onSet={five => applyFive(five)} onAuto={() => { setFiveLock(null); if (mode === 'full') regroup(photos, null); else applyFive(aiFive) }} />
           )}
           {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
           {pushedMsg && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-[13px] text-emerald-700 flex items-center gap-2"><Check size={14} /> {pushedMsg}</div>}
@@ -792,7 +832,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
             </div>
           )}
           {amenityGaps.length === 0 && amenMsg && <p className="text-[12px] text-emerald-700">{amenMsg}</p>}
-          {order.length > 0 && coverChange && (
+          {order.length > 0 && coverChange && mode === 'full' && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900 flex items-center gap-2 flex-wrap">
               <Crown size={13} /> <span><b>New cover picked.</b> {coverChange.why} scores {coverChange.toScore} as a first photo; the current cover scores {coverChange.fromScore}. Nothing goes live until you push.</span>
               <button onClick={() => { setCoverChange(null); analyze(coverChange.from) }} disabled={busy} className="ml-auto text-[12px] font-semibold underline">Keep the old cover</button>
@@ -803,10 +843,13 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
               <div className="flex items-center justify-between gap-2 flex-wrap text-[12px] text-muted">
                 <span><span className="font-semibold text-ink">{order.length}</span> photos · cover photo locked at #1{overflow > 0 ? ` · ${overflow} extra kept at the end` : ''}</span>
                 <div className="flex items-center gap-2">
-                  {changed && <button onClick={() => setOrder(proposed)} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><RotateCcw size={12} /> Reset to AI order</button>}
+                  {changed && <button onClick={() => { setOrder(proposed); setHeroId(proposed[0] || null); setFiveApplied(false) }} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><RotateCcw size={12} /> {mode === 'full' ? 'Reset to AI order' : 'Undo my changes'}</button>}
+                  {mode === 'mine'
+                    ? (aiFull.length > 0 && <button onClick={() => { if (window.confirm('Re-order EVERY photo the engine’s way? Your current order is replaced on screen (nothing goes live until you push).')) { setMode('full'); setOrder(aiFull); setProposed(aiFull); setHeroId(aiFull[0] || null) } }} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink" title="Opt in to the engine re-ordering everything"><Wand2 size={12} /> Use the full AI order</button>)
+                    : <button onClick={() => { setMode('mine'); setOrder(liveOrder); setProposed(liveOrder); setHeroId(liveOrder[0] || null); setFiveLock(null) }} disabled={busy} className="inline-flex items-center gap-1 text-[12px] text-brand-700 hover:text-brand-800"><RotateCcw size={12} /> Back to my order</button>}
                   <span className="text-[11.5px] text-muted/80 basis-full sm:basis-auto">Reorder: drag the <b>Drag</b> handle (finger or mouse), or click a photo&rsquo;s number and type where it goes.</span>
                   {removeList.length > 0 && <button onClick={() => setToRemove(prev => prev.size === removeList.length ? new Set() : new Set(removeList.map(r => r._id)))} className="inline-flex items-center gap-1 text-[12px] text-rose-700 hover:text-rose-800"><Trash2 size={12} /> {toRemove.size === removeList.length ? 'Unmark all' : `Mark all ${removeList.length} flagged`}</button>}
-                  <button onClick={() => analyze(undefined, undefined, false, true)} disabled={busy} title="Let the engine choose the cover from its ranked candidates" className="inline-flex items-center gap-1 text-[12px] text-amber-700 hover:text-amber-800 disabled:opacity-50"><Crown size={12} /> AI picks cover</button>
+                  {mode === 'full' && <button onClick={() => analyze(undefined, undefined, false, true)} disabled={busy} title="Let the engine choose the cover from its ranked candidates" className="inline-flex items-center gap-1 text-[12px] text-amber-700 hover:text-amber-800 disabled:opacity-50"><Crown size={12} /> AI picks cover</button>}
                   <button onClick={() => analyze(heroId || undefined)} disabled={busy} className="inline-flex items-center gap-1 text-[12px] text-brand-600 hover:text-brand-700 disabled:opacity-50"><Wand2 size={12} /> Re-run</button>
                 </div>
               </div>
@@ -859,9 +902,9 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                   // stands NOW (a dragged photo simply starts its own group — honest, not stale).
                   // Positions 1–5 are ONE section — "Cover photos", the five a guest sees in the
                   // search-card swipe — with its own editor.
-                  const grp = idx < 5 ? 'Cover photos' : (p.placement?.slot === 'demoted' ? 'Consider removing' : (p.placement?.group || 'Photos'))
+                  const grp = idx < 5 ? 'Cover photos' : mode !== 'full' ? 'Your order' : (p.placement?.slot === 'demoted' ? 'Consider removing' : (p.placement?.group || 'Photos'))
                   const prev = idx > 0 ? photos[order[idx - 1]] : null
-                  const prevGrp = idx === 0 ? null : idx <= 5 ? 'Cover photos' : (prev?.placement?.slot === 'demoted' ? 'Consider removing' : (prev?.placement?.group || 'Photos'))
+                  const prevGrp = idx === 0 ? null : idx <= 5 ? 'Cover photos' : mode !== 'full' ? 'Your order' : (prev?.placement?.slot === 'demoted' ? 'Consider removing' : (prev?.placement?.group || 'Photos'))
                   const header = grp !== prevGrp ? grp : null
                   const slotTone = idx < 5 ? 'bg-amber-50 text-amber-800 border-amber-200' : p.placement?.slot === 'demoted' ? 'bg-rose-50 text-rose-700 border-rose-200' : p.placement?.slot === 'building' ? 'bg-teal-50 text-teal-700 border-teal-200' : 'bg-app text-muted border-line'
                   return (
@@ -869,7 +912,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                     {header && (
                       <li className="col-span-full flex items-center gap-2 pt-2 first:pt-0">
                         <span className={`text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-md border ${slotTone}`}>{header}</span>
-                        <span className="text-[11px] text-muted">{header === 'Cover photos' ? 'the first five — what a guest sees in the search card and swipes before opening' : header === 'Consider removing' ? 'duplicates, weak shots and stock — tick to remove on push' : 'the tour, room by room'}</span>
+                        <span className="text-[11px] text-muted">{header === 'Cover photos' ? 'the first five — what a guest sees in the search card and swipes before opening' : header === 'Consider removing' ? 'duplicates, weak shots and stock — tick to remove on push' : header === 'Your order' ? 'kept exactly as you arranged it — drag to change' : 'the tour, room by room'}</span>
                         <span className="flex-1 border-t border-line" />
                         {header === 'Cover photos' && <button onClick={() => { const el = document.getElementById('first-five'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); else setFiveOpen(true) }} className="inline-flex items-center gap-1 rounded-lg bg-amber-500 text-white px-2.5 py-1 text-[11.5px] font-bold hover:bg-amber-600"><Crown size={12} /> Arrange the five</button>}
                         {header === 'Cover photos' && fiveLock && <button onClick={() => applyFive([])} className="text-[11px] text-muted hover:text-ink">Back to AI five</button>}
@@ -1228,6 +1271,48 @@ function FiveBoard({ five, all, photos, heroCands, studio, locked, busy, onSet, 
           )})}
           {!cands.length && <span className="text-[11.5px] text-muted">No other photo is strong enough for the first five.</span>}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// THE ENGINE'S FIRST FIVE, FOR APPROVAL (Jon, 2026-10-30). Shown beside what is live now, with the
+// reason for each pick. Use them → only positions 1–5 change; Keep mine → this suggestion is not
+// offered again for the same photos.
+function SuggestedFive({ five, current, photos, applied, busy, onApply, onUndo, onKeep }: {
+  five: string[]; current: string[]; photos: Record<string, Photo>; applied: boolean; busy: boolean
+  onApply: () => void; onUndo: () => void; onKeep: () => void
+}) {
+  const label = (id: string) => { const p = photos[id]; return (p?.placement?.why || p?.subject || p?.caption || '').replace(/\.$/, '') }
+  const row = (ids: string[], tone: string) => (
+    <ol className="grid grid-cols-5 gap-1.5">
+      {ids.slice(0, 5).map((id, i) => (
+        <li key={id + i} className={`relative rounded-lg overflow-hidden border ${tone}`} title={label(id)}>
+          {photos[id]?.url ? <img src={photos[id].url} alt="" className="w-full aspect-[4/3] object-cover" /> : <div className="w-full aspect-[4/3] bg-app" />}
+          <span className="absolute top-1 left-1 text-[10px] font-bold bg-white/90 text-ink rounded px-1">{i + 1}</span>
+        </li>
+      ))}
+    </ol>
+  )
+  return (
+    <div className="rounded-xl border border-amber-300 bg-amber-50/70 px-3.5 py-3 space-y-2.5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Crown size={15} className="text-amber-600" />
+        <span className="text-[13px] font-bold text-ink">{applied ? 'Suggested first 5 — applied' : 'Suggested first 5'}</span>
+        <span className="text-[11.5px] text-amber-900">{applied ? 'Only positions 1–5 changed; the rest is still your order. Push to make it live.' : 'The five a guest swipes on the search card. Only these move — the rest of your order stays as it is.'}</span>
+      </div>
+      {!applied && <div><div className="text-[10.5px] font-bold uppercase tracking-wide text-muted mb-1">Live now</div>{row(current, 'border-line opacity-80')}</div>}
+      <div><div className="text-[10.5px] font-bold uppercase tracking-wide text-amber-800 mb-1">Suggested</div>{row(five, 'border-amber-300')}</div>
+      <ul className="text-[11.5px] text-ink/80 space-y-0.5">
+        {five.slice(0, 5).map((id, i) => label(id) ? <li key={id}><b>{i + 1}.</b> {label(id)}</li> : null)}
+      </ul>
+      <div className="flex items-center gap-2 flex-wrap">
+        {applied
+          ? <button onClick={onUndo} disabled={busy} className="text-[12.5px] font-semibold rounded-lg border border-line bg-white px-3 py-1.5 hover:bg-app">Undo</button>
+          : <>
+            <button onClick={onApply} disabled={busy} className="text-[12.5px] font-semibold rounded-lg bg-amber-500 text-white px-3 py-1.5 hover:bg-amber-600 disabled:opacity-50">Use these 5</button>
+            <button onClick={onKeep} disabled={busy} className="text-[12.5px] font-semibold rounded-lg border border-line bg-white px-3 py-1.5 hover:bg-app">Keep mine</button>
+          </>}
       </div>
     </div>
   )

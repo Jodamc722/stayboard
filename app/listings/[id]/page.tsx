@@ -27,6 +27,7 @@ import { UnitTasks } from '@/components/UnitTasks'
 import { UnitAudit } from '@/components/UnitAudit'
 import { FaqDesk } from '@/components/FaqDesk'
 import { AmenityEditor } from '@/components/AmenityEditor'
+import { buildingGuideFor } from '@/lib/welcome-call-guide'
 import { AreaFacts } from '@/components/AreaFacts'
 import { GuidebookLauncher } from '@/components/GuidebookLauncher'
 import { ListingWorkspace, type WorkTab } from '@/components/ListingWorkspace'
@@ -146,7 +147,9 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   const curLower = new Set(amenities.map(a => String(a).toLowerCase()))
 
   const isBeach = /beach/i.test(String(listing.address_city || ''))
-  const res = computeScore(listing, { avgRating, reviewCount: rated.length, isBeach, siblingAmenities })
+  // The verified building parking line — a Garage the building does not have shows in the audit.
+  const parkingFact = buildingGuideFor([listing.building, listing.nickname, listing.title].filter(Boolean).join(' '))?.parking || null
+  const res = computeScore(listing, { avgRating, reviewCount: rated.length, isBeach, siblingAmenities, parkingFact })
   const optimizeScore = res.overall
   const opt = bandUi(res.band)
   const gaps = scoreGaps(res)
@@ -158,6 +161,13 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   ])).filter(a => !curLower.has(String(a).toLowerCase()))
 
   const pictures = Array.isArray(listing.pictures) ? listing.pictures : (Array.isArray(raw.pictures) ? raw.pictures : [])
+  // Thumbnails by photo id, so the amenity audit can show the photo that proves each finding.
+  const photoUrls: Record<string, string> = {}
+  for (const p of pictures as any[]) {
+    const o = typeof p === 'string' ? (() => { try { return JSON.parse(p) } catch { return {} } })() : (p || {})
+    const id = String(o._id || o.id || ''); const u = String(o.thumbnail || o.regular || o.large || o.original || o.url || '')
+    if (id && u) photoUrls[id] = u
+  }
 
   // THE CONTENT TABLE'S ROWS. Built from the raw publicDescription rather than
   // res.description.sections, because that list filters empties out — and an empty section is the
@@ -383,8 +393,8 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
         {
           id: 'amenities', label: 'Amenities',
           badge: String(res.amenities.score),
-          tone: res.amenities.mustFix.length ? 'bad' : res.amenities.score >= 80 ? 'good' : 'warn',
-          panel: <AmenityEditor listingId={listing.id} current={amenities} recommended={recommendedAdds} catalog={amenityCatalog} />,
+          tone: res.amenities.mustFix.length || res.amenities.audit.conflicts.length ? 'bad' : res.amenities.audit.seenMissing.length ? 'warn' : res.amenities.score >= 80 ? 'good' : 'warn',
+          panel: <AmenityEditor listingId={listing.id} current={amenities} recommended={recommendedAdds} catalog={amenityCatalog} audit={res.amenities.audit} photoUrls={photoUrls} />,
         },
         {
           // AREA (Jon, 2026-10-05): the measured walk / drive times to the places guests book for, and

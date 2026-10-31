@@ -1,4 +1,5 @@
 import { buildingOf as canonicalBuilding } from '@/lib/segments'
+import { auditAmenities, type Audit } from '@/lib/amenity-audit'
 // Single source of truth for the Listing Optimize Score (0-100).
 // Deterministic, research-backed, computed entirely from structured Guesty data
 // (no AI call) so it can run on the property detail page, the Properties/building
@@ -63,6 +64,8 @@ export type ScoreResult = {
     have: string[]
     suggestions: AmenitySuggestion[]
     mustFix: string[]
+    /** What the photos prove vs what is listed (lib/amenity-audit). */
+    audit: Audit
   }
   reviewSignal: { score: number; avgRating: number | null; reviewCount: number } | null
 }
@@ -242,20 +245,34 @@ function scoreDescription(pub: any): { score: number; factors: Factor[]; section
   const factors: Factor[] = []
   let sGot = 0, sNote = ''
   if (!summary) { sGot = 0; sNote = 'No summary - this is what shows before "read more"' }
-  else if (summary.length < 80) { sGot = 12; sNote = `Summary only ${summary.length} chars - thin` }
-  else if (summary.length <= 500) { sGot = 30; sNote = `Summary ${summary.length} chars - good` }
-  else { sGot = 22; sNote = `Summary ${summary.length} chars - over Airbnb's 500 cap` }
-  factors.push({ label: 'Summary', got: sGot, max: 30, note: sNote, ok: sGot >= 24 ? 'good' : sGot >= 12 ? 'warn' : 'bad' })
+  // 450-500 is the target (Jon, 2026-10-30: "this section should try and be 500 characters"): the
+  // summary is the pitch every channel shows first, and unused characters are unused selling.
+  else if (summary.length < 80) { sGot = 6; sNote = `Summary only ${summary.length} chars - thin` }
+  else if (summary.length < 300) { sGot = 14; sNote = `Summary ${summary.length} chars - use the full ~500` }
+  else if (summary.length < 450) { sGot = 21; sNote = `Summary ${summary.length} chars - close; aim for 450-500` }
+  else if (summary.length <= 500) { sGot = 26; sNote = `Summary ${summary.length} chars - uses the full space` }
+  else { sGot = 18; sNote = `Summary ${summary.length} chars - over Airbnb's 500 cap` }
+  factors.push({ label: 'Summary', got: sGot, max: 26, note: sNote, ok: sGot >= 21 ? 'good' : sGot >= 12 ? 'warn' : 'bad' })
   const filled = substantive.length
   const space = get('space')
-  factors.push({ label: 'Sections filled', got: Math.round((Math.min(filled, 6) / 6) * 22), max: 22, note: `${filled} of 6 description sections say something (60+ characters)`, ok: filled >= 5 ? 'good' : filled >= 3 ? 'warn' : 'bad' })
-  factors.push({ label: 'The space', got: space.length >= 400 ? 8 : space.length >= 150 ? 5 : space ? 2 : 0, max: 8, note: space ? `${space.length} chars — ${space.length >= 400 ? 'a full room-by-room' : 'thin; walk the rooms, beds and what is in them'}` : 'Empty — the room-by-room section guests read before booking', ok: space.length >= 400 ? 'good' : space.length >= 150 ? 'warn' : 'bad' })
+  factors.push({ label: 'Sections filled', got: Math.round((Math.min(filled, 6) / 6) * 20), max: 20, note: `${filled} of 6 description sections say something (60+ characters)`, ok: filled >= 5 ? 'good' : filled >= 3 ? 'warn' : 'bad' })
+  // THE SPACE IS THE SALES PITCH (2026-10-30): a few paragraphs that sell the stay plus a short
+  // highlights list. 500-1600 is the band; a wall past ~2000 is an inventory nobody finishes.
+  const spaceGot = !space ? 0 : space.length < 150 ? 3 : space.length < 500 ? 6 : space.length <= 2000 ? 10 : 7
+  factors.push({ label: 'The space', got: spaceGot, max: 10, note: !space ? 'Empty — this is the sales pitch guests read before booking' : space.length < 500 ? `${space.length} chars — thin; sell the stay: the feel, who it suits, the best features` : space.length <= 2000 ? `${space.length} chars — a full selling section` : `${space.length} chars — too long; guests skim, keep the pitch tight`, ok: spaceGot >= 10 ? 'good' : spaceGot >= 6 ? 'warn' : 'bad' })
   // Layout stated with numbers ("2 bedrooms", "sleeps 6", "king bed"), not just the word "bed".
   const layout = /\b(\d+|one|two|three|four|five|six)[- ](bed(room)?s?|bath(room)?s?|queen|king|twin)\b|\bsleeps? \d+|\b(king|queen)[- ](size )?bed\b/.test(lower)
-  factors.push({ label: 'States layout', got: layout ? 15 : 4, max: 15, note: layout ? 'Mentions beds/baths/sleeps' : 'Add bed/bath/sleeps early', ok: layout ? 'good' : 'warn' })
+  factors.push({ label: 'States layout', got: layout ? 12 : 3, max: 12, note: layout ? 'Mentions beds/baths/sleeps' : 'Add bed/bath/sleeps early', ok: layout ? 'good' : 'warn' })
   // Quantified: "5-minute walk", "2 miles", "3 blocks", "steps to the beach".
   const loc = /\b\d+[- ]?(min(ute)?s?|mi(les?)?|blocks?|km)\b|\bsteps (to|from)\b|\bwalking distance\b|\bacross the street\b/.test(lower)
-  factors.push({ label: 'Quantified location', got: loc ? 15 : 4, max: 15, note: loc ? 'Describes proximity to attractions' : 'Add "5-min walk to..." style distances', ok: loc ? 'good' : 'warn' })
+  factors.push({ label: 'Quantified location', got: loc ? 12 : 3, max: 12, note: loc ? 'Describes proximity to attractions' : 'Add "5-min walk to..." style distances', ok: loc ? 'good' : 'warn' })
+  // LOCAL PICKS (2026-10-30: "the location/neighborhood should give actual recommendations"): a
+  // neighbourhood section that names real places — one per line, or several with their minutes.
+  const hood = get('neighborhood')
+  const pickLines = hood.split(/\n/).filter(l => /^\s*[-•]\s*\S/.test(l)).length
+  const timed = (hood.match(/\b\d+[- ]?(min(ute)?s?|mi(les?)?)\b/gi) || []).length
+  const picksGot = !hood ? 0 : (pickLines >= 4 || timed >= 4) ? 10 : (pickLines >= 2 || timed >= 2) ? 6 : 2
+  factors.push({ label: 'Local picks', got: picksGot, max: 10, note: !hood ? 'No neighborhood section' : picksGot >= 10 ? `Recommends real places (${Math.max(pickLines, timed)})` : 'Name the real places to go — the beach, where to eat, what to do — with times', ok: picksGot >= 10 ? 'good' : picksGot >= 6 ? 'warn' : 'bad' })
   // Contact info only — an ALL-CAPS word is a style issue, not a policy breach.
   const forb = full ? contactInfo(full) : 'empty'
   factors.push({ label: 'No contact info', got: forb && forb !== 'empty' ? 2 : 10, max: 10, note: forb && forb !== 'empty' ? `Contains ${forb}` : 'Clean', ok: forb && forb !== 'empty' ? 'bad' : 'good' })
@@ -317,10 +334,10 @@ function scorePhotos(raw: any, photoScoreCol: any, photoCount: number): ScoreRes
   // COUNT (max 45): 20-35 is the sweet spot the photo engine itself targets; past ~45 guests stop
   // scrolling and repeats creep in, so more is no longer better (audit 2026-10-26).
   let cGot = 0, cNote = ''
-  if (photoCount > 45) { cGot = 36; cNote = `${photoCount} photos - too many; cut repeats and weak shots to 25-35` }
-  else if (photoCount >= 20) { cGot = 45; cNote = `${photoCount} photos - a full set` }
-  else if (photoCount >= 15) { cGot = 34; cNote = `${photoCount} photos - good, target 20+` }
-  else if (photoCount >= 10) { cGot = 22; cNote = `${photoCount} photos - add more (target 20+)` }
+  if (photoCount > 45) { cGot = 32; cNote = `${photoCount} photos - too many; cut repeats and weak shots to 25-35` }
+  else if (photoCount >= 20) { cGot = 40; cNote = `${photoCount} photos - a full set` }
+  else if (photoCount >= 15) { cGot = 30; cNote = `${photoCount} photos - good, target 20+` }
+  else if (photoCount >= 10) { cGot = 20; cNote = `${photoCount} photos - add more (target 20+)` }
   else if (photoCount >= 6) { cGot = 10; cNote = `${photoCount} photos - Vrbo's minimum met, well short of ideal` }
   else if (photoCount > 0) { cGot = 4; cNote = `${photoCount} photos - below Vrbo's 6-photo minimum` }
   else { cGot = 0; cNote = 'No photos detected' }
@@ -334,32 +351,47 @@ function scorePhotos(raw: any, photoScoreCol: any, photoCount: number): ScoreRes
   const capGot = Math.round(capShare * 15)
 
   const factors: Factor[] = [
-    { label: 'Photo count', got: cGot, max: 45, note: cNote, ok: cGot >= 40 ? 'good' : cGot >= 22 ? 'warn' : 'bad' },
+    { label: 'Photo count', got: cGot, max: 40, note: cNote, ok: cGot >= 36 ? 'good' : cGot >= 20 ? 'warn' : 'bad' },
     { label: 'Photo captions', got: capGot, max: 15, note: caps.length ? `${goodCaps} of ${caps.length} photos have a real caption` : 'No photos', ok: capShare >= 0.9 ? 'good' : capShare >= 0.5 ? 'warn' : 'bad' },
   ]
   let qGot: number
   if (aiQ != null) {
-    qGot = Math.round((aiQ / 100) * 40)
+    qGot = Math.round((aiQ / 100) * 35)
     factors.push({
-      label: 'AI photo quality', got: qGot, max: 40,
+      label: 'AI photo quality', got: qGot, max: 35,
       note: `Scored ${aiQ}/100 on lighting, sharpness, composition and staging${coverageNote ? ` - ${coverageNote}` : ''}`,
       ok: aiQ >= 80 ? 'good' : aiQ >= 60 ? 'warn' : 'bad',
     })
   } else {
     // Unmeasured is not good: a token 12/40 (it was 30/45, which let a never-analysed unit read 85).
-    qGot = 12
+    qGot = 10
     factors.push({
-      label: 'AI photo quality', got: qGot, max: 40,
+      label: 'AI photo quality', got: qGot, max: 35,
       note: stale ? 'The photo score is out of date (the photos changed or it is 6+ months old) - run Organize photos again.' : 'Not scored yet - run Organize photos on this unit to score it for real.',
       ok: 'warn',
     })
   }
-  return { score: Math.max(0, Math.min(100, cGot + capGot + qGot)), factors, count: photoCount, aiQuality: aiQ, coverageNote, notes }
+  // THE FIRST FIVE (2026-10-30): the photos a guest swipes on the search card. Five angles of one
+  // room sell one room; the strongest sets show the living space, a bedroom, the kitchen or bath
+  // and the outdoor/amenity draw. Read from the photo analysis — unmeasured gets a token 4.
+  const idx: Record<string, any> = raw && typeof raw._photoIndex === 'object' && raw._photoIndex ? raw._photoIndex : {}
+  const firstIds = pics.slice(0, 5).map((p: any) => { const o = typeof p === 'string' ? (() => { try { return JSON.parse(p) } catch { return {} } })() : (p || {}); return str(o._id || o.id) })
+  const known = firstIds.filter(id => id && idx[id])
+  let fGot = 4, fNote = 'Not analysed yet - run Organize photos to check the first five'
+  if (known.length >= 3) {
+    const bucket = (e: any) => { const c = str(e?.category).toLowerCase(); return c === 'living' || c === 'dining' ? 'living' : c === 'bedroom' ? 'bedroom' : c === 'kitchen' ? 'kitchen' : c === 'bathroom' ? 'bathroom' : c === 'outdoor' || c === 'view' || c === 'amenity' || c === 'exterior' ? 'outside' : 'other' }
+    const kinds = new Set(known.map(id => bucket(idx[id])).filter(b => b !== 'other'))
+    const stock = known.some(id => idx[id]?.kind === 'stock')
+    fGot = Math.max(0, (kinds.size >= 4 ? 10 : kinds.size === 3 ? 7 : kinds.size === 2 ? 4 : 1) - (stock ? 3 : 0))
+    fNote = `${kinds.size} different spaces in the first five${stock ? ', and a stock photo' : ''}${kinds.size >= 4 ? ' - a strong spread' : ' - show the living area, a bedroom, the kitchen or bath and the outdoor draw'}`
+  }
+  factors.push({ label: 'First five photos', got: fGot, max: 10, note: fNote, ok: fGot >= 9 ? 'good' : fGot >= 6 ? 'warn' : 'bad' })
+  return { score: Math.max(0, Math.min(100, cGot + capGot + qGot + fGot)), factors, count: photoCount, aiQuality: aiQ, coverageNote, notes }
 }
 
 // Amenity coverage 0-100 + suggestions. siblingAmenities = amenities present on other
 // units in the same building (a missing one that a sibling has is the highest-ROI fix).
-function scoreAmenities(amenities: string[], opts?: { isBeach?: boolean; siblingNorm?: string[] }): {
+function scoreAmenities(amenities: string[], opts?: { isBeach?: boolean; siblingNorm?: string[]; seenMissing?: string[] }): {
   score: number; have: string[]; suggestions: AmenitySuggestion[]; mustFix: string[]
 } {
   const norm = normAmenities(amenities)
@@ -383,7 +415,12 @@ function scoreAmenities(amenities: string[], opts?: { isBeach?: boolean; sibling
   const mustFix: string[] = []
   for (const def of SAFETY) if (!present(norm, def)) mustFix.push(def.name)
   const target = Math.round(weightTotal * 0.82) // hitting ~82% of weighted amenities = full marks
-  const score = weightTotal === 0 ? 0 : Math.min(100, Math.round((weightHave / target) * 100))
+  // SEEN BUT NOT LISTED (2026-10-30): an amenity a photo proves and the listing omits is a filter the
+  // unit fails for no reason — 3 points each (up to 15), and it goes to the top of the suggestions.
+  const seen = (opts?.seenMissing || []).filter(n => !suggestions.some(x => x.name.toLowerCase() === n.toLowerCase()))
+  const missed = opts?.seenMissing?.length || 0
+  const score = weightTotal === 0 ? 0 : Math.max(0, Math.min(100, Math.round((weightHave / target) * 100)) - Math.min(15, missed * 3))
+  for (const n of seen) suggestions.push({ name: n, tier: 3, reason: 'Seen in your photos but not listed — mark it so guests who filter for it find you' })
   suggestions.sort((a, b) => b.tier - a.tier)
   return { score, have: amenities, suggestions, mustFix }
 }
@@ -422,6 +459,8 @@ export function computeScore(listing: any, opts?: {
   reviewCount?: number
   isBeach?: boolean
   siblingAmenities?: string[]
+  /** The verified building parking line, so a contradicted Garage shows in the audit. */
+  parkingFact?: string | null
 }): ScoreResult {
   const raw = listing?.raw || {}
   const pub = raw.publicDescription || raw.publicDescriptions || {}
@@ -437,7 +476,10 @@ export function computeScore(listing: any, opts?: {
   const photoScoreCol = (listing?.photo_score && typeof listing.photo_score === 'object') ? listing.photo_score : null
   const photos = scorePhotos(raw, photoScoreCol, photoCount)
   const settings = scoreSettings(raw)
+  const picIds = (Array.isArray(raw.pictures) ? raw.pictures : []).map((p: any) => { const o = typeof p === 'string' ? (() => { try { return JSON.parse(p) } catch { return {} } })() : (p || {}); return str(o._id || o.id) }).filter(Boolean)
+  const audit = auditAmenities(amenities.map(a => String(a)), raw._photoIndex, picIds, opts?.parkingFact || null)
   const amen = scoreAmenities(amenities, {
+    seenMissing: audit.seenMissing.map(x => x.name),
     isBeach: opts?.isBeach,
     siblingNorm: opts?.siblingAmenities ? normAmenities(opts.siblingAmenities) : undefined,
   })
@@ -463,7 +505,7 @@ export function computeScore(listing: any, opts?: {
     description,
     photos,
     settings,
-    amenities: { score: amen.score, have: amen.have, suggestions: amen.suggestions, mustFix: amen.mustFix },
+    amenities: { score: amen.score, have: amen.have, suggestions: amen.suggestions, mustFix: amen.mustFix, audit },
     reviewSignal,
   }
 }

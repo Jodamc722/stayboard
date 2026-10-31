@@ -5,14 +5,43 @@
 //  3) Full catalog — every amenity used anywhere in the portfolio (all valid Guesty values),
 //     searchable, so you can add anything (incl. Self check-in) without leaving the page.
 // Apply writes the final set to Guesty (PUT /properties-api/amenities/{id}) after you confirm.
+//
+// 2026-10-30 (Jon: "edit and audit the amenities and ensure they're up to date … check photos and see
+// if any are missing and recommend from that page"):
+//  • LIVE — on open it reads the list from Guesty itself, so an edit made in Guesty or a channel is
+//    what you see and what you build on (the mirror is refreshed too).
+//  • AUDIT — from the photo analysis (lib/amenity-audit): seen in a photo but not listed (add),
+//    listed but no photo shows it (shoot it), and listed but contradicted by the building facts
+//    (remove). Every fix is a tap, staged with everything else, pushed once.
 import { useEffect, useMemo, useState } from 'react'
-import { Check, Plus, Sparkles, AlertTriangle, RefreshCw, Star, Search } from 'lucide-react'
+import { Check, Plus, Sparkles, AlertTriangle, RefreshCw, Star, Search, Camera, ImageOff, Ban, Loader2 } from 'lucide-react'
+import type { Audit } from '@/lib/amenity-audit'
 
-export function AmenityEditor({ listingId, current, recommended, catalog }: {
+export function AmenityEditor({ listingId, current: initial, recommended, catalog, audit, photoUrls }: {
   listingId: string; current: string[]; recommended: string[]; catalog: string[]
+  audit?: Audit; photoUrls?: Record<string, string>
 }) {
+  const [current, setCurrent] = useState<string[]>(initial)
   const curSet = new Set(current)
-  const [sel, setSel] = useState<Set<string>>(new Set(current))
+  const [sel, setSel] = useState<Set<string>>(new Set(initial))
+  const [live, setLive] = useState<{ state: 'loading' | 'ok' | 'fail'; note?: string }>({ state: 'loading' })
+  // Read the live list from Guesty. If it differs from the mirror, it becomes the baseline — and any
+  // staging you have not touched follows it.
+  useEffect(() => {
+    let alive = true
+    fetch('/api/listing-amenities?listingId=' + encodeURIComponent(listingId), { cache: 'no-store' }).then(r => r.json()).then(d => {
+      if (!alive) return
+      if (!d?.ok || !Array.isArray(d.amenities)) { setLive({ state: 'fail', note: d?.error || 'Could not reach Guesty — showing the last synced list.' }); return }
+      const liveList: string[] = d.amenities
+      const added = liveList.filter(a => !initial.includes(a)), removed = initial.filter(a => !liveList.includes(a))
+      setCurrent(liveList)
+      setSel(prev => { const untouched = prev.size === initial.length && initial.every(a => prev.has(a)); return untouched ? new Set(liveList) : prev })
+      setLive({ state: 'ok', note: added.length || removed.length ? `Updated from Guesty: ${[added.length ? '+' + added.length : '', removed.length ? '−' + removed.length : ''].filter(Boolean).join(' ')} changed outside Lighthouse` : undefined })
+    }).catch(() => { if (alive) setLive({ state: 'fail', note: 'Could not reach Guesty — showing the last synced list.' }) })
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listingId])
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set())
   const [q, setQ] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirming, setConfirming] = useState(false)
@@ -82,6 +111,7 @@ export function AmenityEditor({ listingId, current, recommended, catalog }: {
       const d = await res.json()
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
       setDone(`Saved — this unit now has ${d.count} amenities in Guesty (syncing to the channels).`)
+      if (Array.isArray(d.amenities)) { setCurrent(d.amenities); setSel(new Set(d.amenities)) }
       setConfirming(false)
     } catch (e: any) { setErr(e?.message || String(e)) }
     finally { setBusy(false) }
@@ -100,6 +130,69 @@ export function AmenityEditor({ listingId, current, recommended, catalog }: {
           </span>
         )}
       </div>
+
+      <div className="mb-3 text-[11px] inline-flex items-center gap-1.5">
+        {live.state === 'loading' ? <><Loader2 size={11} className="animate-spin text-muted" /> <span className="text-muted">Checking Guesty for the live list…</span></>
+          : live.state === 'ok' ? <><Check size={11} className="text-emerald-600" /> <span className="text-emerald-700">Live from Guesty{live.note ? ' · ' + live.note : ''}</span></>
+          : <><AlertTriangle size={11} className="text-amber-600" /> <span className="text-amber-700">{live.note}</span></>}
+      </div>
+
+      {/* THE AUDIT — what the photos prove against what is listed. */}
+      {audit && (() => {
+        const seen = audit.seenMissing.filter(x => !sel.has(x.name) && !dismissed.has(x.name) && !Array.from(sel).some(a => a.toLowerCase() === x.name.toLowerCase()))
+        const conflicts = audit.conflicts.filter(c => Array.from(sel).some(a => a.toLowerCase() === c.name.toLowerCase()))
+        const noPhoto = audit.listedNoPhoto.filter(x => Array.from(sel).some(a => a.toLowerCase() === x.name.toLowerCase()))
+        const clean = !seen.length && !conflicts.length && !noPhoto.length
+        return (
+          <div className="mb-4 rounded-xl border border-line bg-app/40 p-3 space-y-3">
+            <div className="flex items-center gap-2">
+              <Camera size={14} className="text-brand-600" />
+              <span className="text-[12.5px] font-bold text-ink">Amenity audit</span>
+              <span className="text-[11px] text-muted">{audit.analyzed ? `checked against ${audit.analyzed} analysed photos` : 'photos not analysed yet'}</span>
+            </div>
+            {!audit.analyzed && <p className="text-[12px] text-muted">Run <b>Organize photos</b> on the <a href="#photos" className="underline">Photos tab</a> once — the audit then checks every amenity against what the photos show.</p>}
+            {audit.analyzed > 0 && clean && <p className="text-[12px] text-emerald-700 inline-flex items-center gap-1.5"><Check size={12} /> Everything the photos show is listed, and every listed feature that sells on looks has a photo.</p>}
+            {conflicts.length > 0 && (
+              <div>
+                <div className="text-[10.5px] uppercase tracking-wider font-bold text-rose-700 mb-1">Listed but not true here — remove</div>
+                <div className="flex flex-wrap gap-1.5">{conflicts.map(c => (
+                  <span key={c.name} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[12px] text-rose-800">
+                    <Ban size={11} /> <b>{c.name}</b> <span className="text-rose-700/80">{c.why}</span>
+                    <button onClick={() => toggle(Array.from(sel).find(a => a.toLowerCase() === c.name.toLowerCase()) || c.name)} className="ml-1 rounded-md bg-rose-600 text-white px-1.5 py-0.5 text-[11px] font-semibold">Remove</button>
+                  </span>
+                ))}</div>
+              </div>
+            )}
+            {seen.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[10.5px] uppercase tracking-wider font-bold text-sky-800">Seen in your photos, not listed</span>
+                  <button onClick={() => { setDone(null); setSel(sv => { const n = new Set(sv); seen.forEach(x => n.add(x.name)); return n }) }} className="ml-auto text-[11.5px] font-semibold rounded-md bg-ink text-white px-2 py-0.5">Add all {seen.length}</button>
+                </div>
+                <div className="flex flex-wrap gap-1.5">{seen.map(x => (
+                  <span key={x.name} className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-white pl-1 pr-1.5 py-1">
+                    {x.photos.slice(0, 2).map(pid => photoUrls?.[pid] ? <img key={pid} src={photoUrls[pid]} alt="" title="Seen in this photo" className="w-8 h-8 rounded object-cover" /> : null)}
+                    <span className="text-[12px] font-semibold text-ink">{x.name}</span>
+                    {x.photos.length > 1 && <span className="text-[11px] text-muted">· {x.photos.length} photos</span>}
+                    <button onClick={() => toggle(x.name)} className="text-[11px] font-semibold rounded-md border border-sky-300 px-1.5 py-0.5 text-sky-800 hover:bg-sky-50">Add</button>
+                    <button onClick={() => setDismissed(d => { const n = new Set(d); n.add(x.name); return n })} title="Not available to guests" className="text-[11px] text-muted hover:text-ink">✕</button>
+                  </span>
+                ))}</div>
+                <p className="mt-1 text-[11px] text-muted">Add only what guests can actually use — a grill in a neighbour's yard is not yours.</p>
+              </div>
+            )}
+            {noPhoto.length > 0 && (
+              <div>
+                <div className="text-[10.5px] uppercase tracking-wider font-bold text-amber-800 mb-1">Listed, but no photo shows it</div>
+                <ul className="space-y-0.5">{noPhoto.map(x => (
+                  <li key={x.name} className="text-[12px] text-ink inline-flex items-center gap-1.5 mr-3"><ImageOff size={11} className="text-amber-600" /> <b>{x.name}</b> <span className="text-muted">— {x.tip}</span></li>
+                ))}</ul>
+                <p className="mt-1 text-[11px] text-muted">Guests doubt what they cannot see. Add the photo on the <a href="#photos" className="underline">Photos tab</a> (or from the library).</p>
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {/* on this listing (current + anything you've added) */}
       <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">On this listing</div>

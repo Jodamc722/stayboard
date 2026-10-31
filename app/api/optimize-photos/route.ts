@@ -322,7 +322,7 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
     const photoIndex: Record<string, any> = {}
     for (const f of normalized) {
       const human = prevIndex[f._id] && prevIndex[f._id].by === 'human' ? prevIndex[f._id] : null
-      photoIndex[f._id] = { room: f.room, category: f.category, kind: f.kind, subject: f.subject, shotType: f.shotType, quality: f.quality, sellingPoints: f.sellingPoints, caption: f.caption, enhance: f.enhance, enhanceWhy: f.enhanceWhy, at, ...(human ? { by: 'human' } : {}) }
+      photoIndex[f._id] = { room: f.room, category: f.category, kind: f.kind, subject: f.subject, shotType: f.shotType, quality: f.quality, sellingPoints: f.sellingPoints, amenitiesSeen: (f as any).amenitiesSeen || [], caption: f.caption, enhance: f.enhance, enhanceWhy: f.enhanceWhy, at, ...(human ? { by: 'human' } : {}) }
     }
     const ps = { score: assessment.quality, coverageNote: assessment.coverage, notes: assessment.notes, count: allPics.length, hooks: hooks.map(h => h.hook), at }
     await sb.from('guesty_listings').update({ raw: { ...raw, _photoIndex: photoIndex, _photoScore: ps, _photoAmenities: { gaps: amenityGaps, at } }, photo_score: ps }).eq('id', listingId)
