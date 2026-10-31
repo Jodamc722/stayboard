@@ -1153,7 +1153,11 @@ export async function runFullSync(full = false, opts?: { catalogOnly?: boolean }
     }
   }
   const resSince = full ? null : await getSince('reservations')
-  const lstSince = full ? null : await getSince('listings')
+  // Listings are always pulled in FULL (2026-10-30, Jon: "make sure Guesty sends Boynton Beach listing
+  // properly to Lighthouse. We made changes"). The incremental filter keys on lastUpdatedAt, which
+  // Guesty does not move for every edit (fees, financials, some content), so edits were being missed.
+  // The whole catalog is ~3 pages of 100 — cheap enough to take every time.
+  const lstSince = null
   await safe('custom_fields', syncCustomFields,  v => result.custom_fields = v)
   await safe('listings',      () => syncListings(20, lstSince),      v => result.listings      = v)
   if (opts?.catalogOnly) return result
