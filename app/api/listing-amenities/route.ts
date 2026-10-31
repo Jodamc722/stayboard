@@ -17,6 +17,21 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({} as any))
   const listingId = body?.listingId
+  // RULE ONE OUT (Jon, 2026-10-31): { listingId, dismiss: [...] } / { undismiss: [...] } records which
+  // suggested amenities are NOT at this unit, on raw._amenityDismissed. Lighthouse only — Guesty is
+  // not touched — and the audit, the score and the photo organizer all read it.
+  if (listingId && (Array.isArray(body?.dismiss) || Array.isArray(body?.undismiss))) {
+    const sb0 = supabaseAdmin()
+    const { data: row } = await sb0.from('guesty_listings').select('raw').eq('id', listingId).maybeSingle()
+    const raw: any = row?.raw && typeof row.raw === 'object' ? row.raw : {}
+    const cur: string[] = Array.isArray(raw._amenityDismissed) ? raw._amenityDismissed.map(String) : []
+    const add = (Array.isArray(body.dismiss) ? body.dismiss : []).map((x: any) => String(x).trim()).filter(Boolean)
+    const drop = new Set((Array.isArray(body.undismiss) ? body.undismiss : []).map((x: any) => String(x).trim().toLowerCase()))
+    const next = Array.from(new Set([...cur, ...add])).filter(x => !drop.has(x.toLowerCase())).slice(0, 200)
+    const { error } = await sb0.from('guesty_listings').update({ raw: { ...raw, _amenityDismissed: next } }).eq('id', listingId)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, dismissed: next })
+  }
   const incoming = Array.isArray(body?.amenities) ? body.amenities : null
   if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
   if (!incoming) return NextResponse.json({ error: 'amenities array required' }, { status: 400 })

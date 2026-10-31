@@ -17,9 +17,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { Check, Plus, Sparkles, AlertTriangle, RefreshCw, Star, Search, Camera, ImageOff, Ban, Loader2 } from 'lucide-react'
 import type { Audit } from '@/lib/amenity-audit'
 
-export function AmenityEditor({ listingId, current: initial, recommended, catalog, audit, photoUrls }: {
+export function AmenityEditor({ listingId, current: initial, recommended, catalog, audit, photoUrls, dismissed: dismissed0 = [] }: {
   listingId: string; current: string[]; recommended: string[]; catalog: string[]
-  audit?: Audit; photoUrls?: Record<string, string>
+  audit?: Audit; photoUrls?: Record<string, string>; dismissed?: string[]
 }) {
   const [current, setCurrent] = useState<string[]>(initial)
   const curSet = new Set(current)
@@ -41,7 +41,18 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listingId])
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set())
+  // RULED OUT STAYS RULED OUT (Jon, 2026-10-31: "if I x a recommended amenity based on photos it
+  // should not repopulate"). An ✕ is saved on the listing (raw._amenityDismissed) — it does not come
+  // back on reload, on the next photo analysis, or in the score. Undo lives under the list.
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set(dismissed0))
+  const isOut = (n: string) => Array.from(dismissed).some(d => d.toLowerCase() === n.toLowerCase())
+  async function ruleOut(name: string, undo = false) {
+    setDismissed(d => { const n = new Set(d); if (undo) { Array.from(n).forEach(x => { if (x.toLowerCase() === name.toLowerCase()) n.delete(x) }) } else n.add(name); return n })
+    try {
+      await fetch('/api/listing-amenities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, [undo ? 'undismiss' : 'dismiss']: [name] }) })
+      window.dispatchEvent(new CustomEvent('stay:score-refresh'))
+    } catch { /* stays hidden here; retried next time */ }
+  }
   const [q, setQ] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirming, setConfirming] = useState(false)
@@ -72,7 +83,7 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
   const selLower = useMemo(() => new Set(Array.from(sel).map(a => a.toLowerCase())), [sel])
   const willHave = useMemo(() => Array.from(new Set([...current, ...Array.from(sel)])), [current, sel])
   // Recommended = missing high-value picks (already filtered server-side to not-on-unit).
-  const recAdds = useMemo(() => recommended.filter(a => !selLower.has(a.toLowerCase())), [recommended, selLower])
+  const recAdds = useMemo(() => recommended.filter(a => !selLower.has(a.toLowerCase()) && !Array.from(dismissed).some(d => d.toLowerCase() === a.toLowerCase())), [recommended, selLower, dismissed])
   const recLower = useMemo(() => new Set(recAdds.map(a => a.toLowerCase())), [recAdds])
   // Catalog addable = portfolio amenities not on the unit and not already shown as recommended.
   const addable = useMemo(() => {
@@ -140,7 +151,7 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
 
       {/* THE AUDIT — what the photos prove against what is listed. */}
       {audit && (() => {
-        const seen = audit.seenMissing.filter(x => !sel.has(x.name) && !dismissed.has(x.name) && !Array.from(sel).some(a => a.toLowerCase() === x.name.toLowerCase()))
+        const seen = audit.seenMissing.filter(x => !sel.has(x.name) && !isOut(x.name) && !Array.from(sel).some(a => a.toLowerCase() === x.name.toLowerCase()))
         const conflicts = audit.conflicts.filter(c => Array.from(sel).some(a => a.toLowerCase() === c.name.toLowerCase()))
         const noPhoto = audit.listedNoPhoto.filter(x => Array.from(sel).some(a => a.toLowerCase() === x.name.toLowerCase()))
         const clean = !seen.length && !conflicts.length && !noPhoto.length
@@ -177,7 +188,7 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
                     <span className="text-[12px] font-semibold text-ink">{x.name}</span>
                     {x.photos.length > 1 && <span className="text-[11px] text-muted">· {x.photos.length} photos</span>}
                     <button onClick={() => toggle(x.name)} className="text-[11px] font-semibold rounded-md border border-sky-300 px-1.5 py-0.5 text-sky-800 hover:bg-sky-50">Add</button>
-                    <button onClick={() => setDismissed(d => { const n = new Set(d); n.add(x.name); return n })} title="Not available to guests" className="text-[11px] text-muted hover:text-ink">✕</button>
+                    <button onClick={() => ruleOut(x.name)} title="Not at this unit — don't suggest it again" className="text-[11px] text-muted hover:text-rose-700">✕</button>
                   </span>
                 ))}</div>
                 <p className="mt-1 text-[11px] text-muted">Add only what guests can actually use — a grill in a neighbour's yard is not yours.</p>
@@ -225,14 +236,26 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
             {recAdds.map(a => {
               const on = sel.has(a)
               return (
-                <button key={a} onClick={() => toggle(a)}
-                  className={`text-[12px] px-2 py-1 rounded-lg inline-flex items-center gap-1 border transition-colors ${on ? 'bg-amber-500 text-white border-amber-500' : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'}`}>
-                  {on ? <Check size={11} /> : <Star size={11} className="fill-amber-400 text-amber-500" />} {a}
-                </button>
+                <span key={a} className="inline-flex items-center">
+                  <button onClick={() => toggle(a)}
+                    className={`text-[12px] pl-2 pr-1.5 py-1 rounded-l-lg inline-flex items-center gap-1 border transition-colors ${on ? 'bg-amber-500 text-white border-amber-500' : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'}`}>
+                    {on ? <Check size={11} /> : <Star size={11} className="fill-amber-400 text-amber-500" />} {a}
+                  </button>
+                  <button onClick={() => ruleOut(a)} title="Not at this unit — stop suggesting it" className="text-[11px] px-1.5 py-1 rounded-r-lg border border-l-0 border-amber-300 bg-amber-50 text-amber-700 hover:text-rose-700">✕</button>
+                </span>
               )
             })}
           </div>
         </>
+      )}
+
+      {dismissed.size > 0 && (
+        <div className="mb-3 text-[11px] text-muted flex flex-wrap items-center gap-1.5">
+          <span className="font-semibold">Ruled out here:</span>
+          {Array.from(dismissed).map(d => (
+            <button key={d} onClick={() => ruleOut(d, true)} title="Undo — suggest it again" className="rounded-md border border-line px-1.5 py-0.5 hover:text-ink line-through decoration-muted/50">{d} ↺</button>
+          ))}
+        </div>
       )}
 
       {/* full catalog */}

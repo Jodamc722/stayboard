@@ -94,7 +94,10 @@ const norm = (x: string) => String(x || '').toLowerCase().replace(/[’']/g, '')
  * `photoIndex` = raw._photoIndex; `order` = the photo ids in display order (to show the first proof);
  * `parkingFact` = the verified building parking line, when there is one.
  */
-export function auditAmenities(listed: string[], photoIndex: Record<string, any> | null | undefined, order: string[] = [], parkingFact?: string | null): Audit {
+export function auditAmenities(listed: string[], photoIndex: Record<string, any> | null | undefined, order: string[] = [], parkingFact?: string | null, dismissed: string[] = []): Audit {
+  // NOT HERE, SAID A PERSON (Jon, 2026-10-31: "if I x a recommended amenity based on photos it should
+  // not repopulate"). raw._amenityDismissed — a name someone ruled out never comes back as a finding.
+  const ruledOut = new Set(dismissed.map(d => norm(d)))
   const idx = photoIndex && typeof photoIndex === 'object' ? photoIndex : {}
   const ids = (order.length ? order.filter(id => idx[id]) : Object.keys(idx))
   const proof: Record<string, string[]> = {}   // amenity (Guesty spelling) → photo ids
@@ -112,7 +115,7 @@ export function auditAmenities(listed: string[], photoIndex: Record<string, any>
   const proven = (name: string) => Object.keys(proof).some(p => norm(p) === norm(name) || (name === 'Balcony' && p === 'Patio or balcony') || (name === 'Patio or balcony' && /balcony|patio|terrace/i.test(p)))
 
   const seenMissing = Object.entries(proof)
-    .filter(([name]) => !amenityListed(name, listed) && !(name === 'Patio or balcony' && listed.some(l => /balcony|patio|terrace/i.test(l))))
+    .filter(([name]) => !ruledOut.has(norm(name)) && !amenityListed(name, listed) && !(name === 'Patio or balcony' && listed.some(l => /balcony|patio|terrace/i.test(l))))
     .map(([name, photos]) => ({ name, photos: photos.slice(0, 4) }))
     .sort((a, b) => b.photos.length - a.photos.length)
 

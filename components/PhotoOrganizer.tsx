@@ -825,7 +825,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
                     <span className="text-[12.5px] font-semibold text-ink">{g.name}</span>
                     {g.count > 1 && <span className="text-[11px] text-muted">· {g.count} photos</span>}
                     <button onClick={() => markAmenities([g.name])} disabled={!!amenBusy} className="text-[11.5px] font-semibold rounded-md border border-line px-1.5 py-0.5 hover:bg-app disabled:opacity-40">{amenBusy === g.name ? '…' : 'Mark'}</button>
-                    <button onClick={() => setAmenityGaps(x => x.filter(y => y.name !== g.name))} title="Not available to guests — dismiss" className="text-muted hover:text-ink"><X size={12} /></button>
+                    <button onClick={() => { setAmenityGaps(x => x.filter(y => y.name !== g.name)); fetch('/api/listing-amenities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, dismiss: [g.name] }) }).catch(() => {}) }} title="Not at this unit — don't suggest it again" className="text-muted hover:text-ink"><X size={12} /></button>
                   </span>
                 ))}
               </div>

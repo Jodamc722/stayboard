@@ -248,7 +248,8 @@ Return ONLY JSON: {"items":[{"n":<photo number>,"room":"…","category":"…","s
   const listedAmenities: string[] = Array.isArray((listing as any).amenities) ? (listing as any).amenities.map(str) : (Array.isArray(raw?.amenities) ? raw.amenities.map(str) : [])
   const seenBy: Record<string, string[]> = {}
   for (const f of facts) if (f.kind === 'property') for (const a of f.amenitiesSeen || []) (seenBy[a] = seenBy[a] || []).push(f._id)
-  const amenityGaps = Object.entries(seenBy).filter(([name]) => !amenityListed(name, listedAmenities))
+  const ruledOut = new Set((Array.isArray(raw?._amenityDismissed) ? raw._amenityDismissed : []).map((x: any) => str(x).toLowerCase()))
+  const amenityGaps = Object.entries(seenBy).filter(([name]) => !amenityListed(name, listedAmenities) && !ruledOut.has(name.toLowerCase()))
     .map(([name, photos]) => ({ name, photos: photos.slice(0, 4), count: photos.length }))
     .sort((a, b) => b.count - a.count)
 

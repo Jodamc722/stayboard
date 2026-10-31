@@ -28,6 +28,7 @@ import { UnitAudit } from '@/components/UnitAudit'
 import { FaqDesk } from '@/components/FaqDesk'
 import { AmenityEditor } from '@/components/AmenityEditor'
 import { SettingsEditor } from '@/components/SettingsEditor'
+import { ScoreDelta } from '@/components/ScoreDelta'
 import { buildingGuideFor } from '@/lib/welcome-call-guide'
 import { AreaFacts } from '@/components/AreaFacts'
 import { GuidebookLauncher } from '@/components/GuidebookLauncher'
@@ -153,9 +154,14 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   const res = computeScore(listing, { avgRating, reviewCount: rated.length, isBeach, siblingAmenities, parkingFact })
   const optimizeScore = res.overall
   const opt = bandUi(res.band)
-  const gaps = scoreGaps(res)
+  const allGaps = scoreGaps(res)
+  // Fixes vs ideas (Jon, 2026-10-31): amenity suggestions are recommendations, not faults — they sit
+  // apart, below the fix list, and do not count toward the Fix next badge.
+  const gaps = allGaps.filter(g => g.kind !== 'recommend')
+  const recs = allGaps.filter(g => g.kind === 'recommend')
 
   // Recommended-to-add = optimizer high-value picks this unit is missing (canonical labels, incl. Self check-in).
+  const amenityDismissed: string[] = Array.isArray(raw._amenityDismissed) ? raw._amenityDismissed.map(String) : []
   const recommendedAdds: string[] = Array.from(new Set([
     ...res.amenities.mustFix,
     ...res.amenities.suggestions.map((x: any) => x.name),
@@ -233,6 +239,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
                 <span className="text-[13px] font-black tabular-nums leading-none">{optimizeScore}</span>
                 <span className="text-[10px] font-bold uppercase tracking-wide">Optimize</span>
               </span>
+              <ScoreDelta listingId={listing.id} score={optimizeScore} />
               {dead && (
                 <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-amber-100 text-amber-800">{String(listing.status)} in Guesty</span>
               )}
@@ -319,6 +326,25 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
                   </div>
                 )}
 
+                {recs.length > 0 && (
+                  <div className="rounded-2xl border border-line bg-white overflow-hidden">
+                    <div className="px-3 py-2 bg-app border-b border-line flex items-center gap-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Recommended</span>
+                      <span className="text-[11px] text-muted">optional — add if the unit really has it, or ✕ it on the Amenities tab</span>
+                    </div>
+                    {recs.map((g, i) => (
+                      <a key={i} href="#amenities" className="px-3 py-2 flex items-center gap-3 hover:bg-app/50 transition-colors group">
+                        <span className="shrink-0 tabular-nums text-[12px] font-bold px-2 py-0.5 rounded-md w-[46px] text-center bg-sky-50 text-sky-700">+{g.points.toFixed(1)}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[12.5px] font-bold text-ink">{g.label}</span>
+                          <span className="block text-[11.5px] text-muted leading-snug">{g.note}</span>
+                        </span>
+                        <span className="text-[11px] font-semibold text-muted group-hover:text-brand-600 shrink-0 inline-flex items-center gap-0.5">Review <ArrowRight size={11} /></span>
+                      </a>
+                    ))}
+                  </div>
+                )}
+
                 {/* THE FIVE SCORE CARDS ARE REFERENCE, NOT ACTION. They restate the very factors the
                     ranked list above is derived from, so printing both meant reading "Quantified
                     location +4.0" and then scrolling past "Quantified location 4/15" a few hundred
@@ -397,7 +423,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
           id: 'amenities', label: 'Amenities',
           badge: String(res.amenities.score),
           tone: res.amenities.mustFix.length || res.amenities.audit.conflicts.length ? 'bad' : res.amenities.audit.seenMissing.length ? 'warn' : res.amenities.score >= 80 ? 'good' : 'warn',
-          panel: <AmenityEditor listingId={listing.id} current={amenities} recommended={recommendedAdds} catalog={amenityCatalog} audit={res.amenities.audit} photoUrls={photoUrls} />,
+          panel: <AmenityEditor listingId={listing.id} current={amenities} recommended={recommendedAdds.filter(a => !amenityDismissed.some(d => d.toLowerCase() === String(a).toLowerCase()))} catalog={amenityCatalog} audit={res.amenities.audit} photoUrls={photoUrls} dismissed={amenityDismissed} />,
         },
         {
           // AREA (Jon, 2026-10-05): the measured walk / drive times to the places guests book for, and

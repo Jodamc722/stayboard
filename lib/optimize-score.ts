@@ -397,15 +397,19 @@ function scorePhotos(raw: any, photoScoreCol: any, photoCount: number): ScoreRes
 
 // Amenity coverage 0-100 + suggestions. siblingAmenities = amenities present on other
 // units in the same building (a missing one that a sibling has is the highest-ROI fix).
-function scoreAmenities(amenities: string[], opts?: { isBeach?: boolean; siblingNorm?: string[]; seenMissing?: string[] }): {
+function scoreAmenities(amenities: string[], opts?: { isBeach?: boolean; siblingNorm?: string[]; seenMissing?: string[]; dismissed?: string[] }): {
   score: number; have: string[]; suggestions: AmenitySuggestion[]; mustFix: string[]
 } {
   const norm = normAmenities(amenities)
   const sib = opts?.siblingNorm || []
   let weightHave = 0, weightTotal = 0
   const suggestions: AmenitySuggestion[] = []
+  const ruled = (opts?.dismissed || []).map(d => d.toLowerCase())
   for (const def of HIGH_VALUE) {
     if (def.conditional === 'beach' && opts?.isBeach === false) continue
+    // Reviewed and ruled out ("this unit has no pool") — not applicable here, so it neither counts
+    // against coverage nor comes back as a suggestion (Jon, 2026-10-31).
+    if (ruled.indexOf(def.name.toLowerCase()) >= 0) continue
     weightTotal += def.tier
     const got = presence(norm, def)
     if (got === 'full') { weightHave += def.tier; continue }
@@ -427,8 +431,10 @@ function scoreAmenities(amenities: string[], opts?: { isBeach?: boolean; sibling
   const missed = opts?.seenMissing?.length || 0
   const score = weightTotal === 0 ? 0 : Math.max(0, Math.min(100, Math.round((weightHave / target) * 100)) - Math.min(15, missed * 3))
   for (const n of seen) suggestions.push({ name: n, tier: 3, reason: 'Seen in your photos but not listed — mark it so guests who filter for it find you' })
-  suggestions.sort((a, b) => b.tier - a.tier)
-  return { score, have: amenities, suggestions, mustFix }
+  // A suggestion somebody ruled out ("not at this unit") is not suggested again; coverage still counts it missing.
+  const out = (opts?.dismissed || []).length ? suggestions.filter(x => !(opts!.dismissed!).some(d => d.toLowerCase() === x.name.toLowerCase())) : suggestions
+  out.sort((a, b) => b.tier - a.tier)
+  return { score, have: amenities, suggestions: out, mustFix }
 }
 
 function scoreReviews(avgRating: number | null, reviewCount: number): number {
@@ -487,9 +493,10 @@ export function computeScore(listing: any, opts?: {
   const photos = scorePhotos(raw, photoScoreCol, photoCount)
   const settings = scoreSettings(raw)
   const picIds = (Array.isArray(raw.pictures) ? raw.pictures : []).map((p: any) => { const o = typeof p === 'string' ? (() => { try { return JSON.parse(p) } catch { return {} } })() : (p || {}); return str(o._id || o.id) }).filter(Boolean)
-  const audit = auditAmenities(amenities.map(a => String(a)), photoFacts(raw), picIds, opts?.parkingFact || null)
+  const audit = auditAmenities(amenities.map(a => String(a)), photoFacts(raw), picIds, opts?.parkingFact || null, Array.isArray(raw._amenityDismissed) ? raw._amenityDismissed.map(String) : [])
   const amen = scoreAmenities(amenities, {
     seenMissing: audit.seenMissing.map(x => x.name),
+    dismissed: Array.isArray(raw._amenityDismissed) ? raw._amenityDismissed.map(String) : [],
     isBeach: opts?.isBeach,
     siblingNorm: opts?.siblingAmenities ? normAmenities(opts.siblingAmenities) : undefined,
   })
@@ -544,6 +551,8 @@ export function lastOptimizedOf(listing: any): { at: string | null; date: Date |
 // the overall score, and sorted. No new model, no second opinion to keep in sync.
 export type Gap = {
   pillar: 'title' | 'description' | 'photos' | 'amenities' | 'settings'
+  /** 'recommend' = optional improvement (amenity ideas), shown apart from the fix list. */
+  kind?: 'fix' | 'recommend'
   label: string
   note: string
   points: number          // how much the overall score would rise if this were fully fixed
@@ -594,7 +603,7 @@ export function scoreGaps(res: ScoreResult): Gap[] {
     })
   } else if (res.amenities.suggestions.length && amenGapPts >= 0.5) {
     out.push({
-      pillar: 'amenities', label: 'High-value amenities missing', severity: 'warn',
+      pillar: 'amenities', kind: 'recommend', label: 'Recommended amenities', severity: 'warn',
       note: res.amenities.suggestions.slice(0, 3).map(x => x.name).join(', '),
       points: amenGapPts,
     })

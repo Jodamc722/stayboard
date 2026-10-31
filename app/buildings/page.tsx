@@ -142,7 +142,7 @@ const getPortfolioData = unstable_cache(async (periodDays: number | null) => {
 
     const title = String(l.title || l.nickname || 'Untitled unit')   // marketing title — scored below
     const opsName = unitLabel(l)                                      // what a human reads: "Arya 1704/1"
-    const gaps = scoreGaps(res)
+    const gaps = scoreGaps(res).filter(g => g.kind !== 'recommend')
     const amenities: string[] = Array.isArray(l.amenities) ? l.amenities : []
     units.push({
       id, name: opsName, marketingTitle: title, building: name, unit: unitNumber(l), dead,
