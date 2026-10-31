@@ -330,11 +330,11 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
                     Score breakdown — how the {optimizeScore} is built
                   </summary>
                   <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <ScoreCard title="Title" weight="18%" score={res.title.score} factors={res.title.factors} Icon={Tag} />
+                    <ScoreCard title="Title" weight="15%" score={res.title.score} factors={res.title.factors} Icon={Tag} />
                     <ScoreCard title="Description" weight="22%" score={res.description.score} factors={res.description.factors} Icon={FileText} />
-                    <ScoreCard title="Photos" weight="18%" score={res.photos.score} factors={res.photos.factors} Icon={ImageIcon} />
+                    <ScoreCard title="Photos" weight="25%" score={res.photos.score} factors={res.photos.factors} Icon={ImageIcon} />
                     <AmenityScoreCard score={res.amenities.score} suggestions={res.amenities.suggestions} mustFix={res.amenities.mustFix} have={amenities.length} />
-                    <ScoreCard title="Booking settings" weight="20%" score={res.settings.score} factors={res.settings.factors} Icon={Zap} />
+                    <ScoreCard title="Booking settings" weight="18%" score={res.settings.score} factors={res.settings.factors} Icon={Zap} />
                   </div>
                 </details>
               </div>
@@ -471,7 +471,7 @@ function AmenityScoreCard({ score, suggestions, mustFix, have }: { score: number
     <div className="rounded-2xl border border-line bg-white p-4">
       <div className="flex items-center justify-between mb-3 gap-2">
         <div className="text-[11px] uppercase tracking-wider text-muted font-semibold inline-flex items-center gap-1.5">
-          <PlusCircle size={13} /> Amenities <span className="text-muted/60 normal-case tracking-normal">· 22%</span>
+          <PlusCircle size={13} /> Amenities <span className="text-muted/60 normal-case tracking-normal">· 20%</span>
         </div>
         <span className={`inline-flex items-center justify-center min-w-[2.75rem] px-2 py-1 rounded-lg text-sm font-bold tabular-nums ring-1 shrink-0 ${ui.ring}`}>{score}</span>
       </div>
