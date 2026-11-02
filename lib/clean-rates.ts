@@ -2,23 +2,24 @@
 // the numbers and divide by $20, get hours per clean, then use this to assist team scheduling in
 // each market").
 //
-// THE KPI. The Revenue Analytics VR P&L carries a cleaning rate per building and unit size — what a
-// clean of that unit is worth to the cleaning line. Divided by the $20/hour we pay a cleaner, that
-// is the number of paid hours one clean can carry: a $50 17WEST 1-bed is 2.5 hours, a $35 Eden
-// studio is 1.75. Add a day's cleans up in hours, divide by a shift, and you have how many cleaners
-// the day needs in each market — sized by what the work is worth rather than a flat cleans-per-person.
+// THE KPI. The Revenue Analytics VR P&L carries our EXPECTED LABOR COST PER CLEAN, per building and
+// unit size (Jon: "the numbers I shared are our expected labor cost per clean" — not the cleaning
+// fee the guest pays). Divided by the $20/hour we pay a cleaner, that is the paid hours one clean
+// should take: a $50 17WEST 1-bed is 2.5 hours, a $35 Eden studio is 1.75. Add a day's cleans up in
+// hours, divide by a shift, and you have how many cleaners the day needs in each market — sized by
+// the labor each clean is budgeted for rather than a flat cleans-per-person.
 //
-// THE NUMBERS are copied from the P&L's rate table on 2026-11-02 (the Revenue App feed is not
+// THE NUMBERS are copied from the P&L's labor-cost table on 2026-11-02 (the Revenue App feed is not
 // connected to Lighthouse, so nothing can be read live). They are the default; an edited copy
 // saved under CLEAN_RATES_KEY in app_settings wins, so a rate change does not need a deploy.
 //
 // WHAT IS LEFT OUT, ON PURPOSE. Outsourced buildings (Park Towers, Capri, Lucerne, Amrit) are on the
-// table because the P&L carries them, but they are not our crew's hours — the scheduler already
+// table because the P&L carries their labor cost, but they are not our crew's hours — the scheduler already
 // counts them as vendor cleans. Botanica's owner keeps the cleaning: no rate, no hours.
 //
 // A "Full" lock-out (Arya, 3316) is both halves cleaned together, so it carries both rates.
-// A unit with no rate for its size (a 4-bed, a size the P&L does not list) falls back to the market's
-// average rate from the same P&L, so a day is never priced at zero.
+// A unit with no cost for its size (a 4-bed, a size the P&L does not list) falls back to the county's
+// average labor cost per clean from the same P&L, so a day is never priced at zero.
 //
 // ISOMORPHIC: no server-only imports — the board prices cleans in the browser with the same table.
 
@@ -47,7 +48,7 @@ export type CleanRates = {
   payPerHour: number
   /** Hours in one cleaner's day, for turning hours into heads. */
   shiftHours: number
-  /** The P&L's average cleaning rate per market — the fallback for a unit with no rate of its own. */
+  /** The P&L's average labor cost per clean, per county — the fallback for a unit with no rate of its own. */
   marketRate: Record<RateMarket, number>
   buildings: BuildingRate[]
   updatedAt?: string
@@ -158,7 +159,7 @@ export function rateBuildingOf(cfg: CleanRates, building?: string | null, name?:
 export type CleanPrice = {
   building: string | null
   size: RateSize
-  /** Dollars the P&L carries for this clean. */
+  /** Expected labor cost of this clean, in dollars (the P&L KPI). */
   rate: number
   /** rate ÷ pay per hour. */
   hours: number
@@ -168,7 +169,7 @@ export type CleanPrice = {
   ownerCleans: boolean
 }
 
-/** What one clean is worth and how many paid hours that buys. */
+/** What one clean is expected to cost in labor, and the paid hours that is. */
 export function priceClean(cfg: CleanRates, opts: { building?: string | null; name?: string | null; bedrooms?: number | null; market?: string | null }): CleanPrice {
   const size = rateSizeOf(opts.bedrooms, opts.name)
   const b = rateBuildingOf(cfg, opts.building, opts.name)

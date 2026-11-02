@@ -1,8 +1,8 @@
-// HOURS PER CLEAN — the P&L cleaning rates the scheduler sizes the team with (lib/clean-rates.ts).
+// HOURS PER CLEAN — the P&L's expected labor cost per clean the scheduler sizes the team with (lib/clean-rates.ts).
 //
 // GET: anyone signed in to the VR side — the scheduler prices every day with this. Admins see the
 //      dollar rates; everybody else gets the same table already turned into hours (rate ÷ pay, with
-//      pay set to 1), so the floor sees "2.5h a clean" and never what a clean is worth.
+//      pay set to 1), so the floor sees "2.5h a clean" and never the dollar cost.
 // PUT: admins. { config } — merged over the defaults, so a partial save never drops a building.
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'

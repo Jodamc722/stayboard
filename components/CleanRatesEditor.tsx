@@ -1,6 +1,6 @@
 'use client'
-// THE HOURS-PER-CLEAN TABLE (Jon, 2026-11-02). The P&L cleaning rate per building and size, and
-// what it buys at $20/hour. Admins edit the dollars; everyone else sees the hours. Saved to
+// THE HOURS-PER-CLEAN TABLE (Jon, 2026-11-02). The P&L's expected labor cost per clean, per building
+// and size, and the hours that is at $20/hour. Admins edit the dollars; everyone else sees the hours. Saved to
 // app_settings (clean_rates_v1), read by the scheduler's staffing need and the clean-time chips.
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -43,7 +43,7 @@ export function CleanRatesEditor({ onClose, onSaved }: { onClose: () => void; on
         <div className="flex items-start justify-between gap-3 mb-3">
           <div>
             <div className="text-[15px] font-bold text-ink">Hours per clean</div>
-            <div className="text-[12px] text-muted mt-0.5">P&amp;L cleaning rate ÷ ${cfg && dollars ? cfg.payPerHour : 20}/hour = the paid hours a clean carries. The scheduler adds a day&apos;s cleans up in hours and divides by a {cfg?.shiftHours || 8}h shift to size each market.</div>
+            <div className="text-[12px] text-muted mt-0.5">Expected labor cost per clean (P&amp;L) ÷ ${cfg && dollars ? cfg.payPerHour : 20}/hour = the hours a clean should take. The scheduler adds a day&apos;s cleans up in hours and divides by a {cfg?.shiftHours || 8}h shift to size each market.</div>
           </div>
           <button onClick={onClose} className="text-muted hover:text-ink text-lg leading-none">×</button>
         </div>
@@ -87,7 +87,7 @@ export function CleanRatesEditor({ onClose, onSaved }: { onClose: () => void; on
             {dollars && (
               <div className="flex items-center gap-2 mt-2">
                 <button onClick={() => save(false)} disabled={state === 'saving'} className="text-[12px] font-semibold px-3 py-1.5 rounded-lg bg-neutral-900 text-white disabled:opacity-50">{state === 'saving' ? 'Saving…' : 'Save rates'}</button>
-                <button onClick={() => save(true)} disabled={state === 'saving'} className="text-[12px] px-3 py-1.5 rounded-lg border border-line">Reset to the P&amp;L table</button>
+                <button onClick={() => save(true)} disabled={state === 'saving'} className="text-[12px] px-3 py-1.5 rounded-lg border border-line">Reset to the P&amp;L labor costs</button>
                 {state === 'saved' && <span className="text-[12px] text-emerald-700">Saved — the scheduler uses these now.</span>}
               </div>
             )}

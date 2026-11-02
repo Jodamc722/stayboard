@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
   ])
   if (!listings || !listings.length) return NextResponse.json({ ok: false, error: 'Listing data unavailable - hit Sync and retry.' }, { status: 503 })
 
-  // HOURS PER CLEAN (Jon, 2026-11-02): every clean is priced at its P&L cleaning rate ÷ $20 — the
+  // HOURS PER CLEAN (Jon, 2026-11-02): every clean is priced at its expected labor cost (P&L KPI) ÷ $20 — the
   // paid hours it carries — so a day's need is hours ÷ a shift, per market (lib/clean-rates.ts).
   const rates = resolveCleanRates(await getSetting<any>(CLEAN_RATES_KEY, null).catch(() => null))
   const meta: Record<string, { market: string; vendor: boolean; hours: number }> = {}

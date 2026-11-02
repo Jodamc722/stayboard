@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
   const sb = supabaseAdmin()
   const presets = await getOpsPresets()
   const timing = (presets as any).timing || {}
-  // The paid-hours budget (P&L cleaning rate ÷ $20, lib/clean-rates.ts) is the benchmark wherever the
+  // The paid-hours budget (expected labor cost per clean ÷ $20, lib/clean-rates.ts) is the benchmark wherever the
   // building has a rate for that size; the bedroom-count minutes remain for units it does not cover.
   const cleanRates = resolveCleanRates(await getSetting<any>(CLEAN_RATES_KEY, null).catch(() => null))
   const longNights = Math.max(2, Number(timing.longStayNights) || 10)

@@ -59,7 +59,7 @@ type Roster = {
 }
 type FcDay = { date: string; dow: number; day: string; actual: Record<string, number>; vendor: Record<string, number>; hours?: Record<string, number>; isToday?: boolean; isPast?: boolean }
 type Fc = { ok: boolean; today: string; weekStart: string; week: FcDay[]; avgByMarketDow?: Record<string, number[]>; avgHoursPerClean?: Record<string, number>; shiftHours?: number }
-/** One market's day in hours: the booked cleans at their P&L rate ÷ $20, plus projected-but-unbooked cleans at the market's average. */
+/** One market's day in hours: the booked cleans at their expected labor cost ÷ $20, plus projected-but-unbooked cleans at the market's average. */
 type MarketNeed = { market: string; cleans: number; hours: number; need: number }
 const TEAM_STATUSES = ['Working', 'On Call', 'OFF', 'REQ OFF']
 // Roster roles, staffing ratio and the growth buffer are operator-editable (/users -> Ops presets);
@@ -78,7 +78,7 @@ const HUB_COLOR = (hub: string) => {
 function fmtMins(m: number): string { const h = Math.floor(m / 60); const mm = m % 60; return h > 0 ? h + 'h' + (mm ? ' ' + mm + 'm' : '') : mm + 'm' }
 // Benchmark clean minutes by bedroom count (studio 45-90, 1BR 60-90, 2BR 90-120, 3BR+ 120-180).
 // VISIBILITY ONLY — this is task duration from the Breezeway timer, NOT labor cost.
-// Over budget = longer than the paid hours the clean carries (P&L rate ÷ $20) when its building has a
+// Over budget = longer than the paid hours the clean carries (expected labor cost ÷ $20) when its building has a
 // rate for that size; otherwise the bedroom-count benchmark.
 function cleanTimeCls(bedrooms: number | null | undefined, mins: number, timing: Timing = DEFAULT_TIMING, unit?: string, rates?: CleanRates | null): string { const p = rates && unit ? priceClean(rates, { name: unit, bedrooms }) : null; const max = p && p.source === 'building' && p.hours > 0 ? p.hours * 60 : benchmarkMinutes(timing, bedrooms); return mins > max ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-emerald-700 bg-emerald-50 border-emerald-200' }
 const keyOf = (c: { listingId: string; date: string }) => `${c.listingId}__${c.date}`
@@ -125,7 +125,7 @@ export function ScheduleBoard({ embedded }: { embedded?: ScheduleEmbed } = {}) {
   const NON_CLEANERS = presets.roster.nonCleaners
   const DEFAULT_RATE = presets.roster.rate
   const GROWTH = presets.roster.growth
-  // P&L cleaning rates (hours per clean = rate ÷ $20). Non-admins receive them already in hours.
+  // Expected labor cost per clean from the P&L (hours per clean = cost ÷ $20). Non-admins receive them already in hours.
   const [cleanRates, setCleanRates] = useState<CleanRates | null>(null)
   useEffect(() => { fetch('/api/settings/clean-rates', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(j => { if (j && j.config) setCleanRates(j.config) }).catch(() => {}) }, [])
   const [view, setView] = useState<'week' | 'day'>('day') // day (by building) first — the team's morning view
@@ -228,7 +228,7 @@ export function ScheduleBoard({ embedded }: { embedded?: ScheduleEmbed } = {}) {
   const projOn = (d: FcDay) => { let n = 0; for (const mk of stripMarkets) n += projFor(d, mk); return n }
   // HOURS, NOT HEADS PER CLEAN (Jon, 2026-11-02: "use our KPI, look at the numbers and divide by $20,
   // get hours per clean, then use this to assist team scheduling in each market"). Each booked clean
-  // carries its P&L cleaning rate ÷ $20 in paid hours (lib/clean-rates.ts, priced by the forecast
+  // carries its expected labor cost (P&L KPI) ÷ $20 in paid hours (lib/clean-rates.ts, priced by the forecast
   // route); a projected clean that is not booked yet carries the market's average. A market needs
   // its hours (plus the growth buffer) ÷ one shift, rounded up to whole people. The old
   // cleans-per-person rate stays as the fallback for a forecast that carries no hours.
@@ -733,7 +733,7 @@ async function pushBlocks() {
       {!embedded && view === 'day' && data && stripDays.length > 0 && (
 <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-7 gap-1.5">
 {stripDays.map(d => { const sel = d.date === ((data && data.weekStart) || date); const bk = market === 'vendor' ? vendorOn(d) : bookedOn(d); const pj = projOn(d); const nd = needOn(d); const wk = workingOn(d.date); const short = nd > 0 && wk < nd; const past = !!d.isPast && !d.isToday; return (
-<button key={d.date} onClick={() => load('day', d.date)} title={market === 'vendor' ? undefined : bk + ' booked · ' + pj + ' projected · ' + hoursOn(d) + ' cleaning hours (P&L rate ÷ $20)\n' + needsOn(d).map(x => x.market + ': ' + x.cleans + ' cleans · ' + x.hours + 'h → ' + x.need + ' cleaner' + (x.need === 1 ? '' : 's')).join('\n')} className={'rounded-xl px-2.5 py-1.5 text-left bg-white transition ' + (sel ? 'border-2 border-neutral-900' : 'border border-line hover:border-neutral-400') + (past && !sel ? ' opacity-50' : '')}>
+<button key={d.date} onClick={() => load('day', d.date)} title={market === 'vendor' ? undefined : bk + ' booked · ' + pj + ' projected · ' + hoursOn(d) + ' cleaning hours (expected labor cost ÷ $20)\n' + needsOn(d).map(x => x.market + ': ' + x.cleans + ' cleans · ' + x.hours + 'h → ' + x.need + ' cleaner' + (x.need === 1 ? '' : 's')).join('\n')} className={'rounded-xl px-2.5 py-1.5 text-left bg-white transition ' + (sel ? 'border-2 border-neutral-900' : 'border border-line hover:border-neutral-400') + (past && !sel ? ' opacity-50' : '')}>
 <div className="flex items-baseline justify-between gap-1">
 <span className={'text-[10px] uppercase tracking-wide ' + (d.isToday ? 'font-bold text-neutral-900' : 'font-semibold text-muted')}>{d.day} {Number(d.date.slice(8, 10))}</span>
 {d.isToday && <span className="text-[9px] font-bold text-emerald-700">TODAY</span>}
@@ -1009,10 +1009,10 @@ function WorkingRail({ date, dayLabel, docs, rosters, need, needs = [], shiftHou
         <div className="text-[13px] font-bold text-ink">Working — {dayLabel}</div>
         <span className={'text-[11px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 ' + (need > 0 && working < need ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700')}>{working} of {need} needed</span>
       </div>
-      {/* Hours per market: the day's cleans at P&L rate ÷ $20, ÷ a shift = cleaners needed. */}
+      {/* Hours per market: the day's cleans at expected labor cost ÷ $20, ÷ a shift = cleaners needed. */}
       {needs.some(x => x.hours > 0) && (
-        <div className="mb-2.5 rounded-lg bg-app border border-line px-2.5 py-2" title={'Each clean carries its P&L cleaning rate ÷ $20 in paid hours. Hours ÷ ' + shiftHours + 'h shift, plus the growth buffer, rounded up = cleaners needed.'}>
-          <div className="flex items-baseline justify-between text-[10px] uppercase tracking-wide text-muted font-semibold mb-1"><span>Hours per clean · rate ÷ $20</span><button onClick={() => setRatesOpen(true)} className="normal-case tracking-normal underline decoration-dotted hover:text-ink">Rates</button></div>
+        <div className="mb-2.5 rounded-lg bg-app border border-line px-2.5 py-2" title={'Each clean carries its expected labor cost (P&L KPI) ÷ $20 in paid hours. Hours ÷ ' + shiftHours + 'h shift, plus the growth buffer, rounded up = cleaners needed.'}>
+          <div className="flex items-baseline justify-between text-[10px] uppercase tracking-wide text-muted font-semibold mb-1"><span>Hours per clean · labor cost ÷ $20</span><button onClick={() => setRatesOpen(true)} className="normal-case tracking-normal underline decoration-dotted hover:text-ink">Rates</button></div>
           {needs.filter(x => x.cleans > 0 || x.hours > 0).map(x => (
             <div key={x.market} className="flex items-baseline justify-between gap-2 text-[11.5px] py-px">
               <span className="text-ink font-semibold">{x.market === 'North' ? 'Palm Beach' : x.market}</span>
