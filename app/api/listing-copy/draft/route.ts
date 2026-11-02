@@ -31,7 +31,7 @@ import { norm, sectionOf, allowedAt, type BulkSectionKey, type BulkScope } from 
 import { aiFetch } from '@/lib/ai-usage'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 300
 
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 const SAMPLE_UNITS = 8        // enough to see what the building already says without paying for 32
@@ -193,9 +193,13 @@ Return ONLY JSON: {${want.map(k => `"${k}":"..."`).join(',')},"rationale":"one o
     const r = await aiFetch('listing-copy', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      // 8000 + effort cap (2026-11-01): the same failure the single-listing optimizer had — on Sonnet 5
+      // the model thinks first, 1600 tokens were gone before a word of copy, and the bulk draft came
+      // back "unreadable" every time.
       body: JSON.stringify({
         model: await modelFor('listing-copy'),
-        max_tokens: 1600,
+        max_tokens: 8000,
+        ...(/(sonnet|opus|haiku)-5|fable|mythos/.test(await modelFor('listing-copy')) ? { output_config: { effort: 'medium' } } : {}),
         system: SYSTEM,
         messages: [{ role: 'user', content: USER }],
       }),
@@ -204,7 +208,7 @@ Return ONLY JSON: {${want.map(k => `"${k}":"..."`).join(',')},"rationale":"one o
     if (!r.ok) return NextResponse.json({ error: `Anthropic ${r.status}: ${(d?.error?.message || JSON.stringify(d)).slice(0, 200)}` }, { status: 502 })
     const text = Array.isArray(d?.content) ? d.content.map((c: any) => c?.text || '').join('').trim() : ''
     const parsed = parseJson(text)
-    if (!parsed) return NextResponse.json({ error: 'The model returned something unreadable — try again.' }, { status: 502 })
+    if (!parsed) return NextResponse.json({ error: d?.stop_reason === 'max_tokens' ? 'The model ran out of room before it finished — try again.' : 'The model returned something unreadable — try again.', stop: d?.stop_reason || null }, { status: 502 })
 
     const sections: Record<string, string> = {}
     for (const k of want) {
