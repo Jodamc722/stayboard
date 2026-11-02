@@ -1,0 +1,63 @@
+// AD STUDIO — the AI writes the ad (Jon, 2026-11-02: "have you write scripts").
+// POST { prompt, seconds, audience, format, current? } → { name, scenes } with photos already found
+// in our photo library for each scene's search words. Nothing is saved here; the editor decides.
+//
+// FACTS ONLY. The prompt (lib/ad-studio scriptPrompt) carries the house facts and Jon's standing copy
+// rules from the October sales videos — no invented numbers, no fee or revenue percentage, the words
+// the voice mispronounces kept out of spoken lines.
+import { NextRequest, NextResponse } from 'next/server'
+import { requireLevel } from '@/lib/access'
+import { anthropicMessages } from '@/lib/anthropic-call'
+import { modelFor } from '@/lib/ai-models'
+import { scriptPrompt, normalize } from '@/lib/ad-studio'
+import { searchPhotos } from '@/lib/photo-library'
+
+export const dynamic = 'force-dynamic'
+export const maxDuration = 90
+
+function pickPhotos(hits: { url: string; width: number | null; height: number | null; active: boolean }[], n: number): string[] {
+  // Prefer active units and real resolution; a low-res photo looks soft at 1080p.
+  const ranked = hits.slice().sort((a, b) => (Number(b.active) - Number(a.active)) || ((b.width || 1200) - (a.width || 1200)))
+  const out: string[] = []
+  for (let i = 0; i < ranked.length && out.length < n; i++) if (out.indexOf(ranked[i].url) < 0) out.push(ranked[i].url)
+  return out
+}
+
+export async function POST(req: NextRequest) {
+  const g = await requireLevel('ads', 'edit'); if (!g.ok) return g.res
+  const key = process.env.ANTHROPIC_API_KEY
+  if (!key) return NextResponse.json({ ok: false, error: 'No Anthropic key configured.' }, { status: 503 })
+  const b = await req.json().catch(() => ({} as any))
+  const seconds = Math.max(10, Math.min(120, Number(b?.seconds) || 30))
+  const prompt = scriptPrompt({
+    prompt: String(b?.prompt || '').slice(0, 1500), seconds, format: String(b?.format || '16:9'),
+    audience: String(b?.audience || 'property owners').slice(0, 80),
+    current: b?.current ? normalize(b.current) : null,
+  })
+  try {
+    const r = await anthropicMessages(key, { model: await modelFor('ad-script'), max_tokens: 4000, temperature: 0.6, messages: [{ role: 'user', content: prompt }] }, undefined, 'ad-script')
+    if (!r.ok) return NextResponse.json({ ok: false, error: `Model said ${r.status}: ${JSON.stringify(r.data?.error || r.data).slice(0, 200)}` }, { status: 502 })
+    const text = (r.data?.content || []).filter((c: any) => c?.type === 'text').map((c: any) => String(c.text || '')).join('')
+    const m = text.match(/\{[\s\S]*\}/)
+    if (!m) return NextResponse.json({ ok: false, error: 'The writer did not return a script. Try again.' }, { status: 502 })
+    let j: any
+    try { j = JSON.parse(m[0]) } catch { return NextResponse.json({ ok: false, error: 'The script came back malformed. Try again.' }, { status: 502 }) }
+    const raw: any[] = Array.isArray(j?.scenes) ? j.scenes.slice(0, 20) : []
+    // Photos: one library search per distinct query, shared across scenes that ask for the same thing.
+    const cache: Record<string, string[]> = {}
+    const scenes = await Promise.all(raw.map(async (s: any, i: number) => {
+      const q = String(s?.photoQuery || '').trim().slice(0, 60)
+      let photos: string[] = []
+      const want = s?.kind === 'wall' ? 9 : s?.kind === 'cards' ? 3 : s?.kind === 'contact' ? 0 : 1
+      if (q && want) {
+        if (!cache[q]) { try { cache[q] = pickPhotos((await searchPhotos(q, 60)).hits as any, 12) } catch { cache[q] = [] } }
+        photos = cache[q].slice(0, want)
+      }
+      return { id: 's' + (i + 1), kind: s?.kind, vo: s?.vo, head: s?.head, sub: s?.sub, items: s?.items, photos, photoQuery: q }
+    }))
+    const norm = normalize({ id: 'x', scenes })
+    return NextResponse.json({ ok: true, name: String(j?.name || '').slice(0, 120), scenes: norm.scenes, queries: scenes.map(s => s.photoQuery) })
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
+  }
+}

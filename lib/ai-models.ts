@@ -220,6 +220,11 @@ export const AI_TASKS: AiTask[] = [
   { key: 'reports', title: 'Owner reports', group: 'Listings & reports', def: 'opus',
     what: 'Writes and edits the narrative in owner reports; reads attachments.',
     matters: 'Owners read these. This is the relationship on paper.' },
+  // AD STUDIO (Jon, 2026-11-02): writes the script and scene plan for a video ad from a brief. Read
+  // by the person building the ad, who edits every line before the voice is made; a few calls a day.
+  { key: 'ad-script', title: 'Ad Studio — write the script', group: 'Listings & reports', def: 'sonnet',
+    what: 'Writes a short video ad from a brief: spoken lines, on-screen headlines, scene types and photo searches, from the house facts only.',
+    matters: 'Goes out to prospects once edited and voiced. A made-up figure here is a claim we would be held to, so the prompt allows the house facts only.' },
   { key: 'polish', title: 'Polish wording (everywhere)', group: 'Operations', def: 'sonnet',
     what: 'Rewords a sentence or a description wherever the Polish button appears.',
     matters: 'Internal and quick; the person is still editing.' },

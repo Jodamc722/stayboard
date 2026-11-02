@@ -144,6 +144,11 @@ export const FEATURES: Feature[] = [
   // around it. Its numbers already flow in through lib/revenue-app.ts; this is the screen itself.
   { key: 'revenue-app',   label: 'Revenue App',       path: '/revenue-app', group: 'Financials' },
   { key: 'reports',       label: 'Owner Reports',     path: '/reports', group: 'Owners' },
+  // AD STUDIO (Jon, 2026-11-02: "a video editor for ads … prompt, have you write scripts, get
+  // previews … think Final Cut Pro but AI, built for custom ads"). View = watch and export; edit =
+  // write, voice and change ads; full = delete. Deliberately in no ops/cs/data bundle: admin and GM
+  // until Jon hands it to someone.
+  { key: 'ads',           label: 'Ad Studio',         path: '/ads', group: 'Owners' },
   // Owner-money page: owner/admin-only by Jon's rule (migration 025 sets manager to off, same as
   // Revenue). Reviewers without a login use /report/owner-audit instead.
   { key: 'owner-audit',   label: 'Statement review', path: '/owner-audit', group: 'Financials' },

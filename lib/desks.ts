@@ -127,6 +127,8 @@ export const DESKS: Desk[] = [
       // Catalog (Jon, 2026-10-27): the default onboarding catalog and one per property — approved replacement lists with links.
       { to: '/catalogs', match: ['/catalog'], label: 'Catalog', hint: 'Approved furniture and amenity catalogs per property, with the links to buy from; build one from a listing’s photos' },
       { to: '/reports', label: 'Owner reports', hint: 'Owner reviews, projections and onboarding decks' },
+      // Ad Studio (Jon, 2026-11-02): AI-written video ads — brief, script, voice, timeline, export.
+      { to: '/ads', label: 'Ad Studio', hint: 'Video ads: write from a brief, edit scenes on a timeline, add the voice and music, export for any platform' },
       { to: '/projections', label: 'Projections', hint: 'Next season’s owner revenue model behind the projection decks', more: true },
     ],
     also: ['/ffe'],
