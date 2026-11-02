@@ -8,14 +8,22 @@
 // preview cannot disagree with the download.
 //
 // No drop-downs (Jon's standing UI rule): every choice is a visible button.
+//
+// 2026-11-02 (Jon: "make the edit feature, add music, create a playlist of sounds, use Eleven studios
+// and voice options … allow me to prompt each scene once it's created"): every scene has an "Ask AI"
+// box that rewrites just that scene (with Undo); the whole ad takes a change request too; a Sounds tab
+// generates music and sound effects with ElevenLabs and keeps them as a playlist; any scene can carry
+// a sound effect; the voice can be any voice in the ElevenLabs library, with delivery sliders.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdProject, type AdScene, type AdKind, type AdFormat, type AdAssets, type AdAudience, type AdTemplate,
-  FORMATS, FORMAT_LABEL, VOICES, MUSIC, KINDS, LEAD, TEMPLATES, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
+  FORMATS, FORMAT_LABEL, VOICES, MUSIC, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
 } from '@/lib/ad-engine'
 import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 
 type ListRow = { id: string; name: string; updatedAt: string; updatedBy: string; scenes: number; format: string }
+type Sound = { key: string; name: string; kind: 'music' | 'sfx'; url: string; dur: number; prompt: string; createdAt: string; by: string; path: string }
+type LibVoice = { id: string; name: string; blurb: string; preview: string }
 type Hit = { url: string; view?: string; thumb: string; caption: string; unit: string; building: string; width: number | null }
 type LibVideo = { key: string; name: string; url: string; thumb: string; dur: number; format: string; builtin: boolean; createdAt: string; by: string; path?: string }
 
@@ -58,7 +66,20 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
   const [saved, setSaved] = useState<'saved' | 'saving' | 'dirty' | ''>('')
   const [brief, setBrief] = useState('')
   const [seconds, setSeconds] = useState(30)
-  const [side, setSide] = useState<'ads' | 'templates' | 'videos'>('ads')
+  const [side, setSide] = useState<'ads' | 'templates' | 'videos' | 'sounds'>('ads')
+  const [sounds, setSounds] = useState<Sound[]>([])
+  const [sndKind, setSndKind] = useState<'music' | 'sfx'>('music')
+  const [sndPrompt, setSndPrompt] = useState('')
+  const [sndSecs, setSndSecs] = useState(30)
+  const [sndName, setSndName] = useState('')
+  const [hear, setHear] = useState('') // the clip being previewed (music, sound or voice sample)
+  const [ask, setAsk] = useState('')
+  const [adAsk, setAdAsk] = useState('')
+  const [undo, setUndo] = useState<{ id: string; scene: AdScene } | null>(null)
+  const [vq, setVq] = useState('')
+  const [vGender, setVGender] = useState('')
+  const [vHits, setVHits] = useState<LibVoice[] | null>(null)
+  const [vBusy, setVBusy] = useState(false)
   const [lib, setLib] = useState<LibVideo[]>([])
   const [libPct, setLibPct] = useState<number | null>(null)
   const [watch, setWatch] = useState<LibVideo | null>(null)
@@ -81,8 +102,12 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
   const saveTimer = useRef<any>(null)
   const vids = useRef<Record<string, HTMLVideoElement>>({})
   const libRef = useRef<LibVideo[]>([])
+  const sndRef = useRef<Sound[]>([])
+  const sfxBuf = useRef<Record<string, AudioBuffer>>({})
+  const previewEl = useRef<HTMLAudioElement | null>(null)
   const live = useRef(false) // true while playing or exporting: videos run instead of seeking
   libRef.current = lib
+  sndRef.current = sounds
   pRef.current = p
   tRef.current = t
 
@@ -109,7 +134,7 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
       if (last) open(last)
     })
     const l = new Image(); l.src = '/ads/stay-logo-gold.svg'; l.onload = () => { logo.current = l }
-    loadLib()
+    loadLib(); loadSounds()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const newAd = async () => {
@@ -153,14 +178,35 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
   const delScene = () => { if (!p || p.scenes.length < 2) return; change(d => ({ ...d, scenes: d.scenes.filter((_, k) => k !== sel) })); setSel(Math.max(0, sel - 1)) }
 
   // ── AI: write / rewrite ───────────────────────────────────────────────
-  const write = async (rewrite: boolean) => {
+  const write = async (rewrite: boolean, change_?: string) => {
     if (!p) return
-    setBusy(rewrite ? 'rewrite' : 'write'); setErr('')
-    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: brief, seconds, audience: AUD[p.audience].brief, format: p.format, current: rewrite ? p : null }) }).then(x => x.json()).catch(() => null)
+    setBusy(change_ ? 'adask' : rewrite ? 'rewrite' : 'write'); setErr('')
+    const prompt = change_ ? (brief ? brief + '\n\n' : '') + 'CHANGE REQUESTED FOR THE WHOLE AD (keep everything else): ' + change_ : brief
+    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, seconds, audience: AUD[p.audience].brief, format: p.format, current: rewrite ? p : null }) }).then(x => x.json()).catch(() => null)
     setBusy('')
     if (!r?.ok) { setErr(r?.error || 'The writer did not answer. Try again.'); return }
     change(d => ({ ...d, prompt: brief, name: d.name === 'Untitled ad' && r.name ? r.name : d.name, scenes: r.scenes }))
-    setSel(0); setT(1.6)
+    setSel(0); setT(1.6); setUndo(null)
+    if (change_) setAdAsk('')
+  }
+  /** Rewrite just the selected scene the way it is asked ("punchier", "show the rooftop", "make it numbers"). */
+  const askScene = async (what: string) => {
+    if (!p || !what.trim()) return
+    const i = sel, before = p.scenes[i]
+    setBusy('scene'); setErr('')
+    const r = await fetch('/api/ads/scene', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: p, index: i, ask: what.trim() }) }).then(x => x.json()).catch(() => null)
+    setBusy('')
+    if (!r?.ok || !r.scene) { setErr(r?.error || 'The scene could not be changed. Try again.'); return }
+    if (pRef.current?.scenes[i]?.id !== before.id) return // the ad changed underneath; drop it
+    setUndo({ id: before.id, scene: before })
+    change(d => ({ ...d, scenes: d.scenes.map((s, k) => (k === i ? { ...r.scene, id: before.id } : s)) }))
+    setAsk('')
+    if (tl) setT(tl.starts[i] + Math.min(1.6, tl.durs[i] * 0.6))
+  }
+  const undoScene = () => {
+    if (!undo) return
+    change(d => ({ ...d, scenes: d.scenes.map(s => (s.id === undo.id ? undo.scene : s)) }))
+    setUndo(null)
   }
 
   // ── voice ─────────────────────────────────────────────────────────────
@@ -215,29 +261,45 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
     }
     return el
   }
+  /** Bundled track or a generated one from the Sounds library. */
+  const track = (key: string): { label: string; file: string; credit: string } => {
+    const m = MUSIC.find(x => x.key === key)
+    if (m) return m
+    const g = sndRef.current.find(x => x.key === key)
+    return g ? { label: g.name, file: g.url, credit: '' } : { label: key.startsWith('snd:') ? 'Generated track' : 'No music', file: '', credit: '' }
+  }
   const assets = (): AdAssets => ({
     img, media, logo: logo.current, display, body, mono: 'ui-monospace, Menlo, monospace',
-    credit: (MUSIC.find(m => m.key === (pRef.current?.music || '')) || { credit: '' }).credit,
+    credit: track(pRef.current?.music || '').credit,
   })
 
   // ── audio ─────────────────────────────────────────────────────────────
   const ctx = () => { if (!actx.current) actx.current = new AudioContext(); return actx.current }
-  const loadAudio = async (): Promise<{ v: AudioBuffer | null; m: AudioBuffer | null }> => {
+  const loadAudio = async (): Promise<{ v: AudioBuffer | null; m: AudioBuffer | null; fx: Record<string, AudioBuffer> }> => {
     const c = ctx()
     let v: AudioBuffer | null = null, m: AudioBuffer | null = null
     if (audioUrl && hasVoice) {
       if (voiceBuf.current?.url === audioUrl) v = voiceBuf.current.buf
       else { try { const ab = await fetch(audioUrl).then(r => r.arrayBuffer()); v = await c.decodeAudioData(ab); voiceBuf.current = { url: audioUrl, buf: v } } catch { v = null } }
     }
-    const mu = MUSIC.find(x => x.key === pRef.current?.music)
-    if (mu && mu.file) {
-      if (musicBuf.current[mu.key]) m = musicBuf.current[mu.key]
-      else { try { const ab = await fetch(mu.file).then(r => r.arrayBuffer()); m = await c.decodeAudioData(ab); musicBuf.current[mu.key] = m } catch { m = null } }
+    const mk = pRef.current?.music || '', mu = track(mk)
+    if (mu.file) {
+      if (musicBuf.current[mk]) m = musicBuf.current[mk]
+      else { try { const ab = await fetch(mu.file).then(r => r.arrayBuffer()); m = await c.decodeAudioData(ab); musicBuf.current[mk] = m } catch { m = null } }
     }
-    return { v, m }
+    const fx: Record<string, AudioBuffer> = {}
+    for (const sc of pRef.current?.scenes || []) {
+      const k = sc.sfx || ''
+      if (!k || fx[k]) continue
+      if (sfxBuf.current[k]) { fx[k] = sfxBuf.current[k]; continue }
+      const u = sndRef.current.find(x => x.key === k)?.url
+      if (!u) continue
+      try { const ab = await fetch(u).then(r => r.arrayBuffer()); fx[k] = sfxBuf.current[k] = await c.decodeAudioData(ab) } catch { /* skip it */ }
+    }
+    return { v, m, fx }
   }
   /** Wire the voice and the ducked, faded music into `dest`, starting the ad at `from` seconds. */
-  const wire = (c: AudioContext, dest: AudioNode, from: number, v: AudioBuffer | null, m: AudioBuffer | null, startAt: number): AudioScheduledSourceNode[] => {
+  const wire = (c: AudioContext, dest: AudioNode, from: number, v: AudioBuffer | null, m: AudioBuffer | null, startAt: number, fx: Record<string, AudioBuffer> = {}): AudioScheduledSourceNode[] => {
     const cur = pRef.current!, T = timeline(cur)
     const nodes: AudioScheduledSourceNode[] = []
     if (v) {
@@ -261,6 +323,16 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
       for (let x = Math.ceil(from * 10) / 10; x <= T.total; x += 0.1) g.gain.linearRampToValueAtTime(lvl(x), startAt + (x - from))
       if (from < m.duration) { s.start(startAt, from); s.stop(startAt + (T.total - from)); nodes.push(s) }
     }
+    // Each scene's sound effect lands as the scene starts.
+    cur.scenes.forEach((sc, i) => {
+      const b = sc.sfx ? fx[sc.sfx] : null
+      if (!b) return
+      const at = T.starts[i] + 0.05, off = from - at
+      if (off >= b.duration) return
+      const s = c.createBufferSource(); s.buffer = b
+      const g = c.createGain(); g.gain.value = 0.85; s.connect(g); g.connect(dest)
+      s.start(startAt + Math.max(0, -off), Math.max(0, off)); nodes.push(s)
+    })
     return nodes
   }
   const stop = () => {
@@ -273,9 +345,9 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
   const start = async (from: number) => {
     if (!pRef.current) return
     const c = ctx(); if (c.state === 'suspended') await c.resume()
-    const { v, m } = await loadAudio()
+    const { v, m, fx } = await loadAudio()
     const at = c.currentTime + 0.08
-    play0.current = { at, from, nodes: wire(c, c.destination, from, v, m, at) }
+    play0.current = { at, from, nodes: wire(c, c.destination, from, v, m, at, fx) }
     live.current = true
     setPlaying(true)
   }
@@ -324,7 +396,7 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
     p.scenes.forEach(s => s.photos.forEach(u => img(u))); if (p.contact.photo) img(p.contact.photo)
     await new Promise(r => setTimeout(r, 1200))
     const c = ctx(); if (c.state === 'suspended') await c.resume()
-    const { v, m } = await loadAudio()
+    const { v, m, fx } = await loadAudio()
     const dest = c.createMediaStreamDestination()
     const vs = (cv as any).captureStream(30) as MediaStream
     const stream = new MediaStream([...vs.getVideoTracks(), ...dest.stream.getAudioTracks()])
@@ -339,7 +411,7 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
     drawFrame(g, p, tl, 0, assets())
     rec.start(500)
     const at = c.currentTime + 0.15
-    const nodes = wire(c, dest, 0, v, m, at)
+    const nodes = wire(c, dest, 0, v, m, at, fx)
     setExportPct(0)
     await new Promise<void>(res => {
       const step = () => {
@@ -469,6 +541,41 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
     setScene(sel, { photos: ['video:' + (v.builtin ? v.url : v.key)].concat(sc.photos.filter(x => !x.startsWith('video:'))).slice(0, 12) })
   }
 
+  // ── sounds (ElevenLabs music + effects) and voices ────────────────────
+  const loadSounds = async () => {
+    const r = await fetch('/api/ads/sounds').then(x => x.json()).catch(() => null)
+    if (r?.ok) setSounds(r.sounds || [])
+  }
+  const makeSound = async () => {
+    if (!sndPrompt.trim()) { setErr('Describe the sound first, e.g. "warm lounge house, sunset by the pool".'); return }
+    setBusy('sound'); setErr('')
+    const r = await fetch('/api/ads/sounds', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: sndKind, prompt: sndPrompt, seconds: sndSecs, name: sndName }) }).then(x => x.json()).catch(() => null)
+    setBusy('')
+    if (!r?.ok) { setErr(r?.error || 'The sound could not be made.'); return }
+    setSounds(r.sounds || []); setSndPrompt(''); setSndName('')
+  }
+  const delSound = async (x: Sound) => {
+    if (!window.confirm('Delete "' + x.name + '"? Ads that use it will play without it.')) return
+    await fetch('/api/ads/sounds?path=' + encodeURIComponent(x.path), { method: 'DELETE' })
+    loadSounds()
+  }
+  /** Play a clip once (tap again to stop). */
+  const preview = (url: string) => {
+    const el = previewEl.current || (previewEl.current = new Audio())
+    if (hear === url) { el.pause(); setHear(''); return }
+    stop()
+    el.src = url; el.currentTime = 0; el.volume = 0.9
+    el.onended = () => setHear('')
+    el.play().then(() => setHear(url)).catch(() => setHear(''))
+  }
+  const findVoices = async (gender = vGender) => {
+    setVBusy(true); setErr('')
+    const r = await fetch('/api/ads/voices?q=' + encodeURIComponent(vq.trim()) + '&gender=' + gender).then(x => x.json()).catch(() => null)
+    setVBusy(false)
+    if (!r?.ok) { setErr(r?.error || 'The voice library did not answer.'); return }
+    setVHits(r.voices || [])
+  }
+
   // ── templates: a ready-made ad that fills itself from the photo library ──
   const applyTemplate = async (tp: AdTemplate) => {
     if (!p || !canEdit) return
@@ -564,9 +671,16 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
             <Btn disabled={!p || !canEdit || !!busy || !p?.scenes.length} onClick={() => write(true)} title="Keeps what works and tightens the rest">{busy === 'rewrite' ? 'Rewriting…' : 'Improve draft'}</Btn>
           </div>
           <p style={{ fontSize: 11, color: UI.mut, marginTop: 8, lineHeight: 1.5 }}>Writes from the house facts only — no made-up numbers. You edit every line before the voice is made.</p>
+          {p && canEdit && p.scenes.length ? (
+            <>
+              <Label>Change the whole ad</Label>
+              <textarea value={adAsk} onChange={e => setAdAsk(e.target.value)} rows={2} placeholder="e.g. make it faster, open on the rooftop, add a scene about guidebooks" style={field} />
+              <div style={{ marginTop: 6 }}><Btn small tone="blue" disabled={!!busy || !adAsk.trim()} onClick={() => write(true, adAsk.trim())}>{busy === 'adask' ? 'Changing…' : 'Apply to the ad'}</Btn></div>
+            </>
+          ) : null}
 
           <div style={{ display: 'flex', gap: 4, marginTop: 16, borderTop: '1px solid ' + UI.line, paddingTop: 12 }}>
-            {([['ads', 'Ads'], ['templates', 'Templates'], ['videos', 'Videos']] as const).map(([k, l]) => <Btn key={k} small on={side === k} onClick={() => setSide(k)}>{l}</Btn>)}
+            {([['ads', 'Ads'], ['templates', 'Templates'], ['videos', 'Videos'], ['sounds', 'Sounds']] as const).map(([k, l]) => <Btn key={k} small on={side === k} onClick={() => setSide(k)}>{l}</Btn>)}
           </div>
           {side === 'templates' ? (
             <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -578,6 +692,52 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
               ))}
               {busy === 'template' ? <p style={{ fontSize: 11.5, color: UI.gold }}>Filling it with photos from the library…</p> : null}
               {!p ? <p style={{ fontSize: 11.5, color: UI.mut }}>Start an ad first (+ New ad), then pick a template.</p> : null}
+            </div>
+          ) : side === 'sounds' ? (
+            <div style={{ marginTop: 10 }}>
+              {canEdit ? (
+                <div style={{ background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, padding: 9 }}>
+                  <p style={{ fontSize: 12, fontWeight: 700, margin: '0 0 6px' }}>Make a sound with ElevenLabs</p>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <Btn small on={sndKind === 'music'} onClick={() => { setSndKind('music'); setSndSecs(30) }}>Music track</Btn>
+                    <Btn small on={sndKind === 'sfx'} onClick={() => { setSndKind('sfx'); setSndSecs(2) }}>Sound effect</Btn>
+                  </div>
+                  <textarea value={sndPrompt} onChange={e => setSndPrompt(e.target.value)} rows={3} style={{ ...field, marginTop: 6, fontSize: 12 }}
+                    placeholder={sndKind === 'music' ? 'e.g. warm lounge house, sunset by the pool, upscale, steady beat' : 'e.g. soft whoosh transition / camera shutter / ocean waves / cash register ding'} />
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
+                    {(sndKind === 'music' ? [15, 30, 60, 90] : [1, 2, 4, 8]).map(n => <Btn key={n} small on={sndSecs === n} onClick={() => setSndSecs(n)}>{n}s</Btn>)}
+                  </div>
+                  <input value={sndName} onChange={e => setSndName(e.target.value)} placeholder="Name (optional)" style={{ ...field, marginTop: 6, padding: '6px 9px', fontSize: 12 }} />
+                  <div style={{ marginTop: 6 }}><Btn small tone="blue" disabled={!!busy} onClick={makeSound}>{busy === 'sound' ? (sndKind === 'music' ? 'Composing… up to a minute' : 'Making…') : 'Generate'}</Btn></div>
+                </div>
+              ) : null}
+              <Label>Playlist · bundled</Label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {MUSIC.filter(m => m.file).map(m => (
+                  <div key={m.key} style={{ display: 'flex', alignItems: 'center', gap: 6, background: p?.music === m.key ? '#232C38' : 'transparent', borderRadius: 7, padding: '4px 6px' }}>
+                    <Btn small on={hear === m.file} onClick={() => preview(m.file)} title="Listen">{hear === m.file ? '■' : '▶'}</Btn>
+                    <span style={{ flex: 1, minWidth: 0 }}><span style={{ display: 'block', fontSize: 12, fontWeight: 600 }}>{m.label}</span><span style={{ fontSize: 10.5, color: UI.mut }}>{m.mood}</span></span>
+                    {p && canEdit ? <Btn small on={p.music === m.key} onClick={() => change(d => ({ ...d, music: m.key }))}>{p.music === m.key ? 'In use' : 'Use'}</Btn> : null}
+                  </div>
+                ))}
+              </div>
+              <Label>Made with ElevenLabs</Label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 320, overflowY: 'auto' }}>
+                {sounds.map(x => (
+                  <div key={x.key} style={{ display: 'flex', alignItems: 'center', gap: 6, background: p?.music === x.key || (sc && sc.sfx === x.key) ? '#232C38' : 'transparent', borderRadius: 7, padding: '4px 6px' }}>
+                    <Btn small on={hear === x.url} onClick={() => preview(x.url)} title={x.prompt}>{hear === x.url ? '■' : '▶'}</Btn>
+                    <span style={{ flex: 1, minWidth: 0 }} title={x.prompt}>
+                      <span style={{ display: 'block', fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.name}</span>
+                      <span style={{ fontSize: 10.5, color: UI.mut }}>{x.kind === 'music' ? 'Music' : 'Effect'} · {Math.round(x.dur)}s</span>
+                    </span>
+                    {p && canEdit ? (x.kind === 'music'
+                      ? <Btn small on={p.music === x.key} onClick={() => change(d => ({ ...d, music: x.key }))}>{p.music === x.key ? 'In use' : 'Use'}</Btn>
+                      : <Btn small on={!!sc && sc.sfx === x.key} title="Plays as the selected scene lands" onClick={() => setScene(sel, { sfx: sc && sc.sfx === x.key ? '' : x.key })}>{sc && sc.sfx === x.key ? 'On scene' : 'Add to scene'}</Btn>) : null}
+                    {canDelete ? <Btn small tone="red" onClick={() => delSound(x)} title="Delete">✕</Btn> : null}
+                  </div>
+                ))}
+                {!sounds.length ? <p style={{ fontSize: 11.5, color: UI.mut }}>Nothing generated yet. Describe a track or an effect above.</p> : null}
+              </div>
             </div>
           ) : side === 'videos' ? (
             <div style={{ marginTop: 10 }}>
@@ -663,6 +823,18 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
                   <Btn small tone="red" disabled={p.scenes.length < 2} onClick={delScene} title="Delete scene">✕</Btn>
                 </span>
               </div>
+              {canEdit ? (
+                <div style={{ marginTop: 10, background: '#18243a', border: '1px solid #2b4470', borderRadius: 9, padding: 9 }}>
+                  <p style={{ fontSize: 11.5, fontWeight: 700, margin: '0 0 6px', color: '#BFD4FA' }}>✦ Change this scene with AI</p>
+                  <textarea value={ask} onChange={e => setAsk(e.target.value)} rows={2} onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) askScene(ask) }}
+                    placeholder="e.g. make it punchier · show the rooftop pool · turn it into three numbers · mention Art Basel" style={{ ...field, fontSize: 12.5 }} />
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
+                    <Btn small tone="blue" disabled={!!busy || !ask.trim()} onClick={() => askScene(ask)}>{busy === 'scene' ? 'Changing…' : 'Change it'}</Btn>
+                    {['Punchier', 'Shorter', 'New photos', 'Different look'].map(x => <Btn key={x} small disabled={!!busy} onClick={() => askScene(x === 'New photos' ? 'Swap in different, stronger photos that fit this line' : x === 'Different look' ? 'Pick a different scene kind that shows this better' : x === 'Shorter' ? 'Make the voice line and headline shorter' : 'Make the line and headline punchier')}>{x}</Btn>)}
+                    {undo && undo.id === sc.id ? <Btn small onClick={undoScene} title="Back to the scene before the AI change">↶ Undo</Btn> : null}
+                  </div>
+                </div>
+              ) : null}
               <Label>Look</Label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {KINDS.map(k => <Btn key={k.kind} small on={sc.kind === k.kind} title={k.hint} onClick={() => setScene(sel, { kind: k.kind })}>{k.label}</Btn>)}
@@ -745,14 +917,64 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
                 </>
               ) : null}
 
-              <Label>Whole ad</Label>
-              <p style={{ fontSize: 11.5, color: UI.mut, margin: '0 0 6px' }}>Voice</p>
+              <Label>Sound effect</Label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {VOICES.map(v => <Btn key={v.id} small on={p.voiceId === v.id} title={v.blurb} onClick={() => change(d => ({ ...d, voiceId: v.id }))}>{v.name}</Btn>)}
+                <Btn small on={!sc.sfx} disabled={!canEdit} onClick={() => setScene(sel, { sfx: '' })}>None</Btn>
+                {sounds.filter(x => x.kind === 'sfx').slice(0, 12).map(x => <Btn key={x.key} small on={sc.sfx === x.key} disabled={!canEdit} title={x.prompt} onClick={() => { setScene(sel, { sfx: x.key }); preview(x.url) }}>{x.name}</Btn>)}
+                {canEdit ? <Btn small onClick={() => { setSide('sounds'); setSndKind('sfx'); setSndSecs(2) }}>+ Make one</Btn> : null}
               </div>
-              <p style={{ fontSize: 11.5, color: UI.mut, margin: '10px 0 6px' }}>Music</p>
+
+              <Label>Whole ad</Label>
+              <p style={{ fontSize: 11.5, color: UI.mut, margin: '0 0 6px' }}>Voice{p.voiceName && !VOICES.some(v => v.id === p.voiceId) ? <span style={{ color: UI.gold }}> · using {p.voiceName}</span> : null}</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {VOICES.map(v => <Btn key={v.id} small on={p.voiceId === v.id} title={v.blurb} onClick={() => change(d => ({ ...d, voiceId: v.id, voiceName: v.name }))}>{v.name}</Btn>)}
+                {!VOICES.some(v => v.id === p.voiceId) ? <Btn small on>{p.voiceName || 'Library voice'}</Btn> : null}
+              </div>
+              <div style={{ background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, padding: 8, marginTop: 8 }}>
+                <p style={{ fontSize: 11, color: UI.mut, margin: '0 0 6px' }}>Browse the ElevenLabs voice library</p>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <input value={vq} onChange={e => setVq(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') findVoices() }} placeholder="e.g. warm, luxury, narrator, British" style={{ ...field, padding: '5px 8px', fontSize: 12 }} />
+                  <Btn small onClick={() => findVoices()}>{vBusy ? '…' : 'Find'}</Btn>
+                </div>
+                <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+                  {([['', 'Any'], ['female', 'Female'], ['male', 'Male']] as const).map(([k, l]) => <Btn key={k} small on={vGender === k} onClick={() => { setVGender(k); findVoices(k) }}>{l}</Btn>)}
+                </div>
+                {vHits ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8, maxHeight: 240, overflowY: 'auto' }}>
+                    {vHits.map(v => (
+                      <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {v.preview ? <Btn small on={hear === v.preview} onClick={() => preview(v.preview)} title="Hear a sample">{hear === v.preview ? '■' : '▶'}</Btn> : null}
+                        <span style={{ flex: 1, minWidth: 0 }}><span style={{ display: 'block', fontSize: 12, fontWeight: 600 }}>{v.name}</span><span style={{ display: 'block', fontSize: 10.5, color: UI.mut, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={v.blurb}>{v.blurb}</span></span>
+                        {canEdit ? <Btn small on={p.voiceId === v.id} onClick={() => change(d => ({ ...d, voiceId: v.id, voiceName: v.name }))}>{p.voiceId === v.id ? 'In use' : 'Use'}</Btn> : null}
+                      </div>
+                    ))}
+                    {!vHits.length ? <p style={{ fontSize: 11.5, color: UI.mut }}>No voices matched.</p> : null}
+                  </div>
+                ) : null}
+              </div>
+              {(() => {
+                const vs = p.voiceSettings || VOICE_DEFAULTS
+                const row = (k: 'stability' | 'style' | 'speed', label: string, lo: string, hi: string, min: number, max: number) => (
+                  <label key={k} style={{ display: 'block', fontSize: 11, color: UI.mut, marginTop: 6 }}>
+                    <span style={{ display: 'flex' }}><span>{label}</span><span style={{ marginLeft: 'auto', fontFamily: 'ui-monospace, Menlo, monospace' }}>{vs[k].toFixed(2)}</span></span>
+                    <input type="range" min={min} max={max} step={0.01} value={vs[k]} disabled={!canEdit} onChange={e => change(d => ({ ...d, voiceSettings: { ...(d.voiceSettings || VOICE_DEFAULTS), [k]: Number(e.target.value) } }))} style={{ width: '100%' }} />
+                    <span style={{ display: 'flex', fontSize: 10 }}><span>{lo}</span><span style={{ marginLeft: 'auto' }}>{hi}</span></span>
+                  </label>
+                )
+                return (
+                  <div style={{ marginTop: 6 }}>
+                    {row('stability', 'Delivery', 'More expressive', 'Steadier', 0, 1)}
+                    {row('style', 'Style', 'Plain', 'Dramatic', 0, 1)}
+                    {row('speed', 'Pace', 'Slower', 'Faster', 0.7, 1.2)}
+                    <p style={{ fontSize: 10.5, color: UI.mut, marginTop: 4 }}>Changes take effect when you re-record the voice.</p>
+                  </div>
+                )
+              })()}
+              <p style={{ fontSize: 11.5, color: UI.mut, margin: '12px 0 6px' }}>Music · {track(p.music).label}</p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
-                {MUSIC.map(m => <Btn key={m.key} small on={p.music === m.key} onClick={() => change(d => ({ ...d, music: m.key }))}>{m.label}</Btn>)}
+                {MUSIC.map(m => <Btn key={m.key} small on={p.music === m.key} title={m.mood} onClick={() => change(d => ({ ...d, music: m.key }))}>{m.label}</Btn>)}
+                {sounds.filter(x => x.kind === 'music').slice(0, 8).map(x => <Btn key={x.key} small on={p.music === x.key} title={x.prompt} onClick={() => change(d => ({ ...d, music: x.key }))}>♪ {x.name}</Btn>)}
+                <Btn small onClick={() => { setSide('sounds'); setSndKind('music'); setSndSecs(30) }}>+ Generate</Btn>
               </div>
               {p.music !== 'none' ? (
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, color: UI.mut, marginTop: 8 }}>
@@ -792,7 +1014,7 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
                   onClick={() => pick(i)} title={(s.head || s.vo || KINDS.find(k => k.kind === s.kind)?.label || '').replace(/\*\*/g, '')}
                   style={{ position: 'absolute', left: pct(tl.starts[i]) + '%', width: `calc(${pct(tl.durs[i])}% - 3px)`, top: 0, bottom: 0, borderRadius: 7, cursor: 'pointer', overflow: 'hidden',
                     background: KIND_COLOR[s.kind] + (i === sel ? '' : '55'), border: '2px solid ' + (i === sel ? '#fff' : 'transparent'), padding: '4px 6px', color: i === sel ? '#111' : UI.ink }}>
-                  <span style={{ display: 'block', fontSize: 10, fontWeight: 800, letterSpacing: '0.04em' }}>{i + 1} · {KINDS.find(k => k.kind === s.kind)?.label}</span>
+                  <span style={{ display: 'block', fontSize: 10, fontWeight: 800, letterSpacing: '0.04em' }}>{i + 1} · {KINDS.find(k => k.kind === s.kind)?.label}{s.sfx ? ' · 🔊' : ''}</span>
                   <span style={{ display: 'block', fontSize: 10.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{(s.head || s.vo).replace(/\*\*/g, '').replace(/\n/g, ' ')}</span>
                 </div>
               ))}
@@ -809,7 +1031,7 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
             <div style={{ position: 'relative', height: 22 }}>
               {p.music !== 'none' ? (
                 <div style={{ position: 'absolute', left: 0, right: 0, top: 4, bottom: 4, borderRadius: 4, background: `linear-gradient(90deg, rgba(210,176,119,.15), rgba(210,176,119,.55) ${pct(1)}%, rgba(210,176,119,.55) ${pct(tl.voiced ? tl.voEnd + 0.3 : tl.total - 4)}%, rgba(210,176,119,0) 100%)` }}>
-                  <span style={{ fontSize: 9.5, color: UI.ink, padding: '0 6px', lineHeight: '14px' }}>{MUSIC.find(m => m.key === p.music)?.label} · ducks under the voice · fades out on the end card</span>
+                  <span style={{ fontSize: 9.5, color: UI.ink, padding: '0 6px', lineHeight: '14px' }}>{track(p.music).label} · ducks under the voice · fades out on the end card</span>
                 </div>
               ) : null}
             </div>

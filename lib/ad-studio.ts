@@ -8,7 +8,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { SALES_CONTACT_KEY, type ContactCard } from '@/lib/sales-copy'
-import { type AdProject, type AdContact, type AdScene, type AdKind, blankProject, spokenText, voiceSig, HOUSE_FACTS, GUEST_FACTS, KINDS, BUILTIN_VIDEOS } from '@/lib/ad-engine'
+import { type AdProject, type AdContact, type AdScene, type AdKind, blankProject, spokenText, voiceSig, HOUSE_FACTS, GUEST_FACTS, KINDS, BUILTIN_VIDEOS, VOICE_DEFAULTS } from '@/lib/ad-engine'
 
 const BUCKET = 'ad-studio'
 const SIGN_TTL = 60 * 60 * 6
@@ -82,6 +82,7 @@ export async function signedAudio(path: string): Promise<string | null> {
 }
 
 const KIND_KEYS = KINDS.map(k => k.kind)
+const clampN = (v: any, a: number, b: number, d: number) => { const n = Number(v); return Number.isFinite(n) ? Math.max(a, Math.min(b, n)) : d }
 /** Never trust a saved or AI-written file blindly: every field coerced, unknown kinds become a title. */
 export function normalize(p: any): AdProject {
   const scenes: AdScene[] = Array.isArray(p?.scenes) ? p.scenes.slice(0, 40).map((s: any, i: number) => ({
@@ -93,6 +94,7 @@ export function normalize(p: any): AdProject {
     items: Array.isArray(s?.items) ? s.items.slice(0, 12).map((x: any) => String(x || '').slice(0, 160)) : [],
     photos: Array.isArray(s?.photos) ? s.photos.slice(0, 12).map((x: any) => String(x || '')).filter((x: string) => /^(https:\/\/|\/|video:)/.test(x)) : [],
     dur: s?.dur && Number(s.dur) > 0 ? Math.min(30, Number(s.dur)) : null,
+    sfx: typeof s?.sfx === 'string' && /^snd:sounds\/[a-z0-9]+\.mp3$/i.test(s.sfx) ? s.sfx : '',
   })) : []
   const c = p?.contact || {}
   return {
@@ -102,7 +104,13 @@ export function normalize(p: any): AdProject {
     format: (['16:9', '9:16', '1:1', '4:5'].indexOf(p?.format) >= 0 ? p.format : '16:9'),
     audience: (['owners', 'partners', 'guests'].indexOf(p?.audience) >= 0 ? p.audience : 'owners'),
     voiceId: String(p?.voiceId || 'qSeXEcewz7tA0Q0qk9fH').slice(0, 40),
-    music: String(p?.music || 'werq').slice(0, 20),
+    voiceName: String(p?.voiceName || '').slice(0, 80),
+    voiceSettings: {
+      stability: clampN(p?.voiceSettings?.stability, 0, 1, VOICE_DEFAULTS.stability),
+      style: clampN(p?.voiceSettings?.style, 0, 1, VOICE_DEFAULTS.style),
+      speed: clampN(p?.voiceSettings?.speed, 0.7, 1.2, VOICE_DEFAULTS.speed),
+    },
+    music: String(p?.music || 'werq').slice(0, 80),
     musicVol: Math.max(0, Math.min(1, Number(p?.musicVol ?? 0.28))),
     captions: p?.captions !== false,
     scenes,
@@ -139,7 +147,7 @@ export async function makeVoice(p: AdProject): Promise<{ ok: true; project: AdPr
   const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(p.voiceId)}/with-timestamps?output_format=mp3_44100_128`, {
     method: 'POST',
     headers: { 'xi-api-key': key, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, model_id: 'eleven_multilingual_v2', voice_settings: { stability: 0.5, similarity_boost: 0.8, style: 0.2, use_speaker_boost: true } }),
+    body: JSON.stringify({ text, model_id: 'eleven_multilingual_v2', voice_settings: { stability: p.voiceSettings.stability, similarity_boost: 0.8, style: p.voiceSettings.style, use_speaker_boost: true, speed: p.voiceSettings.speed } }),
   })
   if (!r.ok) {
     const t = (await r.text()).slice(0, 300)
@@ -263,4 +271,103 @@ export async function deleteLibraryItem(path: string): Promise<void> {
   if (!/^library\/[a-z0-9]+\.(mp4|webm|mov|m4v)$/i.test(path)) throw new Error('bad path')
   const base = path.replace(/\.[a-z0-9]+$/i, '')
   await supabaseAdmin().storage.from(BUCKET).remove([path, base + '.json', base + '.jpg'])
+}
+
+
+// ───────────────────────── sounds: ElevenLabs music + sound effects ─────────────────────────
+// Jon, 2026-11-02: "add music, create a playlist of sounds, use Eleven studios". Generated tracks and
+// effects are kept in the bucket under sounds/<id>.mp3 with a .json beside it, and appear in the
+// Sounds tab for every ad. The bundled royalty-free tracks are MUSIC in lib/ad-engine.
+export type Sound = { key: string; name: string; kind: 'music' | 'sfx'; url: string; dur: number; prompt: string; createdAt: string; by: string; path: string }
+const elevenKey = () => process.env.ELEVENLABS_API_KEY || process.env.ELEVEN_API_KEY || ''
+
+export async function listSounds(): Promise<Sound[]> {
+  await ensureBucket()
+  const sb = supabaseAdmin()
+  const { data } = await sb.storage.from(BUCKET).list('sounds', { limit: 300, sortBy: { column: 'created_at', order: 'desc' } })
+  const metas = (data || []).filter(f => /\.json$/.test(f.name))
+  const rows = (await Promise.all(metas.map(async f => {
+    const { data: b } = await sb.storage.from(BUCKET).download('sounds/' + f.name)
+    if (!b) return null
+    try { return JSON.parse(await b.text()) } catch { return null }
+  }))).filter(Boolean) as any[]
+  const signed: Record<string, string> = {}
+  if (rows.length) {
+    const { data: s } = await sb.storage.from(BUCKET).createSignedUrls(rows.map(r => r.path), SIGN_TTL)
+    ;(s || []).forEach((x: any) => { if (x?.path && x?.signedUrl) signed[x.path] = x.signedUrl })
+  }
+  return rows.map(r => ({ key: 'snd:' + r.path, name: String(r.name || 'Sound'), kind: (r.kind === 'sfx' ? 'sfx' : 'music') as Sound['kind'], url: signed[r.path] || '', dur: Number(r.dur || 0), prompt: String(r.prompt || ''), createdAt: String(r.createdAt || ''), by: String(r.by || ''), path: String(r.path) }))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
+export async function generateSound(kind: 'music' | 'sfx', prompt: string, seconds: number, name: string, by: string): Promise<{ ok: true } | { ok: false; error: string; status?: number }> {
+  const key = elevenKey()
+  if (!key) return { ok: false, status: 503, error: 'Sounds need an ElevenLabs key. Add ELEVENLABS_API_KEY in Vercel, then redeploy.' }
+  const pr = String(prompt || '').trim().slice(0, 600)
+  if (!pr) return { ok: false, status: 400, error: 'Describe the sound first.' }
+  const r = kind === 'music'
+    ? await fetch('https://api.elevenlabs.io/v1/music?output_format=mp3_44100_128', { method: 'POST', headers: { 'xi-api-key': key, 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: pr + (/vocal|sing|lyric/i.test(pr) ? '' : ' Instrumental, no vocals.'), music_length_ms: Math.round(Math.max(10, Math.min(180, seconds || 60)) * 1000) }) })
+    : await fetch('https://api.elevenlabs.io/v1/sound-generation?output_format=mp3_44100_128', { method: 'POST', headers: { 'xi-api-key': key, 'Content-Type': 'application/json' }, body: JSON.stringify({ text: pr, duration_seconds: Math.max(0.5, Math.min(22, seconds || 2)), prompt_influence: 0.5 }) })
+  if (!r.ok) {
+    const t = (await r.text()).slice(0, 300)
+    return { ok: false, status: 502, error: /missing_permissions|permission/i.test(t) ? `The ElevenLabs key is missing the "${kind === 'music' ? 'Music generation' : 'Sound effects'}" permission — tick it on the key at elevenlabs.io → API keys.` : r.status === 402 ? 'ElevenLabs is out of credits for this.' : 'ElevenLabs said ' + r.status + ': ' + t }
+  }
+  const buf = Buffer.from(await r.arrayBuffer())
+  if (buf.length < 1000) return { ok: false, status: 502, error: 'ElevenLabs returned an empty sound.' }
+  await ensureBucket()
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+  const path = `sounds/${id}.mp3`
+  const sb = supabaseAdmin().storage.from(BUCKET)
+  const up = await sb.upload(path, buf, { contentType: 'audio/mpeg', upsert: true })
+  if (up.error) return { ok: false, status: 500, error: 'save: ' + up.error.message }
+  const meta = { path, kind, name: String(name || pr).slice(0, 80), prompt: pr, dur: kind === 'music' ? Math.max(10, Math.min(180, seconds || 60)) : Math.max(0.5, Math.min(22, seconds || 2)), createdAt: new Date().toISOString(), by }
+  await sb.upload(`sounds/${id}.json`, new Blob([JSON.stringify(meta)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
+  return { ok: true }
+}
+export async function deleteSound(path: string): Promise<void> {
+  if (!/^sounds\/[a-z0-9]+\.mp3$/i.test(path)) throw new Error('bad path')
+  await supabaseAdmin().storage.from(BUCKET).remove([path, path.replace(/\.mp3$/, '.json')])
+}
+
+/** The ElevenLabs voice library, searched — name, accent, style and a free preview clip. */
+export async function searchVoices(q: string, gender: string): Promise<{ id: string; name: string; blurb: string; preview: string }[]> {
+  const key = elevenKey()
+  if (!key) throw new Error('Voices need an ElevenLabs key. Add ELEVENLABS_API_KEY in Vercel, then redeploy.')
+  const qs = new URLSearchParams({ page_size: '24', sort: 'usage_character_count_1y', language: 'en' })
+  if (q) qs.set('search', q)
+  if (gender === 'female' || gender === 'male') qs.set('gender', gender)
+  const r = await fetch('https://api.elevenlabs.io/v1/shared-voices?' + qs.toString(), { headers: { 'xi-api-key': key } })
+  if (!r.ok) throw new Error('ElevenLabs said ' + r.status + ': ' + (await r.text()).slice(0, 200))
+  const j: any = await r.json()
+  return (j.voices || []).map((v: any) => ({
+    id: String(v.voice_id), name: String(v.name || '').replace(/\s*[-–].*$/, '').slice(0, 40) || 'Voice',
+    blurb: [v.descriptive, v.accent, v.age, v.use_case].filter(Boolean).join(' · ').replace(/_/g, ' ').slice(0, 90) || String(v.description || '').slice(0, 90),
+    preview: String(v.preview_url || ''),
+  }))
+}
+
+/** Rewrite ONE scene the way the person asks ("make it punchier", "show the rooftop", "turn this into numbers"). */
+export function scenePrompt(p: AdProject, index: number, ask: string): string {
+  const guests = p.audience === 'guests'
+  const sc = p.scenes[index]
+  const kinds = KINDS.map(k => `- ${k.kind}: ${k.hint}`).join('\n')
+  return `You edit one scene of a short video ad for Stay Hospitality. Change ONLY what the request asks; keep everything else as it is.
+
+FACTS YOU MAY USE (never invent numbers, prices, fees or promises):
+${guests ? GUEST_FACTS : HOUSE_FACTS}
+
+RULES: one short spoken line ("vo", about 2.5 words a second), a short on-screen headline ("head", **gold** one or two words, \\n for a new line). Never put "Salato" or "Pompano Beach" in "vo". ${guests ? 'Guest ad: no prices, no "call us"; a closing scene is kind "cta" with row 1 "Book at stay-hospitality.com".' : 'Owner ad: "listings" not "homes", "40+ channels", no fee or revenue numbers; Lighthouse does not do the owner report.'}
+
+SCENE KINDS:
+${kinds}
+
+THE WHOLE AD, FOR CONTEXT (scene ${index + 1} is the one to change):
+${p.scenes.map((s, i) => `${i + 1}. [${s.kind}] vo: ${s.vo} | head: ${s.head}`).join('\n')}
+
+THE SCENE NOW: ${JSON.stringify({ kind: sc.kind, vo: sc.vo, head: sc.head, sub: sc.sub, items: sc.items })}
+
+THE REQUEST: ${ask}
+
+If the request asks for different photos, give "photoQuery" (two or three words to search our photo library, e.g. "17west pool", "ocean view", "rooftop"); otherwise leave "photoQuery" empty and the photos stay.
+Reply with ONLY JSON: {"kind": "...", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": ""}`
 }

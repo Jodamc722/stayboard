@@ -32,6 +32,8 @@ export type AdScene = {
   photos: string[]
   /** Seconds, used only when there is no voice track yet (the voice decides timing once it exists). */
   dur?: number | null
+  /** A sound effect that plays as the scene lands ('snd:<path>' from the Sounds library). */
+  sfx?: string
 }
 export type AdContact = { name: string; role: string; phone: string; email: string; photo: string }
 export type AdVoice = {
@@ -50,6 +52,10 @@ export type AdProject = {
   prompt: string
   format: AdFormat
   voiceId: string
+  /** The voice's display name (library voices are not all in VOICES). */
+  voiceName?: string
+  /** ElevenLabs delivery: steadier ↔ more expressive, and pace. */
+  voiceSettings: { stability: number; style: number; speed: number }
   music: string
   musicVol: number
   captions: boolean
@@ -74,10 +80,18 @@ export const VOICES: { id: string; name: string; blurb: string }[] = [
   { id: 'SSfU0eLfP3qeuR4j2bwD', name: 'Christopher', blurb: 'Smooth, deep · male' },
   { id: 'c1uwEpPUcC16tq1udqxk', name: 'Harper', blurb: 'Eve’s training voice · cool, clear' },
 ]
-export const MUSIC: { key: string; label: string; file: string; credit: string }[] = [
-  { key: 'werq', label: 'Werq · upbeat groove', file: '/ads/music/werq.mp3', credit: 'Music: “Werq” by Kevin MacLeod (incompetech.com) · CC BY 4.0' },
-  { key: 'none', label: 'No music', file: '', credit: '' },
+const KM = (t: string) => `Music: “${t}” by Kevin MacLeod (incompetech.com) · CC BY 4.0`
+/** The bundled tracks (royalty-free, credit printed on the end card). Generated tracks live in the Sounds library. */
+export const MUSIC: { key: string; label: string; file: string; credit: string; mood: string }[] = [
+  { key: 'werq', label: 'Werq', mood: 'Upbeat groove', file: '/ads/music/werq.mp3', credit: KM('Werq') },
+  { key: 'backbay', label: 'Backbay Lounge', mood: 'Lounge, upscale', file: '/ads/music/backbay-lounge.mp3', credit: KM('Backbay Lounge') },
+  { key: 'moonlight', label: 'Moonlight Beach', mood: 'Island, easy', file: '/ads/music/moonlight-beach.mp3', credit: KM('Moonlight Beach') },
+  { key: 'inspired', label: 'Inspired', mood: 'Uplifting piano', file: '/ads/music/inspired.mp3', credit: KM('Inspired') },
+  { key: 'wallpaper', label: 'Wallpaper', mood: 'Light, bright', file: '/ads/music/wallpaper.mp3', credit: KM('Wallpaper') },
+  { key: 'funkorama', label: 'Funkorama', mood: 'Funky, fun', file: '/ads/music/funkorama.mp3', credit: KM('Funkorama') },
+  { key: 'none', label: 'No music', mood: '', file: '', credit: '' },
 ]
+export const VOICE_DEFAULTS = { stability: 0.5, style: 0.2, speed: 1 }
 export const KINDS: { kind: AdKind; label: string; hint: string }[] = [
   { kind: 'title', label: 'Title', hint: 'Big headline over a photo. **Gold** words, one line per beat.' },
   { kind: 'photo', label: 'Photo', hint: 'One photo full-bleed, headline in the lower third.' },
@@ -118,8 +132,9 @@ export function riskyWords(vo: string): string[] {
   return out
 }
 
-export function voiceSig(p: Pick<AdProject, 'scenes' | 'voiceId'>): string {
-  const s = p.voiceId + '|' + p.scenes.map(x => x.vo.trim()).join('¶')
+export function voiceSig(p: Pick<AdProject, 'scenes' | 'voiceId'> & { voiceSettings?: AdProject['voiceSettings'] }): string {
+  const vs = (p as any).voiceSettings || {}
+  const s = p.voiceId + '|' + [vs.stability, vs.style, vs.speed].join(',') + '|' + p.scenes.map(x => x.vo.trim()).join('¶')
   let h = 5381
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
   return (h >>> 0).toString(36) + ':' + p.scenes.length
@@ -167,7 +182,7 @@ export function timeline(p: AdProject): Timeline {
 export function blankProject(id: string, by: string, contact: AdContact): AdProject {
   const now = new Date().toISOString()
   return {
-    id, name: 'Untitled ad', prompt: '', format: '16:9', voiceId: VOICES[0].id, music: 'werq', musicVol: 0.28, captions: true, audience: 'owners',
+    id, name: 'Untitled ad', prompt: '', format: '16:9', voiceId: VOICES[0].id, music: 'werq', musicVol: 0.28, captions: true, audience: 'owners', voiceSettings: { ...VOICE_DEFAULTS },
     scenes: [
       { id: 's1', kind: 'title', vo: 'More revenue. A lower fee. One complete team. This is Stay Hospitality.', head: 'More **revenue.**\nLower **fee.**\nOne complete **team.**', sub: '', items: [], photos: [] },
       { id: 's2', kind: 'contact', vo: 'Book a call, and let’s see what your property can earn.', head: 'Book a **call.**', sub: '', items: [], photos: [] },
