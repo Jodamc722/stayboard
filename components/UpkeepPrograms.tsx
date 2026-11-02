@@ -111,10 +111,13 @@ export function UpkeepPrograms() {
   }
   const toggle = async (p: Program) => { if (await post({ op: 'toggle', id: p.id }, 'toggle:' + p.id)) reload() }
   const remove = async (p: Program) => { if (await post({ op: 'delete', id: p.id }, 'del:' + p.id)) { setEditing(null); reload() } }
+  // Two taps, inline (no browser dialog — the page's own Delete works the same way).
+  const [retiring, setRetiring] = useState('')
   const retire = async (p: Program, taskId: string) => {
-    if (!window.confirm('Retire this task? It is cancelled in Breezeway (not marked done). The next run creates a fresh one when the place is due.')) return
+    if (retiring !== taskId) { setRetiring(taskId); return }
+    setRetiring('')
     const j = await post({ op: 'retire', id: p.id, taskId }, 'retire:' + taskId)
-    if (j) { setMsg(p.name + ': task ' + taskId + ' retired'); reload() }
+    if (j) { setMsg(p.name + ': task ' + taskId + ' retired — cancelled in Breezeway, not marked done'); reload() }
   }
   const save = async (p: Program) => { const j = await post({ op: 'save', program: p }, 'save'); if (j) { setEditing(null); setMsg('Saved ' + p.name); reload() } }
 
@@ -167,7 +170,11 @@ export function UpkeepPrograms() {
                     {plan && (plan.people.length + plan.cleaners.length) && p.active ? <span className="text-[11.5px] text-muted inline-flex items-center gap-1" title={plan.people.concat(plan.cleaners).map(x => x.name).join(', ')}><Users size={12} /> {plan.people.length + plan.cleaners.length}</span> : null}
                     <Tag tone={t.tone}>{t.text}</Tag>
                     {t.task ? <a href={bz(t.task)} target="_blank" rel="noreferrer" className="text-muted hover:text-ink" title="Open in Breezeway"><ExternalLink size={13} /></a> : null}
-                    {t.task ? <button onClick={() => retire(p, t.task!)} disabled={!!busy} className="text-muted hover:text-rose-700 disabled:opacity-50" title="Retire this task — cancelled in Breezeway, never marked done">{busy === 'retire:' + t.task ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}</button> : null}
+                    {t.task && retiring === t.task ? (
+                      <span className="inline-flex items-center gap-1 text-[11.5px]">Retire this task? It is cancelled, not marked done.
+                        <button onClick={() => retire(p, t.task!)} disabled={!!busy} className="h-6 px-2 rounded-lg bg-rose-600 text-white font-semibold">Retire</button>
+                        <button onClick={() => setRetiring('')} className="h-6 px-2 rounded-lg border border-line">Keep</button></span>
+                    ) : t.task ? <button onClick={() => retire(p, t.task!)} disabled={!!busy} className="text-muted hover:text-rose-700 disabled:opacity-50" title="Retire this task — cancelled in Breezeway, never marked done">{busy === 'retire:' + t.task ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}</button> : null}
                   </li>
                 )
               })}
