@@ -1563,6 +1563,33 @@ export async function buildAudit(month: string): Promise<AuditData> {
   }
 
   // Order: worst first inside each owner, owners by name.
+  // A PATTERN IS NOT AN EXCEPTION (2026-11-02). 3711 N Ocean Blvd carried 130 "Airbnb resolution"
+  // review flags in October — one per booking, every one a POSITIVE Resolution Center charge the
+  // guest paid (a standing fee collected that way) with no statement line. That is how that owner
+  // bills, not 130 things to check; it buried the 23 real flags on the page. When one owner has
+  // ten or more folio-only positive resolution charges in a month, they are demoted to info with
+  // the pattern named, and the row goes back to clear unless something else is wrong. A single
+  // resolution, or a negative one (money going back to a guest), stays a review flag.
+  {
+    const byOwner: Record<string, AuditItem[]> = {}
+    for (const it of items) {
+      const f = it.flags.find(x => x.type === 'resolution')
+      if (f && (f.amount || 0) > 0 && /No line named/.test(f.detail)) (byOwner[it.ownerId] = byOwner[it.ownerId] || []).push(it)
+    }
+    for (const [oid, list] of Object.entries(byOwner)) {
+      if (list.length < 10) continue
+      const total = money(list.reduce((a, it) => a + (it.flags.find(x => x.type === 'resolution')?.amount || 0), 0))
+      for (const it of list) {
+        for (const f of it.flags) if (f.type === 'resolution') {
+          f.severity = 'info'
+          f.detail = 'Standing Resolution Center charge — ' + list.length + ' bookings on this statement carry one ($' + total.toFixed(2) + ' in all), so this is how the guest fee is collected here, not a one-off. ' + f.detail
+        }
+        if (!it.flags.some(x => x.severity !== 'info')) { it.needsReview = false; if (!it.touched && it.status === 'review') it.status = 'clear' }
+      }
+      void oid
+    }
+  }
+
   const sevRank = (it: AuditItem) => it.flags.some(f => f.severity === 'high') ? 0
     : it.flags.some(f => f.severity === 'review') ? 1 : it.kind === 'reservation' ? 2 : 3
   items.sort((a, b) => a.ownerId.localeCompare(b.ownerId) || sevRank(a) - sevRank(b) || b.rental - a.rental)
