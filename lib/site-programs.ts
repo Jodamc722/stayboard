@@ -203,7 +203,7 @@ function clean(p: any): Program | null {
 // in once as ordinary programs, with the same title prefix so their open tasks are carried rather
 // than duplicated, and from then on they are edited, paused or deleted here like any other. The
 // crons that ran them now stand down (they return "moved to programs").
-const LEGACY_VERSION = 4
+const LEGACY_VERSION = 5
 const WALK_DESC = [
   'Weekly walk of the property exterior. Check and ATTACH PHOTOS of each:',
   '• Landscaping', '• Plants', '• Weeds', '• Wall damage', '• Roof damage', '• Leaks', '• All the hoses',
@@ -295,9 +295,13 @@ export async function loadPrograms(): Promise<Program[]> {
   const list = raw && Array.isArray(raw.programs) ? raw.programs : null
   let programs = list ? (list.map(clean).filter(Boolean) as Program[]) : SEED.map(p => ({ ...p }))
   if (!raw || Number(raw.legacy) !== LEGACY_VERSION) {
+    const before = programs
     const add = (await legacyPrograms()).filter(l => !programs.some(p => p.id === l.id || p.name.trim().toLowerCase() === l.name.toLowerCase()))
     programs = migrateEden(retireEdenWalkthrough(programs.concat(add)))
     await savePrograms(programs, 'system: recurring tasks brought into programs').catch(() => null)
+    // A program the migration removed takes its open tasks with it (deleteProgram does the same).
+    const gone = before.filter(p => !programs.some(q => q.id === p.id))
+    if (gone.length) await retireProgramTasks(gone.map(titlePrefix)).catch(() => null)
   }
   return programs
 }
@@ -362,9 +366,42 @@ export async function upsertProgram(input: any, by: string): Promise<{ ok: boole
   return r.ok ? { ok: true, program: p } : { ok: false, error: r.error }
 }
 
+/**
+ * RETIRE a program's open Breezeway tasks: cancelled (never closed — closing says the work was done,
+ * and a walk nobody walked must not read as one). `prefixes` are task-title prefixes ("Eden:");
+ * `keep` are task ids to leave alone. Looks at the mirror over the look-back window, so a task the
+ * sync has not seen yet is not touched. Returns what was cancelled and what Breezeway refused.
+ */
+export async function retireProgramTasks(prefixes: string[], opts: { keep?: string[]; only?: string[] } = {}): Promise<{ cancelled: string[]; failed: { id: string; error: string }[] }> {
+  const out = { cancelled: [] as string[], failed: [] as { id: string; error: string }[] }
+  const list = prefixes.map(p => p.trim()).filter(Boolean)
+  if (!list.length || !breezewayConfigured()) return out
+  const db = supabaseAdmin()
+  const day = ymdET(new Date())
+  const keep = new Set((opts.keep || []).map(String))
+  const only = opts.only ? new Set(opts.only.map(String)) : null
+  for (const prefix of list) {
+    const { data } = await db.from('breezeway_tasks_sync').select('id,name,status,finished_at,scheduled_date')
+      .ilike('name', prefix.replace(/[%_]/g, '') + '%').gte('scheduled_date', shift(day, -LOOKBACK_DAYS)).lte('scheduled_date', shift(day, 30)).limit(500)
+    for (const t of (data || []) as any[]) {
+      const id = str(t.id)
+      if (str(t.name).indexOf(prefix) !== 0 || keep.has(id) || (only && !only.has(id))) continue
+      if (isTaskDone(t.status, t.finished_at) || isTaskGone(t.status)) continue
+      const r = await cancelBreezewayTask(id).catch((e: any) => ({ ok: false, text: str(e?.message || e) } as any))
+      if (r.ok) { out.cancelled.push(id); try { await db.from('breezeway_tasks_sync').update({ status: 'cancelled' }).eq('id', id) } catch { /* sync */ } }
+      else out.failed.push({ id, error: str(r.text).slice(0, 140) })
+    }
+  }
+  return out
+}
+
+/** Delete a program. Its open tasks are retired with it (Jon's rule: no task without a program behind it). */
 export async function deleteProgram(id: string, by: string) {
   const all = await loadPrograms()
-  return savePrograms(all.filter(p => p.id !== id), by)
+  const p = all.find(x => x.id === id)
+  const r = await savePrograms(all.filter(x => x.id !== id), by)
+  if (r.ok && p) await retireProgramTasks([titlePrefix(p)]).catch(() => null)
+  return r
 }
 
 // ── the day's plan ───────────────────────────────────────────────────────────────────────────────

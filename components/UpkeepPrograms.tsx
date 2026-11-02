@@ -111,6 +111,11 @@ export function UpkeepPrograms() {
   }
   const toggle = async (p: Program) => { if (await post({ op: 'toggle', id: p.id }, 'toggle:' + p.id)) reload() }
   const remove = async (p: Program) => { if (await post({ op: 'delete', id: p.id }, 'del:' + p.id)) { setEditing(null); reload() } }
+  const retire = async (p: Program, taskId: string) => {
+    if (!window.confirm('Retire this task? It is cancelled in Breezeway (not marked done). The next run creates a fresh one when the place is due.')) return
+    const j = await post({ op: 'retire', id: p.id, taskId }, 'retire:' + taskId)
+    if (j) { setMsg(p.name + ': task ' + taskId + ' retired'); reload() }
+  }
   const save = async (p: Program) => { const j = await post({ op: 'save', program: p }, 'save'); if (j) { setEditing(null); setMsg('Saved ' + p.name); reload() } }
 
   if (loading && !data) return <div className="py-10 text-center text-muted"><Loader2 className="inline animate-spin" size={18} /></div>
@@ -162,6 +167,7 @@ export function UpkeepPrograms() {
                     {plan && (plan.people.length + plan.cleaners.length) && p.active ? <span className="text-[11.5px] text-muted inline-flex items-center gap-1" title={plan.people.concat(plan.cleaners).map(x => x.name).join(', ')}><Users size={12} /> {plan.people.length + plan.cleaners.length}</span> : null}
                     <Tag tone={t.tone}>{t.text}</Tag>
                     {t.task ? <a href={bz(t.task)} target="_blank" rel="noreferrer" className="text-muted hover:text-ink" title="Open in Breezeway"><ExternalLink size={13} /></a> : null}
+                    {t.task ? <button onClick={() => retire(p, t.task!)} disabled={!!busy} className="text-muted hover:text-rose-700 disabled:opacity-50" title="Retire this task — cancelled in Breezeway, never marked done">{busy === 'retire:' + t.task ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}</button> : null}
                   </li>
                 )
               })}
@@ -353,7 +359,7 @@ function Editor({ initial, options, busy, err, onCancel, onSave, onDelete }: {
           <button onClick={onCancel} className="h-9 px-3 rounded-lg border border-line bg-white text-[13px] font-semibold text-ink">Cancel</button>
           {!canSave ? <span className="text-[11.5px] text-muted">Needs a name, at least one place, and days on each.</span> : null}
           {onDelete ? (confirmDel
-            ? <span className="ml-auto inline-flex items-center gap-2 text-[12px]">Delete the program? Tasks already in Breezeway stay.<button onClick={onDelete} className="h-8 px-3 rounded-lg bg-rose-600 text-white font-semibold">Delete</button><button onClick={() => setConfirmDel(false)} className="h-8 px-3 rounded-lg border border-line">Keep</button></span>
+            ? <span className="ml-auto inline-flex items-center gap-2 text-[12px]">Delete the program? Its open tasks are cancelled in Breezeway; finished ones stay.<button onClick={onDelete} className="h-8 px-3 rounded-lg bg-rose-600 text-white font-semibold">Delete</button><button onClick={() => setConfirmDel(false)} className="h-8 px-3 rounded-lg border border-line">Keep</button></span>
             : <button onClick={() => setConfirmDel(true)} className="ml-auto h-9 px-3 rounded-lg text-rose-700 text-[12.5px] font-semibold inline-flex items-center gap-1"><Trash2 size={14} /> Delete</button>) : null}
         </div>
       </div>
