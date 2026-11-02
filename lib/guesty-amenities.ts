@@ -15,7 +15,10 @@ export const GUESTY_AMENITIES_SNAPSHOT: string[] = ['Accessible-height bed', 'Ac
 
 /** Our words → Guesty's. Keys are normalised (see norm). */
 const SYNONYMS: Record<string, string> = {
-  'cooking basics': 'Cookware', 'pots and pans': 'Cookware', 'cookware': 'Cookware',
+  'cooking basics': 'Cookware',
+  'balcony patio': 'Patio or balcony', 'barbecue utensils': 'Barbeque utensils', 'bbq utensils': 'Barbeque utensils',
+  'suitable for infants': 'Family/kid friendly', 'suitable for infants under 2 years': 'Family/kid friendly', 'suitable for children 2 12 years': 'Family/kid friendly', 'suitable for children': 'Family/kid friendly', 'kid friendly': 'Family/kid friendly', 'family friendly': 'Family/kid friendly',
+  'toilet paper': 'Essentials', 'pots and pans': 'Cookware', 'cookware': 'Cookware',
   'smart tv': 'TV', 'hdtv': 'TV', 'television': 'TV', 'netflix': 'TV',
   'outdoor furniture': 'Outdoor seating (furniture)', 'outdoor seating': 'Outdoor seating (furniture)', 'patio furniture': 'Outdoor seating (furniture)', 'sun loungers': 'Outdoor seating (furniture)', 'lounge chairs': 'Outdoor seating (furniture)',
   'outdoor dining area': 'Outdoor seating (furniture)',
@@ -70,12 +73,18 @@ export function resolveAmenity(name: string, supported?: string[] | null): strin
   return null
 }
 
-/** Translate a whole list; returns what Guesty will keep and what it would have dropped. */
-export function resolveAmenities(names: string[], supported?: string[] | null): { kept: string[]; dropped: string[]; renamed: { from: string; to: string }[] } {
+/**
+ * Translate a whole list; returns what Guesty will keep and what it would have dropped.
+ * `current` = what the listing already carries: a legacy name Guesty already holds (it keeps
+ * "Suitable for children (2-12 years)" from an old import) is passed through untouched rather than
+ * dropped, so a save never strips what was there. Only NEW unknown names are refused.
+ */
+export function resolveAmenities(names: string[], supported?: string[] | null, current: string[] = []): { kept: string[]; dropped: string[]; renamed: { from: string; to: string }[] } {
   const kept: string[] = [], dropped: string[] = [], renamed: { from: string; to: string }[] = []
   const seen = new Set<string>()
+  const had = new Set(current.map(c => c.toLowerCase()))
   for (const raw of names) {
-    const r = resolveAmenity(raw, supported)
+    const r = resolveAmenity(raw, supported) || (had.has(String(raw).toLowerCase()) ? String(raw) : null)
     if (!r) { dropped.push(raw); continue }
     if (seen.has(r.toLowerCase())) continue
     seen.add(r.toLowerCase()); kept.push(r)
@@ -89,4 +98,25 @@ export function listedUnderAnyName(name: string, listed: string[], supported?: s
   const target = resolveAmenity(name, supported)
   const n = norm(name)
   return listed.some(l => { const ln = norm(l); if (ln === n) return true; const lr = resolveAmenity(l, supported); return !!target && !!lr && lr === target })
+}
+
+/**
+ * PORTFOLIO REPAIR (2026-11-01, "a lot of them don't stick — run a full audit and fix"). For one
+ * listing's stored list: which names are in a spelling Guesty maps to no channel, and what the
+ * list should be — every name translated, legacy names Guesty already holds kept, nothing lost.
+ */
+export function repairPlan(listed: string[], supported?: string[] | null): { add: string[]; untranslatable: string[]; next: string[] } {
+  const supLower = new Set(Array.from(new Set([...(supported || []), ...GUESTY_AMENITIES_SNAPSHOT])).map(norm))
+  const add: string[] = [], untranslatable: string[] = []
+  const next: string[] = []
+  const have = new Set(listed.map(norm))
+  for (const a of listed) {
+    if (supLower.has(norm(a))) { if (!next.some(x => norm(x) === norm(a))) next.push(a); continue }
+    const g = resolveAmenity(a, supported)
+    if (g) { if (!have.has(norm(g)) && !add.some(x => norm(x) === norm(g))) add.push(g) } else untranslatable.push(a)
+    // keep the legacy word too — Guesty holds it and removing it gains nothing
+    if (!next.some(x => norm(x) === norm(a))) next.push(a)
+  }
+  for (const g of add) if (!next.some(x => norm(x) === norm(g))) next.push(g)
+  return { add, untranslatable, next }
 }

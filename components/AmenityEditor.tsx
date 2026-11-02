@@ -71,7 +71,16 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
     }).catch(() => {})
     return () => { alive = false }
   }, [])
-  const fullCatalog = useMemo(() => Array.from(new Set([...catalog, ...extra])), [catalog, extra])
+  // ONLY NAMES GUESTY WILL KEEP (2026-11-01: "some amenities never stick"). `catalog` is every name
+  // found on any of our listings — and listings imported from Airbnb carry Airbnb's words ("Pool",
+  // "Self check-in", "Pets allowed") that Guesty stores but refuses on a write. Everything offered
+  // here is translated into Guesty's own supported list first; what has no equivalent is not offered.
+  const supported = extra
+  const fullCatalog = useMemo(() => {
+    const out: string[] = []
+    for (const a of [...extra, ...catalog]) { const g = resolveAmenity(a, supported); if (g && !out.some(x => x.toLowerCase() === g.toLowerCase())) out.push(g) }
+    return out
+  }, [catalog, extra, supported])
 
   function toggle(a: string) {
     setDone(null); setErr(null)
@@ -88,13 +97,13 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
   const recAdds = useMemo(() => {
     const out: string[] = []
     for (const a of recommended) {
-      const g = resolveAmenity(a, fullCatalog); if (!g) continue
+      const g = resolveAmenity(a, supported); if (!g) continue
       if (selLower.has(g.toLowerCase()) || out.some(x => x.toLowerCase() === g.toLowerCase())) continue
       if (Array.from(dismissed).some(d => d.toLowerCase() === a.toLowerCase() || d.toLowerCase() === g.toLowerCase())) continue
       out.push(g)
     }
     return out
-  }, [recommended, selLower, dismissed, fullCatalog])
+  }, [recommended, selLower, dismissed, supported])
   const recLower = useMemo(() => new Set(recAdds.map(a => a.toLowerCase())), [recAdds])
   // Catalog addable = portfolio amenities not on the unit and not already shown as recommended.
   const addable = useMemo(() => {

@@ -53,8 +53,10 @@ export async function POST(req: NextRequest) {
   // GUESTY'S SPELLING OR NOTHING (2026-11-01). Guesty answers 200 and silently drops any name it
   // does not know — "Cooking basics" vanished while the screen said saved. Translate first, and tell
   // the caller what was renamed and what has no Guesty amenity at all.
-  const { kept, dropped, renamed } = resolveAmenities(amenities)
   const sb = supabaseAdmin()
+  const { data: cur0 } = await sb.from('guesty_listings').select('amenities').eq('id', listingId).maybeSingle()
+  const currentList: string[] = Array.isArray(cur0?.amenities) ? cur0!.amenities.map(String) : []
+  const { kept, dropped, renamed } = resolveAmenities(amenities, null, currentList)
   const { data: tok } = await sb.from('guesty_tokens').select('access_token, expires_at').eq('id', 'singleton').maybeSingle()
   const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now() + 30_000)
   if (!valid) return NextResponse.json({ error: 'Guesty token unavailable - run a sync, then retry in a moment.' }, { status: 503 })
