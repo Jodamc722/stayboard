@@ -56,7 +56,7 @@ type Task = {
   aiVerdict: 'no_charge' | 'bill' | null; aiReason: string | null; aiAmount: number | null
   billable?: Billable
   suggested?: { amount: number; why: string; basis?: 'hours' | 'usual' | 'ai' } | null
-  usual?: { median: number; low: number; high: number; n: number } | null
+  usual?: { median: number; low: number; high: number; n: number; recommended?: number; scope?: 'job' | 'type'; recent?: { amount: number; unit: string; day: string }[] } | null
   evidence?: Evidence | null
   flagWhy?: Partial<Record<Flag, string>>
   kind?: string
@@ -268,7 +268,12 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
           <span className="block text-[10.5px] text-muted truncate max-w-[14rem] ml-auto" title={breakdown(t).join(' · ')}>
             {t.overrideAmount != null ? 'set by hand' : breakdown(t).join(' · ') || 'no charge'}
           </span>
-          {t.usual ? <span className={'block text-[10.5px] ml-auto ' + (t.billedAmount > t.usual.high * 1.5 ? 'text-rose-700 font-semibold' : t.billedAmount > 0 && t.billedAmount < t.usual.low * 0.7 ? 'text-amber-800' : 'text-muted')} title={'Approved before for ' + t.usual.n + ' similar jobs: middle half $' + Math.round(t.usual.low) + '–$' + Math.round(t.usual.high)}>usual {money(t.usual.median)} ({t.usual.n})</span> : null}
+          {t.suggested || t.usual ? (
+            <span className={'block text-[10.5px] ml-auto ' + (t.usual && t.billedAmount > t.usual.high * 1.5 ? 'text-rose-700 font-semibold' : t.usual && t.billedAmount > 0 && t.billedAmount < t.usual.low * 0.7 ? 'text-amber-800' : 'text-brand-700')}
+              title={(t.suggested ? 'Recommended ' + money(t.suggested.amount) + ' — ' + t.suggested.why : '') + (t.usual ? '\nSimilar approved jobs (' + t.usual.n + (t.usual.scope === 'type' ? ', same type' : '') + '): middle half $' + Math.round(t.usual.low) + '–$' + Math.round(t.usual.high) + (t.usual.recent?.length ? '\nRecent: ' + t.usual.recent.map(r => r.unit + ' $' + Math.round(r.amount) + ' (' + r.day.slice(5) + ')').join(' · ') : '') : '')}>
+              rec. {money(t.suggested ? t.suggested.amount : t.usual!.recommended ?? t.usual!.median)}{t.usual ? ' · $' + Math.round(t.usual.low) + '–' + Math.round(t.usual.high) : ''}
+            </span>
+          ) : null}
         </div>
 
         <div className="flex items-center gap-1.5">
@@ -332,7 +337,8 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
               {t.evidence ? <span className={t.evidence.verdict === 'solid' ? 'text-emerald-700' : t.evidence.verdict === 'thin' ? 'text-amber-800' : 'text-rose-700'}>{t.evidence.verdict === 'solid' ? 'looks complete' : t.evidence.verdict === 'thin' ? 'thin' : 'nothing added'} — {t.evidence.why}{t.evidence.items ? ' · ' + t.evidence.answered + '/' + t.evidence.items + ' checklist lines answered' : ''}</span> : <span className="text-muted">not checked yet</span>}
               {t.evidence?.said.length ? <ul className="mt-1 space-y-0.5 text-ink/80">{t.evidence.said.map((x, i) => <li key={i} className="italic">“{x}”</li>)}</ul> : null}
             </div>
-            {t.suggested ? <p className="text-[11.5px] text-ink/80 mt-2"><b>At the house rate:</b> {money(t.suggested.amount)} — {t.suggested.why}</p> : null}
+            {t.suggested ? <p className="text-[11.5px] text-ink/80 mt-2"><b>Recommended:</b> {money(t.suggested.amount)} — {t.suggested.why}</p> : null}
+            {t.usual ? <p className="text-[11.5px] text-ink/80 mt-1"><b>Comparable jobs:</b> {t.usual.n} approved{t.usual.scope === 'type' ? ' of the same type' : ''} · middle {money(t.usual.median)} · range {money(t.usual.low)}–{money(t.usual.high)}{t.usual.recent?.length ? ' · recent: ' + t.usual.recent.map(r => r.unit + ' ' + money(r.amount)).join(', ') : ''}</p> : null}
             {t.billable ? <p className="text-[11.5px] text-ink/80 mt-2"><b>Billable model:</b> {VERDICT_WORD[t.billable.verdict]} · {CAT_LABEL[t.billable.category] || t.billable.category} · {Math.round(t.billable.confidence * 100)}% — {t.billable.reasons.join(' · ')}</p> : null}
             {t.aiVerdict === 'bill' && t.aiReason ? <p className="text-[11.5px] text-brand-800 mt-2">AI: {t.aiReason}{t.aiAmount != null ? ' — suggests ' + money(t.aiAmount) : ''}</p> : null}
             {t.description ? <p className="text-[11.5px] text-muted mt-2 whitespace-pre-wrap">{t.description}</p> : null}
@@ -583,6 +589,8 @@ export function BillingReview() {
   const view: 'owner' | 'property' | 'kind' = stage === 'gm' ? 'property' : 'owner'
   const [evBusy, setEvBusy] = useState(0)
   const [sureAll, setSureAll] = useState(false)
+  const [study, setStudy] = useState<any>(null)        // the rate study, once opened
+  const [studyOpen, setStudyOpen] = useState(false)
   const [moreF, setMoreF] = useState(false)   // the extra filters stay folded away (Jon, 2026-11-02: "cleaner and easier")
   const [q, setQ] = useState('')
   // FILTERS (Jon, 2026-09-30: "filter by billable amount greater than zero, by date window, by
@@ -1050,6 +1058,7 @@ export function BillingReview() {
         {addOpen ? <AddTaskDialog month={month} onClose={() => setAddOpen(false)} onCreated={() => load(month, range)} /> : null}
         <IconBtn title="Reload" onClick={() => load(month, range)} disabled={loading}><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></IconBtn>
         <IconBtn title="Download final-approved statements (ZIP)" href={'/api/billing/export?' + winQS + '&format=zip&reviewed=1'}><Download size={14} /></IconBtn>
+        <button onClick={() => { setStudyOpen(v => !v); if (!study) fetch('/api/billing/pricebook', { cache: 'no-store' }).then(r => r.json()).then(setStudy).catch(() => setStudy({ ok: false })) }} title="What each type of job bills, per hour and per job, and the rate we recommend" className={'h-8 px-2.5 rounded-lg border text-[12px] font-semibold ' + (studyOpen ? 'bg-ink text-white border-ink' : 'bg-white border-line text-ink hover:bg-app')}>Rate study</button>
         <a href="/billing?view=labor" title="The older board: labor vs payroll, rates, bulk edits" className="text-[12px] font-semibold text-muted hover:text-ink px-1">Labor &amp; rates</a>
         <span className="inline-flex items-center gap-1 rounded-lg border border-line bg-white pl-2 pr-1 h-8 text-[12px]">
           <button onClick={translateAll} disabled={!!trBusy && trBusy.endsWith('…')} title="Translate every Spanish title and description in this window to English, and write them back to Breezeway" className="font-semibold text-ink disabled:opacity-50">{trBusy || ('ES → EN' + (spanishCount ? ' (' + spanishCount + ')' : ''))}</button>
@@ -1156,6 +1165,41 @@ export function BillingReview() {
           })}
         </span>
       </div>
+      ) : null}
+
+      {/* ── THE RATE STUDY (Jon, 2026-11-02: "study rates … comparative pricing … recommended rate") */}
+      {studyOpen ? (
+        <section className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
+          <header className="px-4 py-2.5 border-b border-line bg-app/40 flex items-center gap-2 flex-wrap">
+            <span className="text-[14px] font-bold text-ink">Rate study</span>
+            {study?.builtAt ? <span className="text-[12px] text-muted">approved jobs, {(study.months || []).slice().reverse().join(' – ')} · house rate ${study.houseRate}/h{study.overallPerHour ? ' · billed jobs average $' + Math.round(study.overallPerHour) + ' per clocked hour' : ''}</span> : null}
+            <div className="flex-1" />
+            <button onClick={() => setStudyOpen(false)} className="text-[12px] text-muted hover:text-ink">Close</button>
+          </header>
+          {!study ? <p className="px-4 py-3 text-[12.5px] text-muted"><Loader2 size={12} className="inline animate-spin mr-1" />Reading the approved jobs…</p> : !study.types?.length ? <p className="px-4 py-3 text-[12.5px] text-muted">No approved history yet.</p> : (
+            <div className="grid gap-4 p-3 lg:grid-cols-2">
+              {([['By type', study.types, (k: string) => CAT_LABEL[k] || k], ['Common jobs', study.jobs, (k: string) => { const w = String(k).split('|')[1] || k; return w.replace(/\b\w/g, (x: string) => x.toUpperCase()) }]] as const).map(([title, list, label]) => (
+                <div key={title} className="min-w-0">
+                  <p className="text-[10.5px] uppercase tracking-wider font-bold text-muted mb-1">{title}</p>
+                  <div className="overflow-x-auto"><table className="w-full text-[12px] tabular-nums">
+                    <thead><tr className="text-muted text-left"><th className="py-1 pr-2 font-semibold">Job</th><th className="py-1 px-2 font-semibold text-right">Jobs</th><th className="py-1 px-2 font-semibold text-right">Range</th><th className="py-1 px-2 font-semibold text-right">Avg time</th><th className="py-1 px-2 font-semibold text-right">$/h</th><th className="py-1 pl-2 font-semibold text-right">Recommended</th></tr></thead>
+                    <tbody>{(list as any[]).map((e: any) => (
+                      <tr key={e.key} className="border-t border-line">
+                        <td className="py-1 pr-2 text-ink truncate max-w-[14rem]" title={e.recent?.map((r: any) => r.unit + ' $' + Math.round(r.amount)).join(' · ')}>{label(e.key)}</td>
+                        <td className="py-1 px-2 text-right text-muted">{e.n}</td>
+                        <td className="py-1 px-2 text-right text-muted">${Math.round(e.low)}–${Math.round(e.high)}</td>
+                        <td className="py-1 px-2 text-right text-muted">{e.avgHours ? e.avgHours.toFixed(1) + 'h' : '—'}</td>
+                        <td className={'py-1 px-2 text-right ' + (e.perHour && e.perHour < (study.houseRate || 40) * 0.8 ? 'text-amber-800 font-semibold' : 'text-muted')} title={e.perHour && e.perHour < (study.houseRate || 40) * 0.8 ? 'Billing under the house rate per clocked hour' : ''}>{e.perHour ? '$' + Math.round(e.perHour) : '—'}</td>
+                        <td className="py-1 pl-2 text-right font-bold text-ink">${e.recommended ?? Math.round(e.median)}</td>
+                      </tr>
+                    ))}</tbody>
+                  </table></div>
+                </div>
+              ))}
+              <p className="lg:col-span-2 text-[11px] text-muted">Recommended = the middle approved price, rounded to $5. On a job with time logged, the recommendation is the hours at the house rate, kept inside the range similar jobs were approved at. Amber $/h = billing under the house rate. Rebuilt from approvals every 3 days.</p>
+            </div>
+          )}
+        </section>
       ) : null}
 
       {err ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {err}</div> : null}

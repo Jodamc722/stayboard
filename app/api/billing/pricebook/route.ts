@@ -7,6 +7,24 @@ import { buildPricebook, readPricebook, pricebookStale } from '@/lib/billing-pri
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
+/** THE RATE STUDY: every type and the commonest jobs, with what they bill and what we recommend. */
+export async function GET() {
+  const gate = await requireLevel('billing', 'view')
+  if (!gate.ok) return gate.res
+  const b = await readPricebook()
+  if (!b) return NextResponse.json({ ok: true, builtAt: null, types: [], jobs: [] })
+  const rows = (m: Record<string, any>) => Object.entries(m || {}).map(([key, e]) => ({ key, ...e }))
+  const all = rows(b.categories || {})
+  const timedBilled = all.reduce((s, e: any) => s + (e.perHour && e.avgHours ? e.perHour * e.avgHours * e.n : 0), 0)
+  const timedHours = all.reduce((s, e: any) => s + (e.perHour && e.avgHours ? e.avgHours * e.n : 0), 0)
+  return NextResponse.json({
+    ok: true, builtAt: b.builtAt, months: b.months, houseRate: b.houseRate || 40,
+    overallPerHour: timedHours > 0 ? Math.round(timedBilled / timedHours * 100) / 100 : null,
+    types: all.sort((a: any, z: any) => z.n - a.n),
+    jobs: rows(b.kinds).filter((e: any) => e.n >= 3).sort((a: any, z: any) => z.n - a.n).slice(0, 80),
+  })
+}
+
 export async function POST(req: Request) {
   const gate = await requireLevel('billing', 'view')
   if (!gate.ok) return gate.res

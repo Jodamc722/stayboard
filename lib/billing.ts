@@ -82,8 +82,9 @@ export type BillingTask = {
   flagWhy: Partial<Record<BillingFlag, string>>
   /** Similar-job key: the billable category + the title's first words, unit and numbers stripped. */
   kind: string
-  /** What this kind of job has been billed once approved (lib/billing-pricebook). null = too few. */
-  usual: { median: number; low: number; high: number; n: number } | null
+  /** What similar jobs were billed once approved (lib/billing-pricebook): the same kind of job, or its
+   *  type when the kind is too rare. null = too few to compare. */
+  usual: { median: number; low: number; high: number; n: number; recommended: number; scope: 'job' | 'type'; recent: { amount: number; unit: string; day: string }[] } | null
 }
 
 /** "Pest control - Eden 2104" and "pest control eden 1101" → "pest|pest control". */
@@ -652,25 +653,37 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
   try { const r = await getSetting<any>('billing_default_rate', null); if (Number(r?.rate) > 0) houseRate = Number(r.rate) } catch { /* $40 */ }
   let evidence: Record<string, any> = {}
   try { const { readEvidence } = await import('./billing-evidence'); evidence = await readEvidence() } catch { /* unchecked */ }
-  let book: Record<string, any> = {}
-  try { const { readPricebook } = await import('./billing-pricebook'); book = (await readPricebook())?.kinds || {} } catch { /* no history yet */ }
+  let book: Record<string, any> = {}, bookCats: Record<string, any> = {}
+  try { const { readPricebook } = await import('./billing-pricebook'); const pb = await readPricebook(); book = pb?.kinds || {}; bookCats = pb?.categories || {} } catch { /* no history yet */ }
   const ownerItems = (t: BillingTask) => t.items.reduce((s2, x) => s2 + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0)
   for (const t of tasks) {
     t.kind = jobKind(t.name, t.unit, t.billable?.category)
     t.evidence = evidence[t.id] || null
-    const pb = book[t.kind]
-    t.usual = pb && pb.n >= 3 ? { median: pb.median, low: pb.low, high: pb.high, n: pb.n } : null
+    // COMPARATIVE PRICING (Jon, 2026-11-02: "study rates and use comparative pricing and have a
+    // recommended rate"): the same job when there are 3+ approved, else its type when there are 5+.
+    const pk = book[t.kind], pc = bookCats[t.billable?.category || 'other']
+    const comp = pk && pk.n >= 3 ? { e: pk, scope: 'job' as const } : pc && pc.n >= 5 ? { e: pc, scope: 'type' as const } : null
+    t.usual = comp ? { median: comp.e.median, low: comp.e.low, high: comp.e.high, n: comp.e.n, recommended: comp.e.recommended ?? Math.round(comp.e.median / 5) * 5, scope: comp.scope, recent: comp.e.recent || [] } : null
     const finished = isTaskDone(t.status, t.finishedAt)
     if (!finished || t.excluded || isDepartureCleanName(t.name) || t.billable?.verdict === 'no') continue
     const hrs = t.billedHours != null ? t.billedHours : t.actualMinutes != null && t.actualMinutes > 0 ? t.actualMinutes / 60 : 0
     const items = ownerItems(t)
+    const like = t.usual ? (t.usual.scope === 'job' ? t.usual.n + ' similar approved jobs' : t.usual.n + ' approved ' + String(t.billable?.category || 'other').replace('_', ' ') + ' jobs') + ' ($' + Math.round(t.usual.low) + '–$' + Math.round(t.usual.high) + ')' : ''
     if (hrs > 0 && t.crew !== 'vendor') {
+      // THE RECOMMENDED RATE: the hours at the house rate, kept inside the range similar jobs were
+      // approved at — a 10-minute fix is not billed $7 when that job always bills $40, and a slow
+      // one is not billed three times the norm without someone deciding to.
       const billH = Math.max(0.5, Math.ceil(hrs * 4 - 1e-9) / 4)
-      const amount = Math.round((houseRate * billH + items) * 100) / 100
-      t.suggested = { amount, basis: 'hours', why: billH + 'h × $' + houseRate + (items ? ' + parts $' + Math.round(items) : '') + (billH !== Math.round(hrs * 100) / 100 ? ' (' + (Math.round(hrs * 100) / 100) + 'h logged, rounded up to 15 min, ½h minimum)' : '') }
+      const byHours = Math.round((houseRate * billH + items) * 100) / 100
+      const hoursWhy = billH + 'h × $' + houseRate + (items ? ' + parts $' + Math.round(items) : '')
+      let amount = byHours, why = hoursWhy
+      if (t.usual && byHours < t.usual.low) { amount = Math.max(byHours, t.usual.low); why = hoursWhy + ' = $' + Math.round(byHours) + ', raised to the low end of ' + like }
+      else if (t.usual && byHours > t.usual.high * 1.5) { amount = Math.round(t.usual.high * 1.5 * 100) / 100; why = hoursWhy + ' = $' + Math.round(byHours) + ', held to 1.5× the top of ' + like + ' — check the time' }
+      else if (t.usual) why = hoursWhy + ', in line with ' + like
+      t.suggested = { amount: Math.round(amount * 100) / 100, basis: 'hours', why }
     } else if (t.usual) {
-      // No time on the clock: what this kind of job has been billed when approved before.
-      t.suggested = { amount: t.usual.median, basis: 'usual', why: 'usual for ' + t.usual.n + ' similar approved jobs ($' + Math.round(t.usual.low) + '–$' + Math.round(t.usual.high) + ')' }
+      // No time on the clock: what similar jobs were approved at.
+      t.suggested = { amount: t.usual.recommended, basis: 'usual', why: 'recommended from ' + like }
     } else if (t.aiAmount != null && t.aiAmount > 0) {
       t.suggested = { amount: t.aiAmount + items, basis: 'ai', why: 'AI estimate' + (items ? ' + parts' : '') }
     }
