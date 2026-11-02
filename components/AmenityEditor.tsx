@@ -16,6 +16,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Check, Plus, Sparkles, AlertTriangle, RefreshCw, Star, Search, Camera, ImageOff, Ban, Loader2 } from 'lucide-react'
 import type { Audit } from '@/lib/amenity-audit'
+import { resolveAmenity } from '@/lib/guesty-amenities'
 
 export function AmenityEditor({ listingId, current: initial, recommended, catalog, audit, photoUrls, dismissed: dismissed0 = [] }: {
   listingId: string; current: string[]; recommended: string[]; catalog: string[]
@@ -83,7 +84,17 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
   const selLower = useMemo(() => new Set(Array.from(sel).map(a => a.toLowerCase())), [sel])
   const willHave = useMemo(() => Array.from(new Set([...current, ...Array.from(sel)])), [current, sel])
   // Recommended = missing high-value picks (already filtered server-side to not-on-unit).
-  const recAdds = useMemo(() => recommended.filter(a => !selLower.has(a.toLowerCase()) && !Array.from(dismissed).some(d => d.toLowerCase() === a.toLowerCase())), [recommended, selLower, dismissed])
+  // Offer only names Guesty can take, in Guesty's spelling (2026-11-01: a chip Guesty would drop is a lie).
+  const recAdds = useMemo(() => {
+    const out: string[] = []
+    for (const a of recommended) {
+      const g = resolveAmenity(a, fullCatalog); if (!g) continue
+      if (selLower.has(g.toLowerCase()) || out.some(x => x.toLowerCase() === g.toLowerCase())) continue
+      if (Array.from(dismissed).some(d => d.toLowerCase() === a.toLowerCase() || d.toLowerCase() === g.toLowerCase())) continue
+      out.push(g)
+    }
+    return out
+  }, [recommended, selLower, dismissed, fullCatalog])
   const recLower = useMemo(() => new Set(recAdds.map(a => a.toLowerCase())), [recAdds])
   // Catalog addable = portfolio amenities not on the unit and not already shown as recommended.
   const addable = useMemo(() => {
@@ -121,7 +132,10 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
       })
       const d = await res.json()
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
-      setDone(`Saved — this unit now has ${d.count} amenities in Guesty (syncing to the channels).`)
+      const notes: string[] = []
+      if (Array.isArray(d.renamed) && d.renamed.length) notes.push('saved as Guesty names it: ' + d.renamed.map((x: any) => `${x.from} → ${x.to}`).join(', '))
+      if (Array.isArray(d.dropped) && d.dropped.length) notes.push('Guesty has no amenity for: ' + d.dropped.join(', ') + ' — not saved')
+      setDone(`Saved — this unit now has ${d.count} amenities in Guesty (syncing to the channels).` + (notes.length ? ' ' + notes.join('. ') + '.' : ''))
       if (Array.isArray(d.amenities)) { setCurrent(d.amenities); setSel(new Set(d.amenities)) }
       try { window.dispatchEvent(new CustomEvent('stay:score-refresh')) } catch { /* no-op */ }
       setConfirming(false)

@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireAnyLevel } from '@/lib/access'
+import { resolveAmenities } from '@/lib/guesty-amenities'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
@@ -49,6 +50,10 @@ export async function POST(req: NextRequest) {
   }
   if (amenities.length > 200) return NextResponse.json({ error: 'Too many amenities.' }, { status: 400 })
 
+  // GUESTY'S SPELLING OR NOTHING (2026-11-01). Guesty answers 200 and silently drops any name it
+  // does not know — "Cooking basics" vanished while the screen said saved. Translate first, and tell
+  // the caller what was renamed and what has no Guesty amenity at all.
+  const { kept, dropped, renamed } = resolveAmenities(amenities)
   const sb = supabaseAdmin()
   const { data: tok } = await sb.from('guesty_tokens').select('access_token, expires_at').eq('id', 'singleton').maybeSingle()
   const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now() + 30_000)
@@ -57,7 +62,7 @@ export async function POST(req: NextRequest) {
   const r = await fetch(`${BASE}/properties-api/amenities/${encodeURIComponent(listingId)}`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${tok!.access_token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ amenities }),
+    body: JSON.stringify({ amenities: kept }),
   })
   const respText = await r.text().catch(() => '')
   if (!r.ok) {
@@ -67,7 +72,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Guesty returns the updated amenities list (array, or { amenities: [...] }).
-  let updated: string[] = amenities
+  let updated: string[] = kept
   try {
     const parsed = JSON.parse(respText)
     if (Array.isArray(parsed)) updated = parsed.filter((x: any) => typeof x === 'string')
@@ -82,7 +87,9 @@ export async function POST(req: NextRequest) {
     await sb.from('guesty_listings').update({ amenities: updated, raw: newRaw, amenities_pushed_at: new Date().toISOString() }).eq('id', listingId)
   } catch { /* mirror is best-effort */ }
 
-  return NextResponse.json({ ok: true, amenities: updated, count: updated.length })
+  // Anything we sent that Guesty still did not keep is reported too, so a mapping gap is visible.
+  const notKept = kept.filter(k => !updated.some(u => u.toLowerCase() === k.toLowerCase()))
+  return NextResponse.json({ ok: true, amenities: updated, count: updated.length, renamed, dropped: dropped.concat(notKept) })
 }
 
 // LIVE READ (Jon, 2026-10-30: "ensure they're up to date"). The Amenities tab used to show the copy

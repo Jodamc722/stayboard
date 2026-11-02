@@ -16,6 +16,7 @@
 //
 // Pure: no imports beyond the catalogue, no I/O.
 import { amenityListed } from './amenity-catalog'
+import { resolveAmenity, listedUnderAnyName } from './guesty-amenities'
 
 export type AuditItem = { name: string; photos: string[] }
 export type Audit = {
@@ -110,12 +111,13 @@ export function auditAmenities(listed: string[], photoIndex: Record<string, any>
     for (const a of Array.isArray(e.amenitiesSeen) ? e.amenitiesSeen : []) if (typeof a === 'string' && a.trim()) names.add(a.trim())
     for (const t of Array.isArray(e.sellingPoints) ? e.sellingPoints : []) for (const a of TAG_TO_AMENITY[String(t).toLowerCase()] || []) names.add(a)
     for (const a of ROOM_TO_AMENITY[String(e.room || '').toLowerCase()] || []) names.add(a)
-    names.forEach(n => { (proof[n] = proof[n] || []).push(id) })
+    // Findings are named the way Guesty names them, so adding one is a real save.
+    names.forEach(n0 => { const n = resolveAmenity(n0) || n0; (proof[n] = proof[n] || []).push(id) })
   }
   const proven = (name: string) => Object.keys(proof).some(p => norm(p) === norm(name) || (name === 'Balcony' && p === 'Patio or balcony') || (name === 'Patio or balcony' && /balcony|patio|terrace/i.test(p)))
 
   const seenMissing = Object.entries(proof)
-    .filter(([name]) => !ruledOut.has(norm(name)) && !amenityListed(name, listed) && !(name === 'Patio or balcony' && listed.some(l => /balcony|patio|terrace/i.test(l))))
+    .filter(([name]) => !ruledOut.has(norm(name)) && resolveAmenity(name) && !amenityListed(name, listed) && !listedUnderAnyName(name, listed) && !(name === 'Patio or balcony' && listed.some(l => /balcony|patio|terrace/i.test(l))))
     .map(([name, photos]) => ({ name, photos: photos.slice(0, 4) }))
     .sort((a, b) => b.photos.length - a.photos.length)
 
