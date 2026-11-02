@@ -22,7 +22,7 @@
 import { digestOf } from '@/lib/amenity-audit'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
-import { requireLevel } from '@/lib/access'
+import { requireAnyLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { loadListingAiWithPreview } from '@/lib/listing-ai-server'
 import { captionSpec, AUTO_PRESET } from '@/lib/listing-ai'
@@ -121,7 +121,8 @@ async function callModel(key: string, system: string, content: any[], maxTokens:
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('optimize', 'edit')
+  // Reached from the Property page's bulk panels too, so a buildings-edit holder may use it (gate alignment, 2026-11-02).
+  const gate = await requireAnyLevel(['optimize', 'buildings'], 'edit')
   if (!gate.ok) return gate.res
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()

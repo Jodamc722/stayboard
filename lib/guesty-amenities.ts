@@ -22,7 +22,7 @@ const SYNONYMS: Record<string, string> = {
   'smart tv': 'TV', 'hdtv': 'TV', 'television': 'TV', 'netflix': 'TV',
   'outdoor furniture': 'Outdoor seating (furniture)', 'outdoor seating': 'Outdoor seating (furniture)', 'patio furniture': 'Outdoor seating (furniture)', 'sun loungers': 'Outdoor seating (furniture)', 'lounge chairs': 'Outdoor seating (furniture)',
   'outdoor dining area': 'Outdoor seating (furniture)',
-  'pool': 'Swimming pool', 'shared pool': 'Communal pool', 'building pool': 'Communal pool', 'rooftop deck': 'Rooftop pool',
+  'pool': 'Swimming pool', 'shared pool': 'Communal pool', 'building pool': 'Communal pool',
   'wifi': 'Wireless Internet', 'wi fi': 'Wireless Internet', 'fast wifi': 'Wireless Internet', 'internet': 'Internet',
   'dedicated workspace': 'Laptop friendly workspace', 'workspace': 'Laptop friendly workspace', 'desk chair': 'Desk', 'office': 'Laptop friendly workspace',
   'smoke alarm': 'Smoke detector', 'carbon monoxide alarm': 'Carbon monoxide detector', 'co alarm': 'Carbon monoxide detector', 'co detector': 'Carbon monoxide detector',
@@ -34,18 +34,19 @@ const SYNONYMS: Record<string, string> = {
   'children s books and toys': 'Children’s books and toys', 'board games for kids': 'Board games',
   'fire pit': 'Fire Pit', 'fridge': 'Refrigerator', 'mini fridge': 'Mini fridge', 'range': 'Stove', 'cooktop': 'Stove', 'electric range': 'Stove',
   'towels': 'Towels provided', 'linens': 'Bed linens', 'sheets': 'Bed linens', 'fan': 'Ceiling fan', 'fans': 'Portable fans',
-  'free street parking': 'Free parking on street', 'street parking': 'Free parking on street', 'valet parking': 'Paid parking on premises', 'parking': 'Free parking on premises',
+  'free street parking': 'Free parking on street', 'street parking': 'Free parking on street', 'valet parking': 'Paid parking on premises',
   'jacuzzi': 'Hot tub', 'whirlpool': 'Hot tub', 'jetted tub': 'Hot tub', 'soaking tub': 'Bathtub', 'tub': 'Bathtub',
   'fitness': 'Gym', 'fitness center': 'Gym', 'fitness room': 'Gym', 'exercise equipment': 'Gym',
   'washer and dryer': 'Washer', 'in unit laundry': 'Washer', 'laundry': 'Washer',
   'speaker': 'Sound system', 'bluetooth speaker': 'Sound system', 'stereo': 'Stereo system',
   'beach chairs': 'Beach essentials', 'beach towels': 'Beach essentials', 'pool towels': 'Towels provided',
   'business centre': 'Laptop friendly workspace', 'business center': 'Laptop friendly workspace',
-  'lobby': 'Doorman', 'concierge': 'Doorman', 'building staff': 'Doorman',
+  // NEVER map a weaker word to a stronger claim (re-audit 2026-11-02): 'parking' is not free parking,
+  // a rooftop deck is not a rooftop pool, a lobby is not a doorman. Those words have no translation.
   'ethernet connection': 'Internet', 'water sports': 'Water Sports', 'kayaks': 'Kayak', 'bicycles': 'Bikes', 'bike': 'Bikes',
 }
 /** Things with NO Guesty amenity at all — never offer them as something to add. */
-const NO_GUESTY_EQUIVALENT = new Set(['self check in', 'smart lock', 'keypad', 'lockbox', 'pets allowed', 'smoking allowed', 'events allowed', 'suitable for infants', 'host greets you', 'security cameras on property', 'baby bath', 'walk in shower', 'walk-in shower', 'floor plan', 'natural light', 'king bed', 'queen bed'])
+const NO_GUESTY_EQUIVALENT = new Set(['self check in', 'smart lock', 'keypad', 'lockbox', 'pets allowed', 'smoking allowed', 'events allowed', 'host greets you', 'security cameras on property', 'parking', 'rooftop deck', 'lobby', 'concierge', 'building staff', 'walk in shower', 'walk-in shower', 'floor plan', 'natural light', 'king bed', 'queen bed'])
 
 export const norm = (x: string) => String(x || '').toLowerCase().replace(/[’']/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim()
 
@@ -82,12 +83,16 @@ export function resolveAmenities(names: string[], supported?: string[] | null, c
   const kept: string[] = [], dropped: string[] = [], renamed: { from: string; to: string }[] = []
   const seen = new Set<string>()
   const had = new Set(current.map(c => c.toLowerCase()))
-  for (const raw of names) {
+  for (const raw0 of names) {
+    // "Washer and dryer" is two Guesty amenities; emit both rather than losing the dryer.
+    const expanded = /^(washer|washing machine)\s*(and|&|\/)\s*dryer$/i.test(String(raw0).trim()) ? ['Washer', 'Dryer'] : [raw0]
+    for (const raw of expanded) {
     const r = resolveAmenity(raw, supported) || (had.has(String(raw).toLowerCase()) ? String(raw) : null)
     if (!r) { dropped.push(raw); continue }
     if (seen.has(r.toLowerCase())) continue
     seen.add(r.toLowerCase()); kept.push(r)
-    if (r !== raw) renamed.push({ from: raw, to: r })
+    if (r !== raw0) renamed.push({ from: raw0, to: r })
+    }
   }
   return { kept, dropped, renamed }
 }

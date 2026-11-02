@@ -16,11 +16,12 @@
 // is recorded in listing_copy_pushes with who did it.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireLevel } from '@/lib/access'
+import { requireLevel, requireAnyLevel } from '@/lib/access'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { unitLabel } from '@/lib/unit-label'
 import { pageRows } from '@/lib/db-page'
 import { guestyFetch } from '@/lib/guesty-retry'
+import { lintCopy, blocks, warns } from '@/lib/channel-lint'
 import {
   BULK_SECTIONS, planBulk, scopeError, lengthErrors, norm, sectionOf,
   type BulkSectionKey, type CopyTarget,
@@ -123,7 +124,8 @@ export async function GET(req: NextRequest) {
 
 /* ------------------------------------------------------------------ POST */
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('optimize', 'edit')
+  // Reached from the Property page's bulk panels too, so a buildings-edit holder may use it (gate alignment, 2026-11-02).
+  const gate = await requireAnyLevel(['optimize', 'buildings'], 'edit')
   if (!gate.ok) return gate.res
   const who = gate.access.email || ''
 
@@ -145,6 +147,12 @@ export async function POST(req: NextRequest) {
   if (!keys.length) return NextResponse.json({ error: 'Nothing to write — every section was left blank.' }, { status: 400 })
   const tooLong = lengthErrors(edits)
   if (tooLong.length) return NextResponse.json({ error: tooLong.join(' ') }, { status: 400 })
+  // THE CHANNEL LINT (2026-11-02): the same rules as the single-listing push. A block here stops the
+  // whole batch BEFORE anything is written — a bulk push of rejected copy is 30 listings silently stuck.
+  const lint = lintCopy(edits as any)
+  const stops = blocks(lint)
+  if (stops.length) return NextResponse.json({ error: stops.map(h => h.message).join(' '), lint, blocked: true }, { status: 400 })
+  const lintWarnings = warns(lint).map(h => h.message)
 
   const sb = supabaseAdmin()
   const all = await allListings(sb)
@@ -175,7 +183,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (!writeIds.size) {
-    return NextResponse.json({ ok: true, okCount: 0, failCount: 0, unchanged: plan.unchanged, results: [], note: 'Every selected listing already says exactly this — nothing was sent to Guesty.' + (saveStandard && scope === 'property' ? ' The property standard was saved.' : '') })
+    return NextResponse.json({ ok: true, okCount: 0, failCount: 0, unchanged: plan.unchanged, results: [], warnings: lintWarnings, note: 'Every selected listing already says exactly this — nothing was sent to Guesty.' + (saveStandard && scope === 'property' ? ' The property standard was saved.' : '') })
   }
 
   const tok = await token(sb)
@@ -224,6 +232,6 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     ok: true, okCount, failCount, unchanged: plan.unchanged,
-    sections: keys.map(k => sectionOf(k)?.label || k), results,
+    sections: keys.map(k => sectionOf(k)?.label || k), results, warnings: lintWarnings,
   })
 }

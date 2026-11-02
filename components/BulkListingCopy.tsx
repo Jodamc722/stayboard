@@ -11,6 +11,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Check, X, Sparkles, AlertTriangle, RefreshCw, Loader2, PencilLine, Building2, MessageSquarePlus, Info } from 'lucide-react'
 import { IconBtn, Tip } from '@/components/lean'
+import { lintField, fateOf, type CopyField } from '@/lib/channel-lint'
+import { ChannelFateStrip } from '@/components/ChannelFateStrip'
 
 type SectionKey = 'access' | 'neighborhood' | 'transit' | 'notes'
 type Section = { key: SectionKey; label: string; scopes: ('property' | 'portfolio')[]; hint: string; rows: number; max: number }
@@ -143,6 +145,7 @@ export function BulkListingCopy({ scope, building, defaultOpen }: { scope: 'prop
 
   async function push() {
     setBusy(true); setErr(null); setResults(null); setNote(null)
+    const partial: Res[] = []   // what already landed, kept visible if a later building fails
     try {
       // Portfolio pushes need the unit ids behind the chosen properties; they are fetched only
       // now, so opening the panel never pulls 250 listings for a person who is just looking.
@@ -162,6 +165,7 @@ export function BulkListingCopy({ scope, building, defaultOpen }: { scope: 'prop
       const total = groups.reduce((n, g) => n + g.length, 0)
 
       const all: Res[] = []
+      const lastWarnings: string[] = []
       let unchanged = 0, done = 0
       setProgress({ done: 0, total })
       for (const g of groups) {
@@ -177,17 +181,21 @@ export function BulkListingCopy({ scope, building, defaultOpen }: { scope: 'prop
           })
           const d = await readJson(r)
           if (!r.ok || d?.error) throw new Error(d?.error || `HTTP ${r.status}`)
-          all.push(...((d.results || []) as Res[]))
+          if (Array.isArray(d.warnings)) for (const w of d.warnings) if (!lastWarnings.includes(w)) lastWarnings.push(w)
+          all.push(...((d.results || []) as Res[])); partial.push(...((d.results || []) as Res[]))
           unchanged += Number(d.unchanged || 0)
           done += slice.length
           setProgress({ done, total })
         }
       }
       setResults(all)
-      if (!all.length) setNote('Every listing already said exactly this — nothing was sent to Guesty.')
-      else if (unchanged) setNote(unchanged + ' section' + (unchanged === 1 ? ' was' : 's were') + ' already identical and left alone.')
+      const notes: string[] = []
+      if (!all.length) notes.push('Every listing already said exactly this — nothing was sent to Guesty.')
+      else if (unchanged) notes.push(unchanged + ' section' + (unchanged === 1 ? ' was' : 's were') + ' already identical and left alone.')
+      if (lastWarnings.length) notes.push('Channel notes: ' + lastWarnings.join(' '))
+      if (notes.length) setNote(notes.join(' '))
       setConfirming(false)
-    } catch (e: any) { setErr(e?.message || String(e)) }
+    } catch (e: any) { setErr(e?.message || String(e)); if (partial.length) setResults(partial) }
     finally { setBusy(false); setProgress(null) }
   }
 
@@ -293,6 +301,11 @@ export function BulkListingCopy({ scope, building, defaultOpen }: { scope: 'prop
                       <span className={over ? 'text-rose-600 font-semibold' : 'text-muted'}>{v.trim().length}/{s.max}</span>
                       {isStd && <span className="text-muted">· matches this property&rsquo;s saved standard</span>}
                     </div>
+                    {/* THE CHANNEL LINT, LIVE — the same rules the push enforces, so a block is fixed here. */}
+                    {lintField(s.key as CopyField, v).map((h, j) => (
+                      <div key={j} className={`text-[11px] mt-1 flex items-start gap-1 ${h.severity === 'block' ? 'text-rose-600' : 'text-amber-700'}`}><AlertTriangle size={11} className="mt-0.5 shrink-0" /> {h.message}</div>
+                    ))}
+                    {v.trim() ? <ChannelFateStrip fates={fateOf(s.key as CopyField)} /> : null}
                   </div>
                 </div>
               )

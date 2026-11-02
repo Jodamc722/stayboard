@@ -33,7 +33,8 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
   if (houseRules.trim()) policy.houseRules = houseRules.trim()
   if (cleaningFee !== '' && Number.isFinite(Number(cleaningFee)) && Number(cleaningFee) >= 0) policy.cleaningFee = Number(cleaningFee)
   const fieldCount = Object.keys(policy).length
-  const canApply = fieldCount > 0 && sel.size > 0
+  const minAboveMax = policy.minNights != null && policy.maxNights != null && policy.minNights > policy.maxNights
+  const canApply = fieldCount > 0 && sel.size > 0 && !minAboveMax
 
   const summary = [
     policy.checkInTime && `check-in ${policy.checkInTime}`,
@@ -140,11 +141,12 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
           {err && <div className="text-[12px] text-rose-600 mb-2 inline-flex items-start gap-1.5"><AlertTriangle size={13} className="mt-0.5 shrink-0" /> {err}</div>}
 
           <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-line">
-            {!confirming ? (
+            {!confirming ? (<>
+              {minAboveMax && <span className="text-[12px] text-rose-600 inline-flex items-center gap-1"><AlertTriangle size={13} /> Minimum nights is above the maximum — nothing could book.</span>}
               <button onClick={() => setConfirming(true)} disabled={!canApply} className="inline-flex items-center gap-1.5 text-[13px] font-semibold rounded-lg bg-brand-600 text-white px-3 py-2 hover:bg-brand-700 disabled:opacity-50">
                 Review &amp; apply to Guesty
               </button>
-            ) : (
+            </>) : (
               <>
                 <span className="text-[12px] text-ink">Apply <b>{summary}</b> to <b>{sel.size}</b> unit{sel.size === 1 ? '' : 's'} on Guesty?</span>
                 <button onClick={apply} disabled={busy} className="inline-flex items-center gap-1.5 text-[13px] font-semibold rounded-lg bg-brand-600 text-white px-3 py-2 hover:bg-brand-700 disabled:opacity-50">{busy ? 'Applying…' : 'Yes, apply'}</button>

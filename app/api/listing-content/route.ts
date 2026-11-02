@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
+import { lintCopy, blocks, warns } from '@/lib/channel-lint'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
@@ -31,9 +32,15 @@ export async function POST(req: NextRequest) {
   for (const k of SECTION_KEYS) {
     if (typeof inSections[k] === 'string' && inSections[k].trim()) publicDescription[k] = String(inSections[k]).trim()
   }
-  if (title && title.length > 50) return NextResponse.json({ error: 'Title exceeds Guesty 50-char limit.' }, { status: 400 })
   if (!title && Object.keys(publicDescription).length === 0) {
     return NextResponse.json({ error: 'Nothing approved to push.' }, { status: 400 })
+  }
+  // THE CHANNEL LINT (2026-11-02): anything Guesty or a channel would refuse stops here, with the reason,
+  // instead of a 200 from Guesty and a listing that quietly never updated on Airbnb.
+  const lint = lintCopy({ ...(title ? { title } : {}), ...publicDescription } as any)
+  const stops = blocks(lint)
+  if (stops.length && body?.force !== true) {
+    return NextResponse.json({ error: stops.map(h => h.message).join(' '), lint, blocked: true }, { status: 400 })
   }
 
   const payload: any = {}
@@ -66,5 +73,5 @@ export async function POST(req: NextRequest) {
     await sb.from('guesty_listings').update(update).eq('id', listingId)
   } catch { /* mirror is best-effort */ }
 
-  return NextResponse.json({ ok: true, pushed: { title: title || null, sections: Object.keys(publicDescription) } })
+  return NextResponse.json({ ok: true, pushed: { title: title || null, sections: Object.keys(publicDescription) }, warnings: warns(lint).map(h => h.message) })
 }

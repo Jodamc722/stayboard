@@ -6,7 +6,7 @@
 // and the result says what each unit was saved as and anything Guesty would not take.
 import { useEffect, useMemo, useState } from 'react'
 import { Check, Plus, Sparkles, AlertTriangle, RefreshCw, Search, X } from 'lucide-react'
-import { resolveAmenity } from '@/lib/guesty-amenities'
+import { resolveAmenity, GUESTY_AMENITIES_SNAPSHOT } from '@/lib/guesty-amenities'
 
 type Unit = { id: string; name: string; amenityCount: number ; amenities?: string[] }
 type Res = { id: string; name: string; ok: boolean; added: number; removed?: number; total: number; error?: string; skipped?: string; renamed?: { from: string; to: string }[]; dropped?: string[] }
@@ -23,7 +23,8 @@ export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: s
 
   useEffect(() => {
     let alive = true
-    fetch('/api/amenities-catalog').then(r => r.json()).then(d => { if (alive && Array.isArray(d?.names)) setExtra(d.names) }).catch(() => {})
+    // Guesty's live list; the built-in snapshot if that call fails, so the picker never sits on "Loading…".
+    fetch('/api/amenities-catalog').then(r => r.json()).then(d => { if (alive) setExtra(Array.isArray(d?.names) && d.names.length ? d.names : GUESTY_AMENITIES_SNAPSHOT) }).catch(() => { if (alive) setExtra(GUESTY_AMENITIES_SNAPSHOT) })
     return () => { alive = false }
   }, [])
   // Only names Guesty will keep: its live list, plus sibling names translated into it.

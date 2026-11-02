@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 const GAP_MS = 300            // between listings — a fee change is two Guesty calls (GET prices + PUT)
-const TIME_BUDGET_MS = 270_000
+const TIME_BUDGET_MS = 240_000
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 // Note: cancellation policy is NOT settable via Guesty's API (the integrations object is read-only),
@@ -177,7 +177,13 @@ export async function POST(req: NextRequest) {
     if (change.checkInTime) payload.defaultCheckInTime = change.checkInTime
     if (change.checkOutTime) payload.defaultCheckOutTime = change.checkOutTime
     if (change.minNights != null || change.maxNights != null) {
-      const terms = (raw.terms && typeof raw.terms === 'object') ? { ...raw.terms } : {}
+      // terms is replaced as a whole; when the mirror has none, read it fresh so maxNights survives.
+      let baseTerms: any = (raw.terms && typeof raw.terms === 'object') ? raw.terms : null
+      if (!baseTerms) {
+        try { const g = await guestyFetch(`${BASE}/listings/${encodeURIComponent(id)}?fields=terms`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' } }); if (g.ok) { const j = await g.json().catch(() => ({})); if (j?.terms && typeof j.terms === 'object') baseTerms = j.terms } } catch { /* below */ }
+        if (!baseTerms) { results.push({ id, name, ok: false, error: 'Could not read the current terms from Guesty — nothing changed.' }); failCount++; continue }
+      }
+      const terms = { ...baseTerms }
       if (change.minNights != null) terms.minNights = change.minNights
       if (change.maxNights != null) terms.maxNights = change.maxNights
       // A minimum above the maximum books nothing — refuse that one listing, not the batch.

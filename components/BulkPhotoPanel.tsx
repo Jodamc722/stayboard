@@ -89,8 +89,10 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
   // rest, or the engine's full order. `photos` is re-sorted to match so the strip shows what ships.
   function withOrder(p: Plan, m: 'five' | 'full'): Plan {
     const byId = new Map(p.photos.map(ph => [ph._id, ph]))
-    const order = m === 'full' ? p.aiFull.slice() : [...p.aiFive, ...p.current.filter(id => !p.aiFive.includes(id))]
+    let order = m === 'full' ? p.aiFull.slice() : [...p.aiFive, ...p.current.filter(id => !p.aiFive.includes(id))]
     for (const id of p.current) if (!order.includes(id)) order.push(id)
+    // A photo the engine named that no longer exists must not make a no-op look like a change.
+    order = order.filter(id => byId.has(id))
     const photos = order.map(id => byId.get(id)!).filter(Boolean)
     const changed = order.some((id, idx) => id !== p.current[idx])
     return { ...p, order, photos, changed }

@@ -17,7 +17,7 @@
 // Draft only. Nothing here reaches Guesty — a person reads it, edits it, and pushes it from the
 // panel, which is the same shape as every other AI write in this app.
 import { NextRequest, NextResponse } from 'next/server'
-import { requireLevel } from '@/lib/access'
+import { requireAnyLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildingFactsFor, factsPrompt } from '@/lib/building-facts'
 import { areaFactsFor, areaPrompt, listingLatLng } from '@/lib/local-area'
@@ -43,7 +43,8 @@ function parseJson(t: string): any {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('optimize', 'edit')
+  // Reached from the Property page's bulk panels too, so a buildings-edit holder may use it (gate alignment, 2026-11-02).
+  const gate = await requireAnyLevel(['optimize', 'buildings'], 'edit')
   if (!gate.ok) return gate.res
 
   const key = process.env.ANTHROPIC_API_KEY

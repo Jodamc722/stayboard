@@ -1,5 +1,7 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { lintField, lintCopy, blocks, vrboBytes, vrboCombined, fateOf, VRBO_MAX_BYTES, type CopyField } from '@/lib/channel-lint'
+import { ChannelFateStrip } from '@/components/ChannelFateStrip'
 import { Sparkles, Wand2, AlertTriangle, Info, UploadCloud, Check, RotateCcw, RefreshCw, MessageSquarePlus, Pencil } from 'lucide-react'
 
 /** A reply that is not JSON (a timeout or crash page) becomes a plain message, not "Unexpected token '<'". */
@@ -137,11 +139,35 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
   }
 
   // Push just ONE section to Guesty.
+  // THE CHANNEL LINT, LIVE (2026-11-02): the same rules the push routes enforce, shown as you type,
+  // so a block is fixed here and never discovered as a Guesty 200 that changed nothing on Airbnb.
+  const lintByField = useMemo(() => {
+    const out: Record<string, ReturnType<typeof lintField>> = {}
+    if (!edited) return out
+    for (const f of FIELDS) out[f.key] = lintField(f.key as CopyField, (edited as any)[f.key] || '')
+    return out
+  }, [edited])
+  const vrbo = useMemo(() => {
+    if (!edited) return null
+    const copy: Partial<Record<CopyField, string>> = {}
+    for (const f of FIELDS) if (f.key !== 'title' && include[f.key] && (edited as any)[f.key]?.trim()) copy[f.key as CopyField] = (edited as any)[f.key]
+    const combined = vrboCombined(copy)
+    return combined ? { bytes: vrboBytes(combined), sections: Object.keys(copy).length } : null
+  }, [edited, include])
+  const approvedBlocks = useMemo(() => {
+    if (!edited) return [] as string[]
+    const copy: Partial<Record<CopyField, string>> = {}
+    for (const f of FIELDS) if (include[f.key] && (edited as any)[f.key]?.trim()) copy[f.key as CopyField] = (edited as any)[f.key].trim()
+    return blocks(lintCopy(copy)).map(h => h.message)
+  }, [edited, include])
+
   async function pushField(k: keyof Content) {
     if (!edited || pushKey) return
     const val = ((edited as any)[k] || '').trim()
     if (!val) { setError(`The ${k} field is empty.`); return }
     if (k === 'title' && val.length > (result?.titleMax || 50)) { setError(`Title is over the ${result?.titleMax || 50}-char limit. Trim it first.`); return }
+    const stop = blocks(lintField(k as CopyField, val))
+    if (stop.length) { setError(stop.map(h => h.message).join(' ')); return }
     if (!window.confirm(`Push just the "${FIELDS.find(f => f.key === k)?.label}" to Guesty for "${name}"? This updates the live listing on every connected channel.`)) return
     setPushKey(k); setError(null); setSectionMsg(m => ({ ...m, [k]: '' }))
     try {
@@ -169,6 +195,7 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
     if (titleApproved && edited.title.trim().length > (result?.titleMax || 50)) {
       setError(`Title is over the ${result?.titleMax || 50}-char limit. Trim it first.`); return
     }
+    if (approvedBlocks.length) { setError(approvedBlocks.join(' ')); return }
     const sections: Record<string, string> = {}
     for (const f of FIELDS) {
       if (f.key === 'title') continue
@@ -187,7 +214,7 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
       const d = await readJson(res)
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
       const parts = [d.pushed?.title ? 'title' : null, ...(d.pushed?.sections || [])].filter(Boolean)
-      setPushedMsg(`Pushed to Guesty: ${parts.join(', ')}. The score above updates in a moment.`)
+      setPushedMsg(`Pushed to Guesty: ${parts.join(', ')}. Airbnb and the site update within hours, Vrbo in 24–48h; Booking.com and Expedia write their own descriptions. The score above updates in a moment.`)
       try { window.dispatchEvent(new CustomEvent('stay:score-refresh')) } catch { /* no-op */ }
     } catch (e: any) {
       setError(e?.message || String(e))
@@ -298,9 +325,13 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
                           <div className="mt-1 text-[11px] text-muted">On a phone card: <span className="text-ink font-semibold">{val.slice(0, 32)}</span>{val.length > 32 ? <span className="text-faint">{val.slice(32)}…</span> : null}</div>
                         ) : null}
                         <div className="flex items-center justify-between gap-2 mt-1">
-                          <div className={`text-[11px] ${over ? 'text-rose-600 font-semibold' : 'text-muted'}`}>{val.length}{isTitle ? ` / ${result.titleMax}` : ''} chars{over ? ' · over limit' : ''}</div>
-                          <button onClick={() => pushField(f.key)} disabled={!!pushKey || !val.trim() || over} className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 disabled:opacity-40"><UploadCloud size={12} /> {pushingThis ? 'pushing…' : 'push this section'}</button>
+                          <div className={`text-[11px] ${over ? 'text-rose-600 font-semibold' : 'text-muted'}`}>{val.length}{isTitle ? ` / ${result.titleMax}` : f.key === 'summary' ? ' / 500' : ''} chars{over ? ' · over limit' : ''}</div>
+                          <button onClick={() => pushField(f.key)} disabled={!!pushKey || !val.trim() || over || (lintByField[f.key] || []).some(h => h.severity === 'block')} className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 disabled:opacity-40"><UploadCloud size={12} /> {pushingThis ? 'pushing…' : 'push this section'}</button>
                         </div>
+                        {(lintByField[f.key] || []).map((h, i) => (
+                          <div key={i} className={`text-[11px] mt-1 flex items-start gap-1 ${h.severity === 'block' ? 'text-rose-600' : 'text-amber-700'}`}><AlertTriangle size={11} className="mt-0.5 shrink-0" /> {h.message}</div>
+                        ))}
+                        <ChannelFateStrip fates={fateOf(f.key as CopyField)} />
                         {msg && <div className={`text-[11px] mt-1 ${/✓|Regenerated/.test(msg) ? 'text-emerald-700' : 'text-amber-700'}`}>{msg}</div>}
                       </div>
                     </div>
@@ -315,9 +346,17 @@ export function ListingOptimizer({ listingId, name }: { listingId: string; name:
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-[13px] text-emerald-700 flex items-center gap-2"><Check size={14} /> {pushedMsg}</div>
               )}
 
-              <div className="rounded-xl border border-line bg-white px-4 py-3 flex items-center justify-between gap-3 shadow-soft sticky bottom-3">
-                <div className="text-[13px] text-muted">{approvedCount} of {FIELDS.length} field(s) approved</div>
-                <button onClick={pushApproved} disabled={pushing || approvedCount === 0}
+              <div className="rounded-xl border border-line bg-white px-4 py-3 flex items-center justify-between gap-3 shadow-soft sticky bottom-3 flex-wrap">
+                <div className="text-[13px] text-muted">
+                  {approvedCount} of {FIELDS.length} field(s) approved
+                  {vrbo && vrbo.sections >= 2 && (
+                    <span className={`block text-[11px] ${vrbo.bytes > VRBO_MAX_BYTES ? 'text-rose-600 font-semibold' : 'text-muted'}`} title="Vrbo joins every section into one description, counted in bytes with a limit of 10,000">
+                      As one Vrbo description: {vrbo.bytes.toLocaleString()} / {VRBO_MAX_BYTES.toLocaleString()} bytes{vrbo.bytes > VRBO_MAX_BYTES ? ' — Vrbo would cut it' : ''}
+                    </span>
+                  )}
+                  {approvedBlocks.length > 0 && <span className="block text-[11px] text-rose-600">Fix the flagged sections before pushing.</span>}
+                </div>
+                <button onClick={pushApproved} disabled={pushing || approvedCount === 0 || approvedBlocks.length > 0}
                   className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 text-white px-4 py-2.5 text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50">
                   {pushing ? <Sparkles size={15} className="animate-pulse" /> : <UploadCloud size={15} />}
                   {pushing ? 'Pushing…' : 'Push all approved to Guesty'}

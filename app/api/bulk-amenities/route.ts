@@ -11,14 +11,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireAnyLevel } from '@/lib/access'
-import { resolveAmenities, resolveAmenity, norm } from '@/lib/guesty-amenities'
+import { resolveAmenities, resolveAmenity, listedUnderAnyName, norm } from '@/lib/guesty-amenities'
 import { guestyFetch } from '@/lib/guesty-retry'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
 const GAP_MS = 350            // ~3 writes/s — under Guesty's 15/s and 120/min with room for other callers
-const TIME_BUDGET_MS = 270_000
+const TIME_BUDGET_MS = 240_000   // one iteration can take ~25s under full backoff; leave room under 300
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
     const final = kept.filter(a => !removes(a))
     const beforeCount = current.length
     const removedCount = current.filter(a => removes(a)).length
-    const alreadyHad = (a: string) => current.some(c => norm(c) === norm(a))
+    const alreadyHad = (a: string) => listedUnderAnyName(a, current, sup)   // any spelling counts as 'had'
     const newlyAdded = addNames.filter(a => !alreadyHad(a) && !removes(a))
 
     try {
@@ -115,11 +115,13 @@ export async function POST(req: NextRequest) {
       const stuck = newlyAdded.filter(a => !updated.some(u => norm(u) === norm(a)))
       try {
         const raw: any = (row?.raw && typeof row.raw === 'object') ? row.raw : {}
-        await sb.from('guesty_listings').update({ amenities: updated, raw: { ...raw, amenities: updated } }).eq('id', id)
+        // amenities_pushed_at: lib/guesty protects a just-pushed list from a stale pull for 30 min.
+        await sb.from('guesty_listings').update({ amenities: updated, raw: { ...raw, amenities: updated }, amenities_pushed_at: new Date().toISOString() }).eq('id', id)
       } catch { /* best effort */ }
       results.push({
         id, name, ok: true, added: newlyAdded.length - stuck.length, removed: removedCount, total: updated.length,
-        renamed: renamed.filter(x => addNames.some(a => norm(a) === norm(x.to)) && !alreadyHad(x.to)),
+        // Every rename on this unit — including legacy words normalised to Guesty's spelling — so nobody is surprised.
+        renamed,
         dropped: stuck.length ? stuck : undefined,
       })
       okCount++

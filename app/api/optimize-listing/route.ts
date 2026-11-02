@@ -17,6 +17,7 @@
 //    are the same text, so an unset key behaves exactly as before. The HONESTY BLOCK below is NOT
 //    editable and is assembled here on every call.
 import { NextRequest, NextResponse } from 'next/server'
+import { lintField } from '@/lib/channel-lint'
 import { buildingFactsFor, factsPrompt } from '@/lib/building-facts'
 import { areaFactsFor, areaPrompt, listingLatLng } from '@/lib/local-area'
 import { ratingToStars } from '@/lib/optimize-score'
@@ -499,6 +500,9 @@ function bannedHits(value: string, list: string): string[] {
 function warnFor(k: SectionKey, value: string, cfg: ListingAi, streetAddress: string | null): string[] {
   const out: string[] = []
   if (!value) return out
+  // THE CHANNEL LINT (lib/channel-lint, 2026-11-02) — the rules Guesty, Airbnb and Vrbo actually enforce,
+  // the same ones the push routes block on. Older checks below stay for what they add (banned phrases, address).
+  for (const h of lintField(k as any, value)) out.push(h.message)
   const c = cfg.sections[k]
   const banned = bannedHits(value, cfg.bannedPhrases)
   if (banned.length) {
@@ -508,27 +512,13 @@ function warnFor(k: SectionKey, value: string, cfg: ListingAi, streetAddress: st
   if (k === 'title') {
     const cap = c.hardCap || TITLE_MAX
     if (value.length > cap) out.push(`Title is ${value.length} chars - over the ${cap}-char limit. Trim before pushing.`)
-    for (const f of forbiddenIn(value)) out.push(`Title contains ${f} - channels may reject it.`)
     return out
   }
   if (c.hardCap && value.length > c.hardCap) out.push(`${label} is ${value.length} chars - over the ${c.hardCap}-char limit. Trim before pushing.`)
-  const bad = forbiddenIn(value).filter(x => x === 'a phone number' || x === 'an email address' || x === 'a URL')
-  if (bad.length) out.push(`${label} contains ${bad.join(' and ')} - remove it before pushing.`)
   const streetNum = streetAddress ? String(streetAddress).match(/\d{2,}/)?.[0] : null
   if (streetNum && value.includes(streetNum)) out.push(`${label} may contain the street address - remove it before pushing.`)
   return out
 }
 
-function forbiddenIn(s: string): string[] {
-  const out: string[] = []
-  if (!s) return out
-  if (/[\w.-]+@[\w.-]+\.\w+/.test(s)) out.push('an email address')
-  if (/https?:\/\/|www\.|\b[\w-]+\.(com|net|org|io|co)\b/i.test(s)) out.push('a URL')
-  if (/(?:\+?\d[\s().-]?){7,}/.test(s)) out.push('a phone number')
-  if (/[☀-➿]|[\uD83C-\uDBFF][\uDC00-\uDFFF]/.test(s)) out.push('an emoji')
-  if (/[!*#]{2,}/.test(s)) out.push('repeated symbols (!!! / ***)')
-  if (/\b[A-Z]{4,}\b/.test(s)) out.push('an ALL-CAPS word')
-  return out
-}
 
 
