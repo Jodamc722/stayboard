@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdProject, type AdScene, type AdKind, type AdFormat, type AdAssets, type AdAudience, type AdTemplate,
-  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
+  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, TRANSITIONS, type AdTransition, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
 } from '@/lib/ad-engine'
 import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 
@@ -38,13 +38,15 @@ const UI = {
   bg: '#0E1116', panel: '#151A21', panel2: '#1B222B', line: '#262E39', ink: '#E8EBEF', mut: '#8C96A3', gold: '#D2B077', blue: '#4C8DF6', red: '#E5675C', green: '#4CC488',
 }
 const KIND_COLOR: Record<AdKind, string> = {
-  cta: '#E0A64C', title: '#C9A15E', photo: '#5C8FD6', stats: '#6CB28C', wall: '#9A7FD1', cards: '#D07F5C', feed: '#4FA7B8', checks: '#8FB04A', rise: '#D4677C', contact: '#B58B3E',
+  cta: '#E0A64C', cinema: '#C98B5E', kinetic: '#E06C9F', reveal: '#5FB8C9', title: '#C9A15E', photo: '#5C8FD6', stats: '#6CB28C', wall: '#9A7FD1', cards: '#D07F5C', feed: '#4FA7B8', checks: '#8FB04A', rise: '#D4677C', contact: '#B58B3E',
 }
 const AUD: Record<AdAudience, { label: string; brief: string; hint: string }> = {
   owners: { label: 'Owners', brief: 'property owners', hint: 'Sell management: revenue, team, Lighthouse; ends on Nick' },
   partners: { label: 'Partners', brief: 'realtors, lenders and tax advisors who refer owners', hint: 'For referral partners; ends on Nick' },
   guests: { label: 'Guests', brief: 'travellers choosing where to stay in South Florida', hint: 'Sell the stay; ends on Book at stay-hospitality.com' },
 }
+/** Jon, 2026-11-02: "never use a collage photo ever" — photos captioned as grids/collages are left out. */
+const COLLAGE = /collage|grid|mosaic|side[- ]by[- ]side|split view|multiple (photos|images|views)|before.{0,4}after|floor ?plan/i
 const proxied = (u: string) => (!u ? '' : u.startsWith('/') ? u : /guesty|cloudinary|muscache/i.test(u) ? '/api/img-proxy?url=' + encodeURIComponent(u) : u)
 const fmtT = (s: number) => { const m = Math.floor(s / 60); const r = s - m * 60; return m + ':' + (r < 10 ? '0' : '') + r.toFixed(1) }
 
@@ -61,7 +63,7 @@ function Btn({ on, children, onClick, title, tone, disabled, small }: { on?: boo
 const Label = ({ children }: { children: React.ReactNode }) => <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: UI.mut, margin: '14px 0 6px' }}>{children}</p>
 const field: React.CSSProperties = { boxSizing: 'border-box', width: '100%', background: UI.panel2, color: UI.ink, border: '1px solid ' + UI.line, borderRadius: 8, padding: '8px 10px', fontSize: 13, lineHeight: 1.45, fontFamily: 'inherit', resize: 'vertical' }
 
-export default function AdStudio({ display, body, canEdit, canDelete, full }: { display: string; body: string; canEdit: boolean; canDelete: boolean; full?: boolean }) {
+export default function AdStudio({ display, body, serif, canEdit, canDelete, full }: { display: string; body: string; serif?: string; canEdit: boolean; canDelete: boolean; full?: boolean }) {
   const [list, setList] = useState<ListRow[]>([])
   const [p, setP] = useState<AdProject | null>(null)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
@@ -444,7 +446,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
     return g ? { label: g.name, file: g.url, credit: '' } : { label: key.startsWith('snd:') ? 'Generated track' : 'No music', file: '', credit: '' }
   }
   const assets = (): AdAssets => ({
-    img, media, logo: logo.current, display, body, mono: 'ui-monospace, Menlo, monospace',
+    img, media, logo: logo.current, display, body, serif, mono: 'ui-monospace, Menlo, monospace',
     credit: track(pRef.current?.music || '').credit,
   })
 
@@ -766,7 +768,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
         if (!cache[s.q]) {
           const r = await fetch('/api/photos/library?search=' + encodeURIComponent(s.q)).then(x => x.json()).catch(() => null)
           const hs: Hit[] = r?.ok ? r.hits || [] : []
-          cache[s.q] = hs.filter((h: any) => h.active !== false).map(h => h.view || h.url)
+          cache[s.q] = hs.filter((h: any) => h.active !== false && !COLLAGE.test(String(h.caption || ''))).map(h => h.view || h.url)
         }
         // different photos for different scenes that share a search
         const used = scenes.reduce((a: string[], x) => a.concat(x.photos), [])
@@ -786,7 +788,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
     setSearching(true)
     const r = await fetch('/api/photos/library?search=' + encodeURIComponent(q.trim())).then(x => x.json()).catch(() => null)
     setSearching(false)
-    setHits(r?.ok ? (r.hits || []).slice(0, 60) : [])
+    setHits(r?.ok ? (r.hits || []).filter((h: Hit) => !COLLAGE.test(String(h.caption || ''))).slice(0, 60) : [])
     if (!r?.ok) setErr(r?.error || 'Photo search failed.')
   }
 
@@ -1287,6 +1289,14 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
                 {KINDS.map(k => <Btn key={k.kind} small on={sc.kind === k.kind} title={k.hint} onClick={() => setScene(sel, { kind: k.kind })}>{k.label}</Btn>)}
               </div>
               <p style={{ fontSize: 11, color: UI.mut, marginTop: 6 }}>{KINDS.find(k => k.kind === sc.kind)?.hint}</p>
+              {sel > 0 ? (
+                <>
+                  <Label>Comes in with</Label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {TRANSITIONS.map(x => <Btn key={x} small on={(sc.tr || 'auto') === x} disabled={!canEdit} onClick={() => { setScene(sel, { tr: x as AdTransition }); if (tl) setT(tl.starts[sel] - 0.15) }}>{x === 'auto' ? 'Auto' : x[0].toUpperCase() + x.slice(1)}</Btn>)}
+                  </div>
+                </>
+              ) : null}
 
               <Label>Voice line</Label>
               <textarea rows={3} value={sc.vo} disabled={!canEdit} onChange={e => setScene(sel, { vo: e.target.value })} placeholder="Leave empty for a music-only beat" style={field} />

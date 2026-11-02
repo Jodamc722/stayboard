@@ -8,7 +8,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { SALES_CONTACT_KEY, type ContactCard } from '@/lib/sales-copy'
-import { type AdProject, type AdContact, type AdScene, type AdKind, blankProject, spokenText, voiceSig, HOUSE_FACTS, GUEST_FACTS, KINDS, BUILTIN_VIDEOS, VOICE_DEFAULTS } from '@/lib/ad-engine'
+import { type AdProject, type AdContact, type AdScene, type AdKind, blankProject, spokenText, voiceSig, HOUSE_FACTS, GUEST_FACTS, KINDS, BUILTIN_VIDEOS, VOICE_DEFAULTS, TRANSITIONS, type AdTransition } from '@/lib/ad-engine'
 
 const BUCKET = 'ad-studio'
 const SIGN_TTL = 60 * 60 * 6
@@ -88,6 +88,7 @@ export function normalize(p: any): AdProject {
   const scenes: AdScene[] = Array.isArray(p?.scenes) ? p.scenes.slice(0, 40).map((s: any, i: number) => ({
     id: String(s?.id || 's' + (i + 1)).slice(0, 20),
     kind: (KIND_KEYS.indexOf(s?.kind) >= 0 ? s.kind : 'title') as AdKind,
+    tr: (TRANSITIONS.indexOf(s?.tr) >= 0 ? s.tr : 'auto') as AdTransition,
     vo: String(s?.vo || '').slice(0, 600),
     head: String(s?.head || '').slice(0, 300),
     sub: String(s?.sub || '').slice(0, 300),
@@ -204,7 +205,15 @@ ${rules}
 - Every scene's spoken line ("vo") must be readable aloud in the time the scene holds: about 2.5 words a second. Open strong — the first two seconds decide whether anyone keeps watching.
 - NEVER put the words "Salato" or "Pompano Beach" in a spoken line (the voice mispronounces them). They may appear on screen.
 - On-screen headlines ("head") are short (2 to 8 words). Mark one or two key words gold with **double stars**. Use \\n to break lines.
-- A music-only beat is allowed: a scene with an empty "vo" (good for a photo wall right after the opening).
+- A music-only beat is allowed: a scene with an empty "vo" (good for a montage right after the opening).
+
+CREATIVE DIRECTION (Jon: "better, nicer and very creative" — and "never use a collage photo ever"):
+- Make it feel like a premium travel/brand film, not slides. Vary the scene kinds; never use the same kind twice in a row.
+- Open with motion: a "cinema" or "kinetic" scene. Use "kinetic" for punchy 2 to 6 word hooks, "cinema" for mood and place, "reveal" for a hero shot, "wall" (montage, quick full-screen cuts) for energy, "cards" (three beats) for three selling points.
+- One image on screen at a time. NEVER a grid, collage or side-by-side photos.
+- Give each scene "tr" (how it arrives): "zoom", "push", "wipe", "flash", "fade" or "cut". Mix them; "flash" or "cut" suit a fast beat, "fade" a calm one.
+- Headlines are copywriting, not labels: sensory, specific, short. Use the "sub" for a place line (e.g. "Singer Island · Florida") on cinematic scenes.
+- Prefer photos with a single strong subject: the view, the pool at golden hour, a styled bedroom. Ask for them with specific photoQuery words.
 
 SCENE KINDS YOU CAN USE:
 ${kinds}
@@ -217,7 +226,7 @@ AUDIENCE: ${input.audience || 'property owners'}
 FORMAT: ${input.format}${input.current && input.current.scenes.length ? `\n\nTHE CURRENT DRAFT (improve it; keep what works):\n${JSON.stringify(input.current.scenes.map(s => ({ kind: s.kind, vo: s.vo, head: s.head, sub: s.sub, items: s.items })))}` : ''}
 
 Reply with ONLY a JSON object, no prose:
-{"name": "a short name for this ad", "scenes": [{"kind": "...", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": "..."}]}`
+{"name": "a short name for this ad", "scenes": [{"kind": "...", "tr": "...", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": "..."}]}`
 }
 
 
@@ -371,7 +380,8 @@ THE SCENE NOW: ${JSON.stringify({ kind: sc.kind, vo: sc.vo, head: sc.head, sub: 
 THE REQUEST: ${ask}
 
 If the request asks for different photos, give "photoQuery" (two or three words to search our photo library, e.g. "17west pool", "ocean view", "rooftop"); otherwise leave "photoQuery" empty and the photos stay.
-Reply with ONLY JSON: {"kind": "...", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": ""}`
+One image on screen at a time — never a grid or collage. Scene kinds can be changed if the request wants a different feel.
+Reply with ONLY JSON: {"kind": "...", "tr": "auto|zoom|push|wipe|flash|fade|cut", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": ""}`
 }
 
 

@@ -14,9 +14,11 @@ import { searchPhotos } from '@/lib/photo-library'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 90
 
-function pickPhotos(hits: { url: string; view: string; width: number | null; height: number | null; active: boolean }[], n: number): string[] {
-  // Prefer active units and real resolution; a low-res photo looks soft at 1080p.
-  const ranked = hits.slice().sort((a, b) => (Number(b.active) - Number(a.active)) || ((b.width || 1200) - (a.width || 1200)))
+/** A photo that is itself a collage / grid / split image never goes in an ad (Jon, 2026-11-02). */
+const isCollage = (h: { caption?: string; url?: string }) => /collage|grid|mosaic|montage|side[- ]by[- ]side|split view|multiple (photos|images|views)|before.{0,4}after|floor ?plan/i.test(String(h.caption || '') + ' ' + String(h.url || ''))
+function pickPhotos(hits: { url: string; view: string; width: number | null; height: number | null; active: boolean; caption?: string }[], n: number): string[] {
+  // Prefer active units and real resolution; a low-res photo looks soft at 1080p. Never a collage.
+  const ranked = hits.filter(h => !isCollage(h)).slice().sort((a, b) => (Number(b.active) - Number(a.active)) || ((b.width || 1200) - (a.width || 1200)))
   const out: string[] = []
   for (let i = 0; i < ranked.length && out.length < n; i++) { const u = ranked[i].view || ranked[i].url; if (out.indexOf(u) < 0) out.push(u) }
   return out
@@ -43,12 +45,12 @@ export async function POST(req: NextRequest) {
     const scenes = await Promise.all(raw.map(async (s: any, i: number) => {
       const q = String(s?.photoQuery || '').trim().slice(0, 60)
       let photos: string[] = []
-      const want = s?.kind === 'wall' ? 9 : s?.kind === 'cards' ? 3 : s?.kind === 'contact' ? 0 : 1
+      const want = s?.kind === 'wall' ? 4 : s?.kind === 'cards' ? 3 : s?.kind === 'contact' ? 0 : 1
       if (q && want) {
         if (!cache[q]) { try { cache[q] = pickPhotos((await searchPhotos(q, 60)).hits as any, 12) } catch { cache[q] = [] } }
         photos = cache[q].slice(0, want)
       }
-      return { id: 's' + (i + 1), kind: s?.kind, vo: s?.vo, head: s?.head, sub: s?.sub, items: s?.items, photos, photoQuery: q }
+      return { id: 's' + (i + 1), kind: s?.kind, tr: s?.tr, vo: s?.vo, head: s?.head, sub: s?.sub, items: s?.items, photos, photoQuery: q }
     }))
     const norm = normalize({ id: 'x', scenes })
     // a contact card in a guest ad is the wrong end card — the writer is told, this is the backstop

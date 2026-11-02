@@ -15,12 +15,17 @@
 //  - The STAY mark is gold in video, transparent, no chip. The end card is Nick's card.
 //  - Words the voice says wrong are respelled for the voice only (SPOKEN below), never on screen.
 
-export type AdKind = 'title' | 'photo' | 'stats' | 'wall' | 'cards' | 'feed' | 'checks' | 'rise' | 'contact' | 'cta'
+export type AdKind = 'title' | 'cinema' | 'kinetic' | 'reveal' | 'photo' | 'stats' | 'wall' | 'cards' | 'feed' | 'checks' | 'rise' | 'contact' | 'cta'
+/** How a scene arrives from the one before it. 'auto' varies them across the ad. */
+export type AdTransition = 'auto' | 'fade' | 'zoom' | 'push' | 'wipe' | 'flash' | 'cut'
+export const TRANSITIONS: AdTransition[] = ['auto', 'fade', 'zoom', 'push', 'wipe', 'flash', 'cut']
 export type AdAudience = 'owners' | 'partners' | 'guests'
 export type AdFormat = '16:9' | '9:16' | '1:1' | '4:5'
 export type AdScene = {
   id: string
   kind: AdKind
+  /** How this scene comes in (default auto). */
+  tr?: AdTransition
   /** What the voice says over this scene. Empty = a music-only beat. */
   vo: string
   /** On-screen headline. Wrap a word in **double stars** to make it gold. A newline forces a break. */
@@ -97,11 +102,14 @@ export const MUSIC: { key: string; label: string; file: string; credit: string; 
 ]
 export const VOICE_DEFAULTS = { stability: 0.5, style: 0.2, speed: 1 }
 export const KINDS: { kind: AdKind; label: string; hint: string }[] = [
+  { kind: 'cinema', label: 'Cinematic', hint: 'Letterboxed full-screen photo, slow dolly, elegant headline and a small place line. Best opener.' },
+  { kind: 'kinetic', label: 'Kinetic type', hint: 'The headline punches in word by word, huge, over a blurred photo. 2 to 6 words. Great hook.' },
+  { kind: 'reveal', label: 'Reveal', hint: 'The photo opens out of a circle with a ring of light; headline lands in the lower third.' },
   { kind: 'title', label: 'Title', hint: 'Big headline over a photo. **Gold** words, one line per beat.' },
   { kind: 'photo', label: 'Photo', hint: 'One photo full-bleed, headline in the lower third.' },
+  { kind: 'wall', label: 'Montage', hint: 'Full-screen photos one after another in quick cuts (2 to 5 photos), headline holds over them. Never a grid.' },
+  { kind: 'cards', label: 'Three beats', hint: 'Three full-screen moments one after another, each with its own big title. Rows: Title|line' },
   { kind: 'stats', label: 'Numbers', hint: 'Figures that count up. Rows: 450+|listings' },
-  { kind: 'wall', label: 'Photo wall', hint: 'A grid of photos. Rows (optional) name each tile.' },
-  { kind: 'cards', label: 'Three cards', hint: 'Up to three photo cards that land with the words. Rows: Title|line' },
   { kind: 'feed', label: 'Live feed', hint: 'Cards that slide in, like Lighthouse at work. Rows: Title|detail' },
   { kind: 'checks', label: 'Checklist', hint: 'Items that tick off, beside a photo. Rows: item' },
   { kind: 'rise', label: 'Results', hint: 'Headline with a rising line. Rows become chips.' },
@@ -204,6 +212,8 @@ export function newSceneId(p: AdProject): string {
 export type AdAssets = {
   /** Returns a loaded image for a URL, or null while it is still loading. */
   img: (url: string) => HTMLImageElement | null
+  /** An elegant serif for the editorial looks (falls back to display). */
+  serif?: string
   /** A scene's media — a photo, or a library video ('video:…') synced to the scene's own clock. */
   media?: (url: string, local: number) => HTMLImageElement | HTMLVideoElement | null
   logo: HTMLImageElement | null
@@ -212,14 +222,15 @@ export type AdAssets = {
   mono: string
   credit: string
 }
-type Palette = { gold: string; ink: string; mut: string; navy: string; navy2: string; deep: string; tint: string; glass: string; line: string; green: string }
+type Palette = { serif?: boolean; gold: string; ink: string; mut: string; navy: string; navy2: string; deep: string; tint: string; glass: string; line: string; green: string }
 /** Visual styles (Jon, 2026-11-02: "create new visual … revamp … vibe"). `gold` is the accent the
  *  headline's **marked** words, rings and buttons take; `tint` darkens photos so text reads. */
 export const LOOKS: { key: string; label: string; blurb: string; c: Palette }[] = [
   { key: 'stay', label: 'Stay navy & gold', blurb: 'The house look', c: { gold: '#D2B077', ink: '#F2EEE6', mut: '#A9B8C6', navy: '#0D2131', navy2: '#132E44', deep: '#091827', tint: '6,18,30', glass: 'rgba(10,26,40,0.62)', line: 'rgba(255,255,255,0.18)', green: '#4CC488' } },
   { key: 'sunset', label: 'Sunset', blurb: 'Warm coral, golden hour', c: { gold: '#FFB37A', ink: '#FFF4EA', mut: '#E7C3B0', navy: '#2A1220', navy2: '#4A1E2C', deep: '#1A0A14', tint: '38,12,22', glass: 'rgba(48,16,30,0.6)', line: 'rgba(255,220,200,0.22)', green: '#7FD1A6' } },
   { key: 'ocean', label: 'Ocean', blurb: 'Aqua and deep blue, beachy', c: { gold: '#5FE0D2', ink: '#EFFBFF', mut: '#A8CFDA', navy: '#062A3A', navy2: '#0A4258', deep: '#031B27', tint: '2,26,38', glass: 'rgba(4,36,52,0.6)', line: 'rgba(200,245,255,0.2)', green: '#5FE0A0' } },
-  { key: 'mono', label: 'Minimal luxe', blurb: 'Black and white, editorial', c: { gold: '#FFFFFF', ink: '#F5F5F2', mut: '#B9B9B4', navy: '#0B0B0B', navy2: '#1E1E1E', deep: '#000000', tint: '0,0,0', glass: 'rgba(12,12,12,0.6)', line: 'rgba(255,255,255,0.25)', green: '#CFCFCF' } },
+  { key: 'editorial', label: 'Editorial', blurb: 'Serif type, cream on deep green, magazine feel', c: { serif: true, gold: '#E9D8B4', ink: '#F7F1E6', mut: '#C8C0AE', navy: '#0F1F1A', navy2: '#1D3A31', deep: '#08120F', tint: '8,20,16', glass: 'rgba(14,30,25,0.6)', line: 'rgba(240,230,210,0.25)', green: '#9FD3B0' } },
+  { key: 'mono', label: 'Minimal luxe', blurb: 'Black and white, serif, editorial', c: { serif: true, gold: '#FFFFFF', ink: '#F5F5F2', mut: '#B9B9B4', navy: '#0B0B0B', navy2: '#1E1E1E', deep: '#000000', tint: '0,0,0', glass: 'rgba(12,12,12,0.6)', line: 'rgba(255,255,255,0.25)', green: '#CFCFCF' } },
   { key: 'bold', label: 'Bold pop', blurb: 'Bright yellow, high energy', c: { gold: '#FFD84A', ink: '#FFFFFF', mut: '#C9C9D6', navy: '#14112A', navy2: '#2A2160', deep: '#0B0920', tint: '14,10,36', glass: 'rgba(20,16,50,0.62)', line: 'rgba(255,255,255,0.22)', green: '#4CE08A' } },
 ]
 let C: Palette = LOOKS[0].c
@@ -419,41 +430,143 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     return
   }
 
+  // MONTAGE (Jon, 2026-11-02: "never use a collage photo ever"): one photo at a time, full screen,
+  // quick cuts with a push-in; the headline holds over them. No grids, ever.
   if (sc.kind === 'wall') {
-    ctx.fillStyle = '#081622'; ctx.fillRect(0, 0, W, H)
-    const cols = portrait ? 2 : 3, rows = portrait ? 4 : 3
-    const n = Math.max(1, Math.min(cols * rows, sc.photos.length || 0))
-    const gap = 4 * u
-    const cw = (W - gap * (cols - 1)) / cols, ch = (H - gap * (rows - 1)) / rows
-    for (let k = 0; k < cols * rows; k++) {
-      const img = sc.photos.length ? get(sc.photos[k % sc.photos.length]) : null
-      const a = appear(local, k * 0.07, 0.5)
-      if (a <= 0) continue
-      const x = (k % cols) * (cw + gap), y = Math.floor(k / cols) * (ch + gap)
-      ctx.save(); ctx.globalAlpha *= a
-      const s = 0.92 + 0.08 * a
-      ctx.translate(x + cw / 2, y + ch / 2); ctx.scale(s, s); ctx.translate(-(x + cw / 2), -(y + ch / 2))
-      ctx.beginPath(); ctx.rect(x, y, cw, ch); ctx.clip()
-      if (img) cover(ctx, img, x, y, cw, ch, 1.02 + 0.06 * clamp(local / dur)); else { ctx.fillStyle = C.navy2; ctx.fillRect(x, y, cw, ch) }
-      const label = sc.items[k] ? split(sc.items[k])[0] : ''
-      if (label && k < n) {
-        const g = ctx.createLinearGradient(0, y + ch * 0.5, 0, y + ch); g.addColorStop(0, `rgba(${C.tint},0)`); g.addColorStop(1, `rgba(${C.tint},0.75)`)
-        ctx.fillStyle = g; ctx.fillRect(x, y, cw, ch)
-        plain(ctx, label, x + 28 * u, y + ch - 76 * u, cw - 56 * u, 34 * u, A.display, C.ink, 700)
-      }
+    const list = sc.photos.length ? sc.photos.slice(0, 6) : ['']
+    const n = list.length, seg = dur / n
+    const k = Math.min(n - 1, Math.floor(local / seg)), lt = local - k * seg
+    const draw = (j: number, t0: number, alpha: number) => {
+      const img = get(list[j]); if (!img) { ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H); return }
+      ctx.save(); ctx.globalAlpha *= alpha
+      cover(ctx, img, 0, 0, W, H, 1.06 + 0.1 * clamp(t0 / seg), (j % 2 ? -0.3 : 0.3) * clamp(t0 / seg))
       ctx.restore()
     }
-    if (head) {
-      const a = appear(local, 0.5)
-      ctx.save(); ctx.globalAlpha *= a
-      const g = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7)
-      g.addColorStop(0, `rgba(${C.tint},0.62)`); g.addColorStop(1, `rgba(${C.tint},0.85)`)
-      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); ctx.restore()
-      ctx.font = `800 ${120 * u}px ${A.display}`
-      const hh = layout(ctx, head, W - pad * 2).length * 120 * u * 1.08
-      rich(ctx, head, pad, (H - hh) / 2 - 30 * u, W - pad * 2, 120 * u, { font: A.display, local, delay: 0.6, align: 'center' })
-      if (sc.sub) plain(ctx, sc.sub, pad, (H + hh) / 2, W - pad * 2, 36 * u, A.body, C.mut, 500, 'center', appear(local, 1))
+    if (k > 0 && lt < 0.22) { draw(k - 1, seg + lt, 1); draw(k, lt, ease(lt / 0.22)) } else draw(k, lt, 1)
+    const g = ctx.createLinearGradient(0, H * 0.35, 0, H); g.addColorStop(0, `rgba(${C.tint},0)`); g.addColorStop(1, `rgba(${C.tint},0.82)`)
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+    // a thin progress tick per photo, like a story
+    for (let j = 0; j < n && n > 1; j++) {
+      const tw = (W - pad * 2 - (n - 1) * 10 * u) / n, x = pad + j * (tw + 10 * u)
+      ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fillRect(x, 40 * u, tw, 4 * u)
+      ctx.fillStyle = C.gold; ctx.fillRect(x, 40 * u, tw * (j < k ? 1 : j === k ? clamp(lt / seg) : 0), 4 * u)
     }
+    if (head) {
+      const size = (portrait ? 108 : 112) * u
+      ctx.font = `800 ${size}px ${A.display}`
+      const hh = layout(ctx, head, W - pad * 2).length * size * 1.08
+      const y = H - bottomSafe - hh - (sc.sub ? 70 * u : 10 * u)
+      ctx.fillStyle = C.gold; ctx.fillRect(pad, y - 26 * u, 90 * u * appear(local, 0.2), 6 * u)
+      rich(ctx, head, pad, y, W - pad * 2, size, { font: A.display, local, delay: 0.25 })
+      if (sc.sub) plain(ctx, sc.sub, pad, y + hh + 14 * u, W - pad * 2, 34 * u, A.body, C.ink, 500, 'left', appear(local, 0.6))
+    }
+    return
+  }
+
+  // THREE BEATS: three full-screen moments in a row, each with its own big title (was side-by-side cards).
+  if (sc.kind === 'cards') {
+    const it = sc.items.slice(0, 3).length ? sc.items.slice(0, 3) : [head || '']
+    const n = it.length, seg = dur / n
+    const k = Math.min(n - 1, Math.floor(local / seg)), lt = local - k * seg
+    const img = get(sc.photos[k] || sc.photos[0] || '')
+    if (img) cover(ctx, img, 0, 0, W, H, 1.12 - 0.08 * clamp(lt / seg), (k % 2 ? 0.25 : -0.25) * clamp(lt / seg)); else { ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H) }
+    const g = ctx.createLinearGradient(portrait ? 0 : W, 0, portrait ? 0 : 0, portrait ? H : 0)
+    g.addColorStop(0, `rgba(${C.tint},0.1)`); g.addColorStop(1, `rgba(${C.tint},0.85)`)
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+    if (lt < 0.25 && k > 0) { ctx.fillStyle = `rgba(255,255,255,${0.5 * (1 - lt / 0.25)})`; ctx.fillRect(0, 0, W, H) }
+    const [t1, t2] = split(it[k])
+    const tw = portrait ? W - pad * 2 : W * 0.55
+    const y = portrait ? H * 0.5 : H * 0.3
+    plain(ctx, '0' + (k + 1) + ' / 0' + n, pad, y - 70 * u, tw, 30 * u, A.mono, C.gold, 600, 'left', appear(lt, 0))
+    const size = (portrait ? 128 : 132) * u
+    const hh = rich(ctx, t1.replace(/^(?!.*\*\*)(.*)$/, '**$1**'), pad, y, tw, size, { font: A.display, local: lt, delay: 0.05, stagger: 0.18 })
+    if (t2) plain(ctx, t2, pad, y + hh + 16 * u, tw, 38 * u, A.body, C.ink, 500, 'left', appear(lt, 0.35))
+    if (head && k === 0 && n > 1) plain(ctx, head.replace(/\*\*/g, ''), pad, pad + 40 * u, tw, 30 * u, A.body, C.mut, 600, 'left', appear(lt, 0))
+    return
+  }
+
+  // CINEMATIC: letterbox, slow dolly, an elegant headline, a tracked place line.
+  if (sc.kind === 'cinema') {
+    const img = im(0)
+    const pr = clamp(local / Math.max(dur, 1))
+    if (img) cover(ctx, img, 0, 0, W, H, 1.02 + 0.14 * pr, -0.35 + 0.7 * pr); else { ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H) }
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, `rgba(${C.tint},0.15)`); g.addColorStop(0.6, `rgba(${C.tint},0.25)`); g.addColorStop(1, `rgba(${C.tint},0.7)`)
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+    const bar = (portrait ? H * 0.09 : H * 0.115) * ease(local / 0.8)
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar)
+    const size = (portrait ? 104 : 96) * u
+    ctx.font = `700 ${size}px ${A.display}`
+    const hh = layout(ctx, head, W - pad * 2.4).length * size * 1.08
+    const y = (H - hh) / 2 + (portrait ? 40 : 30) * u
+    rich(ctx, head, pad * 1.2, y, W - pad * 2.4, size, { font: A.display, weight: 700, local, delay: 0.5, stagger: 0.35, align: 'center', lh: 1.04 })
+    const rw = 160 * u * appear(local, 1.0, 0.8)
+    ctx.fillStyle = C.gold; ctx.fillRect((W - rw) / 2, y + hh + 34 * u, rw, 3 * u)
+    if (sc.sub) {
+      ctx.save(); try { (ctx as any).letterSpacing = 8 * u + 'px' } catch { /* older canvas */ }
+      plain(ctx, sc.sub.toUpperCase(), pad, y + hh + 64 * u, W - pad * 2, 28 * u, A.body, C.ink, 600, 'center', appear(local, 1.2))
+      ctx.restore()
+    }
+    return
+  }
+
+  // KINETIC TYPE: the words punch in one at a time, huge, over a blurred and darkened photo.
+  if (sc.kind === 'kinetic') {
+    const img = im(0)
+    if (img) {
+      ctx.save(); try { ctx.filter = `blur(${Math.round(16 * u)}px) saturate(1.2)` } catch { /* no filter */ }
+      cover(ctx, img, -40 * u, -40 * u, W + 80 * u, H + 80 * u, 1.1 + 0.05 * clamp(local / dur))
+      ctx.restore()
+    } else { ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H) }
+    ctx.fillStyle = `rgba(${C.tint},0.55)`; ctx.fillRect(0, 0, W, H)
+    const size = (portrait ? 150 : 160) * u
+    ctx.font = `800 ${size}px ${A.display}`
+    const lines = layout(ctx, head || 'Stay **here.**', W - pad * 2)
+    const lh = size * 1.02, sp = ctx.measureText(' ').width
+    const total = lines.length * lh
+    let wi = 0
+    const step = Math.min(0.32, Math.max(0.16, (dur * 0.55) / Math.max(1, lines.reduce((a, L) => a + L.words.length, 0))))
+    ctx.textBaseline = 'alphabetic'
+    for (let li = 0; li < lines.length; li++) {
+      const L = lines[li]
+      let x = (W - L.w) / 2
+      const yb = (H - total) / 2 + size * 0.86 + li * lh
+      for (const w of L.words) {
+        const t0 = 0.15 + wi * step, a = clamp((local - t0) / 0.22)
+        if (a > 0) {
+          const sc2 = 1 + 0.45 * (1 - ease(a))
+          const ww = w.w
+          ctx.save(); ctx.globalAlpha *= a
+          ctx.translate(x + ww / 2, yb - size * 0.35); ctx.scale(sc2, sc2); ctx.translate(-(x + ww / 2), -(yb - size * 0.35))
+          ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = size * 0.25
+          ctx.fillStyle = w.gold ? C.gold : C.ink; ctx.fillText(w.t.trim(), x, yb)
+          ctx.restore()
+        }
+        x += w.w + sp; wi++
+      }
+    }
+    if (sc.sub) plain(ctx, sc.sub, pad, (H + total) / 2 + 40 * u, W - pad * 2, 36 * u, A.body, C.mut, 500, 'center', appear(local, 0.3 + wi * step))
+    return
+  }
+
+  // REVEAL: the photo opens out of a circle with a ring of light.
+  if (sc.kind === 'reveal') {
+    ctx.fillStyle = C.navy2; ctx.fillRect(0, 0, W, H)
+    const img = im(0)
+    const a = ease(clamp((local - 0.1) / 1.1))
+    const R = Math.hypot(W, H) * 0.55 * a + 1
+    const cx = W / 2, cy = portrait ? H * 0.42 : H / 2
+    ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.clip()
+    if (img) cover(ctx, img, 0, 0, W, H, 1.25 - 0.17 * a - 0.04 * clamp(local / dur)); else { ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H) }
+    const g = ctx.createLinearGradient(0, H * 0.45, 0, H); g.addColorStop(0, `rgba(${C.tint},0)`); g.addColorStop(1, `rgba(${C.tint},0.8)`)
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+    ctx.restore()
+    if (a < 1) { ctx.save(); ctx.globalAlpha = 1 - a * 0.9; ctx.lineWidth = 6 * u; ctx.strokeStyle = C.gold; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke(); ctx.restore() }
+    const size = (portrait ? 112 : 108) * u
+    ctx.font = `800 ${size}px ${A.display}`
+    const hh = layout(ctx, head, W * (portrait ? 0.86 : 0.7)).length * size * 1.08
+    const y = H - bottomSafe - hh - (sc.sub ? 70 * u : 10 * u)
+    rich(ctx, head, pad, y, W * (portrait ? 0.86 : 0.7), size, { font: A.display, local, delay: 0.9 })
+    if (sc.sub) plain(ctx, sc.sub, pad, y + hh + 14 * u, W * 0.6, 34 * u, A.body, C.ink, 500, 'left', appear(local, 1.2))
     return
   }
 
@@ -530,29 +643,6 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       const shown = pn ? pn.pre + (pn.n * prog).toLocaleString('en-US', { minimumFractionDigits: pn.dec, maximumFractionDigits: pn.dec }) + pn.suf : val
       ctx.font = `800 ${120 * u}px ${A.display}`; ctx.fillStyle = C.ink; ctx.fillText(shown, x, y + 150 * u)
       plain(ctx, label, x, y + 170 * u, cw - 50 * u, 32 * u, A.body, C.mut, 500)
-      ctx.restore()
-    }
-    return
-  }
-
-  if (sc.kind === 'cards') {
-    const it = sc.items.slice(0, 3)
-    const n = Math.max(1, it.length)
-    const fr = [0.04, 0.36, 0.66]
-    for (let k = 0; k < n; k++) {
-      const a = ease((local - dur * fr[k]) / 0.6)
-      if (a <= 0) continue
-      const [t1, t2] = split(it[k] || '')
-      let x: number, y: number, w: number, ph: number
-      if (portrait) { w = area.w; ph = Math.min((area.h / n) - 165 * u, w * 0.56); x = area.x; y = area.y + k * (ph + 165 * u) }
-      else { const gap = 50 * u; w = (area.w - gap * (n - 1)) / n; ph = w * 0.72; x = area.x + k * (w + gap); y = area.y + (area.h - ph - 140 * u) / 2 }
-      ctx.save(); ctx.globalAlpha *= a; ctx.translate(0, (1 - a) * 40 * u)
-      rr(ctx, x, y, w, ph, 22 * u); ctx.save(); ctx.clip()
-      const img = get(sc.photos[k] || sc.photos[0] || '')
-      if (img) cover(ctx, img, x, y, w, ph, 1.12 - 0.1 * a); else { ctx.fillStyle = C.navy2; ctx.fillRect(x, y, w, ph) }
-      ctx.restore(); ctx.lineWidth = 2; ctx.strokeStyle = C.line; rr(ctx, x, y, w, ph, 22 * u); ctx.stroke()
-      plain(ctx, t1, x, y + ph + 18 * u, w, 54 * u, A.display, k === 0 ? C.gold : C.ink, 800)
-      plain(ctx, t2, x, y + ph + 88 * u, w, 30 * u, A.body, C.mut, 500)
       ctx.restore()
     }
     return
@@ -645,29 +735,71 @@ export function sceneAt(tl: Timeline, t: number): number {
   return i
 }
 
+/** How scene i arrives. 'auto' varies it so an ad never uses the same move twice in a row. */
+export function transitionOf(p: AdProject, i: number): AdTransition {
+  const t = p.scenes[i]?.tr || 'auto'
+  if (t !== 'auto') return t
+  const k = p.scenes[i].kind
+  if (k === 'kinetic') return 'flash'
+  if (k === 'cta' || k === 'contact') return 'zoom'
+  return (['zoom', 'push', 'wipe', 'fade'] as AdTransition[])[i % 4]
+}
+/** Film finish: a soft vignette and a fine moving grain, so it reads as footage, not slides. */
+let grain: HTMLCanvasElement | null = null
+function finish(ctx: CanvasRenderingContext2D, W: number, H: number, u: number, t: number) {
+  const v = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.hypot(W, H) * 0.62)
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0.38)')
+  ctx.fillStyle = v; ctx.fillRect(0, 0, W, H)
+  if (typeof document === 'undefined') return
+  if (!grain) {
+    grain = document.createElement('canvas'); grain.width = grain.height = 192
+    const g = grain.getContext('2d'); if (!g) return
+    const d = g.createImageData(192, 192)
+    for (let k = 0; k < d.data.length; k += 4) { const n = Math.random() * 255; d.data[k] = d.data[k + 1] = d.data[k + 2] = n; d.data[k + 3] = 18 }
+    g.putImageData(d, 0, 0)
+  }
+  const pat = ctx.createPattern(grain, 'repeat'); if (!pat) return
+  ctx.save(); ctx.translate(-((t * 977) % 192), -((t * 613) % 192)); ctx.fillStyle = pat; ctx.fillRect(0, 0, W + 192, H + 192); ctx.restore()
+}
+
 /** The whole frame at time t: scene (with a crossfade from the previous one), the mark, captions. */
 export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timeline, t: number, A: AdAssets) {
   const W = ctx.canvas.width, H = ctx.canvas.height
   const u = Math.min(W, H) / 1080
   C = (LOOKS.find(l => l.key === p.look) || LOOKS[0]).c
+  if (C.serif && A.serif) A = { ...A, display: A.serif }
   ctx.save()
   ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H)
   if (!p.scenes.length) { ctx.restore(); return }
   const i = sceneAt(tl, t)
   const local = t - tl.starts[i]
-  if (i > 0 && local < XFADE) {
+  const tr = transitionOf(p, i)
+  const XF = tr === 'push' || tr === 'wipe' ? 0.6 : tr === 'cut' ? 0 : XFADE
+  if (i > 0 && local < XF) {
+    const a = ease(local / XF)
     drawScene(ctx, p, i - 1, tl.durs[i - 1] + local, tl.durs[i - 1], A)
-    ctx.globalAlpha = ease(local / XFADE)
-  }
-  drawScene(ctx, p, i, local, tl.durs[i], A)
+    ctx.save()
+    if (tr === 'fade') ctx.globalAlpha = a
+    else if (tr === 'zoom') { ctx.globalAlpha = Math.min(1, a * 1.4); const z = 1.22 - 0.22 * a; ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.translate(-W / 2, -H / 2) }
+    else if (tr === 'push') ctx.translate(W * (1 - a), 0)
+    else if (tr === 'wipe') { const e = a * (W + H * 0.6); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(e, 0); ctx.lineTo(e - H * 0.6, H); ctx.lineTo(0, H); ctx.closePath(); ctx.clip() }
+    else if (tr === 'flash') ctx.globalAlpha = local / XF > 0.5 ? 1 : 0
+    drawScene(ctx, p, i, local, tl.durs[i], A)
+    ctx.restore()
+    if (tr === 'wipe' && a < 1) { const e = a * (W + H * 0.6); ctx.save(); ctx.strokeStyle = C.gold; ctx.lineWidth = 8 * u; ctx.beginPath(); ctx.moveTo(e, 0); ctx.lineTo(e - H * 0.6, H); ctx.stroke(); ctx.restore() }
+    if (tr === 'flash') { ctx.fillStyle = `rgba(255,255,255,${1 - Math.abs(2 * (local / XF) - 1)})`; ctx.fillRect(0, 0, W, H) }
+  } else drawScene(ctx, p, i, local, tl.durs[i], A)
   ctx.globalAlpha = 1
+  finish(ctx, W, H, u, t)
   const sc = p.scenes[i]
   if (A.logo && sc.kind !== 'contact' && sc.kind !== 'cta') {
     const lw = 150 * u, lh = lw * (A.logo.naturalHeight || 106) / (A.logo.naturalWidth || 222)
     ctx.drawImage(A.logo, W - lw - 56 * u, 46 * u, lw, lh)
   }
   // CAPTIONS: the line being spoken (most viewers watch muted). Shown while the line plays.
-  if (p.captions && sc.vo.trim()) {
+  // Captions — unless the screen already says the same words (a kinetic hook, a title that IS the line).
+  const bare = (x: string) => x.replace(/\*\*/g, '').replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase()
+  if (p.captions && sc.vo.trim() && bare(sc.vo) !== bare(sc.head)) {
     const a = clamp(local / 0.3) * clamp((tl.durs[i] - local) / 0.3)
     if (a > 0) {
       const g = ctx.createLinearGradient(0, H - 230 * u, 0, H)

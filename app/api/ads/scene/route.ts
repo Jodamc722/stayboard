@@ -27,14 +27,14 @@ export async function POST(req: NextRequest) {
     let photos = old.photos
     const q = String(j?.photoQuery || '').trim().slice(0, 60)
     if (q) {
-      const want = j?.kind === 'wall' ? 9 : j?.kind === 'cards' ? 3 : 1
+      const want = j?.kind === 'wall' ? 4 : j?.kind === 'cards' ? 3 : 1
       try {
-        const hits = (await searchPhotos(q, 60)).hits.filter(h => h.active)
+        const hits = (await searchPhotos(q, 60)).hits.filter(h => h.active && !/collage|grid|mosaic|side[- ]by[- ]side|split view|multiple (photos|images|views)|before.{0,4}after|floor ?plan/i.test(String(h.caption || '')))
         const got = hits.map(h => h.view || h.url).filter((u, k, a) => a.indexOf(u) === k).slice(0, want)
         if (got.length) photos = got
       } catch { /* keep the old photos */ }
     }
-    const next = normalize({ id: p.id, scenes: [{ ...old, kind: j?.kind || old.kind, vo: j?.vo ?? old.vo, head: j?.head ?? old.head, sub: j?.sub ?? old.sub, items: Array.isArray(j?.items) ? j.items : old.items, photos }] }).scenes[0]
+    const next = normalize({ id: p.id, scenes: [{ ...old, kind: j?.kind || old.kind, tr: j?.tr || old.tr, vo: j?.vo ?? old.vo, head: j?.head ?? old.head, sub: j?.sub ?? old.sub, items: Array.isArray(j?.items) ? j.items : old.items, photos }] }).scenes[0]
     return NextResponse.json({ ok: true, scene: { ...next, id: old.id, sfx: old.sfx || '' }, photoQuery: q })
   } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 }) }
 }
