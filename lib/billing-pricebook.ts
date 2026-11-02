@@ -35,7 +35,7 @@ export async function buildPricebook(by: string): Promise<PriceBook> {
     const data = await billingRange(r.from, r.to)
     for (const t of data.tasks) {
       if (t.excluded || !(t.billedAmount > 0) || t.reviewState === 'open' || t.gmBy === 'auto' || t.routine) continue
-      if (isDepartureCleanName(t.name)) continue
+      if (isDepartureCleanName(t.name) || t.billable?.category === 'inspection') continue
       ;(rows[t.kind] = rows[t.kind] || []).push({ amount: t.billedAmount, unit: t.unit, day: String(t.scheduledDate || t.finishedAt || '').slice(0, 10) })
     }
   }

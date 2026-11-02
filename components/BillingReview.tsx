@@ -89,7 +89,7 @@ const FLAG_SHORT: Record<Flag, string> = {
 // note = information. Rows sort by this, worst first.
 const FLAG_LEVEL: Record<Flag, 3 | 2 | 1> = {
   should_bill: 3, no_report: 3, duplicate: 3, repeat_unit: 3, not_done: 3, price_outlier: 3, no_time: 3,
-  over_150: 2, thin_report: 2, override_far: 2, long_hours: 2, billed_routine: 2, underpriced: 2, ai_bill: 2, no_owner: 2,
+  billed_routine: 3, over_150: 2, thin_report: 2, override_far: 2, long_hours: 2, underpriced: 2, ai_bill: 2, no_owner: 2,
   no_detail: 1, ai_pending: 1, no_price: 1,
 }
 const severity = (t: Task) => t.flags.reduce((m, f) => Math.max(m, FLAG_LEVEL[f] || 0), 0)

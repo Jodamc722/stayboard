@@ -639,6 +639,14 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
       routine: t.routine, isDeparture: isDepartureCleanName(t.name), aiVerdict: t.aiVerdict,
     }, bModel)
   }
+  // INSPECTIONS NEVER BILL (Jon, 2026-11-02: "Inspections should not be charged … never, because
+  // work is not done"). An inspection finds the work; the repair it raises is what bills. So an
+  // inspection is never suggested a price, never "should bill", and one carrying money is flagged.
+  for (const t of tasks) {
+    if (/inspection/i.test(t.department) || /\binspect(ion|ed|ing)?\b|walk[\s-]?through/i.test(t.name)) {
+      t.billable = { ...(t.billable || {} as any), verdict: 'no', category: 'inspection', reasons: ['Inspections are never billed to owners — the repair it finds is what bills'] }
+    }
+  }
   // ── PRICE + REPORT CONTEXT (Jon, 2026-11-02) ────────────────────────────────────────────────
   let houseRate = 40
   try { const r = await getSetting<any>('billing_default_rate', null); if (Number(r?.rate) > 0) houseRate = Number(r.rate) } catch { /* $40 */ }
@@ -688,7 +696,7 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
     const unpriced = finished && !t.excluded && t.billedAmount === 0 && t.overrideAmount == null && t.reviewState !== 'gm_approved'
     if (unpriced && (t.billable.verdict === 'bill' || t.billable.verdict === 'likely')) f.push('should_bill')
     else if (unpriced && t.billable.verdict === 'maybe' && !isDepartureCleanName(t.name) && !t.routine) f.push('no_price')
-    if (t.billedAmount > 0 && t.billable.verdict === 'no' && t.overrideAmount == null) f.push('billed_routine')
+    if (t.billedAmount > 0 && t.billable.verdict === 'no' && (t.overrideAmount == null || t.billable.category === 'inspection')) { f.push('billed_routine'); if (t.billable.category === 'inspection') why.billed_routine = 'an inspection — inspections are never billed' }
     if (t.routine && t.reviewState === 'open' && t.overrideAmount == null && !t.excluded) {
       if (t.aiVerdict === 'bill') f.push('ai_bill')
       else if (!t.aiVerdict && t.billedAmount === 0 && !isBareRoutine(t.name, t.description)) f.push('ai_pending')
