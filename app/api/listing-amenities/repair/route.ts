@@ -52,8 +52,16 @@ export async function POST(req: NextRequest) {
   const started = Date.now()
   for (const r of rows) {
     if (Date.now() - started > 270_000) { results.push({ id: r.id, name: r.name, skipped: 'time budget' }); continue }
-    const put = await fetch(`${BASE}/properties-api/amenities/${encodeURIComponent(r.id)}`, { method: 'PUT', headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ amenities: r.next }) })
-    const txt = await put.text().catch(() => '')
+    // Guesty: 15/s, 120/min; a 429 says wait, so wait and try again (up to 4 times).
+    let put: Response | null = null, txt = ''
+    for (let attempt = 0; attempt < 4; attempt++) {
+      put = await fetch(`${BASE}/properties-api/amenities/${encodeURIComponent(r.id)}`, { method: 'PUT', headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ amenities: r.next }) })
+      txt = await put.text().catch(() => '')
+      if (put.status !== 429) break
+      const ra = Number(put.headers.get('retry-after')) || 0
+      await new Promise(res => setTimeout(res, Math.max(2000, ra * 1000) * (attempt + 1)))
+    }
+    if (!put) continue
     if (!put.ok) { results.push({ id: r.id, name: r.name, error: `Guesty ${put.status}: ${txt.slice(0, 120)}` }); continue }
     let updated: string[] = r.next
     try { const j = JSON.parse(txt); const arr = Array.isArray(j) ? j : Array.isArray(j?.amenities) ? j.amenities : null; if (arr) updated = arr.filter((x: any) => typeof x === 'string') } catch { /* keep sent */ }
@@ -61,7 +69,7 @@ export async function POST(req: NextRequest) {
     const missed = r.add.filter(a => !landed.includes(a))
     try { const { data: row } = await sb.from('guesty_listings').select('raw').eq('id', r.id).maybeSingle(); const raw: any = row?.raw && typeof row.raw === 'object' ? row.raw : {}; await sb.from('guesty_listings').update({ amenities: updated, raw: { ...raw, amenities: updated }, amenities_pushed_at: new Date().toISOString() }).eq('id', r.id) } catch { /* mirror next sync */ }
     results.push({ id: r.id, name: r.name, added: landed, missed })
-    await new Promise(res => setTimeout(res, 150))
+    await new Promise(res => setTimeout(res, 600))
   }
   return NextResponse.json({ ok: true, repaired: results.filter(x => x.added).length, results })
 }
