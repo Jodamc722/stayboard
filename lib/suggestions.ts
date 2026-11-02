@@ -918,7 +918,17 @@ export async function createFromSuggestion(s: Suggestion, by: string | null, opt
     })
     if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
     const taskId = String(r.data.id)
-    if (assigneeId != null && Number.isFinite(assigneeId)) {
+    // THE PROGRAM'S TEAM (Upkeep → Edit program): when nobody was picked by hand, the team set for
+    // this unit / building / program gets it — everyone on it, not just the first name.
+    let teamIds: { id: number; name: string }[] = []
+    if ((opts.assignee === undefined || opts.assignee === null) && cad) {
+      const { teamFor } = await import('./cadences')
+      const team = teamFor(cad, s.listingId, s.building)
+      if (team) for (const n of team) { try { const id = await matchBreezewayPerson(n); if (id != null && Number.isFinite(id) && !teamIds.some(t => t.id === id)) teamIds.push({ id, name: n }) } catch { /* skip */ } }
+    }
+    if (teamIds.length) {
+      try { await updateBreezewayTask(taskId, { assignments: teamIds.map(t => t.id) }) } catch { /* shows unassigned */ }
+    } else if (assigneeId != null && Number.isFinite(assigneeId)) {
       try { await updateBreezewayTask(taskId, { assignments: [assigneeId] }) } catch { /* shows unassigned */ }
     }
     // Write-through so the board shows it before the next sync.
@@ -929,11 +939,11 @@ export async function createFromSuggestion(s: Suggestion, by: string | null, opt
         // {id,name} OBJECTS, not bare strings (2026-09-09 audit): the board reads
         // `assignees.map(p => p.name)`, so a string here rendered the task as unowned — a rose dot
         // on the job you just handed to somebody — until the next sync overwrote it.
-        assignees: assigneeId != null && who ? [{ id: assigneeId, name: who }] : [],
+        assignees: teamIds.length ? teamIds : assigneeId != null && who ? [{ id: assigneeId, name: who }] : [],
         raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString(),
       }, { onConflict: 'id' })
     } catch { /* sync catches up */ }
-    return { ok: true, taskId, assigned: assigneeId != null ? who : null, name, scheduled }
+    return { ok: true, taskId, assigned: teamIds.length ? teamIds.map(t => t.name).join(', ') : assigneeId != null ? who : null, name, scheduled }
   } catch (e: any) {
     return { ok: false, error: `Breezeway would not create it: ${String(e?.message || e)}` }
   }

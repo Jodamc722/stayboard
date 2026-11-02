@@ -15,12 +15,13 @@
 // unit nobody has logged the job on — not "late", because it is far more often a data gap.
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Loader2, RefreshCw, Plus, ExternalLink, Search, LayoutGrid, List, CalendarDays, Wrench, Sparkles, Fan, ClipboardCheck, Building2 } from 'lucide-react'
+import { Loader2, RefreshCw, Plus, ExternalLink, Search, LayoutGrid, List, CalendarDays, Pencil, Wrench, Sparkles, Fan, ClipboardCheck, Building2 } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { LeanHead, Pill, Tag, LeanEmpty, type Tone } from '@/components/lean'
 import type { Upkeep, UpkeepProgram, UpkeepRow, UpkeepState } from '@/app/api/upkeep/route'
 import { UpkeepCalendar } from '@/components/UpkeepCalendar'
 import { UpkeepPrograms } from '@/components/UpkeepPrograms'
+import { UpkeepProgramEdit } from '@/components/UpkeepProgramEdit'
 
 const url = (market: string) => '/api/upkeep?market=' + encodeURIComponent(market)
 const bzTask = (id: string) => 'https://app.breezeway.io/task/' + encodeURIComponent(id)
@@ -57,6 +58,8 @@ export function UpkeepBoard() {
   // Always opens on Programs (Jon, 2026-10-19); the calendar is one click away.
   const [tab, setTab] = useState<'programs' | 'calendar' | 'property'>('programs')
   const [calProg, setCalProg] = useState<string>('')
+  const [editProg, setEditProg] = useState<string | null>(null)   // cadence key, '' = new program, null = closed
+  const [savedMsg, setSavedMsg] = useState('')
   const [busy, setBusy] = useState('')
   const [filed, setFiled] = useState<Record<string, string>>({})
   const [err, setErr] = useState('')
@@ -145,7 +148,7 @@ export function UpkeepBoard() {
           need to be done in a particular period of time, so there should be a settings where we can
           build that into") — Settings → Preventative cadences: name, every N days, trade, what counts
           as done, which equipment / buildings, whether the next one is filed automatically. */}
-      <Link href="/users?tab=settings&panel=cadences" className="h-8 px-2.5 rounded-lg bg-ink text-white text-[12px] font-semibold inline-flex items-center gap-1"><Plus size={12} /> Program</Link>
+      <button onClick={() => { setTab('programs'); setEditProg('') }} className="h-8 px-2.5 rounded-lg bg-ink text-white text-[12px] font-semibold inline-flex items-center gap-1"><Plus size={12} /> Program</button>
     </LeanHead>
   )
 
@@ -169,6 +172,8 @@ export function UpkeepBoard() {
         {tab === 'calendar' ? <span className="ml-2 text-[12px] text-muted hidden sm:inline">Green = you can get in · grey = guest in · coloured bars = reservations · click any day to book or block</span> : null}
       </div>
 
+      {savedMsg ? <p className="text-[12.5px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">{savedMsg}</p> : null}
+      {editProg !== null && tab === 'programs' ? <UpkeepProgramEdit cadenceKey={editProg || undefined} onClose={() => setEditProg(null)} onSaved={label => { setEditProg(null); setSavedMsg('Saved ' + label + ' — the tiles refresh with it.'); reload() }} /> : null}
       {tab === 'property' ? <UpkeepPrograms /> : tab === 'calendar' ? (
         <section className="rounded-2xl border border-line bg-white overflow-hidden">
           <header className="px-3 py-2 border-b border-line flex items-center gap-2 flex-wrap">
@@ -233,6 +238,7 @@ export function UpkeepBoard() {
                 {([['list', 'List', List, 'One row per unit'], ['grid', 'Grid', LayoutGrid, 'Every unit against every program']] as const).map(([k, label, Icon, tip]) => (
                   <button key={k} onClick={() => setView(k)} aria-pressed={view === k} title={tip} className={'h-7 px-2 inline-flex items-center gap-1 text-[11.5px] font-semibold ' + (view === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}><Icon size={12} /> {label}</button>
                 ))}
+                <button onClick={() => setEditProg(prog.key)} title="Edit this program — how often, auto-create, where, who gets it" className="h-7 px-2 inline-flex items-center gap-1 text-[11.5px] font-semibold bg-white text-muted hover:text-ink border-r border-line"><Pencil size={12} /> Edit</button>
                 <button onClick={() => { setCalProg(prog.key); setTab('calendar') }} title="This program on the calendar — open days, who is there, click a day to book" className="h-7 px-2 inline-flex items-center gap-1 text-[11.5px] font-semibold bg-white text-muted hover:text-ink"><CalendarDays size={12} /> Calendar</button>
               </span>
             </span>

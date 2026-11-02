@@ -117,7 +117,7 @@ export function UpkeepPrograms() {
                   <li key={pl.id} className="px-3 py-2 flex items-center gap-2 flex-wrap text-[12.5px]">
                     {pl.kind === 'unit' ? <Home size={13} className="text-muted" /> : <Building2 size={13} className="text-muted" />}
                     <span className="font-semibold text-ink min-w-[90px]">{pl.label}</span>
-                    <span className="text-muted flex-1 min-w-[140px]">{scheduleText(pl)}{plan?.where ? ' · ' + plan.where : ''}</span>
+                    <span className="text-muted flex-1 min-w-[140px]">{scheduleText(pl)}{plan?.where ? ' · ' + plan.where : ''}{pl.people && pl.people.length ? ' · team: ' + pl.people.map(x => x.name.split(' ')[0]).join(', ') : ''}</span>
                     {plan && (plan.people.length + plan.cleaners.length) && p.active ? <span className="text-[11.5px] text-muted inline-flex items-center gap-1" title={plan.people.concat(plan.cleaners).map(x => x.name).join(', ')}><Users size={12} /> {plan.people.length + plan.cleaners.length}</span> : null}
                     <Tag tone={t.tone}>{t.text}</Tag>
                     {t.task ? <a href={bz(t.task)} target="_blank" rel="noreferrer" className="text-muted hover:text-ink" title="Open in Breezeway"><ExternalLink size={13} /></a> : null}
@@ -252,6 +252,7 @@ function Editor({ initial, options, busy, err, onCancel, onSave, onDelete }: {
                   <button onClick={() => setPlace(pl.id, { onCleanDays: !pl.onCleanDays })} className={chip(pl.onCleanDays)} title="Also any day a clean is scheduled there">+ clean days</button>
                 </div>
                 <div className="text-[11.5px] text-muted">{scheduleText(pl)}</div>
+                <PlaceTeam place={pl} roster={people} programPeople={p.people} onChange={team => setPlace(pl.id, { people: team })} />
               </li>
             ))}
             {!p.places.length ? <li className="text-[12px] text-muted">Search above to add the first building or unit. A building’s task goes on its Exterior property in Breezeway, else its first unit.</li> : null}
@@ -260,7 +261,7 @@ function Editor({ initial, options, busy, err, onCancel, onSave, onDelete }: {
 
         {/* 4 — who */}
         <div className="space-y-2">
-          <div className="text-[12px] font-bold uppercase tracking-wide text-muted">4 · Who gets it</div>
+          <div className="text-[12px] font-bold uppercase tracking-wide text-muted">4 · Who gets it <span className="normal-case font-normal">(every place, unless a place has its own team above)</span></div>
           <div className="flex gap-1.5 flex-wrap items-center">
             {p.people.map(x => <span key={x.id} className="h-7 pl-2.5 pr-1 rounded-full bg-ink text-white text-[11.5px] font-semibold inline-flex items-center gap-1">{x.name}<button onClick={() => set({ people: p.people.filter(y => y.id !== x.id) })} className="h-5 w-5 inline-flex items-center justify-center rounded-full hover:bg-white/20"><X size={11} /></button></span>)}
             <label className="flex items-center gap-1.5 h-7 rounded-full border border-line px-2.5"><Plus size={12} className="text-muted" />
@@ -288,5 +289,36 @@ function Editor({ initial, options, busy, err, onCancel, onSave, onDelete }: {
         </div>
       </div>
     </section>
+  )
+}
+
+// A PLACE'S OWN TEAM (Jon, 2026-11-02: "assign by buildings / units if needed"). Off = the program's
+// people; on = only the people chosen here get this place's task.
+function PlaceTeam({ place, roster, programPeople, onChange }: { place: Place; roster: Person[]; programPeople: Person[]; onChange: (p: Person[] | undefined) => void }) {
+  const own = !!(place.people && place.people.length)
+  const [open, setOpen] = useState(own)
+  const [q, setQ] = useState('')
+  const team = place.people || []
+  const hits = q.trim() ? roster.filter(x => x.name.toLowerCase().includes(q.trim().toLowerCase()) && !team.some(y => y.id === x.id)).slice(0, 8) : []
+  const chip = (on: boolean) => 'h-7 px-2.5 rounded-full border text-[11.5px] font-semibold ' + (on ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line hover:border-ink/40')
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1 flex-wrap text-[11.5px]">
+        <Users size={12} className="text-muted" />
+        <button onClick={() => { setOpen(false); onChange(undefined) }} className={chip(!open)}>Program team{programPeople.length ? ' (' + programPeople.map(x => x.name.split(' ')[0]).join(', ') + ')' : ''}</button>
+        <button onClick={() => setOpen(true)} className={chip(open)}>Own team for {place.label || 'this place'}</button>
+      </div>
+      {open ? (
+        <>
+          <div className="flex gap-1.5 flex-wrap items-center">
+            {team.map(x => <span key={x.id} className="h-7 pl-2.5 pr-1 rounded-full bg-ink text-white text-[11.5px] font-semibold inline-flex items-center gap-1">{x.name}<button onClick={() => onChange(team.filter(y => y.id !== x.id))} className="h-5 w-5 inline-flex items-center justify-center rounded-full hover:bg-white/20"><X size={11} /></button></span>)}
+            <label className="flex items-center gap-1.5 h-7 rounded-full border border-line px-2.5"><Plus size={12} className="text-muted" />
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Add a person" className="w-[120px] bg-transparent text-[12px] outline-none" /></label>
+          </div>
+          {hits.length ? <div className="flex gap-1.5 flex-wrap">{hits.map(x => <button key={x.id} onClick={() => { onChange(team.concat([x])); setQ('') }} className={chip(false)}>{x.name}</button>)}</div> : null}
+          {!team.length ? <p className="text-[11px] text-muted">Add at least one person, or switch back to the program team.</p> : null}
+        </>
+      ) : null}
+    </div>
   )
 }

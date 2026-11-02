@@ -45,6 +45,8 @@ export type Place = {
   days: number[]
   alternate: boolean
   onCleanDays: boolean
+  /** This place's own team; empty/absent = the program's people. */
+  people?: Person[]
 }
 export type Program = {
   id: string
@@ -133,6 +135,7 @@ function clean(p: any): Program | null {
     days: (Array.isArray(x?.days) ? x.days : []).map(Number).filter((n: number) => n >= 0 && n <= 6),
     alternate: !!x?.alternate,
     onCleanDays: !!x?.onCleanDays,
+    people: (Array.isArray(x?.people) ? x.people : []).map((y: any) => ({ id: Number(y?.id), name: str(y?.name) })).filter((y: Person) => Number.isFinite(y.id) && y.id > 0).slice(0, 12),
   })).filter((x: Place) => x.ref && x.label)
   const people: Person[] = (Array.isArray(p.people) ? p.people : []).map((x: any) => ({ id: Number(x?.id), name: str(x?.name) })).filter((x: Person) => Number.isFinite(x.id) && x.id > 0)
   return {
@@ -360,7 +363,7 @@ export async function planPrograms(day = ymdET(new Date()), only?: string): Prom
     const scheduled = onDays(place, day)
     const due = scheduled || (place.onCleanDays && cleanToday)
     const why = scheduled ? scheduleLine(place) : place.onCleanDays && cleanToday ? 'clean scheduled today' : 'not today'
-    const people = p.people
+    const people = place.people && place.people.length ? place.people : p.people
     let action: PlacePlan['action'] = 'none', note = ''
     if (r.homeId == null && !todayT && !carry) { action = 'skip'; note = place.kind === 'unit' ? 'unit not in Breezeway' : 'no Breezeway property at this building yet' }
     else if (todayT) { action = 'add'; note = 'today’s task is on the board' }

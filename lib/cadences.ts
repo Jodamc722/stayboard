@@ -130,6 +130,27 @@ export type CadenceDef = {
    * doing it and the person billing it read the same number.
    */
   billing?: { kind: 'cleaning_fee' | 'flat' | 'none'; times?: number; flat?: number; flatByBuilding?: Record<string, number> }
+  /**
+   * WHO GETS IT (Jon, 2026-11-02: "auto assign team … assign by buildings / units if needed").
+   * Breezeway names. `team` is the program's default; a `teamBy` rule for the unit, else for its
+   * building, wins over it. Empty everywhere = the old behaviour (whoever is already going there,
+   * else the market supervisor).
+   */
+  team?: string[]
+  teamBy?: TeamRule[]
+}
+
+export type TeamRule = { kind: 'building' | 'unit'; ref: string; label: string; names: string[] }
+
+/** The team for one unit: its unit rule, else its building's rule, else the program default. Null = no team set. */
+export function teamFor(c: Pick<CadenceDef, 'team' | 'teamBy'>, listingId: string, building: string | null | undefined): string[] | null {
+  const rules = c.teamBy || []
+  const u = rules.find(r => r.kind === 'unit' && r.ref === listingId && r.names.length)
+  if (u) return u.names
+  const b = String(building || '').trim().toLowerCase()
+  const br = b ? rules.find(r => r.kind === 'building' && r.ref.trim().toLowerCase() === b && r.names.length) : null
+  if (br) return br.names
+  return c.team && c.team.length ? c.team : null
 }
 
 export type CadenceCfg = {
@@ -417,6 +438,11 @@ export function resolveCadences(raw: any): CadenceCfg {
       billing: isObj(o?.billing) && ['cleaning_fee', 'flat', 'none'].includes(String(o.billing.kind))
         ? { kind: o.billing.kind, times: num(o.billing.times, 1, 0, 5), flat: num(o.billing.flat, 0, 0, 100000), flatByBuilding: isObj(o.billing.flatByBuilding) ? o.billing.flatByBuilding : base.billing?.flatByBuilding }
         : base.billing,
+      team: Array.isArray(o?.team) ? (strList(o.team, []) || []).slice(0, 12) : base.team,
+      teamBy: Array.isArray(o?.teamBy)
+        ? (o.teamBy as any[]).filter(r => isObj(r) && (r.kind === 'building' || r.kind === 'unit') && String(r.ref || '').trim()).slice(0, 200)
+          .map(r => ({ kind: r.kind, ref: String(r.ref).trim().slice(0, 80), label: txt(r.label, String(r.ref), 80), names: (strList(r.names, []) || []).slice(0, 12) }))
+        : base.teamBy,
       equipment: superseded(base.key, 'equipment', o?.equipment) ? (base.equipment || 'any') : ['any', 'central', 'mini-split', 'window', 'non-central'].includes(String(o?.equipment)) ? o.equipment : (base.equipment || 'any'),
     }
   }

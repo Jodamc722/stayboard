@@ -14,7 +14,7 @@
 //   → programs[]: per program — late, due soon (14 days), on track, booked, no record — and rows.
 import { NextRequest, NextResponse } from 'next/server'
 import { buildDueCalendar, type DueItem } from '@/lib/pm-calendar'
-import { CADENCE_KEY, resolveCadences, type CadenceDef } from '@/lib/cadences'
+import { CADENCE_KEY, resolveCadences, teamFor, type CadenceDef } from '@/lib/cadences'
 import { getSetting } from '@/lib/app-settings'
 import { requireLevel } from '@/lib/access'
 import { atLeast } from '@/lib/features'
@@ -348,7 +348,8 @@ export async function POST(req: NextRequest) {
     // The person already going there, when there is one; else the market supervisor (maintenance).
     // The coordinator's own pick from the calendar wins outright ('' = book it unassigned).
     const picked = typeof body?.assignee === 'string' ? String(body.assignee).trim().slice(0, 80) : null
-    const assignees = picked !== null ? (picked ? [picked] : []) : plan ? Array.from(new Set([plan.person, c.dept === 'housekeeping' ? '' : automation?.assignAlways].filter(Boolean))) as string[]
+    const team = teamFor(c, listingId, building)
+    const assignees = picked !== null ? (picked ? [picked] : []) : team ? team : plan ? Array.from(new Set([plan.person, c.dept === 'housekeeping' ? '' : automation?.assignAlways].filter(Boolean))) as string[]
       : c.dept === 'housekeeping' ? [] : Array.from(new Set([automation?.assignAlways, sup].filter(Boolean))) as string[]
     const unitInfo = (await getUnitInfo().catch(() => ({} as Record<string, UnitInfo>)))[listingId]
     const title = `${c.label} — ${unit}`
