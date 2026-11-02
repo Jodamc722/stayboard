@@ -145,15 +145,84 @@ function clean(p: any): Program | null {
   }
 }
 
+// EVERY RECURRING TASK LIVES HERE (Jon, 2026-11-02: "make sure we add any recurring task to
+// upkeep / programs. This will be the place we can add recurring tasks to manage"). Two recurring
+// Breezeway jobs used to be hard-coded crons — the weekly Property Exterior Walkthrough
+// (lib/standing-walkthroughs) and the daily Parking Check (lib/parking-daily-task). They are brought
+// in once as ordinary programs, with the same title prefix so their open tasks are carried rather
+// than duplicated, and from then on they are edited, paused or deleted here like any other. The
+// crons that ran them now stand down (they return "moved to programs").
+const LEGACY_VERSION = 2
+const WALK_DESC = [
+  'Weekly walk of the property exterior. Check and ATTACH PHOTOS of each:',
+  '• Landscaping', '• Plants', '• Weeds', '• Wall damage', '• Roof damage', '• Leaks', '• All the hoses',
+  '• The pool (if applicable)', '• Barbecue grills, etc.',
+  'Anything wrong: photograph it and open a maintenance task.',
+].join('\n')
+const PARKING_DESC = [
+  'Daily parking check. Every car in the lot must be registered.',
+  '',
+  '{parking}',
+  '',
+  '1. Open the link on your phone and enter the passcode. If it asks "Which property are you at?", tap the property.',
+  '2. Type your name (the phone remembers it).',
+  '3. Tap "Walk the lot" and go spot by spot — or "Scan plates" and point the camera at each plate.',
+  '4. Green = registered. Red = NOT registered → tap "Flag this car" and take a photo.',
+  '5. A guest car that is not on the list but belongs to a guest → "Register it".',
+  '6. Finish the walk, then complete this task. Flags go to the office for the 1-hour tow notice.',
+].join('\n')
+async function legacyPrograms(): Promise<Program[]> {
+  const people: Person[] = breezewayConfigured() ? await breezewayPeopleLite().catch(() => [] as any[]) as any : []
+  const who = (res: RegExp[]) => res.map(re => people.find(p => re.test(str(p.name).trim()))).filter(Boolean).map(p => ({ id: Number((p as any).id), name: str((p as any).name) }))
+  const bld = (ref: string, label: string, days: number[]): Place => ({ id: ref.toLowerCase().replace(/[^a-z0-9]+/g, '-'), kind: 'building', ref, label, days, alternate: false, onCleanDays: false })
+  return [
+    {
+      id: 'exterior-walkthrough', name: 'Property Exterior Walkthrough', active: true, templateId: null, templateName: '', department: 'inspection',
+      description: WALK_DESC, addCleaners: false,
+      people: who([/^guillermo\b/i, /^oscar\b/i, /^gehron\b/i, /^roberto\b/i, /^jon\b|^jonathan\b/i]),
+      places: [bld('906', '906', [1]), bld('Eden', 'Eden Oasis', [1]), bld('Hendricks', 'Hendricks', [1]), bld('17WEST', '17 West', [1]), bld('3316', '3316', [1]), bld('Rustic', 'Rustic', [1]), bld('Pelican', 'Pelican', [1])],
+    },
+    {
+      id: 'parking-check', name: 'Parking Check', active: true, templateId: null, templateName: '', department: 'inspection',
+      description: PARKING_DESC, addCleaners: true,
+      people: who([/^guillermo\b/i, /^oscar\b/i]),
+      places: [bld('Eden', 'Eden', ALL)],
+    },
+  ]
+}
+
 export async function loadPrograms(): Promise<Program[]> {
   const raw = await getSetting<any>(PROGRAMS_KEY, null)
   const list = raw && Array.isArray(raw.programs) ? raw.programs : null
-  if (!list) return SEED.map(p => ({ ...p }))
-  return list.map(clean).filter(Boolean) as Program[]
+  let programs = list ? (list.map(clean).filter(Boolean) as Program[]) : SEED.map(p => ({ ...p }))
+  if (!raw || Number(raw.legacy) !== LEGACY_VERSION) {
+    const add = (await legacyPrograms()).filter(l => !programs.some(p => p.id === l.id || p.name.trim().toLowerCase() === l.name.toLowerCase()))
+    programs = programs.concat(add)
+    await savePrograms(programs, 'system: recurring tasks brought into programs').catch(() => null)
+  }
+  return programs
 }
 
 export async function savePrograms(programs: Program[], by?: string): Promise<{ ok: boolean; error?: string }> {
-  return setSetting(PROGRAMS_KEY, { programs }, by || null)
+  return setSetting(PROGRAMS_KEY, { programs, legacy: LEGACY_VERSION }, by || null)
+}
+
+/** {parking} in a description becomes the place's parking-lot link and passcode, read live. */
+async function expandDescription(desc: string, place: { ref: string; label: string }): Promise<string> {
+  if (desc.indexOf('{parking}') < 0) return desc
+  let block = 'Parking link: none set up for this property yet (Parking page in Lighthouse).'
+  try {
+    const { listLots, lotByCode } = await import('./parking-lots')
+    const esc = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const res = [place.ref, place.label].filter(Boolean).map(w => new RegExp('\\b' + esc(w.split(' ')[0]) + '\\b', 'i'))
+    const lot = (await listLots()).find(l => l.active && res.some(re => re.test(l.building + ' ' + l.name)))
+    if (lot) {
+      const full = await lotByCode(lot.shareCode)
+      const app = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
+      block = 'LINK: ' + app + '/lot/' + lot.shareCode + '\nPASSCODE: ' + (full?.passcode || '(none — the link opens straight away)')
+    }
+  } catch { /* the instructions still go out */ }
+  return desc.split('{parking}').join(block)
 }
 
 /** Save one program (create or replace by id). Names must be unique: the name is how its tasks are found. */
@@ -293,12 +362,15 @@ export async function planPrograms(day = ymdET(new Date()), only?: string): Prom
     if (r.homeId == null && !todayT && !carry) { action = 'skip'; note = place.kind === 'unit' ? 'unit not in Breezeway' : 'no Breezeway property at this building yet' }
     else if (todayT) { action = 'add'; note = 'today’s task is on the board' }
     else if (carry) { action = 'move'; note = 'not done on ' + carry.date + ' — moves to today' }
+    else if (due && here.some(t => str(t.name).indexOf(titlePrefix(p)) === 0 && str(t.scheduled_date) === day && isTaskDone(t.status, t.finished_at))) { action = 'none'; note = 'done today' }
     else if (due) { action = 'create'; note = 'due — ' + why }
     else note = 'not today'
     plans.push({ ...base, due, why, people, cleaners, today: todayT, carry, extras, action, note })
   }
   return { day, plans }
 }
+
+const place0 = (p: Program, pl: PlacePlan) => { const x = p.places.find(q => q.id === pl.placeId); return { ref: x ? x.ref : pl.label, label: pl.label } }
 
 export async function runPrograms(opts: { dryRun?: boolean; only?: string } = {}) {
   const { day, plans } = await planPrograms(undefined, opts.only)
@@ -348,7 +420,7 @@ export async function runPrograms(opts: { dryRun?: boolean; only?: string } = {}
     if (opts.dryRun) { lines.push(tag + ' (' + pl.why + '): would create at ' + pl.where + ' for ' + (pl.people.concat(pl.cleaners).map(x => x.name).join(', ') || 'nobody')); continue }
     const res = await createBreezewayTask({
       home_id: pl.homeId, name: taskTitle(p, { label: pl.label } as Place), type_department: p.department, scheduled_date: day,
-      template_id: p.templateId || null, ...(p.description ? { description: p.description } : {}), ...(want.length ? { assignments: want } : {}),
+      template_id: p.templateId || null, ...(p.description ? { description: await expandDescription(p.description, place0(p, pl)) } : {}), ...(want.length ? { assignments: want } : {}),
     })
     const id = res.ok && res.data ? str(res.data.id) : ''
     if (!id) { lines.push(tag + ': Breezeway said ' + res.status + ' ' + str(res.text).slice(0, 120)); continue }

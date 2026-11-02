@@ -13,6 +13,9 @@ export const maxDuration = 120
 async function run(req: NextRequest) {
   const gate = await requireCron(req)
   if (!gate.ok) return gate.res
+  // MOVED TO UPKEEP → PROGRAMS (Jon, 2026-11-02: every recurring task is managed there). The
+  // program of the same name now creates these tasks; this route stays so an old link answers.
+  if (req.nextUrl.searchParams.get('legacy') !== '1') return NextResponse.json({ ok: true, moved: 'Upkeep → Programs', count: 0 })
   const r = await runParkingTasks({ dryRun: req.nextUrl.searchParams.get('dry') === '1' })
   return NextResponse.json({ ...r, count: r.created + r.updated })
 }

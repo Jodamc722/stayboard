@@ -274,6 +274,7 @@ function Editor({ initial, options, busy, err, onCancel, onSave, onDelete }: {
         <div className="space-y-1.5">
           <div className="text-[12px] font-bold uppercase tracking-wide text-muted">5 · Note on the task <span className="normal-case font-normal">(optional)</span></div>
           <textarea value={p.description} onChange={e => set({ description: e.target.value })} rows={3} placeholder="What to do, in English and Spanish" className="w-full rounded-lg border border-line px-2.5 py-2 text-[12.5px]" />
+          <p className="mt-1 text-[11px] text-muted">Put <code>{'{parking}'}</code> anywhere in it to add the property&rsquo;s parking-lot link and passcode, read fresh each day.</p>
         </div>
 
         {err ? <p className="text-[12.5px] text-rose-700">{err}</p> : null}

@@ -161,14 +161,6 @@
       "schedule": "*/15 * * * *"
     },
     {
-      "path": "/api/cron/walkthroughs",
-      "schedule": "52 10,11 * * *"
-    },
-    {
-      "path": "/api/cron/parking-task",
-      "schedule": "41 11,12,14,16 * * *"
-    },
-    {
       "path": "/api/cron/site-programs",
       "schedule": "46 11,13,15,17 * * *"
     },
