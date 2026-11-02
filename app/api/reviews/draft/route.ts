@@ -162,14 +162,20 @@ export async function POST(req: NextRequest) {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ error: 'AI not configured — add ANTHROPIC_API_KEY in Vercel env.' }, { status: 503 })
 
-  const { content, rating, guest, channel, instruction, currentDraft, voicePreview } = await req.json().catch(() => ({} as any))
+  const { content, rating, guest, channel, instruction, currentDraft, voicePreview, listing_name, listingId } = await req.json().catch(() => ({} as any))
+  // Homes hosted under the owners' names (lib/host-voice): Boynton replies are Vanessa and Taylor's.
+  const { hostVoiceFor, hostVoicePrompt, applyHostVoice } = await import('@/lib/host-voice')
+  let hv = hostVoiceFor(typeof listing_name === 'string' ? listing_name : '')
+  if (!hv && typeof listingId === 'string' && listingId) {
+    try { const { supabaseAdmin } = await import('@/lib/supabase-admin'); const { data: l } = await supabaseAdmin().from('guesty_listings').select('nickname,title,building').eq('id', listingId).maybeSingle(); if (l) hv = hostVoiceFor(l.nickname, l.title, l.building) } catch { /* house voice */ }
+  }
   const draft = typeof currentDraft === 'string' ? currentDraft.trim() : ''
   const instr = typeof instruction === 'string' ? instruction.trim() : ''
 
   // voicePreview: the admin voice-training playground sends its UNSAVED editor state so admins can
   // test guideline changes before saving. Everyone else gets the saved profile.
   const voice = (voicePreview && typeof voicePreview === 'object') ? voicePreview : await getVoice()
-  const systemText = SYSTEM + voiceSection(voice)
+  const systemText = SYSTEM + voiceSection(voice) + (hv ? hostVoicePrompt(hv, 'review') : '')
   // PROMPT CACHE (2026-09-18). The rules plus the saved voice profile (guidelines + up to twelve
   // example replies) are the same bytes on every draft — several thousand tokens on Opus — and a
   // host answering reviews clicks Draft/Rewrite many times within the five-minute cache window.
@@ -226,7 +232,7 @@ export async function POST(req: NextRequest) {
     if (!d) return NextResponse.json({ error: overloaded ? 'Anthropic is briefly overloaded - please click Rewrite again in a few seconds.' : (lastErr || 'AI request failed.') }, { status: 503 })
     const out = Array.isArray(d?.content) ? d.content.map((c: any) => c?.text || '').join('').trim() : ''
     if (!out) return NextResponse.json({ error: 'Empty draft from AI.' }, { status: 502 })
-    return NextResponse.json({ draft: weNotThem(out) })
+    return NextResponse.json({ draft: hv ? applyHostVoice(weNotThem(out), hv, 'review') : weNotThem(out) })
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || String(e) }, { status: 500 })
   }

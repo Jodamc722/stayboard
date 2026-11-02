@@ -292,9 +292,15 @@ const task_cancel: Executor = async (p) => {
 const guest_reply_draft: Executor = async (p, ctx) => {
   const conversationId = str(p?.conversationId || p?.conversation_id).trim()
   const reviewId = str(p?.reviewId || p?.review_id).trim()
-  const draft = str(p?.draft || p?.body || p?.text).trim()
+  let draft = str(p?.draft || p?.body || p?.text).trim()
   if ((!conversationId && !reviewId) || !draft) return { ok: false, summary: 'need a conversation (or a review) and a draft', error: 'conversationId or reviewId, and draft, required' }
   const db = supabaseAdmin()
+  // Homes with their own hosts (lib/host-voice): whatever wrote the draft, it is theirs and signed by them.
+  {
+    const { hostVoiceFor, hostVoiceForConversation, applyHostVoice } = await import('@/lib/host-voice')
+    const hv = hostVoiceFor(str(p?.unit)) || (conversationId ? await hostVoiceForConversation(conversationId) : null)
+    if (hv) draft = applyHostVoice(draft, hv, reviewId && !conversationId ? 'review' : 'message')
+  }
   // One live draft per thread (or review): a newer one supersedes the older. The older one's Slack
   // slot (the post it was listed in) carries over, so the thread's "send" still finds a live draft and
   // the newer draft is not listed in the room a second time (Eve audit 2026-10-10).
@@ -340,8 +346,10 @@ async function personName(ctx: ExecCtx): Promise<string> {
 const guest_reply_send: Executor = async (p, ctx) => {
   const { sendGuestMessage } = await import('@/lib/guesty')
   const conversationId = str(p?.conversationId || p?.conversation_id).trim()
-  const body = str(p?.body || p?.draft || p?.text).trim()
+  let body = str(p?.body || p?.draft || p?.text).trim()
   if (!conversationId || !body) return { ok: false, summary: 'need a conversation and a message', error: 'conversationId and body required' }
+  // Never the company name on a home with its own hosts, even typed by hand (lib/host-voice).
+  { const { hostVoiceForConversation, brandOnly } = await import('@/lib/host-voice'); const hv = await hostVoiceForConversation(conversationId); if (hv) body = brandOnly(body, hv) }
   const r = await sendGuestMessage(conversationId, body, { module: p?.module ? str(p.module) : undefined })
   if (!r.ok) return { ok: false, summary: `Guesty did not send the message`, error: str(r.error).slice(0, 300) }
   // A PERSON PRESSED SEND (the reply box, or Send on an Eve draft): the mirrored message carries
@@ -373,7 +381,8 @@ const guest_notice_send: Executor = async (p, ctx) => {
   const kind = str(p?.kind).trim()
   if (!conversationId) return { ok: false, summary: 'need a guest thread', error: 'conversationId required' }
   if (!(NOTICE_KINDS as string[]).includes(kind)) return { ok: false, summary: `"${kind.slice(0, 30)}" is not a notice she may send`, error: 'kind must be work_done or entry_request' }
-  const r0 = renderNotice(kind, { guestFirst: p?.guestFirst, what: p?.what, leavingToday: !!p?.leavingToday, when: p?.when })
+  let r0 = renderNotice(kind, { guestFirst: p?.guestFirst, what: p?.what, leavingToday: !!p?.leavingToday, when: p?.when })
+  if (r0) { const { hostVoiceFor, hostVoiceForConversation, applyHostVoice } = await import('@/lib/host-voice'); const hv = hostVoiceFor(str(p?.unit)) || await hostVoiceForConversation(conversationId); if (hv) r0 = { ...r0, text: applyHostVoice(r0.text, hv) } }
   if (!r0) return { ok: false, summary: 'the notice could not be rendered safely', error: 'template refused (unknown kind or a number that could be a code)' }
   // Not twice on one thread: the same notice kind for the same subject within 3 days is a no-op.
   try {

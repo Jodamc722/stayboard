@@ -52,11 +52,15 @@ export async function draftGuestReply(conversationId: string): Promise<{ ok: boo
   const { modelPairFor } = await import('./ai-models')
   const { anthropicMessages, textOf } = await import('./anthropic-call')
   const { model, fallback } = await modelPairFor('guest-reply')
-  const r = await anthropicMessages(key, { model, max_tokens: 400, system: GUEST_REPLY_SYSTEM, messages: [{ role: 'user', content: `${facts}\n\nTHREAD (oldest first):\n${thread}\n\n${ask}` }] }, fallback, 'guest-reply')
+  // Homes hosted under the owners' names (lib/host-voice): Boynton is Vanessa and Taylor.
+  const { hostVoiceFor, hostVoicePrompt, applyHostVoice } = await import('./host-voice')
+  const hv = hostVoiceFor(str(res?.listing_name))
+  const r = await anthropicMessages(key, { model, max_tokens: 400, system: GUEST_REPLY_SYSTEM + (hv ? hostVoicePrompt(hv) : ''), messages: [{ role: 'user', content: `${facts}\n\nTHREAD (oldest first):\n${thread}\n\n${ask}` }] }, fallback, 'guest-reply')
   if (!r.ok) {
     console.error('[guest-reply-draft] model call failed', r.status, JSON.stringify(r.data).slice(0, 300))
     return { ok: false, error: `Eve could not draft this just now (${r.status}). Try again, or write it yourself.` }
   }
-  const draft = str(textOf(r.data)).trim()
+  const raw = str(textOf(r.data)).trim()
+  const draft = raw && hv ? applyHostVoice(raw, hv) : raw
   return draft ? { ok: true, draft } : { ok: false, error: 'Eve came back with nothing to say.' }
 }

@@ -190,8 +190,11 @@ async function guestUnanswered(env: WatchEnv): Promise<Prepared[]> {
         const thread = all.filter(m => m.sender === 'guest' || m.sender === 'host').slice().reverse().map(m => `${m.sender === 'guest' ? 'GUEST' : 'US'}: ${str(m.body).replace(/\s+/g, ' ').slice(0, 500)}`).join('\n')
         if (!thread) return null
         const facts = res ? `Guest: ${guest}. Unit: ${unit}. Stay: ${str(res.check_in).slice(0, 10)} to ${str(res.check_out).slice(0, 10)} (${res.nights || '?'} nights). Channel: ${str(r.channel)}.` : `Channel: ${str(r.channel)}.`
-        const draft = await askModel('guest-reply', GUEST_REPLY_SYSTEM, `${facts}\n\nTHREAD (oldest first):\n${thread}\n\nWrite our reply to the guest's last message.`)
-        if (!draft) return null
+        const { hostVoiceFor, hostVoicePrompt, applyHostVoice } = await import('@/lib/host-voice')
+        const hv = hostVoiceFor(unit)
+        const raw = await askModel('guest-reply', GUEST_REPLY_SYSTEM + (hv ? hostVoicePrompt(hv) : ''), `${facts}\n\nTHREAD (oldest first):\n${thread}\n\nWrite our reply to the guest's last message.`)
+        if (!raw) return null
+        const draft = hv ? applyHostVoice(raw, hv) : raw
         return { conversationId: convId, draft, guest, unit, channel: str(r.channel), why: `Guest waited ${waited} with no answer.` }
       },
     })
@@ -354,8 +357,11 @@ async function badReviewIn(env: WatchEnv): Promise<Prepared[]> {
         ask: `draft a public reply to ${str(r.guest_name) || 'the guest'}'s ${rating}★ review on ${unit}? (it waits on /reviews; nothing is published yet)`,
         why: `A low review with no reply yet — a prospect reads the reply before booking.`,
         exec: async () => {
-          const draft = await askModel('review-reply', REVIEW_REPLY_SYSTEM, `Channel: ${str(r.channel)}\nGuest: ${str(r.guest_name) || 'the guest'}\nRating: ${rating} out of 5\nGuest review:\n"""${quote}"""\n\nWrite the single best reply.`, 300)
-          if (!draft) return null
+          const { hostVoiceFor, hostVoicePrompt, applyHostVoice } = await import('@/lib/host-voice')
+          const hv = hostVoiceFor(unit)
+          const raw = await askModel('review-reply', REVIEW_REPLY_SYSTEM + (hv ? hostVoicePrompt(hv, 'review') : ''), `Channel: ${str(r.channel)}\nGuest: ${str(r.guest_name) || 'the guest'}\nRating: ${rating} out of 5\nGuest review:\n"""${quote}"""\n\nWrite the single best reply.`, 300)
+          if (!raw) return null
+          const draft = hv ? applyHostVoice(raw, hv, 'review') : raw
           return { reviewId: str(r.id), draft, guest: str(r.guest_name) || 'Guest', unit, channel: str(r.channel), why: `${rating}★ review, unanswered.` }
         },
       })

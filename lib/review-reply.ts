@@ -29,7 +29,7 @@ export type ReviewReplyOutcome = { ok: boolean; status: number; body: Record<str
 
 export async function postReviewReply(reviewId: string, reviewReply: string): Promise<ReviewReplyOutcome> {
   const id = String(reviewId || '').trim()
-  const text = String(reviewReply || '').trim()
+  let text = String(reviewReply || '').trim()
   if (!id || !text) return fail(400, 'reviewId and reviewReply are required')
   const sb = supabaseAdmin()
 
@@ -52,6 +52,17 @@ export async function postReviewReply(reviewId: string, reviewReply: string): Pr
       }
     }
   } catch { /* the check is a shortcut; Guesty's own answer below still decides */ }
+
+  // Homes with their own hosts (lib/host-voice): never the company name on their public reply.
+  try {
+    const { data: rv } = await sb.from('guesty_reviews').select('listing_id').eq('id', id).maybeSingle()
+    if (rv?.listing_id) {
+      const { data: l } = await sb.from('guesty_listings').select('nickname,title,building').eq('id', rv.listing_id).maybeSingle()
+      const { hostVoiceFor, applyHostVoice } = await import('./host-voice')
+      const hv = l ? hostVoiceFor(l.nickname, l.title, l.building) : null
+      if (hv) text = applyHostVoice(text, hv, 'review')
+    }
+  } catch { /* posts as written */ }
 
   // 2. Never spin: Guesty gets 20 seconds to answer.
   const ctl = new AbortController()
