@@ -15,8 +15,9 @@
 //  - The STAY mark is gold in video, transparent, no chip. The end card is Nick's card.
 //  - Words the voice says wrong are respelled for the voice only (SPOKEN below), never on screen.
 
-export type AdKind = 'title' | 'photo' | 'stats' | 'wall' | 'cards' | 'feed' | 'checks' | 'rise' | 'contact'
-export type AdFormat = '16:9' | '9:16' | '1:1'
+export type AdKind = 'title' | 'photo' | 'stats' | 'wall' | 'cards' | 'feed' | 'checks' | 'rise' | 'contact' | 'cta'
+export type AdAudience = 'owners' | 'partners' | 'guests'
+export type AdFormat = '16:9' | '9:16' | '1:1' | '4:5'
 export type AdScene = {
   id: string
   kind: AdKind
@@ -52,6 +53,8 @@ export type AdProject = {
   music: string
   musicVol: number
   captions: boolean
+  /** Who the ad speaks to — decides the facts, the rules and the end card. */
+  audience: AdAudience
   scenes: AdScene[]
   contact: AdContact
   voice: AdVoice | null
@@ -60,8 +63,8 @@ export type AdProject = {
   updatedBy: string
 }
 
-export const FORMATS: Record<AdFormat, [number, number]> = { '16:9': [1920, 1080], '9:16': [1080, 1920], '1:1': [1080, 1080] }
-export const FORMAT_LABEL: Record<AdFormat, string> = { '16:9': 'Landscape 16:9 · YouTube, web', '9:16': 'Vertical 9:16 · Reels, TikTok, Stories', '1:1': 'Square 1:1 · Feed posts' }
+export const FORMATS: Record<AdFormat, [number, number]> = { '16:9': [1920, 1080], '9:16': [1080, 1920], '1:1': [1080, 1080], '4:5': [1080, 1350] }
+export const FORMAT_LABEL: Record<AdFormat, string> = { '16:9': 'Landscape 16:9 · YouTube, web', '9:16': 'Vertical 9:16 · Reels, TikTok, Stories', '1:1': 'Square 1:1 · Feed posts', '4:5': 'Portrait 4:5 · Instagram and Facebook feed' }
 
 /** Voices from the ElevenLabs library (paid plan). Victoria is the house sales voice (Jon, 2026-10-29). */
 export const VOICES: { id: string; name: string; blurb: string }[] = [
@@ -85,6 +88,7 @@ export const KINDS: { kind: AdKind; label: string; hint: string }[] = [
   { kind: 'checks', label: 'Checklist', hint: 'Items that tick off, beside a photo. Rows: item' },
   { kind: 'rise', label: 'Results', hint: 'Headline with a rising line. Rows become chips.' },
   { kind: 'contact', label: 'Contact card', hint: 'The end card: photo, Book a call, number, email.' },
+  { kind: 'cta', label: 'Book now', hint: 'Guest end card / social post: photo, headline, a button. Row 1 is the button text.' },
 ]
 
 // ── Words the voice says wrong (October 2026 sessions). Applied to what the voice reads only. ──
@@ -163,7 +167,7 @@ export function timeline(p: AdProject): Timeline {
 export function blankProject(id: string, by: string, contact: AdContact): AdProject {
   const now = new Date().toISOString()
   return {
-    id, name: 'Untitled ad', prompt: '', format: '16:9', voiceId: VOICES[0].id, music: 'werq', musicVol: 0.28, captions: true,
+    id, name: 'Untitled ad', prompt: '', format: '16:9', voiceId: VOICES[0].id, music: 'werq', musicVol: 0.28, captions: true, audience: 'owners',
     scenes: [
       { id: 's1', kind: 'title', vo: 'More revenue. A lower fee. One complete team. This is Stay Hospitality.', head: 'More **revenue.**\nLower **fee.**\nOne complete **team.**', sub: '', items: [], photos: [] },
       { id: 's2', kind: 'contact', vo: 'Book a call, and let’s see what your property can earn.', head: 'Book a **call.**', sub: '', items: [], photos: [] },
@@ -181,6 +185,8 @@ export function newSceneId(p: AdProject): string {
 export type AdAssets = {
   /** Returns a loaded image for a URL, or null while it is still loading. */
   img: (url: string) => HTMLImageElement | null
+  /** A scene's media — a photo, or a library video ('video:…') synced to the scene's own clock. */
+  media?: (url: string, local: number) => HTMLImageElement | HTMLVideoElement | null
   logo: HTMLImageElement | null
   display: string
   body: string
@@ -200,8 +206,8 @@ function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: n
   ctx.lineTo(x + k, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - k)
   ctx.lineTo(x, y + k); ctx.quadraticCurveTo(x, y, x + k, y); ctx.closePath()
 }
-function cover(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, w: number, h: number, zoom = 1, pan = 0) {
-  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height
+function cover(ctx: CanvasRenderingContext2D, img: HTMLImageElement | HTMLVideoElement, x: number, y: number, w: number, h: number, zoom = 1, pan = 0) {
+  const iw = (img as any).naturalWidth || (img as any).videoWidth || img.width, ih = (img as any).naturalHeight || (img as any).videoHeight || img.height
   if (!iw || !ih) return
   const s = Math.max(w / iw, h / ih) * zoom
   const dw = iw * s, dh = ih * s
@@ -280,7 +286,7 @@ function plain(ctx: CanvasRenderingContext2D, text: string, x: number, y: number
 }
 function split(row: string): [string, string] { const i = row.indexOf('|'); return i < 0 ? [row.trim(), ''] : [row.slice(0, i).trim(), row.slice(i + 1).trim()] }
 
-function background(ctx: CanvasRenderingContext2D, W: number, H: number, img: HTMLImageElement | null, local: number, dur: number, dark: number) {
+function background(ctx: CanvasRenderingContext2D, W: number, H: number, img: HTMLImageElement | HTMLVideoElement | null, local: number, dur: number, dark: number) {
   if (img) {
     cover(ctx, img, 0, 0, W, H, 1.04 + 0.09 * clamp(local / Math.max(dur, 1)), 0.25 * clamp(local / Math.max(dur, 1)))
     const g = ctx.createLinearGradient(0, 0, 0, H)
@@ -312,8 +318,37 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
   const portrait = H > W * 1.1
   const pad = (portrait ? 80 : 120) * u
   const bottomSafe = (p.captions ? 190 : 110) * u
-  const im = (k: number) => (sc.photos[k] ? A.img(sc.photos[k]) : null)
+  const get = (u: string) => (!u ? null : A.media ? A.media(u, local) : A.img(u))
+  const im = (k: number) => get(sc.photos[k] || '')
   const head = sc.head || ''
+
+  if (sc.kind === 'cta') {
+    background(ctx, W, H, im(0), local, dur, 0.95)
+    const lw = (portrait ? 200 : 210) * u
+    let y = portrait ? H * 0.2 : H * 0.17
+    if (A.logo) {
+      const lh = lw * (A.logo.naturalHeight || 106) / (A.logo.naturalWidth || 222)
+      ctx.save(); ctx.globalAlpha *= appear(local, 0); ctx.drawImage(A.logo, (W - lw) / 2, y, lw, lh); ctx.restore()
+      y += lh + 60 * u
+    }
+    const size = (portrait ? 112 : 118) * u
+    y += rich(ctx, head || 'Your South Florida **stay.**', pad, y, W - pad * 2, size, { font: A.display, local, delay: 0.25, stagger: 0.3, align: 'center' }) + 26 * u
+    if (sc.sub) y += plain(ctx, sc.sub, pad, y, W - pad * 2, 38 * u, A.body, C.ink, 500, 'center', appear(local, 0.7)) + 40 * u
+    const label = (sc.items[0] || 'Book at stay-hospitality.com').replace(/\|.*/, '')
+    ctx.font = `700 ${40 * u}px ${A.body}`
+    const bw = ctx.measureText(label).width + 110 * u, bh = 104 * u
+    const a = appear(local, 1.0)
+    // a soft pulse so a still post still reads as "tap me"
+    const pulse = 1 + 0.03 * Math.sin(Math.max(0, local - 1.6) * 4)
+    ctx.save(); ctx.globalAlpha *= a
+    ctx.translate(W / 2, y + bh / 2); ctx.scale(pulse, pulse); ctx.translate(-W / 2, -(y + bh / 2))
+    rr(ctx, (W - bw) / 2, y + (1 - a) * 30 * u, bw, bh, bh / 2); ctx.fillStyle = C.gold; ctx.fill()
+    ctx.fillStyle = '#1B1408'; ctx.textBaseline = 'middle'; ctx.fillText(label, (W - bw) / 2 + 55 * u, y + bh / 2 + (1 - a) * 30 * u)
+    ctx.restore()
+    if (sc.items[1]) plain(ctx, sc.items[1], pad, y + bh + 36 * u, W - pad * 2, 30 * u, A.body, C.mut, 500, 'center', appear(local, 1.4))
+    if (A.credit && p.music !== 'none') plain(ctx, A.credit, W - 900 * u, H - 44 * u, 880 * u, 18 * u, A.mono, 'rgba(255,255,255,0.45)', 400)
+    return
+  }
 
   if (sc.kind === 'contact') {
     background(ctx, W, H, im(0), local, dur, 1.3)
@@ -354,7 +389,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     const gap = 4 * u
     const cw = (W - gap * (cols - 1)) / cols, ch = (H - gap * (rows - 1)) / rows
     for (let k = 0; k < cols * rows; k++) {
-      const img = sc.photos.length ? A.img(sc.photos[k % sc.photos.length]) : null
+      const img = sc.photos.length ? get(sc.photos[k % sc.photos.length]) : null
       const a = appear(local, k * 0.07, 0.5)
       if (a <= 0) continue
       const x = (k % cols) * (cw + gap), y = Math.floor(k / cols) * (ch + gap)
@@ -476,7 +511,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       else { const gap = 50 * u; w = (area.w - gap * (n - 1)) / n; ph = w * 0.72; x = area.x + k * (w + gap); y = area.y + (area.h - ph - 140 * u) / 2 }
       ctx.save(); ctx.globalAlpha *= a; ctx.translate(0, (1 - a) * 40 * u)
       rr(ctx, x, y, w, ph, 22 * u); ctx.save(); ctx.clip()
-      const img = A.img(sc.photos[k] || sc.photos[0] || '')
+      const img = get(sc.photos[k] || sc.photos[0] || '')
       if (img) cover(ctx, img, x, y, w, ph, 1.12 - 0.1 * a); else { ctx.fillStyle = C.navy2; ctx.fillRect(x, y, w, ph) }
       ctx.restore(); ctx.lineWidth = 2; ctx.strokeStyle = C.line; rr(ctx, x, y, w, ph, 22 * u); ctx.stroke()
       plain(ctx, t1, x, y + ph + 18 * u, w, 54 * u, A.display, k === 0 ? C.gold : C.ink, 800)
@@ -492,7 +527,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     let lx = area.x, lw = area.w, ly = area.y
     if (sc.kind === 'checks' && sc.photos[0]) {
       const pw = portrait ? area.w : area.w * 0.48, ph = portrait ? area.h * 0.42 : Math.min(area.h, pw * 0.7)
-      const img = A.img(sc.photos[0]); const a = appear(local, 0.1)
+      const img = get(sc.photos[0]); const a = appear(local, 0.1)
       ctx.save(); ctx.globalAlpha *= a; rr(ctx, area.x, area.y, pw, ph, 22 * u); ctx.save(); ctx.clip()
       if (img) cover(ctx, img, area.x, area.y, pw, ph, 1.05); ctx.restore(); ctx.lineWidth = 2; ctx.strokeStyle = C.line; rr(ctx, area.x, area.y, pw, ph, 22 * u); ctx.stroke(); ctx.restore()
       if (portrait) { ly = area.y + ph + 40 * u } else { lx = area.x + pw + 60 * u; lw = area.w - pw - 60 * u }
@@ -589,7 +624,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   drawScene(ctx, p, i, local, tl.durs[i], A)
   ctx.globalAlpha = 1
   const sc = p.scenes[i]
-  if (A.logo && sc.kind !== 'contact') {
+  if (A.logo && sc.kind !== 'contact' && sc.kind !== 'cta') {
     const lw = 150 * u, lh = lw * (A.logo.naturalHeight || 106) / (A.logo.naturalWidth || 222)
     ctx.drawImage(A.logo, W - lw - 56 * u, 46 * u, lw, lh)
   }
@@ -626,3 +661,55 @@ Technology: Guesty (reservations and channels), PriceLabs (pricing data), Breeze
 Operations: one complete in-house team — housekeeping, maintenance, inspections and guest care (the Customer Care Team).
 Results: owners who switch to Stay earn more, on a lower management fee, with full transparency every month. Never state a revenue percentage or a fee percentage.
 Contact: Nick Carline, Business Development, 651-200-8283, nicholas@stay-hospitality.com.`
+
+
+/** Guest-facing ads (Jon, 2026-11-02: "we should have a guest-facing ads builder too"). */
+export const GUEST_FACTS = `Stay Hospitality: vacation rentals across South Florida — Miami, Fort Lauderdale, Pompano and Palm Beach. Book direct at stay-hospitality.com.
+Places include high-rise apartments with bay and city views in downtown Miami, beach and ocean-view stays, resort pools, rooftop pools and lounges, and full apartments with kitchens and living space (say "many" or show it — do not promise an amenity for every stay).
+Every stay is cleaned and inspected by our own team, with a digital guidebook to the neighbourhood and a Customer Care Team for every guest.
+Guests rate their stays 4.6 out of 5. Over a million guests hosted.
+Seasons and events worth a trip: Art Basel (December), New Year's Eve, the Fort Lauderdale and Miami boat shows, Formula 1 Miami (May), winter sun from December to March.
+Rules: never promise a price, a discount, a "best rate" or availability. The call to action is to book at stay-hospitality.com — never "call us" or "text us".`
+
+export type AdTemplate = { key: string; label: string; blurb: string; audience: AdAudience; format: AdFormat; name: string; scenes: (Omit<AdScene, 'id' | 'photos'> & { q?: string; n?: number })[] }
+/** Ready-made ads: pick one and it fills itself with photos from the library — no AI needed. */
+export const TEMPLATES: AdTemplate[] = [
+  { key: 'owner-earn', label: 'Owners · Why Stay', blurb: '30s owner ad: hook, buildings, how, Lighthouse, results, Nick', audience: 'owners', format: '16:9', name: 'Why owners choose Stay', scenes: [
+    { kind: 'title', vo: 'More revenue. A lower fee. One complete team. This is Stay Hospitality.', head: 'More **revenue.**\nLower **fee.**\nOne complete **team.**', sub: '', items: [], q: 'exterior', n: 1 },
+    { kind: 'wall', vo: '', head: '', sub: '', items: [], q: 'pool', n: 9 },
+    { kind: 'cards', vo: 'We price your home every day, put it on more than forty channels, and run it with one complete team.', head: '', sub: '', items: ['Priced daily|Dedicated revenue managers', '40+ channels|Everywhere guests book', 'One complete team|Housekeeping to guest care'], q: 'view', n: 3 },
+    { kind: 'feed', vo: 'Lighthouse, our own AI, spots issues early and automates the work.', head: 'Our own **AI.**', sub: 'Lighthouse spots issues and automates the work', items: ['Same AC issue, 3rd time in 60 days|Recurring issue flagged · technician scheduled', 'New listing live|Guest guidebook built', 'Listing slipping vs comp set|Photos reordered · copy refreshed'], q: 'living', n: 1 },
+    { kind: 'rise', vo: 'Owners who switch to Stay earn more, on a lower management fee.', head: 'Owners who switch\n**earn more.**', sub: '', items: ['Higher nightly rates', 'More booked nights', '40+ channels'], q: 'rooftop', n: 1 },
+    { kind: 'contact', vo: 'Book a call with Nick today. 651-200-8283.', head: 'Book a **call.**', sub: '', items: [], q: 'ocean view', n: 1 },
+  ] },
+  { key: 'owner-reel', label: 'Owners · 15s reel', blurb: 'Vertical, fast: buildings, three reasons, Nick', audience: 'owners', format: '9:16', name: 'Owner reel', scenes: [
+    { kind: 'wall', vo: 'Own a rental in South Florida? Here is how to earn more from it.', head: 'Own a rental in\n**South Florida?**', sub: '', items: [], q: 'pool', n: 8 },
+    { kind: 'cards', vo: 'Priced every day, on more than forty channels, run by one complete team.', head: '', sub: '', items: ['Priced daily|Dedicated revenue managers', '40+ channels|Everywhere guests book', 'One complete team|Housekeeping to guest care'], q: 'view', n: 3 },
+    { kind: 'contact', vo: 'Book a call with Nick. 651-200-8283.', head: 'Book a **call.**', sub: '', items: [], q: 'ocean view', n: 1 },
+  ] },
+  { key: 'guest-book', label: 'Guests · Book direct', blurb: '4:5 feed ad: the stay, the places, book now', audience: 'guests', format: '4:5', name: 'Book your South Florida stay', scenes: [
+    { kind: 'photo', vo: 'Sun, sea and a place that feels like yours.', head: 'Your South Florida\n**stay.**', sub: 'Miami · Fort Lauderdale · Palm Beach', items: [], q: 'ocean view', n: 1 },
+    { kind: 'wall', vo: '', head: '', sub: '', items: [], q: 'pool', n: 8 },
+    { kind: 'cards', vo: 'Rooftop pools, ocean views, and room to spread out.', head: '', sub: '', items: ['Rooftop pools|Downtown and on the beach', 'Ocean views|Wake up to the water', 'Room to live|Kitchens and real living space'], q: 'rooftop pool', n: 3 },
+    { kind: 'cta', vo: 'Book your stay at stay-hospitality.com.', head: 'Book your **stay.**', sub: '', items: ['Book at stay-hospitality.com', 'Rated 4.6 out of 5 by our guests'], q: 'balcony', n: 1 },
+  ] },
+  { key: 'guest-event', label: 'Guests · Event weekend', blurb: '9:16 story: Art Basel / New Year’s / boat show stays', audience: 'guests', format: '9:16', name: 'Art Basel stays', scenes: [
+    { kind: 'title', vo: 'Art Basel is coming to Miami.', head: 'Art Basel\n**Miami Beach**', sub: 'December', items: [], q: 'skyline', n: 1 },
+    { kind: 'photo', vo: 'Stay steps from the city, with a pool and a view of your own.', head: 'Your base for\n**the week.**', sub: '', items: [], q: 'view', n: 1 },
+    { kind: 'cta', vo: 'Book now at stay-hospitality.com.', head: 'Dates go **fast.**', sub: '', items: ['Book at stay-hospitality.com'], q: 'rooftop', n: 1 },
+  ] },
+  { key: 'guest-post', label: 'Guests · Moving post', blurb: '1:1 animated post (6s) — export as GIF or MP4', audience: 'guests', format: '1:1', name: 'Moving post', scenes: [
+    { kind: 'cta', vo: '', head: 'Your South Florida\n**stay.**', sub: 'Pools, views and room to breathe', items: ['Book at stay-hospitality.com'], q: 'pool', n: 1, dur: 6 },
+  ] },
+  { key: 'spotlight', label: 'Guests · Property spotlight', blurb: '4:5: one building, what is there, book now', audience: 'guests', format: '4:5', name: 'Property spotlight', scenes: [
+    { kind: 'wall', vo: '', head: '', sub: '', items: [], q: 'arya', n: 8 },
+    { kind: 'checks', vo: 'A rooftop pool, city views, and room to spread out.', head: 'What is **waiting.**', sub: '', items: ['Rooftop pool', 'City and bay views', 'Room to spread out', 'Cleaned and inspected by our team'], q: 'arya pool', n: 1 },
+    { kind: 'cta', vo: 'Book at stay-hospitality.com.', head: 'Book your **stay.**', sub: '', items: ['Book at stay-hospitality.com'], q: 'arya', n: 1 },
+  ] },
+]
+
+/** Videos already made for sales, shipped with the app (Jon, 2026-11-02: "the ones we created for sales"). */
+export const BUILTIN_VIDEOS: { key: string; name: string; file: string; thumb: string; dur: number; format: AdFormat }[] = [
+  { key: 'builtin:full', name: 'Why owners choose Stay — full cut', file: '/ads/library/why-owners-choose-stay-full.mp4', thumb: '/ads/library/why-owners-choose-stay-full.jpg', dur: 73.4, format: '16:9' },
+  { key: 'builtin:short', name: 'Book a call — short cut', file: '/ads/library/book-a-call-short.mp4', thumb: '/ads/library/book-a-call-short.jpg', dur: 30.6, format: '16:9' },
+]

@@ -15,11 +15,11 @@ import { searchPhotos } from '@/lib/photo-library'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 90
 
-function pickPhotos(hits: { url: string; width: number | null; height: number | null; active: boolean }[], n: number): string[] {
+function pickPhotos(hits: { url: string; view: string; width: number | null; height: number | null; active: boolean }[], n: number): string[] {
   // Prefer active units and real resolution; a low-res photo looks soft at 1080p.
   const ranked = hits.slice().sort((a, b) => (Number(b.active) - Number(a.active)) || ((b.width || 1200) - (a.width || 1200)))
   const out: string[] = []
-  for (let i = 0; i < ranked.length && out.length < n; i++) if (out.indexOf(ranked[i].url) < 0) out.push(ranked[i].url)
+  for (let i = 0; i < ranked.length && out.length < n; i++) { const u = ranked[i].view || ranked[i].url; if (out.indexOf(u) < 0) out.push(u) }
   return out
 }
 
@@ -56,6 +56,8 @@ export async function POST(req: NextRequest) {
       return { id: 's' + (i + 1), kind: s?.kind, vo: s?.vo, head: s?.head, sub: s?.sub, items: s?.items, photos, photoQuery: q }
     }))
     const norm = normalize({ id: 'x', scenes })
+    // a contact card in a guest ad is the wrong end card — the writer is told, this is the backstop
+    if (/guest/i.test(String(b?.audience || ''))) norm.scenes = norm.scenes.map(s => (s.kind === 'contact' ? { ...s, kind: 'cta' as const, items: s.items.length ? s.items : ['Book at stay-hospitality.com'] } : s))
     return NextResponse.json({ ok: true, name: String(j?.name || '').slice(0, 120), scenes: norm.scenes, queries: scenes.map(s => s.photoQuery) })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })

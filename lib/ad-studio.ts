@@ -8,7 +8,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { SALES_CONTACT_KEY, type ContactCard } from '@/lib/sales-copy'
-import { type AdProject, type AdContact, type AdScene, type AdKind, blankProject, spokenText, voiceSig, HOUSE_FACTS, KINDS } from '@/lib/ad-engine'
+import { type AdProject, type AdContact, type AdScene, type AdKind, blankProject, spokenText, voiceSig, HOUSE_FACTS, GUEST_FACTS, KINDS, BUILTIN_VIDEOS } from '@/lib/ad-engine'
 
 const BUCKET = 'ad-studio'
 const SIGN_TTL = 60 * 60 * 6
@@ -91,7 +91,7 @@ export function normalize(p: any): AdProject {
     head: String(s?.head || '').slice(0, 300),
     sub: String(s?.sub || '').slice(0, 300),
     items: Array.isArray(s?.items) ? s.items.slice(0, 12).map((x: any) => String(x || '').slice(0, 160)) : [],
-    photos: Array.isArray(s?.photos) ? s.photos.slice(0, 12).map((x: any) => String(x || '')).filter((x: string) => /^(https:\/\/|\/)/.test(x)) : [],
+    photos: Array.isArray(s?.photos) ? s.photos.slice(0, 12).map((x: any) => String(x || '')).filter((x: string) => /^(https:\/\/|\/|video:)/.test(x)) : [],
     dur: s?.dur && Number(s.dur) > 0 ? Math.min(30, Number(s.dur)) : null,
   })) : []
   const c = p?.contact || {}
@@ -99,7 +99,8 @@ export function normalize(p: any): AdProject {
     id: safeId(p?.id) || Date.now().toString(36),
     name: String(p?.name || 'Untitled ad').slice(0, 120),
     prompt: String(p?.prompt || '').slice(0, 2000),
-    format: (['16:9', '9:16', '1:1'].indexOf(p?.format) >= 0 ? p.format : '16:9'),
+    format: (['16:9', '9:16', '1:1', '4:5'].indexOf(p?.format) >= 0 ? p.format : '16:9'),
+    audience: (['owners', 'partners', 'guests'].indexOf(p?.audience) >= 0 ? p.audience : 'owners'),
     voiceId: String(p?.voiceId || 'qSeXEcewz7tA0Q0qk9fH').slice(0, 40),
     music: String(p?.music || 'werq').slice(0, 20),
     musicVol: Math.max(0, Math.min(1, Number(p?.musicVol ?? 0.28))),
@@ -172,32 +173,94 @@ export async function makeVoice(p: AdProject): Promise<{ ok: true; project: AdPr
 // ───────────────────────── the script writer ─────────────────────────
 export function scriptPrompt(input: { prompt: string; seconds: number; format: string; audience: string; current?: AdProject | null }): string {
   const kinds = KINDS.map(k => `- ${k.kind}: ${k.hint}`).join('\n')
-  return `You write short video ads for Stay Hospitality and lay them out as scenes for an ad editor.
-
-THE FACTS YOU MAY USE (never invent others — no new numbers, percentages, fees, timelines or guarantees):
-${HOUSE_FACTS}
-
-HOUSE STYLE (Jon's standing rules):
+  const guests = /guest/i.test(input.audience)
+  const facts = guests ? GUEST_FACTS : HOUSE_FACTS
+  const rules = guests ? `HOUSE STYLE FOR GUEST ADS:
+- Warm, visual, inviting — sell the stay and the place, not the company. Short lines.
+- Never promise a price, discount, "best rate", free night or availability. No phone number, never "call us" or "text us".
+- End on a "cta" scene whose first row is "Book at stay-hospitality.com" (a second row may carry "Rated 4.6 out of 5 by our guests").
+- Do NOT use the "contact" kind (that is the owner sales card) and do not mention fees, owners, revenue, Lighthouse or channels.` : `HOUSE STYLE (Jon's standing rules):
 - Tight, professional, warm. One short spoken line per scene. Plain words, no hype, no em dashes.
-- Every scene's spoken line ("vo") must be readable aloud in the time the scene holds: about 2.5 words a second.
-- NEVER put the words "Salato" or "Pompano Beach" in a spoken line (the voice mispronounces them). They may appear on screen.
 - Say "listings", not "homes", for the portfolio count. Say "40+ channels".
 - Results: "owners who switch to Stay earn more" — no number. The fee is "lower" — no number.
 - Lighthouse spots issues and automates work; it does not produce the owner report.
-- End on a contact scene (kind "contact") whose line asks them to book a call with Nick and reads his number 651-200-8283.
+- End on a contact scene (kind "contact") whose line asks them to book a call with Nick and reads his number 651-200-8283.`
+  return `You write short video ads for Stay Hospitality and lay them out as scenes for an ad editor. They run on Instagram, Facebook and the web.
+
+THE FACTS YOU MAY USE (never invent others — no new numbers, percentages, fees, prices, timelines or guarantees):
+${facts}
+
+${rules}
+- Every scene's spoken line ("vo") must be readable aloud in the time the scene holds: about 2.5 words a second. Open strong — the first two seconds decide whether anyone keeps watching.
+- NEVER put the words "Salato" or "Pompano Beach" in a spoken line (the voice mispronounces them). They may appear on screen.
 - On-screen headlines ("head") are short (2 to 8 words). Mark one or two key words gold with **double stars**. Use \\n to break lines.
 - A music-only beat is allowed: a scene with an empty "vo" (good for a photo wall right after the opening).
 
 SCENE KINDS YOU CAN USE:
 ${kinds}
 
-PHOTOS: for each scene that shows photos, give "photoQuery": two or three words to search our photo library, e.g. "17west pool", "elser view", "salato exterior", "arya rooftop", "bedroom", "kitchen", "ocean view". Leave it empty for kinds that do not need photos (stats can, contact must not).
+PHOTOS: for each scene that shows photos, give "photoQuery": two or three words to search our photo library, e.g. "17west pool", "elser view", "arya rooftop", "ocean view", "bedroom", "kitchen", "balcony". Leave it empty for the contact kind.
 
-THE BRIEF: ${input.prompt || '(none — write the house sales ad)'}
+THE BRIEF: ${input.prompt || (guests ? '(none — write a guest ad that makes people want to book a South Florida stay)' : '(none — write the house sales ad for owners)')}
 LENGTH: about ${input.seconds} seconds in total.
 AUDIENCE: ${input.audience || 'property owners'}
 FORMAT: ${input.format}${input.current && input.current.scenes.length ? `\n\nTHE CURRENT DRAFT (improve it; keep what works):\n${JSON.stringify(input.current.scenes.map(s => ({ kind: s.kind, vo: s.vo, head: s.head, sub: s.sub, items: s.items })))}` : ''}
 
 Reply with ONLY a JSON object, no prose:
 {"name": "a short name for this ad", "scenes": [{"kind": "...", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": "..."}]}`
+}
+
+
+// ───────────────────────── the video library ─────────────────────────
+// Jon, 2026-11-02: "add my video library … the ones we created for sales". The sales cuts ship with
+// the app (BUILTIN_VIDEOS, public/ads/library); anything exported here or uploaded is kept in the
+// bucket under library/<id>.(mp4|webm) with a .json beside it (name, length, format, thumbnail).
+export type LibVideo = { key: string; name: string; url: string; thumb: string; dur: number; format: string; builtin: boolean; createdAt: string; by: string; path?: string }
+
+export async function listLibrary(): Promise<LibVideo[]> {
+  await ensureBucket()
+  const sb = supabaseAdmin()
+  const { data } = await sb.storage.from(BUCKET).list('library', { limit: 300, sortBy: { column: 'created_at', order: 'desc' } })
+  const metas = (data || []).filter(f => /\.json$/.test(f.name))
+  const rows = await Promise.all(metas.map(async f => {
+    const { data: b } = await sb.storage.from(BUCKET).download('library/' + f.name)
+    if (!b) return null
+    try { return JSON.parse(await b.text()) } catch { return null }
+  }))
+  const real = rows.filter(Boolean) as any[]
+  const paths: string[] = []
+  real.forEach(r => { if (r.path) paths.push(r.path); if (r.thumbPath) paths.push(r.thumbPath) })
+  const signed: Record<string, string> = {}
+  if (paths.length) {
+    const { data: s } = await sb.storage.from(BUCKET).createSignedUrls(paths, SIGN_TTL)
+    ;(s || []).forEach((x: any) => { if (x?.path && x?.signedUrl) signed[x.path] = x.signedUrl })
+  }
+  const mine: LibVideo[] = real.map(r => ({ key: 'lib:' + r.path, name: String(r.name || 'Video'), url: signed[r.path] || '', thumb: r.thumbPath ? signed[r.thumbPath] || '' : '', dur: Number(r.dur || 0), format: String(r.format || ''), builtin: false, createdAt: String(r.createdAt || ''), by: String(r.by || ''), path: r.path }))
+  const built: LibVideo[] = BUILTIN_VIDEOS.map(v => ({ key: v.key, name: v.name, url: v.file, thumb: v.thumb, dur: v.dur, format: v.format, builtin: true, createdAt: '2026-11-02', by: 'Sales videos' }))
+  return mine.concat(built)
+}
+
+/** A signed upload the browser PUTs the file to directly (a video is past what a route may carry). */
+export async function signLibraryUpload(ext: string): Promise<{ path: string; thumbPath: string; signedUrl: string; thumbUrl: string }> {
+  await ensureBucket()
+  const e = /^(mp4|webm|mov|m4v)$/i.test(ext) ? ext.toLowerCase() : 'mp4'
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+  const path = `library/${id}.${e}`, thumbPath = `library/${id}.jpg`
+  const sb = supabaseAdmin().storage.from(BUCKET)
+  const a = await sb.createSignedUploadUrl(path)
+  const b = await sb.createSignedUploadUrl(thumbPath)
+  if (a.error || !a.data || b.error || !b.data) throw new Error('signed upload: ' + (a.error?.message || b.error?.message || 'no url'))
+  return { path, thumbPath, signedUrl: a.data.signedUrl, thumbUrl: b.data.signedUrl }
+}
+export async function saveLibraryMeta(m: { path: string; thumbPath?: string; name: string; dur: number; format: string }, by: string): Promise<void> {
+  if (!/^library\/[a-z0-9]+\.(mp4|webm|mov|m4v)$/i.test(m.path)) throw new Error('bad path')
+  const meta = { path: m.path, thumbPath: m.thumbPath && /^library\/[a-z0-9]+\.jpg$/i.test(m.thumbPath) ? m.thumbPath : '', name: String(m.name || 'Video').slice(0, 140), dur: Number(m.dur || 0), format: String(m.format || '').slice(0, 8), createdAt: new Date().toISOString(), by }
+  const body = new Blob([JSON.stringify(meta)], { type: 'application/json' })
+  const { error } = await supabaseAdmin().storage.from(BUCKET).upload(m.path.replace(/\.[a-z0-9]+$/i, '.json'), body, { upsert: true, contentType: 'application/json' })
+  if (error) throw new Error('save: ' + error.message)
+}
+export async function deleteLibraryItem(path: string): Promise<void> {
+  if (!/^library\/[a-z0-9]+\.(mp4|webm|mov|m4v)$/i.test(path)) throw new Error('bad path')
+  const base = path.replace(/\.[a-z0-9]+$/i, '')
+  await supabaseAdmin().storage.from(BUCKET).remove([path, base + '.json', base + '.jpg'])
 }

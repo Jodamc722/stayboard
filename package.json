@@ -13,6 +13,7 @@
     "@supabase/ssr": "^0.5.0",
     "@supabase/supabase-js": "^2.45.0",
     "@vercel/functions": "^3.9.9",
+    "gifenc": "^1.0.3",
     "jspdf": "^2.5.1",
     "lucide-react": "^0.460.0",
     "mammoth": "^1.13.0",
