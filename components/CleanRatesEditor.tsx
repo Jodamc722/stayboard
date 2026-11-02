@@ -3,6 +3,7 @@
 // what it buys at $20/hour. Admins edit the dollars; everyone else sees the hours. Saved to
 // app_settings (clean_rates_v1), read by the scheduler's staffing need and the clean-time chips.
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { RATE_SIZES, rateSizeLabel, type CleanRates, type RateSize } from '@/lib/clean-rates'
 
 const MK_LABEL: Record<string, string> = { Miami: 'Miami-Dade', Broward: 'Broward', North: 'Palm Beach' }
@@ -31,9 +32,13 @@ export function CleanRatesEditor({ onClose, onSaved }: { onClose: () => void; on
       setCfg(j.config); setState('saved'); onSaved && onSaved(j.config)
     } catch (e: any) { setState('error'); setErr(String(e?.message || e)) }
   }
+  // Portalled to <body>: the rail it opens from is sticky, which traps a fixed overlay under the board.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
   const hrs = (n: number | undefined | null) => n == null || !cfg ? '' : (Math.round((n / cfg.payPerHour) * 100) / 100) + 'h'
-  return (
-    <div className="fixed inset-0 z-50 bg-black/30 flex items-start justify-center p-4 overflow-auto" onClick={onClose}>
+  if (!mounted) return null
+  return createPortal(
+    <div className="fixed inset-0 z-[200] bg-black/30 flex items-start justify-center p-4 overflow-auto" onClick={onClose}>
       <div className="bg-white rounded-2xl border border-line shadow-xl w-full max-w-3xl p-5 mt-8" onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 mb-3">
           <div>
@@ -62,7 +67,7 @@ export function CleanRatesEditor({ onClose, onSaved }: { onClose: () => void; on
                   <tbody>
                     {cfg.buildings.filter(b => b.market === mk).map(b => (
                       <tr key={b.label} className="border-t border-line">
-                        <td className="py-1 text-ink font-semibold">{b.label}{b.outsourced ? <span className="ml-1 text-[10px] font-normal text-muted">outsourced</span> : null}{b.ownerCleans ? <span className="ml-1 text-[10px] font-normal text-muted">owner cleans</span> : null}</td>
+                        <td className="py-1 text-ink font-semibold">{b.label}{b.outsourced ? <span className="block text-[10px] font-normal text-muted">outsourced</span> : null}{b.ownerCleans ? <span className="block text-[10px] font-normal text-muted">owner cleans</span> : null}</td>
                         {[...RATE_SIZES, 'full' as const].map(k => {
                           const v = k === 'full' ? b.fullRate : b.rates[k]
                           return (
@@ -89,6 +94,7 @@ export function CleanRatesEditor({ onClose, onSaved }: { onClose: () => void; on
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
