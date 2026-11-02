@@ -340,6 +340,13 @@ export async function sampleReportForTask(taskId: string, to: string[]): Promise
   if (!hit) return { ok: false, to: [], error: 'That task is not a program task (its title does not start with a program name).' }
   const { program, place } = hit
   let items = await requirements(id).catch(() => [] as WalkItem[])
+  // Breezeway hands a task's lines back only once it is finished; before that the lines come from
+  // our own copy of the checklist (lib/walk-checklists), by the program's template name.
+  if (!items.length) {
+    const { checklistFor } = await import('./walk-checklists')
+    items = checklistFor(program.templateName).flatMap(s => s.lines.map(action => ({ section: s.section, action, type: 'yes_no', response: '', note: '', photos: [] as string[], photoRequired: false, state: 'open' as const })))
+  }
+  if (!items.length) return { ok: false, to: [], error: 'No checklist lines for "' + program.templateName + '" — Breezeway returns them only for finished tasks, and lib/walk-checklists has no copy of this template.' }
   const answered = items.some(x => x.response || x.photos.length)
   const SAMPLE_ISSUES: [RegExp, string][] = [
     [/gate self-closes|self-latches/i, 'Latch does not catch unless the gate is pushed shut. Pool closed and signed until the latch is adjusted.'],
