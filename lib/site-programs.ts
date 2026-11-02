@@ -203,7 +203,7 @@ function clean(p: any): Program | null {
 // in once as ordinary programs, with the same title prefix so their open tasks are carried rather
 // than duplicated, and from then on they are edited, paused or deleted here like any other. The
 // crons that ran them now stand down (they return "moved to programs").
-const LEGACY_VERSION = 3
+const LEGACY_VERSION = 4
 const WALK_DESC = [
   'Weekly walk of the property exterior. Check and ATTACH PHOTOS of each:',
   '• Landscaping', '• Plants', '• Weeds', '• Wall damage', '• Roof damage', '• Leaks', '• All the hoses',
@@ -222,34 +222,30 @@ const PARKING_DESC = [
   '5. A guest car that is not on the list but belongs to a guest → "Register it".',
   '6. Finish the walk, then complete this task. Flags go to the office for the 1-hour tow notice.',
 ].join('\n')
-// THE EDEN EXTERIOR WALK (Jon, 2026-11-02: "build new inspection, call it Eden"). One inspection in
-// three cadences, each its own Breezeway checklist built from the Seville 3020–3024 inspection form
-// (docs: "Eden Exterior Walk"): the daily walk in route order (street and parking, front building,
-// the walkway, pool and spa, rear building, perimeter, trash and utilities, close-out), the weekly
-// items (meter reading, envelope, equipment, life safety, open work orders) on Monday, the monthly
-// items (fasteners and brackets, overhead lines, pool rescue equipment) on the 1st. The checklist
-// templates live in Breezeway and are found BY NAME on the first run (resolveTemplateId), so the
-// programs can exist before the templates do and need no id typed in. Guillermo walks it; every
-// finished walk becomes a report, the owners hear about it when something failed, and Monday
-// brings the week's roll-up (lib/walk-reports).
-export const EDEN_TEMPLATES = { daily: 'Eden Walk Daily 1.0', weekly: 'Eden Walk Weekly 1.0', monthly: 'Eden Walk Monthly 1.0' } as const
+// THE EDEN EXTERIOR WALK (Jon, 2026-11-02: "build new inspection, call it Eden" · "the walk should be
+// done weekly only, 1 a week. This report should be shared with Ownership. Note in task this will be
+// completed weekly"). ONE walk a week, Monday: one Breezeway checklist built from the Seville
+// 3020–3024 inspection form (docs: "Eden Exterior Walk") in route order — street and parking, front
+// building, the walkway, pool and spa, rear building, perimeter, trash and utilities, life safety,
+// close-out — 51 PASS / ISSUE lines. The template lives in Breezeway and is found BY NAME on the
+// first run (resolveTemplateId), so the program can exist before the template does. Guillermo walks
+// it; every finished walk becomes a report that goes to ownership (lib/walk-reports). The daily /
+// weekly / monthly split that briefly existed on 2026-11-02 is migrated to this (migrateEden).
+export const EDEN_TEMPLATE = 'Eden Walk 1.0'
 const EDEN_DESC = [
-  'Exterior walk of Eden, 3020–3024 Seville St. Every line is PASS or ISSUE. An ISSUE needs a photo and a note.',
+  'WEEKLY WALK — completed once a week, every Monday. One task a week: a walk not finished moves to the next day, it is never re-created.',
+  'Exterior walk of Eden, 3020–3024 Seville St, in route order. Every line is PASS or ISSUE. An ISSUE needs a photo and a note.',
   'Hazards get isolated on the spot: a pool gate that does not latch closes the pool; a loose railing or stair tread gets taped off; exposed wiring gets barricaded.',
   'Anything past basic maintenance (roof, panel or wiring, AC refrigerant, gas, structural, pool equipment, work near power lines) is documented and scheduled, never repaired on the spot.',
-  'Finish the task when the walk is done — Lighthouse files a fix task for every ISSUE and sends the owners the report.',
+  'Finish the task when the walk is done — Lighthouse sends ownership the report and files a fix task for every ISSUE.',
   '',
-  'Recorrido exterior de Eden. Cada línea es PASS o ISSUE; un ISSUE necesita foto y nota. Un peligro se aísla en el momento (cerrar la piscina, acordonar la baranda o escalera, bloquear el cableado expuesto). Al terminar, completa la tarea.',
+  'RECORRIDO SEMANAL — se completa una vez por semana, cada lunes. Recorrido exterior de Eden en orden de ruta. Cada línea es PASS o ISSUE; un ISSUE necesita foto y nota. Un peligro se aísla en el momento (cerrar la piscina, acordonar la baranda o escalera, bloquear el cableado expuesto). Al terminar, completa la tarea.',
 ].join('\n')
+const EDEN_REPORT: ProgramReport = { mode: 'always', weekly: false, owners: true, to: [] }
 async function legacyPrograms(): Promise<Program[]> {
   const people: Person[] = breezewayConfigured() ? await breezewayPeopleLite().catch(() => [] as any[]) as any : []
   const who = (res: RegExp[]) => res.map(re => people.find(p => re.test(str(p.name).trim()))).filter(Boolean).map(p => ({ id: Number((p as any).id), name: str((p as any).name) }))
   const bld = (ref: string, label: string, days: number[], monthDay: number | null = null): Place => ({ id: ref.toLowerCase().replace(/[^a-z0-9]+/g, '-'), kind: 'building', ref, label, days, alternate: false, onCleanDays: false, monthDay })
-  const eden = (id: string, name: string, templateName: string, label: string, days: number[], monthDay: number | null, weekly: boolean): Program => ({
-    id, name, active: true, templateId: null, templateName, department: 'inspection', description: EDEN_DESC, addCleaners: false,
-    people: who([/^guillermo\b/i]), places: [bld('Eden', label, days, monthDay)],
-    report: { mode: 'issues', weekly, owners: true, to: [] },
-  })
   return [
     {
       id: 'exterior-walkthrough', name: 'Property Exterior Walkthrough', active: true, templateId: null, templateName: '', department: 'inspection',
@@ -263,9 +259,12 @@ async function legacyPrograms(): Promise<Program[]> {
       people: who([/^guillermo\b/i, /^oscar\b/i]),
       places: [bld('Eden', 'Eden', ALL)],
     },
-    eden('eden', 'Eden', EDEN_TEMPLATES.daily, 'Exterior walk', ALL, null, true),
-    eden('eden-weekly', 'Eden weekly', EDEN_TEMPLATES.weekly, 'Weekly exterior check', [1], null, false),
-    eden('eden-monthly', 'Eden monthly', EDEN_TEMPLATES.monthly, 'Monthly exterior check', [], 1, false),
+    {
+      id: 'eden', name: 'Eden', active: true, templateId: null, templateName: EDEN_TEMPLATE, department: 'inspection',
+      description: EDEN_DESC, addCleaners: false,
+      people: who([/^guillermo\b/i]), places: [bld('Eden', 'Exterior walk', [1])],
+      report: { ...EDEN_REPORT },
+    },
   ]
 }
 
@@ -275,13 +274,29 @@ function retireEdenWalkthrough(programs: Program[]): Program[] {
   return programs.map(p => (p.id === 'exterior-walkthrough' ? { ...p, places: p.places.filter(pl => !/^eden\b/i.test(pl.ref)) } : p))
 }
 
+/**
+ * Seed v3 (the morning of 2026-11-02) split Eden into daily / weekly / monthly programs. v4 is the one
+ * weekly walk Jon asked for: the two extra programs go, and the daily one — if nobody has edited it
+ * onto another template — becomes the weekly walk on the full checklist.
+ */
+function migrateEden(programs: Program[]): Program[] {
+  return programs.filter(p => p.id !== 'eden-weekly' && p.id !== 'eden-monthly').map(p => {
+    if (p.id !== 'eden' || !/^Eden Walk (Daily|Weekly|Monthly)\b/i.test(p.templateName)) return p
+    return {
+      ...p, templateId: null, templateName: EDEN_TEMPLATE, description: EDEN_DESC,
+      places: p.places.map(pl => ({ ...pl, label: 'Exterior walk', days: [1], alternate: false, monthDay: null })),
+      report: { ...EDEN_REPORT, to: reportOf(p).to },
+    }
+  })
+}
+
 export async function loadPrograms(): Promise<Program[]> {
   const raw = await getSetting<any>(PROGRAMS_KEY, null)
   const list = raw && Array.isArray(raw.programs) ? raw.programs : null
   let programs = list ? (list.map(clean).filter(Boolean) as Program[]) : SEED.map(p => ({ ...p }))
   if (!raw || Number(raw.legacy) !== LEGACY_VERSION) {
     const add = (await legacyPrograms()).filter(l => !programs.some(p => p.id === l.id || p.name.trim().toLowerCase() === l.name.toLowerCase()))
-    programs = retireEdenWalkthrough(programs.concat(add))
+    programs = migrateEden(retireEdenWalkthrough(programs.concat(add)))
     await savePrograms(programs, 'system: recurring tasks brought into programs').catch(() => null)
   }
   return programs

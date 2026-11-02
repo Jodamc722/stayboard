@@ -234,7 +234,7 @@ async function raiseFixTasks(r: WalkReport, program: Program): Promise<FixTask[]
       it.note ? 'Note: ' + it.note : '',
       it.photos.length ? 'Photos: ' + it.photos.join(' ') : '',
       'Walk report: ' + APP() + '/walks/' + r.code,
-      'Photograph the fix and finish this task; the owners see it closed on the next report.',
+      'Photograph the fix and finish this task; ownership sees it closed on the next report.',
     ].filter(Boolean).join('\n')
     const res = await createBreezewayTask({
       home_id: r.homeId, name, type_department: 'maintenance', type_priority: /gate|rail|stair|wir|electric|hazard|leak/i.test(it.action + ' ' + it.note) ? 'high' : 'normal',
