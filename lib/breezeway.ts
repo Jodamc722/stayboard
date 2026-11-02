@@ -8,6 +8,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { fetchWithTimeout, retryAfterMs, isTimeout } from '@/lib/fetch-timeout'
 // lib/bust imports only next/cache, so this is not a cycle (ops-day → breezeway would otherwise be one).
 import { bustBoards } from '@/lib/bust'
+import { isTaskDone, isTaskGone } from '@/lib/task-categories'
 // Pure (no imports) — the matcher and the refusal sentence; the list itself is read lazily below.
 import { neverAssignMessage } from '@/lib/never-assign-match'
 
@@ -143,7 +144,64 @@ export function mapBreezewayTask(t: any) {
 // Every task write that lands (create, update, cancel, complete) busts the boards' caches: Today in
 // Ops, the Command Center and the Scheduler cache under 'day' / 'schedule', and a write that never
 // busts them reads back as "nothing happened" until the cache runs out. Best-effort, never throws.
-export async function createBreezewayTask(body: Record<string, any>): Promise<{ ok: boolean; status: number; data: any; text: string }> {
+// ── ONE OPEN TASK PER JOB PER UNIT (Jon, 2026-11-02: "We should not make duplicate tasks, we need to
+// move an incomplete task vs recreating a new task … Never create a new one, only if new. Any task in
+// Lighthouse should move or reschedule if not complete.") ─────────────────────────────────────────
+// Every create in Lighthouse passes through here, so this is where the rule lives. Before POSTing,
+// look for an open task with the same name at the same Breezeway home. If there is one:
+//   • it is dated before the new date (not done in time) → it MOVES to the new date;
+//   • it is dated on or after the new date → it is left where it is.
+// Either way that task is returned as if created, and nothing new is made. Departure / turnover
+// cleans are per stay and exempt. A caller that truly needs a second copy passes allowDuplicate: true.
+const PER_STAY = /\b(departure|turnover|check-?out|mid-?stay)\s+clean/i
+const twinKey = (n: any) => String(n ?? '').replace(/^\s*\[Moved to [^\]]+\]\s*/i, '').toLowerCase().replace(/\s+/g, ' ').trim()
+const ymdShift = (days: number) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10)
+
+async function openTwin(body: Record<string, any>): Promise<any | null> {
+  const home = Number(body?.home_id)
+  const key = twinKey(body?.name)
+  if (!Number.isFinite(home) || !key || PER_STAY.test(key)) return null
+  try {
+    const { data } = await supabaseAdmin().from('breezeway_tasks_sync')
+      .select('id,name,status,finished_at,scheduled_date,assignees')
+      .eq('home_id', home).gte('scheduled_date', ymdShift(-180)).lte('scheduled_date', ymdShift(120)).limit(3000)
+    const open = ((data || []) as any[]).filter(t => twinKey(t.name) === key && !isTaskDone(t.status, t.finished_at) && !isTaskGone(t.status))
+    if (!open.length) return null
+    // The newest open copy is the job; any older copies are already duplicates (the sweeps cancel those).
+    open.sort((a, b) => String(b.scheduled_date).localeCompare(String(a.scheduled_date)) || Number(b.id) - Number(a.id))
+    return open[0]
+  } catch { return null }   // a failed check must never block real work
+}
+
+async function reuseTwin(twin: any, body: Record<string, any>) {
+  const id = String(twin.id)
+  const cur = String(twin.scheduled_date || '').slice(0, 10)
+  const want = /^\d{4}-\d{2}-\d{2}$/.test(String(body?.scheduled_date || '')) ? String(body.scheduled_date) : ''
+  const patch: Record<string, any> = {}
+  if (want && cur && cur < want) patch.scheduled_date = want
+  const have = (Array.isArray(twin.assignees) ? twin.assignees : []).map((a: any) => Number(a?.id ?? a)).filter((n: number) => Number.isFinite(n))
+  const add = (Array.isArray(body?.assignments) ? body.assignments : []).map(Number).filter((n: number) => Number.isFinite(n) && have.indexOf(n) < 0)
+  if (add.length) patch.assignments = have.concat(add)
+  let r: { ok: boolean; status: number; data: any; text: string } | null = null
+  if (Object.keys(patch).length) {
+    r = await updateBreezewayTask(id, { name: twin.name, ...patch }).catch(() => null)
+    if (r?.ok && patch.scheduled_date) {
+      try { await supabaseAdmin().from('breezeway_tasks_sync').update({ scheduled_date: patch.scheduled_date }).eq('id', id) } catch { /* sync */ }
+    }
+  }
+  if (!r?.ok || !r.data?.id) r = await bzApi(`/task/${encodeURIComponent(id)}`).catch(() => null)
+  const data = r?.ok && r.data?.id ? r.data : { id: twin.id, name: twin.name, scheduled_date: patch.scheduled_date || cur }
+  console.info('breezeway create-task: reused open task', id, cur, '->', patch.scheduled_date || cur, 'instead of a duplicate')
+  return { ok: true, status: 200, data, text: '', reused: { id, from: cur, to: patch.scheduled_date || cur } }
+}
+
+export async function createBreezewayTask(body: Record<string, any>): Promise<{ ok: boolean; status: number; data: any; text: string; reused?: { id: string; from: string; to: string } }> {
+  const allowDuplicate = body?.allowDuplicate === true
+  if (body && 'allowDuplicate' in body) { body = { ...body }; delete body.allowDuplicate }
+  if (!allowDuplicate) {
+    const twin = await openTwin(body)
+    if (twin) return reuseTwin(twin, body)
+  }
   // THE LAST LINE OF THE NEVER-ASSIGN LIST (lib/never-assign): whatever path built this body, a
   // person on the list is taken out of `assignments`. Nobody left = the task is created unassigned.
   if (Array.isArray(body?.assignments) && body.assignments.length) {

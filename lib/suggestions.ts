@@ -147,6 +147,8 @@ export type SuggestionRun = {
    * visible backlog into a stream of duplicates.
    */
   stalled: { unit: string; label: string; since: string }[]
+  /** Every open cadence task dated before today — the cron carries each one to today (never a new one). */
+  overdue: { id: string; name: string; since: string; key: string; hasCurrent: boolean }[]
   /**
    * Apartments that appear in Guesty more than once — listed whole AND as their lock-off halves.
    * The whole-unit listing is suppressed so one front door gets one job, not two or three.
@@ -213,7 +215,7 @@ async function readHistory(sinceDate: string): Promise<{ rows: any[]; complete: 
   let complete = true
   for (let p = 0; p < MAX_PAGES; p++) {
     const { data, error } = await db.from('breezeway_tasks_sync')
-      .select('reference_property_id,name,status,finished_at,scheduled_date')
+      .select('id,reference_property_id,name,status,finished_at,scheduled_date')
       .gte('scheduled_date', sinceDate)
       .not('name', 'ilike', '%departure clean%')
       .not('name', 'ilike', '%strip%')
@@ -309,7 +311,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
     ok: true, date, enabled: cfg.enabled,
     day: { date, openCleans: 0, cleaners: 0, load: 0, cap: 0, verdict: '', heavy: false },
     suggestions: [], considered: 0, dropped, mix: { building: 0, area: 0, none: 0 },
-    amenityStats: {}, climateVocab: [], inert: [], buildings: [], stalled: [], doubleListed: 0,
+    amenityStats: {}, climateVocab: [], inert: [], buildings: [], stalled: [], overdue: [], doubleListed: 0,
     pending: {}, historyComplete: true, ...extra,
   })
 
@@ -568,6 +570,8 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   // again — it already exists — but named, because an unworked task is a real backlog and the old
   // behaviour of quietly re-proposing it hid exactly that.
   const stalled: { unit: string; label: string; since: string }[] = []
+  const overdue: { id: string; name: string; since: string; key: string; hasCurrent: boolean }[] = []
+  const current = new Set<string>()   // `${listing}|${cadence}` with an open task dated today or later
   const res = liveRes
   for (const t of hist.rows) {
     const lid = String(t.reference_property_id)
@@ -598,7 +602,8 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
         // (see `stalled`) so they get chased rather than silently re-created.
         if (!openAny[lid]) openAny[lid] = new Set()
         openAny[lid].add(c.key)
-        if (when < date) stalled.push({ unit: lmap[lid].name, label: c.label, since: when })
+        if (when < date) { stalled.push({ unit: lmap[lid].name, label: c.label, since: when }); if (t.id != null) overdue.push({ id: String(t.id), name: nm, since: when, key: lid + '|' + c.key, hasCurrent: false }) }
+        else current.add(lid + '|' + c.key)
       }
       break   // first matching cadence wins, same as the task taxonomy
     }
@@ -833,6 +838,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
       .sort((a, b) => b.units - a.units).slice(0, 30),
     inert,
     stalled: stalled.sort((a, b) => a.since.localeCompare(b.since)).slice(0, 40),
+    overdue: overdue.map(o => ({ ...o, hasCurrent: current.has(o.key) })),
     doubleListed: links.sets, pending,
     buildings: Object.keys(bCount).map(name => ({ name, units: bCount[name] }))
       .sort((a, b) => b.units - a.units || a.name.localeCompare(b.name)).slice(0, 200),

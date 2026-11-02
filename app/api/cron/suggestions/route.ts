@@ -18,6 +18,7 @@ import { closeStrayInspections } from '@/lib/task-audit'
 import { requireCron, tooSoon } from '@/lib/cron-auth'
 import { buildSuggestions, createFromSuggestion, logAccepted, getCadenceCfg } from '@/lib/suggestions'
 import { isTaskDone } from '@/lib/task-categories'
+import { updateBreezewayTask, cancelBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -61,8 +62,41 @@ export async function GET(req: NextRequest) {
       historyComplete: run.historyComplete, suggested: run.suggestions.length,
     }
 
+    if (preview) return NextResponse.json({ ...safe, suggestions: run.suggestions, overdue: run.overdue })
+
+    // ── NOT DONE → CARRIED, NEVER RE-CREATED (Jon, 2026-11-02: "we should never have two tasks
+    // incomplete. If incomplete move to next day. Never create a new one, only if new.") ─────────
+    // Every open preventative task (A/C cleaning, filters, deep cleans…) dated before today moves to
+    // today. One per unit per cadence: if the same job is open twice, the newest is carried and the
+    // older copies are cancelled (cancel, not complete — nobody did them). If today's or a later copy
+    // already exists, the late ones are the duplicates. Runs even with suggestions switched off,
+    // because these tasks exist either way.
+    let carried = 0, dupesCancelled = 0
+    try {
+      if (breezewayConfigured()) {
+        const groups: Record<string, typeof run.overdue> = {}
+        for (const o of run.overdue) (groups[o.key] = groups[o.key] || []).push(o)
+        let budget = 120
+        for (const list of Object.values(groups)) {
+          if (budget <= 0) break
+          list.sort((a, b) => (a.since < b.since ? 1 : a.since > b.since ? -1 : Number(b.id) - Number(a.id)))
+          const keep = list[0].hasCurrent ? null : list[0]
+          for (const o of list) {
+            if (budget-- <= 0) break
+            if (o === keep) {
+              const r = await updateBreezewayTask(o.id, { name: o.name, scheduled_date: date }).catch(() => null)
+              if (r?.ok) { carried++; try { await supabaseAdmin().from('breezeway_tasks_sync').update({ scheduled_date: date }).eq('id', o.id) } catch { /* sync */ } }
+            } else {
+              const c = await cancelBreezewayTask(o.id).catch(() => null)
+              if (c?.ok) { dupesCancelled++; try { await supabaseAdmin().from('breezeway_tasks_sync').update({ status: 'cancelled' }).eq('id', o.id) } catch { /* sync */ } }
+            }
+          }
+        }
+      }
+    } catch { /* carrying must never fail the run */ }
+    ;(safe as any).carried = carried; (safe as any).duplicatesCancelled = dupesCancelled
+
     if (!cfg.enabled) return NextResponse.json({ ...safe, created: 0, note: 'Suggestions are switched off in settings.' })
-    if (preview) return NextResponse.json({ ...safe, suggestions: run.suggestions })
 
     const autoKeys = new Set(cfg.cadences.filter(c => c.mode === 'auto').map(c => c.key))
     const toMake = run.suggestions.filter(s => autoKeys.has(s.cadenceKey))
