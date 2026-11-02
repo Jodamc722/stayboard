@@ -93,7 +93,6 @@ const FLAG_LEVEL: Record<Flag, 3 | 2 | 1> = {
   no_detail: 1, ai_pending: 1, no_price: 1,
 }
 const severity = (t: Task) => t.flags.reduce((m, f) => Math.max(m, FLAG_LEVEL[f] || 0), 0)
-const kindLabel = (k: string | undefined) => { const [c, w] = String(k || 'other|task').split('|'); const words = (w || '').replace(/\b\w/g, x => x.toUpperCase()); return words && words !== 'Task' ? words : (CAT_LABEL[c] || c) }
 const isFinished = (t: Task) => isTaskDone(t.status, t.finishedAt)
 /** The report flags, recomputed when a check lands on the client. */
 function withEvidence(t: Task, ev: Evidence): Task {
@@ -578,8 +577,10 @@ export function BillingReview() {
   const [sortBy, setSortBy] = useState<'flags' | 'amount' | 'date' | 'unit'>('flags')
   // HOW TO WALK IT (Jon, 2026-11-02: "a property by property review … go through it … similar tasks
   // together"): by owner (the list), one property at a time, or every similar job side by side.
-  const [view, setView] = useState<'owner' | 'property' | 'kind'>('property')
   const [walkIdx, setWalkIdx] = useState(0)
+  // TWO VIEWS ONLY (Jon, 2026-11-02: "just the standard view and the final review view"): the
+  // standard list by owner, grouped by type; Final review walks the ops-approved jobs owner by owner.
+  const view: 'owner' | 'property' | 'kind' = stage === 'gm' ? 'property' : 'owner'
   const [evBusy, setEvBusy] = useState(0)
   const [moreF, setMoreF] = useState(false)   // the extra filters stay folded away (Jon, 2026-11-02: "cleaner and easier")
   const [q, setQ] = useState('')
@@ -973,12 +974,6 @@ export function BillingReview() {
     for (const p of out) { p.rows.sort(rowSort); const us = Array.from(new Set(p.rows.map(t => t.unit))); p.unit = us.length === 1 ? us[0] : us.length + ' units' }
     return out.sort((a, b) => (a.ownerName === 'Unassigned owner' ? 1 : 0) - (b.ownerName === 'Unassigned owner' ? 1 : 0) || a.ownerName.localeCompare(b.ownerName))
   }, [visible, rowSort])
-  const kinds = useMemo(() => {
-    const m = new Map<string, Task[]>()
-    for (const t of visible) { const k = t.kind || 'other|task'; if (!m.has(k)) m.set(k, []); m.get(k)!.push(t) }
-    return Array.from(m.entries()).map(([k, rows]) => ({ k, rows: rows.sort((a, b) => b.billedAmount - a.billedAmount) }))
-      .sort((a, b) => Math.max(...b.rows.map(severity)) - Math.max(...a.rows.map(severity)) || b.rows.length - a.rows.length)
-  }, [visible])
   const walk = properties.length ? properties[Math.min(walkIdx, properties.length - 1)] : null
   const stageNow: Stage = stage || (data?.me?.isGm ? 'gm' : 'ops')
   const toState: State = stageNow === 'gm' ? 'gm_approved' : 'ops_approved'
@@ -1079,13 +1074,6 @@ export function BillingReview() {
               ))}
             </div>
           ) : null}
-          {st !== 'done' || apMode === 'rows' ? (
-            <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px] h-8" title="How to go through it">
-              {([['property', 'Owner by owner'], ['kind', 'Similar jobs'], ['owner', 'Full list']] as const).map(([k, l]) => (
-                <button key={k} onClick={() => { setView(k); setWalkIdx(0); setOpenId('') }} className={'px-2.5 font-semibold border-l border-line first:border-l-0 ' + (view === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{l}</button>
-              ))}
-            </div>
-          ) : null}
           <select value={flagF} onChange={e => setFlagF(e.target.value as any)} title="Show rows by flag" className={'h-8 rounded-lg border px-2 text-[12px] font-semibold max-w-[13rem] ' + (flagF ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-line text-ink')}>
             <option value="">All jobs</option>
             <option value="stop">Must look ({facets.stopN})</option>
@@ -1177,7 +1165,7 @@ export function BillingReview() {
         const stops = walk.rows.filter(t => severity(t) >= 3).length
         const total = walk.rows.reduce((a, t) => a + (t.excluded ? 0 : t.billedAmount), 0)
         const byKind = new Map<string, Task[]>()
-        for (const t of walk.rows) { const k = t.kind || 'other|task'; if (!byKind.has(k)) byKind.set(k, []); byKind.get(k)!.push(t) }
+        for (const t of walk.rows) { const k = t.billable?.category || 'other'; if (!byKind.has(k)) byKind.set(k, []); byKind.get(k)!.push(t) }
         const i = Math.min(walkIdx, properties.length - 1)
         const go = (n: number) => { setWalkIdx(Math.max(0, Math.min(properties.length - 1, n))); setOpenId(''); window.scrollTo({ top: 0, behavior: 'smooth' }) }
         const b = 'h-9 px-3 rounded-lg text-[12.5px] font-semibold inline-flex items-center gap-1.5 disabled:opacity-40'
@@ -1205,12 +1193,12 @@ export function BillingReview() {
               </div>
             </header>
             {Array.from(byKind.entries()).map(([k, rows]) => {
-              const u = rows.find(t => t.usual)?.usual
+              const u = null as Task['usual']
               const left = pendingIn(rows)
               return (
                 <div key={k} className="border-b border-line last:border-b-0">
                   <div className="px-4 py-1.5 flex items-center gap-2 bg-white text-[12px]">
-                    <span className="font-bold text-ink">{kindLabel(k)}</span>
+                    <span className="font-bold text-ink">{CAT_LABEL[k] || k}</span>
                     <span className="text-muted">{rows.length} job{rows.length === 1 ? '' : 's'} · {money(rows.reduce((a, t) => a + t.billedAmount, 0))}</span>
                     {u ? <span className="text-muted" title={'Approved before: middle half $' + Math.round(u.low) + '–$' + Math.round(u.high)}>· usual {money(u.median)}</span> : null}
                     <div className="flex-1" />
@@ -1223,25 +1211,7 @@ export function BillingReview() {
             <p className="px-4 py-2 text-[11px] text-muted bg-app/40">Keys: → next owner · ← back · a approve the clean ones. A row with a red flag is never in “the clean ones”.</p>
           </section>
         )
-      })() : view === 'kind' ? kinds.map(({ k, rows }) => {
-        const u = rows.find(t => t.usual)?.usual
-        const amounts = rows.filter(t => t.billedAmount > 0).map(t => t.billedAmount).sort((a, b) => a - b)
-        const mid = amounts.length ? amounts[Math.floor(amounts.length / 2)] : 0
-        const left = pendingIn(rows), clean = cleanIn(rows)
-        return (
-          <section key={k} className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
-            <header className="px-4 py-2.5 flex items-center gap-2 flex-wrap bg-app/40 border-b border-line">
-              <span className="text-[14px] font-bold text-ink">{kindLabel(k)}</span>
-              <span className="text-[12px] text-muted">{rows.length} job{rows.length === 1 ? '' : 's'} · {money(rows.reduce((a, t) => a + t.billedAmount, 0))}{amounts.length ? ' · this window ' + money(amounts[0]) + '–' + money(amounts[amounts.length - 1]) + ', middle ' + money(mid) : ''}</span>
-              {u ? <Tag tone="brand" title={'Approved before for ' + u.n + ' similar jobs: middle half $' + Math.round(u.low) + '–$' + Math.round(u.high)}>usual {money(u.median)}</Tag> : null}
-              <div className="flex-1" />
-              {mayApprove && clean.length ? <button onClick={() => setState(clean.map(t => t.id), toState)} className="h-8 px-2.5 rounded-lg bg-brand-600 text-white text-[12px] font-semibold inline-flex items-center gap-1"><Check size={12} /> Approve clean {clean.length}</button> : null}
-              {mayApprove && left.length > clean.length ? <button onClick={() => setState(left.map(t => t.id), toState)} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink">All {left.length}</button> : null}
-            </header>
-            <ul>{rows.map(t => <Row key={t.id} t={t} stage={st} isGm={isGm} busy={busy.has(t.id)} open={openId === t.id} checked={picks.has(t.id)} onCheck={onCheck} onToggle={onToggle} onState={onState} onEdit={onEdit} onText={onText} extra={data.extras?.[t.id]} onExtra={onExtra} onReload={reload} />)}</ul>
-          </section>
-        )
-      }) : groups.filter(g => g.rows.length).map(({ owner: o, rows }) => {
+      })() : groups.filter(g => g.rows.length).map(({ owner: o, rows }) => {
         const k = o.ownerId || '—'
         const isOpen = !collapsed[k]
         const actionable = rows.filter(inStage)
@@ -1271,11 +1241,26 @@ export function BillingReview() {
               ) : null}
               {o.ownerId ? <IconBtn title={'Download ' + o.ownerName + '’s sheet (Excel)'} href={'/api/billing/export?' + winQS + '&format=xls&done=1&owner=' + encodeURIComponent(o.ownerId)}><Download size={13} /></IconBtn> : null}
             </header>
-            {isOpen ? (
-              <ul>
-                {rows.map(t => <Row key={t.id} t={t} stage={st} isGm={isGm} busy={busy.has(t.id)} open={openId === t.id} checked={picks.has(t.id)} onCheck={onCheck} onToggle={onToggle} onState={onState} onEdit={onEdit} onText={onText} extra={data.extras?.[t.id]} onExtra={onExtra} onReload={reload} />)}
-              </ul>
-            ) : null}
+            {isOpen ? (() => {
+              // BY TYPE, NOT BY DATE (Jon, 2026-11-02): Repair, PM, Pest… each with its own count and total.
+              const byType = new Map<string, Task[]>()
+              for (const t of rows) { const k = t.billable?.category || 'other'; if (!byType.has(k)) byType.set(k, []); byType.get(k)!.push(t) }
+              const types = Array.from(byType.entries()).sort((a, b) => Math.max(...b[1].map(severity)) - Math.max(...a[1].map(severity)) || b[1].reduce((x, t) => x + t.billedAmount, 0) - a[1].reduce((x, t) => x + t.billedAmount, 0))
+              return types.map(([k, list]) => {
+                const left = list.filter(inStage)
+                return (
+                  <div key={k} className="border-b border-line last:border-b-0">
+                    <div className="px-4 py-1.5 flex items-center gap-2 bg-app/30 text-[12px]">
+                      <span className="font-bold text-ink">{CAT_LABEL[k] || k}</span>
+                      <span className="text-muted">{list.length} job{list.length === 1 ? '' : 's'} · {money(list.reduce((a, t) => a + t.billedAmount, 0))}</span>
+                      <div className="flex-1" />
+                      {canApproveAll && list.length > 1 && left.length ? <button onClick={() => setState(left.map(t => t.id), approveAllTo)} className="h-7 px-2 rounded-md border border-line bg-white text-[11.5px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1"><Check size={11} /> Approve these {left.length}</button> : null}
+                    </div>
+                    <ul>{list.map(t => <Row key={t.id} t={t} stage={st} isGm={isGm} busy={busy.has(t.id)} open={openId === t.id} checked={picks.has(t.id)} onCheck={onCheck} onToggle={onToggle} onState={onState} onEdit={onEdit} onText={onText} extra={data.extras?.[t.id]} onExtra={onExtra} onReload={reload} />)}</ul>
+                  </div>
+                )
+              })
+            })() : null}
           </section>
         )
       })}
