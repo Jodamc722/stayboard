@@ -7,8 +7,7 @@
 // the voice mispronounces kept out of spoken lines.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { anthropicMessages } from '@/lib/anthropic-call'
-import { modelFor } from '@/lib/ai-models'
+import { askJson } from '@/lib/ad-json'
 import { scriptPrompt, normalize } from '@/lib/ad-studio'
 import { searchPhotos } from '@/lib/photo-library'
 
@@ -30,18 +29,14 @@ export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => ({} as any))
   const seconds = Math.max(10, Math.min(120, Number(b?.seconds) || 30))
   const prompt = scriptPrompt({
-    prompt: String(b?.prompt || '').slice(0, 1500), seconds, format: String(b?.format || '16:9'),
+    prompt: String(b?.prompt || '').slice(0, 8000), seconds, format: String(b?.format || '16:9'),
     audience: String(b?.audience || 'property owners').slice(0, 80),
     current: b?.current ? normalize(b.current) : null,
   })
   try {
-    const r = await anthropicMessages(key, { model: await modelFor('ad-script'), max_tokens: 4000, temperature: 0.6, messages: [{ role: 'user', content: prompt }] }, undefined, 'ad-script')
-    if (!r.ok) return NextResponse.json({ ok: false, error: `Model said ${r.status}: ${JSON.stringify(r.data?.error || r.data).slice(0, 200)}` }, { status: 502 })
-    const text = (r.data?.content || []).filter((c: any) => c?.type === 'text').map((c: any) => String(c.text || '')).join('')
-    const m = text.match(/\{[\s\S]*\}/)
-    if (!m) return NextResponse.json({ ok: false, error: 'The writer did not return a script. Try again.' }, { status: 502 })
-    let j: any
-    try { j = JSON.parse(m[0]) } catch { return NextResponse.json({ ok: false, error: 'The script came back malformed. Try again.' }, { status: 502 }) }
+    const ans = await askJson(key, prompt, { maxTokens: 5000, temperature: 0.6 })
+    if (!ans.ok) return NextResponse.json({ ok: false, error: ans.error }, { status: 502 })
+    const j: any = ans.json
     const raw: any[] = Array.isArray(j?.scenes) ? j.scenes.slice(0, 20) : []
     // Photos: one library search per distinct query, shared across scenes that ask for the same thing.
     const cache: Record<string, string[]> = {}

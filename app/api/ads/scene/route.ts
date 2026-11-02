@@ -3,8 +3,7 @@
 // Nothing is saved here; the editor applies it (and Undo is one click there).
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { anthropicMessages } from '@/lib/anthropic-call'
-import { modelFor } from '@/lib/ai-models'
+import { askJson } from '@/lib/ad-json'
 import { normalize, scenePrompt } from '@/lib/ad-studio'
 import { searchPhotos } from '@/lib/photo-library'
 
@@ -21,12 +20,9 @@ export async function POST(req: NextRequest) {
   const ask = String(b?.ask || '').trim().slice(0, 800)
   if (!ask || !(i >= 0 && i < p.scenes.length)) return NextResponse.json({ ok: false, error: 'Say what to change.' }, { status: 400 })
   try {
-    const r = await anthropicMessages(key, { model: await modelFor('ad-script'), max_tokens: 1200, temperature: 0.5, messages: [{ role: 'user', content: scenePrompt(p, i, ask) }] }, undefined, 'ad-script')
-    if (!r.ok) return NextResponse.json({ ok: false, error: `Model said ${r.status}` }, { status: 502 })
-    const text = (r.data?.content || []).filter((c: any) => c?.type === 'text').map((c: any) => String(c.text || '')).join('')
-    const m = text.match(/\{[\s\S]*\}/)
-    if (!m) return NextResponse.json({ ok: false, error: 'No answer came back. Try again.' }, { status: 502 })
-    const j = JSON.parse(m[0])
+    const a = await askJson(key, scenePrompt(p, i, ask), { maxTokens: 1200, temperature: 0.5 })
+    if (!a.ok) return NextResponse.json({ ok: false, error: a.error }, { status: 502 })
+    const j = a.json
     const old = p.scenes[i]
     let photos = old.photos
     const q = String(j?.photoQuery || '').trim().slice(0, 60)

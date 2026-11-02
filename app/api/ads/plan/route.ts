@@ -4,8 +4,7 @@
 // with a recommended answer first, and the scene outline. Nothing is written or saved here.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { anthropicMessages } from '@/lib/anthropic-call'
-import { modelFor } from '@/lib/ai-models'
+import { askJson } from '@/lib/ad-json'
 import { planPrompt } from '@/lib/ad-studio'
 import { libraryIndex, buildingPhotos } from '@/lib/photo-library'
 
@@ -19,7 +18,7 @@ export async function POST(req: NextRequest) {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return NextResponse.json({ ok: false, error: 'No Anthropic key configured.' }, { status: 503 })
   const b = await req.json().catch(() => ({} as any))
-  const brief = String(b?.brief || '').trim().slice(0, 1500)
+  const brief = String(b?.brief || '').trim().slice(0, 4000)
   if (!brief) return NextResponse.json({ ok: false, error: 'Write a line about the ad first, e.g. "a cool video for Amrit".' }, { status: 400 })
   try {
     let properties = '', photosOf = '', matched = ''
@@ -39,12 +38,9 @@ export async function POST(req: NextRequest) {
       }
     } catch { /* plan without the library */ }
     const prompt = planPrompt({ brief, seconds: Number(b?.seconds) || 30, format: String(b?.format || '16:9'), audience: String(b?.audience || 'owners'), properties: properties || '(library unavailable)', photosOf })
-    const r = await anthropicMessages(key, { model: await modelFor('ad-script'), max_tokens: 1800, temperature: 0.5, messages: [{ role: 'user', content: prompt }] }, undefined, 'ad-script')
-    if (!r.ok) return NextResponse.json({ ok: false, error: `Model said ${r.status}` }, { status: 502 })
-    const text = (r.data?.content || []).filter((c: any) => c?.type === 'text').map((c: any) => String(c.text || '')).join('')
-    const m = text.match(/\{[\s\S]*\}/)
-    if (!m) return NextResponse.json({ ok: false, error: 'No plan came back. Try again.' }, { status: 502 })
-    const j = JSON.parse(m[0])
+    const a = await askJson(key, prompt, { maxTokens: 3000, temperature: 0.5 })
+    if (!a.ok) return NextResponse.json({ ok: false, error: a.error }, { status: 502 })
+    const j = a.json
     const S = j?.settings || {}
     const pick = <T extends string>(v: any, ok: readonly T[], d: T): T => (ok.indexOf(v) >= 0 ? v : d)
     const plan = {
