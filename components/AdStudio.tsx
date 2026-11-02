@@ -230,7 +230,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
     if (!cur || !canEdit) return
     setSaved('saving')
     const r = await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: cur }) }).then(x => x.json()).catch(() => null)
-    if (r?.ok) { setSaved(pRef.current === cur ? 'saved' : 'dirty'); setList(l => l.map(x => (x.id === cur.id ? { ...x, name: cur.name, scenes: cur.scenes.length, updatedAt: r.project.updatedAt } : x))) }
+    if (r?.ok) { setSaved(pRef.current === cur ? 'saved' : 'dirty'); setList(l => l.map(x => (x.id === cur.id ? { ...x, name: cur.name, format: cur.format, scenes: cur.scenes.length, updatedAt: r.project.updatedAt } : x))) }
     else { setSaved('dirty'); setErr(r?.error || 'Save failed — your changes are still here; try again.') }
   }
   const setScene = (i: number, patch: Partial<AdScene>) => change(d => ({ ...d, scenes: d.scenes.map((s, k) => (k === i ? { ...s, ...patch } : s)) }))
@@ -1139,7 +1139,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
 
                 <div style={{ display: 'flex', gap: 8, marginTop: 18, alignItems: 'center' }}>
                   {i > 0 ? <Btn disabled={!!busy} onClick={() => setWs(i - 1)}>← Back</Btn> : null}
-                  <span style={{ marginLeft: 'auto', fontSize: 11.5, color: UI.mut }}>{busy === 'plan' ? 'Working it through… about 10 seconds' : ''}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11.5, color: UI.mut }}>{busy === 'plan' ? 'Working it through… about 20–30 seconds' : ''}</span>
                   <Btn tone="gold" disabled={!!busy} onClick={next}>{busy === 'plan' ? 'Thinking…' : busy ? 'Working…' : key === 'think' ? (plan ? 'Next →' : 'Work it through →') : last ? (st.mode === 'describe' ? 'Review the plan →' : st.mode === 'script' ? (busy === 'script' ? 'Laying it out…' : 'Lay out my script →') : st.mode === 'revamp' ? 'Revamp it →' : st.mode === 'template' ? 'Next: pick a template →' : 'Create it →') : 'Next →'}</Btn>
                 </div>
               </div>
@@ -1182,7 +1182,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
                 <Btn disabled={!!busy} onClick={rewriteDraft}>{busy === 'script' ? 'Rewriting…' : 'Rewrite'}</Btn>
               </div>
               <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
-                <Btn tone="gold" disabled={!!busy} onClick={async () => { setBusy('write'); await applyScenes(draft.name, draft.scenes, draft.settings); setBusy('') }}>{busy === 'write' ? 'Building…' : 'Build the video from this script →'}</Btn>
+                <Btn tone="gold" disabled={!!busy} onClick={async () => { setBusy('write'); await applyScenes(draft.name, draft.scenes, draft.settings); setBusy('') }}>{busy === 'write' ? 'Building… finding photos' : 'Build the video from this script →'}</Btn>
               </div>
               <p style={{ fontSize: 11, color: UI.mut, marginTop: 8 }}>Photos, timing and looks are laid out from this script. Then Make voice records it in one take.</p>
             </div>
@@ -1238,7 +1238,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
           ) : p ? (
             <>
               <canvas ref={canvasRef} width={FW >= FH ? 960 : Math.round(960 * FW / FH)} height={FW >= FH ? Math.round(960 * FH / FW) : 960}
-                style={{ width: '100%', maxWidth: FW >= FH ? pw : (full ? 460 : 360), aspectRatio: `${FW}/${FH}`, borderRadius: 8, background: '#000', boxShadow: '0 20px 50px -25px rgba(0,0,0,.8)' }} />
+                style={{ ...(FW >= FH ? { width: '100%', maxWidth: pw } : { height: full ? 'calc(100vh - 330px)' : 560, maxHeight: 640, width: 'auto' }), aspectRatio: `${FW}/${FH}`, borderRadius: 8, background: '#000', boxShadow: '0 20px 50px -25px rgba(0,0,0,.8)' }} />
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', maxWidth: FW >= FH ? pw : 520 }}>
                 <Btn tone="gold" onClick={play}>{playing ? '❚❚ Pause' : '▶ Play'}</Btn>
                 <Btn small onClick={() => seek(0)}>⏮ Start</Btn>
