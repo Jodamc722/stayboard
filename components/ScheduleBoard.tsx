@@ -129,10 +129,11 @@ export function ScheduleBoard({ embedded }: { embedded?: ScheduleEmbed } = {}) {
   const GROWTH = presets.roster.growth
   // Expected labor cost per clean from the P&L (hours per clean = cost ÷ $20). Non-admins receive them already in hours.
   const [cleanRates, setCleanRates] = useState<CleanRates | null>(null)
+  const [rateDollars, setRateDollars] = useState(false)
   // Estimated cleaning time for one clean: expected labor cost ÷ pay per hour. Vendor cleans and
   // owner-cleaned units have none.
   const estHours = (c: Clean): number | null => { if (!cleanRates || c.vendor) return null; const p = priceClean(cleanRates, { name: c.unit, bedrooms: c.bedrooms, market: c.market }); return p.hours > 0 ? p.hours : null }
-  useEffect(() => { fetch('/api/settings/clean-rates', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(j => { if (j && j.config) setCleanRates(j.config) }).catch(() => {}) }, [])
+  useEffect(() => { fetch('/api/settings/clean-rates', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(j => { if (j && j.config) { setCleanRates(j.config); setRateDollars(!!j.dollars) } }).catch(() => {}) }, [])
   const [view, setView] = useState<'week' | 'day'>('day') // day (by building) first — the team's morning view
   const [date, setDate] = useState<string>('')
   const [opsFor, setOpsFor] = useState<{ listingId: string; unit: string; date?: string } | null>(null)
@@ -252,6 +253,8 @@ export function ScheduleBoard({ embedded }: { embedded?: ScheduleEmbed } = {}) {
   const hoursOn = (d: FcDay) => Math.round(needsOn(d).reduce((a, x) => a + x.hours, 0) * 10) / 10
   // Who is working: the rail's own rule — a saved override wins, otherwise what Homebase has on the
   // schedule. Counting only saved overrides read "0 of 16" on a day with fourteen people clocked in.
+  // Who is working in ONE market on a day — the same rule as workingOn, for the KPI guide.
+  const workingIn = (mk: string, d: string) => { let n = 0; const doc = teamDocs[mk] || { members: [], cells: {} }; const ros = rosters[mk]; const names = ros ? ros.people.map(p => p.name) : doc.members; for (const m of names) { if (NON_CLEANERS[m]) continue; const p = ros ? ros.people.find(x => x.name === m) : null; const c = p ? p.days[d] : null; const eff = String(doc.cells[m + '__' + d] || '') || (c && c.source === 'homebase' ? String(c.status || '') : ''); if (/work/i.test(eff)) n++ } return n }
   const workingOn = (d: string) => { const seen: Record<string, number> = {}; let n = 0; for (const mk of stripMarkets) { const doc = teamDocs[mk] || { members: [], cells: {} }; const ros = rosters[mk]; const names = ros ? ros.people.map(p => p.name) : doc.members; for (const m of names) { if (NON_CLEANERS[m] || seen[m]) continue; const p = ros ? ros.people.find(x => x.name === m) : null; const c = p ? p.days[d] : null; const eff = String(doc.cells[m + '__' + d] || '') || (c && c.source === 'homebase' ? String(c.status || '') : ''); if (/work/i.test(eff)) { seen[m] = 1; n++ } } } return n }
 
   const [cleared, setCleared] = useState<Record<string, boolean>>({})
@@ -354,6 +357,25 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
 
   const visibleMarkets = (market === 'all' || market === 'vendor') ? [...MARKETS] : [market]
   const dayCleans = useMemo(() => { const all: Clean[] = []; const _seen = new Set<string>(); visibleMarkets.forEach(m => (data?.days?.[0]?.markets[m] || []).forEach(c => { const _k = keyOf(c); if (_seen.has(_k)) return; _seen.add(_k); all.push(c) })); return market === 'vendor' ? all.filter((c) => c.vendor) : (market === 'all' ? all : all.filter((c) => !c.vendor)) }, [data, market])
+
+  // THE DAY'S KPI GUIDE (Jon, 2026-11-02: "show KPI estimation for the day by market based on the
+  // schedule, where we should fall — it should be a guide"). Every clean on the board for the day,
+  // priced at the P&L's expected labor cost and its hours (÷ $20), summed per market. Not a verdict on
+  // anyone: the number the day should land on.
+  const kpiDay = (() => {
+    const by: Record<string, { market: string; cleans: number; hours: number; cost: number }> = {}
+    for (const c of dayCleans) {
+      if (c.vendor || !cleanRates) continue
+      const p = priceClean(cleanRates, { name: c.unit, bedrooms: c.bedrooms, market: c.market })
+      if (!(p.hours > 0)) continue
+      const mk = String(c.market || 'Miami')
+      const r = (by[mk] = by[mk] || { market: mk, cleans: 0, hours: 0, cost: 0 })
+      r.cleans++; r.hours += p.hours; r.cost += p.rate
+    }
+    const rows = MARKETS.map(m => by[m]).filter(Boolean) as { market: string; cleans: number; hours: number; cost: number }[]
+    for (const k of Object.keys(by)) if (!(MARKETS as string[]).includes(k)) rows.push(by[k])
+    return rows
+  })()
 
   // EXPECTED HOURS BY CLEANER (Jon, 2026-11-02: "show a chart with cleaner name and expected hours").
   // Every clean on the day, at its estimated time (expected labor cost ÷ $20), summed onto whoever is
@@ -827,7 +849,7 @@ async function pushBlocks() {
               the bottom it sat below a hundred rows of cleans where nobody scrolled to it. */}
           {!embedded && (
           <div className="space-y-3 order-2 lg:order-1">
-            <WorkingRail rosters={rosters} date={data.weekStart || date} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(data.weekStart || date)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} need={(() => { const d0 = stripDays.find(x => x.date === (data.weekStart || date)); return d0 ? needOn(d0) : 0 })()} needs={(() => { const d0 = stripDays.find(x => x.date === (data.weekStart || date)); return d0 ? needsOn(d0) : [] })()} shiftHours={SHIFT_H} load={cleanerLoad} working={workingOn(data.weekStart || date)} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
+            <WorkingRail rosters={rosters} date={data.weekStart || date} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(data.weekStart || date)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} need={(() => { const d0 = stripDays.find(x => x.date === (data.weekStart || date)); return d0 ? needOn(d0) : 0 })()} needs={(() => { const d0 = stripDays.find(x => x.date === (data.weekStart || date)); return d0 ? needsOn(d0) : [] })()} shiftHours={SHIFT_H} load={cleanerLoad} kpiDay={kpiDay} dollars={rateDollars} payPerHour={(cleanRates && rateDollars && cleanRates.payPerHour) || 20} scheduledByMk={Object.fromEntries(MARKETS.map(m => [m, workingIn(m, data.weekStart || date)]))} working={workingOn(data.weekStart || date)} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
 
             {/* A 280px column, so the controls stack rather than fighting for one line. Download
                 first: the safe one is the one your hand lands on, and Post goes to the whole crew. */}
@@ -932,7 +954,7 @@ async function pushBlocks() {
                         {(c as any).calNote === 'blocked' && <span title="Guesty calendar shows a BLOCK (owner hold / maintenance) covering the gap - this move is a calendar block, not a guest extension" className="inline-block ml-0.5 text-[9px] font-bold text-slate-700 bg-slate-100 border border-slate-300 rounded px-1 align-middle">Unit blocked</span>}
                         {(c as any).calNote === 'booked' && <span title="Guesty calendar shows a reservation covering the gap - the guest is still in the unit (extension confirmed by calendar)" className="inline-block ml-0.5 text-[9px] font-bold text-violet-700 bg-violet-50 border border-violet-300 rounded px-1 align-middle">Cal: occupied</span>}
                         {!c.movedTo && !c.movedFrom && c.taskDate && c.taskDate !== c.date && (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate + '. Click to open the task in Breezeway and check it.'} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle hover:bg-amber-100 underline decoration-dotted">Moved &rarr; {c.taskDate.slice(5)}</a> : <span title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle">Moved &rarr; {c.taskDate.slice(5)}</span>)}{(c.bedrooms != null || c.nights != null || c.checkOutTime) && <div className="text-[11px] text-muted mt-0.5 font-normal">{[c.bedrooms != null ? (c.bedrooms === 0 ? 'Studio' : c.bedrooms + 'BR') : '', c.nights != null ? c.nights + ' nt' : '', c.checkOutTime ? 'out ' + c.checkOutTime : '', c.doorCode ? 'code ' + c.doorCode : ''].filter(Boolean).join(' \u00b7 ')}</div>}{c.cleanMinutes != null && c.cleanMinutes > 0 && c.taskStatus === 'completed' && <span title={'Time on this clean (Breezeway timer). Benchmark for ' + (c.bedrooms == null ? 'this unit' : c.bedrooms === 0 ? 'a studio' : c.bedrooms + 'BR') + '. Duration only \u2014 not labor cost.'} className={'ml-1 inline-flex items-center gap-0.5 text-[9px] font-semibold px-1 py-0.5 rounded border align-middle font-normal ' + cleanTimeCls(c.bedrooms, c.cleanMinutes, presets.timing, c.unit, cleanRates)}>{'\u23f1'} {fmtMins(c.cleanMinutes)}</span>}</td>
-                        <td className="order-5 shrink-0 sm:table-cell px-2.5 py-1.5 align-middle text-right whitespace-nowrap tabular-nums">{(() => { const h = estHours(c); if (h == null) return <span className="text-muted">—</span>; const done = c.cleanMinutes != null && c.cleanMinutes > 0 && c.taskStatus === 'completed'; const over = done && (c.cleanMinutes as number) > h * 60; return <span className="inline-flex flex-col items-end leading-tight"><span className="font-semibold text-ink">{fmtH(h)}</span>{done && <span className={'text-[10px] ' + (over ? 'text-amber-700' : 'text-emerald-700')}>{fmtMins(c.cleanMinutes as number)} actual</span>}</span> })()}</td>
+                        <td className="order-5 shrink-0 sm:table-cell px-2.5 py-1.5 align-middle text-right whitespace-nowrap tabular-nums">{(() => { const h = estHours(c); if (h == null) return <span className="text-muted">—</span>; const done = c.cleanMinutes != null && c.cleanMinutes > 0 && c.taskStatus === 'completed'; return <span className="inline-flex flex-col items-end leading-tight"><span className="font-semibold text-ink">{fmtH(h)}</span>{done && <span className="text-[10px] text-muted">{fmtMins(c.cleanMinutes as number)} actual</span>}</span> })()}</td>
                         <td className="order-3 basis-full min-w-0 whitespace-normal sm:table-cell sm:whitespace-nowrap px-2.5 py-1.5 align-middle text-ink/90">{c.walkInRisk && <span className="inline-flex items-center gap-1 text-[10px] font-bold text-white bg-rose-600 rounded px-1.5 py-0.5 mr-1" title="A confirmed guest is still in-house this day - do NOT clean / walk-in risk">⚠ Guest in-house</span>}{c.missing && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-300 rounded px-1.5 py-0.5 mr-1" title="No Breezeway clean scheduled for this checkout within 14 days">⚠ No clean scheduled</span>}{c.manual ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5">Added manually</span> : c.bzOnly ? (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here. Click to open the task in Breezeway and check it." className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 hover:bg-emerald-100 underline decoration-dotted">Moved-in clean &rarr;</a> : <span title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here" className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">Moved-in clean</span>) : (c.guestOut ? <span className="inline-block max-w-[150px] truncate align-bottom" title={c.guestOut}>{c.guestOut}</span> : <span className="text-muted italic">—</span>)}</td>
                         
                         <td className="order-5 shrink-0 sm:table-cell px-2.5 py-1.5 align-middle text-right whitespace-nowrap">{c.cleaningFee != null && c.cleaningFee > 0
@@ -1021,7 +1043,7 @@ async function pushBlocks() {
   )
 }
 
-function WorkingRail({ date, dayLabel, docs, rosters, need, needs = [], shiftHours = 8, load, working, markets, saveState, onSet, onAdd, onRemove }: { date: string; dayLabel: string; docs: Record<string, TeamDoc>; rosters: Record<string, Roster>; need: number; needs?: MarketNeed[]; shiftHours?: number; load?: { people: { name: string; hours: number; cleans: number }[]; unassigned: { hours: number; cleans: number } }; working: number; markets: string[]; saveState: string; onSet: (mk: string, mem: string, d: string, val: string) => void; onAdd: (mk: string, name: string) => void; onRemove: (mk: string, name: string) => void }) {
+function WorkingRail({ date, dayLabel, docs, rosters, need, needs = [], shiftHours = 8, load, kpiDay = [], dollars = false, payPerHour = 20, scheduledByMk = {}, working, markets, saveState, onSet, onAdd, onRemove }: { date: string; dayLabel: string; docs: Record<string, TeamDoc>; rosters: Record<string, Roster>; need: number; needs?: MarketNeed[]; shiftHours?: number; load?: { people: { name: string; hours: number; cleans: number }[]; unassigned: { hours: number; cleans: number } }; kpiDay?: { market: string; cleans: number; hours: number; cost: number }[]; dollars?: boolean; payPerHour?: number; scheduledByMk?: Record<string, number>; working: number; markets: string[]; saveState: string; onSet: (mk: string, mem: string, d: string, val: string) => void; onAdd: (mk: string, name: string) => void; onRemove: (mk: string, name: string) => void }) {
   const NON_CLEANERS = useOpsPresets().roster.nonCleaners
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [showAll, setShowAll] = useState(false)
@@ -1035,41 +1057,58 @@ function WorkingRail({ date, dayLabel, docs, rosters, need, needs = [], shiftHou
         <div className="text-[13px] font-bold text-ink">Working — {dayLabel}</div>
         <span className={'text-[11px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 ' + (need > 0 && working < need ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700')}>{working} of {need} needed</span>
       </div>
-      {/* Hours per market: the day's cleans at expected labor cost ÷ $20, ÷ a shift = cleaners needed. */}
-      {needs.some(x => x.hours > 0) && (
-        <div className="mb-2.5 rounded-lg bg-app border border-line px-2.5 py-2" title={'Each clean carries its expected labor cost (P&L KPI) ÷ $20 in paid hours. Hours ÷ ' + shiftHours + 'h shift, plus the growth buffer, rounded up = cleaners needed.'}>
-          <div className="flex items-baseline justify-between text-[10px] uppercase tracking-wide text-muted font-semibold mb-1"><span>Hours per clean · labor cost ÷ $20</span><button onClick={() => setRatesOpen(true)} className="normal-case tracking-normal underline decoration-dotted hover:text-ink">Rates</button></div>
-          {needs.filter(x => x.cleans > 0 || x.hours > 0).map(x => (
-            <div key={x.market} className="flex items-baseline justify-between gap-2 text-[11.5px] py-px">
-              <span className="text-ink font-semibold">{x.market === 'North' ? 'Palm Beach' : x.market}</span>
-              <span className="text-muted tabular-nums">{x.cleans} cleans · {x.hours}h{x.cleans ? ' · ' + (Math.round(x.hours / x.cleans * 10) / 10) + 'h each' : ''}</span>
-              <span className="font-bold text-ink tabular-nums">{x.need}</span>
+      {/* THE DAY'S KPI GUIDE: the schedule's cleans at the P&L's expected labor cost, by market —
+          where the day should land. A guide, not a grade. */}
+      {kpiDay.length > 0 && (() => {
+        const tot = kpiDay.reduce((a, r) => ({ cleans: a.cleans + r.cleans, hours: a.hours + r.hours, cost: a.cost + r.cost }), { cleans: 0, hours: 0, cost: 0 })
+        const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
+        const per = (r: { cleans: number; cost: number; hours: number }) => r.cleans ? (dollars ? '$' + (r.cost / r.cleans).toFixed(2) : fmtH(r.hours / r.cleans)) + ' / clean' : ''
+        // SCHEDULED = everyone working that day at an 8h shift (Jon: "assume 8h shifts scheduled").
+        const schedOf = (label: string) => label === 'Total' ? kpiDay.reduce((a, r) => a + (scheduledByMk[r.market] || 0), 0) : (scheduledByMk[label] || 0)
+        const row = (label: string, r: { cleans: number; hours: number; cost: number }, bold = false) => {
+          const heads = schedOf(label)
+          const schedH = heads * shiftHours
+          const kpiHeads = Math.ceil(r.hours / shiftHours - 1e-9)
+          return (
+            <div key={label} className={'py-1 text-[11.5px] ' + (bold ? 'border-t border-line mt-1' : '')}>
+              <div className="flex items-baseline justify-between gap-2">
+                <span className={'text-ink ' + (bold ? 'font-bold' : 'font-semibold')}>{label === 'North' ? 'Palm Beach' : label} <span className="font-normal text-muted">· {r.cleans} clean{r.cleans === 1 ? '' : 's'}</span></span>
+                <span className="text-[10px] text-muted">{per(r)}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 mt-0.5 tabular-nums">
+                <div><div className="text-[9.5px] uppercase tracking-wide text-muted">KPI</div><div className="font-semibold text-ink">{fmtH(r.hours)}<span className="font-normal text-muted"> · {kpiHeads} × {shiftHours}h</span></div>{dollars && <div className="text-[10.5px] text-muted">{money(r.cost)}</div>}</div>
+                <div><div className="text-[9.5px] uppercase tracking-wide text-muted">Scheduled</div><div className="font-semibold text-ink">{fmtH(schedH)}<span className="font-normal text-muted"> · {heads} × {shiftHours}h</span></div>{dollars && <div className="text-[10.5px] text-muted">{money(schedH * payPerHour)}</div>}</div>
+              </div>
+              {heads > 0 && r.hours > 0 && <div className="text-[10px] text-muted mt-0.5">{Math.abs(schedH - r.hours) < 0.5 ? 'In line with the KPI' : schedH > r.hours ? fmtH(schedH - r.hours) + ' above the KPI' : fmtH(r.hours - schedH) + ' below the KPI'}</div>}
             </div>
-          ))}
-        </div>
-      )}
-      {load && (load.people.length > 0 || load.unassigned.cleans > 0) && (
-        <div className="mb-2.5 rounded-lg border border-line px-2.5 py-2" title={'Each clean at its estimated time (expected labor cost ÷ $20), summed per cleaner. The line is a ' + shiftHours + 'h shift.'}>
-          <div className="text-[10px] uppercase tracking-wide text-muted font-semibold mb-1.5">Expected hours by cleaner</div>
-          {load.people.map(p => {
-            const pct = Math.min(100, (p.hours / (shiftHours * 1.25)) * 100)
-            const over = p.hours > shiftHours, near = p.hours > shiftHours * 0.85
-            return (
+          )
+        }
+        return (
+          <div className="mb-2.5 rounded-lg bg-app border border-line px-2.5 py-2" title={'Guide: every clean on today\'s schedule at the P&L\'s expected labor cost' + (dollars ? '' : '') + ', and the hours that is at $20/hour. Where the day should land — not a target for any one person.'}>
+            <div className="flex items-baseline justify-between text-[10px] uppercase tracking-wide text-muted font-semibold mb-1"><span>KPI guide · where today should land</span><button onClick={() => setRatesOpen(true)} className="normal-case tracking-normal underline decoration-dotted hover:text-ink">Rates</button></div>
+            {kpiDay.map(r => row(r.market, r))}
+            {kpiDay.length > 1 && row('Total', tot, true)}
+          </div>
+        )
+      })()}
+      {load && (load.people.length > 0 || load.unassigned.cleans > 0) && (() => {
+        const max = Math.max(1, ...load.people.map(p => p.hours))
+        return (
+          <div className="mb-2.5 rounded-lg border border-line px-2.5 py-2" title="Guide: each person's cleans at their estimated time (expected labor cost ÷ $20).">
+            <div className="text-[10px] uppercase tracking-wide text-muted font-semibold mb-1.5">Estimated hours by cleaner · guide</div>
+            {load.people.map(p => (
               <div key={p.name} className="py-0.5">
                 <div className="flex items-baseline justify-between gap-2 text-[11px]">
-                  <span className="text-ink truncate">{shortTeamName(p.name)} <span className="text-muted">· {p.cleans}</span></span>
-                  <span className={'tabular-nums font-semibold ' + (over ? 'text-rose-700' : near ? 'text-amber-700' : 'text-ink')}>{fmtH(p.hours)}</span>
+                  <span className="text-ink truncate">{shortTeamName(p.name)} <span className="text-muted">· {p.cleans} clean{p.cleans === 1 ? '' : 's'}</span></span>
+                  <span className="tabular-nums font-semibold text-ink">{fmtH(p.hours)}</span>
                 </div>
-                <div className="relative h-1.5 rounded-full bg-neutral-100 mt-0.5">
-                  <div className={'absolute inset-y-0 left-0 rounded-full ' + (over ? 'bg-rose-500' : near ? 'bg-amber-400' : 'bg-emerald-500')} style={{ width: pct + '%' }} />
-                  <div className="absolute inset-y-[-2px] w-px bg-neutral-500" style={{ left: (100 / 1.25) + '%' }} />
-                </div>
+                <div className="h-1.5 rounded-full bg-neutral-100 mt-0.5"><div className="h-full rounded-full bg-neutral-400" style={{ width: Math.max(4, (p.hours / max) * 100) + '%' }} /></div>
               </div>
-            )
-          })}
-          {load.unassigned.cleans > 0 && <div className="flex items-baseline justify-between text-[11px] pt-1 mt-1 border-t border-line"><span className="text-rose-700 font-semibold">Unassigned · {load.unassigned.cleans}</span><span className="tabular-nums font-semibold text-rose-700">{fmtH(load.unassigned.hours)}</span></div>}
-        </div>
-      )}
+            ))}
+            {load.unassigned.cleans > 0 && <div className="flex items-baseline justify-between text-[11px] pt-1 mt-1 border-t border-line text-muted"><span>Not assigned yet · {load.unassigned.cleans}</span><span className="tabular-nums font-semibold">{fmtH(load.unassigned.hours)}</span></div>}
+          </div>
+        )
+      })()}
       {ratesOpen && <CleanRatesEditor onClose={() => setRatesOpen(false)} onSaved={() => { /* the board re-reads on the next load */ }} />}
       <div className="space-y-3 max-h-[480px] overflow-auto pr-1">
         {markets.map(mk => {
