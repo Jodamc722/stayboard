@@ -98,7 +98,8 @@ const norm = (x: string) => String(x || '').toLowerCase().replace(/[’']/g, '')
 export function auditAmenities(listed: string[], photoIndex: Record<string, any> | null | undefined, order: string[] = [], parkingFact?: string | null, dismissed: string[] = []): Audit {
   // NOT HERE, SAID A PERSON (Jon, 2026-10-31: "if I x a recommended amenity based on photos it should
   // not repopulate"). raw._amenityDismissed — a name someone ruled out never comes back as a finding.
-  const ruledOut = new Set(dismissed.map(d => norm(d)))
+  // A ruled-out name counts in either spelling — ours or Guesty's.
+  const ruledOut = new Set(dismissed.flatMap(d => [norm(d), norm(resolveAmenity(d) || d)]))
   const idx = photoIndex && typeof photoIndex === 'object' ? photoIndex : {}
   const ids = (order.length ? order.filter(id => idx[id]) : Object.keys(idx))
   const proof: Record<string, string[]> = {}   // amenity (Guesty spelling) → photo ids

@@ -1,5 +1,6 @@
 import { buildingOf as canonicalBuilding } from '@/lib/segments'
 import { auditAmenities, photoFacts, type Audit } from '@/lib/amenity-audit'
+import { resolveAmenity } from '@/lib/guesty-amenities'
 // Single source of truth for the Listing Optimize Score (0-100).
 // Deterministic, research-backed, computed entirely from structured Guesty data
 // (no AI call) so it can run on the property detail page, the Properties/building
@@ -404,7 +405,7 @@ function scoreAmenities(amenities: string[], opts?: { isBeach?: boolean; sibling
   const sib = opts?.siblingNorm || []
   let weightHave = 0, weightTotal = 0
   const suggestions: AmenitySuggestion[] = []
-  const ruled = (opts?.dismissed || []).map(d => d.toLowerCase())
+  const ruled = (opts?.dismissed || []).flatMap(d => [d.toLowerCase(), (resolveAmenity(d) || d).toLowerCase()])
   for (const def of HIGH_VALUE) {
     if (def.conditional === 'beach' && opts?.isBeach === false) continue
     // Reviewed and ruled out ("this unit has no pool") — not applicable here, so it neither counts
