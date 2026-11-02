@@ -25,7 +25,15 @@ export type ScorecardInput = {
   noPay: { name: string; cleans: number }[]; outliers: { name: string; impliedRate: number }[]
   unmatched: string[]                        // cleaned with no Homebase timecard (7d)
   seventeenWest?: number | null              // wages 17WEST covers in the 30d window
+  /** THE LABOR KPI (Jon, 2026-11-02): expected labor cost per clean from the P&L vs what the turns
+   *  actually cost in housekeeper wages, per market and window, plus yesterday by cleaner in hours. */
+  kpi?: {
+    payPerHour: number
+    windows: { label: string; rows: KpiRow[] }[]
+    people: { name: string; cleans: number; expectedH: number; actualH: number }[]
+  }
 }
+export type KpiRow = { market: string; cleans: number; expectedCpc: number | null; actualCpc: number | null; expectedH: number; actualH: number }
 
 const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
 const rate = (n: number | null | undefined) => (n == null || !Number.isFinite(Number(n)) ? '—' : '$' + Number(n).toFixed(2))
@@ -67,6 +75,28 @@ export function renderLaborScorecard(x: ScorecardInput): { subject: string; html
   moved.push({ tone: mtNet < 0 ? 'amber' : 'green', html: `<b>Maintenance</b> billed ${money(T30.mt.bill)} against ${money(T30.mt.pay)} of wages in 30d → <b style="${mtNet < 0 ? T.red : T.green}">${mtNet < 0 ? '−' : ''}${money(Math.abs(mtNet))}</b>`, sub: T30.mt.noCharge ? `<b>${T30.mt.noCharge} tasks closed with no charge</b> in 30d (${T7.mt.noCharge} this week). Each one bills $0 — this is the lever.` : undefined })
   if (TY.midStayNoCharge || T7.midStayNoCharge) moved.push({ tone: 'amber', html: `<b>${T7.midStayNoCharge || 0} mid-stay clean${(T7.midStayNoCharge || 0) === 1 ? '' : 's'} with no charge entered</b> this week — revenue cleans that invoiced nothing` })
 
+  // ---- THE LABOR KPI: expected (P&L) vs actual, per market ------------------------------------------
+  let kpiHtml = ''
+  if (x.kpi && x.kpi.windows.some(w => w.rows.some(r => r.cleans > 0))) {
+    const tone = (exp: number | null, act: number | null) => exp == null || act == null ? T.muted : act <= exp ? T.green : act <= exp * 1.1 ? T.amber : T.red
+    const varTxt = (exp: number | null, act: number | null) => exp == null || act == null || exp <= 0 ? '' : `${act <= exp ? '−' : '+'}${Math.abs(Math.round(((act - exp) / exp) * 100))}%`
+    const th = `style="text-align:right;padding:4px 6px;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;border-bottom:1px solid #e5e7eb"`
+    const td = `style="text-align:right;padding:5px 6px;font-size:12.5px;border-bottom:1px solid #f3f4f6"`
+    const tdL = `style="text-align:left;padding:5px 6px;font-size:12.5px;border-bottom:1px solid #f3f4f6"`
+    const tables = x.kpi.windows.filter(w => w.rows.some(r => r.cleans > 0)).map(w => `
+      <div style="font-size:11px;font-weight:700;color:#374151;margin:8px 0 2px">${esc(w.label)}</div>
+      <table width="100%" cellspacing="0" cellpadding="0"><tr><th ${th.replace('right', 'left')}>Market</th><th ${th}>Turns</th><th ${th}>Expected / turn</th><th ${th}>Actual / turn</th><th ${th}>vs KPI</th><th ${th}>Hours exp · actual</th></tr>
+      ${w.rows.filter(r => r.cleans > 0).map(r => `<tr><td ${tdL}><b>${esc(r.market)}</b></td><td ${td}>${r.cleans}</td><td ${td}>${rate(r.expectedCpc)}</td><td ${td}><b style="${tone(r.expectedCpc, r.actualCpc)}">${rate(r.actualCpc)}</b></td><td ${td}><span style="${tone(r.expectedCpc, r.actualCpc)}">${varTxt(r.expectedCpc, r.actualCpc)}</span></td><td ${td}>${r.expectedH.toFixed(1)}h · ${r.actualH.toFixed(1)}h</td></tr>`).join('')}
+      </table>`).join('')
+    const ppl = x.kpi.people.filter(p => p.cleans > 0).sort((a, b) => (b.actualH - b.expectedH) - (a.actualH - a.expectedH))
+    const pplHtml = ppl.length ? `
+      <div style="font-size:11px;font-weight:700;color:#374151;margin:12px 0 2px">Yesterday by cleaner — expected hours (cost ÷ $${x.kpi.payPerHour}) vs clocked</div>
+      <table width="100%" cellspacing="0" cellpadding="0"><tr><th ${th.replace('right', 'left')}>Cleaner</th><th ${th}>Turns</th><th ${th}>Expected</th><th ${th}>Clocked</th><th ${th}>Over / under</th></tr>
+      ${ppl.slice(0, 14).map(p => { const d = p.actualH - p.expectedH; const t = !(p.actualH > 0) ? T.muted : d <= 0.25 ? T.green : d <= 1 ? T.amber : T.red; return `<tr><td ${tdL}>${esc(p.name)}</td><td ${td}>${p.cleans}</td><td ${td}>${p.expectedH.toFixed(1)}h</td><td ${td}>${p.actualH > 0 ? p.actualH.toFixed(1) + 'h' : '—'}</td><td ${td}><b style="${t}">${p.actualH > 0 ? (d > 0 ? '+' : '−') + Math.abs(d).toFixed(1) + 'h' : 'no punch'}</b></td></tr>` }).join('')}
+      </table>` : ''
+    kpiHtml = block('Labor KPI — expected vs actual cost per clean', `<p style="margin:4px 0 0;font-size:12px;${T.muted}">Expected = the P&amp;L's labor cost per clean for each unit turned (building × size). Actual = housekeeper wages ÷ every turn. Green at or under the KPI, amber within 10%, red beyond.</p>${tables}${pplHtml}`, A)
+  }
+
   // ---- people: who the numbers cannot see --------------------------------------------------------
   const people: Line[] = []
   if (x.noPay.length) people.push({ tone: 'red', html: `<b>${x.noPay.map(p => esc(p.name)).join(', ')}</b> — ${x.noPay.reduce((a, p) => a + p.cleans, 0)} clean${x.noPay.reduce((a, p) => a + p.cleans, 0) === 1 ? '' : 's'} with <b>$0 of payroll</b>`, sub: 'No wage on the Homebase profile, so every cost-per-turn above reads low. Homebase → the person → wage (or reassign the clean).' })
@@ -93,6 +123,7 @@ export function renderLaborScorecard(x: ScorecardInput): { subject: string; html
     { html: masthead(A, 'Labor Scorecard', 'Owner & operations manager · punches, never the schedule', x.niceDay(x.today)) },
     { html: headline(A, head, [{ label: 'Labor board — the full three tiers', href: `${APP_URL}/labor` }, { label: 'Weekly Planner', href: `${APP_URL}/team` }]) },
     { html: tileRow },
+    { html: kpiHtml, optional: true },
     { html: section('What moved — this week vs the settled 30', moved, { cap: 5, accent: A }) },
     { html: people.length ? section('People the numbers cannot see', people, { cap: 4, accent: A }) : '', optional: true },
     { html: trust, optional: true },

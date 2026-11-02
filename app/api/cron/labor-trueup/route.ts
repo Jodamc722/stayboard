@@ -590,6 +590,27 @@ async function send(req: NextRequest) {
         noPay: (qualityRows.noPay || []).map((x: any) => ({ name: String(x.name || ''), cleans: Number(x.cleans) || 0 })),
         outliers: (qualityRows.outliers || []).map((x: any) => ({ name: String(x.name || ''), impliedRate: Number(x.impliedRate) || 0 })),
         unmatched, seventeenWest: (K30.seventeenWest && K30.seventeenWest.covered) || null,
+        kpi: (() => {
+          // THE LABOR KPI (Jon, 2026-11-02): the P&L's expected labor cost per clean vs actual.
+          const MK: Record<string, string> = { miami: 'Miami', broward: 'Broward', north: 'Palm Beach' }
+          const rowsOf = (ec: any) => ((ec.buckets || []) as any[]).filter(b => b.inHouse && MK[b.key]).map(b => ({
+            market: MK[b.key], cleans: Number(b.cleans) || 0,
+            expectedCpc: b.expectedCostPerClean ?? null, actualCpc: b.laborCostPerClean ?? null,
+            expectedH: Number(b.expectedHours) || 0, actualH: Number(b.hours) || 0,
+          }))
+          const withTotal = (ec: any) => { const r = rowsOf(ec); const k = ec.laborKpi; if (k && r.length > 1) r.push({ market: 'All', cleans: k.cleans, expectedCpc: k.expectedCostPerClean, actualCpc: k.actualCostPerClean, expectedH: k.expectedHours, actualH: k.actualHours }); return r }
+          return {
+            payPerHour: Number(ec30.laborKpi?.payPerHour) || 20,
+            windows: [
+              { label: 'Yesterday · ' + niceDay(yd), rows: withTotal(ecY) },
+              { label: 'Last 7 days', rows: withTotal(ec7) },
+              { label: 'Last 30 days', rows: withTotal(ec30) },
+            ],
+            people: ((ecY.people || []) as any[]).filter(p => p.dept === 'housekeeping' && (p.depCleans || 0) > 0).map(p => ({
+              name: String(p.name), cleans: Number(p.depCleans) || 0, expectedH: Number(p.expectedHours) || 0, actualH: Number(p.hours) || 0,
+            })),
+          }
+        })(),
       })
       html = sc.html; scoreSubject = sc.subject
     } else html = '<!doctype html><html><body style="margin:0;background:#f5f5f4;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0b1220">' +

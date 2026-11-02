@@ -75,6 +75,8 @@ const HUB_COLOR = (hub: string) => {
   const palette = ['bg-slate-100 text-slate-600', 'bg-sky-50 text-sky-700', 'bg-emerald-50 text-emerald-700', 'bg-amber-50 text-amber-700', 'bg-violet-50 text-violet-700', 'bg-rose-50 text-rose-600', 'bg-teal-50 text-teal-700', 'bg-indigo-50 text-indigo-700']
   const _cls = palette[h % palette.length]; _hubColorCache.set(hub, _cls); return _cls
 }
+/** 3.25 → "3h 15m". */
+function fmtH(h: number): string { return fmtMins(Math.round(h * 60)) }
 function fmtMins(m: number): string { const h = Math.floor(m / 60); const mm = m % 60; return h > 0 ? h + 'h' + (mm ? ' ' + mm + 'm' : '') : mm + 'm' }
 // Benchmark clean minutes by bedroom count (studio 45-90, 1BR 60-90, 2BR 90-120, 3BR+ 120-180).
 // VISIBILITY ONLY — this is task duration from the Breezeway timer, NOT labor cost.
@@ -127,6 +129,9 @@ export function ScheduleBoard({ embedded }: { embedded?: ScheduleEmbed } = {}) {
   const GROWTH = presets.roster.growth
   // Expected labor cost per clean from the P&L (hours per clean = cost ÷ $20). Non-admins receive them already in hours.
   const [cleanRates, setCleanRates] = useState<CleanRates | null>(null)
+  // Estimated cleaning time for one clean: expected labor cost ÷ pay per hour. Vendor cleans and
+  // owner-cleaned units have none.
+  const estHours = (c: Clean): number | null => { if (!cleanRates || c.vendor) return null; const p = priceClean(cleanRates, { name: c.unit, bedrooms: c.bedrooms, market: c.market }); return p.hours > 0 ? p.hours : null }
   useEffect(() => { fetch('/api/settings/clean-rates', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(j => { if (j && j.config) setCleanRates(j.config) }).catch(() => {}) }, [])
   const [view, setView] = useState<'week' | 'day'>('day') // day (by building) first — the team's morning view
   const [date, setDate] = useState<string>('')
@@ -346,8 +351,27 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   }
 
   const selectedKeys = Object.keys(selected).filter(k => selected[k] && cleanByKey[k])
+
   const visibleMarkets = (market === 'all' || market === 'vendor') ? [...MARKETS] : [market]
   const dayCleans = useMemo(() => { const all: Clean[] = []; const _seen = new Set<string>(); visibleMarkets.forEach(m => (data?.days?.[0]?.markets[m] || []).forEach(c => { const _k = keyOf(c); if (_seen.has(_k)) return; _seen.add(_k); all.push(c) })); return market === 'vendor' ? all.filter((c) => c.vendor) : (market === 'all' ? all : all.filter((c) => !c.vendor)) }, [data, market])
+
+  // EXPECTED HOURS BY CLEANER (Jon, 2026-11-02: "show a chart with cleaner name and expected hours").
+  // Every clean on the day, at its estimated time (expected labor cost ÷ $20), summed onto whoever is
+  // on it — staged or already in Breezeway. Two people on one clean split it. Vendor cleans skip.
+  const cleanerLoad = (() => {
+    const by: Record<string, { name: string; hours: number; cleans: number }> = {}
+    let unH = 0, unN = 0
+    for (const c of dayCleans) {
+      if (c.vendor) continue
+      const h = estHours(c)
+      if (h == null) continue
+      const k = keyOf(c)
+      const names = overrides[k] ? [overrides[k].name] : cleared[k] ? [] : (c.assignedNames || []).filter(Boolean)
+      if (!names.length) { unH += h; unN++; continue }
+      for (const n of names) { const r = (by[n] = by[n] || { name: n, hours: 0, cleans: 0 }); r.hours += h / names.length; r.cleans++ }
+    }
+    return { people: Object.values(by).map(r => ({ ...r, hours: Math.round(r.hours * 100) / 100 })).sort((a, b) => b.hours - a.hours), unassigned: { hours: Math.round(unH * 100) / 100, cleans: unN } }
+  })()
 
   const rows = useMemo(() => {
     // The embedded board shows only what the gate is about. 'needs-person' = nobody on it, Guesty-only,
@@ -803,7 +827,7 @@ async function pushBlocks() {
               the bottom it sat below a hundred rows of cleans where nobody scrolled to it. */}
           {!embedded && (
           <div className="space-y-3 order-2 lg:order-1">
-            <WorkingRail rosters={rosters} date={data.weekStart || date} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(data.weekStart || date)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} need={(() => { const d0 = stripDays.find(x => x.date === (data.weekStart || date)); return d0 ? needOn(d0) : 0 })()} needs={(() => { const d0 = stripDays.find(x => x.date === (data.weekStart || date)); return d0 ? needsOn(d0) : [] })()} shiftHours={SHIFT_H} working={workingOn(data.weekStart || date)} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
+            <WorkingRail rosters={rosters} date={data.weekStart || date} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(data.weekStart || date)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} need={(() => { const d0 = stripDays.find(x => x.date === (data.weekStart || date)); return d0 ? needOn(d0) : 0 })()} needs={(() => { const d0 = stripDays.find(x => x.date === (data.weekStart || date)); return d0 ? needsOn(d0) : [] })()} shiftHours={SHIFT_H} load={cleanerLoad} working={workingOn(data.weekStart || date)} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
 
             {/* A 280px column, so the controls stack rather than fighting for one line. Download
                 first: the safe one is the one your hand lands on, and Post goes to the whole crew. */}
@@ -856,6 +880,7 @@ async function pushBlocks() {
                     <th className="px-2 py-2 w-8"></th>
                     <th className="px-2.5 py-2 font-semibold min-w-[150px]">HK Team</th>
                     <th className="px-2 py-2 font-semibold">Listing</th>
+                    <th className="px-2 py-2 font-semibold text-right whitespace-nowrap" title="Estimated cleaning time: the P&L's expected labor cost for this unit ÷ $20/hour. After the clean, the Breezeway time sits underneath.">Est. time</th>
                     <th className="px-2 py-2 font-semibold">Reservation</th>
                     <th className="px-2 py-2 font-semibold text-right whitespace-nowrap" title="The value of each clean: the guest's cleaning fee on the checkout, or the listing's cleaning fee (est.) when the channel bundled it into the fare">Value{(() => { const t = rows.filter(c => !c.movedTo && !c.vendor).reduce((s, c) => s + (c.cleaningFee || 0), 0); return t > 0 ? <span className="ml-1 normal-case tracking-normal text-emerald-700">${Math.round(t).toLocaleString()}</span> : null })()}</th>
                     <th className="px-2 py-2 font-semibold"></th>
@@ -906,7 +931,8 @@ async function pushBlocks() {
                         {c.extended && <span title={'EXTENDED - guest stay was extended; the clean auto-moved to the new checkout' + (c.extendedFrom ? ' (was ' + c.extendedFrom + ')' : '')} className="inline-block ml-0.5 text-[9px] font-bold text-violet-700 bg-violet-50 border border-violet-300 rounded px-1 align-middle">Extended{c.extendedFrom ? (c.extendedFrom > c.date ? ' \u2192 ' + c.extendedFrom.slice(5) : ' \u00b7 was ' + c.extendedFrom.slice(5)) : ''}</span>}
                         {(c as any).calNote === 'blocked' && <span title="Guesty calendar shows a BLOCK (owner hold / maintenance) covering the gap - this move is a calendar block, not a guest extension" className="inline-block ml-0.5 text-[9px] font-bold text-slate-700 bg-slate-100 border border-slate-300 rounded px-1 align-middle">Unit blocked</span>}
                         {(c as any).calNote === 'booked' && <span title="Guesty calendar shows a reservation covering the gap - the guest is still in the unit (extension confirmed by calendar)" className="inline-block ml-0.5 text-[9px] font-bold text-violet-700 bg-violet-50 border border-violet-300 rounded px-1 align-middle">Cal: occupied</span>}
-                        {!c.movedTo && !c.movedFrom && c.taskDate && c.taskDate !== c.date && (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate + '. Click to open the task in Breezeway and check it.'} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle hover:bg-amber-100 underline decoration-dotted">Moved &rarr; {c.taskDate.slice(5)}</a> : <span title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle">Moved &rarr; {c.taskDate.slice(5)}</span>)}{(c.bedrooms != null || c.nights != null || c.checkOutTime) && <div className="text-[11px] text-muted mt-0.5 font-normal">{[c.bedrooms != null ? (c.bedrooms === 0 ? 'Studio' : c.bedrooms + 'BR') : '', c.nights != null ? c.nights + ' nt' : '', c.checkOutTime ? 'out ' + c.checkOutTime : '', c.doorCode ? 'code ' + c.doorCode : '', cleanRates && !c.vendor ? (() => { const p = priceClean(cleanRates, { name: c.unit, bedrooms: c.bedrooms, market: c.market }); return p.hours > 0 ? p.hours + 'h budget' : '' })() : ''].filter(Boolean).join(' \u00b7 ')}</div>}{c.cleanMinutes != null && c.cleanMinutes > 0 && c.taskStatus === 'completed' && <span title={'Time on this clean (Breezeway timer). Benchmark for ' + (c.bedrooms == null ? 'this unit' : c.bedrooms === 0 ? 'a studio' : c.bedrooms + 'BR') + '. Duration only \u2014 not labor cost.'} className={'ml-1 inline-flex items-center gap-0.5 text-[9px] font-semibold px-1 py-0.5 rounded border align-middle font-normal ' + cleanTimeCls(c.bedrooms, c.cleanMinutes, presets.timing, c.unit, cleanRates)}>{'\u23f1'} {fmtMins(c.cleanMinutes)}</span>}</td>
+                        {!c.movedTo && !c.movedFrom && c.taskDate && c.taskDate !== c.date && (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate + '. Click to open the task in Breezeway and check it.'} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle hover:bg-amber-100 underline decoration-dotted">Moved &rarr; {c.taskDate.slice(5)}</a> : <span title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle">Moved &rarr; {c.taskDate.slice(5)}</span>)}{(c.bedrooms != null || c.nights != null || c.checkOutTime) && <div className="text-[11px] text-muted mt-0.5 font-normal">{[c.bedrooms != null ? (c.bedrooms === 0 ? 'Studio' : c.bedrooms + 'BR') : '', c.nights != null ? c.nights + ' nt' : '', c.checkOutTime ? 'out ' + c.checkOutTime : '', c.doorCode ? 'code ' + c.doorCode : ''].filter(Boolean).join(' \u00b7 ')}</div>}{c.cleanMinutes != null && c.cleanMinutes > 0 && c.taskStatus === 'completed' && <span title={'Time on this clean (Breezeway timer). Benchmark for ' + (c.bedrooms == null ? 'this unit' : c.bedrooms === 0 ? 'a studio' : c.bedrooms + 'BR') + '. Duration only \u2014 not labor cost.'} className={'ml-1 inline-flex items-center gap-0.5 text-[9px] font-semibold px-1 py-0.5 rounded border align-middle font-normal ' + cleanTimeCls(c.bedrooms, c.cleanMinutes, presets.timing, c.unit, cleanRates)}>{'\u23f1'} {fmtMins(c.cleanMinutes)}</span>}</td>
+                        <td className="order-5 shrink-0 sm:table-cell px-2.5 py-1.5 align-middle text-right whitespace-nowrap tabular-nums">{(() => { const h = estHours(c); if (h == null) return <span className="text-muted">—</span>; const done = c.cleanMinutes != null && c.cleanMinutes > 0 && c.taskStatus === 'completed'; const over = done && (c.cleanMinutes as number) > h * 60; return <span className="inline-flex flex-col items-end leading-tight"><span className="font-semibold text-ink">{fmtH(h)}</span>{done && <span className={'text-[10px] ' + (over ? 'text-amber-700' : 'text-emerald-700')}>{fmtMins(c.cleanMinutes as number)} actual</span>}</span> })()}</td>
                         <td className="order-3 basis-full min-w-0 whitespace-normal sm:table-cell sm:whitespace-nowrap px-2.5 py-1.5 align-middle text-ink/90">{c.walkInRisk && <span className="inline-flex items-center gap-1 text-[10px] font-bold text-white bg-rose-600 rounded px-1.5 py-0.5 mr-1" title="A confirmed guest is still in-house this day - do NOT clean / walk-in risk">⚠ Guest in-house</span>}{c.missing && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-300 rounded px-1.5 py-0.5 mr-1" title="No Breezeway clean scheduled for this checkout within 14 days">⚠ No clean scheduled</span>}{c.manual ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5">Added manually</span> : c.bzOnly ? (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here. Click to open the task in Breezeway and check it." className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 hover:bg-emerald-100 underline decoration-dotted">Moved-in clean &rarr;</a> : <span title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here" className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">Moved-in clean</span>) : (c.guestOut ? <span className="inline-block max-w-[150px] truncate align-bottom" title={c.guestOut}>{c.guestOut}</span> : <span className="text-muted italic">—</span>)}</td>
                         
                         <td className="order-5 shrink-0 sm:table-cell px-2.5 py-1.5 align-middle text-right whitespace-nowrap">{c.cleaningFee != null && c.cleaningFee > 0
@@ -995,7 +1021,7 @@ async function pushBlocks() {
   )
 }
 
-function WorkingRail({ date, dayLabel, docs, rosters, need, needs = [], shiftHours = 8, working, markets, saveState, onSet, onAdd, onRemove }: { date: string; dayLabel: string; docs: Record<string, TeamDoc>; rosters: Record<string, Roster>; need: number; needs?: MarketNeed[]; shiftHours?: number; working: number; markets: string[]; saveState: string; onSet: (mk: string, mem: string, d: string, val: string) => void; onAdd: (mk: string, name: string) => void; onRemove: (mk: string, name: string) => void }) {
+function WorkingRail({ date, dayLabel, docs, rosters, need, needs = [], shiftHours = 8, load, working, markets, saveState, onSet, onAdd, onRemove }: { date: string; dayLabel: string; docs: Record<string, TeamDoc>; rosters: Record<string, Roster>; need: number; needs?: MarketNeed[]; shiftHours?: number; load?: { people: { name: string; hours: number; cleans: number }[]; unassigned: { hours: number; cleans: number } }; working: number; markets: string[]; saveState: string; onSet: (mk: string, mem: string, d: string, val: string) => void; onAdd: (mk: string, name: string) => void; onRemove: (mk: string, name: string) => void }) {
   const NON_CLEANERS = useOpsPresets().roster.nonCleaners
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [showAll, setShowAll] = useState(false)
@@ -1020,6 +1046,28 @@ function WorkingRail({ date, dayLabel, docs, rosters, need, needs = [], shiftHou
               <span className="font-bold text-ink tabular-nums">{x.need}</span>
             </div>
           ))}
+        </div>
+      )}
+      {load && (load.people.length > 0 || load.unassigned.cleans > 0) && (
+        <div className="mb-2.5 rounded-lg border border-line px-2.5 py-2" title={'Each clean at its estimated time (expected labor cost ÷ $20), summed per cleaner. The line is a ' + shiftHours + 'h shift.'}>
+          <div className="text-[10px] uppercase tracking-wide text-muted font-semibold mb-1.5">Expected hours by cleaner</div>
+          {load.people.map(p => {
+            const pct = Math.min(100, (p.hours / (shiftHours * 1.25)) * 100)
+            const over = p.hours > shiftHours, near = p.hours > shiftHours * 0.85
+            return (
+              <div key={p.name} className="py-0.5">
+                <div className="flex items-baseline justify-between gap-2 text-[11px]">
+                  <span className="text-ink truncate">{shortTeamName(p.name)} <span className="text-muted">· {p.cleans}</span></span>
+                  <span className={'tabular-nums font-semibold ' + (over ? 'text-rose-700' : near ? 'text-amber-700' : 'text-ink')}>{fmtH(p.hours)}</span>
+                </div>
+                <div className="relative h-1.5 rounded-full bg-neutral-100 mt-0.5">
+                  <div className={'absolute inset-y-0 left-0 rounded-full ' + (over ? 'bg-rose-500' : near ? 'bg-amber-400' : 'bg-emerald-500')} style={{ width: pct + '%' }} />
+                  <div className="absolute inset-y-[-2px] w-px bg-neutral-500" style={{ left: (100 / 1.25) + '%' }} />
+                </div>
+              </div>
+            )
+          })}
+          {load.unassigned.cleans > 0 && <div className="flex items-baseline justify-between text-[11px] pt-1 mt-1 border-t border-line"><span className="text-rose-700 font-semibold">Unassigned · {load.unassigned.cleans}</span><span className="tabular-nums font-semibold text-rose-700">{fmtH(load.unassigned.hours)}</span></div>}
         </div>
       )}
       {ratesOpen && <CleanRatesEditor onClose={() => setRatesOpen(false)} onSaved={() => { /* the board re-reads on the next load */ }} />}

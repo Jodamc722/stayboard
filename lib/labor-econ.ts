@@ -37,7 +37,8 @@ import { etDay } from './clean-day'
 import { supabaseAdmin } from './supabase-admin'
 import { getTimecardsAudited, type Timecard, type TimecardAudit } from './homebase-labor'
 import { marketOf } from './segments'
-import { getOpsPresets } from './app-settings'
+import { getOpsPresets, getSetting } from './app-settings'
+import { CLEAN_RATES_KEY, resolveCleanRates, priceClean } from './clean-rates'
 import { vendorRegex, type VendorBuilding } from './ops-presets'
 import { nameMatches, nameMatchesRoster } from './homebase'
 import { getSalaried, weeklyCost, annualCost, windowCost, rateLabel, type SalaryRow } from './salary'
@@ -207,6 +208,10 @@ export type PersonEcon = {
   agencyLoad?: number
   /** Departure cleans by unit size — studio / 1br / 2br / 3br / 4br+. */
   roomMix?: Record<string, number>
+  /** THE LABOR KPI (Jon, 2026-11-02): the P&L's expected labor cost of this person's departure
+   *  cleans, and the hours that is at the KPI pay rate (cost ÷ $20). lib/clean-rates.ts. */
+  expectedCost?: number
+  expectedHours?: number
   /** Same-day moves between different BUILDINGS (Rustic 1 → Rustic 2 is not a hop). */
   travel?: { hops: number; minutes: number }
   /** Paid a salary — the salary IS their cost; punches never drive dollars (see lib/salary). */
@@ -300,7 +305,11 @@ export type LaborEcon = {
     laborCostPerClean: number | null; hoursPerClean: number | null; feePerClean: number | null
     laborCostPerCleanHkOnly: number | null; hoursPerCleanHkOnly: number | null
     margin: number; marginPct: number | null
+    /** KPI: the P&L's expected labor cost of every turn in this bucket, and its hours (÷ $20). */
+    expectedCost?: number; expectedHours?: number; expectedCostPerClean?: number | null; expectedHoursPerClean?: number | null
   }>
+  /** THE LABOR KPI, in-house markets together: expected (P&L) vs actual housekeeper labor. */
+  laborKpi?: { cleans: number; expectedCost: number; actualCost: number; expectedHours: number; actualHours: number; expectedCostPerClean: number | null; actualCostPerClean: number | null; payPerHour: number }
   /** The stack: housekeeping labor, maintenance billables, maintenance cleans, supervisor overhead. */
   layers: any
   /** Revenue over payroll: housekeeping, maintenance, all revenue-facing staff, supervisors apart. */
@@ -352,6 +361,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const to = opts.to
   const market = String(opts.market || 'all').toLowerCase()
   const sb = supabaseAdmin()
+  // Expected labor cost per clean — the P&L KPI (lib/clean-rates.ts, editable on the scheduler).
+  const kpiRates = resolveCleanRates(await getSetting<any>(CLEAN_RATES_KEY, null).catch(() => null))
 
   // EVERY READ STARTS AT ONCE (2026-09-28 audit, 02 F9). The window's tasks, both halves of the
   // clean pool, the checkouts, the stays, the agencies and the salaried roster depend on nothing but
@@ -400,7 +411,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   ])
   const timecards = tcAudit.cards
   const VENDOR_RE = vendorRegex(presets.vendorBuildings)
-  const lmap: Record<string, { market: string; name: string; vendor: boolean; is17: boolean; bot: boolean; bedrooms: number | null; travelKey: string; listingFee: number }> = {}
+  const lmap: Record<string, { market: string; name: string; vendor: boolean; is17: boolean; bot: boolean; bedrooms: number | null; travelKey: string; listingFee: number; expCost: number; expHours: number }> = {}
   for (const l of listingRows) {
     const name = l.nickname || l.title || 'Unit'
     const vendor = VENDOR_RE.test(String(l.building || '')) || VENDOR_RE.test(String(name))
@@ -424,6 +435,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
       bedrooms: Number.isFinite(beds) ? beds : null,
       travelKey,
       listingFee: Math.max(0, num(l.listingFee) ?? 0),
+      ...(() => { const pc = priceClean(kpiRates, { building: l.building, name, bedrooms: Number.isFinite(beds) ? beds : null }); return { expCost: pc.rate, expHours: pc.hours } })(),
     }
   }
   const inMarketListing = (id: any) => market === 'all' || lmap[String(id)]?.market === market
@@ -998,6 +1010,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     p.cleans++
     p.depCleans++
     const li = lmap[String(t.reference_property_id)]
+    if (li) { p.expectedCost = round2((p.expectedCost || 0) + li.expCost); p.expectedHours = round2((p.expectedHours || 0) + li.expHours) }
     // ROOM MIX (Jon, 2026-08-22: "the type of room that they cleaned — one bedrooms, studios,
     // two bedrooms, three bedrooms"). A 3BR turn is not a studio turn; the mix says whether a
     // cleaner's day was heavy or light, and it rides on every per-person row.
@@ -1415,6 +1428,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     laborCostPerClean: number | null; hoursPerClean: number | null; feePerClean: number | null
     laborCostPerCleanHkOnly: number | null; hoursPerCleanHkOnly: number | null
     margin: number; marginPct: number | null; people: number
+    expectedCost: number; expectedHours: number; expectedCostPerClean: number | null; expectedHoursPerClean: number | null
   }
   // 'vendor-inhouse' is OUR crew cleaning inside a vendor-managed building — our hours, our cost,
   // and revenue that belongs in housekeeping (Jon: "if HK gets rev for outside cleaning it should be
@@ -1431,6 +1445,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     laborCostPerClean: null, hoursPerClean: null, feePerClean: null,
     laborCostPerCleanHkOnly: null, hoursPerCleanHkOnly: null,
     margin: 0, marginPct: null, people: 0,
+    expectedCost: 0, expectedHours: 0, expectedCostPerClean: null, expectedHoursPerClean: null,
   })
   const buckets: Record<string, Bucket> = {}
   const bucketFor = (k: string, inHouse = true) => (buckets[k] = buckets[k] || mkBucket(k, inHouse))
@@ -1458,11 +1473,11 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
   const cleanRecs = (cleansDone.map(t => {
     const li = lmap[String(t.reference_property_id)]
     const mk = li ? (li.vendor ? 'vendor-inhouse' : li.market) : 'unassigned'
-    return { who: doer(t), market: mk, fee: feeByTask[String(t.id)] || 0, charged: false }
+    return { who: doer(t), market: mk, fee: feeByTask[String(t.id)] || 0, charged: false, expCost: li ? li.expCost : 0, expHours: li ? li.expHours : 0 }
   }).concat(chargedCleanTasks.map(t => {
     const li = lmap[String(t.reference_property_id)]
     const mk = li ? (li.vendor ? 'vendor-inhouse' : li.market) : 'unassigned'
-    return { who: doer(t), market: mk, fee: chargeOfRaw(t), charged: true }
+    return { who: doer(t), market: mk, fee: chargeOfRaw(t), charged: true, expCost: 0, expHours: 0 }
   })))
     .filter(r => !!r.who)
     // A DEPARTURE CLEAN COUNTS BECAUSE IT WAS DONE, NOT BECAUSE ITS FEE MATCHED.
@@ -1470,7 +1485,7 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     // while leaving the housekeeper's whole wage in the numerator — the single biggest reason
     // cost per clean read high. A CHARGED cleaning task still needs its charge, because the
     // charge is the only thing that makes it a countable job rather than housekeeping admin.
-    .filter(r => !r.charged || r.fee > 0) as { who: string; market: string; fee: number; charged: boolean }[]
+    .filter(r => !r.charged || r.fee > 0) as { who: string; market: string; fee: number; charged: boolean; expCost: number; expHours: number }[]
 
   // DEPARTURE CLEANS ONLY IN COST PER CLEAN (Jon, 2026-08-17: "just departure").
   // A turnover and a linen refresh are different jobs at different prices; averaging them produced
@@ -1504,6 +1519,10 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     }
     const b = bucketFor(rec.market)
     b.cleans++
+    // KPI: what this turn was expected to cost in labor (P&L), whoever did it — the same population
+    // as the cost-per-clean denominator, so expected and actual compare like for like.
+    b.expectedCost = round2(b.expectedCost + rec.expCost)
+    b.expectedHours = round2(b.expectedHours + rec.expHours)
     depCleansByMk[rec.market] = (depCleansByMk[rec.market] || 0) + 1
     // THE FEE GOES IN THE SAME BUCKET AS THE CLEAN, ALWAYS. Denominator and numerator now come
     // from one population, so feePerClean, margin and marginPct mean what they say.
@@ -1557,6 +1576,8 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     b.cleansByOthers = depCleansByOthersMk[k] || 0
     b.cleansByHk = Math.max(0, b.cleans - b.cleansByOthers)
     b.laborCostPerClean = b.inHouse && b.cleans > 0 && b.payroll > 0 ? round2(b.payroll / b.cleans) : null
+    b.expectedCostPerClean = b.inHouse && b.cleans > 0 && b.expectedCost > 0 ? round2(b.expectedCost / b.cleans) : null
+    b.expectedHoursPerClean = b.inHouse && b.cleans > 0 && b.expectedHours > 0 ? round2(b.expectedHours / b.cleans) : null
     b.hoursPerClean = b.inHouse && b.cleans > 0 && b.hours > 0 ? round2(b.hours / b.cleans) : null
     b.laborCostPerCleanHkOnly = b.inHouse && b.cleansByHk > 0 && b.payroll > 0 ? round2(b.payroll / b.cleansByHk) : null
     b.hoursPerCleanHkOnly = b.inHouse && b.cleansByHk > 0 && b.hours > 0 ? round2(b.hours / b.cleansByHk) : null
@@ -2461,6 +2482,20 @@ export async function laborEconomics(opts: { from: string; to: string; market?: 
     pnl,
     departments: DEPTS.map(d => byDept[d]),
     buckets: bucketList,
+    laborKpi: (() => {
+      const ins = bucketList.filter(b => b.inHouse && (b.key === 'miami' || b.key === 'broward' || b.key === 'north'))
+      const cleans = ins.reduce((a, b) => a + b.cleans, 0)
+      const expectedCost = round2(ins.reduce((a, b) => a + b.expectedCost, 0))
+      const actualCost = round2(ins.reduce((a, b) => a + b.payroll, 0))
+      return {
+        cleans, expectedCost, actualCost,
+        expectedHours: round2(ins.reduce((a, b) => a + b.expectedHours, 0)),
+        actualHours: round2(ins.reduce((a, b) => a + b.hours, 0)),
+        expectedCostPerClean: cleans ? round2(expectedCost / cleans) : null,
+        actualCostPerClean: cleans && actualCost ? round2(actualCost / cleans) : null,
+        payPerHour: kpiRates.payPerHour,
+      }
+    })(),
     layers,
     kpi,
     maintAudit,
