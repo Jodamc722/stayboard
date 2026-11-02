@@ -1185,6 +1185,7 @@ export function BillingReview() {
                 <span className="text-[12.5px] text-muted">{walk.unit}</span>
                 <Pill title="What this owner is billed in the window">{money(total)} · {walk.rows.length} job{walk.rows.length === 1 ? '' : 's'}</Pill>
                 {stops ? <Tag tone="rose" title="Rows with a must-look flag — they are not in “Approve the clean ones”">{stops} must look</Tag> : null}
+                <button onClick={() => checkMany(walk.rows.map(t => t.id), !walk.rows.every(t => picks.has(t.id)))} className={b + ' border border-line bg-white text-muted hover:text-ink'} title="Select every job for this owner — then price, note or approve them together from the bar below"><CheckSquare size={14} /> {walk.rows.every(t => picks.has(t.id)) ? 'Unselect all' : 'Select all'}</button>
                 <div className="flex-1" />
                 {sugg.length ? <button onClick={() => applySuggested(sugg)} className={b + ' border border-brand-200 bg-white text-brand-700 hover:bg-brand-50'} title={sugg.map(t => t.name + ': ' + money(t.suggested!.amount) + ' — ' + t.suggested!.why).join('\n')}>Bill suggested on {sugg.length} ({money(sugg.reduce((a, t) => a + t.suggested!.amount, 0))})</button> : null}
                 {mayApprove && clean.length ? <button onClick={() => setState(clean.map(t => t.id), toState)} className={b + ' bg-brand-600 text-white hover:bg-brand-700'} title="Approve every row for this owner without a must-look flag (a)"><Check size={14} /> Approve the clean ones ({clean.length})</button> : null}
@@ -1197,7 +1198,8 @@ export function BillingReview() {
               const left = pendingIn(rows)
               return (
                 <div key={k} className="border-b border-line last:border-b-0">
-                  <div className="px-4 py-1.5 flex items-center gap-2 bg-white text-[12px]">
+                  <div className="px-3 py-1.5 flex items-center gap-2 bg-white text-[12px]">
+                    <input type="checkbox" aria-label={'Select every ' + (CAT_LABEL[k] || k) + ' job'} title="Select this group — then act on it from the bar below" checked={rows.every(t => picks.has(t.id))} onChange={e => checkMany(rows.map(t => t.id), e.target.checked)} className="h-4 w-4 accent-brand-600 cursor-pointer" />
                     <span className="font-bold text-ink">{CAT_LABEL[k] || k}</span>
                     <span className="text-muted">{rows.length} job{rows.length === 1 ? '' : 's'} · {money(rows.reduce((a, t) => a + t.billedAmount, 0))}</span>
                     {u ? <span className="text-muted" title={'Approved before: middle half $' + Math.round(u.low) + '–$' + Math.round(u.high)}>· usual {money(u.median)}</span> : null}
@@ -1250,7 +1252,8 @@ export function BillingReview() {
                 const left = list.filter(inStage)
                 return (
                   <div key={k} className="border-b border-line last:border-b-0">
-                    <div className="px-4 py-1.5 flex items-center gap-2 bg-app/30 text-[12px]">
+                    <div className="px-3 py-1.5 flex items-center gap-2 bg-app/30 text-[12px]">
+                      <input type="checkbox" aria-label={'Select every ' + (CAT_LABEL[k] || k) + ' job here'} title="Select this group — then act on it from the bar below" checked={list.every(t => picks.has(t.id))} onChange={e => checkMany(list.map(t => t.id), e.target.checked)} className="h-4 w-4 accent-brand-600 cursor-pointer" />
                       <span className="font-bold text-ink">{CAT_LABEL[k] || k}</span>
                       <span className="text-muted">{list.length} job{list.length === 1 ? '' : 's'} · {money(list.reduce((a, t) => a + t.billedAmount, 0))}</span>
                       <div className="flex-1" />
