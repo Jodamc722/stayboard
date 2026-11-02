@@ -374,6 +374,10 @@ export async function sendWeeklyDigests(opts: { force?: boolean; onlyProgram?: s
     try {
       const rows = await listReports({ programId: p.id, since: from7, limit: 120 })
       const reports = ((await Promise.all(rows.filter(r => r.date <= to7).map(r => getReport(r.code)))).filter(Boolean) as WalkReport[])
+      // A program that has never filed a walk has nothing to roll up — the first Monday after it
+      // starts would otherwise mail the owners "0 walks, 0 issues" for a week it did not exist.
+      // Once a walk has been filed, a week with none IS the finding, and the roll-up still goes.
+      if (!reports.length && !(await listReports({ programId: p.id, limit: 1 })).length) { out.skipped.push(p.name + ': no walk filed yet'); continue }
       let scheduled = 0
       for (let d = from7; d <= to7; d = shift(d, 1)) for (const pl of p.places) if (onDays(pl, d)) scheduled++
       const probe: WalkReport = { ...(reports[0] || {} as any), code: '', fixTasks: [] }
