@@ -670,15 +670,16 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
     const items = ownerItems(t)
     const like = t.usual ? (t.usual.scope === 'job' ? t.usual.n + ' similar approved jobs' : t.usual.n + ' approved ' + String(t.billable?.category || 'other').replace('_', ' ') + ' jobs') + ' ($' + Math.round(t.usual.low) + '–$' + Math.round(t.usual.high) + ')' : ''
     if (hrs > 0 && t.crew !== 'vendor') {
-      // THE RECOMMENDED RATE: the hours at the house rate, kept inside the range similar jobs were
-      // approved at — a 10-minute fix is not billed $7 when that job always bills $40, and a slow
-      // one is not billed three times the norm without someone deciding to.
+      // THE RECOMMENDED RATE: the hours at the house rate, never below what similar jobs were approved
+      // at (a 10-minute fix is not billed $7 when that job always bills $40). Far above the norm, the
+      // hours still stand, with a note to check the time.
       const billH = Math.max(0.5, Math.ceil(hrs * 4 - 1e-9) / 4)
       const byHours = Math.round((houseRate * billH + items) * 100) / 100
       const hoursWhy = billH + 'h × $' + houseRate + (items ? ' + parts $' + Math.round(items) : '')
       let amount = byHours, why = hoursWhy
       if (t.usual && byHours < t.usual.low) { amount = Math.max(byHours, t.usual.low); why = hoursWhy + ' = $' + Math.round(byHours) + ', raised to the low end of ' + like }
-      else if (t.usual && byHours > t.usual.high * 1.5) { amount = Math.round(t.usual.high * 1.5 * 100) / 100; why = hoursWhy + ' = $' + Math.round(byHours) + ', held to 1.5× the top of ' + like + ' — check the time' }
+      // Above the norm: the hours still decide (the time was worked), but it says so — check the clock.
+      else if (t.usual && byHours > t.usual.high * 1.5) { why = hoursWhy + ' — well above ' + like + '; check the time logged' }
       else if (t.usual) why = hoursWhy + ', in line with ' + like
       t.suggested = { amount: Math.round(amount * 100) / 100, basis: 'hours', why }
     } else if (t.usual) {
