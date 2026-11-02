@@ -325,7 +325,7 @@ export async function planPrograms(day = ymdET(new Date()), only?: string): Prom
   }
   for (const p of programs) {
     const { data } = await db.from('breezeway_tasks_sync').select(COLS).ilike('name', p.name.trim().replace(/[%_]/g, '') + ':%')
-      .gte('scheduled_date', shift(day, -LOOKBACK_DAYS)).lte('scheduled_date', day).limit(3000)
+      .gte('scheduled_date', shift(day, -LOOKBACK_DAYS)).lte('scheduled_date', shift(day, 14)).limit(3000)
     keep(data)
   }
   const plans: PlacePlan[] = []
@@ -350,8 +350,11 @@ export async function planPrograms(day = ymdET(new Date()), only?: string): Prom
     const open = here.filter(t => str(t.name).indexOf(titlePrefix(p)) === 0 && !isTaskDone(t.status, t.finished_at) && !isTaskGone(t.status))
       .map(t => ({ id: str(t.id), date: str(t.scheduled_date), assigneeIds: ids(t.assignees), homeId: Number(t.home_id) }))
       .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : Number(b.id) - Number(a.id)))
+    // Rescheduled ahead by someone (a walkthrough moved to Friday): it is this cycle's task — left
+    // where it is, and nothing new is created while it waits.
+    const ahead = open.filter(t => t.date > day).sort((a, b) => (a.date < b.date ? -1 : 1))[0] || null
     const todayT = open.find(t => t.date === day) || null
-    const older = open.filter(t => t !== todayT)
+    const older = open.filter(t => t !== todayT && t.date < day)
     const carry = todayT ? null : older[0] || null
     const extras = todayT ? older : older.slice(1)
     const scheduled = onDays(place, day)
@@ -362,6 +365,7 @@ export async function planPrograms(day = ymdET(new Date()), only?: string): Prom
     if (r.homeId == null && !todayT && !carry) { action = 'skip'; note = place.kind === 'unit' ? 'unit not in Breezeway' : 'no Breezeway property at this building yet' }
     else if (todayT) { action = 'add'; note = 'today’s task is on the board' }
     else if (carry) { action = 'move'; note = 'not done on ' + carry.date + ' — moves to today' }
+    else if (ahead) { action = 'none'; note = 'scheduled for ' + ahead.date }
     else if (due && here.some(t => str(t.name).indexOf(titlePrefix(p)) === 0 && str(t.scheduled_date) === day && isTaskDone(t.status, t.finished_at))) { action = 'none'; note = 'done today' }
     else if (due) { action = 'create'; note = 'due — ' + why }
     else note = 'not today'
