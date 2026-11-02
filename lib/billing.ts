@@ -94,9 +94,9 @@ export function jobKind(name: string, unit: string, category: string | null | un
   // screw covers", "Preventative Maintenance Task || clean bathroom vent") come off first, or every
   // field report would look like the same job.
   const stripped = n.replace(/\[moved to [^\]]+\]/g, ' ')
-    .replace(/(preventa?t?ive|preventive) maintenance( task)?|field reported( priority)?|guest reported( glitch)?|in[\s-]?house|\(code change\)|\bpriority\b|\burgent\b|\btask\b/g, ' ')
+    .replace(/(preventa?t?ive|preventive) maintenance( task)?|field reported( priority)?|guest (has )?reported( that)?|\bglitch\b|in[\s-]?house|\(code change\)|\bpriority\b|\burgent\b|\btask\b/g, ' ')
   const words = (stripped.replace(/[^a-z\s]/g, ' ').trim() ? stripped : n).replace(/[^a-z\s]/g, ' ').split(/\s+/)
-    .filter(w => w.length > 1 && !/^(the|and|for|in|at|of|to|a|unit|apt|suite|stu|studio|br|bdr|room|de|la|el|en|y)$/.test(w))
+    .filter(w => w.length > 1 && !/^(the|and|for|in|at|of|to|a|an|is|are|was|has|have|had|not|no|it|its|on|be|being|with|from|this|that|there|need|needs|needed|please|unit|apt|suite|stu|studio|br|bdr|room|de|la|el|en|y|que|del|los|las)$/.test(w))
   return (category || 'other') + '|' + (words.slice(0, 3).join(' ') || 'task')
 }
 
