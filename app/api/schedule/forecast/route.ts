@@ -4,6 +4,8 @@ import { marketOf, MARKETS } from '@/lib/segments'
 import { getOpsPresets } from '@/lib/app-settings'
 import { vendorRegex } from '@/lib/ops-presets'
 import { requireVrUser } from '@/lib/vr-gate'
+import { getSetting } from '@/lib/app-settings'
+import { CLEAN_RATES_KEY, resolveCleanRates, priceClean } from '@/lib/clean-rates'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -61,18 +63,21 @@ export async function GET(req: NextRequest) {
   const db = supabaseAdmin()
   const [outs, { data: listings }] = await Promise.all([
     fetchCheckouts(db, qFrom, qTo),
-    db.from('guesty_listings').select('id,nickname,title,building,address_city').limit(1000), // deliberate cap: one row per listing, ~290
+    db.from('guesty_listings').select('id,nickname,title,building,address_city,bedrooms').limit(1000), // deliberate cap: one row per listing, ~290
   ])
   if (!listings || !listings.length) return NextResponse.json({ ok: false, error: 'Listing data unavailable - hit Sync and retry.' }, { status: 503 })
 
-  const meta: Record<string, { market: string; vendor: boolean }> = {}
+  // HOURS PER CLEAN (Jon, 2026-11-02): every clean is priced at its P&L cleaning rate ÷ $20 — the
+  // paid hours it carries — so a day's need is hours ÷ a shift, per market (lib/clean-rates.ts).
+  const rates = resolveCleanRates(await getSetting<any>(CLEAN_RATES_KEY, null).catch(() => null))
+  const meta: Record<string, { market: string; vendor: boolean; hours: number }> = {}
   for (const l of listings as any[]) {
     const id = String(l.id)
     const building = str(l.building)
     const name = l.nickname || l.title || 'Unit'
     let market = String(marketOf(building, l.address_city, name) || 'Miami')
     if (!(MARKETS as string[]).includes(market)) market = 'Miami'
-    meta[id] = { market, vendor: VENDOR.test(building) || VENDOR.test(name) }
+    meta[id] = { market, vendor: VENDOR.test(building) || VENDOR.test(name), hours: priceClean(rates, { building, name, bedrooms: l.bedrooms, market }).hours }
   }
 
   const hist: Record<string, number[]> = {}
@@ -80,6 +85,14 @@ export async function GET(req: NextRequest) {
   MARKETS.forEach(m => { hist[m] = zeros(); histVendor[m] = zeros() })
   const wkBy: Record<string, Record<string, number>> = {}
   const wkVendorBy: Record<string, Record<string, number>> = {}
+  const wkHrs: Record<string, Record<string, number>> = {}
+  const addHrs = (date: string, m: { market: string; vendor: boolean; hours: number }, sign = 1) => {
+    if (m.vendor) return
+    if (!wkHrs[date]) wkHrs[date] = {}
+    wkHrs[date][m.market] = (wkHrs[date][m.market] || 0) + sign * m.hours
+  }
+  const histHrs: Record<string, number> = {}
+  const histN: Record<string, number> = {}
 
   const seen = new Set<string>()
   for (const r of outs) {
@@ -94,11 +107,13 @@ export async function GET(req: NextRequest) {
     if (!m) continue
     if (date >= histStart && date < today) {
       (m.vendor ? histVendor : hist)[m.market][dow(date)]++
+      if (!m.vendor) { histHrs[m.market] = (histHrs[m.market] || 0) + m.hours; histN[m.market] = (histN[m.market] || 0) + 1 }
     }
     if (date >= weekStart && date <= weekEnd) {
       const b = m.vendor ? wkVendorBy : wkBy
       if (!b[date]) b[date] = {}
       b[date][m.market] = (b[date][m.market] || 0) + 1
+      addHrs(date, m)
     }
   }
   // Fold in Breezeway departure cleans for the current week (status-filtered like the daily
@@ -135,6 +150,7 @@ export async function GET(req: NextRequest) {
     const bb = bm.vendor ? wkVendorBy : wkBy;
     if (!bb[bdate]) bb[bdate] = {};
     bb[bdate][bm.market] = (bb[bdate][bm.market] || 0) + 1;
+    addHrs(bdate, bm);
   }
   // MOVED dedupe: a checkout whose departure task sits on a DIFFERENT day was counted twice
   // (checkout day + task day). Uncount the checkout day — the daily board shows the clean only
@@ -150,7 +166,7 @@ export async function GET(req: NextRequest) {
       const m = meta[id];
       if (!m) continue;
       const bb = m.vendor ? wkVendorBy : wkBy;
-      if (bb[gd] && bb[gd][m.market] > 0) { bb[gd][m.market] = bb[gd][m.market] - 1; deducted++; }
+      if (bb[gd] && bb[gd][m.market] > 0) { bb[gd][m.market] = bb[gd][m.market] - 1; addHrs(gd, m, -1); deducted++; }
     }
   }
 
@@ -167,11 +183,13 @@ export async function GET(req: NextRequest) {
     const d = addDays(weekStart, i)
     const actual: Record<string, number> = {}
     const vendor: Record<string, number> = {}
+    const hours: Record<string, number> = {}
     MARKETS.forEach(m => {
       actual[m] = (wkBy[d] && wkBy[d][m]) || 0
+      hours[m] = Math.max(0, Math.round(((wkHrs[d] && wkHrs[d][m]) || 0) * 100) / 100)
       vendor[m] = (wkVendorBy[d] && wkVendorBy[d][m]) || 0
     })
-    week.push({ date: d, dow: dow(d), day: DAYLABEL[dow(d)], actual, vendor, isToday: d === today, isPast: d < today })
+    week.push({ date: d, dow: dow(d), day: DAYLABEL[dow(d)], actual, vendor, hours, isToday: d === today, isPast: d < today })
   }
 
   return NextResponse.json({
@@ -188,6 +206,11 @@ export async function GET(req: NextRequest) {
     dowOccurrences: dowOcc,
     avgByMarketDow: avgOf(hist),
     vendorAvgByMarketDow: avgOf(histVendor),
+    // Hours per clean: the average across each market's real cleans in the history window, for
+    // pricing projected-but-unbooked cleans; and the settings the board divides by.
+    avgHoursPerClean: Object.fromEntries(MARKETS.map(m => [m, histN[m] ? Math.round((histHrs[m] / histN[m]) * 100) / 100 : Math.round((rates.marketRate[m as 'Miami'] / rates.payPerHour) * 100) / 100])),
+    shiftHours: rates.shiftHours,
+    payPerHour: rates.payPerHour,
     week,
     note: 'Week runs Sun->Sat. avg/actual = our team; vendor = Botanica (hotel-cleaned).',
     generatedAt: new Date().toISOString(),

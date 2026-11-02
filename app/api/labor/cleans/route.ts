@@ -14,7 +14,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { canSeeMoney } from '@/lib/access'
 import { requireVrUser } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getOpsPresets } from '@/lib/app-settings'
+import { getOpsPresets, getSetting } from '@/lib/app-settings'
+import { CLEAN_RATES_KEY, resolveCleanRates, priceClean } from '@/lib/clean-rates'
 import { vendorRegex, benchmarkMinutes } from '@/lib/ops-presets'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { marketOf } from '@/lib/segments'
@@ -68,6 +69,9 @@ export async function GET(req: NextRequest) {
   const sb = supabaseAdmin()
   const presets = await getOpsPresets()
   const timing = (presets as any).timing || {}
+  // The paid-hours budget (P&L cleaning rate ÷ $20, lib/clean-rates.ts) is the benchmark wherever the
+  // building has a rate for that size; the bedroom-count minutes remain for units it does not cover.
+  const cleanRates = resolveCleanRates(await getSetting<any>(CLEAN_RATES_KEY, null).catch(() => null))
   const longNights = Math.max(2, Number(timing.longStayNights) || 10)
   const VENDOR_RE = vendorRegex((presets as any).vendorBuildings)
 
@@ -146,7 +150,8 @@ export async function GET(req: NextRequest) {
     }
     const nights = res ? (Number(res.nights) > 0 ? Number(res.nights) : null) : null
     const minutes = num(t.total_minutes) || null
-    const bench = benchmarkMinutes(timing as any, li?.bedrooms)
+    const price = li ? priceClean(cleanRates, { building: li.building, name: li.name, bedrooms: li.bedrooms, market: li.market }) : null
+    const bench = price && price.source === 'building' && price.hours > 0 ? Math.round(price.hours * 60) : benchmarkMinutes(timing as any, li?.bedrooms)
 
     rows.push({
       id: String(t.id),
