@@ -61,6 +61,10 @@ export type AdProject = {
   captions: boolean
   /** Who the ad speaks to — decides the facts, the rules and the end card. */
   audience: AdAudience
+  /** The visual style (LOOKS): accent colour, base and photo tint. */
+  look?: string
+  /** What the ad is for (GOALS), set when it was started. */
+  goal?: string
   scenes: AdScene[]
   contact: AdContact
   voice: AdVoice | null
@@ -208,7 +212,25 @@ export type AdAssets = {
   mono: string
   credit: string
 }
-const C = { gold: '#D2B077', ink: '#F2EEE6', mut: '#A9B8C6', navy: '#0D2131', navy2: '#132E44', glass: 'rgba(10,26,40,0.62)', line: 'rgba(255,255,255,0.18)', green: '#4CC488' }
+type Palette = { gold: string; ink: string; mut: string; navy: string; navy2: string; deep: string; tint: string; glass: string; line: string; green: string }
+/** Visual styles (Jon, 2026-11-02: "create new visual … revamp … vibe"). `gold` is the accent the
+ *  headline's **marked** words, rings and buttons take; `tint` darkens photos so text reads. */
+export const LOOKS: { key: string; label: string; blurb: string; c: Palette }[] = [
+  { key: 'stay', label: 'Stay navy & gold', blurb: 'The house look', c: { gold: '#D2B077', ink: '#F2EEE6', mut: '#A9B8C6', navy: '#0D2131', navy2: '#132E44', deep: '#091827', tint: '6,18,30', glass: 'rgba(10,26,40,0.62)', line: 'rgba(255,255,255,0.18)', green: '#4CC488' } },
+  { key: 'sunset', label: 'Sunset', blurb: 'Warm coral, golden hour', c: { gold: '#FFB37A', ink: '#FFF4EA', mut: '#E7C3B0', navy: '#2A1220', navy2: '#4A1E2C', deep: '#1A0A14', tint: '38,12,22', glass: 'rgba(48,16,30,0.6)', line: 'rgba(255,220,200,0.22)', green: '#7FD1A6' } },
+  { key: 'ocean', label: 'Ocean', blurb: 'Aqua and deep blue, beachy', c: { gold: '#5FE0D2', ink: '#EFFBFF', mut: '#A8CFDA', navy: '#062A3A', navy2: '#0A4258', deep: '#031B27', tint: '2,26,38', glass: 'rgba(4,36,52,0.6)', line: 'rgba(200,245,255,0.2)', green: '#5FE0A0' } },
+  { key: 'mono', label: 'Minimal luxe', blurb: 'Black and white, editorial', c: { gold: '#FFFFFF', ink: '#F5F5F2', mut: '#B9B9B4', navy: '#0B0B0B', navy2: '#1E1E1E', deep: '#000000', tint: '0,0,0', glass: 'rgba(12,12,12,0.6)', line: 'rgba(255,255,255,0.25)', green: '#CFCFCF' } },
+  { key: 'bold', label: 'Bold pop', blurb: 'Bright yellow, high energy', c: { gold: '#FFD84A', ink: '#FFFFFF', mut: '#C9C9D6', navy: '#14112A', navy2: '#2A2160', deep: '#0B0920', tint: '14,10,36', glass: 'rgba(20,16,50,0.62)', line: 'rgba(255,255,255,0.22)', green: '#4CE08A' } },
+]
+let C: Palette = LOOKS[0].c
+/** What the ad is meant to do — set when an ad is started; it steers the writer. */
+export const GOALS: { key: string; label: string; audience: AdAudience; brief: string }[] = [
+  { key: 'bookings', label: 'Get bookings', audience: 'guests', brief: 'Goal: drive direct bookings at stay-hospitality.com.' },
+  { key: 'event', label: 'Promote an event / season', audience: 'guests', brief: 'Goal: fill dates around a specific event or season.' },
+  { key: 'owners', label: 'Win new owners', audience: 'owners', brief: 'Goal: get property owners to book a call with Nick.' },
+  { key: 'partners', label: 'Partner referrals', audience: 'partners', brief: 'Goal: get realtors, lenders and advisors to refer owners.' },
+  { key: 'brand', label: 'Brand awareness', audience: 'guests', brief: 'Goal: make people remember Stay Hospitality and its places.' },
+]
 const clamp = (x: number, a = 0, b = 1) => Math.max(a, Math.min(b, x))
 const ease = (x: number) => 1 - Math.pow(1 - clamp(x), 3)
 const appear = (local: number, delay: number, d = 0.6) => ease((local - delay) / d)
@@ -305,13 +327,13 @@ function background(ctx: CanvasRenderingContext2D, W: number, H: number, img: HT
   if (img) {
     cover(ctx, img, 0, 0, W, H, 1.04 + 0.09 * clamp(local / Math.max(dur, 1)), 0.25 * clamp(local / Math.max(dur, 1)))
     const g = ctx.createLinearGradient(0, 0, 0, H)
-    g.addColorStop(0, `rgba(6,18,30,${0.35 * dark + 0.1})`)
-    g.addColorStop(0.55, `rgba(6,18,30,${0.55 * dark + 0.12})`)
-    g.addColorStop(1, `rgba(6,18,30,${0.75 * dark + 0.15})`)
+    g.addColorStop(0, `rgba(${C.tint},${0.35 * dark + 0.1})`)
+    g.addColorStop(0.55, `rgba(${C.tint},${0.55 * dark + 0.12})`)
+    g.addColorStop(1, `rgba(${C.tint},${0.75 * dark + 0.15})`)
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
   } else {
     const g = ctx.createRadialGradient(W * 0.8, 0, 0, W * 0.8, 0, Math.max(W, H) * 1.1)
-    g.addColorStop(0, C.navy2); g.addColorStop(0.6, C.navy); g.addColorStop(1, '#091827')
+    g.addColorStop(0, C.navy2); g.addColorStop(0.6, C.navy); g.addColorStop(1, C.deep)
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
   }
 }
@@ -415,7 +437,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       if (img) cover(ctx, img, x, y, cw, ch, 1.02 + 0.06 * clamp(local / dur)); else { ctx.fillStyle = C.navy2; ctx.fillRect(x, y, cw, ch) }
       const label = sc.items[k] ? split(sc.items[k])[0] : ''
       if (label && k < n) {
-        const g = ctx.createLinearGradient(0, y + ch * 0.5, 0, y + ch); g.addColorStop(0, 'rgba(6,18,30,0)'); g.addColorStop(1, 'rgba(6,18,30,0.75)')
+        const g = ctx.createLinearGradient(0, y + ch * 0.5, 0, y + ch); g.addColorStop(0, `rgba(${C.tint},0)`); g.addColorStop(1, `rgba(${C.tint},0.75)`)
         ctx.fillStyle = g; ctx.fillRect(x, y, cw, ch)
         plain(ctx, label, x + 28 * u, y + ch - 76 * u, cw - 56 * u, 34 * u, A.display, C.ink, 700)
       }
@@ -425,7 +447,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       const a = appear(local, 0.5)
       ctx.save(); ctx.globalAlpha *= a
       const g = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7)
-      g.addColorStop(0, 'rgba(6,18,30,0.62)'); g.addColorStop(1, 'rgba(6,18,30,0.85)')
+      g.addColorStop(0, `rgba(${C.tint},0.62)`); g.addColorStop(1, `rgba(${C.tint},0.85)`)
       ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); ctx.restore()
       ctx.font = `800 ${120 * u}px ${A.display}`
       const hh = layout(ctx, head, W - pad * 2).length * 120 * u * 1.08
@@ -627,6 +649,7 @@ export function sceneAt(tl: Timeline, t: number): number {
 export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timeline, t: number, A: AdAssets) {
   const W = ctx.canvas.width, H = ctx.canvas.height
   const u = Math.min(W, H) / 1080
+  C = (LOOKS.find(l => l.key === p.look) || LOOKS[0]).c
   ctx.save()
   ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H)
   if (!p.scenes.length) { ctx.restore(); return }

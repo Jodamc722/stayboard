@@ -103,6 +103,8 @@ export function normalize(p: any): AdProject {
     prompt: String(p?.prompt || '').slice(0, 2000),
     format: (['16:9', '9:16', '1:1', '4:5'].indexOf(p?.format) >= 0 ? p.format : '16:9'),
     audience: (['owners', 'partners', 'guests'].indexOf(p?.audience) >= 0 ? p.audience : 'owners'),
+    look: /^[a-z]{2,12}$/.test(String(p?.look || '')) ? String(p.look) : 'stay',
+    goal: String(p?.goal || '').slice(0, 20),
     voiceId: String(p?.voiceId || 'qSeXEcewz7tA0Q0qk9fH').slice(0, 40),
     voiceName: String(p?.voiceName || '').slice(0, 80),
     voiceSettings: {

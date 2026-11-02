@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdProject, type AdScene, type AdKind, type AdFormat, type AdAssets, type AdAudience, type AdTemplate,
-  FORMATS, FORMAT_LABEL, VOICES, MUSIC, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
+  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
 } from '@/lib/ad-engine'
 import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 
@@ -82,6 +82,11 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
   const [hear, setHear] = useState('') // the clip being previewed (music, sound or voice sample)
   const [ask, setAsk] = useState('')
   const [plan, setPlan] = useState<Plan | null>(null)
+  // The "new ad" chooser (Jon, 2026-11-02: "when you select new ad it should let you decide how you
+  // want to create it — prompt it, new visual, revamp, music vibe and goal").
+  const [starting, setStarting] = useState(false)
+  const [st, setSt] = useState<{ mode: 'describe' | 'template' | 'revamp' | 'blank'; prompt: string; goal: string; music: string; vibe: string; look: string; format: AdFormat | ''; from: string }>({ mode: 'describe', prompt: '', goal: 'bookings', music: '', vibe: '', look: 'stay', format: '', from: '' })
+  const seed = useRef<{ fresh: boolean; look: string; goal: string; music: string; vibe: string } | null>(null)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [planNote, setPlanNote] = useState('')
   const [adAsk, setAdAsk] = useState('')
@@ -152,13 +157,62 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
     loadLib(); loadSounds()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const newAd = async () => {
+  const newAd = async (): Promise<AdProject | null> => {
     setBusy('new'); setErr('')
     const r = await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new: true }) }).then(x => x.json()).catch(() => null)
     setBusy('')
-    if (!r?.ok) { setErr(r?.error || 'Could not start a new ad.'); return }
-    setP(r.project); setAudioUrl(null); setSel(0); setT(1.6); setSaved('saved'); setBrief('')
+    if (!r?.ok) { setErr(r?.error || 'Could not start a new ad.'); return null }
+    stop(); setP(r.project); pRef.current = r.project; setAudioUrl(null); setSel(0); setT(1.6); setSaved('saved'); setBrief('')
     loadList()
+    return r.project
+  }
+  const openStart = () => { stop(); setPlan(null); setStarting(true); setSt(x => ({ ...x, prompt: '', vibe: '', from: '' })) }
+  const goalOf = (k: string) => GOALS.find(g => g.key === k)
+  /** Brief extras the chooser adds: goal, music vibe and look, in words the planner and writer use. */
+  const seedLines = () => [goalOf(st.goal)?.brief || '', st.vibe.trim() ? 'Music vibe: ' + st.vibe.trim() + '.' : st.music ? 'Music vibe: ' + (MUSIC.find(m => m.key === st.music)?.mood || '') + '.' : '', 'Visual style: ' + (LOOKS.find(l => l.key === st.look)?.blurb || '') + '.'].filter(Boolean).join(' ')
+  /** After an ad is built from the chooser: generate the described music vibe with ElevenLabs. */
+  const vibeTrack = async (vibe: string) => {
+    if (!vibe.trim()) return
+    const r = await fetch('/api/ads/sounds', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'music', prompt: vibe, seconds: 60, name: vibe.slice(0, 40) }) }).then(x => x.json()).catch(() => null)
+    if (!r?.ok) { setErr('The ad is ready, but the new music vibe was not made: ' + (r?.error || 'no answer') + ' It is using a playlist track for now.'); return }
+    setSounds(r.sounds || [])
+    const mine = (r.sounds || []).find((x: any) => x.kind === 'music')
+    if (mine) change(d => ({ ...d, music: mine.key }))
+  }
+  const startGo = async () => {
+    const g = goalOf(st.goal)
+    const look = st.look, music = st.music, vibe = st.vibe
+    if (st.mode === 'describe') {
+      if (!st.prompt.trim()) { setErr('Describe the ad first — even one line, e.g. a cool video for Amrit.'); return }
+      seed.current = { fresh: true, look, goal: st.goal, music, vibe }
+      setBrief(st.prompt.trim()); setStarting(false)
+      await planAd(st.prompt.trim() + '\n\n' + seedLines(), { audience: g?.audience, format: st.format || undefined })
+      return
+    }
+    if (st.mode === 'revamp') {
+      if (!st.from) { setErr('Pick the ad to revamp.'); return }
+      const src = await fetch('/api/ads?id=' + encodeURIComponent(st.from)).then(x => x.json()).catch(() => null)
+      if (!src?.ok) { setErr('Could not open that ad.'); return }
+      const S: AdProject = src.project
+      const n = await newAd(); if (!n) return
+      setStarting(false); setBusy('adask')
+      let scenes = S.scenes.map(x => ({ ...x, items: x.items.slice(), photos: x.photos.slice() }))
+      const base: AdProject = { ...n, name: S.name + ' · revamp', format: (st.format || S.format) as AdFormat, audience: g?.audience || S.audience, music: music || S.music, look, goal: st.goal, contact: S.contact, captions: S.captions, voiceId: S.voiceId, voiceName: S.voiceName, voiceSettings: S.voiceSettings, scenes }
+      const ask = 'REVAMP THIS AD: keep what works, make it fresher and stronger. ' + (st.prompt.trim() ? 'What to change: ' + st.prompt.trim() + '. ' : '') + seedLines()
+      const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: ask, seconds, audience: AUD[base.audience].brief, format: base.format, current: base }) }).then(x => x.json()).catch(() => null)
+      setBusy('')
+      if (r?.ok && r.scenes?.length) scenes = r.scenes
+      else setErr('Copied the ad, but the rewrite did not come back — it is the original scenes for now. Try "Change the whole ad".')
+      change(() => ({ ...base, prompt: st.prompt, scenes }))
+      setSel(0); setT(1.6)
+      vibeTrack(vibe)
+      return
+    }
+    const n = await newAd(); if (!n) return
+    change(d => ({ ...d, look, goal: st.goal, audience: g?.audience || d.audience, music: music || d.music, format: (st.format || d.format) as AdFormat }))
+    setStarting(false)
+    if (st.mode === 'template') { setSide('templates'); vibeTrack(vibe); return }
+    vibeTrack(vibe)
   }
 
   // ── editing + autosave ────────────────────────────────────────────────
@@ -205,13 +259,19 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
     if (change_) setAdAsk('')
   }
   // ── plan first: sharpen the brief and confirm the details before anything is built ──
-  const planAd = async () => {
-    if (!brief.trim()) { setErr('Write a line about the ad first, e.g. "a cool video for Amrit".'); return }
+  const planAd = async (override?: string, opt?: { audience?: AdAudience; format?: AdFormat }) => {
+    const b = override || brief
+    if (!b.trim()) { setErr('Write a line about the ad first, e.g. "a cool video for Amrit".'); return }
+    if (!override) seed.current = null
     stop(); setBusy('plan'); setErr('')
-    const r = await fetch('/api/ads/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brief, seconds, format: p?.format || '16:9', audience: p?.audience || 'owners' }) }).then(x => x.json()).catch(() => null)
+    const r = await fetch('/api/ads/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brief: b, seconds, format: opt?.format || p?.format || '16:9', audience: opt?.audience || p?.audience || 'owners' }) }).then(x => x.json()).catch(() => null)
     setBusy('')
     if (!r?.ok || !r.plan) { setErr(r?.error || 'Could not plan that one. Try again.'); return }
     const pl: Plan = r.plan
+    // What was picked in the chooser wins over the planner's suggestion.
+    const sd = seed.current
+    if (sd?.music) pl.settings.music = sd.music
+    if (opt?.format) pl.settings.format = opt.format
     setPlan(pl); setPlanNote('')
     setAnswers(Object.fromEntries(pl.questions.map(q => [q.id, q.options[0]])))
   }
@@ -241,7 +301,8 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
     setBusy('write'); setErr('')
     const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: full, seconds: st.seconds, audience: AUD[st.audience].brief, format: st.format, current: null }) }).then(x => x.json()).catch(() => null)
     if (!r?.ok) { setBusy(''); setErr(r?.error || 'The writer did not answer. Try again.'); return }
-    let base = pRef.current
+    const sd = seed.current
+    let base = sd?.fresh ? null : pRef.current
     if (!base) {
       const n = await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new: true }) }).then(x => x.json()).catch(() => null)
       if (!n?.ok) { setBusy(''); setErr(n?.error || 'Could not start a new ad.'); return }
@@ -250,8 +311,10 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
     }
     setBusy('')
     setSeconds(st.seconds)
-    change(d => ({ ...d, prompt: brief, name: plan.name || r.name || d.name, audience: st.audience, format: st.format, music: st.music || d.music, scenes: r.scenes }))
+    change(d => ({ ...d, prompt: brief, name: plan.name || r.name || d.name, audience: st.audience, format: st.format, music: st.music || d.music, look: sd?.look || d.look, goal: sd?.goal || d.goal, scenes: r.scenes }))
     setPlan(null); setSel(0); setT(1.6); setUndo(null)
+    seed.current = null
+    if (sd?.vibe) vibeTrack(sd.vibe)
   }
 
   /** Rewrite just the selected scene the way it is asked ("punchier", "show the rooftop", "make it numbers"). */
@@ -643,6 +706,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
 
   // ── templates: a ready-made ad that fills itself from the photo library ──
   const applyTemplate = async (tp: AdTemplate) => {
+    const p = pRef.current
     if (!p || !canEdit) return
     if (p.scenes.length > 2 && !window.confirm('Replace the scenes in "' + p.name + '" with the ' + tp.label + ' template?')) return
     stop(); setBusy('template')
@@ -665,7 +729,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
       scenes.push({ id: 's' + (i + 1), kind: s.kind, vo: s.vo, head: s.head, sub: s.sub, items: s.items.slice(), photos, dur: s.dur || null })
     }
     setBusy('')
-    change(d => ({ ...d, name: d.name === 'Untitled ad' ? tp.name : d.name, format: tp.format, audience: tp.audience, scenes }))
+    change(d => ({ ...d, name: d.name === 'Untitled ad' ? tp.name : d.name, format: d.goal ? d.format : tp.format, audience: tp.audience, scenes }))
     setSel(0); setT(1.6); setSide('ads')
   }
 
@@ -735,7 +799,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
             {(Object.keys(AUD) as AdAudience[]).map(k => <Btn key={k} small on={p?.audience === k} disabled={!p || !canEdit} title={AUD[k].hint} onClick={() => change(d => ({ ...d, audience: k }))}>{AUD[k].label}</Btn>)}
           </div>
           <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
-            <Btn tone="blue" disabled={!canEdit || !!busy || !brief.trim()} onClick={planAd} title="Works through the details with you first, then builds">{busy === 'plan' ? 'Thinking…' : busy === 'write' ? 'Writing…' : 'Plan the ad'}</Btn>
+            <Btn tone="blue" disabled={!canEdit || !!busy || !brief.trim()} onClick={() => planAd()} title="Works through the details with you first, then builds">{busy === 'plan' ? 'Thinking…' : busy === 'write' ? 'Writing…' : 'Plan the ad'}</Btn>
             <Btn disabled={!p || !canEdit || !!busy || !p?.scenes.length} onClick={() => write(true)} title="Keeps what works and tightens the rest">{busy === 'rewrite' ? 'Rewriting…' : 'Improve draft'}</Btn>
           </div>
           <p style={{ fontSize: 11, color: UI.mut, marginTop: 8, lineHeight: 1.5 }}>I sharpen the brief, ask what matters, and show the scene plan before anything is built. House facts only — no made-up numbers.{p && canEdit ? <> <button onClick={() => write(false)} disabled={!!busy} style={{ background: 'none', border: 0, padding: 0, color: UI.blue, cursor: 'pointer', fontSize: 11 }}>Skip — write it now</button></> : null}</p>
@@ -840,7 +904,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
             </div>
           ) : (<>
           <Label>Ads</Label>
-          {canEdit ? <Btn small disabled={!!busy} onClick={newAd}>+ New ad</Btn> : null}
+          {canEdit ? <Btn small disabled={!!busy} onClick={openStart}>+ New ad</Btn> : null}
           <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 300, overflowY: 'auto' }}>
             {list.map(a => (
               <button key={a.id} onClick={() => open(a.id)} style={{ textAlign: 'left', background: p?.id === a.id ? '#232C38' : 'transparent', border: 0, borderRadius: 7, padding: '7px 8px', cursor: 'pointer', color: UI.ink }}>
@@ -856,7 +920,82 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
 
         {/* ── centre: viewer ── */}
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, minWidth: 0, background: '#0A0D11' }}>
-          {plan ? (
+          {starting && !plan ? (
+            <div style={{ width: '100%', maxWidth: 760, background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, padding: '16px 18px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                <span style={{ fontFamily: display, fontSize: 20, fontWeight: 800 }}>New ad</span>
+                <span style={{ fontSize: 12, color: UI.mut }}>How do you want to make it?</span>
+                <span style={{ marginLeft: 'auto' }}><Btn small onClick={() => setStarting(false)}>Close</Btn></span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 8, marginTop: 12 }}>
+                {([['describe', '✦ Describe it', 'Prompt it in your words — I plan it with you first'], ['revamp', '↻ Revamp an ad', 'Take one we made and make it fresher'], ['template', '▦ From a template', 'A ready layout, filled with our photos'], ['blank', '□ Blank', 'Start empty and build scene by scene']] as const).map(([k, l, d]) => (
+                  <button key={k} onClick={() => setSt(x => ({ ...x, mode: k }))} style={{ textAlign: 'left', background: st.mode === k ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + (st.mode === k ? UI.blue : UI.line), borderRadius: 10, padding: '10px 11px', cursor: 'pointer', color: UI.ink }}>
+                    <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700 }}>{l}</span>
+                    <span style={{ display: 'block', fontSize: 11, color: UI.mut, marginTop: 3, lineHeight: 1.4 }}>{d}</span>
+                  </button>
+                ))}
+              </div>
+
+              {st.mode === 'describe' ? (
+                <>
+                  <Label>Describe the ad</Label>
+                  <textarea autoFocus value={st.prompt} onChange={e => setSt(x => ({ ...x, prompt: e.target.value }))} rows={3} placeholder="e.g. a cool video for Amrit · a 15-second Reel for Art Basel weekend at 17WEST · why owners switch to Stay" style={field} />
+                </>
+              ) : st.mode === 'revamp' ? (
+                <>
+                  <Label>Which ad?</Label>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {list.map(a => <Btn key={a.id} small on={st.from === a.id} onClick={() => setSt(x => ({ ...x, from: a.id }))}>{a.name} · {a.format}</Btn>)}
+                    {!list.length ? <span style={{ fontSize: 12, color: UI.mut }}>No ads to revamp yet.</span> : null}
+                  </div>
+                  <Label>What should change? (optional)</Label>
+                  <textarea value={st.prompt} onChange={e => setSt(x => ({ ...x, prompt: e.target.value }))} rows={2} placeholder="e.g. make it for guests, faster cuts, open on the rooftop" style={field} />
+                  <p style={{ fontSize: 11, color: UI.mut, marginTop: 4 }}>The original stays as it is — the revamp is a new ad.</p>
+                </>
+              ) : st.mode === 'template' ? (
+                <p style={{ fontSize: 12, color: UI.mut, marginTop: 12 }}>Set the goal, vibe and look below, then pick a template on the left — it fills itself with our photos.</p>
+              ) : <p style={{ fontSize: 12, color: UI.mut, marginTop: 12 }}>An empty ad with the goal, vibe and look below. Add scenes from the timeline.</p>}
+
+              <Label>Goal</Label>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {GOALS.map(g => <Btn key={g.key} small on={st.goal === g.key} title={g.brief} onClick={() => setSt(x => ({ ...x, goal: g.key }))}>{g.label}</Btn>)}
+              </div>
+
+              <Label>Music vibe</Label>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                <Btn small on={!st.music && !st.vibe} onClick={() => setSt(x => ({ ...x, music: '', vibe: '' }))} title="Let the plan pick">Pick for me</Btn>
+                {MUSIC.filter(m => m.file).map(m => (
+                  <span key={m.key} style={{ display: 'inline-flex', gap: 2 }}>
+                    <Btn small on={st.music === m.key} title={m.mood} onClick={() => setSt(x => ({ ...x, music: m.key, vibe: '' }))}>{m.label} · {m.mood.toLowerCase()}</Btn>
+                    <Btn small on={hear === m.file} onClick={() => preview(m.file)} title="Listen">{hear === m.file ? '■' : '▶'}</Btn>
+                  </span>
+                ))}
+                {sounds.filter(x => x.kind === 'music').slice(0, 6).map(x => <Btn key={x.key} small on={st.music === x.key} title={x.prompt} onClick={() => setSt(s2 => ({ ...s2, music: x.key, vibe: '' }))}>♪ {x.name}</Btn>)}
+              </div>
+              <input value={st.vibe} onChange={e => setSt(x => ({ ...x, vibe: e.target.value, music: e.target.value ? '' : x.music }))} placeholder="…or describe a new vibe and ElevenLabs makes it: e.g. sunset lounge house, warm, upscale" style={{ ...field, marginTop: 6, fontSize: 12.5 }} />
+
+              <Label>Look</Label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0,1fr))', gap: 6 }}>
+                {LOOKS.map(l => (
+                  <button key={l.key} onClick={() => setSt(x => ({ ...x, look: l.key }))} style={{ padding: 0, border: '2px solid ' + (st.look === l.key ? UI.blue : 'transparent'), borderRadius: 9, overflow: 'hidden', cursor: 'pointer', background: 'none', color: UI.ink, textAlign: 'left' }}>
+                    <span style={{ display: 'block', height: 46, background: `linear-gradient(135deg, ${l.c.navy2}, ${l.c.deep})`, padding: '8px 9px', fontFamily: display, fontWeight: 800, fontSize: 14, color: l.c.ink }}>Stay <span style={{ color: l.c.gold }}>here</span></span>
+                    <span style={{ display: 'block', background: UI.panel2, padding: '5px 8px' }}><span style={{ display: 'block', fontSize: 11.5, fontWeight: 700 }}>{l.label}</span><span style={{ fontSize: 10, color: UI.mut }}>{l.blurb}</span></span>
+                  </button>
+                ))}
+              </div>
+
+              <Label>Shape</Label>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                <Btn small on={!st.format} onClick={() => setSt(x => ({ ...x, format: '' }))}>Pick for me</Btn>
+                {(Object.keys(FORMATS) as AdFormat[]).map(f => <Btn key={f} small on={st.format === f} onClick={() => setSt(x => ({ ...x, format: f }))}>{f} · {FORMAT_LABEL[f]}</Btn>)}
+              </div>
+
+              <div style={{ display: 'flex', gap: 6, marginTop: 14, alignItems: 'center' }}>
+                <Btn tone="gold" disabled={!!busy} onClick={startGo}>{busy ? 'Working…' : st.mode === 'describe' ? 'Plan it with me →' : st.mode === 'revamp' ? 'Revamp it →' : st.mode === 'template' ? 'Next: pick a template →' : 'Start blank →'}</Btn>
+                <span style={{ fontSize: 11, color: UI.mut }}>{st.mode === 'describe' ? 'You confirm the plan before anything is built.' : ''}</span>
+              </div>
+            </div>
+          ) : plan ? (
             <div style={{ width: '100%', maxWidth: 720, background: UI.panel, border: '1px solid #2b4470', borderRadius: 12, padding: '16px 18px' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
                 <span style={{ fontFamily: display, fontSize: 19, fontWeight: 800 }}>Before I build it</span>
@@ -898,7 +1037,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
               <Label>Anything else?</Label>
               <input value={planNote} onChange={e => setPlanNote(e.target.value)} placeholder="Optional, e.g. lead with the rooftop, end on the sunset shot" style={field} />
               <div style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
-                <Btn tone="gold" disabled={!!busy} onClick={buildFromPlan}>{busy === 'write' ? 'Building the ad…' : p && p.scenes.length > 1 ? 'Looks right — build it (replaces this ad’s scenes)' : 'Looks right — build it'}</Btn>
+                <Btn tone="gold" disabled={!!busy} onClick={buildFromPlan}>{busy === 'write' ? 'Building the ad…' : p && p.scenes.length > 1 && !seed.current?.fresh ? 'Looks right — build it (replaces this ad’s scenes)' : 'Looks right — build it'}</Btn>
                 <Btn disabled={!!busy} onClick={replan} title="Plans again with your answers and note">{busy === 'plan' ? 'Thinking…' : 'Rethink with my answers'}</Btn>
                 <Btn disabled={!!busy} onClick={() => setPlan(null)}>Cancel</Btn>
               </div>
@@ -921,7 +1060,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
             <div style={{ margin: 'auto', textAlign: 'center', color: UI.mut, maxWidth: 380 }}>
               <p style={{ fontFamily: display, fontSize: 22, color: UI.ink, fontWeight: 800 }}>Make an ad</p>
               <p style={{ fontSize: 13, lineHeight: 1.6 }}>Start a new ad, write a one-line brief, and let the writer lay out the scenes with photos from our library. Then edit, make the voice, and export for any platform.</p>
-              {canEdit ? <div style={{ marginTop: 12 }}><Btn tone="gold" onClick={newAd}>+ New ad</Btn></div> : null}
+              {canEdit ? <div style={{ marginTop: 12 }}><Btn tone="gold" onClick={openStart}>+ New ad</Btn></div> : null}
             </div>
           )}
         </div>
@@ -1041,6 +1180,10 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
               </div>
 
               <Label>Whole ad</Label>
+              <p style={{ fontSize: 11.5, color: UI.mut, margin: '0 0 6px' }}>Look</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+                {LOOKS.map(l => <Btn key={l.key} small on={(p.look || 'stay') === l.key} disabled={!canEdit} title={l.blurb} onClick={() => change(d => ({ ...d, look: l.key }))}><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 5, background: l.c.gold, boxShadow: '0 0 0 2px ' + l.c.navy2, marginRight: 5, verticalAlign: 'middle' }} />{l.label}</Btn>)}
+              </div>
               <p style={{ fontSize: 11.5, color: UI.mut, margin: '0 0 6px' }}>Voice{p.voiceName && !VOICES.some(v => v.id === p.voiceId) ? <span style={{ color: UI.gold }}> · using {p.voiceName}</span> : null}</p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {VOICES.map(v => <Btn key={v.id} small on={p.voiceId === v.id} title={v.blurb} onClick={() => change(d => ({ ...d, voiceId: v.id, voiceName: v.name }))}>{v.name}</Btn>)}
