@@ -147,7 +147,7 @@ export const DESKS: Desk[] = [
     key: 'kpis', label: 'Financials',
     blurb: 'The money pages: owner statements, billable hours, revenue, direct bookings and the Revenue App.',
     views: [
-      { to: '/owner-audit', label: 'Statements', hint: 'Owner statements checked against reservations' },
+      { to: '/owner-audit', label: 'Statement review', hint: 'Owner statements checked against bookings — review, approve, sign off' },
       { to: '/billing', label: 'Billable hours', hint: 'Owner billables: ops review, then final review, then export' },
       { to: '/revenue', label: 'Revenue', hint: 'Revenue, occupancy, ADR and RevPAR by building and unit, with the checks behind them' },
       { to: '/marketing', label: 'Direct bookings', hint: 'Direct bookings by the date they were made' },

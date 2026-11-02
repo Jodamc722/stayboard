@@ -146,7 +146,7 @@ export const FEATURES: Feature[] = [
   { key: 'reports',       label: 'Owner Reports',     path: '/reports', group: 'Owners' },
   // Owner-money page: owner/admin-only by Jon's rule (migration 025 sets manager to off, same as
   // Revenue). Reviewers without a login use /report/owner-audit instead.
-  { key: 'owner-audit',   label: 'Owner Statement Audit', path: '/owner-audit', group: 'Financials' },
+  { key: 'owner-audit',   label: 'Statement review', path: '/owner-audit', group: 'Financials' },
   { key: 'team-schedule', label: 'Weekly Planner',    path: '/team', group: 'Operations' },
   { key: 'cleaners',      label: 'Cleaners',          path: '/cleaners', group: 'Team' },
   { key: 'labor',         label: 'Labor',             path: '/labor', group: 'Team' },

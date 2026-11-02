@@ -19,9 +19,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, Download,
-  ExternalLink, FileText, Lock, MessageSquare, RefreshCw, Scissors, Search,
+  ExternalLink, FileText, Lock, MessageSquare, RefreshCw, RotateCw, Scissors, Search,
   Send, Settings2, ShieldAlert, ShieldCheck, StickyNote, X, HelpCircle,
 } from 'lucide-react'
+
+// STATEMENT LINE CODES IN WORDS. Guesty's codes mean nothing to a reviewer; the table used to print
+// the code twice ("AF  AF") when a line had no name. The code stays as the small grey word.
+const CODE_WORD: Record<string, string> = {
+  AF: 'Nightly income', CMS: 'Commission', CF: 'Cleaning fee', RM: 'Revenue management', OC: 'Owner charge', PO: 'Payout',
+  GF: 'Guest fee', RF: 'Reimbursement', TX: 'Tax', DEP: 'Deposit', AD: 'Adjustment',
+}
+const lineWord = (l: { label: string; code: string }) => (l.label && l.label !== l.code ? l.label : (CODE_WORD[l.code] || l.label || l.code))
 import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanEmpty, IconBtn, Tip } from '@/components/lean'
 
 type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay' | 'owner_stay_cleaning' | 'cleaning_fee' | 'resolution'
@@ -105,11 +113,12 @@ type Data = {
   rules: Rules
   prep: PrepItem[]
   resolutions: { claims: ResolutionClaim[]; lines: ResolutionLine[] }
+  warnings?: string[]
 }
 
 const FLAG_LABEL: Record<FlagType, string> = {
-  negative: 'Negative', low_rate: 'Low rate', orphan_reimb: 'Orphaned revenue',
-  refund: 'Refund', zero_rev: '$0 revenue', passthru: 'Pass-through', no_reservation: 'No res match',
+  negative: 'Negative', low_rate: 'Low rate', orphan_reimb: 'Fees with no rental',
+  refund: 'Refund', zero_rev: '$0 revenue', passthru: 'Pass-through (commission ≈ rental)', no_reservation: 'No booking found',
   commission_off: 'Commission off', off_booking: 'No booking behind it',
   empty_statement: 'Empty statement', owner_stay: 'Owner / F&F stay',
   owner_stay_cleaning: 'Owner stay cleaning',
@@ -357,11 +366,16 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     if (share) { try { setMe(localStorage.getItem('oa_name') || '') } catch { /* private mode */ } }
   }, [share])
 
+  // THE LAST REQUEST WINS (2026-11-02). Switching months twice in a row used to race: the slower
+  // first response could land after the second and show the wrong month under the right title.
+  const loadSeq = useRef(0)
   const load = useCallback(async (m?: string) => {
+    const seq = ++loadSeq.current
     setLoading(true); setError('')
     try {
       const r = await fetch('/api/owner-audit' + (m ? '?month=' + m : ''), { cache: 'no-store' })
       const j = await r.json()
+      if (seq !== loadSeq.current) return
       if (r.status === 401 || j.needsPassword) { setNeedsPw(true); setLoading(false); return }
       if (!j.ok) { setError(j.error || 'Could not load the audit'); setLoading(false); return }
       setNeedsPw(false)
@@ -371,13 +385,26 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       setMonth(j.data ? j.data.month : (m || ''))
       setOpenItems({})
       setStamped({})
+      // Deep links work: /owner-audit?month=2026-10&owner=<id> opens that month on that owner
+      // (the Messages notification for a statement comment points here).
+      try {
+        const u = new URL(window.location.href)
+        if (j.data) { u.searchParams.set('month', j.data.month); window.history.replaceState(null, '', u.toString()) }
+        const ownerQ = u.searchParams.get('owner')
+        if (ownerQ && j.data) { setExpandedOwners({ [ownerQ]: true }); u.searchParams.delete('owner'); window.history.replaceState(null, '', u.toString()) }
+      } catch { /* fine */ }
     } catch (e: any) {
+      if (seq !== loadSeq.current) return
       setError(String(e?.message || e))
     }
-    setLoading(false)
+    if (seq === loadSeq.current) setLoading(false)
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    let m: string | undefined
+    try { const q = new URL(window.location.href).searchParams.get('month') || ''; if (/^\d{4}-\d{2}$/.test(q)) m = q } catch { /* fine */ }
+    load(m)
+  }, [load])
 
   // FOLIO FIXES SHOW UP ON THEIR OWN (Jon, 2026-10-21: "if we fix the folio it should update the
   // report"). Once per open of the desk, after the first load, the open Expedia folios are re-pulled
@@ -740,7 +767,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       if (fStatus && it.status !== fStatus) return false
       // "Flagged" is the open flagged work — the number on the chip. Approved rows keep their flags
       // for the paper trail and are found under the Approved chip, not here.
-      if (fFlag === 'flagged' && (it.status === 'done' || !it.flags.some(f => f.severity !== 'info'))) return false
+      // Flagged = open rows with a real flag. With the Approved chip on, approved rows keep their
+      // flags for the paper trail, so Flagged + Approved shows them instead of nothing.
+      if (fFlag === 'flagged' && ((it.status === 'done' && fStatus !== 'done') || !it.flags.some(f => f.severity !== 'info'))) return false
       if (fFlag && fFlag !== 'flagged' && !it.flags.some(f => f.type === fFlag)) return false
       if (fSource && sourceLabel(it.source) !== fSource) return false
       if (fTag === 'owner' || fTag === 'owner_guest' || fTag === 'ff') { if (it.stayTag !== fTag) return false }
@@ -815,6 +844,18 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     a.download = 'owner-audit-' + data.month + (view === 'stmt' && stmtOwner ? '-' + (ownerName[stmtOwner] || stmtOwner).replace(/[^a-z0-9]+/gi, '-').toLowerCase() : '') + '.csv'
     a.click()
     URL.revokeObjectURL(a.href)
+  }
+
+  // The Prep tab's own download — the Download button used to export the worklist from here.
+  const exportPrepCsv = () => {
+    if (!data) return
+    const esc = (v: any) => '"' + String(v ?? '').split('"').join('""') + '"'
+    const head = ['Owner', 'Guest', 'Code', 'Unit', 'Check-in', 'Check-out', 'Nights (month)', 'Channel', 'On statement', 'Folio cleaning', 'Folio revenue fee', 'Folio lump', 'Statement cleaning', 'Statement revenue fee', 'State', 'Marked by', 'Note']
+    const state = (p: PrepItem) => p.saved ? 'Marked broken out' : p.splitDone ? 'Split already' : p.noFees ? 'Fees not set up' : 'To break out'
+    const lines = data.prep.map(p => [p.ownerName, p.guest, p.resCode, p.unit, p.checkIn, p.checkOut, p.monthNights, sourceLabel(p.source), p.onStatement ? 'yes' : 'no',
+      p.folioClean ?? '', p.folioRm ?? '', p.folioLump ?? '', p.cleaningAmt ?? '', p.rmAmt ?? '', state(p), p.saved ? p.saved.by + ' ' + String(p.saved.at).slice(0, 10) : '', p.note || ''].map(esc).join(','))
+    const blob = new Blob([head.map(esc).join(',') + '\n' + lines.join('\n')], { type: 'text/csv' })
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'expedia-prep-' + data.month + '.csv'; a.click(); URL.revokeObjectURL(a.href)
   }
 
   // ── one audited row (shared by the worklist and the statement view) ────────
@@ -896,8 +937,15 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 <span className={'inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg ring-1 ring-inset ' + STATUS_CLS.done}>
                   <Check size={10} /> Approved
                 </span>
-                <button onClick={() => setStatus(it, 'review')} disabled={saving}
-                  title="Reopen — put this row back on the review list"
+                {/* NEW MONEY AFTER THE APPROVAL (2026-11-02): an approval used to hide anything that
+                    posted later. The row stays approved, but says a line landed after it was signed. */}
+                {it.updatedAt && it.lastPosted && it.lastPosted > String(it.updatedAt).slice(0, 10) && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg ring-1 ring-inset bg-amber-50 text-amber-800 ring-amber-200" title={'A statement line was posted on ' + dateShort(it.lastPosted) + ', after this row was approved on ' + String(it.updatedAt).slice(0, 10) + '. Look again.'}>
+                    <AlertTriangle size={10} /> Posted after approval
+                  </span>
+                )}
+                <button onClick={() => setStatus(it, 'clear')} disabled={saving}
+                  title="Reopen — back to automatic: on the review list if it is flagged, under No issues if it is not"
                   className="text-[10px] font-semibold px-2 py-1 rounded-lg ring-1 ring-inset bg-white text-muted ring-line hover:text-ink">Reopen</button>
               </>
             ) : (
@@ -1013,8 +1061,8 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     {it.lines.map((l, i) => (
                       <tr key={i} className={i % 2 ? 'bg-app/50' : 'bg-white'}>
                         <td className="px-2.5 py-1 text-muted whitespace-nowrap">{dateShort(l.date)}</td>
-                        <td className="px-2.5 py-1 text-ink">{l.label}</td>
-                        <td className="px-2.5 py-1 text-muted">{l.code}</td>
+                        <td className="px-2.5 py-1 text-ink">{lineWord(l)}</td>
+                        <td className="px-2.5 py-1 text-muted" title={CODE_WORD[l.code] || ''}>{l.code}</td>
                         <td className={'px-2.5 py-1 text-right font-medium whitespace-nowrap ' + (l.amount < 0 ? 'text-rose-700' : 'text-ink')}>{fmt(l.amount)}</td>
                       </tr>
                     ))}
@@ -1039,7 +1087,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
             {/* Pull THIS booking again from Guesty. Folio edits (fee breakouts, corrections) are
                 made on the reservation; without this you would be reading yesterday's copy of a
                 booking you just fixed. Statement line items come from the monthly sync above. */}
-            {it.reservationId && (
+            {it.reservationId && internal && !share && (
               <div className="mb-2 flex items-center gap-2 flex-wrap">
                 <button onClick={() => refreshRow(it)} disabled={rowSync === k}
                   title="Pull this reservation and its folio from Guesty again — use this after editing the booking in Guesty"
@@ -1155,9 +1203,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     <div className="space-y-4">
       {/* ONE LINE: title + the month's numbers. Progress counts ONLY rows that needed a person;
           owed and paid are two different numbers, never blended. */}
-      <LeanHead title={'Statement audit' + (data ? ' · ' + data.label : '')}>
+      <LeanHead title={'Statement review' + (data ? ' · ' + data.label : '')}>
         {data && t ? <>
-          <Pill tone="brand" title={t.clear.toLocaleString() + ' more rows had nothing flagged'}>{total === 0 ? 'Nothing flagged' : t.done + '/' + total + ' closed · ' + pct + '%'}</Pill>
+          <Pill tone="brand" title={t.clear.toLocaleString() + ' more rows had nothing flagged'}>{total === 0 ? 'Nothing flagged' : t.done + '/' + total + ' reviewed · ' + pct + '%'}</Pill>
           <Pill tone={t.statements && t.signedOff === t.statements ? 'emerald' : 'slate'} title="Statements signed off">{t.signedOff}/{t.statements} signed</Pill>
           <Pill title="Owed to owners — total of the statements’ closing balances (due to owner)">{fmt0(t.dueToOwner)} owed</Pill>
           <Pill title="Paid out so far — payout movements posted on these statements">{t.paid ? fmt0(t.paid) + ' paid' : 'none paid'}</Pill>
@@ -1186,8 +1234,8 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           {internal && data && (
             <IconBtn title="Edit the flag rules" onClick={() => { setRulesDraft({ ...data.rules, enabled: { ...data.rules.enabled } }); setRulesOpen(true) }}><Settings2 size={14} /></IconBtn>
           )}
-          <IconBtn title="Reload the audit" onClick={() => load(month)}><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></IconBtn>
-          <IconBtn title="Download CSV of this view" onClick={exportCsv}><Download size={14} /></IconBtn>
+          <IconBtn title="Reload this page (no pull from Guesty)" onClick={() => load(month)}><RotateCw size={14} className={loading ? 'animate-spin' : ''} /></IconBtn>
+          <IconBtn title={view === 'prep' ? 'Download the Expedia prep list (CSV)' : 'Download CSV of this view'} onClick={view === 'prep' ? exportPrepCsv : exportCsv}><Download size={14} /></IconBtn>
           {data && <IconBtn title="How to run the week" onClick={() => setRoutineOpen(v => !v)}><HelpCircle size={14} /></IconBtn>}
         </>} />
 
@@ -1202,9 +1250,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
             {data.coverage.syncedAt ? 'Synced ' + agoShort(data.coverage.syncedAt) : 'Never synced'}
           </Tag>
           {!data.coverage.ready && <Tag tone="amber" title={'The statement line items for ' + data.label + ' are still syncing from Guesty — rows may be incomplete until the sync finishes.'}>Still syncing</Tag>}
-          {(data.coverage.twins || 0) > 0 && <Tag tone={(data.coverage.twins || 0) > 2000 ? 'rose' : 'slate'} title={(data.coverage.twins || 0).toLocaleString() + ' lines in this month repeat another line exactly (same day, booking, name and amount). A few hundred is normal — Guesty posts per-night adjustments as identical lines on one day. Thousands means Guesty re-issued the statement and our mirror still holds the old copies: run Refresh from Guesty and the full sweep retires them.'}>{(data.coverage.twins || 0).toLocaleString()} repeated lines</Tag>}
+          {(data.coverage.twins || 0) > 0 && <Tag tone={(data.coverage.twins || 0) > 2000 ? 'rose' : 'slate'} title={(data.coverage.twins || 0).toLocaleString() + ' lines in this month repeat another line exactly (same day, booking, name and amount). A few hundred is normal — Guesty posts per-night adjustments as identical lines on one day. Thousands means Guesty re-issued the statement and our mirror still holds the old copies: press Sync Guesty and the full sweep retires them.'}>{(data.coverage.twins || 0).toLocaleString()} duplicate lines</Tag>}
           {/* PRE-STATEMENT MONTH — the daily/weekly mode: audit the month as it accrues. */}
-          {preStatement && <Tag tone="violet" title={'No statements generated for ' + data.label + ' yet — you are auditing the month as it builds. Work the flagged rows and Posted this week each week, and by generation day there is nothing left to find.'}>Pre-statement</Tag>}
+          {preStatement && <Tag tone="violet" title={'No statements generated for ' + data.label + ' yet — you are auditing the month as it builds. Work the flagged rows and Posted this week each week, and by generation day there is nothing left to find.'}>No statements yet</Tag>}
           {/* DRAFT MONTH — balances still moving, so nothing to reconcile against yet. */}
           {draftCount > 0 && <Tag tone="sky" title={(draftCount === data.owners.filter(o => o.hasStatement).length ? 'Guesty still has every ' + data.label + ' statement as a draft. ' : draftCount + ' of ' + data.owners.filter(o => o.hasStatement).length + ' statements are still drafts in Guesty. ') + 'Their due-to-owner totals are provisional and change on every pull — work the flagged rows, and reconcile the totals once Guesty finalises them.'}>{draftCount} draft{draftCount === 1 ? '' : 's'}</Tag>}
           {internal && (
@@ -1221,6 +1269,14 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               </button>
             </span>
           )}
+        </div>
+      )}
+      {/* PARTIAL AUDIT (2026-11-02). A best-effort read that failed used to be invisible — the page
+          just flagged what it could not see. Now it says so, with what is missing. */}
+      {data && (data.warnings || []).length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 text-amber-900 text-[12.5px] px-3 py-2 space-y-0.5">
+          <div className="font-semibold flex items-center gap-1.5"><AlertTriangle size={13} /> This load is incomplete — reload before approving or signing off.</div>
+          {(data.warnings || []).map((w, i) => <div key={i}>· {w}</div>)}
         </div>
       )}
       {/* WEEKLY ROUTINE — the team's checklist, one click away (the ? button). */}
@@ -1412,7 +1468,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                       className="w-full text-left flex items-center gap-2.5 px-3 sm:px-4 py-2 hover:bg-app/60">
                       <div className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap">
                         <span className="text-[13.5px] font-semibold text-ink truncate max-w-[18rem]">{o.ownerName}</span>
-                        <span className="text-[12px] text-muted tabular-nums" title={o.dueToOwner != null ? 'Payout (statement balance)' : 'Owner earnings (no statement balance)'}>{o.dueToOwner != null ? fmt(o.dueToOwner) : fmt(o.net)} · {o.items} row{o.items === 1 ? '' : 's'}</span>
+                        <span className="text-[12px] text-muted tabular-nums" title={o.dueToOwner != null ? (o.hasPayout ? 'Statement balance (a payout has posted — the tie badge compares earnings to what was paid)' : 'Statement closing balance — not earnings; carries prior balances and statement-level deductions') : 'Owner earnings from the line items (no statement balance yet)'}>{o.dueToOwner != null ? fmt(o.dueToOwner) : fmt(o.net)} · {o.items} row{o.items === 1 ? '' : 's'}</span>
                         {!o.hasStatement
                           ? <Tag tone="amber" title="No statement generated for this owner">No stmt</Tag>
                           : (() => { const b = tieBadge(o); return <span title={b.help} className={'shrink-0 whitespace-nowrap text-[10.5px] font-semibold leading-none px-1.5 py-[3px] rounded-md ring-1 ring-inset ' + b.cls}>{o.isDraft && !o.hasPayout ? 'Draft' : o.ties ? b.text : (o.hasPayout ? fmt(off || 0) : 'balance ' + fmt(off || 0))}</span> })()}
@@ -1421,7 +1477,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                         {o.stmtNote && <Tag tone="amber" title={'Statement note: ' + o.stmtNote}><StickyNote size={10} className="inline -mt-0.5" /></Tag>}
                         {s.notes > 0 && <Tag tone="amber" title="Rows with an audit note"><StickyNote size={10} className="inline -mt-0.5 mr-0.5" />{s.notes}</Tag>}
                         {s.comments > 0 && <Tag tone="brand" title="Comments on rows"><MessageSquare size={10} className="inline -mt-0.5 mr-0.5" />{s.comments}</Tag>}
-                        <Tag tone={toClose && o.done === toClose ? 'emerald' : 'slate'} title={o.clear + ' rows had nothing flagged'}>{toClose ? o.done + '/' + toClose + ' closed' : 'nothing flagged'}</Tag>
+                        <Tag tone={toClose && o.done === toClose ? 'emerald' : 'slate'} title={o.clear + ' rows had nothing flagged'}>{toClose ? o.done + '/' + toClose + ' reviewed' : 'nothing flagged'}</Tag>
                         {o.signOff
                           ? <Tag tone="emerald" title={'Signed off by ' + o.signOff.by + (o.signOff.at ? ' · ' + when(o.signOff.at) : '')}><ShieldCheck size={10} className="inline -mt-0.5 mr-0.5" />{shortWho(o.signOff.by)}</Tag>
                           : o.open > 0 ? null : <Tag tone="brand">Ready to sign</Tag>}
@@ -1603,11 +1659,11 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     {chip('nofees', noFees + ' fees not set up', noFees ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-neutral-100 text-neutral-600 ring-neutral-200')}
                     {chip('split', split + ' split already', 'bg-emerald-50 text-emerald-700 ring-emerald-200')}
                     {marked > 0 && chip('marked', marked + ' marked done', 'bg-emerald-50 text-emerald-700 ring-emerald-200')}
-                    <button onClick={recheckGuesty} disabled={recheckBusy}
+                    {internal && !share && <button onClick={recheckGuesty} disabled={recheckBusy}
                       title="Pull the outstanding reservations fresh from Guesty so folio edits show up now"
                       className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line bg-white text-brand-700 hover:bg-app disabled:opacity-40">
                       <RefreshCw size={12} className={recheckBusy ? 'animate-spin' : ''} /> {recheckBusy ? 'Re-checking…' : 'Re-check Guesty'}
-                    </button>
+                    </button>}
                   </div>
                 </div>
 

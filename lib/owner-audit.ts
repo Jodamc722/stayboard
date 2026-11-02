@@ -210,6 +210,8 @@ export type AuditData = {
   rules: AuditRules
   prep: PrepItem[]
   resolutions: { claims: ResolutionClaim[]; lines: ResolutionLine[] }
+  /** Best-effort reads that failed this load — the page shows them; an empty list means the audit is complete. */
+  warnings: string[]
 }
 
 // Expedia-family sources whose fees arrive lump-summed and need the prep breakout.
@@ -409,8 +411,13 @@ type LedgerRow = {
   res?: string | null
 }
 
-const LEDGER_COLS = "owner_id, listing_id, entry_date, charge_code, amount, name:raw->>name, res:raw->reservationConfirmationCode->>title"
-const LEDGER_COLS_PLAIN = 'owner_id, listing_id, entry_date, charge_code, amount'
+// STORED COLUMNS FIRST (migration 169): res_code and line_name are generated from raw by Postgres,
+// so the read is plain columns on an index. The JSON-accessor form is the fallback for a mirror the
+// migration has not reached yet. There is deliberately NO third form without the booking code: a
+// read that loses the code produces a wrong audit ("No booking behind it" on every line), which is
+// worse than no audit — that fails loudly instead.
+const LEDGER_COLS = 'owner_id, listing_id, entry_date, charge_code, amount, name:line_name, res:res_code'
+const LEDGER_COLS_JSON = "owner_id, listing_id, entry_date, charge_code, amount, name:raw->>name, res:raw->reservationConfirmationCode->>title"
 
 function monthWindow(month: string): { start: string; endExcl: string; days: number } {
   const [y, m] = month.split('-').map(Number)
@@ -463,18 +470,40 @@ export async function auditMonths(limit = 24): Promise<AuditMonthPick[]> {
 }
 
 /**
- * The month the team is actually working: THE CURRENT CALENDAR MONTH. This board is a
- * daily/weekly tool that audits the month as it accrues, so it opens on today's month —
- * "we are in August" (Jon, 2026-08-19, after the board kept opening on July). Last month's
- * statement review is one click back in the picker, and when its statements finalise that
- * work is ties + sign-off, not the daily default.
+ * The month the team is actually working.
+ *
+ * Jon, 2026-08-19: "we are in August" — the board audits the month as it accrues, so it opens on
+ * today's month. Jon, 2026-11-02, opening the board on the 2nd and finding November (two days of
+ * postings) while October's 42 draft statements were the work: STATEMENT REVIEW WEEK WINS. Through
+ * the 10th, if last month has statements and any of them is not yet signed off, the board opens on
+ * last month; otherwise today's month. Days are counted in Eastern time — the old UTC read flipped
+ * the board to next month at 8 pm on the last day.
  */
-export function defaultAuditMonth(months: AuditMonthPick[]): string {
-  const cur = new Date().toISOString().slice(0, 7)
+export function defaultAuditMonth(months: AuditMonthPick[], opts: { prevUnsigned?: boolean; now?: Date } = {}): string {
+  const now = opts.now || new Date()
+  const et = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now)   // YYYY-MM-DD
+  const cur = et.slice(0, 7)
+  const day = Number(et.slice(8, 10))
+  const [y, m] = cur.split('-').map(Number)
+  const prev = new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7)
+  const prevPick = months.find(x => x.m === prev)
+  if (day <= 10 && prevPick && prevPick.statements > 0 && opts.prevUnsigned !== false) return prev
   if (months.some(x => x.m === cur)) return cur
   // No current-month entry (fresh install, empty mirror): newest month with statements.
   const withStmts = months.filter(x => x.statements > 0).map(x => x.m).sort().reverse()[0] || ''
   return months.some(x => x.m === withStmts) ? withStmts : (months[0]?.m || '')
+}
+
+/** True when any of last month's statements is still waiting on a sign-off (drives the default month). */
+export async function prevMonthUnsigned(prev: string): Promise<boolean> {
+  try {
+    const sb = supabaseAdmin()
+    const [{ count: stmtN }, { count: signed }] = await Promise.all([
+      sb.from('guesty_owner_statements').select('id', { count: 'exact', head: true }).eq('period_month', prev),
+      sb.from('owner_audit_reviews').select('owner_id', { count: 'exact', head: true }).eq('month', prev).eq('item_key', SIGNOFF_KEY).eq('status', 'done'),
+    ])
+    return (stmtN || 0) > 0 && (signed || 0) < (stmtN || 0)
+  } catch { return true }
 }
 
 /** Build the whole audit for one statement month. */
@@ -500,9 +529,17 @@ export async function buildAudit(month: string): Promise<AuditData> {
     stErr = plain.error
   }
   if (stErr) throw new Error('statements read: ' + stErr.message)
-  const stmts = (stmtRows || []) as any[]
+  // ONE STATEMENT PER OWNER (2026-11-02). Guesty regenerates a statement under a NEW id and the
+  // mirror keeps the old one (statements are upserted, never retired), so an owner could count
+  // twice in "owed" and in the signed denominator. The newest generation wins; older twins are
+  // dropped here so every total below sees one statement per owner.
   const stmtByOwner: Record<string, any> = {}
-  for (const s of stmts) stmtByOwner[String(s.owner_id || '')] = s
+  for (const s of ((stmtRows || []) as any[])) {
+    const k = String(s.owner_id || '')
+    const have = stmtByOwner[k]
+    if (!have || String(s.stmt_generated_at || '') > String(have.stmt_generated_at || '') || (String(s.stmt_generated_at || '') === String(have.stmt_generated_at || '') && String(s.id) > String(have.id))) stmtByOwner[k] = s
+  }
+  const stmts = Object.values(stmtByOwner) as any[]
 
   // 2. Ledger coverage — has the mirror actually swept this month, and how long ago?
   const { data: cov } = await sb.from('guesty_ledger_months').select('month, status, completed_at').eq('month', month)
@@ -519,22 +556,24 @@ export async function buildAudit(month: string): Promise<AuditData> {
   //    refuses the JSON accessors, so the audit is never lost over a label.
   const rows: LedgerRow[] = []
   const PAGE = 1000
-  let named = true
+  // Which column form this mirror supports is decided ONCE, on the first page, and kept for every
+  // page after — mixing forms mid-read is how half a month lost its booking codes.
+  let cols = LEDGER_COLS
   for (let off = 0; off < 200_000; off += PAGE) {
-    // ORDERED (2026-09-03): an unordered range past 1,000 rows repeats and skips — the likely
-    // source of the "17 duplicate rows" the dedupe below papers over. Duplicates get deduped;
-    // the skipped rows never came back at all.
-    const run = (cols: string) => sb.from('guesty_owner_ledger').select(cols)
+    // ORDERED (2026-09-03): an unordered range past 1,000 rows repeats and skips.
+    const run = (c: string) => sb.from('guesty_owner_ledger').select(c)
       .eq('recognized', true)
       .eq('entry_month', month)
       .order('id')
       .range(off, off + PAGE - 1)
-    let { data, error } = await run(named ? LEDGER_COLS : LEDGER_COLS_PLAIN)
-    if (error && named) {
-      named = false
-      ;({ data, error } = await run(LEDGER_COLS_PLAIN))
+    let { data, error } = await run(cols)
+    if (error && off === 0 && cols === LEDGER_COLS && /res_code|line_name|schema cache|column/i.test(error.message)) {
+      cols = LEDGER_COLS_JSON
+      ;({ data, error } = await run(cols))
     }
-    if (error) throw new Error('ledger read: ' + error.message)
+    // A transient failure (statement timeout, 5xx) gets one retry of the same page, same columns.
+    if (error) ({ data, error } = await run(cols))
+    if (error) throw new Error('ledger read failed (' + error.message.slice(0, 120) + ') — the audit was not built rather than built wrong. Reload in a moment.')
     const batch = (data || []) as unknown as LedgerRow[]
     rows.push(...batch)
     if (batch.length < PAGE) break
@@ -644,129 +683,107 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const listingIds = new Set<string>()
   for (const g of Object.values(groups)) for (const id of Object.keys(g.listingIds)) listingIds.add(id)
 
+  // 5. ONE PASS, IN PARALLEL (2026-11-02 — the page took 6–10 s because ~60 reads ran one after
+  // another). The booking join, the month scan and last month's AF rows do not depend on each
+  // other, so they run together; the folio read rides on the booking join. Anything best-effort
+  // that fails is written to `warnings` so the page can SAY the audit is partial instead of
+  // quietly flagging what it cannot see.
+  const warnings: string[] = []
   const resByCode: Record<string, any> = {}
-  for (let i = 0; i < codes.length; i += 200) {
-    const { data } = await sb.from('guesty_reservations')
-      .select("id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, created_at, money_total, custom_fields, tags:raw->tags, fare:raw->money->>fareAccommodation")
-      .in('confirmation_code', codes.slice(i, i + 200))
-    for (const r of (data || []) as any[]) {
-      const c = String(r.confirmation_code || '')
-      // Prefer a confirmed/completed booking if the code somehow appears twice.
-      if (!resByCode[c] || String(r.status || '') === 'confirmed') resByCode[c] = r
-      if (r.listing_id) listingIds.add(String(r.listing_id))
-    }
-  }
-
-  // 5a-bis. Every Expedia-family reservation touching the statement month — the PREP list
-  // comes from RESERVATIONS, so bookings show up to be worked even before (or without) a
-  // generated statement carrying them.
-  const expRes: any[] = []
-  {
-    // Paged + ordered (2026-09-03): .limit(1000) was a silent cap on a scan that must be complete.
-    let data: any[] = []
-    for (let off = 0; off < 20_000; off += PAGE) {
-      const { data: page } = await sb.from('guesty_reservations')
-        .select('id, confirmation_code, guest_name, check_in, check_out, status, source, listing_id')
-        .gt('check_out', win.start).lt('check_in', win.endExcl)
-        .not('status', 'in', '(canceled,cancelled,inquiry,declined,expired)')
-        .or('source.ilike.%expedia%,source.ilike.%orbitz%,source.ilike.%travelocity%,source.ilike.%hotels%,source.ilike.%wotif%,source.ilike.%ebookers%,source.ilike.%cheaptickets%')
-        .order('id')
-        .range(off, off + PAGE - 1)
-      const batch = (page || []) as any[]
-      data = data.concat(batch)
-      if (batch.length < PAGE) break
-    }
-    // The mirror holds some bookings TWICE (17 duplicate rows found in July 2026 — same code and
-    // listing, different mirror ids). Every scan that reads reservations dedupes on the code, or
-    // the board shows the same guest twice and every total built from the scan is inflated.
-    const seenExp = new Set<string>()
-    for (const r of (data || []) as any[]) {
-      if (!EXPEDIA_RE.test(String(r.source || ''))) continue
-      const k = String(r.confirmation_code || r.id || '')
-      if (seenExp.has(k)) continue
-      seenExp.add(k)
-      expRes.push(r)
-      if (r.listing_id) listingIds.add(String(r.listing_id))
-    }
-  }
-
-  // 5a-ter. OWNER AND FRIENDS-&-FAMILY STAYS COME FROM RESERVATIONS, NOT FROM MONEY.
-  // They are the one thing on an owner statement that can be worth $0.00 and still matter: nights
-  // taken off the market, a cleaning somebody has to pay for, and occasionally a booking tagged
-  // "owner" that nobody authorised. Because they carry no ledger money, they produced no group and
-  // no row — the board tagged 0 of 1,292 rows while the team's spreadsheet listed 15 by hand.
-  // So they are pulled from the month's reservations and joined in below, statement money or not.
-  const ownerStayRes: any[] = []
-  const seenOwnerStay = new Set<string>()   // the mirror duplicates bookings — dedupe on the code
-  let ownerScanCount = 0
-  // PAGED, not limited. A plain .limit() stops at the mirror's 1,000-row ceiling — July touches
-  // more reservations than that, so a single call silently scanned part of the month and any owner
-  // stay past the cut would have been missed exactly like before.
-  for (let off = 0; off < 20_000; off += PAGE) {
-    const { data, error } = await sb.from('guesty_reservations')
-      .select('id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, money_total, tags:raw->tags')
-      .gt('check_out', win.start).lt('check_in', win.endExcl)
-      .order('id')
-      .range(off, off + PAGE - 1)
-    if (error) break
-    const batch = (data || []) as any[]
-    ownerScanCount += batch.length
-    for (const r of batch) {
-      const tagBlob = Array.isArray((r as any).tags) ? (r as any).tags.map((t: any) => String(t)).join(' ') : ''
-      if (!isOwnerOrFriendsFamily(String(r.source || ''), tagBlob, String(r.guest_name || ''))) continue
-      const k = String(r.confirmation_code || r.id || '') + '|' + String(r.listing_id || '')
-      if (seenOwnerStay.has(k)) continue
-      seenOwnerStay.add(k)
-      ownerStayRes.push(r)
-      if (r.listing_id) listingIds.add(String(r.listing_id))
-    }
-    if (batch.length < PAGE) break
-  }
-
-  // Guest-folio invoice items — the fee split is normally done HERE ("Cleaning fee" + "Revenue
-  // Fee" items, lump zeroed), and it does not surface in the owner ledger. Fetched for the Expedia
-  // prep set AND for owner / owner-guest stays, because on an owner stay THE FOLIO IS THE ANSWER:
-  // the accommodation revenue may be anything, but the cleaning fee has to be charged to the owner
-  // there, and a statement with no CF line does not prove it is missing.
   const folioByRes: Record<string, any[]> = {}
-  {
-    // ...AND every reservation the statements carry, because Jon's rule is that ALL of them
-    // carry a cleaning fee, and the only place that can be checked is the guest folio. These
-    // are ids we already hold; it is extra rows on a read that is already running, not a scan.
-    const ids = Array.from(new Set([...expRes, ...ownerStayRes, ...Object.values(resByCode)]
-      .map(r => String((r as any).id || '')).filter(Boolean)))
-    for (let i = 0; i < ids.length; i += 100) {
-      const { data } = await sb.from('guesty_reservations')
-        .select('id, inv:raw->money->invoiceItems')
-        .in('id', ids.slice(i, i + 100))
+  const expRes: any[] = []
+  const ownerStayRes: any[] = []
+  const seenOwnerStay = new Set<string>()
+  let ownerScanCount = 0
+  const prevMonth = (() => { const [y, m] = month.split('-').map(Number); return new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7) })()
+  const prevPerNight: Record<string, number> = {}               // listing|date -> owner-effect rental
+
+  const joinBookings = async () => {
+    // The folio (raw->money->invoiceItems) comes along in the same read — it used to be a second
+    // chunked pass over the same ids.
+    const chunks: string[][] = []
+    for (let i = 0; i < codes.length; i += 200) chunks.push(codes.slice(i, i + 200))
+    const results = await Promise.all(chunks.map(c => sb.from('guesty_reservations')
+      .select("id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, created_at, money_total, custom_fields, tags:raw->tags, fare:raw->money->>fareAccommodation, inv:raw->money->invoiceItems")
+      .in('confirmation_code', c)))
+    for (const { data, error } of results) {
+      if (error) { warnings.push('Some bookings could not be matched to their statement lines (' + error.message.slice(0, 80) + ').'); continue }
       for (const r of (data || []) as any[]) {
+        const c = String(r.confirmation_code || '')
+        // Prefer a confirmed/completed booking if the code somehow appears twice.
+        if (!resByCode[c] || String(r.status || '') === 'confirmed') resByCode[c] = r
+        if (r.listing_id) listingIds.add(String(r.listing_id))
         folioByRes[String(r.id)] = Array.isArray((r as any).inv) ? (r as any).inv : []
       }
     }
   }
 
-  // 5b. Last month's AF rows — rate context for the relative low-rate rule. AF lines are
-  // per-night, so distinct (listing, date) counts nights without needing the reservation
-  // join (two bookings can't occupy the same unit on the same night). Best-effort: a read
-  // error here degrades to "no last-month context", never a lost audit.
-  const prevMonth = (() => { const [y, m] = month.split('-').map(Number); return new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7) })()
-  const prevPerNight: Record<string, number> = {}               // listing|date -> owner-effect rental
-  for (let off = 0; off < 100_000; off += PAGE) {
-    const { data, error } = await sb.from('guesty_owner_ledger')
-      .select('listing_id, entry_date, amount')
-      .eq('recognized', true).eq('entry_month', prevMonth).eq('charge_code', 'AF')
-      .order('id')
-      .range(off, off + PAGE - 1)
-    if (error) break
-    const batch = (data || []) as any[]
-    for (const r of batch) {
-      const lid = String(r.listing_id || '')
-      const d = String(r.entry_date || '')
-      if (!lid || !d) continue
-      prevPerNight[lid + '|' + d] = money((prevPerNight[lid + '|' + d] || 0) - (Number(r.amount) || 0))
-      listingIds.add(lid)
+  // 5a. Every reservation touching the month — ONE scan feeds both the Expedia prep list and the
+  // owner / friends-&-family stays (they used to be two full scans of the same window).
+  // Paged + ordered: a plain .limit() is a silent cap on a scan that must be complete.
+  const scanMonth = async () => {
+    const seenExp = new Set<string>()
+    for (let off = 0; off < 20_000; off += PAGE) {
+      const { data, error } = await sb.from('guesty_reservations')
+        .select('id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, money_total, tags:raw->tags')
+        .gt('check_out', win.start).lt('check_in', win.endExcl)
+        .order('id')
+        .range(off, off + PAGE - 1)
+      if (error) { warnings.push('The month scan stopped early (' + error.message.slice(0, 80) + ') — owner stays and the Expedia prep list may be incomplete.'); break }
+      const batch = (data || []) as any[]
+      ownerScanCount += batch.length
+      for (const r of batch) {
+        const src = String(r.source || ''), st = String(r.status || '').toLowerCase()
+        if (EXPEDIA_RE.test(src) && !['canceled', 'cancelled', 'inquiry', 'declined', 'expired'].includes(st)) {
+          // The mirror holds some bookings TWICE (same code, different mirror ids) — dedupe on the code.
+          const k = String(r.confirmation_code || r.id || '')
+          if (!seenExp.has(k)) { seenExp.add(k); expRes.push(r); if (r.listing_id) listingIds.add(String(r.listing_id)) }
+        }
+        const tagBlob = Array.isArray((r as any).tags) ? (r as any).tags.map((t: any) => String(t)).join(' ') : ''
+        if (isOwnerOrFriendsFamily(src, tagBlob, String(r.guest_name || ''))) {
+          const k = String(r.confirmation_code || r.id || '') + '|' + String(r.listing_id || '')
+          if (!seenOwnerStay.has(k)) { seenOwnerStay.add(k); ownerStayRes.push(r); if (r.listing_id) listingIds.add(String(r.listing_id)) }
+        }
+      }
+      if (batch.length < PAGE) break
     }
-    if (batch.length < PAGE) break
+  }
+
+  // 5b. Last month's AF rows — rate context for the relative low-rate rule. AF lines are per-night,
+  // so distinct (listing, date) counts nights without the reservation join.
+  const readPrevMonth = async () => {
+    for (let off = 0; off < 100_000; off += PAGE) {
+      const { data, error } = await sb.from('guesty_owner_ledger')
+        .select('listing_id, entry_date, amount')
+        .eq('recognized', true).eq('entry_month', prevMonth).eq('charge_code', 'AF')
+        .order('id')
+        .range(off, off + PAGE - 1)
+      if (error) { warnings.push('Last month\'s rates could not be read — the low-rate check has less context this load.'); break }
+      const batch = (data || []) as any[]
+      for (const r of batch) {
+        const lid = String(r.listing_id || '')
+        const d = String(r.entry_date || '')
+        if (!lid || !d) continue
+        prevPerNight[lid + '|' + d] = money((prevPerNight[lid + '|' + d] || 0) - (Number(r.amount) || 0))
+        listingIds.add(lid)
+      }
+      if (batch.length < PAGE) break
+    }
+  }
+  await Promise.all([joinBookings(), scanMonth(), readPrevMonth()])
+
+  // Folios for the Expedia / owner-stay bookings that are NOT on a statement line (the rest came
+  // with the booking join). On an owner stay THE FOLIO IS THE ANSWER: the cleaning fee has to be
+  // charged to the owner there, and a statement with no CF line does not prove it is missing.
+  {
+    const ids = Array.from(new Set([...expRes, ...ownerStayRes].map(r => String((r as any).id || '')).filter(id => id && !(id in folioByRes))))
+    const chunks: string[][] = []
+    for (let i = 0; i < ids.length; i += 100) chunks.push(ids.slice(i, i + 100))
+    const results = await Promise.all(chunks.map(c => sb.from('guesty_reservations').select('id, inv:raw->money->invoiceItems').in('id', c)))
+    for (const { data, error } of results) {
+      if (error) { warnings.push('Some guest folios could not be read — cleaning-fee checks may be incomplete.'); continue }
+      for (const r of (data || []) as any[]) folioByRes[String(r.id)] = Array.isArray((r as any).inv) ? (r as any).inv : []
+    }
   }
 
   const [{ data: ownerRows }, { data: listingRows }] = await Promise.all([
@@ -874,7 +891,9 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const { data: revRows, error: revErr } = await sb.from('owner_audit_reviews')
     .select('owner_id, item_key, status, note, comments, updated_by, updated_at')
     .eq('month', month)
-  // A missing table (migration not run yet) degrades to "no reviews saved", never to a 500.
+  // A missing table (migration not run yet) degrades to "no reviews saved", never to a 500 — but
+  // the page is told, because an audit with every approval missing must not read as unreviewed.
+  if (revErr) warnings.push('Saved reviews could not be read (' + String(revErr.message || '').slice(0, 80) + ') — approvals, notes and sign-offs are not shown this load. Do not approve or sign off until a reload shows them.')
   const reviews: Record<string, any> = {}
   const prepSaved: Record<string, { by: string; at: string }> = {}
   const prepNote: Record<string, string> = {}
@@ -1707,6 +1726,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
       Number(prepResolved(a)) - Number(prepResolved(b))
       || a.ownerName.localeCompare(b.ownerName) || a.checkIn.localeCompare(b.checkIn)),
     resolutions: { claims: resolutionClaims, lines: resLedger },
+    warnings,
   }
 }
 

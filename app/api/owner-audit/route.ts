@@ -23,7 +23,7 @@ import { appendReservationNote } from '@/lib/claim-note'
 import { pullReservationsByIds } from '@/lib/guesty'
 import { syncOwners, syncOwnerStatements, syncLedgerMonth } from '@/lib/guesty-owner-sync'
 import { MONTH_LABEL } from '@/lib/owner-statements'
-import { auditMonths, buildAudit, defaultAuditMonth, saveAuditRules, AuditStatus, WRITABLE_STATUSES, SIGNOFF_KEY, PREP_PREFIX, PREP_OWNER } from '@/lib/owner-audit'
+import { auditMonths, buildAudit, defaultAuditMonth, prevMonthUnsigned, saveAuditRules, AuditStatus, WRITABLE_STATUSES, SIGNOFF_KEY, PREP_PREFIX, PREP_OWNER } from '@/lib/owner-audit'
 import { tagAndNotify } from '@/lib/mentions'
 
 export const dynamic = 'force-dynamic'
@@ -66,7 +66,14 @@ export async function GET(req: NextRequest) {
   try {
     const months = await auditMonths()
     const wanted = new URL(req.url).searchParams.get('month') || ''
-    const month = /^\d{4}-\d{2}$/.test(wanted) ? wanted : defaultAuditMonth(months)
+    let month = ''
+    if (/^\d{4}-\d{2}$/.test(wanted)) month = wanted
+    else {
+      const et = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+      const [y, m] = et.slice(0, 7).split('-').map(Number)
+      const prev = new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7)
+      month = defaultAuditMonth(months, { prevUnsigned: Number(et.slice(8, 10)) <= 10 ? await prevMonthUnsigned(prev) : false })
+    }
     if (!month) return NextResponse.json({ ok: true, internal: who.internal, months, data: null })
     const data = await buildAudit(month)
     return NextResponse.json({ ok: true, internal: who.internal, months, data })
