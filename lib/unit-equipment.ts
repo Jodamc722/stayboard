@@ -22,7 +22,7 @@
 // assumed.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
-import { getSetting, setSetting } from './app-settings'
+import { getSetting, getSettingFresh, setSetting } from './app-settings'
 import { buildingOf } from './segments'
 
 export const EQUIP_KEY = 'unit_equipment'
@@ -54,7 +54,7 @@ export async function getOverrides(): Promise<Record<string, { ac: AcType; by?: 
   return v && typeof v === 'object' && v.ac && typeof v.ac === 'object' ? v.ac : {}
 }
 export async function setOverride(listingId: string, ac: AcType | null, by: string): Promise<void> {
-  const cur = await getSetting<any>(EQUIP_KEY, null).catch(() => null)
+  const cur = await getSettingFresh<any>(EQUIP_KEY, null).catch(() => null)
   const acMap = { ...((cur && cur.ac) || {}) }
   if (ac) acMap[listingId] = { ac, by, at: new Date().toISOString() }; else delete acMap[listingId]
   await setSetting(EQUIP_KEY, { ...(cur || {}), ac: acMap }, by)
@@ -70,7 +70,7 @@ export async function getUnitInfo(): Promise<Record<string, UnitInfo>> {
   return v && typeof v === 'object' && v.info && typeof v.info === 'object' ? v.info : {}
 }
 export async function setUnitInfo(listingId: string, info: UnitInfo, by: string): Promise<UnitInfo | null> {
-  const cur = await getSetting<any>(EQUIP_KEY, null).catch(() => null)
+  const cur = await getSettingFresh<any>(EQUIP_KEY, null).catch(() => null)
   const map = { ...((cur && cur.info) || {}) }
   const clean: UnitInfo = {
     filterSize: str(info.filterSize).slice(0, 40), filterLocation: str(info.filterLocation).slice(0, 120), notes: str(info.notes).slice(0, 400),

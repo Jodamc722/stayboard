@@ -74,6 +74,25 @@ export type BillingTask = {
   flags: BillingFlag[]
   /** The billable model's read (lib/billable-model): should this bill the owner, and why. */
   billable: Billable
+  /** What it should bill at the house rate (hours rounded up to 15 min, half-hour minimum) plus owner items. */
+  suggested: { amount: number; why: string; basis: 'hours' | 'usual' | 'ai' } | null
+  /** The crew's report, audited (lib/billing-evidence). null = not checked yet. */
+  evidence: import('./billing-evidence').Evidence | null
+  /** The reason behind each flag, in numbers ("$420 vs usual $95 for 6 pest jobs"). */
+  flagWhy: Partial<Record<BillingFlag, string>>
+  /** Similar-job key: the billable category + the title's first words, unit and numbers stripped. */
+  kind: string
+  /** What this kind of job has been billed once approved (lib/billing-pricebook). null = too few. */
+  usual: { median: number; low: number; high: number; n: number } | null
+}
+
+/** "Pest control - Eden 2104" and "pest control eden 1101" → "pest|pest control". */
+export function jobKind(name: string, unit: string, category: string | null | undefined): string {
+  let n = String(name || '').toLowerCase()
+  for (const w of String(unit || '').toLowerCase().split(/[^a-z0-9]+/).filter(x => x.length > 2)) n = n.split(w).join(' ')
+  const words = n.replace(/\[moved to [^\]]+\]/g, ' ').replace(/[^a-z\s]/g, ' ').split(/\s+/)
+    .filter(w => w.length > 1 && !/^(the|and|for|in|at|of|to|a|unit|apt|suite|stu|studio|br|bdr|room|de|la|el|en|y)$/.test(w))
+  return (category || 'other') + '|' + (words.slice(0, 3).join(' ') || 'task')
 }
 
 export type ReviewState = 'open' | 'ops_approved' | 'gm_approved'
@@ -121,6 +140,14 @@ export type BillingFlag =
   | 'not_done'        // hours or a rate on a task Breezeway does not call finished — held at $0
   | 'should_bill'     // the billable model says bill / likely, it is finished, and it is still $0
   | 'billed_routine'  // carries money, but the billable model says it is routine (departure clean, check, common area)
+  // (Jon, 2026-11-02: "price better, better flags … actually audit the report submitted and flag if
+  // nothing meaningful was added")
+  | 'price_outlier'   // far above what the same kind of job usually bills in this window
+  | 'repeat_unit'     // the same kind of job billed on the same unit within 14 days
+  | 'no_time'         // hourly task finished with no time on the clock — bills $0 labour
+  | 'underpriced'     // billed well under what the hours at the house rate come to
+  | 'no_report'       // billed, and the crew's report has nothing in it — no photos, no notes
+  | 'thin_report'     // billed, and the report is missing photos or any real words about the work
 
 export const FLAG_LABEL: Record<BillingFlag, string> = {
   over_150: 'over $150', no_price: 'maybe billable', override_far: 'override far from computed',
@@ -128,6 +155,8 @@ export const FLAG_LABEL: Record<BillingFlag, string> = {
   ai_bill: 'AI: real work — price it', ai_pending: 'AI check pending',
   not_done: 'not finished in Breezeway',
   should_bill: 'should bill — still $0', billed_routine: 'billed, but looks routine',
+  price_outlier: 'price far above usual', repeat_unit: 'same job again within 14 days', no_time: 'hourly, no time logged',
+  underpriced: 'under the house rate', no_report: 'no report — nothing added', thin_report: 'thin report',
 }
 export const OVER_LINE_USD = 150
 
@@ -277,7 +306,10 @@ function detailItems(costs: any, supplies: any, extras: any, overrides: any): Bi
   const sArr = Array.isArray(supplies) ? supplies : []
   for (let i = 0; i < sArr.length; i++) {
     const s = sArr[i]
-    const amt = num(s?.total_price != null ? s.total_price : s?.unit_cost)
+    // unit_cost is per piece: with no total_price, the line is unit_cost × quantity (it billed ×1 before).
+    const qty = Number(s?.quantity) > 0 ? Number(s.quantity) : 1
+    const unitCost = num(s?.unit_cost)
+    const amt = s?.total_price != null ? num(s.total_price) : unitCost == null ? null : Math.round(unitCost * qty * 100) / 100
     if (amt == null) continue
     if (s?.billable === false) continue
     push('supply:' + (s?.id ?? i), String(s?.name || s?.description || 'Supply') + (s?.quantity && Number(s.quantity) > 1 ? ' ×' + Number(s.quantity) : ''), 'Supply', amt, s?.bill_to ? String(s.bill_to) : null, 'supply')
@@ -581,6 +613,7 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
       reportUrl: t.report_url ? String(t.report_url) : null,
       flags: [],
       billable: null as any,
+      suggested: null, evidence: null, flagWhy: {}, kind: '', usual: null,
     }
   })
 
@@ -601,10 +634,52 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
       routine: t.routine, isDeparture: isDepartureCleanName(t.name), aiVerdict: t.aiVerdict,
     }, bModel)
   }
+  // ── PRICE + REPORT CONTEXT (Jon, 2026-11-02) ────────────────────────────────────────────────
+  let houseRate = 40
+  try { const r = await getSetting<any>('billing_default_rate', null); if (Number(r?.rate) > 0) houseRate = Number(r.rate) } catch { /* $40 */ }
+  let evidence: Record<string, any> = {}
+  try { const { readEvidence } = await import('./billing-evidence'); evidence = await readEvidence() } catch { /* unchecked */ }
+  let book: Record<string, any> = {}
+  try { const { readPricebook } = await import('./billing-pricebook'); book = (await readPricebook())?.kinds || {} } catch { /* no history yet */ }
+  const ownerItems = (t: BillingTask) => t.items.reduce((s2, x) => s2 + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0)
+  for (const t of tasks) {
+    t.kind = jobKind(t.name, t.unit, t.billable?.category)
+    t.evidence = evidence[t.id] || null
+    const pb = book[t.kind]
+    t.usual = pb && pb.n >= 3 ? { median: pb.median, low: pb.low, high: pb.high, n: pb.n } : null
+    const finished = isTaskDone(t.status, t.finishedAt)
+    if (!finished || t.excluded || isDepartureCleanName(t.name) || t.billable?.verdict === 'no') continue
+    const hrs = t.billedHours != null ? t.billedHours : t.actualMinutes != null && t.actualMinutes > 0 ? t.actualMinutes / 60 : 0
+    const items = ownerItems(t)
+    if (hrs > 0 && t.crew !== 'vendor') {
+      const billH = Math.max(0.5, Math.ceil(hrs * 4 - 1e-9) / 4)
+      const amount = Math.round((houseRate * billH + items) * 100) / 100
+      t.suggested = { amount, basis: 'hours', why: billH + 'h × $' + houseRate + (items ? ' + parts $' + Math.round(items) : '') + (billH !== Math.round(hrs * 100) / 100 ? ' (' + (Math.round(hrs * 100) / 100) + 'h logged, rounded up to 15 min, ½h minimum)' : '') }
+    } else if (t.usual) {
+      // No time on the clock: what this kind of job has been billed when approved before.
+      t.suggested = { amount: t.usual.median, basis: 'usual', why: 'usual for ' + t.usual.n + ' similar approved jobs ($' + Math.round(t.usual.low) + '–$' + Math.round(t.usual.high) + ')' }
+    } else if (t.aiAmount != null && t.aiAmount > 0) {
+      t.suggested = { amount: t.aiAmount + items, basis: 'ai', why: 'AI estimate' + (items ? ' + parts' : '') }
+    }
+  }
+  // What the same kind of job usually bills here, and when it was billed on the same unit.
+  const priced: Record<string, number[]> = {}
+  const billedOn: Record<string, { id: string; day: string }[]> = {}
+  for (const t of tasks) {
+    if (t.excluded || t.billedAmount <= 0) continue
+    ;(priced[t.kind] = priced[t.kind] || []).push(t.billedAmount)
+    const day = (t.scheduledDate || (t.finishedAt || '').slice(0, 10))
+    if (day) (billedOn[(t.listingId || t.unit) + '|' + t.kind] = billedOn[(t.listingId || t.unit) + '|' + t.kind] || []).push({ id: t.id, day })
+  }
+  const median = (a: number[]) => { const b = a.slice().sort((x, y) => x - y); const m = Math.floor(b.length / 2); return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2 }
+  const dayGap = (a: string, b: string) => Math.abs(Date.parse(a + 'T12:00:00Z') - Date.parse(b + 'T12:00:00Z')) / 86400000
+  const $ = (n: number) => '$' + (Math.round(n * 100) / 100).toLocaleString('en-US')
+
   for (const t of tasks) {
     const f: BillingFlag[] = []
+    const why: Partial<Record<BillingFlag, string>> = {}
     const finished = isTaskDone(t.status, t.finishedAt)
-    if (t.billedAmount > OVER_LINE_USD) f.push('over_150')
+    if (t.billedAmount > OVER_LINE_USD) { f.push('over_150'); why.over_150 = $(t.billedAmount) + ' — over the $' + OVER_LINE_USD + ' line' }
     const unpriced = finished && !t.excluded && t.billedAmount === 0 && t.overrideAmount == null && t.reviewState !== 'gm_approved'
     if (unpriced && (t.billable.verdict === 'bill' || t.billable.verdict === 'likely')) f.push('should_bill')
     else if (unpriced && t.billable.verdict === 'maybe' && !isDepartureCleanName(t.name) && !t.routine) f.push('no_price')
@@ -616,18 +691,39 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
     if (t.overrideAmount != null) {
       const computed = Math.round((t.laborAmount + t.items.reduce((s2, x) => s2 + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0)) * 100) / 100
       const gap = Math.abs(t.overrideAmount - computed)
-      if (computed > 0 ? (gap / computed > 0.5 || gap > 50) : t.overrideAmount > 50) f.push('override_far')
+      if (computed > 0 ? (gap / computed > 0.5 || gap > 50) : t.overrideAmount > 50) { f.push('override_far'); why.override_far = 'set by hand at ' + $(t.overrideAmount) + ', the task computes to ' + $(computed) }
     }
-    if (!t.hasDetail && !t.excluded) f.push('no_detail')
+    // Noise cut: a $0 row that is not meant to bill does not need its detail or owner chased.
+    const matters = t.billedAmount > 0 || f.includes('should_bill') || f.includes('ai_bill')
+    if (!t.hasDetail && !t.excluded && matters) f.push('no_detail')
     const k = (t.listingId || t.unit) + '|' + (t.scheduledDate || (t.finishedAt || '').slice(0, 10)) + '|' + t.name.trim().toLowerCase()
-    if ((seenKey[k] || 0) > 1 && !isDepartureCleanName(t.name) && !t.routine) f.push('duplicate')
-    if ((t.billedHours != null && t.billedHours > 8) || (t.actualMinutes != null && t.actualMinutes > 8 * 60)) f.push('long_hours')
+    if ((seenKey[k] || 0) > 1 && !isDepartureCleanName(t.name) && !t.routine) { f.push('duplicate'); why.duplicate = 'same title on the same unit the same day' }
+    if ((t.billedHours != null && t.billedHours > 8) || (t.actualMinutes != null && t.actualMinutes > 8 * 60)) { f.push('long_hours'); why.long_hours = (Math.round((t.billedHours ?? (t.actualMinutes || 0) / 60) * 10) / 10) + 'h on one task' }
     // Work that WOULD have billed but is held back by the rule above. Flagged only when there is
     // something to hold back, so the ordinary open task does not light up the board.
     if (!finished && !t.excluded && t.overrideAmount == null &&
         ((t.actualMinutes != null && t.actualMinutes > 0) || t.billedHours != null || (t.ratePaid != null && t.ratePaid > 0))) f.push('not_done')
-    if (!t.ownerId && !t.excluded) f.push('no_owner')
+    if (!t.ownerId && !t.excluded && matters) f.push('no_owner')
+    // ── THE NEW CHECKS ──
+    if (finished && !t.excluded && t.billedAmount > 0) {
+      // Against the approved history first; this window's own prices when there is no history.
+      const peers = priced[t.kind] || []
+      const ref = t.usual && t.usual.n >= 4 ? { med: t.usual.median, n: t.usual.n, src: 'approved before' } : peers.length >= 4 ? { med: median(peers), n: peers.length, src: 'this window' } : null
+      if (ref && ref.med > 0 && t.billedAmount > Math.max(75, ref.med * 2.5)) { f.push('price_outlier'); why.price_outlier = $(t.billedAmount) + ' vs usual ' + $(ref.med) + ' (' + ref.n + ' similar jobs, ' + ref.src + ')' }
+      const day = t.scheduledDate || (t.finishedAt || '').slice(0, 10)
+      const near = day ? (billedOn[(t.listingId || t.unit) + '|' + t.kind] || []).filter(x => x.id !== t.id && dayGap(x.day, day) <= 14) : []
+      if (near.length && !isDepartureCleanName(t.name) && !t.routine && !f.includes('duplicate')) { f.push('repeat_unit'); why.repeat_unit = 'also billed ' + near.map(x => x.day.slice(5)).join(', ') + ' on this unit' }
+      if (t.suggested && t.suggested.basis === 'hours' && t.overrideAmount == null && t.billable?.verdict !== 'maybe' && t.billedAmount < t.suggested.amount * 0.8) { f.push('underpriced'); why.underpriced = $(t.billedAmount) + ' — ' + t.suggested.why + ' = ' + $(t.suggested.amount) }
+    }
+    if (finished && !t.excluded && String(t.rateType || '').toLowerCase() === 'hourly' && !(t.actualMinutes && t.actualMinutes > 0) && t.billedHours == null && t.overrideAmount == null) { f.push('no_time'); why.no_time = 'hourly at ' + $(t.ratePaid || 0) + '/h with no time logged — bills $0 labour' }
+    if (f.includes('should_bill') && t.suggested) why.should_bill = 'suggest ' + $(t.suggested.amount) + ' (' + t.suggested.why + ')'
+    // THE REPORT AUDIT: only where money is involved.
+    if (finished && !t.excluded && (t.billedAmount > 0 || f.includes('should_bill')) && t.evidence) {
+      if (t.evidence.verdict === 'none') { f.push('no_report'); why.no_report = t.evidence.why }
+      else if (t.evidence.verdict === 'thin') { f.push('thin_report'); why.thin_report = t.evidence.why }
+    }
     t.flags = f
+    t.flagWhy = why
   }
 
   const groups: Record<string, OwnerGroup> = {}
@@ -640,7 +736,7 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
     if (t.reviewState === 'open') g.open += 1
     else if (t.reviewState === 'ops_approved') g.opsApproved += 1
     else g.gmApproved += 1
-    if (t.flags.length) g.flagged += 1
+    if (t.flags.length && t.reviewState !== 'gm_approved') g.flagged += 1
     g.billed = Math.round((g.billed + t.billedAmount) * 100) / 100
     if (!t.excluded) {
       g.labor = Math.round((g.labor + t.laborAmount) * 100) / 100

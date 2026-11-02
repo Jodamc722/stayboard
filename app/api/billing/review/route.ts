@@ -43,6 +43,7 @@ function slim(t: BillingTask) {
     flags: t.flags,
     routine: t.routine, aiVerdict: t.aiVerdict, aiReason: t.aiReason, aiAmount: t.aiAmount,
     billable: t.billable,
+    suggested: t.suggested, evidence: t.evidence, flagWhy: t.flagWhy, kind: t.kind, usual: t.usual,
   }
 }
 
@@ -89,6 +90,7 @@ export async function GET(req: NextRequest) {
       aiPending: pendingRoutine(data.tasks).length,
       // The billable model (lib/billable-model): stale → the desk asks it to retrain; MAYBEs with a
       // real description the model has not read → the desk asks it to judge them.
+      pricebook: await (async () => { try { const { readPricebook, pricebookStale } = await import('@/lib/billing-pricebook'); const b = await readPricebook(); return { stale: pricebookStale(b), builtAt: b?.builtAt || null, kinds: b ? Object.keys(b.kinds).length : 0 } } catch { return null } })(),
       billableModel: await (async () => { const m = await loadModel(); return { stale: modelStale(m), trainedAt: m.at || null, maybes: data.tasks.filter(t => t.billable.verdict === 'maybe' && !t.billable.ai && String(t.description || '').trim().length > 15 && t.reviewState !== 'gm_approved').length } })(),
     })
   } catch (e: any) {

@@ -36,6 +36,16 @@ export async function getSetting<T>(key: string, fallback: T): Promise<T> {
   return val as T
 }
 
+/**
+ * A read that skips this instance's 60-second cache. Use it for READ-MODIFY-WRITE: a cached read
+ * can be up to a minute behind a write another server instance just made, and writing back a map
+ * built on it silently drops that write (2026-11-02: three A/C settings vanished this way).
+ */
+export async function getSettingFresh<T>(key: string, fallback: T): Promise<T> {
+  _cache.delete(key)
+  return getSetting<T>(key, fallback)
+}
+
 /** Write a setting. Stored as a JSON string because `value` is TEXT. */
 export async function setSetting(key: string, value: any, updatedBy?: string | null): Promise<{ ok: boolean; error?: string }> {
   try {

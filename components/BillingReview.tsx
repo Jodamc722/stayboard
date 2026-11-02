@@ -36,6 +36,8 @@ import { LeanHead, Pill, Tag, LeanTabs, LeanEmpty, IconBtn, Tip, type Tone } fro
 import { AddTaskDialog, TaskExtrasPanel, type Extra } from '@/components/BillingTaskTools'
 
 type Flag = 'over_150' | 'no_price' | 'override_far' | 'no_detail' | 'duplicate' | 'long_hours' | 'no_owner' | 'ai_bill' | 'ai_pending' | 'not_done' | 'should_bill' | 'billed_routine'
+  | 'price_outlier' | 'repeat_unit' | 'no_time' | 'underpriced' | 'no_report' | 'thin_report'
+type Evidence = { at: string; photos: number; answered: number; items: number; words: number; comments: number; verdict: 'solid' | 'thin' | 'none'; why: string; said: string[] }
 type BVerdict = 'bill' | 'likely' | 'maybe' | 'no'
 type Billable = { verdict: BVerdict; category: string; confidence: number; reasons: string[]; history?: { billed: number; total: number } | null; ai?: 'bill' | 'no' | null }
 type State = 'open' | 'ops_approved' | 'gm_approved'
@@ -53,9 +55,14 @@ type Task = {
   routine: 'unit_check' | 'strip' | null
   aiVerdict: 'no_charge' | 'bill' | null; aiReason: string | null; aiAmount: number | null
   billable?: Billable
+  suggested?: { amount: number; why: string; basis?: 'hours' | 'usual' | 'ai' } | null
+  usual?: { median: number; low: number; high: number; n: number } | null
+  evidence?: Evidence | null
+  flagWhy?: Partial<Record<Flag, string>>
+  kind?: string
 }
 type Owner = { ownerId: string | null; ownerName: string; units: number; tasks: number; billed: number; open: number; opsApproved: number; gmApproved: number; flagged: number }
-type Payload = { ok: true; month: string; from: string; to: string; me: { email: string; isGm: boolean }; tasks: Task[]; owners: Owner[]; missingDetail: number; aiPending?: number; billableModel?: { stale: boolean; trainedAt: number | null; maybes: number }; extras?: Record<string, Extra> }
+type Payload = { ok: true; month: string; from: string; to: string; me: { email: string; isGm: boolean }; tasks: Task[]; owners: Owner[]; missingDetail: number; aiPending?: number; billableModel?: { stale: boolean; trainedAt: number | null; maybes: number }; pricebook?: { stale: boolean; builtAt: string | null; kinds: number } | null; extras?: Record<string, Extra> }
 type Stage = 'ops' | 'gm' | 'done' | 'all'
 
 const FLAG_LABEL: Record<Flag, string> = {
@@ -65,6 +72,9 @@ const FLAG_LABEL: Record<Flag, string> = {
   should_bill: 'The billable model says this should bill the owner — finished and still $0',
   billed_routine: 'Carries money, but the billable model says it is routine (departure clean, check, common area)',
   ai_bill: 'AI: real work — price it', ai_pending: 'AI check pending',
+  price_outlier: 'Far above what this kind of job usually bills', repeat_unit: 'The same kind of job was billed on this unit within 14 days',
+  no_time: 'Hourly task with no time logged — labour bills $0', underpriced: 'Billed well under the hours at the house rate',
+  no_report: 'The crew added nothing to the report — no photos, no notes', thin_report: 'The report is missing photos or any real words about the work',
 }
 // LEAN PASS (2026-09-22): the row shows the short word, the hover says the full reason.
 const FLAG_SHORT: Record<Flag, string> = {
@@ -72,8 +82,30 @@ const FLAG_SHORT: Record<Flag, string> = {
   duplicate: 'Duplicate?', long_hours: 'Long hours', no_owner: 'No owner', not_done: 'Not finished',
   should_bill: 'Should bill', billed_routine: 'Billed routine?',
   ai_bill: 'AI: bill it', ai_pending: 'AI pending',
+  price_outlier: 'Price high', repeat_unit: 'Repeat job', no_time: 'No time', underpriced: 'Underpriced',
+  no_report: 'No report', thin_report: 'Thin report',
 }
-const FLAG_TONE = (f: Flag): Tone => f === 'over_150' ? 'amber' : f === 'ai_bill' || f === 'should_bill' ? 'brand' : f === 'ai_pending' || f === 'no_price' ? 'sky' : f === 'billed_routine' ? 'amber' : 'rose'
+// HOW BAD (Jon, 2026-11-02: "better flags"): stop = look before approving, check = worth a glance,
+// note = information. Rows sort by this, worst first.
+const FLAG_LEVEL: Record<Flag, 3 | 2 | 1> = {
+  should_bill: 3, no_report: 3, duplicate: 3, repeat_unit: 3, not_done: 3, price_outlier: 3, no_time: 3,
+  over_150: 2, thin_report: 2, override_far: 2, long_hours: 2, billed_routine: 2, underpriced: 2, ai_bill: 2, no_owner: 2,
+  no_detail: 1, ai_pending: 1, no_price: 1,
+}
+const severity = (t: Task) => t.flags.reduce((m, f) => Math.max(m, FLAG_LEVEL[f] || 0), 0)
+const kindLabel = (k: string | undefined) => { const [c, w] = String(k || 'other|task').split('|'); const words = (w || '').replace(/\b\w/g, x => x.toUpperCase()); return words && words !== 'Task' ? words : (CAT_LABEL[c] || c) }
+const isFinished = (t: Task) => isTaskDone(t.status, t.finishedAt)
+/** The report flags, recomputed when a check lands on the client. */
+function withEvidence(t: Task, ev: Evidence): Task {
+  const flags: Flag[] = t.flags.filter(f => f !== 'no_report' && f !== 'thin_report')
+  const why = { ...(t.flagWhy || {}) }
+  if (isFinished(t) && !t.excluded && (t.billedAmount > 0 || flags.includes('should_bill'))) {
+    if (ev.verdict === 'none') { flags.push('no_report'); why.no_report = ev.why }
+    else if (ev.verdict === 'thin') { flags.push('thin_report'); why.thin_report = ev.why }
+  }
+  return { ...t, evidence: ev, flags, flagWhy: why }
+}
+const FLAG_TONE = (f: Flag): Tone => f === 'ai_bill' || f === 'should_bill' || f === 'underpriced' ? 'brand' : f === 'ai_pending' || f === 'no_price' || f === 'no_detail' ? 'sky' : (FLAG_LEVEL[f] || 0) >= 3 ? 'rose' : 'amber'
 // The billable model's read, as one small chip per row.
 const CAT_LABEL: Record<string, string> = { repair: 'Repair', pm: 'PM', pest: 'Pest', extra_clean: 'Extra clean', owner_item: 'Owner item', guest_fix: 'Guest fix', departure_clean: 'Departure', routine: 'Routine', inspection: 'Inspection', building: 'Common area', our_fault: 'Re-clean', other: 'Other' }
 /** A task's kind for the Task filter: its title without the unit, numbers and dates. */
@@ -100,7 +132,7 @@ function recompute(t: Task): Task {
   const itemsTotal = t.items.reduce((s, x) => s + (String(x.bill_to || 'owner') === 'guest' ? 0 : x.amount), 0)
   const computed = Math.round((t.laborAmount + itemsTotal) * 100) / 100
   const billed = t.excluded ? 0 : (t.overrideAmount != null ? t.overrideAmount : computed)
-  const flags: Flag[] = t.flags.filter(f => f !== 'over_150' && f !== 'override_far' && f !== 'no_price' && f !== 'should_bill' && f !== 'billed_routine' && !((f === 'ai_bill' || f === 'ai_pending') && (t.overrideAmount != null || t.excluded)))
+  const flags: Flag[] = t.flags.filter(f => f !== 'over_150' && f !== 'override_far' && f !== 'no_price' && f !== 'should_bill' && f !== 'billed_routine' && !(f === 'underpriced' && (t.overrideAmount != null || t.excluded)) && !((f === 'ai_bill' || f === 'ai_pending') && (t.overrideAmount != null || t.excluded)))
   if (billed > 150) flags.push('over_150')
   if (t.overrideAmount != null) {
     const gap = Math.abs(t.overrideAmount - computed)
@@ -210,9 +242,10 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
               {t.doer || 'no one assigned'} · {short(t.scheduledDate || t.finishedAt)}
               {t.actualMinutes ? ' · ' + (t.actualMinutes / 60).toFixed(1) + 'h' : ''}
             </span>
-            {t.flags.map(f => (
+            {t.evidence && t.evidence.verdict === 'solid' && t.billedAmount > 0 ? <Tag tone="emerald" title={'Report checked: ' + t.evidence.why + (t.evidence.said.length ? ' — “' + t.evidence.said[0] + '”' : '')}>Report ✓</Tag> : null}
+            {t.flags.slice().sort((a, b) => (FLAG_LEVEL[b] || 0) - (FLAG_LEVEL[a] || 0)).map(f => (
               <Tag key={f} tone={FLAG_TONE(f)}
-                title={f === 'ai_bill' && t.aiReason ? t.aiReason + (t.aiAmount != null ? ' — suggests ' + money(t.aiAmount) : '') : (f === 'should_bill' || f === 'no_price' || f === 'billed_routine') && t.billable ? FLAG_LABEL[f] + ' — ' + (CAT_LABEL[t.billable.category] || t.billable.category) + ': ' + t.billable.reasons.join(' · ') : FLAG_LABEL[f]}>{FLAG_SHORT[f]}{f === 'should_bill' && t.billable ? ' · ' + (CAT_LABEL[t.billable.category] || '') : ''}</Tag>
+                title={t.flagWhy?.[f] ? FLAG_LABEL[f] + ' — ' + t.flagWhy[f] : f === 'ai_bill' && t.aiReason ? t.aiReason + (t.aiAmount != null ? ' — suggests ' + money(t.aiAmount) : '') : (f === 'should_bill' || f === 'no_price' || f === 'billed_routine') && t.billable ? FLAG_LABEL[f] + ' — ' + (CAT_LABEL[t.billable.category] || t.billable.category) + ': ' + t.billable.reasons.join(' · ') : FLAG_LABEL[f]}>{FLAG_SHORT[f]}{f === 'should_bill' && t.billable ? ' · ' + (CAT_LABEL[t.billable.category] || '') : ''}</Tag>
             ))}
           </span>
         </button>
@@ -236,6 +269,7 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
           <span className="block text-[10.5px] text-muted truncate max-w-[14rem] ml-auto" title={breakdown(t).join(' · ')}>
             {t.overrideAmount != null ? 'set by hand' : breakdown(t).join(' · ') || 'no charge'}
           </span>
+          {t.usual ? <span className={'block text-[10.5px] ml-auto ' + (t.billedAmount > t.usual.high * 1.5 ? 'text-rose-700 font-semibold' : t.billedAmount > 0 && t.billedAmount < t.usual.low * 0.7 ? 'text-amber-800' : 'text-muted')} title={'Approved before for ' + t.usual.n + ' similar jobs: middle half $' + Math.round(t.usual.low) + '–$' + Math.round(t.usual.high)}>usual {money(t.usual.median)} ({t.usual.n})</span> : null}
         </div>
 
         <div className="flex items-center gap-1.5">
@@ -252,7 +286,9 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
             </>
           ) : (
             <>
-              {t.aiVerdict === 'bill' && t.aiAmount != null && t.overrideAmount == null && !t.excluded ? (
+              {t.suggested && t.overrideAmount == null && !t.excluded && (t.flags.includes('should_bill') || t.flags.includes('underpriced') || t.flags.includes('no_price')) && Math.abs(t.suggested.amount - t.billedAmount) >= 1 ? (
+                <button disabled={busy} onClick={() => { setAmt(String(t.suggested!.amount)); onEdit(t.id, { override_amount: t.suggested!.amount }) }} title={'Bill ' + t.suggested.why} className={btn + ' border border-brand-200 text-brand-700 hover:bg-brand-50'}>Bill {money(t.suggested.amount)}</button>
+              ) : t.aiVerdict === 'bill' && t.aiAmount != null && t.overrideAmount == null && !t.excluded ? (
                 <button disabled={busy} onClick={() => { setAmt(String(t.aiAmount)); onEdit(t.id, { override_amount: t.aiAmount }) }} title="Take the AI's suggested price" className={btn + ' border border-brand-200 text-brand-700 hover:bg-brand-50'}>Use {money(t.aiAmount)}</button>
               ) : null}
               <button disabled={busy} onClick={() => onState(t.id, 'ops_approved')} className={btn + ' bg-brand-600 text-white hover:bg-brand-700'}>{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={13} />} Approve</button>
@@ -287,6 +323,17 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
               ))}
               {!t.hasDetail ? <li className="text-amber-800 text-[11.5px] flex items-center gap-1"><AlertTriangle size={11} /> Detail not pulled yet — cost lines may be missing.</li> : null}
             </ul>
+            {t.flags.length ? (
+              <ul className="mt-2 space-y-0.5">
+                {t.flags.slice().sort((a, b) => (FLAG_LEVEL[b] || 0) - (FLAG_LEVEL[a] || 0)).map(f => <li key={f} className={'text-[11.5px] flex gap-1.5 ' + ((FLAG_LEVEL[f] || 0) >= 3 ? 'text-rose-700' : (FLAG_LEVEL[f] || 0) === 2 ? 'text-amber-800' : 'text-muted')}><AlertTriangle size={11} className="mt-[2px] shrink-0" /><span><b>{FLAG_SHORT[f]}:</b> {t.flagWhy?.[f] || FLAG_LABEL[f]}</span></li>)}
+              </ul>
+            ) : null}
+            <div className="mt-2 text-[11.5px]">
+              <b className="text-ink">Crew report:</b>{' '}
+              {t.evidence ? <span className={t.evidence.verdict === 'solid' ? 'text-emerald-700' : t.evidence.verdict === 'thin' ? 'text-amber-800' : 'text-rose-700'}>{t.evidence.verdict === 'solid' ? 'looks complete' : t.evidence.verdict === 'thin' ? 'thin' : 'nothing added'} — {t.evidence.why}{t.evidence.items ? ' · ' + t.evidence.answered + '/' + t.evidence.items + ' checklist lines answered' : ''}</span> : <span className="text-muted">not checked yet</span>}
+              {t.evidence?.said.length ? <ul className="mt-1 space-y-0.5 text-ink/80">{t.evidence.said.map((x, i) => <li key={i} className="italic">“{x}”</li>)}</ul> : null}
+            </div>
+            {t.suggested ? <p className="text-[11.5px] text-ink/80 mt-2"><b>At the house rate:</b> {money(t.suggested.amount)} — {t.suggested.why}</p> : null}
             {t.billable ? <p className="text-[11.5px] text-ink/80 mt-2"><b>Billable model:</b> {VERDICT_WORD[t.billable.verdict]} · {CAT_LABEL[t.billable.category] || t.billable.category} · {Math.round(t.billable.confidence * 100)}% — {t.billable.reasons.join(' · ')}</p> : null}
             {t.aiVerdict === 'bill' && t.aiReason ? <p className="text-[11.5px] text-brand-800 mt-2">AI: {t.aiReason}{t.aiAmount != null ? ' — suggests ' + money(t.aiAmount) : ''}</p> : null}
             {t.description ? <p className="text-[11.5px] text-muted mt-2 whitespace-pre-wrap">{t.description}</p> : null}
@@ -525,7 +572,15 @@ export function BillingReview() {
   const [err, setErr] = useState('')
   const [stage, setStage] = useState<Stage | null>(null)     // null until we know the role
   const visibleIdsRef = useRef<string[]>([])                  // the rows on screen, in order, for shift-click runs
-  const [flaggedOnly, setFlaggedOnly] = useState(false)
+  // Which flag to show: '' all rows, 'any' any flag, 'stop' the must-look ones, or one flag (Jon, 2026-11-02).
+  const [flagF, setFlagF] = useState<'' | 'any' | 'stop' | Flag>('')
+  const flaggedOnly = flagF === 'any'
+  const [sortBy, setSortBy] = useState<'flags' | 'amount' | 'date' | 'unit'>('flags')
+  // HOW TO WALK IT (Jon, 2026-11-02: "a property by property review … go through it … similar tasks
+  // together"): by owner (the list), one property at a time, or every similar job side by side.
+  const [view, setView] = useState<'owner' | 'property' | 'kind'>('owner')
+  const [walkIdx, setWalkIdx] = useState(0)
+  const [evBusy, setEvBusy] = useState(0)
   const [q, setQ] = useState('')
   // FILTERS (Jon, 2026-09-30: "filter by billable amount greater than zero, by date window, by
   // department etc."). The window is a month (arrows) or any from–to range; the rest narrow the
@@ -543,6 +598,7 @@ export function BillingReview() {
   const [taskF, setTaskF] = useState('')        // 'cat:<category>' or 'name:<task name>'
   const [bFilter, setBFilter] = useState<'' | 'should' | 'bill' | 'maybe' | 'no'>('')
   const trained = useRef(false)
+  const pbRan = useRef(false)
   const judged = useRef<Set<string>>(new Set())
   const urlRead = useRef(false)
   useEffect(() => {
@@ -597,6 +653,7 @@ export function BillingReview() {
       // The billable model: retrain once a day, then let the AI read the MAYBEs with a description.
       const bm = j.billableModel
       const post = (b: any) => fetch('/api/billing/billable', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(r => r.json()).catch(() => null)
+      if (j.pricebook?.stale && !pbRan.current) { pbRan.current = true; fetch('/api/billing/pricebook', { method: 'POST' }).then(r => r.json()).catch(() => null).then(res => { if (res?.ok && res.rebuilt && my === seq.current) loadRef.current(m, rg) }) }
       if (bm?.stale && !trained.current) { trained.current = true; post({ op: 'train' }).then(res => { if (res?.ok && my === seq.current) loadRef.current(m, rg) }) }
       else if (bm && bm.maybes > 0 && !judged.current.has(j.from + j.to)) { judged.current.add(j.from + j.to); post({ op: 'judge', from: j.from, to: j.to }).then(res => { if (res?.ok && res.judged > 0 && my === seq.current) loadRef.current(m, rg) }) }
     } catch (e: any) { if (my === seq.current) setErr(String(e?.message || e)) }
@@ -633,7 +690,7 @@ export function BillingReview() {
     const needle = q.trim().toLowerCase()
     const num = (v: string) => { const n = v.trim() === '' ? null : Number(v.replace(/[$,]/g, '')); return n != null && Number.isFinite(n) ? n : null }
     const min = num(minAmt), max = num(maxAmt)
-    return (t: Task) => (!flaggedOnly || t.flags.length > 0)
+    return (t: Task) => (!flagF || (flagF === 'any' ? t.flags.length > 0 : flagF === 'stop' ? severity(t) >= 3 : t.flags.includes(flagF)))
       && (!billOnly || t.billedAmount > 0)
       && (!bFilter || (bFilter === 'should' ? t.flags.includes('should_bill') : bFilter === 'bill' ? (t.billable?.verdict === 'bill' || t.billable?.verdict === 'likely') : t.billable?.verdict === bFilter))
       && (min == null || t.billedAmount >= min)
@@ -643,33 +700,43 @@ export function BillingReview() {
       && (!depts.length || depts.includes(t.department))
       && (!building || (t.building || '—') === building)
       && (!person || (t.doer || '—') === person)
-      && (!needle || (t.unit + ' ' + t.name + ' ' + (t.doer || '') + ' ' + t.ownerName).toLowerCase().includes(needle))
-  }, [q, flaggedOnly, billOnly, minAmt, maxAmt, ownerF, taskF, depts, building, person, bFilter])
+      && (!needle || (t.unit + ' ' + t.name + ' ' + (t.description || '') + ' ' + (t.doer || '') + ' ' + t.ownerName).toLowerCase().includes(needle))
+  }, [q, flagF, billOnly, minAmt, maxAmt, ownerF, taskF, depts, building, person, bFilter])
   const visible = useMemo(() => {
     if (!viewIds) return [] as Task[]
     return tasks.filter(t => viewIds.has(t.id)).filter(passes)
   }, [tasks, viewIds, passes])
   // The choices each filter offers — what this window actually holds, with counts.
   const facets = useMemo(() => {
-    const count = (f: (t: Task) => string) => { const m = new Map<string, number>(); for (const t of tasks) { const k = f(t); m.set(k, (m.get(k) || 0) + 1) } return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0])) }
+    // Counts for what is in the current queue, so a number in a dropdown matches what it shows.
+    const base = viewIds ? tasks.filter(t => viewIds.has(t.id)) : tasks
+    const count = (f: (t: Task) => string) => { const m = new Map<string, number>(); for (const t of base) { const k = f(t); m.set(k, (m.get(k) || 0) + 1) } return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0])) }
     // Owners and task types, with counts. A task "name" is its title with the unit and dates
     // stripped (taskKey), so 40 "Departure Clean - Eden 2104" rows read as one choice.
-    const owners = (() => { const m = new Map<string, { name: string; n: number }>(); for (const t of tasks) { const k = t.ownerId || '—'; const x = m.get(k) || { name: t.ownerName || 'No owner', n: 0 }; x.n++; m.set(k, x) } return Array.from(m.entries()).sort((a, b) => a[1].name.localeCompare(b[1].name)) })()
+    const owners = (() => { const m = new Map<string, { name: string; n: number }>(); for (const t of base) { const k = t.ownerId || '—'; const x = m.get(k) || { name: t.ownerName || 'No owner', n: 0 }; x.n++; m.set(k, x) } return Array.from(m.entries()).sort((a, b) => a[1].name.localeCompare(b[1].name)) })()
     const cats = count(t => t.billable?.category || 'other')
     const names = count(t => taskKey(t.name)).filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 40)
-    return { depts: count(t => t.department), buildings: count(t => t.building || '—'), people: count(t => t.doer || '—'), owners, cats, names }
-  }, [tasks])
-  const filtersOn = !!bFilter || billOnly || !!depts.length || !!building || !!person || minAmt.trim() !== '' || maxAmt.trim() !== '' || !!ownerF || !!taskF || flaggedOnly || !!q.trim()
+    const flagN = new Map<Flag, number>(); let anyN = 0, stopN = 0
+    for (const t of base) { if (t.flags.length) anyN++; if (severity(t) >= 3) stopN++; for (const f of t.flags) flagN.set(f, (flagN.get(f) || 0) + 1) }
+    const flags = Array.from(flagN.entries()).sort((a, b) => (FLAG_LEVEL[b[0]] || 0) - (FLAG_LEVEL[a[0]] || 0) || b[1] - a[1])
+    return { depts: count(t => t.department), buildings: count(t => t.building || '—'), people: count(t => t.doer || '—'), owners, cats, names, flags, anyN, stopN }
+  }, [tasks, viewIds])
+  const filtersOn = !!bFilter || billOnly || !!depts.length || !!building || !!person || minAmt.trim() !== '' || maxAmt.trim() !== '' || !!ownerF || !!taskF || !!flagF || !!q.trim()
   const shownTotal = useMemo(() => visible.reduce((a, t) => a + t.billedAmount, 0), [visible])
-  const clearFilters = () => { setBFilter(''); setBillOnly(false); setDepts([]); setBuilding(''); setPerson(''); setMinAmt(''); setMaxAmt(''); setOwnerF(''); setTaskF(''); setFlaggedOnly(false); setQ('') }
+  const clearFilters = () => { setBFilter(''); setBillOnly(false); setDepts([]); setBuilding(''); setPerson(''); setMinAmt(''); setMaxAmt(''); setOwnerF(''); setTaskF(''); setFlagF(''); setQ('') }
 
-  // Owners in server order (name), rows inside sorted: flagged first, then biggest.
+  // Rows: worst flag first, then biggest — or by amount / date / unit when the reviewer picks.
+  const rowSort = useCallback((a: Task, b: Task) => sortBy === 'amount' ? b.billedAmount - a.billedAmount || a.unit.localeCompare(b.unit)
+    : sortBy === 'date' ? String(a.scheduledDate || a.finishedAt || '').localeCompare(String(b.scheduledDate || b.finishedAt || '')) || a.unit.localeCompare(b.unit)
+      : sortBy === 'unit' ? a.unit.localeCompare(b.unit, undefined, { numeric: true }) || b.billedAmount - a.billedAmount
+        : severity(b) - severity(a) || b.billedAmount - a.billedAmount || a.unit.localeCompare(b.unit), [sortBy])
+  // Owners in server order (name).
   const groups = useMemo(() => {
     const m = new Map<string, Task[]>()
     for (const t of visible) { const k = t.ownerId || '—'; if (!m.has(k)) m.set(k, []); m.get(k)!.push(t) }
-    for (const list of Array.from(m.values())) list.sort((a, b) => Number(!!b.flags.length) - Number(!!a.flags.length) || b.billedAmount - a.billedAmount || a.unit.localeCompare(b.unit))
+    for (const list of Array.from(m.values())) list.sort(rowSort)
     return (data?.owners || []).map(o => ({ owner: o, rows: m.get(o.ownerId || '—') || [] }))
-  }, [visible, data])
+  }, [visible, data, rowSort])
   visibleIdsRef.current = groups.flatMap(g => g.rows.map(t => t.id))
 
   // Whole-window numbers for the strip — never the filtered view's.
@@ -786,6 +853,32 @@ export function BillingReview() {
   }, [byId])
   const onToggle = useCallback((id: string) => setOpenId(cur => (cur === id ? '' : id)), [])
 
+  // ── THE REPORT AUDIT RUNS ON ITS OWN (Jon, 2026-11-02) ─────────────────────────────────────
+  // Every finished row that bills (or should) and has not had its crew report read: send them, 24 at
+  // a time, and merge each verdict in place. Once per window; nothing waits on it.
+  const evRan = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!data) return
+    const k = data.from + data.to
+    if (evRan.current.has(k)) return
+    const ids = data.tasks.filter(t => !t.evidence && !t.id.startsWith('lh-') && !t.excluded && t.reviewState !== 'gm_approved' && isFinished(t) && (t.billedAmount > 0 || t.flags.includes('should_bill'))).map(t => t.id)
+    if (!ids.length) return
+    evRan.current.add(k)
+    let left = ids.slice()
+    setEvBusy(left.length)
+    ;(async () => {
+      for (let guard = 0; left.length && guard < 40; guard++) {
+        const chunk = left.slice(0, 24); left = left.slice(24)
+        const r = await fetch('/api/billing/evidence', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskIds: chunk }) }).then(x => x.json()).catch(() => null)
+        if (!r?.ok) break
+        const ev: Record<string, Evidence> = r.evidence || {}
+        if (Object.keys(ev).length) setData(d => d ? { ...d, tasks: d.tasks.map(t => ev[t.id] ? withEvidence(t, ev[t.id]) : t) } : d)
+        setEvBusy(left.length)
+      }
+      setEvBusy(0)
+    })()
+  }, [data])
+
   // ── SELECTION + BULK (Jon, 2026-10-02: "need to be able to bulk change billables and approve") ──
   // Tick rows (shift-click for a run, a box per owner for the owner's rows, "Select all shown" in
   // the toolbar), then the bar at the bottom changes them together: approve / send back, exclude or
@@ -865,6 +958,49 @@ export function BillingReview() {
     translateAll()
   }, [autoTr, data, spanishCount, translateAll])
 
+  // ── PROPERTY BY PROPERTY, AND LIKE WITH LIKE (Jon, 2026-11-02) ──────────────────────────────
+  const properties = useMemo(() => {
+    const m = new Map<string, { key: string; unit: string; ownerName: string; rows: Task[] }>()
+    for (const t of visible) {
+      const k = t.ownerName + '|' + t.unit
+      if (!m.has(k)) m.set(k, { key: k, unit: t.unit, ownerName: t.ownerName, rows: [] })
+      m.get(k)!.rows.push(t)
+    }
+    const out = Array.from(m.values())
+    for (const p of out) p.rows.sort(rowSort)
+    return out.sort((a, b) => a.ownerName.localeCompare(b.ownerName) || a.unit.localeCompare(b.unit, undefined, { numeric: true }))
+  }, [visible, rowSort])
+  const kinds = useMemo(() => {
+    const m = new Map<string, Task[]>()
+    for (const t of visible) { const k = t.kind || 'other|task'; if (!m.has(k)) m.set(k, []); m.get(k)!.push(t) }
+    return Array.from(m.entries()).map(([k, rows]) => ({ k, rows: rows.sort((a, b) => b.billedAmount - a.billedAmount) }))
+      .sort((a, b) => Math.max(...b.rows.map(severity)) - Math.max(...a.rows.map(severity)) || b.rows.length - a.rows.length)
+  }, [visible])
+  const walk = properties.length ? properties[Math.min(walkIdx, properties.length - 1)] : null
+  const stageNow: Stage = stage || (data?.me?.isGm ? 'gm' : 'ops')
+  const toState: State = stageNow === 'gm' ? 'gm_approved' : 'ops_approved'
+  const mayApprove = stageNow === 'ops' || (stageNow === 'gm' && !!data?.me?.isGm)
+  const pendingIn = useCallback((rows: Task[]) => rows.filter(t => (stageNow === 'gm' ? t.reviewState === 'ops_approved' : t.reviewState === 'open')), [stageNow])
+  const cleanIn = useCallback((rows: Task[]) => pendingIn(rows).filter(t => severity(t) < 3), [pendingIn])
+  const applySuggested = useCallback(async (rows: Task[]) => {
+    const list = rows.filter(t => t.suggested && t.overrideAmount == null && !t.excluded && (t.flags.includes('should_bill') || t.flags.includes('underpriced') || t.flags.includes('no_price')))
+    for (let i = 0; i < list.length; i += 4) await Promise.all(list.slice(i, i + 4).map(t => onEdit(t.id, { override_amount: t.suggested!.amount })))
+  }, [onEdit])
+  // Keys in the walk: → / j next property, ← / k back, a = approve the clean ones here.
+  useEffect(() => {
+    if (view !== 'property') return
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === 'ArrowRight' || e.key === 'j') { setWalkIdx(i => Math.min(i + 1, Math.max(0, properties.length - 1))); setOpenId(''); e.preventDefault() }
+      else if (e.key === 'ArrowLeft' || e.key === 'k') { setWalkIdx(i => Math.max(0, i - 1)); setOpenId(''); e.preventDefault() }
+      else if (e.key === 'a' && walk && mayApprove) { const ids = cleanIn(walk.rows).map(t => t.id); if (ids.length) setState(ids, toState) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [view, properties.length, walk, mayApprove, cleanIn, setState, toState])
+
   if (!data && loading) return <><LeanHead title="Billable Hours" /><LeanEmpty><Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading {range ? short(range.from) + ' – ' + short(range.to) : monthLabel(month)}…</LeanEmpty></>
   if (!data) return <><LeanHead title="Billable Hours" /><div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{err || 'Nothing loaded.'}</div></>
   const isGm = !!data.me?.isGm
@@ -940,7 +1076,23 @@ export function BillingReview() {
               ))}
             </div>
           ) : null}
-          <Tip label="Show only rows with a flag"><button onClick={() => setFlaggedOnly(v => !v)} aria-label="Flagged only" className={'h-8 px-2.5 rounded-lg border text-[12px] font-semibold inline-flex items-center gap-1.5 ' + (flaggedOnly ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-line text-muted hover:text-ink')}><AlertTriangle size={13} /> Flagged</button></Tip>
+          {st !== 'done' || apMode === 'rows' ? (
+            <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px] h-8" title="How to go through it">
+              {([['owner', 'By owner'], ['property', 'Property by property'], ['kind', 'Similar jobs']] as const).map(([k, l]) => (
+                <button key={k} onClick={() => { setView(k); setWalkIdx(0); setOpenId('') }} className={'px-2.5 font-semibold border-l border-line first:border-l-0 ' + (view === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{l}</button>
+              ))}
+            </div>
+          ) : null}
+          <select value={flagF} onChange={e => setFlagF(e.target.value as any)} title="Show rows by flag" className={'h-8 rounded-lg border px-2 text-[12px] font-semibold max-w-[13rem] ' + (flagF ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-line text-ink')}>
+            <option value="">All rows</option>
+            <option value="stop">Must look ({facets.stopN})</option>
+            <option value="any">Any flag ({facets.anyN})</option>
+            {facets.flags.map(([f, n]) => <option key={f} value={f}>{FLAG_SHORT[f]} ({n})</option>)}
+          </select>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value as any)} title="Order of the rows" className="h-8 rounded-lg border border-line bg-white px-2 text-[12px] text-ink">
+            <option value="flags">Worst flag first</option><option value="amount">Biggest first</option><option value="date">By date</option><option value="unit">By unit</option>
+          </select>
+          {evBusy ? <Tag title={'Reading the crew reports on ' + evBusy + ' billable task(s) — photos, notes, checklist answers'}><Loader2 size={10} className="animate-spin inline mr-1" />Reports {evBusy}</Tag> : null}
           <label className="h-8 inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2 text-[12px]"><Search size={13} className="text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="unit, task, person, owner" className="w-36 bg-transparent outline-none text-ink" /></label>
           {aiBusy ? <Tag title={'AI is reading ' + aiBusy + ' unit checks / strips — the ones with a real description stay open only if it saw chargeable work'}><Loader2 size={10} className="animate-spin inline mr-1" />AI {aiBusy}</Tag> : null}
           {visible.length ? (
@@ -1008,7 +1160,77 @@ export function BillingReview() {
           {st === 'ops' ? 'Nothing open for ops to review.' : st === 'gm' ? 'Nothing waiting on final review.' : st === 'done' ? 'Nothing final-approved yet in this window.' : 'No tasks in this window.'}
           {filtersOn ? ' (with the current filters)' : ''}
         </LeanEmpty>
-      ) : groups.filter(g => g.rows.length).map(({ owner: o, rows }) => {
+      ) : view === 'property' && walk ? (() => {
+        const pend = pendingIn(walk.rows), clean = cleanIn(walk.rows)
+        const sugg = walk.rows.filter(t => t.suggested && t.overrideAmount == null && !t.excluded && (t.flags.includes('should_bill') || t.flags.includes('underpriced') || t.flags.includes('no_price')))
+        const stops = walk.rows.filter(t => severity(t) >= 3).length
+        const total = walk.rows.reduce((a, t) => a + (t.excluded ? 0 : t.billedAmount), 0)
+        const byKind = new Map<string, Task[]>()
+        for (const t of walk.rows) { const k = t.kind || 'other|task'; if (!byKind.has(k)) byKind.set(k, []); byKind.get(k)!.push(t) }
+        const i = Math.min(walkIdx, properties.length - 1)
+        const go = (n: number) => { setWalkIdx(Math.max(0, Math.min(properties.length - 1, n))); setOpenId(''); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+        const b = 'h-9 px-3 rounded-lg text-[12.5px] font-semibold inline-flex items-center gap-1.5 disabled:opacity-40'
+        return (
+          <section className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
+            <header className="px-4 py-3 border-b border-line bg-app/40 space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={() => go(i - 1)} disabled={i === 0} className={b + ' border border-line bg-white text-ink'} title="Previous property (← or k)"><ChevronLeft size={14} /> Prev</button>
+                <select value={i} onChange={e => go(Number(e.target.value))} className="h-9 rounded-lg border border-line bg-white px-2 text-[12.5px] max-w-[22rem]" title="Jump to a property">
+                  {properties.map((p, n) => { const left = pendingIn(p.rows).length; return <option key={p.key} value={n}>{left ? '● ' : '✓ '}{p.unit} — {p.ownerName} ({left} to review)</option> })}
+                </select>
+                <button onClick={() => go(i + 1)} disabled={i >= properties.length - 1} className={b + (pend.length ? ' border border-line bg-white text-ink' : ' bg-ink text-white')} title="Next property (→ or j)">Next <ChevronRight size={14} /></button>
+                <span className="text-[12px] text-muted">Property {i + 1} of {properties.length} · {properties.filter(p => pendingIn(p.rows).length === 0).length} done</span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[16px] font-bold text-ink">{walk.unit}</span>
+                <span className="text-[12.5px] text-muted">{walk.ownerName}</span>
+                <Pill title="What this property bills in the window">{money(total)} · {walk.rows.length} job{walk.rows.length === 1 ? '' : 's'}</Pill>
+                {stops ? <Tag tone="rose" title="Rows with a must-look flag — they are not in “Approve the clean ones”">{stops} must look</Tag> : null}
+                <div className="flex-1" />
+                {sugg.length ? <button onClick={() => applySuggested(sugg)} className={b + ' border border-brand-200 bg-white text-brand-700 hover:bg-brand-50'} title={sugg.map(t => t.name + ': ' + money(t.suggested!.amount) + ' — ' + t.suggested!.why).join('\n')}>Bill suggested on {sugg.length} ({money(sugg.reduce((a, t) => a + t.suggested!.amount, 0))})</button> : null}
+                {mayApprove && clean.length ? <button onClick={() => setState(clean.map(t => t.id), toState)} className={b + ' bg-brand-600 text-white hover:bg-brand-700'} title="Approve every row here without a must-look flag (a)"><Check size={14} /> Approve the clean ones ({clean.length})</button> : null}
+                {mayApprove && pend.length > clean.length ? <button onClick={() => setState(pend.map(t => t.id), toState)} className={b + ' border border-line bg-white text-ink'}>Approve all {pend.length}</button> : null}
+                {!pend.length ? <button onClick={() => go(i + 1)} disabled={i >= properties.length - 1} className={b + ' bg-emerald-600 text-white'}><Check size={14} /> All reviewed — next property</button> : null}
+              </div>
+            </header>
+            {Array.from(byKind.entries()).map(([k, rows]) => {
+              const u = rows.find(t => t.usual)?.usual
+              const left = pendingIn(rows)
+              return (
+                <div key={k} className="border-b border-line last:border-b-0">
+                  <div className="px-4 py-1.5 flex items-center gap-2 bg-white text-[12px]">
+                    <span className="font-bold text-ink">{kindLabel(k)}</span>
+                    <span className="text-muted">{rows.length} job{rows.length === 1 ? '' : 's'} · {money(rows.reduce((a, t) => a + t.billedAmount, 0))}</span>
+                    {u ? <span className="text-muted" title={'Approved before: middle half $' + Math.round(u.low) + '–$' + Math.round(u.high)}>· usual {money(u.median)}</span> : null}
+                    <div className="flex-1" />
+                    {mayApprove && rows.length > 1 && left.length ? <button onClick={() => setState(left.map(t => t.id), toState)} className="h-7 px-2 rounded-md border border-line text-[11.5px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1"><Check size={11} /> Approve these {left.length}</button> : null}
+                  </div>
+                  <ul>{rows.map(t => <Row key={t.id} t={t} stage={st} isGm={isGm} busy={busy.has(t.id)} open={openId === t.id} checked={picks.has(t.id)} onCheck={onCheck} onToggle={onToggle} onState={onState} onEdit={onEdit} onText={onText} extra={data.extras?.[t.id]} onExtra={onExtra} onReload={reload} />)}</ul>
+                </div>
+              )
+            })}
+            <p className="px-4 py-2 text-[11px] text-muted bg-app/40">Keys: → next property · ← back · a approve the clean ones. A row with a red flag is never in “the clean ones”.</p>
+          </section>
+        )
+      })() : view === 'kind' ? kinds.map(({ k, rows }) => {
+        const u = rows.find(t => t.usual)?.usual
+        const amounts = rows.filter(t => t.billedAmount > 0).map(t => t.billedAmount).sort((a, b) => a - b)
+        const mid = amounts.length ? amounts[Math.floor(amounts.length / 2)] : 0
+        const left = pendingIn(rows), clean = cleanIn(rows)
+        return (
+          <section key={k} className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
+            <header className="px-4 py-2.5 flex items-center gap-2 flex-wrap bg-app/40 border-b border-line">
+              <span className="text-[14px] font-bold text-ink">{kindLabel(k)}</span>
+              <span className="text-[12px] text-muted">{rows.length} job{rows.length === 1 ? '' : 's'} · {money(rows.reduce((a, t) => a + t.billedAmount, 0))}{amounts.length ? ' · this window ' + money(amounts[0]) + '–' + money(amounts[amounts.length - 1]) + ', middle ' + money(mid) : ''}</span>
+              {u ? <Tag tone="brand" title={'Approved before for ' + u.n + ' similar jobs: middle half $' + Math.round(u.low) + '–$' + Math.round(u.high)}>usual {money(u.median)}</Tag> : null}
+              <div className="flex-1" />
+              {mayApprove && clean.length ? <button onClick={() => setState(clean.map(t => t.id), toState)} className="h-8 px-2.5 rounded-lg bg-brand-600 text-white text-[12px] font-semibold inline-flex items-center gap-1"><Check size={12} /> Approve clean {clean.length}</button> : null}
+              {mayApprove && left.length > clean.length ? <button onClick={() => setState(left.map(t => t.id), toState)} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink">All {left.length}</button> : null}
+            </header>
+            <ul>{rows.map(t => <Row key={t.id} t={t} stage={st} isGm={isGm} busy={busy.has(t.id)} open={openId === t.id} checked={picks.has(t.id)} onCheck={onCheck} onToggle={onToggle} onState={onState} onEdit={onEdit} onText={onText} extra={data.extras?.[t.id]} onExtra={onExtra} onReload={reload} />)}</ul>
+          </section>
+        )
+      }) : groups.filter(g => g.rows.length).map(({ owner: o, rows }) => {
         const k = o.ownerId || '—'
         const isOpen = !collapsed[k]
         const actionable = rows.filter(inStage)
