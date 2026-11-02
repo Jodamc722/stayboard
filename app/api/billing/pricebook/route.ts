@@ -7,11 +7,12 @@ import { buildPricebook, readPricebook, pricebookStale } from '@/lib/billing-pri
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
-export async function POST() {
+export async function POST(req: Request) {
   const gate = await requireLevel('billing', 'view')
   if (!gate.ok) return gate.res
   const cur = await readPricebook()
-  if (!pricebookStale(cur)) return NextResponse.json({ ok: true, rebuilt: false, kinds: Object.keys(cur!.kinds).length })
+  const force = new URL(req.url).searchParams.get('force') === '1'
+  if (!force && !pricebookStale(cur)) return NextResponse.json({ ok: true, rebuilt: false, kinds: Object.keys(cur!.kinds).length })
   try {
     const b = await buildPricebook(gate.access.email || 'billing')
     return NextResponse.json({ ok: true, rebuilt: true, kinds: Object.keys(b.kinds).length, months: b.months })

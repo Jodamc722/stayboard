@@ -90,7 +90,12 @@ export type BillingTask = {
 export function jobKind(name: string, unit: string, category: string | null | undefined): string {
   let n = String(name || '').toLowerCase()
   for (const w of String(unit || '').toLowerCase().split(/[^a-z0-9]+/).filter(x => x.length > 2)) n = n.split(w).join(' ')
-  const words = n.replace(/\[moved to [^\]]+\]/g, ' ').replace(/[^a-z\s]/g, ' ').split(/\s+/)
+  // The words that say WHERE a job came from, not WHAT it is ("Field Reported Priority / toilet
+  // screw covers", "Preventative Maintenance Task || clean bathroom vent") come off first, or every
+  // field report would look like the same job.
+  const stripped = n.replace(/\[moved to [^\]]+\]/g, ' ')
+    .replace(/(preventa?t?ive|preventive) maintenance( task)?|field reported( priority)?|guest reported( glitch)?|in[\s-]?house|\(code change\)|\bpriority\b|\burgent\b|\btask\b/g, ' ')
+  const words = (stripped.replace(/[^a-z\s]/g, ' ').trim() ? stripped : n).replace(/[^a-z\s]/g, ' ').split(/\s+/)
     .filter(w => w.length > 1 && !/^(the|and|for|in|at|of|to|a|unit|apt|suite|stu|studio|br|bdr|room|de|la|el|en|y)$/.test(w))
   return (category || 'other') + '|' + (words.slice(0, 3).join(' ') || 'task')
 }
@@ -715,7 +720,7 @@ export async function billingRange(rFrom: string, rTo: string): Promise<{ tasks:
       if (near.length && !isDepartureCleanName(t.name) && !t.routine && !f.includes('duplicate')) { f.push('repeat_unit'); why.repeat_unit = 'also billed ' + near.map(x => x.day.slice(5)).join(', ') + ' on this unit' }
       if (t.suggested && t.suggested.basis === 'hours' && t.overrideAmount == null && t.billable?.verdict !== 'maybe' && t.billedAmount < t.suggested.amount * 0.8) { f.push('underpriced'); why.underpriced = $(t.billedAmount) + ' — ' + t.suggested.why + ' = ' + $(t.suggested.amount) }
     }
-    if (finished && !t.excluded && String(t.rateType || '').toLowerCase() === 'hourly' && !(t.actualMinutes && t.actualMinutes > 0) && t.billedHours == null && t.overrideAmount == null) { f.push('no_time'); why.no_time = 'hourly at ' + $(t.ratePaid || 0) + '/h with no time logged — bills $0 labour' }
+    if (finished && !t.excluded && (t.ratePaid || 0) > 0 && String(t.rateType || '').toLowerCase() === 'hourly' && !(t.actualMinutes && t.actualMinutes > 0) && t.billedHours == null && t.overrideAmount == null) { f.push('no_time'); why.no_time = 'hourly at ' + $(t.ratePaid || 0) + '/h with no time logged — bills $0 labour' }
     if (f.includes('should_bill') && t.suggested) why.should_bill = 'suggest ' + $(t.suggested.amount) + ' (' + t.suggested.why + ')'
     // THE REPORT AUDIT: only where money is involved.
     if (finished && !t.excluded && (t.billedAmount > 0 || f.includes('should_bill')) && t.evidence) {

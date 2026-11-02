@@ -578,7 +578,7 @@ export function BillingReview() {
   const [sortBy, setSortBy] = useState<'flags' | 'amount' | 'date' | 'unit'>('flags')
   // HOW TO WALK IT (Jon, 2026-11-02: "a property by property review … go through it … similar tasks
   // together"): by owner (the list), one property at a time, or every similar job side by side.
-  const [view, setView] = useState<'owner' | 'property' | 'kind'>('owner')
+  const [view, setView] = useState<'owner' | 'property' | 'kind'>('property')
   const [walkIdx, setWalkIdx] = useState(0)
   const [evBusy, setEvBusy] = useState(0)
   const [q, setQ] = useState('')
@@ -962,13 +962,15 @@ export function BillingReview() {
   const properties = useMemo(() => {
     const m = new Map<string, { key: string; unit: string; ownerName: string; rows: Task[] }>()
     for (const t of visible) {
-      const k = t.ownerName + '|' + t.unit
-      if (!m.has(k)) m.set(k, { key: k, unit: t.unit, ownerName: t.ownerName, rows: [] })
+      // OWNER BY OWNER (Jon, 2026-11-02: "owner by owner, not property by property … group all tasks"):
+      // one stop per owner, every unit of theirs in it, grouped by similar job.
+      const k = t.ownerId || t.ownerName || '—'
+      if (!m.has(k)) m.set(k, { key: k, unit: '', ownerName: t.ownerName, rows: [] })
       m.get(k)!.rows.push(t)
     }
     const out = Array.from(m.values())
-    for (const p of out) p.rows.sort(rowSort)
-    return out.sort((a, b) => a.ownerName.localeCompare(b.ownerName) || a.unit.localeCompare(b.unit, undefined, { numeric: true }))
+    for (const p of out) { p.rows.sort(rowSort); const us = Array.from(new Set(p.rows.map(t => t.unit))); p.unit = us.length === 1 ? us[0] : us.length + ' units' }
+    return out.sort((a, b) => (a.ownerName === 'Unassigned owner' ? 1 : 0) - (b.ownerName === 'Unassigned owner' ? 1 : 0) || a.ownerName.localeCompare(b.ownerName))
   }, [visible, rowSort])
   const kinds = useMemo(() => {
     const m = new Map<string, Task[]>()
@@ -1078,7 +1080,7 @@ export function BillingReview() {
           ) : null}
           {st !== 'done' || apMode === 'rows' ? (
             <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px] h-8" title="How to go through it">
-              {([['owner', 'By owner'], ['property', 'Property by property'], ['kind', 'Similar jobs']] as const).map(([k, l]) => (
+              {([['property', 'Owner by owner'], ['kind', 'Similar jobs'], ['owner', 'Full list']] as const).map(([k, l]) => (
                 <button key={k} onClick={() => { setView(k); setWalkIdx(0); setOpenId('') }} className={'px-2.5 font-semibold border-l border-line first:border-l-0 ' + (view === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{l}</button>
               ))}
             </div>
@@ -1174,23 +1176,23 @@ export function BillingReview() {
           <section className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
             <header className="px-4 py-3 border-b border-line bg-app/40 space-y-2">
               <div className="flex items-center gap-2 flex-wrap">
-                <button onClick={() => go(i - 1)} disabled={i === 0} className={b + ' border border-line bg-white text-ink'} title="Previous property (← or k)"><ChevronLeft size={14} /> Prev</button>
-                <select value={i} onChange={e => go(Number(e.target.value))} className="h-9 rounded-lg border border-line bg-white px-2 text-[12.5px] max-w-[22rem]" title="Jump to a property">
-                  {properties.map((p, n) => { const left = pendingIn(p.rows).length; return <option key={p.key} value={n}>{left ? '● ' : '✓ '}{p.unit} — {p.ownerName} ({left} to review)</option> })}
+                <button onClick={() => go(i - 1)} disabled={i === 0} className={b + ' border border-line bg-white text-ink'} title="Previous owner (← or k)"><ChevronLeft size={14} /> Prev</button>
+                <select value={i} onChange={e => go(Number(e.target.value))} className="h-9 rounded-lg border border-line bg-white px-2 text-[12.5px] max-w-[22rem]" title="Jump to an owner">
+                  {properties.map((p, n) => { const left = pendingIn(p.rows).length; return <option key={p.key} value={n}>{left ? '● ' : '✓ '}{p.ownerName} — {p.unit} ({left} to review)</option> })}
                 </select>
-                <button onClick={() => go(i + 1)} disabled={i >= properties.length - 1} className={b + (pend.length ? ' border border-line bg-white text-ink' : ' bg-ink text-white')} title="Next property (→ or j)">Next <ChevronRight size={14} /></button>
-                <span className="text-[12px] text-muted">Property {i + 1} of {properties.length} · {properties.filter(p => pendingIn(p.rows).length === 0).length} done</span>
+                <button onClick={() => go(i + 1)} disabled={i >= properties.length - 1} className={b + (pend.length ? ' border border-line bg-white text-ink' : ' bg-ink text-white')} title="Next owner (→ or j)">Next <ChevronRight size={14} /></button>
+                <span className="text-[12px] text-muted">Owner {i + 1} of {properties.length} · {properties.filter(p => pendingIn(p.rows).length === 0).length} done</span>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[16px] font-bold text-ink">{walk.unit}</span>
-                <span className="text-[12.5px] text-muted">{walk.ownerName}</span>
-                <Pill title="What this property bills in the window">{money(total)} · {walk.rows.length} job{walk.rows.length === 1 ? '' : 's'}</Pill>
+                <span className="text-[16px] font-bold text-ink">{walk.ownerName}</span>
+                <span className="text-[12.5px] text-muted">{walk.unit}</span>
+                <Pill title="What this owner is billed in the window">{money(total)} · {walk.rows.length} job{walk.rows.length === 1 ? '' : 's'}</Pill>
                 {stops ? <Tag tone="rose" title="Rows with a must-look flag — they are not in “Approve the clean ones”">{stops} must look</Tag> : null}
                 <div className="flex-1" />
                 {sugg.length ? <button onClick={() => applySuggested(sugg)} className={b + ' border border-brand-200 bg-white text-brand-700 hover:bg-brand-50'} title={sugg.map(t => t.name + ': ' + money(t.suggested!.amount) + ' — ' + t.suggested!.why).join('\n')}>Bill suggested on {sugg.length} ({money(sugg.reduce((a, t) => a + t.suggested!.amount, 0))})</button> : null}
-                {mayApprove && clean.length ? <button onClick={() => setState(clean.map(t => t.id), toState)} className={b + ' bg-brand-600 text-white hover:bg-brand-700'} title="Approve every row here without a must-look flag (a)"><Check size={14} /> Approve the clean ones ({clean.length})</button> : null}
+                {mayApprove && clean.length ? <button onClick={() => setState(clean.map(t => t.id), toState)} className={b + ' bg-brand-600 text-white hover:bg-brand-700'} title="Approve every row for this owner without a must-look flag (a)"><Check size={14} /> Approve the clean ones ({clean.length})</button> : null}
                 {mayApprove && pend.length > clean.length ? <button onClick={() => setState(pend.map(t => t.id), toState)} className={b + ' border border-line bg-white text-ink'}>Approve all {pend.length}</button> : null}
-                {!pend.length ? <button onClick={() => go(i + 1)} disabled={i >= properties.length - 1} className={b + ' bg-emerald-600 text-white'}><Check size={14} /> All reviewed — next property</button> : null}
+                {!pend.length ? <button onClick={() => go(i + 1)} disabled={i >= properties.length - 1} className={b + ' bg-emerald-600 text-white'}><Check size={14} /> All reviewed — next owner</button> : null}
               </div>
             </header>
             {Array.from(byKind.entries()).map(([k, rows]) => {
@@ -1209,7 +1211,7 @@ export function BillingReview() {
                 </div>
               )
             })}
-            <p className="px-4 py-2 text-[11px] text-muted bg-app/40">Keys: → next property · ← back · a approve the clean ones. A row with a red flag is never in “the clean ones”.</p>
+            <p className="px-4 py-2 text-[11px] text-muted bg-app/40">Keys: → next owner · ← back · a approve the clean ones. A row with a red flag is never in “the clean ones”.</p>
           </section>
         )
       })() : view === 'kind' ? kinds.map(({ k, rows }) => {

@@ -77,7 +77,8 @@ export async function gatherEvidence(taskId: string, created: { name?: string | 
   for (const k of ['notes', 'report_notes', 'completion_notes']) { const m = meaningful(str(t?.[k]), ignore); if (m) said.push(m) }
   const words = said.join(' ').split(/\s+/).filter(w => w.replace(/[^a-záéíóúñ]/gi, '').length > 1).length
   const hasWords = words >= 5
-  const verdict: Evidence['verdict'] = photos > 0 && hasWords ? 'solid' : photos > 0 || hasWords || answered >= 3 ? 'thin' : 'none'
+  // Photos are the proof for most jobs: two or more, or one with real words, is a report.
+  const verdict: Evidence['verdict'] = photos >= 2 || (photos === 1 && hasWords) ? 'solid' : photos > 0 || hasWords || answered >= 3 ? 'thin' : 'none'
   const why = verdict === 'solid' ? photos + ' photo' + (photos === 1 ? '' : 's') + ', ' + words + ' words from the crew'
     : verdict === 'none' ? 'nothing added — no photos, no notes' + (rows.length ? ', no checklist answers' : '')
       : [photos ? photos + ' photo' + (photos === 1 ? '' : 's') : 'no photos', hasWords ? words + ' words' : words ? 'only ' + words + ' word' + (words === 1 ? '' : 's') + ' of notes' : 'no notes about the work'].join(', ')
