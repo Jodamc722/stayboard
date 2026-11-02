@@ -25,7 +25,6 @@ const SYNONYMS: Record<string, string> = {
   'pool': 'Swimming pool', 'shared pool': 'Communal pool', 'building pool': 'Communal pool', 'rooftop deck': 'Rooftop pool',
   'wifi': 'Wireless Internet', 'wi fi': 'Wireless Internet', 'fast wifi': 'Wireless Internet', 'internet': 'Internet',
   'dedicated workspace': 'Laptop friendly workspace', 'workspace': 'Laptop friendly workspace', 'desk chair': 'Desk', 'office': 'Laptop friendly workspace',
-  'self check in': 'Private entrance', 'smart lock': 'Private entrance', 'keypad': 'Private entrance', 'lockbox': 'Private entrance',
   'smoke alarm': 'Smoke detector', 'carbon monoxide alarm': 'Carbon monoxide detector', 'co alarm': 'Carbon monoxide detector', 'co detector': 'Carbon monoxide detector',
   'terrace': 'Patio or balcony', 'patio': 'Patio or balcony', 'lanai': 'Patio or balcony',
   'ocean view': 'Sea view', 'oceanview': 'Sea view', 'bay view': 'Water View', 'intracoastal view': 'Water View', 'city skyline view': 'City View', 'skyline view': 'City View', 'garden view': 'Garden View',
@@ -46,7 +45,7 @@ const SYNONYMS: Record<string, string> = {
   'ethernet connection': 'Internet', 'water sports': 'Water Sports', 'kayaks': 'Kayak', 'bicycles': 'Bikes', 'bike': 'Bikes',
 }
 /** Things with NO Guesty amenity at all — never offer them as something to add. */
-const NO_GUESTY_EQUIVALENT = new Set(['pets allowed', 'smoking allowed', 'events allowed', 'suitable for infants', 'host greets you', 'security cameras on property', 'baby bath', 'walk in shower', 'walk-in shower', 'floor plan', 'natural light', 'king bed', 'queen bed'])
+const NO_GUESTY_EQUIVALENT = new Set(['self check in', 'smart lock', 'keypad', 'lockbox', 'pets allowed', 'smoking allowed', 'events allowed', 'suitable for infants', 'host greets you', 'security cameras on property', 'baby bath', 'walk in shower', 'walk-in shower', 'floor plan', 'natural light', 'king bed', 'queen bed'])
 
 export const norm = (x: string) => String(x || '').toLowerCase().replace(/[’']/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim()
 

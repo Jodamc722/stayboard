@@ -158,7 +158,8 @@ const HIGH_VALUE: AmenityDef[] = [
   { name: 'Pool', tier: 3, variants: ['pool', 'swimming pool'], not: ['pool towels', 'pool towel', 'pool table', 'pool toys'] },
   { name: 'Kitchen', tier: 3, variants: ['kitchen', 'kitchenette', 'cooking basics'] },
   { name: 'Parking', tier: 3, variants: ['parking', 'garage', 'carport', 'valet'], partial: ['street parking', 'off premises', 'off-premises', 'paid parking off'], conditional: 'parking' },
-  { name: 'Self check-in', tier: 3, variants: ['self check-in', 'self check in', 'smart lock', 'keypad', 'lockbox'] },
+  // Self check-in left out (2026-11-01): Guesty has no amenity for it — it is the listing's check-in
+  // method, a separate field — so scoring it here was a point nobody could earn from this page.
   { name: 'Hot tub', tier: 2, variants: ['hot tub', 'jacuzzi', 'jetted tub', 'whirlpool'] },
   { name: 'Washer', tier: 2, variants: ['washer', 'washing machine', 'laundry'], not: ['dishwasher'] },
   { name: 'Dryer', tier: 2, variants: ['dryer', 'clothes dryer'], not: ['hair dryer', 'hairdryer'] },
