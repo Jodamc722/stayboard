@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { guestyFetch } from '@/lib/guesty-retry'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
@@ -85,12 +86,13 @@ export async function POST(req: NextRequest) {
   const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now() + 30_000)
   if (!valid) return NextResponse.json({ error: 'Guesty token unavailable - run a sync, then retry in a moment.' }, { status: 503 })
 
-  const r = await fetch(`${BASE}/listings/${encodeURIComponent(listingId)}`, {
+  const r = await guestyFetch(`${BASE}/listings/${encodeURIComponent(listingId)}`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${tok!.access_token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ pictures: reordered }),
   })
   const respText = await r.text().catch(() => '')
+  if (r.status === 429) return NextResponse.json({ error: 'Guesty asked us to slow down — try this unit again in a minute.' }, { status: 429 })
   if (!r.ok) return NextResponse.json({ error: `Guesty ${r.status}: ${respText.slice(0, 240)}` }, { status: 502 })
 
   // Mirror locally so StayBoard reflects the new order immediately.
@@ -105,8 +107,8 @@ export async function POST(req: NextRequest) {
   let verified = false
   let verifyNote = ''
   try {
-    const vr = await fetch(`${BASE}/listings/${encodeURIComponent(listingId)}?fields=pictures`, {
-      headers: { Authorization: `Bearer ${tok!.access_token}`, Accept: 'application/json' }, cache: 'no-store',
+    const vr = await guestyFetch(`${BASE}/listings/${encodeURIComponent(listingId)}?fields=pictures`, {
+      headers: { Authorization: `Bearer ${tok!.access_token}`, Accept: 'application/json' },
     })
     if (vr.ok) {
       const vj: any = await vr.json().catch(() => ({}))

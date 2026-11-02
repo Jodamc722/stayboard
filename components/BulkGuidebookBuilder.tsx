@@ -5,7 +5,7 @@ import { Loader2, Check, AlertTriangle, ArrowRight } from 'lucide-react'
 type Listing = { id: string; name: string }
 type Bld = { name: string; listings: Listing[] }
 type Rec = { name: string; type?: string; blurb?: string; area?: string }
-type Res = { id: string; name: string; status: 'pending' | 'running' | 'done' | 'err' | 'skip'; bookId?: string }
+type Res = { id: string; name: string; status: 'pending' | 'running' | 'done' | 'err' | 'skip'; bookId?: string; msg?: string }
 
 const SHARED = [
   { key: 'entry', label: 'Building access & elevator', hint: 'Lobby entry, fob or code, elevator, which floors — the parts every unit shares.' },
@@ -25,6 +25,7 @@ export function BulkGuidebookBuilder() {
   const [recs, setRecs] = useState<Rec[]>([])
   const [recPick, setRecPick] = useState<Record<number, boolean>>({})
   const [recBusy, setRecBusy] = useState(false)
+  const [recErr, setRecErr] = useState('')
   const [running, setRunning] = useState(false)
   const [overwrite, setOverwrite] = useState(false)
   const [results, setResults] = useState<Res[]>([])
@@ -50,9 +51,10 @@ export function BulkGuidebookBuilder() {
     setRecBusy(true)
     try {
       const r = await fetch('/api/guidebook/suggest-recs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ listingId: listings[0].id }) })
-      const d = await r.json(); const list: Rec[] = Array.isArray(d?.recs) ? d.recs : []
+      const d = await r.json().catch(() => ({})); const list: Rec[] = Array.isArray(d?.recs) ? d.recs : []
+      if (!r.ok || d?.error) setRecErr(String(d?.error || ('HTTP ' + r.status))); else setRecErr('')
       setRecs(list); const pk: Record<number, boolean> = {}; list.forEach((_, i) => { pk[i] = i < 6 }); setRecPick(pk)
-    } catch {}
+    } catch (e: any) { setRecErr(String(e?.message || e)) }
     setRecBusy(false)
   }
 
@@ -68,9 +70,9 @@ export function BulkGuidebookBuilder() {
         const d = await r.json().catch(() => ({}))
         const skipped = !!(d?.exists && !d?.id)
         const ok = r.ok && d?.id
-        setResults((rs) => rs.map((x) => (x.id === l.id ? { ...x, status: skipped ? 'skip' : (ok ? 'done' : 'err'), bookId: d?.id } : x)))
-      } catch {
-        setResults((rs) => rs.map((x) => (x.id === l.id ? { ...x, status: 'err' } : x)))
+        setResults((rs) => rs.map((x) => (x.id === l.id ? { ...x, status: skipped ? 'skip' : (ok ? 'done' : 'err'), bookId: d?.id, msg: ok || skipped ? undefined : String(d?.error || ('HTTP ' + r.status)).slice(0, 120) } : x)))
+      } catch (e: any) {
+        setResults((rs) => rs.map((x) => (x.id === l.id ? { ...x, status: 'err', msg: String(e?.message || e).slice(0, 120) } : x)))
       }
     }
     setRunning(false)
@@ -118,6 +120,7 @@ export function BulkGuidebookBuilder() {
               <label className="text-xs font-semibold text-ink">Things to do nearby</label>
               <button type="button" onClick={suggestRecs} disabled={recBusy} className="text-xs font-semibold text-brand-700 hover:underline disabled:opacity-50">{recBusy ? 'Finding…' : (recs.length ? 'Refresh' : 'Suggest spots')}</button>
             </div>
+            {recErr && <div className="mt-1 text-xs text-rose-600">Could not suggest spots: {recErr}</div>}
             {recs.length > 0 && (
               <div className="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                 {recs.map((r, i) => (
@@ -152,7 +155,7 @@ export function BulkGuidebookBuilder() {
                 <div key={r.id} className="flex items-center gap-2 text-sm rounded-lg border border-line px-2.5 py-1.5">
                   {r.status === 'done' ? <Check size={14} className="text-emerald-600" /> : r.status === 'running' ? <Loader2 size={14} className="animate-spin text-neutral-400" /> : r.status === 'skip' ? <AlertTriangle size={14} className="text-amber-500" /> : r.status === 'err' ? <AlertTriangle size={14} className="text-rose-500" /> : <span className="h-3.5 w-3.5" />}
                   <span className="flex-1 truncate">{r.name}</span>
-                  {r.bookId ? <a href={'/guidebooks/' + r.bookId} className="text-xs font-semibold text-brand-700 hover:underline">Open</a> : r.status === 'skip' ? <span className="text-xs text-amber-600">already has one</span> : r.status === 'err' ? <span className="text-xs text-rose-500">failed</span> : null}
+                  {r.bookId ? <a href={'/guidebooks/' + r.bookId} className="text-xs font-semibold text-brand-700 hover:underline">Open</a> : r.status === 'skip' ? <span className="text-xs text-amber-600">already has one</span> : r.status === 'err' ? <span className="text-xs text-rose-500" title={r.msg}>{r.msg ? 'failed — ' + r.msg : 'failed'}</span> : null}
                 </div>
               ))}
             </div>

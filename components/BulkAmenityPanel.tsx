@@ -1,12 +1,15 @@
 'use client'
-// Bulk amenity add for a building: pick amenities, pick which units, apply to all selected at
-// once. The amenity catalog is the union of amenities already in use across the building's units
-// (so every value is a valid Guesty amenity). Writes to Guesty after you confirm.
+// Bulk amenity add/remove for a building: pick amenities, pick which units, apply to all selected
+// at once. Every chip is a name Guesty will KEEP (2026-11-01: Guesty answers 200 and silently drops
+// a name it does not know, which is why adds "never stuck") — the picker is Guesty's own supported
+// list plus the building's sibling amenities translated into that list. Writes after you confirm,
+// and the result says what each unit was saved as and anything Guesty would not take.
 import { useEffect, useMemo, useState } from 'react'
 import { Check, Plus, Sparkles, AlertTriangle, RefreshCw, Search, X } from 'lucide-react'
+import { resolveAmenity } from '@/lib/guesty-amenities'
 
 type Unit = { id: string; name: string; amenityCount: number ; amenities?: string[] }
-type Res = { id: string; name: string; ok: boolean; added: number; total: number; error?: string }
+type Res = { id: string; name: string; ok: boolean; added: number; removed?: number; total: number; error?: string; skipped?: string; renamed?: { from: string; to: string }[]; dropped?: string[] }
 
 export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: string[] }) {
   const [openPanel, setOpenPanel] = useState(false)
@@ -23,7 +26,9 @@ export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: s
     fetch('/api/amenities-catalog').then(r => r.json()).then(d => { if (alive && Array.isArray(d?.names)) setExtra(d.names) }).catch(() => {})
     return () => { alive = false }
   }, [])
-  const allAddable = useMemo(() => Array.from(new Set([...addable, ...extra])).sort((a, b) => a.localeCompare(b)), [addable, extra])
+  // Only names Guesty will keep: its live list, plus sibling names translated into it.
+  const allAddable = useMemo(() => Array.from(new Set([...extra, ...addable.map(a => resolveAmenity(a, extra)).filter((x): x is string => !!x)])).sort((a, b) => a.localeCompare(b)), [addable, extra])
+  const [note, setNote] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [mode, setMode] = useState<'add' | 'remove'>('add')
   const [rem, setRem] = useState<Set<string>>(new Set())
@@ -42,9 +47,16 @@ export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: s
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ listingIds: Array.from(sel), add: mode === 'add' ? Array.from(amen) : [], remove: mode === 'remove' ? Array.from(rem) : [] }),
       })
-      const d = await res.json()
+      // A Vercel timeout page is HTML; read text first so the error is readable rather than "Unexpected token '<'".
+      const text = await res.text()
+      let d: any = null; try { d = JSON.parse(text) } catch { /* not JSON */ }
+      if (!d) throw new Error(res.status >= 500 ? 'The server took too long — try fewer units at once.' : `HTTP ${res.status}`)
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
       setResults(d.results || [])
+      const bits: string[] = []
+      if (Array.isArray(d.renamed) && d.renamed.length) bits.push('Saved as Guesty names it: ' + d.renamed.map((r: any) => `${r.from} → ${r.to}`).join(', '))
+      if (Array.isArray(d.dropped) && d.dropped.length) bits.push('Guesty has no amenity for: ' + d.dropped.join(', ') + ' — not saved anywhere.')
+      setNote(bits.length ? bits.join(' · ') : null)
       setConfirming(false)
     } catch (e: any) { setErr(e?.message || String(e)) }
     finally { setBusy(false) }
@@ -73,13 +85,18 @@ export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: s
       )}
       {results ? (
         <div>
-          <div className="text-[13px] font-semibold text-ink mb-2">Done — {results.filter(r => r.ok).length}/{results.length} units updated.</div>
+          <div className="text-[13px] font-semibold text-ink mb-2">Done — {results.filter(r => r.ok).length}/{results.length} units updated on Guesty.</div>
+          {note && <div className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2">{note}</div>}
           <div className="space-y-1 max-h-64 overflow-y-auto">
             {results.map(r => (
-              <div key={r.id} className="flex items-center justify-between gap-2 text-[12px] border border-line rounded-lg px-2.5 py-1.5">
-                <span className="text-ink truncate">{r.name}</span>
-                {r.ok ? <span className="text-emerald-700 inline-flex items-center gap-1 shrink-0"><Check size={12} /> +{r.added} ({r.total} total)</span>
-                  : <span className="text-rose-600 inline-flex items-center gap-1 shrink-0" title={r.error}><AlertTriangle size={12} /> failed</span>}
+              <div key={r.id} className="text-[12px] border border-line rounded-lg px-2.5 py-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-ink truncate">{r.name}</span>
+                  {r.ok ? <span className="text-emerald-700 inline-flex items-center gap-1 shrink-0"><Check size={12} /> {r.removed ? `−${r.removed}` : `+${r.added}`} ({r.total} total)</span>
+                    : <span className="text-rose-600 inline-flex items-center gap-1 shrink-0" title={r.error || r.skipped}><AlertTriangle size={12} /> {r.skipped ? 'not reached' : 'failed'}</span>}
+                </div>
+                {!r.ok && (r.error || r.skipped) && <div className="text-[11px] text-rose-600 mt-0.5">{r.error || r.skipped}</div>}
+                {r.ok && r.dropped && r.dropped.length > 0 && <div className="text-[11px] text-amber-800 mt-0.5">Guesty did not keep: {r.dropped.join(', ')}</div>}
               </div>
             ))}
           </div>
@@ -95,7 +112,7 @@ export function BulkAmenityPanel({ units, addable }: { units: Unit[]; addable: s
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search amenities…" className="w-full pl-8 pr-3 py-1.5 text-[13px] rounded-lg border border-line bg-app focus:outline-none focus:ring-2 focus:ring-brand-200" />
           </div>
           <div className="flex flex-wrap gap-1.5 mb-4 max-h-40 overflow-y-auto">
-            {filtered.length === 0 && <span className="text-[12px] text-muted italic">No amenities in this building's catalog.</span>}
+            {filtered.length === 0 && <span className="text-[12px] text-muted italic">{extra.length ? 'No Guesty amenity matches that.' : 'Loading Guesty’s amenity list…'}</span>}
             {filtered.map(a => {
               const on = amen.has(a)
               return (

@@ -20,7 +20,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildingFactsFor, factsPrompt } from '@/lib/building-facts'
-import { areaFactsFor, areaPrompt } from '@/lib/local-area'
+import { areaFactsFor, areaPrompt, listingLatLng } from '@/lib/local-area'
 import { HONESTY } from '@/lib/listing-rules'
 import { loadListingAi } from '@/lib/listing-ai-server'
 import { sectionRules, bannedRule } from '@/lib/listing-ai'
@@ -127,7 +127,9 @@ export async function POST(req: NextRequest) {
       }
       const nb = norm(best.neighborhood)
       if (nb) L.push('- Neighbourhood as Guesty has it: ' + nb)
-      const lat = Number(best.lat), lng = Number(best.lng)
+      // Coordinates from wherever Guesty put them (address.lat/lng, latitude/longitude, or the columns).
+      const ll = listingLatLng(units.find(u => norm(u.raw?.address?.full || u.raw?.address?.street || '') === norm(best.full || best.street || '')) || units[0])
+      const lat = ll ? ll.lat : NaN, lng = ll ? ll.lng : NaN
       if (Number.isFinite(lat) && Number.isFinite(lng) && (lat || lng)) L.push('- Coordinates: ' + lat.toFixed(5) + ', ' + lng.toFixed(5))
       L.push('You may use general, durable knowledge of this area — the kind of neighbourhood it is, which')
       L.push('way the water or the highway lies, that an airport is a drive rather than a walk. You may NOT')
@@ -155,7 +157,11 @@ export async function POST(req: NextRequest) {
       : (k === 'transit' || k === 'neighborhood')
         ? ' Work from where this property actually is, plus the verified facts and what the units already say.'
         : ''
-    return `- "${k}" (${s.label}): ${s.hint}${how}${c ? ' ' + sectionRules(c) : ''} Hard limit ${s.max} characters.${ask}`
+    // The section GUIDE is the editable prompt from Settings — the "Our local picks:" shape, the
+    // one-pick-per-line hyphens, lead-with-the-famous-place, the Notes line list. Without it the
+    // bulk draft ignored every rule the single-listing optimizer follows (audit, 2026-11-01).
+    const guide = c?.guide ? ' ' + String(c.guide).trim() : ''
+    return `- "${k}" (${s.label}): ${s.hint}${how}${guide}${c ? ' ' + sectionRules(c) : ''} Hard limit ${s.max} characters.${ask}`
   }).join('\n')
 
   const scopeNote = scope === 'portfolio'

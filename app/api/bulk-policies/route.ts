@@ -8,10 +8,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireAnyLevel } from '@/lib/access'
 import { requireVrUser } from '@/lib/vr-gate'
+import { guestyFetch } from '@/lib/guesty-retry'
+import { conflictsWithMax, readConfig as readStayWindow } from '@/lib/stay-window'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 300
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
+const GAP_MS = 300            // between listings — a fee change is two Guesty calls (GET prices + PUT)
+const TIME_BUDGET_MS = 270_000
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 // Note: cancellation policy is NOT settable via Guesty's API (the integrations object is read-only),
 // so it's intentionally not handled here. Set cancellation in Guesty's UI.
@@ -138,8 +143,14 @@ export async function POST(req: NextRequest) {
   const byId = new Map<string, any>()
   ;(rows ?? []).forEach((r: any) => byId.set(r.id, r))
 
-  const results: { id: string; name: string; ok: boolean; error?: string; from?: number | null; to?: number }[] = []
+  const results: { id: string; name: string; ok: boolean; error?: string; from?: number | null; to?: number; note?: string }[] = []
   let okCount = 0, failCount = 0
+  // The Stay Window (lib/stay-window) sets per-date minimum nights on its enrolled listings for the
+  // next ~60 days, so a bulk default change is real but not what a guest sees until the window
+  // moves on. Say so on the row instead of letting the person think nothing happened.
+  let windowIds = new Set<string>()
+  if (change.minNights != null) { try { const cfg = await readStayWindow(); windowIds = new Set(cfg.listings.map(l => String(l.id))) } catch { /* no config */ } }
+  const started = Date.now()
 
   // Writability test: PUT a listing's CURRENT pictures back unchanged to see if Guesty allows photo writes.
   if (dryRunPictures) {
@@ -151,18 +162,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ dryRunPictures: true, listingId: id0, status: rp.status, ok: rp.ok, pics: pics0.length, body: tp.slice(0, 200) })
   }
 
+  let first = true
   for (const id of listingIds) {
     const row = byId.get(id)
     const name = row ? (row.title || row.nickname || id) : id
+    if (!row) { results.push({ id, name, ok: false, error: 'Not in our mirror yet — run a Guesty sync, then retry.' }); failCount++; continue }
+    if (Date.now() - started > TIME_BUDGET_MS) { results.push({ id, name, ok: false, error: 'Not reached — time budget; run again for the rest.' }); failCount++; continue }
+    if (!first) await sleep(GAP_MS)
+    first = false
     const raw: any = (row?.raw && typeof row.raw === 'object') ? row.raw : {}
     // Build a partial PUT payload, merging nested objects from the synced raw so we don't clobber siblings.
     const payload: any = {}
+    let note = ''
     if (change.checkInTime) payload.defaultCheckInTime = change.checkInTime
     if (change.checkOutTime) payload.defaultCheckOutTime = change.checkOutTime
     if (change.minNights != null || change.maxNights != null) {
       const terms = (raw.terms && typeof raw.terms === 'object') ? { ...raw.terms } : {}
       if (change.minNights != null) terms.minNights = change.minNights
       if (change.maxNights != null) terms.maxNights = change.maxNights
+      // A minimum above the maximum books nothing — refuse that one listing, not the batch.
+      const minN = Number(terms.minNights), maxN = Number(terms.maxNights)
+      const clash = Number.isFinite(minN) ? conflictsWithMax(minN, Number.isFinite(maxN) ? maxN : null) : null
+      if (clash) { results.push({ id, name, ok: false, error: clash }); failCount++; continue }
+      if (change.minNights != null && windowIds.has(String(id))) note = 'Default saved; the Stay Window sets this listing’s per-date minimums for the next ~60 days, so the calendar shows those first.'
       payload.terms = terms
     }
     if (change.houseRules) payload.publicDescription = { houseRules: change.houseRules }
@@ -172,7 +194,7 @@ export async function POST(req: NextRequest) {
       // fees go back exactly as they are now — only cleaningFee changes.
       let prices: any = null
       try {
-        const g = await fetch(`${BASE}/listings/${encodeURIComponent(id)}?fields=prices`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' } })
+        const g = await guestyFetch(`${BASE}/listings/${encodeURIComponent(id)}?fields=prices`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' } })
         if (g.ok) { const j = await g.json().catch(() => ({})); if (j?.prices && typeof j.prices === 'object') prices = j.prices }
       } catch { /* handled below */ }
       if (!prices) { results.push({ id, name, ok: false, error: 'Could not read the current prices from Guesty — nothing changed.' }); failCount++; continue }
@@ -181,13 +203,13 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const r = await fetch(`${BASE}/listings/${encodeURIComponent(id)}`, {
+      const r = await guestyFetch(`${BASE}/listings/${encodeURIComponent(id)}`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
       const text = await r.text().catch(() => '')
-      if (!r.ok) { results.push({ id, name, ok: false, error: `Guesty ${r.status}: ${text.slice(0, 120)}` }); failCount++; continue }
+      if (!r.ok) { results.push({ id, name, ok: false, error: r.status === 429 ? 'Guesty asked us to slow down — run again in a minute for this unit.' : `Guesty ${r.status}: ${text.slice(0, 120)}` }); failCount++; continue }
       // Mirror locally.
       try {
         const newRaw: any = { ...raw }
@@ -198,7 +220,7 @@ export async function POST(req: NextRequest) {
         if (change.houseRules) newRaw.publicDescription = { ...(raw.publicDescription || {}), houseRules: change.houseRules }
         await sb.from('guesty_listings').update({ raw: newRaw }).eq('id', id)
       } catch { /* best effort */ }
-      results.push({ id, name, ok: true, ...(change.cleaningFee != null ? { from: oldFee, to: change.cleaningFee } : {}) }); okCount++
+      results.push({ id, name, ok: true, ...(note ? { note } : {}), ...(change.cleaningFee != null ? { from: oldFee, to: change.cleaningFee } : {}) }); okCount++
     } catch (e: any) {
       results.push({ id, name, ok: false, error: e?.message || String(e) }); failCount++
     }

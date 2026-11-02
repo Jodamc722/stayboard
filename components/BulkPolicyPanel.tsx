@@ -7,7 +7,7 @@ import { useState } from 'react'
 import { Check, SlidersHorizontal, AlertTriangle, RefreshCw, X } from 'lucide-react'
 
 type Unit = { id: string; name: string; cleaningFee?: number | null }
-type Res = { id: string; name: string; ok: boolean; error?: string; from?: number | null; to?: number }
+type Res = { id: string; name: string; ok: boolean; error?: string; from?: number | null; to?: number; note?: string }
 
 export function BulkPolicyPanel({ units }: { units: Unit[] }) {
   const [open, setOpen] = useState(false)
@@ -51,7 +51,9 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ listingIds: Array.from(sel), policy }),
       })
-      const d = await res.json()
+      // A Vercel timeout page is HTML; read text first so the error is readable.
+      const text = await res.text(); let d: any = null; try { d = JSON.parse(text) } catch { /* not JSON */ }
+      if (!d) throw new Error(res.status >= 500 ? 'The server took too long — try fewer units at once.' : `HTTP ${res.status}`)
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
       setResults(d.results || []); setConfirming(false)
     } catch (e: any) { setErr(e?.message || String(e)) }
@@ -78,10 +80,14 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
           <div className="text-[13px] font-semibold text-ink mb-2">Done — {results.filter(r => r.ok).length}/{results.length} units updated.</div>
           <div className="space-y-1 max-h-64 overflow-y-auto">
             {results.map(r => (
-              <div key={r.id} className="flex items-center justify-between gap-2 text-[12px] border border-line rounded-lg px-2.5 py-1.5">
-                <span className="text-ink truncate">{r.name}</span>
-                {r.ok ? <span className="text-emerald-700 inline-flex items-center gap-1 shrink-0"><Check size={12} /> {r.to != null ? `clean $${r.from ?? '—'} → $${r.to}` : 'updated'}</span>
-                  : <span className="text-rose-600 inline-flex items-center gap-1 shrink-0" title={r.error}><AlertTriangle size={12} /> failed</span>}
+              <div key={r.id} className="text-[12px] border border-line rounded-lg px-2.5 py-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-ink truncate">{r.name}</span>
+                  {r.ok ? <span className="text-emerald-700 inline-flex items-center gap-1 shrink-0"><Check size={12} /> {r.to != null ? `clean $${r.from ?? '—'} → $${r.to}` : 'updated'}</span>
+                    : <span className="text-rose-600 inline-flex items-center gap-1 shrink-0" title={r.error}><AlertTriangle size={12} /> failed</span>}
+                </div>
+                {!r.ok && r.error && <div className="text-[11px] text-rose-600 mt-0.5">{r.error}</div>}
+                {r.ok && r.note && <div className="text-[11px] text-amber-800 mt-0.5">{r.note}</div>}
               </div>
             ))}
           </div>
@@ -104,7 +110,7 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
               <input value={maxNights} onChange={e => setMaxNights(e.target.value.replace(/\D/g, ''))} placeholder="45" className="w-full mt-0.5 px-2 py-1.5 text-[13px] rounded-lg border border-line bg-app focus:outline-none focus:ring-2 focus:ring-brand-200" />
             </label>
           </div>
-          <label className="block text-[11px] text-muted mb-3">House rules (additional text)
+          <label className="block text-[11px] text-muted mb-3">House rules (replaces the listing’s house-rules text)
             <textarea value={houseRules} onChange={e => setHouseRules(e.target.value)} rows={2} placeholder="e.g. No parties or events. Quiet hours 10pm–8am. No smoking indoors." className="w-full mt-0.5 px-2.5 py-1.5 text-[13px] rounded-lg border border-line bg-app focus:outline-none focus:ring-2 focus:ring-brand-200" />
           </label>
           <label className="block text-[11px] text-muted mb-3 max-w-[220px]">Cleaning fee — what the guest pays ($)

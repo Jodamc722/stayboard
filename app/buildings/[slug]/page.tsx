@@ -15,6 +15,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Building2, BedDouble, Bath, Users, MapPin, ArrowLeft, ArrowRight, Image as ImageIcon, Sparkles, MessageSquare } from 'lucide-react'
 import { ratingToStars } from '@/lib/optimize-score'
 import { pageRows } from '@/lib/db-page'
+import { resolveAmenity } from '@/lib/guesty-amenities'
 
 export const dynamic = 'force-dynamic'
 
@@ -90,8 +91,10 @@ export default async function BuildingPage({ params }: { params: { slug: string 
     units.flatMap((u: any) => Array.isArray(u.amenities) ? u.amenities : (Array.isArray(u.raw?.amenities) ? u.raw.amenities : []))
   ))
 
-  const bulkUnits = units.map((u: any) => { const amenities = (Array.isArray(u.amenities) ? u.amenities : (Array.isArray(u.raw?.amenities) ? u.raw.amenities : [])) as string[]; const cf = Number(u.raw?.prices?.cleaningFee); return { id: u.id, name: unitLabel(u), amenityCount: amenities.length, amenities, cleaningFee: Number.isFinite(cf) ? cf : null } })
-  const bulkAddable = Array.from(new Set(siblingAmenities)).sort((a, b) => a.localeCompare(b))
+  // Bulk tools act on live units only — a retired listing never needs amenities, fees or photos.
+  const bulkUnits = units.filter((u: any) => !DEAD.includes(String(u.status || '').toLowerCase())).map((u: any) => { const amenities = (Array.isArray(u.amenities) ? u.amenities : (Array.isArray(u.raw?.amenities) ? u.raw.amenities : [])) as string[]; const cf = Number(u.raw?.prices?.cleaningFee); return { id: u.id, name: unitLabel(u), amenityCount: amenities.length, amenities, cleaningFee: Number.isFinite(cf) ? cf : null } })
+  // Offer only names Guesty will keep — a sibling's legacy spelling ("Smart TV") would be dropped on save.
+  const bulkAddable = Array.from(new Set(siblingAmenities.map(a => resolveAmenity(a)).filter((x): x is string => !!x))).sort((a, b) => a.localeCompare(b))
 
   const scored = units.map((l: any) => {
     const dead = DEAD.includes(String(l.status || '').toLowerCase())

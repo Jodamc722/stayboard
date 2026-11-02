@@ -20,6 +20,7 @@ import { requireLevel } from '@/lib/access'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { unitLabel } from '@/lib/unit-label'
 import { pageRows } from '@/lib/db-page'
+import { guestyFetch } from '@/lib/guesty-retry'
 import {
   BULK_SECTIONS, planBulk, scopeError, lengthErrors, norm, sectionOf,
   type BulkSectionKey, type CopyTarget,
@@ -161,8 +162,20 @@ export async function POST(req: NextRequest) {
 
   const plan = planBulk(targets, edits)
   const writeIds = new Set(plan.rows.filter(r => r.action === 'write').map(r => r.id))
+
+  // The property keeps its own words (Jon said yes to this). Only the three property-scoped
+  // sections are stored — Other notes is portfolio boilerplate and has no per-property meaning.
+  // Saved BEFORE the writes so "save as the standard" holds even when every unit already matched.
+  const buildings = Array.from(new Set(targets.map(t => t.building)))
+  if (saveStandard && scope === 'property' && buildings.length === 1) {
+    const patch: any = { building: buildings[0], updated_by: who, updated_at: new Date().toISOString() }
+    let any = false
+    for (const k of STD_KEYS) if (edits[k]) { patch[k] = edits[k]; any = true }
+    if (any) { try { await sb.from('property_copy_standards').upsert(patch, { onConflict: 'building' }) } catch { /* best effort */ } }
+  }
+
   if (!writeIds.size) {
-    return NextResponse.json({ ok: true, okCount: 0, failCount: 0, unchanged: plan.unchanged, results: [], note: 'Every selected listing already says exactly this — nothing was sent to Guesty.' })
+    return NextResponse.json({ ok: true, okCount: 0, failCount: 0, unchanged: plan.unchanged, results: [], note: 'Every selected listing already says exactly this — nothing was sent to Guesty.' + (saveStandard && scope === 'property' ? ' The property standard was saved.' : '') })
   }
 
   const tok = await token(sb)
@@ -184,13 +197,13 @@ export async function POST(req: NextRequest) {
     if (!first) await new Promise(res => setTimeout(res, GAP_MS))
     first = false
     try {
-      const r = await fetch(`${BASE}/listings/${encodeURIComponent(id)}`, {
+      const r = await guestyFetch(`${BASE}/listings/${encodeURIComponent(id)}`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify({ publicDescription: mine }),
       })
       const text = await r.text().catch(() => '')
-      if (!r.ok) { results.push({ id, name, ok: false, error: `Guesty ${r.status}: ${text.slice(0, 120)}` }); failCount++; continue }
+      if (!r.ok) { results.push({ id, name, ok: false, error: r.status === 429 ? 'Guesty asked us to slow down — push this unit again in a minute.' : `Guesty ${r.status}: ${text.slice(0, 120)}` }); failCount++; continue }
       try {
         const raw: any = (row.raw && typeof row.raw === 'object') ? row.raw : {}
         const newRaw = { ...raw, publicDescription: { ...pub(raw), ...mine }, _lastBulkCopy: new Date().toISOString() }
@@ -200,16 +213,6 @@ export async function POST(req: NextRequest) {
     } catch (e: any) {
       results.push({ id, name, ok: false, error: e?.message || String(e) }); failCount++
     }
-  }
-
-  // The property keeps its own words (Jon said yes to this). Only the three property-scoped
-  // sections are stored — Other notes is portfolio boilerplate and has no per-property meaning.
-  const buildings = Array.from(new Set(targets.map(t => t.building)))
-  if (saveStandard && scope === 'property' && buildings.length === 1 && okCount > 0) {
-    const patch: any = { building: buildings[0], updated_by: who, updated_at: new Date().toISOString() }
-    let any = false
-    for (const k of STD_KEYS) if (edits[k]) { patch[k] = edits[k]; any = true }
-    if (any) { try { await sb.from('property_copy_standards').upsert(patch, { onConflict: 'building' }) } catch { /* best effort */ } }
   }
 
   try {

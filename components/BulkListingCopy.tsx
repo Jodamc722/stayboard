@@ -27,7 +27,12 @@ const SECTIONS: Section[] = [
   { key: 'notes', label: 'Other notes', scopes: ['property', 'portfolio'], rows: 5, max: 2000, hint: 'Anything else a guest should know. Drafted from what the listings already say.' },
 ]
 
-const CHUNK = 50   // the API caps a single call; a portfolio push is sent in batches
+const CHUNK = 50   // the API caps a single call at 60; a portfolio push is sent in batches
+// A Vercel timeout page is HTML; read text first so the error is readable rather than "Unexpected token '<'".
+async function readJson(r: Response): Promise<any> {
+  const text = await r.text()
+  try { return JSON.parse(text) } catch { return { error: r.status >= 500 ? 'The server took too long — try again, or fewer at once.' : `HTTP ${r.status}` } }
+}
 
 // What a person would actually type into a prompt box for each section, so it is not left blank.
 const PROMPT_HINT: Record<SectionKey, string> = {
@@ -128,7 +133,7 @@ export function BulkListingCopy({ scope, building, defaultOpen }: { scope: 'prop
           prompts: which === 'all' ? prompts : (prompts[which] ? { [which]: prompts[which] } : {}),
         }),
       })
-      const d = await r.json()
+      const d = await readJson(r)
       if (!r.ok || d?.error) throw new Error(d?.error || `HTTP ${r.status}`)
       setText(t => ({ ...t, ...(d.sections || {}) }))
       setRationale(String(d.rationale || '') + (Array.isArray(d.warnings) && d.warnings.length ? ' ⚠ Before you push: ' + d.warnings.join(' · ') : ''))
@@ -141,36 +146,42 @@ export function BulkListingCopy({ scope, building, defaultOpen }: { scope: 'prop
     try {
       // Portfolio pushes need the unit ids behind the chosen properties; they are fetched only
       // now, so opening the panel never pulls 250 listings for a person who is just looking.
-      let ids: string[] = []
+      // Chunks never split a building: the server checks each call holds WHOLE properties, so a
+      // building straddling two chunks used to fail the second call after the first had written.
+      const groups: string[][] = []
       if (scope === 'portfolio') {
         for (const p of chosenProps) {
           const r = await fetch('/api/listing-copy?scope=property&building=' + encodeURIComponent(p.building))
-          const d = await r.json()
+          const d = await readJson(r)
           if (d?.error) throw new Error(p.building + ': ' + d.error)
-          ids = ids.concat((d.units || []).map((u: any) => String(u.id)))
+          groups.push((d.units || []).map((u: any) => String(u.id)))
         }
       } else {
-        ids = chosenUnits.map(u => u.id)
+        groups.push(chosenUnits.map(u => u.id))
       }
+      const total = groups.reduce((n, g) => n + g.length, 0)
 
       const all: Res[] = []
-      let unchanged = 0
-      setProgress({ done: 0, total: ids.length })
-      for (let i = 0; i < ids.length; i += CHUNK) {
-        const slice = ids.slice(i, i + CHUNK)
-        const r = await fetch('/api/listing-copy', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            scope, building: scope === 'property' ? building : undefined,
-            listingIds: slice, sections: text,
-            saveStandard: scope === 'property' && saveStandard,
-          }),
-        })
-        const d = await r.json()
-        if (!r.ok || d?.error) throw new Error(d?.error || `HTTP ${r.status}`)
-        all.push(...((d.results || []) as Res[]))
-        unchanged += Number(d.unchanged || 0)
-        setProgress({ done: Math.min(i + CHUNK, ids.length), total: ids.length })
+      let unchanged = 0, done = 0
+      setProgress({ done: 0, total })
+      for (const g of groups) {
+        for (let i = 0; i < g.length; i += CHUNK) {
+          const slice = g.slice(i, i + CHUNK)
+          const r = await fetch('/api/listing-copy', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              scope, building: scope === 'property' ? building : undefined,
+              listingIds: slice, sections: text,
+              saveStandard: scope === 'property' && saveStandard,
+            }),
+          })
+          const d = await readJson(r)
+          if (!r.ok || d?.error) throw new Error(d?.error || `HTTP ${r.status}`)
+          all.push(...((d.results || []) as Res[]))
+          unchanged += Number(d.unchanged || 0)
+          done += slice.length
+          setProgress({ done, total })
+        }
       }
       setResults(all)
       if (!all.length) setNote('Every listing already said exactly this — nothing was sent to Guesty.')

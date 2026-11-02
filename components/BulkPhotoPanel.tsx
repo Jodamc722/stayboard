@@ -1,14 +1,27 @@
 'use client'
-// Bulk "organize photos by room" for a building. For each selected unit it runs the AI photo
-// categoriser (/api/optimize-photos), then builds a new order = the first 5 photos UNCHANGED
-// followed by the remaining photos grouped by room type. Nothing is written to Guesty until you
-// approve; pushing sends the new order AND each photo's caption via /api/photo-order.
+// Bulk photo optimisation for a building. For each selected unit it runs the AI photo analysis
+// (/api/optimize-photos) and proposes a new order. YOUR ORDER STAYS YOURS (Jon, 2026-10-30: "the
+// first 5 are only suggested … sometimes I organize the way that I want and I don't want to have to
+// change it again"): the default plan changes ONLY the first five — the engine's best opening — and
+// leaves the rest of each unit's order exactly as it is. "Use the full AI order" is a deliberate
+// switch. Nothing is written to Guesty until you push; pushing sends the order AND captions via
+// /api/photo-order, one unit at a time with a pause between (Guesty rate limits), and warns when
+// the week's photo updates approach Airbnb's ~100-per-week cap.
 import { useState } from 'react'
 import { Images, RefreshCw, Check, X, Lock, UploadCloud, AlertTriangle, Wand2 } from 'lucide-react'
 
 type Unit = { id: string; name: string }
 type Photo = { _id: string; url: string; category?: string; caption?: string }
-type Plan = { name: string; photos: Photo[]; order: string[]; changed: boolean; pushed?: boolean; error?: string }
+type Plan = { name: string; photos: Photo[]; order: string[]; changed: boolean; pushed?: boolean; error?: string; current: string[]; aiFull: string[]; aiFive: string[] }
+
+const GAP_MS = 500   // between unit pushes — each is a PUT plus a verify GET on Guesty
+const AIRBNB_WEEKLY_PHOTO_CAP = 100
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+// Photo updates pushed this week, remembered in this browser only (a guard, not a ledger).
+function weekKey() { const d = new Date(); const day = (d.getDay() + 6) % 7; d.setDate(d.getDate() - day); return 'stay:photo-pushes:' + d.toISOString().slice(0, 10) }
+function pushedThisWeek(): number { try { return Number(localStorage.getItem(weekKey()) || 0) || 0 } catch { return 0 } }
+function recordPushed(n: number) { try { localStorage.setItem(weekKey(), String(pushedThisWeek() + n)) } catch { /* private window */ } }
+async function readJson(r: Response): Promise<any> { const t = await r.text(); try { return JSON.parse(t) } catch { return { error: r.status >= 500 ? 'The server took too long — try again.' : 'HTTP ' + r.status } } }
 
 const ROOM_RANK: Record<string, number> = {
   living: 0, 'living area': 0, 'living room': 0, lounge: 0,
@@ -30,6 +43,8 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
   const [progress, setProgress] = useState('')
   const [plans, setPlans] = useState<Record<string, Plan>>({})
   const [pushing, setPushing] = useState<Set<string>>(new Set())
+  const [mode, setMode] = useState<'five' | 'full'>('five')
+  const [weekCount, setWeekCount] = useState<number>(() => pushedThisWeek())
 
   const toggleU = (id: string) => setSel(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
 
@@ -51,26 +66,38 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
       setProgress('Analysing ' + u.name + ' — ' + (i + 1) + ' of ' + ids.length)
       try {
         const r = await fetch('/api/optimize-photos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId: u.id }) })
-        const j = await r.json().catch(() => null)
-        if (!r.ok || !j) throw new Error((j && j.error) || ('HTTP ' + r.status))
+        const j = await readJson(r)
+        if (!r.ok || j?.error) throw new Error(j?.error || ('HTTP ' + r.status))
         const photos: Photo[] = Array.isArray(j.photos) ? j.photos.map((p: any) => ({ _id: String(p._id), url: String(p.url || ''), category: p.category, caption: p.caption })) : []
         if (photos.length < 2) {
-          next[u.id] = { name: u.name, photos, order: photos.map(p => p._id), changed: false, error: 'fewer than 2 photos' }
+          next[u.id] = { name: u.name, photos, order: photos.map(p => p._id), changed: false, error: 'fewer than 2 photos', current: [], aiFull: [], aiFive: [] }
         } else {
-          // 2026-09-08: use the engine's order (lib/photo-order) — the same order the unit page
-          // proposes — instead of a weaker local "first 5 + by category" that disagreed with it.
           const current: string[] = Array.isArray(j.currentOrder) ? j.currentOrder.map(String) : photos.map(p => p._id)
-          const order: string[] = Array.isArray(j.proposedOrder) && j.proposedOrder.length ? j.proposedOrder.map(String) : buildOrder(photos)
-          const ordered = order.map(id => photos.find(p => p._id === id)!).filter(Boolean)
-          const changed = order.some((id, idx) => id !== current[idx])
-          next[u.id] = { name: u.name, photos: ordered, order, changed }
+          const aiFull: string[] = Array.isArray(j.proposedOrder) && j.proposedOrder.length ? j.proposedOrder.map(String) : buildOrder(photos)
+          const aiFive = aiFull.slice(0, 5)
+          next[u.id] = { ...withOrder({ name: u.name, photos, order: [], changed: false, current, aiFull, aiFive }, mode) }
         }
       } catch (e: any) {
-        next[u.id] = { name: u.name, photos: [], order: [], changed: false, error: e?.message || String(e) }
+        next[u.id] = { name: u.name, photos: [], order: [], changed: false, error: e?.message || String(e), current: [], aiFull: [], aiFive: [] }
       }
       setPlans({ ...next })
     }
     setProgress(''); setRunning(false)
+  }
+
+  // The order a plan pushes, for the chosen mode: the engine's first five then YOUR order for the
+  // rest, or the engine's full order. `photos` is re-sorted to match so the strip shows what ships.
+  function withOrder(p: Plan, m: 'five' | 'full'): Plan {
+    const byId = new Map(p.photos.map(ph => [ph._id, ph]))
+    const order = m === 'full' ? p.aiFull.slice() : [...p.aiFive, ...p.current.filter(id => !p.aiFive.includes(id))]
+    for (const id of p.current) if (!order.includes(id)) order.push(id)
+    const photos = order.map(id => byId.get(id)!).filter(Boolean)
+    const changed = order.some((id, idx) => id !== p.current[idx])
+    return { ...p, order, photos, changed }
+  }
+  function switchMode(m: 'five' | 'full') {
+    setMode(m)
+    setPlans(prev => { const n: Record<string, Plan> = {}; for (const [id, p] of Object.entries(prev)) n[id] = p.error ? p : withOrder(p, m); return n })
   }
 
   async function push(id: string) {
@@ -81,8 +108,9 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
     for (const ph of plan.photos) { if (ph.caption) captions[ph._id] = ph.caption }
     try {
       const r = await fetch('/api/photo-order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId: id, order: plan.order, captions }) })
-      const j = await r.json().catch(() => null)
-      if (!r.ok || !j) throw new Error((j && j.error) || ('HTTP ' + r.status))
+      const j = await readJson(r)
+      if (!r.ok || j?.error) throw new Error(j?.error || ('HTTP ' + r.status))
+      recordPushed(plan.order.length); setWeekCount(pushedThisWeek())
       setPlans(prev => ({ ...prev, [id]: { ...prev[id], pushed: true, error: undefined } }))
     } catch (e: any) {
       setPlans(prev => ({ ...prev, [id]: { ...prev[id], error: e?.message || String(e) } }))
@@ -97,13 +125,18 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
     // Booking — and it sends captions too, despite this file's header claiming "reorder only,
     // captions untouched". The single-listing push has asked for confirmation all along; the
     // building-wide one did not.
-    const n = Object.keys(plans).filter(id => plans[id].changed && !plans[id].pushed && !plans[id].error).length
+    const todo = Object.keys(plans).filter(id => plans[id].changed && !plans[id].pushed && !plans[id].error)
+    const n = todo.length
     if (!n) return
-    if (!window.confirm(`Push the new photo order AND descriptions for ${n} unit${n === 1 ? '' : 's'} to every channel (Airbnb, Vrbo, Booking)? This changes live listings.`)) return
+    const photosToPush = todo.reduce((t, id) => t + plans[id].order.length, 0)
+    const capNote = weekCount + photosToPush > AIRBNB_WEEKLY_PHOTO_CAP ? `\n\nHeads up: that is ${photosToPush} photo updates on top of ${weekCount} already this week — Airbnb throttles around ${AIRBNB_WEEKLY_PHOTO_CAP} per listing-week, so some may apply late.` : ''
+    if (!window.confirm(`Push the ${mode === 'five' ? 'new first five (rest of your order kept)' : 'full AI photo order'} AND captions for ${n} unit${n === 1 ? '' : 's'} to every channel (Airbnb, Vrbo, Booking)? This changes live listings.${capNote}`)) return
 
-    for (const id of Object.keys(plans)) {
-      const pl = plans[id]
-      if (pl.changed && !pl.pushed && !pl.error) await push(id)
+    let first = true
+    for (const id of todo) {
+      if (!first) await sleep(GAP_MS)
+      first = false
+      await push(id)
     }
   }
 
@@ -124,7 +157,12 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
         <h2 className="text-sm font-bold text-ink inline-flex items-center gap-1.5"><Images size={14} className="text-brand-600" /> Organize photos by room</h2>
         <button onClick={() => setOpen(false)} title="Close" className="text-muted hover:text-ink"><X size={16} /></button>
       </div>
-      <p className="text-[12px] text-muted mb-3">Groups each unit's photos by room type and adds a short room description (caption) to each. The first 5 photos always keep their current order. Nothing changes on Guesty until you push.</p>
+      <p className="text-[12px] text-muted mb-2">Analyses each unit's photos, picks the strongest opening five and writes a short caption for each photo. Your order stays yours: by default only the first five change and the rest keep the order you set. Nothing changes on Guesty until you push.</p>
+      <div className="flex items-center gap-1 mb-3 text-[12px]">
+        <button onClick={() => switchMode('five')} className={mode === 'five' ? 'px-2.5 py-1 rounded-lg border font-semibold bg-brand-600 text-white border-brand-600' : 'px-2.5 py-1 rounded-lg border font-semibold bg-white text-brand-700 border-brand-200'}>New first five only</button>
+        <button onClick={() => switchMode('full')} className={mode === 'full' ? 'px-2.5 py-1 rounded-lg border font-semibold bg-brand-600 text-white border-brand-600' : 'px-2.5 py-1 rounded-lg border font-semibold bg-white text-brand-700 border-brand-200'}>Use the full AI order</button>
+        {weekCount > 0 && <span className={'ml-auto text-[11px] ' + (weekCount >= AIRBNB_WEEKLY_PHOTO_CAP * 0.8 ? 'text-amber-700' : 'text-muted')}>{weekCount} photo updates pushed this week{weekCount >= AIRBNB_WEEKLY_PHOTO_CAP * 0.8 ? ' — near Airbnb’s weekly cap' : ''}</span>}
+      </div>
 
       <div className="flex items-center justify-between mb-1.5">
         <div className="text-[10px] uppercase tracking-wider text-muted font-semibold">Units <span className="text-brand-700">· {sel.size}/{units.length}</span></div>
@@ -162,7 +200,7 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
                 <span className="text-[12px] font-semibold text-ink truncate">{p.name}</span>
                 {p.error ? <span className="text-[11px] text-rose-600 inline-flex items-center gap-1 shrink-0" title={p.error}><AlertTriangle size={12} /> {p.error.slice(0, 40)}</span>
                   : p.pushed ? <span className="text-[11px] text-emerald-700 inline-flex items-center gap-1 shrink-0"><Check size={12} /> Pushed to Guesty</span>
-                  : !p.changed ? <span className="text-[11px] text-muted shrink-0">Already grouped</span>
+                  : !p.changed ? <span className="text-[11px] text-muted shrink-0">Already in this order</span>
                   : <button onClick={() => push(id)} disabled={pushing.has(id)} className="text-[11px] font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-md px-2 py-1 inline-flex items-center gap-1 disabled:opacity-50">{pushing.has(id) ? <RefreshCw size={11} className="animate-spin" /> : <UploadCloud size={11} />} Push</button>}
               </div>
               {p.photos.length > 0 && (
@@ -170,7 +208,8 @@ export function BulkPhotoPanel({ units }: { units: Unit[] }) {
                   {p.photos.map((ph, idx) => (
                     <div key={ph._id} className="relative shrink-0">
                       <img src={ph.url} alt="" className="w-16 h-16 object-cover rounded-md border border-line" />
-                      {idx < 5 && <span className="absolute top-0.5 left-0.5 bg-black/60 text-white rounded px-1 text-[8px] inline-flex items-center gap-0.5"><Lock size={7} /> {idx + 1}</span>}
+                      {idx < 5 && <span className="absolute top-0.5 left-0.5 bg-brand-600/85 text-white rounded px-1 text-[8px] inline-flex items-center gap-0.5" title="AI’s pick for the opening five">{idx + 1}</span>}
+                      {idx >= 5 && mode === 'five' && <span className="absolute top-0.5 left-0.5 bg-black/60 text-white rounded px-1 text-[8px] inline-flex items-center gap-0.5" title="Your order, kept"><Lock size={7} /></span>}
                       {(ph.caption || ph.category) && <span className="absolute bottom-0.5 left-0.5 right-0.5 bg-black/55 text-white rounded px-1 text-[8px] truncate text-center">{ph.caption || ph.category}</span>}
                     </div>
                   ))}

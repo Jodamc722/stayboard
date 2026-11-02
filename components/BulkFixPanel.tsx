@@ -62,7 +62,8 @@ export function BulkFixPanel() {
         setRows(st.slice())
       }
     }
-    await Promise.all([worker(), worker(), worker()])
+    // One worker: three parallel AI calls is exactly how UnitTable produced 429s (see its header).
+    await worker()
     setBusy(false)
   }
 
