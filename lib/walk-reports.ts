@@ -299,7 +299,9 @@ export function reportEmailHtml(r: WalkReport): { subject: string; html: string 
     return itemHtml(it, f ? `<div style="font-size:12.5px;color:#0f6e56;margin-top:2px">Fix task raised for maintenance (${esc(fmtDate(f.raisedOn))})</div>` : '')
   }).join('')
   const carried = r.carried.map(c => itemHtml({ action: c.action, note: c.note, photos: c.photos }, `<div style="font-size:12.5px;color:#854f0b;margin-top:2px">Open since the walk of ${esc(fmtDate(c.date))}</div>`)).join('')
+  const sample = r.programId.indexOf('sample:') === 0
   const html = `<div style="${FONT};max-width:620px;margin:0 auto;font-size:14px;line-height:1.5">
+    ${sample ? `<p style="margin:0 0 12px;padding:8px 12px;border-radius:8px;background:#f9eeda;color:#633806;font-size:13px"><b>SAMPLE.</b> This is what ownership receives after a finished walk. The answers below are illustrative — the real ones come from the walk in the field app.</p>` : ''}
     <p style="font-size:12px;color:#6b6a66;margin:0 0 4px">${esc(r.place || r.programName)}</p>
     <h1 style="font-size:20px;margin:0 0 6px">${esc(r.programName)} — ${esc(when)}</h1>
     <p style="margin:0 0 14px;color:#4a4946">${r.finishedBy ? 'Walked by ' + esc(r.finishedBy) : 'Walked'}${r.startedAt ? ', ' + esc(fmtTime(r.startedAt)) + (r.finishedAt ? ' to ' + esc(fmtTime(r.finishedAt)) : '') : r.finishedAt ? ' at ' + esc(fmtTime(r.finishedAt)) : ''}${r.minutes ? ' (' + r.minutes + ' min)' : ''}.</p>
@@ -316,6 +318,61 @@ async function emailReport(r: WalkReport, to: string[]) {
   const { subject, html } = reportEmailHtml(r)
   return send(to, subject, html)
 }
+
+/**
+ * A SAMPLE of the owner email, from a real task's own checklist (Jon, 2026-11-02: "complete one as a
+ * test and draft and send me the email"). Breezeway takes checklist answers only from the field app,
+ * so a task nobody has walked has no answers; the sample fills them in — every line passed, two
+ * lines flagged with an illustrative note — so the person sees the email as ownership will get it.
+ * A task that HAS answers is shown as it is. Filed under program "sample:<id>" so it never counts
+ * as a walk (lists, roll-ups and carried issues all key on the program id), raises no fix task,
+ * and goes only to the addresses given. The subject and the page say SAMPLE.
+ */
+export async function sampleReportForTask(taskId: string, to: string[]): Promise<{ ok: boolean; code?: string; to: string[]; error?: string }> {
+  const id = str(taskId).trim()
+  if (!/^\d+$/.test(id)) return { ok: false, to: [], error: 'taskId must be a Breezeway task id' }
+  if (!breezewayConfigured()) return { ok: false, to: [], error: 'Breezeway not configured' }
+  const cur = await retrieveBreezewayTask(id).catch(() => null)
+  const t: any = cur && cur.ok && cur.data ? (cur.data.task || cur.data) : null
+  if (!t || t.id == null) return { ok: false, to: [], error: 'Breezeway did not return task ' + id }
+  const programs = await loadPrograms()
+  const hit = programForTask(t.name, programs)
+  if (!hit) return { ok: false, to: [], error: 'That task is not a program task (its title does not start with a program name).' }
+  const { program, place } = hit
+  let items = await requirements(id).catch(() => [] as WalkItem[])
+  const answered = items.some(x => x.response || x.photos.length)
+  const SAMPLE_ISSUES: [RegExp, string][] = [
+    [/gate self-closes|self-latches/i, 'Latch does not catch unless the gate is pushed shut. Pool closed and signed until the latch is adjusted.'],
+    [/^Exterior stair/i, 'Light at the bottom landing is out; treads and railing are sound.'],
+  ]
+  if (!answered) {
+    const used = new Set<number>()
+    items = items.map(it => {
+      const k = SAMPLE_ISSUES.findIndex((s, i) => !used.has(i) && s[0].test(it.action))
+      if (k >= 0) { used.add(k); return { ...it, response: 'No', note: SAMPLE_ISSUES[k][1], state: 'issue' as const } }
+      return { ...it, response: 'Yes', state: 'pass' as const }
+    })
+  }
+  const passed = items.filter(x => x.state === 'pass').length, issues = items.filter(x => x.state === 'issue').length, open = items.filter(x => x.state === 'open').length
+  const now = Date.now()
+  const today = ymdET(new Date())
+  const report: WalkReport = {
+    code: randomBytes(8).toString('hex'), programId: 'sample:' + program.id, programName: program.name, place: place ? place.label : str(t?.home?.name || ''), placeId: place ? place.id : null,
+    taskId: 'sample-' + id, taskName: str(t?.name), homeId: Number(t?.home_id ?? t?.home?.id) || null,
+    scheduledDate: str(t?.scheduled_date).slice(0, 10) || today, startedAt: new Date(now - 23 * 60_000).toISOString(), finishedAt: new Date(now).toISOString(),
+    finishedBy: str(t?.finished_by?.name || (Array.isArray(t?.assignments) && t.assignments[0] && (t.assignments[0].name || t.assignments[0].full_name)) || 'the walker'),
+    minutes: 23, items, passed, issues, open, comments: [], photos: photoUrls(t?.photos), reportUrl: str(t?.report_url || t?.task_report_url),
+    fixTasks: answered ? [] : items.filter(x => x.state === 'issue').map(x => ({ taskId: 'sample', name: program.name + ' fix: ' + x.action, action: x.action, note: x.note, photos: [], raisedOn: today })),
+    carried: [], emailedAt: null, emailedTo: [], emailError: null, createdAt: new Date(now).toISOString(),
+  }
+  await saveReport(report)
+  const { subject, html } = reportEmailHtml(report)
+  const sent = await send(to, '[SAMPLE] ' + subject, html)
+  if (sent.ok) { report.emailedAt = new Date().toISOString(); report.emailedTo = sent.to; await saveReport(report).catch(() => null) }
+  return sent.ok ? { ok: true, code: report.code, to: sent.to } : { ok: false, code: report.code, to: [], error: sent.error }
+}
+
+export const isSample = (r: Pick<WalkReport, 'programId'>) => r.programId.indexOf('sample:') === 0
 
 /** Re-send a filed report to its owners (or to a tester). */
 export async function resendReport(code: string, to?: string[]): Promise<{ ok: boolean; to: string[]; error?: string }> {

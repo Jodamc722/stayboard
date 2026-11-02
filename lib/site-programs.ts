@@ -259,10 +259,13 @@ async function legacyPrograms(): Promise<Program[]> {
       people: who([/^guillermo\b/i, /^oscar\b/i]),
       places: [bld('Eden', 'Eden', ALL)],
     },
+    // WHO WALKS (Jon, 2026-11-02): "exterior walkthroughs are done by supervisor, GM or operations
+    // manager or maintenance — never by HK". The supervisor and maintenance names here are the
+    // Broward crew; addCleaners stays false so the day's cleaners are never added to the walk.
     {
       id: 'eden', name: 'Eden', active: true, templateId: null, templateName: EDEN_TEMPLATE, department: 'inspection',
       description: EDEN_DESC, addCleaners: false,
-      people: who([/^guillermo\b/i]), places: [bld('Eden', 'Exterior walk', [1])],
+      people: who([/^guillermo\b/i, /^oscar\b/i, /^gehron\b/i, /^roberto\b/i, /^jon\b|^jonathan\b/i]), places: [bld('Eden', 'Exterior walk', [1])],
       report: { ...EDEN_REPORT },
     },
   ]

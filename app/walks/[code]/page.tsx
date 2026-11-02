@@ -43,6 +43,7 @@ export default async function WalkReportPage({ params }: { params: { code: strin
   return (
     <main className="min-h-screen bg-app text-ink">
       <div className="max-w-[720px] mx-auto px-4 py-8 space-y-6">
+        {r.programId.indexOf('sample:') === 0 ? <p className="rounded-xl bg-amber-50 text-amber-800 px-3 py-2 text-[13px]"><b>Sample.</b> This is what ownership receives after a finished walk; the answers are illustrative, the real ones come from the walk in the field app.</p> : null}
         <header className="space-y-1">
           <p className="text-[12px] font-semibold uppercase tracking-wide text-muted">{r.place || 'Property walk'}</p>
           <h1 className="text-[24px] font-bold leading-tight">{r.programName} — {fmtDate(r.scheduledDate)}</h1>

@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { retrieveBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
-import { listReports, walkReportForTask, resendReport, sendWeeklyDigests } from '@/lib/walk-reports'
+import { listReports, walkReportForTask, resendReport, sendWeeklyDigests, sampleReportForTask } from '@/lib/walk-reports'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -35,6 +35,12 @@ export async function POST(req: NextRequest) {
     const task = cur.ok ? (cur.data && (cur.data.task || cur.data)) : null
     if (!task || task.id == null) return NextResponse.json({ error: 'Breezeway did not return task ' + id + ' (' + cur.status + ')' }, { status: 404 })
     const r = await walkReportForTask(task, { force: body?.force === true })
+    return NextResponse.json(r, { status: r.ok ? 200 : 400 })
+  }
+  // A sample of the owner email from a real task, to the signed-in person (or the addresses given).
+  if (op === 'preview') {
+    const to = (Array.isArray(body?.to) ? body.to : []).map((x: any) => str(x).trim()).filter(Boolean)
+    const r = await sampleReportForTask(str(body?.taskId), to.length ? to : [str(gate.access.email)])
     return NextResponse.json(r, { status: r.ok ? 200 : 400 })
   }
   if (op === 'resend') {

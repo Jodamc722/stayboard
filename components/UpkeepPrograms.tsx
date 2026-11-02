@@ -120,6 +120,16 @@ export function UpkeepPrograms() {
     if (j) { setMsg(p.name + ': task ' + taskId + ' retired — cancelled in Breezeway, not marked done'); reload() }
   }
   const save = async (p: Program) => { const j = await post({ op: 'save', program: p }, 'save'); if (j) { setEditing(null); setMsg('Saved ' + p.name); reload() } }
+  // The owner email as a sample, from the task on the board today, to the signed-in person.
+  const sample = async (p: Program, taskId: string) => {
+    setBusy('sample:' + p.id); setErr(''); setMsg('')
+    try {
+      const r = await fetch('/api/walks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'preview', taskId }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || j?.ok === false) throw new Error(j?.error || 'The sample did not send')
+      setMsg('Sample of the owner email sent to ' + (j.to || []).join(', ') + ' — the same report is at /walks/' + j.code)
+    } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy('') }
+  }
 
   if (loading && !data) return <div className="py-10 text-center text-muted"><Loader2 className="inline animate-spin" size={18} /></div>
   if (error || data?.error) return <p className="text-[13px] text-rose-700">{String(error || data?.error)}</p>
@@ -154,6 +164,9 @@ export function UpkeepPrograms() {
                   {reportText(p.report) ? <span className="inline-flex items-center gap-1 ml-2"><Mail size={11} /> {reportText(p.report)}</span> : null}
                 </div>
               </div>
+              {p.report && p.report.mode !== 'off' && mine.some(x => x.today) ? (
+                <button onClick={() => sample(p, mine.find(x => x.today)!.today!.id)} disabled={!!busy} title="Email me a sample of the owner report, built from the task on the board today (answers illustrative)" className="h-8 px-2.5 inline-flex items-center gap-1 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:border-ink/40 disabled:opacity-50">{busy === 'sample:' + p.id ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />} Sample email</button>
+              ) : null}
               <button onClick={() => run(p)} disabled={!!busy || !p.active} title="Run today now — creates what is due, moves what was not done, adds today's cleaners" className="h-8 px-2.5 inline-flex items-center gap-1 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:border-ink/40 disabled:opacity-50">{busy === 'run:' + p.id ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />} Run today</button>
               <button onClick={() => toggle(p)} disabled={!!busy} title={p.active ? 'Pause — nothing new is created' : 'Resume'} className="h-8 px-2.5 inline-flex items-center gap-1 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:border-ink/40">{p.active ? <><Pause size={13} /> Pause</> : <><Play size={13} /> Resume</>}</button>
               <button onClick={() => setEditing(JSON.parse(JSON.stringify(p)))} className="h-8 px-2.5 inline-flex items-center gap-1 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:border-ink/40"><Pencil size={13} /> Edit</button>
