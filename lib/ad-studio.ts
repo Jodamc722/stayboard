@@ -371,3 +371,33 @@ THE REQUEST: ${ask}
 If the request asks for different photos, give "photoQuery" (two or three words to search our photo library, e.g. "17west pool", "ocean view", "rooftop"); otherwise leave "photoQuery" empty and the photos stay.
 Reply with ONLY JSON: {"kind": "...", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": ""}`
 }
+
+
+/** Step one of "Write the ad": read the brief, sharpen it, and ask only what would change the ad.
+ *  Jon, 2026-11-02: "when generating, first confirm the details before creating a video — if I say
+ *  make a cool video for Amrit, it should first work through what you want … and optimise the request." */
+export function planPrompt(input: { brief: string; seconds: number; format: string; audience: string; properties: string; photosOf: string }): string {
+  const guests = /guest/i.test(input.audience)
+  return `You are the creative lead on Stay Hospitality's ad team. Someone typed a quick brief for a short video ad. Before anything is made, turn it into a sharp creative plan and ask ONLY the questions whose answers would change the ad.
+
+FACTS WE MAY USE (never invent numbers, prices, fees, awards or promises):
+${guests ? GUEST_FACTS : HOUSE_FACTS}
+
+PROPERTIES WE MANAGE (name · market · units · photos in the library):
+${input.properties}
+${input.photosOf ? `\nWHAT OUR PHOTOS OF THE NAMED PROPERTY SHOW (captions):\n${input.photosOf}\n` : ''}
+CURRENT SETTINGS: audience ${input.audience}, format ${input.format}, about ${input.seconds} seconds.
+
+THE BRIEF, AS TYPED: ${input.brief || '(empty)'}
+
+Work it through like a pro:
+- Name the property exactly as it appears in the list above if the brief points at one (spelling may be loose). If none matches, say so in "warnings".
+- Decide who it is for (owners, partners or guests) — a brief about a property's vibe is usually a GUEST ad; about management, revenue or "why Stay" it is an OWNER ad. Pick the platform shape (16:9 web/YouTube, 9:16 Reels/Stories/TikTok, 1:1 or 4:5 feed) and length that fit.
+- Pick ONE angle (the single idea the ad sells) and a hook for the first two seconds, using what the photos actually show.
+- Then ask 2 to 4 multiple-choice questions, only where a reasonable person could want it differently (e.g. who it is for, where it runs, the angle, the ending, the mood). Each has 2 to 4 short options; put your recommendation FIRST. Do not ask what the brief already says clearly. Do not ask about facts we do not have.
+- Outline the scenes you would build (one line each: the look and what is said/shown), 4 to 8 scenes, ending the way the house rules require (guest ads: "Book at stay-hospitality.com", no prices; owner/partner ads: book a call with Nick).
+- Suggest the mood of music: one of werq (upbeat groove), backbay (lounge, upscale), moonlight (island, easy), inspired (uplifting piano), wallpaper (light, bright), funkorama (funky).
+
+Reply with ONLY JSON:
+{"name": "short ad name", "property": "exact property name or empty", "brief": "the sharpened brief, 2 to 4 sentences, written as instructions to the writer", "settings": {"audience": "owners|partners|guests", "format": "16:9|9:16|1:1|4:5", "seconds": 15|30|45|60|90, "music": "werq|backbay|moonlight|inspired|wallpaper|funkorama"}, "angle": "one sentence", "hook": "the first line on screen", "questions": [{"id": "q1", "q": "question", "options": ["recommended", "other", "other"]}], "outline": ["1. Title — ...", "2. ..."], "warnings": ["anything missing or risky, e.g. few photos of that property"]}`
+}

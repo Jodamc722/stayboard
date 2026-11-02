@@ -24,6 +24,13 @@ import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 type ListRow = { id: string; name: string; updatedAt: string; updatedBy: string; scenes: number; format: string }
 type Sound = { key: string; name: string; kind: 'music' | 'sfx'; url: string; dur: number; prompt: string; createdAt: string; by: string; path: string }
 type LibVoice = { id: string; name: string; blurb: string; preview: string }
+type Plan = {
+  name: string; property: string; brief: string
+  settings: { audience: AdAudience; format: AdFormat; seconds: number; music: string }
+  angle: string; hook: string
+  questions: { id: string; q: string; options: string[] }[]
+  outline: string[]; warnings: string[]
+}
 type Hit = { url: string; view?: string; thumb: string; caption: string; unit: string; building: string; width: number | null }
 type LibVideo = { key: string; name: string; url: string; thumb: string; dur: number; format: string; builtin: boolean; createdAt: string; by: string; path?: string }
 
@@ -54,7 +61,7 @@ function Btn({ on, children, onClick, title, tone, disabled, small }: { on?: boo
 const Label = ({ children }: { children: React.ReactNode }) => <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: UI.mut, margin: '14px 0 6px' }}>{children}</p>
 const field: React.CSSProperties = { boxSizing: 'border-box', width: '100%', background: UI.panel2, color: UI.ink, border: '1px solid ' + UI.line, borderRadius: 8, padding: '8px 10px', fontSize: 13, lineHeight: 1.45, fontFamily: 'inherit', resize: 'vertical' }
 
-export default function AdStudio({ display, body, canEdit, canDelete }: { display: string; body: string; canEdit: boolean; canDelete: boolean }) {
+export default function AdStudio({ display, body, canEdit, canDelete, full }: { display: string; body: string; canEdit: boolean; canDelete: boolean; full?: boolean }) {
   const [list, setList] = useState<ListRow[]>([])
   const [p, setP] = useState<AdProject | null>(null)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
@@ -74,6 +81,9 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
   const [sndName, setSndName] = useState('')
   const [hear, setHear] = useState('') // the clip being previewed (music, sound or voice sample)
   const [ask, setAsk] = useState('')
+  const [plan, setPlan] = useState<Plan | null>(null)
+  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [planNote, setPlanNote] = useState('')
   const [adAsk, setAdAsk] = useState('')
   const [undo, setUndo] = useState<{ id: string; scene: AdScene } | null>(null)
   const [vq, setVq] = useState('')
@@ -120,10 +130,15 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
     const r = await fetch('/api/ads').then(x => x.json()).catch(() => null)
     if (r?.ok) setList(r.projects || [])
   }, [])
-  const open = useCallback(async (id: string) => {
+  const open = useCallback(async (id: string, quiet?: boolean) => {
     stop()
     const r = await fetch('/api/ads?id=' + encodeURIComponent(id)).then(x => x.json()).catch(() => null)
-    if (!r?.ok) { setErr(r?.error || 'Could not open that ad.'); return }
+    if (!r?.ok) {
+      // The last ad opened was deleted: forget it quietly instead of showing an error on arrival.
+      if (quiet) { try { localStorage.removeItem('adstudio.last') } catch { /* fine */ } return }
+      setErr(r?.error || 'Could not open that ad.'); return
+    }
+    setErr(''); setPlan(null)
     setP(r.project); setAudioUrl(r.audioUrl || null); setSel(0); setT(1.6); setSaved('saved'); setBrief(r.project.prompt || '')
     try { localStorage.setItem('adstudio.last', id) } catch { /* fine */ }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -131,7 +146,7 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
     loadList().then(() => {
       let last = ''
       try { last = localStorage.getItem('adstudio.last') || '' } catch { /* fine */ }
-      if (last) open(last)
+      if (last) open(last, true)
     })
     const l = new Image(); l.src = '/ads/stay-logo-gold.svg'; l.onload = () => { logo.current = l }
     loadLib(); loadSounds()
@@ -189,6 +204,56 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
     setSel(0); setT(1.6); setUndo(null)
     if (change_) setAdAsk('')
   }
+  // ── plan first: sharpen the brief and confirm the details before anything is built ──
+  const planAd = async () => {
+    if (!brief.trim()) { setErr('Write a line about the ad first, e.g. "a cool video for Amrit".'); return }
+    stop(); setBusy('plan'); setErr('')
+    const r = await fetch('/api/ads/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brief, seconds, format: p?.format || '16:9', audience: p?.audience || 'owners' }) }).then(x => x.json()).catch(() => null)
+    setBusy('')
+    if (!r?.ok || !r.plan) { setErr(r?.error || 'Could not plan that one. Try again.'); return }
+    const pl: Plan = r.plan
+    setPlan(pl); setPlanNote('')
+    setAnswers(Object.fromEntries(pl.questions.map(q => [q.id, q.options[0]])))
+  }
+  /** Rethink the plan with the answers and any note so far. */
+  const replan = async () => {
+    if (!plan) return
+    const extra = plan.questions.map(q => `${q.q} → ${answers[q.id] || q.options[0]}`).join('\n') + (planNote.trim() ? '\nAlso: ' + planNote.trim() : '')
+    setBusy('plan'); setErr('')
+    const r = await fetch('/api/ads/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brief: plan.brief + '\n\nDECIDED SO FAR:\n' + extra, seconds: plan.settings.seconds, format: plan.settings.format, audience: plan.settings.audience }) }).then(x => x.json()).catch(() => null)
+    setBusy('')
+    if (!r?.ok || !r.plan) { setErr(r?.error || 'Could not rethink it. Try again.'); return }
+    setPlan(r.plan); setPlanNote('')
+    setAnswers(Object.fromEntries(r.plan.questions.map((q: any) => [q.id, q.options[0]])))
+  }
+  /** Build the ad from the confirmed plan: settings applied, then the writer works from the sharpened brief. */
+  const buildFromPlan = async () => {
+    if (!plan) return
+    const st = plan.settings
+    const full = [
+      plan.brief,
+      plan.property ? `PROPERTY: ${plan.property}. Every photoQuery must name it (e.g. "${plan.property.split(/\s+/)[0].toLowerCase()} pool") so the photos are of this property only.` : '',
+      plan.angle ? 'ANGLE: ' + plan.angle : '', plan.hook ? 'OPEN WITH: ' + plan.hook : '',
+      plan.questions.length ? 'DECISIONS:\n' + plan.questions.map(q => `- ${q.q} → ${answers[q.id] || q.options[0]}`).join('\n') : '',
+      planNote.trim() ? 'ALSO: ' + planNote.trim() : '',
+      plan.outline.length ? 'FOLLOW THIS SCENE OUTLINE:\n' + plan.outline.join('\n') : '',
+    ].filter(Boolean).join('\n\n')
+    setBusy('write'); setErr('')
+    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: full, seconds: st.seconds, audience: AUD[st.audience].brief, format: st.format, current: null }) }).then(x => x.json()).catch(() => null)
+    if (!r?.ok) { setBusy(''); setErr(r?.error || 'The writer did not answer. Try again.'); return }
+    let base = pRef.current
+    if (!base) {
+      const n = await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new: true }) }).then(x => x.json()).catch(() => null)
+      if (!n?.ok) { setBusy(''); setErr(n?.error || 'Could not start a new ad.'); return }
+      base = n.project as AdProject
+      setP(base); setAudioUrl(null); loadList()
+    }
+    setBusy('')
+    setSeconds(st.seconds)
+    change(d => ({ ...d, prompt: brief, name: plan.name || r.name || d.name, audience: st.audience, format: st.format, music: st.music || d.music, scenes: r.scenes }))
+    setPlan(null); setSel(0); setT(1.6); setUndo(null)
+  }
+
   /** Rewrite just the selected scene the way it is asked ("punchier", "show the rooftop", "make it numbers"). */
   const askScene = async (what: string) => {
     if (!p || !what.trim()) return
@@ -624,15 +689,18 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
   // ─────────────────────────────── render ───────────────────────────────
   const sc = p ? p.scenes[sel] : null
   const [FW, FH] = p ? FORMATS[p.format] : [1920, 1080]
-  const pw = FW >= FH ? 960 : 540 * (FW / FH) * 1.6
+  const pw = FW >= FH ? (full ? 1280 : 960) : 540 * (FW / FH) * 1.6
   const totalW = 100 // timeline is % based
   const pct = (x: number) => (tl ? (x / tl.total) * totalW : 0)
 
   return (
-    <div style={{ background: UI.bg, color: UI.ink, borderRadius: 14, border: '1px solid ' + UI.line, overflow: 'hidden', fontFamily: body }}>
+    <div style={{ background: UI.bg, color: UI.ink, borderRadius: full ? 0 : 14, border: full ? 0 : '1px solid ' + UI.line, overflow: 'hidden', fontFamily: body, minHeight: full ? '100vh' : undefined }}>
       {/* ── top bar ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: '1px solid ' + UI.line, flexWrap: 'wrap', background: UI.panel }}>
         <span style={{ fontFamily: display, fontWeight: 800, fontSize: 16, letterSpacing: '-0.01em' }}>Ad Studio</span>
+        {full
+          ? <a href="/ads" style={{ fontSize: 11.5, color: UI.mut, textDecoration: 'none', border: '1px solid ' + UI.line, borderRadius: 8, padding: '4px 8px' }} title="Back to Lighthouse">← Lighthouse</a>
+          : <a href="/ads?full=1" target="_blank" rel="noopener" style={{ fontSize: 11.5, color: UI.mut, textDecoration: 'none', border: '1px solid ' + UI.line, borderRadius: 8, padding: '4px 8px' }} title="Open the editor on its own, full screen, in a new tab">⤢ Full screen</a>}
         {p ? (
           <input value={p.name} disabled={!canEdit} onChange={e => change(d => ({ ...d, name: e.target.value }))} style={{ ...field, width: 260, padding: '6px 10px', fontWeight: 600 }} />
         ) : null}
@@ -655,11 +723,11 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
       </div>
       {err ? <div style={{ background: '#3a1d1b', color: '#F3C2BC', padding: '8px 14px', fontSize: 12.5, display: 'flex', gap: 10 }}><span style={{ flex: 1 }}>{err}</span><button onClick={() => setErr('')} style={{ background: 'none', border: 0, color: '#F3C2BC', cursor: 'pointer' }}>Dismiss</button></div> : null}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '260px minmax(0,1fr) 330px', minHeight: 560 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: full ? '280px minmax(0,1fr) 360px' : '260px minmax(0,1fr) 330px', minHeight: full ? 'calc(100vh - 230px)' : 560 }}>
         {/* ── left: brief + ads ── */}
         <div style={{ borderRight: '1px solid ' + UI.line, padding: '4px 14px 14px', background: UI.panel, minWidth: 0 }}>
           <Label>Brief</Label>
-          <textarea value={brief} onChange={e => setBrief(e.target.value)} rows={5} disabled={!canEdit || !p} placeholder="What is this ad for? e.g. 30-second owner ad for 17WEST, lead with high-date pricing, end on Nick." style={field} />
+          <textarea value={brief} onChange={e => setBrief(e.target.value)} rows={5} disabled={!canEdit} placeholder="What is this ad for? Even one line works, e.g. a cool video for Amrit. I'll work through the details with you first." style={field} />
           <Label>Length</Label>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>{[15, 30, 45, 60, 90].map(s => <Btn key={s} small on={seconds === s} onClick={() => setSeconds(s)}>{s}s</Btn>)}</div>
           <Label>Audience</Label>
@@ -667,10 +735,10 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
             {(Object.keys(AUD) as AdAudience[]).map(k => <Btn key={k} small on={p?.audience === k} disabled={!p || !canEdit} title={AUD[k].hint} onClick={() => change(d => ({ ...d, audience: k }))}>{AUD[k].label}</Btn>)}
           </div>
           <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
-            <Btn tone="blue" disabled={!p || !canEdit || !!busy} onClick={() => write(false)}>{busy === 'write' ? 'Writing…' : 'Write the ad'}</Btn>
+            <Btn tone="blue" disabled={!canEdit || !!busy || !brief.trim()} onClick={planAd} title="Works through the details with you first, then builds">{busy === 'plan' ? 'Thinking…' : busy === 'write' ? 'Writing…' : 'Plan the ad'}</Btn>
             <Btn disabled={!p || !canEdit || !!busy || !p?.scenes.length} onClick={() => write(true)} title="Keeps what works and tightens the rest">{busy === 'rewrite' ? 'Rewriting…' : 'Improve draft'}</Btn>
           </div>
-          <p style={{ fontSize: 11, color: UI.mut, marginTop: 8, lineHeight: 1.5 }}>Writes from the house facts only — no made-up numbers. You edit every line before the voice is made.</p>
+          <p style={{ fontSize: 11, color: UI.mut, marginTop: 8, lineHeight: 1.5 }}>I sharpen the brief, ask what matters, and show the scene plan before anything is built. House facts only — no made-up numbers.{p && canEdit ? <> <button onClick={() => write(false)} disabled={!!busy} style={{ background: 'none', border: 0, padding: 0, color: UI.blue, cursor: 'pointer', fontSize: 11 }}>Skip — write it now</button></> : null}</p>
           {p && canEdit && p.scenes.length ? (
             <>
               <Label>Change the whole ad</Label>
@@ -788,10 +856,58 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
 
         {/* ── centre: viewer ── */}
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, minWidth: 0, background: '#0A0D11' }}>
-          {p ? (
+          {plan ? (
+            <div style={{ width: '100%', maxWidth: 720, background: UI.panel, border: '1px solid #2b4470', borderRadius: 12, padding: '16px 18px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                <span style={{ fontFamily: display, fontSize: 19, fontWeight: 800 }}>Before I build it</span>
+                <span style={{ fontSize: 12, color: UI.mut }}>Check the plan, answer the questions, then build.</span>
+              </div>
+              <Label>The ad</Label>
+              <input value={plan.name} onChange={e => setPlan({ ...plan, name: e.target.value })} style={{ ...field, fontWeight: 700, marginBottom: 6 }} />
+              <textarea value={plan.brief} onChange={e => setPlan({ ...plan, brief: e.target.value })} rows={3} style={field} />
+              {plan.property ? <p style={{ fontSize: 12, color: UI.gold, margin: '6px 0 0' }}>Property: {plan.property} · photos come from this property only</p> : null}
+              {plan.angle ? <p style={{ fontSize: 12.5, margin: '8px 0 0' }}><b>Angle:</b> {plan.angle}</p> : null}
+              {plan.hook ? <p style={{ fontSize: 12.5, margin: '4px 0 0' }}><b>Opens on:</b> “{plan.hook}”</p> : null}
+              {plan.warnings.length ? <div style={{ marginTop: 8 }}>{plan.warnings.map((w, i) => <p key={i} style={{ fontSize: 11.5, color: '#F3C2BC', margin: '2px 0' }}>⚠ {w}</p>)}</div> : null}
+
+              <Label>Settings</Label>
+              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+                <span style={{ display: 'flex', gap: 4 }}>{(Object.keys(AUD) as AdAudience[]).map(k => <Btn key={k} small on={plan.settings.audience === k} onClick={() => setPlan({ ...plan, settings: { ...plan.settings, audience: k } })}>{AUD[k].label}</Btn>)}</span>
+                <span style={{ display: 'flex', gap: 4 }}>{(Object.keys(FORMATS) as AdFormat[]).map(f => <Btn key={f} small on={plan.settings.format === f} title={FORMAT_LABEL[f]} onClick={() => setPlan({ ...plan, settings: { ...plan.settings, format: f } })}>{f}</Btn>)}</span>
+                <span style={{ display: 'flex', gap: 4 }}>{[15, 30, 45, 60, 90].map(n => <Btn key={n} small on={plan.settings.seconds === n} onClick={() => setPlan({ ...plan, settings: { ...plan.settings, seconds: n } })}>{n}s</Btn>)}</span>
+              </div>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
+                {MUSIC.filter(m => m.file).map(m => <Btn key={m.key} small on={plan.settings.music === m.key} title={m.mood} onClick={() => setPlan({ ...plan, settings: { ...plan.settings, music: m.key } })}>♪ {m.label}</Btn>)}
+              </div>
+
+              {plan.questions.length ? <Label>A few questions</Label> : null}
+              {plan.questions.map(q => (
+                <div key={q.id} style={{ marginBottom: 10 }}>
+                  <p style={{ fontSize: 13, fontWeight: 600, margin: '0 0 5px' }}>{q.q}</p>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {q.options.map((o, k) => <Btn key={o} small on={(answers[q.id] || q.options[0]) === o} onClick={() => setAnswers(a => ({ ...a, [q.id]: o }))}>{o}{k === 0 ? ' ★' : ''}</Btn>)}
+                  </div>
+                </div>
+              ))}
+
+              <Label>Scene plan</Label>
+              <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, lineHeight: 1.6, color: UI.ink }}>
+                {plan.outline.map((o, i) => <li key={i}>{o.replace(/^\d+[.)]\s*/, '')}</li>)}
+              </ol>
+
+              <Label>Anything else?</Label>
+              <input value={planNote} onChange={e => setPlanNote(e.target.value)} placeholder="Optional, e.g. lead with the rooftop, end on the sunset shot" style={field} />
+              <div style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
+                <Btn tone="gold" disabled={!!busy} onClick={buildFromPlan}>{busy === 'write' ? 'Building the ad…' : p && p.scenes.length > 1 ? 'Looks right — build it (replaces this ad’s scenes)' : 'Looks right — build it'}</Btn>
+                <Btn disabled={!!busy} onClick={replan} title="Plans again with your answers and note">{busy === 'plan' ? 'Thinking…' : 'Rethink with my answers'}</Btn>
+                <Btn disabled={!!busy} onClick={() => setPlan(null)}>Cancel</Btn>
+              </div>
+              <p style={{ fontSize: 11, color: UI.mut, marginTop: 8 }}>★ = my recommendation. Nothing is built or saved until you press build.</p>
+            </div>
+          ) : p ? (
             <>
               <canvas ref={canvasRef} width={FW >= FH ? 960 : Math.round(960 * FW / FH)} height={FW >= FH ? Math.round(960 * FH / FW) : 960}
-                style={{ width: '100%', maxWidth: FW >= FH ? pw : 360, aspectRatio: `${FW}/${FH}`, borderRadius: 8, background: '#000', boxShadow: '0 20px 50px -25px rgba(0,0,0,.8)' }} />
+                style={{ width: '100%', maxWidth: FW >= FH ? pw : (full ? 460 : 360), aspectRatio: `${FW}/${FH}`, borderRadius: 8, background: '#000', boxShadow: '0 20px 50px -25px rgba(0,0,0,.8)' }} />
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', maxWidth: FW >= FH ? pw : 520 }}>
                 <Btn tone="gold" onClick={play}>{playing ? '❚❚ Pause' : '▶ Play'}</Btn>
                 <Btn small onClick={() => seek(0)}>⏮ Start</Btn>
@@ -811,7 +927,7 @@ export default function AdStudio({ display, body, canEdit, canDelete }: { displa
         </div>
 
         {/* ── right: inspector ── */}
-        <div style={{ borderLeft: '1px solid ' + UI.line, padding: '4px 14px 14px', background: UI.panel, minWidth: 0, maxHeight: 760, overflowY: 'auto' }}>
+        <div style={{ borderLeft: '1px solid ' + UI.line, padding: '4px 14px 14px', background: UI.panel, minWidth: 0, maxHeight: full ? 'calc(100vh - 230px)' : 760, overflowY: 'auto' }}>
           {p && sc ? (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 12 }}>
