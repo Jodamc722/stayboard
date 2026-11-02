@@ -113,7 +113,7 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
   const changed = toAdd.length > 0 || toRemove.length > 0
 
   async function apply(list?: string[]) {
-    setBusy(true); setErr(null)
+    setBusy(true); setErr(null); setDone(null)
     try {
       const res = await fetch('/api/listing-amenities', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -170,7 +170,7 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
                 <div className="flex flex-wrap gap-1.5">{conflicts.map(c => (
                   <span key={c.name} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[12px] text-rose-800">
                     <Ban size={11} /> <b>{c.name}</b> <span className="text-rose-700/80">{c.why}</span>
-                    <button onClick={() => toggle(Array.from(sel).find(a => a.toLowerCase() === c.name.toLowerCase()) || c.name)} className="ml-1 rounded-md bg-rose-600 text-white px-1.5 py-0.5 text-[11px] font-semibold">Remove</button>
+                    <button onClick={() => apply(Array.from(sel).filter(a => a.toLowerCase() !== c.name.toLowerCase()))} disabled={busy} className="ml-1 rounded-md bg-rose-600 text-white px-1.5 py-0.5 text-[11px] font-semibold disabled:opacity-50">{busy ? '…' : 'Remove & save'}</button>
                   </span>
                 ))}</div>
               </div>
@@ -187,11 +187,11 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
                     {x.photos.slice(0, 2).map(pid => photoUrls?.[pid] ? <img key={pid} src={photoUrls[pid]} alt="" title="Seen in this photo" className="w-8 h-8 rounded object-cover" /> : null)}
                     <span className="text-[12px] font-semibold text-ink">{x.name}</span>
                     {x.photos.length > 1 && <span className="text-[11px] text-muted">· {x.photos.length} photos</span>}
-                    <button onClick={() => toggle(x.name)} className="text-[11px] font-semibold rounded-md border border-sky-300 px-1.5 py-0.5 text-sky-800 hover:bg-sky-50">Add</button>
+                    <button onClick={() => apply(Array.from(new Set([...Array.from(sel), x.name])))} disabled={busy} className="text-[11px] font-semibold rounded-md bg-sky-700 text-white px-1.5 py-0.5 hover:bg-sky-800 disabled:opacity-50">{busy ? '…' : 'Add & save'}</button>
                     <button onClick={() => ruleOut(x.name)} title="Not at this unit — don't suggest it again" className="text-[11px] text-muted hover:text-rose-700">✕</button>
                   </span>
                 ))}</div>
-                <p className="mt-1 text-[11px] text-muted">Add only what guests can actually use — a grill in a neighbour's yard is not yours.</p>
+                <p className="mt-1 text-[11px] text-muted">Add &amp; save writes to Guesty straight away. Add only what guests can actually use — a grill in a neighbour's yard is not yours.</p>
               </div>
             )}
             {noPhoto.length > 0 && (
@@ -300,8 +300,9 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
       {err && <div className="mt-3 text-[12px] text-rose-600 inline-flex items-start gap-1.5"><AlertTriangle size={13} className="mt-0.5 shrink-0" /> {err}</div>}
       {done && <div className="mt-3 text-[12px] text-emerald-700 inline-flex items-center gap-1.5"><Check size={13} /> {done}</div>}
 
-      {changed && !done && (
-        <div className="mt-4 pt-3 border-t border-line flex items-center gap-2 flex-wrap">
+      {changed && (
+        <div className="sticky bottom-2 z-10 mt-4 rounded-xl border border-brand-300 bg-brand-50 shadow-lg px-3 py-2.5 flex items-center gap-2 flex-wrap">
+          <span className="text-[12px] font-semibold text-ink">Unsaved: {toAdd.length > 0 && <b>+{toAdd.length}</b>}{toAdd.length > 0 && toRemove.length > 0 ? ', ' : ''}{toRemove.length > 0 && <b>−{toRemove.length}</b>}</span>
           {!confirming ? (
             <button onClick={() => setConfirming(true)} className="inline-flex items-center gap-1.5 text-[13px] font-semibold rounded-lg bg-brand-600 text-white px-3 py-2 hover:bg-brand-700">
               Review & apply to Guesty
@@ -317,6 +318,7 @@ export function AmenityEditor({ listingId, current: initial, recommended, catalo
               <button onClick={() => setConfirming(false)} disabled={busy} className="text-[12px] text-muted hover:text-ink">Cancel</button>
             </>
           )}
+          <button onClick={() => { setSel(new Set(current)); setConfirming(false) }} disabled={busy} className="ml-auto text-[12px] text-muted hover:text-ink">Discard</button>
         </div>
       )}
     </section>
