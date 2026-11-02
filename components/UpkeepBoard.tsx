@@ -238,7 +238,7 @@ export function UpkeepBoard() {
                 {([['list', 'List', List, 'One row per unit'], ['grid', 'Grid', LayoutGrid, 'Every unit against every program']] as const).map(([k, label, Icon, tip]) => (
                   <button key={k} onClick={() => setView(k)} aria-pressed={view === k} title={tip} className={'h-7 px-2 inline-flex items-center gap-1 text-[11.5px] font-semibold ' + (view === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}><Icon size={12} /> {label}</button>
                 ))}
-                <button onClick={() => setEditProg(prog.key)} title="Edit this program — how often, auto-create, where, who gets it" className="h-7 px-2 inline-flex items-center gap-1 text-[11.5px] font-semibold bg-white text-muted hover:text-ink border-r border-line"><Pencil size={12} /> Edit</button>
+                <button onClick={() => { setEditProg(prog.key); window.scrollTo({ top: 0, behavior: 'smooth' }) }} title="Edit this program — how often, auto-create, where, who gets it" className="h-7 px-2 inline-flex items-center gap-1 text-[11.5px] font-semibold bg-white text-muted hover:text-ink border-r border-line"><Pencil size={12} /> Edit</button>
                 <button onClick={() => { setCalProg(prog.key); setTab('calendar') }} title="This program on the calendar — open days, who is there, click a day to book" className="h-7 px-2 inline-flex items-center gap-1 text-[11.5px] font-semibold bg-white text-muted hover:text-ink"><CalendarDays size={12} /> Calendar</button>
               </span>
             </span>
