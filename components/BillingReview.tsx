@@ -581,6 +581,7 @@ export function BillingReview() {
   const [view, setView] = useState<'owner' | 'property' | 'kind'>('property')
   const [walkIdx, setWalkIdx] = useState(0)
   const [evBusy, setEvBusy] = useState(0)
+  const [moreF, setMoreF] = useState(false)   // the extra filters stay folded away (Jon, 2026-11-02: "cleaner and easier")
   const [q, setQ] = useState('')
   // FILTERS (Jon, 2026-09-30: "filter by billable amount greater than zero, by date window, by
   // department etc."). The window is a month (arrows) or any from–to range; the rest narrow the
@@ -1086,13 +1087,10 @@ export function BillingReview() {
             </div>
           ) : null}
           <select value={flagF} onChange={e => setFlagF(e.target.value as any)} title="Show rows by flag" className={'h-8 rounded-lg border px-2 text-[12px] font-semibold max-w-[13rem] ' + (flagF ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-line text-ink')}>
-            <option value="">All rows</option>
+            <option value="">All jobs</option>
             <option value="stop">Must look ({facets.stopN})</option>
             <option value="any">Any flag ({facets.anyN})</option>
             {facets.flags.map(([f, n]) => <option key={f} value={f}>{FLAG_SHORT[f]} ({n})</option>)}
-          </select>
-          <select value={sortBy} onChange={e => setSortBy(e.target.value as any)} title="Order of the rows" className="h-8 rounded-lg border border-line bg-white px-2 text-[12px] text-ink">
-            <option value="flags">Worst flag first</option><option value="amount">Biggest first</option><option value="date">By date</option><option value="unit">By unit</option>
           </select>
           {evBusy ? <Tag title={'Reading the crew reports on ' + evBusy + ' billable task(s) — photos, notes, checklist answers'}><Loader2 size={10} className="animate-spin inline mr-1" />Reports {evBusy}</Tag> : null}
           <label className="h-8 inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2 text-[12px]"><Search size={13} className="text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="unit, task, person, owner" className="w-36 bg-transparent outline-none text-ink" /></label>
@@ -1110,12 +1108,27 @@ export function BillingReview() {
       {/* ── filters: billable only, minimum, department, building, person ───────────────────────
             The by-owner summary is a statement total, so the filters do not apply to it and are
             hidden rather than left there doing nothing. */}
-      {(
-      <div className="flex items-center gap-1.5 flex-wrap">
-        <select value={ownerF} onChange={e => setOwnerF(e.target.value)} className={sel} title="Owner">
-          <option value="">All owners</option>
-          {facets.owners.map(([k, o]) => <option key={k} value={k}>{o.name} ({o.n})</option>)}
-        </select>
+      {(() => {
+        const nMore = [taskF, billOnly, minAmt.trim(), maxAmt.trim(), bFilter, building, person, depts.length ? 'd' : ''].filter(Boolean).length + (sortBy !== 'flags' ? 1 : 0)
+        return (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <select value={ownerF} onChange={e => setOwnerF(e.target.value)} className={sel} title="Owner">
+              <option value="">All owners</option>
+              {facets.owners.map(([k, o]) => <option key={k} value={k}>{o.name} ({o.n})</option>)}
+            </select>
+            <button onClick={() => setMoreF(v => !v)} className={'h-8 px-2.5 rounded-lg border text-[12px] font-semibold ' + (moreF || nMore ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>{moreF ? 'Fewer filters' : 'More filters'}{nMore ? ' · ' + nMore : ''}</button>
+            {filtersOn ? <>
+              <Pill tone="brand" title="What the filters show — the header strip stays the whole window">{visible.length} shown · {money(shownTotal)}</Pill>
+              <button onClick={clearFilters} className="text-[12px] font-semibold text-muted hover:text-ink px-1">Clear</button>
+            </> : null}
+          </div>
+        )
+      })()}
+      {moreF ? (
+      <div className="flex items-center gap-1.5 flex-wrap rounded-xl border border-line bg-app/40 p-2">
+        <select value={sortBy} onChange={e => setSortBy(e.target.value as any)} title="Order of the rows" className="h-8 rounded-lg border border-line bg-white px-2 text-[12px] text-ink">
+            <option value="flags">Worst flag first</option><option value="amount">Biggest first</option><option value="date">By date</option><option value="unit">By unit</option>
+          </select>
         <select value={taskF} onChange={e => setTaskF(e.target.value)} className={sel} title="Task — by type, or by the task itself">
           <option value="">All tasks</option>
           <optgroup label="Type">{facets.cats.map(([c, n]) => <option key={'c' + c} value={'cat:' + c}>{CAT_LABEL[c] || c} ({n})</option>)}</optgroup>
@@ -1145,12 +1158,8 @@ export function BillingReview() {
               className={'h-8 px-2.5 rounded-lg border text-[12px] font-semibold capitalize ' + (on ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>{d} <span className="opacity-60 tabular-nums">{n}</span></button>
           })}
         </span>
-        {filtersOn ? <>
-          <Pill tone="brand" title="What the filters show — the header strip stays the whole window">{visible.length} shown · {money(shownTotal)}</Pill>
-          <button onClick={clearFilters} className="text-[12px] font-semibold text-muted hover:text-ink px-1">Clear</button>
-        </> : null}
       </div>
-      )}
+      ) : null}
 
       {err ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {err}</div> : null}
 
