@@ -245,7 +245,9 @@ export function ScheduleBoard({ embedded }: { embedded?: ScheduleEmbed } = {}) {
   const needsOn = (d: FcDay): MarketNeed[] => market === 'vendor' ? [] : stripMarkets.map(mk => marketNeed(d, mk))
   const needOn = (d: FcDay) => needsOn(d).reduce((a, x) => a + x.need, 0)
   const hoursOn = (d: FcDay) => Math.round(needsOn(d).reduce((a, x) => a + x.hours, 0) * 10) / 10
-  const workingOn = (d: string) => { const seen: Record<string, number> = {}; let n = 0; for (const mk of stripMarkets) { const doc = teamDocs[mk]; if (!doc) continue; for (const m of doc.members) { if (NON_CLEANERS[m] || seen[m]) continue; if (/work/i.test(String(doc.cells[m + '__' + d] || ''))) { seen[m] = 1; n++ } } } return n }
+  // Who is working: the rail's own rule — a saved override wins, otherwise what Homebase has on the
+  // schedule. Counting only saved overrides read "0 of 16" on a day with fourteen people clocked in.
+  const workingOn = (d: string) => { const seen: Record<string, number> = {}; let n = 0; for (const mk of stripMarkets) { const doc = teamDocs[mk] || { members: [], cells: {} }; const ros = rosters[mk]; const names = ros ? ros.people.map(p => p.name) : doc.members; for (const m of names) { if (NON_CLEANERS[m] || seen[m]) continue; const p = ros ? ros.people.find(x => x.name === m) : null; const c = p ? p.days[d] : null; const eff = String(doc.cells[m + '__' + d] || '') || (c && c.source === 'homebase' ? String(c.status || '') : ''); if (/work/i.test(eff)) { seen[m] = 1; n++ } } } return n }
 
   const [cleared, setCleared] = useState<Record<string, boolean>>({})
   const [selected, setSelected] = useState<Record<string, boolean>>({})
