@@ -45,9 +45,25 @@ export type Place = {
   days: number[]
   alternate: boolean
   onCleanDays: boolean
+  /**
+   * MONTHLY (the Eden walk, 2026-11-02): also runs on this day of every month (1–28, so every month
+   * has it). A place can be monthly and nothing else — days empty, alternate off.
+   */
+  monthDay?: number | null
   /** This place's own team; empty/absent = the program's people. */
   people?: Person[]
 }
+/**
+ * WHAT HAPPENS WHEN A TASK OF THE PROGRAM IS FINISHED (Jon, 2026-11-02, the Eden exterior walk:
+ * "create it as a Breezeway task, once it's done it sends a report to the owners"). The checklist
+ * answers, photos and notes become a walk report (lib/walk-reports) with its own link:
+ *   mode     off = no report · issues = the owners get an email only when something failed ·
+ *            always = an email after every finished task
+ *   weekly   a Monday roll-up of the week's walks, issues and what is still open
+ *   owners   send to the owners of the place's units (guesty_owners), plus `to`
+ *   to       extra addresses (the property manager, the on-site contact)
+ */
+export type ProgramReport = { mode: 'off' | 'issues' | 'always'; weekly: boolean; owners: boolean; to: string[] }
 export type Program = {
   id: string
   name: string
@@ -59,9 +75,11 @@ export type Program = {
   people: Person[]
   addCleaners: boolean
   places: Place[]
+  report?: ProgramReport
   updatedAt?: string
   updatedBy?: string
 }
+export const NO_REPORT: ProgramReport = { mode: 'off', weekly: false, owners: true, to: [] }
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 export const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
@@ -104,11 +122,14 @@ export const taskTitle = (p: Program, place: Place) => `${p.name.trim()}: ${plac
 /** Is today one of the place's days (cleans aside)? Pure. */
 export function onDays(place: Place, ymd: string): boolean {
   const d = new Date(ymd + 'T12:00:00Z')
+  if (place.monthDay && d.getUTCDate() === place.monthDay) return true
   if (place.alternate && Math.floor(d.getTime() / 86400000) % 2 === 0) return true
   return place.days.indexOf(d.getUTCDay()) >= 0
 }
 
-/** One line for a place's schedule: "Every day", "Mon, Wed, Fri", "Every other day + clean days". */
+const ordinal = (n: number) => n + (n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th')
+
+/** One line for a place's schedule: "Every day", "Mon, Wed, Fri", "Every other day + clean days", "Monthly on the 1st". */
 export function scheduleLine(place: Place): string {
   const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
   const parts: string[] = []
@@ -116,10 +137,35 @@ export function scheduleLine(place: Place): string {
   if (days.length === 7) parts.push('Every day')
   else if (days.length) parts.push(days.map(d => names[d]).join(', '))
   if (place.alternate) parts.push('every other day')
+  if (place.monthDay) parts.push('monthly on the ' + ordinal(place.monthDay))
   if (place.onCleanDays) parts.push('clean days')
   if (!parts.length) return 'No days set'
   const s = parts.join(' + ')
   return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+/** The report settings a stored program carries, with the defaults filled in. */
+export function reportOf(p: Pick<Program, 'report'> | null | undefined): ProgramReport {
+  const r: any = p && p.report
+  if (!r || typeof r !== 'object') return { ...NO_REPORT, to: [] }
+  const mode = ['off', 'issues', 'always'].indexOf(r.mode) >= 0 ? r.mode : 'off'
+  const to = (Array.isArray(r.to) ? r.to : []).map((x: any) => str(x).trim().toLowerCase()).filter((x: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x)).slice(0, 20)
+  return { mode, weekly: !!r.weekly, owners: r.owners !== false, to: Array.from(new Set(to)) as string[] }
+}
+
+/**
+ * Which program (and which of its places) a Breezeway task belongs to, from the task's name — the
+ * title is "<program name>: <place label>", and that prefix is the only thing the engine keys on.
+ */
+export function programForTask(name: any, programs: Program[]): { program: Program; place: Place | null } | null {
+  const n = str(name).replace(/^\s*\[Moved to [^\]]+\]\s*/i, '').trim()
+  if (!n) return null
+  const hits = programs.filter(p => n.indexOf(titlePrefix(p)) === 0).sort((a, b) => b.name.length - a.name.length)
+  const program = hits[0]
+  if (!program) return null
+  const rest = n.slice(titlePrefix(program).length).trim().toLowerCase()
+  const place = program.places.find(pl => pl.label.trim().toLowerCase() === rest) || program.places.find(pl => rest.indexOf(pl.label.trim().toLowerCase()) === 0) || null
+  return { program, place }
 }
 
 function clean(p: any): Program | null {
@@ -135,6 +181,7 @@ function clean(p: any): Program | null {
     days: (Array.isArray(x?.days) ? x.days : []).map(Number).filter((n: number) => n >= 0 && n <= 6),
     alternate: !!x?.alternate,
     onCleanDays: !!x?.onCleanDays,
+    monthDay: Number(x?.monthDay) >= 1 && Number(x?.monthDay) <= 28 ? Math.round(Number(x.monthDay)) : null,
     people: (Array.isArray(x?.people) ? x.people : []).map((y: any) => ({ id: Number(y?.id), name: str(y?.name) })).filter((y: Person) => Number.isFinite(y.id) && y.id > 0).slice(0, 12),
   })).filter((x: Place) => x.ref && x.label)
   const people: Person[] = (Array.isArray(p.people) ? p.people : []).map((x: any) => ({ id: Number(x?.id), name: str(x?.name) })).filter((x: Person) => Number.isFinite(x.id) && x.id > 0)
@@ -144,6 +191,7 @@ function clean(p: any): Program | null {
     templateId: Number(p.templateId) > 0 ? Number(p.templateId) : null,
     templateName: str(p.templateName).slice(0, 120), department: dept,
     description: str(p.description).slice(0, 2000), people, addCleaners: p.addCleaners !== false, places,
+    report: reportOf(p),
     updatedAt: str(p.updatedAt) || undefined, updatedBy: str(p.updatedBy) || undefined,
   }
 }
@@ -155,7 +203,7 @@ function clean(p: any): Program | null {
 // in once as ordinary programs, with the same title prefix so their open tasks are carried rather
 // than duplicated, and from then on they are edited, paused or deleted here like any other. The
 // crons that ran them now stand down (they return "moved to programs").
-const LEGACY_VERSION = 2
+const LEGACY_VERSION = 3
 const WALK_DESC = [
   'Weekly walk of the property exterior. Check and ATTACH PHOTOS of each:',
   '• Landscaping', '• Plants', '• Weeds', '• Wall damage', '• Roof damage', '• Leaks', '• All the hoses',
@@ -174,10 +222,34 @@ const PARKING_DESC = [
   '5. A guest car that is not on the list but belongs to a guest → "Register it".',
   '6. Finish the walk, then complete this task. Flags go to the office for the 1-hour tow notice.',
 ].join('\n')
+// THE EDEN EXTERIOR WALK (Jon, 2026-11-02: "build new inspection, call it Eden"). One inspection in
+// three cadences, each its own Breezeway checklist built from the Seville 3020–3024 inspection form
+// (docs: "Eden Exterior Walk"): the daily walk in route order (street and parking, front building,
+// the walkway, pool and spa, rear building, perimeter, trash and utilities, close-out), the weekly
+// items (meter reading, envelope, equipment, life safety, open work orders) on Monday, the monthly
+// items (fasteners and brackets, overhead lines, pool rescue equipment) on the 1st. The checklist
+// templates live in Breezeway and are found BY NAME on the first run (resolveTemplateId), so the
+// programs can exist before the templates do and need no id typed in. Guillermo walks it; every
+// finished walk becomes a report, the owners hear about it when something failed, and Monday
+// brings the week's roll-up (lib/walk-reports).
+export const EDEN_TEMPLATES = { daily: 'Eden Walk Daily 1.0', weekly: 'Eden Walk Weekly 1.0', monthly: 'Eden Walk Monthly 1.0' } as const
+const EDEN_DESC = [
+  'Exterior walk of Eden, 3020–3024 Seville St. Every line is PASS or ISSUE. An ISSUE needs a photo and a note.',
+  'Hazards get isolated on the spot: a pool gate that does not latch closes the pool; a loose railing or stair tread gets taped off; exposed wiring gets barricaded.',
+  'Anything past basic maintenance (roof, panel or wiring, AC refrigerant, gas, structural, pool equipment, work near power lines) is documented and scheduled, never repaired on the spot.',
+  'Finish the task when the walk is done — Lighthouse files a fix task for every ISSUE and sends the owners the report.',
+  '',
+  'Recorrido exterior de Eden. Cada línea es PASS o ISSUE; un ISSUE necesita foto y nota. Un peligro se aísla en el momento (cerrar la piscina, acordonar la baranda o escalera, bloquear el cableado expuesto). Al terminar, completa la tarea.',
+].join('\n')
 async function legacyPrograms(): Promise<Program[]> {
   const people: Person[] = breezewayConfigured() ? await breezewayPeopleLite().catch(() => [] as any[]) as any : []
   const who = (res: RegExp[]) => res.map(re => people.find(p => re.test(str(p.name).trim()))).filter(Boolean).map(p => ({ id: Number((p as any).id), name: str((p as any).name) }))
-  const bld = (ref: string, label: string, days: number[]): Place => ({ id: ref.toLowerCase().replace(/[^a-z0-9]+/g, '-'), kind: 'building', ref, label, days, alternate: false, onCleanDays: false })
+  const bld = (ref: string, label: string, days: number[], monthDay: number | null = null): Place => ({ id: ref.toLowerCase().replace(/[^a-z0-9]+/g, '-'), kind: 'building', ref, label, days, alternate: false, onCleanDays: false, monthDay })
+  const eden = (id: string, name: string, templateName: string, label: string, days: number[], monthDay: number | null, weekly: boolean): Program => ({
+    id, name, active: true, templateId: null, templateName, department: 'inspection', description: EDEN_DESC, addCleaners: false,
+    people: who([/^guillermo\b/i]), places: [bld('Eden', label, days, monthDay)],
+    report: { mode: 'issues', weekly, owners: true, to: [] },
+  })
   return [
     {
       id: 'exterior-walkthrough', name: 'Property Exterior Walkthrough', active: true, templateId: null, templateName: '', department: 'inspection',
@@ -191,7 +263,16 @@ async function legacyPrograms(): Promise<Program[]> {
       people: who([/^guillermo\b/i, /^oscar\b/i]),
       places: [bld('Eden', 'Eden', ALL)],
     },
+    eden('eden', 'Eden', EDEN_TEMPLATES.daily, 'Exterior walk', ALL, null, true),
+    eden('eden-weekly', 'Eden weekly', EDEN_TEMPLATES.weekly, 'Weekly exterior check', [1], null, false),
+    eden('eden-monthly', 'Eden monthly', EDEN_TEMPLATES.monthly, 'Monthly exterior check', [], 1, false),
   ]
+}
+
+/** The Eden walk replaces the generic weekly walkthrough at Eden — one building, one walk. */
+function retireEdenWalkthrough(programs: Program[]): Program[] {
+  if (!programs.some(p => p.id === 'eden')) return programs
+  return programs.map(p => (p.id === 'exterior-walkthrough' ? { ...p, places: p.places.filter(pl => !/^eden\b/i.test(pl.ref)) } : p))
 }
 
 export async function loadPrograms(): Promise<Program[]> {
@@ -200,10 +281,33 @@ export async function loadPrograms(): Promise<Program[]> {
   let programs = list ? (list.map(clean).filter(Boolean) as Program[]) : SEED.map(p => ({ ...p }))
   if (!raw || Number(raw.legacy) !== LEGACY_VERSION) {
     const add = (await legacyPrograms()).filter(l => !programs.some(p => p.id === l.id || p.name.trim().toLowerCase() === l.name.toLowerCase()))
-    programs = programs.concat(add)
+    programs = retireEdenWalkthrough(programs.concat(add))
     await savePrograms(programs, 'system: recurring tasks brought into programs').catch(() => null)
   }
   return programs
+}
+
+/**
+ * The template a program's tasks carry. A program saved with a template name but no id (the Eden
+ * seed, or a template still being built in Breezeway when the program was saved) is matched by name
+ * against the account's templates on the first run that finds it, and the id is kept from then on.
+ */
+export async function resolveTemplateId(p: Program): Promise<number | null> {
+  if (p.templateId) return p.templateId
+  if (!p.templateName || !breezewayConfigured()) return null
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim()
+  const want = norm(p.templateName)
+  const { listBreezewayTemplates } = await import('./breezeway')
+  const list = await listBreezewayTemplates().catch(() => [] as { id: number; name: string }[])
+  const hit = list.find(t => norm(t.name) === want) || list.find(t => norm(t.name).replace(/\s*\d+(\.\d+)*$/, '') === want.replace(/\s*\d+(\.\d+)*$/, ''))
+  if (!hit) return null
+  try {
+    const all = await loadPrograms()
+    const at = all.findIndex(x => x.id === p.id)
+    if (at >= 0 && !all[at].templateId) { all[at] = { ...all[at], templateId: hit.id, templateName: hit.name }; await savePrograms(all, 'system: template matched by name') }
+  } catch { /* the id is used for this run either way */ }
+  p.templateId = hit.id
+  return hit.id
 }
 
 export async function savePrograms(programs: Program[], by?: string): Promise<{ ok: boolean; error?: string }> {
@@ -425,9 +529,11 @@ export async function runPrograms(opts: { dryRun?: boolean; only?: string } = {}
       continue
     }
     if (opts.dryRun) { lines.push(tag + ' (' + pl.why + '): would create at ' + pl.where + ' for ' + (pl.people.concat(pl.cleaners).map(x => x.name).join(', ') || 'nobody')); continue }
+    const templateId = await resolveTemplateId(p).catch(() => p.templateId || null)
+    if (!templateId && p.templateName) lines.push(tag + ': checklist "' + p.templateName + '" is not in Breezeway yet — the task goes out with the note only')
     const res = await createBreezewayTask({
       home_id: pl.homeId, name: taskTitle(p, { label: pl.label } as Place), type_department: p.department, scheduled_date: day,
-      template_id: p.templateId || null, ...(p.description ? { description: await expandDescription(p.description, place0(p, pl)) } : {}), ...(want.length ? { assignments: want } : {}),
+      template_id: templateId || null, ...(p.description ? { description: await expandDescription(p.description, place0(p, pl)) } : {}), ...(want.length ? { assignments: want } : {}),
     })
     const id = res.ok && res.data ? str(res.data.id) : ''
     if (!id) { lines.push(tag + ': Breezeway said ' + res.status + ' ' + str(res.text).slice(0, 120)); continue }

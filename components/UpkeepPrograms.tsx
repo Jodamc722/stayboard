@@ -9,10 +9,10 @@
 // buildings or single units from one search box, tap the days, pick the people. Buttons, not
 // drop-downs.
 import { useMemo, useState } from 'react'
-import { Loader2, Plus, Play, Pause, Pencil, Trash2, X, Search, Building2, Home, Users, ExternalLink, Check, RefreshCw } from 'lucide-react'
+import { Loader2, Plus, Play, Pause, Pencil, Trash2, X, Search, Building2, Home, Users, ExternalLink, Check, RefreshCw, FileText, Mail } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { Tag, LeanEmpty } from '@/components/lean'
-import type { Program, Place, PlacePlan, Person } from '@/lib/site-programs'
+import type { Program, Place, PlacePlan, Person, ProgramReport } from '@/lib/site-programs'
 
 const URL_MAIN = '/api/upkeep/programs?options=1'
 const DAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
@@ -21,6 +21,8 @@ const bz = (id: string) => 'https://app.breezeway.io/task/' + encodeURIComponent
 const nice = (ymd: string) => { const d = new Date(ymd + 'T12:00:00Z'); return isNaN(d.getTime()) ? ymd : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) }
 const rid = () => Math.random().toString(36).slice(2, 9)
 const DEPTS = [['maintenance', 'Maintenance'], ['housekeeping', 'Housekeeping'], ['inspection', 'Inspection']] as const
+const NO_REPORT: ProgramReport = { mode: 'off', weekly: false, owners: true, to: [] }
+const ordinal = (n: number) => n + (n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th')
 
 type Data = {
   ok: boolean; programs: Program[]; day: string; plans: PlacePlan[]
@@ -28,15 +30,53 @@ type Data = {
   error?: string
 }
 type Tpl = { id: number; name: string; department: string }
+type ReportRow = { code: string; programId: string; taskId: string; date: string; finishedAt: string | null; finishedBy: string; passed: number; issues: number; open: number; place: string }
 
 function scheduleText(p: Place) {
   const parts: string[] = []
   const d = Array.from(new Set(p.days)).sort()
   if (d.length === 7) parts.push('Every day'); else if (d.length) parts.push(d.map(x => DAY_NAMES[x]).join(', '))
   if (p.alternate) parts.push('every other day')
+  if (p.monthDay) parts.push('monthly on the ' + ordinal(p.monthDay))
   if (p.onCleanDays) parts.push('clean days')
   const s = parts.join(' + ') || 'No days set'
   return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function reportText(r: ProgramReport | undefined) {
+  const x = r || NO_REPORT
+  if (x.mode === 'off' && !x.weekly) return ''
+  const who = [x.owners ? 'the owners' : '', x.to.length ? x.to.length + ' address' + (x.to.length === 1 ? '' : 'es') : ''].filter(Boolean).join(' + ') || 'nobody yet'
+  const when = x.mode === 'always' ? 'every walk' : x.mode === 'issues' ? 'walks with issues' : ''
+  return 'Report to ' + who + ': ' + [when, x.weekly ? 'Monday roll-up' : ''].filter(Boolean).join(' + ')
+}
+
+// THE LAST REPORTS OF A PROGRAM (lib/walk-reports) — one line each, the owners' link beside it.
+function Reports({ program }: { program: Program }) {
+  const [open, setOpen] = useState(false)
+  const { data, loading } = useCachedFetch<{ reports: ReportRow[] }>(open ? '/api/walks?program=' + encodeURIComponent(program.id) + '&limit=10' : null, { ttl: 60_000 })
+  const rows = data?.reports || []
+  return (
+    <div className="px-3 py-2 border-t border-line text-[12.5px]">
+      <button onClick={() => setOpen(o => !o)} className="inline-flex items-center gap-1.5 font-semibold text-ink hover:underline"><FileText size={13} className="text-muted" /> {open ? 'Hide reports' : 'Reports'}</button>
+      {open ? (
+        loading && !data ? <Loader2 size={13} className="animate-spin text-muted ml-2 inline" /> : !rows.length ? <p className="text-muted mt-1">No finished walk has been filed yet. The first report appears when a task of this program is finished in Breezeway.</p> : (
+          <ul className="mt-1.5 divide-y divide-line">
+            {rows.map(r => (
+              <li key={r.code} className="py-1.5 flex items-center gap-2 flex-wrap">
+                <span className="font-semibold text-ink min-w-[110px]">{nice(r.date)}</span>
+                <span className="text-muted flex-1 min-w-[120px]">{r.finishedBy || '—'}{r.place ? ' · ' + r.place : ''}</span>
+                <Tag tone="emerald">{r.passed} pass</Tag>
+                <Tag tone={r.issues ? 'rose' : 'slate'}>{r.issues} issue{r.issues === 1 ? '' : 's'}</Tag>
+                {r.open ? <Tag tone="amber">{r.open} not done</Tag> : null}
+                <a href={'/walks/' + r.code} target="_blank" rel="noreferrer" className="text-muted hover:text-ink" title="Open the report (the owners' link)"><ExternalLink size={13} /></a>
+              </li>
+            ))}
+          </ul>
+        )
+      ) : null}
+    </div>
+  )
 }
 
 function todayLine(pl: PlacePlan | undefined): { text: string; tone: 'emerald' | 'amber' | 'sky' | 'slate' | 'rose'; task?: string } {
@@ -102,7 +142,8 @@ export function UpkeepPrograms() {
                   <Tag tone="violet">{p.department}</Tag>
                 </div>
                 <div className="text-[11.5px] text-muted mt-0.5">
-                  {p.templateName ? 'Checklist: ' + p.templateName : 'No checklist template'} · {p.people.length ? p.people.map(x => x.name.split(' ')[0]).join(', ') : 'nobody fixed'}{p.addCleaners ? ' + whoever is cleaning there' : ''}
+                  {p.templateName ? 'Checklist: ' + p.templateName + (p.templateId ? '' : ' (not in Breezeway yet)') : 'No checklist template'} · {p.people.length ? p.people.map(x => x.name.split(' ')[0]).join(', ') : 'nobody fixed'}{p.addCleaners ? ' + whoever is cleaning there' : ''}
+                  {reportText(p.report) ? <span className="inline-flex items-center gap-1 ml-2"><Mail size={11} /> {reportText(p.report)}</span> : null}
                 </div>
               </div>
               <button onClick={() => run(p)} disabled={!!busy || !p.active} title="Run today now — creates what is due, moves what was not done, adds today's cleaners" className="h-8 px-2.5 inline-flex items-center gap-1 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:border-ink/40 disabled:opacity-50">{busy === 'run:' + p.id ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />} Run today</button>
@@ -126,6 +167,7 @@ export function UpkeepPrograms() {
               })}
               {!p.places.length ? <li className="px-3 py-3 text-[12.5px] text-muted">No places yet — Edit to add a building or unit.</li> : null}
             </ul>
+            {p.report && (p.report.mode !== 'off' || p.report.weekly) ? <Reports program={p} /> : null}
           </section>
         )
       })}
@@ -171,10 +213,14 @@ function Editor({ initial, options, busy, err, onCancel, onSave, onDelete }: {
   const setPlace = (id: string, patch: Partial<Place>) => set({ places: p.places.map(x => (x.id === id ? { ...x, ...patch } : x)) })
   const addPlace = (h: { kind: Place['kind']; ref: string; label: string }) => {
     const last = p.places[p.places.length - 1]
-    set({ places: p.places.concat([{ id: 'pl-' + rid(), kind: h.kind, ref: h.ref, label: h.label, days: last ? last.days.slice() : [0, 1, 2, 3, 4, 5, 6], alternate: last ? last.alternate : false, onCleanDays: last ? last.onCleanDays : false }]) })
+    set({ places: p.places.concat([{ id: 'pl-' + rid(), kind: h.kind, ref: h.ref, label: h.label, days: last ? last.days.slice() : [0, 1, 2, 3, 4, 5, 6], alternate: last ? last.alternate : false, onCleanDays: last ? last.onCleanDays : false, monthDay: last ? last.monthDay || null : null }]) })
     setWq('')
   }
-  const canSave = p.name.trim().length > 1 && p.places.length > 0 && p.places.every(x => x.days.length || x.alternate || x.onCleanDays)
+  const report: ProgramReport = p.report || NO_REPORT
+  const setReport = (patch: Partial<ProgramReport>) => set({ report: { ...report, ...patch } })
+  const [emailQ, setEmailQ] = useState('')
+  const addEmail = () => { const e = emailQ.trim().toLowerCase(); if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && report.to.indexOf(e) < 0) setReport({ to: report.to.concat([e]) }); setEmailQ('') }
+  const canSave = p.name.trim().length > 1 && p.places.length > 0 && p.places.every(x => x.days.length || x.alternate || x.onCleanDays || x.monthDay)
 
   const chip = (on: boolean) => 'h-7 px-2.5 rounded-full border text-[11.5px] font-semibold ' + (on ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line hover:border-ink/40')
   return (
@@ -239,10 +285,12 @@ function Editor({ initial, options, busy, err, onCancel, onSave, onDelete }: {
                   <button onClick={() => set({ places: p.places.filter(x => x.id !== pl.id) })} className="text-muted hover:text-rose-700" title="Remove"><Trash2 size={14} /></button>
                 </div>
                 <div className="flex items-center gap-1 flex-wrap">
-                  <button onClick={() => setPlace(pl.id, { days: [0, 1, 2, 3, 4, 5, 6], alternate: false })} className={chip(pl.days.length === 7)}>Every day</button>
-                  <button onClick={() => setPlace(pl.id, { days: [1, 3, 5], alternate: false })} className={chip(pl.days.join() === '1,3,5' && !pl.alternate)}>Mon · Wed · Fri</button>
-                  <button onClick={() => setPlace(pl.id, { days: [], alternate: true })} className={chip(pl.alternate && !pl.days.length)}>Every other day</button>
-                  <button onClick={() => setPlace(pl.id, { days: [1], alternate: false })} className={chip(pl.days.join() === '1' && !pl.alternate)}>Weekly</button>
+                  <button onClick={() => setPlace(pl.id, { days: [0, 1, 2, 3, 4, 5, 6], alternate: false, monthDay: null })} className={chip(pl.days.length === 7 && !pl.monthDay)}>Every day</button>
+                  <button onClick={() => setPlace(pl.id, { days: [1, 3, 5], alternate: false, monthDay: null })} className={chip(pl.days.join() === '1,3,5' && !pl.alternate && !pl.monthDay)}>Mon · Wed · Fri</button>
+                  <button onClick={() => setPlace(pl.id, { days: [], alternate: true, monthDay: null })} className={chip(pl.alternate && !pl.days.length && !pl.monthDay)}>Every other day</button>
+                  <button onClick={() => setPlace(pl.id, { days: [1], alternate: false, monthDay: null })} className={chip(pl.days.join() === '1' && !pl.alternate && !pl.monthDay)}>Weekly</button>
+                  <button onClick={() => setPlace(pl.id, { days: [], alternate: false, monthDay: pl.monthDay || 1 })} className={chip(!!pl.monthDay && !pl.days.length)} title="Once a month, on the day below">Monthly</button>
+                  {pl.monthDay ? <label className="inline-flex items-center gap-1 text-[11.5px] text-muted">on the <input type="number" min={1} max={28} value={pl.monthDay} onChange={e => setPlace(pl.id, { monthDay: Math.max(1, Math.min(28, Math.round(Number(e.target.value) || 1))) })} className="w-[52px] h-7 rounded-lg border border-line px-1.5 text-[12px] text-ink" /></label> : null}
                   <span className="mx-1 h-5 w-px bg-line" />
                   {DAYS.map((d, i) => {
                     const on = pl.days.indexOf(i) >= 0
@@ -276,6 +324,27 @@ function Editor({ initial, options, busy, err, onCancel, onSave, onDelete }: {
           <div className="text-[12px] font-bold uppercase tracking-wide text-muted">5 · Note on the task <span className="normal-case font-normal">(optional)</span></div>
           <textarea value={p.description} onChange={e => set({ description: e.target.value })} rows={3} placeholder="What to do, in English and Spanish" className="w-full rounded-lg border border-line px-2.5 py-2 text-[12.5px]" />
           <p className="mt-1 text-[11px] text-muted">Put <code>{'{parking}'}</code> anywhere in it to add the property&rsquo;s parking-lot link and passcode, read fresh each day.</p>
+        </div>
+
+        {/* 6 — the owners' report (lib/walk-reports) */}
+        <div className="space-y-2">
+          <div className="text-[12px] font-bold uppercase tracking-wide text-muted">6 · Owner report <span className="normal-case font-normal">(when a task of this program is finished)</span></div>
+          <div className="flex gap-1.5 flex-wrap">
+            {([['off', 'No report'], ['issues', 'Email when something failed'], ['always', 'Email after every walk']] as const).map(([k, l]) => <button key={k} onClick={() => setReport({ mode: k })} className={chip(report.mode === k)}>{l}</button>)}
+            <button onClick={() => setReport({ weekly: !report.weekly })} className={chip(report.weekly)}>{report.weekly ? '✓ ' : ''}Monday roll-up</button>
+          </div>
+          {report.mode !== 'off' || report.weekly ? (
+            <>
+              <p className="text-[11.5px] text-muted">Every finished task becomes a report with its own link: each checklist line pass or issue, each issue with its photo and note, and what is still open from earlier walks. A failed line also raises a maintenance task for the program&rsquo;s people.</p>
+              <div className="flex gap-1.5 flex-wrap items-center">
+                <button onClick={() => setReport({ owners: !report.owners })} className={chip(report.owners)}>{report.owners ? '✓ ' : ''}The owners of each place</button>
+                {report.to.map(e => <span key={e} className="h-7 pl-2.5 pr-1 rounded-full bg-ink text-white text-[11.5px] font-semibold inline-flex items-center gap-1">{e}<button onClick={() => setReport({ to: report.to.filter(x => x !== e) })} className="h-5 w-5 inline-flex items-center justify-center rounded-full hover:bg-white/20"><X size={11} /></button></span>)}
+                <label className="flex items-center gap-1.5 h-7 rounded-full border border-line px-2.5"><Plus size={12} className="text-muted" />
+                  <input value={emailQ} onChange={e => setEmailQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ',' || e.key === ' ') { e.preventDefault(); addEmail() } }} onBlur={addEmail} placeholder="Also email…" className="w-[160px] bg-transparent text-[12px] outline-none" /></label>
+              </div>
+              <p className="text-[11px] text-muted">Owners come from the Guesty owner records on the place&rsquo;s units. Emails go out from the Lighthouse mailbox (jon@stay-hospitality.com).</p>
+            </>
+          ) : null}
         </div>
 
         {err ? <p className="text-[12.5px] text-rose-700">{err}</p> : null}

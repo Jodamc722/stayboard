@@ -235,6 +235,10 @@ export const OPEN_PREFIXES = [
   '/order/', '/orders-live',
   // OWNER JOB LINKS (Jon, 2026-10-07). /job/<token> shows an owner one job with its photos and charge.
   '/job/',
+  // WALK REPORTS (Jon, 2026-11-02, the Eden exterior walk). /walks/<code> is the copy of a finished
+  // walk the owners get — every line, photos, what is still open. The 16-hex code is the capability.
+  // (No apostrophes in this comment: scripts/check-tabs reads this array as text, quote by quote.)
+  '/walks/',
   // APPROVED CATALOG LINK (Jon, 2026-10-27). /catalog/<code> is the read-only approved furniture list for
   // one property; the code is the capability and /api/public/catalog checks it on every call.
   '/catalog/',

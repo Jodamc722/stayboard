@@ -4,13 +4,16 @@
 // validates the sender) and upsert that copy. Plain GET answers Breezeway's URL-validation ping.
 // One-time setup (logged-in): GET ?subscribe=1 registers this URL for 'task' events.
 import { NextRequest, NextResponse } from 'next/server'
+import { waitUntil } from '@vercel/functions'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, getBreezewayToken, retrieveBreezewayTask, mapBreezewayTask } from '@/lib/breezeway'
 import { requireVrAdmin } from '@/lib/vr-gate'
 import { bustBoards } from '@/lib/bust'
+import { isTaskDone } from '@/lib/task-categories'
+import { walkReportForTask } from '@/lib/walk-reports'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 30
+export const maxDuration = 60
 
 const WEBHOOK_BASE = process.env.BREEZEWAY_WEBHOOK_URL || 'https://api.breezeway.io/public/webhook/v1'
 // The app's own address, the same base every other link the app sends uses (was the old
@@ -55,6 +58,13 @@ export async function POST(req: NextRequest) {
     // A field change in Breezeway (started, finished, reassigned) reaches the boards on the next
     // read, not when their cache happens to expire — throttled per instance (BUST_EVERY_MS).
     if (!error && Date.now() - lastBustAt >= BUST_EVERY_MS) { lastBustAt = Date.now(); bustBoards({ daysheet: false }) }
+    // A FINISHED PROGRAM TASK BECOMES ITS REPORT (lib/walk-reports; Jon, 2026-11-02, the Eden
+    // exterior walk). After Breezeway has its 200 — the answers, photos and the owners' email take
+    // seconds, and a delivery that waits on them is a delivery Breezeway retries. Idempotent per
+    // task, and a task that is not a reporting program's is answered in one settings read.
+    if (isTaskDone(row.status, row.finished_at)) {
+      waitUntil(walkReportForTask(task).then(r => { if (r.code && !r.skipped) console.info('[walk-reports] filed', r.code, 'for task', String(task.id)); else if (r.error) console.error('[walk-reports]', String(task.id), r.error) }).catch(e => console.error('[walk-reports] unhandled', String(e?.message || e).slice(0, 300))))
+    }
   } catch { /* never fail the webhook delivery */ }
   return NextResponse.json({ ok: true })
 }
